@@ -3,26 +3,27 @@
 //! matching response, honoring timeouts and local/peer disconnect signals.
 
 use core::mem;
-use std::fmt::{self, Display};
-use std::sync::Mutex;
+use std::{
+	fmt::{self, Display},
+	sync::Mutex,
+};
 
 use super::statement_store_rpc;
-use crate::host_internal::sso_messages::{
-    Response, SsoSessionStatement, decode_sso_session_statement, v1,
+use crate::{
+	host_internal::{
+		sso_messages::{Response, SsoSessionStatement, decode_sso_session_statement, v1},
+		sso_wire::SsoRequest,
+	},
+	host_logic::{session::SsoSessionInfo, statement_store::parse_new_statements_result},
+	unix_time::current_unix_secs,
 };
-use crate::host_internal::sso_wire::SsoRequest;
-use crate::host_logic::session::SsoSessionInfo;
-use crate::host_logic::statement_store::parse_new_statements_result;
-use crate::unix_time::current_unix_secs;
 
-use futures::channel::oneshot;
-use futures::future::BoxFuture;
-use futures::stream::BoxStream;
-use futures::{FutureExt, StreamExt, pin_mut};
+use futures::{
+	FutureExt, StreamExt, channel::oneshot, future::BoxFuture, pin_mut, stream::BoxStream,
+};
 use serde_json::Value;
-use subxt_rpcs::RpcClient;
-use subxt_rpcs::client::RpcSubscription;
-use tracing::instrument;
+use subxt_rpcs::{RpcClient, client::RpcSubscription};
+use tracing::{debug, instrument};
 use truapi::{CancellationReason, CancellationToken};
 
 /// Host-spec B.3.3 recommends seven-day statement expiry for session traffic:
@@ -61,10 +62,7 @@ pub struct SsoSessionKey {
 impl SsoSessionKey {
     /// Key for the session's own/peer id pair.
     pub fn from_session(session: &SsoSessionInfo) -> Self {
-        Self {
-            own: session.session_id_own,
-            peer: session.session_id_peer,
-        }
+		Self { own: session.session_id_own, peer: session.session_id_peer }
     }
 }
 
@@ -87,22 +85,11 @@ impl SessionDisconnects {
         session: &SsoSessionInfo,
     ) -> (SessionDisconnectGuard, oneshot::Receiver<String>) {
         let (tx, rx) = oneshot::channel();
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("session disconnect mutex poisoned");
+		let mut inner = self.inner.lock().expect("session disconnect mutex poisoned");
         inner.next_id = inner.next_id.wrapping_add(1);
         let id = inner.next_id;
-        inner
-            .waiters
-            .push((id, SsoSessionKey::from_session(session), tx));
-        (
-            SessionDisconnectGuard {
-                disconnects: self.clone(),
-                id,
-            },
-            rx,
-        )
+		inner.waiters.push((id, SsoSessionKey::from_session(session), tx));
+		(SessionDisconnectGuard { disconnects: self.clone(), id }, rx)
     }
 
     fn unsubscribe(&self, id: u64) {
@@ -121,10 +108,7 @@ impl SessionDisconnects {
     /// Resolve pending waiters for the session identified by `key`.
     pub fn notify_key(&self, key: SsoSessionKey, reason: &'static str) {
         let waiters = {
-            let mut inner = self
-                .inner
-                .lock()
-                .expect("session disconnect mutex poisoned");
+			let mut inner = self.inner.lock().expect("session disconnect mutex poisoned");
             let mut matching = Vec::new();
             let mut pending = Vec::with_capacity(inner.waiters.len());
             for waiter in mem::take(&mut inner.waiters) {
@@ -178,10 +162,7 @@ pub struct CancelError {
 
 impl CancelError {
     fn new(reason: CancellationReason, remote_message_id: &str) -> Self {
-        Self {
-            reason,
-            remote_message_id: remote_message_id.to_string(),
-        }
+		Self { reason, remote_message_id: remote_message_id.to_string() }
     }
 
     /// Why the request was cancelled.
@@ -196,10 +177,7 @@ impl CancelError {
 
     /// Same cancellation reattributed to another message id.
     pub fn with_remote_message_id(self, remote_message_id: &str) -> Self {
-        Self {
-            reason: self.reason,
-            remote_message_id: remote_message_id.to_string(),
-        }
+		Self { reason: self.reason, remote_message_id: remote_message_id.to_string() }
     }
 }
 
@@ -207,15 +185,11 @@ impl Display for CancelError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.reason {
             CancellationReason::Cancelled => {
-                write!(
-                    f,
-                    "{SSO_CALL_CANCELLED_REASON} for {}",
-                    self.remote_message_id
-                )
-            }
+				write!(f, "{SSO_CALL_CANCELLED_REASON} for {}", self.remote_message_id)
+			},
             reason @ CancellationReason::TimedOut { .. } => {
                 write!(f, "SSO response {reason} for {}", self.remote_message_id)
-            }
+			},
         }
     }
 }
@@ -417,10 +391,16 @@ fn handle_sso_remote_statement_page<T>(
                 if let Some(response) = pending_remote_response.take() {
                     return Ok(Some(response));
                 }
-            }
+			},
             Some(SsoSessionStatement::RemoteMessages(messages)) => {
                 for message in messages {
-                    let message = message.map_err(SsoRemoteResponseError::Failure)?;
+					let message = match message {
+						Ok(message) => message,
+						Err(error) => {
+							debug!(%error, "skipping undecodable SSO remote message");
+							continue;
+						},
+					};
                     if message == v1::RemoteMessage::Disconnected {
                         return Err(SsoRemoteResponseError::PeerDisconnected);
                     }
@@ -434,8 +414,8 @@ fn handle_sso_remote_statement_page<T>(
                     *pending_remote_response = Some(response);
                     break;
                 }
-            }
-            None => {}
+			},
+			None => {},
         }
     }
     Ok(None)
@@ -469,9 +449,7 @@ pub fn sso_message_id() -> String {
 pub fn fresh_statement_expiry() -> u64 {
     let timestamp = current_unix_secs().saturating_add(DEFAULT_SSO_STATEMENT_EXPIRY_SECS);
     let expiry_floor = timestamp << 32;
-    let mut last = LAST_SSO_STATEMENT_EXPIRY
-        .lock()
-        .expect("SSO statement expiry mutex poisoned");
+	let mut last = LAST_SSO_STATEMENT_EXPIRY.lock().expect("SSO statement expiry mutex poisoned");
     let expiry = next_statement_expiry(*last, expiry_floor);
     *last = expiry;
     expiry
@@ -484,14 +462,16 @@ fn next_statement_expiry(last: u64, expiry_floor: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host_internal::sso_messages::{
+	use crate::{
+		host_internal::sso_messages::{
         ProductSubtreeRequest, ProductSubtreeResponse, RemoteMessage, RemoteMessageData,
         build_outgoing_request_statement, build_signed_session_response_statement,
-    };
-    use crate::host_logic::sso::pairing::{SsoStatementData, encrypt_session_statement_data};
-    use crate::host_logic::statement_store::build_signed_session_request_statement;
-    use crate::test_support::{
-        new_statements_frame, sso_host_and_responder_sessions, sso_session_info,
+		},
+		host_logic::{
+			sso::pairing::{SsoStatementData, encrypt_session_statement_data},
+			statement_store::build_signed_session_request_statement,
+		},
+		test_support::{new_statements_frame, sso_host_and_responder_sessions, sso_session_info},
     };
     use futures::stream;
     use parity_scale_codec::Encode;
@@ -546,9 +526,8 @@ mod tests {
     fn sso_remote_response_waiter_reports_timeout_cancellation() {
         let session = sso_session_info();
         let cancel = CancellationToken::default();
-        cancel.cancel_with_reason(CancellationReason::TimedOut {
-            timeout: Duration::from_millis(1),
-        });
+		cancel
+			.cancel_with_reason(CancellationReason::TimedOut { timeout: Duration::from_millis(1) });
         let err = futures::executor::block_on(wait_for_sso_remote_response(
             pending_wait(session.sso.as_ref().unwrap(), &cancel),
             |_| None::<Result<(), String>>,
@@ -558,10 +537,7 @@ mod tests {
         let SsoRemoteResponseError::Cancelled(err) = err else {
             panic!("expected cancellation error");
         };
-        assert_eq!(
-            err.to_string(),
-            "SSO response timed out after 1ms for request-1"
-        );
+		assert_eq!(err.to_string(), "SSO response timed out after 1ms for request-1");
     }
 
     #[test]
@@ -619,10 +595,7 @@ mod tests {
         let SsoRemoteResponseError::Cancelled(err) = err else {
             panic!("expected cancellation error");
         };
-        assert_eq!(
-            err.to_string(),
-            "SSO response wait cancelled by caller for request-1"
-        );
+		assert_eq!(err.to_string(), "SSO response wait cancelled by caller for request-1");
     }
 
     fn peer_page(statement: Vec<u8>) -> Value {
@@ -790,17 +763,15 @@ mod tests {
 
         assert_eq!(
             response,
-            Response {
-                responding_to: "request-1".to_string(),
-                payload: Ok([7; 32]),
-            }
+			Response { responding_to: "request-1".to_string(), payload: Ok([7; 32]) }
         );
     }
 
-    /// Only messages read before the match have to decode; garbage after it
-    /// belongs to nobody the waiter cares about.
+	/// A message that does not decode, such as a stale reply from an older peer
+	/// left on the session channel, is skipped wherever it sits, so it cannot
+	/// fail a wait for another request.
     #[test]
-    fn an_undecodable_message_only_matters_before_the_match() {
+	fn an_undecodable_message_is_skipped() {
         let (host, responder) = sso_host_and_responder_sessions();
         let ack = build_signed_session_response_statement(
             &responder,
@@ -812,10 +783,7 @@ mod tests {
         let statement_with = |data: Vec<Vec<u8>>| {
             let encrypted = encrypt_session_statement_data(
                 &responder,
-                &SsoStatementData::Request {
-                    request_id: "resp-statement".to_string(),
-                    data,
-                },
+				&SsoStatementData::Request { request_id: "resp-statement".to_string(), data },
             )
             .unwrap();
             build_signed_session_request_statement(&responder, encrypted, fresh_statement_expiry())
@@ -833,15 +801,11 @@ mod tests {
         );
         let before = wait_for_subtree(
             &host,
-            vec![
-                peer_page(ack),
-                peer_page(statement_with(vec![garbage, reply])),
-            ],
+			vec![peer_page(ack), peer_page(statement_with(vec![garbage, reply]))],
         );
 
-        assert!(after.is_ok());
-        assert!(
-            matches!(before, Err(SsoRemoteResponseError::Failure(reason)) if reason.contains("invalid SSO remote message"))
-        );
+		let expected =
+			Ok(Response { responding_to: "request-1".to_string(), payload: Ok([7; 32]) });
+		assert_eq!((before, after), (expected.clone(), expected));
     }
 }

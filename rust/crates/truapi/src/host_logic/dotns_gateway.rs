@@ -276,15 +276,11 @@ pub fn decode_revive_call_output(output: &[u8]) -> Result<Vec<u8>, DotnsContract
             let data = Vec::<u8>::decode(input).map_err(|_| truncated("data"))?;
             // ReturnFlags::REVERT.
             if flags & 1 == 1 {
-                return Err(DotnsContractError::Reverted {
-                    detail: describe_revert(&data),
-                });
+				return Err(DotnsContractError::Reverted { detail: describe_revert(&data) });
             }
             Ok(data)
-        }
-        _ => Err(DotnsContractError::Dispatch {
-            detail: format!("0x{}", hex::encode(*input)),
-        }),
+		},
+		_ => Err(DotnsContractError::Dispatch { detail: format!("0x{}", hex::encode(*input)) }),
     }
 }
 
@@ -296,9 +292,7 @@ fn describe_revert(data: &[u8]) -> String {
     }
     if data.starts_with(&[0x08, 0xc3, 0x79, 0xa0]) && data.len() >= 68 {
         let len = u64::from_be_bytes(
-            data[60..68]
-                .try_into()
-                .expect("8-byte slice from a length-checked buffer; qed"),
+			data[60..68].try_into().expect("8-byte slice from a length-checked buffer; qed"),
         ) as usize;
         if let Some(message) = 68usize
             .checked_add(len)
@@ -322,24 +316,19 @@ fn word(data: &[u8], index: usize) -> Result<&[u8], DotnsContractError> {
 
 /// Interprets an ABI word as a right-aligned usize offset or length.
 fn word_usize(data: &[u8], index: usize) -> Result<usize, DotnsContractError> {
-    usize::try_from(word_u64(data, index)?).map_err(|_| DotnsContractError::Abi {
-        context: "oversized word",
-    })
+	usize::try_from(word_u64(data, index)?)
+		.map_err(|_| DotnsContractError::Abi { context: "oversized word" })
 }
 
 /// Decodes an ABI `string` at byte offset `at`.
 /// The layout is a length word followed by padded UTF-8 bytes.
 fn decode_string_at(data: &[u8], at: usize) -> Result<String, DotnsContractError> {
-    let region = data.get(at..).ok_or(DotnsContractError::Abi {
-        context: "string offset",
-    })?;
+	let region = data.get(at..).ok_or(DotnsContractError::Abi { context: "string offset" })?;
     let len = word_usize(region, 0)?;
     let bytes = 32usize
         .checked_add(len)
         .and_then(|end| region.get(32..end))
-        .ok_or(DotnsContractError::Abi {
-            context: "string bytes",
-        })?;
+		.ok_or(DotnsContractError::Abi { context: "string bytes" })?;
     String::from_utf8(bytes.to_vec()).map_err(|_| DotnsContractError::AbiUtf8)
 }
 
@@ -367,24 +356,18 @@ pub fn decode_address(data: &[u8]) -> Result<[u8; 20], DotnsContractError> {
     if bytes[..12].iter().any(|b| *b != 0) {
         return Err(DotnsContractError::Abi { context: "address" });
     }
-    Ok(bytes[12..]
-        .try_into()
-        .expect("20-byte tail of a 32-byte word; qed"))
+	Ok(bytes[12..].try_into().expect("20-byte tail of a 32-byte word; qed"))
 }
 
 /// Decodes a `string[]` return value (`LabelStore.getLabels`).
 pub fn decode_string_array(data: &[u8]) -> Result<Vec<String>, DotnsContractError> {
     let array_at = word_usize(data, 0)?;
-    let array = data.get(array_at..).ok_or(DotnsContractError::Abi {
-        context: "array offset",
-    })?;
+	let array = data
+		.get(array_at..)
+		.ok_or(DotnsContractError::Abi { context: "array offset" })?;
     let len = word_usize(array, 0)?;
-    let elements = array.get(32..).ok_or(DotnsContractError::Abi {
-        context: "array elements",
-    })?;
-    (0..len)
-        .map(|i| decode_string_at(elements, word_usize(elements, i)?))
-        .collect()
+	let elements = array.get(32..).ok_or(DotnsContractError::Abi { context: "array elements" })?;
+	(0..len).map(|i| decode_string_at(elements, word_usize(elements, i)?)).collect()
 }
 
 /// Decodes one `DotnsPopController.pendingClaims(address,uint256,uint256)`
@@ -392,21 +375,16 @@ pub fn decode_string_array(data: &[u8]) -> Result<Vec<String>, DotnsContractErro
 /// pairs.
 pub fn decode_pending_claims_array(data: &[u8]) -> Result<Vec<(String, u64)>, DotnsContractError> {
     let array_at = word_usize(data, 0)?;
-    let array = data.get(array_at..).ok_or(DotnsContractError::Abi {
-        context: "claims offset",
-    })?;
+	let array = data
+		.get(array_at..)
+		.ok_or(DotnsContractError::Abi { context: "claims offset" })?;
     let len = word_usize(array, 0)?;
-    let elements = array.get(32..).ok_or(DotnsContractError::Abi {
-        context: "claims elements",
-    })?;
+	let elements = array.get(32..).ok_or(DotnsContractError::Abi { context: "claims elements" })?;
     (0..len)
         .map(|i| {
-            let claim =
-                elements
+			let claim = elements
                     .get(word_usize(elements, i)?..)
-                    .ok_or(DotnsContractError::Abi {
-                        context: "claim offset",
-                    })?;
+				.ok_or(DotnsContractError::Abi { context: "claim offset" })?;
             let label = decode_string_at(claim, word_usize(claim, 0)?)?;
             let minted_at = word_u64(claim, 1)?;
             Ok((label, minted_at))
@@ -423,15 +401,9 @@ pub fn decode_u64(data: &[u8]) -> Result<u64, DotnsContractError> {
 fn word_u64(data: &[u8], index: usize) -> Result<u64, DotnsContractError> {
     let bytes = word(data, index)?;
     if bytes[..24].iter().any(|b| *b != 0) {
-        return Err(DotnsContractError::Abi {
-            context: "oversized word",
-        });
+		return Err(DotnsContractError::Abi { context: "oversized word" });
     }
-    Ok(u64::from_be_bytes(
-        bytes[24..]
-            .try_into()
-            .expect("8-byte tail of a 32-byte word; qed"),
-    ))
+	Ok(u64::from_be_bytes(bytes[24..].try_into().expect("8-byte tail of a 32-byte word; qed")))
 }
 
 /// Usernames of one account as recorded by the dotNS contracts.
@@ -534,13 +506,11 @@ const MAX_DNS_LABEL_LEN: usize = 63;
 /// starting nor ending with a hyphen, at most 63 octets
 /// (`StringUtils._isDnsLabel`).
 pub fn is_dns_label(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= MAX_DNS_LABEL_LEN
-        && !value.starts_with('-')
-        && !value.ends_with('-')
-        && value
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+	!value.is_empty() &&
+		value.len() <= MAX_DNS_LABEL_LEN &&
+		!value.starts_with('-') &&
+		!value.ends_with('-') &&
+		value.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 /// The dotted lite shape: a letters-only stem, one dot, exactly two digits
@@ -550,12 +520,12 @@ pub fn is_dns_label(value: &str) -> bool {
 pub fn is_lite_label(label: &str) -> bool {
     match label.rsplit_once('.') {
         Some((stem, digits)) => {
-            !stem.is_empty()
-                && stem.len() <= MAX_DNS_LABEL_LEN
-                && stem.chars().all(|c| c.is_ascii_lowercase())
-                && digits.len() == 2
-                && digits.chars().all(|c| c.is_ascii_digit())
-        }
+			!stem.is_empty() &&
+				stem.len() <= MAX_DNS_LABEL_LEN &&
+				stem.chars().all(|c| c.is_ascii_lowercase()) &&
+				digits.len() == 2 &&
+				digits.chars().all(|c| c.is_ascii_digit())
+		},
         None => false,
     }
 }
@@ -567,9 +537,9 @@ pub const MAX_BASE_LABEL_LEN: usize = 32;
 /// it (`is_person_label`): non-empty, lowercase ASCII letters only, no digits
 /// or hyphens, at most [`MAX_BASE_LABEL_LEN`] bytes.
 pub fn is_full_person_label(label: &str) -> bool {
-    !label.is_empty()
-        && label.len() <= MAX_BASE_LABEL_LEN
-        && label.chars().all(|c| c.is_ascii_lowercase())
+	!label.is_empty() &&
+		label.len() <= MAX_BASE_LABEL_LEN &&
+		label.chars().all(|c| c.is_ascii_lowercase())
 }
 
 /// Shortest base a person can register or reserve: `PopRules` classifies bases
@@ -677,15 +647,12 @@ pub async fn discover_pop_controller<T: DotnsTransport + ?Sized>(
     let stored: [u8; 20] = value.try_into().map_err(|value: Vec<u8>| {
         format!("DotnsGateway.DispatcherAddress is {} bytes", value.len())
     })?;
-    match transport
-        .view(&stored, call_no_args("protocolRegistry()"))
-        .await
-    {
+	match transport.view(&stored, call_no_args("protocolRegistry()")).await {
         Ok(output) => {
             decode_address(&output)
                 .map_err(|err| format!("DotnsPopController.protocolRegistry(): {err}"))?;
             Ok(Some(stored))
-        }
+		},
         // A chain still storing its dispatcher pays this second view; a repointed one
         // answers on the first. Both hops go once no chain stores a dispatcher.
         Err(DotnsViewError::Reverted(_)) => {
@@ -700,12 +667,12 @@ pub async fn discover_pop_controller<T: DotnsTransport + ?Sized>(
                 )),
                 Err(DotnsViewError::Failed(reason)) => {
                     Err(format!("RootGatewayDispatcher.TARGET(): {reason}"))
+				},
                 }
-            }
-        }
+		},
         Err(err @ DotnsViewError::Failed(_)) => {
             Err(format!("DotnsPopController.protocolRegistry(): {err}"))
-        }
+		},
     }
 }
 
@@ -741,10 +708,7 @@ pub async fn resolve_labels<T: DotnsTransport + ?Sized>(
         .map_err(|err| format!("DotnsPopController.protocolRegistry(): {err}"))?;
 
     let factory_output = transport
-        .view(
-            &registry,
-            call_bytes32("get(bytes32)", &registry_key("storeFactory")),
-        )
+		.view(&registry, call_bytes32("get(bytes32)", &registry_key("storeFactory")))
         .await
         .map_err(|err| format!("ProtocolRegistry.get(storeFactory): {err}"))?;
     let factory = decode_address(&factory_output)
@@ -778,8 +742,8 @@ pub async fn resolve_labels<T: DotnsTransport + ?Sized>(
             .map_err(|err| format!("LabelStore.getLabels: {err}"))?;
         let short_page = (stored.len() as u64) < LABEL_PAGE_LIMIT;
         for label in stored {
-            if let Some(bare) = bare_store_label(&label, &tld)
-                && !labels.iter().any(|known| known == bare)
+			if let Some(bare) = bare_store_label(&label, &tld) &&
+				!labels.iter().any(|known| known == bare)
             {
                 labels.push(bare.to_string());
             }
@@ -802,11 +766,7 @@ pub async fn resolve_labels<T: DotnsTransport + ?Sized>(
 /// not carry it or that still hold a dot afterwards, unless that dot is a lite
 /// label's separator (`alice.42`); other dotted remainders are subnames.
 fn bare_store_label<'a>(label: &'a str, tld: &str) -> Option<&'a str> {
-    let bare = if tld.is_empty() {
-        label
-    } else {
-        label.strip_suffix(tld)?
-    };
+	let bare = if tld.is_empty() { label } else { label.strip_suffix(tld)? };
     (!bare.is_empty() && (!bare.contains('.') || is_dotted_lite_username(bare))).then_some(bare)
 }
 
@@ -832,19 +792,14 @@ pub async fn label_available<T: DotnsTransport + ?Sized>(
     controller: &[u8; 20],
     label: &str,
 ) -> Result<bool, String> {
-    let registry_output = transport
-        .view(controller, call_no_args("protocolRegistry()"))
-        .await?;
+	let registry_output = transport.view(controller, call_no_args("protocolRegistry()")).await?;
     let registry = decode_address(&registry_output)
         .map_err(|err| format!("DotnsPopController.protocolRegistry(): {err}"))?;
 
     let tld = network_tld(transport, &registry).await?;
 
     let registrar_output = transport
-        .view(
-            &registry,
-            call_bytes32("get(bytes32)", &registry_key("registrar")),
-        )
+		.view(&registry, call_bytes32("get(bytes32)", &registry_key("registrar")))
         .await?;
     let registrar = decode_address(&registrar_output)
         .map_err(|err| format!("ProtocolRegistry.get(registrar): {err}"))?;
@@ -890,10 +845,10 @@ async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
                     "DotnsPopController.pendingClaims page reverted; retaining earlier pages"
                 );
                 break;
-            }
+			},
             Err(DotnsViewError::Failed(reason)) => {
                 return Err(format!("DotnsPopController.pendingClaims: {reason}"));
-            }
+			},
         };
         let page_claims = decode_pending_claims_array(&output)
             .map_err(|err| format!("DotnsPopController.pendingClaims: {err}"))?;
@@ -993,16 +948,9 @@ mod tests {
         );
 
         let standalone = Link::None([0x55; 65]);
+		assert_eq!(hex::encode(standalone.encode()), format!("01{}", hex::encode([0x55; 65])));
         assert_eq!(
-            hex::encode(standalone.encode()),
-            format!("01{}", hex::encode([0x55; 65]))
-        );
-        assert_eq!(
-            hex::encode(build_register_proof_message(
-                &[0x44; 32],
-                b"alicebc",
-                &standalone
-            )),
+			hex::encode(build_register_proof_message(&[0x44; 32], b"alicebc", &standalone)),
             "255da65ea6687123d5ac035a438a5c6fa18f7d04f23433611095a0fe58c479ab"
         );
     }
@@ -1013,10 +961,7 @@ mod tests {
         let call = encode_register_name_call([0x6a, 0x01], &[0x44; 32], b"alicebc", &link);
         assert_eq!(&call[..2], &[0x6a, 0x01]);
         assert_eq!(&call[2..34], &[0x44; 32]);
-        assert_eq!(
-            &call[34..],
-            &[b"alicebc".to_vec().encode(), link.encode()].concat()[..]
-        );
+		assert_eq!(&call[34..], &[b"alicebc".to_vec().encode(), link.encode()].concat()[..]);
 
         // Layout: 0x01 (Some) ‖ variant ‖ compact-len proof ‖ ring_index LE ‖
         // revision LE ‖ 0x01 (Sr25519) ‖ signature, the AsDotnsGatewayInfo::
@@ -1039,17 +984,11 @@ mod tests {
     #[test]
     fn selectors_match_reference_vectors() {
         assert_eq!(hex::encode(selector("getLabelStore(address)")), "4fc5dce9");
-        assert_eq!(
-            hex::encode(selector("getLabels(uint256,uint256)")),
-            "2d7b5794"
-        );
+		assert_eq!(hex::encode(selector("getLabels(uint256,uint256)")), "2d7b5794");
         assert_eq!(hex::encode(selector("protocolRegistry()")), "7656419f");
         assert_eq!(hex::encode(selector("get(bytes32)")), "8eaa6ac0");
         assert_eq!(hex::encode(selector("TARGET()")), "cc1f2afa");
-        assert_eq!(
-            hex::encode(selector("pendingClaims(address,uint256,uint256)")),
-            "76025b85"
-        );
+		assert_eq!(hex::encode(selector("pendingClaims(address,uint256,uint256)")), "76025b85");
         assert_eq!(hex::encode(selector("tld()")), "2d551432");
         assert_eq!(hex::encode(selector("recordExists(bytes32)")), "f79fe538");
         assert_eq!(hex::encode(selector("ownerOf(uint256)")), "6352211e");
@@ -1085,17 +1024,10 @@ mod tests {
         assert_eq!(pair_call[35], 0);
         assert_eq!(pair_call[67], 16);
 
-        let paged_call = call_address_u256_pair(
-            "pendingClaims(address,uint256,uint256)",
-            &[0xBB; 20],
-            32,
-            16,
-        );
+		let paged_call =
+			call_address_u256_pair("pendingClaims(address,uint256,uint256)", &[0xBB; 20], 32, 16);
         assert_eq!(paged_call.len(), 4 + 96);
-        assert_eq!(
-            &paged_call[..4],
-            &selector("pendingClaims(address,uint256,uint256)")
-        );
+		assert_eq!(&paged_call[..4], &selector("pendingClaims(address,uint256,uint256)"));
         let mut expected_args = vec![0u8; 96];
         expected_args[12..32].fill(0xBB);
         expected_args[63] = 32;
@@ -1136,10 +1068,7 @@ mod tests {
         let mut ok = vec![0u8];
         0u32.encode_to(&mut ok);
         vec![0xABu8, 0xCD].encode_to(&mut ok);
-        assert_eq!(
-            decode_revive_call_output(&contract_result(&ok)).unwrap(),
-            vec![0xAB, 0xCD]
-        );
+		assert_eq!(decode_revive_call_output(&contract_result(&ok)).unwrap(), vec![0xAB, 0xCD]);
 
         // Error("nope") revert payload under ReturnFlags::REVERT.
         let mut revert_data = vec![0x08, 0xc3, 0x79, 0xa0];
@@ -1190,12 +1119,7 @@ mod tests {
         let encoded = values
             .iter()
             .map(|(label, minted_at)| {
-                [
-                    abi_word(0x40).to_vec(),
-                    abi_word(*minted_at).to_vec(),
-                    abi_string(label),
-                ]
-                .concat()
+				[abi_word(0x40).to_vec(), abi_word(*minted_at).to_vec(), abi_string(label)].concat()
             })
             .collect::<Vec<_>>();
         let mut output = abi_word(0x20).to_vec();
@@ -1235,18 +1159,9 @@ mod tests {
         );
 
         // pendingClaims = [("alice01", 42), ("bob", 7)].
-        let struct_a = [
-            abi_word(0x40).to_vec(),
-            abi_word(42).to_vec(),
-            abi_string("alice01"),
-        ]
-        .concat();
-        let struct_b = [
-            abi_word(0x40).to_vec(),
-            abi_word(7).to_vec(),
-            abi_string("bob"),
-        ]
-        .concat();
+		let struct_a =
+			[abi_word(0x40).to_vec(), abi_word(42).to_vec(), abi_string("alice01")].concat();
+		let struct_b = [abi_word(0x40).to_vec(), abi_word(7).to_vec(), abi_string("bob")].concat();
         let mut claims = abi_word(0x20).to_vec();
         claims.extend_from_slice(&abi_word(2));
         claims.extend_from_slice(&abi_word(0x40));
@@ -1412,9 +1327,7 @@ mod tests {
 
             // Provenance gates every slot: a perfectly shaped label the
             // controller did not issue is skipped.
-            let mut denying = IssuedAll {
-                denied: vec!["app.42", "squatter"],
-            };
+			let mut denying = IssuedAll { denied: vec!["app.42", "squatter"] };
             let identity = classify_labels(
                 &mut denying,
                 &controller,
@@ -1835,10 +1748,7 @@ mod tests {
         let err = futures::executor::block_on(discover_pop_controller(&mut transport))
             .expect_err("failure");
         assert!(err.contains("TARGET(): node unreachable"), "{err}");
-        assert!(
-            !err.contains("neither"),
-            "a node failure is not a wrong contract: {err}"
-        );
+		assert!(!err.contains("neither"), "a node failure is not a wrong contract: {err}");
     }
 
     #[test]
@@ -1908,19 +1818,13 @@ mod tests {
 
         // The fallback is verified: the registry must hold the ".dot" record.
         let verified = futures::executor::block_on(network_tld(
-            &mut ScriptedTld {
-                tld: reverted,
-                dot_record_exists: true,
-            },
+			&mut ScriptedTld { tld: reverted, dot_record_exists: true },
             &registry,
         ));
         assert_eq!(verified.as_deref(), Ok(TLD_WITHOUT_VIEW));
 
         let unverified = futures::executor::block_on(network_tld(
-            &mut ScriptedTld {
-                tld: reverted,
-                dot_record_exists: false,
-            },
+			&mut ScriptedTld { tld: reverted, dot_record_exists: false },
             &registry,
         ));
         assert!(unverified.is_err(), "{unverified:?}");
@@ -1964,10 +1868,7 @@ mod tests {
                 word[12..].copy_from_slice(&[0xd1; 20]);
                 Ok(word.to_vec())
             } else if sel == selector("exists(uint256)") {
-                assert_eq!(
-                    &input[4..36],
-                    &namehash_under(&tld_node(".paseo"), "george")
-                );
+				assert_eq!(&input[4..36], &namehash_under(&tld_node(".paseo"), "george"));
                 (self.exists)()
             } else {
                 panic!("unscripted view {}", hex::encode(sel));
@@ -2011,14 +1912,9 @@ mod tests {
         });
         assert!(matches!(
             view_output(&reverted),
-            Err(DotnsViewError::Reverted(
-                DotnsContractError::Reverted { .. }
-            ))
+			Err(DotnsViewError::Reverted(DotnsContractError::Reverted { .. }))
         ));
-        assert!(matches!(
-            view_output(&[0x01]),
-            Err(DotnsViewError::Failed(_))
-        ));
+		assert!(matches!(view_output(&[0x01]), Err(DotnsViewError::Failed(_))));
         let returned = contract_result(&{
             let mut out = vec![0x00];
             0u32.encode_to(&mut out);
@@ -2038,10 +1934,7 @@ mod tests {
         assert_eq!(bare_store_label(".paseo", ".paseo"), None);
         // A dotted lite label survives the strip; other dotted remainders
         // stay subnames.
-        assert_eq!(
-            bare_store_label("alice.01.paseo", ".paseo"),
-            Some("alice.01")
-        );
+		assert_eq!(bare_store_label("alice.01.paseo", ".paseo"), Some("alice.01"));
         assert_eq!(bare_store_label("sub.alice.01.paseo", ".paseo"), None);
         // An empty TLD leaves bare labels as they are.
         assert_eq!(bare_store_label("alice01", ""), Some("alice01"));
@@ -2054,21 +1947,15 @@ mod tests {
         let encoded = [&[0x20u8][..], b"alice.01"].concat();
         assert_eq!(
             &owner_key[..32],
-            [
-                twox_128(b"DotnsGateway").as_slice(),
-                twox_128(b"LiteLabelOwner").as_slice(),
-            ]
+			[twox_128(b"DotnsGateway").as_slice(), twox_128(b"LiteLabelOwner").as_slice(),]
             .concat()
         );
         assert_eq!(&owner_key[32..48], &blake2_128(&encoded));
         assert_eq!(&owner_key[48..], &encoded);
 
         let alias_key = account_alias_key(&[0x11; 32]);
-        let prefix = [
-            twox_128(b"DotnsGateway").as_slice(),
-            twox_128(b"AccountAlias").as_slice(),
-        ]
-        .concat();
+		let prefix =
+			[twox_128(b"DotnsGateway").as_slice(), twox_128(b"AccountAlias").as_slice()].concat();
         assert_eq!(&alias_key[..32], prefix.as_slice());
         // Blake2_128Concat over the raw account bytes.
         assert_eq!(&alias_key[48..], &[0x11; 32]);

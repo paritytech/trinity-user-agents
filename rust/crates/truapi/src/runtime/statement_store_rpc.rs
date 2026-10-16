@@ -12,17 +12,21 @@ use core::time::Duration;
 use serde_json::{Value, json};
 
 use crate::platform::{JsonRpcConnection, Platform, ProviderError};
-use subxt_rpcs::RpcClient;
-use subxt_rpcs::client::{RpcSubscription, rpc_params};
+use subxt_rpcs::{
+	RpcClient,
+	client::{RpcSubscription, rpc_params},
+};
 use thiserror::Error;
 use tracing::warn;
 
-use crate::host_logic::statement_store::{
+use crate::{
+	host_logic::statement_store::{
     SUBMIT_STATEMENT_METHOD, SUBSCRIBE_STATEMENT_METHOD, TopicFilterKind,
     UNSUBSCRIBE_STATEMENT_METHOD, hex_topic,
+	},
+	host_rpc_client::HostRpcClient,
+	subscription::Spawner,
 };
-use crate::host_rpc_client::HostRpcClient;
-use crate::subscription::Spawner;
 
 /// One attempt plus ten retries, 2 s apart, matching the native iOS and Android hosts.
 const SSO_NO_ALLOWANCE_RETRY_ATTEMPTS: usize = 11;
@@ -59,11 +63,7 @@ impl StatementStoreRpc {
         people_chain_genesis_hash: [u8; 32],
         spawner: Spawner,
     ) -> Self {
-        Self {
-            platform,
-            people_chain_genesis_hash,
-            spawner,
-        }
+		Self { platform, people_chain_genesis_hash, spawner }
     }
 
     /// Trusted network namespace shared by host-owned signaling and authority.
@@ -76,8 +76,7 @@ impl StatementStoreRpc {
     pub async fn chain_client(
         &self,
         label: &'static str,
-    ) -> Result<crate::runtime::statement_allowance::ChainClient, StatementStoreRpcClientError>
-    {
+	) -> Result<crate::runtime::statement_allowance::ChainClient, StatementStoreRpcClientError> {
         Ok(crate::runtime::statement_allowance::ChainClient::new(
             crate::runtime::statement_allowance::rpc::RpcClient::new(self.client(label).await?),
             self.people_chain_genesis_hash,
@@ -91,10 +90,7 @@ impl StatementStoreRpc {
         label: &'static str,
     ) -> Result<RpcClient, StatementStoreRpcClientError> {
         let connection = self.connect(label).await?;
-        Ok(RpcClient::new(HostRpcClient::new(
-            connection,
-            self.spawner.clone(),
-        )))
+		Ok(RpcClient::new(HostRpcClient::new(connection, self.spawner.clone())))
     }
 
     /// Open a statement-store RPC client on its own connection whose request

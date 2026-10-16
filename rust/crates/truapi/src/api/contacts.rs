@@ -1,12 +1,14 @@
 //! Unified [`Contacts`] trait.
 
-use crate::versioned::contacts::{
-    HostContactsPickError, HostContactsPickManyError, HostContactsPickManyRequest,
-    HostContactsPickManyResponse, HostContactsPickRequest, HostContactsPickResponse,
-    HostContactsPlaceLabelsError, HostContactsPlaceLabelsRequest, HostContactsPlaceLabelsResponse,
+use crate::{
+    CallContext, CallError,
+    versioned::contacts::{
+        HostContactsPickError, HostContactsPickManyError, HostContactsPickManyRequest,
+        HostContactsPickManyResponse, HostContactsPickRequest, HostContactsPickResponse,
+        HostContactsPlaceLabelsError, HostContactsPlaceLabelsRequest, HostContactsPlaceLabelsResponse,
+    },
+    wire, wire_trait,
 };
-use crate::{CallContext, CallError};
-use crate::{wire, wire_trait};
 
 /// User-mediated access to the user's contacts.
 ///

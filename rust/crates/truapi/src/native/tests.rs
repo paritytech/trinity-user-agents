@@ -1,7 +1,8 @@
 use super::*;
-use std::collections::HashMap;
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use std::{
+	collections::HashMap,
+	sync::{Arc, Mutex, atomic::Ordering},
+};
 
 use crate::platform::{
     AuthPresenter, AuthState, ChainProvider, DevicePermissionStatus, LocaleHost,
@@ -14,35 +15,32 @@ use parity_scale_codec::Encode;
 use truapi::v01;
 
 use super::ws_bridge::WsBridgeStartError;
-use crate::host_logic::worker::WorkerTransition;
-use crate::{PairedSsoPeer, PairingProposal};
+use crate::{PairedSsoPeer, PairingProposal, host_logic::worker::WorkerTransition};
 
-use super::callbacks::{
+use super::{
+	callbacks::{
     HostCallbacks, NativeChatCallbacks, NativeGameCallbacks, NativePocketCallbacks,
     NativePocketRemoval,
-};
-use super::config::{
+	},
+	config::{
     HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
     ProductExecutionConfig, native_host_platform,
-};
-use super::errors::HostRejection;
-use super::events::NativeEventBus;
-use super::platform::{
+	},
+	errors::HostRejection,
+	events::NativeEventBus,
+	platform::{
     CallbackPlatform, ChatCallbackPlatform, GameCallbackPlatform, PocketCallbackPlatform,
+	},
+	runtime::{NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime},
 };
-use super::runtime::{NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime};
 use crate::platform::CreateTransactionReview;
 use futures::FutureExt;
-use truapi::Bytes32;
-use truapi::v01::LegacyAccountTxPayload;
+use truapi::{Bytes32, v01::LegacyAccountTxPayload};
 
 pub type PreimageFixtureEntries = Vec<(Vec<u8>, Option<Vec<u8>>)>;
 
 pub fn pocket_card(card_id: &str, privileged: bool) -> v01::PocketCard {
-    v01::PocketCard {
-        card_id: card_id.to_string(),
-        privileged,
-    }
+	v01::PocketCard { card_id: card_id.to_string(), privileged }
 }
 
 /// Everything a Pocket stream has already queued, so a missing item reads
@@ -65,9 +63,7 @@ pub fn drain_pocket(
 fn a_pocket_subscriber_sees_its_snapshot_before_later_changes() {
     let bus = NativeEventBus::default();
     let mut stream = bus.subscribe_pocket_cards(|| {
-        Ok(v01::HostPocketListSubscribeItem {
-            cards: vec![pocket_card("loyalty", false)],
-        })
+		Ok(v01::HostPocketListSubscribeItem { cards: vec![pocket_card("loyalty", false)] })
     });
     bus.notify_pocket_cards_changed(vec![
         pocket_card("loyalty", false),
@@ -77,9 +73,7 @@ fn a_pocket_subscriber_sees_its_snapshot_before_later_changes() {
     assert_eq!(
         drain_pocket(&mut stream),
         vec![
-            Ok(v01::HostPocketListSubscribeItem {
-                cards: vec![pocket_card("loyalty", false)],
-            }),
+			Ok(v01::HostPocketListSubscribeItem { cards: vec![pocket_card("loyalty", false)] }),
             Ok(v01::HostPocketListSubscribeItem {
                 cards: vec![pocket_card("loyalty", false), pocket_card("humanity", true)],
             }),
@@ -94,21 +88,15 @@ fn a_pocket_subscriber_sees_its_snapshot_before_later_changes() {
 fn a_pocket_host_failure_reaches_the_product_instead_of_an_empty_list() {
     let bus = NativeEventBus::default();
     let mut opening = bus.subscribe_pocket_cards(|| {
-        Err(v01::GenericError {
-            reason: "card store unavailable".to_string(),
-        })
+		Err(v01::GenericError { reason: "card store unavailable".to_string() })
     });
     assert_eq!(
         drain_pocket(&mut opening),
-        vec![Err(v01::GenericError {
-            reason: "card store unavailable".to_string(),
-        })]
+		vec![Err(v01::GenericError { reason: "card store unavailable".to_string() })]
     );
 
     let mut live = bus.subscribe_pocket_cards(|| {
-        Ok(v01::HostPocketListSubscribeItem {
-            cards: vec![pocket_card("loyalty", false)],
-        })
+		Ok(v01::HostPocketListSubscribeItem { cards: vec![pocket_card("loyalty", false)] })
     });
     bus.notify_pocket_cards_failed(v01::GenericError {
         reason: "card store went away".to_string(),
@@ -116,12 +104,8 @@ fn a_pocket_host_failure_reaches_the_product_instead_of_an_empty_list() {
     assert_eq!(
         drain_pocket(&mut live),
         vec![
-            Ok(v01::HostPocketListSubscribeItem {
-                cards: vec![pocket_card("loyalty", false)],
-            }),
-            Err(v01::GenericError {
-                reason: "card store went away".to_string(),
-            }),
+			Ok(v01::HostPocketListSubscribeItem { cards: vec![pocket_card("loyalty", false)] }),
+			Err(v01::GenericError { reason: "card store went away".to_string() }),
         ]
     );
 }
@@ -146,24 +130,14 @@ fn an_unexpected_foreign_error_converts_instead_of_panicking() {
             uniffi::UnexpectedUniFFICallbackError::new(reason),
         )
         .expect("an unexpected foreign error must convert");
-    assert_eq!(
-        storage,
-        v01::HostLocalStorageReadError::Unknown {
-            reason: reason.to_string(),
-        }
-    );
+	assert_eq!(storage, v01::HostLocalStorageReadError::Unknown { reason: reason.to_string() });
 
     let navigate = <v01::HostNavigateToError as uniffi::ConvertError<crate::UniFfiTag>>::
         try_convert_unexpected_callback_error(
             uniffi::UnexpectedUniFFICallbackError::new(reason),
         )
         .expect("an unexpected foreign error must convert");
-    assert_eq!(
-        navigate,
-        v01::HostNavigateToError::Unknown {
-            reason: reason.to_string(),
-        }
-    );
+	assert_eq!(navigate, v01::HostNavigateToError::Unknown { reason: reason.to_string() });
 }
 
 pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
@@ -185,7 +159,8 @@ pub struct EventCallbacks {
     pub chat_registered_bots: Mutex<Vec<(String, String, String)>>,
     pub chat_bot_rejection: Mutex<Option<String>>,
     pub chat_post_rejection: Mutex<Option<String>>,
-    pub chat_posted: Mutex<Vec<(String, v01::ChatMessageContent)>>,
+    pub chat_posted: Mutex<Vec<(String, v01::ChatMessageContent, Option<String>)>>,
+    pub chat_room_footers: Mutex<Vec<(String, v01::ChatRoomFooter)>>,
     pub pocket_cards: Mutex<Vec<v01::PocketCard>>,
     pub pocket_removed: Mutex<Vec<String>>,
     pub theme: Mutex<v01::HostThemeSubscribeItem>,
@@ -201,6 +176,8 @@ pub struct EventCallbacks {
     pub worker_demand: Mutex<Vec<(String, WorkerTransition)>>,
     /// Devices reported as paired, in arrival order.
     pub paired_devices: Mutex<Vec<PairedSsoPeer>>,
+    /// Every `durable_work_changed` report, in order.
+    pub durable_work: Mutex<Vec<bool>>,
     /// Capability this host reports as refused by the OS, if any.
     pub os_refused: Option<v01::HostDevicePermissionRequest>,
     /// Configurable prompt outcome for grant, denial, and callback failure tests.
@@ -226,10 +203,7 @@ pub struct EventCallbacks {
 impl EventCallbacks {
     /// Same as [`Self::new`], reporting `capability` as refused by the OS.
     pub fn refusing(capability: v01::HostDevicePermissionRequest) -> Self {
-        Self {
-            os_refused: Some(capability),
-            ..Self::new()
-        }
+		Self { os_refused: Some(capability), ..Self::new() }
     }
 
     pub fn new() -> Self {
@@ -242,6 +216,7 @@ impl EventCallbacks {
             chat_bot_rejection: Mutex::new(None),
             chat_post_rejection: Mutex::new(None),
             chat_posted: Mutex::new(Vec::new()),
+            chat_room_footers: Mutex::new(Vec::new()),
             pocket_cards: Mutex::new(Vec::new()),
             pocket_removed: Mutex::new(Vec::new()),
             theme: Mutex::new(v01::HostThemeSubscribeItem {
@@ -261,6 +236,7 @@ impl EventCallbacks {
             chain_closes: Mutex::new(Vec::new()),
             worker_demand: Mutex::new(Vec::new()),
             paired_devices: Mutex::new(Vec::new()),
+            durable_work: Mutex::new(Vec::new()),
             os_refused: None,
             remote_permission_result: Ok(PermissionDecision::Deny),
             remote_permission_reply: Mutex::new(None),
@@ -308,6 +284,12 @@ impl HostCallbacks for EventCallbacks {
     async fn receiver_command(&self, _: String, _: u8, _: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
         Ok(None)
     }
+    async fn activation_events(&self) -> Result<Vec<v01::NotificationActivation>, HostRejection> {
+        Ok(Vec::new())
+    }
+    async fn acknowledge_activation(&self, _: u64) -> Result<(), HostRejection> {
+        Err(HostRejection::Rejected { reason: "notification activation unsupported".into() })
+    }
 
     async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
         if self.core_storage_keys_failure.load(Ordering::SeqCst) {
@@ -338,6 +320,10 @@ impl HostCallbacks for EventCallbacks {
             .push((product_id, transition));
     }
 
+    fn durable_work_changed(&self, pending: bool) {
+        self.durable_work.lock().expect("durable work mutex poisoned").push(pending);
+    }
+
     fn device_paired(&self, device: PairedSsoPeer) {
         self.paired_devices
             .lock()
@@ -355,16 +341,6 @@ impl HostCallbacks for EventCallbacks {
     }
     fn cancel_notification(&self, _id: u32) -> Result<(), HostRejection> {
         Ok(())
-    }
-    async fn activation_events(&self) -> Result<Vec<v01::NotificationActivation>, HostRejection> {
-        Err(HostRejection::Rejected {
-            reason: "notification activation unsupported".into(),
-        })
-    }
-    async fn acknowledge_activation(&self, _sequence: u64) -> Result<(), HostRejection> {
-        Err(HostRejection::Rejected {
-            reason: "notification activation unsupported".into(),
-        })
     }
     async fn device_permission(
         &self,
@@ -573,31 +549,21 @@ impl HostCallbacks for EventCallbacks {
 #[async_trait::async_trait]
 impl NativePocketCallbacks for EventCallbacks {
     fn list_cards(&self) -> Result<Vec<v01::PocketCard>, HostRejection> {
-        Ok(self
-            .pocket_cards
-            .lock()
-            .expect("pocket cards mutex poisoned")
-            .clone())
+		Ok(self.pocket_cards.lock().expect("pocket cards mutex poisoned").clone())
     }
 
     async fn remove_card(&self, card_id: String) -> Result<NativePocketRemoval, HostRejection> {
-        let mut cards = self
-            .pocket_cards
-            .lock()
-            .expect("pocket cards mutex poisoned");
+		let mut cards = self.pocket_cards.lock().expect("pocket cards mutex poisoned");
         let outcome = match cards.iter().find(|card| card.card_id == card_id) {
             None => NativePocketRemoval::Absent,
             Some(card) if card.privileged => NativePocketRemoval::Privileged,
             Some(_) => {
                 cards.retain(|card| card.card_id != card_id);
                 NativePocketRemoval::Removed
-            }
+			},
         };
         drop(cards);
-        self.pocket_removed
-            .lock()
-            .expect("pocket removed mutex poisoned")
-            .push(card_id);
+		self.pocket_removed.lock().expect("pocket removed mutex poisoned").push(card_id);
         Ok(outcome)
     }
 }
@@ -614,10 +580,7 @@ impl NativeChatCallbacks for EventCallbacks {
             .lock()
             .expect("created rooms mutex poisoned")
             .push((room_id, name, icon));
-        Ok(*self
-            .chat_room_status
-            .lock()
-            .expect("room status mutex poisoned"))
+		Ok(*self.chat_room_status.lock().expect("room status mutex poisoned"))
     }
 
     async fn register_bot(
@@ -626,11 +589,8 @@ impl NativeChatCallbacks for EventCallbacks {
         name: String,
         icon: String,
     ) -> Result<v01::ChatBotRegistrationStatus, HostRejection> {
-        if let Some(reason) = self
-            .chat_bot_rejection
-            .lock()
-            .expect("bot rejection mutex poisoned")
-            .clone()
+		if let Some(reason) =
+			self.chat_bot_rejection.lock().expect("bot rejection mutex poisoned").clone()
         {
             return Err(HostRejection::Rejected { reason });
         }
@@ -638,34 +598,38 @@ impl NativeChatCallbacks for EventCallbacks {
             .lock()
             .expect("registered bots mutex poisoned")
             .push((bot_id, name, icon));
-        Ok(*self
-            .chat_bot_status
-            .lock()
-            .expect("bot status mutex poisoned"))
+		Ok(*self.chat_bot_status.lock().expect("bot status mutex poisoned"))
     }
 
     async fn post_message(
         &self,
         room_id: String,
         content: v01::ChatMessageContent,
+		alt: Option<String>,
     ) -> Result<String, HostRejection> {
-        if let Some(reason) = self
-            .chat_post_rejection
-            .lock()
-            .expect("post rejection mutex poisoned")
-            .clone()
+		if let Some(reason) =
+			self.chat_post_rejection.lock().expect("post rejection mutex poisoned").clone()
         {
             return Err(HostRejection::Rejected { reason });
         }
-        let mut posted = self
-            .chat_posted
-            .lock()
-            .expect("posted messages mutex poisoned");
-        posted.push((room_id, content));
+		let mut posted = self.chat_posted.lock().expect("posted messages mutex poisoned");
+		posted.push((room_id, content, alt));
         // Distinct per message: a correlation assertion must not pass on a
         // constant the host happens to return every time.
         Ok(format!("message-{}", posted.len()))
     }
+
+	async fn set_room_footer(
+		&self,
+		room_id: String,
+		footer: v01::ChatRoomFooter,
+	) -> Result<(), HostRejection> {
+		self.chat_room_footers
+			.lock()
+			.expect("room footers mutex poisoned")
+			.push((room_id, footer));
+		Ok(())
+	}
 
     async fn list_rooms(&self) -> Result<Vec<v01::ChatRoom>, HostRejection> {
         let mut room_ids: Vec<String> = self
@@ -716,9 +680,7 @@ fn a_product_write_reaches_a_storage_subscription_on_the_same_key() {
 
     assert_eq!(
         futures::FutureExt::now_or_never(futures::StreamExt::next(&mut subscription)),
-        Some(Some(Ok(v01::HostLocalStorageChangeItem {
-            value: Some(vec![1, 2, 3]),
-        }))),
+		Some(Some(Ok(v01::HostLocalStorageChangeItem { value: Some(vec![1, 2, 3]) }))),
         "a write the product made is a change its own subscribers must see"
     );
 }
@@ -736,11 +698,7 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
         network_suffix: "paseo".to_string(),
         // Every runtime opens its own database; the directory is left for the
         // OS to clean so the fixture can stay a plain value.
-        database_directory: tempfile::tempdir()
-            .unwrap()
-            .keep()
-            .to_string_lossy()
-            .into_owned(),
+		database_directory: tempfile::tempdir().unwrap().keep().to_string_lossy().into_owned(),
         local_session_secret: Some(vec![7; 32]),
         local_session_lite_username: Some("alice".to_string()),
         coinage_instance_id: None,
@@ -751,10 +709,7 @@ pub fn native_execution_config(
     product_id: &str,
     execution_kind: ProductExecutionKind,
 ) -> ProductExecutionConfig {
-    ProductExecutionConfig {
-        product_id: product_id.to_string(),
-        execution_kind,
-    }
+	ProductExecutionConfig { product_id: product_id.to_string(), execution_kind }
 }
 
 pub fn native_product_execution(
@@ -782,18 +737,15 @@ pub fn native_product_execution(
 /// passes for a decoder that never saw the second kind.
 pub const UNDECODABLE_DEEPLINKS: [(&str, &str); 2] = [
     ("not-a-deeplink", "invalid pairing deeplink hex"),
-    (
-        "polkadotapp://pair?handshake=ff",
-        "invalid pairing handshake proposal",
-    ),
+	("polkadotapp://pair?handshake=ff", "invalid pairing handshake proposal"),
 ];
 
 /// Reads the reason out of either refusal, so a test names the failure it
 /// expected rather than the enum shape.
 pub fn pairing_rejection(failure: NativePairingError) -> String {
     match failure {
-        NativePairingError::UndecodableDeeplink { reason }
-        | NativePairingError::Rejected { reason } => reason,
+		NativePairingError::UndecodableDeeplink { reason } |
+		NativePairingError::Rejected { reason } => reason,
     }
 }
 
@@ -824,13 +776,13 @@ pub fn proposal_deeplink(
 /// behind it, and the prompt can only name the peer by its raw key.
 #[test]
 fn a_pairing_deeplink_yields_the_proposal_it_carries() {
-    use crate::PairingProposalMetadata;
-    use crate::host_logic::sso::pairing::v2::{MetadataEntry, MetadataKey};
-
-    let peer = PairedSsoPeer {
-        statement_account_id: [0x31; 32],
-        encryption_public_key: [0x42; 32],
+	use crate::{
+		PairingProposalMetadata,
+		host_logic::sso::pairing::v2::{MetadataEntry, MetadataKey},
     };
+
+	let peer =
+		PairedSsoPeer { statement_account_id: [0x31; 32], encryption_public_key: [0x42; 32] };
     let deeplink = proposal_deeplink(
         peer,
         vec![
@@ -857,10 +809,7 @@ fn a_pairing_deeplink_yields_the_proposal_it_carries() {
             parse_pairing_deeplink(deeplink.to_string())
                 .expect_err("an undecodable deeplink carries no peer"),
         );
-        assert!(
-            reason.contains(expected),
-            "{deeplink} did not reach the core's decoder: {reason}"
-        );
+		assert!(reason.contains(expected), "{deeplink} did not reach the core's decoder: {reason}");
     }
 }
 
@@ -906,10 +855,7 @@ fn the_deeplink_entry_points_reject_what_they_cannot_decode() {
 fn a_decodable_deeplink_that_fails_is_not_reported_as_undecodable() {
     let host = native_host_runtime_no_session();
     let deeplink = proposal_deeplink(
-        PairedSsoPeer {
-            statement_account_id: [0x31; 32],
-            encryption_public_key: [0x42; 32],
-        },
+		PairedSsoPeer { statement_account_id: [0x31; 32], encryption_public_key: [0x42; 32] },
         Vec::new(),
     );
 
@@ -937,10 +883,8 @@ fn a_decodable_deeplink_that_fails_is_not_reported_as_undecodable() {
 #[test]
 fn the_peer_entry_points_need_the_core_signing_host() {
     let host = native_host_runtime_no_session();
-    let peer = PairedSsoPeer {
-        statement_account_id: [0x31; 32],
-        encryption_public_key: [0x42; 32],
-    };
+	let peer =
+		PairedSsoPeer { statement_account_id: [0x31; 32], encryption_public_key: [0x42; 32] };
 
     for failure in [
         pairing_rejection(
@@ -964,18 +908,13 @@ fn the_peer_entry_points_need_the_core_signing_host() {
 #[test]
 fn a_paired_device_reaches_the_host_callbacks() {
     let (callbacks, _events, platform) = event_platform();
-    let device = PairedSsoPeer {
-        statement_account_id: [0x31; 32],
-        encryption_public_key: [0x42; 32],
-    };
+	let device =
+		PairedSsoPeer { statement_account_id: [0x31; 32], encryption_public_key: [0x42; 32] };
 
     crate::DevicePairingObserver::device_paired(&platform, device);
 
     assert_eq!(
-        *callbacks
-            .paired_devices
-            .lock()
-            .expect("paired device mutex poisoned"),
+		*callbacks.paired_devices.lock().expect("paired device mutex poisoned"),
         vec![device]
     );
 }
@@ -993,14 +932,8 @@ fn process_runtime_counts_worker_references_per_product() {
     host.release_worker(product());
 
     assert_eq!(
-        *callbacks
-            .worker_demand
-            .lock()
-            .expect("worker demand mutex poisoned"),
-        vec![
-            (product(), WorkerTransition::Start),
-            (product(), WorkerTransition::Stop),
-        ]
+		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
+		vec![(product(), WorkerTransition::Start), (product(), WorkerTransition::Stop),]
     );
 }
 
@@ -1029,18 +962,14 @@ fn native_pocket_removal_waits_for_the_host_without_holding_the_core_thread() {
 
     let (answer, outcome) = futures::channel::oneshot::channel();
     let platform = PocketCallbackPlatform {
-        pocket: Arc::new(DeferredRemoval {
-            outcome: Mutex::new(Some(outcome)),
-        }),
+		pocket: Arc::new(DeferredRemoval { outcome: Mutex::new(Some(outcome)) }),
         events: Arc::new(NativeEventBus::default()),
     };
     let product = ProductContext::new("pocket.dot".to_string()).expect("valid product id");
     let mut removal = crate::platform::PocketPlatform::remove_pocket_card(
         &platform,
         &product,
-        v01::HostPocketRemoveCardRequest {
-            card_id: "humanity".to_string(),
-        },
+		v01::HostPocketRemoveCardRequest { card_id: "humanity".to_string() },
     );
 
     let waker = futures::task::noop_waker();
@@ -1057,43 +986,26 @@ fn native_pocket_removal_waits_for_the_host_without_holding_the_core_thread() {
 #[test]
 fn native_pocket_removal_outcomes_are_decided_by_the_host() {
     let pocket_host = Arc::new(EventCallbacks::new());
-    *pocket_host
-        .pocket_cards
-        .lock()
-        .expect("pocket cards mutex poisoned") =
+	*pocket_host.pocket_cards.lock().expect("pocket cards mutex poisoned") =
         vec![pocket_card("loyalty", false), pocket_card("humanity", true)];
     let events = Arc::new(NativeEventBus::default());
-    let platform = PocketCallbackPlatform {
-        pocket: pocket_host.clone(),
-        events,
-    };
+	let platform = PocketCallbackPlatform { pocket: pocket_host.clone(), events };
     let product = ProductContext::new("pocket.dot".to_string()).expect("valid product id");
     let remove = |card_id: &str| {
         futures::executor::block_on(crate::platform::PocketPlatform::remove_pocket_card(
             &platform,
             &product,
-            v01::HostPocketRemoveCardRequest {
-                card_id: card_id.to_string(),
-            },
+			v01::HostPocketRemoveCardRequest { card_id: card_id.to_string() },
         ))
     };
     let mut cards = crate::platform::PocketPlatform::subscribe_pocket_cards(&platform, &product);
     let first = futures::executor::block_on(cards.next())
         .expect("the current list arrives on subscribe")
         .expect("no stream error");
-    assert_eq!(
-        first.cards,
-        vec![pocket_card("loyalty", false), pocket_card("humanity", true)]
-    );
+	assert_eq!(first.cards, vec![pocket_card("loyalty", false), pocket_card("humanity", true)]);
 
-    assert!(matches!(
-        remove("humanity"),
-        Err(v01::HostPocketRemoveCardError::Privileged)
-    ));
-    assert!(
-        remove("absent").is_ok(),
-        "an absent card is already removed"
-    );
+	assert!(matches!(remove("humanity"), Err(v01::HostPocketRemoveCardError::Privileged)));
+	assert!(remove("absent").is_ok(), "an absent card is already removed");
     assert!(remove("loyalty").is_ok());
     assert_eq!(
         pocket_host
@@ -1123,18 +1035,12 @@ struct RecordingGameCallbacks {
 #[async_trait::async_trait]
 impl NativeGameCallbacks for RecordingGameCallbacks {
     async fn schedule_reminder(&self, starts_at: u64) -> Result<(), HostRejection> {
-        self.calls
-            .lock()
-            .expect("game calls mutex poisoned")
-            .push(Some(starts_at));
+		self.calls.lock().expect("game calls mutex poisoned").push(Some(starts_at));
         Ok(())
     }
 
     async fn cancel_reminder(&self) -> Result<(), HostRejection> {
-        self.calls
-            .lock()
-            .expect("game calls mutex poisoned")
-            .push(None);
+		self.calls.lock().expect("game calls mutex poisoned").push(None);
         Ok(())
     }
 }
@@ -1142,9 +1048,7 @@ impl NativeGameCallbacks for RecordingGameCallbacks {
 #[test]
 fn game_callbacks_receive_the_start_time_and_the_cancel() {
     let callbacks = Arc::new(RecordingGameCallbacks::default());
-    let platform = GameCallbackPlatform {
-        game: callbacks.clone(),
-    };
+	let platform = GameCallbackPlatform { game: callbacks.clone() };
     let product = ProductContext::new("dim2.dot".to_string()).expect("valid product id");
 
     futures::executor::block_on(async {
@@ -1156,10 +1060,7 @@ fn game_callbacks_receive_the_start_time_and_the_cancel() {
             .expect("cancel succeeds");
     });
 
-    assert_eq!(
-        *callbacks.calls.lock().expect("game calls mutex poisoned"),
-        vec![Some(42), None]
-    );
+	assert_eq!(*callbacks.calls.lock().expect("game calls mutex poisoned"), vec![Some(42), None]);
 }
 
 #[test]
@@ -1182,10 +1083,7 @@ fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
 
     let result = execution.publish_chat_action(text_chat_action("hello"));
 
-    assert!(matches!(
-        result,
-        Err(crate::ProductRuntimeError::Unsupported)
-    ));
+	assert!(matches!(result, Err(crate::ProductRuntimeError::Unsupported)));
 }
 
 /// Hosts mediate product network access in their own code and ask this to
@@ -1193,32 +1091,20 @@ fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
 /// actually holds, not only the normalized one the core passes internally.
 #[test]
 fn the_trusted_export_normalizes_before_matching() {
-    for trusted in [
-        "peopl.dot",
-        "PEOPL.DOT",
-        "  peopl.dot  ",
-        "dim2.paseo",
-        "stash.dot",
-    ] {
+	for trusted in ["peopl.dot", "PEOPL.DOT", "  peopl.dot  ", "dim2.paseo", "stash.dot"] {
         assert!(
             super::has_trusted_remote_permissions(trusted.to_string()),
             "{trusted} is a first-party product",
         );
     }
-    for untrusted in [
-        "app.peopl.dot",
-        "peopl",
-        "notpeopl.dot",
-        "localhost:3000",
-        "",
-        "   ",
-    ] {
+	for untrusted in ["app.peopl.dot", "peopl", "notpeopl.dot", "localhost:3000", "", "   "] {
         assert!(
             !super::has_trusted_remote_permissions(untrusted.to_string()),
             "{untrusted} is not",
         );
     }
 }
+
 
 
 #[test]
@@ -1243,15 +1129,9 @@ fn native_auth_presenter_forwards_states_across_the_ffi_mirror() {
     platform.auth_state_changed(crate::platform::AuthState::Disconnected);
 
     assert_eq!(
-        callbacks
-            .auth_states
-            .lock()
-            .expect("auth state mutex poisoned")
-            .as_slice(),
+		callbacks.auth_states.lock().expect("auth state mutex poisoned").as_slice(),
         &[
-            AuthState::Pairing {
-                deeplink: "polkadotapp://pair?handshake=00".to_string(),
-            },
+			AuthState::Pairing { deeplink: "polkadotapp://pair?handshake=00".to_string() },
             AuthState::Connected(crate::platform::SessionUiInfo {
                 public_key: [7; 32],
                 identity_account_id: None,
@@ -1337,10 +1217,7 @@ fn native_preimage_subscription_emits_current_then_notified_value() {
 #[test]
 fn native_chat_room_subscription_emits_current_then_notified_replacement() {
     let (callbacks, events, _platform) = event_platform();
-    let platform = ChatCallbackPlatform {
-        chat: callbacks,
-        events: events.clone(),
-    };
+	let platform = ChatCallbackPlatform { chat: callbacks, events: events.clone() };
     let product =
         ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
             .unwrap();
@@ -1358,10 +1235,7 @@ fn native_chat_room_subscription_emits_current_then_notified_replacement() {
     assert!(first.rooms.is_empty());
     assert_eq!(second.rooms.len(), 1);
     assert_eq!(second.rooms[0].room_id, "support");
-    assert_eq!(
-        second.rooms[0].participating_as,
-        v01::ChatRoomParticipation::Bot
-    );
+	assert_eq!(second.rooms[0].participating_as, v01::ChatRoomParticipation::Bot);
 }
 
 /// What a room-list subscription yields: a replacement, or the host's
@@ -1395,22 +1269,15 @@ fn native_chat_adapter_forwards_every_message_variant() {
     let product =
         ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
             .unwrap();
-    let reaction = v01::ChatReaction {
-        message_id: "message-1".to_string(),
-        emoji: "\u{1f3b2}".to_string(),
-    };
+	let reaction =
+		v01::ChatReaction { message_id: "message-1".to_string(), emoji: "\u{1f3b2}".to_string() };
     // Every variant the protocol advertises reaches the host, so a product
     // can post the `Actions` that `action_subscribe` later reports back.
     // An added variant stops `validate_chat_message_content` compiling,
     // which is what forces this list to be revisited.
     let variants = [
-        v01::ChatMessageContent::Text {
-            text: "hello".to_string(),
-        },
-        v01::ChatMessageContent::RichText(v01::ChatRichText {
-            text: None,
-            media: Vec::new(),
-        }),
+		v01::ChatMessageContent::Text { text: "hello".to_string() },
+		v01::ChatMessageContent::RichText(v01::ChatRichText { text: None, media: Vec::new() }),
         v01::ChatMessageContent::Actions(v01::ChatActions {
             text: None,
             actions: Vec::new(),
@@ -1435,28 +1302,57 @@ fn native_chat_adapter_forwards_every_message_variant() {
         futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
             &platform,
             &product,
-            v01::HostChatPostMessageRequest {
+			truapi::latest::HostChatPostMessageRequest {
                 room_id: "support".to_string(),
+				alt: None,
                 payload: payload.clone(),
             },
         ))
         .unwrap_or_else(|error| panic!("{payload:?} must reach the host: {error:?}"));
     }
 
-    let posted = callbacks
-        .chat_posted
-        .lock()
-        .expect("posted messages mutex poisoned")
-        .clone();
+	let posted = callbacks.chat_posted.lock().expect("posted messages mutex poisoned").clone();
     // Asserts the room alongside the content: routing the room correctly
     // for `Text` while misrouting the rest must not pass.
     assert_eq!(
         posted,
         variants
             .iter()
-            .map(|content| ("support".to_string(), content.clone()))
+			.map(|content| ("support".to_string(), content.clone(), None))
             .collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn native_chat_adapter_forwards_the_alt_of_a_message() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let platform = ChatCallbackPlatform {
+		chat: callbacks.clone(),
+		events: Arc::new(NativeEventBus::default()),
+	};
+	let product =
+		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
+			.unwrap();
+	let card = v01::ChatMessageContent::Custom(v01::ChatCustomMessage {
+		message_type: "results".to_string(),
+		payload: vec![1],
+	});
+
+	futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
+		&platform,
+		&product,
+		truapi::latest::HostChatPostMessageRequest {
+			room_id: "support".to_string(),
+			payload: card.clone(),
+			alt: Some("Week 12 results".to_string()),
+		},
+	))
+	.expect("a card with an alt reaches the host");
+
+	assert_eq!(
+		callbacks.chat_posted.lock().expect("posted messages mutex poisoned").as_slice(),
+		&[("support".to_string(), card, Some("Week 12 results".to_string()),)]
+	);
 }
 
 #[test]
@@ -1482,8 +1378,9 @@ fn a_posted_action_set_round_trips_to_the_product_that_posted_it() {
     let posted = futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
         &platform,
         &product,
-        v01::HostChatPostMessageRequest {
+		truapi::latest::HostChatPostMessageRequest {
             room_id: "support".to_string(),
+			alt: None,
             payload: v01::ChatMessageContent::Actions(v01::ChatActions {
                 text: Some("pick one".to_string()),
                 actions: vec![v01::ChatAction {
@@ -1520,21 +1417,11 @@ fn a_posted_action_set_round_trips_to_the_product_that_posted_it() {
         panic!("expected a chat action item")
     };
     let v01::ChatActionPayload::ActionTriggered(trigger) = delivered.payload else {
-        panic!(
-            "expected an ActionTriggered payload, got {:?}",
-            delivered.payload
-        );
+		panic!("expected an ActionTriggered payload, got {:?}", delivered.payload);
     };
 
     // The action set really reached the host, in the room it named.
-    assert_eq!(
-        callbacks
-            .chat_posted
-            .lock()
-            .expect("posted messages mutex poisoned")
-            .len(),
-        1
-    );
+	assert_eq!(callbacks.chat_posted.lock().expect("posted messages mutex poisoned").len(), 1);
     // The id the product must match on to find the message it posted.
     assert_eq!(trigger.message_id, posted.message_id);
     assert_eq!(trigger.action_id, "approve");
@@ -1550,16 +1437,15 @@ fn native_chat_adapter_surfaces_a_message_rejection() {
     let product =
         ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
             .unwrap();
-    *callbacks
-        .chat_post_rejection
-        .lock()
-        .expect("post rejection mutex poisoned") = Some("cannot render a file card".to_string());
+	*callbacks.chat_post_rejection.lock().expect("post rejection mutex poisoned") =
+		Some("cannot render a file card".to_string());
 
     let error = futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
         &platform,
         &product,
-        v01::HostChatPostMessageRequest {
+		truapi::latest::HostChatPostMessageRequest {
             room_id: "support".to_string(),
+			alt: None,
             payload: v01::ChatMessageContent::File(v01::ChatFile {
                 url: "https://example.invalid/f".to_string(),
                 file_name: "f".to_string(),
@@ -1576,17 +1462,9 @@ fn native_chat_adapter_surfaces_a_message_rejection() {
     // something that was never persisted.
     assert_eq!(
         error,
-        v01::HostChatPostMessageError::Unknown {
-            reason: "cannot render a file card".to_string(),
-        }
+		v01::HostChatPostMessageError::Unknown { reason: "cannot render a file card".to_string() }
     );
-    assert!(
-        callbacks
-            .chat_posted
-            .lock()
-            .expect("posted messages mutex poisoned")
-            .is_empty()
-    );
+	assert!(callbacks.chat_posted.lock().expect("posted messages mutex poisoned").is_empty());
 }
 
 #[test]
@@ -1599,10 +1477,8 @@ fn native_chat_adapter_surfaces_a_bot_registration_rejection() {
     let product =
         ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
             .unwrap();
-    *callbacks
-        .chat_bot_rejection
-        .lock()
-        .expect("bot rejection mutex poisoned") = Some("keychain locked".to_string());
+	*callbacks.chat_bot_rejection.lock().expect("bot rejection mutex poisoned") =
+		Some("keychain locked".to_string());
 
     let error = futures::executor::block_on(crate::platform::ChatPlatform::register_chat_bot(
         &platform,
@@ -1619,9 +1495,7 @@ fn native_chat_adapter_surfaces_a_bot_registration_rejection() {
     // that does not exist.
     assert_eq!(
         error,
-        v01::HostChatRegisterBotError::Unknown {
-            reason: "keychain locked".to_string(),
-        }
+		v01::HostChatRegisterBotError::Unknown { reason: "keychain locked".to_string() }
     );
     assert!(
         callbacks
@@ -1636,10 +1510,7 @@ fn native_chat_adapter_surfaces_a_bot_registration_rejection() {
 fn native_chat_adapter_preserves_bot_status_and_leaves_rooms_alone() {
     let callbacks = Arc::new(EventCallbacks::new());
     let events = Arc::new(NativeEventBus::default());
-    let platform = ChatCallbackPlatform {
-        chat: callbacks.clone(),
-        events: events.clone(),
-    };
+	let platform = ChatCallbackPlatform { chat: callbacks.clone(), events: events.clone() };
     let product =
         ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
             .unwrap();
@@ -1650,11 +1521,7 @@ fn native_chat_adapter_preserves_bot_status_and_leaves_rooms_alone() {
     };
 
     let mut rooms = crate::platform::ChatPlatform::subscribe_chat_rooms(&platform, &product);
-    assert!(
-        ready_rooms(rooms.as_mut(), "initial room list")
-            .rooms
-            .is_empty()
-    );
+	assert!(ready_rooms(rooms.as_mut(), "initial room list").rooms.is_empty());
 
     let registered = futures::executor::block_on(crate::platform::ChatPlatform::register_chat_bot(
         &platform,
@@ -1663,10 +1530,8 @@ fn native_chat_adapter_preserves_bot_status_and_leaves_rooms_alone() {
     ))
     .unwrap();
 
-    *callbacks
-        .chat_bot_status
-        .lock()
-        .expect("bot status mutex poisoned") = v01::ChatBotRegistrationStatus::Exists;
+	*callbacks.chat_bot_status.lock().expect("bot status mutex poisoned") =
+		v01::ChatBotRegistrationStatus::Exists;
     let existing = futures::executor::block_on(crate::platform::ChatPlatform::register_chat_bot(
         &platform, &product, request,
     ))
@@ -1689,22 +1554,14 @@ fn native_chat_adapter_preserves_bot_status_and_leaves_rooms_alone() {
     // Registering a bot is not a room change. Polled without blocking so an
     // unexpected replacement fails instead of parking on a live sender.
     let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
-    assert!(matches!(
-        rooms.as_mut().poll_next(&mut cx),
-        core::task::Poll::Pending
-    ));
+	assert!(matches!(rooms.as_mut().poll_next(&mut cx), core::task::Poll::Pending));
 
     // Still live for genuine room changes.
     events.notify_chat_rooms_changed(vec![v01::ChatRoom {
         room_id: "support".to_string(),
         participating_as: v01::ChatRoomParticipation::Bot,
     }]);
-    assert_eq!(
-        ready_rooms(rooms.as_mut(), "a genuine room change")
-            .rooms
-            .len(),
-        1
-    );
+	assert_eq!(ready_rooms(rooms.as_mut(), "a genuine room change").rooms.len(), 1);
 }
 
 #[test]
@@ -1723,11 +1580,7 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
         icon: String::new(),
     };
     let mut rooms = crate::platform::ChatPlatform::subscribe_chat_rooms(&platform, &product);
-    assert!(
-        ready_rooms(rooms.as_mut(), "initial room list")
-            .rooms
-            .is_empty()
-    );
+	assert!(ready_rooms(rooms.as_mut(), "initial room list").rooms.is_empty());
 
     let created = futures::executor::block_on(crate::platform::ChatPlatform::create_chat_room(
         &platform,
@@ -1736,10 +1589,8 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
     ))
     .unwrap();
     let updated_rooms = ready_rooms(rooms.as_mut(), "the created room replacement");
-    *callbacks
-        .chat_room_status
-        .lock()
-        .expect("room status mutex poisoned") = v01::ChatRoomRegistrationStatus::Exists;
+	*callbacks.chat_room_status.lock().expect("room status mutex poisoned") =
+		v01::ChatRoomRegistrationStatus::Exists;
     let existing = futures::executor::block_on(crate::platform::ChatPlatform::create_chat_room(
         &platform, &product, request,
     ))
@@ -1747,11 +1598,10 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
     let posted = futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
         &platform,
         &product,
-        v01::HostChatPostMessageRequest {
+		truapi::latest::HostChatPostMessageRequest {
             room_id: "second-room".to_string(),
-            payload: v01::ChatMessageContent::Text {
-                text: "Echo: hello".to_string(),
-            },
+			alt: None,
+			payload: v01::ChatMessageContent::Text { text: "Echo: hello".to_string() },
         },
     ))
     .unwrap();
@@ -1773,18 +1623,40 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
         ]
     );
     assert_eq!(
-        callbacks
-            .chat_posted
-            .lock()
-            .expect("posted messages mutex poisoned")
-            .as_slice(),
+		callbacks.chat_posted.lock().expect("posted messages mutex poisoned").as_slice(),
         &[(
             "second-room".to_string(),
-            v01::ChatMessageContent::Text {
-                text: "Echo: hello".to_string(),
-            },
+			v01::ChatMessageContent::Text { text: "Echo: hello".to_string() },
+			None,
         )]
     );
+}
+
+#[test]
+fn native_chat_adapter_hands_the_room_footer_to_the_host() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let platform = ChatCallbackPlatform {
+		chat: callbacks.clone(),
+		events: Arc::new(NativeEventBus::default()),
+	};
+	let product =
+		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
+			.unwrap();
+
+	futures::executor::block_on(crate::platform::ChatPlatform::set_chat_room_footer(
+		&platform,
+		&product,
+		v01::HostChatSetRoomFooterRequest {
+			room_id: "support".to_string(),
+			footer: v01::ChatRoomFooter::Empty,
+		},
+	))
+	.unwrap();
+
+	assert_eq!(
+		*callbacks.chat_room_footers.lock().expect("room footers mutex poisoned"),
+		[("support".to_string(), v01::ChatRoomFooter::Empty)]
+	);
 }
 
 #[test]
@@ -1799,9 +1671,7 @@ fn native_chain_provider_rejects_an_early_close_and_allows_a_later_retry() {
     let closed = futures::executor::block_on(ChainProvider::connect(&platform, [9; 32]));
     assert_eq!(
         closed.map(|_| ()),
-        Err(ProviderError::Host {
-            reason: "chain connection closed during setup".to_string(),
-        })
+		Err(ProviderError::Host { reason: "chain connection closed during setup".to_string() })
     );
     assert_eq!(*callbacks.chain_closes.lock().unwrap(), vec![42]);
 
@@ -1810,10 +1680,7 @@ fn native_chain_provider_rejects_an_early_close_and_allows_a_later_retry() {
         futures::executor::block_on(ChainProvider::connect(&platform, [9; 32])).unwrap();
     let mut responses = connection.responses();
     events.notify_chain_response(43, "after retry".to_string());
-    assert_eq!(
-        futures::executor::block_on(responses.next()),
-        Some("after retry".to_string())
-    );
+	assert_eq!(futures::executor::block_on(responses.next()), Some("after retry".to_string()));
     events.notify_chain_closed(43);
     assert_eq!(futures::executor::block_on(responses.next()), None);
     drop(connection);
@@ -1872,20 +1739,12 @@ fn native_chain_provider_forwards_send_response_and_close() {
         &[genesis.to_vec()]
     );
     assert_eq!(
-        callbacks
-            .chain_sends
-            .lock()
-            .expect("chain sends mutex poisoned")
-            .as_slice(),
+		callbacks.chain_sends.lock().expect("chain sends mutex poisoned").as_slice(),
         &[(42, r#"{"jsonrpc":"2.0","id":1}"#.to_string())]
     );
     assert_eq!(response, r#"{"jsonrpc":"2.0","id":1,"result":true}"#);
     assert_eq!(
-        callbacks
-            .chain_closes
-            .lock()
-            .expect("chain closes mutex poisoned")
-            .as_slice(),
+		callbacks.chain_closes.lock().expect("chain closes mutex poisoned").as_slice(),
         &[42]
     );
 }
@@ -1895,10 +1754,7 @@ fn runtime_config_reports_the_platform_the_library_was_built_for() {
     let resolved = NativeResolvedHostRuntimeConfig::try_from(native_host_runtime_config())
         .expect("config is valid");
 
-    assert_eq!(
-        resolved.signing.host.host_info.platform,
-        native_host_platform()
-    );
+	assert_eq!(resolved.signing.host.host_info.platform, native_host_platform());
 }
 
 #[test]
@@ -1986,9 +1842,7 @@ fn product_execution_config_rejects_empty_product_id() {
 
     assert_eq!(
         err,
-        NativeRuntimeConfigError::Invalid {
-            reason: "product_id must not be empty".to_string(),
-        }
+		NativeRuntimeConfigError::Invalid { reason: "product_id must not be empty".to_string() }
     );
 }
 
@@ -2060,6 +1914,12 @@ fn start_ws_bridge_twice_returns_already_running() {
         async fn receiver_command(&self, _: String, _: u8, _: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
             Ok(None)
         }
+        async fn activation_events(&self) -> Result<Vec<v01::NotificationActivation>, HostRejection> {
+            Ok(Vec::new())
+        }
+        async fn acknowledge_activation(&self, _: u64) -> Result<(), HostRejection> {
+            Err(HostRejection::Rejected { reason: "notification activation unsupported".into() })
+        }
 
         async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
             Err(HostRejection::Rejected {
@@ -2078,6 +1938,7 @@ fn start_ws_bridge_twice_returns_already_running() {
     
         fn on_core_log(&self, _marker: String, _detail: String) {}
         fn worker_demand_changed(&self, _product_id: String, _transition: WorkerTransition) {}
+        fn durable_work_changed(&self, _pending: bool) {}
         fn device_paired(&self, _device: PairedSsoPeer) {}
         async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
             Ok(())
@@ -2090,18 +1951,6 @@ fn start_ws_bridge_twice_returns_already_running() {
         }
         fn cancel_notification(&self, _id: u32) -> Result<(), HostRejection> {
             Ok(())
-        }
-        async fn activation_events(
-            &self,
-        ) -> Result<Vec<v01::NotificationActivation>, HostRejection> {
-            Err(HostRejection::Rejected {
-                reason: "notification activation unsupported".into(),
-            })
-        }
-        async fn acknowledge_activation(&self, _sequence: u64) -> Result<(), HostRejection> {
-            Err(HostRejection::Rejected {
-                reason: "notification activation unsupported".into(),
-            })
         }
         async fn device_permission(
             &self,
@@ -2309,6 +2158,12 @@ fn pending_permission_decision_does_not_stall_bridge() {
         async fn receiver_command(&self, _: String, _: u8, _: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
             Ok(None)
         }
+        async fn activation_events(&self) -> Result<Vec<v01::NotificationActivation>, HostRejection> {
+            Ok(Vec::new())
+        }
+        async fn acknowledge_activation(&self, _: u64) -> Result<(), HostRejection> {
+            Err(HostRejection::Rejected { reason: "notification activation unsupported".into() })
+        }
 
         async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
             Err(HostRejection::Rejected {
@@ -2327,6 +2182,7 @@ fn pending_permission_decision_does_not_stall_bridge() {
     
         fn on_core_log(&self, _marker: String, _detail: String) {}
         fn worker_demand_changed(&self, _product_id: String, _transition: WorkerTransition) {}
+        fn durable_work_changed(&self, _pending: bool) {}
         fn device_paired(&self, _device: PairedSsoPeer) {}
         async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
             Ok(())
@@ -2339,18 +2195,6 @@ fn pending_permission_decision_does_not_stall_bridge() {
         }
         fn cancel_notification(&self, _id: u32) -> Result<(), HostRejection> {
             Ok(())
-        }
-        async fn activation_events(
-            &self,
-        ) -> Result<Vec<v01::NotificationActivation>, HostRejection> {
-            Err(HostRejection::Rejected {
-                reason: "notification activation unsupported".into(),
-            })
-        }
-        async fn acknowledge_activation(&self, _sequence: u64) -> Result<(), HostRejection> {
-            Err(HostRejection::Rejected {
-                reason: "notification activation unsupported".into(),
-            })
         }
         async fn device_permission(
             &self,
@@ -2557,15 +2401,10 @@ fn pending_permission_decision_does_not_stall_bridge() {
             }
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
-        assert!(
-            permission_entered.load(Ordering::SeqCst),
-            "permission callback was not invoked"
-        );
+		assert!(permission_entered.load(Ordering::SeqCst), "permission callback was not invoked");
 
         let feature_value = truapi::versioned::system::HostFeatureSupportedRequest::V1(
-            v01::HostFeatureSupportedRequest::Chain {
-                genesis_hash: vec![0u8; 32],
-            },
+			v01::HostFeatureSupportedRequest::Chain { genesis_hash: vec![0u8; 32] },
         )
         .encode();
         let feature_frame = ProtocolMessage {
@@ -2586,7 +2425,7 @@ fn pending_permission_decision_does_not_stall_bridge() {
                 match ws.next().await {
                     Some(Ok(WsMessage::Binary(bytes))) => {
                         break ProtocolMessage::decode(&mut &bytes[..]).expect("decode response");
-                    }
+					},
                     Some(Ok(_)) => continue,
                     Some(Err(err)) => panic!("ws error: {err}"),
                     None => panic!("connection closed before response"),
@@ -2596,16 +2435,13 @@ fn pending_permission_decision_does_not_stall_bridge() {
         .await
         .expect("feature_supported must answer while the permission decision is pending");
 
-        release_tx
-            .send(())
-            .await
-            .expect("release permission callback");
+		release_tx.send(()).await.expect("release permission callback");
         let permission_response = tokio::time::timeout(std::time::Duration::from_secs(10), async {
             loop {
                 match ws.next().await {
                     Some(Ok(WsMessage::Binary(bytes))) => {
                         break ProtocolMessage::decode(&mut &bytes[..]).expect("decode response");
-                    }
+					},
                     Some(Ok(_)) => continue,
                     Some(Err(err)) => panic!("ws error: {err}"),
                     None => panic!("connection closed before response"),
@@ -2623,30 +2459,16 @@ fn pending_permission_decision_does_not_stall_bridge() {
     assert_eq!(feature_response.payload.method_id, feature_ids.method_id);
 
     assert_eq!(permission_response.request_id, "p:permission");
-    assert_eq!(
-        permission_response.payload.trait_id,
-        permission_ids.trait_id
-    );
-    assert_eq!(
-        permission_response.payload.method_id,
-        permission_ids.method_id
-    );
-    assert_eq!(
-        permission_response.payload.message_type,
-        crate::frame::MESSAGE_TYPE_RESPONSE
-    );
+	assert_eq!(permission_response.payload.trait_id, permission_ids.trait_id);
+	assert_eq!(permission_response.payload.method_id, permission_ids.method_id);
+	assert_eq!(permission_response.payload.message_type, crate::frame::MESSAGE_TYPE_RESPONSE);
     let expected_permission: Result<
         truapi::versioned::permissions::HostDevicePermissionResponse,
         truapi::CallError<truapi::versioned::permissions::HostDevicePermissionError>,
-    > = Ok(
-        truapi::versioned::permissions::HostDevicePermissionResponse::V1(
+	> = Ok(truapi::versioned::permissions::HostDevicePermissionResponse::V1(
             v01::HostDevicePermissionResponse { granted: true },
-        ),
-    );
-    assert_eq!(
-        permission_response.payload.value,
-        expected_permission.encode()
-    );
+	));
+	assert_eq!(permission_response.payload.value, expected_permission.encode());
 
     execution.stop_ws_bridge();
 }
@@ -2714,10 +2536,7 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
         ))
         .await
         .expect("connect second");
-        socket
-            .send(WsMessage::Text("ignored".into()))
-            .await
-            .expect("send text");
+		socket.send(WsMessage::Text("ignored".into())).await.expect("send text");
         socket
     });
     crate::test_support::wait_until(
@@ -2748,10 +2567,7 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
         [
             vec!["truapi.ws_bridge.started"],
             vec![],
-            vec![
-                "truapi.ws_bridge.connection_open",
-                "truapi.ws_bridge.text_frame_ignored"
-            ],
+			vec!["truapi.ws_bridge.connection_open", "truapi.ws_bridge.text_frame_ignored"],
         ]
     );
     drop(socket);
@@ -2796,10 +2612,7 @@ fn two_executions_share_one_bridge_through_the_native_api() {
         app_endpoint.port, chat_endpoint.port,
         "both executions must share the one listener port"
     );
-    assert_ne!(
-        app_endpoint.token, chat_endpoint.token,
-        "each execution must get its own token"
-    );
+	assert_ne!(app_endpoint.token, chat_endpoint.token, "each execution must get its own token");
 
     let feature_ids = request_ids("system_feature_supported").expect("known request method");
     let round_trip = |request_id: &str| ProtocolMessage {
@@ -2823,7 +2636,7 @@ fn two_executions_share_one_bridge_through_the_native_api() {
                 match ws.next().await {
                     Some(Ok(WsMessage::Binary(bytes))) => {
                         break ProtocolMessage::decode(&mut &bytes[..]).expect("decode response");
-                    }
+					},
                     Some(Ok(_)) => continue,
                     Some(Err(err)) => panic!("ws error: {err}"),
                     None => panic!("connection closed before response"),
@@ -2840,21 +2653,12 @@ fn two_executions_share_one_bridge_through_the_native_api() {
         .expect("test runtime");
 
     rt.block_on(async {
-        let app_url = format!(
-            "ws://127.0.0.1:{}/?t={}",
-            app_endpoint.port, app_endpoint.token
-        );
-        let chat_url = format!(
-            "ws://127.0.0.1:{}/?t={}",
-            chat_endpoint.port, chat_endpoint.token
-        );
+		let app_url = format!("ws://127.0.0.1:{}/?t={}", app_endpoint.port, app_endpoint.token);
+		let chat_url = format!("ws://127.0.0.1:{}/?t={}", chat_endpoint.port, chat_endpoint.token);
 
-        let (mut app_ws, _) = tokio_tungstenite::connect_async(&app_url)
-            .await
-            .expect("app dial");
-        let (mut chat_ws, _) = tokio_tungstenite::connect_async(&chat_url)
-            .await
-            .expect("chat dial");
+		let (mut app_ws, _) = tokio_tungstenite::connect_async(&app_url).await.expect("app dial");
+		let (mut chat_ws, _) =
+			tokio_tungstenite::connect_async(&chat_url).await.expect("chat dial");
 
         app_ws
             .send(WsMessage::Binary(round_trip("app:1").encode()))
@@ -2912,16 +2716,10 @@ fn prepare_disconnect_request_round_trips_with_fresh_ids() {
     let bytes = runtime.prepare_disconnect_request();
     let message = RemoteMessage::decode(&mut bytes.as_slice()).expect("valid encoding");
     assert_eq!(message.message_id.len(), 8, "opaque nanoid message id");
-    assert!(matches!(
-        message.data,
-        RemoteMessageData::V1(v1::RemoteMessage::Disconnected)
-    ));
+	assert!(matches!(message.data, RemoteMessageData::V1(v1::RemoteMessage::Disconnected)));
     let second = RemoteMessage::decode(&mut runtime.prepare_disconnect_request().as_slice())
         .expect("valid encoding");
-    assert_ne!(
-        message.message_id, second.message_id,
-        "each disconnect message carries its own id"
-    );
+	assert_ne!(message.message_id, second.message_id, "each disconnect message carries its own id");
 }
 
 #[test]
@@ -2964,19 +2762,12 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
     for (answer, granted) in [
         (Ok(PermissionDecision::AllowAlways), true),
         (Ok(PermissionDecision::Deny), false),
-        (
-            Err(HostRejection::Rejected {
-                reason: "permission UI unavailable".to_string(),
-            }),
-            false,
-        ),
+		(Err(HostRejection::Rejected { reason: "permission UI unavailable".to_string() }), false),
     ] {
         let host = NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), native_host_runtime_config(), None)
         .unwrap();
-        let callbacks = Arc::new(EventCallbacks {
-            remote_permission_result: answer,
-            ..EventCallbacks::new()
-        });
+		let callbacks =
+			Arc::new(EventCallbacks { remote_permission_result: answer, ..EventCallbacks::new() });
         let execution = host
             .open_product_execution(
                 callbacks.clone(),
@@ -2995,14 +2786,8 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
         let response =
             futures::executor::block_on(execution.authorize_remote_permission(request)).unwrap();
         assert_eq!(
-            (
-                response,
-                callbacks.remote_permission_products.lock().unwrap().clone()
-            ),
-            (
-                granted,
-                vec![("fetch.dot".to_string(), ProductExecutionKind::Worker)]
-            ),
+			(response, callbacks.remote_permission_products.lock().unwrap().clone()),
+			(granted, vec![("fetch.dot".to_string(), ProductExecutionKind::Worker)]),
         );
     }
 }
@@ -3042,10 +2827,9 @@ fn native_permission_confirmation_preserves_consent_lifetime() {
 
 #[test]
 fn native_remote_authorization_reuses_stored_product_decisions() {
-    for (decision, granted) in [
-        (PermissionDecision::AllowAlways, true),
-        (PermissionDecision::Deny, false),
-    ] {
+	for (decision, granted) in
+		[(PermissionDecision::AllowAlways, true), (PermissionDecision::Deny, false)]
+	{
         let callbacks = Arc::new(EventCallbacks {
             remote_permission_result: Ok(decision),
             ..EventCallbacks::new()
@@ -3072,19 +2856,10 @@ fn native_remote_authorization_reuses_stored_product_decisions() {
             },
         };
         futures::executor::block_on(async {
-            let first = first_execution
-                .authorize_remote_permission(request.clone())
-                .await
-                .unwrap();
-            let next = next_execution
-                .authorize_remote_permission(request.clone())
-                .await
-                .unwrap();
+			let first = first_execution.authorize_remote_permission(request.clone()).await.unwrap();
+			let next = next_execution.authorize_remote_permission(request.clone()).await.unwrap();
             let prompts_for_product = callbacks.remote_permission_calls.load(Ordering::SeqCst);
-            let other = other_product
-                .authorize_remote_permission(request)
-                .await
-                .unwrap();
+			let other = other_product.authorize_remote_permission(request).await.unwrap();
             assert_eq!(
                 (
                     first,
@@ -3137,10 +2912,7 @@ fn native_remote_authorization_rejects_closed_and_closing_executions() {
                     request.await.err().map(|error| error.to_string()),
                     callbacks.remote_permission_calls.load(Ordering::SeqCst),
                 ),
-                (
-                    Some("product execution is closed".to_string()),
-                    usize::from(pending)
-                ),
+				(Some("product execution is closed".to_string()), usize::from(pending)),
             );
         });
     }
@@ -3157,9 +2929,7 @@ fn a_native_status_read_follows_the_os_gate() {
     .expect("host runtime config should be valid");
     let execution = host
         .open_product_execution(
-            Arc::new(EventCallbacks::refusing(
-                v01::HostDevicePermissionRequest::Camera,
-            )),
+			Arc::new(EventCallbacks::refusing(v01::HostDevicePermissionRequest::Camera)),
             None,
             None,
             None,
@@ -3181,10 +2951,7 @@ fn a_native_status_read_follows_the_os_gate() {
     // stored decision, so its question is still open.
     assert_eq!(
         (camera, microphone),
-        (
-            PermissionAuthorizationStatus::Denied,
-            PermissionAuthorizationStatus::NotDetermined,
-        )
+		(PermissionAuthorizationStatus::Denied, PermissionAuthorizationStatus::NotDetermined,)
     );
 }
 
@@ -3286,10 +3053,7 @@ fn a_kept_face_with_bytes_past_its_tree_does_not_read_back() {
     let mut kept = encode_renderer_node(latest::RendererNode::Nil);
     kept.push(0);
 
-    assert!(matches!(
-        decode_renderer_node(kept),
-        Err(NativeRendererError::Malformed { .. })
-    ));
+	assert!(matches!(decode_renderer_node(kept), Err(NativeRendererError::Malformed { .. })));
 }
 
 /// A title is drawn and an id is addressed, so they cannot share one rule:
@@ -3307,9 +3071,6 @@ fn a_card_title_accepts_what_a_card_id_refuses() {
 /// the core stored would miss a card it holds.
 #[test]
 fn screening_normalizes_and_trims() {
-    assert_eq!(
-        screen_pocket_card_id("  cafe\u{301}  ".to_string()).unwrap(),
-        "caf\u{e9}"
-    );
+	assert_eq!(screen_pocket_card_id("  cafe\u{301}  ".to_string()).unwrap(), "caf\u{e9}");
     assert!(screen_pocket_card_id("   ".to_string()).is_err());
 }

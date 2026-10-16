@@ -49,9 +49,9 @@ internal fun PermissionAuthorizationRequest.hasDedicatedSettings(): Boolean = wh
     else -> false
 }
 
-internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermission = when (this) {
-    is PermissionAuthorizationRequest.Calling, is PermissionAuthorizationRequest.AutomaticPreimageSubmit ->
-        error("Account-scoped permission requires dedicated settings")
+/** `null` for ephemeral approvals and scopes managed by dedicated settings. */
+internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermission? = when (this) {
+    is PermissionAuthorizationRequest.Calling, is PermissionAuthorizationRequest.AutomaticPreimageSubmit -> null
     is PermissionAuthorizationRequest.Device -> ProductPermission.DeviceCapability(DeviceCapabilityType.entries.single { it.native() == v1 })
     is PermissionAuthorizationRequest.AccountAccess -> ProductPermission.AccountAccess(targetProductId)
     PermissionAuthorizationRequest.IdentityDisclosure -> ProductPermission.UserIdentityAccess
@@ -72,12 +72,13 @@ internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermissio
                 else ProductPermission.RemotePermission.NetworkAccessSet(domains)
         }
         RemotePermission.WebRtc -> ProductPermission.RemotePermission.WebRtcAccess
-        RemotePermission.Calling -> error("Calling requires scoped Media settings")
+        RemotePermission.Calling -> null
         RemotePermission.ChainSubmit -> ProductPermission.RemotePermission.ChainSubmitAccess
         RemotePermission.StatementSubmit -> ProductPermission.RemotePermission.StatementSubmitAccess
         RemotePermission.PreimageSubmit -> ProductPermission.RemotePermission.PreimageSubmitAccess
         is RemotePermission.JamPeers -> ProductPermission.RemotePermission.JamPeersAccess(remote.genesis.toHexString(withPrefix = true))
     }
+    is PermissionAuthorizationRequest.CrossProductSignature -> null
 }
 
 private fun DeviceCapabilityType.native(): HostDevicePermissionRequest = when (this) {

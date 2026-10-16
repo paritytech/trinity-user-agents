@@ -8,40 +8,46 @@
 //! platform trait set imposes; sound on wasm32 because the runtime is
 //! single-threaded.
 
-use core::cell::Cell;
-use core::future::Future;
-use core::pin::Pin;
-use core::task::{Context, Poll};
-use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use core::{
+	cell::Cell,
+	future::Future,
+	pin::Pin,
+	task::{Context, Poll},
+};
+use std::{
+	rc::Rc,
+	sync::{
+		Arc,
+		atomic::{AtomicBool, Ordering},
+	},
+};
 
 use crate::platform::{
     ChainProvider, ChatPlatform, ContactsPlatform, GamePlatform, HopProvider, HostInfo,
-    JsonRpcConnection, MediaPlatform, PairingHostConfig, PermissionStatusHost, PlatformInfo,
-    PocketPlatform, ProductContext,
-    ProductExecutionKind, ProfilePlatform, ProviderError, RuntimeConfigValidationError,
+    JsonRpcConnection, MediaPlatform,
+    PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform, ProductContext,
+    ProfilePlatform, ProductExecutionKind, ProviderError, RuntimeConfigValidationError,
+    ScannerPlatform,
+};
+use futures::{
+    channel::mpsc,
+    future::{AbortHandle, Abortable},
+    stream::{self, BoxStream, Stream, StreamExt},
 };
 #[cfg(feature = "wasm-signing-host")]
 use crate::platform::{CoinageWalletHost, IdentityBackendHost, SigningHostConfig};
-use futures::channel::mpsc;
-use futures::future::{AbortHandle, Abortable};
-use futures::stream::{self, BoxStream, Stream, StreamExt};
 use js_sys::{Array, Function, Reflect, Uint8Array};
 use parity_scale_codec::{Decode, Encode};
 use send_wrapper::SendWrapper;
-use truapi::latest::HostPlatform;
-use truapi::v01;
-use wasm_bindgen::JsCast;
-use wasm_bindgen::prelude::*;
+use truapi::{latest::HostPlatform, v01};
+use wasm_bindgen::{JsCast, prelude::*};
 
 #[cfg(feature = "wasm-signing-host")]
 use crate::SigningHostRuntime;
-use crate::host_logic::worker::WorkerTransition;
-use crate::subscription::Spawner;
 use crate::{
     ChannelId, DebugEvent, DebugSink, FrameSink, PairingHostRuntime,
     PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductRuntime,
+	host_logic::worker::WorkerTransition, subscription::Spawner,
 };
 
 mod generated_bridge;
@@ -103,11 +109,7 @@ struct WasmDebugSink {
 
 impl DebugSink for WasmDebugSink {
     fn emit(&self, event: DebugEvent) {
-        let DebugEvent::Frame {
-            channel_id,
-            dir,
-            bytes,
-        } = event;
+		let DebugEvent::Frame { channel_id, dir, bytes } = event;
         let frame = Uint8Array::from(bytes.as_slice());
         if let Err(err) = self.emit.call3(
             &JsValue::NULL,
@@ -126,9 +128,7 @@ struct WasmPlatform {
 
 impl WasmPlatform {
     fn new(bridge: Arc<JsBridge>) -> Self {
-        Self {
-            bridge: SendWrapper::new(bridge),
-        }
+		Self { bridge: SendWrapper::new(bridge) }
     }
 }
 
@@ -321,7 +321,7 @@ where
                     ))
                 })
                 .boxed();
-            }
+			},
         },
         Err(err) => return stream::once(async { Err(generic(js_to_string(err))) }).boxed(),
     };
@@ -513,7 +513,7 @@ impl JsonRpcConnection for JsCallbackJsonRpcConnection {
                     "JsCallbackJsonRpcConnection::responses() called more than once",
                 ));
                 futures::stream::empty().boxed()
-            }
+			},
         }
     }
 
@@ -544,8 +544,8 @@ fn parse_generic_error(value: JsValue) -> v01::GenericError {
     if let Some(reason) = value.as_string() {
         return generic(reason);
     }
-    if let Ok(reason) = Reflect::get(&value, &JsValue::from_str("reason"))
-        && let Some(reason) = reason.as_string()
+	if let Ok(reason) = Reflect::get(&value, &JsValue::from_str("reason")) &&
+		let Some(reason) = reason.as_string()
     {
         return generic(reason);
     }
@@ -558,9 +558,7 @@ fn parse_generic_error(value: JsValue) -> v01::GenericError {
 async fn await_optional_promise(returned: JsValue) -> Result<JsValue, String> {
     if returned.is_instance_of::<js_sys::Promise>() {
         let promise = returned.unchecked_into::<js_sys::Promise>();
-        wasm_bindgen_futures::JsFuture::from(promise)
-            .await
-            .map_err(js_to_string)
+		wasm_bindgen_futures::JsFuture::from(promise).await.map_err(js_to_string)
     } else {
         Ok(returned)
     }
@@ -679,11 +677,7 @@ fn parse_optional_bytes_item(value: JsValue) -> Result<Option<Vec<u8>>, String> 
 fn js_to_string(value: JsValue) -> String {
     value
         .as_string()
-        .or_else(|| {
-            value
-                .dyn_ref::<js_sys::Error>()
-                .map(|err| err.message().into())
-        })
+		.or_else(|| value.dyn_ref::<js_sys::Error>().map(|err| err.message().into()))
         .unwrap_or_else(|| format!("{value:?}"))
 }
 
@@ -712,9 +706,7 @@ fn get_optional_function(callbacks: &JsValue, name: &str) -> Result<Option<Funct
 /// stub would keep the whole runtime from starting, not just the capability it
 /// stands in for.
 fn noop_function() -> Function {
-    Closure::<dyn Fn()>::new(|| {})
-        .into_js_value()
-        .unchecked_into()
+	Closure::<dyn Fn()>::new(|| {}).into_js_value().unchecked_into()
 }
 
 fn absent_optional_callback() -> Function {
@@ -776,21 +768,9 @@ fn pairing_host_config_from_js(value: &JsValue) -> Result<PairingHostConfig, JsV
                 .flatten(),
         },
         get_required_bytes32_at(&people, "genesisHash", "runtimeConfig.people.genesisHash")?,
-        get_required_bytes32_at(
-            &bulletin,
-            "genesisHash",
-            "runtimeConfig.bulletin.genesisHash",
-        )?,
-        get_required_bytes32_at(
-            &asset_hub,
-            "genesisHash",
-            "runtimeConfig.assetHub.genesisHash",
-        )?,
-        get_required_string_at(
-            &pairing,
-            "deeplinkScheme",
-            "runtimeConfig.pairing.deeplinkScheme",
-        )?,
+		get_required_bytes32_at(&bulletin, "genesisHash", "runtimeConfig.bulletin.genesisHash")?,
+		get_required_bytes32_at(&asset_hub, "genesisHash", "runtimeConfig.assetHub.genesisHash")?,
+		get_required_string_at(&pairing, "deeplinkScheme", "runtimeConfig.pairing.deeplinkScheme")?,
     )
     .map_err(runtime_config_validation_to_js)
 }
@@ -850,16 +830,8 @@ fn signing_host_config_from_js(value: &JsValue) -> Result<SigningHostConfig, JsV
                 .flatten(),
         },
         get_required_bytes32_at(&people, "genesisHash", "runtimeConfig.people.genesisHash")?,
-        get_required_bytes32_at(
-            &bulletin,
-            "genesisHash",
-            "runtimeConfig.bulletin.genesisHash",
-        )?,
-        get_required_bytes32_at(
-            &asset_hub,
-            "genesisHash",
-            "runtimeConfig.assetHub.genesisHash",
-        )?,
+		get_required_bytes32_at(&bulletin, "genesisHash", "runtimeConfig.bulletin.genesisHash")?,
+		get_required_bytes32_at(&asset_hub, "genesisHash", "runtimeConfig.assetHub.genesisHash")?,
         network_suffix,
     )
     .map_err(runtime_config_validation_to_js)?;
@@ -887,7 +859,7 @@ fn product_context_from_js(value: &JsValue) -> Result<ProductContext, JsValue> {
                 return Err(JsValue::from_str(&format!(
                     "runtimeConfig.executionKind must be App, Widget or Worker, got {other:?}"
                 )));
-            }
+			},
         };
     ProductContext::new_with_execution(product_id, execution_kind)
         .map_err(runtime_config_validation_to_js)
@@ -925,12 +897,12 @@ fn runtime_config_validation_to_js(err: RuntimeConfigValidationError) -> JsValue
             JsValue::from_str(&format!(
                 "runtimeConfig.productId must be a dotNS or localhost product identifier, got {product_id:?}"
             ))
-        }
+		},
         RuntimeConfigValidationError::InvalidNetworkSuffix { network_suffix } => {
             JsValue::from_str(&format!(
                 "runtimeConfig.networkSuffix must be a supported dotNS TLD, got {network_suffix:?}"
             ))
-        }
+		},
         // By length, never by value: an id that trips this is unbounded in
         // size, and this string reaches the product's console.
         RuntimeConfigValidationError::ProductIdTooLong { limit, actual } => JsValue::from_str(
@@ -1019,10 +991,7 @@ fn get_optional_bytes32_at(
         .map_err(|_| JsValue::from_str(&format!("{path} must be hex or Uint8Array")))?;
     let bytes = array.to_vec();
     bytes.try_into().map(Some).map_err(|bytes: Vec<u8>| {
-        JsValue::from_str(&format!(
-            "{path} must be exactly 32 bytes, got {}",
-            bytes.len()
-        ))
+		JsValue::from_str(&format!("{path} must be exactly 32 bytes, got {}", bytes.len()))
     })
 }
 
@@ -1034,10 +1003,7 @@ fn get_required_bytes32_at(value: &JsValue, name: &str, path: &str) -> Result<[u
 fn parse_hex32(value: &str) -> Result<[u8; 32], String> {
     let raw = value.strip_prefix("0x").unwrap_or(value);
     if raw.len() != 64 {
-        return Err(format!(
-            "expected 32-byte hex string, got {} hex chars",
-            raw.len()
-        ));
+		return Err(format!("expected 32-byte hex string, got {} hex chars", raw.len()));
     }
     let bytes = hex::decode(raw).map_err(|_| "invalid hex".to_string())?;
     bytes
@@ -1049,9 +1015,7 @@ fn decode_permission_authorization_request(
     payload: &[u8],
 ) -> Result<PermissionAuthorizationRequest, JsValue> {
     PermissionAuthorizationRequest::decode(&mut &*payload).map_err(|err| {
-        JsValue::from_str(&format!(
-            "permission authorization request did not decode: {err}"
-        ))
+		JsValue::from_str(&format!("permission authorization request did not decode: {err}"))
     })
 }
 
@@ -1083,9 +1047,9 @@ fn permission_authorization_status_from_js(
         "NotDetermined" => Ok(PermissionAuthorizationStatus::NotDetermined),
         "Denied" => Ok(PermissionAuthorizationStatus::Denied),
         "Authorized" => Ok(PermissionAuthorizationStatus::Authorized),
-        other => Err(JsValue::from_str(&format!(
-            "unknown permission authorization status: {other}"
-        ))),
+		other => {
+			Err(JsValue::from_str(&format!("unknown permission authorization status: {other}")))
+		},
     }
 }
 
@@ -1113,6 +1077,7 @@ struct WasmPlatformAdapters {
     native_wallet: Option<Arc<dyn CoinageWalletHost>>,
     media_platform: Option<Arc<dyn MediaPlatform>>,
     game_platform: Option<Arc<dyn GamePlatform>>,
+	scanner_platform: Option<Arc<dyn ScannerPlatform>>,
 }
 
 /// Build the platform and the optional capability adapters supplied by the host.
@@ -1128,6 +1093,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
     let has_native_wallet = bridge.has_coinage_wallet();
     let has_media = bridge.has_media();
     let has_game = bridge.has_game();
+	let has_scanner = bridge.has_scanner();
     let platform = Arc::new(WasmPlatform::new(bridge));
     let chat = has_chat.then(|| platform.clone() as Arc<dyn ChatPlatform>);
     let contacts = has_contacts.then(|| platform.clone() as Arc<dyn ContactsPlatform>);
@@ -1141,6 +1107,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
     let native_wallet = has_native_wallet.then(|| platform.clone() as Arc<dyn CoinageWalletHost>);
     let media = has_media.then(|| platform.clone() as Arc<dyn MediaPlatform>);
     let game = has_game.then(|| platform.clone() as Arc<dyn GamePlatform>);
+	let scanner = has_scanner.then(|| platform.clone() as Arc<dyn ScannerPlatform>);
     WasmPlatformAdapters {
         platform,
         chat_platform: chat,
@@ -1154,6 +1121,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
         native_wallet,
         media_platform: media,
         game_platform: game,
+		scanner_platform: scanner,
     }
 }
 
@@ -1349,6 +1317,7 @@ impl WasmPairingHostRuntime {
             profile_platform,
             media_platform,
             game_platform,
+            scanner_platform,
             ..
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
@@ -1377,10 +1346,11 @@ impl WasmPairingHostRuntime {
         if let Some(game_platform) = game_platform {
             runtime.set_game_platform(game_platform);
         }
+		if let Some(scanner_platform) = scanner_platform {
+			runtime.set_scanner_platform(scanner_platform);
+		}
         install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
-        Ok(Self {
-            runtime: Rc::new(runtime),
-        })
+		Ok(Self { runtime: Rc::new(runtime) })
     }
 
     /// Build one product-scoped runtime from this pairing host runtime.
@@ -1406,9 +1376,7 @@ impl WasmPairingHostRuntime {
         if let Some(debug_emit) = debug_emit {
             runtime.set_debug_sink(
                 ChannelId(channel_id),
-                Arc::new(WasmDebugSink {
-                    emit: SendWrapper::new(debug_emit),
-                }),
+				Arc::new(WasmDebugSink { emit: SendWrapper::new(debug_emit) }),
             );
         }
         Ok(WasmProductRuntime::from_parts(runtime, channel.dispose))
@@ -1430,9 +1398,7 @@ impl WasmPairingHostRuntime {
     /// `undefined` when no session is active.
     #[wasm_bindgen(js_name = sessionChatIdentityKey)]
     pub fn session_chat_identity_key(&self) -> Option<Vec<u8>> {
-        self.runtime
-            .session_chat_identity_key()
-            .map(|key| key.to_vec())
+		self.runtime.session_chat_identity_key().map(|key| key.to_vec())
     }
 
     /// Read the active session's sr25519 statement-store secret, or
@@ -1473,19 +1439,13 @@ impl WasmPairingHostRuntime {
     /// to core storage; resolves only after product frames may use it.
     #[wasm_bindgen(js_name = activateExternalSession)]
     pub async fn activate_external_session(&self, blob: Vec<u8>) -> Result<(), JsValue> {
-        self.runtime
-            .activate_external_session(&blob)
-            .await
-            .map_err(generic_error_to_js)
+		self.runtime.activate_external_session(&blob).await.map_err(generic_error_to_js)
     }
 
     /// Restore the persisted auth session and resolve only after it is active.
     #[wasm_bindgen(js_name = activateStoredSession)]
     pub async fn activate_stored_session(&self) -> Result<(), JsValue> {
-        self.runtime
-            .activate_stored_session()
-            .await
-            .map_err(generic_error_to_js)
+		self.runtime.activate_stored_session().await.map_err(generic_error_to_js)
     }
 
     /// Notify the runtime that the auth session slot may have changed.
@@ -1598,10 +1558,7 @@ impl WasmPairingHostRuntime {
     /// Clear one product's durable and in-memory capability state.
     #[wasm_bindgen(js_name = clearProductState)]
     pub async fn clear_product_state(&self, product_id: String) -> Result<(), JsValue> {
-        self.runtime
-            .clear_product_state(&product_id)
-            .await
-            .map_err(generic_error_to_js)
+		self.runtime.clear_product_state(&product_id).await.map_err(generic_error_to_js)
     }
 
     /// Clear canonical paired-session state without notifying the peer.
@@ -1645,17 +1602,9 @@ pub fn describe_core_storage_key_for_wasm(encoded: Vec<u8>) -> Result<JsValue, J
     let description = crate::platform::describe_core_storage_key(&encoded)
         .map_err(|error| JsValue::from_str(&error.to_string()))?;
     let value = js_sys::Object::new();
-    Reflect::set(
-        &value,
-        &JsValue::from_str("kind"),
-        &JsValue::from_str(description.kind),
-    )?;
+	Reflect::set(&value, &JsValue::from_str("kind"), &JsValue::from_str(description.kind))?;
     if let Some(product_id) = description.product_id {
-        Reflect::set(
-            &value,
-            &JsValue::from_str("productId"),
-            &JsValue::from_str(&product_id),
-        )?;
+		Reflect::set(&value, &JsValue::from_str("productId"), &JsValue::from_str(&product_id))?;
     }
     if let Some(request) = description.permission_request {
         Reflect::set(
@@ -1816,7 +1765,7 @@ impl WasmSigningHostRuntime {
             native_wallet,
             media_platform,
             game_platform,
-            ..
+			scanner_platform,
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
             wasm_bindgen_futures::spawn_local(fut);
@@ -1848,10 +1797,11 @@ impl WasmSigningHostRuntime {
         if let Some(game_platform) = game_platform {
             runtime.set_game_platform(game_platform);
         }
+		if let Some(scanner_platform) = scanner_platform {
+			runtime.set_scanner_platform(scanner_platform);
+		}
         install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
-        Ok(Self {
-            runtime: Rc::new(runtime),
-        })
+		Ok(Self { runtime: Rc::new(runtime) })
     }
 
     /// Build one product-scoped runtime from this signing host.
@@ -2003,10 +1953,7 @@ impl WasmSigningHostRuntime {
     /// Activate a wallet-local session from raw BIP-39 entropy.
     #[wasm_bindgen(js_name = activateLocalSession)]
     pub async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), JsValue> {
-        self.runtime
-            .activate_local_session(secret)
-            .await
-            .map_err(generic_error_to_js)
+		self.runtime.activate_local_session(secret).await.map_err(generic_error_to_js)
     }
 
     /// Activate a wallet-local session and attach known identity metadata.
@@ -2110,8 +2057,65 @@ impl WasmSigningHostRuntime {
     /// Revoke one product's grants from the current local activation.
     #[wasm_bindgen(js_name = clearProductState)]
     pub async fn clear_product_state(&self, product_id: String) -> Result<(), JsValue> {
+		self.runtime.clear_product_state(&product_id).await.map_err(generic_error_to_js)
+	}
+
+	/// Read a permission authorization status for a product.
+	///
+	/// A device capability resolves the host application's OS gate as well as
+	/// storage, so an OS refusal reads as `Denied` whatever is stored. Remote,
+	/// identity-disclosure and account-access decisions have no OS gate.
+	#[wasm_bindgen(js_name = permissionAuthorizationStatus)]
+	pub async fn permission_authorization_status(
+		&self,
+		product_id: String,
+		payload: Vec<u8>,
+	) -> Result<JsValue, JsValue> {
+		let request = decode_permission_authorization_request(&payload)?;
+		let status = self
+			.runtime
+			.permission_authorization_status(&product_id, request)
+			.await
+			.map_err(generic_error_to_js)?;
+		Ok(permission_authorization_status_to_js(status))
+	}
+
+	/// Read permission authorization statuses for a product.
+	///
+	/// A device capability resolves the host application's OS gate as well as
+	/// storage, so an OS refusal reads as `Denied` whatever is stored. Remote,
+	/// identity-disclosure and account-access decisions have no OS gate.
+	#[wasm_bindgen(js_name = permissionAuthorizationStatuses)]
+	pub async fn permission_authorization_statuses(
+		&self,
+		product_id: String,
+		payloads: Array,
+	) -> Result<Array, JsValue> {
+		let requests = decode_permission_authorization_requests(&payloads)?;
+		let statuses = self
+			.runtime
+			.permission_authorization_statuses(&product_id, requests)
+			.await
+			.map_err(generic_error_to_js)?;
+		let values = Array::new();
+		for status in statuses {
+			values.push(&permission_authorization_status_to_js(status));
+		}
+		Ok(values)
+	}
+
+	/// Update a stored permission authorization status for a product.
+	#[wasm_bindgen(js_name = setPermissionAuthorizationStatus)]
+	pub async fn set_permission_authorization_status(
+		&self,
+		product_id: String,
+		payload: Vec<u8>,
+		status: String,
+	) -> Result<(), JsValue> {
+		let request = decode_permission_authorization_request(&payload)?;
+		let status = permission_authorization_status_from_js(&status)?;
         self.runtime
-            .clear_product_state(&product_id)
+			.set_permission_authorization_status(&product_id, request, status)
             .await
             .map_err(generic_error_to_js)
     }
@@ -2242,9 +2246,8 @@ impl WasmProductRuntime {
         crate::logging::init();
         let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
         let channel = CoreChannel::from_js(&callbacks)?;
-        let frame_sink = Arc::new(WasmFrameSink {
-            emit_frame: SendWrapper::new(channel.emit_frame),
-        });
+		let frame_sink =
+			Arc::new(WasmFrameSink { emit_frame: SendWrapper::new(channel.emit_frame) });
         let WasmPlatformAdapters {
             platform,
             chat_platform,
@@ -2254,6 +2257,7 @@ impl WasmProductRuntime {
             profile_platform,
             media_platform,
             game_platform,
+            scanner_platform,
             ..
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
@@ -2276,6 +2280,9 @@ impl WasmProductRuntime {
         if let Some(game_platform) = game_platform {
             pairing.set_game_platform(game_platform);
         }
+		if let Some(scanner_platform) = scanner_platform {
+			pairing.set_scanner_platform(scanner_platform);
+		}
         if let Some(contacts_platform) = contacts_platform {
             pairing.set_contacts_platform(contacts_platform);
         }
@@ -2464,12 +2471,12 @@ impl WasmProductRuntime {
                             Ok(node) => {
                                 let bytes = Uint8Array::from(node.encode().as_slice());
                                 let _ = on_update.call1(&JsValue::NULL, &bytes);
-                            }
+							},
                             Err(error) => {
                                 let reason = crate::interrupt::interrupt_reason(error);
                                 let _ = on_error.call1(&JsValue::NULL, &JsValue::from_str(&reason));
                                 return;
-                            }
+							},
                         }
                     }
                     let _ = on_complete.call0(&JsValue::NULL);

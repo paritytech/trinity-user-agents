@@ -226,7 +226,8 @@ export function profileHostAdapter(
   if (
     typeof host.presentContactProfile === "function" &&
     typeof host.placeContactAvatars === "function"
-  ) return host as Required<ProfilePlatform>;
+  )
+    return host as Required<ProfilePlatform>;
   return {
     presentProfile: (product, request) => host.presentProfile(product, request),
     presentContactProfile: (product, presented) => {

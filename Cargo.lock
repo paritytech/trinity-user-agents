@@ -6402,7 +6402,7 @@ dependencies = [
 
 [[package]]
 name = "truapi"
-version = "0.24.0"
+version = "0.25.0"
 dependencies = [
  "async-sqlite",
  "async-trait",
@@ -6419,6 +6419,7 @@ dependencies = [
  "hex",
  "hkdf",
  "hpke",
+ "itertools 0.14.0",
  "js-sys",
  "libc",
  "merlin",
@@ -6534,7 +6535,7 @@ dependencies = [
 
 [[package]]
 name = "truapi-host-cli"
-version = "0.24.0"
+version = "0.25.0"
 dependencies = [
  "anyhow",
  "arboard",

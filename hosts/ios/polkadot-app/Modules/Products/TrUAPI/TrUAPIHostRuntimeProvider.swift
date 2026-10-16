@@ -289,7 +289,10 @@ extension TrUAPIHostRuntimeProvider {
             throw TrUAPIRuntimeConfigError.missingGenesisHash(chain: "assetHub")
         }
 
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        let bundle = Bundle.main
+        let version = bundle.appVersion.map { version in
+            bundle.appBuild.map { "\(version) (\($0))" } ?? version
+        }
 
         return try HostRuntimeConfig(
             hostName: "Polkadot App",

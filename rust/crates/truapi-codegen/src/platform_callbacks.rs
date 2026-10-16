@@ -2,8 +2,10 @@
 
 use std::collections::BTreeSet;
 
-use crate::platform::{PlatformDefinition, PlatformInner, PlatformMethod, PlatformTrait};
-use crate::rustdoc::{TypeDef, TypeDefKind, TypeRef, VariantFields};
+use crate::{
+	platform::{PlatformDefinition, PlatformInner, PlatformMethod, PlatformTrait},
+	rustdoc::{TypeDef, TypeDefKind, TypeRef, VariantFields},
+};
 
 /// Compound callback results with inline SCALE codecs shared by both bridges.
 /// Byte vectors themselves remain unencoded byte payloads.
@@ -26,11 +28,7 @@ pub fn composed_traits(definition: &PlatformDefinition) -> Vec<&PlatformTrait> {
         None => definition.traits.iter().map(|t| t.name.clone()).collect(),
     };
     composed.extend(optional_trait_names(definition));
-    definition
-        .traits
-        .iter()
-        .filter(|t| composed.contains(&t.name))
-        .collect()
+	definition.traits.iter().filter(|t| composed.contains(&t.name)).collect()
 }
 
 /// Capability trait names a host may omit, taken from the `OptionalPlatform`
@@ -63,7 +61,7 @@ pub fn trait_object_return_name<'a>(
         PlatformInner::TraitObject(name) => Some(name.as_str()),
         PlatformInner::Result { ok, .. } | PlatformInner::Plain(ok) => {
             named_platform_trait(ok, platform_trait_names)
-        }
+		},
         PlatformInner::Unit | PlatformInner::Stream(_) => None,
     }
 }
@@ -83,11 +81,7 @@ pub fn raw_callback_wire_name(
     }
     let raw = raw_callback_name(method);
     if trait_object_return_name(method, platform_trait_names).is_some() {
-        return format!(
-            "{}{}",
-            callback_namespace(&trait_def.name),
-            upper_first(&raw)
-        );
+		return format!("{}{}", callback_namespace(&trait_def.name), upper_first(&raw));
     }
     raw
 }
@@ -98,11 +92,7 @@ pub fn raw_callback_field_name(
     method: &PlatformMethod,
     platform_trait_names: &BTreeSet<String>,
 ) -> String {
-    snake_case(&raw_callback_wire_name(
-        trait_def,
-        method,
-        platform_trait_names,
-    ))
+	snake_case(&raw_callback_wire_name(trait_def, method, platform_trait_names))
 }
 
 /// TS type name for the raw callback in the generated host-callback bridge.
@@ -111,11 +101,7 @@ pub fn raw_callback_type_name(
     method: &PlatformMethod,
     platform_trait_names: &BTreeSet<String>,
 ) -> String {
-    upper_first(&raw_callback_wire_name(
-        trait_def,
-        method,
-        platform_trait_names,
-    ))
+	upper_first(&raw_callback_wire_name(trait_def, method, platform_trait_names))
 }
 
 /// Name of the TS adapter that wraps a typed host callback into its raw form.
@@ -124,10 +110,7 @@ pub fn raw_callback_adapter_name(
     method: &PlatformMethod,
     platform_trait_names: &BTreeSet<String>,
 ) -> String {
-    format!(
-        "{}Adapter",
-        raw_callback_wire_name(trait_def, method, platform_trait_names)
-    )
+	format!("{}Adapter", raw_callback_wire_name(trait_def, method, platform_trait_names))
 }
 
 /// Callback-object namespace for a trait: its name with the role suffix
@@ -157,9 +140,9 @@ fn named_platform_trait<'a>(
 /// through. Streams carry `Result`s on the Rust side but the JS raw bridge
 /// already unwraps them before handing each item to the WASM callback sink.
 pub fn stream_item(item: &TypeRef) -> &TypeRef {
-    if let TypeRef::Named { name, args } = item
-        && name == "Result"
-        && let Some(ok) = args.first()
+	if let TypeRef::Named { name, args } = item &&
+		name == "Result" &&
+		let Some(ok) = args.first()
     {
         return ok;
     }
@@ -190,11 +173,7 @@ fn lower_pascal_case(name: &str) -> String {
     let Some(first) = chars.next() else {
         return String::new();
     };
-    format!(
-        "{}{}",
-        first.to_ascii_lowercase(),
-        chars.collect::<String>()
-    )
+	format!("{}{}", first.to_ascii_lowercase(), chars.collect::<String>())
 }
 
 fn upper_first(name: &str) -> String {
@@ -202,11 +181,7 @@ fn upper_first(name: &str) -> String {
     let Some(first) = chars.next() else {
         return String::new();
     };
-    format!(
-        "{}{}",
-        first.to_ascii_uppercase(),
-        chars.collect::<String>()
-    )
+	format!("{}{}", first.to_ascii_uppercase(), chars.collect::<String>())
 }
 
 /// Convert a camelCase identifier to snake_case.
@@ -241,11 +216,11 @@ pub fn collect_local_bridge_payload_types(definition: &PlatformDefinition) -> BT
             match &method.return_shape.inner {
                 PlatformInner::Result { ok, .. } | PlatformInner::Plain(ok) => {
                     collect_local_from_type(ok, &local, &mut out);
-                }
+				},
                 PlatformInner::Stream(item) => {
                     collect_local_from_type(stream_item(item), &local, &mut out)
-                }
-                PlatformInner::Unit | PlatformInner::TraitObject(_) => {}
+				},
+				PlatformInner::Unit | PlatformInner::TraitObject(_) => {},
             }
         }
     }
@@ -277,29 +252,29 @@ fn collect_local_from_type_def<'a>(
             for field in fields {
                 collect_local_from_type(&field.type_ref, local, out);
             }
-        }
+		},
         TypeDefKind::TupleStruct(fields) => {
             for field in fields {
                 collect_local_from_type(field, local, out);
             }
-        }
+		},
         TypeDefKind::Enum(variants) => {
             for variant in variants {
                 match &variant.fields {
-                    VariantFields::Unit => {}
+					VariantFields::Unit => {},
                     VariantFields::Unnamed(types) => {
                         for ty in types {
                             collect_local_from_type(ty, local, out);
                         }
-                    }
+					},
                     VariantFields::Named(fields) => {
                         for field in fields {
                             collect_local_from_type(&field.type_ref, local, out);
                         }
+					},
                     }
                 }
-            }
-        }
+		},
     }
 }
 
@@ -316,15 +291,15 @@ fn collect_local_from_type<'a>(
             for arg in args {
                 collect_local_from_type(arg, local, out);
             }
-        }
+		},
         TypeRef::Vec(inner) | TypeRef::Option(inner) | TypeRef::Array(inner, _) => {
             collect_local_from_type(inner, local, out);
-        }
+		},
         TypeRef::Tuple(items) => {
             for item in items {
                 collect_local_from_type(item, local, out);
             }
-        }
-        TypeRef::Primitive(_) | TypeRef::Generic(_) | TypeRef::Unit => {}
+		},
+		TypeRef::Primitive(_) | TypeRef::Generic(_) | TypeRef::Unit => {},
     }
 }

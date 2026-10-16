@@ -586,4 +586,12 @@ public extension ChatMessageContainerConfiguration {
             identifier: viewModel.rawText
         ).makeContentView()
     }
+
+    #Preview("Failed") {
+        ChatMessageContainerConfiguration.outboxRichText(
+            text: "Hi! I'd like to add you as a contact",
+            statusConfiguration: .failed
+        )
+        .makeContentView()
+    }
 #endif

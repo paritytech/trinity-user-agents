@@ -2,15 +2,21 @@
 
 use crate::platform::{PermissionAuthorizationRequest, PermissionAuthorizationStatus, ResourceAllocationReview, UserConfirmationReview};
 use tracing::instrument;
-use truapi::api::{Entropy, ResourceAllocation};
-use truapi::versioned::entropy::{
-    HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse,
-};
-use truapi::versioned::resource_allocation::{
+use truapi::{
+	CallContext, CallError,
+	api::{Entropy, ResourceAllocation},
+	latest,
+	versioned::{
+		entropy::{HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse},
+		resource_allocation::{
     HostRequestResourceAllocationError, HostRequestResourceAllocationRequest,
     HostRequestResourceAllocationResponse,
+		},
+	},
 };
-use truapi::{CallContext, CallError, v01};
+
+use super::from_latest_error;
+use truapi::versioned::{FromLatest, IntoLatest, Versioned};
 
 use crate::runtime::{
     ProductRuntimeHost, RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
@@ -23,7 +29,7 @@ impl ProductRuntimeHost {
     pub(in crate::runtime) async fn require_statement_store_allowance(
         &self,
         session: &crate::runtime::authority::AuthoritySession,
-        derivation_index: Option<v01::DerivationIndex>,
+        derivation_index: Option<latest::DerivationIndex>,
     ) -> Result<(), String> {
         let product_id = self.product_id();
         let require_session = || {
@@ -53,8 +59,8 @@ impl ProductRuntimeHost {
         require_session()?;
         if status == PermissionAuthorizationStatus::NotDetermined {
             let resource = match derivation_index {
-                Some(index) => v01::AllocatableResource::ProductStatementStoreAllowance(index),
-                None => v01::AllocatableResource::StatementStoreAllowance,
+                Some(index) => latest::AllocatableResource::ProductStatementStoreAllowance(index),
+                None => latest::AllocatableResource::StatementStoreAllowance,
             };
             let confirmed = self
                 .platform
@@ -113,7 +119,7 @@ impl ProductRuntimeHost {
     pub(in crate::runtime) async fn check_statement_store_allowance(
         &self,
         session: &crate::runtime::authority::AuthoritySession,
-        derivation_index: Option<v01::DerivationIndex>,
+        derivation_index: Option<latest::DerivationIndex>,
     ) -> Result<(), String> {
         let status = self
             .permission_authorization_status(
@@ -148,13 +154,13 @@ impl ResourceAllocation for ProductRuntimeHost {
         request: HostRequestResourceAllocationRequest,
     ) -> Result<HostRequestResourceAllocationResponse, CallError<HostRequestResourceAllocationError>>
     {
-        let HostRequestResourceAllocationRequest::V1(inner) = request;
+		let version = request.version();
+		let inner = request.into_latest();
+		let result = async {
         let Some(session) = self.authority.current_session() else {
-            return Err(CallError::Domain(HostRequestResourceAllocationError::V1(
-                v01::ResourceAllocationError::Unknown {
+				return Err(CallError::Domain(latest::ResourceAllocationError::Unknown {
                     reason: "No active session".to_string(),
-                },
-            )));
+				}));
         };
 
         let product_id = self.product_id();
@@ -174,8 +180,8 @@ impl ResourceAllocation for ProductRuntimeHost {
         let mut grants = Vec::new();
         for resource in &inner.resources {
             let derivation_index = match resource {
-                v01::AllocatableResource::StatementStoreAllowance => None,
-                v01::AllocatableResource::ProductStatementStoreAllowance(index) => {
+                latest::AllocatableResource::StatementStoreAllowance => None,
+                latest::AllocatableResource::ProductStatementStoreAllowance(index) => {
                     Some(index.clone())
                 }
                 _ => continue,
@@ -212,11 +218,9 @@ impl ResourceAllocation for ProductRuntimeHost {
         )
         .await
         .map_err(|err| {
-            CallError::Domain(HostRequestResourceAllocationError::V1(
-                v01::ResourceAllocationError::Unknown {
+				CallError::Domain(latest::ResourceAllocationError::Unknown {
                     reason: err.to_string(),
-                },
-            ))
+				})
         })?
         .map_err(|err| CallError::HostFailure {
             reason: format!("resource allocation confirmation failed: {err:?}"),
@@ -250,11 +254,9 @@ impl ResourceAllocation for ProductRuntimeHost {
         }
         if !confirmed {
             // Declining an increase does not revoke an existing durable grant.
-            return Err(CallError::Domain(HostRequestResourceAllocationError::V1(
-                v01::ResourceAllocationError::Unknown {
+            return Err(CallError::Domain(latest::ResourceAllocationError::Unknown {
                     reason: "User rejected resource allocation".to_string(),
-                },
-            )));
+				}));
         }
         for (request, _) in &grants {
             let status = service
@@ -276,13 +278,17 @@ impl ResourceAllocation for ProductRuntimeHost {
                 .allocate_resources(&cx, &session, product_id, inner),
         )
         .await
-        .map(HostRequestResourceAllocationResponse::V1)
         .map_err(|err| {
-            CallError::Domain(HostRequestResourceAllocationError::V1(
-                v01::ResourceAllocationError::Unknown {
+				CallError::Domain(latest::ResourceAllocationError::Unknown {
                     reason: err.to_string(),
-                },
-            ))
+				})
+			})
+		}
+		.await;
+		result
+			.map(|response| HostRequestResourceAllocationResponse::from_latest(response, version))
+			.map_err(|error| {
+				from_latest_error::<HostRequestResourceAllocationError>(error, version)
         })
     }
 }
@@ -295,27 +301,28 @@ impl Entropy for ProductRuntimeHost {
         _cx: &CallContext,
         request: HostDeriveEntropyRequest,
     ) -> Result<HostDeriveEntropyResponse, CallError<HostDeriveEntropyError>> {
-        let HostDeriveEntropyRequest::V1(v01::HostDeriveEntropyRequest { context }) = request;
+		let version = request.version();
+		let latest::HostDeriveEntropyRequest { context } = request.into_latest();
+		let result = async {
         let Some(session) = self.authority.current_session() else {
-            return Err(CallError::Domain(HostDeriveEntropyError::V1(
-                v01::HostDeriveEntropyError::Unknown {
+				return Err(CallError::Domain(latest::HostDeriveEntropyError::Unknown {
                     reason: "Not connected".to_string(),
-                },
-            )));
+				}));
         };
         let entropy = self
             .authority
             .derive_entropy(&session, &self.product_id(), &context)
             .map_err(|err| {
-                CallError::Domain(HostDeriveEntropyError::V1(
-                    v01::HostDeriveEntropyError::Unknown {
+					CallError::Domain(latest::HostDeriveEntropyError::Unknown {
                         reason: err.to_string(),
-                    },
-                ))
+					})
             })?;
 
-        Ok(HostDeriveEntropyResponse::V1(
-            v01::HostDeriveEntropyResponse { entropy },
-        ))
+			Ok(latest::HostDeriveEntropyResponse { entropy })
+		}
+		.await;
+		result
+			.map(|response| HostDeriveEntropyResponse::from_latest(response, version))
+			.map_err(|error| from_latest_error::<HostDeriveEntropyError>(error, version))
     }
 }

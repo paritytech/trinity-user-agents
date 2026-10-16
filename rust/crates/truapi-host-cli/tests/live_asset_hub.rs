@@ -10,8 +10,9 @@
 //! are about the chain rather than about host wiring. The provider routes Asset Hub
 //! now that the preset serves it as a role.
 
-use truapi::statement_allowance::collection::PersonhoodCollection;
-use truapi::statement_allowance::{self as alloc, extension::AS_PGAS, pgas};
+use truapi::statement_allowance::{
+	self as alloc, collection::PersonhoodCollection, extension::AS_PGAS, pgas,
+};
 
 const ASSET_HUB_WS: &str = "wss://paseo-asset-hub-next-rpc.polkadot.io";
 
@@ -31,9 +32,7 @@ async fn asset_hub() -> (alloc::rpc::RpcClient, alloc::extension::Metadata) {
     let rpc = alloc::rpc::RpcClient::connect(&asset_hub_ws())
         .await
         .expect("connect to Asset Hub");
-    let metadata = alloc::fetch_metadata(&rpc)
-        .await
-        .expect("Asset Hub metadata");
+	let metadata = alloc::fetch_metadata(&rpc).await.expect("Asset Hub metadata");
     (rpc, metadata)
 }
 
@@ -59,15 +58,9 @@ async fn live_asset_hub_reports_the_product_context_suffix() {
 async fn live_asset_hub_declares_the_pgas_claim_shape() {
     let (_rpc, metadata) = asset_hub().await;
 
+	assert_eq!(metadata.metadata_version(), 16, "the runtime API should serve V16");
     assert_eq!(
-        metadata.metadata_version(),
-        16,
-        "the runtime API should serve V16"
-    );
-    assert_eq!(
-        metadata
-            .extension_info_field_count(AS_PGAS, "Claim")
-            .unwrap(),
+		metadata.extension_info_field_count(AS_PGAS, "Claim").unwrap(),
         5,
         "AsPgas::Claim arity changed; the encoded payload has to change with it"
     );
@@ -108,9 +101,7 @@ async fn live_asset_hub_has_imported_the_current_people_ring_revision() {
     let people_rpc = alloc::rpc::RpcClient::connect(PEOPLE_WS)
         .await
         .expect("connect to the People chain");
-    let people_metadata = alloc::fetch_metadata(&people_rpc)
-        .await
-        .expect("People metadata");
+	let people_metadata = alloc::fetch_metadata(&people_rpc).await.expect("People metadata");
     let at = people_rpc.finalized_head().await.expect("finalized head");
     let revision =
         alloc::ring::read_ring_revision(&people_rpc, &people_metadata, COLLECTION, RING_INDEX, &at)
@@ -166,9 +157,7 @@ async fn live_asset_hub_reports_whether_an_account_holds_a_full_claim() {
             .try_into()
             .unwrap();
     assert!(
-        pgas::holds_a_full_claim(&rpc, &metadata, &funded)
-            .await
-            .expect("balance read"),
+		pgas::holds_a_full_claim(&rpc, &metadata, &funded).await.expect("balance read"),
         "the test identity has claimed PGAS, so it should read as funded"
     );
 
@@ -207,12 +196,14 @@ async fn live_asset_hub_reports_a_skipped_revision_as_pruned() {
 // dotNS gateway: the register_name authorization shape and the username reads.
 // ---------------------------------------------------------------------------
 
-use truapi::host_logic::dotns_gateway::{
+use truapi::{
+	host_logic::dotns_gateway::{
     DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, call_bytes32, classify_labels,
     decode_address, discover_pop_controller, encode_revive_call, is_dotted_lite_username,
     is_pop_issued, label_available, namehash_under, resolve_labels, selector, view_output,
+	},
+	statement_allowance::extension::AS_DOTNS_GATEWAY,
 };
-use truapi::statement_allowance::extension::AS_DOTNS_GATEWAY;
 
 /// The `DotnsRegistrar` (ERC721), the same CREATE3 address on every network
 /// per dotns `DEPLOYMENTS.md`. Only used to find an account that holds a
@@ -242,10 +233,7 @@ struct PlainRpc(alloc::rpc::RpcClient);
 #[truapi::platform::async_trait]
 impl DotnsTransport for PlainRpc {
     async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
-        self.0
-            .get_storage(&key)
-            .await
-            .map_err(|err| err.to_string())
+		self.0.get_storage(&key).await.map_err(|err| err.to_string())
     }
 
     async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
@@ -312,10 +300,7 @@ async fn live_asset_hub_resolves_a_settled_store_over_dotns_discovery() {
     // ownerOf(namehash) on the ERC721 registrar. Eth-derived owners map back
     // to an AccountId32 by `0xEE` padding, which `account_to_h160` truncates.
     let owner_output = transport
-        .view(
-            &DOTNS_REGISTRAR,
-            call_bytes32("ownerOf(uint256)", &minted_node()),
-        )
+		.view(&DOTNS_REGISTRAR, call_bytes32("ownerOf(uint256)", &minted_node()))
         .await
         .expect("registrar ownerOf");
     let owner = decode_address(&owner_output).expect("owner address");
@@ -341,9 +326,7 @@ async fn live_asset_hub_resolves_a_settled_store_over_dotns_discovery() {
     // a digit-only parent cannot pass as a lite name.
     for label in labels.iter().filter(|label| label.contains('.')) {
         assert!(
-            is_pop_issued(&mut transport, &controller, label)
-                .await
-                .expect("isPopIssued"),
+			is_pop_issued(&mut transport, &controller, label).await.expect("isPopIssued"),
             "dotted label {label:?} is not pop-issued"
         );
     }

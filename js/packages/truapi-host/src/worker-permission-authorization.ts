@@ -111,7 +111,8 @@ export async function handleSetPermissionAuthorizationStatus(
       kind: "setPermissionAuthorizationStatusResponse",
       requestId,
       ok: false,
-      error: "setPermissionAuthorizationStatus received before runtime is ready",
+      error:
+        "setPermissionAuthorizationStatus received before runtime is ready",
     });
     return;
   }

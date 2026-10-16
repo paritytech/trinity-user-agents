@@ -10,13 +10,17 @@
 //! cross-host persistence status quo:
 //! <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/storage.md?plain=1#L58-L98>
 
-use futures::channel::mpsc;
-use futures::stream::{self, BoxStream, StreamExt};
+use futures::{
+	channel::mpsc,
+	stream::{self, BoxStream, StreamExt},
+};
 use parity_scale_codec::{Decode, Encode};
 use std::sync::{Arc, Mutex};
 
-use truapi::v01::HostAccountConnectionStatusSubscribeItem;
-use truapi::versioned::account::HostAccountConnectionStatusSubscribeItem as VersionedItem;
+use truapi::{
+	v01::HostAccountConnectionStatusSubscribeItem,
+	versioned::account::HostAccountConnectionStatusSubscribeItem as VersionedItem,
+};
 
 /// Session info for a pairing host's active signing-host session. The 32-byte
 /// sr25519 public key plus optional usernames are sourced from the signing host
@@ -66,7 +70,16 @@ fn non_empty_username(value: &Option<String>) -> bool {
 }
 
 /// SSO session material negotiated by the pairing host with the signing host.
-#[derive(derive_more::Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(
+	derive_more::Debug,
+	Clone,
+	PartialEq,
+	Eq,
+	Encode,
+	Decode,
+	zeroize::Zeroize,
+	zeroize::ZeroizeOnDrop,
+)]
 pub struct SsoSessionInfo {
     /// Pairing host's own 64-byte expanded sr25519 statement-store secret.
     #[debug("\"<redacted>\"")]
@@ -258,10 +271,7 @@ pub fn decode_persisted_session(blob: &[u8]) -> Result<SessionInfo, String> {
     if tagged_trailing {
         return Err("invalid session blob: trailing bytes".to_string());
     }
-    Err(format!(
-        "invalid session blob: no known layout decodes it ({})",
-        failures.join("; ")
-    ))
+	Err(format!("invalid session blob: no known layout decodes it ({})", failures.join("; ")))
 }
 
 /// Holds the currently-active session and broadcasts connection-status
@@ -291,10 +301,7 @@ impl SessionState {
         let should_broadcast = inner.current.as_ref() != Some(&info);
         inner.current = Some(info);
         if should_broadcast {
-            broadcast(
-                &mut inner.subscribers,
-                HostAccountConnectionStatusSubscribeItem::Connected,
-            );
+			broadcast(&mut inner.subscribers, HostAccountConnectionStatusSubscribeItem::Connected);
         }
     }
 
@@ -308,10 +315,7 @@ impl SessionState {
         let should_broadcast = inner.current.as_ref() != Some(&info);
         inner.current = Some(info);
         if should_broadcast {
-            broadcast(
-                &mut inner.subscribers,
-                HostAccountConnectionStatusSubscribeItem::Connected,
-            );
+			broadcast(&mut inner.subscribers, HostAccountConnectionStatusSubscribeItem::Connected);
         }
         true
     }
@@ -330,11 +334,7 @@ impl SessionState {
 
     /// Snapshot of the current session, or `None` when nothing is paired.
     pub fn current(&self) -> Option<SessionInfo> {
-        self.inner
-            .lock()
-            .expect("session-state mutex poisoned")
-            .current
-            .clone()
+		self.inner.lock().expect("session-state mutex poisoned").current.clone()
     }
 
     /// Read the active root without cloning session secrets or pairing state.
@@ -380,8 +380,7 @@ fn broadcast(
 mod tests {
     use super::*;
     use crate::session_usernames::SessionUsernames;
-    use futures::executor::block_on;
-    use futures::{FutureExt, StreamExt};
+	use futures::{FutureExt, StreamExt, executor::block_on};
 
     fn info(pubkey_byte: u8) -> SessionInfo {
         SessionInfo {
@@ -549,12 +548,7 @@ mod tests {
                 decoded.device_enc_public_key,
                 decoded.lite_username.as_deref(),
             ),
-            (
-                [0x77; 32],
-                Some([0x88; 32]),
-                Some([0x99; 32]),
-                Some("alice.dot")
-            ),
+			([0x77; 32], Some([0x88; 32]), Some([0x99; 32]), Some("alice.dot")),
             "identity material was dropped, so the blob was read as the six-field layout"
         );
     }
@@ -584,10 +578,7 @@ mod tests {
             Some(&PERSISTED_SESSION_V1),
             "a written blob must carry the version tag"
         );
-        assert_eq!(
-            decode_persisted_session(&blob).expect("round trip"),
-            original
-        );
+		assert_eq!(decode_persisted_session(&blob).expect("round trip"), original);
     }
 
     #[test]
@@ -684,11 +675,7 @@ mod tests {
                         ("root_entropy_source", entropy_present),
                         ("identity_chat_private_key", chat_key_present),
                     ] {
-                        let expected = if present {
-                            "Some(\"<redacted>\""
-                        } else {
-                            "None"
-                        };
+						let expected = if present { "Some(\"<redacted>\"" } else { "None" };
                         assert!(compact.contains(&format!("{field}:{expected}")));
                     }
                     assert!(!rendered.contains("171"), "entropy exposed");
@@ -721,10 +708,7 @@ mod tests {
             assert!(!rendered.contains("171"), "entropy exposed");
             assert!(!rendered.contains("205"), "chat key exposed");
             assert!(!rendered.contains("ss_secret: ["), "statement key exposed");
-            assert!(
-                !rendered.contains("enc_secret: ["),
-                "encryption key exposed"
-            );
+			assert!(!rendered.contains("enc_secret: ["), "encryption key exposed");
         }
         let blob = encode_persisted_session(&session);
         let decoded = decode_persisted_session(&blob).expect("session should decode");
@@ -811,10 +795,7 @@ mod tests {
         state.set_session(info(0x01));
         let mut stream = state.subscribe();
         let first = block_on(stream.next()).expect("expected initial item");
-        assert_eq!(
-            first,
-            VersionedItem::V1(HostAccountConnectionStatusSubscribeItem::Connected)
-        );
+		assert_eq!(first, VersionedItem::V1(HostAccountConnectionStatusSubscribeItem::Connected));
     }
 
     #[test]
@@ -836,10 +817,7 @@ mod tests {
 
         state.set_session(info(0x01));
         let next = block_on(stream.next()).expect("expected Connected event");
-        assert_eq!(
-            next,
-            VersionedItem::V1(HostAccountConnectionStatusSubscribeItem::Connected)
-        );
+		assert_eq!(next, VersionedItem::V1(HostAccountConnectionStatusSubscribeItem::Connected));
     }
 
     #[test]
@@ -851,10 +829,7 @@ mod tests {
 
         state.clear_session();
         let next = block_on(stream.next()).expect("expected Disconnected event");
-        assert_eq!(
-            next,
-            VersionedItem::V1(HostAccountConnectionStatusSubscribeItem::Disconnected)
-        );
+		assert_eq!(next, VersionedItem::V1(HostAccountConnectionStatusSubscribeItem::Disconnected));
     }
 
     #[test]
@@ -867,10 +842,7 @@ mod tests {
         state.set_session(info(0x01));
 
         let pending = stream.next().now_or_never();
-        assert!(
-            pending.is_none(),
-            "no transition event expected for equivalent session"
-        );
+		assert!(pending.is_none(), "no transition event expected for equivalent session");
     }
 
     #[test]
@@ -883,10 +855,7 @@ mod tests {
         state.set_session(info(0x02));
 
         let next = block_on(stream.next()).expect("expected replacement Connected event");
-        assert_eq!(
-            next,
-            VersionedItem::V1(HostAccountConnectionStatusSubscribeItem::Connected)
-        );
+		assert_eq!(next, VersionedItem::V1(HostAccountConnectionStatusSubscribeItem::Connected));
     }
 
     #[test]
@@ -901,14 +870,8 @@ mod tests {
         state.set_session(info(0x77));
         let a_next = block_on(a.next()).expect("a should receive Connected");
         let b_next = block_on(b.next()).expect("b should receive Connected");
-        assert_eq!(
-            a_next,
-            VersionedItem::V1(HostAccountConnectionStatusSubscribeItem::Connected)
-        );
-        assert_eq!(
-            b_next,
-            VersionedItem::V1(HostAccountConnectionStatusSubscribeItem::Connected)
-        );
+		assert_eq!(a_next, VersionedItem::V1(HostAccountConnectionStatusSubscribeItem::Connected));
+		assert_eq!(b_next, VersionedItem::V1(HostAccountConnectionStatusSubscribeItem::Connected));
     }
 
     /// Clearing a never-set session is a no-op and must not synthesize a
@@ -941,10 +904,7 @@ mod tests {
 
         state.set_session(info(0x33));
         let next = block_on(survivor.next()).expect("survivor must receive Connected");
-        assert_eq!(
-            next,
-            VersionedItem::V1(HostAccountConnectionStatusSubscribeItem::Connected),
-        );
+		assert_eq!(next, VersionedItem::V1(HostAccountConnectionStatusSubscribeItem::Connected),);
 
         // Internally, `set_session`'s broadcast call `retain`-prunes any
         // dropped senders. After the call the subscribers list should have

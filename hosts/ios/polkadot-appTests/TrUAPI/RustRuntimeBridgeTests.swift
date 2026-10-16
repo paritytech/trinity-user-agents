@@ -168,6 +168,7 @@ private func makeBridge(
     ))
 }
 
+
 // MARK: - Tests
 
 /// MainActor suite: MockNavigationRouter is @MainActor, and Swift Testing
@@ -812,6 +813,7 @@ struct RustRuntimeBridgeTests {
         #expect(execution.chainResponses.first?.1 == "{\"ok\":true}")
         #expect(execution.chainClosed == [7])
     }
+
 
     /// Core storage keys (`Data`) are hex-encoded for the underlying store;
     /// a write then read round-trips through the hex key.

@@ -5,22 +5,32 @@ use std::time::Instant;
 
 use futures::StreamExt;
 use tracing::{instrument, warn};
-use truapi::api::Preimage;
-use truapi::versioned::preimage::{
+use truapi::{
+	CallContext, CallError, Subscription,
+	api::Preimage,
+	latest,
+	versioned::{
+		FromLatest, IntoLatest, Versioned,
+		preimage::{
     RemotePreimageLookupSubscribeError, RemotePreimageLookupSubscribeItem,
-    RemotePreimageLookupSubscribeRequest, RemotePreimageSubmitError, RemotePreimageSubmitRequest,
-    RemotePreimageSubmitResponse,
+			RemotePreimageLookupSubscribeRequest, RemotePreimageSubmitError,
+			RemotePreimageSubmitRequest, RemotePreimageSubmitResponse,
+		},
+	},
 };
-use truapi::{CallContext, CallError, Subscription, v01};
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 
-use crate::host_internal::bulletin::preimage_key;
-use crate::runtime::bulletin_rpc::BulletinSubmitError;
-use crate::runtime::{
-    PERMISSION_DENIED_REASON, PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, PREIMAGE_SUBMIT_TIMEOUT,
-    ProductRuntimeHost, bulletin_allowance_error_reason, preimage_submit_error,
-    remote_authority_call, remote_authority_context_until, until_cancelled,
+use super::from_latest_error;
+use crate::{
+	host_internal::bulletin::preimage_key,
+    platform::{PreimageSubmitReview, UserConfirmationReview},
+	runtime::{
+		PERMISSION_DENIED_REASON, PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+		PREIMAGE_SUBMIT_TIMEOUT, ProductRuntimeHost, bulletin_allowance_error_reason,
+		bulletin_rpc::BulletinSubmitError, preimage_submit_error, remote_authority_call,
+        remote_authority_context_until, until_cancelled,
+	},
 };
 
 #[truapi::async_trait]
@@ -34,22 +44,23 @@ impl Preimage for ProductRuntimeHost {
         RemotePreimageLookupSubscribeItem,
         CallError<RemotePreimageLookupSubscribeError>,
     > {
-        let RemotePreimageLookupSubscribeRequest::V1(v01::RemotePreimageLookupSubscribeRequest {
-            key,
-        }) = request;
+		let version = request.version();
+		let request = request.into_latest();
+		let subscription: Subscription<
+			latest::RemotePreimageLookupSubscribeItem,
+			CallError<latest::GenericError>,
+		> = async {
+			let latest::RemotePreimageLookupSubscribeRequest { key } = request;
 
         // A cache hit is final: preimages are content-addressed and immutable.
         // Emit the value once, then keep the subscription open until the
         // caller unsubscribes, since there is nothing left to report.
-        if let Ok(key_bytes) = <[u8; 32]>::try_from(key.as_slice())
-            && let Some(value) = self.services.cached_preimage(&key_bytes)
+			if let Ok(key_bytes) = <[u8; 32]>::try_from(key.as_slice()) &&
+				let Some(value) = self.services.cached_preimage(&key_bytes)
         {
-            let item =
-                RemotePreimageLookupSubscribeItem::V1(v01::RemotePreimageLookupSubscribeItem {
-                    value: Some(value),
-                });
-            let stream =
-                futures::stream::once(async move { Ok(item) }).chain(futures::stream::pending());
+				let item = latest::RemotePreimageLookupSubscribeItem { value: Some(value) };
+				let stream = futures::stream::once(async move { Ok(item) })
+					.chain(futures::stream::pending());
             return Subscription::new(stream);
         }
 
@@ -66,10 +77,8 @@ impl Preimage for ProductRuntimeHost {
                         reason = %error.reason,
                         "preimage lookup platform stream failed"
                     );
-                    return Err(CallError::HostFailure {
-                        reason: error.reason,
-                    });
-                }
+						return Err(CallError::HostFailure { reason: error.reason });
+					},
             };
             let value = value.filter(|value| {
                 let matches = preimage_key(value)[..] == key[..];
@@ -81,12 +90,17 @@ impl Preimage for ProductRuntimeHost {
                 }
                 matches
             });
-            Ok(RemotePreimageLookupSubscribeItem::V1(
-                v01::RemotePreimageLookupSubscribeItem { value },
-            ))
+				Ok(latest::RemotePreimageLookupSubscribeItem { value })
         });
         Subscription::new(stream)
     }
+		.await;
+		Subscription::new(subscription.map(move |result| {
+			result
+				.map(|item| RemotePreimageLookupSubscribeItem::from_latest(item, version))
+				.map_err(|error| from_latest_error(error, version))
+		}))
+	}
 
     #[instrument(skip_all, fields(runtime.method = "preimage.submit"))]
     async fn submit(
@@ -94,16 +108,18 @@ impl Preimage for ProductRuntimeHost {
         cx: &CallContext,
         request: RemotePreimageSubmitRequest,
     ) -> Result<RemotePreimageSubmitResponse, CallError<RemotePreimageSubmitError>> {
-        let RemotePreimageSubmitRequest::V1(value) = request;
+		let version = request.version();
+		let value = request.into_latest();
+		let result = async {
         let Some(session) = self.authority.current_session() else {
             return Err(preimage_submit_error("No active session".to_string()));
         };
         let bulletin = &self.services.bulletin;
         self.require_remote_permission(
-            v01::RemotePermission::PreimageSubmit,
-            RemotePreimageSubmitError::V1(v01::PreimageSubmitError::Unknown {
+				latest::RemotePermission::PreimageSubmit,
+				latest::PreimageSubmitError::Unknown {
                 reason: PERMISSION_DENIED_REASON.to_string(),
-            }),
+				},
         )
         .await?;
         let approval = until_cancelled(
@@ -130,15 +146,11 @@ impl Preimage for ProductRuntimeHost {
             .await
             .map_err(|err| preimage_submit_error(err.reason))?;
 
-        // A test host's allowance was never authorized on chain, so a Bulletin
-        // `store` signed with it would always be refused. The value is kept in
-        // the core under its content key, and the product reads it back through
-        // the same lookup a landed submission answers.
         #[cfg(feature = "test-host")]
         if self.authority.submits_preimages_locally() {
             let key = preimage_key(&value);
             self.services.keep_local_preimage(key, value);
-            return Ok(RemotePreimageSubmitResponse::V1(key.to_vec()));
+				return Ok(key.to_vec());
         }
 
         let key = match bulletin
@@ -146,9 +158,6 @@ impl Preimage for ProductRuntimeHost {
             .await
         {
             Ok(key) => key,
-            // A rejected allowance is the one case a refresh-and-retry can fix:
-            // evict the exhausted key, allocate a fresh (increased) allowance,
-            // and try exactly once more.
             Err(BulletinSubmitError::AllowanceRejected { .. }) => {
                 let authority_cx = remote_authority_context_until(
                     cx,
@@ -172,12 +181,17 @@ impl Preimage for ProductRuntimeHost {
                     .submit_preimage(cx, submission_deadline, &allowance, &value)
                     .await
                     .map_err(|err| preimage_submit_error(err.to_string()))?
-            }
+				},
             Err(err) => return Err(preimage_submit_error(err.to_string())),
         };
         // Move the owned body into the lookup cache (no extra copy) so an
         // immediate product lookup hits before the content backend has it.
         self.prime_preimage_cache(&key, value);
-        Ok(RemotePreimageSubmitResponse::V1(key))
+			Ok(key)
+		}
+		.await;
+		result
+			.map(|response| RemotePreimageSubmitResponse::from_latest(response, version))
+			.map_err(|error| from_latest_error(error, version))
     }
 }

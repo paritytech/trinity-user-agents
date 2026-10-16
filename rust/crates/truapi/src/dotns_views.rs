@@ -18,10 +18,7 @@ fn append_dynamic_string(data: &mut Vec<u8>, value: &str) {
     len[24..].copy_from_slice(&(bytes.len() as u64).to_be_bytes());
     data.extend_from_slice(&len);
     data.extend_from_slice(bytes);
-    data.extend(std::iter::repeat_n(
-        0u8,
-        bytes.len().div_ceil(32) * 32 - bytes.len(),
-    ));
+	data.extend(std::iter::repeat_n(0u8, bytes.len().div_ceil(32) * 32 - bytes.len()));
 }
 
 /// Head word holding the byte offset a dynamic argument's tail starts at,
@@ -60,10 +57,7 @@ pub async fn protocol_component<T: DotnsTransport + ?Sized>(
     name: &str,
 ) -> Result<[u8; 20], String> {
     let output = transport
-        .view(
-            protocol_registry,
-            call_bytes32("get(bytes32)", &registry_key(name)),
-        )
+		.view(protocol_registry, call_bytes32("get(bytes32)", &registry_key(name)))
         .await
         .map_err(|err| format!("ProtocolRegistry.get({name}): {err}"))?;
     decode_address(&output).map_err(|err| format!("ProtocolRegistry.get({name}): {err}"))
@@ -82,26 +76,20 @@ pub async fn network_tld<T: DotnsTransport + ?Sized>(
     match transport.view(registry, call_no_args("tld()")).await {
         Ok(output) => {
             return decode_string(&output).map_err(|err| format!("ProtocolRegistry.tld(): {err}"));
-        }
-        Err(DotnsViewError::Reverted(_)) => {}
+		},
+		Err(DotnsViewError::Reverted(_)) => {},
         Err(DotnsViewError::Failed(reason)) => {
             return Err(format!("ProtocolRegistry.tld(): {reason}"));
-        }
+		},
     }
     let dotns_registry_output = transport
-        .view(
-            registry,
-            call_bytes32("get(bytes32)", &registry_key("registry")),
-        )
+		.view(registry, call_bytes32("get(bytes32)", &registry_key("registry")))
         .await
         .map_err(|err| format!("ProtocolRegistry.get(registry): {err}"))?;
     let dotns_registry = decode_address(&dotns_registry_output)
         .map_err(|err| format!("ProtocolRegistry.get(registry): {err}"))?;
     let exists_output = transport
-        .view(
-            &dotns_registry,
-            call_bytes32("recordExists(bytes32)", &tld_node(TLD_WITHOUT_VIEW)),
-        )
+		.view(&dotns_registry, call_bytes32("recordExists(bytes32)", &tld_node(TLD_WITHOUT_VIEW)))
         .await
         .map_err(|err| format!("DotnsRegistry.recordExists: {err}"))?;
     if decode_bool(&exists_output).map_err(|err| format!("DotnsRegistry.recordExists: {err}"))? {

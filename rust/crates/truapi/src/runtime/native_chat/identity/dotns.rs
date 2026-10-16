@@ -31,8 +31,7 @@ pub(super) struct Owner {
 
 impl Owner {
     pub(super) fn is_unmapped_hint(&self) -> bool {
-        self.account
-            .is_none_or(|account| account[20..] == [0xee; 12])
+		self.account.is_none_or(|account| account[20..] == [0xee; 12])
     }
 }
 
@@ -48,9 +47,7 @@ impl Directory {
             .await?
             .filter(|address| *address != [0; 20])
             .ok_or("current Host network has no dotNS PoP controller")?;
-        let output = snapshot
-            .view(&controller, call_no_args("protocolRegistry()"))
-            .await?;
+		let output = snapshot.view(&controller, call_no_args("protocolRegistry()")).await?;
         let protocol = address(&output)?;
         if protocol == [0; 20] {
             return Err("dotNS protocol registry is unconfigured".into());
@@ -58,9 +55,7 @@ impl Directory {
         let tld = network_tld(&mut snapshot, &protocol).await?;
         // The Host's configured suffix is a consistency check, never permission
         // to try another chain, contract or identity backend when lookup fails.
-        let suffix = tld
-            .strip_prefix('.')
-            .ok_or("dotNS TLD has no leading dot")?;
+		let suffix = tld.strip_prefix('.').ok_or("dotNS TLD has no leading dot")?;
         if suffix != context.network_suffix || !is_dns_label(suffix) {
             return Err("dotNS TLD differs from current Host network".into());
         }
@@ -68,13 +63,7 @@ impl Directory {
         if registry == [0; 20] {
             return Err("dotNS name registry is unconfigured".into());
         }
-        Ok(Self {
-            snapshot,
-            controller,
-            registry,
-            tld: tld_node(&tld),
-            schema,
-        })
+		Ok(Self { snapshot, controller, registry, tld: tld_node(&tld), schema })
     }
 
     pub(super) async fn owner(&mut self, username: &str) -> Result<Option<Owner>, String> {
@@ -92,9 +81,9 @@ impl Directory {
         // Gateway-issued lite names retain the original AccountId32 even before
         // the person maps a Revive address. This is a metadata-directed exact
         // lookup, and still must agree with the live forward registry owner.
-        if is_lite_username(username)
-            && let Some(key) = self.schema.lite_owner_key(username)?
-            && let Some(encoded) = self.snapshot.storage_value(&key).await?
+		if is_lite_username(username) &&
+			let Some(key) = self.schema.lite_owner_key(username)? &&
+			let Some(encoded) = self.snapshot.storage_value(&key).await?
         {
             return Ok(Some(Owner {
                 account: Some(account_for_owner(&encoded, &owner)?),
@@ -104,23 +93,16 @@ impl Directory {
         // ReviveApi_account_id is the canonical mapped H160 -> AccountId32
         // conversion used by dotns-cli's get_substrate_address. Never pad a
         // contract owner or borrow the caller's claimed account as a substitute.
-        let account = match self
-            .snapshot
-            .runtime_call("ReviveApi_account_id", &owner)
-            .await
-        {
+		let account = match self.snapshot.runtime_call("ReviveApi_account_id", &owner).await {
             Ok(encoded) => Some(account_for_owner(&encoded, &owner)?),
             Err(reason) => {
                 // Some deployments cannot invert an unmapped H160. A native
                 // index may supply a candidate, never replace the owner above.
                 tracing::debug!(%reason, "dotNS inverse account lookup unavailable");
                 None
-            }
+			},
         };
-        Ok(Some(Owner {
-            account,
-            address: owner,
-        }))
+		Ok(Some(Owner { account, address: owner }))
     }
 
     pub(super) async fn labels(&mut self, account: &[u8; 32]) -> Result<Vec<String>, String> {
@@ -128,10 +110,8 @@ impl Directory {
         Ok(labels
             .into_iter()
             .filter(|label| {
-                normalize_username(label)
-                    .as_ref()
-                    .is_ok_and(|normalized| normalized == label)
-                    && (is_dns_label(label) || is_lite_username(label))
+				normalize_username(label).as_ref().is_ok_and(|normalized| normalized == label) &&
+					(is_dns_label(label) || is_lite_username(label))
             })
             .collect())
     }
@@ -146,10 +126,7 @@ pub(super) async fn verified_label(
     // Native preference is full then lite. Check EVERY candidate forwards:
     // transferred-away names survive forever in the append-only LabelStore.
     for lite in [false, true] {
-        for label in labels
-            .iter()
-            .filter(|label| is_lite_username(label) == lite)
-        {
+		for label in labels.iter().filter(|label| is_lite_username(label) == lite) {
             let owner = forward_owner(
                 &mut directory.snapshot,
                 &directory.controller,
@@ -170,11 +147,11 @@ fn is_lite_username(label: &str) -> bool {
     // Lookup is not registration: preserve every already-issued numeric suffix
     // verbatim, including deployments with longer suffixes and DNS stems.
     // isPopIssued below is the authority, not today's registration shape rules.
-    label.len() <= 32
-        && label.split_once('.').is_some_and(|(stem, suffix)| {
-            is_dns_label(stem)
-                && !suffix.is_empty()
-                && suffix.bytes().all(|byte| byte.is_ascii_digit())
+	label.len() <= 32 &&
+		label.split_once('.').is_some_and(|(stem, suffix)| {
+			is_dns_label(stem) &&
+				!suffix.is_empty() &&
+				suffix.bytes().all(|byte| byte.is_ascii_digit())
         })
 }
 
@@ -222,8 +199,8 @@ async fn forward_owner<T: DotnsTransport + ?Sized>(
     tld: &[u8; 32],
     username: &str,
 ) -> Result<Option<[u8; 20]>, String> {
-    if !(is_dns_label(username) || is_lite_username(username))
-        || !is_pop_issued(transport, controller, username).await?
+	if !(is_dns_label(username) || is_lite_username(username)) ||
+		!is_pop_issued(transport, controller, username).await?
     {
         return Ok(None);
     }
@@ -232,6 +209,7 @@ async fn forward_owner<T: DotnsTransport + ?Sized>(
         LabelOwner::Owned(owner) => Ok(Some(owner)),
         LabelOwner::Unusable(reason) => Err(reason.to_string()),
     }
+
 }
 
 fn address(bytes: &[u8]) -> Result<[u8; 20], String> {
@@ -280,10 +258,7 @@ mod tests {
             let tld = tld_node(".paseo");
             let atomic = namehash_under(&tld, "alice.42");
             let nested = namehash_under(&namehash_under(&tld, "42"), "alice");
-            let mut registry = Registry {
-                issued: true,
-                owners: HashMap::new(),
-            };
+			let mut registry = Registry { issued: true, owners: HashMap::new() };
             registry.owners.insert(atomic, [1; 20]);
             assert_eq!(
                 forward_owner(&mut registry, &[2; 20], &[3; 20], &tld, "alice.42")
@@ -326,10 +301,7 @@ mod tests {
         futures::executor::block_on(async {
             let tld = tld_node(".paseo");
             let node = namehash_under(&namehash_under(&tld, "0123"), "alice-jane");
-            let mut registry = Registry {
-                issued: true,
-                owners: HashMap::from([(node, [7; 20])]),
-            };
+			let mut registry = Registry { issued: true, owners: HashMap::from([(node, [7; 20])]) };
             assert_eq!(
                 forward_owner(&mut registry, &[2; 20], &[3; 20], &tld, "alice-jane.0123")
                     .await
@@ -367,10 +339,7 @@ mod tests {
     fn backend_candidates_never_override_chain_owner_or_choose_an_ambiguous_match() {
         let account = [3; 32];
         let owner = account_to_h160(&account);
-        assert_eq!(
-            verified_candidate(&[account], &owner).unwrap(),
-            Some(account)
-        );
+		assert_eq!(verified_candidate(&[account], &owner).unwrap(), Some(account));
         assert_eq!(verified_candidate(&[[4; 32]], &owner).unwrap(), None);
         assert!(verified_candidate(&[account, account], &owner).is_err());
         assert!(verified_candidate(&[[0; 32]], &owner).is_err());

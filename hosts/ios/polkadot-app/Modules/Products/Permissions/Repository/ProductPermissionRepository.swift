@@ -461,8 +461,8 @@ extension ProductPermission {
             return [try .statementStoreAllowance(derivationIndex: derivationIndex?.toSelector())]
         case let .accountAccess(targetProductId):
             return [.accountAccess(targetProductId: bareProductLabel(targetProductId))]
-        case .calling, .automaticPreimageSubmit:
-            // These exact account/network scopes have dedicated native settings.
+        case .calling, .automaticPreimageSubmit, .crossProductSignature:
+            // Exact scopes use dedicated settings; signatures remain execution-local.
             return []
         }
     }

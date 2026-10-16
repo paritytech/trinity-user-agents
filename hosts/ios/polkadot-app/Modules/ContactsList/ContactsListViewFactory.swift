@@ -45,6 +45,7 @@ enum ContactsListViewFactory {
 
         let viewModelFactory = ContactsListViewModelFactory(
             chatMessageDecoderFactory: decoderFactory,
+            productIconViewModelFactory: flowState.flowState.iconViewModelFactory,
             chain: chain,
             tokenFormatter: tokenFormatter
         )

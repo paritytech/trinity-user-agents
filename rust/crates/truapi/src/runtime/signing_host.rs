@@ -1,17 +1,5 @@
-//! Signing-host role for wallet-local account authority.
-//!
-//! A signing host owns the user's keys and serves authority requests locally,
-//! with no pairing flow and no SSO channel. Secret material is provided by the
-//! embedding host at unlock through [`LocalActivation::activate_local_session`]
-//! (the host owns its persistence, e.g. the OS keychain) and kept in memory
-//! for the session, zeroized on disconnect.
-//!
-//! Implemented: local session lifecycle, raw-bytes signing, extrinsic-payload
-//! signing, v4 transaction construction (payload fields and extensions arrive
-//! pre-encoded, so no chain metadata is needed), RFC-0007 product entropy,
-//! bandersnatch ring-VRF aliases and membership proofs, and product-scoped
-//! Statement Store allowance keys (native and browser), and Bulletin allowance
-//! keys (native only).
+//! Wallet-local signing authority and incoming SSO handling.
+
 mod allowance_renewal;
 mod local_activation;
 mod local_identity;
@@ -22,8 +10,10 @@ mod sso_responder;
 mod sso_service;
 mod wallet_allowances;
 
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::{
+	collections::{HashMap, HashSet},
+	sync::{Arc, Mutex},
+};
 use truapi::latest::{
     ChainIdentifier, DerivationIndex, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
     HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
@@ -39,47 +29,53 @@ pub use local_activation::LocalActivation;
 pub use local_identity::{LocalIdentity, LocalIdentityContext};
 pub use sso_responder::{
     AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-    PairingProposal, PairingProposalMetadata, ResponderExit,
-};
-pub use sso_responder::{
-    disconnect_paired_host, establish_pairing, notify_pairing_allowance_allocation,
-    notify_pairing_failed, respond_to_pairing, resume_pairing,
+	PairingProposal, PairingProposalMetadata, ResponderExit, disconnect_paired_host,
+	establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
+	respond_to_pairing, resume_pairing,
 };
 pub use sso_service::SigningHostSsoService;
 
-use super::authority::{
+use super::{
+	RuntimeServices,
+	authority::{
     AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
     CreateTransactionAuthorityRequest, PaymentTopUpAuthorityError, ProductAuthority,
     ProductDeviceChatAuthorityError, ProductDeviceChatAuthorityRequest,
     SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
     authority_session_validation_id,
+	},
+	connected_session_ui_info,
+	native_chat::{NativeChatContext, NativeChatRegistry},
+	ring_vrf_registry::RingVrfRegistryStore,
+	validate_vrf_transcript,
 };
-use super::native_chat::{NativeChatContext, NativeChatRegistry};
-use super::ring_vrf_registry::RingVrfRegistryStore;
-use super::{RuntimeServices, connected_session_ui_info, validate_vrf_transcript};
-use crate::host_internal::extrinsic::build_local_transaction;
-use crate::host_internal::sso_messages::{
-    OnExistingAllowancePolicy, PaymentTopUpRequest, ProductRequest, RingVrfError,
-};
-use crate::host_internal::transaction::sign_extrinsic_payload;
-use crate::host_logic::entropy::derive_product_entropy;
-use crate::host_logic::features::genesis_for;
-use crate::host_logic::media_protocol::UnsignedAdvertisement;
-use crate::host_logic::product_account::{
-    ProductAccountError, SR25519_SIGNING_CONTEXT, derivation_index_bytes, derive_identity_keypair,
-    derive_product_keypair, derive_product_subtree_keypair, derive_ring_vrf_entropy,
+use crate::{
+	host_internal::{
+		extrinsic::build_local_transaction,
+		sso_messages::{OnExistingAllowancePolicy, PaymentTopUpRequest, ProductRequest, RingVrfError},
+		transaction::sign_extrinsic_payload,
+	},
+	host_logic::{
+		entropy::derive_product_entropy,
+		features::genesis_for,
+		media_protocol::UnsignedAdvertisement,
+		product_account::{
+			ProductAccountError, SR25519_SIGNING_CONTEXT, derivation_index_bytes,
+			derive_full_person_ring_vrf_entropy, derive_identity_keypair,
+			derive_lite_person_ring_vrf_entropy, derive_product_keypair,
+			derive_product_subtree_keypair, derive_ring_vrf_entropy,
     derive_root_keypair_from_entropy, personhood_product_id,
+		},
+		raw_signing::raw_payload_bytes,
+		session::{SessionInfo, SessionState},
+	},
+	runtime::{
+		auth_state::AuthStateMachine,
+		sso_service::SsoWithdrawals,
+		statement_allowance::{self, CollectionCandidate, collection::PersonhoodCollection},
+		vrf::{self, Vrf},
+	},
 };
-use crate::host_logic::product_account::{
-    derive_full_person_ring_vrf_entropy, derive_lite_person_ring_vrf_entropy,
-};
-use crate::host_logic::raw_signing::raw_payload_bytes;
-use crate::host_logic::session::{SessionInfo, SessionState};
-use crate::runtime::auth_state::AuthStateMachine;
-use crate::runtime::sso_service::SsoWithdrawals;
-use crate::runtime::statement_allowance::collection::PersonhoodCollection;
-use crate::runtime::statement_allowance::{self, CollectionCandidate};
-use crate::runtime::vrf::{self, Vrf};
 use ring_vrf::{
     ChainRingResolver, MemberCandidate, RingResolver, create_proof, development_context_bytes,
 };
@@ -95,8 +91,10 @@ use crate::platform::{
     PermissionAuthorizationStatus, Platform, ProductContext, SignVrfReview, UserConfirmationReview,
     normalize_product_identifier,
 };
-use truapi::versioned::account::{HostRequestLoginError, HostRequestLoginResponse};
-use truapi::{CallContext, CallError, v01};
+use truapi::{
+	CallContext, CallError, v01,
+	versioned::account::{HostRequestLoginError, HostRequestLoginResponse},
+};
 use zeroize::Zeroizing;
 
 #[derive(Default)]
@@ -302,8 +300,7 @@ impl SigningHost {
     /// Whether allocation is answered as granted without performing it.
     #[cfg(feature = "test-host")]
     pub fn grants_allowances_unchecked(&self) -> bool {
-        self.grant_allowances_unchecked
-            .load(std::sync::atomic::Ordering::Relaxed)
+		self.grant_allowances_unchecked.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Keep preimage submissions in the core instead of the Bulletin chain.
@@ -315,23 +312,18 @@ impl SigningHost {
             .store(local, core::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Answer resource allocation as granted without performing it.
+	/// Answer resource allocation as granted without performing it in test hosts.
     #[cfg(feature = "test-host")]
     pub fn set_grant_allowances_unchecked(&self, granted: bool) {
         self.grant_allowances_unchecked
             .store(granted, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Answer these resource tags as refused, replacing any earlier set.
-    ///
-    /// The tag is the `AllocatableResource` variant name, so
-    /// `SmartContractAllowance` withholds every derivation index.
+	/// Replace refused resource tags; SmartContractAllowance covers every index.
     #[cfg(feature = "test-host")]
     pub(crate) fn set_withheld_resources(&self, tags: Vec<String>) {
-        *self
-            .withheld_resources
-            .lock()
-            .expect("withheld resource mutex poisoned") = tags.into_iter().collect();
+		*self.withheld_resources.lock().expect("withheld resource mutex poisoned") =
+			tags.into_iter().collect();
     }
 
     /// Whether `resource` is answered as refused.
@@ -447,11 +439,8 @@ impl SigningHost {
     fn product_subtree_secret(&self, product_id: &str) -> Result<[u8; 64], AuthorityError> {
         let entropy = self.root_entropy()?;
         let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
-        let product_id = normalize_product_identifier(product_id).map_err(|err| {
-            AuthorityError::Unavailable {
-                reason: err.to_string(),
-            }
-        })?;
+		let product_id = normalize_product_identifier(product_id)
+			.map_err(|err| AuthorityError::Unavailable { reason: err.to_string() })?;
         derive_product_subtree_keypair(&root, &product_id)
             .map(|keypair| keypair.secret.to_bytes())
             .map_err(product_authority_error)
@@ -477,11 +466,8 @@ impl SigningHost {
         if owner != session.public_key {
             return Err(AuthorityError::Disconnected);
         }
-        let product_id = normalize_product_identifier(product_id).map_err(|err| {
-            AuthorityError::Unavailable {
-                reason: err.to_string(),
-            }
-        })?;
+		let product_id = normalize_product_identifier(product_id)
+			.map_err(|err| AuthorityError::Unavailable { reason: err.to_string() })?;
         derive_product_subtree_keypair(&root, &product_id).map_err(product_authority_error)?;
 
         let mut state = self
@@ -589,12 +575,8 @@ impl SigningHost {
         let entropy = self.root_entropy()?;
         let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
         let owner = root.public.to_bytes();
-        let product_id =
-            normalize_product_identifier(&account.dot_ns_identifier).map_err(|err| {
-                AuthorityError::Unavailable {
-                    reason: err.to_string(),
-                }
-            })?;
+		let product_id = normalize_product_identifier(&account.dot_ns_identifier)
+			.map_err(|err| AuthorityError::Unavailable { reason: err.to_string() })?;
         derive_product_keypair(
             &root,
             &product_id,
@@ -608,8 +590,7 @@ impl SigningHost {
         &self,
         account: &v01::ProductAccountId,
     ) -> Result<schnorrkel::Keypair, AuthorityError> {
-        self.product_keypair_with_owner(account)
-            .map(|(_, keypair)| keypair)
+		self.product_keypair_with_owner(account).map(|(_, keypair)| keypair)
     }
 
     fn identity_keypair(&self) -> Result<schnorrkel::Keypair, AuthorityError> {
@@ -618,10 +599,7 @@ impl SigningHost {
     }
 
     fn install_local_session(&self, secret: Zeroizing<Vec<u8>>, session: SessionInfo) {
-        let mut state = self
-            .local_grants
-            .lock()
-            .expect("local AutoSigning grant mutex poisoned");
+		let mut state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
         state.advance_activation();
         self.services.contacts_session_changed();
         *self
@@ -634,15 +612,13 @@ impl SigningHost {
         if let Some(session) = self.current_local_session()
             && let Ok(context) = self.native_chat_context(&session)
         {
+			self.native_chat.ensure_host_channel(context.clone());
             self.native_chat.resume_wallet_recovery(context);
         }
     }
 
     fn clear_local_session(&self) {
-        let mut state = self
-            .local_grants
-            .lock()
-            .expect("local AutoSigning grant mutex poisoned");
+		let mut state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
         state.advance_activation();
         self.services.contacts_session_changed();
         self.root_entropy
@@ -655,10 +631,7 @@ impl SigningHost {
     }
 
     fn current_local_session(&self) -> Option<AuthoritySession> {
-        let state = self
-            .local_grants
-            .lock()
-            .expect("local AutoSigning grant mutex poisoned");
+		let state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
         let session = self.session_state.current()?;
         Some(AuthoritySession::from_session_info(
             &session,
@@ -807,9 +780,7 @@ impl SigningHost {
         let root = self.root_entropy()?;
         derive_ring_vrf_entropy(&root, &handle.dot_ns_identifier, &handle.derivation_index)
             .map(Zeroizing::new)
-            .map_err(|err| RingVrfError::Unknown {
-                reason: err.to_string(),
-            })
+			.map_err(|err| RingVrfError::Unknown { reason: err.to_string() })
     }
 
     /// Every personhood collection this wallet can derive allowance aliases for,
@@ -850,30 +821,22 @@ impl SigningHost {
         if owner != personhood_product_id(&self.network_suffix) {
             return Ok(());
         }
-        let chains =
-            self.platform
+		let chains = self
+			.platform
                 .supported_chains()
                 .await
-                .map_err(|error| RingVrfError::Unknown {
-                    reason: error.reason,
-                })?;
+			.map_err(|error| RingVrfError::Unknown { reason: error.reason })?;
         let chain_id =
             genesis_for(&chains, ChainIdentifier::People).ok_or(RingVrfError::RingNotFound)?;
-        let entries = self
-            .ring_vrf_registry
-            .owner_entries(session.public_key, owner)
-            .await?;
-        let missing = [
-            (PersonhoodCollection::People, 0),
-            (PersonhoodCollection::LitePeople, 1),
-        ]
+		let entries = self.ring_vrf_registry.owner_entries(session.public_key, owner).await?;
+		let missing = [(PersonhoodCollection::People, 0), (PersonhoodCollection::LitePeople, 1)]
         .into_iter()
         .filter(|(collection, index)| {
             !entries.iter().any(|entry| {
-                entry.handle.derivation_index == DerivationIndex::Index(*index)
-                    && entry.rings.iter().any(|ring| {
-                        ring.chain_id == chain_id
-                            && matches!(
+					entry.handle.derivation_index == DerivationIndex::Index(*index) &&
+						entry.rings.iter().any(|ring| {
+							ring.chain_id == chain_id &&
+								matches!(
                                 ring.junctions.as_slice(),
                                 [RingLocationJunction::PalletInstance(_), RingLocationJunction::CollectionId(identifier)]
                                     if identifier.as_slice() == collection.identifier()
@@ -972,9 +935,7 @@ impl SigningHost {
         vrf: &Vrf,
         entropy: &[u8; 32],
     ) -> Result<MemberCandidate, RingVrfError> {
-        Ok(MemberCandidate {
-            member: vrf.member(entropy)?,
-        })
+		Ok(MemberCandidate { member: vrf.member(entropy)? })
     }
 
     /// Whether `calling_product_id` may act on `handle`'s ring-VRF key.
@@ -987,10 +948,7 @@ impl SigningHost {
         calling_product_id: &str,
         handle: &v01::ProductAccountId,
     ) -> Result<
-        (
-            v01::ProductAccountId,
-            crate::runtime::product_manifest::AuthorizedAccess,
-        ),
+		(v01::ProductAccountId, crate::runtime::product_manifest::AuthorizedAccess),
         RingVrfError,
     > {
         let access = crate::runtime::product_manifest::ring_vrf_key_access_granted(
@@ -1013,24 +971,20 @@ impl SigningHost {
         &self,
         ring: &v01::RingLocation,
     ) -> Result<Vec<v01::ProductAccountId>, RingVrfError> {
-        let session = self.current_local_session().ok_or(RingVrfError::Unknown {
-            reason: "no active session".to_string(),
-        })?;
-        self.ring_vrf_registry
-            .providers(session.public_key, ring)
-            .await
+		let session = self
+			.current_local_session()
+			.ok_or(RingVrfError::Unknown { reason: "no active session".to_string() })?;
+		self.ring_vrf_registry.providers(session.public_key, ring).await
     }
 
     pub async fn selected_ring_vrf_provider(
         &self,
         ring: &v01::RingLocation,
     ) -> Result<Option<v01::ProductAccountId>, RingVrfError> {
-        let session = self.current_local_session().ok_or(RingVrfError::Unknown {
-            reason: "no active session".to_string(),
-        })?;
-        self.ring_vrf_registry
-            .selected_provider(session.public_key, ring)
-            .await
+		let session = self
+			.current_local_session()
+			.ok_or(RingVrfError::Unknown { reason: "no active session".to_string() })?;
+		self.ring_vrf_registry.selected_provider(session.public_key, ring).await
     }
 
     pub async fn select_ring_vrf_provider(
@@ -1038,12 +992,10 @@ impl SigningHost {
         ring: v01::RingLocation,
         handle: v01::ProductAccountId,
     ) -> Result<(), RingVrfError> {
-        let session = self.current_local_session().ok_or(RingVrfError::Unknown {
-            reason: "no active session".to_string(),
-        })?;
-        self.ring_vrf_registry
-            .select_provider(session.public_key, ring, handle)
-            .await
+		let session = self
+			.current_local_session()
+			.ok_or(RingVrfError::Unknown { reason: "no active session".to_string() })?;
+		self.ring_vrf_registry.select_provider(session.public_key, ring, handle).await
     }
 
     async fn sign_vrf_request(
@@ -1072,7 +1024,8 @@ impl SigningHost {
                 &request.account.dot_ns_identifier,
             );
         if !granted {
-            let confirmed = super::until_cancelled(
+			let confirmed =
+				super::until_cancelled(
                 cx,
                 self.platform
                     .confirm_user_action(UserConfirmationReview::SignVrf(SignVrfReview {
@@ -1093,10 +1046,7 @@ impl SigningHost {
         let (pre_output, proof) = crate::dynamic_vrf::sign_dynamic_vrf(
             &keypair,
             &request.transcript_label,
-            request
-                .items
-                .iter()
-                .map(|item| (item.label.as_slice(), item.value.as_slice())),
+			request.items.iter().map(|item| (item.label.as_slice(), item.value.as_slice())),
         );
         Ok(v01::VrfSignature { pre_output, proof })
     }
@@ -1211,17 +1161,11 @@ impl ProductAuthority for SigningHost {
         _product: &ProductContext,
     ) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
         if let Some(session) = self.session_state.current() {
-            self.auth_state
-                .connected(&connected_session_ui_info(&session));
-            Ok(HostRequestLoginResponse::V1(
-                v01::HostRequestLoginResponse::AlreadyConnected,
-            ))
+			self.auth_state.connected(&connected_session_ui_info(&session));
+			Ok(HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::AlreadyConnected))
         } else {
-            // The host activates a local session out of band once the wallet
-            // is unlocked; there is no in-core login prompt to drive.
-            Ok(HostRequestLoginResponse::V1(
-                v01::HostRequestLoginResponse::Rejected,
-            ))
+			// Wallet unlock and session activation are platform-owned.
+			Ok(HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Rejected))
         }
     }
 
@@ -1279,8 +1223,7 @@ impl ProductAuthority for SigningHost {
                 current.public_key,
                 calling_product_id,
                 &account.dot_ns_identifier,
-            )
-        {
+			) {
             Ok(AutoSigningGrant::Active)
         } else {
             Ok(AutoSigningGrant::Absent)
@@ -1294,8 +1237,7 @@ impl ProductAuthority for SigningHost {
         calling_product_id: String,
         request: v01::HostAccountSignVrfRequest,
     ) -> Result<v01::VrfSignature, AuthorityError> {
-        self.sign_vrf_request(cx, session, calling_product_id, request, true)
-            .await
+		self.sign_vrf_request(cx, session, calling_product_id, request, true).await
     }
 
     async fn sign_payload(
@@ -1357,10 +1299,7 @@ impl ProductAuthority for SigningHost {
             .secret
             .sign_simple(SR25519_SIGNING_CONTEXT, &message, &keypair.public)
             .to_bytes();
-        Ok(v01::HostSignPayloadResponse {
-            signature: signature.to_vec(),
-            signed_transaction: None,
-        })
+		Ok(v01::HostSignPayloadResponse { signature: signature.to_vec(), signed_transaction: None })
     }
 
     async fn create_transaction(
@@ -1421,7 +1360,7 @@ impl ProductAuthority for SigningHost {
                 )
                 .await
                 .map_err(AuthorityError::from)
-            }
+			},
             CreateTransactionAuthorityRequest::IdentityAccount(request) => {
                 let keypair = self.identity_keypair()?;
                 if keypair.public.to_bytes() != request.signer {
@@ -1473,22 +1412,20 @@ impl ProductAuthority for SigningHost {
             Err(RingVrfError::NotAllowlisted) => None,
             Err(err) => return Err(err),
         };
-        // The grant admits the caller's own context and the granting product's,
-        // and no one else's, exactly as on `create_proof`. The alias this returns
-        // and the alias a proof attests are one VRF evaluation, so guarding only
-        // the proof would leave the same bytes reachable through this read.
+		// The context is held to the same rule as on `create_proof`: the alias and
+		// the proof come from one VRF evaluation.
         let key_handle = match granted {
             Some((key_handle, access)) => {
-                crate::runtime::product_manifest::require_own_context(
+				crate::runtime::product_manifest::require_context_access(
+					&self.services,
                     &access,
                     &request.payload.context,
-                )?;
+				)
+				.await?;
                 key_handle
-            }
+			},
             None => {
-                // No grant: the prompt path, as before. Both arguments are
-                // normalized first so the decision is filed under, and read
-                // back from, the identity the gate would have decided about.
+				// Permission lookups and prompts must use the same canonical identifiers.
                 let requester = normalize_product_identifier(&request.calling_product_id)
                     .map_err(|_| RingVrfError::NotAllowlisted)?;
                 let owner =
@@ -1502,22 +1439,20 @@ impl ProductAuthority for SigningHost {
                 )
                 .await
                 {
-                    Ok(PermissionAuthorizationStatus::Authorized) => {}
+					Ok(PermissionAuthorizationStatus::Authorized) => {},
                     Ok(
-                        PermissionAuthorizationStatus::Denied
-                        | PermissionAuthorizationStatus::NotDetermined,
+						PermissionAuthorizationStatus::Denied |
+						PermissionAuthorizationStatus::NotDetermined,
                     ) => return Err(RingVrfError::Rejected),
                     Err(err) => {
-                        return Err(RingVrfError::Unknown {
-                            reason: err.to_string(),
-                        });
-                    }
+						return Err(RingVrfError::Unknown { reason: err.to_string() });
+					},
                 }
                 v01::ProductAccountId {
                     dot_ns_identifier: owner,
                     derivation_index: request.payload.key_handle.derivation_index.clone(),
                 }
-            }
+			},
         };
         let vrf = vrf::load().await?;
         let entropy = self
@@ -1535,10 +1470,7 @@ impl ProductAuthority for SigningHost {
         self.require_current_product_session(session, &key_handle.dot_ns_identifier)?;
         let context = development_context_bytes(&request.payload.context);
         let alias = vrf.alias(&entropy, &context)?;
-        Ok(v01::ContextualAlias {
-            context,
-            alias: alias.to_vec(),
-        })
+		Ok(v01::ContextualAlias { context, alias: alias.to_vec() })
     }
 
     async fn create_proof(
@@ -1551,16 +1483,14 @@ impl ProductAuthority for SigningHost {
         let (key_handle, access) = self
             .require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
             .await?;
-        // A grant lets the caller act with the owner's key in the caller's own
-        // context. It does not let it choose whose pseudonym to mint: the
-        // contextual alias is a function of (owner key, context), so an
-        // unconstrained context would let a grantee produce the alias the owner
-        // presents to a third product that granted nothing. That third party
-        // cannot consent here and is not a party to the grant.
-        //
-        // The owner's own calls are unaffected; a cross-product caller is held to
-        // its own context or the granting product's.
-        crate::runtime::product_manifest::require_own_context(&access, &request.payload.context)?;
+		// A grant cannot expose the owner's alias in a third product's context unless
+		// that product's manifest grants the caller `context`.
+		crate::runtime::product_manifest::require_context_access(
+			&self.services,
+			&access,
+			&request.payload.context,
+		)
+		.await?;
         let vrf = vrf::load().await?;
         let entropy = self
             .resolve_ring_vrf_key_for_ring(
@@ -1571,28 +1501,18 @@ impl ProductAuthority for SigningHost {
             )
             .await?;
         let candidate = self.ring_vrf_member_candidate(&vrf, &entropy)?;
-        let resolved = self
-            .ring_resolver
-            .resolve(&request.payload.ring_location, &[candidate])
-            .await?;
+		let resolved =
+			self.ring_resolver.resolve(&request.payload.ring_location, &[candidate]).await?;
         // Reject a stale request if the local session disconnected or changed
         // while its chain snapshot was being resolved.
         self.require_current_product_session(session, &request.calling_product_id)?;
         self.require_current_product_session(session, &key_handle.dot_ns_identifier)?;
         let context = development_context_bytes(&request.payload.context);
-        let (proof, alias) = create_proof(
-            &vrf,
-            &entropy,
-            &resolved,
-            &context,
-            &request.payload.message,
-        )?;
+		let (proof, alias) =
+			create_proof(&vrf, &entropy, &resolved, &context, &request.payload.message)?;
         Ok(v01::HostAccountCreateProofResponse {
             proof,
-            contextual_alias: v01::ContextualAlias {
-                context,
-                alias: alias.to_vec(),
-            },
+			contextual_alias: v01::ContextualAlias { context, alias: alias.to_vec() },
             ring_index: resolved.ring_index,
             ring_revision: resolved.ring_revision,
         })
@@ -1608,11 +1528,8 @@ impl ProductAuthority for SigningHost {
         self.ring_resolver.validate(&request.payload.ring).await?;
 
         let handle = v01::ProductAccountId {
-            dot_ns_identifier: normalize_product_identifier(&request.calling_product_id).map_err(
-                |err| RingVrfError::Unknown {
-                    reason: err.to_string(),
-                },
-            )?,
+			dot_ns_identifier: normalize_product_identifier(&request.calling_product_id)
+				.map_err(|err| RingVrfError::Unknown { reason: err.to_string() })?,
             derivation_index: request.payload.index,
         };
         let entropy = self.ring_vrf_entropy(session, &handle)?;
@@ -1653,16 +1570,14 @@ impl ProductAuthority for SigningHost {
             )
             .await
             {
-                Ok(PermissionAuthorizationStatus::Authorized) => {}
+				Ok(PermissionAuthorizationStatus::Authorized) => {},
                 Ok(
-                    PermissionAuthorizationStatus::Denied
-                    | PermissionAuthorizationStatus::NotDetermined,
+					PermissionAuthorizationStatus::Denied |
+					PermissionAuthorizationStatus::NotDetermined,
                 ) => return Err(RingVrfError::Rejected),
                 Err(err) => {
-                    return Err(RingVrfError::Unknown {
-                        reason: err.to_string(),
-                    });
-                }
+					return Err(RingVrfError::Unknown { reason: err.to_string() });
+				},
             }
         }
 
@@ -1787,10 +1702,7 @@ impl ProductAuthority for SigningHost {
     ) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
         self.require_current_product_session(session, &product_id)?;
         #[cfg(feature = "test-host")]
-        if self
-            .grant_allowances_unchecked
-            .load(std::sync::atomic::Ordering::Relaxed)
-        {
+		if self.grant_allowances_unchecked.load(std::sync::atomic::Ordering::Relaxed) {
             // Nothing is allocated and no proof is built: a suite in this mode
             // learns that its product handles a grant, not that a host would
             // have given one. A withheld tag is still refused here, so the one
@@ -1842,7 +1754,7 @@ impl ProductAuthority for SigningHost {
                     )
                     .await
                     .map(|_| v01::AllocationOutcome::Allocated)
-                }
+				},
                 v01::AllocatableResource::SmartContractAllowance(index) => {
                     sso_responder::allocate_smart_contract_allowance(
                         &self.services,
@@ -1854,7 +1766,7 @@ impl ProductAuthority for SigningHost {
                     )
                     .await
                     .map(|()| v01::AllocationOutcome::Allocated)
-                }
+				},
                 v01::AllocatableResource::AutoSigning => self
                     .grant_auto_signing(session, &product_id)
                     .map(|_| v01::AllocationOutcome::Allocated)
@@ -1877,7 +1789,7 @@ impl ProductAuthority for SigningHost {
                 Err(reason) => {
                     tracing::warn!(%product_id, %reason, "direct resource allocation item failed");
                     outcomes.push(v01::AllocationOutcome::NotAvailable);
-                }
+				},
             }
         }
         Ok(v01::HostRequestResourceAllocationResponse { outcomes })
@@ -1915,11 +1827,8 @@ impl ProductAuthority for SigningHost {
 
     #[cfg(feature = "test-host")]
     fn submits_preimages_locally(&self) -> bool {
-        self.grant_allowances_unchecked
-            .load(std::sync::atomic::Ordering::Relaxed)
-            || self
-                .submit_preimages_locally
-                .load(core::sync::atomic::Ordering::Relaxed)
+		self.grant_allowances_unchecked.load(std::sync::atomic::Ordering::Relaxed) ||
+			self.submit_preimages_locally.load(core::sync::atomic::Ordering::Relaxed)
     }
 
     fn forget_statement_store_allowance_key(&self, product_id: &str, public_key: [u8; 32]) {
@@ -2019,11 +1928,8 @@ impl ProductAuthority for SigningHost {
     ) -> Result<[u8; 32], AuthorityError> {
         self.require_current_product_session(session, product_id)?;
         let entropy = self.root_entropy()?;
-        derive_product_entropy(&entropy, product_id, context).map_err(|err| {
-            AuthorityError::Unknown {
-                reason: err.to_string(),
-            }
-        })
+		derive_product_entropy(&entropy, product_id, context)
+			.map_err(|err| AuthorityError::Unknown { reason: err.to_string() })
     }
 
     fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError> {
@@ -2032,9 +1938,7 @@ impl ProductAuthority for SigningHost {
         // contact hashes alike whichever role the user is running.
         let root_entropy_source =
             crate::host_logic::entropy::root_entropy_source(&self.root_entropy()?);
-        Ok(crate::runtime::contacts::handle_key_from_root_source(
-            &root_entropy_source,
-        ))
+		Ok(crate::runtime::contacts::handle_key_from_root_source(&root_entropy_source))
     }
 }
 
@@ -2060,9 +1964,7 @@ fn local_session_generation(
 }
 
 fn product_authority_error(err: ProductAccountError) -> AuthorityError {
-    AuthorityError::Unavailable {
-        reason: err.to_string(),
-    }
+	AuthorityError::Unavailable { reason: err.to_string() }
 }
 
 #[cfg(test)]
@@ -2070,58 +1972,67 @@ mod tests {
     mod allowance_keys;
     mod auto_signing;
     mod cross_product_account;
-    mod raw_signing;
     #[cfg(feature = "test-host")]
     mod local_preimages;
+	mod raw_signing;
     #[cfg(feature = "test-host")]
     mod withheld_resources;
 
     use std::sync::Arc;
 
-    use super::super::authority::{
+	use super::{
+		super::{
+			ProductAuthority, ProductRuntimeHost, RuntimeServices, SigningHostRole,
+			authority::{
         AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest,
         ProductDeviceChatAuthorityError, ProductDeviceChatAuthorityRequest,
         SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
+			},
+		},
+		LocalActivation, TEST_NETWORK_SUFFIX,
+		ring_vrf::{MemberCandidate, ResolvedRing, RingResolver},
     };
-    use super::super::{ProductAuthority, ProductRuntimeHost, RuntimeServices, SigningHostRole};
-    use super::TEST_NETWORK_SUFFIX;
-    use super::ring_vrf::{MemberCandidate, ResolvedRing, RingResolver};
-    use super::{LocalActivation, RingVrfError, SR25519_SIGNING_CONTEXT};
-    use crate::host_internal::extrinsic::tests::split_v4;
-    use crate::host_internal::permissions::PermissionsService;
-    use crate::host_internal::sso_messages::{
+	use crate::{
+		host_internal::{
+			extrinsic::tests::split_v4,
+			permissions::PermissionsService,
+			sso_messages::{
         ProductDeviceChatResponse, ProductRequest, RemoteMessage, RemoteMessageData,
-        SsoProductDeviceChatOperation, v1,
-    };
-    use crate::host_internal::transaction::{
-        extrinsic_payload_extensions, extrinsic_payload_preimage,
-    };
-    use crate::host_logic::product_account::{
-        derive_identity_keypair, derive_product_keypair, derive_ring_vrf_entropy,
-        derive_root_keypair_from_entropy, index_bytes,
-    };
-    use crate::platform::{
+				RingVrfError, SsoProductDeviceChatOperation, v1,
+			},
+			transaction::{extrinsic_payload_extensions, extrinsic_payload_preimage},
+		},
+		host_logic::product_account::{
+			SR25519_SIGNING_CONTEXT, derive_identity_keypair, derive_product_keypair,
+			derive_ring_vrf_entropy, derive_root_keypair_from_entropy, index_bytes,
+		},
+		platform::{
         HostInfo, PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform,
         PlatformInfo, ProductContext, SigningHostConfig,
+		},
+		runtime::{sso_service::Dispatch, statement_allowance::collection::PersonhoodCollection},
+		test_support::{StubPlatform, test_spawner},
     };
-    use crate::runtime::sso_service::Dispatch;
-    use crate::runtime::statement_allowance::collection::PersonhoodCollection;
-    use crate::test_support::{StubPlatform, test_spawner};
-    use truapi::api::{Account, Entropy, ResourceAllocation, Signing};
-    use truapi::latest::{
+	use truapi::{
+		CallContext, CallError,
+		api::{Account, Entropy, ResourceAllocation, Signing},
+		latest::{
         HostAccountCreateProofRequest, HostAccountGetAliasRequest,
         HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
-    };
-    use truapi::versioned::account::{
+		},
+		v01,
+		versioned::{
+			account::{
         HostAccountGetError, HostAccountGetRequest, HostProductDeviceChatError,
         HostProductDeviceChatRequest, HostProductDeviceChatResponse,
-    };
-    use truapi::versioned::entropy::HostDeriveEntropyRequest;
-    use truapi::versioned::resource_allocation::{
+			},
+			entropy::HostDeriveEntropyRequest,
+			resource_allocation::{
         HostRequestResourceAllocationRequest, HostRequestResourceAllocationResponse,
+			},
+			signing::{HostSignRawError, HostSignRawRequest, HostSignRawResponse},
+		},
     };
-    use truapi::versioned::signing::{HostSignRawError, HostSignRawRequest, HostSignRawResponse};
-    use truapi::{CallContext, CallError, v01};
 
     const ENTROPY: [u8; 16] = [0xAB; 16];
 
@@ -2229,10 +2140,7 @@ mod tests {
         // above; the granted path is guarded by
         // `a_context_grant_lets_a_foreign_product_prove_with_the_owners_key`
         // and its M14 pair.
-        assert!(
-            !granted,
-            "the closed default: no manifest reachable means no grant"
-        );
+		assert!(!granted, "the closed default: no manifest reachable means no grant");
     }
 
     fn signing_runtime() -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
@@ -2370,6 +2278,43 @@ mod tests {
             authority.certify_encoded_media_endpoint(&session, &unsigned.product_id, &trailing),
             Err(AuthorityError::Rejected),
         );
+    }
+
+    #[test]
+    fn media_certification_obeys_product_revocation_without_stopping_wallet_transport() {
+        futures::executor::block_on(async {
+            let (services, authority) = signing_runtime();
+            authority.activate_local_session(ENTROPY.to_vec()).await.unwrap();
+            let session = authority.current_session().unwrap();
+            let unsigned = media_advertisement(&services);
+            let payload = parity_scale_codec::Encode::encode(&unsigned);
+            authority.clear_product_state("other.dot").await.unwrap();
+            let refreshed = authority.current_session().unwrap();
+            for snapshot in [&session, &refreshed] {
+                authority.certify_local_media_endpoint(snapshot, unsigned.clone()).unwrap();
+                authority.certify_encoded_media_endpoint(
+                    snapshot, &unsigned.product_id, &payload,
+                ).unwrap();
+            }
+            authority.clear_product_state(&unsigned.product_id).await.unwrap();
+            for snapshot in [&session, &refreshed] {
+                assert_eq!(
+                    authority.certify_local_media_endpoint(snapshot, unsigned.clone()),
+                    Err(AuthorityError::Disconnected),
+                );
+                assert_eq!(
+                    authority.certify_encoded_media_endpoint(
+                        snapshot, &unsigned.product_id, &payload,
+                    ),
+                    Err(AuthorityError::Disconnected),
+                );
+                authority.sign_media_statement(
+                    snapshot, vec![1], vec![[7; 32]], unsigned.expires_at,
+                ).unwrap();
+            }
+            let current = authority.current_session().unwrap();
+            authority.certify_local_media_endpoint(&current, unsigned).unwrap();
+        });
     }
 
     #[test]
@@ -3004,10 +2949,7 @@ mod tests {
                 derivation_index: v01::DerivationIndex::Index(0),
             },
             transcript_label: b"pop:autosigning".to_vec(),
-            items: vec![v01::VrfTranscriptItem {
-                label: b"round".to_vec(),
-                value: vec![1],
-            }],
+			items: vec![v01::VrfTranscriptItem { label: b"round".to_vec(), value: vec![1] }],
         }
     }
 
@@ -3029,9 +2971,7 @@ mod tests {
         Arc::new(StubRingResolver {
             collection: *b"pop:polkadot.network/people     ",
             ring: ResolvedRing {
-                selected: MemberCandidate {
-                    member: full_member,
-                },
+				selected: MemberCandidate { member: full_member },
                 ring_index: 7,
                 ring_revision: 11,
                 domain_size: crate::runtime::vrf::DOMAIN_2E11,
@@ -3064,7 +3004,7 @@ mod tests {
     /// Persist a user refusal of `caller`'s access to `target`'s account.
     fn deny_account_access(platform: &StubPlatform, caller: &str, target: &str) {
         futures::executor::block_on(
-            // Bare-labelled on both sides, as `account_access_authorization`
+			// Bare-labelled on both sides, as `ProductConsent::account_access`
             // writes it in production.
             crate::host_internal::permissions::set_account_access_status(
                 platform,
@@ -3097,14 +3037,12 @@ mod tests {
         register_full_person_key(&authority, &session, &ring_location);
 
         let host = product_runtime_for(services, authority.clone(), "dim2.dot");
-        let proof = futures::executor::block_on(host.create_account_proof(
+		let proof =
+			futures::executor::block_on(host.create_account_proof(
             &CallContext::default(),
             foreign_proof_request(&ring_location),
         ));
-        assert!(
-            proof.is_ok(),
-            "a granted cross-product proof must succeed, got {proof:?}"
-        );
+		assert!(proof.is_ok(), "a granted cross-product proof must succeed, got {proof:?}");
     }
 
     /// The same call with no grant. Same fixture, one line different.
@@ -3121,17 +3059,16 @@ mod tests {
         register_full_person_key(&authority, &session, &ring_location);
 
         let host = product_runtime_for(services, authority.clone(), "dim2.dot");
-        let proof = futures::executor::block_on(host.create_account_proof(
+		let proof =
+			futures::executor::block_on(host.create_account_proof(
             &CallContext::default(),
             foreign_proof_request(&ring_location),
         ));
         assert_eq!(
             proof.err(),
-            Some(CallError::Domain(
-                truapi::versioned::account::HostAccountCreateProofError::V1(
+			Some(CallError::Domain(truapi::versioned::account::HostAccountCreateProofError::V1(
                     v01::HostAccountCreateProofError::NotAllowlisted
-                )
-            ))
+			)))
         );
     }
 
@@ -3177,10 +3114,7 @@ mod tests {
             foreign_proof_through_the_authority_with(Some(r#"{"dim2":["context"]}"#), |platform| {
                 deny_account_access(platform, "dim2.dot", "peopl.dot")
             });
-        assert!(
-            proof.is_ok(),
-            "blessed account access ignores the saved denial: {proof:?}"
-        );
+		assert!(proof.is_ok(), "blessed account access ignores the saved denial: {proof:?}");
     }
 
     /// A `context` grant covers the identity read, so the two calls agree.
@@ -3251,10 +3185,11 @@ mod tests {
     /// The contextual alias is a function of (owner key, context), so with the
     /// context unconstrained a `context` grant from `peopl.dot` let `dim2.dot`
     /// produce the alias `peopl.dot` presents to `bank.dot`, a third product
-    /// that granted nothing, is not a party to the grant, and cannot consent
-    /// here. The grant is to act in the grantee's own context or the granting
-    /// product's, not in anyone else's: a context naming the owner is the grant
-    /// read literally, and is the one a chain-wide proof context resolves to.
+	/// that granted nothing and is not a party to the grant. The grant is to act
+	/// in the grantee's own context or the granting product's: a context naming
+	/// the owner is the grant read literally, and is the one a chain-wide proof
+	/// context resolves to. Any other product's context needs that product's own
+	/// grant, covered by `a_product_may_grant_a_grantee_its_context`.
     ///
     /// The owner's own calls are untouched: minting your own aliases in any
     /// context is what the context parameter is for.
@@ -3351,6 +3286,219 @@ mod tests {
              namesake presents on another"
         );
     }
+
+	/// `dim2next.dot`'s proof and alias read with `peopl.dot`'s key in
+	/// `context`, after seeding `peopl.dot`'s manifest with `owner_grants` and
+	/// `dim2`'s with `context_grants`.
+	///
+	/// `context_grants` of `None` caches the chain's answer that `dim2`
+	/// publishes no manifest, so no case reaches for a chain the stub lacks.
+	fn third_product_context(
+		owner_grants: &str,
+		context_grants: Option<&str>,
+		context: v01::ProductProofContext,
+		seed: impl FnOnce(&StubPlatform),
+	) -> (
+		Result<v01::HostAccountCreateProofResponse, RingVrfError>,
+		Result<v01::ContextualAlias, RingVrfError>,
+	) {
+		let platform = Arc::new(StubPlatform::default());
+		cache_grant(&platform, "peopl.dot", owner_grants);
+		match context_grants {
+			Some(grants) => cache_grant(&platform, "dim2.dot", grants),
+			None => futures::executor::block_on(
+				<StubPlatform as crate::platform::CoreStorage>::write_core_storage(
+					&platform,
+					crate::runtime::product_manifest::manifest_cache_key("dim2.dot"),
+					crate::runtime::product_manifest::encode_cached_root_manifest(
+						None,
+						crate::unix_time::current_unix_secs(),
+					),
+				),
+			)
+			.expect("stub core storage accepts the entry"),
+		}
+		seed(&platform);
+		let (_services, authority) =
+			signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+			.expect("activation succeeds");
+		let session = authority.current_session().expect("active session");
+		let ring = full_person_ring_location();
+		register_full_person_key(&authority, &session, &ring);
+
+		let proof = futures::executor::block_on(authority.create_proof(
+			&CallContext::default(),
+			&session,
+			ProductRequest {
+				calling_product_id: "dim2next.dot".to_string(),
+				payload: v01::HostAccountCreateProofRequest {
+					key_handle: full_person_key_handle(),
+					context: context.clone(),
+					ring_location: ring.clone(),
+					message: b"m".to_vec(),
+				},
+			},
+		));
+		let alias = futures::executor::block_on(authority.account_alias(
+			&CallContext::default(),
+			&session,
+			ProductRequest {
+				calling_product_id: "dim2next.dot".to_string(),
+				payload: v01::HostAccountGetAliasRequest {
+					key_handle: full_person_key_handle(),
+					context,
+					ring_location: ring,
+				},
+			},
+		));
+		(proof, alias)
+	}
+
+	fn context_of(product_id: &str) -> v01::ProductProofContext {
+		v01::ProductProofContext {
+			product_id: product_id.to_string(),
+			suffix: v01::DerivationIndex::Index(0),
+		}
+	}
+
+	const OWNER_GRANTS_DIM2NEXT: &str = r#"{"dim2next":["context"]}"#;
+
+	/// The product a context names consents to its use through its own manifest.
+	///
+	/// paritytech/platform-bugs#99: `dim2next` proves with `peopl`'s key in
+	/// `dim2`'s context, which the TURN issuer requires. `peopl` grants the key
+	/// and `dim2` grants the context, so both parties to the pseudonym have
+	/// consented. The read is held to the same rule, since the alias and the
+	/// proof are one VRF evaluation.
+	#[test]
+	fn a_product_may_grant_a_grantee_its_context() {
+		for (grants, context) in [
+			(r#"{"dim2next":["context"]}"#, "dim2.dot"),
+			(r#"{"dim2next":["all"]}"#, "dim2.dot"),
+			(r#"{"dim2next":["context"]}"#, "app.dim2.dot"),
+			(r#"{"dim2next":["context"]}"#, "DIM2.DOT"),
+		] {
+			let (proof, alias) = third_product_context(
+				OWNER_GRANTS_DIM2NEXT,
+				Some(grants),
+				context_of(context),
+				|_| {},
+			);
+			assert!(proof.is_ok(), "{grants} admits a proof in {context}: {proof:?}");
+			assert!(alias.is_ok(), "{grants} admits the read in {context}: {alias:?}");
+		}
+	}
+
+	/// Everything a context grant does not cover stays refused, on both calls.
+	#[test]
+	fn a_context_the_naming_product_did_not_grant_is_refused() {
+		let cases: [(&str, Option<&str>, &str, &str); 5] = [
+			(
+				OWNER_GRANTS_DIM2NEXT,
+				None,
+				"dim2.dot",
+				"a product publishing no manifest granted nothing",
+			),
+			(
+				OWNER_GRANTS_DIM2NEXT,
+				Some(r#"{}"#),
+				"dim2.dot",
+				"a manifest naming no one granted nothing",
+			),
+			(
+				OWNER_GRANTS_DIM2NEXT,
+				Some(r#"{"other":["context"]}"#),
+				"dim2.dot",
+				"a grant to another product is not a grant to the caller",
+			),
+			(
+				OWNER_GRANTS_DIM2NEXT,
+				Some(r#"{"dim2next":["storage"]}"#),
+				"dim2.dot",
+				"a narrower scope does not imply context",
+			),
+			(
+				// `dim2.dot`'s manifest is cached by bare label, so it is the
+				// document a `.paseo` context would read: a namesake's grant.
+				OWNER_GRANTS_DIM2NEXT,
+				Some(r#"{"dim2next":["context"]}"#),
+				"dim2.paseo",
+				"a grant must not reach the pseudonym on another network",
+			),
+		];
+		for (owner, grants, context, why) in cases {
+			let (proof, alias) = third_product_context(owner, grants, context_of(context), |_| {});
+			assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted), "proof: {why}");
+			assert_eq!(alias.err(), Some(RingVrfError::NotAllowlisted), "read: {why}");
+		}
+	}
+
+	/// A context grant does not reach the development context.
+	///
+	/// `raw:` names no product, so there is no manifest to consent with, and its
+	/// bytes are whatever the caller chose, which could be any product's
+	/// context.
+	#[test]
+	fn a_context_grant_does_not_reach_the_raw_context() {
+		let (proof, alias) = third_product_context(
+			OWNER_GRANTS_DIM2NEXT,
+			Some(r#"{"dim2next":["all"]}"#),
+			v01::ProductProofContext {
+				product_id: "raw:".to_string(),
+				suffix: v01::DerivationIndex::Raw([0x11; 32]),
+			},
+			|_| {},
+		);
+		assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted));
+		assert_eq!(alias.err(), Some(RingVrfError::NotAllowlisted));
+	}
+
+	/// A context grant does not open the owner's key.
+	///
+	/// The two grants answer different questions: `dim2` consents to its
+	/// pseudonym, `peopl` to its key. Without the owner's grant the gate refuses
+	/// before the context is looked at, and the read falls back to the prompt.
+	#[test]
+	fn a_context_grant_without_the_owners_key_grant_is_refused() {
+		let (proof, alias) = third_product_context(
+			r#"{"someone-else":["context"]}"#,
+			Some(r#"{"dim2next":["context"]}"#),
+			context_of("dim2.dot"),
+			|_| {},
+		);
+		assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted));
+		assert_eq!(
+			alias.err(),
+			Some(RingVrfError::Rejected),
+			"the ungranted read takes the prompt path, which the stub declines"
+		);
+	}
+
+	/// A refusal the user stored for the pair overrides the context product's
+	/// grant, as it overrides the owner's.
+	#[test]
+	fn a_stored_refusal_overrides_a_context_grant() {
+		let (proof, alias) = third_product_context(
+			OWNER_GRANTS_DIM2NEXT,
+			Some(r#"{"dim2next":["context"]}"#),
+			context_of("dim2.dot"),
+			|platform| deny_account_access(platform, "dim2next.dot", "dim2.dot"),
+		);
+		assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted));
+		assert_eq!(alias.err(), Some(RingVrfError::NotAllowlisted));
+	}
+
+	/// The caller's own context and the owner's need no third manifest.
+	#[test]
+	fn own_and_owner_contexts_need_no_context_grant() {
+		for context in ["dim2next.dot", "peopl.dot"] {
+			let (proof, alias) =
+				third_product_context(OWNER_GRANTS_DIM2NEXT, None, context_of(context), |_| {});
+			assert!(proof.is_ok(), "proof in {context}: {proof:?}");
+			assert!(alias.is_ok(), "read in {context}: {alias:?}");
+		}
+	}
 
     /// An owner listing its own keys is not asked to consent to its own account.
     ///
@@ -3500,14 +3648,12 @@ mod tests {
         let platform = Arc::new(StubPlatform::default());
         cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
         // Written exactly as the previous release wrote it: full ids, both sides.
-        futures::executor::block_on(
-            crate::host_internal::permissions::set_account_access_status(
+		futures::executor::block_on(crate::host_internal::permissions::set_account_access_status(
                 platform.as_ref(),
                 "ordinary.dot",
                 "peopl.dot",
                 crate::platform::PermissionAuthorizationStatus::Denied,
-            ),
-        )
+		))
         .expect("stub core storage accepts the decision");
         let (services, _authority) =
             signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
@@ -3573,13 +3719,14 @@ mod tests {
         }
     }
 
-    /// The identity read is held to the caller's own context, like the proof.
+	/// The identity read is held to the same contexts as the proof.
     ///
     /// The alias and the proof come out of one VRF evaluation, so a guard on
     /// `create_proof` alone leaves the same bytes reachable through
     /// `account_alias`: a grantee could read the alias the owner presents to a
     /// third product that granted nothing. Both calls refuse it, and both admit
-    /// the granting product's own context.
+	/// the granting product's own context. A third product's own grant is
+	/// covered by `a_product_may_grant_a_grantee_its_context`.
     #[test]
     fn a_grantee_cannot_read_the_owners_alias_in_a_third_partys_context() {
         let platform = Arc::new(StubPlatform::default());
@@ -3674,10 +3821,7 @@ mod tests {
                 },
             ))
         };
-        assert!(
-            prove("peopl.dot").is_ok(),
-            "control: the canonical spelling"
-        );
+		assert!(prove("peopl.dot").is_ok(), "control: the canonical spelling");
         assert!(
             prove("PEOPL.DOT").is_ok(),
             "the owner must not be refused on its own key for spelling itself differently"
@@ -3709,16 +3853,10 @@ mod tests {
                 Granted::Context,
             ))
         };
-        for spelling in [
-            "ordinary.dot",
-            "app.ordinary.dot",
-            "worker.ordinary.dot",
-            "ordinary.paseo",
-        ] {
-            assert!(
-                !granted(spelling),
-                "{spelling} is the refused product wearing another name"
-            );
+		for spelling in
+			["ordinary.dot", "app.ordinary.dot", "worker.ordinary.dot", "ordinary.paseo"]
+		{
+			assert!(!granted(spelling), "{spelling} is the refused product wearing another name");
         }
 
         // Control: a product the user never refused still holds its own grant,
@@ -3744,10 +3882,7 @@ mod tests {
     #[test]
     fn a_grant_of_all_satisfies_context_at_the_authority() {
         let granted = foreign_proof_through_the_authority(Some(r#"{"dim2":["all"]}"#));
-        assert!(
-            granted.is_ok(),
-            "`all` must satisfy `context`, got {granted:?}"
-        );
+		assert!(granted.is_ok(), "`all` must satisfy `context`, got {granted:?}");
     }
 
     fn signing_runtime_with_ring_resolver(
@@ -3801,7 +3936,7 @@ mod tests {
     /// The stored `AccountAccess` decision is the only thing that can override a
     /// publisher's grant. Reading a storage fault as "not refused" would let a
     /// locked keychain turn the user's explicit no into a yes, on the strength
-    /// of a manifest the publisher controls. `account_access_authorization`,
+	/// of a manifest the publisher controls. `ProductConsent::account_access`,
     /// which writes that same decision, already fails closed; this is the read
     /// side agreeing with it.
     ///
@@ -3876,10 +4011,7 @@ mod tests {
             "peopl.dot",
             crate::host_internal::product_manifest::Granted::Context,
         ));
-        assert!(
-            !granted,
-            "the stub answers no RPC, so the lookup must fail closed"
-        );
+		assert!(!granted, "the stub answers no RPC, so the lookup must fail closed");
 
         let dialled = platform
             .chain_connects
@@ -4096,10 +4228,8 @@ mod tests {
 
         // Index 0 is the full-person handle and index 1 the light-person one, and
         // People leads so a full person spends its wider slot budget first.
-        let expected = [
-            (PersonhoodCollection::People, 0u32),
-            (PersonhoodCollection::LitePeople, 1),
-        ];
+		let expected =
+			[(PersonhoodCollection::People, 0u32), (PersonhoodCollection::LitePeople, 1)];
         assert_eq!(candidates.len(), expected.len());
         for (candidate, (collection, index)) in candidates.iter().zip(expected) {
             assert_eq!(candidate.collection, collection);
@@ -4156,14 +4286,7 @@ mod tests {
             .public
             .to_bytes();
         assert_eq!(session.identity_account_id, Some(identity));
-        assert_eq!(
-            authority
-                .identity_keypair()
-                .expect("identity")
-                .public
-                .to_bytes(),
-            identity
-        );
+		assert_eq!(authority.identity_keypair().expect("identity").public.to_bytes(), identity);
     }
 
     #[test]
@@ -4345,10 +4468,8 @@ mod tests {
 
     #[test]
     fn cross_product_alias_reuses_persisted_account_access_grant() {
-        let platform = Arc::new(StubPlatform {
-            account_access_confirmed: true,
-            ..StubPlatform::default()
-        });
+		let platform =
+			Arc::new(StubPlatform { account_access_confirmed: true, ..StubPlatform::default() });
         let authority =
             SigningHostRole::new_with_ring_resolver(platform.clone(), full_person_ring_resolver());
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
@@ -4410,9 +4531,7 @@ mod tests {
                 dot_ns_identifier: "myapp.dot".to_string(),
                 derivation_index: v01::DerivationIndex::Index(0),
             },
-            payload: v01::RawPayload::Bytes {
-                bytes: b"hello world".to_vec(),
-            },
+			payload: v01::RawPayload::Bytes { bytes: b"hello world".to_vec() },
         });
         let HostSignRawResponse::V1(response) =
             futures::executor::block_on(runtime.sign_raw(&cx, request)).expect("sign_raw ok");
@@ -4441,10 +4560,7 @@ mod tests {
             account: product_account(0),
             transcript_label: b"pop:airdrop".to_vec(),
             items: vec![
-                v01::VrfTranscriptItem {
-                    label: b"domain".to_vec(),
-                    value: b"lottery".to_vec(),
-                },
+				v01::VrfTranscriptItem { label: b"domain".to_vec(), value: b"lottery".to_vec() },
                 v01::VrfTranscriptItem {
                     label: b"round".to_vec(),
                     value: 7u32.to_le_bytes().to_vec(),
@@ -4844,10 +4960,8 @@ mod tests {
 
     #[test]
     fn stale_auto_signing_completion_cannot_grant_same_wallet_reactivation() {
-        let platform = Arc::new(StubPlatform {
-            sign_vrf_confirmed: false,
-            ..StubPlatform::default()
-        });
+		let platform =
+			Arc::new(StubPlatform { sign_vrf_confirmed: false, ..StubPlatform::default() });
         let (_services, authority) = signing_runtime_with_platform(platform.clone());
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("first activation succeeds");
@@ -4977,10 +5091,7 @@ mod tests {
             .expect("requested signed transaction");
         let (account, embedded_signature, tail) = split_v4(signed_transaction);
         assert_eq!(account, keypair.public.to_bytes());
-        assert_eq!(
-            embedded_signature.as_slice(),
-            &product_response.signature[1..]
-        );
+		assert_eq!(embedded_signature.as_slice(), &product_response.signature[1..]);
         let extensions = extrinsic_payload_extensions(&payload).unwrap();
         let expected_tail = extensions
             .iter()
@@ -5025,9 +5136,7 @@ mod tests {
             account,
             request: v01::HostSignRawWithLegacyAccountRequest {
                 signer: String::new(),
-                payload: v01::RawPayload::Bytes {
-                    bytes: b"hello".to_vec(),
-                },
+				payload: v01::RawPayload::Bytes { bytes: b"hello".to_vec() },
             },
         };
 
@@ -5068,9 +5177,7 @@ mod tests {
                 dot_ns_identifier: "myapp.dot".to_string(),
                 derivation_index: v01::DerivationIndex::Index(0),
             },
-            payload: v01::RawPayload::Bytes {
-                bytes: vec![1, 2, 3],
-            },
+			payload: v01::RawPayload::Bytes { bytes: vec![1, 2, 3] },
         });
         let err =
             futures::executor::block_on(runtime.sign_raw(&cx, request)).expect_err("no session");
@@ -5207,9 +5314,7 @@ mod tests {
             .expect_err("no session yet");
         assert!(matches!(
             err,
-            CallError::Domain(HostAccountGetError::V1(
-                v01::HostAccountGetError::NotConnected
-            ))
+			CallError::Domain(HostAccountGetError::V1(v01::HostAccountGetError::NotConnected))
         ));
     }
 
@@ -5225,9 +5330,7 @@ mod tests {
                 dot_ns_identifier: "myapp.dot".to_string(),
                 derivation_index: v01::DerivationIndex::Index(0),
             },
-            payload: v01::RawPayload::Bytes {
-                bytes: b"<Bytes>hi</Bytes>".to_vec(),
-            },
+			payload: v01::RawPayload::Bytes { bytes: b"<Bytes>hi</Bytes>".to_vec() },
         });
         let HostSignRawResponse::V1(response) =
             futures::executor::block_on(runtime.sign_raw(&cx, request)).expect("sign_raw ok");
@@ -5245,11 +5348,7 @@ mod tests {
         assert!(
             keypair
                 .public
-                .verify_simple(
-                    b"substrate",
-                    b"<Bytes><Bytes>hi</Bytes></Bytes>",
-                    &signature
-                )
+				.verify_simple(b"substrate", b"<Bytes><Bytes>hi</Bytes></Bytes>", &signature)
                 .is_err(),
             "payload was not double-wrapped",
         );
@@ -5895,10 +5994,7 @@ mod tests {
         // different validation id.
         futures::executor::block_on(authority.activate_local_session([0xCD; 16].to_vec()))
             .expect("second activation");
-        assert_ne!(
-            authority.current_session().expect("session").public_key,
-            stale.public_key,
-        );
+		assert_ne!(authority.current_session().expect("session").public_key, stale.public_key,);
 
         let cx = CallContext::default();
         let request = v01::HostSignRawRequest {
@@ -5906,9 +6002,7 @@ mod tests {
                 dot_ns_identifier: "myapp.dot".to_string(),
                 derivation_index: v01::DerivationIndex::Index(0),
             },
-            payload: v01::RawPayload::Bytes {
-                bytes: vec![1, 2, 3],
-            },
+			payload: v01::RawPayload::Bytes { bytes: vec![1, 2, 3] },
         };
         let err = futures::executor::block_on(authority.sign_raw(
             &cx,
@@ -5956,13 +6050,13 @@ mod tests {
     /// the request is left waiting on the connection.
     #[test]
     fn a_pgas_request_waits_on_the_asset_hub_connection() {
-        use std::future::Future;
-        use std::task::{Context, Poll};
+		use std::{
+			future::Future,
+			task::{Context, Poll},
+		};
 
-        let platform = Arc::new(StubPlatform {
-            chain_connect_pending: true,
-            ..StubPlatform::default()
-        });
+		let platform =
+			Arc::new(StubPlatform { chain_connect_pending: true, ..StubPlatform::default() });
         let (_services, authority) = signing_runtime_with_platform(platform);
         futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
             .expect("activation");
@@ -5983,10 +6077,10 @@ mod tests {
         let mut task_cx = Context::from_waker(&waker);
 
         match allocation.as_mut().poll(&mut task_cx) {
-            Poll::Pending => {}
+			Poll::Pending => {},
             Poll::Ready(outcome) => {
                 panic!("a PGAS claim should be waiting on Asset Hub, got {outcome:?}")
-            }
+			},
         }
     }
 
@@ -6014,12 +6108,10 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(AuthorityError::Cancelled(
-                crate::runtime::authority::AuthorityCancelError::new(
+			Err(AuthorityError::Cancelled(crate::runtime::authority::AuthorityCancelError::new(
                     "allocation-withdrawn",
                     truapi::CancellationReason::Cancelled,
-                )
-            ))
+			)))
         );
     }
 

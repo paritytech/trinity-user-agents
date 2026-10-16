@@ -17,16 +17,12 @@ pub type RingIndex = u32;
 /// (`indiv_support::traits::reality::RingPosition`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 pub enum RingPosition {
-    #[codec(index = 0)]
-    Onboarding { queue_page: u32, queued_at: u64 },
-    #[codec(index = 1)]
-    Included {
-        ring_index: u32,
-        ring_page: u32,
-        ring_position: u32,
-    },
-    #[codec(index = 2)]
-    Suspended,
+	#[codec(index = 0)]
+	Onboarding { queue_page: u32, queued_at: u64 },
+	#[codec(index = 1)]
+	Included { ring_index: u32, ring_page: u32, ring_position: u32 },
+	#[codec(index = 2)]
+	Suspended,
 }
 
 /// `Members.RingKeysStatus` value (`indiv_support::…::RingStatus`). It
@@ -34,17 +30,17 @@ pub enum RingPosition {
 /// timestamp the ring became immutable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 pub struct RingStatus {
-    pub total: u32,
-    pub included: u32,
-    /// Seconds timestamp once the ring stopped accepting keys.
-    pub immutable_since: Option<u64>,
+	pub total: u32,
+	pub included: u32,
+	/// Seconds timestamp once the ring stopped accepting keys.
+	pub immutable_since: Option<u64>,
 }
 
 impl RingStatus {
-    /// Keys queued behind the proof set.
-    pub fn queued(&self) -> u32 {
-        self.total.saturating_sub(self.included)
-    }
+	/// Keys queued behind the proof set.
+	pub fn queued(&self) -> u32 {
+		self.total.saturating_sub(self.included)
+	}
 }
 
 /// `Members.Root` value: the current ring root commitment.
@@ -54,7 +50,7 @@ impl RingStatus {
 /// `brevity-ffi/examples/ring_root_type_probe.rs`).
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct RingRoot {
-    pub root: [u8; 288],
-    pub revision: u32,
-    pub intermediate: [u8; 848],
+	pub root: [u8; 288],
+	pub revision: u32,
+	pub intermediate: [u8; 848],
 }

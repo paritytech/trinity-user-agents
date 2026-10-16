@@ -7,7 +7,7 @@ use schnorrkel::Keypair;
 use truapi::v01;
 use crate::platform::normalize_product_identifier;
 
-use super::{LocalGrantState, SigningHost, local_session_validation_id};
+use super::{LocalGrantState, SigningHost, local_session_generation};
 use crate::host_logic::media_protocol::{
     ACCOUNT_SIGNING_CONTEXT, MAX_PRODUCT_ID_BYTES, MAX_UNSIGNED_ADVERTISEMENT_BYTES,
     MediaIdentity, UnsignedAdvertisement, decode_unsigned_advertisement,
@@ -18,21 +18,22 @@ use crate::unix_time::current_unix_secs;
 use crate::runtime::authority::{AuthorityError, AuthoritySession, media_statement_fields};
 
 impl SigningHost {
-    /// Hold the activation fence through key derivation and signing. A concurrent
-    /// logout/replacement cannot turn a checked snapshot into a different wallet.
+    /// Hold the activation and optional product fence through key derivation and
+    /// signing. Unrelated product revocations do not invalidate wallet transport.
     fn media_session_guard(
         &self,
         session: &AuthoritySession,
+        product_id: Option<&str>,
     ) -> Result<MutexGuard<'_, LocalGrantState>, AuthorityError> {
         let state = self
             .local_grants
             .lock()
             .expect("local AutoSigning grant mutex poisoned");
         let current = self.session_state.current().ok_or(AuthorityError::Disconnected)?;
-        if local_session_validation_id(&current, state.activation_generation)
-            != session.validation_id
-        {
-            return Err(AuthorityError::Disconnected);
+        let generation = local_session_generation(&current, &session.validation_id)?;
+        match product_id {
+            Some(product_id) => state.require_product_generation(generation, product_id)?,
+            None => state.require_generation(generation)?,
         }
         Ok(state)
     }
@@ -67,7 +68,7 @@ impl SigningHost {
         session: &AuthoritySession,
         unsigned: UnsignedAdvertisement,
     ) -> Result<[u8; 64], AuthorityError> {
-        let _guard = self.media_session_guard(session)?;
+        let _guard = self.media_session_guard(session, Some(&unsigned.product_id))?;
         let (expected, keypair) = self.media_account_keypair(&unsigned.product_id)?;
         validate_unsigned_advertisement(&unsigned, &expected, current_unix_secs())
             .map_err(|_| AuthorityError::Rejected)?;
@@ -82,7 +83,7 @@ impl SigningHost {
         product_id: &str,
         payload: &[u8],
     ) -> Result<[u8; 64], AuthorityError> {
-        let _guard = self.media_session_guard(session)?;
+        let _guard = self.media_session_guard(session, Some(product_id))?;
         if payload.len() > MAX_UNSIGNED_ADVERTISEMENT_BYTES {
             return Err(AuthorityError::Rejected);
         }
@@ -100,7 +101,7 @@ impl SigningHost {
         expires_at: u64,
     ) -> Result<Vec<u8>, AuthorityError> {
         let fields = media_statement_fields(payload, topics, expires_at)?;
-        let _guard = self.media_session_guard(session)?;
+        let _guard = self.media_session_guard(session, None)?;
         let keypair = self.identity_keypair()?;
         sign_statement_fields(keypair.secret.to_bytes(), keypair.public.to_bytes(), fields)
             .map(|fields| fields.encode())

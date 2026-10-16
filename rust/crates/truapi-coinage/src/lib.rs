@@ -77,89 +77,87 @@ pub mod wal;
 pub type Spawner = std::sync::Arc<dyn Fn(futures::future::BoxFuture<'static, ()>) + Send + Sync>;
 
 pub use allocator::{
-    CoinAllocator, FixedDelayProvider, SystemJitterDelayProvider, VoucherAllocator,
-    VoucherDelayProvider,
+	CoinAllocator, FixedDelayProvider, SystemJitterDelayProvider, VoucherAllocator,
+	VoucherDelayProvider,
 };
 pub use balance::{BalanceBuckets, compute_balance, next_unlock_at_ms};
 pub use claim::{
-    ClaimError, ClaimExecutor, ClaimOrchestrator, ClaimStatus, ClaimStatusStore, IncomingClaim,
-    SendConfirmation, TransferSendVerifying, claimed_amount_from_plan, restore_persisted_statuses,
+	ClaimError, ClaimExecutor, ClaimOrchestrator, ClaimStatus, ClaimStatusStore, IncomingClaim,
+	SendConfirmation, TransferSendVerifying, claimed_amount_from_plan, restore_persisted_statuses,
 };
 pub use claim_plan::{
-    ClaimPlan, ClaimPlanStatus, ClaimPlanStore, CodableClaimPlanEntry, decode_claim_plan_entries,
-    encode_claim_plan_entries,
+	ClaimPlan, ClaimPlanStatus, ClaimPlanStore, CodableClaimPlanEntry, decode_claim_plan_entries,
+	encode_claim_plan_entries,
 };
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use constants::{
-    CASH_ASSET_PRECISION, CASH_PLANKS_PER_CENT, COIN_MAX_AGE, MAX_VOUCHER_WAIT_TIME,
-    MINIMUM_RING_SIZE, RECYCLE_AT_AGE, SEND_VERIFY_BLOCK_TIMEOUT, WAL_MORTALITY_BLOCKS,
+	CASH_ASSET_PRECISION, CASH_PLANKS_PER_CENT, COIN_MAX_AGE, MAX_VOUCHER_WAIT_TIME,
+	MINIMUM_RING_SIZE, RECYCLE_AT_AGE, SEND_VERIFY_BLOCK_TIMEOUT, WAL_MORTALITY_BLOCKS,
 };
 pub use denomination::{Denomination, DenominationBreakdown, DenominationBreakdownContext};
 pub use index_store::{
-    COIN_INDEX_KEY, CoinageIndexStore, InMemoryCoinageIndexStore, IndexKind, VOUCHER_INDEX_KEY,
-    decode_index, encode_index,
+	COIN_INDEX_KEY, CoinageIndexStore, InMemoryCoinageIndexStore, IndexKind, VOUCHER_INDEX_KEY,
+	decode_index, encode_index,
 };
-pub use keys::VoucherCryptography;
 pub use keys::{
-    CoinDerivedWallet, CoinKeypairFactory, MAIN_PURSE, PAGE, VoucherKeypairFactory, VoucherSeed,
+	CoinDerivedWallet, CoinKeypairFactory, MAIN_PURSE, PAGE, VoucherCryptography,
+	VoucherKeypairFactory, VoucherSeed,
 };
 pub use memo::{MemoEntry, TransferMemo};
 pub use model::{
-    Coin, CoinState, EffectivePrivacy, Voucher, VoucherLocalState, VoucherPrivacyLevel,
-    VoucherRemoteState, ring_readiness_upgraded,
+	Coin, CoinState, EffectivePrivacy, Voucher, VoucherLocalState, VoucherPrivacyLevel,
+	VoucherRemoteState, ring_readiness_upgraded,
 };
 pub use outgoing_transfer::{
-    OutgoingCoinTransferParts, OutgoingCoinTransferService, OutgoingHandoffRejected,
-    OutgoingTransferError, OutgoingTransferReconciliation,
+	OutgoingCoinTransferParts, OutgoingCoinTransferService, OutgoingHandoffRejected,
+	OutgoingTransferError, OutgoingTransferReconciliation,
 };
 pub use query::{
-    AliasState, CoinOnChainQueryService, CoinageQueryError, CoinageStorageKey, CoinageStorageQuery,
-    LockInfo, LockReason, QueryVoucherLocationSubscriber, RecyclerReadinessLoader,
-    RecyclerRevisionSnapshot, VoucherOnChainInfo, VoucherOnChainQueryService,
+	AliasState, CoinOnChainQueryService, CoinageQueryError, CoinageStorageKey, CoinageStorageQuery,
+	LockInfo, LockReason, QueryVoucherLocationSubscriber, RecyclerReadinessLoader,
+	RecyclerRevisionSnapshot, VoucherOnChainInfo, VoucherOnChainQueryService,
 };
 pub use recipient::{CoinageSendMessage, TransferRecipientService};
 pub use recovery::{RecoveryChainProbe, RecoveryReport, TransferRecoveryService};
 pub use repo::{
-    CoinRepository, InMemoryCoinRepository, InMemoryVoucherRepository, TransferContext,
-    TransferStateCommitter, VoucherRepository,
+	CoinRepository, InMemoryCoinRepository, InMemoryVoucherRepository, TransferContext,
+	TransferStateCommitter, VoucherRepository,
 };
-pub use ring_proof::BandersnatchRingProofProvider;
-pub use ring_proof::PersonRingProofSigner;
 pub use ring_proof::{
-    FREE_UNLOAD_TOKEN_CONTEXT_PREFIX, PersonOriginKind, RECYCLER_ALIAS_CONTEXT, RING_VRF_PROOF_LEN,
-    ResolvedUnloadToken, RingProofError, RingProofParams, RingProofProvider, UnloadProofRequest,
-    UnloadTokenProof,
+	BandersnatchRingProofProvider, FREE_UNLOAD_TOKEN_CONTEXT_PREFIX, PersonOriginKind,
+	PersonRingProofSigner, RECYCLER_ALIAS_CONTEXT, RING_VRF_PROOF_LEN, ResolvedUnloadToken,
+	RingProofError, RingProofParams, RingProofProvider, UnloadProofRequest, UnloadTokenProof,
 };
 pub use secret_claim::{
-    ExternalCoinTransferBackend, ExternalCoinTransferRequest, ExternalSecretClaimService,
-    SpentCoinTransferRecoveryReport, SpentCoinTransferRecoveryService, external_claim_message_id,
+	ExternalCoinTransferBackend, ExternalCoinTransferRequest, ExternalMemoClaiming,
+	ExternalSecretClaimService, SpentCoinTransferRecoveryReport, SpentCoinTransferRecoveryService,
+	SpentCoinsRecovering, external_claim_message_id,
 };
-pub use secret_claim::{ExternalMemoClaiming, SpentCoinsRecovering};
 pub use selection::{
-    CoinSelectionError, CoinSelectionResult, CoinSelector, PrivacyLevel, RecyclerKey,
-    TransferStrategy, VoucherGroup, find_exact_match,
+	CoinSelectionError, CoinSelectionResult, CoinSelector, PrivacyLevel, RecyclerKey,
+	TransferStrategy, VoucherGroup, find_exact_match,
 };
 pub use sync::{
-    CoinStateSubscriber, CoinStateSyncService, CoinStateUpdate, CoinageDatabaseDependencyFactory,
-    NotifyingCoinRepository, NotifyingVoucherRepository, OnChainCoin,
+	CoinStateSubscriber, CoinStateSyncService, CoinStateUpdate, CoinageDatabaseDependencyFactory,
+	NotifyingCoinRepository, NotifyingVoucherRepository, OnChainCoin,
 };
 pub use tasks::ActiveTaskRegistry;
 pub use transfer_sender::{
-    OpaqueTransferPreview, PreparedUnloadGroup, RegularCoinTransferParts,
-    RegularCoinTransferService, RegularTransferError, RegularTransferSubmitter,
-    SplitTransferSubmission, TransferPreviewChoice, TransferPreviewStrategy, UnloadGroupDraft,
-    UnloadOriginPreparation, VoucherSelectionDiagnostic, voucher_selection_diagnostics,
+	OpaqueTransferPreview, PreparedUnloadGroup, RegularCoinTransferParts,
+	RegularCoinTransferService, RegularTransferError, RegularTransferSubmitter,
+	SplitTransferSubmission, TransferPreviewChoice, TransferPreviewStrategy, UnloadGroupDraft,
+	UnloadOriginPreparation, VoucherSelectionDiagnostic, voucher_selection_diagnostics,
 };
 pub use voucher_location::{
-    RingPosition, RingStatus, VoucherLocationService, VoucherLocationSubscriber,
-    VoucherLocationUpdate,
+	RingPosition, RingStatus, VoucherLocationService, VoucherLocationSubscriber,
+	VoucherLocationUpdate,
 };
 
 #[cfg(test)]
 fn test_spawner() -> Spawner {
-    std::sync::Arc::new(|future| {
-        tokio::spawn(future);
-    })
+	std::sync::Arc::new(|future| {
+		tokio::spawn(future);
+	})
 }
 
 pub use wal::{CheckpointBlock, TransferWalEntry, WalCoinRef, WalOperation, WalPayload, WalStore};

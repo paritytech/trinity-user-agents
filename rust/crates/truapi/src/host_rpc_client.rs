@@ -5,21 +5,31 @@
 //! [`subxt_rpcs::RpcClientT`]: request correlation, subscription routing, and
 //! best-effort unsubscribe on subscription drop.
 
-use core::mem;
-use core::pin::Pin;
-use core::task::{Context, Poll};
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use core::{
+	mem,
+	pin::Pin,
+	task::{Context, Poll},
+};
+use std::{
+	collections::HashMap,
+	sync::{
+		Arc, Mutex,
+		atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+	},
+};
 
 use crate::platform::JsonRpcConnection;
-use futures::channel::{mpsc, oneshot};
-use futures::{FutureExt, pin_mut};
-use futures::{Stream, StreamExt};
+use futures::{
+	FutureExt, Stream, StreamExt,
+	channel::{mpsc, oneshot},
+	pin_mut,
+};
 use serde::{Serialize, Serializer};
 use serde_json::value::RawValue;
-use subxt_rpcs::client::{RawRpcFuture, RawRpcSubscription, RpcClientT};
-use subxt_rpcs::{Error as RpcError, UserError};
+use subxt_rpcs::{
+	Error as RpcError, UserError,
+	client::{RawRpcFuture, RawRpcSubscription, RpcClientT},
+};
 use tracing::instrument;
 
 use crate::subscription::Spawner;
@@ -101,9 +111,7 @@ impl SubscriptionState {
     /// path reaches a receiver the subscriber is already polling, which is what
     /// makes the waker reachable there.
     fn activate(&mut self, subscription_id: String, tx: SubscriptionSink) {
-        let previous = self
-            .entries
-            .insert(subscription_id, SubscriptionEntry::Active(tx.clone()));
+		let previous = self.entries.insert(subscription_id, SubscriptionEntry::Active(tx.clone()));
         // Re-activating an id that is already active replaces the sink and has
         // nothing buffered, which is also the never-seen case.
         if let Some(SubscriptionEntry::Pending(items)) = previous {
@@ -142,20 +150,19 @@ impl SubscriptionState {
         match self.entries.get_mut(&subscription_id) {
             Some(SubscriptionEntry::Active(tx)) => {
                 return Some((tx.clone(), item));
-            }
+			},
             Some(SubscriptionEntry::Pending(items)) => {
                 if items.len() < MAX_BUFFERED_ITEMS_PER_SUBSCRIPTION {
                     items.push(item);
                 }
-            }
+			},
             // The cap counts subscriptions holding a buffer, not active ones:
             // an active subscription costs nothing to remember here.
             None => {
                 if self.pending_count() < MAX_BUFFERED_SUBSCRIPTIONS {
-                    self.entries
-                        .insert(subscription_id, SubscriptionEntry::Pending(vec![item]));
-                }
+					self.entries.insert(subscription_id, SubscriptionEntry::Pending(vec![item]));
             }
+			},
         }
         None
     }
@@ -294,9 +301,7 @@ impl HostRpcClient {
 impl Clone for HostRpcClient {
     fn clone(&self) -> Self {
         self.inner.retain_user_handle();
-        Self {
-            inner: self.inner.clone(),
-        }
+		Self { inner: self.inner.clone() }
     }
 }
 
@@ -313,9 +318,7 @@ impl HostRpcClientInner {
 
     fn acquire_lease(self: &Arc<Self>) -> HostRpcClientLease {
         self.retain_user_handle();
-        HostRpcClientLease {
-            inner: self.clone(),
-        }
+		HostRpcClientLease { inner: self.clone() }
     }
 
     fn release_user_handle(&self) {
@@ -372,8 +375,7 @@ impl HostRpcClientInner {
             return Err(error);
         }
 
-        rx.await
-            .map_err(|_| client_error("json-rpc request was cancelled"))?
+		rx.await.map_err(|_| client_error("json-rpc request was cancelled"))?
     }
 
     async fn subscribe(
@@ -404,10 +406,7 @@ impl HostRpcClientInner {
             unsubscribe_method: unsubscribe_method.to_string(),
             closed: false,
         };
-        Ok(RawRpcSubscription {
-            stream: Box::pin(stream),
-            id: Some(subscription_id),
-        })
+		Ok(RawRpcSubscription { stream: Box::pin(stream), id: Some(subscription_id) })
     }
 
     fn unsubscribe(&self, subscription_id: &str, unsubscribe_method: &str) {
@@ -453,9 +452,7 @@ impl HostRpcClientInner {
             return Ok(());
         }
 
-        let _ = pending.tx.send(Err(client_error(
-            "json-rpc response missing result and error",
-        )));
+		let _ = pending.tx.send(Err(client_error("json-rpc response missing result and error")));
         Ok(())
     }
 
@@ -497,9 +494,9 @@ impl HostRpcClientInner {
             mem::take(&mut *pending)
         };
         for (_, pending) in pending {
-            let _ = pending.tx.send(Err(client_error(format!(
-                "json-rpc connection closed: {error}"
-            ))));
+			let _ = pending
+				.tx
+				.send(Err(client_error(format!("json-rpc connection closed: {error}"))));
         }
 
         // Taken in one step, so a close error cannot land between an activation
@@ -537,12 +534,7 @@ impl RpcClientT for HostRpcClient {
         unsub: &'a str,
     ) -> RawRpcFuture<'a, RawRpcSubscription> {
         let lease = self.inner.acquire_lease();
-        Box::pin(async move {
-            self.inner
-                .clone()
-                .subscribe(sub, params, unsub, lease)
-                .await
-        })
+		Box::pin(async move { self.inner.clone().subscribe(sub, params, unsub, lease).await })
     }
 }
 
@@ -559,8 +551,7 @@ impl Drop for SubscriptionStream {
     fn drop(&mut self) {
         if !self.closed {
             self.closed = true;
-            self.client
-                .unsubscribe(&self.subscription_id, &self.unsubscribe_method);
+			self.client.unsubscribe(&self.subscription_id, &self.unsubscribe_method);
         }
     }
 }
@@ -574,7 +565,7 @@ impl Stream for SubscriptionStream {
             Poll::Ready(None) => {
                 this.closed = true;
                 Poll::Ready(None)
-            }
+			},
             other => other,
         }
     }
@@ -604,9 +595,7 @@ fn normalize_outbound_params(
     let hash = mem::take(hash_slot);
     *hash_slot = serde_json::Value::Array(vec![hash]);
     let encoded = serde_json::to_string(&params).map_err(RpcError::Serialization)?;
-    RawValue::from_string(encoded)
-        .map(Some)
-        .map_err(RpcError::Serialization)
+	RawValue::from_string(encoded).map(Some).map_err(RpcError::Serialization)
 }
 
 fn subscription_id_from_raw(raw: &RawValue) -> Result<String, RpcError> {
@@ -639,11 +628,9 @@ mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
 
-    use futures::executor::block_on;
-    use futures::stream::BoxStream;
+	use futures::{executor::block_on, stream::BoxStream};
     use serde_json::{Value, json};
-    use subxt_rpcs::RpcClient;
-    use subxt_rpcs::client::rpc_params;
+	use subxt_rpcs::{RpcClient, client::rpc_params};
 
     use crate::subscription::thread_per_subscription_spawner;
 
@@ -696,12 +683,7 @@ mod tests {
         }
 
         fn responses(&self) -> BoxStream<'static, String> {
-            self.receiver
-                .lock()
-                .unwrap()
-                .take()
-                .expect("responses called twice")
-                .boxed()
+			self.receiver.lock().unwrap().take().expect("responses called twice").boxed()
         }
 
         fn close(&self) {
@@ -717,9 +699,7 @@ mod tests {
 
         {
             let client = HostRpcClient::new(connection.clone(), spawner);
-            client
-                .send_fire_and_forget("statement_submit", None)
-                .unwrap();
+			client.send_fire_and_forget("statement_submit", None).unwrap();
         }
 
         assert_eq!(connection.close_count(), 1);
@@ -731,9 +711,7 @@ mod tests {
         let spawner: Spawner = Arc::new(|_| {});
         let client = HostRpcClient::new(connection.clone(), spawner);
 
-        client
-            .send_fire_and_forget("chainSpec_v1_chainName", None)
-            .unwrap();
+		client.send_fire_and_forget("chainSpec_v1_chainName", None).unwrap();
 
         assert_eq!(connection.sent()[0]["params"], json!([]));
     }
@@ -745,14 +723,9 @@ mod tests {
         let client = HostRpcClient::new(connection.clone(), spawner);
         let params = RawValue::from_string(r#"["follow-id","0x1234"]"#.to_string()).unwrap();
 
-        client
-            .send_fire_and_forget("chainHead_v1_unpin", Some(params))
-            .unwrap();
+		client.send_fire_and_forget("chainHead_v1_unpin", Some(params)).unwrap();
 
-        assert_eq!(
-            connection.sent()[0]["params"],
-            json!(["follow-id", ["0x1234"]]),
-        );
+		assert_eq!(connection.sent()[0]["params"], json!(["follow-id", ["0x1234"]]),);
     }
 
     #[test]
@@ -797,10 +770,7 @@ mod tests {
     impl RacingConnection {
         fn new() -> Arc<Self> {
             let (tx, rx) = mpsc::unbounded();
-            Arc::new(Self {
-                sender: Mutex::new(Some(tx)),
-                receiver: Mutex::new(Some(rx)),
-            })
+			Arc::new(Self { sender: Mutex::new(Some(tx)), receiver: Mutex::new(Some(rx)) })
         }
 
         fn emit(&self, frame: String) {
@@ -837,12 +807,7 @@ mod tests {
         }
 
         fn responses(&self) -> BoxStream<'static, String> {
-            self.receiver
-                .lock()
-                .unwrap()
-                .take()
-                .expect("responses called twice")
-                .boxed()
+			self.receiver.lock().unwrap().take().expect("responses called twice").boxed()
         }
 
         fn close(&self) {
@@ -901,12 +866,7 @@ mod tests {
             .inner
             .deliver_or_buffer_subscription_item("sub-1".to_string(), raw(r#"{"event":"second"}"#));
 
-        client
-            .inner
-            .subscriptions
-            .lock()
-            .unwrap()
-            .activate("sub-1".to_string(), tx);
+		client.inner.subscriptions.lock().unwrap().activate("sub-1".to_string(), tx);
 
         client
             .inner
@@ -935,19 +895,14 @@ mod tests {
             let _guard = inner.subscriptions.lock().unwrap();
             panic!("poisoning the subscription lock on purpose");
         }));
-        assert!(
-            poisoned.is_err(),
-            "the helper panic should have been caught"
-        );
+		assert!(poisoned.is_err(), "the helper panic should have been caught");
         assert!(
             client.inner.subscriptions.is_poisoned(),
             "the lock should be poisoned for this test to mean anything"
         );
 
         // Would panic a second time under `unwrap`, aborting the test binary.
-        client
-            .inner
-            .close_with_error(client_error("peer went away"));
+		client.inner.close_with_error(client_error("peer went away"));
         client.inner.unsubscribe("sub-1", "unsub");
     }
 
@@ -989,10 +944,7 @@ mod tests {
 
         assert_eq!(
             drain(&mut rx),
-            vec![
-                r#"{"event":"buffered"}"#.to_string(),
-                r#"{"event":"live"}"#.to_string(),
-            ],
+			vec![r#"{"event":"buffered"}"#.to_string(), r#"{"event":"live"}"#.to_string(),],
             "the live notification overtook the buffered one"
         );
     }
@@ -1014,9 +966,7 @@ mod tests {
             .unwrap()
             .activate("sub-1".to_string(), tx.clone());
 
-        client
-            .inner
-            .close_with_error(client_error("peer went away"));
+		client.inner.close_with_error(client_error("peer went away"));
 
         let seen = drain(&mut rx);
         assert_eq!(seen.len(), 2, "expected the event and then the close error");
@@ -1035,15 +985,10 @@ mod tests {
             .inner
             .deliver_or_buffer_subscription_item("orphan".to_string(), raw(r#"{"event":"x"}"#));
 
-        client
-            .inner
-            .close_with_error(client_error("peer went away"));
+		client.inner.close_with_error(client_error("peer went away"));
 
         let remaining = client.inner.subscriptions.lock().unwrap().entries.len();
-        assert_eq!(
-            remaining, 0,
-            "close should leave no subscription state behind"
-        );
+		assert_eq!(remaining, 0, "close should leave no subscription state behind");
     }
 
     /// A frame off the wire reaches the subscription it names. Without this a
@@ -1052,12 +997,7 @@ mod tests {
     fn a_notification_frame_is_routed_to_its_subscription() {
         let client = HostRpcClient::new(TrackingConnection::new(), Arc::new(|_| {}));
         let (tx, mut rx) = mpsc::unbounded();
-        client
-            .inner
-            .subscriptions
-            .lock()
-            .unwrap()
-            .activate("sub-1".to_string(), tx);
+		client.inner.subscriptions.lock().unwrap().activate("sub-1".to_string(), tx);
 
         client
             .inner
@@ -1080,12 +1020,7 @@ mod tests {
         let connection = TrackingConnection::new();
         let client = HostRpcClient::new(connection.clone(), Arc::new(|_| {}));
         let (tx, _rx) = mpsc::unbounded();
-        client
-            .inner
-            .subscriptions
-            .lock()
-            .unwrap()
-            .activate("sub-1".to_string(), tx);
+		client.inner.subscriptions.lock().unwrap().activate("sub-1".to_string(), tx);
 
         client.inner.unsubscribe("sub-1", "unsub");
 
@@ -1142,9 +1077,7 @@ mod tests {
         let client =
             HostRpcClient::new(TrackingConnection::new(), thread_per_subscription_spawner());
         let rpc_client = RpcClient::new(client.clone());
-        client
-            .inner
-            .close_with_error(client_error("peer went away"));
+		client.inner.close_with_error(client_error("peer went away"));
 
         // Bounded: without the closed check these block on a peer that will
         // never answer, and a hung suite diagnoses nothing.
@@ -1160,10 +1093,7 @@ mod tests {
             .expect("a closed client should refuse rather than hang");
 
         assert!(request_failed, "a request on a closed client should fail");
-        assert!(
-            subscribe_failed,
-            "a subscribe on a closed client should fail"
-        );
+		assert!(subscribe_failed, "a subscribe on a closed client should fail");
     }
 
     /// The cap counts subscriptions holding a buffer. Asserted against the map
@@ -1173,12 +1103,7 @@ mod tests {
     fn the_buffer_cap_counts_only_subscriptions_holding_items() {
         let client = HostRpcClient::new(TrackingConnection::new(), Arc::new(|_| {}));
         let (tx, _rx) = mpsc::unbounded();
-        client
-            .inner
-            .subscriptions
-            .lock()
-            .unwrap()
-            .activate("active".to_string(), tx);
+		client.inner.subscriptions.lock().unwrap().activate("active".to_string(), tx);
 
         for index in 0..MAX_BUFFERED_SUBSCRIPTIONS {
             client
@@ -1195,10 +1120,7 @@ mod tests {
             let state = client.inner.subscriptions.lock().unwrap();
             (
                 state.entries.len(),
-                matches!(
-                    state.entries.get("active"),
-                    Some(SubscriptionEntry::Active(_))
-                ),
+				matches!(state.entries.get("active"), Some(SubscriptionEntry::Active(_))),
                 state.entries.contains_key("one-too-many"),
             )
         };
@@ -1207,23 +1129,15 @@ mod tests {
             MAX_BUFFERED_SUBSCRIPTIONS + 1,
             "the active subscription must not consume a buffer slot"
         );
-        assert!(
-            active_survives,
-            "the active subscription should still be active"
-        );
-        assert!(
-            !over_cap,
-            "a subscription past the cap must not be buffered"
-        );
+		assert!(active_survives, "the active subscription should still be active");
+		assert!(!over_cap, "a subscription past the cap must not be buffered");
     }
 
     #[test]
     fn a_buffer_stops_growing_at_its_item_cap() {
         let client = HostRpcClient::new(TrackingConnection::new(), Arc::new(|_| {}));
         for _ in 0..MAX_BUFFERED_ITEMS_PER_SUBSCRIPTION + 8 {
-            client
-                .inner
-                .deliver_or_buffer_subscription_item("sub-1".to_string(), raw("1"));
+			client.inner.deliver_or_buffer_subscription_item("sub-1".to_string(), raw("1"));
         }
 
         let buffered = {

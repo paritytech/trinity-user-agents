@@ -4,15 +4,13 @@
 //! discriminant lookup table (`wire_table.rs`). The generated files are
 //! intended to be included in the `truapi` crate.
 
-use std::fs;
-use std::path::Path;
+use std::{fs, path::Path};
 
 use anyhow::Result;
 
 use convert_case::{Case, Casing};
 
-use crate::platform::PlatformDefinition;
-use crate::rustdoc::*;
+use crate::{platform::PlatformDefinition, rustdoc::*};
 
 mod client;
 mod dispatcher;
@@ -46,10 +44,7 @@ pub fn generate_wasm_bridge_file(
     output_dir: &Path,
 ) -> Result<()> {
     fs::create_dir_all(output_dir)?;
-    fs::write(
-        output_dir.join("generated_bridge.rs"),
-        generate_wasm_bridge(definition, api)?,
-    )?;
+	fs::write(output_dir.join("generated_bridge.rs"), generate_wasm_bridge(definition, api)?)?;
     Ok(())
 }
 
@@ -158,29 +153,16 @@ mod tests {
             kind: MethodKind::Request,
             params: vec![ParamDef {
                 name: "request".to_string(),
-                type_ref: TypeRef::Named {
-                    name: "ReqWrapper".to_string(),
-                    args: vec![],
-                },
+				type_ref: TypeRef::Named { name: "ReqWrapper".to_string(), args: vec![] },
             }],
             return_type: ReturnType::Result {
-                ok: TypeRef::Named {
-                    name: "RespWrapper".to_string(),
-                    args: vec![],
-                },
+				ok: TypeRef::Named { name: "RespWrapper".to_string(), args: vec![] },
                 err: TypeRef::Named {
                     name: "CallError".to_string(),
-                    args: vec![TypeRef::Named {
-                        name: "ErrWrapper".to_string(),
-                        args: vec![],
-                    }],
+					args: vec![TypeRef::Named { name: "ErrWrapper".to_string(), args: vec![] }],
                 },
             },
-            wire: WireAttrs {
-                host_initiated: false,
-                internal: false,
-                id: Some(request_id),
-            },
+			wire: WireAttrs { host_initiated: false, internal: false, id: Some(request_id) },
             docs: None,
         }
     }
@@ -191,23 +173,13 @@ mod tests {
             kind: MethodKind::Subscription,
             params: vec![],
             return_type: ReturnType::Subscription {
-                item: TypeRef::Named {
-                    name: "ItemWrapper".to_string(),
-                    args: vec![],
-                },
+				item: TypeRef::Named { name: "ItemWrapper".to_string(), args: vec![] },
                 interrupt: TypeRef::Named {
                     name: "CallError".to_string(),
-                    args: vec![TypeRef::Named {
-                        name: "GenericError".to_string(),
-                        args: vec![],
-                    }],
+					args: vec![TypeRef::Named { name: "GenericError".to_string(), args: vec![] }],
                 },
             },
-            wire: WireAttrs {
-                host_initiated: false,
-                internal: false,
-                id: Some(start_id),
-            },
+			wire: WireAttrs { host_initiated: false, internal: false, id: Some(start_id) },
             docs: None,
         }
     }
@@ -295,10 +267,7 @@ mod tests {
 
         let src = generate_wire_table(&api, "testhash").expect("generate_wire_table");
         let entries = parse_entries(&src);
-        assert_eq!(
-            entries,
-            vec![(18, "account_connection_status_subscribe".into())],
-        );
+		assert_eq!(entries, vec![(18, "account_connection_status_subscribe".into())],);
     }
 
     /// Two traits each declaring a method named `submit` must produce two
@@ -308,15 +277,11 @@ mod tests {
     #[test]
     fn collision_safe_when_two_traits_share_method_name() {
         let mut statement_store_submit = make_request_method("submit", 62);
-        statement_store_submit.params[0].type_ref = TypeRef::Named {
-            name: "StatementStoreSubmitRequest".to_string(),
-            args: vec![],
-        };
+		statement_store_submit.params[0].type_ref =
+			TypeRef::Named { name: "StatementStoreSubmitRequest".to_string(), args: vec![] };
         let mut preimage_submit = make_request_method("submit", 68);
-        preimage_submit.params[0].type_ref = TypeRef::Named {
-            name: "PreimageSubmitRequest".to_string(),
-            args: vec![],
-        };
+		preimage_submit.params[0].type_ref =
+			TypeRef::Named { name: "PreimageSubmitRequest".to_string(), args: vec![] };
         let api = ApiDefinition {
             traits: vec![
                 TraitDef {
@@ -359,9 +324,7 @@ mod tests {
         let table = generate_wire_table(&api, "testhash").expect("wire_table");
         let entries = parse_entries(&table);
         assert!(
-            entries
-                .iter()
-                .any(|(_, tag)| tag == "statement_store_submit"),
+			entries.iter().any(|(_, tag)| tag == "statement_store_submit"),
             "wire_table missing prefixed StatementStore tag:\n{table}"
         );
         assert!(
@@ -419,10 +382,8 @@ mod tests {
     #[test]
     fn idempotent_emission() {
         let mut method = make_request_method("request_device_permission", 8);
-        method.params[0].type_ref = TypeRef::Named {
-            name: "RequestDevicePermissionRequest".to_string(),
-            args: vec![],
-        };
+		method.params[0].type_ref =
+			TypeRef::Named { name: "RequestDevicePermissionRequest".to_string(), args: vec![] };
         let api = ApiDefinition {
             traits: vec![TraitDef {
                 name: "Permissions".to_string(),
@@ -459,10 +420,7 @@ mod tests {
                 name: "Permissions".to_string(),
                 module_path: Vec::new(),
                 wire_trait_id: Some(197),
-                methods: vec![
-                    make_request_method("alpha", 10),
-                    make_request_method("beta", 10),
-                ],
+				methods: vec![make_request_method("alpha", 10), make_request_method("beta", 10)],
                 docs: None,
             }],
             public_trait_order: vec!["Permissions".to_string()],
@@ -471,10 +429,7 @@ mod tests {
         };
         let err = generate_wire_table(&api, "testhash").expect_err("duplicate ids must error");
         let msg = format!("{err}");
-        assert!(
-            msg.contains("wire id (197, 10) reused"),
-            "unexpected error message: {msg}",
-        );
+		assert!(msg.contains("wire id (197, 10) reused"), "unexpected error message: {msg}",);
     }
 
     /// Method ids are scoped per trait: two traits may both use method id 0,
@@ -504,14 +459,8 @@ mod tests {
         };
 
         let table = generate_wire_table(&api, "testhash").expect("wire_table");
-        assert!(
-            table.contains("trait_id: 205,"),
-            "missing trait id 13:\n{table}"
-        );
-        assert!(
-            table.contains("trait_id: 202,"),
-            "missing trait id 10:\n{table}"
-        );
+		assert!(table.contains("trait_id: 205,"), "missing trait id 13:\n{table}");
+		assert!(table.contains("trait_id: 202,"), "missing trait id 10:\n{table}");
     }
 
     /// Two traits must not share a wire trait id.
@@ -542,10 +491,7 @@ mod tests {
         let err =
             generate_wire_table(&api, "testhash").expect_err("duplicate trait ids must error");
         let msg = format!("{err}");
-        assert!(
-            msg.contains("wire trait id 196 reused"),
-            "unexpected error message: {msg}",
-        );
+		assert!(msg.contains("wire trait id 196 reused"), "unexpected error message: {msg}",);
     }
 
     /// A trait missing `#[wire_trait(id = N)]` must fail emission.
@@ -566,10 +512,7 @@ mod tests {
 
         let err = generate_wire_table(&api, "testhash").expect_err("missing trait id must error");
         let msg = format!("{err}");
-        assert!(
-            msg.contains("missing #[wire_trait(id = N)]"),
-            "unexpected error message: {msg}",
-        );
+		assert!(msg.contains("missing #[wire_trait(id = N)]"), "unexpected error message: {msg}",);
     }
 
     /// Trait 255 is reserved for protocol errors, so no API trait may declare
@@ -597,8 +540,8 @@ mod tests {
         let err = generate_wire_table(&api, "testhash").expect_err("trait id 255 must be refused");
         let msg = err.to_string();
         assert!(
-            msg.contains("wire trait id 255 reused")
-                && msg.contains("reserved for protocol errors"),
+			msg.contains("wire trait id 255 reused") &&
+				msg.contains("reserved for protocol errors"),
             "unexpected error message: {msg}",
         );
     }
@@ -634,10 +577,7 @@ mod tests {
     fn wire_const_name_pins_digits_and_acronyms() {
         assert_eq!(wire_const_name("Preimage", "submit"), "PREIMAGE_SUBMIT");
         assert_eq!(wire_const_name("Signing", "sign_v2"), "SIGNING_SIGN_V_2");
-        assert_eq!(
-            wire_const_name("HTTPServer", "serve"),
-            "H_T_T_P_SERVER_SERVE"
-        );
+		assert_eq!(wire_const_name("HTTPServer", "serve"), "H_T_T_P_SERVER_SERVE");
         assert_eq!(
             wire_const_name("StatementStore", "create_proof"),
             "STATEMENT_STORE_CREATE_PROOF"
@@ -648,10 +588,7 @@ mod tests {
     fn module_for_trait_maps_irregular_names() {
         assert_eq!(module_for_trait("JsonRpc"), "jsonrpc");
         assert_eq!(module_for_trait("LocalStorage"), "local_storage");
-        assert_eq!(
-            module_for_trait("ResourceAllocation"),
-            "resource_allocation"
-        );
+		assert_eq!(module_for_trait("ResourceAllocation"), "resource_allocation");
         assert_eq!(module_for_trait("Account"), "account");
     }
 
@@ -677,10 +614,7 @@ mod tests {
         let err =
             generate_wire_table(&api, "testhash").expect_err("missing id annotation must error");
         let msg = format!("{err}");
-        assert!(
-            msg.contains("missing #[wire(id"),
-            "unexpected error message: {msg}",
-        );
+		assert!(msg.contains("missing #[wire(id"), "unexpected error message: {msg}",);
     }
 
     /// The dispatcher expects each method to take exactly one versioned
@@ -691,10 +625,7 @@ mod tests {
         let mut method = make_request_method("alpha", 10);
         method.params.push(ParamDef {
             name: "extra".to_string(),
-            type_ref: TypeRef::Named {
-                name: "ExtraWrapper".to_string(),
-                args: vec![],
-            },
+			type_ref: TypeRef::Named { name: "ExtraWrapper".to_string(), args: vec![] },
         });
         let api = ApiDefinition {
             traits: vec![TraitDef {
@@ -725,10 +656,7 @@ mod tests {
             ok: TypeRef::Primitive("u32".to_string()),
             err: TypeRef::Named {
                 name: "CallError".to_string(),
-                args: vec![TypeRef::Named {
-                    name: "ErrWrapper".to_string(),
-                    args: vec![],
-                }],
+				args: vec![TypeRef::Named { name: "ErrWrapper".to_string(), args: vec![] }],
             },
         };
         let api = ApiDefinition {
@@ -743,10 +671,7 @@ mod tests {
             // `ReqWrapper` must be a real versioned wrapper here: otherwise the
             // request-parameter check fires first and this stops exercising the
             // response check it is named for.
-            types: vec![
-                versioned_wrapper_def("ReqWrapper"),
-                versioned_wrapper_def("ErrWrapper"),
-            ],
+			types: vec![versioned_wrapper_def("ReqWrapper"), versioned_wrapper_def("ErrWrapper")],
             framework_types: Vec::new(),
         };
         let err = generate_dispatcher(&api).expect_err("primitive response must error");

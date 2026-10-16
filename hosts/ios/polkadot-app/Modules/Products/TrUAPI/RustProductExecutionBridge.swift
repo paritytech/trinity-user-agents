@@ -5,7 +5,6 @@ import Products
 import ChainRegistry
 import SubstrateSdk
 import DesignSystem
-import UIKit
 
 /// Production `HostBridge` for one product execution: wires the rust core's
 /// platform callbacks to app services and, once attached, notifies the
@@ -53,7 +52,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         media = NativeMediaBackend(productId: dependencies.productId)
         storage = ProductStorageBackend(storage: dependencies.productStorage)
         coreStorage = CoreStorageBackend(storage: dependencies.coreStorage)
-        theme = Self.makeTheme(dependencies.themeManager.theme)
+        theme = dependencies.themeManager.theme.hostThemeSubscribeItem
 
         // Register before opening the execution: its synchronous currentTheme
         // callback already has the selected theme, and no transition is lost
@@ -89,16 +88,8 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     @MainActor
-    private static func makeTheme(_ theme: Theme) -> HostThemeSubscribeItem {
-        HostThemeSubscribeItem(
-            name: .custom(theme.id),
-            variant: theme.colors.bgSurfaceMain.isLight ? .light : .dark
-        )
-    }
-
-    @MainActor
     private func themeDidChange(_ next: Theme) {
-        let next = Self.makeTheme(next)
+        let next = next.hostThemeSubscribeItem
         let changed = themeLock.withLock {
             guard theme != next else { return false }
             theme = next
@@ -301,6 +292,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         dependencies.logger.debug("[truapi] auth state: \(details)")
     }
 }
+
 
 // MARK: - Notify-back event handlers
 

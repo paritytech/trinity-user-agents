@@ -8,12 +8,14 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
 use subxt_rpcs::client::{RpcClient, rpc_params};
-use truapi::host_logic::dotns_gateway::{
+use truapi::{
+	host_logic::dotns_gateway::{
     DotnsIdentity, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, account_alias_key,
     classify_labels, discover_pop_controller, encode_revive_call, label_available,
     lite_label_owner_key, resolve_labels, timestamp_now_key, view_output,
+	},
+	platform::async_trait,
 };
-use truapi::platform::async_trait;
 
 /// Env var overriding the `DotnsPopController` H160 (hex), skipping on-chain
 /// discovery.
@@ -39,10 +41,7 @@ impl AssetHubReader {
         let rpc = RpcClient::from_insecure_url(asset_hub_ws)
             .await
             .with_context(|| format!("connect {asset_hub_ws}"))?;
-        Ok(Self {
-            rpc,
-            pop_controller: None,
-        })
+		Ok(Self { rpc, pop_controller: None })
     }
 
     /// Asset Hub chain time in Unix seconds. `Timestamp.Now` itself is
@@ -68,9 +67,7 @@ impl AssetHubReader {
     /// Account that reserved the dotted lite username `lite_label` through the
     /// gateway, per `DotnsGateway.LiteLabelOwner`.
     pub async fn lite_label_owner(&self, lite_label: &str) -> Result<Option<[u8; 32]>> {
-        let value = self
-            .raw_storage(&lite_label_owner_key(lite_label.as_bytes()))
-            .await?;
+		let value = self.raw_storage(&lite_label_owner_key(lite_label.as_bytes())).await?;
         account_id_value("DotnsGateway.LiteLabelOwner", value)
     }
 
@@ -89,9 +86,7 @@ impl AssetHubReader {
     /// `false` once the name is registered, whichever flow minted it.
     pub async fn label_available(&mut self, label: &str) -> Result<bool> {
         let controller = self.pop_controller().await?;
-        label_available(self, &controller, label)
-            .await
-            .map_err(anyhow::Error::msg)
+		label_available(self, &controller, label).await.map_err(anyhow::Error::msg)
     }
 
     /// `DotnsPopController` address, resolved once per reader. The env override
@@ -162,10 +157,7 @@ impl AssetHubReader {
     async fn raw_storage(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         let value: Value = self
             .rpc
-            .request(
-                "state_getStorage",
-                rpc_params![format!("0x{}", hex::encode(key))],
-            )
+			.request("state_getStorage", rpc_params![format!("0x{}", hex::encode(key))])
             .await
             .context("rpc state_getStorage")?;
         value
@@ -194,9 +186,7 @@ fn account_id_value(entry: &str, value: Option<Vec<u8>>) -> Result<Option<[u8; 3
 #[async_trait]
 impl DotnsTransport for AssetHubReader {
     async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
-        self.raw_storage(&key)
-            .await
-            .map_err(|err| format!("{err:#}"))
+		self.raw_storage(&key).await.map_err(|err| format!("{err:#}"))
     }
 
     async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {

@@ -21,10 +21,7 @@ impl AccountConnectionStatusSubscribe {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Subscription(MethodIds {
-            trait_id: 2,
-            method_id: 0,
-        }),
+		wire: MethodWire::Subscription(MethodIds { trait_id: 2, method_id: 0 }),
     };
 }
 impl SubscriptionMethod for AccountConnectionStatusSubscribe {
@@ -48,10 +45,7 @@ impl AccountGetAccount {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 2,
-            method_id: 1,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 2, method_id: 1 }),
     };
 }
 impl RequestMethod for AccountGetAccount {
@@ -75,10 +69,7 @@ impl AccountGetAccountAlias {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 2,
-            method_id: 2,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 2, method_id: 2 }),
     };
 }
 impl RequestMethod for AccountGetAccountAlias {
@@ -102,10 +93,7 @@ impl AccountCreateAccountProof {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 2,
-            method_id: 3,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 2, method_id: 3 }),
     };
 }
 impl RequestMethod for AccountCreateAccountProof {
@@ -129,10 +117,7 @@ impl AccountSignVrf {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 2,
-            method_id: 7,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 2, method_id: 7 }),
     };
 }
 impl RequestMethod for AccountSignVrf {
@@ -156,10 +141,7 @@ impl AccountRegisterRingVrfKey {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 2,
-            method_id: 8,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 2, method_id: 8 }),
     };
 }
 impl RequestMethod for AccountRegisterRingVrfKey {
@@ -183,10 +165,7 @@ impl AccountListRingVrfKeys {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 2,
-            method_id: 9,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 2, method_id: 9 }),
     };
 }
 impl RequestMethod for AccountListRingVrfKeys {
@@ -210,10 +189,7 @@ impl AccountRingVrfSign {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 2,
-            method_id: 10,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 2, method_id: 10 }),
     };
 }
 impl RequestMethod for AccountRingVrfSign {
@@ -237,10 +213,7 @@ impl AccountProductDeviceChat {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 2,
-            method_id: 12,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 2, method_id: 12 }),
     };
 }
 impl RequestMethod for AccountProductDeviceChat {
@@ -264,10 +237,7 @@ impl AccountGetLegacyAccounts {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 2,
-            method_id: 4,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 2, method_id: 4 }),
     };
 }
 impl RequestMethod for AccountGetLegacyAccounts {
@@ -291,10 +261,7 @@ impl AccountGetUserId {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 2,
-            method_id: 5,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 2, method_id: 5 }),
     };
 }
 impl RequestMethod for AccountGetUserId {
@@ -318,10 +285,7 @@ impl AccountRequestLogin {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 2,
-            method_id: 6,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 2, method_id: 6 }),
     };
 }
 impl RequestMethod for AccountRequestLogin {
@@ -345,10 +309,7 @@ impl ChainFollowHeadSubscribe {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Subscription(MethodIds {
-            trait_id: 3,
-            method_id: 0,
-        }),
+		wire: MethodWire::Subscription(MethodIds { trait_id: 3, method_id: 0 }),
     };
 }
 impl SubscriptionMethod for ChainFollowHeadSubscribe {
@@ -372,10 +333,7 @@ impl ChainGetHeadHeader {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 3,
-            method_id: 1,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 3, method_id: 1 }),
     };
 }
 impl RequestMethod for ChainGetHeadHeader {
@@ -399,10 +357,7 @@ impl ChainGetHeadBody {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 3,
-            method_id: 2,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 3, method_id: 2 }),
     };
 }
 impl RequestMethod for ChainGetHeadBody {
@@ -426,10 +381,7 @@ impl ChainGetHeadStorage {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 3,
-            method_id: 3,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 3, method_id: 3 }),
     };
 }
 impl RequestMethod for ChainGetHeadStorage {
@@ -453,10 +405,7 @@ impl ChainCallHead {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 3,
-            method_id: 4,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 3, method_id: 4 }),
     };
 }
 impl RequestMethod for ChainCallHead {
@@ -480,10 +429,7 @@ impl ChainUnpinHead {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 3,
-            method_id: 5,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 3, method_id: 5 }),
     };
 }
 impl RequestMethod for ChainUnpinHead {
@@ -507,10 +453,7 @@ impl ChainContinueHead {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 3,
-            method_id: 6,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 3, method_id: 6 }),
     };
 }
 impl RequestMethod for ChainContinueHead {
@@ -534,10 +477,7 @@ impl ChainStopHeadOperation {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 3,
-            method_id: 7,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 3, method_id: 7 }),
     };
 }
 impl RequestMethod for ChainStopHeadOperation {
@@ -561,10 +501,7 @@ impl ChainGetSpecGenesisHash {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 3,
-            method_id: 8,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 3, method_id: 8 }),
     };
 }
 impl RequestMethod for ChainGetSpecGenesisHash {
@@ -588,10 +525,7 @@ impl ChainGetSpecChainName {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 3,
-            method_id: 9,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 3, method_id: 9 }),
     };
 }
 impl RequestMethod for ChainGetSpecChainName {
@@ -615,10 +549,7 @@ impl ChainGetSpecProperties {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 3,
-            method_id: 10,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 3, method_id: 10 }),
     };
 }
 impl RequestMethod for ChainGetSpecProperties {
@@ -642,10 +573,7 @@ impl ChainBroadcastTransaction {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 3,
-            method_id: 11,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 3, method_id: 11 }),
     };
 }
 impl RequestMethod for ChainBroadcastTransaction {
@@ -669,10 +597,7 @@ impl ChainStopTransaction {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 3,
-            method_id: 12,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 3, method_id: 12 }),
     };
 }
 impl RequestMethod for ChainStopTransaction {
@@ -696,10 +621,7 @@ impl ChainGetChainInfo {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 3,
-            method_id: 13,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 3, method_id: 13 }),
     };
 }
 impl RequestMethod for ChainGetChainInfo {
@@ -723,10 +645,7 @@ impl ChatCreateRoom {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: Some(ExecutionKind::Worker),
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 4,
-            method_id: 0,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 4, method_id: 0 }),
     };
 }
 impl RequestMethod for ChatCreateRoom {
@@ -750,10 +669,7 @@ impl ChatRegisterBot {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: Some(ExecutionKind::Worker),
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 4,
-            method_id: 1,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 4, method_id: 1 }),
     };
 }
 impl RequestMethod for ChatRegisterBot {
@@ -777,10 +693,7 @@ impl ChatListSubscribe {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: Some(ExecutionKind::Worker),
-        wire: MethodWire::Subscription(MethodIds {
-            trait_id: 4,
-            method_id: 2,
-        }),
+		wire: MethodWire::Subscription(MethodIds { trait_id: 4, method_id: 2 }),
     };
 }
 impl SubscriptionMethod for ChatListSubscribe {
@@ -804,10 +717,7 @@ impl ChatPostMessage {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: Some(ExecutionKind::Worker),
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 4,
-            method_id: 3,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 4, method_id: 3 }),
     };
 }
 impl RequestMethod for ChatPostMessage {
@@ -831,10 +741,7 @@ impl ChatActionSubscribe {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: Some(ExecutionKind::Worker),
-        wire: MethodWire::Subscription(MethodIds {
-            trait_id: 4,
-            method_id: 4,
-        }),
+		wire: MethodWire::Subscription(MethodIds { trait_id: 4, method_id: 4 }),
     };
 }
 impl SubscriptionMethod for ChatActionSubscribe {
@@ -842,6 +749,30 @@ impl SubscriptionMethod for ChatActionSubscribe {
     type Error = truapi::versioned::chat::HostChatActionSubscribeError;
     type Item = truapi::versioned::chat::HostChatActionSubscribeItem;
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `chat_set_room_footer` method marker.
+pub struct ChatSetRoomFooter;
+impl ChatSetRoomFooter {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Chat",
+		method: "set_room_footer",
+		wire_name: "chat_set_room_footer",
+		request_type: "truapi::versioned::chat::HostChatSetRoomFooterRequest",
+		response_type: "truapi::versioned::chat::HostChatSetRoomFooterResponse",
+		error_type: Some("truapi::versioned::chat::HostChatSetRoomFooterError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: Some(ExecutionKind::Worker),
+		wire: MethodWire::Request(MethodIds { trait_id: 4, method_id: 6 }),
+	};
+}
+impl RequestMethod for ChatSetRoomFooter {
+	type Request = truapi::versioned::chat::HostChatSetRoomFooterRequest;
+	type Response = truapi::versioned::chat::HostChatSetRoomFooterResponse;
+	type Error = truapi::versioned::chat::HostChatSetRoomFooterError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `coin_payment_create_purse` method marker.
@@ -858,10 +789,7 @@ impl CoinPaymentCreatePurse {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 5,
-            method_id: 0,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 5, method_id: 0 }),
     };
 }
 impl RequestMethod for CoinPaymentCreatePurse {
@@ -885,10 +813,7 @@ impl CoinPaymentQueryPurse {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 5,
-            method_id: 1,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 5, method_id: 1 }),
     };
 }
 impl RequestMethod for CoinPaymentQueryPurse {
@@ -912,10 +837,7 @@ impl CoinPaymentRebalancePurse {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Subscription(MethodIds {
-            trait_id: 5,
-            method_id: 2,
-        }),
+		wire: MethodWire::Subscription(MethodIds { trait_id: 5, method_id: 2 }),
     };
 }
 impl SubscriptionMethod for CoinPaymentRebalancePurse {
@@ -939,10 +861,7 @@ impl CoinPaymentDeletePurse {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Subscription(MethodIds {
-            trait_id: 5,
-            method_id: 3,
-        }),
+		wire: MethodWire::Subscription(MethodIds { trait_id: 5, method_id: 3 }),
     };
 }
 impl SubscriptionMethod for CoinPaymentDeletePurse {
@@ -966,10 +885,7 @@ impl CoinPaymentCreateReceivable {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 5,
-            method_id: 4,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 5, method_id: 4 }),
     };
 }
 impl RequestMethod for CoinPaymentCreateReceivable {
@@ -993,10 +909,7 @@ impl CoinPaymentCreateCheque {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 5,
-            method_id: 5,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 5, method_id: 5 }),
     };
 }
 impl RequestMethod for CoinPaymentCreateCheque {
@@ -1020,10 +933,7 @@ impl CoinPaymentDeposit {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Subscription(MethodIds {
-            trait_id: 5,
-            method_id: 6,
-        }),
+		wire: MethodWire::Subscription(MethodIds { trait_id: 5, method_id: 6 }),
     };
 }
 impl SubscriptionMethod for CoinPaymentDeposit {
@@ -1047,10 +957,7 @@ impl CoinPaymentRefund {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Subscription(MethodIds {
-            trait_id: 5,
-            method_id: 7,
-        }),
+		wire: MethodWire::Subscription(MethodIds { trait_id: 5, method_id: 7 }),
     };
 }
 impl SubscriptionMethod for CoinPaymentRefund {
@@ -1074,10 +981,7 @@ impl CoinPaymentListenForPayment {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Subscription(MethodIds {
-            trait_id: 5,
-            method_id: 8,
-        }),
+		wire: MethodWire::Subscription(MethodIds { trait_id: 5, method_id: 8 }),
     };
 }
 impl SubscriptionMethod for CoinPaymentListenForPayment {
@@ -1101,10 +1005,7 @@ impl ContactsPick {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 20,
-            method_id: 0,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 20, method_id: 0 }),
     };
 }
 impl RequestMethod for ContactsPick {
@@ -1128,10 +1029,7 @@ impl ContactsPickMany {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 20,
-            method_id: 1,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 20, method_id: 1 }),
     };
 }
 impl RequestMethod for ContactsPickMany {
@@ -1155,10 +1053,7 @@ impl ContactsPlaceLabels {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 20,
-            method_id: 2,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 20, method_id: 2 }),
     };
 }
 impl RequestMethod for ContactsPlaceLabels {
@@ -1182,10 +1077,7 @@ impl EntropyDerive {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 6,
-            method_id: 0,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 6, method_id: 0 }),
     };
 }
 impl RequestMethod for EntropyDerive {
@@ -1398,10 +1290,7 @@ impl ExpandedCardSetFaceShown {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: Some(ExecutionKind::Widget),
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 23,
-            method_id: 0,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 23, method_id: 0 }),
     };
 }
 impl RequestMethod for ExpandedCardSetFaceShown {
@@ -1425,10 +1314,7 @@ impl GameRemindNextGame {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 21,
-            method_id: 0,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 21, method_id: 0 }),
     };
 }
 impl RequestMethod for GameRemindNextGame {
@@ -1452,10 +1338,7 @@ impl GameCancelNextGame {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 21,
-            method_id: 1,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 21, method_id: 1 }),
     };
 }
 impl RequestMethod for GameCancelNextGame {
@@ -1479,10 +1362,7 @@ impl LocalStorageRead {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 7,
-            method_id: 0,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 7, method_id: 0 }),
     };
 }
 impl RequestMethod for LocalStorageRead {
@@ -1506,10 +1386,7 @@ impl LocalStorageWrite {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 7,
-            method_id: 1,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 7, method_id: 1 }),
     };
 }
 impl RequestMethod for LocalStorageWrite {
@@ -1533,10 +1410,7 @@ impl LocalStorageClear {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 7,
-            method_id: 2,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 7, method_id: 2 }),
     };
 }
 impl RequestMethod for LocalStorageClear {
@@ -1560,10 +1434,7 @@ impl LocalStorageSubscribe {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Subscription(MethodIds {
-            trait_id: 7,
-            method_id: 3,
-        }),
+		wire: MethodWire::Subscription(MethodIds { trait_id: 7, method_id: 3 }),
     };
 }
 impl SubscriptionMethod for LocalStorageSubscribe {
@@ -1587,10 +1458,7 @@ impl LocaleSubscribe {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Subscription(MethodIds {
-            trait_id: 16,
-            method_id: 0,
-        }),
+		wire: MethodWire::Subscription(MethodIds { trait_id: 16, method_id: 0 }),
     };
 }
 impl SubscriptionMethod for LocaleSubscribe {
@@ -1614,10 +1482,7 @@ impl LocaleLocalizeTimestamps {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 16,
-            method_id: 1,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 16, method_id: 1 }),
     };
 }
 impl RequestMethod for LocaleLocalizeTimestamps {
@@ -1938,10 +1803,7 @@ impl NotificationsSendPushNotification {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 8,
-            method_id: 0,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 8, method_id: 0 }),
     };
 }
 impl RequestMethod for NotificationsSendPushNotification {
@@ -1965,10 +1827,7 @@ impl NotificationsCancelPushNotification {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 8,
-            method_id: 1,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 8, method_id: 1 }),
     };
 }
 impl RequestMethod for NotificationsCancelPushNotification {
@@ -2197,7 +2056,6 @@ impl RequestMethod for NotificationsAcknowledgeActivation {
     type Error = truapi::versioned::notifications::NotificationActivationAcknowledgeError;
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
-
 /// `payment_balance_subscribe` method marker.
 pub struct PaymentBalanceSubscribe;
 impl PaymentBalanceSubscribe {
@@ -2212,10 +2070,7 @@ impl PaymentBalanceSubscribe {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Subscription(MethodIds {
-            trait_id: 9,
-            method_id: 0,
-        }),
+		wire: MethodWire::Subscription(MethodIds { trait_id: 9, method_id: 0 }),
     };
 }
 impl SubscriptionMethod for PaymentBalanceSubscribe {
@@ -2239,10 +2094,7 @@ impl PaymentRequest {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 9,
-            method_id: 2,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 9, method_id: 2 }),
     };
 }
 impl RequestMethod for PaymentRequest {
@@ -2266,10 +2118,7 @@ impl PaymentStatusSubscribe {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Subscription(MethodIds {
-            trait_id: 9,
-            method_id: 3,
-        }),
+		wire: MethodWire::Subscription(MethodIds { trait_id: 9, method_id: 3 }),
     };
 }
 impl SubscriptionMethod for PaymentStatusSubscribe {
@@ -2293,10 +2142,7 @@ impl PaymentTopUp {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 9,
-            method_id: 1,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 9, method_id: 1 }),
     };
 }
 impl RequestMethod for PaymentTopUp {
@@ -2320,10 +2166,7 @@ impl PermissionsRequestDevicePermission {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 10,
-            method_id: 0,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 10, method_id: 0 }),
     };
 }
 impl RequestMethod for PermissionsRequestDevicePermission {
@@ -2347,10 +2190,7 @@ impl PermissionsRequestRemotePermission {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 10,
-            method_id: 1,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 10, method_id: 1 }),
     };
 }
 impl RequestMethod for PermissionsRequestRemotePermission {
@@ -2374,10 +2214,7 @@ impl PermissionsAuthorizeRemotePermission {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 10,
-            method_id: 2,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 10, method_id: 2 }),
     };
 }
 impl RequestMethod for PermissionsAuthorizeRemotePermission {
@@ -2401,10 +2238,7 @@ impl PermissionsAuthorizeDevicePermission {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 10,
-            method_id: 3,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 10, method_id: 3 }),
     };
 }
 impl RequestMethod for PermissionsAuthorizeDevicePermission {
@@ -2428,10 +2262,7 @@ impl PocketListSubscribe {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: Some(ExecutionKind::Worker),
-        wire: MethodWire::Subscription(MethodIds {
-            trait_id: 18,
-            method_id: 0,
-        }),
+		wire: MethodWire::Subscription(MethodIds { trait_id: 18, method_id: 0 }),
     };
 }
 impl SubscriptionMethod for PocketListSubscribe {
@@ -2455,10 +2286,7 @@ impl PocketRemoveCard {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: Some(ExecutionKind::Worker),
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 18,
-            method_id: 1,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 18, method_id: 1 }),
     };
 }
 impl RequestMethod for PocketRemoveCard {
@@ -2482,10 +2310,7 @@ impl PreimageLookupSubscribe {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Subscription(MethodIds {
-            trait_id: 11,
-            method_id: 0,
-        }),
+		wire: MethodWire::Subscription(MethodIds { trait_id: 11, method_id: 0 }),
     };
 }
 impl SubscriptionMethod for PreimageLookupSubscribe {
@@ -2509,10 +2334,7 @@ impl PreimageSubmit {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 11,
-            method_id: 1,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 11, method_id: 1 }),
     };
 }
 impl RequestMethod for PreimageSubmit {
@@ -2536,10 +2358,7 @@ impl ProfilePresent {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 69,
-            method_id: 0,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 69, method_id: 0 }),
     };
 }
 impl RequestMethod for ProfilePresent {
@@ -2563,10 +2382,7 @@ impl ProfileDisclose {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 69,
-            method_id: 1,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 69, method_id: 1 }),
     };
 }
 impl RequestMethod for ProfileDisclose {
@@ -2590,10 +2406,7 @@ impl ProfileRetract {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 69,
-            method_id: 2,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 69, method_id: 2 }),
     };
 }
 impl RequestMethod for ProfileRetract {
@@ -2617,10 +2430,7 @@ impl ProfilePresentContact {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 69,
-            method_id: 3,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 69, method_id: 3 }),
     };
 }
 impl RequestMethod for ProfilePresentContact {
@@ -2644,10 +2454,7 @@ impl ProfilePlaceContactAvatars {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 69,
-            method_id: 4,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 69, method_id: 4 }),
     };
 }
 impl RequestMethod for ProfilePlaceContactAvatars {
@@ -2671,10 +2478,7 @@ impl ProfileOwnStatus {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 69,
-            method_id: 5,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 69, method_id: 5 }),
     };
 }
 impl RequestMethod for ProfileOwnStatus {
@@ -2698,10 +2502,7 @@ impl ProfilePresentOwn {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 69,
-            method_id: 6,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 69, method_id: 6 }),
     };
 }
 impl RequestMethod for ProfilePresentOwn {
@@ -2725,10 +2526,7 @@ impl RendererRender {
         kind: MethodKind::Subscription,
         direction: Direction::HostToProduct,
         required_execution: Some(ExecutionKind::Worker),
-        wire: MethodWire::Subscription(MethodIds {
-            trait_id: 17,
-            method_id: 0,
-        }),
+		wire: MethodWire::Subscription(MethodIds { trait_id: 17, method_id: 0 }),
     };
 }
 impl HostSubscriptionMethod for RendererRender {
@@ -2752,10 +2550,7 @@ impl RendererActionSubscribe {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: Some(ExecutionKind::Worker),
-        wire: MethodWire::Subscription(MethodIds {
-            trait_id: 17,
-            method_id: 1,
-        }),
+		wire: MethodWire::Subscription(MethodIds { trait_id: 17, method_id: 1 }),
     };
 }
 impl SubscriptionMethod for RendererActionSubscribe {
@@ -2781,10 +2576,7 @@ impl ResourceAllocationRequest {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 12,
-            method_id: 0,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 12, method_id: 0 }),
     };
 }
 impl RequestMethod for ResourceAllocationRequest {
@@ -2808,10 +2600,7 @@ impl ScannerScan {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 25,
-            method_id: 0,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 25, method_id: 0 }),
     };
 }
 impl RequestMethod for ScannerScan {
@@ -2835,10 +2624,7 @@ impl SigningCreateTransaction {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 13,
-            method_id: 0,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 13, method_id: 0 }),
     };
 }
 impl RequestMethod for SigningCreateTransaction {
@@ -2862,10 +2648,7 @@ impl SigningCreateTransactionWithLegacyAccount {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 13,
-            method_id: 1,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 13, method_id: 1 }),
     };
 }
 impl RequestMethod for SigningCreateTransactionWithLegacyAccount {
@@ -2889,10 +2672,7 @@ impl SigningSignRawWithLegacyAccount {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 13,
-            method_id: 2,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 13, method_id: 2 }),
     };
 }
 impl RequestMethod for SigningSignRawWithLegacyAccount {
@@ -2916,10 +2696,7 @@ impl SigningSignPayloadWithLegacyAccount {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 13,
-            method_id: 3,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 13, method_id: 3 }),
     };
 }
 impl RequestMethod for SigningSignPayloadWithLegacyAccount {
@@ -2943,10 +2720,7 @@ impl SigningSignRaw {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 13,
-            method_id: 4,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 13, method_id: 4 }),
     };
 }
 impl RequestMethod for SigningSignRaw {
@@ -2970,10 +2744,7 @@ impl SigningSignPayload {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 13,
-            method_id: 5,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 13, method_id: 5 }),
     };
 }
 impl RequestMethod for SigningSignPayload {
@@ -2997,10 +2768,7 @@ impl SigningSignRawUnwatermarkedDeprecated {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 13,
-            method_id: 6,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 13, method_id: 6 }),
     };
 }
 impl RequestMethod for SigningSignRawUnwatermarkedDeprecated {
@@ -3024,10 +2792,7 @@ impl SigningSignRawUnwatermarkedDeprecatedWithLegacyAccount {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 13,
-            method_id: 7,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 13, method_id: 7 }),
     };
 }
 impl RequestMethod for SigningSignRawUnwatermarkedDeprecatedWithLegacyAccount {
@@ -3051,10 +2816,7 @@ impl StatementStoreSubscribe {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Subscription(MethodIds {
-            trait_id: 14,
-            method_id: 0,
-        }),
+		wire: MethodWire::Subscription(MethodIds { trait_id: 14, method_id: 0 }),
     };
 }
 impl SubscriptionMethod for StatementStoreSubscribe {
@@ -3080,10 +2842,7 @@ impl StatementStoreCreateProof {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 14,
-            method_id: 1,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 14, method_id: 1 }),
     };
 }
 impl RequestMethod for StatementStoreCreateProof {
@@ -3109,10 +2868,7 @@ impl StatementStoreCreateProofAuthorized {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 14,
-            method_id: 3,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 14, method_id: 3 }),
     };
 }
 impl RequestMethod for StatementStoreCreateProofAuthorized {
@@ -3138,10 +2894,7 @@ impl StatementStoreSubmit {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 14,
-            method_id: 2,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 14, method_id: 2 }),
     };
 }
 impl RequestMethod for StatementStoreSubmit {
@@ -3165,10 +2918,7 @@ impl SystemHandshake {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 1,
-            method_id: 0,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 1, method_id: 0 }),
     };
 }
 impl RequestMethod for SystemHandshake {
@@ -3192,10 +2942,7 @@ impl SystemFeatureSupported {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 1,
-            method_id: 1,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 1, method_id: 1 }),
     };
 }
 impl RequestMethod for SystemFeatureSupported {
@@ -3219,10 +2966,7 @@ impl SystemNavigateTo {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 1,
-            method_id: 2,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 1, method_id: 2 }),
     };
 }
 impl RequestMethod for SystemNavigateTo {
@@ -3246,10 +2990,7 @@ impl SystemHostInfo {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 1,
-            method_id: 3,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 1, method_id: 3 }),
     };
 }
 impl RequestMethod for SystemHostInfo {
@@ -3273,10 +3014,7 @@ impl SystemGetProductContext {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 1,
-            method_id: 4,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 1, method_id: 4 }),
     };
 }
 impl RequestMethod for SystemGetProductContext {
@@ -3300,10 +3038,7 @@ impl ThemeSubscribe {
         kind: MethodKind::Subscription,
         direction: Direction::ProductToHost,
         required_execution: None,
-        wire: MethodWire::Subscription(MethodIds {
-            trait_id: 15,
-            method_id: 0,
-        }),
+		wire: MethodWire::Subscription(MethodIds { trait_id: 15, method_id: 0 }),
     };
 }
 impl SubscriptionMethod for ThemeSubscribe {
@@ -3327,10 +3062,7 @@ impl WorkerBeginOperation {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: Some(ExecutionKind::Worker),
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 19,
-            method_id: 0,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 19, method_id: 0 }),
     };
 }
 impl RequestMethod for WorkerBeginOperation {
@@ -3354,10 +3086,7 @@ impl WorkerEndOperation {
         kind: MethodKind::Request,
         direction: Direction::ProductToHost,
         required_execution: Some(ExecutionKind::Worker),
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 19,
-            method_id: 1,
-        }),
+		wire: MethodWire::Request(MethodIds { trait_id: 19, method_id: 1 }),
     };
 }
 impl RequestMethod for WorkerEndOperation {
@@ -3633,6 +3362,7 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
     ChatListSubscribe::DESCRIPTOR,
     ChatPostMessage::DESCRIPTOR,
     ChatActionSubscribe::DESCRIPTOR,
+	ChatSetRoomFooter::DESCRIPTOR,
     CoinPaymentCreatePurse::DESCRIPTOR,
     CoinPaymentQueryPurse::DESCRIPTOR,
     CoinPaymentRebalancePurse::DESCRIPTOR,
@@ -3734,6 +3464,7 @@ pub const WORKER_ONLY_METHODS: &[MethodDescriptor] = &[
     ChatListSubscribe::DESCRIPTOR,
     ChatPostMessage::DESCRIPTOR,
     ChatActionSubscribe::DESCRIPTOR,
+	ChatSetRoomFooter::DESCRIPTOR,
     PocketListSubscribe::DESCRIPTOR,
     PocketRemoveCard::DESCRIPTOR,
     RendererRender::DESCRIPTOR,

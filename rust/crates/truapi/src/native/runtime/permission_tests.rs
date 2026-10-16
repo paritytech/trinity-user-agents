@@ -1,6 +1,8 @@
 use super::*;
-use crate::native::tests::{EventCallbacks, native_execution_config, native_host_runtime_config};
-use crate::platform::{CoreStorageKey, PermissionDecision};
+use crate::{
+	native::tests::{EventCallbacks, native_execution_config, native_host_runtime_config},
+	platform::{CoreStorageKey, PermissionDecision},
+};
 use truapi::latest::{RemotePermission, RemotePermissionRequest};
 
 fn block_on<T>(future: impl Future<Output = T>) -> T {
@@ -20,7 +22,11 @@ fn request() -> PermissionAuthorizationRequest {
 }
 
 fn host(callbacks: &Arc<EventCallbacks>) -> Arc<NativeTrUApiHostRuntime> {
-    NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), native_host_runtime_config(), None)
+	NativeTrUApiHostRuntime::with_runtime_config(
+		callbacks.clone(),
+		native_host_runtime_config(),
+		None,
+	)
         .unwrap()
 }
 
@@ -41,10 +47,7 @@ fn open(
 }
 
 fn entry(status: PermissionAuthorizationStatus) -> PermissionAuthorizationEntry {
-    PermissionAuthorizationEntry {
-        request: request(),
-        status,
-    }
+	PermissionAuthorizationEntry { request: request(), status }
 }
 
 #[test]
@@ -54,27 +57,18 @@ fn native_permission_settings_enumerate_existing_grants_and_preserve_canonical_r
         // Bytes written by the old native runtime, before settings integration.
         let key = CoreStorageKey::remote_permission_authorization(
             "settings.dot",
-            &RemotePermissionRequest {
-                permission: RemotePermission::ChainSubmit,
-            },
+			&RemotePermissionRequest { permission: RemotePermission::ChainSubmit },
         );
-        callbacks
-            .core_storage
-            .lock()
-            .expect("storage")
-            .insert(key.encode(), vec![1]);
+		callbacks.core_storage.lock().expect("storage").insert(key.encode(), vec![1]);
         callbacks.core_storage.lock().expect("storage").insert(
             CoreStorageKey::account_access_authorization("settings", "other").encode(),
             vec![0],
         );
         let runtime = host(&callbacks);
-        let records = runtime
-            .permission_authorizations("settings.dot".into())
-            .await
-            .unwrap();
+		let records = runtime.permission_authorizations("settings.dot".into()).await.unwrap();
         assert_eq!(records.len(), 2);
-        assert!(records.iter().any(|record| record.request == request()
-            && record.status == PermissionAuthorizationStatus::Denied));
+		assert!(records.iter().any(|record| record.request == request() &&
+			record.status == PermissionAuthorizationStatus::Denied));
         assert!(records.iter().any(|record| matches!(&record.request,
             PermissionAuthorizationRequest::AccountAccess { target_product_id } if target_product_id == "other")));
         let imported = runtime
@@ -84,8 +78,8 @@ fn native_permission_settings_enumerate_existing_grants_and_preserve_canonical_r
             )
             .await
             .unwrap();
-        assert!(imported.iter().any(|record| record.request == request()
-            && record.status == PermissionAuthorizationStatus::Denied));
+		assert!(imported.iter().any(|record| record.request == request() &&
+			record.status == PermissionAuthorizationStatus::Denied));
         runtime
             .set_permission_authorization_status(
                 "settings.dot".into(),
@@ -102,8 +96,8 @@ fn native_permission_settings_enumerate_existing_grants_and_preserve_canonical_r
             )
             .await
             .unwrap();
-        assert!(imported.iter().any(|record| record.request == request()
-            && record.status == PermissionAuthorizationStatus::NotDetermined));
+		assert!(imported.iter().any(|record| record.request == request() &&
+			record.status == PermissionAuthorizationStatus::NotDetermined));
         assert!(
             restarted
                 .permission_authorization_products()
@@ -111,12 +105,7 @@ fn native_permission_settings_enumerate_existing_grants_and_preserve_canonical_r
                 .unwrap()
                 .contains(&"settings.dot".to_string())
         );
-        assert!(
-            callbacks
-                .permission_changes
-                .lock()
-                .contains(&"settings.dot".to_string())
-        );
+		assert!(callbacks.permission_changes.lock().contains(&"settings.dot".to_string()));
     });
 }
 
@@ -153,16 +142,9 @@ fn native_permission_revocation_cancels_pending_prompt_and_all_sibling_execution
         assert!(!unrelated.is_closed());
         assert!(!other_network.is_closed());
         assert!(!other_executable.is_closed());
+		assert_eq!(runtime.permission_authorization_revision("settings.paseo".into()).unwrap(), 0);
         assert_eq!(
-            runtime
-                .permission_authorization_revision("settings.paseo".into())
-                .unwrap(),
-            0
-        );
-        assert_eq!(
-            runtime
-                .permission_authorization_revision("app.settings.dot".into())
-                .unwrap(),
+			runtime.permission_authorization_revision("app.settings.dot".into()).unwrap(),
             0
         );
         // Completes without dismissing/releasing the old native consent UI.
@@ -187,11 +169,7 @@ fn native_permission_revocation_cancels_pending_prompt_and_all_sibling_execution
                 .unwrap()
         );
         assert_eq!(
-            runtime
-                .permission_authorizations("settings.dot".into())
-                .await
-                .unwrap()[0]
-                .status,
+			runtime.permission_authorizations("settings.dot".into()).await.unwrap()[0].status,
             PermissionAuthorizationStatus::Denied
         );
     });
@@ -216,18 +194,13 @@ fn native_permission_revocation_clears_sibling_one_use_grants() {
                 .request_remote_permission(
                     &truapi::CallContext::default(),
                     truapi::versioned::permissions::RemotePermissionRequest::V1(
-                        RemotePermissionRequest {
-                            permission: RemotePermission::ChainSubmit,
-                        },
+						RemotePermissionRequest { permission: RemotePermission::ChainSubmit },
                     ),
                 )
                 .await
                 .unwrap();
             assert_eq!(
-                admin
-                    .permission_authorization_status(request())
-                    .await
-                    .unwrap(),
+				admin.permission_authorization_status(request()).await.unwrap(),
                 PermissionAuthorizationStatus::Authorized
             );
         }
@@ -241,10 +214,7 @@ fn native_permission_revocation_clears_sibling_one_use_grants() {
             .unwrap();
         for admin in [&first_admin, &second_admin] {
             assert_eq!(
-                admin
-                    .permission_authorization_status(request())
-                    .await
-                    .unwrap(),
+				admin.permission_authorization_status(request()).await.unwrap(),
                 PermissionAuthorizationStatus::NotDetermined
             );
         }
@@ -256,9 +226,7 @@ fn native_permission_legacy_commit_is_fenced_without_breaking_grant_bundles() {
     block_on(async {
         let callbacks = Arc::new(EventCallbacks::new());
         let runtime = host(&callbacks);
-        let revision = runtime
-            .permission_authorization_revision("settings.dot".into())
-            .unwrap();
+		let revision = runtime.permission_authorization_revision("settings.dot".into()).unwrap();
         assert!(
             runtime
                 .set_permission_authorization_status_if_current(
@@ -271,9 +239,7 @@ fn native_permission_legacy_commit_is_fenced_without_breaking_grant_bundles() {
                 .unwrap()
         );
         assert_eq!(
-            runtime
-                .permission_authorization_revision("settings.dot".into())
-                .unwrap(),
+			runtime.permission_authorization_revision("settings.dot".into()).unwrap(),
             revision
         );
         assert!(
@@ -306,9 +272,7 @@ fn native_permission_legacy_commit_is_fenced_without_breaking_grant_bundles() {
                 .await
                 .unwrap()
         );
-        let next = runtime
-            .permission_authorization_revision("settings.dot".into())
-            .unwrap();
+		let next = runtime.permission_authorization_revision("settings.dot".into()).unwrap();
         assert_eq!(next, revision + 1);
         assert!(
             runtime
@@ -322,9 +286,7 @@ fn native_permission_legacy_commit_is_fenced_without_breaking_grant_bundles() {
                 .unwrap()
         );
         assert_eq!(
-            runtime
-                .permission_authorization_revision("settings.dot".into())
-                .unwrap(),
+			runtime.permission_authorization_revision("settings.dot".into()).unwrap(),
             next + 1
         );
     });
@@ -352,10 +314,7 @@ fn native_permission_import_cannot_race_an_inflight_canonical_write() {
         release.send(()).unwrap();
         let (written, imported) = futures::join!(canonical, import);
         written.unwrap();
-        assert_eq!(
-            imported.unwrap()[0].status,
-            PermissionAuthorizationStatus::Denied
-        );
+		assert_eq!(imported.unwrap()[0].status, PermissionAuthorizationStatus::Denied);
     });
 }
 
@@ -385,11 +344,7 @@ fn native_permission_revoke_waits_out_prior_persistence_before_acknowledging() {
         let (_, revoked) = futures::join!(grant, revoke);
         revoked.unwrap();
         assert_eq!(
-            runtime
-                .permission_authorizations("settings.dot".into())
-                .await
-                .unwrap()[0]
-                .status,
+			runtime.permission_authorizations("settings.dot".into()).await.unwrap()[0].status,
             PermissionAuthorizationStatus::Denied
         );
         assert!(execution.is_closed());
@@ -410,9 +365,7 @@ fn native_permission_failures_are_errors_not_empty_lists_or_successful_revokes()
             .await
             .unwrap();
         let execution = open(&runtime, &callbacks, "settings.dot");
-        callbacks
-            .core_storage_write_failure
-            .store(true, Ordering::SeqCst);
+		callbacks.core_storage_write_failure.store(true, Ordering::SeqCst);
         assert!(
             runtime
                 .set_permission_authorization_status(
@@ -425,22 +378,11 @@ fn native_permission_failures_are_errors_not_empty_lists_or_successful_revokes()
         );
         assert!(execution.is_closed());
         assert_eq!(
-            runtime
-                .permission_authorizations("settings.dot".into())
-                .await
-                .unwrap()[0]
-                .status,
+			runtime.permission_authorizations("settings.dot".into()).await.unwrap()[0].status,
             PermissionAuthorizationStatus::Authorized
         );
-        callbacks
-            .core_storage_keys_failure
-            .store(true, Ordering::SeqCst);
-        assert!(
-            runtime
-                .permission_authorizations("settings.dot".into())
-                .await
-                .is_err()
-        );
+		callbacks.core_storage_keys_failure.store(true, Ordering::SeqCst);
+		assert!(runtime.permission_authorizations("settings.dot".into()).await.is_err());
         assert!(runtime.permission_authorization_products().await.is_err());
     });
 }
@@ -454,30 +396,19 @@ fn native_permission_account_aliases_never_display_phantom_authority() {
             vec![0],
         );
         let runtime = host(&callbacks);
-        let records = runtime
-            .permission_authorizations("settings.dot".into())
-            .await
-            .unwrap();
+		let records = runtime.permission_authorizations("settings.dot".into()).await.unwrap();
         assert_eq!(records.len(), 1);
-        assert_eq!(
-            records[0].status,
-            PermissionAuthorizationStatus::NotDetermined
-        );
+		assert_eq!(records[0].status, PermissionAuthorizationStatus::NotDetermined);
         callbacks.core_storage.lock().expect("storage").insert(
             CoreStorageKey::account_access_authorization("settings", "other").encode(),
             vec![1],
         );
-        let records = runtime
-            .permission_authorizations("settings.dot".into())
-            .await
-            .unwrap();
+		let records = runtime.permission_authorizations("settings.dot".into()).await.unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].status, PermissionAuthorizationStatus::Denied);
         assert_eq!(
             records[0].request,
-            PermissionAuthorizationRequest::AccountAccess {
-                target_product_id: "other".into()
-            }
+			PermissionAuthorizationRequest::AccountAccess { target_product_id: "other".into() }
         );
     });
 }
@@ -491,9 +422,8 @@ fn native_permission_account_revocation_preserves_existing_bare_grantee_scope() 
         let app = open(&runtime, &callbacks, "app.settings.dot");
         let network = open(&runtime, &callbacks, "settings.paseo");
         let unrelated = open(&runtime, &callbacks, "other.dot");
-        let revision = runtime
-            .permission_authorization_revision("app.settings.dot".into())
-            .unwrap();
+		let revision =
+			runtime.permission_authorization_revision("app.settings.dot".into()).unwrap();
         let request = PermissionAuthorizationRequest::AccountAccess {
             target_product_id: "target.dot".into(),
         };
@@ -520,11 +450,7 @@ fn native_permission_account_revocation_preserves_existing_bare_grantee_scope() 
         );
         let fresh = open(&runtime, &callbacks, "app.settings.dot");
         assert_eq!(
-            fresh
-                .admin()
-                .permission_authorization_status(request)
-                .await
-                .unwrap(),
+			fresh.admin().permission_authorization_status(request).await.unwrap(),
             PermissionAuthorizationStatus::Denied
         );
     });
@@ -556,11 +482,7 @@ fn native_permission_bundle_import_and_edits_do_not_rewrite_singleton_authority(
             .unwrap();
         let execution = open(&runtime, &callbacks, "settings.dot");
         assert_eq!(
-            execution
-                .admin()
-                .permission_authorization_status(bundle.clone())
-                .await
-                .unwrap(),
+			execution.admin().permission_authorization_status(bundle.clone()).await.unwrap(),
             PermissionAuthorizationStatus::Denied
         );
         assert_eq!(
@@ -589,19 +511,11 @@ fn native_permission_bundle_import_and_edits_do_not_rewrite_singleton_authority(
             .unwrap();
         let fresh = open(&runtime, &callbacks, "settings.dot");
         assert_eq!(
-            fresh
-                .admin()
-                .permission_authorization_status(singleton)
-                .await
-                .unwrap(),
+			fresh.admin().permission_authorization_status(singleton).await.unwrap(),
             PermissionAuthorizationStatus::Authorized
         );
         assert_eq!(
-            runtime
-                .permission_authorizations("settings.dot".into())
-                .await
-                .unwrap()
-                .len(),
+			runtime.permission_authorizations("settings.dot".into()).await.unwrap().len(),
             2
         );
     });
@@ -630,9 +544,7 @@ fn native_permission_explicit_bundle_denial_overrides_trusted_default_only_for_t
         assert!(
             execution
                 .authorize_remote_permission(RemotePermissionRequest {
-                    permission: RemotePermission::Remote {
-                        domains: vec!["a.example".into()]
-                    },
+					permission: RemotePermission::Remote { domains: vec!["a.example".into()] },
                 })
                 .await
                 .unwrap()

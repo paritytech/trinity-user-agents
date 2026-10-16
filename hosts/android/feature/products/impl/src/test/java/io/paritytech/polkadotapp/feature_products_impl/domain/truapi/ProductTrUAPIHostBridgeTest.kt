@@ -68,8 +68,6 @@ class ProductTrUAPIHostBridgeTest {
         scope = CoroutineScope(StandardTestDispatcher(testScheduler)),
     )
 
-    // The callers launch attach into scopes with no handler, so a refusal from the core has to come
-    // back as the Result the signature promises rather than as a crash.
     @Test
     fun `a core that refuses to open the execution fails the attach instead of throwing`() = runTest {
         val runtime = mockk<io.parity.truapi.TrUAPIHostRuntime> {

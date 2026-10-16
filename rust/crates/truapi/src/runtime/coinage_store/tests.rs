@@ -46,9 +46,7 @@ impl CoreStorage for DurableSlot {
             resume.await.unwrap();
         }
         if self.fail_next.swap(false, Ordering::SeqCst) {
-            return Err(GenericError {
-                reason: "injected atomic write failure".into(),
-            });
+			return Err(GenericError { reason: "injected atomic write failure".into() });
         }
         self.values.lock().insert(key.encode(), value);
         if self.fail_after_replace.swap(false, Ordering::SeqCst) {
@@ -134,10 +132,7 @@ fn recovery_open_never_creates_a_missing_purse() {
         )
         .await
         .unwrap();
-        assert!(matches!(
-            restored.bind_asset_instance(Some(5)).await,
-            Err(StoreError::Conflict)
-        ));
+		assert!(matches!(restored.bind_asset_instance(Some(5)).await, Err(StoreError::Conflict)));
     });
 }
 
@@ -148,7 +143,7 @@ async fn reopen_after_owned_work(storage: Arc<DurableSlot>) -> Arc<HostCoinageSt
                 Ok(store) => break store,
                 Err(StoreError::Conflict) => {
                     futures_timer::Delay::new(std::time::Duration::from_millis(1)).await;
-                }
+				},
                 Err(error) => panic!("unexpected reopen failure: {error}"),
             }
         }
@@ -159,17 +154,12 @@ async fn reopen_after_owned_work(storage: Arc<DurableSlot>) -> Arc<HostCoinageSt
         futures::future::Either::Left((store, _)) => store,
         futures::future::Either::Right(_) => {
             panic!("owned commit did not release storage ownership")
-        }
+		},
     }
 }
 
 fn coin(index: u32) -> Coin {
-    Coin {
-        derivation_index: index,
-        exponent: 2,
-        age: Some(3),
-        state: CoinState::Available,
-    }
+	Coin { derivation_index: index, exponent: 2, age: Some(3), state: CoinState::Available }
 }
 
 fn voucher(index: u32) -> Voucher {
@@ -189,10 +179,7 @@ fn journal(id: &str) -> TransferWalEntry {
         entry_id: id.into(),
         operation: WalOperation::SecretHandoff,
         payload: WalPayload {
-            input_coins: vec![WalCoinRef {
-                derivation_index: 0,
-                exponent: 2,
-            }],
+			input_coins: vec![WalCoinRef { derivation_index: 0, exponent: 2 }],
             ..WalPayload::default()
         },
         checkpoint: CheckpointBlock::Pending,
@@ -212,14 +199,8 @@ fn asset_binding_survives_restart_without_retargeting_reserved_operations() {
             .unwrap();
         drop(store);
         let restored = open(storage).await;
-        assert_eq!(
-            restored.bind_asset_instance(Some(1)).await,
-            Err(StoreError::Conflict)
-        );
-        assert_eq!(
-            restored.bind_asset_instance(None).await,
-            Err(StoreError::Conflict)
-        );
+		assert_eq!(restored.bind_asset_instance(Some(1)).await, Err(StoreError::Conflict));
+		assert_eq!(restored.bind_asset_instance(None).await, Err(StoreError::Conflict));
         restored.bind_asset_instance(Some(0)).await.unwrap();
         assert_eq!(
             restored.read_operation([9; 32]).await.unwrap(),
@@ -236,10 +217,7 @@ fn a_bound_legacy_asset_is_not_an_uninitialized_asset_selection() {
         store.bind_asset_instance(None).await.unwrap();
         drop(store);
         let restored = open(storage).await;
-        assert_eq!(
-            restored.bind_asset_instance(Some(0)).await,
-            Err(StoreError::Conflict)
-        );
+		assert_eq!(restored.bind_asset_instance(Some(0)).await, Err(StoreError::Conflict));
     });
 }
 
@@ -249,19 +227,11 @@ fn restart_restores_atomic_spend_repositories_and_host_operations() {
         let storage = Arc::new(DurableSlot::default());
         let store = open(storage.clone()).await;
         CoinRepository::upsert(&*store, &coin(0)).await.unwrap();
-        VoucherRepository::upsert(&*store, &voucher(4))
-            .await
-            .unwrap();
+		VoucherRepository::upsert(&*store, &voucher(4)).await.unwrap();
         store.reserve(&[0], &[4]).await.unwrap();
         WalStore::save(&*store, &journal("handoff")).await.unwrap();
         store
-            .update_checkpoint(
-                "handoff",
-                CheckpointBlock::Known {
-                    number: 42,
-                    hash: [8; 32],
-                },
-            )
+			.update_checkpoint("handoff", CheckpointBlock::Known { number: 42, hash: [8; 32] })
             .await
             .unwrap();
         ClaimPlanStore::save(
@@ -292,50 +262,24 @@ fn restart_restores_atomic_spend_repositories_and_host_operations() {
             .write_operation([7; 32], b"host-private handoff material".to_vec())
             .await
             .unwrap();
-        store
-            .commit(&[0], &[4], &[coin(1)], &[coin(2)])
-            .await
-            .unwrap();
+		store.commit(&[0], &[4], &[coin(1)], &[coin(2)]).await.unwrap();
         drop(store);
 
         let restored = open(storage.clone()).await;
         let coins = CoinRepository::list(&*restored).await.unwrap();
         assert_eq!(
-            coins
-                .iter()
-                .map(|coin| (coin.derivation_index, coin.state))
-                .collect::<Vec<_>>(),
-            vec![
-                (0, CoinState::Spent),
-                (1, CoinState::Available),
-                (2, CoinState::Spent)
-            ]
+			coins.iter().map(|coin| (coin.derivation_index, coin.state)).collect::<Vec<_>>(),
+			vec![(0, CoinState::Spent), (1, CoinState::Available), (2, CoinState::Spent)]
         );
-        assert!(
-            VoucherRepository::list(&*restored)
-                .await
-                .unwrap()
-                .is_empty()
-        );
-        assert_eq!(
-            restored.current_index(IndexKind::Voucher).await.unwrap(),
-            Some(4)
-        );
+		assert!(VoucherRepository::list(&*restored).await.unwrap().is_empty());
+		assert_eq!(restored.current_index(IndexKind::Voucher).await.unwrap(), Some(4));
         assert_eq!(restored.get_next_index(IndexKind::Coin).await.unwrap(), 3);
         assert_eq!(
             WalStore::load_all(&*restored).await.unwrap()[0].checkpoint,
-            CheckpointBlock::Known {
-                number: 42,
-                hash: [8; 32]
-            }
+			CheckpointBlock::Known { number: 42, hash: [8; 32] }
         );
         assert_eq!(
-            restored
-                .plan(&[9; 32])
-                .await
-                .unwrap()
-                .unwrap()
-                .outgoing_public_keys,
+			restored.plan(&[9; 32]).await.unwrap().unwrap().outgoing_public_keys,
             vec![[10; 32]]
         );
         let markers = restored.plan(&[9; 32]).await.unwrap().unwrap().markers;
@@ -359,14 +303,9 @@ fn failed_writes_and_invalid_cross_repository_changes_publish_nothing() {
         let storage = Arc::new(DurableSlot::default());
         let store = open(storage.clone()).await;
         CoinRepository::upsert(&*store, &coin(0)).await.unwrap();
-        VoucherRepository::upsert(&*store, &voucher(0))
-            .await
-            .unwrap();
+		VoucherRepository::upsert(&*store, &voucher(0)).await.unwrap();
         assert!(store.reserve(&[0], &[99]).await.is_err());
-        assert_eq!(
-            CoinRepository::list(&*store).await.unwrap()[0].state,
-            CoinState::Available
-        );
+		assert_eq!(CoinRepository::list(&*store).await.unwrap()[0].state, CoinState::Available);
         storage.fail_next.store(true, Ordering::SeqCst);
         assert!(store.reserve(&[0], &[0]).await.is_err());
         assert!(CoinRepository::list(&*store).await.is_err());
@@ -393,10 +332,7 @@ fn failed_writes_and_invalid_cross_repository_changes_publish_nothing() {
             VoucherLocalState::PendingTransfer
         );
         restored.revert(&[0], &[0]).await.unwrap();
-        assert_eq!(
-            CoinRepository::list(&*restored).await.unwrap()[0].state,
-            CoinState::Available
-        );
+		assert_eq!(CoinRepository::list(&*restored).await.unwrap()[0].state, CoinState::Available);
         assert_eq!(
             VoucherRepository::list(&*restored).await.unwrap()[0].local_state,
             VoucherLocalState::Available
@@ -424,15 +360,9 @@ fn counters_are_monotonic_durable_and_unique_under_concurrency() {
         drop(store);
         let restored = open(storage).await;
         assert_eq!(restored.get_next_index(IndexKind::Coin).await.unwrap(), 32);
-        restored
-            .set_index(IndexKind::Voucher, u32::MAX)
-            .await
-            .unwrap();
+		restored.set_index(IndexKind::Voucher, u32::MAX).await.unwrap();
         assert!(restored.get_next_index(IndexKind::Voucher).await.is_err());
-        assert_eq!(
-            restored.current_index(IndexKind::Voucher).await.unwrap(),
-            Some(u32::MAX)
-        );
+		assert_eq!(restored.current_index(IndexKind::Voucher).await.unwrap(), Some(u32::MAX));
     });
 }
 
@@ -450,17 +380,10 @@ fn canceled_caller_cannot_interrupt_commit_and_publication() {
         drop(caller);
         resume_tx.send(()).unwrap();
         // Reads wait for the owned task, not for the disconnected caller.
-        assert_eq!(
-            store.read_operation([9; 32]).await.unwrap(),
-            Some(vec![4, 5, 6])
-        );
+		assert_eq!(store.read_operation([9; 32]).await.unwrap(), Some(vec![4, 5, 6]));
         drop(store);
         assert_eq!(
-            reopen_after_owned_work(storage)
-                .await
-                .read_operation([9; 32])
-                .await
-                .unwrap(),
+			reopen_after_owned_work(storage).await.read_operation([9; 32]).await.unwrap(),
             Some(vec![4, 5, 6])
         );
     });
@@ -474,32 +397,13 @@ fn journal_batch_and_checkpoint_failures_do_not_erase_recovery_evidence() {
         WalStore::save(&*store, &journal("first")).await.unwrap();
         let mut conflicting = journal("first");
         conflicting.created_at_ms += 1;
-        assert!(
-            store
-                .save_all(&[journal("second"), conflicting])
-                .await
-                .is_err()
-        );
-        assert_eq!(
-            WalStore::load_all(&*store).await.unwrap(),
-            vec![journal("first")]
-        );
-        assert!(
-            store
-                .update_checkpoint("absent", CheckpointBlock::Pending)
-                .await
-                .is_err()
-        );
+		assert!(store.save_all(&[journal("second"), conflicting]).await.is_err());
+		assert_eq!(WalStore::load_all(&*store).await.unwrap(), vec![journal("first")]);
+		assert!(store.update_checkpoint("absent", CheckpointBlock::Pending).await.is_err());
         storage.fail_next.store(true, Ordering::SeqCst);
         assert!(
             store
-                .update_checkpoint(
-                    "first",
-                    CheckpointBlock::Known {
-                        number: 10,
-                        hash: [6; 32]
-                    }
-                )
+				.update_checkpoint("first", CheckpointBlock::Known { number: 10, hash: [6; 32] })
                 .await
                 .is_err()
         );
@@ -516,10 +420,8 @@ fn journal_batch_and_checkpoint_failures_do_not_erase_recovery_evidence() {
 fn legacy_purse_snapshot_cannot_rebind_reserved_indices_to_current_keys() {
     block_on(async {
         let storage = Arc::new(DurableSlot::default());
-        let slot = CoreStorageKey::MainPurseCoinage {
-            root_public_key: [1; 32],
-            genesis_hash: [2; 32],
-        };
+		let slot =
+			CoreStorageKey::MainPurseCoinage { root_public_key: [1; 32], genesis_hash: [2; 32] };
         let legacy = Snapshot {
             coin_index: Some(7),
             coins: BTreeMap::from([(7, coin(7))]),
@@ -560,19 +462,9 @@ fn authentication_binds_wallet_network_version_and_rejects_corruption() {
         let storage = Arc::new(DurableSlot::default());
         let store = open(storage.clone()).await;
         store.write_operation([4; 32], vec![42; 32]).await.unwrap();
-        let first = storage
-            .values
-            .lock()
-            .get(&store.storage_key.encode())
-            .unwrap()
-            .clone();
+		let first = storage.values.lock().get(&store.storage_key.encode()).unwrap().clone();
         store.write_operation([4; 32], vec![42; 32]).await.unwrap();
-        let second = storage
-            .values
-            .lock()
-            .get(&store.storage_key.encode())
-            .unwrap()
-            .clone();
+		let second = storage.values.lock().get(&store.storage_key.encode()).unwrap().clone();
         assert_ne!(&first[6..HEADER_BYTES], &second[6..HEADER_BYTES]);
         drop(store);
         let mut tampered = first.clone();
@@ -580,36 +472,15 @@ fn authentication_binds_wallet_network_version_and_rejects_corruption() {
         let mut unknown = first.clone();
         unknown[4..6].copy_from_slice(&(VERSION + 1).to_le_bytes());
         for (root, genesis, key, bytes, error) in [
-            (
-                [8; 32],
-                [2; 32],
-                [3; 32],
-                first.clone(),
-                StoreError::Authentication,
-            ),
-            (
-                [1; 32],
-                [8; 32],
-                [3; 32],
-                first.clone(),
-                StoreError::Authentication,
-            ),
+			([8; 32], [2; 32], [3; 32], first.clone(), StoreError::Authentication),
+			([1; 32], [8; 32], [3; 32], first.clone(), StoreError::Authentication),
             ([1; 32], [2; 32], [8; 32], first, StoreError::Authentication),
-            (
-                [1; 32],
-                [2; 32],
-                [3; 32],
-                tampered,
-                StoreError::Authentication,
-            ),
+			([1; 32], [2; 32], [3; 32], tampered, StoreError::Authentication),
             ([1; 32], [2; 32], [3; 32], unknown, StoreError::Version),
             ([1; 32], [2; 32], [3; 32], Vec::new(), StoreError::Corrupt),
         ] {
             storage.values.lock().insert(
-                CoreStorageKey::MainPurseCoinage {
-                    root_public_key: root,
-                    genesis_hash: genesis,
-                }
+				CoreStorageKey::MainPurseCoinage { root_public_key: root, genesis_hash: genesis }
                 .encode(),
                 bytes,
             );
@@ -637,10 +508,7 @@ fn authenticated_but_inconsistent_and_unbounded_snapshots_fail_closed() {
         let mut inconsistent = Snapshot::default();
         inconsistent.coins.insert(0, coin(0)); // Missing high-water mark would reissue key zero.
         let encrypted = store.encrypt(&inconsistent).unwrap();
-        storage
-            .values
-            .lock()
-            .insert(store.storage_key.encode(), encrypted);
+		storage.values.lock().insert(store.storage_key.encode(), encrypted);
         drop(store);
         assert!(matches!(
             HostCoinageStore::open_storage(
@@ -657,10 +525,7 @@ fn authenticated_but_inconsistent_and_unbounded_snapshots_fail_closed() {
 
         let mut excessive_rows = vec![0, 0, 0]; // Unbound asset and absent counters.
         ((MAX_ASSETS + 1) as u32).encode_to(&mut excessive_rows);
-        assert!(matches!(
-            codec::decode(&excessive_rows),
-            Err(StoreError::Capacity)
-        ));
+		assert!(matches!(codec::decode(&excessive_rows), Err(StoreError::Capacity)));
         let mut duplicate = Vec::new();
         None::<Option<u32>>.encode_to(&mut duplicate);
         Some(0u32).encode_to(&mut duplicate);
@@ -672,10 +537,7 @@ fn authenticated_but_inconsistent_and_unbounded_snapshots_fail_closed() {
             Some(3i16).encode_to(&mut duplicate);
             CoinState::Available.as_raw().encode_to(&mut duplicate);
         }
-        assert!(matches!(
-            codec::decode(&duplicate),
-            Err(StoreError::Corrupt)
-        ));
+		assert!(matches!(codec::decode(&duplicate), Err(StoreError::Corrupt)));
         let mut trailing = codec::encode(&Snapshot::default(), 1).unwrap();
         trailing.push(0);
         assert!(matches!(codec::decode(&trailing), Err(StoreError::Corrupt)));
@@ -688,9 +550,7 @@ fn post_replacement_failure_blocks_stale_reads_and_writes_until_recovery() {
         let storage = Arc::new(DurableSlot::default());
         let store = open(storage.clone()).await;
         CoinRepository::upsert(&*store, &coin(0)).await.unwrap();
-        VoucherRepository::upsert(&*store, &voucher(0))
-            .await
-            .unwrap();
+		VoucherRepository::upsert(&*store, &voucher(0)).await.unwrap();
         WalStore::save(&*store, &journal("guard")).await.unwrap();
         store.write_operation([7; 32], vec![1, 2, 3]).await.unwrap();
         store.reserve(&[0], &[0]).await.unwrap();
@@ -708,35 +568,18 @@ fn post_replacement_failure_blocks_stale_reads_and_writes_until_recovery() {
         assert_eq!(store.read_operation([7; 32]).await, Err(StoreError::Write));
         assert_eq!(store.read_operation([8; 32]).await, Err(StoreError::Write));
         assert!(store.list_operations().await.is_err());
-        assert_eq!(
-            store.write_operation([8; 32], vec![9]).await,
-            Err(StoreError::Write)
-        );
+		assert_eq!(store.write_operation([8; 32], vec![9]).await, Err(StoreError::Write));
         assert!(store.get_next_index(IndexKind::Coin).await.is_err());
         assert!(store.revert(&[0], &[0]).await.is_err());
 
         // An unauthenticated replacement must not clear the failure latch.
-        let replaced = storage
-            .values
-            .lock()
-            .get(&store.storage_key.encode())
-            .unwrap()
-            .clone();
+		let replaced = storage.values.lock().get(&store.storage_key.encode()).unwrap().clone();
         let mut corrupted = replaced.clone();
         *corrupted.last_mut().unwrap() ^= 1;
-        storage
-            .values
-            .lock()
-            .insert(store.storage_key.encode(), corrupted);
-        assert_eq!(
-            store.reauthenticate().await,
-            Err(StoreError::Authentication)
-        );
+		storage.values.lock().insert(store.storage_key.encode(), corrupted);
+		assert_eq!(store.reauthenticate().await, Err(StoreError::Authentication));
         assert_eq!(store.read_operation([7; 32]).await, Err(StoreError::Write));
-        storage
-            .values
-            .lock()
-            .insert(store.storage_key.encode(), replaced);
+		storage.values.lock().insert(store.storage_key.encode(), replaced);
         storage.fail_next.store(true, Ordering::SeqCst);
         assert_eq!(store.reauthenticate().await, Err(StoreError::Write));
         assert!(store.current_index(IndexKind::Coin).await.is_err());
@@ -754,30 +597,18 @@ fn post_replacement_failure_blocks_stale_reads_and_writes_until_recovery() {
 
         let coins = CoinRepository::list(&*store).await.unwrap();
         assert_eq!(
-            coins
-                .iter()
-                .map(|coin| (coin.derivation_index, coin.state))
-                .collect::<Vec<_>>(),
+			coins.iter().map(|coin| (coin.derivation_index, coin.state)).collect::<Vec<_>>(),
             vec![(0, CoinState::Spent), (1, CoinState::Available)]
         );
         assert!(VoucherRepository::list(&*store).await.unwrap().is_empty());
-        assert_eq!(
-            store.read_operation([7; 32]).await.unwrap(),
-            Some(vec![1, 2, 3])
-        );
+		assert_eq!(store.read_operation([7; 32]).await.unwrap(), Some(vec![1, 2, 3]));
         assert_eq!(store.read_operation([8; 32]).await.unwrap(), None);
         assert_eq!(store.get_next_index(IndexKind::Coin).await.unwrap(), 2);
         drop(store);
         let restored = reopen_after_owned_work(storage).await;
         assert_eq!(CoinRepository::list(&*restored).await.unwrap(), coins);
-        assert_eq!(
-            restored.current_index(IndexKind::Coin).await.unwrap(),
-            Some(2)
-        );
-        assert_eq!(
-            restored.read_operation([7; 32]).await.unwrap(),
-            Some(vec![1, 2, 3])
-        );
+		assert_eq!(restored.current_index(IndexKind::Coin).await.unwrap(), Some(2));
+		assert_eq!(restored.read_operation([7; 32]).await.unwrap(), Some(vec![1, 2, 3]));
     });
 }
 
@@ -787,10 +618,7 @@ fn live_owner_and_abandoned_owned_write_exclude_a_second_allocator() {
         let storage = Arc::new(DurableSlot::default());
         let store = open(storage.clone()).await;
         assert_eq!(store.get_next_index(IndexKind::Coin).await.unwrap(), 0);
-        assert!(matches!(
-            try_open(storage.clone()).await,
-            Err(StoreError::Conflict)
-        ));
+		assert!(matches!(try_open(storage.clone()).await, Err(StoreError::Conflict)));
 
         let (entered_tx, entered_rx) = oneshot::channel();
         let (resume_tx, resume_rx) = oneshot::channel();
@@ -800,10 +628,7 @@ fn live_owner_and_abandoned_owned_write_exclude_a_second_allocator() {
         entered_rx.await.unwrap();
         drop(allocate);
         drop(store);
-        assert!(matches!(
-            try_open(storage.clone()).await,
-            Err(StoreError::Conflict)
-        ));
+		assert!(matches!(try_open(storage.clone()).await, Err(StoreError::Conflict)));
         resume_tx.send(()).unwrap();
         let restored = reopen_after_owned_work(storage).await;
         assert_eq!(restored.get_next_index(IndexKind::Coin).await.unwrap(), 2);
@@ -822,19 +647,10 @@ fn uncertain_owner_release_requires_durable_repair_and_never_initializes_absence
         drop(store);
 
         storage.fail_next.store(true, Ordering::SeqCst);
-        assert!(matches!(
-            try_open(storage.clone()).await,
-            Err(StoreError::Write)
-        ));
+		assert!(matches!(try_open(storage.clone()).await, Err(StoreError::Write)));
         storage.values.lock().remove(&key);
-        assert!(matches!(
-            try_open(storage.clone()).await,
-            Err(StoreError::Missing)
-        ));
-        assert!(matches!(
-            try_open(storage.clone()).await,
-            Err(StoreError::Missing)
-        ));
+		assert!(matches!(try_open(storage.clone()).await, Err(StoreError::Missing)));
+		assert!(matches!(try_open(storage.clone()).await, Err(StoreError::Missing)));
         assert!(!storage.values.lock().contains_key(&key));
         storage.values.lock().insert(key, observed);
         let restored = open(storage).await;
@@ -851,10 +667,7 @@ fn uncertain_first_write_cannot_be_reset_by_dropping_its_owner() {
         assert!(store.get_next_index(IndexKind::Coin).await.is_err());
         assert_eq!(store.reauthenticate().await, Err(StoreError::Missing));
         drop(store);
-        assert!(matches!(
-            try_open(storage.clone()).await,
-            Err(StoreError::Missing)
-        ));
+		assert!(matches!(try_open(storage.clone()).await, Err(StoreError::Missing)));
         assert!(storage.values.lock().is_empty());
     });
 }
@@ -895,10 +708,7 @@ fn scan_batch_atomically_advances_progress_without_releasing_reservations() {
         );
         drop(store);
         let restored = open(storage).await;
-        assert_eq!(
-            restored.read_operation([4; 32]).await.unwrap(),
-            Some(vec![1])
-        );
+		assert_eq!(restored.read_operation([4; 32]).await.unwrap(), Some(vec![1]));
         assert_eq!(
             CoinRepository::list(&*restored)
                 .await
@@ -921,10 +731,7 @@ fn operation_receipt_progress_preserves_identity_and_survives_restart() {
             entry_id: truapi_coinage::wal::operation_entry_id("payment", "parent"),
             operation: WalOperation::TransferPrepared,
             payload: WalPayload {
-                output_coins: vec![WalCoinRef {
-                    derivation_index: 5,
-                    exponent: 2,
-                }],
+				output_coins: vec![WalCoinRef { derivation_index: 5, exponent: 2 }],
                 ..WalPayload::default()
             },
             checkpoint: CheckpointBlock::Pending,
@@ -940,10 +747,7 @@ fn operation_receipt_progress_preserves_identity_and_survives_restart() {
         WalStore::save(&*store, &receipt).await.unwrap();
         drop(store);
         let restored = open(storage).await;
-        assert_eq!(
-            restored.load_operation("payment").await.unwrap(),
-            vec![receipt.clone()]
-        );
+		assert_eq!(restored.load_operation("payment").await.unwrap(), vec![receipt.clone()]);
         receipt.operation = WalOperation::TransferPrepared;
         assert!(WalStore::save(&*restored, &receipt).await.is_err());
     });

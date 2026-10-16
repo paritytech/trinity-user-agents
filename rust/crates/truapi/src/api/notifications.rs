@@ -1,6 +1,8 @@
 //! Unified [`Notifications`] trait.
 
-use crate::versioned::notifications::{
+use crate::{
+    CallContext, CallError,
+    versioned::notifications::{
     HostNotificationAcknowledgeReceiverEventRequest,
     HostNotificationAcknowledgeReceiverEventResponse, HostNotificationDisableReceiverRequest,
     HostNotificationDisableReceiverResponse, HostNotificationReceiverEventsRequest,
@@ -8,15 +10,15 @@ use crate::versioned::notifications::{
     HostNotificationReceiverStatusResponse, HostNotificationReceivingError,
     HostNotificationRecordReceiptRequest, HostNotificationRecordReceiptResponse,
     HostNotificationReplaceReceiverRequest, HostNotificationReplaceReceiverResponse,
+    NotificationActivationAcknowledgeError, NotificationActivationAcknowledgeRequest,
+    NotificationActivationAcknowledgeResponse, NotificationActivationEventsError,
+    NotificationActivationEventsRequest, NotificationActivationEventsResponse,
     HostPushNotificationCancelError, HostPushNotificationCancelRequest,
     HostPushNotificationCancelResponse, HostPushNotificationError, HostPushNotificationRequest,
-    HostPushNotificationResponse, NotificationActivationAcknowledgeError,
-    NotificationActivationAcknowledgeRequest, NotificationActivationAcknowledgeResponse,
-    NotificationActivationEventsError, NotificationActivationEventsRequest,
-    NotificationActivationEventsResponse,
+		HostPushNotificationResponse,
+	},
+	wire, wire_trait,
 };
-use crate::{CallContext, CallError};
-use crate::{wire, wire_trait};
 
 /// Local notification scheduling and consent-scoped background receiving.
 #[wire_trait(id = 8)]

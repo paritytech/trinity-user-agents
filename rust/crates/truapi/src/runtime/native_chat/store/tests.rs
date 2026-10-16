@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Deterministic durability and authenticated restore regressions; no sleeps.
 
-use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::{
+	collections::BTreeMap,
+	sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 
 use futures::executor::block_on;
 use parity_scale_codec::{Compact, Input};
@@ -112,9 +114,7 @@ impl CoreStorage for DurableSlot {
         }
         self.values.lock().insert(key.encode(), bytes);
         if self.fail_after.swap(false, Ordering::SeqCst) {
-            return Err(GenericError {
-                reason: "private post-rename platform diagnostic".into(),
-            });
+			return Err(GenericError { reason: "private post-rename platform diagnostic".into() });
         }
         Ok(())
     }
@@ -221,53 +221,31 @@ fn post_rename_failure_blocks_stale_state_until_cancel_safe_reauthentication() {
         let storage = Arc::new(DurableSlot::default());
         let store = open(storage.clone()).await;
         storage.fail_after.store(true, Ordering::SeqCst);
-        assert_eq!(
-            store.update(change).await,
-            Err(ChatError::StorageUnavailable)
-        );
+		assert_eq!(store.update(change).await, Err(ChatError::StorageUnavailable));
         let accepted = storage.bytes();
         let writes = storage.writes.load(Ordering::SeqCst);
         assert_eq!(
-            store
-                .read(|_| panic!("poisoned state cannot authorize a read"))
-                .await,
+			store.read(|_| panic!("poisoned state cannot authorize a read")).await,
             Err::<(), _>(ChatError::StorageUnavailable)
         );
         assert_eq!(
-            store
-                .update(|_| panic!("poisoned state cannot authorize a mutation"))
-                .await,
+			store.update(|_| panic!("poisoned state cannot authorize a mutation")).await,
             Err::<(), _>(ChatError::StorageUnavailable)
         );
         assert_eq!(storage.writes.load(Ordering::SeqCst), writes);
         assert_eq!(storage.bytes(), accepted);
 
         storage.values.lock().remove(&slot().encode());
-        assert_eq!(
-            store.reauthenticate().await,
-            Err(ChatError::StorageUnavailable)
-        );
-        assert_eq!(
-            store.read(snapshot).await,
-            Err(ChatError::StorageUnavailable)
-        );
+		assert_eq!(store.reauthenticate().await, Err(ChatError::StorageUnavailable));
+		assert_eq!(store.read(snapshot).await, Err(ChatError::StorageUnavailable));
         let mut tampered = accepted.clone();
         *tampered.last_mut().unwrap() ^= 1;
         storage.replace(&slot(), tampered);
-        assert_eq!(
-            store.reauthenticate().await,
-            Err(ChatError::StorageUnavailable)
-        );
+		assert_eq!(store.reauthenticate().await, Err(ChatError::StorageUnavailable));
         storage.replace(&slot(), accepted);
         storage.fail_before.store(true, Ordering::SeqCst);
-        assert_eq!(
-            store.reauthenticate().await,
-            Err(ChatError::StorageUnavailable)
-        );
-        assert_eq!(
-            store.read(snapshot).await,
-            Err(ChatError::StorageUnavailable)
-        );
+		assert_eq!(store.reauthenticate().await, Err(ChatError::StorageUnavailable));
+		assert_eq!(store.read(snapshot).await, Err(ChatError::StorageUnavailable));
 
         let (entered, resume) = storage.pause();
         let mut caller = Box::pin(store.reauthenticate());
@@ -288,11 +266,7 @@ fn post_rename_failure_blocks_stale_state_until_cancel_safe_reauthentication() {
             .unwrap();
         drop(store);
         assert_eq!(
-            open(storage)
-                .await
-                .read(|state| state.processed.clone())
-                .await
-                .unwrap(),
+			open(storage).await.read(|state| state.processed.clone()).await.unwrap(),
             vec![13, 14]
         );
     });
@@ -327,10 +301,7 @@ fn canceled_initialization_cannot_mint_a_competing_device() {
         assert!(futures::poll!(&mut replacement).is_pending());
         resume.send(()).unwrap();
         let store = replacement.await.unwrap();
-        assert_eq!(
-            store.read(snapshot).await.unwrap(),
-            snapshot(&initial().unwrap())
-        );
+		assert_eq!(store.read(snapshot).await.unwrap(), snapshot(&initial().unwrap()));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert_eq!(storage.writes.load(Ordering::SeqCst), 1);
     });
@@ -354,10 +325,7 @@ fn concurrent_opens_and_owned_updates_keep_exclusive_slot_custody() {
         assert!(futures::poll!(&mut competing).is_pending());
         resume.send(()).unwrap();
         let store = first.await;
-        assert!(matches!(
-            competing.await,
-            Err(ChatError::StorageUnavailable)
-        ));
+		assert!(matches!(competing.await, Err(ChatError::StorageUnavailable)));
         assert_eq!(storage.writes.load(Ordering::SeqCst), 1);
 
         let (entered, resume) = storage.pause();
@@ -377,13 +345,7 @@ fn concurrent_opens_and_owned_updates_keep_exclusive_slot_custody() {
         assert_eq!(storage.writes.load(Ordering::SeqCst), 2);
         resume.send(()).unwrap();
         let restored = replacement.await.unwrap();
-        assert_eq!(
-            restored
-                .read(|state| state.processed.clone())
-                .await
-                .unwrap(),
-            vec![13]
-        );
+		assert_eq!(restored.read(|state| state.processed.clone()).await.unwrap(), vec![13]);
         restored
             .update(|state| {
                 state.processed.push(14);
@@ -391,13 +353,7 @@ fn concurrent_opens_and_owned_updates_keep_exclusive_slot_custody() {
             })
             .await
             .unwrap();
-        assert_eq!(
-            restored
-                .read(|state| state.processed.clone())
-                .await
-                .unwrap(),
-            vec![13, 14]
-        );
+		assert_eq!(restored.read(|state| state.processed.clone()).await.unwrap(), vec![13, 14]);
     });
 }
 
@@ -407,10 +363,7 @@ fn dropped_poisoned_store_keeps_custody_until_durable_repair() {
         let storage = Arc::new(DurableSlot::default());
         let store = open(storage.clone()).await;
         storage.fail_after.store(true, Ordering::SeqCst);
-        assert_eq!(
-            store.update(change).await,
-            Err(ChatError::StorageUnavailable)
-        );
+		assert_eq!(store.update(change).await, Err(ChatError::StorageUnavailable));
         let accepted = storage.bytes();
         drop(store);
         storage.values.lock().remove(&slot().encode());
@@ -453,13 +406,7 @@ fn dropped_poisoned_store_keeps_custody_until_durable_repair() {
         ));
         storage.replace(&slot(), accepted.clone());
         let recovered = open(storage.clone()).await;
-        assert_eq!(
-            recovered
-                .read(|state| state.processed.clone())
-                .await
-                .unwrap(),
-            vec![13]
-        );
+		assert_eq!(recovered.read(|state| state.processed.clone()).await.unwrap(), vec![13]);
         assert_eq!(storage.bytes(), accepted);
         assert_eq!(storage.writes.load(Ordering::SeqCst), 4);
     });
@@ -473,22 +420,10 @@ fn same_slot_on_different_platforms_has_independent_custody() {
         let first_store = open(first.clone()).await;
         let second_store = open(second.clone()).await;
         first.fail_after.store(true, Ordering::SeqCst);
-        assert_eq!(
-            first_store.update(change).await,
-            Err(ChatError::StorageUnavailable)
-        );
-        assert_eq!(
-            second_store.read(snapshot).await.unwrap(),
-            snapshot(&initial().unwrap())
-        );
+		assert_eq!(first_store.update(change).await, Err(ChatError::StorageUnavailable));
+		assert_eq!(second_store.read(snapshot).await.unwrap(), snapshot(&initial().unwrap()));
         second_store.update(change).await.unwrap();
-        assert_eq!(
-            second_store
-                .read(|state| state.processed.clone())
-                .await
-                .unwrap(),
-            vec![13]
-        );
+		assert_eq!(second_store.read(|state| state.processed.clone()).await.unwrap(), vec![13]);
     });
 }
 
@@ -531,10 +466,7 @@ fn completed_attachment_chunks_release_bookkeeping_but_preserve_storage() {
             .await
             .unwrap();
             assert_eq!(
-                restored
-                    .read(|state| state.processed.clone())
-                    .await
-                    .unwrap(),
+				restored.read(|state| state.processed.clone()).await.unwrap(),
                 vec![u64::from(chunk_index)]
             );
             drop(restored);
@@ -598,10 +530,7 @@ fn ambiguous_initialization_requires_authenticated_bytes_never_absence() {
         )
         .await
         .unwrap();
-        assert_eq!(
-            recovered.read(snapshot).await.unwrap(),
-            snapshot(&initial().unwrap())
-        );
+		assert_eq!(recovered.read(snapshot).await.unwrap(), snapshot(&initial().unwrap()));
         assert_eq!(accepted.bytes(), bytes);
         assert_eq!(accepted.writes.load(Ordering::SeqCst), 2);
     });

@@ -14,13 +14,17 @@ use std::time::Duration;
 #[cfg(target_arch = "wasm32")]
 use web_time::Duration;
 
-use crate::chain_runtime::ChainRuntime;
-use crate::host_logic::dotns_gateway::{
+use crate::{
+	chain_runtime::ChainRuntime,
+	host_logic::{
+		dotns_gateway::{
     DotnsIdentity, DotnsTransport, classify_labels, discover_pop_controller, resolve_labels,
+		},
+		session::SessionInfo,
+	},
+	runtime::dotns_lookup::DotnsLookup,
+	session_usernames::SessionUsernames,
 };
-use crate::host_logic::session::SessionInfo;
-use crate::runtime::dotns_lookup::DotnsLookup;
-use crate::session_usernames::SessionUsernames;
 
 use futures::{FutureExt, pin_mut};
 use tracing::{debug, instrument, warn};
@@ -59,9 +63,8 @@ pub async fn resolve_session_identity_with_chain(
             session,
             "identity",
         )
-        .await?
-            == LookupOutcome::NoRecord
-            && preferred_account != session.public_key
+		.await? == LookupOutcome::NoRecord &&
+			preferred_account != session.public_key
         {
             let public_key = session.public_key;
             lookup_and_apply(
@@ -130,17 +133,17 @@ async fn lookup_and_apply(
                 );
                 session.apply_usernames(identity.lite_username, identity.full_username);
                 return Ok(LookupOutcome::Applied);
-            }
+			},
             Ok(None) => {
                 debug!(
                     account = %hex::encode(account),
                     "dotNS {label} lookup found no usable owned username"
                 );
                 return Ok(LookupOutcome::NoRecord);
-            }
+			},
             Err(IdentityLookupError::Unavailable(reason)) => {
                 return Err(format!("dotNS {label} username lookup unavailable: {reason}"));
-            }
+			},
             Err(IdentityLookupError::Failed(reason)) => {
                 warn!(
                     account = %hex::encode(account),
@@ -153,7 +156,7 @@ async fn lookup_and_apply(
                         "dotNS {label} username lookup unavailable after {attempt} attempts: {reason}"
                     ));
                 }
-            }
+			},
         }
     }
     unreachable!("identity lookup always attempts at least once")
@@ -219,9 +222,7 @@ pub(super) async fn lookup_local_identity(
                 continue;
             }
             let owner = lookup
-                .storage(crate::host_logic::dotns_gateway::lite_label_owner_key(
-                    label.as_bytes(),
-                ))
+				.storage(crate::host_logic::dotns_gateway::lite_label_owner_key(label.as_bytes()))
                 .await?;
             let Some(owner) = owner else { continue };
             let owner: [u8; 32] = owner
@@ -259,10 +260,7 @@ pub(super) async fn registration_timestamp(
         .storage(crate::host_logic::dotns_gateway::timestamp_now_key())
         .await?
         .ok_or("Timestamp.Now is unset")?;
-    let millis: [u8; 8] = value
-        .as_slice()
-        .try_into()
-        .map_err(|_| "Timestamp.Now is not a u64")?;
+	let millis: [u8; 8] = value.as_slice().try_into().map_err(|_| "Timestamp.Now is not a u64")?;
     Ok(u64::from_le_bytes(millis) / 1000)
 }
 
@@ -275,20 +273,22 @@ mod tests {
     //! without a network.
 
     use super::*;
-    use crate::chain_runtime::{RuntimeChainProvider, RuntimeFailure};
-    use crate::host_logic::dotns_gateway::{
-        VIEW_CALL_ORIGIN, account_to_h160, dispatcher_address_key, selector,
+    use crate::{
+        chain_runtime::{RuntimeChainProvider, RuntimeFailure},
+        host_logic::dotns_gateway::{
+            VIEW_CALL_ORIGIN, account_to_h160, dispatcher_address_key, selector,
+        },
+        platform::JsonRpcConnection,
+        subscription::thread_per_subscription_spawner,
     };
-    use crate::platform::JsonRpcConnection;
-    use crate::subscription::thread_per_subscription_spawner;
     use async_trait::async_trait;
-    use futures::StreamExt;
-    use futures::channel::mpsc;
-    use futures::stream::BoxStream;
+	use futures::{StreamExt, channel::mpsc, stream::BoxStream};
     use parity_scale_codec::{Compact, Decode, Encode};
     use serde_json::{Value as JsonValue, json};
-    use std::sync::{Arc, Mutex};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+	use std::sync::{
+		Arc, Mutex,
+		atomic::{AtomicUsize, Ordering},
+	};
 
     const FOLLOW_ID: &str = "ah-follow";
     const BEST_HASH: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
@@ -346,11 +346,7 @@ mod tests {
         let structs: Vec<Vec<u8>> = claims
             .iter()
             .map(|(label, minted_at)| {
-                [
-                    abi_word(64).to_vec(),
-                    abi_word(*minted_at).to_vec(),
-                    abi_string_tail(label),
-                ]
+				[abi_word(64).to_vec(), abi_word(*minted_at).to_vec(), abi_string_tail(label)]
                 .concat()
             })
             .collect();
@@ -405,10 +401,7 @@ mod tests {
             (DISPATCHER, s) if s == selector("TARGET()") => abi_address(&CONTROLLER),
             (CONTROLLER, s) if s == selector("pendingClaims(address,uint256,uint256)") => {
                 // First page for the mapped identity account.
-                assert_eq!(
-                    &input[4..36],
-                    abi_address(&account_to_h160(&ACCOUNT)).as_slice()
-                );
+				assert_eq!(&input[4..36], abi_address(&account_to_h160(&ACCOUNT)).as_slice());
                 assert_eq!(&input[36..68], &abi_word(0));
                 assert_eq!(&input[68..100], &abi_word(16));
                 // A transferred candidate must not win; the still-owned name
@@ -417,7 +410,7 @@ mod tests {
                     ("transferred.01", 1_800_000_000),
                     ("alice.01", 1),
                 ])
-            }
+			},
             (CONTROLLER, s) if s == selector("isPopIssued(string)") => {
                 // Provenance alone cannot authorize the transferred name.
                 abi_word(1).to_vec()
@@ -451,15 +444,13 @@ mod tests {
             (FACTORY, s) if s == selector("getLabelStore(address)") => {
                 assert_eq!(&input[16..36], account_to_h160(&ACCOUNT));
                 abi_address(&STORE)
-            }
+			},
             (STORE, s) if s == selector("getLabels(uint256,uint256)") => {
                 abi_string_array(&["myproject.paseo", "app.myproject.paseo"])
-            }
-            (dest, sel) => panic!(
-                "unscripted view {} on 0x{}",
-                hex::encode(sel),
-                hex::encode(dest)
-            ),
+			},
+			(dest, sel) => {
+				panic!("unscripted view {} on 0x{}", hex::encode(sel), hex::encode(dest))
+			},
         };
         contract_result(&data)
     }
@@ -541,7 +532,7 @@ mod tests {
                             "bestBlockHash": BEST_HASH
                         })),
                     ]
-                }
+				},
                 "chainHead_v1_storage" => {
                     *next_operation += 1;
                     let operation_id = format!("storage-{}", *next_operation);
@@ -565,25 +556,18 @@ mod tests {
                         "operationId": operation_id
                     })));
                     frames
-                }
+				},
                 "chainHead_v1_call" => {
                     *next_operation += 1;
                     let operation_id = format!("call-{}", *next_operation);
                     assert_eq!(request["params"][2].as_str(), Some("ReviveApi_call"));
                     let args = hex::decode(
-                        request["params"][3]
-                            .as_str()
-                            .unwrap()
-                            .trim_start_matches("0x"),
+						request["params"][3].as_str().unwrap().trim_start_matches("0x"),
                     )
                     .unwrap();
                     // origin[32] ‖ dest[20] ‖ value u128 ‖ None ‖ None ‖ Vec(input).
                     assert_eq!(&args[..32], VIEW_CALL_ORIGIN.as_slice());
-                    assert_eq!(
-                        &args[52..70],
-                        &[0u8; 18],
-                        "zero value, no gas or deposit limit"
-                    );
+					assert_eq!(&args[52..70], &[0u8; 18], "zero value, no gas or deposit limit");
                     let dest: [u8; 20] = args[32..52].try_into().unwrap();
                     let input = Vec::<u8>::decode(&mut &args[70..]).unwrap();
                     let sel: [u8; 4] = input[..4].try_into().unwrap();
@@ -593,11 +577,14 @@ mod tests {
                         }
                         self.lookup_requests.fetch_add(1, Ordering::SeqCst);
                         if matches!(self.lookup, ScriptedLookup::Unavailable) {
-                            return vec![json!({
+							return vec![
+								json!({
                                 "jsonrpc": "2.0",
                                 "id": id,
                                 "error": {"code": -32000, "message": "identity lookup offline"}
-                            }).to_string()];
+								})
+								.to_string(),
+							];
                         }
                     }
                     let output = match self.lookup {
@@ -605,16 +592,16 @@ mod tests {
                             rejected_preferred_view_output(&dest, &input)
                         }
                         ScriptedLookup::NoRecord
-                            if dest == CONTROLLER
-                                && sel == selector("pendingClaims(address,uint256,uint256)") =>
+							if dest == CONTROLLER &&
+								sel == selector("pendingClaims(address,uint256,uint256)") =>
                         {
                             contract_result(&abi_pending_claims(&[]))
-                        }
+						},
                         ScriptedLookup::NoRecord
                             if dest == FACTORY && sel == selector("getLabelStore(address)") =>
                         {
                             contract_result(&abi_address(&[0; 20]))
-                        }
+						},
                         _ => view_output(&dest, &input),
                     };
                     vec![
@@ -625,7 +612,7 @@ mod tests {
                             "output": format!("0x{}", hex::encode(output))
                         })),
                     ]
-                }
+				},
                 "chainHead_v1_unpin" | "chainHead_v1_unfollow" => vec![response(JsonValue::Null)],
                 other => panic!("unscripted method {other}"),
             }
@@ -649,12 +636,7 @@ mod tests {
         }
 
         fn responses(&self) -> BoxStream<'static, String> {
-            self.receiver
-                .lock()
-                .unwrap()
-                .take()
-                .expect("responses called once")
-                .boxed()
+			self.receiver.lock().unwrap().take().expect("responses called once").boxed()
         }
 
         fn close(&self) {
@@ -691,7 +673,9 @@ mod tests {
         };
 
         futures::executor::block_on(resolve_session_identity_with_chain(
-            &chain, [0xcc; 32], &mut resolved,
+			&chain,
+			[0xcc; 32],
+			&mut resolved,
         ))
         .unwrap();
 
@@ -790,16 +774,15 @@ mod tests {
         let mut session = unnamed_session();
         let original = session.clone();
         let error = futures::executor::block_on(resolve_session_identity_with_chain(
-            &chain, [0xcc; 32], &mut session,
+			&chain,
+			[0xcc; 32],
+			&mut session,
         ))
         .unwrap_err();
         assert!(error.contains("after 3 attempts"), "{error}");
         assert!(error.contains("identity lookup offline"), "{error}");
         assert_eq!(session, original, "partial labels must not change identity or XID");
-        assert_eq!(
-            provider.lookup_requests.load(Ordering::SeqCst),
-            IDENTITY_LOOKUP_MAX_ATTEMPTS,
-        );
+		assert_eq!(provider.lookup_requests.load(Ordering::SeqCst), IDENTITY_LOOKUP_MAX_ATTEMPTS,);
     }
 
     #[test]
@@ -812,7 +795,9 @@ mod tests {
         session.public_key = ACCOUNT;
         let original = session.clone();
         futures::executor::block_on(resolve_session_identity_with_chain(
-            &chain, [0xcc; 32], &mut session,
+			&chain,
+			[0xcc; 32],
+			&mut session,
         ))
         .unwrap();
         assert_eq!(session, original);
@@ -831,7 +816,9 @@ mod tests {
         let mut session = unnamed_session();
         let original = session.clone();
         let error = futures::executor::block_on(resolve_session_identity_with_chain(
-            &chain, [0xcc; 32], &mut session,
+			&chain,
+			[0xcc; 32],
+			&mut session,
         ))
         .unwrap_err();
         assert!(error.contains("gateway is not deployed"), "{error}");
@@ -846,7 +833,9 @@ mod tests {
         session.lite_username = Some("alice.01".to_string());
         let original = session.clone();
         futures::executor::block_on(resolve_session_identity_with_chain(
-            &chain, [0; 32], &mut session,
+			&chain,
+			[0; 32],
+			&mut session,
         ))
         .unwrap();
         assert_eq!(session, original);

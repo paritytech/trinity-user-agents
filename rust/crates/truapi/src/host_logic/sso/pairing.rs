@@ -15,8 +15,10 @@
 use crate::platform::PairingHostConfig;
 #[cfg(test)]
 use crate::platform::{HostInfo, PlatformInfo};
-use chacha20poly1305::ChaCha20Poly1305;
-use chacha20poly1305::aead::{Aead, KeyInit};
+use chacha20poly1305::{
+	ChaCha20Poly1305,
+	aead::{Aead, KeyInit},
+};
 use hkdf::Hkdf;
 use parity_scale_codec::{Decode, Encode};
 use schnorrkel::{ExpansionMode, MiniSecretKey, SignatureError};
@@ -188,10 +190,7 @@ pub fn encrypt_v2_handshake_response(
     let aead_key = aead_key_from_shared_secret(&shared_secret)?;
     let encrypted_message =
         encrypt_chacha20_poly1305(aead_key, &response.encode(), "handshake response")?;
-    Ok(VersionedHandshakeResponse::V2 {
-        encrypted_message,
-        public_key: ephemeral_public,
-    })
+	Ok(VersionedHandshakeResponse::V2 { encrypted_message, public_key: ephemeral_public })
 }
 
 /// Decode wallet-posted pairing handshake data from SCALE bytes.
@@ -263,12 +262,12 @@ pub fn establish_sso_session_info(
 /// The statement keypair signs every session statement (its public key is the
 /// `identityAccountId` the pairing host binds the session to), and the X25519
 /// secret is the persistent `sso` key both sides feed into the session ECDH.
-#[derive(Clone, PartialEq, Eq, zeroize::Zeroize, zeroize::ZeroizeOnDrop, derive_more::Debug)]
+#[derive(derive_more::Debug, Clone, PartialEq, Eq, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct ResponderIdentity {
-    /// Expanded Ed25519 secret used to sign session statements.
+    /// Expanded sr25519 secret used to sign session statements.
     #[debug("\"<redacted>\"")]
     pub statement_secret: [u8; 64],
-    /// Ed25519 public key advertised as the session identity account.
+	/// sr25519 public key advertised as the session identity account.
     pub statement_public_key: [u8; 32],
     /// X25519 secret key used to derive the shared session channels.
     #[debug("\"<redacted>\"")]
@@ -290,16 +289,10 @@ pub fn establish_responder_session_info(
     host_encryption_public_key: [u8; 32],
 ) -> Result<SsoSessionInfo, String> {
     let shared_secret = shared_secret(identity.encryption_secret_key, host_encryption_public_key)?;
-    let session_id_own = create_session_id(
-        shared_secret,
-        identity.statement_public_key,
-        host_statement_account_id,
-    );
-    let session_id_peer = create_session_id(
-        shared_secret,
-        host_statement_account_id,
-        identity.statement_public_key,
-    );
+	let session_id_own =
+		create_session_id(shared_secret, identity.statement_public_key, host_statement_account_id);
+	let session_id_peer =
+		create_session_id(shared_secret, host_statement_account_id, identity.statement_public_key);
 
     Ok(SsoSessionInfo {
         ss_secret: identity.statement_secret,
@@ -394,11 +387,7 @@ fn decrypt_session_message(
     session: &SsoSessionInfo,
     encrypted_message: &[u8],
 ) -> Result<Vec<u8>, String> {
-    decrypt_chacha20_poly1305(
-        session_aead_key(session)?,
-        encrypted_message,
-        "statement data",
-    )
+	decrypt_chacha20_poly1305(session_aead_key(session)?, encrypted_message, "statement data")
 }
 
 fn encrypt_chacha20_poly1305(
@@ -437,9 +426,8 @@ fn decrypt_chacha20_poly1305(
         return Err(format!("encrypted SSO {label} is too short"));
     }
     let (nonce, ciphertext) = encrypted_message.split_at(AEAD_NONCE_LEN);
-    let nonce: &[u8; AEAD_NONCE_LEN] = nonce
-        .try_into()
-        .expect("nonce slice has the checked fixed length");
+	let nonce: &[u8; AEAD_NONCE_LEN] =
+		nonce.try_into().expect("nonce slice has the checked fixed length");
     let cipher = ChaCha20Poly1305::new((&key).into());
     cipher
         .decrypt(nonce.into(), ciphertext)
@@ -528,10 +516,8 @@ pub fn create_pairing_bootstrap_from_identity(
         identity.encryption_public_key,
         config,
     );
-    let topic = bootstrap_topic(
-        identity.statement_store_public_key,
-        identity.encryption_public_key,
-    );
+	let topic =
+		bootstrap_topic(identity.statement_store_public_key, identity.encryption_public_key);
 
     Ok(PairingBootstrap {
         deeplink,
@@ -557,37 +543,23 @@ pub fn build_pairing_deeplink(
         },
         metadata: handshake_metadata(config),
     });
-    format!(
-        "{scheme}://pair?handshake={}",
-        hex::encode(handshake.encode())
-    )
+	format!("{scheme}://pair?handshake={}", hex::encode(handshake.encode()))
 }
 
 fn handshake_metadata(config: &PairingHostConfig) -> Vec<v2::MetadataEntry> {
-    let mut entries = vec![v2::MetadataEntry(
-        v2::MetadataKey::HostName,
-        config.host.host_info.name.clone(),
-    )];
+	let mut entries =
+		vec![v2::MetadataEntry(v2::MetadataKey::HostName, config.host.host_info.name.clone())];
     if let Some(value) = &config.host.host_info.version {
-        entries.push(v2::MetadataEntry(
-            v2::MetadataKey::HostVersion,
-            value.clone(),
-        ));
+		entries.push(v2::MetadataEntry(v2::MetadataKey::HostVersion, value.clone()));
     }
     if let Some(value) = &config.host.host_info.icon {
         entries.push(v2::MetadataEntry(v2::MetadataKey::HostIcon, value.clone()));
     }
     if let Some(value) = &config.host.platform_info.kind {
-        entries.push(v2::MetadataEntry(
-            v2::MetadataKey::PlatformType,
-            value.clone(),
-        ));
+		entries.push(v2::MetadataEntry(v2::MetadataKey::PlatformType, value.clone()));
     }
     if let Some(value) = &config.host.platform_info.version {
-        entries.push(v2::MetadataEntry(
-            v2::MetadataKey::PlatformVersion,
-            value.clone(),
-        ));
+		entries.push(v2::MetadataEntry(v2::MetadataKey::PlatformVersion, value.clone()));
     }
     entries
 }
@@ -656,10 +628,7 @@ mod tests {
                 version: Some("1.2.3".to_string()),
                 platform: truapi::latest::HostPlatform::Web,
             },
-            PlatformInfo {
-                kind: Some("Firefox".to_string()),
-                version: Some("192.32".to_string()),
-            },
+			PlatformInfo { kind: Some("Firefox".to_string()), version: Some("192.32".to_string()) },
             [0; 32],
             [0xbb; 32],
             [0xcc; 32],
@@ -751,10 +720,8 @@ mod tests {
     fn handshake_x25519_chacha_round_trip_and_authentication() {
         let (host_secret, host_public) = x25519_keypair(1);
         let sensitive = response(x25519_keypair(2).1);
-        let VersionedHandshakeResponse::V2 {
-            mut encrypted_message,
-            public_key,
-        } = encrypt_v2_handshake_response(host_public, &sensitive).unwrap();
+		let VersionedHandshakeResponse::V2 { mut encrypted_message, public_key } =
+			encrypt_v2_handshake_response(host_public, &sensitive).unwrap();
 
         assert_eq!(
             decrypt_v2_handshake_response(host_secret, public_key, &encrypted_message).unwrap(),
@@ -774,10 +741,7 @@ mod tests {
                 .unwrap_err()
                 .contains("too short")
         );
-        assert_eq!(
-            shared_secret([1; 32], [0; 32]).unwrap_err(),
-            "invalid X25519 public key"
-        );
+		assert_eq!(shared_secret([1; 32], [0; 32]).unwrap_err(), "invalid X25519 public key");
     }
 
     #[test]
@@ -786,10 +750,7 @@ mod tests {
         let chat = derive_x25519_keypair_from_entropy(&[0xAB; 16], b"chat");
         assert_eq!(sso, derive_x25519_keypair_from_entropy(&[0xAB; 16], b"sso"));
         assert_ne!(sso, chat);
-        assert_eq!(
-            PublicKey::from(&StaticSecret::from(sso.0)).to_bytes(),
-            sso.1
-        );
+		assert_eq!(PublicKey::from(&StaticSecret::from(sso.0)).to_bytes(), sso.1);
         let cross_platform_entropy: [u8; 32] = std::array::from_fn(|index| (index + 1) as u8);
         let (sso_secret, _) = derive_x25519_keypair_from_entropy(&cross_platform_entropy, b"sso");
         let (chat_secret, _) = derive_x25519_keypair_from_entropy(&cross_platform_entropy, b"chat");
@@ -812,10 +773,7 @@ mod tests {
         );
         assert_eq!(
             generated.topic,
-            bootstrap_topic(
-                generated.statement_store_public_key,
-                generated.encryption_public_key,
-            )
+			bootstrap_topic(generated.statement_store_public_key, generated.encryption_public_key,)
         );
     }
 
@@ -840,32 +798,17 @@ mod tests {
             establish_sso_session_info(&host, responder.statement_public_key, responder_public)
                 .unwrap();
 
-        assert_eq!(
-            responder_session.session_id_own,
-            host_session.session_id_peer
-        );
-        assert_eq!(
-            responder_session.session_id_peer,
-            host_session.session_id_own
-        );
-        assert_eq!(
-            responder_session.request_channel,
-            host_session.peer_request_channel
-        );
-        assert_eq!(
-            peer_response_channel(&responder_session),
-            host_session.response_channel
-        );
+		assert_eq!(responder_session.session_id_own, host_session.session_id_peer);
+		assert_eq!(responder_session.session_id_peer, host_session.session_id_own);
+		assert_eq!(responder_session.request_channel, host_session.peer_request_channel);
+		assert_eq!(peer_response_channel(&responder_session), host_session.response_channel);
 
         let data = SsoStatementData::Request {
             request_id: "req-1".to_string(),
             data: vec![vec![0xde, 0xad]],
         };
         let encrypted = encrypt_session_statement_data(&responder_session, &data).unwrap();
-        assert_eq!(
-            decrypt_session_statement_data(&host_session, &encrypted).unwrap(),
-            data
-        );
+		assert_eq!(decrypt_session_statement_data(&host_session, &encrypted).unwrap(), data);
     }
 
     #[test]
@@ -887,9 +830,6 @@ mod tests {
 
         assert_eq!(&encrypted[..AEAD_NONCE_LEN], nonce);
         assert_eq!(encrypted.len(), AEAD_NONCE_LEN + data.encode().len() + 16);
-        assert_eq!(
-            decrypt_session_statement_data(&session, &encrypted).unwrap(),
-            data
-        );
+		assert_eq!(decrypt_session_statement_data(&session, &encrypted).unwrap(), data);
     }
 }

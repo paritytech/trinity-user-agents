@@ -11,8 +11,7 @@
 use crate::platform::{CoreStorage, CoreStorageKey};
 use truapi::latest::GenericError;
 
-use super::allowances::session_storage_id;
-use super::authority::AuthorityError;
+use super::{allowances::session_storage_id, authority::AuthorityError};
 use crate::host_logic::session::SessionInfo;
 
 /// Read `product_id`'s persisted subtree public key, if any.
@@ -39,10 +38,7 @@ pub async fn write_product_subtree(
     public_key: [u8; 32],
 ) -> Result<(), AuthorityError> {
     storage
-        .write_core_storage(
-            product_subtree_key(session, product_id)?,
-            public_key.to_vec(),
-        )
+		.write_core_storage(product_subtree_key(session, product_id)?, public_key.to_vec())
         .await
         .map_err(storage_error)
 }
@@ -70,16 +66,13 @@ fn product_subtree_key(
 }
 
 fn storage_error(err: GenericError) -> AuthorityError {
-    AuthorityError::Unknown {
-        reason: format!("product subtree storage failed: {}", err.reason),
-    }
+	AuthorityError::Unknown { reason: format!("product subtree storage failed: {}", err.reason) }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-    use std::sync::Mutex;
+	use std::{collections::HashMap, sync::Mutex};
 
     use parity_scale_codec::Encode;
 
@@ -97,12 +90,7 @@ mod tests {
             &self,
             key: CoreStorageKey,
         ) -> Result<Option<Vec<u8>>, GenericError> {
-            Ok(self
-                .inner
-                .lock()
-                .expect("storage mutex poisoned")
-                .get(&key.encode())
-                .cloned())
+			Ok(self.inner.lock().expect("storage mutex poisoned").get(&key.encode()).cloned())
         }
 
         async fn write_core_storage(
@@ -110,18 +98,12 @@ mod tests {
             key: CoreStorageKey,
             value: Vec<u8>,
         ) -> Result<(), GenericError> {
-            self.inner
-                .lock()
-                .expect("storage mutex poisoned")
-                .insert(key.encode(), value);
+			self.inner.lock().expect("storage mutex poisoned").insert(key.encode(), value);
             Ok(())
         }
 
         async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {
-            self.inner
-                .lock()
-                .expect("storage mutex poisoned")
-                .remove(&key.encode());
+			self.inner.lock().expect("storage mutex poisoned").remove(&key.encode());
             Ok(())
         }
 
@@ -152,34 +134,19 @@ mod tests {
         let session = sso_session_info();
 
         futures::executor::block_on(async {
-            write_product_subtree(&storage, &session, "one.dot", [1; 32])
-                .await
-                .unwrap();
-            write_product_subtree(&storage, &session, "two.dot", [2; 32])
-                .await
-                .unwrap();
-            write_product_subtree(&storage, &session, "one.dot", [3; 32])
-                .await
-                .unwrap();
+			write_product_subtree(&storage, &session, "one.dot", [1; 32]).await.unwrap();
+			write_product_subtree(&storage, &session, "two.dot", [2; 32]).await.unwrap();
+			write_product_subtree(&storage, &session, "one.dot", [3; 32]).await.unwrap();
 
             assert_eq!(
-                read_product_subtree(&storage, &session, "one.dot")
-                    .await
-                    .unwrap(),
+				read_product_subtree(&storage, &session, "one.dot").await.unwrap(),
                 Some([3; 32])
             );
             assert_eq!(
-                read_product_subtree(&storage, &session, "two.dot")
-                    .await
-                    .unwrap(),
+				read_product_subtree(&storage, &session, "two.dot").await.unwrap(),
                 Some([2; 32])
             );
-            assert_eq!(
-                read_product_subtree(&storage, &session, "absent.dot")
-                    .await
-                    .unwrap(),
-                None
-            );
+			assert_eq!(read_product_subtree(&storage, &session, "absent.dot").await.unwrap(), None);
         });
     }
 
@@ -189,9 +156,7 @@ mod tests {
         let session = sso_session_info();
 
         futures::executor::block_on(async {
-            write_product_subtree(&storage, &session, "one.dot", [7; 32])
-                .await
-                .unwrap();
+			write_product_subtree(&storage, &session, "one.dot", [7; 32]).await.unwrap();
 
             // Hosts derive addresses straight from this slot, so the value must
             // stay 32 unframed bytes rather than anything this module encodes.
@@ -209,28 +174,15 @@ mod tests {
         let session = sso_session_info();
 
         futures::executor::block_on(async {
-            write_product_subtree(&storage, &session, "one.dot", [1; 32])
-                .await
-                .unwrap();
-            write_product_subtree(&storage, &session, "two.dot", [2; 32])
-                .await
-                .unwrap();
+			write_product_subtree(&storage, &session, "one.dot", [1; 32]).await.unwrap();
+			write_product_subtree(&storage, &session, "two.dot", [2; 32]).await.unwrap();
 
             // Backs the rollback in `persist_product_subtree_if_current`.
-            remove_product_subtree(&storage, &session, "one.dot")
-                .await
-                .unwrap();
+			remove_product_subtree(&storage, &session, "one.dot").await.unwrap();
 
+			assert_eq!(read_product_subtree(&storage, &session, "one.dot").await.unwrap(), None);
             assert_eq!(
-                read_product_subtree(&storage, &session, "one.dot")
-                    .await
-                    .unwrap(),
-                None
-            );
-            assert_eq!(
-                read_product_subtree(&storage, &session, "two.dot")
-                    .await
-                    .unwrap(),
+				read_product_subtree(&storage, &session, "two.dot").await.unwrap(),
                 Some([2; 32])
             );
         });
@@ -250,12 +202,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert_eq!(
-                read_product_subtree(&storage, &session, "one.dot")
-                    .await
-                    .unwrap(),
-                None
-            );
+			assert_eq!(read_product_subtree(&storage, &session, "one.dot").await.unwrap(), None);
         });
     }
 }
