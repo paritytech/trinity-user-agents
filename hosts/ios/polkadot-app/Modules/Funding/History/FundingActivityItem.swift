@@ -93,6 +93,7 @@ extension FundingStatus {
             true
         case .toppedUp,
              .sent,
+             .paidOutAfterCancel,
              .refunded,
              .payoutFailed,
              .failed,

@@ -83,7 +83,10 @@ private extension FundingProgressView {
     /// The line under the steps: where a cancel stands, why it is slow, or
     /// for a bank transfer not seen yet, that it is on its way.
     var note: (text: String, color: Color)? {
-        if let status = model.progress?.status, let line = FundingCancelPresentation.line(for: status, direction: model.direction) {
+        if let status = model.progress?.status, let line = FundingCancelPresentation.line(
+            for: status,
+            direction: model.direction
+        ) {
             return (line.text, line.isWarning ? .fgWarning : .fgSecondary)
         }
         if let status = model.progress?.status, FundingCancelPresentation.cancelCameTooLate(status) {
