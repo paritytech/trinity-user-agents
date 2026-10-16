@@ -118,6 +118,10 @@ private extension SPASimplifiedViewController {
                 )
             case let .directURL(url):
                 DirectURLNavigationDecisionHandler(baseURL: url)
+            #if DEBUG
+                case let .devServer(url, _):
+                    DirectURLNavigationDecisionHandler(baseURL: url)
+            #endif
             }
 
         let engine = SPAJSEngine(

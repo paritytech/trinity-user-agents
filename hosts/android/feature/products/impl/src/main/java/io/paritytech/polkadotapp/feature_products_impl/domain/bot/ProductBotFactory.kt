@@ -16,11 +16,12 @@ class ProductBotFactory @Inject constructor(
     @param:ApplicationContext private val appContext: Context,
     private val workerRefCounter: ProductWorkerRefCounter,
 ) {
-    fun create(product: Product): ProductChatExtension {
+    fun create(product: Product, origin: ProductChatExtensionOrigin): ProductChatExtension {
         return ProductChatExtension(
             appContext = appContext,
             product = product,
             workerRefCounter = workerRefCounter,
+            origin = origin,
         )
     }
 }

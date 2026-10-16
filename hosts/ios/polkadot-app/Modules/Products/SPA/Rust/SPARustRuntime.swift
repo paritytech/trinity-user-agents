@@ -66,6 +66,10 @@ extension SPARustRuntime: SPARuntimeProtocol {
                 try await prepareDotNsContent()
             case let .directURL(url):
                 url
+            #if DEBUG
+                case let .devServer(url, _):
+                    url
+            #endif
             }
 
         try checkNotDisposed()

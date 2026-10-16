@@ -9,11 +9,16 @@ struct IdentityShareQrView: View {
         _viewModel = State(initialValue: viewModel)
     }
 
+    private var hint: String {
+        String(localized: .identityCardScanQrHint(PaymentAssetBranding.shared.current.symbol))
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            Text(.identityCardScanQrHint(PaymentAssetBranding.shared.current.symbol))
+            Text(CashLogo.styled(hint, symbol: PaymentAssetBranding.shared.current.symbol, typography: .paragraphLarge))
                 .typography(.paragraphLarge)
                 .foregroundStyle(Color.fgPrimary)
+                .accessibilityLabel(hint)
                 .padding(.horizontal, DSSpacings.large)
                 .padding(.vertical, DSSpacings.mediumIncreased)
                 .fixedSize(horizontal: false, vertical: true)
