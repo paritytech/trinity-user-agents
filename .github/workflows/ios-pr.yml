@@ -49,6 +49,7 @@ on:
       - ".github/workflows/ios-pr.yml"
       - ".github/actions/bootstrap-ios-core/**"
       - ".github/actions/upsert-pr-comment/**"
+      - ".github/actions/setup-swiftlint/**"
   # Also on the default branch, which is the only run that saves the in-tree
   # core's Rust cache. A cache written during a pull request is scoped to that
   # pull request's ref, so nothing else can read it, and one written on main is
@@ -80,6 +81,7 @@ on:
       - ".github/workflows/ios-pr.yml"
       - ".github/actions/bootstrap-ios-core/**"
       - ".github/actions/upsert-pr-comment/**"
+      - ".github/actions/setup-swiftlint/**"
   # Kept alongside pull_request so a build can be reproduced on demand without
   # pushing a commit.
   workflow_dispatch:
@@ -159,8 +161,7 @@ jobs:
 
   # The app jobs all need the core generated from this commit, and it is the
   # same output for each of them, so it is built once here and carried across.
-  # Built on the larger runner because it is Rust compilation and CPU bound:
-  # the same work measured 11m13s on macos-26 and 5m44s on macos-26-xlarge.
+  # Built on the larger runner because it is Rust compilation and CPU bound.
   # The `release/` test on this job and the three below it is deliberately every
   # release branch, app and package alike, behind the label check that already
   # gates them. A release branch is a version bump on top of main, which app PR CI
@@ -170,7 +171,7 @@ jobs:
     name: Build the in-tree core
     needs: check-skip-label
     if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
-    runs-on: macos-26-xlarge
+    runs-on: parity-macos-large
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -226,7 +227,7 @@ jobs:
     needs: [check-skip-label, core]
     if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
     timeout-minutes: 30
-    runs-on: macos-26-xlarge
+    runs-on: parity-macos
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -235,6 +236,11 @@ jobs:
         with:
           match_auth_required: "true"
           match_repository_pat: ${{ secrets.FASTLANE_RO_PAT }}
+
+      # The app's lint build phase uses this rather than whatever SwiftLint the
+      # runner has, so the warning baseline holds on both runner fleets.
+      - name: Install the pinned SwiftLint
+        uses: ./.github/actions/setup-swiftlint
 
       - name: Restore the in-tree core
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -307,11 +313,24 @@ jobs:
           reviewdog -f=rdjson -name="warning-ratchet-out-of-diff" \
             -reporter=github-check -filter-mode=nofilter -fail-level=none < warnings.rdjson
 
+      # The step below tells you to regenerate the baseline, which otherwise
+      # means owning a Mac on the same Xcode this job used. Hand the generated
+      # file back instead, so accepting a new warning floor is a download and a
+      # commit.
+      - name: Upload the warnings this build produced
+        if: always() && hashFiles('hosts/ios/current_warnings.json') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: warnings-${{ github.run_number }}
+          path: hosts/ios/current_warnings.json
+          retention-days: 7
+
       - name: Fail on new warnings
         if: always() && steps.ratchet.outcome == 'failure'
         run: |
           echo "New build warnings introduced. See the annotations above."
-          echo "Fix them, or regenerate & commit build-logs/warnings.json if intentional."
+          echo "Fix them, or replace build-logs/warnings.json with the"
+          echo "warnings-${{ github.run_number }} artifact if intentional."
           exit 1
 
       # Upload build artifacts for debugging - only when DEBUG_CI is enabled
@@ -347,6 +366,9 @@ jobs:
 
       - name: Setup iOS Environment
         uses: ./hosts/ios/.github/actions/install
+
+      - name: Install the pinned SwiftLint
+        uses: ./.github/actions/setup-swiftlint
 
       - name: Restore the in-tree core
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -479,12 +501,15 @@ jobs:
     needs: [check-skip-label, core]
     if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
     timeout-minutes: 30
-    runs-on: macos-26-xlarge
+    runs-on: parity-macos-large
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Setup iOS Environment
         uses: ./hosts/ios/.github/actions/install
+
+      - name: Install the pinned SwiftLint
+        uses: ./.github/actions/setup-swiftlint
 
       - name: Restore the in-tree core
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

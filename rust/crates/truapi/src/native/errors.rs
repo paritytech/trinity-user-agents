@@ -115,9 +115,7 @@ pub enum NativeChatFieldError {
 
 impl From<ChatFieldError> for NativeChatFieldError {
     fn from(err: ChatFieldError) -> Self {
-        Self::Refused {
-            reason: err.to_string(),
-        }
+		Self::Refused { reason: err.to_string() }
     }
 }
 
@@ -134,8 +132,6 @@ pub enum NativeCoreDatabaseError {
 
 impl From<crate::store::DbError> for NativeCoreDatabaseError {
     fn from(error: crate::store::DbError) -> Self {
-        Self::Unavailable {
-            reason: error.to_string(),
-        }
+		Self::Unavailable { reason: error.to_string() }
     }
 }

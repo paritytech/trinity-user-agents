@@ -7,18 +7,23 @@
 //! `truapi-host pairing-host --script foo.ts` *is* the test — there is no
 //! separate bun orchestrator.
 
-use std::ffi::OsString;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::ExitStatus;
-use std::process::Stdio;
+use std::{
+	ffi::OsString,
+	fs,
+	path::{Path, PathBuf},
+	process::{ExitStatus, Stdio},
+};
 
 use anyhow::{Context, Result};
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
+use tokio::{
+	io::{AsyncBufReadExt, BufReader},
+	process::Command,
+};
 
-use crate::script_project;
-use crate::terminal_ui::{self, SystemEvent, UiHandle};
+use crate::{
+	script_project,
+	terminal_ui::{self, SystemEvent, UiHandle},
+};
 
 /// Host topology serving the product script.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,11 +45,7 @@ impl ScriptHostRole {
 /// `@parity/truapi` compiled in, so a downloaded install runs product scripts
 /// without a source checkout.
 const PACKAGED_RUNNER: &str = "runner.js";
-const EMPTY_BUN_CONFIG: &str = if cfg!(windows) {
-    "--config=NUL"
-} else {
-    "--config=/dev/null"
-};
+const EMPTY_BUN_CONFIG: &str = if cfg!(windows) { "--config=NUL" } else { "--config=/dev/null" };
 
 /// Self-contained injected-global declarations shipped with the runner.
 const PACKAGED_SCRIPT_TYPES: &str = "script-types.d.ts";
@@ -67,10 +68,7 @@ pub fn script_types() -> Result<Vec<u8>> {
 
 /// Locate the host-script runner.
 pub fn runner_path() -> PathBuf {
-    resolve_runner(
-        std::env::var_os("TRUAPI_HOST_RUNNER"),
-        std::env::current_exe().ok().as_deref(),
-    )
+	resolve_runner(std::env::var_os("TRUAPI_HOST_RUNNER"), std::env::current_exe().ok().as_deref())
 }
 
 /// Explicit override first, then the bundle beside the running binary, then the
@@ -93,14 +91,10 @@ fn packaged_runner(executable: &Path) -> Option<PathBuf> {
     let executable = fs::canonicalize(executable).unwrap_or_else(|_| executable.to_path_buf());
     let directory = executable.parent()?;
     // `current` can move during an update; the runner must stay on this binary's version.
-    if let Some(versions) = directory.parent()
-        && versions.file_name().is_some_and(|name| name == "versions")
+	if let Some(versions) = directory.parent() &&
+		versions.file_name().is_some_and(|name| name == "versions")
     {
-        return Some(
-            versions
-                .join(env!("CARGO_PKG_VERSION"))
-                .join(PACKAGED_RUNNER),
-        );
+		return Some(versions.join(env!("CARGO_PKG_VERSION")).join(PACKAGED_RUNNER));
     }
     let runner = directory.join(PACKAGED_RUNNER);
     runner.is_file().then_some(runner)
@@ -131,18 +125,8 @@ fn configured_editor() -> String {
     std::env::var("VISUAL")
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            std::env::var("EDITOR")
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-        })
-        .unwrap_or_else(|| {
-            if cfg!(windows) {
-                "notepad".to_string()
-            } else {
-                "vi".to_string()
-            }
-        })
+		.or_else(|| std::env::var("EDITOR").ok().filter(|value| !value.trim().is_empty()))
+		.unwrap_or_else(|| if cfg!(windows) { "notepad".to_string() } else { "vi".to_string() })
 }
 
 fn parse_editor(specification: &str) -> Result<(String, Vec<String>)> {
@@ -191,13 +175,8 @@ pub async fn run_captured(
 
 /// Stream a child process into the terminal UI and stop it on cancellation.
 pub async fn capture(mut command: Command, ui: UiHandle) -> Result<ExitStatus> {
-    command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    let mut child = command
-        .spawn()
-        .context("failed to spawn bun (is bun installed?)")?;
+	command.stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+	let mut child = command.spawn().context("failed to spawn bun (is bun installed?)")?;
     let stdout = child.stdout.take().context("capture script stdout")?;
     let stderr = child.stderr.take().context("capture script stderr")?;
     let stdout_ui = ui.clone();
@@ -255,17 +234,10 @@ fn bun_command(entrypoint: &Path, caller_directory: &Path) -> Result<Command> {
     let entrypoint = entrypoint
         .canonicalize()
         .with_context(|| format!("trusted Bun entrypoint not found: {}", entrypoint.display()))?;
-    let directory = entrypoint
-        .parent()
-        .context("Bun entrypoint has no parent directory")?;
+	let directory = entrypoint.parent().context("Bun entrypoint has no parent directory")?;
     let mut command = Command::new("bun");
     command
-        .args([
-            EMPTY_BUN_CONFIG,
-            "--no-env-file",
-            "--no-macros",
-            "--install=fallback",
-        ])
+		.args([EMPTY_BUN_CONFIG, "--no-env-file", "--no-macros", "--install=fallback"])
         .arg("run")
         .arg(&entrypoint)
         .current_dir(directory)
@@ -288,11 +260,7 @@ mod tests {
                 .env_remove("TRUAPI_UNTRUSTED_DOTENV")
                 .output()
                 .await?;
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+			assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
             assert_eq!(String::from_utf8(output.stderr)?, "");
             assert_eq!(
                 serde_json::from_slice::<serde_json::Value>(&output.stdout)?,
@@ -311,10 +279,7 @@ mod tests {
         let trusted = fixture.path().join("trusted");
         fs::create_dir_all(&product)?;
         fs::create_dir_all(trusted.join("node_modules/trusted-dependency"))?;
-        fs::write(
-            product.join("bunfig.toml"),
-            "preload = [\"./preload.ts\"]\n",
-        )?;
+		fs::write(product.join("bunfig.toml"), "preload = [\"./preload.ts\"]\n")?;
         fs::write(
             product.join("preload.ts"),
             "globalThis.preloadExecuted = true; console.log('untrusted preload executed');\n",
@@ -369,10 +334,7 @@ console.log(JSON.stringify({
         fs::write(install.path().join(PACKAGED_RUNNER), "packaged").unwrap();
 
         assert_eq!(
-            resolve_runner(
-                Some(OsString::from("/somewhere/custom.ts")),
-                Some(&executable)
-            ),
+			resolve_runner(Some(OsString::from("/somewhere/custom.ts")), Some(&executable)),
             Path::new("/somewhere/custom.ts")
         );
     }
@@ -386,10 +348,7 @@ console.log(JSON.stringify({
         fs::write(&executable, "binary").unwrap();
         fs::write(&bundle, "packaged").unwrap();
 
-        assert_eq!(
-            resolve_runner(None, Some(&executable)),
-            bundle.canonicalize().unwrap()
-        );
+		assert_eq!(resolve_runner(None, Some(&executable)), bundle.canonicalize().unwrap());
     }
 
     #[cfg(unix)]
@@ -409,10 +368,7 @@ console.log(JSON.stringify({
         fs::write(&installed_executable, "binary")?;
         fs::write(&installed_bundle, "packaged")?;
         let current = root.join("current");
-        symlink(
-            Path::new("versions").join(env!("CARGO_PKG_VERSION")),
-            &current,
-        )?;
+		symlink(Path::new("versions").join(env!("CARGO_PKG_VERSION")), &current)?;
 
         let entrypoint = bin.join("truapi-host");
         symlink(root.join("current/truapi-host"), &entrypoint)?;
@@ -449,10 +405,7 @@ console.log(JSON.stringify({
     #[test]
     fn an_incomplete_managed_install_does_not_fall_back_to_source_code() -> Result<()> {
         let install = tempfile::tempdir()?;
-        let version = install
-            .path()
-            .join("versions")
-            .join(env!("CARGO_PKG_VERSION"));
+		let version = install.path().join("versions").join(env!("CARGO_PKG_VERSION"));
         fs::create_dir_all(&version)?;
         let executable = version.join("truapi-host");
         fs::write(&executable, "binary")?;
@@ -470,12 +423,8 @@ console.log(JSON.stringify({
         fs::write(&script, "console.log('hello');\n")?;
 
         let runner = runner_path().canonicalize()?;
-        let command = command(
-            "ws://127.0.0.1:1234",
-            "example.dot",
-            &script,
-            ScriptHostRole::SigningHost,
-        )?;
+		let command =
+			command("ws://127.0.0.1:1234", "example.dot", &script, ScriptHostRole::SigningHost)?;
         let command = command.as_std();
         assert_eq!(command.get_program(), std::ffi::OsStr::new("bun"));
         assert_eq!(
@@ -516,10 +465,7 @@ console.log(JSON.stringify({
         fs::write(temporary.path().join("runner.js"), "runner")?;
         let project = temporary.path().join("project");
         fs::create_dir(&project)?;
-        fs::write(
-            project.join("package.json"),
-            r#"{"truapiHost":{"script":"script.ts"}}"#,
-        )?;
+		fs::write(project.join("package.json"), r#"{"truapiHost":{"script":"script.ts"}}"#)?;
         let script = project.join("script.ts");
         fs::write(&script, "script")?;
         let output = std::process::Command::new(std::env::current_exe()?)
@@ -531,10 +477,26 @@ console.log(JSON.stringify({
             .env("TRUAPI_HOST_RUNNER", "runner.js")
             .env("TRUAPI_TEST_SCRIPT", script)
             .output()?;
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stdout)
+		assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+		Ok(())
+	}
+
+	#[test]
+	fn managed_scripts_use_their_project_directory_when_selected_explicitly() -> Result<()> {
+		let project = tempfile::tempdir()?;
+		fs::write(project.path().join("package.json"), r#"{"truapiHost":{"script":"script.ts"}}"#)?;
+		let script = project.path().join("script.ts");
+		fs::write(&script, "console.log('hello');\n")?;
+
+		let command =
+			command("ws://127.0.0.1:1234", "example.dot", &script, ScriptHostRole::SigningHost)?;
+
+		assert_eq!(
+			command
+				.as_std()
+				.get_envs()
+				.find_map(|(key, value)| { (key == "TRUAPI_SCRIPT_CWD").then_some(value) }),
+			Some(Some(project.path().as_os_str()))
         );
         Ok(())
     }

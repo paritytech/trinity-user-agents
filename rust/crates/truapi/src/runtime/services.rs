@@ -4,21 +4,26 @@
 //! and signing hosts. Pairing state, signing state, active sessions, and role
 //! controls live on the concrete role objects.
 
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
-
-use crate::chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure};
-use crate::host_logic::worker::WorkerLedger;
-use crate::platform::{
-    CoinageWalletHost, HostInfo, JsonRpcConnection, PermissionStatusHost, Platform,
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::{
+	collections::VecDeque,
+	sync::{Arc, Mutex, OnceLock},
 };
-use crate::runtime::bulletin_rpc::BulletinRpc;
-use crate::runtime::signing_host::DevicePairingObserver;
-use crate::runtime::statement_store_rpc::StatementStoreRpc;
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::durable::{DurableTxEngine, DurableWorkObserver};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::store::{Db, DbError};
-use crate::subscription::Spawner;
+use crate::{
+	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
+	host_logic::worker::WorkerLedger,
+	platform::{CoinageWalletHost, HostInfo, JsonRpcConnection, PermissionStatusHost, Platform},
+	runtime::{
+		bulletin_rpc::BulletinRpc, signing_host::DevicePairingObserver,
+		statement_store_rpc::StatementStoreRpc,
+	},
+	subscription::Spawner,
+};
 use async_trait::async_trait;
 use truapi::latest;
 
@@ -48,8 +53,6 @@ pub struct RuntimeServices {
     /// startup by a host that can read it. Unset leaves device grants
     /// resolving from stored state alone.
     permission_status: OnceLock<Arc<dyn PermissionStatusHost>>,
-    /// Host Pocket adapter, installed once at startup by a host with a Pocket
-    /// surface. Unset leaves every product Pocket call `Unsupported`.
     /// Host profile presenter, installed once at startup by a host that can
     /// render profiles. Unset leaves every product Profile call `Unsupported`.
     profile_platform: OnceLock<Arc<dyn crate::platform::ProfilePlatform>>,
@@ -60,6 +63,8 @@ pub struct RuntimeServices {
     pub(crate) profile_state_gate: futures::lock::Mutex<()>,
     /// Optional native authenticated username index; only supplies candidates.
     identity_backend: OnceLock<Arc<dyn crate::platform::IdentityBackendHost>>,
+    /// Host Pocket adapter, installed once at startup by a host with a Pocket
+    /// surface. Unset leaves every product Pocket call `Unsupported`.
     pocket_platform: OnceLock<Arc<dyn crate::platform::PocketPlatform>>,
     /// Host contacts adapter, installed once at startup by a host with a
     /// contact picker. Unset leaves every product contacts call `Unsupported`.
@@ -72,6 +77,12 @@ pub struct RuntimeServices {
     /// Host Game adapter, installed once at startup by a host that can hold
     /// reminders. Unset leaves every product Game call `Unsupported`.
     game_platform: OnceLock<Arc<dyn crate::platform::GamePlatform>>,
+	/// Host scanner, installed once at startup by a host that can draw a
+	/// viewfinder. Unset leaves every product scan `Unsupported`.
+	scanner_platform: OnceLock<Arc<dyn crate::platform::ScannerPlatform>>,
+	/// Whether a scan is open. Shared by every product runtime of this host,
+	/// because the device has one viewfinder.
+	scan_open: AtomicBool,
     /// Host observer told when a device finishes pairing with this signing
     /// host. Unset leaves a paired device unannounced.
     device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
@@ -80,6 +91,13 @@ pub struct RuntimeServices {
     /// [`DbError::NotConfigured`].
     #[cfg(not(target_arch = "wasm32"))]
     core_db: OnceLock<Db>,
+	/// Durable transaction engine over the core database, installed with it.
+	#[cfg(not(target_arch = "wasm32"))]
+	durable_engine: OnceLock<Arc<DurableTxEngine>>,
+	/// Host observer told whether durable work is pending. Unset leaves
+	/// recovery to whoever calls it.
+	#[cfg(not(target_arch = "wasm32"))]
+	durable_work_observer: OnceLock<Arc<dyn DurableWorkObserver>>,
     /// Asset Hub the dotNS contracts are deployed on. All-zero says this host
     /// has none, which leaves every manifest unresolvable.
     asset_hub_chain_genesis_hash: [u8; 32],
@@ -179,9 +197,15 @@ impl RuntimeServices {
             contact_handles: Default::default(),
             contact_labels: Default::default(),
             game_platform: OnceLock::new(),
+			scanner_platform: OnceLock::new(),
+			scan_open: AtomicBool::new(false),
             device_pairing_observer: OnceLock::new(),
             #[cfg(not(target_arch = "wasm32"))]
             core_db: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			durable_engine: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			durable_work_observer: OnceLock::new(),
             asset_hub_chain_genesis_hash,
             worker_ledger: WorkerLedger::default(),
             chain,
@@ -278,10 +302,7 @@ impl RuntimeServices {
     ///
     /// Set-once, like every optional capability, so reminders cannot change
     /// hands under a running product. Returns whether this call installed it.
-    pub fn install_game_platform(
-        &self,
-        platform: Arc<dyn crate::platform::GamePlatform>,
-    ) -> bool {
+	pub fn install_game_platform(&self, platform: Arc<dyn crate::platform::GamePlatform>) -> bool {
         self.game_platform.set(platform).is_ok()
     }
 
@@ -318,6 +339,29 @@ impl RuntimeServices {
             .session_changed(self.contact_handles.generation(), &self.spawner);
     }
 
+	/// Install the host's scanner. Answers whether this call was the one that
+	/// installed it.
+	pub fn install_scanner_platform(
+		&self,
+		platform: Arc<dyn crate::platform::ScannerPlatform>,
+	) -> bool {
+		self.scanner_platform.set(platform).is_ok()
+	}
+
+	/// The host's scanner, when one is installed.
+	pub fn scanner_platform(&self) -> Option<Arc<dyn crate::platform::ScannerPlatform>> {
+		self.scanner_platform.get().cloned()
+	}
+
+	/// Claim the one open scan, or `None` while another holds it. Dropping the
+	/// claim frees it, so a cancelled or failed scan cannot keep it.
+	pub fn claim_scan(&self) -> Option<ScanClaim<'_>> {
+		self.scan_open
+			.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+			.ok()
+			.map(|_| ScanClaim(&self.scan_open))
+    }
+
     /// Install the host's device-pairing observer.
     ///
     /// Set-once, like every optional capability, so the surface that announces
@@ -349,6 +393,32 @@ impl RuntimeServices {
     pub(crate) fn core_db(&self) -> Result<Db, DbError> {
         self.core_db.get().cloned().ok_or(DbError::NotConfigured)
     }
+
+	/// Install the durable transaction engine. Set-once, like the database it
+	/// runs on. Returns whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_durable_engine(&self, engine: Arc<DurableTxEngine>) -> bool {
+		self.durable_engine.set(engine).is_ok()
+	}
+
+	/// The durable transaction engine, once the core database is installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn durable_engine(&self) -> Option<Arc<DurableTxEngine>> {
+		self.durable_engine.get().cloned()
+	}
+
+	/// Install the host's durable work observer. Returns whether this call
+	/// installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_durable_work_observer(&self, observer: Arc<dyn DurableWorkObserver>) -> bool {
+		self.durable_work_observer.set(observer).is_ok()
+	}
+
+	/// The host's durable work observer, when one is installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn durable_work_observer(&self) -> Option<Arc<dyn DurableWorkObserver>> {
+		self.durable_work_observer.get().cloned()
+	}
 
     /// This device's persisted X25519 encryption secret, created on first use.
     ///
@@ -397,10 +467,7 @@ impl RuntimeServices {
         {
             return Some(value.clone());
         }
-        self.preimage_cache
-            .lock()
-            .expect("preimage cache mutex poisoned")
-            .get(key)
+		self.preimage_cache.lock().expect("preimage cache mutex poisoned").get(key)
     }
 
     /// Retain a remotely accepted statement for read-after-write consistency.
@@ -444,11 +511,7 @@ impl PreimageCache {
         if value.len() > PREIMAGE_CACHE_MAX_BYTES {
             return;
         }
-        if let Some(index) = self
-            .entries
-            .iter()
-            .position(|(existing, _)| *existing == key)
-        {
+		if let Some(index) = self.entries.iter().position(|(existing, _)| *existing == key) {
             let (_, old) = self.entries.remove(index).expect("index in range");
             self.total_bytes -= old.len();
         }
@@ -478,11 +541,7 @@ struct StatementCache {
 
 impl StatementCache {
     fn insert(&mut self, statement: latest::SignedStatement) {
-        if let Some(index) = self
-            .entries
-            .iter()
-            .position(|existing| existing == &statement)
-        {
+		if let Some(index) = self.entries.iter().position(|existing| existing == &statement) {
             self.entries.remove(index);
         }
         self.entries.push_back(statement);
@@ -501,10 +560,10 @@ impl StatementCache {
             .filter(|statement| match kind {
                 crate::host_logic::statement_store::TopicFilterKind::MatchAll => {
                     topics.iter().all(|topic| statement.topics.contains(topic))
-                }
+				},
                 crate::host_logic::statement_store::TopicFilterKind::MatchAny => {
                     topics.iter().any(|topic| statement.topics.contains(topic))
-                }
+				},
             })
             .cloned()
             .collect()
@@ -534,12 +593,17 @@ impl RuntimeChainProvider for HostChainProvider {
                 format!("genesis_hash must be 32 bytes, got {}", genesis_hash.len()),
             )
         })?;
-        self.platform
-            .connect(genesis_hash)
-            .await
-            .map(Arc::from)
-            .map_err(|err| {
+		self.platform.connect(genesis_hash).await.map(Arc::from).map_err(|err| {
                 RuntimeFailure::unavailable_with_reason("remote_chain_connect", format!("{err:?}"))
             })
     }
+}
+
+/// The open scan. Frees the slot when dropped.
+pub struct ScanClaim<'a>(&'a AtomicBool);
+
+impl Drop for ScanClaim<'_> {
+	fn drop(&mut self) {
+		self.0.store(false, Ordering::Release);
+	}
 }

@@ -1,11 +1,10 @@
 //! Headless TrUAPI hosts for local end-to-end testing.
 //!
 //! Two roles, one binary, pairing over the real People-chain statement store:
-//! - `pairing-host`: a seedless host that presents a pairing deeplink and
-//!   serves product frames over WebSocket (the surface a product/test driver
-//!   talks to).
-//! - `signing-host`: a wallet-local host that answers a pairing deeplink and
-//!   auto-signs, replacing the external signing-bot in e2e.
+//! - `pairing-host`: a seedless host that presents a pairing deeplink and serves product frames
+//!   over WebSocket (the surface a product/test driver talks to).
+//! - `signing-host`: a wallet-local host that answers a pairing deeplink and auto-signs, replacing
+//!   the external signing-bot in e2e.
 //!
 //! Plus the diagnostics and one-shot commands: `identity-check` for the dotNS
 //! usernames of a mnemonic's accounts, `register-name` for a full-person
@@ -30,6 +29,7 @@ mod product_config;
 mod profile;
 mod qr_scanner;
 mod register_name;
+mod scanner;
 mod script_project;
 mod script_runner;
 mod sessions;
@@ -37,51 +37,53 @@ mod signing_shell;
 mod terminal_ui;
 mod update;
 
-use std::collections::HashMap;
-use std::fmt;
-use std::future::Future;
-use std::net::{Ipv4Addr, SocketAddr};
-use std::path::{Path, PathBuf};
-use std::process::ExitStatus;
-use std::str::FromStr;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+	collections::HashMap,
+	fmt,
+	future::Future,
+	net::{Ipv4Addr, SocketAddr},
+	path::{Path, PathBuf},
+	process::ExitStatus,
+	str::FromStr,
+	sync::Arc,
+	time::Duration,
+};
 
 use anyhow::{Context, Result, bail};
-use clap::parser::ValueSource;
-use clap::{ArgMatches, Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
+use clap::{
+	ArgMatches, Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum,
+	parser::ValueSource,
+};
 use futures::future::BoxFuture;
-use tracing_subscriber::Layer;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-use truapi::host_logic::dotns_gateway::{
-    MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_lite_label, is_registrable_full_label,
-};
-use truapi::platform::{
-    ChatPlatform, HostInfo, PermissionStatusHost, PlatformInfo, ProductExecutionKind,
-};
-use truapi::statement_allowance as alloc;
-use truapi::subscription::Spawner;
+use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 use truapi::{
     AnnouncedPairing, DebugSink, PairedSsoPeer, PairingHostConfig, PairingHostRuntime,
     PairingProposal, ResponderExit, SigningHostConfig, SigningHostRuntime, StatementRenewalTarget,
     WsDebugSink,
+	host_logic::dotns_gateway::{
+		MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_lite_label, is_registrable_full_label,
+	},
+	platform::{ChatPlatform, HostInfo, PermissionStatusHost, PlatformInfo, ProductExecutionKind},
+	statement_allowance as alloc,
+	subscription::Spawner,
 };
 
-use crate::accounts::{ResolveSignerConfig, ResolvedSigner};
-use crate::network::{Network, NetworkConfig};
-use crate::platform::{ApprovalPolicy, CliPlatform, CliStoragePaths};
-use crate::sessions::{
+use crate::{
+	accounts::{ResolveSignerConfig, ResolvedSigner},
+	network::{Network, NetworkConfig},
+	platform::{ApprovalPolicy, CliPlatform, CliStoragePaths},
+	sessions::{
     CurrentSession, DEFAULT_SESSION_NAME, PairedHost, PairedHostMetadata, SessionCatalog,
     SessionClearTarget, SessionProfile,
-};
-use crate::signing_shell::{
+	},
+	signing_shell::{
     ApprovalCommand, DeviceCommand, HELP_TEXT, PAIRING_HELP_TEXT, PairCommand, ProductCommand,
     ScriptCommand, SessionCommand, ShellCommand, parse_command,
-};
-use crate::terminal_ui::{
+	},
+	terminal_ui::{
     ActiveTerminalUi, ActivityState, DriveResult, PairingImageInput, SystemEvent, TerminalUi,
     UiHandle,
+	},
 };
 
 /// Default product served by the pairing host's frame endpoint. Product ids
@@ -168,15 +170,12 @@ fn startup_filter(
     rust_log: Option<&str>,
     log_level: LogLevel,
 ) -> (tracing_subscriber::EnvFilter, String) {
-    if let Some(value) = rust_log.map(str::trim).filter(|value| !value.is_empty())
-        && let Ok(filter) = tracing_subscriber::EnvFilter::try_new(value)
+	if let Some(value) = rust_log.map(str::trim).filter(|value| !value.is_empty()) &&
+		let Ok(filter) = tracing_subscriber::EnvFilter::try_new(value)
     {
         return (filter, value.to_string());
     }
-    (
-        tracing_subscriber::EnvFilter::new(log_level.scoped_filter()),
-        log_level.to_string(),
-    )
+	(tracing_subscriber::EnvFilter::new(log_level.scoped_filter()), log_level.to_string())
 }
 
 fn load_log_level(base_path: &Path) -> Result<Option<LogLevel>> {
@@ -342,9 +341,7 @@ impl ExecutionKind {
     /// The Pocket host to install, if this kind serves Pocket and a card set
     /// was configured.
     fn pocket_host(self) -> Option<Arc<pocket::CliPocketHost>> {
-        matches!(self, Self::Worker)
-            .then(pocket::CliPocketHost::from_env)
-            .flatten()
+		matches!(self, Self::Worker).then(pocket::CliPocketHost::from_env).flatten()
     }
 }
 
@@ -508,9 +505,7 @@ fn command_base_path(command: &Command) -> PathBuf {
 }
 
 fn state_base_path(base_path: Option<PathBuf>) -> PathBuf {
-    base_path
-        .unwrap_or_else(default_base_path)
-        .join(STATE_VERSION)
+	base_path.unwrap_or_else(default_base_path).join(STATE_VERSION)
 }
 
 fn script_project_directory(base_path: Option<PathBuf>) -> PathBuf {
@@ -525,10 +520,10 @@ async fn main() -> Result<()> {
 
     let matches = Cli::command().get_matches();
     let mut cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
-    let debugger = cli.debugger.take().map(|url| DebuggerSwitch {
-        url,
-        source: debugger_url_source(&matches),
-    });
+	let debugger = cli
+		.debugger
+		.take()
+		.map(|url| DebuggerSwitch { url, source: debugger_url_source(&matches) });
     let base_path = command_base_path(&cli.command);
     let (saved_log_level, saved_log_level_error) = match load_log_level(&base_path) {
         Ok(level) => (level, None),
@@ -602,24 +597,18 @@ async fn dispatch(
         Command::Update => update::run_update_command().await,
         Command::PairingHost(args) => {
             run_pairing_host(args, log_filter, log_controller, debugger).await
-        }
+		},
         Command::Dev(args) => run_dev(args, log_filter, log_controller, debugger).await,
         Command::SigningHost(args) => {
             run_signing_host(args, log_filter, log_controller, None, debugger).await
-        }
+		},
         Command::IdentityCheck { mnemonic, network } => {
             let entropy = bip39::Mnemonic::parse(mnemonic.trim())
                 .context("invalid BIP-39 mnemonic")?
                 .to_entropy();
             attestation::check_identity(network.config(), &entropy).await
-        }
-        Command::RegisterName {
-            mnemonic,
-            network,
-            label,
-            link_lite,
-            chat_key,
-        } => {
+		},
+		Command::RegisterName { mnemonic, network, label, link_lite, chat_key } => {
             let entropy = bip39::Mnemonic::parse(mnemonic.trim())
                 .context("invalid BIP-39 mnemonic")?
                 .to_entropy();
@@ -640,21 +629,13 @@ async fn dispatch(
                 chat_key,
             })
             .await
-        }
-        Command::AllocCheck {
-            mnemonic,
-            network,
-            target,
-            lookback,
-            submit,
-        } => run_alloc_check(mnemonic, network.config(), target, lookback, submit).await,
-        Command::PgasCheck {
-            mnemonic,
-            network,
-            target,
-            lookback,
-            submit,
-        } => run_pgas_check(mnemonic, network.config(), target, lookback, submit).await,
+		},
+		Command::AllocCheck { mnemonic, network, target, lookback, submit } => {
+			run_alloc_check(mnemonic, network.config(), target, lookback, submit).await
+		},
+		Command::PgasCheck { mnemonic, network, target, lookback, submit } => {
+			run_pgas_check(mnemonic, network.config(), target, lookback, submit).await
+		},
     }
 }
 
@@ -689,25 +670,21 @@ async fn run_pgas_check(
                 .context("invalid --target hex")?;
             <[u8; 32]>::try_from(bytes.as_slice())
                 .map_err(|_| anyhow::anyhow!("--target must be 32 bytes"))?
-        }
+		},
         None => [0u8; 32],
     };
 
     let people_rpc = alloc::rpc::RpcClient::connect(network.people_ws)
         .await
         .map_err(anyhow::Error::msg)?;
-    let people_metadata = alloc::fetch_metadata(&people_rpc)
-        .await
-        .map_err(anyhow::Error::msg)?;
+	let people_metadata = alloc::fetch_metadata(&people_rpc).await.map_err(anyhow::Error::msg)?;
     let asset_hub_rpc = alloc::rpc::RpcClient::connect(network.asset_hub_ws)
         .await
         .map_err(anyhow::Error::msg)?;
-    let asset_hub_metadata = alloc::fetch_metadata(&asset_hub_rpc)
-        .await
-        .map_err(anyhow::Error::msg)?;
-    let asset_hub_state = alloc::fetch_chain_state(&asset_hub_rpc)
-        .await
-        .map_err(anyhow::Error::msg)?;
+	let asset_hub_metadata =
+		alloc::fetch_metadata(&asset_hub_rpc).await.map_err(anyhow::Error::msg)?;
+	let asset_hub_state =
+		alloc::fetch_chain_state(&asset_hub_rpc).await.map_err(anyhow::Error::msg)?;
     let network_suffix = alloc::slot::read_network_suffix(&asset_hub_rpc)
         .await
         .map_err(anyhow::Error::msg)?;
@@ -775,10 +752,7 @@ async fn run_pgas_check(
     );
     let max = alloc::slot::max_pgas_claims(&asset_hub_metadata, ring.collection)
         .map_err(anyhow::Error::msg)?;
-    println!(
-        "day={day} max_claims_per_day={max} target=0x{}",
-        hex::encode(target)
-    );
+	println!("day={day} max_claims_per_day={max} target=0x{}", hex::encode(target));
     match alloc::slot::scan_pgas_slot_excluding(
         &asset_hub_rpc,
         &asset_hub_metadata,
@@ -798,10 +772,8 @@ async fn run_pgas_check(
         return Ok(());
     }
 
-    let asset_hub = alloc::ChainContext {
-        metadata: Arc::new(asset_hub_metadata),
-        state: asset_hub_state,
-    };
+	let asset_hub =
+		alloc::ChainContext { metadata: Arc::new(asset_hub_metadata), state: asset_hub_state };
     let outcome = pgas::claim_pgas(pgas::PgasClaim {
         asset_hub_rpc: &asset_hub_rpc,
         asset_hub: &asset_hub,
@@ -822,11 +794,11 @@ async fn run_pgas_check(
 }
 
 fn log_target_is_visible(target: &str) -> bool {
-    target != terminal_ui::SSO_TRANSCRIPT_TARGET
-        && target != "rustls"
-        && !target.starts_with("rustls::")
-        && target != "tungstenite::protocol"
-        && !target.starts_with("tungstenite::protocol::")
+	target != terminal_ui::SSO_TRANSCRIPT_TARGET &&
+		target != "rustls" &&
+		!target.starts_with("rustls::") &&
+		target != "tungstenite::protocol" &&
+		!target.starts_with("tungstenite::protocol::")
 }
 
 /// Check statement-store allowance for a mnemonic: ring membership, the chosen
@@ -853,22 +825,17 @@ async fn run_alloc_check(
                 .context("invalid --target hex")?;
             <[u8; 32]>::try_from(bytes.as_slice())
                 .map_err(|_| anyhow::anyhow!("--target must be 32 bytes"))?
-        }
+		},
         None => [0u8; 32],
     };
 
     let rpc = alloc::rpc::RpcClient::connect(network.people_ws)
         .await
         .map_err(anyhow::Error::msg)?;
-    let metadata = alloc::fetch_metadata(&rpc)
-        .await
-        .map_err(anyhow::Error::msg)?;
-    let chain_state = alloc::fetch_chain_state(&rpc)
-        .await
-        .map_err(anyhow::Error::msg)?;
-    let network_suffix = alloc::slot::read_network_suffix(&rpc)
-        .await
-        .map_err(anyhow::Error::msg)?;
+	let metadata = alloc::fetch_metadata(&rpc).await.map_err(anyhow::Error::msg)?;
+	let chain_state = alloc::fetch_chain_state(&rpc).await.map_err(anyhow::Error::msg)?;
+	let network_suffix =
+		alloc::slot::read_network_suffix(&rpc).await.map_err(anyhow::Error::msg)?;
     println!(
         "chain: specVersion={} txVersion={} genesis=0x{}",
         chain_state.spec_version,
@@ -915,15 +882,7 @@ async fn run_alloc_check(
             continue;
         }
         print!("{}: ", candidate.collection);
-        report_slot_scan(
-            &rpc,
-            &metadata,
-            *candidate,
-            &network_suffix,
-            period,
-            &target,
-            now,
-        )
+		report_slot_scan(&rpc, &metadata, *candidate, &network_suffix, period, &target, now)
         .await?;
     }
 
@@ -966,12 +925,14 @@ async fn run_alloc_check(
                 seq,
                 ring_index,
                 collection,
-            }) => println!(
+			}) => {
+				println!(
                 "REGISTERED in {collection} seq={seq} ring_index={ring_index} block={block_hash}"
-            ),
+				)
+			},
             Ok(alloc::RegistrationOutcome::AlreadyAllocated { seq, collection }) => {
                 println!("already allocated in {collection} at seq={seq}")
-            }
+			},
             Err(err) => bail!("registration failed: {err}"),
         }
     }
@@ -1008,7 +969,7 @@ async fn report_slot_scan(
         Ok(alloc::slot::SlotSelection::Free(seq)) => println!("slot scan: free seq={seq}"),
         Ok(alloc::slot::SlotSelection::FreeSlotsExcluded) => {
             println!("slot scan: free slots exist but are awaiting earlier submissions");
-        }
+		},
         Ok(alloc::slot::SlotSelection::Full { max, occupied }) => {
             println!("slot scan: all {max} slots taken, none reusable");
             let cooldown = alloc::slot::replacement_cooldown(rpc, metadata).await?;
@@ -1020,11 +981,7 @@ async fn report_slot_scan(
             );
             for slot in &occupied {
                 let age = chain_now.saturating_sub(slot.since);
-                let state = if age >= cooldown {
-                    "replaceable"
-                } else {
-                    "in cooldown"
-                };
+				let state = if age >= cooldown { "replaceable" } else { "in cooldown" };
                 println!(
                     "  seq={} since={} age={age}s {state} account=0x{}",
                     slot.seq,
@@ -1036,10 +993,10 @@ async fn report_slot_scan(
                 Some(seq) => println!("would replace seq={seq} (oldest replaceable)"),
                 None => println!("nothing replaceable: cooldown={cooldown}s"),
             }
-        }
+		},
         Ok(alloc::slot::SlotSelection::AlreadyAllocated(seq)) => {
             println!("slot scan: target already allocated at seq={seq}")
-        }
+		},
         Err(err) => println!("slot scan: {err}"),
     }
 
@@ -1048,11 +1005,7 @@ async fn report_slot_scan(
 
 /// Select the default confirmation policy; main-purse payments always prompt.
 fn approval_policy(auto_accept: bool) -> ApprovalPolicy {
-    if auto_accept {
-        ApprovalPolicy::AutoAccept
-    } else {
-        ApprovalPolicy::Prompt
-    }
+	if auto_accept { ApprovalPolicy::AutoAccept } else { ApprovalPolicy::Prompt }
 }
 
 /// Spawner that runs runtime futures on the tokio runtime, so their WebSocket
@@ -1062,16 +1015,14 @@ fn approval_policy(auto_accept: bool) -> ApprovalPolicy {
 /// has shut down; `tokio::spawn` panics there, so the handle is looked up
 /// rather than assumed.
 fn tokio_spawner() -> Spawner {
-    Arc::new(
-        |fut: BoxFuture<'static, ()>| match tokio::runtime::Handle::try_current() {
+	Arc::new(|fut: BoxFuture<'static, ()>| match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
                 handle.spawn(fut);
-            }
+		},
             Err(error) => {
                 tracing::warn!(%error, "dropping a runtime future: no tokio runtime is running");
-            }
         },
-    )
+	})
 }
 
 fn host_info(name: &str) -> HostInfo {
@@ -1196,10 +1147,7 @@ mod debugger_tap_tests {
         let untapped = tap_for_debugger(factory.clone(), None);
 
         assert_eq!(
-            (
-                Arc::ptr_eq(&factory, &tapped),
-                Arc::ptr_eq(&factory, &untapped)
-            ),
+			(Arc::ptr_eq(&factory, &tapped), Arc::ptr_eq(&factory, &untapped)),
             (false, true)
         );
     }
@@ -1264,9 +1212,9 @@ async fn run_pairing_host(
     }
     pairing_runtime.set_profile_platform(profile::CliProfileHost::from_env());
     pairing_runtime.set_game_platform(Arc::new(game::CliGameHost));
-    pairing_runtime.set_contacts_platform(contacts::CliContactsHost::from_env(
-        storage_platform.clone(),
-    ));
+	pairing_runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
+	pairing_runtime
+		.set_contacts_platform(contacts::CliContactsHost::from_env(storage_platform.clone()));
 
     // Resolved before the port is bound, so a bad URL still fails on the argument
     // rather than half-way through startup - but reported below, once the UI
@@ -1275,9 +1223,7 @@ async fn run_pairing_host(
     let debugger = debugger.map(connect_debugger).transpose()?;
     let frame_server = frame_server::bind(args.frame_listen).await?;
     let frame_url = frame_server.endpoint().to_string();
-    terminal_ui::output_event(SystemEvent::FramesListening {
-        url: frame_url.clone(),
-    });
+	terminal_ui::output_event(SystemEvent::FramesListening { url: frame_url.clone() });
     report_debugger(debugger.as_ref());
     let runtime_for_frames = tap_for_debugger(pairing_runtime.clone(), debugger.map(|d| d.sink));
 
@@ -1300,11 +1246,7 @@ async fn run_pairing_host(
     }
 
     let terminal_ui = terminal_ui.context("interactive terminal was not initialized")?;
-    with_frame_server(
-        runtime_for_frames,
-        product.clone(),
-        frame_server,
-        async move {
+	with_frame_server(runtime_for_frames, product.clone(), frame_server, async move {
             pairing_interactive_loop(
                 frame_url,
                 product,
@@ -1315,8 +1257,7 @@ async fn run_pairing_host(
                 log_controller,
             )
             .await
-        },
-    )
+	})
     .await
 }
 
@@ -1330,10 +1271,8 @@ async fn run_signing_host(
     if let Err(error) = validate_signing_args(&args) {
         invalid_invocation(error);
     }
-    let exec_input = args
-        .action
-        .as_ref()
-        .map(|SigningHostAction::Exec { command }| command.clone());
+	let exec_input =
+		args.action.as_ref().map(|SigningHostAction::Exec { command }| command.clone());
     let interactive = args.script.is_none() && exec_input.is_none() && !args.serve;
     if interactive && !terminal_ui::is_interactive_terminal() {
         invalid_invocation(
@@ -1380,9 +1319,7 @@ async fn run_signing_host(
     let debugger = debugger.map(connect_debugger).transpose()?;
     let frame_server = frame_server::bind(args.frame_listen).await?;
     let frame_url = frame_server.endpoint().to_string();
-    terminal_ui::output_event(SystemEvent::FramesListening {
-        url: frame_url.clone(),
-    });
+	terminal_ui::output_event(SystemEvent::FramesListening { url: frame_url.clone() });
     if let Some(url) = bootstrap::bridge_url(&frame_url) {
         terminal_ui::output_event(SystemEvent::BridgeReady { url });
     }
@@ -1420,11 +1357,7 @@ async fn run_signing_host(
         let serve_deeplink = args.deeplink.clone();
         let serve_frame_url = frame_url.clone();
         let auto_accept = args.auto_accept;
-        return with_frame_server(
-            runtime_for_frames,
-            product.clone(),
-            frame_server,
-            async move {
+		return with_frame_server(runtime_for_frames, product.clone(), frame_server, async move {
                 ensure_signer(&mut session).await?;
                 restore_paired_responders(&mut session).await;
                 if let Some(deeplink) = serve_deeplink {
@@ -1439,12 +1372,11 @@ async fn run_signing_host(
                     None => {
                         wait_for_shutdown().await;
                         0
-                    }
+				},
                 };
                 session.responders.stop_all();
                 Ok(code)
-            },
-        )
+		})
         .await
         .map(|code| std::process::exit(code));
     }
@@ -1452,11 +1384,8 @@ async fn run_signing_host(
     let initial_deeplink = args.deeplink.clone();
     if let Some(command) = exec_command {
         let cleanup_catalog = session.catalog.clone();
-        let clear_target = with_frame_server(
-            runtime_for_frames,
-            product.clone(),
-            frame_server,
-            async move {
+		let clear_target =
+			with_frame_server(runtime_for_frames, product.clone(), frame_server, async move {
                 if let Some(deeplink) = initial_deeplink {
                     start_deeplink_responder(&mut session, deeplink).await?;
                 }
@@ -1470,8 +1399,7 @@ async fn run_signing_host(
                 .await;
                 session.responders.stop_all();
                 result
-            },
-        )
+			})
         .await?;
         if let Some(target) = clear_target {
             clear_sessions_after_shutdown(&cleanup_catalog, &target)?;
@@ -1481,25 +1409,16 @@ async fn run_signing_host(
 
     let terminal_ui = terminal_ui.context("interactive terminal was not initialized")?;
     let initial_command = if let Some(deeplink) = initial_deeplink {
-        Some((
-            format!("/pair {deeplink}"),
-            ShellCommand::Pair(PairCommand::Deeplink(deeplink)),
-        ))
+		Some((format!("/pair {deeplink}"), ShellCommand::Pair(PairCommand::Deeplink(deeplink))))
     } else {
         normalized(args.session.clone()).map(|name| {
-            (
-                format!("/session {name}"),
-                ShellCommand::Session(SessionCommand::Switch(name)),
-            )
+			(format!("/session {name}"), ShellCommand::Session(SessionCommand::Switch(name)))
         })
     };
     restore_paired_responders(&mut session).await;
     let cleanup_catalog = session.catalog.clone();
-    let clear_target = with_frame_server(
-        runtime_for_frames,
-        product.clone(),
-        frame_server,
-        async move {
+	let clear_target =
+		with_frame_server(runtime_for_frames, product.clone(), frame_server, async move {
             signing_interactive_loop(
                 &mut session,
                 frame_url,
@@ -1509,8 +1428,7 @@ async fn run_signing_host(
                 log_controller,
             )
             .await
-        },
-    )
+		})
     .await?;
     if let Some(target) = clear_target {
         clear_sessions_after_shutdown(&cleanup_catalog, &target)?;
@@ -1600,7 +1518,7 @@ fn initial_session_name(args: &SigningHostArgs, catalog: &SessionCatalog) -> Res
                 "selected session from its account store; the current-session pointer was missing or stale"
             );
             Ok(name)
-        }
+		},
         CurrentSession::Fresh => Ok(DEFAULT_SESSION_NAME.to_string()),
         CurrentSession::Ambiguous { candidates } => Err(anyhow::anyhow!(
             "this base path holds several provisioned sessions ({}) and no current-session \
@@ -1623,13 +1541,12 @@ fn selected_session_account(
 }
 
 async fn resolve_session_signer(config: ResolveSignerConfig<'_>) -> Result<ResolvedSigner> {
-    if config.mnemonic.is_none()
-        && let Some(signer) = accounts::resolve_cached_signer(
+	if config.mnemonic.is_none() &&
+		let Some(signer) = accounts::resolve_cached_signer(
             config.base_path,
             config.network.id,
             config.account.as_deref(),
-        )?
-    {
+		)? {
         return Ok(signer);
     }
     accounts::resolve_signer(config).await
@@ -1643,11 +1560,8 @@ async fn start_signing_host(
     ui: Option<UiHandle>,
 ) -> Result<SigningHostSession> {
     let mnemonic = normalized(args.mnemonic.clone());
-    let mut profile = if mnemonic.is_some() {
-        None
-    } else {
-        Some(catalog.ensure_profile(&session_name)?)
-    };
+	let mut profile =
+		if mnemonic.is_some() { None } else { Some(catalog.ensure_profile(&session_name)?) };
     let default_account = normalized(args.account.clone());
     let mut cached_user_id = profile
         .as_ref()
@@ -1670,12 +1584,9 @@ async fn start_signing_host(
         })
         .transpose()?
         .flatten();
-    let promotion = if let (Some(current), Some(user_id)) = (
-        &profile,
-        signer
-            .as_ref()
-            .and_then(|signer| signer.lite_username.as_ref()),
-    ) && current.name != *user_id
+	let promotion = if let (Some(current), Some(user_id)) =
+		(&profile, signer.as_ref().and_then(|signer| signer.lite_username.as_ref())) &&
+		current.name != *user_id
     {
         let promotion = catalog.prepare_promotion(current, user_id)?;
         profile = Some(promotion.profile().clone());
@@ -1685,9 +1596,7 @@ async fn start_signing_host(
         None
     };
     let storage_profile = profile.as_ref().cloned().unwrap_or_else(|| {
-        catalog
-            .profile(DEFAULT_SESSION_NAME)
-            .expect("default session profile is valid")
+		catalog.profile(DEFAULT_SESSION_NAME).expect("default session profile is valid")
     });
     if signer.is_none() && mnemonic.is_some() {
         let mut explicit_signer = accounts::resolve_signer(ResolveSignerConfig {
@@ -1703,7 +1612,7 @@ async fn start_signing_host(
             Ok(user_id) => explicit_signer.lite_username = Some(user_id),
             Err(error) => {
                 tracing::warn!(%error, "explicit signer has no resolvable dotNS username")
-            }
+			},
         }
         signer = Some(explicit_signer);
     }
@@ -1751,8 +1660,8 @@ async fn start_signing_host(
         terminal_ui::output_event(SystemEvent::SigningHostReady);
     }
     if let Some(profile) = &profile {
-        if profile.name != session_name
-            && let Some(ui) = &ui
+		if profile.name != session_name &&
+			let Some(ui) = &ui
         {
             ui.session(profile.name.clone(), catalog.list()?);
         }
@@ -1839,6 +1748,7 @@ fn build_signing_runtime(
     }
     runtime.set_profile_platform(profile::CliProfileHost::from_env());
     runtime.set_game_platform(Arc::new(game::CliGameHost));
+	runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
     runtime.set_core_db(core_db);
     runtime.start_statement_allowance_renewal();
     Ok((runtime, platform))
@@ -1869,12 +1779,11 @@ fn validate_signing_args(args: &SigningHostArgs) -> Result<()> {
     if mnemonic.is_some() && session.is_some() {
         bail!("--session cannot be used when --mnemonic or HOST_CLI_SIGNER_MNEMONIC is set");
     }
-    if mnemonic.is_some()
-        && args.action.as_ref().is_some_and(|action| {
+	if mnemonic.is_some() &&
+		args.action.as_ref().is_some_and(|action| {
             let SigningHostAction::Exec { command } = action;
             matches!(parse_command(command), Ok(ShellCommand::Devices(_)))
-        })
-    {
+		}) {
         bail!("paired-device management is unavailable when launched with --mnemonic");
     }
     if account.is_some() && session.is_some() {
@@ -1892,8 +1801,8 @@ fn validate_signing_args(args: &SigningHostArgs) -> Result<()> {
     if account.is_some() && reserved.is_some() {
         bail!("--reserved-username only applies when --account is omitted");
     }
-    if let Some(reserved) = &reserved
-        && !is_registrable_full_label(reserved)
+	if let Some(reserved) = &reserved &&
+		!is_registrable_full_label(reserved)
     {
         bail!(
             "--reserved-username {reserved:?} is not a reservable base label: lowercase ASCII \
@@ -1985,7 +1894,7 @@ fn spawn_supervised_responder(
                                     tokio::time::sleep(retry_delay).await;
                                     retry_delay =
                                         (retry_delay * 2).min(std::time::Duration::from_secs(30));
-                                }
+								},
                             }
                         }
                         if let Err(error) = runtime
@@ -2004,17 +1913,17 @@ fn spawn_supervised_responder(
                         outcome: format!("{:?}", ResponderExit::PeerDisconnected),
                     });
                     return;
-                }
+				},
                 Ok(ResponderExit::SubscriptionEnded) => {
                     terminal_ui::output_event(SystemEvent::SigningHostExit {
                         outcome: format!("{:?}", ResponderExit::SubscriptionEnded),
                     });
-                }
+				},
                 Err(error) => {
                     terminal_ui::output_event(SystemEvent::SigningHostError {
                         reason: error.reason,
                     });
-                }
+				},
             }
             tokio::time::sleep(retry_delay).await;
             retry_delay = (retry_delay * 2).min(std::time::Duration::from_secs(30));
@@ -2024,10 +1933,7 @@ fn spawn_supervised_responder(
 
 fn start_paired_host_responder(session: &mut SigningHostSession, host: PairedHost) {
     let statement_account_id = host.statement_account_id();
-    let persisted = session
-        .profile
-        .clone()
-        .map(|profile| (session.catalog.clone(), profile));
+	let persisted = session.profile.clone().map(|profile| (session.catalog.clone(), profile));
     let task = spawn_supervised_responder(session.runtime.clone(), host, persisted);
     session.responders.insert(statement_account_id, task);
     terminal_ui::output_event(SystemEvent::SigningHostResponderStarted);
@@ -2045,7 +1951,7 @@ async fn restore_paired_responders(session: &mut SigningHostSession) {
         Err(error) => {
             tracing::warn!(%error, "failed to read saved paired devices");
             return;
-        }
+		},
     };
     if paired_hosts.is_empty() {
         return;
@@ -2056,11 +1962,7 @@ async fn restore_paired_responders(session: &mut SigningHostSession) {
             .iter()
             .map(|host| pairing_device_renewal_target(host.statement_account_id())),
     );
-    if let Err(error) = session
-        .runtime
-        .track_statement_renewal_targets(renewal_targets)
-        .await
-    {
+	if let Err(error) = session.runtime.track_statement_renewal_targets(renewal_targets).await {
         tracing::warn!(
             reason = %error.reason,
             "failed to restore paired-device allowance renewal"
@@ -2119,9 +2021,7 @@ async fn run_dev(
     debugger: Option<DebuggerSwitch>,
 ) -> Result<()> {
     bootstrap::read_container(&bootstrap::container_path())?;
-    let product_id = args
-        .product_id
-        .unwrap_or_else(|| format!("localhost:{}", args.app_port));
+	let product_id = args.product_id.unwrap_or_else(|| format!("localhost:{}", args.app_port));
     let signing = SigningHostArgs {
         product_id,
         network: args.network,
@@ -2138,14 +2038,7 @@ async fn run_dev(
         ..Default::default()
     };
     let command = (!args.command.is_empty()).then_some(args.command);
-    run_signing_host(
-        signing,
-        initial_log_filter,
-        log_controller,
-        command,
-        debugger,
-    )
-    .await
+	run_signing_host(signing, initial_log_filter, log_controller, command, debugger).await
 }
 
 /// Run the wrapped development command, returning the code to exit with.
@@ -2154,9 +2047,8 @@ async fn run_dev(
 /// exits, because package managers can leave the actual development server
 /// running two or three intermediate processes away.
 async fn run_dev_command(command: Vec<String>) -> Result<i32> {
-    let (program, arguments) = command
-        .split_first()
-        .expect("an empty dev command is never supervised");
+	let (program, arguments) =
+		command.split_first().expect("an empty dev command is never supervised");
     let mut command = DevCommand::spawn(program, arguments)?;
 
     tokio::select! {
@@ -2191,9 +2083,7 @@ impl DevCommand {
 
             command.as_std_mut().process_group(0);
         }
-        let child = command
-            .spawn()
-            .with_context(|| format!("failed to start {program}"))?;
+		let child = command.spawn().with_context(|| format!("failed to start {program}"))?;
         #[cfg(unix)]
         let process_group = child
             .id()
@@ -2235,9 +2125,7 @@ async fn wait_for_dev_process_group_exit(command: &mut DevCommand) -> bool {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     };
-    tokio::time::timeout(DEV_COMMAND_GRACE, exited)
-        .await
-        .is_ok()
+	tokio::time::timeout(DEV_COMMAND_GRACE, exited).await.is_ok()
 }
 
 #[cfg(not(unix))]
@@ -2262,13 +2150,13 @@ async fn wait_for_shutdown() {
                     _ = wait_for_interrupt() => {}
                     _ = terminate.recv() => {}
                 }
-            }
+			},
             Err(error) => {
                 terminal_ui::output_event(SystemEvent::SigningHostError {
                     reason: format!("SIGTERM handling unavailable: {error}"),
                 });
                 wait_for_interrupt().await;
-            }
+			},
         }
     }
     #[cfg(not(unix))]
@@ -2319,19 +2207,11 @@ fn current_account_base_path(session: &SigningHostSession) -> Result<PathBuf> {
         .profile
         .as_ref()
         .map(|profile| profile.account_base_path.clone())
-        .unwrap_or(
-            session
-                .catalog
-                .profile(DEFAULT_SESSION_NAME)?
-                .account_base_path,
-        ))
+		.unwrap_or(session.catalog.profile(DEFAULT_SESSION_NAME)?.account_base_path))
 }
 
 async fn activate_current_signer(session: &mut SigningHostSession) -> Result<()> {
-    let signer = session
-        .signer
-        .as_ref()
-        .context("signer has not been resolved")?;
+	let signer = session.signer.as_ref().context("signer has not been resolved")?;
     session
         .runtime
         .activate_local_session_with_identity(signer.entropy.clone(), signer.lite_username.clone())
@@ -2339,9 +2219,7 @@ async fn activate_current_signer(session: &mut SigningHostSession) -> Result<()>
         .map_err(|err| anyhow::anyhow!("failed to activate local session: {}", err.reason))?;
     if let (Some(profile), Some(user_id)) = (&session.profile, &signer.lite_username) {
         if let Some(account_name) = &signer.account_name {
-            session
-                .catalog
-                .store_signer_binding(profile, user_id, account_name)?;
+			session.catalog.store_signer_binding(profile, user_id, account_name)?;
         } else {
             session.catalog.store_user_id(profile, user_id)?;
         }
@@ -2381,7 +2259,7 @@ async fn prepare_own_allowance(session: &mut SigningHostSession) -> bool {
         Err(error) => {
             tracing::warn!(reason = %error.reason, "wallet allowance renewal failed");
             return false;
-        }
+		},
     };
     // `renew_statement_allowances` reports per-target failures in its outcomes
     // rather than as an error, so an exhausted slot reads as success here
@@ -2394,8 +2272,8 @@ async fn prepare_own_allowance(session: &mut SigningHostSession) -> bool {
         .is_some_and(|outcome| {
             matches!(
                 outcome.status,
-                TargetRenewalStatus::Registered { .. }
-                    | TargetRenewalStatus::AlreadyAllocated { .. }
+				TargetRenewalStatus::Registered { .. } |
+					TargetRenewalStatus::AlreadyAllocated { .. }
             )
         })
 }
@@ -2409,11 +2287,7 @@ async fn announce_allowance_allocation(
     if !prepare_own_allowance(session).await {
         return None;
     }
-    match session
-        .runtime
-        .notify_pairing_allowance_allocation(deeplink)
-        .await
-    {
+	match session.runtime.notify_pairing_allowance_allocation(deeplink).await {
         Ok(announced) => Some(announced),
         Err(error) => {
             terminal_ui::output_event(SystemEvent::SigningHostError {
@@ -2423,7 +2297,7 @@ async fn announce_allowance_allocation(
                 ),
             });
             None
-        }
+		},
     }
 }
 
@@ -2438,11 +2312,7 @@ async fn report_pairing_failure(
     announced: &AnnouncedPairing,
     reason: String,
 ) {
-    if let Err(error) = session
-        .runtime
-        .notify_pairing_failed(announced, reason)
-        .await
-    {
+	if let Err(error) = session.runtime.notify_pairing_failed(announced, reason).await {
         terminal_ui::output_event(SystemEvent::SigningHostError {
             reason: format!(
                 "failed to tell the pairing host that pairing failed: {}",
@@ -2461,17 +2331,14 @@ async fn prepare_pairing_response(
     loop {
         ensure_signer(session).await?;
         let (auto_managed, account_name) = {
-            let signer = session
-                .signer
-                .as_ref()
-                .context("signer has not been resolved")?;
+			let signer = session.signer.as_ref().context("signer has not been resolved")?;
             (signer.auto_managed, signer.account_name.clone())
         };
         match renew_pairing_allowances(session, existing, candidate).await {
             Ok(()) => return Ok(()),
             Err(err)
-                if signer_identity_may_rotate(auto_managed, existing.len())
-                    && is_statement_slot_exhaustion(&err) =>
+				if signer_identity_may_rotate(auto_managed, existing.len()) &&
+					is_statement_slot_exhaustion(&err) =>
             {
                 attempts += 1;
                 if attempts > 8 {
@@ -2509,12 +2376,12 @@ async fn prepare_pairing_response(
                     .await?,
                 );
                 activate_current_signer(session).await?;
-            }
+			},
             Err(err) if !existing.is_empty() && is_statement_slot_exhaustion(&err) => {
                 return Err(err).context(
                     "cannot pair another device without replacing an existing pairing; remove a paired device or wait for a new allowance period",
                 );
-            }
+			},
             Err(err) => return Err(err),
         }
     }
@@ -2571,8 +2438,8 @@ async fn discard_new_pairing_candidate(
     candidate: &PairedHost,
     candidate_is_existing: bool,
 ) {
-    if !candidate_is_existing
-        && let Err(error) = session
+	if !candidate_is_existing &&
+		let Err(error) = session
             .runtime
             .untrack_statement_renewal_account(&candidate.statement_account_id())
             .await
@@ -2610,13 +2477,10 @@ async fn renew_pairing_allowances(
     use truapi::statement_allowance::renewal::TargetRenewalStatus;
 
     let candidate_id = candidate.statement_account_id();
-    let candidate_is_existing = existing
-        .iter()
-        .any(|host| host.statement_account_id() == candidate_id);
-    let mut required_device_ids = existing
-        .iter()
-        .map(PairedHost::statement_account_id)
-        .collect::<Vec<_>>();
+	let candidate_is_existing =
+		existing.iter().any(|host| host.statement_account_id() == candidate_id);
+	let mut required_device_ids =
+		existing.iter().map(PairedHost::statement_account_id).collect::<Vec<_>>();
     if !candidate_is_existing {
         required_device_ids.push(candidate_id);
     }
@@ -2624,12 +2488,7 @@ async fn renew_pairing_allowances(
     required_device_ids.dedup();
 
     let mut targets = vec![StatementRenewalTarget::WalletSso];
-    targets.extend(
-        required_device_ids
-            .iter()
-            .copied()
-            .map(pairing_device_renewal_target),
-    );
+	targets.extend(required_device_ids.iter().copied().map(pairing_device_renewal_target));
     session
         .runtime
         .track_statement_renewal_targets(targets)
@@ -2641,13 +2500,10 @@ async fn renew_pairing_allowances(
         Ok(report) => report,
         Err(error) => {
             if !candidate_is_existing {
-                let _ = session
-                    .runtime
-                    .untrack_statement_renewal_account(&candidate_id)
-                    .await;
+				let _ = session.runtime.untrack_statement_renewal_account(&candidate_id).await;
             }
             bail!("pairing allowance renewal failed: {}", error.reason);
-        }
+		},
     };
 
     let mut required_labels = vec![WALLET_SSO_RENEWAL_LABEL.to_string()];
@@ -2665,26 +2521,20 @@ async fn renew_pairing_allowances(
             .map(|outcome| &outcome.status)
             .with_context(|| format!("pairing allowance renewal omitted {label}"))?;
         match status {
-            TargetRenewalStatus::Registered { .. }
-            | TargetRenewalStatus::AlreadyAllocated { .. } => {}
+			TargetRenewalStatus::Registered { .. } |
+			TargetRenewalStatus::AlreadyAllocated { .. } => {},
             TargetRenewalStatus::Failed { reason } => {
                 if !candidate_is_existing {
-                    let _ = session
-                        .runtime
-                        .untrack_statement_renewal_account(&candidate_id)
-                        .await;
+					let _ = session.runtime.untrack_statement_renewal_account(&candidate_id).await;
                 }
                 bail!("pairing allowance renewal for {label} failed: {reason}");
-            }
+			},
             TargetRenewalStatus::SkippedExhausted => {
                 if !candidate_is_existing {
-                    let _ = session
-                        .runtime
-                        .untrack_statement_renewal_account(&candidate_id)
-                        .await;
+					let _ = session.runtime.untrack_statement_renewal_account(&candidate_id).await;
                 }
                 bail!("no free StatementStore slot for {label}");
-            }
+			},
         }
     }
     Ok(())
@@ -2713,7 +2563,7 @@ async fn run_renew(session: &mut SigningHostSession) -> Result<()> {
                     block_hash: Some(block_hash.clone()),
                     already_allocated: false,
                 });
-            }
+			},
             TargetRenewalStatus::AlreadyAllocated { seq } => {
                 fresh += 1;
                 terminal_ui::output_event(SystemEvent::AllowanceReady {
@@ -2722,21 +2572,19 @@ async fn run_renew(session: &mut SigningHostSession) -> Result<()> {
                     block_hash: None,
                     already_allocated: true,
                 });
-            }
+			},
             TargetRenewalStatus::Failed { reason } => {
                 failed += 1;
                 terminal_ui::output_event(SystemEvent::AllowanceRenewalFailed {
                     target: target.clone(),
                     reason: reason.clone(),
                 });
-            }
+			},
             TargetRenewalStatus::SkippedExhausted => skipped += 1,
         }
     }
     for label in &report.pruned {
-        terminal_ui::output_event(SystemEvent::AllowanceRenewalPruned {
-            target: label.clone(),
-        });
+		terminal_ui::output_event(SystemEvent::AllowanceRenewalPruned { target: label.clone() });
     }
     terminal_ui::output_event(SystemEvent::AllowanceRenewalReport {
         period: report.period,
@@ -2792,9 +2640,7 @@ async fn respond_to_deeplink(session: &mut SigningHostSession, deeplink: String)
     if exit == ResponderExit::PeerDisconnected && session.profile.is_some() {
         remove_paired_host_locally(session, &host.statement_account_id()).await?;
     }
-    terminal_ui::output_event(SystemEvent::SigningHostExit {
-        outcome: format!("{exit:?}"),
-    });
+	terminal_ui::output_event(SystemEvent::SigningHostExit { outcome: format!("{exit:?}") });
     Ok(())
 }
 
@@ -2845,9 +2691,7 @@ async fn disconnect_and_remove_paired_host(
     let paired_host = find_paired_host(session, statement_account_id)?;
     let notification = tokio::time::timeout(
         Duration::from_secs(30),
-        session
-            .runtime
-            .disconnect_paired_host(paired_sso_peer(&paired_host)),
+		session.runtime.disconnect_paired_host(paired_sso_peer(&paired_host)),
     )
     .await
     .map_err(|_| "disconnect notification submission timed out".to_string())
@@ -2857,13 +2701,10 @@ async fn disconnect_and_remove_paired_host(
         Err(reason) if force => Some(reason),
         Err(reason) => {
             bail!("failed to notify paired device before removal: {reason}")
-        }
+		},
     };
     remove_paired_host_locally(session, statement_account_id).await?;
-    Ok(PairedHostRemoval {
-        paired_host,
-        notification_failure,
-    })
+	Ok(PairedHostRemoval { paired_host, notification_failure })
 }
 
 fn forced_removal_warning(reason: &str) -> (&'static str, String) {
@@ -2883,14 +2724,10 @@ async fn remove_paired_host_locally(
         .profile
         .as_ref()
         .context("paired-device management is unavailable when launched with --mnemonic")?;
-    session
-        .catalog
-        .remove_paired_host(profile, statement_account_id)?;
+	session.catalog.remove_paired_host(profile, statement_account_id)?;
     session.responders.remove(statement_account_id);
-    if let Err(error) = session
-        .runtime
-        .untrack_statement_renewal_account(statement_account_id)
-        .await
+	if let Err(error) =
+		session.runtime.untrack_statement_renewal_account(statement_account_id).await
     {
         tracing::warn!(
             reason = %error.reason,
@@ -2910,10 +2747,9 @@ fn validate_session_clear(
     session.catalog.validate_clear_target(target)?;
     Ok(match target {
         SessionClearTarget::All => true,
-        SessionClearTarget::Named(name) => session
-            .profile
-            .as_ref()
-            .is_some_and(|profile| profile.name == *name),
+		SessionClearTarget::Named(name) => {
+			session.profile.as_ref().is_some_and(|profile| profile.name == *name)
+		},
     })
 }
 
@@ -2926,15 +2762,15 @@ fn session_clear_confirmation(
         SessionClearTarget::Named(name) => format!("Clear session {name}"),
         SessionClearTarget::All => {
             format!("Clear all sessions for {}", session.catalog.network_id())
-        }
+		},
     };
     let scope = match target {
         SessionClearTarget::Named(_) => {
             "This permanently deletes its local signer keys, scripts, storage, and permissions"
-        }
+		},
         SessionClearTarget::All => {
             "This permanently deletes every local session's signer keys, scripts, storage, and permissions"
-        }
+		},
     };
     let mut detail = format!(
         "{scope} for {}. On-chain usernames are not removed.",
@@ -2976,31 +2812,20 @@ fn clear_sessions_after_shutdown(
 }
 
 fn session_status_event(session: &SigningHostSession) -> SystemEvent {
-    let name = session
+	let name = session.profile.as_ref().map_or("ephemeral", |profile| profile.name.as_str());
+	let path = session
         .profile
         .as_ref()
-        .map_or("ephemeral", |profile| profile.name.as_str());
-    let path = session.profile.as_ref().map_or_else(
-        || "<none>".to_string(),
-        |profile| profile.path.display().to_string(),
-    );
+		.map_or_else(|| "<none>".to_string(), |profile| profile.path.display().to_string());
     let user_id = session
         .signer
         .as_ref()
         .and_then(|signer| signer.lite_username.as_deref())
         .or(session.cached_user_id.as_deref())
         .unwrap_or_else(|| {
-            if session.signer.is_some() {
-                "<no assigned username>"
-            } else {
-                "<not provisioned>"
-            }
+			if session.signer.is_some() { "<no assigned username>" } else { "<not provisioned>" }
         });
-    SystemEvent::SessionStatus {
-        name: name.to_string(),
-        path,
-        user_id: user_id.to_string(),
-    }
+	SystemEvent::SessionStatus { name: name.to_string(), path, user_id: user_id.to_string() }
 }
 
 fn session_status(session: &SigningHostSession) -> String {
@@ -3008,10 +2833,7 @@ fn session_status(session: &SigningHostSession) -> String {
 }
 
 fn session_list(session: &SigningHostSession) -> Result<String> {
-    let current = session
-        .profile
-        .as_ref()
-        .map_or("ephemeral", |profile| profile.name.as_str());
+	let current = session.profile.as_ref().map_or("ephemeral", |profile| profile.name.as_str());
     let mut lines = vec!["Sessions".to_string()];
     for name in session.catalog.list()? {
         let marker = if name == current { "*" } else { " " };
@@ -3045,11 +2867,7 @@ fn paired_device_label(host: &PairedHost) -> String {
     if let Some(platform) = platform {
         parts.push(platform);
     }
-    if parts.is_empty() {
-        "<unknown device>".to_string()
-    } else {
-        parts.join(" · ")
-    }
+	if parts.is_empty() { "<unknown device>".to_string() } else { parts.join(" · ") }
 }
 
 fn paired_device_list(session: &SigningHostSession) -> Result<String> {
@@ -3057,10 +2875,7 @@ fn paired_device_list(session: &SigningHostSession) -> Result<String> {
         .profile
         .as_ref()
         .context("paired-device management is unavailable when launched with --mnemonic")?;
-    Ok(format_paired_device_list(
-        &profile.name,
-        session.catalog.paired_hosts(profile)?,
-    ))
+	Ok(format_paired_device_list(&profile.name, session.catalog.paired_hosts(profile)?))
 }
 
 fn format_paired_device_list(session_name: &str, mut paired_hosts: Vec<PairedHost>) -> String {
@@ -3070,11 +2885,7 @@ fn format_paired_device_list(session_name: &str, mut paired_hosts: Vec<PairedHos
     }
     let mut lines = vec![format!("Paired devices for session {session_name}")];
     lines.extend(paired_hosts.iter().map(|host| {
-        format!(
-            "0x{}  {}",
-            hex::encode(host.statement_account_id()),
-            paired_device_label(host)
-        )
+		format!("0x{}  {}", hex::encode(host.statement_account_id()), paired_device_label(host))
     }));
     lines.join("\n")
 }
@@ -3112,11 +2923,8 @@ async fn switch_session(session: &mut SigningHostSession, name: String) -> Resul
     // A name that already provisioned a session was promoted to its Lite
     // username, so it selects that session rather than creating another.
     let name = session.catalog.resolve_session_name(&name)?;
-    if session
-        .profile
-        .as_ref()
-        .is_some_and(|profile| profile.name == name)
-        && session.signer.is_some()
+	if session.profile.as_ref().is_some_and(|profile| profile.name == name) &&
+		session.signer.is_some()
     {
         terminal_ui::output_event(session_status_event(session));
         return Ok(());
@@ -3133,16 +2941,16 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
         &provisional_profile,
         session.default_account.as_deref(),
     )?;
-    if is_lite_label(&name)
-        && accounts::AccountStore::load(&provisional_profile.account_base_path)?
+	if is_lite_label(&name) &&
+		accounts::AccountStore::load(&provisional_profile.account_base_path)?
             .created_at(session.network.id, account.as_deref())?
             .is_none()
     {
         bail!("session {name:?} has no saved account; choose a username base to create one");
     }
     let lite_username_prefix = sessions::lite_username_prefix(&name);
-    if !provisional_profile.is_provisioned()
-        && lite_username_prefix
+	if !provisional_profile.is_provisioned() &&
+		lite_username_prefix
             .as_ref()
             .is_some_and(|prefix| prefix.len() < MIN_PERSON_LABEL_LEN)
     {
@@ -3181,9 +2989,7 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
     })
     .await?;
     let (profile, promotion) = if let Some(user_id) = &signer.lite_username {
-        let promotion = session
-            .catalog
-            .prepare_promotion(&provisional_profile, user_id)?;
+		let promotion = session.catalog.prepare_promotion(&provisional_profile, user_id)?;
         (promotion.profile().clone(), Some(promotion))
     } else {
         (provisional_profile, None)
@@ -3208,9 +3014,7 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
         bail!("failed to activate session {name:?}: {}", error.reason);
     }
     if let (Some(user_id), Some(account_name)) = (&signer.lite_username, &signer.account_name) {
-        session
-            .catalog
-            .store_signer_binding(&profile, user_id, account_name)?;
+		session.catalog.store_signer_binding(&profile, user_id, account_name)?;
     }
     session.catalog.set_current(&profile.name)?;
     if let Some(promotion) = promotion {
@@ -3226,11 +3030,8 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
     session.last_script = last_script;
     session.profile = Some(profile);
     if let Some(ui) = &session.ui {
-        let current_name = session
-            .profile
-            .as_ref()
-            .map(|profile| profile.name.clone())
-            .unwrap_or(name);
+		let current_name =
+			session.profile.as_ref().map(|profile| profile.name.clone()).unwrap_or(name);
         ui.session(current_name, available_sessions);
         if let Some(user_id) = &session.cached_user_id {
             ui.connection(user_id.clone());
@@ -3275,9 +3076,7 @@ async fn import_mnemonic_session(
             to: session_name.clone(),
         });
     } else {
-        terminal_ui::output_event(SystemEvent::SessionCreating {
-            name: session_name.clone(),
-        });
+		terminal_ui::output_event(SystemEvent::SessionCreating { name: session_name.clone() });
     }
 
     let profile = session.catalog.ensure_profile(&session_name)?;
@@ -3312,13 +3111,9 @@ async fn import_mnemonic_session(
         .as_deref()
         .context("imported signer has no stored account name")?;
     if let Some(username) = &username {
-        session
-            .catalog
-            .store_signer_binding(&profile, username, account_name)?;
+		session.catalog.store_signer_binding(&profile, username, account_name)?;
     } else {
-        session
-            .catalog
-            .store_account_binding(&profile, account_name)?;
+		session.catalog.store_account_binding(&profile, account_name)?;
     }
     session.catalog.set_current(&session_name)?;
     let available_sessions = session.catalog.list()?;
@@ -3369,9 +3164,8 @@ async fn pairing_interactive_loop(
     mut ui: ActiveTerminalUi,
     log_controller: LogController,
 ) -> Result<()> {
-    let mut pairing_state_path = storage
-        .state_dir()
-        .context("pairing host storage is not configured")?;
+	let mut pairing_state_path =
+		storage.state_dir().context("pairing host storage is not configured")?;
     let mut last_script = sessions::session_last_script(&pairing_state_path)?;
     loop {
         let Some(input) = ui.next_command().await? else {
@@ -3383,7 +3177,7 @@ async fn pairing_interactive_loop(
             Err(error) => {
                 ui.error(error);
                 continue;
-            }
+			},
         };
         match command {
             ShellCommand::Help => ui.system(PAIRING_HELP_TEXT),
@@ -3395,7 +3189,7 @@ async fn pairing_interactive_loop(
             ShellCommand::Login => {
                 let product_id = product.current();
                 run_pairing_login(&runtime, &product_id, input, &mut ui).await?;
-            }
+			},
             ShellCommand::Logout => match runtime.logout().await {
                 Ok(()) => ui.success(
                     "Logged out",
@@ -3413,7 +3207,7 @@ async fn pairing_interactive_loop(
                     ui.set_log_level(level);
                     ui.event(SystemEvent::LogLevelChanged { level });
                 }
-            }
+			},
             ShellCommand::Product(ProductCommand::Current) => ui.system(product.current()),
             ShellCommand::Product(ProductCommand::Switch(product_id)) => {
                 match product.select(product_id) {
@@ -3424,16 +3218,15 @@ async fn pairing_interactive_loop(
                             format!("Product set to {product_id}"),
                             Some("Reconnect product clients to continue.".to_string()),
                         );
-                    }
+					},
                     Ok(false) => ui.system(product.current()),
                     Err(error) => ui.error(error.to_string()),
                 }
-            }
+			},
             ShellCommand::Quit => return Ok(()),
             ShellCommand::Script(command) => {
-                let current_state_path = storage
-                    .state_dir()
-                    .context("pairing host storage is not configured")?;
+				let current_state_path =
+					storage.state_dir().context("pairing host storage is not configured")?;
                 if current_state_path != pairing_state_path {
                     pairing_state_path = current_state_path;
                     last_script = sessions::session_last_script(&pairing_state_path)?;
@@ -3451,18 +3244,18 @@ async fn pairing_interactive_loop(
                         let product_id = product.current();
                         run_pairing_script(&frame_url, &product_id, &script, input, &mut ui)
                             .await?;
-                    }
-                    Ok(None) => {}
+					},
+					Ok(None) => {},
                     Err(error) => ui.error(error.to_string()),
                 }
-            }
-            ShellCommand::Pair(_)
-            | ShellCommand::Devices(_)
-            | ShellCommand::Approval(_)
-            | ShellCommand::Session(_)
-            | ShellCommand::Renew => {
+			},
+			ShellCommand::Pair(_) |
+			ShellCommand::Devices(_) |
+			ShellCommand::Approval(_) |
+			ShellCommand::Session(_) |
+			ShellCommand::Renew => {
                 ui.error("command is only available on the signing host");
-            }
+			},
         }
     }
 }
@@ -3474,18 +3267,15 @@ async fn run_pairing_login(
     ui: &mut ActiveTerminalUi,
 ) -> Result<()> {
     let checkpoint = ui.activity_checkpoint();
-    match ui
-        .drive_pairing_login(label, runtime.login(product_id))
-        .await?
-    {
-        DriveResult::Complete(Ok(truapi::v01::HostRequestLoginResponse::Success)) => {}
+	match ui.drive_pairing_login(label, runtime.login(product_id)).await? {
+		DriveResult::Complete(Ok(truapi::v01::HostRequestLoginResponse::Success)) => {},
         DriveResult::Complete(Ok(truapi::v01::HostRequestLoginResponse::AlreadyConnected)) => {
             ui.success("Already logged in", None);
-        }
+		},
         DriveResult::Complete(Ok(truapi::v01::HostRequestLoginResponse::Rejected)) => {
             ui.finish_activities_since(checkpoint, ActivityState::Cancelled, "Login was rejected");
             ui.error("login rejected");
-        }
+		},
         DriveResult::Complete(Err(error)) => {
             ui.finish_activities_since(
                 checkpoint,
@@ -3493,12 +3283,12 @@ async fn run_pairing_login(
                 "Login stopped after an error",
             );
             ui.error(format!("login failed: {}", error.reason));
-        }
+		},
         DriveResult::Cancelled => {
             runtime.cancel_pairing();
             ui.finish_activities_since(checkpoint, ActivityState::Cancelled, "Login cancelled");
             ui.error("login cancelled");
-        }
+		},
     }
     Ok(())
 }
@@ -3521,13 +3311,11 @@ async fn run_pairing_script(
             script_runner::ScriptHostRole::PairingHost,
         )
         .await?;
-        terminal_ui::output_event(SystemEvent::ScriptExit {
-            code: status.code().unwrap_or(1),
-        });
+		terminal_ui::output_event(SystemEvent::ScriptExit { code: status.code().unwrap_or(1) });
         Ok::<(), anyhow::Error>(())
     };
     match ui.drive(label, operation).await? {
-        DriveResult::Complete(Ok(())) => {}
+		DriveResult::Complete(Ok(())) => {},
         DriveResult::Complete(Err(error)) => {
             ui.finish_activities_since(
                 activity_checkpoint,
@@ -3535,11 +3323,11 @@ async fn run_pairing_script(
                 "Stopped after an error",
             );
             ui.error(error.to_string());
-        }
+		},
         DriveResult::Cancelled => {
             ui.finish_activities_since(activity_checkpoint, ActivityState::Cancelled, "Cancelled");
             ui.error("command cancelled");
-        }
+		},
     }
     Ok(())
 }
@@ -3569,7 +3357,7 @@ async fn signing_interactive_loop(
             Err(error) => {
                 ui.error(error);
                 continue;
-            }
+			},
         };
         match command {
             ShellCommand::Help => ui.system(HELP_TEXT),
@@ -3585,32 +3373,30 @@ async fn signing_interactive_loop(
                     ui.set_log_level(level);
                     ui.event(SystemEvent::LogLevelChanged { level });
                 }
-            }
+			},
             ShellCommand::Approval(ApprovalCommand::Current) => {
                 let mode = match session.platform.approval_policy() {
                     ApprovalPolicy::Prompt => "manual",
                     ApprovalPolicy::AutoAccept => "automatic",
                 };
                 ui.system(format!("Approval mode: {mode}"));
-            }
+			},
             ShellCommand::Approval(ApprovalCommand::Manual) => {
                 session.platform.set_approval_policy(ApprovalPolicy::Prompt);
                 ui.success(
                     "Approval mode set to manual",
                     Some("Future product confirmations will require approval.".to_string()),
                 );
-            }
+			},
             ShellCommand::Approval(ApprovalCommand::Automatic) => {
-                session
-                    .platform
-                    .set_approval_policy(ApprovalPolicy::AutoAccept);
+				session.platform.set_approval_policy(ApprovalPolicy::AutoAccept);
                 ui.success(
                     "Approval mode set to automatic",
                     Some(
                         "Future product confirmations will be approved automatically, except main-purse payments, which always require review.".to_string(),
                     ),
                 );
-            }
+			},
             ShellCommand::Product(ProductCommand::Current) => ui.system(product.current()),
             ShellCommand::Product(ProductCommand::Switch(product_id)) => {
                 match product.select(product_id) {
@@ -3621,17 +3407,17 @@ async fn signing_interactive_loop(
                             format!("Product set to {product_id}"),
                             Some("Reconnect product clients to continue.".to_string()),
                         );
-                    }
+					},
                     Ok(false) => ui.system(product.current()),
                     Err(error) => ui.error(error.to_string()),
                 }
-            }
+			},
             ShellCommand::Session(SessionCommand::Current) => {
                 ui.event(session_status_event(session));
                 if session.profile.is_some() && session.signer.is_none() {
                     ui.event(SystemEvent::SigningHostNeedsSession);
                 }
-            }
+			},
             ShellCommand::Session(SessionCommand::List) => match session_list(session) {
                 Ok(sessions) => ui.system(sessions),
                 Err(error) => ui.error(format!("failed to list sessions: {error}")),
@@ -3640,10 +3426,7 @@ async fn signing_interactive_loop(
                 Ok(devices) => ui.system(devices),
                 Err(error) => ui.error(format!("failed to list paired devices: {error}")),
             },
-            ShellCommand::Devices(DeviceCommand::Remove {
-                statement_account_id,
-                force,
-            }) => {
+			ShellCommand::Devices(DeviceCommand::Remove { statement_account_id, force }) => {
                 let (action, detail) = match paired_device_remove_confirmation(
                     session,
                     &statement_account_id,
@@ -3653,12 +3436,10 @@ async fn signing_interactive_loop(
                     Err(error) => {
                         ui.error(error.to_string());
                         continue;
-                    }
+					},
                 };
                 let handle = ui.handle();
-                let approved = match ui
-                    .drive(input.clone(), handle.confirm(action, detail))
-                    .await?
+				let approved = match ui.drive(input.clone(), handle.confirm(action, detail)).await?
                 {
                     DriveResult::Complete(approved) => approved,
                     DriveResult::Cancelled => false,
@@ -3687,24 +3468,22 @@ async fn signing_interactive_loop(
                                 hex::encode(statement_account_id)
                             )),
                         );
-                    }
+					},
                     DriveResult::Complete(Err(error)) => ui.error(error.to_string()),
                     DriveResult::Cancelled => ui.system("Paired-device removal cancelled"),
                 }
-            }
+			},
             ShellCommand::Session(SessionCommand::Clear(target)) => {
                 let active = match validate_session_clear(session, &target) {
                     Ok(active) => active,
                     Err(error) => {
                         ui.error(error.to_string());
                         continue;
-                    }
+					},
                 };
                 let (action, detail) = session_clear_confirmation(session, &target, active);
                 let handle = ui.handle();
-                let approved = match ui
-                    .drive(input.clone(), handle.confirm(action, detail))
-                    .await?
+				let approved = match ui.drive(input.clone(), handle.confirm(action, detail)).await?
                 {
                     DriveResult::Complete(approved) => approved,
                     DriveResult::Cancelled => false,
@@ -3729,10 +3508,10 @@ async fn signing_interactive_loop(
                             .as_ref()
                             .map_or(DEFAULT_SESSION_NAME, |profile| profile.name.as_str());
                         ui.handle().session(current, session.catalog.list()?);
-                    }
+					},
                     Err(error) => ui.error(error.to_string()),
                 }
-            }
+			},
             ShellCommand::Quit => return Ok(None),
             ShellCommand::Pair(PairCommand::Scan) => {
                 let input = match ui.read_pairing_image().await? {
@@ -3740,14 +3519,12 @@ async fn signing_interactive_loop(
                     DriveResult::Cancelled => continue,
                 };
                 run_interactive_pairing_image(session, input, &mut ui).await?;
-            }
-            ShellCommand::Script(command) => match select_interactive_script(
+			},
+			ShellCommand::Script(command) => {
+				match select_interactive_script(
                 &command,
                 &session.script_projects,
-                session
-                    .profile
-                    .as_ref()
-                    .map(|profile| profile.path.as_path()),
+					session.profile.as_ref().map(|profile| profile.path.as_path()),
                 &mut session.last_script,
                 &mut ui,
             )
@@ -3764,9 +3541,10 @@ async fn signing_interactive_loop(
                         &mut ui,
                     )
                     .await?;
-                }
-                Ok(None) => {}
+					},
+					Ok(None) => {},
                 Err(error) => ui.error(error.to_string()),
+				}
             },
             command => {
                 let product_id = product.current();
@@ -3779,7 +3557,7 @@ async fn signing_interactive_loop(
                     &mut ui,
                 )
                 .await?;
-            }
+			},
         }
     }
 }
@@ -3796,7 +3574,7 @@ async fn run_interactive_operation(
     let handle = ui.handle();
     let operation = execute_interactive_operation(session, frame_url, product_id, command, handle);
     match ui.drive(label, operation).await? {
-        DriveResult::Complete(Ok(())) => {}
+		DriveResult::Complete(Ok(())) => {},
         DriveResult::Complete(Err(error)) => {
             ui.finish_activities_since(
                 activity_checkpoint,
@@ -3804,11 +3582,11 @@ async fn run_interactive_operation(
                 "Stopped after an error",
             );
             ui.error_with_causes(&error);
-        }
+		},
         DriveResult::Cancelled => {
             ui.finish_activities_since(activity_checkpoint, ActivityState::Cancelled, "Cancelled");
             ui.error("command cancelled");
-        }
+		},
     }
     Ok(())
 }
@@ -3829,7 +3607,7 @@ async fn run_interactive_pairing_image(
         start_deeplink_responder(session, deeplink).await
     };
     match ui.drive("/pair", operation).await? {
-        DriveResult::Complete(Ok(())) => {}
+		DriveResult::Complete(Ok(())) => {},
         DriveResult::Complete(Err(error)) => {
             ui.finish_activities_since(
                 activity_checkpoint,
@@ -3837,11 +3615,11 @@ async fn run_interactive_pairing_image(
                 "Stopped after an error",
             );
             ui.error_with_causes(&error);
-        }
+		},
         DriveResult::Cancelled => {
             ui.finish_activities_since(activity_checkpoint, ActivityState::Cancelled, "Cancelled");
             ui.error("command cancelled");
-        }
+		},
     }
     Ok(())
 }
@@ -3856,16 +3634,16 @@ async fn execute_interactive_operation(
     match command {
         ShellCommand::Pair(PairCommand::Deeplink(deeplink)) => {
             start_deeplink_responder(session, deeplink).await?
-        }
+		},
         ShellCommand::Pair(PairCommand::Image(path)) => {
             let deeplink = tokio::task::spawn_blocking(move || qr_scanner::decode_path(&path))
                 .await
                 .context("join QR image decoder")??;
             start_deeplink_responder(session, deeplink).await?;
-        }
+		},
         ShellCommand::Pair(PairCommand::Scan) => {
             bail!("clipboard image paste must be handled by the terminal UI")
-        }
+		},
         ShellCommand::Script(ScriptCommand::Run(Some(script))) => {
             let session_path = session.profile.as_ref().map(|profile| profile.path.clone());
             let script =
@@ -3879,33 +3657,31 @@ async fn execute_interactive_operation(
                 script_runner::ScriptHostRole::SigningHost,
             )
             .await?;
-            terminal_ui::output_event(SystemEvent::ScriptExit {
-                code: status.code().unwrap_or(1),
-            });
-        }
+			terminal_ui::output_event(SystemEvent::ScriptExit { code: status.code().unwrap_or(1) });
+		},
         ShellCommand::Script(_) => bail!("script selection must be handled by the terminal UI"),
         ShellCommand::Session(SessionCommand::Switch(name)) => {
             switch_session(session, name).await?;
-        }
+		},
         ShellCommand::Session(SessionCommand::ImportMnemonic(mnemonic)) => {
             import_mnemonic_session(session, &mnemonic).await?;
-        }
+		},
         ShellCommand::Renew => run_renew(session).await?,
         ShellCommand::Login => bail!("/login is only available on the pairing host"),
         ShellCommand::Logout => bail!("/logout is only available on the pairing host"),
         ShellCommand::Product(_) | ShellCommand::Devices(_) | ShellCommand::Approval(_) => {
             bail!("command must be handled by the terminal UI")
-        }
-        ShellCommand::Help
-        | ShellCommand::Clear
-        | ShellCommand::Copy
-        | ShellCommand::Log(_)
-        | ShellCommand::Session(
+		},
+		ShellCommand::Help |
+		ShellCommand::Clear |
+		ShellCommand::Copy |
+		ShellCommand::Log(_) |
+		ShellCommand::Session(
             SessionCommand::Current | SessionCommand::List | SessionCommand::Clear(_),
-        )
-        | ShellCommand::Quit => {
+		) |
+		ShellCommand::Quit => {
             bail!("command must be handled by the terminal UI")
-        }
+		},
     }
     Ok(())
 }
@@ -3920,16 +3696,18 @@ async fn execute_non_interactive_command(
     match command {
         ShellCommand::Pair(PairCommand::Deeplink(deeplink)) => {
             respond_to_deeplink(session, deeplink).await?
-        }
+		},
         ShellCommand::Pair(PairCommand::Image(path)) => {
             let deeplink = tokio::task::spawn_blocking(move || qr_scanner::decode_path(&path))
                 .await
                 .context("join QR image decoder")??;
             respond_to_deeplink(session, deeplink).await?
-        }
-        ShellCommand::Pair(PairCommand::Scan) => bail!(
+		},
+		ShellCommand::Pair(PairCommand::Scan) => {
+			bail!(
             "clipboard image paste needs an interactive signing host; use /pair <image-path> or /pair <polkadotapp://pair?...>"
-        ),
+			)
+		},
         ShellCommand::Script(command) => {
             if command.edits() && !terminal_ui::is_interactive_terminal() {
                 bail!(
@@ -3938,16 +3716,9 @@ async fn execute_non_interactive_command(
             }
             let script =
                 select_script(&command, &session.script_projects, &mut session.last_script)?;
-            let session_path = session
-                .profile
-                .as_ref()
-                .map(|profile| profile.path.as_path());
+			let session_path = session.profile.as_ref().map(|profile| profile.path.as_path());
             let script = remember_script(session_path, &mut session.last_script, script)?;
-            let script = if command.edits() {
-                edit_script_plain(script).await?
-            } else {
-                script
-            };
+			let script = if command.edits() { edit_script_plain(script).await? } else { script };
             if !command.runs() {
                 return Ok(None);
             }
@@ -3965,22 +3736,22 @@ async fn execute_non_interactive_command(
             if !status.success() {
                 bail!("script exited with code {code}");
             }
-        }
+		},
         ShellCommand::Help => println!("{HELP_TEXT}"),
-        ShellCommand::Clear | ShellCommand::Quit => {}
+		ShellCommand::Clear | ShellCommand::Quit => {},
         ShellCommand::Copy => bail!("/copy is only available in the terminal UI"),
         ShellCommand::Approval(_) => {
             bail!("/approval is only available in the terminal UI")
-        }
+		},
         ShellCommand::Login => bail!("/login is only available on the pairing host"),
         ShellCommand::Logout => bail!("/logout is only available on the pairing host"),
         ShellCommand::Log(level) => {
             log_controller.set(level)?;
             terminal_ui::output_event(SystemEvent::LogLevelChanged { level });
-        }
+		},
         ShellCommand::Product(ProductCommand::Current) => {
             println!("{}", product.current());
-        }
+		},
         ShellCommand::Product(ProductCommand::Switch(product_id)) => {
             if product.select(product_id)? {
                 terminal_ui::output_success(
@@ -3990,23 +3761,20 @@ async fn execute_non_interactive_command(
             } else {
                 println!("{}", product.current());
             }
-        }
+		},
         ShellCommand::Session(SessionCommand::Current) => {
             println!("{}", session_status(session));
             if session.profile.is_some() && session.signer.is_none() {
                 terminal_ui::output_event(SystemEvent::SigningHostNeedsSession);
             }
-        }
+		},
         ShellCommand::Session(SessionCommand::List) => {
             println!("{}", session_list(session)?);
-        }
+		},
         ShellCommand::Devices(DeviceCommand::List) => {
             println!("{}", paired_device_list(session)?);
-        }
-        ShellCommand::Devices(DeviceCommand::Remove {
-            statement_account_id,
-            force,
-        }) => {
+		},
+		ShellCommand::Devices(DeviceCommand::Remove { statement_account_id, force }) => {
             let profile_name = session
                 .profile
                 .as_ref()
@@ -4024,20 +3792,20 @@ async fn execute_non_interactive_command(
                 hex::encode(statement_account_id),
                 profile_name
             );
-        }
+		},
         ShellCommand::Session(SessionCommand::Switch(name)) => {
             switch_session(session, name).await?;
-        }
+		},
         ShellCommand::Session(SessionCommand::ImportMnemonic(mnemonic)) => {
             import_mnemonic_session(session, &mnemonic).await?;
-        }
+		},
         ShellCommand::Session(SessionCommand::Clear(target)) => {
             validate_session_clear(session, &target)?;
             session.responders.stop_all();
             session.runtime_factory.reset_connections();
             tokio::task::yield_now().await;
             return Ok(Some(target));
-        }
+		},
         ShellCommand::Renew => run_renew(session).await?,
     }
     Ok(None)
@@ -4068,7 +3836,7 @@ fn select_script(
     match command {
         ScriptCommand::Edit | ScriptCommand::EditOnly => {
             select_script_to_edit(projects, last_script)
-        }
+		},
         ScriptCommand::New(directory) => script_project::create(projects, directory.as_deref()),
         ScriptCommand::Run(Some(script)) => Ok(script.clone()),
         ScriptCommand::Run(None) => last_script
@@ -4110,27 +3878,19 @@ async fn select_interactive_script(
 ) -> Result<Option<PathBuf>> {
     let script = select_script(command, projects, last_script)?;
     let script = remember_script(session_path, last_script, script)?;
-    let script = if command.edits() {
-        edit_script_in(script, ui).await?
-    } else {
-        script
-    };
+	let script = if command.edits() { edit_script_in(script, ui).await? } else { script };
     Ok(command.runs().then_some(script))
 }
 
 async fn edit_script_in(script: PathBuf, ui: &mut ActiveTerminalUi) -> Result<PathBuf> {
     match ui
-        .drive(
-            "Preparing script",
-            script_project::prepare(&script, Some(ui.handle())),
-        )
+		.drive("Preparing script", script_project::prepare(&script, Some(ui.handle())))
         .await?
     {
         DriveResult::Complete(result) => result?,
-        DriveResult::Cancelled => bail!(
-            "script setup cancelled; project retained at {}",
-            script.display()
-        ),
+		DriveResult::Cancelled => {
+			bail!("script setup cancelled; project retained at {}", script.display())
+		},
     }
     ui.system(format!("Opening {} in your editor", script.display()));
     ui.suspend()?;
@@ -4188,13 +3948,7 @@ mod cli_tests {
         let network = Network::default().config();
         let catalog = SessionCatalog::new(base_path.to_path_buf(), network.id)?;
         catalog.set_current(name)?;
-        start_signing_host(
-            &SigningHostArgs::default(),
-            catalog,
-            name.to_string(),
-            network,
-            None,
-        )
+		start_signing_host(&SigningHostArgs::default(), catalog, name.to_string(), network, None)
         .await
     }
 
@@ -4265,19 +4019,11 @@ mod cli_tests {
                 session.runtime.has_active_session(),
                 session.runtime.statement_renewal_owner_key().ok(),
                 session.signer.as_ref().map(|signer| signer.entropy.clone()),
-                session
-                    .profile
-                    .as_ref()
-                    .map(|profile| profile.name.as_str()),
+				session.profile.as_ref().map(|profile| profile.name.as_str()),
                 session.catalog.current_session()?,
                 *resets.borrow_and_update(),
                 std::fs::read(
-                    session
-                        .profile
-                        .as_ref()
-                        .unwrap()
-                        .account_base_path
-                        .join("accounts.json")
+					session.profile.as_ref().unwrap().account_base_path.join("accounts.json")
                 )?,
             ),
             (
@@ -4292,24 +4038,16 @@ mod cli_tests {
         );
         let runtime = session.runtime.clone();
         switch_session(&mut session, "pending".to_string()).await?;
-        assert_eq!(
-            (
-                Arc::ptr_eq(&runtime, &session.runtime),
-                resets.has_changed()?
-            ),
-            (true, false)
-        );
+		assert_eq!((Arc::ptr_eq(&runtime, &session.runtime), resets.has_changed()?), (true, false));
         Ok(())
     }
 
     #[tokio::test]
     async fn session_selection_preserves_the_active_profile_when_promotion_cannot_commit()
     -> Result<()> {
-        for (name, slash_command) in [
-            (DEFAULT_SESSION_NAME, false),
-            ("pending", true),
-            ("pending", false),
-        ] {
+		for (name, slash_command) in
+			[(DEFAULT_SESSION_NAME, false), ("pending", true), ("pending", false)]
+		{
             let temporary = tempfile::tempdir()?;
             let mut session = unfinished_session(temporary.path(), name).await?;
             let profile = session.profile.clone().unwrap();
@@ -4319,27 +4057,17 @@ mod cli_tests {
                     profile.path.join("session.json"),
                     br#"{"version":1,"last_script":"saved.ts"}"#.to_vec(),
                 ),
-                (
-                    profile.path.join("core-storage.json"),
-                    br#"{"values":{}}"#.to_vec(),
-                ),
-                (
-                    profile.path.join("scripts/saved.ts"),
-                    b"console.log('saved');".to_vec(),
-                ),
-                (
-                    profile.product_storage_dir.join("saved"),
-                    b"product data".to_vec(),
-                ),
+				(profile.path.join("core-storage.json"), br#"{"values":{}}"#.to_vec()),
+				(profile.path.join("scripts/saved.ts"), b"console.log('saved');".to_vec()),
+				(profile.product_storage_dir.join("saved"), b"product data".to_vec()),
             ];
             for (path, bytes) in &contents {
                 std::fs::create_dir_all(path.parent().unwrap())?;
                 std::fs::write(path, bytes)?;
             }
             let role = session.catalog.profile(DEFAULT_SESSION_NAME)?;
-            let blocked_pointer = role
-                .path
-                .join(format!(".current-session.{}.tmp", std::process::id()));
+			let blocked_pointer =
+				role.path.join(format!(".current-session.{}.tmp", std::process::id()));
             std::fs::create_dir(&blocked_pointer)?;
             let runtime = session.runtime.clone();
             let resets = session.runtime_factory.connection_reset().unwrap();
@@ -4352,10 +4080,7 @@ mod cli_tests {
             let error =
                 result.expect_err("failed persistence must leave the active profile usable");
 
-            assert!(
-                error.to_string().contains("write current session"),
-                "{error:#}"
-            );
+			assert!(error.to_string().contains("write current session"), "{error:#}");
             assert_eq!(
                 (
                     Arc::ptr_eq(&runtime, &session.runtime),
@@ -4393,12 +4118,7 @@ mod cli_tests {
                     session.runtime.has_active_session(),
                     session.signer.as_ref().map(|signer| signer.entropy.clone()),
                     std::fs::read(
-                        session
-                            .profile
-                            .as_ref()
-                            .unwrap()
-                            .account_base_path
-                            .join("accounts.json")
+						session.profile.as_ref().unwrap().account_base_path.join("accounts.json")
                     )?,
                 ),
                 (true, Some(vec![0; 16]), accounts)
@@ -4424,12 +4144,16 @@ mod cli_tests {
         session.catalog.ensure_profile("workbench.99")?;
         for name in ["foo", "carol", "workbench.99", "another"] {
             let expected_error = match name {
-                "foo" | "carol" => format!(
+				"foo" | "carol" => {
+					format!(
                     "session name {name:?} must contain at least 6 lowercase ASCII letters to create an account; digits and separators do not count"
-                ),
-                "workbench.99" => format!(
+					)
+				},
+				"workbench.99" => {
+					format!(
                     "session {name:?} has no saved account; choose a username base to create one"
-                ),
+					)
+				},
                 _ => format!("check lite username {name:?} availability"),
             };
             let error = switch_session(&mut session, name.to_string())
@@ -4481,11 +4205,7 @@ mod cli_tests {
 
         let status = runtime.core_database_status().await.unwrap();
 
-        let file = profile
-            .path()
-            .canonicalize()
-            .unwrap()
-            .join(truapi::store::CORE_DB_FILE);
+		let file = profile.path().canonicalize().unwrap().join(truapi::store::CORE_DB_FILE);
         assert_eq!(
             status.path,
             Some(file.to_string_lossy().into_owned()),
@@ -4501,10 +4221,7 @@ mod cli_tests {
         };
 
         let proposal = VersionedHandshakeProposal::V2(Proposal {
-            device: Device {
-                statement_account_id: [1; 32],
-                encryption_public_key: [2; 32],
-            },
+			device: Device { statement_account_id: [1; 32], encryption_public_key: [2; 32] },
             metadata: vec![
                 MetadataEntry(
                     MetadataKey::HostName,
@@ -4513,10 +4230,7 @@ mod cli_tests {
                 MetadataEntry(MetadataKey::HostVersion, "1.2.3".to_string()),
             ],
         });
-        let deeplink = format!(
-            "polkadotapp://pair?handshake={}",
-            hex::encode(proposal.encode())
-        );
+		let deeplink = format!("polkadotapp://pair?handshake={}", hex::encode(proposal.encode()));
 
         assert_eq!(
             paired_host_from_deeplink(&deeplink).unwrap(),
@@ -4548,11 +4262,7 @@ mod cli_tests {
 
         assert_eq!(
             (
-                manager
-                    .tasks
-                    .keys()
-                    .copied()
-                    .collect::<std::collections::HashSet<_>>(),
+				manager.tasks.keys().copied().collect::<std::collections::HashSet<_>>(),
                 first_abort.is_finished(),
                 second_abort.is_finished(),
             ),
@@ -4622,10 +4332,8 @@ mod cli_tests {
         let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
         let provisional = catalog.ensure_profile("worker-0")?;
         catalog.promote_to_user(&provisional, "alice.01")?;
-        let args = SigningHostArgs {
-            session: Some("worker-0".to_string()),
-            ..SigningHostArgs::default()
-        };
+		let args =
+			SigningHostArgs { session: Some("worker-0".to_string()), ..SigningHostArgs::default() };
 
         assert_eq!(initial_session_name(&args, &catalog)?, "alice.01");
         Ok(())
@@ -4659,10 +4367,7 @@ mod cli_tests {
         let profile = catalog.ensure_profile("alice.01")?;
         std::fs::write(profile.path.join("accounts.json"), "{}")?;
 
-        assert_eq!(
-            initial_session_name(&SigningHostArgs::default(), &catalog)?,
-            "alice.01"
-        );
+		assert_eq!(initial_session_name(&SigningHostArgs::default(), &catalog)?, "alice.01");
         Ok(())
     }
 
@@ -4684,10 +4389,7 @@ mod cli_tests {
         assert_eq!(before.log_level, Some(LogLevel::Trace));
         assert_eq!(after.log_level, Some(LogLevel::Trace));
         assert_eq!(LogLevel::Trace.as_filter(), "trace");
-        assert_eq!(
-            LogLevel::Trace.scoped_filter(),
-            "warn,truapi=trace,truapi_host=trace"
-        );
+		assert_eq!(LogLevel::Trace.scoped_filter(), "warn,truapi=trace,truapi_host=trace");
     }
 
     #[test]
@@ -4696,22 +4398,15 @@ mod cli_tests {
         assert!(!log_target_is_visible("rustls"));
         assert!(!log_target_is_visible("rustls::client::tls13"));
         assert!(!log_target_is_visible("tungstenite::protocol"));
-        assert!(!log_target_is_visible(
-            "tungstenite::protocol::frame::socket"
-        ));
+		assert!(!log_target_is_visible("tungstenite::protocol::frame::socket"));
         assert!(log_target_is_visible("tungstenite::handshake"));
         assert!(log_target_is_visible("truapi::runtime"));
     }
 
     #[test]
     fn signing_host_exec_accepts_one_slash_command() {
-        let cli = Cli::try_parse_from([
-            "truapi-host",
-            "signing-host",
-            "--auto-accept",
-            "exec",
-            "/help",
-        ])
+		let cli =
+			Cli::try_parse_from(["truapi-host", "signing-host", "--auto-accept", "exec", "/help"])
         .expect("exec slash command should parse");
         let Command::SigningHost(args) = cli.command else {
             panic!("expected signing-host command");
@@ -4849,9 +4544,8 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
         ])
         .await?;
         let ready = std::fs::read_to_string(&ready_path)?;
-        let (address, pid) = ready
-            .split_once(' ')
-            .context("descendant readiness record is incomplete")?;
+		let (address, pid) =
+			ready.split_once(' ').context("descendant readiness record is incomplete")?;
         let address = address.parse::<SocketAddr>()?;
         let port_was_released = std::net::TcpListener::bind(address).is_ok();
         if !port_was_released {
@@ -4865,11 +4559,7 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
         }
 
         assert_eq!(
-            (
-                exit_code,
-                port_was_released,
-                started.elapsed() >= DEV_COMMAND_GRACE,
-            ),
+			(exit_code, port_was_released, started.elapsed() >= DEV_COMMAND_GRACE,),
             (0, true, true)
         );
         Ok(())
@@ -4877,21 +4567,14 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
 
     #[test]
     fn frame_listen_explicitly_selects_tcp_websockets() {
-        let cli = Cli::try_parse_from([
-            "truapi-host",
-            "pairing-host",
-            "--frame-listen",
-            "127.0.0.1:0",
-        ])
+		let cli =
+			Cli::try_parse_from(["truapi-host", "pairing-host", "--frame-listen", "127.0.0.1:0"])
         .expect("explicit TCP frame listener should parse");
         let Command::PairingHost(args) = cli.command else {
             panic!("expected pairing-host command");
         };
 
-        assert_eq!(
-            args.frame_listen,
-            Some("127.0.0.1:0".parse().expect("valid socket address"))
-        );
+		assert_eq!(args.frame_listen, Some("127.0.0.1:0".parse().expect("valid socket address")));
     }
 
     #[test]
@@ -4933,13 +4616,8 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
         assert!(args.serve);
         assert!(validate_signing_args(&args).is_ok());
 
-        let with_script = Cli::try_parse_from([
-            "truapi-host",
-            "signing-host",
-            "--serve",
-            "--script",
-            "smoke.ts",
-        ])
+		let with_script =
+			Cli::try_parse_from(["truapi-host", "signing-host", "--serve", "--script", "smoke.ts"])
         .expect("serve with a script should parse");
         let Command::SigningHost(args) = with_script.command else {
             panic!("expected signing-host command");
@@ -5122,13 +4800,7 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
     #[test]
     fn log_levels_display_in_lowercase() {
         assert_eq!(
-            [
-                LogLevel::Error,
-                LogLevel::Warn,
-                LogLevel::Info,
-                LogLevel::Debug,
-                LogLevel::Trace,
-            ]
+			[LogLevel::Error, LogLevel::Warn, LogLevel::Info, LogLevel::Debug, LogLevel::Trace,]
             .map(|level| level.to_string()),
             ["error", "warn", "info", "debug", "trace"]
         );
@@ -5141,11 +4813,7 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
 
         assert_eq!(
             (filter.to_string(), displayed, fallback),
-            (
-                "truapi=trace,warn".to_string(),
-                "warn,truapi=trace".to_string(),
-                "debug".to_string()
-            )
+			("truapi=trace,warn".to_string(), "warn,truapi=trace".to_string(), "debug".to_string())
         );
     }
 
@@ -5158,10 +4826,7 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
         ] {
             let cli = Cli::try_parse_from(arguments).expect("host command should parse");
 
-            assert_eq!(
-                command_base_path(&cli.command),
-                PathBuf::from("custom-state/v2")
-            );
+			assert_eq!(command_base_path(&cli.command), PathBuf::from("custom-state/v2"));
         }
     }
 
@@ -5204,10 +4869,7 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
         controller.set(LogLevel::Debug)?;
 
         assert_eq!(
-            (
-                *reloaded.lock().expect("reload observation lock"),
-                load_log_level(temporary.path())?,
-            ),
+			(*reloaded.lock().expect("reload observation lock"), load_log_level(temporary.path())?,),
             (Some(LogLevel::Debug), Some(LogLevel::Debug))
         );
         Ok(())

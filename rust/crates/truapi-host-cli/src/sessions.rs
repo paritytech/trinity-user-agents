@@ -1,8 +1,10 @@
 //! Network-scoped signing-host session directories and current selection.
 
-use std::fs;
-use std::fs::OpenOptions;
-use std::path::{Component, Path, PathBuf};
+use std::{
+	fs,
+	fs::OpenOptions,
+	path::{Component, Path, PathBuf},
+};
 
 use anyhow::{Context, Result, bail};
 use fs2::FileExt;
@@ -79,12 +81,7 @@ impl PairedHost {
         encryption_public_key: [u8; 32],
         metadata: PairedHostMetadata,
     ) -> Self {
-        Self {
-            version: PAIRED_HOST_VERSION,
-            statement_account_id,
-            encryption_public_key,
-            metadata,
-        }
+		Self { version: PAIRED_HOST_VERSION, statement_account_id, encryption_public_key, metadata }
     }
 
     /// Return the statement account ID that uniquely identifies this host.
@@ -112,10 +109,7 @@ struct PairedHostStore {
 
 impl Default for PairedHostStore {
     fn default() -> Self {
-        Self {
-            version: PAIRED_HOST_STORE_VERSION,
-            paired_hosts: Vec::new(),
-        }
+		Self { version: PAIRED_HOST_STORE_VERSION, paired_hosts: Vec::new() }
     }
 }
 
@@ -173,13 +167,7 @@ struct SessionInfo {
 
 impl Default for SessionInfo {
     fn default() -> Self {
-        Self {
-            version: 1,
-            user_id: None,
-            account_name: None,
-            last_script: None,
-            created_as: None,
-        }
+		Self { version: 1, user_id: None, account_name: None, last_script: None, created_as: None }
     }
 }
 
@@ -249,7 +237,7 @@ impl Drop for SessionPromotion {
             Err(error) => {
                 tracing::error!(%error, path = %metadata.display(), "failed to restore session metadata");
                 false
-            }
+			},
         };
         for (source, target) in self.moved_paths.iter().rev() {
             if source.exists() {
@@ -260,9 +248,8 @@ impl Drop for SessionPromotion {
                 restored = false;
             }
         }
-        if self.created_target
-            && restored
-            && let Err(error) = fs::remove_dir_all(&self.profile.path)
+		if self.created_target &&
+			restored && let Err(error) = fs::remove_dir_all(&self.profile.path)
         {
             tracing::error!(%error, path = %self.profile.path.display(), "failed to remove uncommitted session profile");
         }
@@ -285,12 +272,7 @@ impl SessionCatalog {
         let role_path = network_path.join("signing-host");
         fs::create_dir_all(&role_path)
             .with_context(|| format!("create session root {}", role_path.display()))?;
-        Ok(Self {
-            base_path,
-            network_id: network_id.to_string(),
-            network_path,
-            role_path,
-        })
+		Ok(Self { base_path, network_id: network_id.to_string(), network_path, role_path })
     }
 
     pub fn profile(&self, name: &str) -> Result<SessionProfile> {
@@ -340,17 +322,12 @@ impl SessionCatalog {
         let mut provisioned: Vec<String> = self
             .list()?
             .into_iter()
-            .filter(|name| {
-                self.profile(name)
-                    .is_ok_and(|profile| profile.is_provisioned())
-            })
+			.filter(|name| self.profile(name).is_ok_and(|profile| profile.is_provisioned()))
             .collect();
         Ok(match provisioned.len() {
             0 => CurrentSession::Fresh,
             1 => CurrentSession::Recovered(provisioned.remove(0)),
-            _ => CurrentSession::Ambiguous {
-                candidates: provisioned,
-            },
+			_ => CurrentSession::Ambiguous { candidates: provisioned },
         })
     }
 
@@ -369,9 +346,9 @@ impl SessionCatalog {
         for candidate in self.list()? {
             let profile = self.profile(&candidate)?;
             let info = read_session_info(&profile.path)?;
-            if (profile.is_provisioned() || info.account_name.is_some())
-                && (candidate == name
-                    || prefix
+			if (profile.is_provisioned() || info.account_name.is_some()) &&
+				(candidate == name ||
+					prefix
                         .as_deref()
                         .is_some_and(|prefix| username_base(&candidate) == Some(prefix)))
             {
@@ -399,23 +376,24 @@ impl SessionCatalog {
         match latest.as_slice() {
             [] if numbered => {
                 bail!("session {name:?} was not found; use /session --list to see saved sessions")
-            }
+			},
             [] => Ok(name.to_string()),
             [candidate] => Ok(candidate.clone()),
-            _ => bail!(
+			_ => {
+				bail!(
                 "sessions {} have the same creation time; select an exact session name",
                 latest.join(", ")
-            ),
+				)
+			},
         }
     }
 
     pub fn set_current(&self, name: &str) -> Result<()> {
         let profile = self.ensure_profile(name)?;
         let path = self.role_path.join(CURRENT_SESSION_FILE);
-        let temporary = self.role_path.join(format!(
-            ".{CURRENT_SESSION_FILE}.{}.tmp",
-            std::process::id()
-        ));
+		let temporary = self
+			.role_path
+			.join(format!(".{CURRENT_SESSION_FILE}.{}.tmp", std::process::id()));
         fs::write(&temporary, format!("{}\n", profile.name))
             .with_context(|| format!("write current session {}", temporary.display()))?;
         fs::rename(&temporary, &path)
@@ -477,7 +455,7 @@ impl SessionCatalog {
             SessionClearTarget::Named(name) => {
                 resolved = SessionClearTarget::Named(self.resolve_session_name(name)?);
                 &resolved
-            }
+			},
             SessionClearTarget::All => target,
         };
         self.validate_clear_target(target)?;
@@ -493,7 +471,7 @@ impl SessionCatalog {
                 }
                 accounts::remove_managed_accounts(&self.base_path, &self.network_id, Some(name))?;
                 Ok(vec![name.clone()])
-            }
+			},
             SessionClearTarget::All => {
                 let names = self.list()?;
                 for name in &names {
@@ -502,7 +480,7 @@ impl SessionCatalog {
                 remove_dir_if_exists(&self.role_path)?;
                 accounts::remove_managed_accounts(&self.base_path, &self.network_id, None)?;
                 Ok(names)
-            }
+			},
         }
     }
 
@@ -558,7 +536,7 @@ impl SessionCatalog {
                 Err(error) => {
                     return Err(error)
                         .with_context(|| format!("read session metadata {}", metadata.display()));
-                }
+				},
             };
             if profile.path == self.role_path {
                 fs::create_dir(&target_path)
@@ -582,9 +560,7 @@ impl SessionCatalog {
     }
 
     pub fn cached_user_id(&self, profile: &SessionProfile) -> Result<Option<String>> {
-        Ok(read_session_info(&profile.path)?
-            .user_id
-            .filter(|user_id| !user_id.is_empty()))
+		Ok(read_session_info(&profile.path)?.user_id.filter(|user_id| !user_id.is_empty()))
     }
 
     pub fn store_user_id(&self, profile: &SessionProfile, user_id: &str) -> Result<()> {
@@ -598,9 +574,7 @@ impl SessionCatalog {
 
     /// Return the exact local account record bound to this durable session.
     pub fn cached_account_name(&self, profile: &SessionProfile) -> Result<Option<String>> {
-        Ok(read_session_info(&profile.path)?
-            .account_name
-            .filter(|name| !name.is_empty()))
+		Ok(read_session_info(&profile.path)?.account_name.filter(|name| !name.is_empty()))
     }
 
     /// Persist the username and account record together so restart cannot fall
@@ -661,9 +635,7 @@ impl SessionCatalog {
         } else {
             store.paired_hosts.push(paired_host);
         }
-        store
-            .paired_hosts
-            .sort_by_key(PairedHost::statement_account_id);
+		store.paired_hosts.sort_by_key(PairedHost::statement_account_id);
         write_paired_host_store(&profile.path, &store)
     }
 
@@ -710,7 +682,7 @@ fn remove_file_if_exists(path: &Path) -> Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => {
             Err(error).with_context(|| format!("clear session pointer {}", path.display()))
-        }
+		},
     }
 }
 
@@ -795,10 +767,10 @@ fn read_session_info(session_path: &Path) -> Result<SessionInfo> {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(SessionInfo::default());
-        }
+		},
         Err(error) => {
             return Err(error).with_context(|| format!("read session metadata {}", path.display()));
-        }
+		},
     };
     serde_json::from_str(&text)
         .with_context(|| format!("decode session metadata {}", path.display()))
@@ -823,10 +795,10 @@ fn read_paired_host_store(session_path: &Path) -> Result<PairedHostStore> {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(PairedHostStore::default());
-        }
+		},
         Err(error) => {
             return Err(error).with_context(|| format!("read paired hosts {}", path.display()));
-        }
+		},
     };
     let store: PairedHostStore = serde_json::from_str(&text)
         .with_context(|| format!("decode paired hosts {}", path.display()))?;
@@ -888,10 +860,8 @@ pub fn validate_name(name: &str) -> Result<(), String> {
     if !bytes.all(|byte| {
         byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
     }) {
-        return Err(
-            "session name may contain only lowercase letters, digits, `.`, `_`, and `-`"
-                .to_string(),
-        );
+		return Err("session name may contain only lowercase letters, digits, `.`, `_`, and `-`"
+			.to_string());
     }
     if matches!(name, "." | "..") {
         return Err("session name cannot be `.` or `..`".to_string());
@@ -925,34 +895,28 @@ pub fn lite_username_prefix(name: &str) -> Option<String> {
     if name == DEFAULT_SESSION_NAME {
         return None;
     }
-    let prefix: String = name
-        .bytes()
-        .filter(u8::is_ascii_lowercase)
-        .map(char::from)
-        .collect();
+	let prefix: String = name.bytes().filter(u8::is_ascii_lowercase).map(char::from).collect();
     Some(prefix)
 }
 
 fn username_base(name: &str) -> Option<&str> {
-    name.rsplit_once('.')
-        .filter(|_| is_lite_label(name))
-        .map(|(base, _)| base)
+	name.rsplit_once('.').filter(|_| is_lite_label(name)).map(|(base, _)| base)
 }
 
 fn absolute_path(path: PathBuf) -> Result<PathBuf> {
     if path.is_absolute() {
         return Ok(path);
     }
-    Ok(std::env::current_dir()
-        .context("resolve current directory")?
-        .join(path))
+	Ok(std::env::current_dir().context("resolve current directory")?.join(path))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Barrier, mpsc};
-    use std::time::Duration;
+	use std::{
+		sync::{Arc, Barrier, mpsc},
+		time::Duration,
+	};
     use tempfile::tempdir;
 
     #[test]
@@ -986,18 +950,11 @@ mod tests {
         let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
         catalog.set_current("alice")?;
 
-        assert_eq!(
-            catalog.current_session()?,
-            CurrentSession::Pointed("alice".to_string())
-        );
+		assert_eq!(catalog.current_session()?, CurrentSession::Pointed("alice".to_string()));
         assert_eq!(catalog.list()?, vec!["alice"]);
         let profile = catalog.profile("alice")?;
         assert!(profile.path.ends_with("testnet/alice_signing_host"));
-        assert!(
-            profile
-                .product_storage_dir
-                .ends_with("testnet/alice_signing_host/storage")
-        );
+		assert!(profile.product_storage_dir.ends_with("testnet/alice_signing_host/storage"));
         assert_eq!(profile.path, profile.account_base_path);
         Ok(())
     }
@@ -1010,14 +967,8 @@ mod tests {
 
         catalog.store_signer_binding(&profile, "alice.01", "imported")?;
 
-        assert_eq!(
-            catalog.cached_user_id(&profile)?.as_deref(),
-            Some("alice.01")
-        );
-        assert_eq!(
-            catalog.cached_account_name(&profile)?.as_deref(),
-            Some("imported")
-        );
+		assert_eq!(catalog.cached_user_id(&profile)?.as_deref(), Some("alice.01"));
+		assert_eq!(catalog.cached_account_name(&profile)?.as_deref(), Some("imported"));
         Ok(())
     }
 
@@ -1030,10 +981,7 @@ mod tests {
         catalog.store_account_binding(&profile, "imported")?;
 
         assert_eq!(catalog.cached_user_id(&profile)?, None);
-        assert_eq!(
-            catalog.cached_account_name(&profile)?.as_deref(),
-            Some("imported")
-        );
+		assert_eq!(catalog.cached_account_name(&profile)?.as_deref(), Some("imported"));
         Ok(())
     }
 
@@ -1052,16 +1000,10 @@ mod tests {
 
         assert_eq!(catalog.paired_hosts(&profile)?, vec![first, second]);
         assert_eq!(
-            (
-                catalog.cached_user_id(&profile)?,
-                catalog.cached_account_name(&profile)?,
-            ),
+			(catalog.cached_user_id(&profile)?, catalog.cached_account_name(&profile)?,),
             (Some("alice.dot".to_string()), Some("imported".to_string()))
         );
-        assert_eq!(
-            fs::read(profile.path.join(SESSION_INFO_FILE))?,
-            session_metadata
-        );
+		assert_eq!(fs::read(profile.path.join(SESSION_INFO_FILE))?, session_metadata);
         let metadata: serde_json::Value =
             serde_json::from_slice(&fs::read(profile.path.join(PAIRED_HOSTS_FILE))?)?;
         assert_eq!(metadata["version"], 1);
@@ -1115,16 +1057,10 @@ mod tests {
 
         assert_eq!(catalog.paired_hosts(&profile)?, vec![second]);
         assert_eq!(
-            (
-                catalog.cached_user_id(&profile)?,
-                catalog.cached_account_name(&profile)?,
-            ),
+			(catalog.cached_user_id(&profile)?, catalog.cached_account_name(&profile)?,),
             (Some("alice.dot".to_string()), Some("imported".to_string()))
         );
-        assert_eq!(
-            fs::read(profile.path.join(SESSION_INFO_FILE))?,
-            session_metadata
-        );
+		assert_eq!(fs::read(profile.path.join(SESSION_INFO_FILE))?, session_metadata);
         Ok(())
     }
 
@@ -1191,16 +1127,10 @@ mod tests {
         catalog.store_paired_host(&profile, paired_host(1, 11, "first"))?;
 
         assert_eq!(
-            (
-                catalog.cached_user_id(&profile)?,
-                catalog.cached_account_name(&profile)?,
-            ),
+			(catalog.cached_user_id(&profile)?, catalog.cached_account_name(&profile)?,),
             (Some("alice.dot".to_string()), Some("imported".to_string()))
         );
-        assert_eq!(
-            fs::read(profile.path.join(SESSION_INFO_FILE))?,
-            legacy_metadata
-        );
+		assert_eq!(fs::read(profile.path.join(SESSION_INFO_FILE))?, legacy_metadata);
         Ok(())
     }
 
@@ -1221,11 +1151,7 @@ mod tests {
         fs::write(&path, &unsupported)?;
 
         assert!(catalog.paired_hosts(&profile).is_err());
-        assert!(
-            catalog
-                .store_paired_host(&profile, paired_host(2, 22, "second"))
-                .is_err()
-        );
+		assert!(catalog.store_paired_host(&profile, paired_host(2, 22, "second")).is_err());
         assert_eq!(fs::read(path)?, unsupported);
         Ok(())
     }
@@ -1254,10 +1180,7 @@ mod tests {
         fs::write(bob.path.join("state"), "bob")?;
         catalog.set_current("alice")?;
 
-        assert_eq!(
-            catalog.clear(&SessionClearTarget::Named("alice".to_string()))?,
-            vec!["alice"]
-        );
+		assert_eq!(catalog.clear(&SessionClearTarget::Named("alice".to_string()))?, vec!["alice"]);
 
         assert!(!alice.path.exists());
         assert!(bob.path.exists());
@@ -1299,14 +1222,9 @@ mod tests {
         let temporary = tempdir()?;
         let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
 
-        let error = catalog
-            .clear(&SessionClearTarget::Named("alice".to_string()))
-            .unwrap_err();
+		let error = catalog.clear(&SessionClearTarget::Named("alice".to_string())).unwrap_err();
 
-        assert_eq!(
-            error.to_string(),
-            "session `alice` does not exist; use /session --list"
-        );
+		assert_eq!(error.to_string(), "session `alice` does not exist; use /session --list");
         Ok(())
     }
 
@@ -1337,11 +1255,7 @@ mod tests {
 
         assert_eq!(profile.account_base_path, temporary.path());
         assert!(profile.path.ends_with("testnet/signing-host"));
-        assert!(
-            profile
-                .product_storage_dir
-                .ends_with("testnet/signing-host/storage/default")
-        );
+		assert!(profile.product_storage_dir.ends_with("testnet/signing-host/storage/default"));
         Ok(())
     }
 
@@ -1397,14 +1311,8 @@ mod tests {
         fs::write(&replacement, "console.log('replacement');")?;
         store_session_last_script(&profile.path, &replacement)?;
 
-        assert_eq!(
-            catalog.cached_user_id(&profile)?.as_deref(),
-            Some("alice.dot")
-        );
-        assert_eq!(
-            catalog.last_script(&profile)?.as_deref(),
-            Some(replacement.as_path())
-        );
+		assert_eq!(catalog.cached_user_id(&profile)?.as_deref(), Some("alice.dot"));
+		assert_eq!(catalog.last_script(&profile)?.as_deref(), Some(replacement.as_path()));
         let metadata = fs::read_to_string(profile.path.join(SESSION_INFO_FILE))?;
         assert!(metadata.contains("\"user_id\": \"alice.dot\""));
         assert!(metadata.contains("\"last_script\": \"replacement.ts\""));
@@ -1441,10 +1349,7 @@ mod tests {
 
         store_session_last_script(&profile.path, &script)?;
 
-        assert_eq!(
-            catalog.last_script(&profile)?.as_deref(),
-            Some(script.as_path())
-        );
+		assert_eq!(catalog.last_script(&profile)?.as_deref(), Some(script.as_path()));
         let metadata = fs::read_to_string(profile.path.join(SESSION_INFO_FILE))?;
         assert!(metadata.contains(script.to_str().context("temporary path is not UTF-8")?));
         Ok(())
@@ -1459,10 +1364,7 @@ mod tests {
         catalog.set_current("alice.01")?;
         fs::remove_file(catalog.role_path.join(CURRENT_SESSION_FILE))?;
 
-        assert_eq!(
-            catalog.current_session()?,
-            CurrentSession::Recovered("alice.01".to_string())
-        );
+		assert_eq!(catalog.current_session()?, CurrentSession::Recovered("alice.01".to_string()));
         Ok(())
     }
 
@@ -1475,10 +1377,7 @@ mod tests {
         catalog.set_current("alice.01")?;
         fs::write(catalog.role_path.join(CURRENT_SESSION_FILE), "gone.99\n")?;
 
-        assert_eq!(
-            catalog.current_session()?,
-            CurrentSession::Recovered("alice.01".to_string())
-        );
+		assert_eq!(catalog.current_session()?, CurrentSession::Recovered("alice.01".to_string()));
         Ok(())
     }
 
@@ -1513,10 +1412,8 @@ mod tests {
 
     #[test]
     fn a_username_prefix_selects_creation_order_instead_of_the_numerical_suffix() -> Result<()> {
-        for (first, second) in [
-            ("workbench.42", "workbench.73"),
-            ("workbench.73", "workbench.42"),
-        ] {
+		for (first, second) in [("workbench.42", "workbench.73"), ("workbench.73", "workbench.42")]
+		{
             let temporary = tempdir()?;
             let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
             saved_session(&catalog, first, None, 100)?;
@@ -1549,10 +1446,7 @@ mod tests {
                 fs::remove_file(broken.account_base_path.join("accounts.json"))?;
             }
             assert_eq!(
-                catalog
-                    .resolve_session_name("workbench")
-                    .unwrap_err()
-                    .to_string(),
+				catalog.resolve_session_name("workbench").unwrap_err().to_string(),
                 "account \"missing\" not found for testnet"
             );
         }
@@ -1567,16 +1461,10 @@ mod tests {
         saved_session(&catalog, "workbench.73", None, 100)?;
 
         assert_eq!(
-            catalog
-                .resolve_session_name("workbench")
-                .unwrap_err()
-                .to_string(),
+			catalog.resolve_session_name("workbench").unwrap_err().to_string(),
             "sessions workbench.42, workbench.73 have the same creation time; select an exact session name"
         );
-        assert_eq!(
-            catalog.resolve_session_name("workbench.42")?,
-            "workbench.42"
-        );
+		assert_eq!(catalog.resolve_session_name("workbench.42")?, "workbench.42");
         Ok(())
     }
 
@@ -1634,10 +1522,7 @@ mod tests {
         let catalog = SessionCatalog::new(temporary.path().to_path_buf(), "testnet")?;
         let provisional = catalog.ensure_profile("worker-0")?;
         let promoted = catalog.promote_to_user(&provisional, "alice.01")?;
-        fs::write(
-            promoted.path.join("accounts.json"),
-            r#"{"version":1,"accounts":[]}"#,
-        )?;
+		fs::write(promoted.path.join("accounts.json"), r#"{"version":1,"accounts":[]}"#)?;
 
         let cleared = catalog.clear(&SessionClearTarget::Named("worker-0".to_string()))?;
 

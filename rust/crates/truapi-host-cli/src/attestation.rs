@@ -12,8 +12,7 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures_util::{StreamExt as _, TryStreamExt as _, stream};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -32,8 +31,7 @@ use truapi::latest::GenericError;
 use truapi::platform::IdentityBackendHost;
 use truapi::{LocalIdentityContext, SigningHostRuntime};
 
-use crate::dotns_read::AssetHubReader;
-use crate::network::NetworkConfig;
+use crate::{dotns_read::AssetHubReader, network::NetworkConfig};
 
 /// Env var carrying an optional bearer token for the identity backend.
 /// Set it to reuse a token minted elsewhere. Unset, the CLI runs the sr25519
@@ -170,9 +168,7 @@ async fn backend_token(
     let token = mint_backend_token(client, backend_base, auth).await?;
     auth.ensure_current()?;
     let token = {
-        let mut tokens = BACKEND_TOKENS
-            .lock()
-            .expect("backend token cache mutex poisoned");
+		let mut tokens = BACKEND_TOKENS.lock().expect("backend token cache mutex poisoned");
         if let Some(existing) = tokens.iter().find(|token| {
             token.backend_base == backend_base && token.auth_client_id == auth_client_id
         }) {
@@ -186,11 +182,7 @@ async fn backend_token(
             token
         }
     };
-    Ok(BackendToken {
-        value: token,
-        source: BackendTokenSource::Cache,
-        auth_client_id,
-    })
+	Ok(BackendToken { value: token, source: BackendTokenSource::Cache, auth_client_id })
 }
 
 fn evict_rejected_backend_token(backend_base: &str, auth_client_id: &[u8; 32], rejected: &str) {
@@ -198,9 +190,9 @@ fn evict_rejected_backend_token(backend_base: &str, auth_client_id: &[u8; 32], r
         .lock()
         .expect("backend token cache mutex poisoned")
         .retain(|token| {
-            token.backend_base != backend_base
-                || token.auth_client_id != *auth_client_id
-                || token.value != rejected
+			token.backend_base != backend_base ||
+				token.auth_client_id != *auth_client_id ||
+				token.value != rejected
         });
 }
 
@@ -226,9 +218,7 @@ async fn mint_backend_token(
         .and_then(Value::as_str)
         .context("challenge response missing 'challenge' field")?
         .to_string();
-    let challenge_bytes = BASE64
-        .decode(&challenge)
-        .context("challenge is not valid base64")?;
+	let challenge_bytes = BASE64.decode(&challenge).context("challenge is not valid base64")?;
 
     let payload = b"{}";
     let (client_id, proof) = auth.sign_challenge(&challenge_bytes)?;
@@ -318,9 +308,7 @@ pub async fn lite_username_available(
     username_base: &str,
 ) -> Result<bool> {
     let backend_base = network.identity_backend_base;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()?;
+	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
     let url = format!("{backend_base}/usernames/available");
     let body = json!({ "usernames": [username_base] });
     let response = send_with_backend_auth(
@@ -339,39 +327,28 @@ pub async fn lite_username_available(
         let text = response.text().await.unwrap_or_default();
         bail!("username availability check failed for {username_base} ({status}): {text}");
     }
-    let body: Value = response
-        .json()
-        .await
-        .context("decoding availability response")?;
+	let body: Value = response.json().await.context("decoding availability response")?;
     Ok(availability_status(&body, username_base) == Some("AVAILABLE"))
 }
 
 /// Reads one base's status out of the availability response, a flat
 /// `{base: "AVAILABLE" | …}` map.
 fn availability_status<'a>(body: &'a Value, username_base: &str) -> Option<&'a str> {
-    body.get(username_base).and_then(Value::as_str).or_else(|| {
-        body.get("value")?
-            .get(username_base)?
-            .get("status")?
-            .as_str()
-    })
+	body.get(username_base)
+		.and_then(Value::as_str)
+		.or_else(|| body.get("value")?.get(username_base)?.get("status")?.as_str())
 }
 
 /// Registers (or confirms) the signing host's lite username. Waits until the
 /// dotNS contracts on Asset Hub record it. Returns the lite username assigned on
 /// chain, including its discriminator.
 pub async fn attest(config: &AttestConfig) -> Result<String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()?;
+	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
 
     let mut reader = AssetHubReader::connect(&config.asset_hub_ws).await?;
     // Timestamping the reservation signature with Asset Hub chain time. The
     // gateway rejects values ahead of the chain.
-    let signed_at = reader
-        .timestamp_secs()
-        .await
-        .context("read Asset Hub Timestamp.Now")?;
+	let signed_at = reader.timestamp_secs().await.context("read Asset Hub Timestamp.Now")?;
 
     // A reserved base name that is already registered can never be claimed,
     // yet the reservation would hold that stem's queue for the whole
@@ -413,9 +390,7 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 
     let identity = wait_for_dotns_username(&mut reader, &registration.candidate_public_key).await?;
     debug!("lite username registered and confirmed on-chain");
-    identity
-        .lite_username
-        .context("registered dotNS identity has no lite username")
+	identity.lite_username.context("registered dotNS identity has no lite username")
 }
 
 /// Resolves the on-chain lite username for an already-attested signer: the
@@ -617,9 +592,7 @@ pub async fn lookup_backend_username(
 ) -> Result<Option<String>> {
     const SEARCH_CONCURRENCY: usize = 4;
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()?;
+	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
     let matches = stream::iter(b'a'..=b'z')
         .map(|initial| {
             search_backend_prefix(
@@ -638,10 +611,12 @@ pub async fn lookup_backend_username(
     match matches.len() {
         0 => Ok(None),
         1 => Ok(matches.into_iter().next()),
-        _ => bail!(
+		_ => {
+			bail!(
             "identity backend returned multiple assigned usernames for {candidate_account_id}: {}",
             matches.into_iter().collect::<Vec<_>>().join(", ")
-        ),
+			)
+		},
     }
 }
 
@@ -724,21 +699,18 @@ pub async fn check_identity(network: NetworkConfig, entropy: &[u8]) -> Result<()
     let identity = derive_identity_keypair(entropy, network.network_suffix)
         .map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
     let mut reader = AssetHubReader::connect(network.asset_hub_ws).await?;
-    let identity_path = format!(
-        "//product//{}/index_bytes(0)",
-        identity_product_id(network.network_suffix)
-    );
+	let identity_path =
+		format!("//product//{}/index_bytes(0)", identity_product_id(network.network_suffix));
 
-    for (label, public) in [
-        ("<root>", root.public.to_bytes()),
-        (identity_path.as_str(), identity.public.to_bytes()),
-    ] {
+	for (label, public) in
+		[("<root>", root.public.to_bytes()), (identity_path.as_str(), identity.public.to_bytes())]
+	{
         let address = product_public_key_to_address(public);
         match reader.dotns_identity(&public).await {
             Ok(identity) => match identity.full_username.or(identity.lite_username) {
                 Some(username) => {
                     println!("IDENTITY_FOUND path={label} account={address} username={username}")
-                }
+				},
                 None => println!("IDENTITY_NONE path={label} account={address}"),
             },
             Err(err) => println!("IDENTITY_ERROR path={label} account={address} error={err:#}"),
@@ -828,18 +800,16 @@ async fn wait_for_dotns_username(
                     crate::terminal_ui::ActivityState::Running,
                 );
                 return Ok(identity);
-            }
+			},
             Ok(_) => {
                 crate::terminal_ui::update_activity(
                     "signer",
                     "Setting up signer",
-                    Some(format!(
-                        "Waiting for dotNS username · attempt {attempt}/{MAX_ATTEMPTS}"
-                    )),
+					Some(format!("Waiting for dotNS username · attempt {attempt}/{MAX_ATTEMPTS}")),
                     crate::terminal_ui::ActivityState::Running,
                 );
                 debug!("dotNS username poll {attempt}/{MAX_ATTEMPTS}: empty");
-            }
+			},
             Err(err) => warn!(%err, "dotNS username poll attempt {attempt} failed"),
         }
         if attempt < MAX_ATTEMPTS {
@@ -852,8 +822,10 @@ async fn wait_for_dotns_username(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-    use tokio::net::TcpListener;
+	use tokio::{
+		io::{AsyncReadExt as _, AsyncWriteExt as _},
+		net::TcpListener,
+	};
 
     /// The availability response is a flat `{base: status}` map.
     #[test]
@@ -908,9 +880,7 @@ mod tests {
         let entropy = [7u8; 16];
         let registration =
             build_lite_registration(&entropy, "paseo", [9u8; 32], "testing", None, 123)?;
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()?;
+		let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
         let config = AttestConfig {
             backend_base: backend_base.clone(),
             asset_hub_ws: String::new(),
@@ -945,16 +915,14 @@ mod tests {
             } else if request.starts_with("POST /api/v1/auth/token ") {
                 let client_id = request_header(&request, "Auth-ClientId")
                     .context("auth token request missing Auth-ClientId")?;
-                let bytes = BASE64
-                    .decode(client_id)
-                    .context("Auth-ClientId is not base64")?;
+				let bytes = BASE64.decode(client_id).context("Auth-ClientId is not base64")?;
                 let public_key: [u8; 32] = bytes.try_into().map_err(|bytes: Vec<u8>| {
                     anyhow::anyhow!("Auth-ClientId is {} bytes", bytes.len())
                 })?;
                 authenticated_account = Some(product_public_key_to_address(public_key));
                 ("200 OK", r#"{"token":"candidate-token"}"#.to_string())
-            } else if request.starts_with("POST /api/v1/usernames ")
-                && lowercase.contains("authorization: bearer candidate-token")
+			} else if request.starts_with("POST /api/v1/usernames ") &&
+				lowercase.contains("authorization: bearer candidate-token")
             {
                 let payload = request
                     .split_once("\r\n\r\n")
@@ -975,10 +943,7 @@ mod tests {
                     )
                 }
             } else {
-                (
-                    "500 Internal Server Error",
-                    r#"{"error":"unexpected request"}"#.to_string(),
-                )
+				("500 Internal Server Error", r#"{"error":"unexpected request"}"#.to_string())
             };
             let response = format!(
                 "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -1003,9 +968,7 @@ mod tests {
         const OTHER_BASE: &str = "test://other-token";
         const SUBJECT: [u8; 32] = [1; 32];
         const OTHER_SUBJECT: [u8; 32] = [2; 32];
-        let mut tokens = BACKEND_TOKENS
-            .lock()
-            .expect("backend token cache mutex poisoned");
+		let mut tokens = BACKEND_TOKENS.lock().expect("backend token cache mutex poisoned");
         tokens.retain(|token| token.backend_base != BASE && token.backend_base != OTHER_BASE);
         tokens.push(CachedBackendToken {
             backend_base: BASE.to_string(),
@@ -1025,36 +988,30 @@ mod tests {
         drop(tokens);
 
         evict_rejected_backend_token(BASE, &SUBJECT, "newer-token");
-        assert!(
-            BACKEND_TOKENS
-                .lock()
-                .expect("backend token cache mutex poisoned")
-                .iter()
-                .any(|token| {
-                    token.backend_base == BASE
-                        && token.auth_client_id == SUBJECT
-                        && token.value == "stale"
-                })
-        );
+		assert!(BACKEND_TOKENS.lock().expect("backend token cache mutex poisoned").iter().any(
+			|token| {
+				token.backend_base == BASE &&
+					token.auth_client_id == SUBJECT &&
+					token.value == "stale"
+			}
+		));
 
         evict_rejected_backend_token(BASE, &SUBJECT, "stale");
-        let mut tokens = BACKEND_TOKENS
-            .lock()
-            .expect("backend token cache mutex poisoned");
+		let mut tokens = BACKEND_TOKENS.lock().expect("backend token cache mutex poisoned");
         assert!(
             tokens
                 .iter()
                 .all(|token| token.backend_base != BASE || token.auth_client_id != SUBJECT)
         );
         assert!(tokens.iter().any(|token| {
-            token.backend_base == BASE
-                && token.auth_client_id == OTHER_SUBJECT
-                && token.value == "other-subject"
+			token.backend_base == BASE &&
+				token.auth_client_id == OTHER_SUBJECT &&
+				token.value == "other-subject"
         }));
         assert!(tokens.iter().any(|token| {
-            token.backend_base == OTHER_BASE
-                && token.auth_client_id == SUBJECT
-                && token.value == "keep"
+			token.backend_base == OTHER_BASE &&
+				token.auth_client_id == SUBJECT &&
+				token.value == "keep"
         }));
         tokens.retain(|token| token.backend_base != BASE && token.backend_base != OTHER_BASE);
     }
@@ -1071,9 +1028,7 @@ mod tests {
             .to_bytes();
 
         {
-            let mut tokens = BACKEND_TOKENS
-                .lock()
-                .expect("backend token cache mutex poisoned");
+			let mut tokens = BACKEND_TOKENS.lock().expect("backend token cache mutex poisoned");
             tokens.retain(|token| token.backend_base != backend_base);
             tokens.push(CachedBackendToken {
                 backend_base: backend_base.clone(),
@@ -1082,9 +1037,7 @@ mod tests {
             });
         }
 
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()?;
+		let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
         let url = format!("{backend_base}/protected");
         let auth = BackendAuth::Entropy {
             entropy: &entropy,
@@ -1101,19 +1054,14 @@ mod tests {
         assert!(requests[1].starts_with("POST /api/v1/auth/challenges "));
         assert!(requests[2].starts_with("POST /api/v1/auth/token "));
         let encoded_client_id = BASE64.encode(auth_client_id);
-        assert_eq!(
-            request_header(&requests[2], "Auth-ClientId"),
-            Some(encoded_client_id.as_str())
-        );
+		assert_eq!(request_header(&requests[2], "Auth-ClientId"), Some(encoded_client_id.as_str()));
         assert!(requests[3].contains("authorization: Bearer fresh-token"));
 
-        let mut tokens = BACKEND_TOKENS
-            .lock()
-            .expect("backend token cache mutex poisoned");
+		let mut tokens = BACKEND_TOKENS.lock().expect("backend token cache mutex poisoned");
         assert!(tokens.iter().any(|token| {
-            token.backend_base == backend_base
-                && token.auth_client_id == auth_client_id
-                && token.value == "fresh-token"
+			token.backend_base == backend_base &&
+				token.auth_client_id == auth_client_id &&
+				token.value == "fresh-token"
         }));
         tokens.retain(|token| token.backend_base != backend_base);
         Ok(())
@@ -1127,23 +1075,20 @@ mod tests {
             let read = stream.read(&mut buffer).await?;
             let request = String::from_utf8_lossy(&buffer[..read]).to_string();
             let lowercase = request.to_ascii_lowercase();
-            let (status, body) = if request.starts_with("POST /api/v1/protected ")
-                && lowercase.contains("authorization: bearer expired-test-token")
+			let (status, body) = if request.starts_with("POST /api/v1/protected ") &&
+				lowercase.contains("authorization: bearer expired-test-token")
             {
                 ("401 Unauthorized", r#"{"title":"Invalid Token"}"#)
             } else if request.starts_with("POST /api/v1/auth/challenges ") {
                 ("200 OK", r#"{"challenge":"Y2hhbGxlbmdl"}"#)
             } else if request.starts_with("POST /api/v1/auth/token ") {
                 ("200 OK", r#"{"token":"fresh-token"}"#)
-            } else if request.starts_with("POST /api/v1/protected ")
-                && lowercase.contains("authorization: bearer fresh-token")
+			} else if request.starts_with("POST /api/v1/protected ") &&
+				lowercase.contains("authorization: bearer fresh-token")
             {
                 ("200 OK", r#"{"ok":true}"#)
             } else {
-                (
-                    "500 Internal Server Error",
-                    r#"{"error":"unexpected request"}"#,
-                )
+				("500 Internal Server Error", r#"{"error":"unexpected request"}"#)
             };
             let response = format!(
                 "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",

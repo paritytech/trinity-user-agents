@@ -15,8 +15,7 @@ use futures::stream::BoxStream;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, broadcast, mpsc};
 use tokio_stream::wrappers::BroadcastStream;
-use tokio_tungstenite::connect_async;
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{debug, warn};
 use truapi::latest as api;
 use truapi::platform::{ChainProvider, HopProvider, JsonRpcConnection, ProviderError};
@@ -400,7 +399,7 @@ impl JsonRpcConnection for WsJsonRpcConnection {
                     )) => {
                         warn!(dropped, "chain response subscriber lagged");
                         None
-                    }
+					},
                 }
             })
             .boxed()
@@ -494,10 +493,7 @@ mod tests {
             );
             for entry in config.host_chain_set().chains {
                 let expected = config.url_for_role(entry.identifier).unwrap_or_else(|| {
-                    panic!(
-                        "{} serves {:?} with no preset URL",
-                        config.id, entry.identifier
-                    )
+					panic!("{} serves {:?} with no preset URL", config.id, entry.identifier)
                 });
                 assert!(
                     provider.routes(&entry.genesis_hash),
@@ -537,10 +533,6 @@ mod tests {
             FALLBACK,
             "an endpoint that is not a role is excluded without the switch"
         );
-        assert_eq!(
-            widened.url_for(&optional[0].genesis),
-            optional[0].ws,
-            "and included with it"
-        );
+		assert_eq!(widened.url_for(&optional[0].genesis), optional[0].ws, "and included with it");
     }
 }

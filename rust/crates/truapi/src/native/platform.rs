@@ -1,5 +1,7 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+	Arc, Mutex,
+	atomic::{AtomicBool, Ordering},
+};
 
 use crate::platform::{
     AuthPresenter, ChainProvider, CoinageWalletHost, CoreStorage, CoreStorageKey,
@@ -10,21 +12,24 @@ use crate::platform::{
     ProductStorage, ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview,
     async_trait,
 };
-use futures::channel::mpsc;
-use futures::stream::{self, BoxStream, StreamExt};
+use futures::{
+	channel::mpsc,
+	stream::{self, BoxStream, StreamExt},
+};
 use parity_scale_codec::Encode;
 use truapi::v01;
 
-use crate::host_logic::worker::WorkerTransition;
-use crate::{DevicePairingObserver, PairedSsoPeer};
+use crate::{DevicePairingObserver, PairedSsoPeer, host_logic::worker::WorkerTransition};
 
-use super::callbacks::{
+use super::{
+	callbacks::{
     HostCallbacks, NativeChatCallbacks, NativeCoinageCallbacks, NativeContactsCallbacks,
     NativeGameCallbacks,
-    NativePocketCallbacks, NativePocketRemoval,
+		NativePocketCallbacks, NativePocketRemoval, NativeScannerCallbacks,
+	},
+	errors::HostRejection,
+	events::NativeEventBus,
 };
-use super::errors::HostRejection;
-use super::events::NativeEventBus;
 
 /// Host-selected process-wide native custody.
 pub struct NativeCoinageCallbackPlatform {
@@ -165,9 +170,7 @@ impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
     ) -> Result<crate::platform::HostContactMatches, v01::GenericError> {
         self.contacts
             .contacts(lookup.clone())
-            .map_err(|error| v01::GenericError {
-                reason: error.to_string(),
-            })
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
     }
 
     async fn pick_contact(
@@ -177,9 +180,28 @@ impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
         self.contacts
             .pick_contact(product.product_id.clone())
             .await
-            .map_err(|error| v01::GenericError {
-                reason: error.to_string(),
-            })
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+}
+
+/// [`crate::platform::ScannerPlatform`] served by host-provided
+/// [`NativeScannerCallbacks`]; constructed only when the host passed one.
+pub struct ScannerCallbackPlatform {
+	/// Host viewfinder.
+	pub scanner: Arc<dyn NativeScannerCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::ScannerPlatform for ScannerCallbackPlatform {
+	async fn scan_code(
+		&self,
+		product: &ProductContext,
+		request: &truapi::latest::HostScannerScanRequest,
+	) -> Result<crate::platform::HostScan, v01::GenericError> {
+		self.scanner
+			.scan_code(product.product_id.clone(), product.execution_kind, request.clone())
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
     }
 
     async fn pick_contacts(
@@ -224,8 +246,13 @@ pub struct CallbackPlatform {
 
 impl crate::host_logic::worker::WorkerDemandObserver for CallbackPlatform {
     fn worker_demand_changed(&self, product_id: &str, transition: WorkerTransition) {
-        self.callbacks
-            .worker_demand_changed(product_id.to_string(), transition);
+		self.callbacks.worker_demand_changed(product_id.to_string(), transition);
+	}
+}
+
+impl crate::durable::DurableWorkObserver for CallbackPlatform {
+	fn durable_work_changed(&self, pending: bool) {
+		self.callbacks.durable_work_changed(pending);
     }
 }
 
@@ -238,10 +265,8 @@ impl DevicePairingObserver for CallbackPlatform {
 #[async_trait]
 impl Navigation for CallbackPlatform {
     async fn navigate_to(&self, url: String) -> Result<(), v01::HostNavigateToError> {
-        self.callbacks.on_core_log(
-            "truapi.native.callback.navigate_to".to_string(),
-            url.clone(),
-        );
+		self.callbacks
+			.on_core_log("truapi.native.callback.navigate_to".to_string(), url.clone());
         self.callbacks.navigate_to(url).await
     }
 }
@@ -266,13 +291,9 @@ impl Notifications for CallbackPlatform {
     }
 
     async fn cancel_notification(&self, id: u32) -> Result<(), v01::GenericError> {
-        self.callbacks.on_core_log(
-            "truapi.native.callback.cancel_notification".to_string(),
-            id.to_string(),
-        );
         self.callbacks
-            .cancel_notification(id)
-            .map_err(v01::GenericError::from)
+			.on_core_log("truapi.native.callback.cancel_notification".to_string(), id.to_string());
+		self.callbacks.cancel_notification(id).map_err(v01::GenericError::from)
     }
 }
 
@@ -367,14 +388,10 @@ impl Features for CallbackPlatform {
     }
 
     async fn supported_chains(&self) -> Result<crate::platform::HostChainSet, v01::GenericError> {
-        self.callbacks.on_core_log(
-            "truapi.native.callback.supported_chains".to_string(),
-            String::new(),
-        );
-
         self.callbacks
-            .supported_chains()
-            .map_err(v01::GenericError::from)
+			.on_core_log("truapi.native.callback.supported_chains".to_string(), String::new());
+
+		self.callbacks.supported_chains().map_err(v01::GenericError::from)
     }
 }
 
@@ -389,11 +406,8 @@ impl ProductStorage for CallbackPlatform {
         key: String,
         value: Vec<u8>,
     ) -> Result<(), v01::HostLocalStorageReadError> {
-        self.callbacks
-            .local_storage_write(key.clone(), value.clone())
-            .await?;
-        self.storage_events
-            .notify_storage_changed(&key, Some(value));
+		self.callbacks.local_storage_write(key.clone(), value.clone()).await?;
+		self.storage_events.notify_storage_changed(&key, Some(value));
         Ok(())
     }
 
@@ -417,9 +431,7 @@ impl ProductStorage for CallbackPlatform {
                 .local_storage_read(key)
                 .await
                 .map(|value| v01::HostLocalStorageChangeItem { value })
-                .map_err(|error| v01::GenericError {
-                    reason: error.to_string(),
-                })
+				.map_err(|error| v01::GenericError { reason: error.to_string() })
         };
         stream::once(current).chain(rx).boxed()
     }
@@ -436,9 +448,7 @@ impl ProductOperations for CallbackPlatform {
             .begin_operation(product.product_id.clone(), label)
             .await
             .map(|id| v01::HostWorkerBeginOperationResponse { id })
-            .map_err(|error| v01::HostWorkerOperationError::Unknown {
-                reason: error.to_string(),
-            })
+			.map_err(|error| v01::HostWorkerOperationError::Unknown { reason: error.to_string() })
     }
 
     async fn end_operation(
@@ -449,9 +459,7 @@ impl ProductOperations for CallbackPlatform {
         self.callbacks
             .end_operation(product.product_id.clone(), id)
             .await
-            .map_err(|error| v01::HostWorkerOperationError::Unknown {
-                reason: error.to_string(),
-            })
+			.map_err(|error| v01::HostWorkerOperationError::Unknown { reason: error.to_string() })
     }
 }
 
@@ -533,7 +541,7 @@ impl JsonRpcConnection for NativeJsonRpcConnection {
                     "responses() called more than once".to_string(),
                 );
                 stream::empty().boxed()
-            }
+			},
         }
     }
 
@@ -568,16 +576,12 @@ impl ChainProvider for CallbackPlatform {
         genesis_hash: [u8; 32],
     ) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
         let close_generation = self.events.chain_close_generation();
-        let Some(connection_id) = self
-            .callbacks
-            .chain_connect(genesis_hash.to_vec())
-            .map_err(|rejection| ProviderError::Host {
-                reason: v01::GenericError::from(rejection).reason,
+		let Some(connection_id) =
+			self.callbacks.chain_connect(genesis_hash.to_vec()).map_err(|rejection| {
+				ProviderError::Host { reason: v01::GenericError::from(rejection).reason }
             })?
         else {
-            return Err(ProviderError::Host {
-                reason: "chain provider unavailable".to_string(),
-            });
+			return Err(ProviderError::Host { reason: "chain provider unavailable".to_string() });
         };
         let response_rx = self.events.register_chain(connection_id, close_generation);
         let registered = response_rx.is_some();
@@ -648,10 +652,8 @@ impl HopProvider for CallbackPlatform {
 
 impl AuthPresenter for CallbackPlatform {
     fn auth_state_changed(&self, state: crate::platform::AuthState) {
-        self.callbacks.on_core_log(
-            "truapi.native.callback.auth_state_changed".to_string(),
-            String::new(),
-        );
+		self.callbacks
+			.on_core_log("truapi.native.callback.auth_state_changed".to_string(), String::new());
         self.callbacks.auth_state_changed(state);
     }
 }
@@ -662,24 +664,17 @@ impl UserConfirmation for CallbackPlatform {
         &self,
         review: UserConfirmationReview,
     ) -> Result<PermissionDecision, v01::GenericError> {
-        self.callbacks.on_core_log(
-            "truapi.native.callback.confirm_permission".to_string(),
-            String::new(),
-        );
         self.callbacks
-            .confirm_permission(review)
-            .await
-            .map_err(v01::GenericError::from)
+			.on_core_log("truapi.native.callback.confirm_permission".to_string(), String::new());
+		self.callbacks.confirm_permission(review).await.map_err(v01::GenericError::from)
     }
 
     async fn confirm_user_action(
         &self,
         review: UserConfirmationReview,
     ) -> Result<bool, v01::GenericError> {
-        self.callbacks.on_core_log(
-            "truapi.native.callback.confirm_user_action".to_string(),
-            String::new(),
-        );
+		self.callbacks
+			.on_core_log("truapi.native.callback.confirm_user_action".to_string(), String::new());
         self.callbacks
             .confirm_user_action(review)
             .await
@@ -691,10 +686,7 @@ impl ThemeHost for CallbackPlatform {
     fn subscribe_theme(
         &self,
     ) -> BoxStream<'static, Result<v01::HostThemeSubscribeItem, v01::GenericError>> {
-        let current = self
-            .callbacks
-            .current_theme()
-            .map_err(v01::GenericError::from);
+		let current = self.callbacks.current_theme().map_err(v01::GenericError::from);
         self.events.subscribe_theme(current)
     }
 }
@@ -732,12 +724,8 @@ impl PreimageHost for CallbackPlatform {
         // and the subscription is lost, then await the current value lazily.
         let rx = self.events.subscribe_preimage_changes(key.clone());
         let callbacks = self.callbacks.clone();
-        let current = async move {
-            callbacks
-                .lookup_preimage(key)
-                .await
-                .map_err(v01::GenericError::from)
-        };
+		let current =
+			async move { callbacks.lookup_preimage(key).await.map_err(v01::GenericError::from) };
         stream::once(current).chain(rx).boxed()
     }
 }
@@ -762,12 +750,10 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
             .chat
             .create_room(request.room_id, request.name, request.icon)
             .await
-            .map_err(|error| v01::HostChatCreateRoomError::Unknown {
-                reason: error.to_string(),
-            })?;
+			.map_err(|error| v01::HostChatCreateRoomError::Unknown { reason: error.to_string() })?;
 
-        if status == v01::ChatRoomRegistrationStatus::New
-            && let Ok(rooms) = self.chat.list_rooms().await
+		if status == v01::ChatRoomRegistrationStatus::New &&
+			let Ok(rooms) = self.chat.list_rooms().await
         {
             self.events.notify_chat_rooms_changed(rooms);
         }
@@ -796,16 +782,28 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
     async fn post_chat_message(
         &self,
         _product: &ProductContext,
-        request: v01::HostChatPostMessageRequest,
-    ) -> Result<v01::HostChatPostMessageResponse, v01::HostChatPostMessageError> {
+		request: truapi::latest::HostChatPostMessageRequest,
+	) -> Result<truapi::latest::HostChatPostMessageResponse, truapi::latest::HostChatPostMessageError>
+	{
         let message_id = self
             .chat
-            .post_message(request.room_id, request.payload)
+			.post_message(request.room_id, request.payload, request.alt)
             .await
-            .map_err(|error| v01::HostChatPostMessageError::Unknown {
+			.map_err(|error| truapi::latest::HostChatPostMessageError::Unknown {
                 reason: error.to_string(),
             })?;
-        Ok(v01::HostChatPostMessageResponse { message_id })
+		Ok(truapi::latest::HostChatPostMessageResponse { message_id })
+	}
+
+	async fn set_chat_room_footer(
+		&self,
+		_product: &ProductContext,
+		request: v01::HostChatSetRoomFooterRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat
+			.set_room_footer(request.room_id, request.footer)
+			.await
+			.map_err(v01::GenericError::from)
     }
 
     fn subscribe_chat_rooms(
@@ -817,9 +815,7 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
         let changes = self.events.chat_room_changes();
         let chat = Arc::clone(&self.chat);
         stream::once(async move {
-            v01::HostChatListSubscribeItem {
-                rooms: chat.list_rooms().await.unwrap_or_default(),
-            }
+			v01::HostChatListSubscribeItem { rooms: chat.list_rooms().await.unwrap_or_default() }
         })
         .chain(changes)
         .map(Ok)
@@ -847,9 +843,7 @@ impl crate::platform::PocketPlatform for PocketCallbackPlatform {
             pocket
                 .list_cards()
                 .map(|cards| v01::HostPocketListSubscribeItem { cards })
-                .map_err(|error| v01::GenericError {
-                    reason: error.to_string(),
-                })
+				.map_err(|error| v01::GenericError { reason: error.to_string() })
         }))
     }
 
@@ -861,12 +855,7 @@ impl crate::platform::PocketPlatform for PocketCallbackPlatform {
         let unknown = |error: HostRejection| v01::HostPocketRemoveCardError::Unknown {
             reason: error.to_string(),
         };
-        match self
-            .pocket
-            .remove_card(request.card_id)
-            .await
-            .map_err(unknown)?
-        {
+		match self.pocket.remove_card(request.card_id).await.map_err(unknown)? {
             NativePocketRemoval::Privileged => Err(v01::HostPocketRemoveCardError::Privileged),
             // A card this host does not hold is already removed.
             NativePocketRemoval::Absent => Ok(()),
@@ -881,7 +870,7 @@ impl crate::platform::PocketPlatform for PocketCallbackPlatform {
                     }),
                 }
                 Ok(())
-            }
+			},
         }
     }
 }
@@ -900,20 +889,14 @@ impl crate::platform::GamePlatform for GameCallbackPlatform {
         _product: &ProductContext,
         starts_at: u64,
     ) -> Result<(), v01::GenericError> {
-        self.game
-            .schedule_reminder(starts_at)
-            .await
-            .map_err(v01::GenericError::from)
+		self.game.schedule_reminder(starts_at).await.map_err(v01::GenericError::from)
     }
 
     async fn cancel_game_reminder(
         &self,
         _product: &ProductContext,
     ) -> Result<(), v01::GenericError> {
-        self.game
-            .cancel_reminder()
-            .await
-            .map_err(v01::GenericError::from)
+		self.game.cancel_reminder().await.map_err(v01::GenericError::from)
     }
 }
 

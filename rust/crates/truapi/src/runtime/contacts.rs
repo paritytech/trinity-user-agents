@@ -358,10 +358,7 @@ mod tests {
     fn one_contact_has_one_handle_regardless_of_product() {
         // The point of the design: a handle is a durable shared id, so it takes
         // no product as input and cannot vary by caller.
-        assert_eq!(
-            contact_handle(&key(), &ALICE),
-            contact_handle(&key(), &ALICE)
-        );
+		assert_eq!(contact_handle(&key(), &ALICE), contact_handle(&key(), &ALICE));
     }
 
     #[test]
@@ -373,10 +370,7 @@ mod tests {
     fn two_users_have_different_handles_for_one_contact() {
         // Keyed per identity, so the same person is a different pseudonym to a
         // different user.
-        assert_ne!(
-            contact_handle(&key(), &ALICE),
-            contact_handle(&other_key(), &ALICE)
-        );
+		assert_ne!(contact_handle(&key(), &ALICE), contact_handle(&other_key(), &ALICE));
     }
 
     #[test]
@@ -462,11 +456,7 @@ mod tests {
                 account[..2].copy_from_slice(&byte.to_le_bytes());
                 account
             };
-            cache.insert(
-                contact_handle(&key(), &account),
-                account,
-                cache.generation(),
-            );
+			cache.insert(contact_handle(&key(), &account), account, cache.generation());
         }
         assert_eq!(
             cache.state().entries.len(),
@@ -505,9 +495,7 @@ mod tests {
         // Encoded width pins the payload: one discriminant plus 32 bytes leaves
         // no room for a name, an account, or a count to ride along.
         let picked = truapi::latest::ContactPickOutcome::Picked {
-            handle: truapi::latest::ContactHandle {
-                bytes: contact_handle(&key(), &ALICE),
-            },
+			handle: truapi::latest::ContactHandle { bytes: contact_handle(&key(), &ALICE) },
         };
         assert_eq!(picked.encode().len(), 33);
     }
@@ -515,15 +503,7 @@ mod tests {
     #[test]
     fn the_outcomes_that_disclose_nothing_encode_to_one_byte() {
         // Dismissed and NoContacts carry a discriminant and nothing else.
-        assert_eq!(
-            truapi::latest::ContactPickOutcome::Dismissed.encode().len(),
-            1
-        );
-        assert_eq!(
-            truapi::latest::ContactPickOutcome::NoContacts
-                .encode()
-                .len(),
-            1
-        );
+		assert_eq!(truapi::latest::ContactPickOutcome::Dismissed.encode().len(), 1);
+		assert_eq!(truapi::latest::ContactPickOutcome::NoContacts.encode().len(), 1);
     }
 }

@@ -11,10 +11,7 @@ use crate::Bytes32;
 /// build a valid-looking transfer to an address nobody controls. A handle is
 /// not an address, and the type is where that is said.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(
-    all(feature = "runtime", not(target_arch = "wasm32")),
-    derive(uniffi::Record)
-)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct ContactHandle {
     /// The handle's bytes.
     pub bytes: Bytes32,

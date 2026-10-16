@@ -53,15 +53,19 @@ it("preserves one-use permission decisions across the WASM callback", async () =
   };
   for (const decision of ["AllowOnce", "AllowAlways", "Deny"] as const) {
     const reviews: UserConfirmationReview[] = [];
-    const raw = createWasmRawCallbacks(makeHostCallbacks({
+    const raw = createWasmRawCallbacks(
+      makeHostCallbacks({
       userConfirmation: {
         confirmPermission: async (request) => {
           reviews.push(request);
           return decision;
         },
       },
-    }));
-    const encoded = await raw.confirmPermission(UserConfirmationReview.enc(review));
+      }),
+    );
+    const encoded = await raw.confirmPermission(
+      UserConfirmationReview.enc(review),
+    );
     expect({ decision: PermissionDecision.dec(encoded), reviews }).toEqual({
       decision,
       reviews: [review],
@@ -456,10 +460,7 @@ describe("createWasmRawCallbacks", () => {
                   review.value.resources[0]?.tag === "StatementStoreAllowance"
                 );
               case "PreimageSubmit":
-                calls.push([
-                  "confirmUserAction:PreimageSubmit",
-                  review.value.size,
-                ]);
+                calls.push(["confirmUserAction:PreimageSubmit", review.value.size]);
                 return review.value.size === 42n;
               default:
                 return false;
