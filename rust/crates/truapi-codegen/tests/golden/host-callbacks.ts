@@ -2139,10 +2139,10 @@ export interface ScannerPlatform {
  * Host-owned share sheet. Optional; a host without one leaves every product
  * share `Unsupported`. The Swift and Kotlin bridges follow the same rules.
  *
- * - Show the sheet over what is on screen, with the text as the only item.
- *   Never send the text anywhere by yourself.
- * - Answer `HostShare::NotVisible` for an App or Widget that is not on
- *   screen. A Worker reaching the host already passed the core's tap check.
+ * - Show the sheet over what is on screen, with the text as the only item. Never send the text
+ *   anywhere by yourself.
+ * - Answer `HostShare::NotVisible` for an App or Widget that is not on screen. A Worker reaching
+ *   the host already passed the core's tap check.
  * - Close the sheet when the core drops the future.
  */
 export interface SharePlatform {
