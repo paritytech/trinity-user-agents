@@ -200,7 +200,7 @@ Publishers MUST set `kind` to match the subname label the manifest is written un
 
 #### Funding configuration
 
-`includes.funding` is the one surface that carries a configuration object rather than a flag. Its presence means the worker serves Funding. The provider's worker answers quotes, and a Host asks every funding provider for every quote. What the provider moves comes from those quotes; `routes` can declare it up front so a Host can show what the provider serves before quotes arrive.
+`includes.funding` is the one surface that carries a configuration object rather than a flag. Its presence means the worker serves Funding; an omitted key or `"funding": null` means it does not. The provider's worker answers quotes, and a Host asks every funding provider for every quote. The funding providers are the ones the Host offers, bundled with it or resolved from their published names, whose Worker manifest declares `includes.funding`. What the provider moves comes from those quotes; `routes` can declare it up front so a Host can show what the provider serves before quotes arrive.
 
 ```typescript
 type FundingConfig = {
@@ -210,17 +210,19 @@ type FundingConfig = {
 type FundingRoute = {
   mode: 'CARD' | 'BANK' | 'CRYPTO';
   directions: ('In' | 'Out')[];  // In: into the user's balance. Out: out of it.
-  assets: string[];              // Symbols the user pays with (In) or receives (Out): ISO 4217 codes for CARD and BANK, token symbols for CRYPTO.
+  assets: string[];              // Symbols the user pays with (In) or receives (Out): uppercase ISO 4217 codes for CARD and BANK, token symbols for CRYPTO.
   networks?: string[];           // CRYPTO only: networks the assets move on, such as "polkadot" (Polkadot Asset Hub), "ethereum", "tron", "solana", "bitcoin". Omitted means not declared.
-  countries?: string[];          // ISO 3166-1 alpha-2 codes the route serves. Omitted means not declared.
+  countries?: string[];          // Uppercase ISO 3166-1 alpha-2 codes the route serves. Omitted means not declared.
 };
 ```
 
-- **Routes are optional and informational.** They let a Host show what a provider serves before quotes arrive, such as listing it under a mode and direction. They do not decide which providers a Host asks: every funding provider is asked for every quote. A provider's routes change more often than it publishes a release, and a Host reads a manifest again only when its `contenthash` changes, so declared routes can lag. A worker without `routes` still serves Funding, and its quotes say what it serves.
+- **Routes are optional and informational.** They let a Host show what a provider serves before quotes arrive, such as listing it under a mode and direction. They do not decide which providers a Host asks, nor which provider the user can choose: every funding provider is asked for every quote, and any provider that quotes can be chosen. A provider's routes change more often than it publishes a release, and a Host reads a manifest again only when its `contenthash` changes, so declared routes can lag. A worker without `routes` still serves Funding, and its quotes say what it serves.
 - **One mode per route.** A provider serving card and bank publishes two routes.
 - **Unrecognised values are ignored, not fatal**, so later revisions can add modes and directions without a new `$v`. A route is ignored when its `mode` is unrecognised or it has no recognised direction or no assets; an unrecognised direction is dropped from a route that has others. A worker left with no usable route is treated as declaring none.
-- **Networks are lowercase ids**, and a Host asks for a quote on one of them. Unrecognised ids are ignored like other unknown values, and `networks` on a CARD or BANK route is ignored.
-- **The quote is authoritative.** A Host MAY use a route's `countries` to pre-filter what it shows, such as not listing a route whose `countries` omit the user's country; a declared country can still be refused, and a route without `countries` is checked by its quote. Limits, fees and timing come only from the quote, which the Funding runtime contract defines.
+- **Networks are lowercase ids**, read as published. A Host asks for a quote on a network it supports, and `networks` on a CARD or BANK route is ignored.
+- **Values are compared as published.** Hosts do not change the case of `assets`, `countries` or `networks`, so publishers write them in the case shown above.
+- **A `funding` value of the wrong shape is malformed.** Like any other field, a `funding` object, route or field of the wrong type (such as `directions` given as a string) fails the whole Worker manifest, and with it every surface the worker serves. Unrecognised values in a well-formed route are ignored as described above.
+- **The quote is authoritative.** Before quotes arrive, a Host MAY use a route's `countries` to order or narrow what it shows, such as listing last a provider whose `countries` omit the user's country. Once quotes arrive they decide: a provider that quotes can be chosen whatever its routes say, a declared country can still be refused, and a route without `countries` is checked by its quote. Limits, fees and timing come only from the quote, which the Funding runtime contract defines.
 
 The smallest declaration is `"funding": {}`, a provider whose quotes say everything it serves. A provider serving inbound card payments in EUR and USD in three countries, and crypto deposits and withdrawals of USDT and DOT on Polkadot and Ethereum:
 
@@ -505,7 +507,7 @@ For a base name `B`:
 4. **Parse and validate the root manifest.**
   - Parse the string as JSON. Failure → malformed; surface a diagnostic.
   - Validate `$v`. Unknown version → undiscoverable; surface a diagnostic and keep working for other products.
-  - Validate against the `RootManifest` schema. Validation failure → malformed; do not partially trust the result.
+  - Validate against the v1 `RootManifest` schema. Validation failure → malformed; do not partially trust the result.
   - Two things are exempt and MUST NOT fail validation: an unrecognised `icon.format`, and an unrecognised grant value in `trustedProducts` (see [Root manifest (v1)](#root-manifest-v1)).
 5. **(Optional) Read the author.** Hosts that surface authorship in UI call `IDotnsRegistry.owner(node)` — a single call that returns the canonical owner. The registry transparently handles the ERC-721 fallback for second-level names, so callers do not need to distinguish that case from subnodes.
 6. **Probe executable subnames.** For each of `app.<product_id>.<tld>`, `widget.<product_id>.<tld>`, `worker.<product_id>.<tld>` whose executable type the Host can render (per [Subname convention](#subname-convention)): compute the subnode's namehash and repeat steps 2-4 against it, using `text(subnode, "executable")` instead of `text(node, "manifest")` and parsing against the matching `ExecutableManifest` variant. A subnode that does not exist (resolver `address(0)`) or has an empty text record means the product does not provide that executable — this is not an error.
@@ -548,6 +550,8 @@ A conforming Host implementation should produce well-defined behaviour for each 
 - Unrecognised key in `includes` → ignored; the other surfaces still serve.
 - Funding route with an unrecognised `mode`, no recognised direction, or no assets → route ignored; other routes still apply. An unrecognised direction alongside recognised ones is dropped.
 - No `routes`, or no usable funding route → the worker still serves Funding; the Host asks it for every quote, like every other funding provider.
+- `"funding": null` → the worker does not serve Funding; its other surfaces still serve.
+- A `funding` object, route or field of the wrong type → the Worker manifest is malformed; the Host skips that executable.
 
 ## Drawbacks
 
