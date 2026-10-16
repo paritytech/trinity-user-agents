@@ -104,52 +104,6 @@ struct WalletView: View {
     }
 
     @ViewBuilder
-    private var collectiblesCard: some View {
-        CollectiblesCardView(
-            isExpanded: viewModel.expandedSection == .collectiblesDetails,
-            onViewCollectibles: { viewModel.onViewCollectibles?() }
-        )
-        .padding(.horizontal, 24)
-        .frame(maxHeight: viewModel.expandedSection == .collectiblesDetails ? .infinity : nil)
-        .alignmentGuide(.bottom) { dimensions in
-            switch viewModel.expandedSection {
-            case .none:
-                dimensions[.top] + collectiblesPeekHeight
-            case .collectiblesDetails:
-                dimensions[.bottom]
-            case .assetDetails,
-                 .identityDetails:
-                dimensions[.top] - offScreenOffset
-            }
-        }
-        .opacity(collectiblesOpacity)
-        .onTapGesture { viewModel.onCollectibles?() }
-        .allowsHitTesting(collectiblesHitTest)
-    }
-
-    private var collectiblesOpacity: Double {
-        switch viewModel.expandedSection {
-        case .none,
-             .collectiblesDetails:
-            1
-        case .assetDetails,
-             .identityDetails:
-            0
-        }
-    }
-
-    private var collectiblesHitTest: Bool {
-        switch viewModel.expandedSection {
-        case .none,
-             .collectiblesDetails:
-            true
-        case .assetDetails,
-             .identityDetails:
-            false
-        }
-    }
-
-    @ViewBuilder
     private var identityCard: some View {
         IdentityDetailsViewLayout(
             viewModel: viewModel.identityDetailsViewModel,
@@ -291,6 +245,54 @@ struct WalletView: View {
             true
         case .identityDetails,
              .collectiblesDetails:
+            false
+        }
+    }
+}
+
+private extension WalletView {
+    @ViewBuilder
+    var collectiblesCard: some View {
+        CollectiblesCardView(
+            isExpanded: viewModel.expandedSection == .collectiblesDetails,
+            onViewCollectibles: { viewModel.onViewCollectibles?() }
+        )
+        .padding(.horizontal, 24)
+        .frame(maxHeight: viewModel.expandedSection == .collectiblesDetails ? .infinity : nil)
+        .alignmentGuide(.bottom) { dimensions in
+            switch viewModel.expandedSection {
+            case .none:
+                dimensions[.top] + collectiblesPeekHeight
+            case .collectiblesDetails:
+                dimensions[.bottom]
+            case .assetDetails,
+                 .identityDetails:
+                dimensions[.top] - offScreenOffset
+            }
+        }
+        .opacity(collectiblesOpacity)
+        .onTapGesture { viewModel.onCollectibles?() }
+        .allowsHitTesting(collectiblesHitTest)
+    }
+
+    private var collectiblesOpacity: Double {
+        switch viewModel.expandedSection {
+        case .none,
+             .collectiblesDetails:
+            1
+        case .assetDetails,
+             .identityDetails:
+            0
+        }
+    }
+
+    private var collectiblesHitTest: Bool {
+        switch viewModel.expandedSection {
+        case .none,
+             .collectiblesDetails:
+            true
+        case .assetDetails,
+             .identityDetails:
             false
         }
     }
