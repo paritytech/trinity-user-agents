@@ -1128,6 +1128,7 @@ impl NativeProductExecution {
             media_platform: self.media.clone(),
             expanded_card: Some(self.expanded_card.clone()),
             game_platform: self.game.clone(),
+            scanner_platform: None,
         }
     }
 

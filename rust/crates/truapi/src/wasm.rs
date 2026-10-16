@@ -1142,6 +1142,7 @@ fn connection_adapters_from_js(
         profile_platform,
         media_platform,
         game_platform,
+        scanner_platform,
         ..
     } = wasm_platform(Arc::new(JsBridge::from_js(callbacks)?));
     Ok(Some(crate::host_core::ConnectionAdapters {
@@ -1155,6 +1156,7 @@ fn connection_adapters_from_js(
         profile_platform,
         media_platform,
         game_platform,
+        scanner_platform,
         expanded_card: None,
         chat: Arc::new(crate::runtime::ActionChannel::chat()),
         renderer: Arc::new(crate::runtime::ActionChannel::renderer()),
@@ -1884,58 +1886,6 @@ impl WasmSigningHostRuntime {
             .calling_permission_authorization_request(&product_id)
             .await
             .map(|request| request.encode())
-            .map_err(generic_error_to_js)
-    }
-
-    /// Read one permission authorization status for a product.
-    #[wasm_bindgen(js_name = permissionAuthorizationStatus)]
-    pub async fn permission_authorization_status(
-        &self,
-        product_id: String,
-        payload: Vec<u8>,
-    ) -> Result<JsValue, JsValue> {
-        let request = decode_permission_authorization_request(&payload)?;
-        let status = self
-            .runtime
-            .permission_authorization_status(&product_id, request)
-            .await
-            .map_err(generic_error_to_js)?;
-        Ok(permission_authorization_status_to_js(status))
-    }
-
-    /// Read permission authorization statuses for a product.
-    #[wasm_bindgen(js_name = permissionAuthorizationStatuses)]
-    pub async fn permission_authorization_statuses(
-        &self,
-        product_id: String,
-        payloads: Array,
-    ) -> Result<Array, JsValue> {
-        let requests = decode_permission_authorization_requests(&payloads)?;
-        let statuses = self
-            .runtime
-            .permission_authorization_statuses(&product_id, requests)
-            .await
-            .map_err(generic_error_to_js)?;
-        let values = Array::new();
-        for status in statuses {
-            values.push(&permission_authorization_status_to_js(status));
-        }
-        Ok(values)
-    }
-
-    /// Update one stored permission authorization status for a product.
-    #[wasm_bindgen(js_name = setPermissionAuthorizationStatus)]
-    pub async fn set_permission_authorization_status(
-        &self,
-        product_id: String,
-        payload: Vec<u8>,
-        status: String,
-    ) -> Result<(), JsValue> {
-        let request = decode_permission_authorization_request(&payload)?;
-        let status = permission_authorization_status_from_js(&status)?;
-        self.runtime
-            .set_permission_authorization_status(&product_id, request, status)
-            .await
             .map_err(generic_error_to_js)
     }
 
