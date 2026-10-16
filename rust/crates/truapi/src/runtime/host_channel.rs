@@ -395,9 +395,13 @@ mod tests {
 			profile::{Disclosure, received_reference, write_disclosure},
 			services::RuntimeServices,
 		},
-		test_support::StubPlatform,
+		test_support::{StubPlatform, new_statements_frame, subscribe_ack_frame},
 	};
-	use futures::executor::block_on;
+	use futures::{
+		executor::{LocalPool, block_on},
+		task::LocalSpawnExt,
+	};
+	use parking_lot::Mutex;
 	use std::sync::Arc;
 	use truapi::latest::HostPlatform;
 
@@ -416,6 +420,15 @@ mod tests {
 			chain_connect_error: Some("host channel test has no RPC"),
 			..Default::default()
 		});
+		host_on(seed, platform, Arc::new(|_future| {}), GENESIS)
+	}
+
+	fn host_on(
+		seed: u8,
+		platform: Arc<StubPlatform>,
+		spawner: crate::subscription::Spawner,
+		genesis: [u8; 32],
+	) -> Host {
 		let identity = [seed; 32];
 		let context = NativeChatContext {
 			services: RuntimeServices::with_chat_platform(
@@ -426,10 +439,10 @@ mod tests {
 					version: None,
 					platform: HostPlatform::Unknown,
 				},
-				GENESIS,
+				genesis,
 				[3; 32],
 				[4; 32],
-				Arc::new(|_future| {}),
+				spawner,
 				None,
 				None,
 			),
@@ -444,7 +457,7 @@ mod tests {
 			session_valid: Arc::new(|| true),
 			chat_session_granted: Arc::new(|_| false),
 			network_suffix: "test".into(),
-			genesis_hash: GENESIS,
+			genesis_hash: genesis,
 			coinage_instance_id: None,
 		};
 		Host { context, platform, identity }
@@ -502,6 +515,222 @@ mod tests {
 			.into_iter()
 			.map(|(peer, pair)| (pair.topic(), (peer, pair)))
 			.collect()
+	}
+
+	/// Drive real RPC tasks to quiescence, without threads, sleeps or polling deadlines.
+	#[derive(Default)]
+	struct RpcExecutor {
+		pool: LocalPool,
+		tasks: Arc<Mutex<Vec<futures::future::BoxFuture<'static, ()>>>>,
+	}
+
+	impl RpcExecutor {
+		fn spawner(&self) -> crate::subscription::Spawner {
+			let tasks = self.tasks.clone();
+			Arc::new(move |task| tasks.lock().push(task))
+		}
+
+		fn settle(&mut self) {
+			loop {
+				let tasks = std::mem::take(&mut *self.tasks.lock());
+				for task in tasks {
+					self.pool.spawner().spawn_local(task).unwrap();
+				}
+				self.pool.run_until_stalled();
+				if self.tasks.lock().is_empty() {
+					break;
+				}
+			}
+		}
+
+		fn complete<F>(&mut self, future: F) -> F::Output
+		where
+			F: core::future::Future + 'static,
+			F::Output: 'static,
+		{
+			let result = self.pool.spawner().spawn_local_with_handle(future).unwrap();
+			self.settle();
+			result.now_or_never().expect("RPC completed without a timer or external wake")
+		}
+	}
+
+	/// Keep only persisted storage across a host reopen, never a cached pair or receiver.
+	fn reopen(
+		host: &Host,
+		executor: &RpcExecutor,
+		responses: Vec<String>,
+		genesis: [u8; 32],
+	) -> Host {
+		host_on(
+			host.identity[0],
+			Arc::new(StubPlatform {
+				local_storage: host.platform.local_storage.clone(),
+				rpc_responses: responses,
+				..Default::default()
+			}),
+			executor.spawner(),
+			genesis,
+		)
+	}
+
+	/// Capture actual publish RPC bytes; no builder shortcut or Chat actor is involved.
+	fn published(host: &Host, only: [u8; 32]) -> Vec<u8> {
+		let mut executor = RpcExecutor::default();
+		let sender = reopen(
+			host,
+			&executor,
+			vec![r#"{"jsonrpc":"2.0","id":"truapi:1","result":{"status":"new"}}"#.into()],
+			host.context.genesis_hash,
+		);
+		let context = sender.context.clone();
+		assert_eq!(executor.complete(async move { publish(&context, Some(only)).await }).unwrap(), 1);
+		let requests = sender.platform.sent_rpc.lock().unwrap();
+		assert_eq!(requests.len(), 1, "only direct host-channel publication is allowed");
+		let request: serde_json::Value = serde_json::from_str(&requests[0]).unwrap();
+		assert_eq!(request["method"], "statement_submit");
+		assert_eq!(*sender.platform.chain_connects.lock().unwrap(), vec![host.context.genesis_hash]);
+		hex::decode(request["params"][0].as_str().unwrap().strip_prefix("0x").unwrap()).unwrap()
+	}
+
+	/// Feed captured publish bytes through the real subscription, AEAD opener and recorder.
+	fn receive_after_reopen(host: &Host, statements: Vec<Vec<u8>>) -> Host {
+		let mut executor = RpcExecutor::default();
+		let receiver_host = reopen(
+			host,
+			&executor,
+			vec![
+				subscribe_ack_frame("truapi:1", "direct-profile"),
+				new_statements_frame("direct-profile", statements),
+			],
+			host.context.genesis_hash,
+		);
+		let expected_topics = block_on(by_topic(&receiver_host));
+		assert!(!expected_topics.is_empty(), "persisted bootstrap must survive reopening");
+		assert_eq!(
+			block_on(read_peers(receiver_host.platform.as_ref(), owner_of(&receiver_host.context))).unwrap(),
+			block_on(read_peers(host.platform.as_ref(), owner_of(&host.context))).unwrap(),
+		);
+		let receiver = Receiver::start(receiver_host.context.clone());
+		executor.settle();
+		{
+			let requests = receiver_host.platform.sent_rpc.lock().unwrap();
+			assert_eq!(requests.len(), 1, "receiver must not fall back to Chat");
+			let request: serde_json::Value = serde_json::from_str(&requests[0]).unwrap();
+			assert_eq!(request["method"], "statement_subscribeStatement");
+			let mut watched: Vec<String> = request["params"][0]["matchAny"]
+				.as_array().unwrap().iter().map(|value| value.as_str().unwrap().to_owned()).collect();
+			watched.sort_unstable();
+			let mut expected: Vec<String> = expected_topics.keys()
+				.map(|topic| format!("0x{}", hex::encode(topic))).collect();
+			expected.sort_unstable();
+			assert_eq!(watched, expected);
+		}
+		assert_eq!(
+			*receiver_host.platform.chain_connects.lock().unwrap(),
+			vec![host.context.genesis_hash],
+		);
+		drop(receiver);
+		executor.settle();
+		receiver_host
+	}
+
+	fn assert_direct_reference(host: &Host, peer: [u8; 32], expected: Option<&str>) {
+		let received = block_on(received_reference(
+			host.platform.as_ref(), owner_of(&host.context), "any.dot", &peer,
+		)).unwrap().expect("the direct receiver recorded a reference or durable withdrawal");
+		assert_eq!(received.peer_identity, peer);
+		assert_eq!(received.discloser_product_id, "seity.dot");
+		assert_eq!(received.reference.as_deref(), expected);
+	}
+
+	#[test]
+	fn direct_publish_receiver_updates_withdraws_and_rejects_replay_after_reopen() {
+		let alice = host(0x0a);
+		let bob = host(0x0b);
+		block_on(bootstrapped(&alice, &bob));
+		// Bootstrap is the only Chat prerequisite. Neither host has a Chat session grant,
+		// actor or product relay for any of the following deliveries.
+		block_on(disclose(&alice, REFERENCE, vec![bob.identity]));
+		let first = published(&alice, bob.identity);
+		let bob = receive_after_reopen(&bob, vec![first.clone()]);
+		assert_direct_reference(&bob, alice.identity, Some(REFERENCE));
+
+		block_on(disclose(&alice, "seity-contacts:v1:bb", vec![bob.identity]));
+		let second = published(&alice, bob.identity);
+		let bob = receive_after_reopen(&bob, vec![second.clone()]);
+		assert_direct_reference(&bob, alice.identity, Some("seity-contacts:v1:bb"));
+
+		block_on(disclose(&alice, "seity-contacts:v1:bb", vec![]));
+		let withdrawal = published(&alice, bob.identity);
+		let bob = receive_after_reopen(&bob, vec![withdrawal]);
+		assert_direct_reference(&bob, alice.identity, None);
+
+		// Reopen again: a durable revision fence, not an in-memory dedupe, must win.
+		let bob = receive_after_reopen(&bob, vec![second, first]);
+		assert_direct_reference(&bob, alice.identity, None);
+	}
+
+	/// Preserve a real signature while putting a different pair's ciphertext on the
+	/// watched topic. Topic routing alone must not authorize a reference.
+	fn retarget(host: &Host, bytes: &[u8], topic: [u8; 32]) -> Vec<u8> {
+		let statement = decode_signed_statement(bytes).unwrap();
+		let fields = statement_fields_from_v01(Statement {
+			proof: None,
+			decryption_key: None,
+			expiry: statement.expiry,
+			channel: statement.channel,
+			topics: vec![topic],
+			data: statement.data,
+		}).unwrap();
+		let signer = derive_identity_keypair(&host.context.entropy, &host.context.network_suffix).unwrap();
+		sign_statement_fields(signer.secret.to_bytes(), signer.public.to_bytes(), fields).unwrap().encode()
+	}
+
+	#[test]
+	fn direct_receiver_rejects_a_different_peers_ciphertext_on_its_watched_topic() {
+		let alice = host(0x0a);
+		let bob = host(0x0b);
+		let carol = host(0x0c);
+		block_on(bootstrapped(&alice, &bob));
+		block_on(bootstrapped(&alice, &carol));
+		block_on(disclose(&alice, REFERENCE, vec![carol.identity]));
+		let for_carol = published(&alice, carol.identity);
+		let topic = *block_on(by_topic(&bob)).keys().next().unwrap();
+		let bob = receive_after_reopen(&bob, vec![retarget(&alice, &for_carol, topic)]);
+		assert_eq!(block_on(held(&bob, alice.identity)), None);
+		// Positive control: this same receiver accepts Alice's correctly paired share.
+		block_on(disclose(&alice, REFERENCE, vec![bob.identity]));
+		let bob = receive_after_reopen(&bob, vec![published(&alice, bob.identity)]);
+		assert_direct_reference(&bob, alice.identity, Some(REFERENCE));
+	}
+
+	#[test]
+	fn direct_receiver_isolates_persisted_peers_and_ciphertext_by_network() {
+		let alice = host(0x0a);
+		let bob = host(0x0b);
+		block_on(bootstrapped(&alice, &bob));
+		block_on(disclose(&alice, REFERENCE, vec![bob.identity]));
+		let original = published(&alice, bob.identity);
+		let executor = RpcExecutor::default();
+		let other_network = reopen(&bob, &executor, vec![], [0x77; 32]);
+		assert!(block_on(read_peers(
+			other_network.platform.as_ref(), owner_of(&other_network.context),
+		)).unwrap().is_empty(), "another network must not inherit the bootstrap roster");
+
+		// Even copying the public bootstrap key cannot reuse a pair across networks.
+		let peers = block_on(read_peers(bob.platform.as_ref(), owner_of(&bob.context))).unwrap();
+		block_on(upsert_peer(
+			other_network.platform.as_ref(), owner_of(&other_network.context),
+			alice.identity, peers[0].channel_public_key,
+		)).unwrap();
+		let topic = *block_on(by_topic(&other_network)).keys().next().unwrap();
+		let other_network = receive_after_reopen(
+			&other_network, vec![retarget(&alice, &original, topic)],
+		);
+		assert_eq!(block_on(held(&other_network, alice.identity)), None);
+		let bob = receive_after_reopen(&bob, vec![original]);
+		assert_direct_reference(&bob, alice.identity, Some(REFERENCE));
+		assert_eq!(block_on(held(&other_network, alice.identity)), None);
 	}
 
 	#[test]
