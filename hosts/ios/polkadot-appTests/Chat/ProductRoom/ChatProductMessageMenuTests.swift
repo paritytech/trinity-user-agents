@@ -58,6 +58,42 @@ struct ChatProductMessageMenuTests {
         #expect((section?.children.first as? UIAction)?.title == "act-pin")
     }
 
+    /// A product-source room has no host copy of the versions of an edited message, so the host entry "View edit
+    /// history" is not in its menu. The product adds its own entry.
+    @Test func aProductSourceRoomHasNoHostEditHistory() throws {
+        let presenter = try makePresenter(productSource: true)
+        let history = Data.action("edit-history")
+
+        let elements = ChatViewModelFactory.menuElements(
+            [.copy, .edited, .product(history)],
+            messageId: "m1",
+            content: ChatMessageMenuContent(text: "hello", actions: .inert),
+            icons: [:],
+            productRoom: presenter
+        )
+
+        #expect(!presenter.offersHostEditHistory)
+        #expect(elements.count == 2)
+        #expect((elements.first as? UIAction)?.title == String(localized: .chatCopy))
+        let section = elements.last as? UIMenu
+        #expect((section?.children.first as? UIAction)?.title == "edit-history")
+    }
+
+    @Test func aHostStoreRoomKeepsTheHostEditHistory() throws {
+        let presenter = try makePresenter()
+
+        let elements = ChatViewModelFactory.menuElements(
+            [.copy, .edited],
+            messageId: "m1",
+            content: ChatMessageMenuContent(text: "hello", actions: .inert),
+            icons: [:],
+            productRoom: presenter
+        )
+
+        #expect(presenter.offersHostEditHistory)
+        #expect((elements.last as? UIAction)?.title == String(localized: .chatEditHistory))
+    }
+
     @Test func aDestructiveProductEntryDrawsInRed() {
         let action = UIAction.chatProduct(Data.action("act-report", destructive: true), image: nil) {}
 
@@ -171,6 +207,7 @@ struct ChatProductMessageMenuTests {
 private extension ChatProductMessageMenuTests {
     func makePresenter(
         messageActions: Bool = true,
+        productSource: Bool = false,
         messages: [Chat.LocalMessage] = [ProductRoomTestData.message("m1")]
     ) throws -> ChatProductRoomPresenter {
         let presenter = try #require(ChatProductRoomPresenter(
@@ -181,7 +218,10 @@ private extension ChatProductMessageMenuTests {
             logger: StubLogger()
         ))
         presenter.update(
-            policy: ProductRoomTestData.policy(ProductRoomTestData.config(messageActions: messageActions)),
+            policy: ProductRoomTestData.policy(ProductRoomTestData.config(
+                messageActions: messageActions,
+                productSource: productSource
+            )),
             messages: messages
         )
         return presenter
