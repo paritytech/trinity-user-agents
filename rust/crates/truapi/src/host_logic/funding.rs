@@ -351,7 +351,9 @@ impl FundingSession {
 			self.stage = FundingStage::Failed { reason: reason.clone(), settled_at_ms: now_ms };
 		}
 		self.updates.push(FundingUpdateRecord { update, at_ms: now_ms });
-		if self.is_terminal() {
+		// A provider that reports its next step has carried on, so the decline
+		// it was owed reached it and is not repeated.
+		if self.is_terminal() || matches!(self.cancel, Some(FundingCancel::Declined)) {
 			self.cancel = None;
 		}
 		Ok(())
@@ -615,7 +617,9 @@ impl FundingSession {
 
 	/// What the provider still has to hear about the user's cancel when its
 	/// serve stream opens: a request it has not answered, or an answer to its
-	/// offer.
+	/// offer. A decline is repeated on every open until the provider reports
+	/// its next step, as a worker that stopped before handling it would
+	/// otherwise wait for an answer that never comes.
 	pub fn pending_cancel_item(&self) -> Option<HostFundingServeSubscribeItem> {
 		let intent = self.intent.clone();
 		match self.cancel.as_ref()? {
@@ -1244,6 +1248,29 @@ mod tests {
 				CancelConfirmation::Declined,
 				false,
 				Some(HostFundingServeSubscribeItem::CancelDeclined { intent: "fs_1".into() }),
+			)
+		);
+	}
+
+	// A provider that reports its next step after a decline has carried on,
+	// so the decline is not handed to it again on every reopen.
+	#[test]
+	fn a_decline_stops_repeating_once_the_provider_carries_on() {
+		let mut session = served(FundingDirection::In);
+		reported(&mut session, &[FundingUpdate::PaymentReceived { finalized: true }]);
+		cancelled(&mut session);
+		reported(&mut session, &[offer(5, 95, None)]);
+		session.confirm_cancel(None, NOW);
+		let before = session.pending_cancel_item();
+
+		reported(&mut session, &[FundingUpdate::Converting]);
+
+		assert_eq!(
+			(before, session.pending_cancel_item(), session.cancel.clone()),
+			(
+				Some(HostFundingServeSubscribeItem::CancelDeclined { intent: "fs_1".into() }),
+				None,
+				None,
 			)
 		);
 	}

@@ -359,56 +359,6 @@ pub trait NativeContactsCallbacks: Send + Sync {
 	) -> Result<crate::platform::HostContactPick, HostRejection>;
 }
 
-/// Native form of [`crate::platform::ScannerPlatform`], whose rules it follows.
-/// Installed with [`NativeTrUApiHostRuntime::set_scanner_callbacks`].
-#[uniffi::export(rust, foreign)]
-#[async_trait::async_trait]
-pub trait NativeScannerCallbacks: Send + Sync {
-	/// Open the viewfinder on behalf of `product_id`'s execution of
-	/// `execution_kind` and report how it ended.
-	async fn scan_code(
-		&self,
-		product_id: String,
-		execution_kind: crate::platform::ProductExecutionKind,
-		request: truapi::latest::HostScannerScanRequest,
-	) -> Result<crate::platform::HostScan, HostRejection>;
-}
-
-/// Native funding overlay. A host with a funding modality passes an
-/// implementation to [`NativeTrUApiHostRuntime::set_funding_callbacks`];
-/// without one, funding requests answer `Unsupported`.
-///
-/// [`NativeTrUApiHostRuntime::set_funding_callbacks`]: super::NativeTrUApiHostRuntime::set_funding_callbacks
-#[uniffi::export(rust, foreign)]
-#[async_trait::async_trait]
-pub trait NativeFundingCallbacks: Send + Sync {
-	/// Show the funding overlay for session `intent`, which `product_id`
-	/// opened, or the host itself when `None`, on the screen `direction`
-	/// names, and report whether the user started or dismissed it. `amount`
-	/// is a decimal string of CASH units.
-	async fn present_funding(
-		&self,
-		product_id: Option<String>,
-		intent: String,
-		direction: v01::FundingDirection,
-		amount: Option<u128>,
-	) -> Result<crate::platform::FundingPresentOutcome, HostRejection>;
-
-	/// Show `target` for provider `provider_id`'s session `intent` in a frame
-	/// the host owns, and report how it closed. A page is a checked https
-	/// URL: show its origin, and answer `Returned` when it reaches its return
-	/// URL.
-	async fn present_provider_frame(
-		&self,
-		provider_id: String,
-		intent: String,
-		target: v01::FundingFrameTarget,
-	) -> Result<v01::FundingFrameOutcome, HostRejection>;
-
-	/// A session's status changed, for host UI such as the in-flight pill.
-	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem);
-}
-
 /// Native payment engine, which pays from the user's balance to an account.
 /// A host passes an implementation to
 /// [`NativeTrUApiHostRuntime::set_payment_callbacks`] and reports each later
@@ -484,4 +434,54 @@ pub trait NativeBalanceCallbacks: Send + Sync {
 		product_id: String,
 		purse: Option<u32>,
 	) -> Result<u128, v01::HostPaymentBalanceSubscribeError>;
+}
+
+/// Native form of [`crate::platform::ScannerPlatform`], whose rules it follows.
+/// Installed with [`NativeTrUApiHostRuntime::set_scanner_callbacks`].
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeScannerCallbacks: Send + Sync {
+	/// Open the viewfinder on behalf of `product_id`'s execution of
+	/// `execution_kind` and report how it ended.
+	async fn scan_code(
+		&self,
+		product_id: String,
+		execution_kind: crate::platform::ProductExecutionKind,
+		request: truapi::latest::HostScannerScanRequest,
+	) -> Result<crate::platform::HostScan, HostRejection>;
+}
+
+/// Native funding overlay. A host with a funding modality passes an
+/// implementation to [`NativeTrUApiHostRuntime::set_funding_callbacks`];
+/// without one, funding requests answer `Unsupported`.
+///
+/// [`NativeTrUApiHostRuntime::set_funding_callbacks`]: super::NativeTrUApiHostRuntime::set_funding_callbacks
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeFundingCallbacks: Send + Sync {
+	/// Show the funding overlay for session `intent`, which `product_id`
+	/// opened, or the host itself when `None`, on the screen `direction`
+	/// names, and report whether the user started or dismissed it. `amount`
+	/// is a decimal string of CASH units.
+	async fn present_funding(
+		&self,
+		product_id: Option<String>,
+		intent: String,
+		direction: v01::FundingDirection,
+		amount: Option<u128>,
+	) -> Result<crate::platform::FundingPresentOutcome, HostRejection>;
+
+	/// Show `target` for provider `provider_id`'s session `intent` in a frame
+	/// the host owns, and report how it closed. A page is a checked https
+	/// URL: show its origin, and answer `Returned` when it reaches its return
+	/// URL.
+	async fn present_provider_frame(
+		&self,
+		provider_id: String,
+		intent: String,
+		target: v01::FundingFrameTarget,
+	) -> Result<v01::FundingFrameOutcome, HostRejection>;
+
+	/// A session's status changed, for host UI such as the in-flight pill.
+	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem);
 }
