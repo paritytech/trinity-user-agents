@@ -5,7 +5,10 @@ import Products
 protocol ModuleNavigating: AnyObject {
     func openChat(_ model: ChatOpenModel)
     func presentModally(_ viewController: UIViewController)
-    func presentFullScreen(_ viewController: UIViewController)
+    func presentFullScreen(
+        _ viewController: UIViewController,
+        transitioningDelegate: UIViewControllerTransitioningDelegate?
+    )
     func openProduct(page: ProductPage)
     func openPocket()
     func openScanPanel()
@@ -26,9 +29,13 @@ extension ModuleNavigator: ModuleNavigating {
         UIWindow.topWindow?.topmostViewController?.present(navigationController, animated: true)
     }
 
-    func presentFullScreen(_ viewController: UIViewController) {
+    func presentFullScreen(
+        _ viewController: UIViewController,
+        transitioningDelegate: UIViewControllerTransitioningDelegate?
+    ) {
         let navigationController = AppNavigationController(rootViewController: viewController)
         navigationController.modalPresentationStyle = .fullScreen
+        navigationController.transitioningDelegate = transitioningDelegate
 
         UIWindow.topWindow?.topmostViewController?.present(navigationController, animated: true)
     }

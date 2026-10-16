@@ -108,25 +108,24 @@ env:
   DEBUG_CI: false
 
 jobs:
-  # Whether this run builds the app. Every job below is macOS time, so on a
-  # pull request they run only when the ios-simulator-build label asks for
-  # them, the same way ios-device-build and android-device-build ask for their
-  # builds. CI's `iOS package (Swift + WebKit)` job still compiles the
-  # TrUAPIHost package against the core on a pull request touching `ios/` or
-  # the core crates. Nothing compiles the app itself on a pull request without
-  # the label, so a change that breaks it is caught by the push to main, where
-  # these jobs and manual runs build everything.
+  # Which jobs this run needs. The unit tests, and the core they build
+  # against, run on every pull request this workflow's paths match, so a
+  # change that breaks or hangs them is caught before it merges. The app
+  # builds are macOS time no test needs, so they run only when the
+  # ios-simulator-build label asks for them, the same way ios-device-build
+  # and android-device-build ask for their builds.
   #
   # The labels are read from the API rather than the event, so re-running a
-  # push's run sees a label added since. A run started by another label stays
-  # skipped on a re-run, because building there would duplicate the run the
-  # ios-simulator-build label starts on its own.
+  # push's run sees a label added since. A run started by another label
+  # skips everything on a re-run too, because it would duplicate the run
+  # already in progress for the branch.
   check-skip-label:
     timeout-minutes: 5
     runs-on: ubuntu-latest
     outputs:
       skip: ${{ steps.check_skip.outputs.skip }}
       app: ${{ steps.check_skip.outputs.app }}
+      tests: ${{ steps.check_skip.outputs.tests }}
     steps:
       - name: Decide which jobs this run needs
         id: check_skip
@@ -137,6 +136,7 @@ jobs:
             if (!pr) {
               core.setOutput('skip', 'false');
               core.setOutput('app', 'true');
+              core.setOutput('tests', 'true');
               return;
             }
             const label = 'ios-simulator-build';
@@ -146,6 +146,7 @@ jobs:
               core.info(`Label ${context.payload.label.name} does not ask for a build.`);
               core.setOutput('skip', 'false');
               core.setOutput('app', 'false');
+              core.setOutput('tests', 'false');
               return;
             }
             const labels = (await github.paginate(github.rest.issues.listLabelsOnIssue, {
@@ -158,9 +159,11 @@ jobs:
               : `No ${label} label; the app jobs are skipped.`);
             core.setOutput('skip', labels.includes('skip-ci').toString());
             core.setOutput('app', app.toString());
+            core.setOutput('tests', 'true');
 
-  # The app jobs all need the core generated from this commit, and it is the
-  # same output for each of them, so it is built once here and carried across.
+  # The app and test jobs all need the core generated from this commit, and it
+  # is the same output for each of them, so it is built once here and carried
+  # across.
   # Built on the larger runner because it is Rust compilation and CPU bound.
   # The `release/` test on this job and the three below it is deliberately every
   # release branch, app and package alike, behind the label check that already
@@ -170,7 +173,7 @@ jobs:
   core:
     name: Build the in-tree core
     needs: check-skip-label
-    if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
+    if: needs.check-skip-label.outputs.skip == 'false' && (needs.check-skip-label.outputs.app == 'true' || needs.check-skip-label.outputs.tests == 'true') && !startsWith(github.head_ref, 'release/')
     runs-on: parity-macos-large
     timeout-minutes: 45
     steps:
@@ -499,7 +502,7 @@ jobs:
 
   test:
     needs: [check-skip-label, core]
-    if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
+    if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.tests == 'true' && !startsWith(github.head_ref, 'release/')
     timeout-minutes: 30
     runs-on: parity-macos-large
     steps:
