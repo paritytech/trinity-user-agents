@@ -2658,64 +2658,63 @@ async fn lapse_profile_references(actor: &Arc<NativeChatActor>) {
         .unwrap();
 }
 
+/// The profile frames a response hands the product, beside whatever else
+/// the outbox holds for it.
+fn profile_frames(prepared: &[HostNativeChatPrepared]) -> Vec<&HostNativeChatPrepared> {
+	prepared
+		.iter()
+		.filter(|entry| entry.request_id.starts_with("profile-"))
+		.collect()
+}
+
 #[test]
 fn an_unacknowledged_reference_is_resent_a_bounded_number_of_times_per_disclosure() {
-    block_on(async {
-        let fixture = Fixture::new();
-        set_product_grants(
-            &fixture.platform,
-            PRODUCT,
-            crate::platform::PermissionAuthorizationStatus::Authorized,
-        )
-        .await;
-        let actor = fixture.actor().await;
-        let identity = IdentityFixture::new();
-        seed_peer(&actor, &identity, &[&DeviceFixture::new(1)]).await;
-        disclose_for(&fixture).await;
-        let registry = NativeChatRegistry::default();
-        assert!(
-            actor
-                .publish_profile_reference(&fixture.context)
-                .await
-                .unwrap()
-        );
-        let view = actor.public_view(&fixture.context, vec![]).await.unwrap();
-        let mut request_ids = vec![view.prepared[0].request_id.clone()];
+	block_on(async {
+		let fixture = Fixture::new();
+		set_product_grants(
+			&fixture.platform,
+			PRODUCT,
+			crate::platform::PermissionAuthorizationStatus::Authorized,
+		)
+		.await;
+		let actor = fixture.actor().await;
+		let identity = IdentityFixture::new();
+		seed_peer(&actor, &identity, &[&DeviceFixture::new(1)]).await;
+		disclose_for(&fixture).await;
+		let registry = NativeChatRegistry::default();
+		assert!(actor.publish_profile_reference(&fixture.context).await.unwrap());
+		let view = actor.public_view(&fixture.context, vec![]).await.unwrap();
+		let mut request_ids = vec![profile_frames(&view.prepared)[0].request_id.clone()];
 
-        for attempt in 2..=profile::MAX_PROFILE_ATTEMPTS {
-            lapse_profile_references(&actor).await;
-            actor.reconcile(&fixture.context, &registry).await.unwrap();
-            let view = actor.public_view(&fixture.context, vec![]).await.unwrap();
-            assert_eq!(view.prepared.len(), 1, "attempt {attempt} is offered");
-            let resent = &view.prepared[0];
-            assert!(
-                !request_ids.contains(&resent.request_id),
-                "attempt {attempt} is a new frame"
-            );
-            assert!(
-                resent
-                    .statement
-                    .expiry
-                    .is_some_and(|expiry| (expiry >> 32) > current_unix_secs()),
-                "attempt {attempt} is signed for a new lifetime"
-            );
-            request_ids.push(resent.request_id.clone());
-        }
+		for attempt in 2..=profile::MAX_PROFILE_ATTEMPTS {
+			lapse_profile_references(&actor).await;
+			actor.reconcile(&fixture.context, &registry).await.unwrap();
+			let view = actor.public_view(&fixture.context, vec![]).await.unwrap();
+			let frames = profile_frames(&view.prepared);
+			assert_eq!(frames.len(), 1, "attempt {attempt} is offered");
+			let resent = frames[0];
+			assert!(!request_ids.contains(&resent.request_id), "attempt {attempt} is a new frame");
+			assert!(
+				resent
+					.statement
+					.expiry
+					.is_some_and(|expiry| (expiry >> 32) > current_unix_secs()),
+				"attempt {attempt} is signed for a new lifetime"
+			);
+			request_ids.push(resent.request_id.clone());
+		}
 
-        lapse_profile_references(&actor).await;
-        actor.reconcile(&fixture.context, &registry).await.unwrap();
-        let view = actor.public_view(&fixture.context, vec![]).await.unwrap();
-        assert!(
-            view.prepared.is_empty(),
-            "the last attempt is dropped, not re-signed"
-        );
-        assert!(
-            !actor
-                .publish_profile_reference(&fixture.context)
-                .await
-                .unwrap(),
-            "and nothing is queued again while the disclosure is unchanged"
-        );
+		lapse_profile_references(&actor).await;
+		actor.reconcile(&fixture.context, &registry).await.unwrap();
+		let view = actor.public_view(&fixture.context, vec![]).await.unwrap();
+		assert!(
+			profile_frames(&view.prepared).is_empty(),
+			"the last attempt is dropped, not re-signed"
+		);
+		assert!(
+			!actor.publish_profile_reference(&fixture.context).await.unwrap(),
+			"and nothing is queued again while the disclosure is unchanged"
+		);
 
         crate::runtime::profile::write_disclosure(
             fixture.platform.as_ref(),
@@ -2751,28 +2750,25 @@ fn an_unacknowledged_reference_is_resent_a_bounded_number_of_times_per_disclosur
 
 #[test]
 fn a_reconcile_sends_a_reference_no_trigger_queued() {
-    block_on(async {
-        let fixture = Fixture::new();
-        set_product_grants(
-            &fixture.platform,
-            PRODUCT,
-            crate::platform::PermissionAuthorizationStatus::Authorized,
-        )
-        .await;
-        let actor = fixture.actor().await;
-        let identity = IdentityFixture::new();
-        seed_peer(&actor, &identity, &[&DeviceFixture::new(1)]).await;
-        // Stored with no Chat told, as by a host that stopped before relaying.
-        disclose_for(&fixture).await;
-        actor
-            .reconcile(&fixture.context, &NativeChatRegistry::default())
-            .await
-            .unwrap();
-        let view = actor.public_view(&fixture.context, vec![]).await.unwrap();
-        assert_eq!(view.prepared.len(), 1);
-        assert_eq!(view.prepared[0].peer_identity, identity.account);
-        assert!(view.prepared[0].request_id.starts_with("profile-"));
-    });
+	block_on(async {
+		let fixture = Fixture::new();
+		set_product_grants(
+			&fixture.platform,
+			PRODUCT,
+			crate::platform::PermissionAuthorizationStatus::Authorized,
+		)
+		.await;
+		let actor = fixture.actor().await;
+		let identity = IdentityFixture::new();
+		seed_peer(&actor, &identity, &[&DeviceFixture::new(1)]).await;
+		// Stored with no Chat told, as by a host that stopped before relaying.
+		disclose_for(&fixture).await;
+		actor.reconcile(&fixture.context, &NativeChatRegistry::default()).await.unwrap();
+		let view = actor.public_view(&fixture.context, vec![]).await.unwrap();
+		let peers: Vec<[u8; 32]> =
+			profile_frames(&view.prepared).iter().map(|frame| frame.peer_identity).collect();
+		assert_eq!(peers, vec![identity.account]);
+	});
 }
 
 #[test]
@@ -2829,24 +2825,26 @@ fn a_peer_that_becomes_ready_is_sent_the_disclosure_in_that_request() {
             "a peer that is not ready is sent nothing"
         );
 
-        let opened = registry
-            .execute(
-                fixture.context.clone(),
-                PRODUCT.into(),
-                HostProductDeviceChatRequest::Open {
-                    statement: acknowledgment(&actor, &identity, &peer, "retire-legacy", false),
-                },
-            )
-            .await
-            .unwrap();
-        assert_eq!(
-            opened.prepared.len(),
-            1,
-            "the acknowledgement that makes it ready brings the reference"
-        );
-        assert_eq!(opened.prepared[0].peer_identity, identity.account);
-        assert!(opened.prepared[0].request_id.starts_with("profile-"));
-    });
+		let opened = registry
+			.execute(
+				fixture.context.clone(),
+				PRODUCT.into(),
+				HostProductDeviceChatRequest::Open {
+					statement: acknowledgment(&actor, &identity, &peer, "retire-legacy", false),
+				},
+			)
+			.await
+			.unwrap();
+		let peers: Vec<[u8; 32]> = profile_frames(&opened.prepared)
+			.iter()
+			.map(|frame| frame.peer_identity)
+			.collect();
+		assert_eq!(
+			peers,
+			vec![identity.account],
+			"the acknowledgement that makes it ready brings the reference"
+		);
+	});
 }
 
 /// A contact is named from the verified roster of the Chat it is a contact
@@ -3679,6 +3677,133 @@ fn a_ready_peer_gets_one_host_channel_bootstrap_per_session() {
                 .unwrap()
         );
     });
+}
+
+/// The Chat product submits what the response's `prepared` list hands it,
+/// so a bootstrap the outbox holds but that list omits never reaches the
+/// peer.
+#[test]
+fn a_queued_host_channel_bootstrap_is_handed_to_the_product() {
+	block_on(async {
+		let fixture = Fixture::new();
+		set_product_grants(
+			&fixture.platform,
+			PRODUCT,
+			crate::platform::PermissionAuthorizationStatus::Authorized,
+		)
+		.await;
+		let actor = fixture.actor().await;
+		let identity = IdentityFixture::new();
+		let peer = DeviceFixture::new(1);
+		seed_peer(&actor, &identity, &[&peer]).await;
+		assert!(actor.publish_host_channel_bootstraps(&fixture.context).await.unwrap());
+		let packet = outgoing(&actor, OutgoingKind::HostChannelBootstrap).await;
+
+		let view = actor.public_view(&fixture.context, vec![]).await.unwrap();
+		let handed: Vec<String> =
+			view.prepared.iter().map(|prepared| prepared.request_id.clone()).collect();
+		assert_eq!(handed, vec![packet.request_id]);
+	});
+}
+
+/// Seed `other` as a ready contact of `actor`, with the keys `other` really has.
+async fn seed_actor_peer(actor: &NativeChatActor, other: &NativeChatActor) {
+	let peer = Peer {
+		identity: other.public.identity_account_id,
+		root_key: other.public.identity_chat_public_key,
+		username: None,
+		devices: vec![DeviceRecord {
+			account: other.public.account_id,
+			key: Some(other.public.chat_public_key),
+			active: true,
+			timestamp: 0,
+			message_id: "authenticated-fixture".into(),
+		}],
+		invitation: None,
+		invitation_timestamp: None,
+		invitation_text: None,
+		established: true,
+		revocation_request: None,
+		revocation_acked: true,
+		revocation_acks: vec![other.public.account_id],
+		revision: 1,
+	};
+	actor
+		.store
+		.update(move |state| {
+			state.peers.push(peer);
+			Ok(())
+		})
+		.await
+		.unwrap();
+}
+
+/// Two hosts that are each other's ready contacts send their host-channel keys
+/// through Chat and open each other's: both then derive the same pair, so the
+/// topic one posts on is the topic the other watches.
+#[test]
+fn two_hosts_exchange_host_channel_keys_over_chat_and_meet_on_one_topic() {
+	block_on(async {
+		let alice = Fixture::new();
+		let mut bob = Fixture::new();
+		bob.context.entropy = Zeroizing::new(vec![0x55; 16]);
+		bob.context.session.public_key = [9; 32];
+		for fixture in [&alice, &bob] {
+			set_product_grants(
+				&fixture.platform,
+				PRODUCT,
+				crate::platform::PermissionAuthorizationStatus::Authorized,
+			)
+			.await;
+		}
+		let alice_actor = alice.actor().await;
+		let bob_actor = bob.actor().await;
+		seed_actor_peer(&alice_actor, &bob_actor).await;
+		seed_actor_peer(&bob_actor, &alice_actor).await;
+
+		for (sender_fixture, sender, receiver_fixture, receiver) in
+			[(&alice, &alice_actor, &bob, &bob_actor), (&bob, &bob_actor, &alice, &alice_actor)]
+		{
+			assert!(sender.publish_host_channel_bootstraps(&sender_fixture.context).await.unwrap());
+			let packet = outgoing(sender, OutgoingKind::HostChannelBootstrap).await;
+			receiver
+				.open_statement(
+					&receiver_fixture.context,
+					&NativeChatRegistry::default(),
+					packet.statement,
+				)
+				.await
+				.unwrap();
+		}
+
+		let held = |fixture: &Fixture, peer: [u8; 32]| {
+			let platform = fixture.platform.clone();
+			let owner = profile::profile_owner(&fixture.context);
+			async move {
+				crate::runtime::host_channel::read_peers(platform.as_ref(), owner)
+					.await
+					.unwrap()
+					.into_iter()
+					.find(|held| held.peer_identity == peer)
+					.map(|held| held.channel_public_key)
+					.expect("the contact's channel key is stored")
+			}
+		};
+		let pair = |fixture: &Fixture, peer: [u8; 32], key: [u8; 32]| {
+			crate::host_logic::host_channel::ChannelKey::derive(
+				&fixture.context.entropy,
+				&fixture.context.genesis_hash,
+				&peer,
+			)
+			.pair(&key)
+			.unwrap()
+		};
+		let bob_identity = bob_actor.public.identity_account_id;
+		let alice_identity = alice_actor.public.identity_account_id;
+		let alice_pair = pair(&alice, bob_identity, held(&alice, bob_identity).await);
+		let bob_pair = pair(&bob, alice_identity, held(&bob, alice_identity).await);
+		assert_eq!(alice_pair.topic(), bob_pair.topic());
+	});
 }
 
 async fn open_bootstrap_frame(
