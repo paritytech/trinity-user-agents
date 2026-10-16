@@ -1194,7 +1194,11 @@ export interface AuthPresenter {
  * the figure the host checks a payment against. Optional: a host that omits
  * it leaves balance subscriptions answered `Unsupported`.
  *
- * The core asks for the product's balance access before calling here.
+ * The balance is the user's, per purse, not the product's: every product
+ * following a purse sees the same figure. The core asks for the product's
+ * balance access before calling here, and checks it again before passing on
+ * each balance the stream emits, so a revoked grant ends the stream with
+ * `PermissionDenied`.
  */
 export interface BalancePlatform {
   /**

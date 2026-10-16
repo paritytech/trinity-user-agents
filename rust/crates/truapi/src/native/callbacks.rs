@@ -425,10 +425,11 @@ pub trait NativeTopUpCallbacks: Send + Sync {
 #[uniffi::export(rust, foreign)]
 #[async_trait::async_trait]
 pub trait NativeBalanceCallbacks: Send + Sync {
-	/// The current balance of `purse` (`None` for the main purse) for
-	/// `product_id`, as a decimal string of CASH units: what a payment
-	/// request can spend right now. The core has already checked the
-	/// product's balance access.
+	/// The current balance of `purse` (`None` for the main purse), as a
+	/// decimal string of CASH units: what a payment request can spend right
+	/// now. The balance is the user's, the same for every product;
+	/// `product_id` names the asking product only for the host's own records.
+	/// The core has already checked the product's balance access.
 	async fn balance(
 		&self,
 		product_id: String,
