@@ -242,8 +242,9 @@ export type CoreStorageKey =
    */
   | { tag: "FundingSupport"; value?: undefined }
   /**
-   * The last funding sessions blob the core could not read, kept as it was
-   * so a stored session is never overwritten unread.
+   * Funding sessions blobs the core could not read, as a SCALE list of the
+   * raw blobs, newest last, so a stored session is never overwritten
+   * unread and a later bad blob does not replace an earlier one.
    */
   | { tag: "FundingSessionsUnreadable"; value?: undefined };
 
@@ -354,7 +355,9 @@ export interface FundingPresentation {
 export interface FundingQuoteList {
   /**
    * The request this list answers, as `request_funding_quotes` returned
-   * it. A host shows only the lists of its latest request.
+   * it. Ids only grow, and a list can reach the host before the call that
+   * returns its id does, so a host shows a list only when its id is at
+   * least the latest it has seen, and drops the rest.
    */
   requestId: bigint;
 

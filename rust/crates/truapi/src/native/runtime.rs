@@ -333,13 +333,14 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Answer the provider's cancel offer on funding session `intent`, which
-	/// the host showed from the session's `cancel`.
+	/// the host showed from the session's `cancel`: accept it on `terms`, the
+	/// fee and refund shown, or decline it with `None`.
 	pub async fn confirm_funding_cancel(
 		&self,
 		intent: String,
-		accept: bool,
+		terms: Option<crate::host_logic::funding::CancelTerms>,
 	) -> Result<crate::host_logic::funding::CancelConfirmation, HostRejection> {
-		Ok(self.runtime.confirm_funding_cancel(&intent, accept).await?)
+		Ok(self.runtime.confirm_funding_cancel(&intent, terms).await?)
 	}
 
 	/// Install the host's top-up engine. Set-once; answers whether this call

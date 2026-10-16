@@ -9533,8 +9533,16 @@ fn a_cancel_after_money_moved_is_negotiated_with_the_provider() {
 	let cancel = |intent: &str| {
 		futures::executor::block_on(services.cancel_funding(intent)).expect("cancel")
 	};
-	let confirm = |intent: &str, accept| {
-		futures::executor::block_on(services.confirm_funding_cancel(intent, accept))
+	let confirm = |intent: &str, accept: bool| {
+		let terms = accept
+			.then(|| match services.funding().get(intent).and_then(|session| session.cancel) {
+				Some(crate::host_logic::funding::FundingCancel::Offered {
+					fee, refund, ..
+				}) => Some(crate::host_logic::funding::CancelTerms { fee, refund }),
+				_ => None,
+			})
+			.flatten();
+		futures::executor::block_on(services.confirm_funding_cancel(intent, terms))
 			.expect("confirm")
 	};
 	let received = v01::FundingUpdate::PaymentReceived { finalized: true, mismatch: None };
@@ -10526,4 +10534,68 @@ fn auth_tokens_need_a_session_and_a_keeper() {
 			0,
 		)
 	);
+}
+
+/// A host engine that refuses every top-up, as one does when the user
+/// declines it or its source is busy.
+struct RefusingTopUpPlatform;
+
+#[truapi::async_trait]
+impl crate::platform::TopUpPlatform for RefusingTopUpPlatform {
+	async fn top_up(
+		&self,
+		_product: &ProductContext,
+		_request: truapi::latest::HostPaymentTopUpRequest,
+	) -> Result<(), truapi::latest::HostPaymentTopUpError> {
+		Err(v01::HostPaymentTopUpError::SourceBusy)
+	}
+
+	fn subscribe_top_up_status(
+		&self,
+		_product: &ProductContext,
+		_id: crate::Bytes32,
+	) -> futures::stream::BoxStream<
+		'static,
+		Result<
+			truapi::latest::HostPaymentTopUpStatusSubscribeItem,
+			truapi::latest::HostPaymentTopUpStatusSubscribeError,
+		>,
+	> {
+		Box::pin(futures::stream::empty())
+	}
+}
+
+// A worker that died with a top-up pending repeats it under the same id once
+// it runs again. When the host refuses the repeat, no money moved under that
+// id, so the record an earlier call left behind goes too, and the session is
+// not locked by funds that never started.
+#[test]
+fn a_refused_repeat_of_a_recorded_top_up_leaves_no_record_behind() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	assert!(services.install_top_up_platform(Arc::new(RefusingTopUpPlatform)));
+	let intent = served_session(&services, 500);
+	let worker = provider_worker(&services, "ramp.dot");
+	let provider = ProductContext::new_with_execution(
+		"ramp.dot".to_string(),
+		crate::platform::ProductExecutionKind::Worker,
+	)
+	.expect("test provider context is valid");
+	let host_id = crate::runtime::payment_id::host_payment_id(&provider, [7; 32]);
+	futures::executor::block_on(services.funding().record_start(
+		services.platform.as_ref(),
+		crate::unix_time::current_unix_millis(),
+		"ramp.dot",
+		v01::FundingDirection::In,
+		host_id,
+		500,
+	))
+	.expect("recorded");
+
+	let repeated = top_up(&worker, 500, product_account_source());
+
+	let session = services.funding().get(&intent).expect("kept");
+	assert_eq!((repeated.is_err(), session.started.len(), session.money_moved()), (true, 0, false));
 }
