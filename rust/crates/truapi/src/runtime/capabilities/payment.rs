@@ -161,13 +161,14 @@ impl Payment for ProductRuntimeHost {
 	{
 		let version = request.version();
 		let latest::HostPaymentBalanceSubscribeRequest { purse } = request.into_latest();
-		let Some(platform) = self.services.balance_platform() else {
+		let Some(platform) = self.connection.services.balance_platform() else {
 			return Subscription::interrupted(CallError::Unsupported);
 		};
 		if let Err(error) = self.require_session() {
 			return Subscription::interrupted(error);
 		}
 		if let Err(error) = self
+			.connection
 			.require_remote_permission(
 				latest::RemotePermission::BalanceAccess,
 				latest::HostPaymentBalanceSubscribeError::PermissionDenied,
@@ -176,7 +177,7 @@ impl Payment for ProductRuntimeHost {
 		{
 			return Subscription::interrupted(from_latest_error(error, version));
 		}
-		versioned_subscription(platform.subscribe_balance(&self.product, purse), version)
+		versioned_subscription(platform.subscribe_balance(&self.connection.product, purse), version)
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "payment.request"))]
@@ -200,14 +201,17 @@ impl Payment for ProductRuntimeHost {
 	) -> Subscription<HostPaymentStatusSubscribeItem, CallError<HostPaymentStatusSubscribeError>> {
 		let version = request.version();
 		let latest::HostPaymentStatusSubscribeRequest { id } = request.into_latest();
-		let Some(platform) = self.services.payment_platform() else {
+		let Some(platform) = self.connection.services.payment_platform() else {
 			return Subscription::interrupted(CallError::Unsupported);
 		};
 		if let Err(error) = self.require_session() {
 			return Subscription::interrupted(error);
 		}
 		versioned_subscription(
-			platform.subscribe_payment_status(&self.product, host_payment_id(&self.product, id)),
+			platform.subscribe_payment_status(
+				&self.connection.product,
+				host_payment_id(&self.connection.product, id),
+			),
 			version,
 		)
 	}
@@ -236,14 +240,17 @@ impl Payment for ProductRuntimeHost {
 	> {
 		let version = request.version();
 		let latest::HostPaymentTopUpStatusSubscribeRequest { id } = request.into_latest();
-		let Some(platform) = self.services.top_up_platform() else {
+		let Some(platform) = self.connection.services.top_up_platform() else {
 			return Subscription::interrupted(CallError::Unsupported);
 		};
 		if let Err(error) = self.require_session() {
 			return Subscription::interrupted(error);
 		}
 		versioned_subscription(
-			platform.subscribe_top_up_status(&self.product, host_payment_id(&self.product, id)),
+			platform.subscribe_top_up_status(
+				&self.connection.product,
+				host_payment_id(&self.connection.product, id),
+			),
 			version,
 		)
 	}
@@ -252,7 +259,7 @@ impl Payment for ProductRuntimeHost {
 impl ProductRuntimeHost {
 	/// `Denied` unless a pairing session is connected.
 	fn require_session<E>(&self) -> Result<(), CallError<E>> {
-		match self.authority.current_session() {
+		match self.accounts.current_session() {
 			Some(_) => Ok(()),
 			None => Err(CallError::Denied),
 		}
@@ -261,7 +268,8 @@ impl ProductRuntimeHost {
 	/// Whether the product already holds balance access, without asking.
 	async fn holds_balance_access(&self) -> bool {
 		matches!(
-			self.permissions_service()
+			self.connection
+				.permissions_service()
 				.peek_remote(&latest::RemotePermissionRequest {
 					permission: latest::RemotePermission::BalanceAccess,
 				})
@@ -276,13 +284,13 @@ impl ProductRuntimeHost {
 		&self,
 		mut request: latest::HostPaymentRequest,
 	) -> Result<(), CallError<latest::HostPaymentError>> {
-		let platform = self.services.payment_platform().ok_or(CallError::Unsupported)?;
+		let platform = self.connection.services.payment_platform().ok_or(CallError::Unsupported)?;
 		self.require_session()?;
 		if request.amount == 0 {
 			return Err(CallError::Domain(latest::HostPaymentError::InvalidAmount));
 		}
-		request.id = host_payment_id(&self.product, request.id);
-		match platform.request_payment(&self.product, request).await {
+		request.id = host_payment_id(&self.connection.product, request.id);
+		match platform.request_payment(&self.connection.product, request).await {
 			Ok(()) => Ok(()),
 			// Only a product the user lets see the balance may learn that the
 			// balance was short; to any other it reads as a refusal.
@@ -301,7 +309,7 @@ impl ProductRuntimeHost {
 		&self,
 		mut request: latest::HostPaymentTopUpRequest,
 	) -> Result<(), CallError<latest::HostPaymentTopUpError>> {
-		let platform = self.services.top_up_platform().ok_or(CallError::Unsupported)?;
+		let platform = self.connection.services.top_up_platform().ok_or(CallError::Unsupported)?;
 		self.require_session()?;
 		if request.amount == 0 {
 			return Err(CallError::Domain(latest::HostPaymentTopUpError::InvalidAmount));
@@ -309,8 +317,11 @@ impl ProductRuntimeHost {
 		if !source_keys_are_valid(&request.source) {
 			return Err(CallError::Domain(latest::HostPaymentTopUpError::InvalidSource));
 		}
-		request.id = host_payment_id(&self.product, request.id);
-		platform.top_up(&self.product, request).await.map_err(CallError::Domain)
+		request.id = host_payment_id(&self.connection.product, request.id);
+		platform
+			.top_up(&self.connection.product, request)
+			.await
+			.map_err(CallError::Domain)
 	}
 }
 
