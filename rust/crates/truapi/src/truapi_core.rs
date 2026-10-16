@@ -10,13 +10,15 @@ use parity_scale_codec::{Decode, Encode};
 use tracing::instrument;
 use truapi::api::TrUApi;
 
-use crate::dispatcher::Dispatcher;
-use crate::frame::ProtocolMessage;
-use crate::generated::dispatcher;
-use crate::host_logic::session::SessionState;
-use crate::runtime::{PairingHostRole, ProductAuthority, ProductRuntimeHost, RuntimeServices};
-use crate::subscription::Spawner;
-use crate::transport::Transport;
+use crate::{
+	dispatcher::Dispatcher,
+	frame::ProtocolMessage,
+	generated::dispatcher,
+	host_logic::session::SessionState,
+	runtime::{PairingHostRole, ProductAuthority, ProductRuntimeHost, RuntimeServices},
+	subscription::Spawner,
+	transport::Transport,
+};
 
 /// Top-level core. Owns the generated dispatcher.
 pub struct TrUApiCore {
@@ -36,10 +38,7 @@ impl TrUApiCore {
     {
         let mut dispatcher = Dispatcher::new(spawner);
         dispatcher::register(&mut dispatcher, host);
-        Self {
-            dispatcher,
-            session_state: SessionState::new(),
-        }
+		Self { dispatcher, session_state: SessionState::new() }
     }
 
     /// Build a product-facing core around a [`Platform`] implementation,
@@ -94,10 +93,7 @@ impl TrUApiCore {
         let execution_kind = runtime.execution_kind();
         let mut dispatcher = Dispatcher::for_execution(spawner, execution_kind);
         dispatcher::register(&mut dispatcher, runtime);
-        Self {
-            dispatcher,
-            session_state,
-        }
+		Self { dispatcher, session_state }
     }
 
     /// Handle to the shared session-state holder used by subscriptions and
@@ -126,12 +122,10 @@ impl TrUApiCore {
                     "undecodable product frame; dropping frame: {err}"
                 );
                 return None;
-            }
+			},
         };
         let transport = Arc::new(ResponseTransport::default());
-        self.dispatcher
-            .dispatch(message, transport.clone() as Arc<dyn Transport>)
-            .await;
+		self.dispatcher.dispatch(message, transport.clone() as Arc<dyn Transport>).await;
         transport.take().map(|response| response.encode())
     }
 
@@ -184,8 +178,10 @@ mod tests {
     use parity_scale_codec::Encode;
     use truapi::v01;
 
-    use crate::frame::{Payload, request_ids, subscription_ids};
-    use crate::test_support::{StubPlatform, runtime_config, test_spawner};
+	use crate::{
+		frame::{Payload, request_ids, subscription_ids},
+		test_support::{StubPlatform, runtime_config, test_spawner},
+	};
 
     /// A dial needs the user's `JamPeers` grant for its genesis, so a refusal
     /// answers `NotGranted` before anything connects. The browser core never
@@ -263,9 +259,7 @@ mod tests {
             product,
             test_spawner(),
         );
-        let request = v01::HostFeatureSupportedRequest::Chain {
-            genesis_hash: vec![0u8; 32],
-        };
+		let request = v01::HostFeatureSupportedRequest::Chain { genesis_hash: vec![0u8; 32] };
         let ids = request_ids("system_feature_supported").expect("known request method");
         let mut value =
             truapi::versioned::system::HostFeatureSupportedRequest::V1(request).encode();
@@ -303,9 +297,7 @@ mod tests {
             product,
             test_spawner(),
         );
-        let request = v01::HostFeatureSupportedRequest::Chain {
-            genesis_hash: vec![0u8; 32],
-        };
+		let request = v01::HostFeatureSupportedRequest::Chain { genesis_hash: vec![0u8; 32] };
         let ids = request_ids("system_feature_supported").expect("known request method");
         let value = truapi::versioned::system::HostFeatureSupportedRequest::V1(request).encode();
         let frame = ProtocolMessage {
@@ -324,10 +316,7 @@ mod tests {
         assert_eq!(response.request_id, "p:1");
         assert_eq!(response.payload.trait_id, ids.trait_id);
         assert_eq!(response.payload.method_id, ids.method_id);
-        assert_eq!(
-            response.payload.message_type,
-            crate::frame::MESSAGE_TYPE_RESPONSE
-        );
+		assert_eq!(response.payload.message_type, crate::frame::MESSAGE_TYPE_RESPONSE);
         let expected: Result<
             truapi::versioned::system::HostFeatureSupportedResponse,
             truapi::CallError<truapi::versioned::system::HostFeatureSupportedError>,
@@ -361,10 +350,7 @@ mod tests {
         assert_eq!(response.request_id, "p:1");
         assert_eq!(response.payload.trait_id, ids.trait_id);
         assert_eq!(response.payload.method_id, ids.method_id);
-        assert_eq!(
-            response.payload.message_type,
-            crate::frame::MESSAGE_TYPE_RESPONSE
-        );
+		assert_eq!(response.payload.message_type, crate::frame::MESSAGE_TYPE_RESPONSE);
         response.payload.value
     }
 
@@ -408,11 +394,7 @@ mod tests {
         );
         let _ = run_request(&core, "local_storage_read", request.encode());
         assert_eq!(
-            platform
-                .chain_connects
-                .lock()
-                .expect("chain connect mutex poisoned")
-                .clone(),
+			platform.chain_connects.lock().expect("chain connect mutex poisoned").clone(),
             vec![[0xcc; 32]],
             "the core dials Asset Hub, not People ([0; 32]) or Bulletin ([0xbb; 32])"
         );
@@ -421,9 +403,7 @@ mod tests {
     #[test]
     fn local_storage_read_round_trips_none() {
         let core = make_core();
-        let request = v01::HostLocalStorageReadRequest {
-            key: "missing".into(),
-        };
+		let request = v01::HostLocalStorageReadRequest { key: "missing".into() };
         let payload = run_request(
             &core,
             "local_storage_read",
@@ -432,21 +412,16 @@ mod tests {
         let expected: Result<
             truapi::versioned::local_storage::HostLocalStorageReadResponse,
             truapi::CallError<truapi::versioned::local_storage::HostLocalStorageReadError>,
-        > = Ok(
-            truapi::versioned::local_storage::HostLocalStorageReadResponse::V1(
+		> = Ok(truapi::versioned::local_storage::HostLocalStorageReadResponse::V1(
                 v01::HostLocalStorageReadResponse { value: None },
-            ),
-        );
+		));
         assert_eq!(payload, expected.encode());
     }
 
     #[test]
     fn local_storage_write_round_trips_unit_ok() {
         let core = make_core();
-        let request = v01::HostLocalStorageWriteRequest {
-            key: "k".into(),
-            value: vec![1, 2, 3],
-        };
+		let request = v01::HostLocalStorageWriteRequest { key: "k".into(), value: vec![1, 2, 3] };
         let payload = run_request(
             &core,
             "local_storage_write",
@@ -491,20 +466,17 @@ mod tests {
         let expected: Result<
             truapi::versioned::notifications::HostPushNotificationResponse,
             truapi::CallError<truapi::versioned::notifications::HostPushNotificationError>,
-        > = Ok(
-            truapi::versioned::notifications::HostPushNotificationResponse::V1(
+		> = Ok(truapi::versioned::notifications::HostPushNotificationResponse::V1(
                 v01::HostPushNotificationResponse { id: 0 },
-            ),
-        );
+		));
         assert_eq!(payload, expected.encode());
     }
 
     #[test]
     fn request_remote_permission_round_trips_granted() {
         let core = make_core();
-        let request = v01::RemotePermissionRequest {
-            permission: v01::RemotePermission::ChainSubmit,
-        };
+		let request =
+			v01::RemotePermissionRequest { permission: v01::RemotePermission::ChainSubmit };
         let payload = run_request(
             &core,
             "permissions_request_remote_permission",
@@ -514,11 +486,9 @@ mod tests {
         let expected: Result<
             truapi::versioned::permissions::RemotePermissionResponse,
             truapi::CallError<truapi::versioned::permissions::RemotePermissionError>,
-        > = Ok(
-            truapi::versioned::permissions::RemotePermissionResponse::V1(
+		> = Ok(truapi::versioned::permissions::RemotePermissionResponse::V1(
                 v01::RemotePermissionResponse { granted: true },
-            ),
-        );
+		));
         assert_eq!(payload, expected.encode());
     }
 
@@ -580,10 +550,7 @@ mod tests {
         let first = &sent[0];
         assert_eq!(first.payload.trait_id, sub_ids.trait_id);
         assert_eq!(first.payload.method_id, sub_ids.method_id);
-        assert_eq!(
-            first.payload.message_type,
-            crate::frame::MESSAGE_TYPE_RECEIVE
-        );
+		assert_eq!(first.payload.message_type, crate::frame::MESSAGE_TYPE_RECEIVE);
         let expected = truapi::versioned::account::HostAccountConnectionStatusSubscribeItem::V1(
             v01::HostAccountConnectionStatusSubscribeItem::Disconnected,
         )

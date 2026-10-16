@@ -267,6 +267,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
         pocket: false,
         game: false,
         contacts: false,
+        scanner: false,
       },
       // Null under `bun test`: the `import.meta.env.DEV` gate reads undefined,
       // so no dial resolves and the worker builds no tap.
@@ -443,6 +444,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
       pocket: false,
       game: false,
       contacts: false,
+      scanner: false,
     });
   });
 
@@ -466,6 +468,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
       pocket: true,
       game: false,
       contacts: false,
+      scanner: false,
     });
   });
 
@@ -492,6 +495,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
       pocket: false,
       game: true,
       contacts: false,
+      scanner: false,
     });
   });
 

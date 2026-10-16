@@ -18,13 +18,12 @@ import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import io.novasama.substrate_sdk_android.extensions.toHexString
 import dagger.Lazy
+import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.GameHostBridge
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
-import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.parity.truapi.WebSocketChainProvider
@@ -57,22 +56,24 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import timber.log.Timber
+import uniffi.truapi.AuthState
 import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
+import uniffi.truapi.HostNavigateToException
 import uniffi.truapi.HostPushNotificationRequest
+import uniffi.truapi.HostRejection
 import uniffi.truapi.HostThemeSubscribeItem
+import uniffi.truapi.ProductExecutionConfig
+import uniffi.truapi.ProductExecutionKind
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.ThemeName
-import uniffi.truapi.AuthState
-import uniffi.truapi.HostChainSet
 import uniffi.truapi.UserConfirmationReview
-import uniffi.truapi.HostNavigateToException
-import uniffi.truapi.HostRejection
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Instant
-import uniffi.truapi.ThemeVariant as NativeThemeVariant
 import uniffi.truapi.PermissionDecision as TrUAPIPermissionDecision
+import uniffi.truapi.ThemeVariant as NativeThemeVariant
 
 /**
  * Native platform callbacks ([io.parity.truapi.HostBridge]) for one product
@@ -291,6 +292,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         chains: TrUAPIChains,
         navigationPolicy: NavigationPolicy,
         kind: ProductExecutionKind,
+        chat: ChatHostBridge? = null,
         card: ExpandedCardFace? = null,
         onPermissionRevoked: suspend () -> Unit,
         onReadyToInject: suspend (bootstrap: String) -> Unit,
@@ -309,6 +311,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             val opened = runtime.openProductExecution(
                 bridge = buildBridge(productId, navigationPolicy, card),
                 configuration = ProductExecutionConfig(productId.value, kind),
+                chat = chat,
                 pocket = pocket,
                 game = gameBridge(productId),
             )

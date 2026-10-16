@@ -3,6 +3,7 @@ import os
 import AsyncExtensions
 import BulletinChain
 import ChainRegistry
+import DesignSystem
 import Products
 import TrUAPIHost
 
@@ -39,8 +40,7 @@ final class ProductPocketService: @unchecked Sendable {
     private struct Drawing {
         let faces: any PocketFaceSourcing
         let products: any ProductResolving
-        let dotNsResolver: any DotNsResolverProtocol
-        let ipfsUrl: @Sendable (String) -> URL?
+        let productImages: ProductImageSources
     }
 
     init(collection: any PocketCardStore, logger: LoggerProtocol = Logger.shared) {
@@ -106,7 +106,7 @@ final class ProductPocketService: @unchecked Sendable {
 
     /// Resolves the images inside `productId`'s faces, out of that product's
     /// own worker archive. Nil before the session has started the Pocket.
-    func images(of productId: ProductId) -> PocketImageResolver? {
+    func images(of productId: ProductId) -> ProductImageResolver? {
         guard let drawing = running.withLock({ $0.drawing }) else { return nil }
 
         let name = PocketWorkerArchiveName(
@@ -114,11 +114,7 @@ final class ProductPocketService: @unchecked Sendable {
             published: { try? await drawing.products.resolve(productId).contentId(for: .worker) }
         )
 
-        return PocketImageResolver(
-            contentId: { await name.resolve() },
-            archive: ProductWorkerArchive(dotNsResolver: drawing.dotNsResolver),
-            ipfsUrl: drawing.ipfsUrl
-        )
+        return drawing.productImages.resolver(contentId: { await name.resolve() })
     }
 
     /// Starts the worker manager the core runs on, then follows the collection:
@@ -129,7 +125,8 @@ final class ProductPocketService: @unchecked Sendable {
         flowState: SPAFlowState,
         productFileProvider: any ChatProductFileProviding,
         chainRegistry: ChainRegistryProtocol,
-        gameReminders: any ProductGameReminderScheduling
+        gameReminders: any ProductGameReminderScheduling,
+        themeManager: any ThemeManagerProtocol
     ) {
         let manager = TrUAPIWorkerManager(
             builder: TrUAPIWorkerBuilder(
@@ -143,6 +140,7 @@ final class ProductPocketService: @unchecked Sendable {
                         gameReminders: gameReminders,
                         ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
                         hostProvider: flowState.hostProvider,
+                        themeManager: themeManager,
                         logger: logger
                     )
                 },
@@ -168,7 +166,6 @@ final class ProductPocketService: @unchecked Sendable {
             logger: logger
         )
 
-        let converter = HexToCIDConverter(ipfsBaseURL: AppConfig.KnownIPFS.main)
         let drawing = Drawing(
             faces: RealPocketFaceSource(
                 store: { [collection] in collection },
@@ -176,8 +173,7 @@ final class ProductPocketService: @unchecked Sendable {
                 logger: logger
             ),
             products: flowState.productResolver,
-            dotNsResolver: flowState.dotNsResolver,
-            ipfsUrl: { converter.ipfsURL(cid: $0) }
+            productImages: flowState.productImages
         )
 
         install(manager: manager, drawing: drawing, handlers: handlers)

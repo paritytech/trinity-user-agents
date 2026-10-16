@@ -43,7 +43,10 @@ public enum ProductPermission: Equatable, Sendable {
         case .networkAccess, .networkAccessBundle, .webRtcAccess, .chainSubmitAccess, .preimageSubmitAccess,
              .statementSubmitAccess, .jamPeersAccess:
             true
-        case .deviceCapability, .accountAccess, .balanceAccess, .userIdentityAccess:
+        case .deviceCapability,
+             .accountAccess,
+             .balanceAccess,
+             .userIdentityAccess:
             false
         }
     }

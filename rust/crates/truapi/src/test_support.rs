@@ -1,21 +1,29 @@
 //! Shared fixtures for the runtime test modules: a stub platform, a
 //! recording json-rpc connection, and SSO statement/frame builders.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
+use std::{
+	sync::{
+		Arc, Mutex,
+		atomic::{AtomicBool, AtomicUsize, Ordering},
+	},
+	task::{Context, Poll},
+};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 #[cfg(target_arch = "wasm32")]
 use web_time::Duration;
 
-use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1};
-use crate::host_logic::session::{SessionInfo, SsoSessionInfo};
-use crate::host_logic::sso::pairing;
-use crate::subscription::Spawner;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::subscription::thread_per_subscription_spawner;
+use crate::{
+	host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1},
+	host_logic::{
+		session::{SessionInfo, SsoSessionInfo},
+		sso::pairing,
+	},
+	subscription::Spawner,
+};
 
 use crate::platform::{
     AccountAccessReview, AuthPresenter, AuthState, ChainProvider,
@@ -28,13 +36,19 @@ use crate::platform::{
     SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
     UserConfirmationReview,
 };
-use futures::Stream;
-use futures::stream::{self, BoxStream, StreamExt};
+use futures::{
+	Stream,
+	stream::{self, BoxStream, StreamExt},
+};
 use parity_scale_codec::{Decode, Encode};
 use schnorrkel::{ExpansionMode, MiniSecretKey};
-use truapi::v01;
-use truapi::versioned::account::{HostAccountCreateProofRequest, HostAccountGetAliasRequest};
-use truapi::versioned::resource_allocation::HostRequestResourceAllocationRequest;
+use truapi::{
+	v01,
+	versioned::{
+		account::{HostAccountCreateProofRequest, HostAccountGetAliasRequest},
+		resource_allocation::HostRequestResourceAllocationRequest,
+	},
+};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey};
 
 mod scripted_chain;
@@ -142,6 +156,8 @@ pub struct StubPlatform {
         Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
     /// Every `ResourceAllocation` review passed to `confirm_user_action`, in order.
     pub resource_allocation_reviews: Arc<Mutex<Vec<ResourceAllocationReview>>>,
+    pub preimage_submit_denied: bool,
+    pub preimage_submit_reviews: Arc<parking_lot::Mutex<Vec<crate::platform::PreimageSubmitReview>>>,
     pub session_blob: Option<Vec<u8>>,
     pub session_error: Option<&'static str>,
     pub session_clears: Arc<Mutex<usize>>,
@@ -255,11 +271,8 @@ impl StubPlatform {
             .lock()
             .expect("storage subscribers mutex poisoned")
             .retain(|(subscribed, tx)| {
-                subscribed != key
-                    || tx
-                        .unbounded_send(Err(v01::GenericError {
-                            reason: reason.to_string(),
-                        }))
+				subscribed != key ||
+					tx.unbounded_send(Err(v01::GenericError { reason: reason.to_string() }))
                         .is_ok()
             });
     }
@@ -269,9 +282,8 @@ impl StubPlatform {
             .lock()
             .expect("storage subscribers mutex poisoned")
             .retain(|(subscribed, tx)| {
-                subscribed != key
-                    || tx
-                        .unbounded_send(Ok(v01::HostLocalStorageChangeItem {
+				subscribed != key ||
+					tx.unbounded_send(Ok(v01::HostLocalStorageChangeItem {
                             value: value.clone(),
                         }))
                         .is_ok()
@@ -283,10 +295,7 @@ impl StubPlatform {
 #[derive(Clone)]
 pub enum SsoResponseScript {
     /// Peer acknowledges the request and replies with `response`.
-    Success {
-        session: SessionInfo,
-        response: Box<RemoteMessage>,
-    },
+	Success { session: SessionInfo, response: Box<RemoteMessage> },
     /// Peer acknowledges the request and then sends `Disconnected`.
     PeerDisconnect { session: SessionInfo },
 }
@@ -379,11 +388,13 @@ pub fn session_info() -> crate::host_logic::session::SessionInfo {
 /// A pairing host and the signing host it paired with, each holding its own
 /// side of one SSO session.
 pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
-    use crate::host_logic::sso::pairing::{
+	use crate::{
+		host_logic::sso::pairing::{
         ResponderIdentity, create_pairing_bootstrap, derive_x25519_keypair_from_entropy,
         establish_responder_session_info, establish_sso_session_info,
+		},
+		platform::{HostInfo, PairingHostConfig, PlatformInfo},
     };
-    use crate::platform::{HostInfo, PairingHostConfig, PlatformInfo};
 
     let config = PairingHostConfig::new(
         HostInfo {
@@ -463,9 +474,7 @@ pub fn signed_test_statement(data: Vec<u8>) -> Vec<u8> {
     crate::host_logic::statement_store::sign_statement_fields(
         secret,
         public,
-        vec![crate::host_logic::statement_store::StatementField::Data(
-            data,
-        )],
+		vec![crate::host_logic::statement_store::StatementField::Data(data)],
     )
     .unwrap()
     .encode()
@@ -585,17 +594,12 @@ pub fn sso_success_response_script(
     session: &SessionInfo,
     response: RemoteMessage,
 ) -> SsoResponseScript {
-    SsoResponseScript::Success {
-        session: session.clone(),
-        response: Box::new(response),
-    }
+	SsoResponseScript::Success { session: session.clone(), response: Box::new(response) }
 }
 
 /// Dynamic JSON-RPC response script where the SSO peer sends `Disconnected`.
 pub fn sso_peer_disconnect_response_script(session: &SessionInfo) -> SsoResponseScript {
-    SsoResponseScript::PeerDisconnect {
-        session: session.clone(),
-    }
+	SsoResponseScript::PeerDisconnect { session: session.clone() }
 }
 
 /// JSON-RPC response sequence for the background peer-disconnect monitor.
@@ -701,10 +705,7 @@ pub fn pairing_device_from_deeplink(deeplink: &str) -> ([u8; 32], [u8; 32]) {
     let decoded = pairing::VersionedHandshakeProposal::decode(&mut handshake.as_slice())
         .expect("handshake should decode");
     let pairing::VersionedHandshakeProposal::V2(proposal) = decoded;
-    (
-        proposal.device.statement_account_id,
-        proposal.device.encryption_public_key,
-    )
+	(proposal.device.statement_account_id, proposal.device.encryption_public_key)
 }
 
 /// Signed wallet handshake statement answering `deeplink` with pairing success.
@@ -816,9 +817,7 @@ pub fn account_id(identifier: &str, index: u32) -> v01::ProductAccountId {
 
 /// Raw signing payload fixture.
 pub fn raw_payload() -> v01::RawPayload {
-    v01::RawPayload::Bytes {
-        bytes: b"hello".to_vec(),
-    }
+	v01::RawPayload::Bytes { bytes: b"hello".to_vec() }
 }
 
 /// Product-scoped proof context fixture for `product_id`.
@@ -920,10 +919,7 @@ pub fn statement() -> v01::Statement {
 /// Signed statement fixture scoped to `topic`.
 pub fn signed_statement(topic: [u8; 32]) -> v01::SignedStatement {
     v01::SignedStatement {
-        proof: v01::StatementProof::Sr25519 {
-            signature: [9; 64],
-            signer: [8; 32],
-        },
+		proof: v01::StatementProof::Sr25519 { signature: [9; 64], signer: [8; 32] },
         decryption_key: None,
         expiry: Some(99),
         channel: Some([1; 32]),
@@ -936,9 +932,7 @@ pub fn signed_statement(topic: [u8; 32]) -> v01::SignedStatement {
 impl PlatformProductStorage for StubPlatform {
     async fn read(&self, key: String) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
         if let Some(reason) = self.local_storage_error {
-            return Err(v01::HostLocalStorageReadError::Unknown {
-                reason: reason.to_string(),
-            });
+			return Err(v01::HostLocalStorageReadError::Unknown { reason: reason.to_string() });
         }
         Ok(self
             .local_storage
@@ -953,9 +947,7 @@ impl PlatformProductStorage for StubPlatform {
         value: Vec<u8>,
     ) -> Result<(), v01::HostLocalStorageReadError> {
         if let Some(reason) = self.local_storage_error {
-            return Err(v01::HostLocalStorageReadError::Unknown {
-                reason: reason.to_string(),
-            });
+			return Err(v01::HostLocalStorageReadError::Unknown { reason: reason.to_string() });
         }
         self.local_storage_writes
             .lock()
@@ -970,14 +962,9 @@ impl PlatformProductStorage for StubPlatform {
     }
     async fn clear(&self, key: String) -> Result<(), v01::HostLocalStorageReadError> {
         if let Some(reason) = self.local_storage_error {
-            return Err(v01::HostLocalStorageReadError::Unknown {
-                reason: reason.to_string(),
-            });
+			return Err(v01::HostLocalStorageReadError::Unknown { reason: reason.to_string() });
         }
-        self.local_storage
-            .lock()
-            .expect("local storage mutex poisoned")
-            .remove(&key);
+		self.local_storage.lock().expect("local storage mutex poisoned").remove(&key);
         self.push_storage_change(&key, None);
         Ok(())
     }
@@ -1021,10 +1008,7 @@ impl PlatformProductOperations for StubPlatform {
         // The stub has no worker lifecycle to keep alive; it only records the
         // call and hands back its position as the id.
         let id = {
-            let mut begun = self
-                .begun_operations
-                .lock()
-                .expect("begun operations mutex poisoned");
+			let mut begun = self.begun_operations.lock().expect("begun operations mutex poisoned");
             begun.push((product.product_id.clone(), label));
             begun.len() as u32
         };
@@ -1051,9 +1035,9 @@ impl PlatformProductOperations for StubPlatform {
             .expect("ended operations mutex poisoned")
             .push((product.product_id.clone(), id));
         match self.end_operation_error {
-            Some(reason) => Err(v01::HostWorkerOperationError::Unknown {
-                reason: reason.to_string(),
-            }),
+			Some(reason) => {
+				Err(v01::HostWorkerOperationError::Unknown { reason: reason.to_string() })
+			},
             None => Ok(()),
         }
     }
@@ -1070,23 +1054,17 @@ impl PlatformCoreStorage for StubPlatform {
         }
         if let CoreStorageKey::AuthSession = key {
             if let Some(reason) = self.session_error {
-                return Err(v01::GenericError {
-                    reason: reason.to_string(),
-                });
+				return Err(v01::GenericError { reason: reason.to_string() });
             }
             return Ok(self.session_blob.clone());
         }
         if let Some(reason) = self.local_storage_error {
-            return Err(v01::GenericError {
-                reason: reason.to_string(),
-            });
+			return Err(v01::GenericError { reason: reason.to_string() });
         }
         if let (CoreStorageKey::PermissionAuthorization { .. }, Some(reason)) =
             (&key, self.permission_storage_error)
         {
-            return Err(v01::GenericError {
-                reason: reason.to_string(),
-            });
+			return Err(v01::GenericError { reason: reason.to_string() });
         }
         Ok(self
             .local_storage
@@ -1117,9 +1095,7 @@ impl PlatformCoreStorage for StubPlatform {
             return Ok(());
         }
         if let Some(reason) = self.local_storage_error {
-            return Err(v01::GenericError {
-                reason: reason.to_string(),
-            });
+			return Err(v01::GenericError { reason: reason.to_string() });
         }
         self.local_storage
             .lock()
@@ -1130,16 +1106,11 @@ impl PlatformCoreStorage for StubPlatform {
 
     async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
         if let CoreStorageKey::AuthSession = key {
-            *self
-                .session_clears
-                .lock()
-                .expect("session clear counter mutex poisoned") += 1;
+			*self.session_clears.lock().expect("session clear counter mutex poisoned") += 1;
             return Ok(());
         }
         if let Some(reason) = self.local_storage_error {
-            return Err(v01::GenericError {
-                reason: reason.to_string(),
-            });
+			return Err(v01::GenericError { reason: reason.to_string() });
         }
         self.local_storage
             .lock()
@@ -1157,10 +1128,7 @@ pub fn core_storage_test_key(key: CoreStorageKey) -> String {
 #[crate::platform::async_trait]
 impl PlatformNavigation for StubPlatform {
     async fn navigate_to(&self, url: String) -> Result<(), v01::HostNavigateToError> {
-        self.navigations
-            .lock()
-            .expect("navigation list mutex poisoned")
-            .push(url);
+		self.navigations.lock().expect("navigation list mutex poisoned").push(url);
         Ok(())
     }
 }
@@ -1175,9 +1143,7 @@ impl PlatformNotifications for StubPlatform {
             .lock()
             .expect("notification list mutex poisoned")
             .push(notification);
-        Ok(v01::HostPushNotificationResponse {
-            id: self.notification_id,
-        })
+		Ok(v01::HostPushNotificationResponse { id: self.notification_id })
     }
 
     async fn cancel_notification(&self, id: u32) -> Result<(), v01::GenericError> {
@@ -1329,18 +1295,18 @@ fn sso_scripted_responses(
                 0 => {
                     let id = wait_for_statement_subscribe_id(sent.clone(), 0).await;
                     Some((subscribe_ack_frame(&id, "own-sub"), 1))
-                }
+				},
                 1 => {
                     let id = wait_for_statement_subscribe_id(sent.clone(), 1).await;
                     Some((subscribe_ack_frame(&id, "peer-sub"), 2))
-                }
+				},
                 2 => {
                     let id = wait_for_rpc_method_id(sent.clone(), "statement_submit", 0).await;
                     Some((statement_submit_ack_frame(&id), 3))
-                }
+				},
                 3 => match &script {
-                    SsoResponseScript::Success { session, .. }
-                    | SsoResponseScript::PeerDisconnect { session } => {
+					SsoResponseScript::Success { session, .. } |
+					SsoResponseScript::PeerDisconnect { session } => {
                         let (statement_request_id, _) = submitted_sso_request(&sent, session);
                         Some((
                             new_statements_frame(
@@ -1356,7 +1322,7 @@ fn sso_scripted_responses(
                             ),
                             4,
                         ))
-                    }
+					},
                 },
                 4 => match script {
                     SsoResponseScript::Success { session, response } => {
@@ -1379,7 +1345,7 @@ fn sso_scripted_responses(
                             ),
                             5,
                         ))
-                    }
+					},
                     SsoResponseScript::PeerDisconnect { session } => {
                         let (_, request) = submitted_sso_request(&sent, &session);
                         let message_id = format!("wallet-disconnect-{}", request.message_id);
@@ -1405,7 +1371,7 @@ fn sso_scripted_responses(
                             ),
                             5,
                         ))
-                    }
+					},
                 },
                 _ => futures::future::pending().await,
             }
@@ -1415,10 +1381,7 @@ fn sso_scripted_responses(
 
 impl JsonRpcConnection for RecordingConnection {
     fn send(&self, request: String) {
-        self.sent
-            .lock()
-            .expect("rpc list mutex poisoned")
-            .push(request);
+		self.sent.lock().expect("rpc list mutex poisoned").push(request);
     }
     fn responses(&self) -> BoxStream<'static, String> {
         if self.pairing_silent_after_subscribe {
@@ -1430,7 +1393,7 @@ impl JsonRpcConnection for RecordingConnection {
                         0 => {
                             let id = wait_for_statement_subscribe_id(sent.clone(), 0).await;
                             Some((subscribe_ack_frame(&id, "pairing-sub"), 1))
-                        }
+						},
                         _ => futures::future::pending().await,
                     }
                 }
@@ -1447,11 +1410,11 @@ impl JsonRpcConnection for RecordingConnection {
                         0 => {
                             let id = wait_for_statement_subscribe_id(sent.clone(), 0).await;
                             Some((subscribe_ack_frame(&id, "pairing-sub"), 1))
-                        }
+						},
                         1 => {
                             let query_id = wait_for_statement_subscribe_id(sent.clone(), 1).await;
                             Some((subscribe_ack_frame(&query_id, "query-sub"), 2))
-                        }
+						},
                         2 => {
                             for _ in 0..100 {
                                 if let Some(deeplink) = first_pairing_deeplink(&auth_states) {
@@ -1466,7 +1429,7 @@ impl JsonRpcConnection for RecordingConnection {
                                 futures_timer::Delay::new(Duration::from_millis(1)).await;
                             }
                             panic!("pairing deeplink was not presented");
-                        }
+						},
                         _ => futures::future::pending().await,
                     }
                 }
@@ -1483,7 +1446,7 @@ impl JsonRpcConnection for RecordingConnection {
                         0 => {
                             let id = wait_for_statement_subscribe_id(sent.clone(), 0).await;
                             Some((subscribe_ack_frame(&id, "pairing-sub"), 1))
-                        }
+						},
                         1 => {
                             for _ in 0..100 {
                                 if let Some(deeplink) = first_pairing_deeplink(&auth_states) {
@@ -1501,7 +1464,7 @@ impl JsonRpcConnection for RecordingConnection {
                                 futures_timer::Delay::new(Duration::from_millis(1)).await;
                             }
                             panic!("pairing deeplink was not presented");
-                        }
+						},
                         _ => futures::future::pending().await,
                     }
                 }
@@ -1518,7 +1481,7 @@ impl JsonRpcConnection for RecordingConnection {
                         0 => {
                             let id = wait_for_statement_subscribe_id(sent.clone(), 0).await;
                             Some((subscribe_ack_frame(&id, "pairing-sub"), 1))
-                        }
+						},
                         1 => {
                             for _ in 0..100 {
                                 if let Some(deeplink) = first_pairing_deeplink(&auth_states) {
@@ -1533,7 +1496,7 @@ impl JsonRpcConnection for RecordingConnection {
                                 futures_timer::Delay::new(Duration::from_millis(1)).await;
                             }
                             panic!("pairing deeplink was not presented");
-                        }
+						},
                         _ => futures::future::pending().await,
                     }
                 }
@@ -1550,7 +1513,7 @@ impl JsonRpcConnection for RecordingConnection {
                         0 => {
                             let id = wait_for_statement_subscribe_id(sent.clone(), 0).await;
                             Some((subscribe_ack_frame(&id, "pairing-sub"), 1))
-                        }
+						},
                         1 => {
                             for _ in 0..100 {
                                 if let Some(deeplink) = first_pairing_deeplink(&auth_states) {
@@ -1565,7 +1528,7 @@ impl JsonRpcConnection for RecordingConnection {
                                 futures_timer::Delay::new(Duration::from_millis(1)).await;
                             }
                             panic!("pairing deeplink was not presented");
-                        }
+						},
                         _ => futures::future::pending().await,
                     }
                 }
@@ -1662,11 +1625,7 @@ fn method_keyed_responses(
         let answers = answers.clone();
         async move {
             loop {
-                let request = sent
-                    .lock()
-                    .expect("rpc list mutex poisoned")
-                    .get(answered)
-                    .cloned();
+				let request = sent.lock().expect("rpc list mutex poisoned").get(answered).cloned();
                 if let Some(request) = request {
                     let value: serde_json::Value =
                         serde_json::from_str(&request).expect("request is valid JSON");
@@ -1777,14 +1736,10 @@ impl ChainProvider for StubPlatform {
             .expect("chain connect mutex poisoned")
             .push(genesis_hash);
         if let Some(reason) = self.chain_connect_error {
-            return Err(ProviderError::Host {
-                reason: reason.to_string(),
-            });
+			return Err(ProviderError::Host { reason: reason.to_string() });
         }
         if self.unreachable_genesis == Some(genesis_hash) {
-            return Err(ProviderError::Host {
-                reason: "fixture serves no such chain".to_string(),
-            });
+			return Err(ProviderError::Host { reason: "fixture serves no such chain".to_string() });
         }
         if self.chain_connect_pending {
             let _guard = DropFlagGuard(self.pending_connect_dropped.clone());
@@ -1813,11 +1768,7 @@ impl AuthPresenter for StubPlatform {
             .lock()
             .expect("auth state list mutex poisoned")
             .push(state.clone());
-        let hook = self
-            .on_auth_state
-            .lock()
-            .expect("auth state hook mutex poisoned")
-            .clone();
+		let hook = self.on_auth_state.lock().expect("auth state hook mutex poisoned").clone();
         if let Some(hook) = hook {
             hook(&state);
         }
@@ -1854,28 +1805,28 @@ impl UserConfirmation for StubPlatform {
                     .expect("sign payload review list mutex poisoned")
                     .push(review);
                 (self.sign_payload_error, self.sign_payload_confirmed)
-            }
+			},
             UserConfirmationReview::SignRaw(review) => {
                 self.sign_raw_reviews
                     .lock()
                     .expect("raw signing review list mutex poisoned")
                     .push(review);
                 (self.sign_raw_error, self.sign_raw_confirmed)
-            }
+			},
             UserConfirmationReview::SignVrf(review) => {
                 self.sign_vrf_reviews
                     .lock()
                     .expect("VRF signing review list mutex poisoned")
                     .push(review);
                 (self.sign_vrf_error, self.sign_vrf_confirmed)
-            }
+			},
             UserConfirmationReview::StatementStoreProductSign(review) => {
                 self.statement_store_product_sign_reviews
                     .lock()
                     .expect("statement store product sign review list mutex poisoned")
                     .push(review);
                 (self.sign_raw_error, self.sign_raw_confirmed)
-            }
+			},
             UserConfirmationReview::CreateTransaction(review) => {
                 self.create_transaction_reviews
                     .lock()
@@ -1887,27 +1838,23 @@ impl UserConfirmation for StubPlatform {
                     .expect("transaction confirmation gate mutex poisoned")
                     .take();
                 if let Some(gate) = gate {
-                    gate.await
-                        .expect("transaction confirmation gate was released");
-                }
-                (
-                    self.create_transaction_error,
-                    self.create_transaction_confirmed,
-                )
+					gate.await.expect("transaction confirmation gate was released");
             }
+				(self.create_transaction_error, self.create_transaction_confirmed)
+			},
             UserConfirmationReview::AccountAlias(_) => {
                 (self.account_alias_error, self.account_alias_confirmed)
-            }
+			},
             UserConfirmationReview::CreateProof(_) => {
                 (self.create_proof_error, self.create_proof_confirmed)
-            }
+			},
             UserConfirmationReview::AccountAccess(review) => {
                 self.account_access_reviews
                     .lock()
                     .expect("account access review list mutex poisoned")
                     .push(review);
                 (self.account_access_error, self.account_access_confirmed)
-            }
+			},
             UserConfirmationReview::IdentityDisclosure(_) => {
                 self.identity_disclosure_calls
                     .fetch_add(1, Ordering::SeqCst);
@@ -1933,24 +1880,24 @@ impl UserConfirmation for StubPlatform {
                 if let Some(gate) = gate {
                     gate.await.expect("resource confirmation gate was released");
                 }
-                (
-                    self.resource_allocation_error,
-                    self.resource_allocation_confirmed,
-                )
-            }
-            UserConfirmationReview::PreimageSubmit(_) => (None, true),
+				(self.resource_allocation_error, self.resource_allocation_confirmed)
+			},
+            UserConfirmationReview::PreimageSubmit(review) => {
+                self.preimage_submit_reviews
+                    .lock()
+                    .push(review);
+                (None, !self.preimage_submit_denied)
+            },
             UserConfirmationReview::ProductSubtree(review) => {
                 self.product_subtree_reviews
                     .lock()
                     .expect("product subtree review list mutex poisoned")
                     .push(review);
                 (None, !self.product_subtree_denied)
-            }
+			},
         };
         if let Some(reason) = error {
-            return Err(v01::GenericError {
-                reason: reason.to_string(),
-            });
+			return Err(v01::GenericError { reason: reason.to_string() });
         }
         Ok(confirmed)
     }
@@ -1961,9 +1908,7 @@ impl ThemeHost for StubPlatform {
         &self,
     ) -> BoxStream<'static, Result<v01::HostThemeSubscribeItem, v01::GenericError>> {
         if self.theme_stream_pending {
-            return Box::pin(PendingThemeStream {
-                dropped: self.theme_stream_dropped.clone(),
-            });
+			return Box::pin(PendingThemeStream { dropped: self.theme_stream_dropped.clone() });
         }
         // A custom name, not `Default`: the core must forward whatever the host
         // reports instead of substituting a name of its own.

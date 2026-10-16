@@ -20,13 +20,12 @@
 //! implementation, then create product-scoped `ProductRuntime` endpoints that
 //! expose the stable byte-frame API used from WASM, native mobile, or desktop
 //! shells. Host-facing bridges:
-//! - `ws_bridge`: localhost WebSocket bridge for
-//!   native WebView hosts (Android/iOS).
+//! - `ws_bridge`: localhost WebSocket bridge for native WebView hosts (Android/iOS).
 //! - `bootstrap`: the JavaScript those hosts inject to reach that bridge.
 //! - `native`: UniFFI surface exposing the native host runtime + callbacks.
 //! - `wasm` (wasm32 only): wasm-bindgen surface exposing `WasmProductRuntime`.
-//! - `native_debug` (non-wasm32 only): a loopback WebSocket `DebugSink` that
-//!   streams tapped frames to the `@parity/truapi-debugger` app.
+//! - `native_debug` (non-wasm32 only): a loopback WebSocket `DebugSink` that streams tapped frames
+//!   to the `@parity/truapi-debugger` app.
 
 // Runtime code, the generated dispatcher and the macros all name this crate
 // `truapi`, the way code outside it does.
@@ -90,13 +89,7 @@ pub mod latest {
         AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
         BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
         ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
-        ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
-        ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
-        ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect,
-        EffectProps, GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
-        HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
-        HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
-        HostAccountSignVrfError, HostAccountSignVrfRequest, HostJamPeerTransportCloseError,
+        HostJamPeerTransportCloseError,
         HostJamPeerTransportCloseRequest, HostJamPeerTransportDialError,
         HostJamPeerTransportDialRequest, HostJamPeerTransportDialResponse,
         HostJamPeerTransportEventsError, HostJamPeerTransportEventsResponse,
@@ -104,24 +97,113 @@ pub mod latest {
         HostJamPeerTransportOpenResponse, HostJamPeerTransportRecvError,
         HostJamPeerTransportRecvRequest, HostJamPeerTransportRecvResponse,
         HostJamPeerTransportResetError, HostJamPeerTransportResetRequest,
-        HostJamPeerTransportSendError, HostJamPeerTransportSendRequest, HostPlatform,
-        HostSignPayloadData, HostWorkerOperationError, ImageFit, ImageProps, ImageSource,
+        HostJamPeerTransportSendError, HostJamPeerTransportSendRequest,
         JAM_PEER_TRANSPORT_MAX_BUFFERED_BYTES_PER_CONNECTION, JAM_PEER_TRANSPORT_MAX_CONNECTIONS,
         JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES, JAM_PEER_TRANSPORT_MAX_STREAMS_PER_CONNECTION,
-        JamPeerTransportEvent, Modifier, OperationStartedResult, PocketCard, ProductAccountId,
-        ProductProofContext, RawPayload, RegisteredRingVrfKey, RemotePermission,
-        RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
-        RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
-        RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, RingLocation,
-        RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType,
-        ScanOutcome, Shape, SignedStatement, Size, Statement, StatementProof, StorageQueryItem,
-        StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
-        TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature,
+        JamPeerTransportEvent,
+		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
+		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
+		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
+		Dimensions, Effect, EffectProps, GenericError, HorizontalAlignment,
+		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
+		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
+		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
+		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
+        HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
+		OperationStartedResult, PocketCard, ProductAccount, ProductAccountId, ProductProofContext,
+		RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
+		RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
+		RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
+		RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, ResourceAllocationError,
+		RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi,
+		RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
+        StatementProof, StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps,
+        TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
+        VrfSignature,
     };
 
     /// Latest payload type of a versioned envelope.
     pub type LatestOf<T> = <T as Versioned>::Latest;
 
+	/// Account proof creation failure.
+	pub type HostAccountCreateProofError =
+		LatestOf<versioned::account::HostAccountCreateProofError>;
+	/// Contextual alias derivation failure.
+	pub type HostAccountGetAliasError = LatestOf<versioned::account::HostAccountGetAliasError>;
+	/// Account lookup request.
+	pub type HostAccountGetRequest = LatestOf<versioned::account::HostAccountGetRequest>;
+	/// Account lookup result.
+	pub type HostAccountGetResponse = LatestOf<versioned::account::HostAccountGetResponse>;
+	/// Ring-VRF registry listing failure.
+	pub type HostAccountListRingVrfKeysError =
+		LatestOf<versioned::account::HostAccountListRingVrfKeysError>;
+	/// Ring-VRF key registration failure.
+	pub type HostAccountRegisterRingVrfKeyError =
+		LatestOf<versioned::account::HostAccountRegisterRingVrfKeyError>;
+	/// Ring-VRF signing failure.
+	pub type HostAccountRingVrfSignError =
+		LatestOf<versioned::account::HostAccountRingVrfSignError>;
+	/// User identifier lookup failure.
+	pub type HostGetUserIdError = LatestOf<versioned::account::HostGetUserIdError>;
+	/// User identifier lookup result.
+	pub type HostGetUserIdResponse = LatestOf<versioned::account::HostGetUserIdResponse>;
+	/// Transaction creation failure.
+	pub type HostCreateTransactionError = LatestOf<versioned::signing::HostCreateTransactionError>;
+	/// Transaction created for a legacy account.
+	pub type HostCreateTransactionWithLegacyAccountResponse =
+		LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountResponse>;
+	/// Payload signing failure.
+	pub type HostSignPayloadError = LatestOf<versioned::signing::HostSignPayloadError>;
+	/// Product entropy derivation failure.
+	pub type HostDeriveEntropyError = LatestOf<versioned::entropy::HostDeriveEntropyError>;
+	/// Product entropy derivation request.
+	pub type HostDeriveEntropyRequest = LatestOf<versioned::entropy::HostDeriveEntropyRequest>;
+	/// Product entropy derivation result.
+	pub type HostDeriveEntropyResponse = LatestOf<versioned::entropy::HostDeriveEntropyResponse>;
+	/// Host information exposed to a product.
+	pub type HostInfoResponse = LatestOf<versioned::system::HostInfoResponse>;
+	/// Product navigation request.
+	pub type HostNavigateToRequest = LatestOf<versioned::system::HostNavigateToRequest>;
+	/// Storage read request, optionally naming another product.
+	pub type HostLocalStorageReadRequest =
+		LatestOf<versioned::local_storage::HostLocalStorageReadRequest>;
+	/// Value read from product storage.
+	pub type HostLocalStorageReadResponse =
+		LatestOf<versioned::local_storage::HostLocalStorageReadResponse>;
+	/// Product storage write request.
+	pub type HostLocalStorageWriteRequest =
+		LatestOf<versioned::local_storage::HostLocalStorageWriteRequest>;
+	/// Product storage removal request.
+	pub type HostLocalStorageClearRequest =
+		LatestOf<versioned::local_storage::HostLocalStorageClearRequest>;
+	/// Product storage change subscription request.
+	pub type HostLocalStorageSubscribeRequest =
+		LatestOf<versioned::local_storage::HostLocalStorageSubscribeRequest>;
+	/// Worker pending operation completion request.
+	pub type HostWorkerEndOperationRequest =
+		LatestOf<versioned::worker::HostWorkerEndOperationRequest>;
+	/// Push notification scheduling failure.
+	pub type HostPushNotificationError =
+		LatestOf<versioned::notifications::HostPushNotificationError>;
+	/// Push notification cancellation request.
+	pub type HostPushNotificationCancelRequest =
+		LatestOf<versioned::notifications::HostPushNotificationCancelRequest>;
+	/// Content-addressed preimage lookup request.
+	pub type RemotePreimageLookupSubscribeRequest =
+		LatestOf<versioned::preimage::RemotePreimageLookupSubscribeRequest>;
+	/// Current preimage lookup result.
+	pub type RemotePreimageLookupSubscribeItem =
+		LatestOf<versioned::preimage::RemotePreimageLookupSubscribeItem>;
+	/// Payment balance subscription failure.
+	pub type HostPaymentBalanceSubscribeError =
+		LatestOf<versioned::payment::HostPaymentBalanceSubscribeError>;
+	/// Payment request failure.
+	pub type HostPaymentError = LatestOf<versioned::payment::HostPaymentError>;
+	/// Payment status subscription failure.
+	pub type HostPaymentStatusSubscribeError =
+		LatestOf<versioned::payment::HostPaymentStatusSubscribeError>;
+	/// Payment top-up failure.
+	pub type HostPaymentTopUpError = LatestOf<versioned::payment::HostPaymentTopUpError>;
     /// Ring VRF proof creation result.
     pub type HostAccountCreateProofResponse =
         LatestOf<versioned::account::HostAccountCreateProofResponse>;
@@ -139,6 +221,10 @@ pub mod latest {
     pub type HostChatRegisterBotResponse = LatestOf<versioned::chat::HostChatRegisterBotResponse>;
     /// Native chat bot registration failure.
     pub type HostChatRegisterBotError = LatestOf<versioned::chat::HostChatRegisterBotError>;
+	/// Request to set what a native chat room shows below its messages.
+	pub type HostChatSetRoomFooterRequest = LatestOf<versioned::chat::HostChatSetRoomFooterRequest>;
+	/// Failure to set what a native chat room shows below its messages.
+	pub type HostChatSetRoomFooterError = LatestOf<versioned::chat::HostChatSetRoomFooterError>;
     /// Current native room list for a product.
     pub type HostChatListSubscribeItem = LatestOf<versioned::chat::HostChatListSubscribeItem>;
     /// Native chat message posting request.
@@ -240,6 +326,11 @@ pub mod latest {
     /// Push notification scheduling result.
     pub type HostPushNotificationResponse =
         LatestOf<versioned::notifications::HostPushNotificationResponse>;
+	/// Login request.
+	pub type HostRequestLoginRequest = LatestOf<versioned::account::HostRequestLoginRequest>;
+	/// Connection state reported to account subscribers.
+	pub type HostAccountConnectionStatusSubscribeItem =
+		LatestOf<versioned::account::HostAccountConnectionStatusSubscribeItem>;
     /// Login request error.
     pub type HostRequestLoginError = LatestOf<versioned::account::HostRequestLoginError>;
     /// Login request result.
@@ -333,11 +424,21 @@ pub enum CallError<D> {
 }
 
 impl<D> CallError<D> {
+	/// Transform the domain failure while preserving framework outcomes.
+	pub fn map_domain<T>(self, map: impl FnOnce(D) -> T) -> CallError<T> {
+		match self {
+			Self::Domain(domain) => CallError::Domain(map(domain)),
+			Self::Denied => CallError::Denied,
+			Self::Unsupported => CallError::Unsupported,
+			Self::MalformedFrame { reason } => CallError::MalformedFrame { reason },
+			Self::HostFailure { reason } => CallError::HostFailure { reason },
+			Self::Cancelled => CallError::Cancelled,
+		}
+	}
+
     /// Convenience for default handlers whose implementation is not wired.
     pub fn unavailable() -> Self {
-        Self::HostFailure {
-            reason: "unavailable".into(),
-        }
+		Self::HostFailure { reason: "unavailable".into() }
     }
 }
 
@@ -435,12 +536,7 @@ impl CancellationToken {
 
     /// Returns the cancellation reason, if cancellation has been requested.
     pub fn reason(&self) -> Option<CancellationReason> {
-        self.inner
-            .state
-            .lock()
-            .expect("cancel state poisoned")
-            .reason
-            .clone()
+		self.inner.state.lock().expect("cancel state poisoned").reason.clone()
     }
 
     /// Returns whether cancellation has been requested.
@@ -450,10 +546,7 @@ impl CancellationToken {
 
     /// Future resolved with the cancellation reason when cancellation is requested.
     pub fn cancelled(&self) -> CancellationFuture {
-        CancellationFuture {
-            inner: self.inner.clone(),
-            id: None,
-        }
+		CancellationFuture { inner: self.inner.clone(), id: None }
     }
 }
 
@@ -469,11 +562,9 @@ impl Future for CancellationFuture {
             return Poll::Ready(reason);
         }
 
-        if let Some(id) = this.id
-            && let Some((_, waker)) = state
-                .wakers
-                .iter_mut()
-                .find(|(waiter_id, _)| *waiter_id == id)
+		if let Some(id) = this.id &&
+			let Some((_, waker)) =
+				state.wakers.iter_mut().find(|(waiter_id, _)| *waiter_id == id)
         {
             if !waker.will_wake(cx.waker()) {
                 *waker = cx.waker().clone();
@@ -516,20 +607,12 @@ pub struct CallContext {
 impl CallContext {
     /// Construct a context bound to the given `request_id` with a fresh cancellation token.
     pub fn with_request_id(request_id: String) -> Self {
-        Self {
-            request_id,
-            cancel: CancellationToken::default(),
-            timeout: None,
-        }
+		Self { request_id, cancel: CancellationToken::default(), timeout: None }
     }
 
     /// Construct a context from explicit `request_id` and `cancel` parts.
     pub fn with_parts(request_id: String, cancel: CancellationToken) -> Self {
-        Self {
-            request_id,
-            cancel,
-            timeout: None,
-        }
+		Self { request_id, cancel, timeout: None }
     }
 
     /// Attach a timeout to this call.
@@ -582,9 +665,7 @@ impl<Item, Interrupt> Subscription<Item, Interrupt> {
     where
         S: Stream<Item = Result<Item, Interrupt>> + Send + 'static,
     {
-        Self {
-            inner: Box::pin(stream),
-        }
+		Self { inner: Box::pin(stream) }
     }
 
     /// Creates a subscription that yields no items and ends with `interrupt`.
@@ -600,103 +681,168 @@ impl<Item, Interrupt> Subscription<Item, Interrupt> {
     }
 }
 
-/// Applies `#[cfg(feature = "runtime")]` to every item it wraps.
-macro_rules! runtime_items {
-    ($($item:item)*) => { $( #[cfg(feature = "runtime")] $item )* };
-}
+#[cfg(feature = "runtime")]
+pub mod bootstrap;
+#[cfg(feature = "runtime")]
+pub mod chain;
+#[cfg(feature = "runtime")]
+mod chain_runtime;
+#[cfg(feature = "runtime")]
+mod dispatcher;
+#[cfg(feature = "runtime")]
+mod dotns_views;
+#[cfg(feature = "runtime")]
+mod dynamic_vrf;
+#[cfg(feature = "runtime")]
+pub mod frame;
+#[cfg(feature = "runtime")]
+mod host_core;
+#[cfg(feature = "runtime")]
+mod host_internal;
+#[cfg(feature = "runtime")]
+pub mod host_logic;
+#[cfg(feature = "runtime")]
+mod host_rpc_client;
+#[cfg(feature = "runtime")]
+mod interrupt;
+#[cfg(feature = "runtime")]
+pub mod logging;
+#[cfg(feature = "runtime")]
+pub mod platform;
+#[cfg(feature = "runtime")]
+mod protocol_error;
+#[cfg(feature = "runtime")]
+mod runtime;
+#[cfg(feature = "runtime")]
+mod session_usernames;
+#[cfg(feature = "runtime")]
+pub mod subscription;
+#[cfg(feature = "runtime")]
+pub mod transport;
+#[cfg(feature = "runtime")]
+mod truapi_core;
 
-runtime_items! {
-    pub mod bootstrap;
-    pub mod chain;
-    mod chain_runtime;
-    mod truapi_core;
-    mod dispatcher;
-    mod dotns_views;
-    mod dynamic_vrf;
-    pub mod frame;
-    mod host_core;
-    mod host_internal;
-    pub mod host_logic;
-    mod host_rpc_client;
-    mod interrupt;
-    pub mod jam_peer_transport;
-    pub mod logging;
-    pub mod platform;
-    mod protocol_error;
-    mod runtime;
-    mod session_usernames;
-    pub mod subscription;
-    pub mod transport;
+#[cfg(feature = "runtime")]
+pub mod jam_peer_transport;
+#[cfg(feature = "runtime")]
+#[cfg(test)]
+mod test_support;
+#[cfg(feature = "runtime")]
+mod unix_time;
 
-    #[cfg(test)]
-    mod test_support;
-    mod unix_time;
+// Dispatch must keep serving deprecated APIs while clients migrate.
+#[cfg(feature = "runtime")]
+#[allow(deprecated)]
+pub mod generated;
 
-    // Dispatch must keep serving deprecated APIs while clients migrate.
-    #[allow(deprecated)]
-    pub mod generated;
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod native;
 
-    #[cfg(not(target_arch = "wasm32"))]
-    pub mod native;
+#[cfg(feature = "runtime")]
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
 
-    #[cfg(target_arch = "wasm32")]
-    pub mod wasm;
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod native_debug;
 
-    #[cfg(not(target_arch = "wasm32"))]
-    pub mod native_debug;
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod store;
 
-    #[cfg(not(target_arch = "wasm32"))]
-    pub mod store;
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod durable;
 
-    pub use truapi_core::TrUApiCore;
-    pub use host_core::{
+#[cfg(feature = "runtime")]
+pub use truapi_core::TrUApiCore;
+
+#[cfg(feature = "runtime")]
+pub use host_core::{
         ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, PairingHostRuntime,
         ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
-    };
-    pub use host_internal::bulletin::{preimage_cid, preimage_key};
-    pub use host_logic::session::{
+};
+#[cfg(feature = "runtime")]
+pub use host_internal::bulletin::{preimage_cid, preimage_key};
+#[cfg(feature = "runtime")]
+pub use host_logic::session::{
         ExternalPairedSession, SsoSessionInfo, decode_persisted_session, encode_external_paired_session,
-    };
-    pub use host_logic::worker::{WorkerLedger, WorkerTransition};
-    #[cfg(not(target_arch = "wasm32"))]
-    pub use native_debug::{DebugSinkError, WsDebugSink};
-    pub use platform::{
+};
+#[cfg(feature = "runtime")]
+pub use host_logic::worker::{WorkerLedger, WorkerTransition};
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub use native::{
+	NativeRendererObserver, NativeRendererSubscription, WsBridgeEndpoint, WsBridgeStartError,
+};
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub use native_debug::{DebugSinkError, WsDebugSink};
+#[cfg(feature = "runtime")]
+pub use platform::{
         CoreStorageKeyDescription, CoreStorageKeyDescriptionError, HostIdentity, PairingHostConfig,
         PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform, ProductContext,
         SigningHostConfig, describe_core_storage_key,
-    };
-    pub use runtime::StatementRenewalTarget;
-    pub use runtime::contacts::contact_handle;
-    pub use runtime::login_failure::reports_exhausted_period;
-    pub use runtime::product_manifest::{encode_cached_root_manifest, manifest_cache_key};
-    pub use runtime::statement_allowance;
-    pub use runtime::{
+};
+#[cfg(feature = "runtime")]
+pub use runtime::StatementRenewalTarget;
+#[cfg(feature = "runtime")]
+pub use runtime::contacts::contact_handle;
+#[cfg(feature = "runtime")]
+pub use runtime::login_failure::reports_exhausted_period;
+#[cfg(feature = "runtime")]
+pub use runtime::product_manifest::{encode_cached_root_manifest, manifest_cache_key};
+#[cfg(feature = "runtime")]
+pub use runtime::statement_allowance;
+#[cfg(feature = "runtime")]
+pub use runtime::{
         AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
         PairingProposal, PairingProposalMetadata, ResponderExit,
-    };
-    pub use runtime::{LocalIdentity, LocalIdentityContext, WalletAllowanceSnapshot};
+};
+#[cfg(feature = "runtime")]
+pub use runtime::{LocalIdentity, LocalIdentityContext, WalletAllowanceSnapshot};
 
-    #[cfg(not(target_arch = "wasm32"))]
-    pub use native::{
-        NativeRendererObserver, NativeRendererSubscription, WsBridgeEndpoint, WsBridgeStartError,
-    };
-
-    #[cfg(all(target_arch = "wasm32", feature = "wasm-signing-host"))]
-    pub use wasm::WasmSigningHostRuntime;
-    #[cfg(target_arch = "wasm32")]
-    pub use wasm::{
+#[cfg(feature = "runtime")]
+#[cfg(all(target_arch = "wasm32", feature = "wasm-signing-host"))]
+pub use wasm::WasmSigningHostRuntime;
+#[cfg(feature = "runtime")]
+#[cfg(target_arch = "wasm32")]
+pub use wasm::{
         WasmPairingHostRuntime, WasmProductRuntime, WasmRendererSubscription,
         derive_product_account_public_key, describe_core_storage_key_for_wasm,
         has_trusted_remote_permissions_for_wasm, product_account_address, set_log_level,
         wire_schema_hash,
-    };
-}
+};
 
 #[cfg(all(test, feature = "host-api"))]
 mod tests {
     use super::*;
 
     #[test]
+	fn mapping_domain_errors_preserves_framework_outcomes() {
+		let errors = [
+			CallError::Domain(7),
+			CallError::Denied,
+			CallError::Unsupported,
+			CallError::MalformedFrame { reason: "invalid payload".into() },
+			CallError::HostFailure { reason: "host disconnected".into() },
+			CallError::Cancelled,
+		];
+		assert_eq!(
+			errors.map(|error| error.map_domain(|domain| domain.to_string())),
+			[
+				CallError::Domain("7".to_string()),
+				CallError::Denied,
+				CallError::Unsupported,
+				CallError::MalformedFrame { reason: "invalid payload".into() },
+				CallError::HostFailure { reason: "host disconnected".into() },
+				CallError::Cancelled,
+			],
+		);
+	}
+
+	#[test]
     fn call_context_timeout_can_be_set_and_replaced() {
         let default = Duration::from_secs(180);
         let explicit = Duration::from_millis(25);

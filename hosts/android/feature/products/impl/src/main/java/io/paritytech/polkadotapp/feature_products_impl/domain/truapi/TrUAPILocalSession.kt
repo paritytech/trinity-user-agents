@@ -3,7 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.storage.accountSecrets.AccountSecretsStorage
 import io.paritytech.polkadotapp.feature_account_api.data.storage.accountSecrets.requireMetaAccountPassphrase
-import io.paritytech.polkadotapp.feature_usernames_api.domain.usecase.UsernameOfAccountUseCase
+import io.paritytech.polkadotapp.feature_usernames_api.data.LocalUsernameStorage
 import javax.inject.Inject
 
 /** Secret material and display identity for the core's wallet-local session. */
@@ -23,11 +23,15 @@ class TrUAPILocalSession(
  * The secret is raw BIP-39 entropy because the core derives the session's root
  * and identity keypairs from it directly; handing it anything derived would give
  * the same recovery phrase different product accounts than iOS derives.
+ *
+ * The username is read locally, as the iOS host reads it from its settings: the
+ * claim and recovery flows write it there, and awaiting a chain read here would
+ * hold the runtime boot on a connection that may not be up yet.
  */
 class TrUAPILocalSessionSource @Inject constructor(
     private val accountRepository: AccountRepository,
     private val accountSecretsStorage: AccountSecretsStorage,
-    private val usernameOfAccountUseCase: UsernameOfAccountUseCase,
+    private val localUsernameStorage: LocalUsernameStorage,
 ) {
     suspend fun resolve(): Result<TrUAPILocalSession> = runCatching {
         val account = accountRepository.getWalletAccount()
@@ -35,10 +39,7 @@ class TrUAPILocalSessionSource @Inject constructor(
         TrUAPILocalSession(
             secret = accountSecretsStorage.requireMetaAccountPassphrase(account.id).entropy,
             // Display metadata only, so a missing username still yields a session.
-            liteUsername = usernameOfAccountUseCase.getUsername()
-                .getOrNull()
-                ?.liteUsername
-                ?.getDisplayUsername(),
+            liteUsername = localUsernameStorage.getValue()?.getDisplayUsername(),
         )
     }
 }

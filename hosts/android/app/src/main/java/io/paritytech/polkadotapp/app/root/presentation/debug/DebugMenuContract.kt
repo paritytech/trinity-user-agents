@@ -13,11 +13,7 @@ interface DebugMenuContract {
 
     fun onCopyWalletAccountClick()
 
-    fun onCopyCandidateAccountClick()
-
     fun onCopyWalletMnemonicClick()
-
-    fun onOpenVideoGameClick()
 
     fun onProductBotsClick()
 
@@ -34,8 +30,6 @@ interface DebugMenuContract {
     fun onClearDotNsCacheClick()
 
     fun onClearJWTTokenClick()
-
-    fun onSimulateGameResultsClick()
 
     fun onCoinageDebugWidgetsToggled(enabled: Boolean)
 
