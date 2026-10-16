@@ -1472,8 +1472,9 @@ pub enum CoreStorageKey {
 	/// each record trusted for twelve hours.
 	#[codec(index = 16)]
 	FundingSupport,
-	/// The last funding sessions blob the core could not read, kept as it was
-	/// so a stored session is never overwritten unread.
+	/// Funding sessions blobs the core could not read, as a SCALE list of the
+	/// raw blobs, newest last, so a stored session is never overwritten
+	/// unread and a later bad blob does not replace an earlier one.
 	#[codec(index = 17)]
 	FundingSessionsUnreadable,
 }
@@ -3263,7 +3264,9 @@ pub struct FundingPresentation {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingQuoteList {
 	/// The request this list answers, as `request_funding_quotes` returned
-	/// it. A host shows only the lists of its latest request.
+	/// it. Ids only grow, and a list can reach the host before the call that
+	/// returns its id does, so a host shows a list only when its id is at
+	/// least the latest it has seen, and drops the rest.
 	pub request_id: u64,
 	/// One row per provider asked, in the host's provider order.
 	pub rows: Vec<FundingQuoteRow>,

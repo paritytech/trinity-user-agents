@@ -2,23 +2,16 @@ package io.paritytech.polkadotapp.feature_coinage_impl.data.deposit
 
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
 import io.paritytech.polkadotapp.chains.network.binding.Balance
-import io.paritytech.polkadotapp.chains.util.planksFromAmount
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.utils.Fraction.Companion.percents
 import io.paritytech.polkadotapp.common.utils.flatMap
-import io.paritytech.polkadotapp.common.utils.isZero
-import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.mapError
 import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_balances_api.domain.model.TokenBalance
 import io.paritytech.polkadotapp.feature_coinage_impl.data.deposit.model.AutoConversionCheckError
 import io.paritytech.polkadotapp.feature_coinage_impl.data.deposit.model.ConversionProgress
-import io.paritytech.polkadotapp.feature_coinage_impl.data.deposit.model.ConversionTerms
 import io.paritytech.polkadotapp.feature_coinage_impl.data.deposit.model.PossibleFundConversion
-import io.paritytech.polkadotapp.feature_prices_api.data.repository.CurrencyRepository
-import io.paritytech.polkadotapp.feature_prices_api.domain.GetPriceUseCase
-import io.paritytech.polkadotapp.feature_prices_api.domain.model.amountOf
 import io.paritytech.polkadotapp.feature_swap_api.domain.SwapService
 import io.paritytech.polkadotapp.feature_swap_api.domain.model.SwapDirection
 import io.paritytech.polkadotapp.feature_swap_api.domain.model.SwapFee
@@ -30,15 +23,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
-import java.math.BigDecimal
 import javax.inject.Inject
 
 internal interface FundsConverter {
     context(scope: ComputationalScope)
     fun launchSync(): Flow<*>
-
-    context(scope: ComputationalScope)
-    fun initiateConversionTermsWarmUp()
 
     /**
      * error: [AutoConversionCheckError]
@@ -55,25 +44,13 @@ internal interface FundsConverter {
     suspend fun performConversion(
         checked: PossibleFundConversion,
     ): Flow<ConversionProgress>
-
-    context(scope: ComputationalScope)
-    suspend fun getConversionTerms(
-        depositAsset: Chain.Asset,
-        conversionTarget: Chain.Asset,
-        sender: MetaAccount,
-        recipient: AccountId,
-    ): Result<ConversionTerms>
 }
 
 internal class RealFundsConverter @Inject constructor(
     private val swapService: SwapService,
-    private val getPriceUseCase: GetPriceUseCase,
-    private val currencyRepository: CurrencyRepository
 ) : FundsConverter {
     companion object {
         private val SWAP_SLIPAGE = 0.5.percents
-
-        private val MID_SIZE_DEPOSIT_IN_USD = 100.toBigDecimal()
     }
 
     context(scope: ComputationalScope)
@@ -83,11 +60,6 @@ internal class RealFundsConverter @Inject constructor(
 
             emitAll(swapService.runSubscriptions())
         }
-    }
-
-    context(scope: ComputationalScope)
-    override fun initiateConversionTermsWarmUp() {
-        swapService.initiateWarmUp()
     }
 
     context(scope: ComputationalScope)
@@ -117,28 +89,6 @@ internal class RealFundsConverter @Inject constructor(
             .map { it.toConversionProgress() }
     }
 
-    context(scope: ComputationalScope)
-    override suspend fun getConversionTerms(
-        depositAsset: Chain.Asset,
-        conversionTarget: Chain.Asset,
-        sender: MetaAccount,
-        recipient: AccountId,
-    ): Result<ConversionTerms> {
-        swapService.awaitFullyLoadedRouting()
-
-        return determineMidSizeDeposit(depositAsset)
-            .flatMap { midSizeDeposit -> quote(depositAsset, conversionTarget, midSizeDeposit) }
-            .flatMap { quote ->
-                calculateFee(quote, sender, recipient).map { fee ->
-                    ConversionTerms(
-                        fee = fee,
-                        minDepositAmount = fee.minimumConversionDeposit(),
-                        midSizeDepositQuote = quote
-                    )
-                }
-            }
-    }
-
     private fun checkPassesDetectionThreshold(balance: TokenBalance, fee: SwapFee): Result<SwapFee> {
         val threshold = fee.detectableDepositThreshold()
         return if (balance.transferable >= threshold) {
@@ -157,22 +107,6 @@ internal class RealFundsConverter @Inject constructor(
         // We're being conservative here since Cross chain transfer have a flaw where they put amount/2 into xcm execute which
         // effectively raises the bar for the minimum cross chain transfer
         return requiredBalanceForMinimalSwap() * 3
-    }
-
-    private suspend fun determineMidSizeDeposit(chainAsset: Chain.Asset): Result<Balance> {
-        return runCatching {
-            val price = getPriceUseCase.getPrice(chainAsset)
-            require(price.currency == currencyRepository.usd) {
-                "Cannot determine deposit size when price is not in usd"
-            }
-
-            val amount = price.amountOf(MID_SIZE_DEPOSIT_IN_USD)
-            if (amount.isZero()) error("Cannot determine deposit size for ${chainAsset.symbol} - price is zero")
-
-            chainAsset.planksFromAmount(amount)
-        }
-            .logFailure("Failed to determine mid size deposit based on price, using \"1 unit\" fallback")
-            .recover { chainAsset.planksFromAmount(BigDecimal.ONE) }
     }
 
     private fun SwapProgress.toConversionProgress(): ConversionProgress {
