@@ -5,7 +5,7 @@ mod sso_channel;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
-	collections::HashMap,
+	collections::{HashMap, HashSet},
 	sync::{Arc, Mutex, Weak},
 };
 use truapi::latest::{
@@ -253,6 +253,11 @@ pub struct PairingHost {
 	statement_store_allowances: Mutex<HashMap<AllowanceCacheKey, StatementStoreAllowanceKey>>,
 	bulletin_allowances: Mutex<HashMap<AllowanceCacheKey, BulletinAllowanceKey>>,
 	product_subtrees: Mutex<HashMap<(SsoSessionKey, String), [u8; 32]>>,
+	/// Products with an allocation request the product never received an
+	/// answer to: still in flight, withdrawn, timed out or dropped. The person
+	/// may still grant it, so the next request reuses that slot instead of
+	/// paying for another one.
+	unanswered_allocations: Mutex<HashSet<(SsoSessionKey, String)>>,
 	auto_signing_keys: Mutex<HashMap<AutoSigningCacheKey, AutoSigningKey>>,
 	ring_resolver: Arc<dyn RingResolver>,
 	ring_vrf_registry: Arc<RingVrfRegistryStore>,
@@ -320,6 +325,7 @@ impl PairingHost {
 			statement_store_allowances: Mutex::new(HashMap::new()),
 			bulletin_allowances: Mutex::new(HashMap::new()),
 			product_subtrees: Mutex::new(HashMap::new()),
+			unanswered_allocations: Mutex::new(HashSet::new()),
 			auto_signing_keys: Mutex::new(HashMap::new()),
 			ring_resolver: ChainRingResolver::new(services.chain.clone()),
 			ring_vrf_registry: RingVrfRegistryStore::new(services.platform.clone()),
@@ -373,6 +379,34 @@ impl PairingHost {
 	#[cfg(test)]
 	pub fn newest_request_for_tests(&self) -> Option<String> {
 		self.newest_request.lock().expect("newest request mutex poisoned").clone()
+	}
+
+	/// Record that `product_id`'s last allocation request went unanswered.
+	#[cfg(test)]
+	pub fn remember_unanswered_allocation_for_tests(
+		&self,
+		session: &SessionInfo,
+		product_id: &str,
+	) {
+		let sso = session.sso.as_ref().expect("an SSO session");
+		self.unanswered_allocations
+			.lock()
+			.expect("unanswered allocation mutex poisoned")
+			.insert((SsoSessionKey::from_session(sso), product_id.to_string()));
+	}
+
+	/// Whether `product_id`'s last allocation request went unanswered.
+	#[cfg(test)]
+	pub fn has_unanswered_allocation_for_tests(
+		&self,
+		session: &SessionInfo,
+		product_id: &str,
+	) -> bool {
+		let sso = session.sso.as_ref().expect("an SSO session");
+		self.unanswered_allocations
+			.lock()
+			.expect("unanswered allocation mutex poisoned")
+			.contains(&(SsoSessionKey::from_session(sso), product_id.to_string()))
 	}
 
 	/// Change notifications the sync task has finished reconciling.
@@ -763,6 +797,7 @@ impl PairingHost {
 		self.clear_statement_store_allowance_keys(None);
 		self.clear_bulletin_allowance_keys(None);
 		self.clear_product_subtrees(None);
+		self.clear_unanswered_allocations(None);
 		self.auth_state.announce_current();
 	}
 
@@ -1815,6 +1850,22 @@ impl PairingHost {
 				warn!(%reason, %product_id, "product subtree clear failed during disconnect");
 			}
 		}
+	}
+
+	fn clear_unanswered_allocations(&self, session: Option<&SessionInfo>) {
+		let mut unanswered = self
+			.unanswered_allocations
+			.lock()
+			.expect("unanswered allocation mutex poisoned");
+		let Some(session) = session else {
+			unanswered.clear();
+			return;
+		};
+		let Some(sso) = session.sso.as_ref() else {
+			return;
+		};
+		let session_key = SsoSessionKey::from_session(sso);
+		unanswered.retain(|(key, _)| *key != session_key);
 	}
 
 	fn clear_product_subtrees(&self, session: Option<&SessionInfo>) {
