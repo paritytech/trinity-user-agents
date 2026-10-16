@@ -9,10 +9,8 @@ import io.paritytech.polkadotapp.common.presentation.deeplink.asWebUri
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.repository.awaitAccountsInitialized
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.ProductDeepLinkGate
 import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.isPocketTarget
@@ -33,10 +31,8 @@ internal class ProductSpaDeepLinkHandler @Inject constructor(
         // reserved segment still opens as an App page, as it did before Pocket claimed one.
         if (data.isPocketTarget()) return false
 
-        return gate.opens(data.productId(tld))
+        return gate.opens()
     }
-
-    private fun Uri.productId(tld: DotNsTld): ProductId? = ProductId.fromUrl(asWebUri(), tld).getOrNull()
 
     context(scope: ComputationalScope)
     override suspend fun handle(data: Uri): Result<DeeplinkProcessingOutcome> =

@@ -1,5 +1,9 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment
 
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.domain.model.intoAccountId
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.search.RemoteSearchPhase
@@ -12,22 +16,20 @@ import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.
 import io.paritytech.polkadotapp.feature_chats_api.domain.usecase.GetContactsUseCase
 import io.paritytech.polkadotapp.feature_chats_api.presentation.ChatStarter
 import io.paritytech.polkadotapp.feature_chats_api.presentation.address.ContactsAddressConverterFactory
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFunding
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_transfers_api.presentation.PreviousPaymentsAddressConverterFactory
 import io.paritytech.polkadotapp.feature_usernames_api.presentation.address.ParseAddressUsernameConverterFactory
 import io.paritytech.polkadotapp.feature_usernames_api.presentation.address.UsernameAddressConverterFactory
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.OFFRAMP_URL
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.ONRAMP_URL
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.ParkedFundingDomainProvider
+import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.FundingEntryPoints
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.WithdrawUnavailablePresentationError
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.domain.RealSendPaymentInteractor
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.verifySheetNeverOpened
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.verifySheetOpenedOnce
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.verifySheetOpenedTwice
 import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.assertPresentationErrorShown
 import io.paritytech.polkadotapp.test_shared.whenever
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -73,11 +75,18 @@ class SendPaymentViewModelTest {
 
     private val input = MutableStateFlow("")
     private val addressCandidates = MutableSharedFlow<AddressCandidates>(replay = 1)
-    private val fundingDomainProvider = ParkedFundingDomainProvider()
+
+    // Each open parks until the test answers it, as the overlay holds the call while it is up.
+    private val pendingOpens = ArrayDeque<CompletableDeferred<Result<String?>>>()
+    private val hostFunding = mockk<HostFunding> {
+        coEvery { openFunding(any(), null) } coAnswers {
+            CompletableDeferred<Result<String?>>().also(pendingOpens::addLast).await()
+        }
+    }
 
     private val interactor = RealSendPaymentInteractor(
         chainAssetProvider = chainAssetProvider,
-        fundingDomainProvider = fundingDomainProvider
+        hostFunding = hostFunding
     )
 
     @Before
@@ -94,6 +103,19 @@ class SendPaymentViewModelTest {
     @After
     fun tearDown() {
         Dispatchers.resetMain()
+    }
+
+    /** A build that cannot run a funding provider, such as release, has no Send to yourself. */
+    @Test
+    fun `hides Send to yourself where funding is not offered`() = runBlocking<Unit> {
+        fundingVisible = false
+        val viewModel = createViewModel()
+
+        assertFalse(viewModel.state.value.sendToYourselfVisible)
+
+        withRecentsListed(query = "")
+
+        assertFalse(viewModel.awaitState { it.input.isEmpty() && it.results is PaymentSearchResults.Sections }.sendToYourselfVisible)
     }
 
     @Test
@@ -163,50 +185,56 @@ class SendPaymentViewModelTest {
     }
 
     @Test
-    fun `Send to yourself opens the withdraw sheet`() = runBlocking<Unit> {
+    fun `Send to yourself opens outbound funding with no amount`() = runBlocking<Unit> {
         val viewModel = createViewModel()
 
         viewModel.onSendToYourselfClick()
-        fundingDomainProvider.completeReadsWithConfig()
+        answerOpens(Result.success("intent"))
 
-        router.verifySheetOpenedOnce(OFFRAMP_URL)
-        router.verifySheetNeverOpened(ONRAMP_URL)
+        coVerify(exactly = 1) { hostFunding.openFunding(FundingDirection.OUT, null) }
+    }
+
+    // The overlay is up for as long as the call is, so a second tap would stack a second session behind it.
+    @Test
+    fun `a Send to yourself tap while the overlay is up opens nothing more`() = runBlocking<Unit> {
+        val viewModel = createViewModel()
+
+        viewModel.onSendToYourselfClick()
+        viewModel.onSendToYourselfClick()
+        answerOpens(Result.success("intent"))
+
+        coVerify(exactly = 1) { hostFunding.openFunding(FundingDirection.OUT, null) }
     }
 
     @Test
-    fun `a second Send to yourself tap while the funding config loads opens one sheet`() = runBlocking<Unit> {
+    fun `a dismissed overlay unlocks Send to yourself`() = runBlocking<Unit> {
         val viewModel = createViewModel()
 
         viewModel.onSendToYourselfClick()
+        answerOpens(Result.success(null))
         viewModel.onSendToYourselfClick()
-        fundingDomainProvider.completeReadsWithConfig()
+        answerOpens(Result.success("intent"))
 
-        router.verifySheetOpenedOnce(OFFRAMP_URL)
+        coVerify(exactly = 2) { hostFunding.openFunding(FundingDirection.OUT, null) }
     }
 
     @Test
-    fun `after Send to yourself opened its sheet the next tap opens it again`() = runBlocking<Unit> {
+    fun `a failed open shows the withdraw error and unlocks Send to yourself`() = runBlocking<Unit> {
         val viewModel = createViewModel()
 
         viewModel.onSendToYourselfClick()
-        fundingDomainProvider.completeReadsWithConfig()
+        answerOpens(Result.failure(IllegalStateException("no funding")))
         viewModel.onSendToYourselfClick()
-        fundingDomainProvider.completeReadsWithConfig()
-
-        router.verifySheetOpenedTwice(OFFRAMP_URL)
-    }
-
-    @Test
-    fun `a failed funding config read shows the withdraw error and unlocks Send to yourself`() = runBlocking<Unit> {
-        val viewModel = createViewModel()
-
-        viewModel.onSendToYourselfClick()
-        fundingDomainProvider.failReads()
-        viewModel.onSendToYourselfClick()
-        fundingDomainProvider.completeReadsWithConfig()
+        answerOpens(Result.success("intent"))
 
         assertPresentationErrorShown<WithdrawUnavailablePresentationError>(viewModel)
-        router.verifySheetOpenedOnce(OFFRAMP_URL)
+        coVerify(exactly = 2) { hostFunding.openFunding(FundingDirection.OUT, null) }
+    }
+
+    private fun answerOpens(result: Result<String?>) {
+        while (pendingOpens.isNotEmpty()) {
+            pendingOpens.removeFirst().complete(result)
+        }
     }
 
     private fun withAddressConverters() {
@@ -248,6 +276,9 @@ class SendPaymentViewModelTest {
         accountId = username.encodeToByteArray().intoAccountId()
     )
 
+    private var fundingVisible = true
+    private val fundingEntryPoints = mockk<FundingEntryPoints> { every { visible } answers { fundingVisible } }
+
     private fun createViewModel() = SendPaymentViewModel(
         walletRouter = router,
         clipboardService = clipboardService,
@@ -259,6 +290,7 @@ class SendPaymentViewModelTest {
         parserAddressUsernameConverterFactory = parseAddressUsernameConverterFactory,
         previousPaymentsAddressConverterFactory = previousPaymentsAddressConverterFactory,
         contactsAddressConverterFactory = contactsAddressConverterFactory,
-        interactor = interactor
+        interactor = interactor,
+        fundingEntryPoints = fundingEntryPoints,
     )
 }

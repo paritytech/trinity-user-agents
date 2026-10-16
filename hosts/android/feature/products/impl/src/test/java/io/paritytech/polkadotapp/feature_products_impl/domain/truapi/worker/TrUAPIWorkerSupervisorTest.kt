@@ -10,6 +10,8 @@ import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.InMemoryBundledProductFiles
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
@@ -108,6 +110,7 @@ class TrUAPIWorkerSupervisorTest {
             override fun create(config: ChatWebViewConfig, scope: CoroutineScope) = provider()
         },
         bootstrapInstaller = mockk(relaxed = true),
+        bundledProducts = BundledProducts(InMemoryBundledProductFiles(emptyMap()), enabled = true),
         refCounter = { mockk(relaxed = true) },
         dispatchers = testDispatchers(),
     )

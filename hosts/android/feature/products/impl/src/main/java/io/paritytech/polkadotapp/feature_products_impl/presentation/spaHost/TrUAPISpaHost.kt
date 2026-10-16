@@ -16,6 +16,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownRequest
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.debugServedUrl
@@ -43,11 +44,14 @@ class TrUAPISpaHost @Inject constructor(
     private val deepLinkHandler: DeepLinkHandler,
     @param:ApplicationContext private val context: Context,
     private val dotNsTldProvider: DotNsTldProvider,
+    private val bundledProducts: BundledProducts,
     private val debugPocketCards: DebugPocketCards,
 ) : SpaHost {
     context(scope: ComputationalScope, messageDisplay: MessageDisplay)
     override fun createSession(initialUrl: String, underCard: Boolean): SpaHostSession {
         lateinit var webViewProvider: BrowserWebViewProvider
+        // A product the app ships opens from its own files, under its own id.
+        val bundled = bundledProducts.appFor(initialUrl)
 
         val servedPage = debugServedPage(initialUrl)
         val pageUrl = servedPage?.url ?: initialUrl
@@ -61,6 +65,7 @@ class TrUAPISpaHost @Inject constructor(
             navigationPolicy = webViewNavigation,
             allowIframes = true,
             scope = scope,
+            bundledProduct = bundled,
             fixedProductId = servedPage?.productId,
             firstPartyOrigin = servedPage?.origin,
             servedExecutable = if (underCard) ExecutableKind.WIDGET else ExecutableKind.APP,
@@ -79,14 +84,14 @@ class TrUAPISpaHost @Inject constructor(
             scope,
             hostApiNavigation,
             card = cardFaceRequests,
-            explicitProductId = servedPage?.productId,
+            explicitProductId = bundled?.id ?: servedPage?.productId,
         )
 
         val currentUrlFlow = MutableStateFlow(pageUrl)
         webViewProvider.addOnPageStartedListener { url ->
             currentUrlFlow.value = url
             scope.launch {
-                val productId = servedPage?.productId ?: dotNsTldProvider.getTld().getOrNull()
+                val productId = bundled?.id ?: servedPage?.productId ?: dotNsTldProvider.getTld().getOrNull()
                     ?.let { tld -> ProductId.fromUrl(url.toUri(), tld).getOrNull() }
                 productId?.let { productRegistrar.ensureRegistered(it) }
             }

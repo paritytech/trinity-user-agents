@@ -54,6 +54,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageBalanceBreakdownUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.DigitalDollarCardDetailsUiState
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
@@ -74,6 +75,7 @@ fun DigitalDollarCardDetails(
     val viewModel = hiltViewModel<DigitalDollarCardDetailsViewModel>()
     val loadingState by viewModel.coinageState.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val fundingActivity by viewModel.fundingActivity.collectAsStateWithLifecycle()
 
     BackHandler { onBack() }
 
@@ -83,7 +85,9 @@ fun DigitalDollarCardDetails(
         cardIndex = cardIndex,
         coinageLoadingState = loadingState,
         state = state,
+        fundingActivity = fundingActivity,
         onSendClick = viewModel::onSendClick,
+        onFundingRowClick = viewModel::onFundingRowClick,
         onGetCashClick = viewModel::onGetCashClick,
         onAutoFundClick = viewModel::onAutoFundClick,
         onCoinTapped = viewModel::onCoinTapped,
@@ -102,7 +106,9 @@ private fun DigitalDollarCardDetailsContent(
     cardIndex: Int,
     coinageLoadingState: LoadingState<CoinageUiState>,
     state: DigitalDollarCardDetailsUiState,
+    fundingActivity: FundingActivityUiState,
     onSendClick: () -> Unit,
+    onFundingRowClick: (id: String) -> Unit,
     onGetCashClick: () -> Unit,
     onAutoFundClick: () -> Unit,
     onCoinTapped: (String?) -> Unit,
@@ -112,91 +118,127 @@ private fun DigitalDollarCardDetailsContent(
     onBackupUpdateClick: () -> Unit,
     onBackupCloseClick: () -> Unit
 ) {
-    Column(
-        modifier = Modifier.fillMaxSize()
-    ) {
-        PolkadotTopBar(
-            title = stringResource(RCommon.string.pocket_digital_dollar_title, LocalPaymentAssetBrand.current.symbol)
-                .withCurrencyTickerStyle(PolkadotTheme.typography.title.large),
-            navigationAction = rememberTopBarAction(onBack),
-            titleAlignment = TopBarTitleAlignment.Center,
-            titleSize = TopBarTitleSize.Medium
-        )
+    var inProgressExpanded by remember { mutableStateOf(false) }
+    val showInProgressPanel = inProgressExpanded && fundingActivity.inFlight.size > 1
 
+    Box(modifier = Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(PolkadotTheme.spacings.mediumIncreased)
-                .windowInsetsPadding(LocalAppNavigationBarInsets.current)
+            modifier = Modifier.fillMaxSize()
         ) {
-            DigitalDollarCard(
-                modifier = Modifier.pocketCardSharedElement(cardIndex),
-                card = card,
-                isExpanded = true
+            PolkadotTopBar(
+                title = stringResource(RCommon.string.pocket_digital_dollar_title, LocalPaymentAssetBrand.current.symbol)
+                    .withCurrencyTickerStyle(PolkadotTheme.typography.title.large),
+                navigationAction = rememberTopBarAction(onBack),
+                titleAlignment = TopBarTitleAlignment.Center,
+                titleSize = TopBarTitleSize.Medium
             )
-
-            VerticalSpacer { mediumIncreased }
 
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .pocketContentSlide()
+                    .verticalScroll(rememberScrollState())
+                    .padding(PolkadotTheme.spacings.mediumIncreased)
+                    .windowInsetsPadding(LocalAppNavigationBarInsets.current)
             ) {
-                AnimatedContent(
-                    targetState = state.balanceRestore,
-                    contentKey = { it::class.simpleName }
-                ) { balanceRestoreState ->
-                    when (balanceRestoreState) {
-                        BalanceRestoreUiState.NotDetermined -> Unit
+                DigitalDollarCard(
+                    modifier = Modifier.pocketCardSharedElement(cardIndex),
+                    card = card,
+                    isExpanded = true
+                )
 
-                        BalanceRestoreUiState.SendCash -> SendCashActions(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(IntrinsicSize.Min),
-                            onGetCashClick = onGetCashClick,
-                            onSendClick = onSendClick
-                        )
+                VerticalSpacer { mediumIncreased }
 
-                        is BalanceRestoreUiState.Restore -> {
-                            var isDoneUpdatingVisible by remember { mutableStateOf(false) }
-                            var isWhyVisible by remember { mutableStateOf(false) }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pocketContentSlide()
+                ) {
+                    AnimatedContent(
+                        targetState = state.balanceRestore,
+                        contentKey = { it::class.simpleName }
+                    ) { balanceRestoreState ->
+                        when (balanceRestoreState) {
+                            BalanceRestoreUiState.NotDetermined -> Unit
 
-                            BalanceRestoredWidget(
-                                modifier = Modifier.fillMaxWidth(),
-                                isInProgress = balanceRestoreState.inProgress,
-                                onWhyClick = { isWhyVisible = true },
-                                onCloseClick = { isDoneUpdatingVisible = true },
-                                onUpdateClick = onBackupUpdateClick
+                            is BalanceRestoreUiState.SendCash -> SendCashActions(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(IntrinsicSize.Min),
+                                canGetCash = balanceRestoreState.canGetCash,
+                                onGetCashClick = onGetCashClick,
+                                onSendClick = onSendClick
                             )
 
-                            DoneUpdatingBottomSheet(
-                                isVisible = isDoneUpdatingVisible,
-                                onDismissRequest = { isDoneUpdatingVisible = false },
-                                onConfirm = onBackupCloseClick
-                            )
+                            is BalanceRestoreUiState.Restore -> {
+                                var isDoneUpdatingVisible by remember { mutableStateOf(false) }
+                                var isWhyVisible by remember { mutableStateOf(false) }
 
-                            WhyUpdateBottomSheet(
-                                isVisible = isWhyVisible,
-                                onDismissRequest = { isWhyVisible = false }
-                            )
+                                BalanceRestoredWidget(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    isInProgress = balanceRestoreState.inProgress,
+                                    onWhyClick = { isWhyVisible = true },
+                                    onCloseClick = { isDoneUpdatingVisible = true },
+                                    onUpdateClick = onBackupUpdateClick
+                                )
+
+                                DoneUpdatingBottomSheet(
+                                    isVisible = isDoneUpdatingVisible,
+                                    onDismissRequest = { isDoneUpdatingVisible = false },
+                                    onConfirm = onBackupCloseClick
+                                )
+
+                                WhyUpdateBottomSheet(
+                                    isVisible = isWhyVisible,
+                                    onDismissRequest = { isWhyVisible = false }
+                                )
+                            }
                         }
                     }
-                }
 
-                coinageLoadingState.onLoaded { coinageState ->
-                    VerticalSpacer { mediumIncreased }
+                    coinageLoadingState.onLoaded { coinageState ->
+                        VerticalSpacer { mediumIncreased }
 
-                    CoinageCardContent(
-                        state = coinageState,
-                        onAutoFundClick = onAutoFundClick,
-                        onCoinTapped = onCoinTapped,
-                        onCoinsFlickedDown = onCoinsFlickedDown,
-                        onHeadingClicked = onHeadingClicked,
-                        onShareLogsClick = onShareLogsClick
+                        CoinageCardContent(
+                            state = coinageState,
+                            onAutoFundClick = onAutoFundClick,
+                            onCoinTapped = onCoinTapped,
+                            onCoinsFlickedDown = onCoinsFlickedDown,
+                            onHeadingClicked = onHeadingClicked,
+                            onShareLogsClick = onShareLogsClick
+                        )
+                    }
+
+                    if (fundingActivity.inFlight.isNotEmpty()) {
+                        VerticalSpacer { small }
+
+                        FundingInProgressDock(
+                            rows = fundingActivity.inFlight,
+                            onExpand = { inProgressExpanded = true },
+                            onRowClick = onFundingRowClick,
+                        )
+                    }
+
+                    VerticalSpacer { large }
+
+                    FundingHistorySection(
+                        modifier = Modifier.fillMaxWidth(),
+                        days = fundingActivity.days,
+                        onRowClick = onFundingRowClick,
                     )
                 }
             }
+        }
+
+        if (showInProgressPanel) {
+            FundingInProgressPanel(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .windowInsetsPadding(LocalAppNavigationBarInsets.current)
+                    .padding(PolkadotTheme.spacings.mediumIncreased),
+                rows = fundingActivity.inFlight,
+                onCollapse = { inProgressExpanded = false },
+                onRowClick = onFundingRowClick,
+            )
         }
     }
 }
@@ -204,6 +246,7 @@ private fun DigitalDollarCardDetailsContent(
 @Composable
 private fun SendCashActions(
     modifier: Modifier = Modifier,
+    canGetCash: Boolean,
     onGetCashClick: () -> Unit,
     onSendClick: () -> Unit
 ) {
@@ -213,7 +256,7 @@ private fun SendCashActions(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small)
     ) {
-        CashActionButton(
+        if (canGetCash) CashActionButton(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight(),
@@ -315,9 +358,11 @@ private fun DigitalDollarCardDetailsPreview() {
                     )
                 ),
                 state = DigitalDollarCardDetailsUiState(
-                    balanceRestore = BalanceRestoreUiState.SendCash
+                    balanceRestore = BalanceRestoreUiState.SendCash(canGetCash = true)
                 ),
+                fundingActivity = FundingActivityUiState(inFlight = persistentListOf(), days = persistentListOf()),
                 onSendClick = {},
+                onFundingRowClick = {},
                 onGetCashClick = {},
                 onAutoFundClick = {},
                 onCoinTapped = {},

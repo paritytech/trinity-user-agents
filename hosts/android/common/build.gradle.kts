@@ -23,6 +23,7 @@ android {
         buildConfigField("boolean", "SAFETY_MODE", "false")
         buildConfigField("boolean", "TAB_BAR_CONNECTIVITY_INDICATOR", "false")
         buildConfigField("boolean", "DEBUG_TOOLS_ENABLED", "true")
+        buildConfigField("boolean", "BUNDLED_PRODUCTS_ENABLED", "true")
     }
 
     buildTypes {
@@ -35,6 +36,7 @@ android {
             buildConfigField("boolean", "TESTNET_FUND_ENABLED", "false")
             buildConfigField("boolean", "SAMPLE_BOT", "false")
             buildConfigField("boolean", "DEBUG_TOOLS_ENABLED", "false")
+            buildConfigField("boolean", "BUNDLED_PRODUCTS_ENABLED", "false")
         }
         getByName("nightly") {
             buildConfigField("String", "TESTNET_ENVIRONMENT", "\"NIGHTLY\"")

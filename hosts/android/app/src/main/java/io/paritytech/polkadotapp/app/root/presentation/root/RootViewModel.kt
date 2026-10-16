@@ -22,12 +22,11 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.chatRequest.ChatReques
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatBotStateController
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatOverlay
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
+import io.paritytech.polkadotapp.feature_coinage_api.domain.deposit.AutoConvertDepositService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.ExternalPaymentWorkerStarter
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageServiceStarter
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthMixin
-import io.paritytech.polkadotapp.feature_coinage_api.domain.deposit.AutoConvertDepositService
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProductsWarmUp
 import io.paritytech.polkadotapp.feature_settings_impl.domain.interactors.SyncPriceCurrencyChange
 import io.paritytech.polkadotapp.feature_splash_api.presentation.SplashPassedObserver
 import io.paritytech.polkadotapp.feature_sso_impl.domain.SsoService
@@ -60,7 +59,6 @@ class RootViewModel @Inject constructor(
     private val ssoService: SsoService,
     private val chatRequestServiceCoordinator: ChatRequestServiceCoordinator,
     private val exploreProductsService: ExploreProductsService,
-    private val fundingProductsWarmUp: FundingProductsWarmUp,
     private val jwtAuthWarmUpService: JwtAuthWarmUpService,
     chatBotStateController: ChatBotStateController,
     chatEngine: ChatEngine,
@@ -126,7 +124,6 @@ class RootViewModel @Inject constructor(
         if (FeatureOption.BROWSE_TAB.isEnabled) {
             scope.launch { exploreProductsService.warmUpExploreLoading() }
         }
-        scope.launch { fundingProductsWarmUp.warmUp() }
     }
 
     override val showDevResetPrompt = MutableStateFlow(false)

@@ -46,7 +46,16 @@ class ProductTabSessionFactoryTest {
 
         val productId = ProductId.fromStoredValue("humanity.dot")
         verify {
-            webViewProviders.create(devServer.url, any(), true, scope, productId, devServer.origin, any())
+            webViewProviders.create(
+                devServer.url,
+                any(),
+                true,
+                scope,
+                bundledProduct = null,
+                fixedProductId = productId,
+                firstPartyOrigin = devServer.origin,
+                servedExecutable = any(),
+            )
             sessionStarter.start(provider, devServer.url, scope, any(), null, productId)
         }
         verify(exactly = 0) { native.create(any(), any(), any()) }

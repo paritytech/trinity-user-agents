@@ -58,6 +58,8 @@ class TrUAPIHostRuntimeProviderTest {
         confirmationLauncher = mockk(relaxed = true),
         appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
         contactsBridge = mockk { every { contactRemovals() } returns emptyFlow() },
+        fundingBridge = mockk(relaxed = true),
+        bundledProducts = mockk { every { fundingProviders() } returns emptyList() },
         scannerBridge = mockk(),
         workerSupervisor = { mockk(relaxed = true) },
         dispatchers = testDispatchers(),
