@@ -882,6 +882,8 @@ impl SigningHostRuntime {
 	/// Live quotes for funding session `intent`: one row per funding
 	/// provider, whatever routes its manifest declares, `Pending` and then
 	/// `Quoted` or `Unavailable` as each provider answers or runs out of time.
+	/// The stream ends once every provider has, and never errors; dropping it
+	/// withdraws the asks still open.
 	pub fn get_funding_quote(
 		&self,
 		intent: &str,

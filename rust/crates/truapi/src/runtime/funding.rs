@@ -159,21 +159,35 @@ impl FundingRegistry {
 		Ok(true)
 	}
 
-	/// The sessions assigned to `provider_id` and requests to cancel them:
-	/// every one still in flight first, then each later one. An assignment
-	/// may arrive more than once.
+	/// The sessions assigned to `provider_id` and what the user asked of
+	/// them. Opening the stream replays every session still in flight, oldest
+	/// first, each followed by its pending cancel request or answer, then
+	/// every quote ask still unanswered; later items follow in the order they
+	/// happen. An item can repeat, as each
+	/// open replays, so a worker treats them as idempotent. The stream never
+	/// errors and never ends on its own; dropping it stops serving.
 	pub fn serve(&self, provider_id: &str) -> BoxStream<'static, HostFundingServeSubscribeItem> {
 		let mut servers = self.lock_servers();
-		let mut assigned: Vec<_> = self
-			.lock_sessions()
-			.values()
-			.filter(|session| {
-				!session.is_terminal() && session.provider_id.as_deref() == Some(provider_id)
-			})
-			.cloned()
-			.collect();
-		assigned.sort_by_key(|session| session.opened_at_ms);
-		let asks: Vec<HostFundingServeSubscribeItem> = self
+		let replay: Vec<HostFundingServeSubscribeItem> = {
+			let sessions = self.lock_sessions();
+			let mut assigned: Vec<&FundingSession> = sessions
+				.values()
+				.filter(|session| {
+					!session.is_terminal() && session.provider_id.as_deref() == Some(provider_id)
+				})
+				.collect();
+			assigned.sort_by_key(|session| session.opened_at_ms);
+			assigned
+				.into_iter()
+				.flat_map(|session| {
+					core::iter::once(HostFundingServeSubscribeItem::Assigned {
+						session: Box::new(session.assignment()),
+					})
+					.chain(session.pending_cancel_item())
+				})
+				.collect()
+		};
+		let asks = self
 			.lock_asks()
 			.iter()
 			.filter(|(_, pending)| pending.provider_id == provider_id)
@@ -181,21 +195,14 @@ impl FundingRegistry {
 				ask_id: ask_id.clone(),
 				ask: pending.ask.clone(),
 			})
-			.collect();
-		let replay: Vec<_> = assigned
-			.into_iter()
-			.flat_map(|session| {
-				let cancel = session.pending_cancel_item();
-				core::iter::once(HostFundingServeSubscribeItem::Assigned {
-					session: Box::new(session.assignment()),
-				})
-				.chain(cancel)
-			})
-			.chain(asks)
-			.collect();
+			.collect::<Vec<_>>();
 		let (sender, receiver) = mpsc::unbounded();
-		servers.entry(provider_id.to_string()).or_default().push(sender);
-		stream::iter(replay).chain(receiver).boxed()
+		let senders = servers.entry(provider_id.to_string()).or_default();
+		// A worker that restarts opens a new stream, so the ones it left are
+		// dropped here rather than kept until the next item is sent.
+		senders.retain(|sender| !sender.is_closed());
+		senders.push(sender);
+		stream::iter(replay.into_iter().chain(asks)).chain(receiver).boxed()
 	}
 
 	/// Ask `provider_id` to price `ask`. The ask reaches the provider's open
@@ -487,8 +494,11 @@ impl FundingRegistry {
 		Ok(confirmation)
 	}
 
-	/// Watch one session, receiving its current stage immediately. A terminal
-	/// session yields that one item and then ends.
+	/// Watch one session: its current stage at once, then one item per change,
+	/// in commit order and never repeated. The stream ends after a terminal
+	/// stage, so a session that has already ended yields that one item. It
+	/// never errors; dropping it stops watching. `None` when no such session is
+	/// held.
 	pub fn subscribe(
 		&self,
 		intent: &str,
@@ -602,9 +612,8 @@ impl FundingRegistry {
 		edit: impl FnOnce(&mut HashMap<String, FundingSession>) -> (R, Vec<String>),
 	) -> Result<R, FundingSessionError> {
 		let mut loaded = self.writes.lock().await;
-		let before = self.lock_sessions().clone();
 		let presenting_before = self.lock_presenting().clone();
-		let mut working = before.clone();
+		let mut working = self.lock_sessions().clone();
 		let mut changed = Vec::new();
 		if !*loaded {
 			for session in load_sessions(storage).await? {
@@ -636,17 +645,18 @@ impl FundingRegistry {
 				session.saved = None;
 			}
 		}
-		if !*loaded || announces || working != before {
+		// The write lock keeps the in-memory map unchanged until this commit
+		// replaces it, so it still holds the sessions as they were before `edit`.
+		if !*loaded || announces || working != *self.lock_sessions() {
 			let kept = retained(working.into_values());
 			// An assigned session is stored even while its overlay is up, as
 			// its provider's reports are stored before they are answered.
-			let started: Vec<_> = {
+			let started: Vec<&FundingSession> = {
 				let presenting = self.lock_presenting();
 				kept.iter()
 					.filter(|session| {
 						!presenting.contains(&session.intent) || session.provider_id.is_some()
 					})
-					.cloned()
 					.collect()
 			};
 			if let Err(error) = store_sessions(storage, &started).await {
@@ -681,21 +691,41 @@ impl FundingRegistry {
 		let Some(services) = self.services.upgrade() else {
 			return;
 		};
-		let sessions = self.lock_sessions().clone();
+		// Only what the loops below need, so no copy of the whole session map
+		// is taken and it stays unlocked while the ledger and followers run.
+		let (assigned, quoting, due) = {
+			let sessions = self.lock_sessions();
+			let quoting: HashSet<String> = sessions
+				.values()
+				.filter(|session| !session.is_terminal() && session.provider_id.is_none())
+				.map(|session| session.intent.clone())
+				.collect();
+			let assigned: HashMap<String, String> = sessions
+				.values()
+				.filter(|session| !session.is_terminal())
+				.filter_map(|session| Some((session.intent.clone(), session.provider_id.clone()?)))
+				.collect();
+			let due: Vec<(String, String, Settlement)> = sessions
+				.values()
+				.filter_map(|session| {
+					let settlement = session.settlement_due()?;
+					Some((session.intent.clone(), session.provider_id.clone()?, settlement))
+				})
+				.collect();
+			(assigned, quoting, due)
+		};
 		let (acquire, release) = {
 			let mut holding = self.lock_holding();
 			let mut acquire = Vec::new();
-			for session in sessions.values().filter(|session| !session.is_terminal()) {
-				if let Some(provider) = &session.provider_id &&
-					!holding.contains_key(&session.intent)
-				{
-					holding.insert(session.intent.clone(), provider.clone());
+			for (intent, provider) in &assigned {
+				if !holding.contains_key(intent) {
+					holding.insert(intent.clone(), provider.clone());
 					acquire.push(provider.clone());
 				}
 			}
 			let ended: Vec<String> = holding
 				.keys()
-				.filter(|intent| sessions.get(*intent).is_none_or(FundingSession::is_terminal))
+				.filter(|intent| !assigned.contains_key(*intent))
 				.cloned()
 				.collect();
 			let release: Vec<String> =
@@ -708,19 +738,10 @@ impl FundingRegistry {
 		for provider in &release {
 			services.worker_ledger.release(provider);
 		}
-		services.funding_quotes().retain_sessions(|intent| {
-			sessions
-				.get(intent)
-				.is_some_and(|session| !session.is_terminal() && session.provider_id.is_none())
-		});
-		for session in sessions.values() {
-			let (Some(settlement), Some(provider)) =
-				(session.settlement_due(), session.provider_id.clone())
-			else {
-				continue;
-			};
-			if self.lock_following().insert(session.intent.clone()) {
-				services.clone().follow_settlement(session.intent.clone(), provider, settlement);
+		services.funding_quotes().retain_sessions(|intent| quoting.contains(intent));
+		for (intent, provider, settlement) in due {
+			if self.lock_following().insert(intent.clone()) {
+				services.clone().follow_settlement(intent, provider, settlement);
 			}
 		}
 	}

@@ -249,7 +249,7 @@ pub enum CancelOutcome {
 	Requested,
 	/// A cancel is already with the provider, or accepted and being settled.
 	Pending,
-	/// Too late: the user's balance was already credited.
+	/// Too late: the provider already started crediting the user's balance.
 	TooLate,
 	/// Not cancellable here: the session ended, or its overlay is still up.
 	Refused,
@@ -1107,7 +1107,7 @@ fn decode_sessions(blob: &[u8]) -> Option<Vec<FundingSession>> {
 /// Replace the persisted set with `sessions`, clearing the slot when empty.
 pub async fn store_sessions(
 	storage: &(impl CoreStorage + ?Sized),
-	sessions: &[FundingSession],
+	sessions: &[&FundingSession],
 ) -> Result<(), FundingSessionError> {
 	let written = if sessions.is_empty() {
 		storage.clear_core_storage(CoreStorageKey::FundingSessions).await
@@ -2066,7 +2066,8 @@ mod tests {
 		let storage = stub_platform();
 		let sessions = vec![session(FundingDirection::In), expired("fs_2", NOW)];
 
-		block_on(store_sessions(storage.as_ref(), &sessions)).expect("stored");
+		block_on(store_sessions(storage.as_ref(), &sessions.iter().collect::<Vec<_>>()))
+			.expect("stored");
 
 		assert_eq!(block_on(load_sessions(storage.as_ref())).expect("loaded"), sessions);
 	}
@@ -2120,7 +2121,7 @@ mod tests {
 	#[test]
 	fn storing_nothing_clears_the_slot() {
 		let storage = stub_platform();
-		block_on(store_sessions(storage.as_ref(), &[session(FundingDirection::In)]))
+		block_on(store_sessions(storage.as_ref(), &[&session(FundingDirection::In)]))
 			.expect("stored");
 
 		block_on(store_sessions(storage.as_ref(), &[])).expect("cleared");

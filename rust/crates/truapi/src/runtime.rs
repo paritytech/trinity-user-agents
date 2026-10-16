@@ -1516,8 +1516,9 @@ impl FundingProvider for ProductRuntimeHost {
 	async fn serve_subscribe(
 		&self,
 		_cx: &CallContext,
-		_request: HostFundingServeSubscribeRequest,
+		request: HostFundingServeSubscribeRequest,
 	) -> Subscription<HostFundingServeSubscribeItem, CallError<HostFundingServeSubscribeError>> {
+		let version = request.version();
 		if let Err(error) = self.funding_provider_access() {
 			return Subscription::interrupted(error);
 		}
@@ -1528,7 +1529,7 @@ impl FundingProvider for ProductRuntimeHost {
 		Subscription::new(Box::pin(
 			registry
 				.serve(&self.product.product_id)
-				.map(|item| Ok(HostFundingServeSubscribeItem::V1(item))),
+				.map(move |item| Ok(HostFundingServeSubscribeItem::from_latest(item, version))),
 		))
 	}
 
@@ -1538,7 +1539,8 @@ impl FundingProvider for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostFundingReportRequest,
 	) -> Result<HostFundingReportResponse, CallError<HostFundingReportError>> {
-		let HostFundingReportRequest::V1(request) = request;
+		let version = request.version();
+		let request = request.into_latest();
 		self.funding_provider_access()?;
 		let reported = self
 			.services
@@ -1555,8 +1557,8 @@ impl FundingProvider for ProductRuntimeHost {
 		// for it.
 		self.services.funding().keep_expiring(&self.services);
 		reported
-			.map(|()| HostFundingReportResponse::V1)
-			.map_err(|error| CallError::Domain(HostFundingReportError::V1(error)))
+			.map(|()| HostFundingReportResponse::from_latest((), version))
+			.map_err(|error| CallError::Domain(HostFundingReportError::from_latest(error, version)))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "funding_provider.save"))]
@@ -1616,23 +1618,24 @@ impl FundingProvider for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostFundingPresentFrameRequest,
 	) -> Result<HostFundingPresentFrameResponse, CallError<HostFundingPresentFrameError>> {
-		let HostFundingPresentFrameRequest::V1(request) = request;
+		let version = request.version();
+		let latest::HostFundingPresentFrameRequest { intent, target } = request.into_latest();
+		let domain =
+			|error| CallError::Domain(HostFundingPresentFrameError::from_latest(error, version));
 		let platform = self.funding_provider_access()?;
-		if !self.services.funding().is_serving(&self.product.product_id, &request.intent) {
-			return Err(CallError::Domain(HostFundingPresentFrameError::V1(
-				v01::HostFundingPresentFrameError::NotFound,
-			)));
+		if !self.services.funding().is_serving(&self.product.product_id, &intent) {
+			return Err(domain(latest::HostFundingPresentFrameError::NotFound));
 		}
-		let target = crate::host_logic::funding::checked_frame_target(request.target).ok_or(
-			CallError::Domain(HostFundingPresentFrameError::V1(
-				v01::HostFundingPresentFrameError::InvalidUrl,
-			)),
-		)?;
+		let target = crate::host_logic::funding::checked_frame_target(target)
+			.ok_or_else(|| domain(latest::HostFundingPresentFrameError::InvalidUrl))?;
 		let outcome = platform
-			.present_provider_frame(&self.product, request.intent, target)
+			.present_provider_frame(&self.product, intent, target)
 			.await
 			.map_err(|error| CallError::HostFailure { reason: error.reason })?;
-		Ok(HostFundingPresentFrameResponse::V1(v01::HostFundingPresentFrameResponse { outcome }))
+		Ok(HostFundingPresentFrameResponse::from_latest(
+			latest::HostFundingPresentFrameResponse { outcome },
+			version,
+		))
 	}
 }
 
