@@ -35,7 +35,12 @@ impl Scanner for ProductRuntimeHost {
 		let version = request.version();
 		let request = request.into_latest();
 		let result = async {
-			let platform = self.services.scanner_platform().ok_or(CallError::Unsupported)?;
+			let shared = if self.scanner_platform.is_none() {
+				self.services.scanner_platform()
+			} else {
+				None
+			};
+			let platform = self.scanner_platform.as_ref().or(shared.as_ref()).ok_or(CallError::Unsupported)?;
 			validate_request(&request).map_err(|reason| {
 				CallError::Domain(latest::HostScannerScanError::InvalidRequest { reason })
 			})?;

@@ -395,20 +395,10 @@ pub struct ProductRuntimeHost {
     chat: Arc<ActionChannel<HostChatActionSubscribeItem>>,
     renderer: Arc<ActionChannel<HostRendererActionSubscribeItem>>,
     pocket_platform: Option<Arc<dyn crate::platform::PocketPlatform>>,
-    media_platform: Option<Arc<dyn crate::platform::MediaPlatform>>,
-    media: std::sync::OnceLock<Arc<media::MediaService>>,
-    media_closed: std::sync::atomic::AtomicBool,
-    /// Host-assigned ids of this connection's open pending operations, each
-    /// holding one worker reference until it ends or the connection is torn
-    /// down.
-    ///
-    /// Scoped to the connection rather than the product, which holds because
-    /// only a Worker execution reaches `begin_operation`/`end_operation` and a
-    /// product has one of those at a time.
-    ///
-    /// The set is unbounded here. Whether a product may hold a thousand open
-    /// operations is the host's call, made in `begin_operation`, since the
-    /// host is what the operations keep running.
+    game_platform: Option<Arc<dyn crate::platform::GamePlatform>>,
+    scanner_platform: Option<Arc<dyn crate::platform::ScannerPlatform>>,
+    /// Control of the card face above this connection's Widget, when the host draws one.
+    expanded_card: Option<Arc<dyn crate::platform::ExpandedCardHost>>,
     open_operations: Mutex<HashSet<u32>>,
 }
 
@@ -447,6 +437,9 @@ impl ProductRuntimeHost {
             chat: adapters.chat,
             renderer: adapters.renderer,
             pocket_platform: adapters.pocket_platform,
+            expanded_card: adapters.expanded_card,
+            game_platform: adapters.game_platform,
+            scanner_platform: adapters.scanner_platform,
             open_operations: Mutex::new(HashSet::new()),
             media_platform: adapters.media_platform,
             media: std::sync::OnceLock::new(),
@@ -615,6 +608,9 @@ impl ProductRuntimeHost {
             chat,
             renderer,
             pocket_platform: None,
+            expanded_card: None,
+            game_platform: None,
+            scanner_platform: None,
             open_operations: Mutex::new(HashSet::new()),
             media_platform: None,
             media: std::sync::OnceLock::new(),

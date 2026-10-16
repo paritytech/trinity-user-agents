@@ -1010,52 +1010,6 @@ impl SigningHostRuntime {
             .await
     }
 
-    /// Read a stored permission authorization status without prompting.
-    #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_status", product_id = %product_id))]
-    pub async fn permission_authorization_status(
-        &self,
-        product_id: &str,
-        request: PermissionAuthorizationRequest,
-    ) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-        self.product_admin(product_context(product_id)?)
-            .permission_authorization_status(request)
-            .await
-    }
-
-	/// Open a funding session on the host's own behalf, as the Balance card's
-	/// Add and Withdraw do, and show the overlay. Returns the session id, or
-	/// `None` when the user dismissed the overlay without starting.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.open_funding"))]
-	pub async fn open_funding(
-		&self,
-		direction: v01::FundingDirection,
-		amount: Option<u128>,
-	) -> Result<Option<String>, v01::GenericError> {
-		self.services.open_host_funding(direction, amount).await
-	}
-
-	/// Install the host's [`GamePlatform`], which holds each product's game
-	/// reminder.
-	///
-	/// Set-once, so reminders cannot change hands under a running product.
-	/// Returns whether this call installed it. Call it before serving any
-	/// product runtime.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_game_platform"))]
-	pub fn set_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
-		self.services.install_game_platform(platform)
-	}
-
-    /// Re-read a product's stored authorization after another core changes it.
-    pub async fn refresh_permission_authorization(
-        &self,
-        product_id: &str,
-        request: PermissionAuthorizationRequest,
-    ) -> Result<(), v01::GenericError> {
-        self.product_admin(product_context(product_id)?)
-            .refresh_permission_authorization(request)
-            .await
-    }
-
     /// Activate a wallet-local session from host-held secret material (raw
     /// BIP-39 entropy).
     #[instrument(skip_all, fields(runtime.method = "signing_host_runtime.activate_local_session"))]
@@ -1508,7 +1462,10 @@ pub struct ConnectionAdapters {
     pub chat: Arc<ActionChannel<truapi::versioned::chat::HostChatActionSubscribeItem>>,
     pub renderer: Arc<ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>>,
     pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
-    pub media_platform: Option<Arc<dyn MediaPlatform>>,
+    pub game_platform: Option<Arc<dyn GamePlatform>>,
+    pub scanner_platform: Option<Arc<dyn ScannerPlatform>>,
+    /// Control of the card face above this connection's Widget, when the host draws one.
+    pub expanded_card: Option<Arc<dyn ExpandedCardHost>>,
 }
 
 impl ConnectionAdapters {
@@ -1523,7 +1480,9 @@ impl ConnectionAdapters {
             chat: Arc::new(ActionChannel::chat()),
             renderer: Arc::new(ActionChannel::renderer()),
             pocket_platform: services.pocket_platform(),
-            media_platform: services.media_platform(),
+            expanded_card: None,
+            game_platform: services.game_platform(),
+            scanner_platform: services.scanner_platform(),
         }
     }
 }

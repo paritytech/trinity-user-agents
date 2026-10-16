@@ -1273,7 +1273,9 @@ impl NativeProductExecution {
             chat: self.chat_connection.clone(),
             renderer: self.renderer_connection.clone(),
             pocket_platform: self.pocket.clone(),
-            media_platform: self.media.clone(),
+            expanded_card: Some(self.expanded_card.clone()),
+            game_platform: self.game.clone(),
+            scanner_platform: None,
         }
     }
 
