@@ -284,6 +284,7 @@ async fn receive(context: NativeChatContext) {
 				continue;
 			},
 		};
+		tracing::debug!(topics = topics.len(), "host channel watching bootstrapped peers");
 		let watched = topics;
 		let mut refresh = Delay::new(REFRESH).fuse();
 		loop {
@@ -348,6 +349,7 @@ async fn handle_page(
 		};
 		// The seal is the authentication: what does not open is not the peer's.
 		let Ok(message) = pair.open(data) else {
+			tracing::debug!(peer = %hex::encode(&peer[..4]), "host channel statement did not open");
 			continue;
 		};
 		let Some(Ok(reference)) = ProfileReference::from_message(&message) else {
@@ -366,7 +368,15 @@ async fn handle_page(
 		)
 		.await
 		{
-			Ok(kept) => changed |= kept,
+			Ok(kept) => {
+				if kept {
+					tracing::info!(
+						peer = %hex::encode(&peer[..4]),
+						"host channel reference recorded from a contact"
+					);
+				}
+				changed |= kept;
+			},
 			Err(error) => tracing::debug!(%error, "host channel reference not recorded"),
 		}
 	}
