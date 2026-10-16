@@ -159,6 +159,15 @@ fn a_published_stack_opens_under_the_printed_key_only() {
 	let unchecked: serde_json::Value =
 		serde_json::from_str(&stdout(&stack(&["verify", served]))).unwrap();
 	assert_eq!(unchecked["signed"], false, "without a key nothing checks the signature");
+	assert_eq!(unchecked["envelope"], true, "but the file still says it carries one");
+}
+
+#[test]
+fn a_descriptor_past_the_size_cap_is_unreachable() {
+	let url = respond_once("200 OK", "", vec![b' '; 1024 * 1024 + 1]);
+	let output = stack(&["verify", &url]);
+	assert!(!output.status.success());
+	assert!(stderr(&output).contains("larger than"), "{}", stderr(&output));
 }
 
 #[test]

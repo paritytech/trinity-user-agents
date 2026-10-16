@@ -19,6 +19,8 @@ const WELL_KNOWN: &str = ".well-known/trinity-stack.json";
 /// A local file has no URL of its own; the pointer only carries the key to check.
 const LOCAL_FILE_URL: &str = "https://local-file.invalid/";
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
+/// The largest descriptor `fetch` reads; a descriptor is a few kilobytes.
+const MAX_DESCRIPTOR_BYTES: usize = 1024 * 1024;
 
 #[derive(Subcommand)]
 pub enum StackCommand {
@@ -216,19 +218,17 @@ fn render(
 	model.insert("$v".into(), trinity_stack::VERSION.into());
 	model.insert("generation".into(), generation.into());
 	model.insert("sequence".into(), 0.into());
-	// The crate's hash, the one `@parity/trinity-stack`'s `publish` keeps, so a state file means
-	// the same thing to both.
-	let unsequenced = Document::parse(&serde_json::to_vec(&model)?).map_err(refused)?;
-	let content_hash = format!("0x{}", hex::encode(unsequenced.descriptor().content_hash()));
+	// The crate hashes and renders the canonical form, as `@parity/trinity-stack`'s `publish` does,
+	// so equal hashes mean equal published bytes and a state file means the same thing to both.
+	let hash = trinity_stack::content_hash(&serde_json::to_vec(&model)?).map_err(refused)?;
+	let content_hash = format!("0x{}", hex::encode(hash));
 	let sequence = match state {
 		Some(state) if state.content_hash == content_hash => state.sequence,
 		Some(state) => (state.sequence + 1).max(now),
 		None => now,
 	};
 	model.insert("sequence".into(), sequence.into());
-	let mut descriptor = serde_json::to_vec_pretty(&model)?;
-	descriptor.push(b'\n');
-	Document::parse(&descriptor).map_err(refused)?;
+	let descriptor = trinity_stack::canonical(&serde_json::to_vec(&model)?).map_err(refused)?;
 	Ok((descriptor, PublishState { sequence, content_hash }))
 }
 
@@ -264,8 +264,12 @@ async fn verify(stack: &str, key: Option<&str>) -> Result<()> {
 		.map_err(|cause| anyhow!("{} is unreachable: {cause}", pointer.url()))?;
 	let accepted =
 		accept(&pointer, None, Fetched::Document(bytes), unix_now() as i64).map_err(refused)?;
+	// `signed` means a signature was checked against a key; `envelope` says the file carries one,
+	// so a signed stack read without `--key` is not mistaken for an unsigned one.
+	let envelope = matches!(Document::parse(bytes), Ok(Document::Envelope { .. }));
 	let report = serde_json::json!({
 		"signed": accepted.stack.signed,
+		"envelope": envelope,
 		"stale": accepted.stale,
 		"expired": accepted.expired,
 		"descriptor": accepted.stack.descriptor,
@@ -333,11 +337,22 @@ async fn fetch(url: &str) -> Result<Vec<u8>, String> {
 	if !status.is_success() {
 		return Err(format!("HTTP {status}"));
 	}
-	response
-		.bytes()
-		.await
-		.map(|bytes| bytes.to_vec())
-		.map_err(|error| error.to_string())
+	let too_large = || format!("larger than {MAX_DESCRIPTOR_BYTES} bytes");
+	if response
+		.content_length()
+		.is_some_and(|length| length > MAX_DESCRIPTOR_BYTES as u64)
+	{
+		return Err(too_large());
+	}
+	let mut response = response;
+	let mut body = Vec::new();
+	while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
+		body.extend_from_slice(&chunk);
+		if body.len() > MAX_DESCRIPTOR_BYTES {
+			return Err(too_large());
+		}
+	}
+	Ok(body)
 }
 
 fn unix_now() -> u64 {
@@ -373,9 +388,19 @@ mod tests {
 	#[test]
 	fn the_content_hash_is_the_crates() {
 		let (descriptor, state) = render(model(), "g1", None, 1_000).unwrap();
-		let parsed = Document::parse(&descriptor).unwrap();
-		let expected = format!("0x{}", hex::encode(parsed.descriptor().content_hash()));
+		let expected =
+			format!("0x{}", hex::encode(trinity_stack::content_hash(&descriptor).unwrap()));
 		assert_eq!(state.content_hash, expected, "the npm package's publish keeps the same hash");
+	}
+
+	#[test]
+	fn a_service_kind_only_newer_readers_know_raises_sequence() {
+		let (_, first) = render(model(), "g1", None, 1_000).unwrap();
+		let mut future = model();
+		future["services"] =
+			serde_json::json!([{ "kind": "future-kind", "urls": ["https://a.example/"] }]);
+		let (_, again) = render(future, "g1", Some(first), 900).unwrap();
+		assert_eq!(again.sequence, 1_001);
 	}
 
 	#[test]
