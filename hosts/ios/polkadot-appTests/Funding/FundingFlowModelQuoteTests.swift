@@ -54,7 +54,10 @@ struct FundingFlowModelQuoteTests {
 
     @Test
     func aWithdrawalAboveWhatPaymentsCanSpendIsRefused() {
-        let model = makeModel(FakeFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])]), direction: .out)
+        let model = makeModel(
+            FakeFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])]),
+            direction: .out
+        )
         model.selectRail(.card)
         model.spendable = 20
 

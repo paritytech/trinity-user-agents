@@ -12,7 +12,13 @@ struct FundingHistoryStoreTests {
         let written = [
             record("delivered", outcome: .delivered),
             record("released", direction: .out, outcome: .released, payout: .paidOut),
-            record("payout", direction: .out, outcome: .released, payout: .failed(reason: "bank closed"), refunded: "4"),
+            record(
+                "payout",
+                direction: .out,
+                outcome: .released,
+                payout: .failed(reason: "bank closed"),
+                refunded: "4"
+            ),
             record("cancelled", direction: .out, outcome: .cancelled, refunded: "95"),
             record("refunded", outcome: .refunded),
             record("other", outcome: .failed(.other(code: "kyc", message: "id expired"))),
