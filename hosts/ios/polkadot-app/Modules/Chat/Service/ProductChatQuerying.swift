@@ -33,3 +33,11 @@ struct ProductExecutionChatQuerying: ProductChatQuerying {
 protocol ProductChatSearching: Sendable {
     func searchPage(_ request: ProductChatSearchQueryRequest) async throws -> ProductChatSearchQueryItem
 }
+
+/// The search of a product-source room for the search of the chat list (VERBOSITY-WASM-PRODUCT C11). It asks only a
+/// product whose worker runs now, so a search of the list never starts a worker.
+protocol ProductChatListSearching: Sendable {
+    /// One page of hits, or nil when the worker of the product does not run. It throws as
+    /// ``ProductChatSearching/searchPage(_:)`` does.
+    func searchPageIfRunning(_ request: ProductChatSearchQueryRequest) async throws -> ProductChatSearchQueryItem?
+}

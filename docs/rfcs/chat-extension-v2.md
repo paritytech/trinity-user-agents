@@ -1286,7 +1286,12 @@ pub struct HostChatActionSubscribeItem {
   or `ReactionRemoved` body applies as a reaction of `"product"`, and URL media, which `ChatMediaItem` cannot carry,
   is left out of the converted body.
 - In a product-source room the host persists no message. It applies `update_feed` to the pages of an open room screen
-  and to the chat-list preview. The core refuses `post_message` with `Unknown`.
+  and to the chat-list preview. When no screen shows the room, it applies the update to the cached newest page of the
+  room, if the host has one, so the next open shows the change before the newest page arrives. The core refuses
+  `post_message` with `Unknown`.
+- The app icon badge, where the host has one, counts the `UnreadCount` badge of each product room as it counts the
+  unread messages of a stored chat. A room whose product sets its badge counts that badge, not its stored messages, and a
+  room that the user muted counts nothing.
 - In a product-source room the host sends every user action to `user_action`. It draws a sent message as `Preparing`
   at once and replaces it with the `MessageCreated` answer. On `Rejected` it removes the message and shows the reason,
   and on time-out it marks the message `Failed`. It reverts any other action that fails and shows the reason.

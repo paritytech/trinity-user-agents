@@ -38,8 +38,10 @@ extension ContactsListWireframe: ContactsListWireframeProtocol {
         }
 
         view?.controller.navigationController?.pushViewController(chat.controller, animated: true)
-        // The room screen scrolls to the message when the message arrives in its window.
+        // The room screen scrolls to the message when the message arrives in its window. A product-source room
+        // pages to the message, because its window holds only the newest page at first.
         (chat as? ChatProductRoomViewProtocol)?.scrollToMessage(messageId)
+        ((chat as? ChatViewController)?.presenter as? ChatPresenter)?.productRoom?.showListSearchHit(messageId)
     }
 
     func open(url: URL) {

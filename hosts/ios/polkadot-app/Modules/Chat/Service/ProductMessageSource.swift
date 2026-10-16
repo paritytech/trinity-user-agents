@@ -20,6 +20,10 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         var jumpPageLimit = 1_000
         /// The product wants a `Seen` action when the user sees a newer message.
         var reportsSeen = false
+        /// The wait before a `Seen` that the product did not take goes again.
+        var seenRetryDelay: Duration = .seconds(3)
+        /// The most times that one `Seen` goes to the product.
+        var seenAttempts = 3
     }
 
     struct Page {
@@ -83,6 +87,8 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
     var reportedSeenMessageId: String?
     var seenToReport: String?
     var isReportingSeen = false
+    /// How many times the source sent the `Seen` of ``seenToReport`` with no answer of the product.
+    var failedSeenAttempts = 0
 
     init(
         chatId: Chat.Id,
@@ -214,7 +220,10 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         return outcome
     }
 
+    /// Pages until the window holds the message. A jump before the room screen starts the source starts it, so a
+    /// hit of the chat-list search can open the room at its message.
     func jump(to messageId: Chat.MessageId) async -> Bool {
+        await start()
         await firstPageTask?.value
 
         if await page(until: messageId, using: loadOlder) {
