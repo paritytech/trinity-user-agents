@@ -179,10 +179,9 @@ impl RuntimeServices {
 	/// provider's row is first `Pending`, then `Quoted` or `Unavailable`. The
 	/// stream ends once every provider has answered or run out of time, and
 	/// never errors. Dropping it withdraws the asks still open and lets the
-	/// providers' workers go. The
-	/// ask's direction is the session's, and an ask naming no country takes
-	/// the one the host detected. Empty for a session the core does not know
-	/// or that ended.
+	/// providers' workers go. The ask's direction is the session's, and an
+	/// ask naming no country takes the one the host detected. Empty for a
+	/// session the core does not know or that ended.
 	pub fn get_funding_quote(
 		self: &Arc<Self>,
 		intent: &str,
