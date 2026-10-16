@@ -1,12 +1,19 @@
 // Loads the trinity-stack crate's wasm build once, at import, so the rest of the package can call
-// it synchronously. Node and Bun read the file; browsers fetch it next to this module.
+// it synchronously. Node and Bun read the file; browsers fetch it next to this module. The file
+// system is reached through `process.getBuiltinModule`, so a browser bundler sees no `node:`
+// import to resolve.
 import init, { initSync } from "../wasm/trinity_stack.js";
 
 const wasmUrl = new URL("../wasm/trinity_stack_bg.wasm", import.meta.url);
+const fs =
+  typeof process === "undefined"
+    ? undefined
+    : (process.getBuiltinModule?.("node:fs") as
+        | typeof import("node:fs")
+        | undefined);
 
-if (typeof process !== "undefined" && process.versions?.node) {
-  const { readFile } = await import(/* @vite-ignore */ "node:fs/promises");
-  initSync({ module: await readFile(wasmUrl) });
+if (fs) {
+  initSync({ module: fs.readFileSync(wasmUrl) });
 } else {
   await init({ module_or_path: wasmUrl });
 }

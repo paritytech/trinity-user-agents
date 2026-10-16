@@ -118,6 +118,24 @@ const MODEL: Model = {
 const URL_ = "https://stack.example/.well-known/trinity-stack.json";
 
 describe("publish", () => {
+  test("the key order a generator emits does not change the content", async () => {
+    const first = await publish(MODEL, { generation: "g1" });
+    const reordered = Object.fromEntries(
+      Object.entries(MODEL).reverse(),
+    ) as Model;
+    const again = await publish(reordered, {
+      generation: "g1",
+      state: first.state,
+    });
+    expect(again.state).toEqual(first.state);
+  });
+
+  test("an invalid Date is refused rather than turning off expiry", () => {
+    expect(() =>
+      accept({ url: URL_ }, undefined, new Uint8Array(), new Date("bad")),
+    ).toThrow("invalid Date");
+  });
+
   test("keeps sequence while nothing changes and raises it when something does", async () => {
     const now = new Date("2026-10-15T12:00:00Z");
     const first = await publish(MODEL, { generation: "g1", now });
@@ -258,6 +276,24 @@ describe("read", () => {
         })
       ).status,
     ).toBe("unreachable");
+  });
+});
+
+describe("packaging", () => {
+  // A browser bundler must find nothing it cannot resolve, such as a `node:` import.
+  test("bundles for the browser", async () => {
+    const built = await Bun.build({
+      entrypoints: [new URL("./index.ts", import.meta.url).pathname],
+      target: "browser",
+    });
+    expect(built.success).toBe(true);
+    // Bun keeps a `node:` import external; esbuild and webpack refuse it for a browser target.
+    const bundle = await built.outputs[0]!.text();
+    expect(bundle).not.toMatch(/(import\s*\(|from)\s*["']node:/);
+  });
+
+  test("a URL that is not one is the caller's bug, not an outage", async () => {
+    await expect(fetchDescriptor("not a url")).rejects.toThrow();
   });
 });
 
