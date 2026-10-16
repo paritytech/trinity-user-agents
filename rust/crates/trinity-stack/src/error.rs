@@ -50,9 +50,6 @@ pub enum Error {
 	/// `Asset.chain` or `coinage.chain` names a role no chain has.
 	#[error("no chain has role {0:?}")]
 	UnknownChainRole(String),
-	/// A time is not RFC 3339 in UTC ending in `Z`.
-	#[error("{0:?} is not an RFC 3339 UTC time")]
-	InvalidTime(String),
 	/// A hex value is not lowercase, 0x-prefixed and of the right length.
 	#[error("{field} is not {bytes} bytes of lowercase 0x-prefixed hex")]
 	InvalidHex {

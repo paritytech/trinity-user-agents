@@ -46,7 +46,7 @@
     "accountDataStore": "0x2222222222222222222222222222222222222222"
   },
   "fork": {
-    "at": "2026-10-15T10:00:00Z",
+    "at": 1792058400,
     "of": {
       "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
     }
