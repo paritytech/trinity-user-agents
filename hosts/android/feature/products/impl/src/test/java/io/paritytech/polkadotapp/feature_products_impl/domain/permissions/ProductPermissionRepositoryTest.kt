@@ -30,6 +30,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.DerivationIndex
+import uniffi.truapi.CrossProductSignatureKind
 import uniffi.truapi.PermissionAuthorizationEntry
 import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.PermissionAuthorizationStatus
@@ -109,6 +110,22 @@ class ProductPermissionRepositoryTest {
             ProductPermission.UserIdentityAccess to true), permissions)
         assertFalse(f.repository.isGranted(product, camera))
         assertTrue(f.repository.isDenied(product, camera))
+        coVerify(exactly = 0) { f.dao.insert(any()) }
+    }
+
+    @Test
+    fun `cross product signatures do not become legacy permission grants`() = runTest {
+        val f = Fixture()
+        val request = PermissionAuthorizationRequest.CrossProductSignature("other", CrossProductSignatureKind.PAYLOAD)
+        assertEquals(null, request.legacyPermission())
+        f.saved(product)[request] = authorized
+        f.saved(product)[camera.canonicalRequest()!!] = authorized
+
+        val permissions = f.repository.getAllByProduct(product).associate { it.permission to it.granted }
+
+        assertEquals(mapOf(camera to true), permissions)
+        assertTrue(f.repository.isGranted(product, camera))
+        assertFalse(f.repository.isGranted(product, ProductPermission.AccountAccess("other")))
         coVerify(exactly = 0) { f.dao.insert(any()) }
     }
 

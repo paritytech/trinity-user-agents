@@ -50,6 +50,7 @@ internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermissio
             is DerivationIndex.Raw -> AllowanceAccountSelector.Raw(selector.v1.toDataByteArray())
         }
     )
+    is PermissionAuthorizationRequest.CrossProductSignature -> null
     is PermissionAuthorizationRequest.Remote -> when (val remote = v1.permission) {
         is RemotePermission.Remote -> {
             val domains = remote.domains.map(::canonicalDomain).distinct().sorted()
