@@ -7,7 +7,13 @@ extension Chat.LocalMessage {
     /// The ids are the ids of the product. A `Custom` body has an empty payload. Media items are not sent: the
     /// product knows its messages by id, and inline media can be up to 1 MiB each.
     func productQueryMessage(in chatId: Chat.Id) -> ChatMessage {
-        let (body, replyTo) = content.productQueryBody(in: chatId)
+        let (queryBody, replyTo) = content.productQueryBody(in: chatId)
+        let body: ChatMessageBody =
+            if hasMarkdownText, case let .text(text) = queryBody {
+                .richText(text: text, media: [])
+            } else {
+                queryBody
+            }
 
         return ChatMessage(
             messageId: Chat.ProductMessageId.product(messageId, in: chatId),

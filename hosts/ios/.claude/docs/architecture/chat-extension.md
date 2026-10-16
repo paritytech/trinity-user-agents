@@ -125,6 +125,10 @@ built (O24).
 
 - Product bodies are content kind `productBody` (stored type 247, SCALE). Feed updates map to cells in
   `ChatViewModelFactory`; custom bodies draw through `ProductMessageDecoder` and the renderer.
+- In a product-source room a `RichText` body with text and no media becomes the same content as a `Text` body
+  (`.text` or `.reply`), with `Chat.LocalMessage.hasMarkdownText`, so it keeps its quote, its edit and the "Edited"
+  mark. The factory draws it in the Markdown subset (`ChatMarkdownText`, a line ending is a line break) and draws a
+  `Text` body as plain text with its `https` links; a tapped link opens after the host confirmation.
 - Product message ids are stored as `Chat.ProductMessageId` (`"<chatId raw>/<product id>"`), because
   `CDChatMessage.messageId` is unique across chats.
 - The room screen draws at most one list update per frame (`ChatPresenter+ListUpdates.swift`). A burst of

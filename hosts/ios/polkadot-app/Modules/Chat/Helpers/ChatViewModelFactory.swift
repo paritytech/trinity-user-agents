@@ -325,7 +325,7 @@ private extension ChatViewModelFactory {
                     reactions: reactions,
                     actions: actions,
                     inboxBubbleStyle: inboxBubbleStyle,
-                    productText: plainProductText(of: message.messageId, text: latestEdit?.newText ?? text),
+                    productText: productText(of: message, text: latestEdit?.newText ?? text, actions: actions),
                     reactionChoice: reactionChoice
                 )
             ]
@@ -443,7 +443,7 @@ private extension ChatViewModelFactory {
                     reactions: reactions,
                     actions: actions,
                     inboxBubbleStyle: inboxBubbleStyle,
-                    productText: plainProductText(of: message.messageId, text: replyDisplayText),
+                    productText: productText(of: message, text: replyDisplayText, actions: actions),
                     reactionChoice: reactionChoice
                 )
             ]

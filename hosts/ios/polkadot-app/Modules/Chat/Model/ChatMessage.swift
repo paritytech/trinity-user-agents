@@ -27,6 +27,9 @@ extension Chat {
         let order: UInt64
         /// The participant of a product room that wrote the message, when it is not the user or the product.
         var authorParticipantId: String?
+        /// True when the text of the message is Markdown: a `RichText` body with no media in a room that the product
+        /// keeps. The content is a text or a reply, so the bubble keeps its quote and its edits.
+        var hasMarkdownText = false
 
         init?(
             remote: Chat.RemoteMessage,

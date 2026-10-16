@@ -6,6 +6,33 @@ import UIKit
 private let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
 
 extension AttributedString {
+    /// The text with no change, and a link on each `https` address that the data detector finds. This is the
+    /// `Text` body of a product (02-DESIGN §6.1).
+    static func plainText(linkingHTTPS text: String) -> Self {
+        ChatAttributedTextCache.shared.attributedString(for: text, style: "plain-https") {
+            var attributed = AttributedString(text)
+            guard let detector = linkDetector else {
+                return attributed
+            }
+
+            let range = NSRange(text.startIndex ..< text.endIndex, in: text)
+            for match in detector.matches(in: text, options: [], range: range) {
+                guard
+                    let url = match.url,
+                    url.scheme?.lowercased() == "https",
+                    let textRange = Range(match.range, in: text),
+                    let lower = AttributedString.Index(textRange.lowerBound, within: attributed),
+                    let upper = AttributedString.Index(textRange.upperBound, within: attributed)
+                else {
+                    continue
+                }
+
+                attributed[lower ..< upper].link = url
+            }
+            return attributed
+        }
+    }
+
     static func from(markdown text: String, textColor: UIColor?) -> Self {
         ChatAttributedTextCache.shared.attributedString(
             for: text,

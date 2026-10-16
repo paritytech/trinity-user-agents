@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The Markdown subset of product rich text: paragraphs, bold, italic, inline code, fenced code, lists, block
 /// quotes and `https` links. A heading shows as a bold paragraph. Raw HTML tags, images, tables and other
-/// links show as their text only.
+/// links show as their text only. A line ending inside a paragraph shows as a line break, as in a chat message.
 public struct ChatMarkdownText: View, Hashable {
     let markdown: String
     let attributedText: AttributedString
@@ -118,10 +118,15 @@ private struct ChatMarkdownRenderer {
 }
 
 private extension ChatMarkdownRenderer {
-    /// An inline HTML tag shows nothing. A block of HTML shows its text without the tags.
+    /// An inline HTML tag shows nothing. A block of HTML shows its text without the tags. A soft line break is a
+    /// line break.
     func visiblePiece(of slice: AttributedSubstring, inline: InlinePresentationIntent?) -> AttributedString? {
         if inline?.contains(.inlineHTML) == true {
             return nil
+        }
+
+        if inline?.contains(.softBreak) == true {
+            return AttributedString(Symbols.lineBreak)
         }
 
         guard inline?.contains(.blockHTML) == true else {

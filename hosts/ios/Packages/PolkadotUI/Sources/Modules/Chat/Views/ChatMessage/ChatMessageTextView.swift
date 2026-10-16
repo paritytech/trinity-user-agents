@@ -92,21 +92,23 @@ public extension ChatMessageTextView {
             self.collapse = start == nil ? nil : collapse
         }
 
-        /// The `Text` body of a product (02-DESIGN §6.1): plain text, with no Markdown and no links. A text longer
-        /// than ``ChatTextCollapse/collapsedLength`` shows only its start when `collapse` is not nil.
+        /// The `Text` body of a product (02-DESIGN §6.1): plain text with no Markdown, and its `https` links. A
+        /// tapped link opens through `openLink`. A text longer than ``ChatTextCollapse/collapsedLength`` shows only
+        /// its start when `collapse` is not nil.
         public init(
             plainText text: String,
             textColor: UIColor,
             statusPlaceholderImage: UIImage? = nil,
+            openLink: ((URL) -> Void)?,
             collapse: ChatTextCollapse? = nil
         ) {
             rawText = text
             self.textColor = textColor
-            let full = AttributedString(text)
+            let full = AttributedString.plainText(linkingHTTPS: text)
             let start = collapse.flatMap { _ in ChatTextCollapse.collapsed(full) }
             attributedText = start ?? full
             self.statusPlaceholderImage = statusPlaceholderImage
-            openLink = nil
+            self.openLink = openLink
             scalesWithTextSize = true
             self.collapse = start == nil ? nil : collapse
         }

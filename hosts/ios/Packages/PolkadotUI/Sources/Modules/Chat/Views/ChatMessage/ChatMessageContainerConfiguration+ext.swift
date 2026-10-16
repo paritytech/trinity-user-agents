@@ -33,8 +33,9 @@ public extension ChatMessageContainerConfiguration {
     /// How the text of a product body draws (02-DESIGN §6.1). A person chat draws its text with no such value.
     struct ProductText {
         enum Format {
-            /// A `Text` body: plain text, with no Markdown and no links.
-            case plain
+            /// A `Text` body: plain text with no Markdown, and its `https` links. A tapped link opens through the
+            /// host.
+            case plain(openLink: ((URL) -> Void)?)
             /// A `RichText` body: the Markdown subset of ``ChatMarkdownText``. A tapped link opens through the host.
             case markdown(openLink: ((URL) -> Void)?)
         }
@@ -43,9 +44,9 @@ public extension ChatMessageContainerConfiguration {
         /// The "Show more" button of a long text. Nil shows the text in full.
         let collapse: ChatTextCollapse?
 
-        /// A `Text` body of a product.
-        public static func plain(collapse: ChatTextCollapse? = nil) -> Self {
-            Self(format: .plain, collapse: collapse)
+        /// A `Text` body of a product. The host confirms a tapped link before it opens it.
+        public static func plain(openLink: ((URL) -> Void)?, collapse: ChatTextCollapse? = nil) -> Self {
+            Self(format: .plain(openLink: openLink), collapse: collapse)
         }
 
         /// A `RichText` body of a product. The host confirms a tapped link before it opens it.
@@ -401,11 +402,12 @@ private extension ChatMessageContainerConfiguration {
                 openLink: openLink,
                 collapse: productText?.collapse
             )
-        case .plain:
+        case let .plain(openLink):
             .init(
                 plainText: text,
                 textColor: textColor,
                 statusPlaceholderImage: placeholderImage,
+                openLink: openLink,
                 collapse: productText?.collapse
             )
         case nil:
