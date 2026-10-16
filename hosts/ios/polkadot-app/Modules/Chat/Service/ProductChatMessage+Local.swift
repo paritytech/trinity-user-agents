@@ -33,6 +33,7 @@ extension ChatMessage {
         if !isFromUser, origin.participantId != Chat.ProductParticipant.product {
             message.authorParticipantId = origin.participantId
         }
+        message.hasMarkdownText = body.isMarkdownText
         return message
     }
 
@@ -76,17 +77,26 @@ extension ChatMessageStatus {
 }
 
 extension ChatMessageBody {
+    /// True for a `RichText` body with text and no media. The room draws it as a text in the Markdown subset
+    /// (02-DESIGN §6.1).
+    var isMarkdownText: Bool {
+        guard case let .richText(text, media) = self else {
+            return false
+        }
+
+        return text != nil && media.isEmpty
+    }
+
     /// The body as a content kind of the room screen.
     ///
-    /// A reply quote exists only for a text body.
+    /// A reply quote exists only for a text body. A `RichText` body with no media is a text body too, so it keeps
+    /// its quote. ``isMarkdownText`` gives its format.
     func localContent(replyTo: String?) -> Chat.LocalMessage.Content {
         switch self {
         case let .text(text):
-            if let replyTo {
-                .reply(.init(messageId: replyTo, ownContent: .init(text: text, attachments: nil)))
-            } else {
-                .text(text)
-            }
+            Self.textContent(text, replyTo: replyTo)
+        case let .richText(text?, media) where media.isEmpty:
+            Self.textContent(text, replyTo: replyTo)
         case .richText:
             // As in a room that the host stores: inline and preimage media, and a file alone (P10.3).
             localContent
@@ -113,6 +123,16 @@ extension ChatMessageBody {
         case let .richText(text, _): text
         case let .actions(actions): actions.text
         case let .custom(_, _, previewText): previewText
+        }
+    }
+}
+
+private extension ChatMessageBody {
+    static func textContent(_ text: String, replyTo: String?) -> Chat.LocalMessage.Content {
+        if let replyTo {
+            .reply(.init(messageId: replyTo, ownContent: .init(text: text, attachments: nil)))
+        } else {
+            .text(text)
         }
     }
 }

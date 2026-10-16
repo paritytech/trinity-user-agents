@@ -186,7 +186,8 @@ extension ChatProductRoomPresenter {
 
         /// Writes the messages of the window, oldest first, as one JSON array: the id that the product gave, the
         /// author (`user`, `product` or the participant id), the name that the room shows for the author, the
-        /// time, the status, the text, the quoted message, and the emoji of the reactions.
+        /// time, the status, the text, the quoted message, the emoji of the reactions, and `markdown` for a text
+        /// that the room draws in the Markdown subset.
         private func markMessages() {
             let rows: [[String: Any]] = messages.values
                 .sorted { ($0.order, $0.timestamp) < ($1.order, $1.timestamp) }
@@ -206,6 +207,9 @@ extension ChatProductRoomPresenter {
                     }
                     if case let .reply(reply) = message.content {
                         row["replyTo"] = productMessageId(reply.messageId)
+                    }
+                    if message.hasMarkdownText {
+                        row["markdown"] = true
                     }
                     return row
                 }

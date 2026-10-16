@@ -24,6 +24,15 @@ struct ChatMarkdownTextTests {
         #expect(characters(render("one\n\ntwo")) == "one\n\ntwo")
     }
 
+    /// A chat message keeps the line breaks that its writer typed. CommonMark lets a soft line break show as a
+    /// line break.
+    @Test func aLineEndingInsideAParagraphIsALineBreak() throws {
+        let text = render("**first** line\nsecond *line*")
+
+        #expect(characters(text) == "first line\nsecond line")
+        #expect(try intent(of: "first", in: text)?.contains(.stronglyEmphasized) == true)
+    }
+
     @Test func listsShowTheirMarkers() {
         let text = render("- red\n- blue\n  - navy\n\n1. first\n2. second")
 

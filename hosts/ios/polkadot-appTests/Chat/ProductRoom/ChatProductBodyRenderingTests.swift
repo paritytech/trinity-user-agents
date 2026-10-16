@@ -5,6 +5,7 @@ import Operation_iOS
 import Products
 import SubstrateSdk
 import Testing
+import TrUAPIHost
 import UIKit
 @testable import polkadot_app
 
@@ -18,9 +19,10 @@ struct ChatProductBodyRenderingTests {
 
     // MARK: - Text (O18)
 
-    /// A `Text` body of a product is plain: no Markdown and no links, also for a bare address.
-    @Test func aProductTextIsPlainWithNoLinks() async throws {
-        let raw = "**not bold** [x](https://example.com) and https://example.com/a"
+    /// A `Text` body of a product is plain: no Markdown. Its `https` addresses are links that open through the
+    /// host; other addresses are text (02-DESIGN §6.1).
+    @Test func aProductTextIsPlainWithItsHttpsLinks() async throws {
+        let raw = "**not bold** and https://example.com/a, http://example.org and www.example.net"
         let (factory, presenter) = try makeFactory()
         defer { withExtendedLifetime(presenter) {} }
 
@@ -28,7 +30,58 @@ struct ChatProductBodyRenderingTests {
 
         #expect(text.rawText == raw)
         #expect(String(text.attributedText.characters) == raw)
-        #expect(text.attributedText.runs.allSatisfy { $0.link == nil })
+        let links = text.attributedText.runs.compactMap(\.link)
+        #expect(links == [URL(string: "https://example.com/a")])
+        let range = try #require(text.attributedText.range(of: "https://example.com/a"))
+        #expect(text.attributedText[range].link == URL(string: "https://example.com/a"))
+        #expect(text.openLink != nil)
+    }
+
+    /// A `RichText` body with no media in a room that the product keeps is a text with its quote, drawn in the
+    /// Markdown subset: the text of a person that has Markdown (PARITY-NATIVE-IOS D3, D4).
+    @Test func aRichTextWithoutMediaIsAMarkdownTextThatKeepsItsQuote() async throws {
+        let body = ChatMessageBody.richText(text: "**bold**\nnext *line*", media: [])
+        let product = ChatMessage(
+            messageId: "m2",
+            origin: ChatMessageOrigin(participantId: "c1"),
+            timestamp: 1_767_225_600_000,
+            body: body,
+            status: .sent,
+            replyTo: "m1",
+            editedAt: nil,
+            reactions: []
+        )
+        let local = product.localMessage(chatId: Data.chatId, extensionId: Data.productId, isUnread: false)
+        let quote = Chat.RemoteMessageContentV1.MessageContent.ReplyContent(
+            messageId: "m1",
+            ownContent: .init(text: "**bold**\nnext *line*", attachments: nil)
+        )
+        #expect(local.content == .reply(quote))
+        #expect(local.hasMarkdownText)
+        #expect(local.productQueryMessage(in: Data.chatId).body == body)
+
+        let (factory, presenter) = try makeFactory()
+        defer { withExtendedLifetime(presenter) {} }
+        let quoted = Data.message("m1", content: .text("hello"))
+        let bubble = try await bubble(factory, local, after: [quoted])
+        let content = try #require(bubble.innerContentConfiguration as? ChatRichTextMessageConfiguration)
+        let text = try #require(content.textViewModel)
+
+        #expect(String(text.attributedText.characters) == "bold\nnext line")
+        #expect(bubble.replyInfo?.messageId == "m1")
+    }
+
+    /// A body with media stays a media body, and a `Text` body has no Markdown.
+    @Test func onlyARichTextWithTextAndNoMediaIsAMarkdownText() {
+        let media = ChatMessageBody.richText(text: "**a**", media: [image()])
+
+        #expect(!media.isMarkdownText)
+        #expect(!ChatMessageBody.text(text: "**a**").isMarkdownText)
+        #expect(!ChatMessageBody.richText(text: nil, media: []).isMarkdownText)
+        guard case .productBody = media.localContent(replyTo: "m1") else {
+            Issue.record("a body with media must be a product body")
+            return
+        }
     }
 
     /// The text of the user in a product room is a `Text` body too.
@@ -270,9 +323,10 @@ private extension ChatProductBodyRenderingTests {
 
     func bubble(
         _ factory: ChatViewModelFactory,
-        _ message: Chat.LocalMessage
+        _ message: Chat.LocalMessage,
+        after earlier: [Chat.LocalMessage] = []
     ) async throws -> ChatMessageContainerConfiguration {
-        let listModel = await ChatInteractorState().onMessagesUpdate([message])
+        let listModel = await ChatInteractorState().onMessagesUpdate(earlier + [message])
         let chatMetadata = ChatMetadata(
             chatId: Data.chatId,
             peerMetadata: Chat.PeerMetadata(
@@ -302,6 +356,20 @@ private extension ChatProductBodyRenderingTests {
         let bubble = try await bubble(factory, message)
         let content = try #require(bubble.innerContentConfiguration as? ChatRichTextMessageConfiguration)
         return try #require(content.textViewModel)
+    }
+
+    func image() -> ChatMediaItem {
+        .image(
+            resource: .inline(mimeType: "image/png", bytes: Foundation.Data([0])),
+            meta: ChatMediaMeta(
+                mimeType: "image/png",
+                sizeBytes: nil,
+                width: nil,
+                height: nil,
+                placeholder: nil,
+                alt: nil
+            )
+        )
     }
 
     func mediaStack(_ factory: ChatViewModelFactory, _ message: Chat.LocalMessage) async throws -> ChatMediaStackView {

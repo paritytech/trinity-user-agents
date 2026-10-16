@@ -46,14 +46,20 @@ extension Chat.LocalMessage.Content.ProductBody {
 // MARK: - Product text (02-DESIGN §6.1, O18)
 
 extension ChatViewModelFactory {
-    /// The format of a `Text` body: plain text in a product room, with no Markdown and no links. Nil in a person
-    /// chat, which keeps inline Markdown and the links that the system finds.
-    func plainProductText(
-        of messageId: String,
-        text: String
+    /// The format of a text in a product room: the Markdown subset for a `RichText` body with no media, else plain
+    /// text with its `https` links. A tapped link opens through the host. Nil in a person chat, which keeps inline
+    /// Markdown and the links that the system finds.
+    func productText(
+        of message: Chat.LocalMessage,
+        text: String,
+        actions: ChatViewModelActions?
     ) -> ChatMessageContainerConfiguration.ProductText? {
         guard productRoom != nil else { return nil }
-        return .plain(collapse: productTextCollapse(of: messageId, text: text))
+
+        let collapse = productTextCollapse(of: message.messageId, text: text)
+        return message.hasMarkdownText
+            ? .markdown(openLink: actions?.openLink, collapse: collapse)
+            : .plain(openLink: actions?.openLink, collapse: collapse)
     }
 
     /// The "Show more" button of a long product text, or nil when the user expanded the text or the text is short.
