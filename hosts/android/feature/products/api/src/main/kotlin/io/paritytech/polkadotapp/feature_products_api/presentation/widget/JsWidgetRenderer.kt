@@ -131,9 +131,7 @@ private fun JsImageRenderer(
             },
             contentDescription = null,
             contentScale = when {
-                // Natural size, shrunk to fit the space given, as on iOS.
                 sizedSides == 0 -> ContentScale.Inside
-                // Sized on one side, the picture's proportions set the other rather than the space around it.
                 sizedSides == 1 && widget.fit != JsImageFit.NONE -> ContentScale.Fit
                 else -> widget.fit.toContentScale()
             },
@@ -148,7 +146,7 @@ private fun JsImageRenderer(
     }
 }
 
-/** One picture pixel to a dp, as iOS draws one to a point, so a picture's natural size matches on both. */
+/** One picture pixel to a dp, as iOS draws one to a point. */
 private class DpPainter(private val picture: Painter, private val density: Float) : Painter() {
     override val intrinsicSize: Size
         get() = picture.intrinsicSize.let { if (it.isSpecified) it * density else it }
@@ -161,7 +159,6 @@ private fun JsEffectRenderer(
     widget: JsWidget.Effect,
     modifier: Modifier = Modifier,
 ) {
-    // The protocol's tint is animated.
     val sweep by rememberInfiniteTransition(label = "effect").animateFloat(
         initialValue = 0f,
         targetValue = 1f,
@@ -256,9 +253,7 @@ private fun JsRowRenderer(
     Row(
         modifier = modifier
             .then(widget.modifiers.toComposeModifier())
-            // A row with no height of its own is as tall as its tallest child, so one filling the
-            // height matches it rather than the space around the row. Only then: intrinsic heights
-            // can come out short for text that wraps.
+            // Only when a child fills the height: intrinsic heights can come out short for text that wraps.
             .then(
                 if (widget.modifiers.hasHeight() || widget.children.none { it.fillsHeight() }) {
                     Modifier

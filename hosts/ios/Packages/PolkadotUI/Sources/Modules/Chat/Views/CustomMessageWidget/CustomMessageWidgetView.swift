@@ -125,11 +125,6 @@ private struct NodeImageView: View {
             }
     }
 
-    /// Until the picture arrives, and if it cannot be loaded, the node draws
-    /// nothing in the size its modifiers give it. A picture with no size of
-    /// its own takes its natural one, one pixel to a point, shrunk to fit the
-    /// space it is given; one sized on a single side takes the other from its
-    /// proportions, or its natural size when it is not to be resized.
     @ViewBuilder
     private var content: some View {
         switch picture {
@@ -169,7 +164,6 @@ private struct NodeImageView: View {
 }
 
 private extension CustomMessageWidgetNode.ImageFit {
-    /// A picture larger than its node is cut to the node, never drawn past it.
     @ViewBuilder
     func apply(to image: Image) -> some View {
         switch self {
@@ -214,8 +208,7 @@ private struct NodeEffectModifier: ViewModifier {
     func body(content: Content) -> some View {
         switch effect {
         case .rainbow:
-            // A tint over the children's bounds, as strong as Android's, which
-            // leaves them the layout and the taps.
+            // As strong as Android's tint, and over the children so they keep their taps.
             content.overlay {
                 Rectangle()
                     .motionFillingShader(shader: HolographicShaders.iridescentShine)
@@ -303,8 +296,6 @@ private struct NodeRowView: View {
 
 // MARK: - Arrangement
 
-/// Shares out the space a stack was given along its axis. A stack with no
-/// size there hugs its children and has none to share, so it is given `.start`.
 private struct ArrangedChildren: View {
     let children: [CustomMessageWidgetNode]
     let arrangement: CustomMessageWidgetNode.Arrangement
@@ -380,8 +371,7 @@ private struct NodeButtonView: View {
                 actionHandler?(actionId, nil)
             }
         } label: {
-            // As wide as the label unless sized, with Material's content
-            // padding, as on Android.
+            // Material's content padding, as on Android.
             Text(props.text)
                 .padding(.horizontal, 24)
                 .frame(maxWidth: modifiers.hasOwnWidth ? .infinity : nil)

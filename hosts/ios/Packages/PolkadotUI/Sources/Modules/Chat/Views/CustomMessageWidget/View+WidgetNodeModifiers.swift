@@ -82,9 +82,8 @@ private struct NodeBackgroundModifier: ViewModifier {
 
 // MARK: - Border
 
-/// Drawn inside the node, so a border never reaches over its neighbours. A
-/// stroke twice as wide clipped to the shape keeps the outer edge on the shape
-/// for any shape, which an inset stroke cannot do for rounded corners.
+/// A stroke twice as wide clipped to the shape draws inside any shape, which an
+/// inset stroke cannot do for rounded corners.
 private struct NodeBorderModifier: ViewModifier {
     let border: CustomMessageWidgetNode.Border?
 

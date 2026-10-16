@@ -223,8 +223,7 @@ public extension CustomMessageWidgetNode {
             height != nil || minHeight != nil || fillHeight
         }
 
-        /// A fixed or filled width, which a minimum alone is not: a node with
-        /// only a minimum is as wide as its content, and at least the minimum.
+        /// A fixed or filled width; a minimum alone is not one.
         public var hasOwnWidth: Bool {
             width != nil || fillWidth
         }

@@ -26,7 +26,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import kotlin.math.abs
 
-/** The layout rules a face is written against, which iOS draws the same way. */
+/** The layout rules of `renderer.rs`, which iOS draws the same way. */
 @RunWith(AndroidJUnit4::class)
 class JsWidgetLayoutTest {
     @get:Rule
@@ -66,52 +66,43 @@ class JsWidgetLayoutTest {
 
     @Test
     fun aPictureWithNoSizeOfItsOwnTakesOneDpPerPixel() {
-        val picture = Bitmap.createBitmap(30, 20, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.RED) }
+        val image = JsWidget.Image(source = JsImageSource.Archive("small.png"), fit = JsImageFit.CONTAIN)
 
-        draw(
-            JsWidget.Image(source = JsImageSource.Archive("small.png"), fit = JsImageFit.CONTAIN),
-            images = JsImageResolver { picture },
-        )
-        compose.waitUntil(timeoutMillis = 5_000) { boundsOf(pureRed) != null }
+        val drawn = drawPicture(30, 20, image)
 
-        val drawn = boundsOf(pureRed)
-        assertEquals(listOf(30, 20), listOf(drawn?.width()?.inDp(), drawn?.height()?.inDp()))
+        assertEquals(listOf(30, 20), listOf(drawn.width().inDp(), drawn.height().inDp()))
     }
 
     @Test
     fun aLargePictureWithNoSizeOfItsOwnIsShrunkToFit() {
-        val picture = Bitmap.createBitmap(600, 300, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.RED) }
+        val image = JsWidget.Image(source = JsImageSource.Archive("large.png"), fit = JsImageFit.FILL)
 
-        draw(
-            JsWidget.Image(source = JsImageSource.Archive("large.png"), fit = JsImageFit.FILL),
-            images = JsImageResolver { picture },
-        )
-        compose.waitUntil(timeoutMillis = 5_000) { boundsOf(pureRed) != null }
+        val drawn = drawPicture(600, 300, image)
 
-        val drawn = boundsOf(pureRed)
-        assertEquals(listOf(100, 50), listOf(drawn?.width()?.inDp(), drawn?.height()?.inDp()))
+        assertEquals(listOf(100, 50), listOf(drawn.width().inDp(), drawn.height().inDp()))
     }
 
     @Test
     fun aPictureSizedOnOneSideTakesTheOtherFromItsProportions() {
-        val picture = Bitmap.createBitmap(80, 40, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.RED) }
-
-        draw(
-            JsWidget.Column(
-                children = listOf(
-                    JsWidget.Image(
-                        source = JsImageSource.Archive("wide.png"),
-                        fit = JsImageFit.COVER,
-                        modifiers = listOf(JsModifier.Size(width = 40)),
-                    ),
-                    block(JsColor.FG_SUCCESS),
-                ),
-            ),
-            images = JsImageResolver { picture },
+        val image = JsWidget.Image(
+            source = JsImageSource.Archive("wide.png"),
+            fit = JsImageFit.COVER,
+            modifiers = listOf(JsModifier.Size(width = 40)),
         )
+
+        val drawn = drawPicture(80, 40, image)
+
+        assertEquals(listOf(40, 20), listOf(drawn.width().inDp(), drawn.height().inDp()))
+    }
+
+    /** Draws `image` showing a red picture of this many pixels, and returns where it landed. */
+    private fun drawPicture(width: Int, height: Int, image: JsWidget.Image): android.graphics.Rect {
+        val picture = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        picture.eraseColor(android.graphics.Color.RED)
+        draw(image, images = JsImageResolver { picture })
         compose.waitUntil(timeoutMillis = 5_000) { boundsOf(pureRed) != null }
 
-        assertEquals(20, boundsOf(success)?.top?.inDp())
+        return checkNotNull(boundsOf(pureRed))
     }
 
     private fun draw(widget: JsWidget, images: JsImageResolver = JsImageResolver { null }) {
