@@ -85,13 +85,17 @@ export interface SavedClaim {
   attempt: number;
 }
 
-/** The cancel offer the session made, and whether the user accepted it.
- *  The fee and refund follow from the amount, so only the offer's expiry is
- *  kept. */
+/** The cancel offer the session made, and whether the user accepted it. The
+ *  terms are kept as offered: the refund an accepted offer settles with must be
+ *  the one the user saw. */
 export interface SavedCancel {
   state: "offered" | "accepted";
-  /** When the offer lapses, Unix ms. */
+  /** When the offer lapses, Unix ms. The core decides that it lapsed. */
   expiresAt: number;
+  /** Balance units. */
+  fee: string;
+  /** Balance units. */
+  refund: string;
 }
 
 export interface Saved {
@@ -108,6 +112,9 @@ export interface Saved {
     /** When the simulated card or bank payment arrives, Unix ms. Kept so a
      *  restart does not start the wait again. */
     arrivesAt?: number;
+    /** Whether part of the user's payment reached the provider, after which a
+     *  cancel is a request rather than a stop. */
+    paymentSeen?: boolean;
     /** The faucet drip the session asked for, once asked. */
     drip?: SavedDrip;
     tick?: SavedTick;
@@ -116,6 +123,13 @@ export interface Saved {
   outbound?: {
     phase: OutboundPhase;
     paymentId?: `0x${string}`;
+    /** What the user's payment moved, balance units: the requested amount, or
+     *  what a partial claim took. Refunds never exceed it. */
+    debited?: string;
+    /** Whether the host took `Converting` after the release. */
+    converted?: boolean;
+    /** Whether the host took the payout's outcome. */
+    payoutReported?: boolean;
     /** Where the user asked to be paid, as typed on the payout screen. */
     destination?: string;
     /** When the simulated payout arrives, Unix ms. Kept so a restart does

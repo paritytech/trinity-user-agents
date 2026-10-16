@@ -74,8 +74,11 @@ interface World {
   dripped: boolean;
   pas: bigint;
   ticksBeforeDone: number;
-  /** Whether the user's payment completes, or stays pending. */
-  paymentStatus: "completed" | "pending";
+  /** Whether the user's payment completes, is claimed in part, or stays
+   *  pending. */
+  paymentStatus: "completed" | "partial" | "pending";
+  /** Planning the conversion throws a programming error. */
+  planFails: boolean;
 }
 
 const freshCore = (): Core => ({
@@ -107,8 +110,12 @@ beforeEach(() => {
     pas: 0n,
     ticksBeforeDone: 0,
     paymentStatus: "completed",
+    planFails: false,
   };
 });
+
+/** What a partly claimed payment takes. */
+const PARTIAL = 20_000_000n;
 
 const reportKey = (update: FundingUpdate) =>
   JSON.stringify(update, (_key, value) =>
@@ -204,7 +211,8 @@ function reportOpen(update: FundingUpdate): string | undefined {
     core.named.push(update.value.paymentId);
     // The fake payment completes at once, which releases the session.
     core.released = true;
-    core.debited = update.value.amount;
+    core.debited =
+      world.paymentStatus === "partial" ? PARTIAL : update.value.amount;
   }
   if (update.tag === "Failed") core.failed = true;
   if (rank !== undefined) core.lastRank = rank;
@@ -260,7 +268,18 @@ const client = {
       return repeat ? refused("AlreadyExists") : ok();
     },
     statusSubscribe: () =>
-      stream(world.paymentStatus === "completed" ? [{ tag: "Completed" }] : []),
+      stream(
+        world.paymentStatus === "completed"
+          ? [{ tag: "Completed" }]
+          : world.paymentStatus === "partial"
+            ? [
+                {
+                  tag: "ClaimedPartially",
+                  value: { actualClaimed: PARTIAL.toString() },
+                },
+              ]
+            : [],
+      ),
   },
   localStorage: {
     read: ({ key }: { key: string }) => ok({ value: world.storage.get(key) }),
@@ -317,14 +336,17 @@ mock.module("../worker/onchain", () => ({
   CLAIM_UNIT: 10_000n,
   depositToken: () => ({ symbol: "PAS", decimals: 10 }),
   displaySymbol: () => "PAS",
-  planConversion: async () => ({
-    route: { tier: "pool" },
-    depositSymbol: "PAS",
-    deposit: DEPOSIT.toString(),
-    remoteFeeBuffer: "0",
-    keepNativeForFees: "0",
-    slippagePct: 1,
-  }),
+  planConversion: async () => {
+    if (world.planFails) throw new TypeError("no route for this amount");
+    return {
+      route: { tier: "pool" },
+      depositSymbol: "PAS",
+      deposit: DEPOSIT.toString(),
+      remoteFeeBuffer: "0",
+      keepNativeForFees: "0",
+      slippagePct: 1,
+    };
+  },
   depositBalance: async () => world.pas,
   sweepSurplus: async () => 0n,
   convertOnce: async () => {
@@ -349,7 +371,7 @@ mock.module("../worker/accounts", () => ({
   topUpSecret: () => "0x00",
 }));
 
-const { Session } = await import("../worker/session");
+const { Session, MAX_RESTARTS } = await import("../worker/session");
 const { actionKey, toStored } = await import("../shared/channel");
 const { quoteIdOf } = await import("../worker/quotes");
 const { writeSaved } = await import("../worker/saved");
@@ -660,7 +682,8 @@ function releasedWithdrawal(
   {
     payoutInMs = 60_000,
     cancel,
-  }: { payoutInMs?: number; cancel?: Saved["cancel"] } = {},
+    debited = amount,
+  }: { payoutInMs?: number; cancel?: Saved["cancel"]; debited?: bigint } = {},
 ): FundingAssignment {
   const paymentId = accounts.paymentIdFor("out-session");
   world.requests = [paymentId];
@@ -669,7 +692,7 @@ function releasedWithdrawal(
     named: [paymentId],
     released: true,
     lastRank: 4,
-    debited: amount,
+    debited,
   };
   // The host keeps what the session saved before the worker stopped.
   world.saved = writeSaved({
@@ -679,6 +702,7 @@ function releasedWithdrawal(
     outbound: {
       phase: "paying-out",
       paymentId,
+      debited: debited.toString(),
       payoutAt: Date.now() + payoutInMs,
     },
   });
@@ -750,6 +774,8 @@ test("an accepted cancel resumes from every checkpoint without refunding twice",
     // The core hands the worker what it has not heard about the cancel.
     if (world.core.cancel === "accepted") resumed.cancelAccepted();
     else {
+      // The core hands over a request the worker has not answered yet.
+      world.core.cancel ??= "requested";
       resumed.cancel();
       await userAnswers(resumed, true);
     }
@@ -778,14 +804,30 @@ test("a declined cancel offer lets the payout go through", async () => {
   expect(world.topUps).toEqual([]);
 });
 
-test("a cancel offer that lapsed does not hold the payout", async () => {
+// The core decides when an offer lapsed, on its own clock, and tells the
+// worker: a worker trusting its own clock could act on an offer the user
+// accepted at the last moment.
+test("an open cancel offer holds the payout until the core answers, even past its expiry", async () => {
+  world.core.cancel = "offered";
   const session = new Session(
     releasedWithdrawal(25n * ONE_CASH, {
       payoutInMs: 0,
-      cancel: { state: "offered", expiresAt: Date.now() - 1 },
+      cancel: {
+        state: "offered",
+        expiresAt: Date.now() - 1,
+        fee: CANCEL_FEE.toString(),
+        refund: (25n * ONE_CASH - CANCEL_FEE).toString(),
+      },
     }),
   );
-  expect(await session.run()).toBe("ended");
+  world.core.cancel = "offered";
+  const outcome = session.run();
+  await until(() => tags().includes("Converting"));
+  await Bun.sleep(50);
+  expect(tags()).not.toContain("Payout");
+  world.core.cancel = "declined";
+  session.cancelDeclined();
+  expect(await outcome).toBe("ended");
   expect(tags()).toEqual(["Converting", "Payout"]);
 });
 
@@ -859,4 +901,176 @@ test("an inbound cancel after the payment arrived is offered, and an accepted on
   expect(tags()).toEqual(["CancelOffer", "Failed"]);
   expect(lastUpdate().value).toEqual({ reason: { tag: "Refunded" } });
   expect(world.topUps).toEqual([]);
+});
+
+// A payment the host claimed only in part moved less than was asked, and the
+// core refuses a refund above what moved: refunding the asked amount would
+// leave the refund unnamed and the session open for good.
+test("a failed payout of a partly claimed payment refunds what was taken", async () => {
+  world.paymentStatus = "partial";
+  const session = assignment("Out", withCents(13));
+  world.storage.set(actionKey(session.intent), toStored(PAYOUT));
+  expect(await new Session(session).run()).toBe("ended");
+  expect(lastUpdate()).toEqual({
+    tag: "Refunding",
+    value: {
+      topUpId: accounts.refundIdFor(session.intent),
+      amount: PARTIAL.toString(),
+    },
+  });
+  expect(world.core.refunded).toBe(true);
+});
+
+test("a cancel of a partly claimed withdrawal offers what was taken, less the fee", async () => {
+  const session = new Session(
+    releasedWithdrawal(25n * ONE_CASH, { debited: PARTIAL }),
+  );
+  const outcome = session.run();
+  await until(() => tags().includes("Converting"));
+  userCancels(session);
+  await userAnswers(session, true);
+  expect(await outcome).toBe("ended");
+  expect(updateOf("CancelOffer")).toMatchObject({
+    fee: CANCEL_FEE.toString(),
+    refund: (PARTIAL - CANCEL_FEE).toString(),
+  });
+  expect(updateOf("Refunding")).toMatchObject({
+    amount: (PARTIAL - CANCEL_FEE).toString(),
+  });
+  expect(world.core.refunded).toBe(true);
+});
+
+const SAVED_PLAN = {
+  route: { tier: "pool" as const },
+  depositSymbol: "PAS",
+  deposit: DEPOSIT.toString(),
+  remoteFeeBuffer: "0",
+  keepNativeForFees: "0",
+  slippagePct: 1,
+};
+
+// Once a top-up started the provider cannot undo the credit, and a refund it
+// claims instead would be refused while money moves. A late acceptance, with
+// no offer open, is ignored.
+test("a cancel accepted after the credit started is ignored and the credit completes", async () => {
+  const amount = 25n * ONE_CASH;
+  const account = (await import("../worker/accounts")).topUpIdFor;
+  const claimId = account(
+    new TextEncoder().encode("in-session".padEnd(32, ".")).slice(0, 32),
+    0,
+  );
+  world.core = { ...freshCore(), lastRank: 3, cancel: "accepted" };
+  const session = new Session(
+    assignment(
+      "In",
+      amount,
+      writeSaved({
+        v: 1,
+        amount: amount.toString(),
+        inbound: {
+          phase: "crediting",
+          plan: SAVED_PLAN,
+          claims: [{ id: claimId, amount: amount.toString(), attempt: 0 }],
+        },
+      }),
+    ),
+  );
+  session.cancelAccepted();
+  expect(await session.run()).toBe("ended");
+  expect(tags()).toEqual(["Crediting", "Delivered"]);
+  expect(tags()).not.toContain("Failed");
+});
+
+// The core hands a cancel over again while its offer is open, after any
+// restart of the stream: the worker must make the same offer again, not
+// withdraw it.
+test("a cancel handed over again while its offer is open makes the same offer", async () => {
+  const amount = 25n * ONE_CASH;
+  world.ticksBeforeDone = 1_000;
+  world.core = { ...freshCore(), lastRank: 3, cancel: "offered" };
+  const offer = {
+    state: "offered" as const,
+    expiresAt: Date.now() + 60_000,
+    fee: CANCEL_FEE.toString(),
+    refund: (amount - CANCEL_FEE).toString(),
+  };
+  const session = new Session(
+    assignment(
+      "In",
+      amount,
+      writeSaved({
+        v: 1,
+        amount: amount.toString(),
+        cancel: offer,
+        inbound: { phase: "crediting", plan: SAVED_PLAN, claims: [] },
+      }),
+    ),
+  );
+  const outcome = session.run();
+  session.cancel();
+  await until(() => tags().includes("CancelOffer"));
+  expect(tags()).not.toContain("CancelRefused");
+  expect(updateOf("CancelOffer")).toEqual({
+    fee: offer.fee,
+    refund: offer.refund,
+    expiresAt: offer.expiresAt.toString(),
+  });
+  // Nothing was credited while the offer stood.
+  expect(world.topUps).toEqual([]);
+  world.core.cancel = "declined";
+  session.cancelDeclined();
+  expect(await outcome).toBe("ended");
+  expect(tags().at(-1)).toBe("Delivered");
+});
+
+// The deposit already reached the provider, so a cancel is a request; this
+// provider cannot send crypto back and refuses it.
+test("a crypto session whose deposit was seen refuses a cancel after a restart", async () => {
+  const amount = 25n * ONE_CASH;
+  process.env.FUNDTEST_DEMO_CRYPTO = "0";
+  world.core = { ...freshCore(), lastRank: 0 };
+  const session = new Session({
+    ...assignment(
+      "In",
+      amount,
+      writeSaved({
+        v: 1,
+        amount: amount.toString(),
+        inbound: {
+          phase: "awaiting-user",
+          paymentSeen: true,
+          plan: SAVED_PLAN,
+          depositExpiresAt: Date.now() + 60_000,
+          claims: [],
+        },
+      }),
+    ),
+    quote: {
+      quoteId: quoteIdOf(
+        { direction: "In", rail: "Crypto", asset: "PAS", amount },
+        Date.now() + 60_000,
+      ),
+    } as FundingAssignment["quote"],
+  });
+  void session.run();
+  userCancels(session);
+  await until(() => tags().includes("CancelRefused"));
+  expect(updateOf("CancelRefused")).toEqual({
+    reason: "This provider cannot send a crypto deposit back",
+  });
+  expect(tags()).not.toContain("Failed");
+});
+
+test("a session an error keeps stopping gives up once no money moved for it", async () => {
+  world.planFails = true;
+  const session = assignment("In", 25n * ONE_CASH);
+  world.storage.set(actionKey(session.intent), toStored({ kind: "card-paid" }));
+  expect(await new Session(session).run()).toBe("retry");
+  world.reports = [];
+  world.core = freshCore();
+  expect(await new Session(session, MAX_RESTARTS).run()).toBe("ended");
+  expect(lastUpdate()).toMatchObject({
+    tag: "Failed",
+    value: { reason: { tag: "Other", value: { code: "provider_stuck" } } },
+  });
 });

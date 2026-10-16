@@ -96,26 +96,33 @@ a wallet is taken either way. After 30 minutes with nothing received the session
 **Out, any rail.** `Details`, then `/payout` for where to send the money. The worker calls `payment.request` for the
 user's CASH to the reserve account and reports `Collecting { paymentId, amount }`. Once the host reports the payment
 complete, the session is released and the worker simulates the payout. A failed payout is refunded: the reserve account
-tops the user up by the amount collected, under an id fixed by the session's intent, and the worker reports
-`Refunding { topUpId, amount }`. A user who declines the payment ends the session as `Cancelled`, and one without the
-balance as `InsufficientBalance`.
+tops the user up by what the payment moved (the amount asked, or what a partial claim took), under an id fixed by the
+session's intent, and the worker reports `Refunding { topUpId, amount }`. A user who declines the payment ends the
+session as `Cancelled`, and one without the balance as `InsufficientBalance`.
 
 **Cancel.** A cancel while the user has not paid stops the session, which ends as `Failed { Cancelled }`. After that a
 cancel is a request the worker answers:
 
-| Where the session is                                    | Answer                                                                                                                                       |
-| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Inbound, payment sent or seen, before the credit starts | `CancelOffer`. Accepted, the session ends as `Failed { Refunded }`, the payment returned on the user's rail                                  |
-| Inbound, crediting                                      | `CancelRefused`. The host itself refuses a cancel once a top-up started                                                                      |
-| Outbound, payment still completing                      | `CancelRefused`, so the user can ask again once it completed                                                                                 |
-| Outbound, released and paying out                       | `CancelOffer`. Accepted, the reserve account tops the user up by the refund under the session's refund id and the worker reports `Refunding` |
-| Any, amount ending in `.73`                             | `CancelRefused`                                                                                                                              |
+| Where the session is                              | Answer                                                                                                                                       |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inbound, card or bank, before the first top-up    | `CancelOffer`. Accepted, the session ends as `Failed { Refunded }`, the payment returned on the user's rail                                  |
+| Inbound, crypto, once part of the deposit arrived | `CancelRefused`: this provider does not send a crypto deposit back                                                                           |
+| Inbound, once a top-up started                    | `CancelRefused`. The host itself refuses a cancel once a top-up started                                                                      |
+| Outbound, payment still completing                | `CancelRefused`, so the user can ask again once it completed                                                                                 |
+| Outbound, released and paying out                 | `CancelOffer`. Accepted, the reserve account tops the user up by the refund under the session's refund id and the worker reports `Refunding` |
+| Any, amount ending in `.73`                       | `CancelRefused`                                                                                                                              |
 
-An offer charges 1% of the amount, at least 0.50 CASH, and the refund is the rest. It stays open for 5 minutes. While it
-is open the session goes on but stops before the point it could not undo, the credit inbound and the payout outbound,
-until the user answers or the offer lapses. A declined or lapsed offer lets the session carry on. The offer and the
-user's acceptance are saved, and the host hands the request or the answer back after a restart, so a cancel settles
-once.
+An offer charges 1% of the amount, at least 0.50 CASH, and the refund is the rest. On a withdrawal the amount is what
+the payment moved. The offer stays open for 5 minutes on the host's clock. While it is open the session goes on but
+stops before the point it could not undo, the credit inbound and the payout outbound, until the host says the user
+answered or the offer lapsed: the worker never decides the lapse on its own clock. A declined or lapsed offer lets the
+session carry on. The offer, its terms and the user's acceptance are saved, and an accepted cancel refunds exactly the
+offered refund. The host hands an open offer's request back after a restart, and the worker makes the same offer again.
+An acceptance that arrives once the session is past the point it could undo is ignored.
+
+**Errors.** A failure that may clear by itself is retried. A session an error stops is handed out again after a growing
+wait. After six such stops in a row a session no money moved for ends as `Failed { Other: provider_stuck }`; one that
+started moving money keeps being handed out, since only the provider can settle it.
 
 **Restarts.** Each session saves its checkpoint with `fundingProvider.save` before every external action: the phase, the
 conversion plan, the pipeline's tick state, the faucet drip it is about to ask for and the top-ups it is about to make.
@@ -202,7 +209,7 @@ opening a host-routed chain client per step (`worker/src/shared.js`) and the top
 
 The checkout is a dependency rather than vendored source because getcash is GPL-3.0-or-later and this repository is MIT:
 none of its code is committed here. The worker bundle that `npm run build` produces contains getcash's code and is
-therefore a combined work under the GPL.
+therefore a combined work under the GPL, which is why `package.json` declares `GPL-3.0-or-later`.
 
 Chain access goes through `@parity/product-sdk-host` (its host-routed papi provider), whose `@parity/truapi` is
 overridden to this repository's build, so the worker holds one TrUAPI client and it has `fundingProvider`.

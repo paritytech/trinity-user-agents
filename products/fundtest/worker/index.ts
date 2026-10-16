@@ -51,7 +51,7 @@ function handle(item: HostFundingServeSubscribeItem): void {
     case "Assigned": {
       const { session } = item.value;
       if (sessions.has(session.intent)) return;
-      const running = new Session(session);
+      const running = new Session(session, restarts.get(session.intent));
       sessions.set(session.intent, running);
       void running
         .run()

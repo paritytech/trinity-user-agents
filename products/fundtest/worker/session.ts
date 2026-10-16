@@ -112,6 +112,10 @@ const CANCEL_OFFER_MS = 5 * 60_000;
  *  a CASH, never more than the amount. */
 const CANCEL_FEE_BPS = 100n;
 const CANCEL_FEE_MIN = ONE_CASH / 2n;
+/** Times in a row an error the session cannot settle may stop it before it
+ *  gives up: a session no money moved for then ends as failed, and one money
+ *  moved for keeps being handed out, since only it can settle that money. */
+export const MAX_RESTARTS = 6;
 
 /** A failure the session ends on rather than retries. */
 class SessionFailure extends Error {
@@ -163,8 +167,6 @@ export class Session {
   private readonly saved: Saved;
   private abort = new AbortController();
   private cancelRequested = false;
-  /** Whether part of a crypto deposit has reached the session account. */
-  private fundsSeen = false;
   private account: Promise<EphemeralKeypairWithSecret> | undefined;
   /** A demo crypto deposit under way, which the deposit watch waits out so
    *  the drip's surplus is swept before the conversion starts. */
@@ -173,7 +175,11 @@ export class Session {
    *  kill point. */
   private demoFailure: SessionFailure | Killed | undefined;
 
-  constructor(assignment: FundingAssignment) {
+  /** `restarts` counts the times in a row an error stopped this session. */
+  constructor(
+    assignment: FundingAssignment,
+    private readonly restarts = 0,
+  ) {
     this.intent = assignment.intent;
     this.terms = termsOf(assignment);
     this.saved = readSaved(assignment.saved);
@@ -199,7 +205,29 @@ export class Session {
   private get cancellable(): boolean {
     const phase =
       this.saved.inbound?.phase ?? this.saved.outbound?.phase ?? "new";
-    return !this.fundsSeen && (phase === "new" || phase === "awaiting-user");
+    return (
+      !this.saved.inbound?.paymentSeen &&
+      (phase === "new" || phase === "awaiting-user")
+    );
+  }
+
+  /** Whether an accepted cancel can still be honoured: an inbound session
+   *  until its first top-up, an outbound one until its payout is reported. */
+  private get undoable(): boolean {
+    if (this.terms.direction === "In") {
+      const inbound = this.saved.inbound;
+      return inbound?.phase !== "done" && (inbound?.claims.length ?? 0) === 0;
+    }
+    const outbound = this.saved.outbound;
+    return outbound?.phase === "paying-out" && !outbound.payoutReported;
+  }
+
+  /** Whether the session started moving money, so only it can end it. */
+  private get fundsStarted(): boolean {
+    if (this.terms.direction === "In")
+      return (this.saved.inbound?.claims.length ?? 0) > 0;
+    const phase = this.saved.outbound?.phase ?? "new";
+    return phase !== "new" && phase !== "awaiting-user";
   }
 
   /** The user asked to cancel. While nothing has moved the session stops
@@ -223,12 +251,21 @@ export class Session {
   /** The user accepted the cancel offer: the session stops what it is doing
    *  and settles the cancel. */
   cancelAccepted(): void {
-    if (this.saved.cancel?.state === "accepted") return;
-    this.saved.cancel = {
-      state: "accepted",
-      expiresAt: this.saved.cancel?.expiresAt ?? Date.now(),
-    };
+    const offer = this.saved.cancel;
+    if (offer?.state === "accepted") return;
+    if (offer === undefined || !this.undoable) {
+      console.warn(
+        `[fundtest] ${this.intent}: an accepted cancel arrived past the point it can be undone`,
+      );
+      return;
+    }
+    this.saved.cancel = { ...offer, state: "accepted" };
     this.abort.abort();
+    this.save().catch((error: unknown) =>
+      console.warn(
+        `[fundtest] ${this.intent}: saving the accepted cancel failed: ${describe(error)}`,
+      ),
+    );
   }
 
   /** The user declined the cancel offer, or it lapsed: the session carries
@@ -247,24 +284,30 @@ export class Session {
   /** Answers a cancel after money moved: a refusal, or an offer that is
    *  saved before it is made. An offer still open is made again as it was. */
   private async answerCancel(): Promise<void> {
-    const refusal = this.cancelRefusal();
-    if (refusal !== undefined) {
-      await this.report({ tag: "CancelRefused", value: { reason: refusal } });
-      return;
-    }
-    const open = this.saved.cancel;
-    if (open?.state === "accepted") return;
-    if (open === undefined || Date.now() >= open.expiresAt) {
+    if (this.saved.cancel?.state === "accepted") return;
+    if (this.saved.cancel === undefined) {
+      const refusal = this.cancelRefusal();
+      if (refusal !== undefined) {
+        await this.report({ tag: "CancelRefused", value: { reason: refusal } });
+        return;
+      }
+      const { fee, refund } = this.cancelTerms();
       this.saved.cancel = {
         state: "offered",
         expiresAt: Date.now() + CANCEL_OFFER_MS,
+        fee: fee.toString(),
+        refund: refund.toString(),
       };
       await this.save();
     }
-    const { fee, refund } = this.cancelTerms();
+    const offer = this.saved.cancel;
     await this.report({
       tag: "CancelOffer",
-      value: { fee, refund, expiresAt: BigInt(this.saved.cancel!.expiresAt) },
+      value: {
+        fee: BigInt(offer.fee),
+        refund: BigInt(offer.refund),
+        expiresAt: BigInt(offer.expiresAt),
+      },
     });
   }
 
@@ -275,14 +318,15 @@ export class Session {
     if (this.trigger === "cancel-refuse")
       return "This provider does not cancel a payment once it is under way";
     if (this.terms.direction === "In") {
-      const phase = this.saved.inbound?.phase;
-      return phase === "crediting" || phase === "done"
-        ? "The CASH is already on its way to your balance"
+      if (!this.undoable)
+        return "The CASH is already on its way to your balance";
+      return this.terms.rail === "Crypto"
+        ? "This provider cannot send a crypto deposit back"
         : undefined;
     }
     switch (this.saved.outbound?.phase) {
       case "paying-out":
-        return undefined;
+        return this.undoable ? undefined : "The payout has already been made";
       case "refunding":
       case "done":
         return "The payout failed and is being refunded already";
@@ -293,7 +337,9 @@ export class Session {
 
   /** What cancelling costs and what the user gets back, in balance units. */
   private cancelTerms(): { fee: bigint; refund: bigint } {
-    const amount = this.requireAmount();
+    const debited = this.saved.outbound?.debited;
+    const amount =
+      debited === undefined ? this.requireAmount() : BigInt(debited);
     const percent = (amount * CANCEL_FEE_BPS) / 10_000n;
     const charged = percent > CANCEL_FEE_MIN ? percent : CANCEL_FEE_MIN;
     const fee = charged < amount ? charged : amount;
@@ -301,14 +347,15 @@ export class Session {
   }
 
   /** Waits while a cancel offer is open, so the session does not pass the
-   *  point it can undo before the user answers. Ends the wait when the offer
-   *  lapses or is declined, and stops the session when it is accepted. */
+   *  point it can undo before the user answers. Only the host's answer ends
+   *  the wait: it sends `CancelDeclined` once the offer lapses on its clock,
+   *  so the worker's own clock never decides. */
   private async cancelGate(): Promise<void> {
     for (;;) {
       const cancel = this.saved.cancel;
       if (cancel?.state === "accepted") throw new Aborted();
-      if (cancel?.state !== "offered" || Date.now() >= cancel.expiresAt) return;
-      await sleep(Math.min(1_000, cancel.expiresAt - Date.now()), this.signal);
+      if (cancel?.state !== "offered") return;
+      await sleep(1_000, this.signal);
     }
   }
 
@@ -317,12 +364,10 @@ export class Session {
    *  refund from the reserve account, under an id fixed by the session. */
   private async settleCancel(): Promise<void> {
     this.abort = new AbortController();
+    const offer = this.saved.cancel!;
     if (this.terms.direction === "In") return this.end({ tag: "Refunded" });
     const state = this.saved.outbound!;
-    state.refund ??= {
-      id: refundIdFor(this.intent),
-      amount: this.cancelTerms().refund.toString(),
-    };
+    state.refund ??= { id: refundIdFor(this.intent), amount: offer.refund };
     state.phase = "refunding";
     await this.save();
     await this.refund(state.refund);
@@ -351,6 +396,13 @@ export class Session {
       }
       if (error instanceof SessionOver) {
         console.info(`[fundtest] ${this.intent}: ${error.message}`);
+        return "ended";
+      }
+      if (this.restarts >= MAX_RESTARTS && !this.fundsStarted) {
+        console.error(
+          `[fundtest] ${this.intent} gives up after ${this.restarts} restarts: ${describe(error)}`,
+        );
+        await this.end(other("provider_stuck", describe(error)));
         return "ended";
       }
       console.error(
@@ -797,13 +849,23 @@ export class Session {
       if (held !== lastSeen && held > 0n) {
         // A short payment: ask for the rest.
         lastSeen = held;
-        this.fundsSeen = true;
+        await this.markPaymentSeen();
         await reportDeposit(deposit - held);
       }
       return undefined;
     });
+    await this.markPaymentSeen();
     await this.report({ tag: "PaymentReceived", value: { finalized: false } });
     state.phase = "arriving";
+    await this.save();
+  }
+
+  /** Records that the user's payment reached the provider, before the host
+   *  hears of it, so a restarted worker treats a cancel as a request. */
+  private async markPaymentSeen(): Promise<void> {
+    const state = this.saved.inbound!;
+    if (state.paymentSeen) return;
+    state.paymentSeen = true;
     await this.save();
   }
 
@@ -1138,23 +1200,28 @@ export class Session {
     }
     if (state.phase === "collecting") {
       const id = state.paymentId!;
-      const paid = await this.retrying("payment status", () =>
+      const amount = this.requireAmount();
+      const debited = await this.retrying("payment status", () =>
         firstOf(
           client.payment.statusSubscribe({ request: { id } }),
-          (status) =>
-            status.tag === "Completed" || status.tag === "ClaimedPartially"
-              ? true
-              : status.tag === "Failed"
-                ? false
-                : undefined,
+          (status): bigint | null | undefined =>
+            status.tag === "Completed"
+              ? amount
+              : status.tag === "ClaimedPartially"
+                ? BigInt(status.value.actualClaimed)
+                : status.tag === "Failed"
+                  ? null
+                  : undefined,
           this.signal,
         ),
       );
+      const paid = debited !== null;
       // The host ends the session from the payment's outcome. A released
       // withdrawal keeps its saved state until the payout and any refund are
       // reported, so a restart resumes the payout rather than looking for the
       // payment again.
       if (paid) {
+        state.debited = debited.toString();
         state.payoutAt = Date.now() + this.payoutWaitMs();
         state.phase = "paying-out";
         await this.save();
@@ -1163,10 +1230,10 @@ export class Session {
       }
     }
     if (state.phase === "paying-out") {
-      if (await this.payOut(state.payoutAt)) {
+      if (await this.payOut(state)) {
         state.refund = {
           id: refundIdFor(this.intent),
-          amount: this.requireAmount().toString(),
+          amount: state.debited ?? this.requireAmount().toString(),
         };
         state.phase = "refunding";
         await this.save();
@@ -1184,7 +1251,9 @@ export class Session {
   /** The simulated payout to the destination the user typed, due at
    *  `payoutAt`. The CASH stays with the reserve account. Answers whether the
    *  payout failed. */
-  private async payOut(payoutAt: number | undefined): Promise<boolean> {
+  private async payOut(
+    state: NonNullable<Saved["outbound"]>,
+  ): Promise<boolean> {
     const client = await truapi();
     const operation = await client.worker
       .beginOperation({ label: `fundtest payout ${this.intent}` })
@@ -1193,17 +1262,22 @@ export class Session {
         () => undefined,
       );
     try {
-      await this.report({ tag: "Converting" }, true);
+      if (!state.converted) {
+        await this.report({ tag: "Converting" }, true);
+        state.converted = true;
+        await this.save();
+      }
       await this.killAt(3);
-      if (this.trigger === "payout-retry") {
+      if (this.trigger === "payout-retry" && !state.payoutReported) {
         for (let attempt = 0; attempt < PAYOUT_RETRIES; attempt++) {
           await sleep(this.arrivalMs(CONFIG.payoutMs), this.signal);
           await this.report({ tag: "PayoutRetrying" }, true);
         }
       }
-      await this.waitUntil(payoutAt ?? Date.now() + this.payoutWaitMs());
-      await this.cancelGate();
       const failed = this.trigger === "refund";
+      if (state.payoutReported) return failed;
+      await this.waitUntil(state.payoutAt ?? Date.now() + this.payoutWaitMs());
+      await this.cancelGate();
       await this.report(
         {
           tag: "Payout",
@@ -1218,6 +1292,7 @@ export class Session {
         },
         true,
       );
+      state.payoutReported = true;
       return failed;
     } finally {
       if (operation !== undefined)
