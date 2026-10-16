@@ -309,6 +309,36 @@ it and one at a time, whether the host asked for the transition or the core took
 render. The host runs the executable and the core keeps the count; on the web `@parity/truapi-host` pushes the wanted
 level to the page.
 
+### Host channel
+
+Authenticated Chat host messages exchange stable X25519 public keys. The hosts
+derive a pairwise encrypted statement-store channel scoped to the active identity
+and People network. Profile references and withdrawals can then arrive without a
+Chat product being open. Products keep using the existing Profile API.
+
+Peer keys persist in `HostChannelPeers` at codec slot 22 across feature layers.
+Slots 20 and 21 remain available to the deployed receiving and automatic-upload
+policies. The direct receiver persists reference revisions and withdrawals so
+reopening a host does not make an older disclosure current again.
+
+This prototype keeps at most 4096 peers and watches at most 128 topics. Published
+messages expire after two days. Bootstrap receipt is not acknowledged and there
+is no periodic republication. The existing Chat relay remains available.
+
+The deterministic regressions exercise real sealed publication bytes and the
+receiver without a Chat relay after bootstrap:
+
+```sh
+cargo test -p truapi --lib runtime::host_channel::tests
+cargo test -p truapi --lib two_hosts_exchange_host_channel_keys_over_chat_and_meet_on_one_topic
+```
+
+For browser qualification, establish a conversation between two independent host
+profiles, then leave Chat on both. Share, update and withdraw a profile while
+checking the other host. Confirm the direct receiver records the update rather
+than relying only on the visible change, which could also arrive through the
+legacy relay. Reopen the receiving host and check that withdrawal persists.
+
 ### Inter-host SSO
 
 `PairingHost::call(request)` sends typed requests to [`SigningHostSsoService`](src/runtime/signing_host/sso_service.rs).
