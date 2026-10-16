@@ -87,6 +87,30 @@ test("the app runs the worker without the hold of the harness by default", () =>
   );
 });
 
+test("a wake relay and the OS notifications are options of the harness", () => {
+  const plain = launchEnvironment({
+    productHost: "verbosity.dot",
+    productName: "Verbosity",
+    holdWorker: false,
+  });
+  assert.equal(plain.SIMCTL_CHILD_TRUAPI_IOS_E2E_WAKE_RELAY_URL, undefined);
+  assert.equal(plain.SIMCTL_CHILD_TRUAPI_IOS_E2E_OS_NOTIFICATIONS, undefined);
+
+  const environment = launchEnvironment({
+    productHost: "verbosity.dot",
+    productName: "Verbosity",
+    holdWorker: false,
+    wakeRelay: "http://127.0.0.1:9988",
+    osNotifications: true,
+  });
+  assert.equal(
+    environment.SIMCTL_CHILD_TRUAPI_IOS_E2E_WAKE_RELAY_URL,
+    "http://127.0.0.1:9988",
+  );
+  assert.equal(environment.SIMCTL_CHILD_TRUAPI_IOS_E2E_WAKE_PUSH_FEED, "1");
+  assert.equal(environment.SIMCTL_CHILD_TRUAPI_IOS_E2E_OS_NOTIFICATIONS, "1");
+});
+
 test("the hold of the harness stays an option", () => {
   const environment = launchEnvironment({
     productHost: "verbosity.dot",
