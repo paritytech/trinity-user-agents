@@ -52,16 +52,16 @@ pub enum FundingFailure {
 	/// release.
 	#[codec(index = 9)]
 	Cancelled,
-	/// Outcome not covered above. Clients render the message and treat the
-	/// code as opaque.
+	/// Outcome not covered above. A client shows `message`, except for the
+	/// codes the core sets itself, which it may show in its own words.
 	#[codec(index = 10)]
 	Other {
-		/// Stable machine-readable code.
+		/// Stable machine-readable code. The core sets `not_claimed` when
+		/// nothing reached the balance and `payment_failed` when the user's
+		/// payment did not go through; any other code is the provider's own.
 		code: String,
-		/// Human-readable text. A provider's failure carries its own text; a
-		/// failure the core decides carries English text with a code hosts
-		/// can translate: `not_claimed` when nothing reached the balance,
-		/// `payment_failed` when the user's payment did not go through.
+		/// Text to show: the provider's own, or English text for the codes
+		/// the core sets.
 		message: String,
 	},
 }
