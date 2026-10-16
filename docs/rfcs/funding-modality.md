@@ -170,7 +170,7 @@ enum FundingDeposit {
 
 - Only the provider a session is assigned to may report on it, and updates only move forward. Otherwise the report
   fails with `NotFound` or `OutOfOrder`.
-- The core stores each report before answering and keeps the session until the host has written it to its history. After that it keeps the newest 64 recorded sessions per product in full and compacts older ones into a session pack it never trims (intent, owner, direction, amounts, outcome and times), so a product watching any session it opened gets its terminal item instead of `NotFound`, and the host can list the pack as history.
+- The core stores each report before answering and keeps the session until the host has written it to its history. After that it keeps the newest 64 recorded sessions per product in full and compacts older ones into a session pack it never trims (intent, owner, direction, amounts, outcome and times), so a product watching any session it opened gets its terminal item instead of `NotFound`, and `funding_history` gives the host every recorded session, full or compacted, to rebuild its own history if it was lost.
 - `Crediting` names a top-up the worker started with `payment.topUp`, `Collecting` a payment it requested with
   `payment.request`. An id another of the provider's sessions names fails with `DuplicateId`.
 - `Deposit` and `Details` carry what the host draws: where and what the user pays, and the provider's references. The
