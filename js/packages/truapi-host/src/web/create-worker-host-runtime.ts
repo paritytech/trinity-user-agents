@@ -310,12 +310,13 @@ function encodePermissionAuthorizationRequest(
 const DEV_LOG_LEVEL_KEY = "truapi:logLevel";
 
 /**
- * The page's `localStorage`, if it has a usable one. Node 25 defines the global
- * but throws on access unless `--localstorage-file` is set.
+ * The global `localStorage`, when it is usable. Node 25 defines the global but
+ * throws on access unless `--localstorage-file` is set.
  */
 function devStorage(): Storage | undefined {
   try {
-    return globalThis.localStorage ?? undefined;
+    const storage = globalThis.localStorage;
+    return typeof storage?.getItem === "function" ? storage : undefined;
   } catch {
     return undefined;
   }
