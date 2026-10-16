@@ -9,12 +9,15 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.BlockOutlined
 import io.paritytech.polkadotapp.design.components.icon.vectors.FileOutlined
@@ -193,7 +196,9 @@ private fun SettingsScreenInternal(
 
 @Preview(device = "spec:width=1080px,height=3000px,dpi=440")
 @Composable
-private fun SettingsScreenPreview() {
+private fun SettingsScreenPreview() = CompositionLocalProvider(
+    LocalPaymentAssetBrand provides PaymentAssetBrand.mocked
+) {
     PolkadotTheme {
         SettingsScreenInternal(
             state = SettingsUiState(

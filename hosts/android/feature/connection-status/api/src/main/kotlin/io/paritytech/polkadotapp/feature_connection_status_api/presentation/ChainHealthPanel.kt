@@ -15,12 +15,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
-import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainGlyph
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthIndicator
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthIndicatorsModel
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthItemModel
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainLiveness
-import kotlinx.collections.immutable.persistentListOf
+import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.IndicatorRow
+import kotlinx.collections.immutable.toImmutableList
 import kotlin.math.roundToInt
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
@@ -31,10 +31,9 @@ import io.paritytech.polkadotapp.common.R as RCommon
 private const val PERCENT = 100
 
 /**
- * The "Network Status" breakdown behind the tab bar's connectivity item: one row per monitored chain with
- * its indicator at panel size, its name, and what the indicator is saying. While the chain is connected and
- * producing, the row also carries the share of expected blocks it produced and the block interval that
- * share implies.
+ * The "Network Status" breakdown behind the tab bar's connectivity item. A connected, producing chain also
+ * shows the share of expected blocks it produced and the interval that implies; the statement store,
+ * which produces none, shows neither.
  */
 @Composable
 fun ChainHealthPanel(
@@ -53,22 +52,22 @@ fun ChainHealthPanel(
                 style = PolkadotTheme.typography.title.large,
                 color = PolkadotTheme.colors.fg.primary,
             )
-            model.chains.forEach { item -> ChainRow(item = item) }
+            model.rows.forEach { item -> HealthRow(item = item) }
         }
     }
 }
 
 @Composable
-private fun ChainRow(item: ChainHealthItemModel) {
+private fun HealthRow(item: ChainHealthItemModel) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ChainIndicator(modifier = Modifier.clearAndSetSemantics { }, item = item, indicatorSize = ChainIndicatorSize.Panel)
+        RowIndicator(modifier = Modifier.clearAndSetSemantics { }, item = item, indicatorSize = ChainIndicatorSize.Panel)
         Column {
             NovaText(
-                text = stringResource(item.glyph.nameRes()),
+                text = stringResource(item.row.nameRes()),
                 style = PolkadotTheme.typography.title.medium,
                 color = PolkadotTheme.colors.fg.primary,
             )
@@ -85,11 +84,11 @@ private fun ChainRow(item: ChainHealthItemModel) {
 
 @Composable
 private fun summary(item: ChainHealthItemModel): String {
-    val state = stringResource(item.indicator.labelRes())
+    val state = stringResource(item.labelRes())
 
     return when (val indicator = item.indicator) {
-        is ChainHealthIndicator.Healthy -> connectedSummary(state, indicator.liveness)
-        is ChainHealthIndicator.Production -> connectedSummary(state, indicator.liveness)
+        is ChainHealthIndicator.Healthy -> connectedSummary(item.row, state, indicator.liveness)
+        is ChainHealthIndicator.Production -> connectedSummary(item.row, state, indicator.liveness)
         ChainHealthIndicator.Outage,
         ChainHealthIndicator.Connecting,
         ChainHealthIndicator.Disconnected,
@@ -99,7 +98,11 @@ private fun summary(item: ChainHealthItemModel): String {
 }
 
 @Composable
-private fun connectedSummary(state: String, liveness: ChainLiveness?): String = stringResource(
+private fun connectedSummary(row: IndicatorRow, state: String, liveness: ChainLiveness?): String =
+    if (row.measuresProduction()) productionSummary(state, liveness) else state
+
+@Composable
+private fun productionSummary(state: String, liveness: ChainLiveness?): String = stringResource(
     RCommon.string.chain_health_connected_summary,
     state,
     liveness?.let { stringResource(RCommon.string.chain_health_live_percent, (it.share * PERCENT).roundToInt()) }
@@ -123,28 +126,40 @@ private fun duration(value: Duration): String {
     }
 }
 
-// The design names rows by the chain's role, not by the registry name of whichever network is active.
-private fun ChainGlyph.nameRes(): Int = when (this) {
-    ChainGlyph.People -> RCommon.string.chain_health_chain_people
-    ChainGlyph.AssetHub -> RCommon.string.chain_health_chain_hub
-    ChainGlyph.Bulletin -> RCommon.string.chain_health_chain_bulletin
+// The design names a row by its role, not by the registry name of whichever network is active.
+internal fun IndicatorRow.nameRes(): Int = when (this) {
+    IndicatorRow.People -> RCommon.string.chain_health_chain_people
+    IndicatorRow.AssetHub -> RCommon.string.chain_health_chain_hub
+    IndicatorRow.Bulletin -> RCommon.string.chain_health_chain_bulletin
+    IndicatorRow.StatementStore -> RCommon.string.chain_health_statement_store
 }
 
-internal fun ChainHealthIndicator.labelRes(): Int = when (this) {
+internal fun IndicatorRow.measuresProduction(): Boolean = when (this) {
+    IndicatorRow.People, IndicatorRow.AssetHub, IndicatorRow.Bulletin -> true
+    IndicatorRow.StatementStore -> false
+}
+
+internal fun ChainHealthItemModel.labelRes(): Int = when (indicator) {
     is ChainHealthIndicator.Healthy, is ChainHealthIndicator.Production -> RCommon.string.chain_health_state_connected
     ChainHealthIndicator.Outage -> RCommon.string.chain_health_state_not_producing
     ChainHealthIndicator.Connecting -> RCommon.string.chain_health_state_connecting
-    ChainHealthIndicator.Disconnected -> RCommon.string.chain_health_state_broken
+    ChainHealthIndicator.Disconnected -> row.brokenLabelRes()
     ChainHealthIndicator.Offline -> RCommon.string.chain_health_state_offline
+}
+
+private fun IndicatorRow.brokenLabelRes(): Int = when (this) {
+    IndicatorRow.People, IndicatorRow.AssetHub, IndicatorRow.Bulletin -> RCommon.string.chain_health_state_broken
+    IndicatorRow.StatementStore -> RCommon.string.chain_health_state_disconnected
 }
 
 @Preview(showBackground = true, backgroundColor = 0xFF000000)
 @Composable
 private fun ChainHealthPanelHealthyPreview() {
     PanelPreview(
-        previewItem("People Chain", ChainGlyph.People, share = 13f / 15f, blockTime = 2.seconds),
-        previewItem("Hub Chain", ChainGlyph.AssetHub, share = 1f, blockTime = 2.seconds),
-        previewItem("Bulletin Chain", ChainGlyph.Bulletin, share = 0.9f, blockTime = 6.seconds),
+        previewItem(IndicatorRow.People, share = 13f / 15f, blockTime = 2.seconds),
+        previewItem(IndicatorRow.AssetHub, share = 1f, blockTime = 2.seconds),
+        previewItem(IndicatorRow.Bulletin, share = 0.9f, blockTime = 6.seconds),
+        previewItem(IndicatorRow.StatementStore, ChainHealthIndicator.Healthy(liveness = null)),
     )
 }
 
@@ -152,9 +167,10 @@ private fun ChainHealthPanelHealthyPreview() {
 @Composable
 private fun ChainHealthPanelMixedPreview() {
     PanelPreview(
-        previewItem("People Chain", ChainGlyph.People, share = 0.8f, blockTime = 2.seconds),
-        previewItem("Hub Chain", ChainGlyph.AssetHub, share = 0.4f, blockTime = 2.seconds),
-        previewItem("Bulletin Chain", ChainGlyph.Bulletin, share = 0f, blockTime = 6.seconds),
+        previewItem(IndicatorRow.People, share = 0.8f, blockTime = 2.seconds),
+        previewItem(IndicatorRow.AssetHub, share = 0.4f, blockTime = 2.seconds),
+        previewItem(IndicatorRow.Bulletin, share = 0f, blockTime = 6.seconds),
+        previewItem(IndicatorRow.StatementStore, ChainHealthIndicator.Connecting),
     )
 }
 
@@ -162,28 +178,27 @@ private fun ChainHealthPanelMixedPreview() {
 @Composable
 private fun ChainHealthPanelDisconnectedPreview() {
     PanelPreview(
-        previewItem("People Chain", ChainGlyph.People, ChainHealthIndicator.Disconnected),
-        previewItem("Hub Chain", ChainGlyph.AssetHub, ChainHealthIndicator.Offline),
-        previewItem("Bulletin Chain", ChainGlyph.Bulletin, ChainHealthIndicator.Connecting),
+        previewItem(IndicatorRow.People, ChainHealthIndicator.Disconnected),
+        previewItem(IndicatorRow.AssetHub, ChainHealthIndicator.Offline),
+        previewItem(IndicatorRow.Bulletin, ChainHealthIndicator.Connecting),
+        previewItem(IndicatorRow.StatementStore, ChainHealthIndicator.Disconnected),
     )
 }
 
 @Composable
-private fun PanelPreview(people: ChainHealthItemModel, hub: ChainHealthItemModel, bulletin: ChainHealthItemModel) {
+private fun PanelPreview(vararg rows: ChainHealthItemModel) {
     PolkadotTheme {
         ChainHealthPanel(
             modifier = Modifier.background(PolkadotTheme.colors.bg.surface.container),
-            model = ChainHealthIndicatorsModel(persistentListOf(people, hub, bulletin)),
+            model = ChainHealthIndicatorsModel(rows.toList().toImmutableList()),
         )
     }
 }
 
-private fun previewItem(name: String, glyph: ChainGlyph, share: Float, blockTime: Duration) =
-    previewItem(name, glyph, ChainHealthIndicator.of(share, blockTime))
+private fun previewItem(row: IndicatorRow, share: Float, blockTime: Duration) =
+    previewItem(row, ChainHealthIndicator.of(share, blockTime))
 
-private fun previewItem(name: String, glyph: ChainGlyph, indicator: ChainHealthIndicator) = ChainHealthItemModel(
-    chainId = name,
-    chainName = name,
-    glyph = glyph,
+private fun previewItem(row: IndicatorRow, indicator: ChainHealthIndicator) = ChainHealthItemModel(
+    row = row,
     indicator = indicator,
 )

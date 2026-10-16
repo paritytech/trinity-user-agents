@@ -24,5 +24,5 @@ protocol QRScannerPresenterProtocol: AnyObject {
     func setup()
     func viewDidAppear()
     func viewWillDisappear()
-    func setRecognitionArmed(_ armed: Bool)
+    func setCaptureActive(_ active: Bool)
 }

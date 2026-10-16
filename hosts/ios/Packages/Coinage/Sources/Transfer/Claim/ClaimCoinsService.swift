@@ -1,6 +1,7 @@
 import AsyncExtensions
 import BigInt
 import Foundation
+import FoundationExt
 import NovaCrypto
 import os
 import SDKLogger
@@ -12,8 +13,9 @@ import SubstrateSdk
 ///
 /// Claiming is not one-shot: a coin the chain still shows unclaimed is money the peer has parted
 /// with that nothing else will collect, so a failed claim is retried whenever the coin is still
-/// there — until every coin has a finalized claim, or `retryUntil` passes. It always makes at least
-/// one attempt, so a message first seen after its window closed is still tried once.
+/// there — until every coin has a finalized claim, or `retryUntil` passes. The window ends the loop
+/// only once the run has looked at the chain, so a run resumed past its window — or started offline —
+/// still gets one attempt with a live connection.
 ///
 /// The flow completes only when nothing further will be attempted, so its completion is what tells a
 /// caller the payment is finished — no interim detection means that.
@@ -27,16 +29,35 @@ public protocol ClaimCoinsServicing: Sendable {
 }
 
 public final class ClaimCoinsService: ClaimCoinsServicing, @unchecked Sendable {
-    /// How long one pass waits for every coin to show up before claiming whatever it can see. A
-    /// peer's coin has no ledger row of ours, so only the chain can say it exists, and one that never
-    /// arrives must not hold up the ones that did.
-    private static let detectionTimeout: Duration = .seconds(30)
+    /// The pacing of one claim and the time it runs on. Injected so tests drive every timeout, delay,
+    /// and window from a test clock instead of waiting on the wall clock.
+    struct Timing: Sendable {
+        /// How long one pass waits for every coin to show up before claiming whatever it can see. A
+        /// peer's coin has no ledger row of ours, so only the chain can say it exists, and one that never
+        /// arrives must not hold up the ones that did.
+        let detectionTimeout: Duration
+        /// How long a dropped coin subscription waits before it is opened again.
+        let resubscribeDelay: Duration
+        /// Paces the timeout and the delay above.
+        let clock: any Clock<Duration>
+        /// The wall-clock time the retry window is checked against. A date rather than a clock instant,
+        /// so a window opened on one launch means the same thing on the next.
+        let dateProvider: any DateProviding
+
+        static let production = Timing(
+            detectionTimeout: .seconds(30),
+            resubscribeDelay: .seconds(1),
+            clock: ContinuousClock(),
+            dateProvider: NowDateProvider()
+        )
+    }
 
     private let txService: any CoinageTxServicing
     private let coinOnChainQuery: any CoinOnChainQuerying
     private let claimSubmitter: any CoinageClaimSubmitting
     private let snKeyFactory: any SNKeyFactoryProtocol
     private let coinService: any CoinServiceProtocol
+    private let timing: Timing
     private let logger: SDKLoggerProtocol?
 
     init(
@@ -45,6 +66,7 @@ public final class ClaimCoinsService: ClaimCoinsServicing, @unchecked Sendable {
         claimSubmitter: any CoinageClaimSubmitting,
         snKeyFactory: any SNKeyFactoryProtocol,
         coinService: any CoinServiceProtocol,
+        timing: Timing = .production,
         logger: SDKLoggerProtocol?
     ) {
         self.txService = txService
@@ -52,6 +74,7 @@ public final class ClaimCoinsService: ClaimCoinsServicing, @unchecked Sendable {
         self.claimSubmitter = claimSubmitter
         self.snKeyFactory = snKeyFactory
         self.coinService = coinService
+        self.timing = timing
         self.logger = logger
     }
 
@@ -82,6 +105,12 @@ public final class ClaimCoinsService: ClaimCoinsServicing, @unchecked Sendable {
 // MARK: - Claim loop
 
 private extension ClaimCoinsService {
+    /// What one pass saw of the coins still owed, and whether it saw the chain at all.
+    struct CoinsLook {
+        let claimable: [PublicKey: ClaimableCoinInfo]
+        let looked: Bool
+    }
+
     func runClaim(
         coinKeys: [Data],
         groupId: CoinageTxGroupId,
@@ -96,12 +125,8 @@ private extension ClaimCoinsService {
         guard !coins.isEmpty else { report(.notClaimed); return }
 
         let onChainUpdates = AsyncBufferedChannel<[PublicKey: ClaimableCoinInfo]>()
-        let pump = Task { [coinOnChainQuery] in
-            do {
-                for try await snapshot in coinOnChainQuery.subscribeCoinInfos(for: Array(coins)) {
-                    onChainUpdates.send(snapshot)
-                }
-            } catch {}
+        let pump = Task {
+            await self.pumpCoinInfos(into: onChainUpdates, coins: coins, groupId: groupId)
         }
         defer { pump.cancel() }
 
@@ -139,6 +164,7 @@ private extension ClaimCoinsService {
     ) async throws -> [CoinageTxEntry] {
         let coins = Set(keypairs.keys)
         var settled: [CoinageTxEntry] = []
+        var hasLooked = false
 
         while !Task.isCancelled {
             logger?.debug("Awaiting settles coins=\(coins.count) with group=\(groupId)")
@@ -163,23 +189,20 @@ private extension ClaimCoinsService {
 
             logger?.debug("Unregistered \(unregistered.count) coins for group=\(groupId)")
 
-            let claimable = await awaitOnChainWithTimeout(onChain, unclaimed: unregistered)
+            let look = await awaitOnChainWithTimeout(onChain, unclaimed: unregistered)
+            hasLooked = hasLooked || look.looked
 
-            logger?.debug("Claimable \(claimable.count) coins for group=\(groupId)")
+            logger?.debug("Claimable \(look.claimable.count) coins for group=\(groupId)")
 
-            if !claimable.isEmpty {
-                logger?.debug("Claiming coins for group=\(groupId)")
-
+            if !look.claimable.isEmpty {
                 await submit(
-                    claimable: claimable,
+                    claimable: look.claimable,
                     keypairs: keypairs,
                     bundleSize: coins.count,
                     groupId: groupId,
                     retryUntil: retryUntil
                 )
-
-                logger?.debug("Claiming complete for group=\(groupId)")
-            } else if Date() >= retryUntil {
+            } else if await isWindowClosed(retryUntil, hasLooked: hasLooked, groupId: groupId) {
                 logger?.debug("Claim window closed group=\(groupId) unregistered=\(unregistered.count)")
                 break
             }
@@ -228,6 +251,8 @@ private extension ClaimCoinsService {
                 age: info.age
             )
         }
+        logger?.debug("Claiming coins for group=\(groupId)")
+
         do {
             try await claimSubmitter.submit(
                 claimable: items,
@@ -235,28 +260,64 @@ private extension ClaimCoinsService {
                 groupId: groupId,
                 retryUntil: retryUntil
             )
+            logger?.debug("Claiming complete for group=\(groupId)")
         } catch {
             logger?.error("Claim submission failed group=\(groupId): \(error)")
         }
     }
 
     /// The next look at the chain that shows every still-owed coin, or the best look within
-    /// ``detectionTimeout``. Reads the consume-once channel one look at a time, so a failing submit
-    /// cannot spin the loop. Settling for the last look is deliberate: a coin that never arrives is
-    /// the peer's problem, and holding the others hostage to it would strand money sitting right there.
+    /// ``Timing/detectionTimeout``. Reads the consume-once channel one look at a time, so a failing
+    /// submit cannot spin the loop. Settling for the last look is deliberate: a coin that never arrives
+    /// is the peer's problem, and holding the others hostage to it would strand money sitting right there.
     func awaitOnChainWithTimeout(
         _ onChain: AsyncBufferedChannel<[PublicKey: ClaimableCoinInfo]>.Iterator,
         unclaimed: Set<PublicKey>
-    ) async -> [PublicKey: ClaimableCoinInfo] {
-        let latest = OSAllocatedUnfairLock<[PublicKey: ClaimableCoinInfo]>(initialState: [:])
-        _ = try? await withTimeout(Self.detectionTimeout) {
+    ) async -> CoinsLook {
+        let latest = OSAllocatedUnfairLock<CoinsLook>(initialState: CoinsLook(claimable: [:], looked: false))
+        _ = try? await withTimeout(timing.detectionTimeout, clock: timing.clock) {
             while let look = await onChain.next() {
                 let filtered = look.filter { unclaimed.contains($0.key) }
-                latest.withLock { $0 = filtered }
+                latest.withLock { $0 = CoinsLook(claimable: filtered, looked: true) }
                 if unclaimed.isSubset(of: Set(filtered.keys)) { break }
             }
         }
         return latest.withLock { $0 }
+    }
+
+    /// An empty pass is the window's last word only once the run has seen the chain: without a look,
+    /// "nothing claimable" may just mean no connection.
+    func isWindowClosed(_ retryUntil: Date, hasLooked: Bool, groupId: CoinageTxGroupId) async -> Bool {
+        guard await timing.dateProvider.read() >= retryUntil else { return false }
+        guard hasLooked else {
+            logger?.debug("Claim window passed, awaiting first look group=\(groupId)")
+            return false
+        }
+        return true
+    }
+
+    /// Feeds every look at the coins into `channel` until cancelled, reopening the subscription after
+    /// ``Timing/resubscribeDelay`` whenever it fails or ends — a claim that waits for a look must not
+    /// wait on a subscription that is gone.
+    func pumpCoinInfos(
+        into channel: AsyncBufferedChannel<[PublicKey: ClaimableCoinInfo]>,
+        coins: Set<PublicKey>,
+        groupId: CoinageTxGroupId
+    ) async {
+        while !Task.isCancelled {
+            do {
+                for try await snapshot in coinOnChainQuery.subscribeCoinInfos(for: Array(coins)) {
+                    channel.send(snapshot)
+                }
+                guard !Task.isCancelled else { break }
+                logger?.debug("Claim coin subscription ended group=\(groupId)")
+            } catch {
+                logger?.error("Claim coin subscription failed group=\(groupId): \(error)")
+            }
+
+            guard await (try? timing.clock.sleep(for: timing.resubscribeDelay)) != nil else { break }
+        }
+        channel.finish()
     }
 
     func deriveKeypairs(from coinKeys: [Data]) -> [PublicKey: Data] {

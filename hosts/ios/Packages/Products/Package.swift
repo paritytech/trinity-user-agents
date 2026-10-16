@@ -42,8 +42,8 @@ let package = Package(
             .upToNextMajor(from: "0.0.4")
         ),
         .package(
-            url: "https://github.com/sideeffect-io/AsyncExtensions",
-            exact: "0.5.4"
+            url: "https://github.com/paritytech/AsyncExtensions",
+            exact: "0.5.6"
         ),
         .package(path: "../StatementStore"),
         .package(path: "../Individuality"),

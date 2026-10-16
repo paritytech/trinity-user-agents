@@ -1,13 +1,8 @@
 package io.paritytech.polkadotapp.feature_tokens_api.presentation.model
 
-import io.paritytech.polkadotapp.common.utils.CurrencyConfig
-
 sealed interface TokenSymbolAppearance {
-    val symbol: String
+    /** The payment asset; its symbol is resolved by the formatter from the published brand. */
+    object DigitalDollar : TokenSymbolAppearance
 
-    object DigitalDollar : TokenSymbolAppearance {
-        override val symbol: String = CurrencyConfig.symbol
-    }
-
-    class Symbol(override val symbol: String) : TokenSymbolAppearance
+    class Symbol(val symbol: String) : TokenSymbolAppearance
 }

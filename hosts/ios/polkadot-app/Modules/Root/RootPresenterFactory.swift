@@ -1,7 +1,6 @@
 import UIKit
 import Keystore_iOS
 import Operation_iOS
-import JailbreakDetection
 import KeyDerivation
 import SubstrateSdk
 import ChainRegistry
@@ -18,11 +17,7 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
             visibilityReporter: foregroundPresentationController
         )
 
-        #if FEATURE_DIMS
-            let chatExtensionRouters: [ChatExtensionPushRouting] = [DIM2ExtensionPushRouter()]
-        #else
-            let chatExtensionRouters: [ChatExtensionPushRouting] = []
-        #endif
+        let chatExtensionRouters: [ChatExtensionPushRouting] = []
 
         let chatExtensionRouteHandler = ChatExtensionPushRouteHandler(
             routers: chatExtensionRouters,
@@ -52,15 +47,7 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
 
         let migrator = createLaunchMigrator()
 
-        let jailbreakDetector = JailbreakDetector(
-            device: UIDevice.current,
-            fileManager: FileManager.default,
-            urlOpener: UIApplication.shared,
-            processInfo: ProcessInfo.processInfo
-        )
-
         let resolver = SequentialDecisionResolver<RootDestination>(
-            preChecks: [RootGate.Jailbreak(detector: jailbreakDetector, logger: Logger.shared)],
             gates: [
                 RootGate.Theme(),
                 RootGate.Wallet(
@@ -103,7 +90,7 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
         #if TESTNET_FEATURE
             interactor.appFactoryResetCheckerFactory = AppFactoryResetCheckerFactory(
                 operationQueue: OperationManagerFacade.sharedDefaultQueue,
-                usernameChain: AppConfig.Chains.usernameChain
+                identityChain: AppConfig.Chains.assethubChain
             )
         #endif
 

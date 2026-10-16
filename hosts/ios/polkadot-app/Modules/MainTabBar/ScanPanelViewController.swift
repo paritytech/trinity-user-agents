@@ -11,6 +11,8 @@ final class ScanPanelViewController: UIViewController, ViewHolder {
 
     var onChatFound: ((ChatOpenModel) -> Void)?
     var onContentHeightChanged: (() -> Void)?
+    var onPanelDragChanged: ((CGFloat) -> Void)?
+    var onPanelDragEnded: ((CGFloat) -> Void)?
 
     init(
         scannerController: UIViewController & ScanPanelScannerControlling,
@@ -40,16 +42,19 @@ final class ScanPanelViewController: UIViewController, ViewHolder {
         setupHandlers()
         presenter.setup()
     }
+
+    func cancelSearch() {
+        let searchField = rootView.searchRow.searchField
+        searchField.text = nil
+        presenter.search(username: "")
+        searchField.resignFirstResponder()
+    }
 }
 
 // MARK: - Private
 
 private extension ScanPanelViewController {
     func setupHandlers() {
-        rootView.searchRow.cancelHandler = { [weak self] in
-            self?.cancelSearch()
-        }
-
         rootView.onCameraTapped = { [weak self] in
             self?.cancelSearch()
         }
@@ -61,13 +66,14 @@ private extension ScanPanelViewController {
         rootView.resultsView.selectionHandler = { [weak self] identifier in
             self?.presenter.didSelectContact(identifier: identifier)
         }
-    }
 
-    func cancelSearch() {
-        let searchField = rootView.searchRow.searchField
-        searchField.text = nil
-        presenter.search(username: "")
-        searchField.resignFirstResponder()
+        rootView.grabber.onDragChanged = { [weak self] translation in
+            self?.onPanelDragChanged?(translation)
+        }
+
+        rootView.grabber.onDragEnded = { [weak self] translation in
+            self?.onPanelDragEnded?(translation)
+        }
     }
 }
 
@@ -76,11 +82,8 @@ extension ScanPanelViewController: TabBarKeyboardTrackingContent {
         rootView.searchRow.searchField.isFirstResponder
     }
 
-    /// Focusing the field shrinks the camera to a thumbnail and disarms recognition, so a code
-    /// cannot be picked up from the sliver of preview left behind the keyboard.
     func setKeyboardInputFocused(_ focused: Bool) {
-        scannerController.setRecognitionArmed(!focused)
-        scannerController.setPreviewCompact(focused)
+        scannerController.setCaptureActive(!focused)
         rootView.setSearchFocused(focused)
     }
 }

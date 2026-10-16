@@ -14,7 +14,7 @@ Polkadot iOS — a production-grade iOS wallet and social app for the Polkadot b
 - **substrate-sdk-ios** — Substrate/Polkadot blockchain interaction
 - **Operation-iOS** (3.0.0) — Core Data service (writer/observer/reader modes), repositories, operations
 - **CoreData** — Local persistence (SubstrateDataModel + UserDataModel)
-- **WebRTC** — Peer-to-peer voice/video calls and DIM2 game
+- **WebRTC** — Peer-to-peer voice/video calls
 - **Firebase** — Remote Config
 - **Fastlane + GitHub Actions** — CI/CD pipeline
 
@@ -162,16 +162,16 @@ NOTES:
 ## Dependencies
 
 Key external packages (via SPM):
-- **substrate-sdk-ios** (5.7.1) — Polkadot/Substrate blockchain SDK
-- **ExtrinsicService** (1.7.8) — Extrinsic construction and submission
-- **Firebase SDK** (12.5.0) — Remote Config
-- **SnapKit** (5.7.1) — Auto Layout DSL
-- **Kingfisher** (8.2.0) — Image loading and caching
-- **Lottie** (4.5.2) — Animations
-- **WebRTC** (149.0.0) — Real-time communication
-- **SVGKit** (3.0.0) — SVG rendering
-- **SwiftyBeaver** (2.1.1) — Logging
-- **QRCode** (26.1.0) — QR code generation
+- **substrate-sdk-ios** — Polkadot/Substrate blockchain SDK
+- **ExtrinsicService** — Extrinsic construction and submission
+- **Firebase SDK** — Remote Config
+- **SnapKit** — Auto Layout DSL
+- **Kingfisher** — Image loading and caching
+- **Lottie** — Animations
+- **WebRTC** — Real-time communication
+- **SVGKit** — SVG rendering
+- **SwiftyBeaver** — Logging
+- **QRCode** — QR code generation
 
 NOTES:
 

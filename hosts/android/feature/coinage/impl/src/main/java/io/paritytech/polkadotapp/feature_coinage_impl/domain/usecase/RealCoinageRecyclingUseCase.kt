@@ -14,7 +14,6 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclerVouche
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclingStatus
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.isInRecycler
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.CoinageTransactionService
-import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.getStateOrUntracked
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageInput
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageOperationGroupId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageTransactionRequest
@@ -157,7 +156,7 @@ class RealCoinageRecyclingUseCase @Inject constructor(
 
         return filter { coin ->
             val ownAsset = OwnAsset.Coin(coin.derivationIndex)
-            states.getStateOrUntracked(ownAsset).isFree
+            states.getAssetStateOf(ownAsset).isFree
         }
     }
 

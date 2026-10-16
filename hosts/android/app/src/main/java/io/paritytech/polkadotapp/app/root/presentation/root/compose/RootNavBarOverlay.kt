@@ -5,6 +5,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -30,13 +32,14 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.input.pointer.util.addPointerInputChange
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarBaseInset
 import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
-import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
+import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.design.utils.collectAsEffect
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthIndicatorsModel
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.TabInfo
@@ -63,6 +66,8 @@ private val BAR_HORIZONTAL_MARGIN = 16.dp
 // how far it was dragged. Matches Material's swipeable velocity threshold.
 private val FLING_VELOCITY_THRESHOLD = 125.dp
 
+private const val BACKDROP_ALPHA = 0.7f
+
 /**
  * Hosts the global navigation bar as a right-edge pull-out. The bar sits off-screen with only a [NUB_WIDTH]
  * nub showing; dragging it left reveals it, and it springs into place on release. Tapping outside collapses
@@ -81,7 +86,6 @@ fun RootNavBarOverlay(
     scannerTooltipVisible: Boolean,
     openScanPanelRequests: Flow<Unit>,
     onTabSelected: (BottomTab) -> Unit,
-    onUsernameSearchClick: () -> Unit,
     onScannerTooltipDismiss: () -> Unit,
     onAppClick: (Long) -> Unit,
     onAppClose: (Long) -> Unit,
@@ -128,6 +132,18 @@ fun RootNavBarOverlay(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        AnimatedVisibility(
+            visible = !hidden && pull.scanExpanded,
+            enter = fadeIn(),
+            exit = fadeOut(),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(PolkadotTheme.colors.bg.surface.overlay.copy(alpha = BACKDROP_ALPHA)),
+            )
+        }
+
         if (scrimVisible) {
             Box(
                 modifier = Modifier
@@ -151,6 +167,7 @@ fun RootNavBarOverlay(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .statusBarsPadding()
                     .graphicsLayer { translationX = -pull.offset },
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -194,21 +211,16 @@ fun RootNavBarOverlay(
                                     else -> pull.undoPeek()
                                 }
                             }
-                        },
+                        }
+                        .grabBandAbove(SWIPE_AREA_EXPANSION),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    VerticalSpacer { SWIPE_AREA_EXPANSION }
                     RootNavBar(
                         // Left margin, then measure (→ pill's right edge = width − right margin so the nub
                         // math is unchanged), then right margin.
                         modifier = Modifier
                             .padding(start = BAR_HORIZONTAL_MARGIN)
-                            .onSizeChanged {
-                                pull.setBarWidth(it.width.toFloat())
-                                if (!pull.panelExpanded && !hidden) {
-                                    onBarHeight(with(density) { it.height.toDp() })
-                                }
-                            }
+                            .onSizeChanged { pull.setBarWidth(it.width.toFloat()) }
                             .padding(end = BAR_HORIZONTAL_MARGIN),
                         currentTab = currentTab,
                         tabWarnings = tabWarnings,
@@ -227,11 +239,21 @@ fun RootNavBarOverlay(
                         onAppClose = onAppClose,
                         onScanClicked = { onScannerTooltipDismiss(); pull.toggleScan() },
                         onScanHandled = { navigate -> pull.collapsePanels(); navigate?.invoke() },
-                        onUsernameSearchClick = { pull.collapsePanels(); onUsernameSearchClick() },
+                        onScanDismiss = { pull.collapsePanels() },
                         onScannerTooltipDismiss = onScannerTooltipDismiss,
+                        onRestingHeightChange = { if (!hidden) onBarHeight(it) },
                     )
                 }
             }
         }
+    }
+}
+
+private fun Modifier.grabBandAbove(band: Dp): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints.copy(minHeight = 0))
+    val height = (placeable.height + band.roundToPx()).coerceIn(constraints.minHeight, constraints.maxHeight)
+
+    layout(placeable.width, height) {
+        placeable.place(0, height - placeable.height)
     }
 }

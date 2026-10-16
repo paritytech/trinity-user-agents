@@ -14,6 +14,8 @@ final class MockChainRegistry: ChainRegistryProtocol, @unchecked Sendable {
     private var storedChainsByGenesis: [String: ChainModel] = [:]
     private var storedRuntimeProviders: [String: RuntimeProviderProtocol] = [:]
     private var storedConnectionsByChainId: [ChainModel.Id: ChainConnection] = [:]
+    private var storedChainSockets: [ChainModel.Id: [ChainSocketProtocol]] = [:]
+    private var storedChainSocketRequests: [(chainId: ChainModel.Id, attempt: Int)] = []
 
     var chainsByGenesis: [String: ChainModel] {
         get { mutex.withLock { storedChainsByGenesis } }
@@ -28,6 +30,16 @@ final class MockChainRegistry: ChainRegistryProtocol, @unchecked Sendable {
     var connectionsByChainId: [ChainModel.Id: ChainConnection] {
         get { mutex.withLock { storedConnectionsByChainId } }
         set { mutex.withLock { storedConnectionsByChainId = newValue } }
+    }
+
+    /// `makeChainSocket` calls, in order.
+    var chainSocketRequests: [(chainId: ChainModel.Id, attempt: Int)] {
+        mutex.withLock { storedChainSocketRequests }
+    }
+
+    /// Queues sockets `makeChainSocket` hands out for `chainId` in order; it returns nil once they run out.
+    func enqueueChainSockets(_ sockets: [ChainSocketProtocol], for chainId: ChainModel.Id) {
+        mutex.withLock { storedChainSockets[chainId, default: []].append(contentsOf: sockets) }
     }
 
     /// Chains delivered to a new subscriber. Empty by default, so subscribing stays a no-op.
@@ -50,6 +62,18 @@ final class MockChainRegistry: ChainRegistryProtocol, @unchecked Sendable {
     func getChainByGenesis(for genesisHash: ChainModel.Id) -> ChainModel? { chainsByGenesis[genesisHash] }
     func getConnection(for chainId: ChainModel.Id) -> ChainConnection? { connectionsByChainId[chainId] }
     func getOneShotConnection(for _: ChainModel.Id) -> JSONRPCEngine? { nil }
+    func makeChainSocket(for chainId: ChainModel.Id, attempt: Int) -> ChainSocketProtocol? {
+        mutex.withLock {
+            storedChainSocketRequests.append((chainId, attempt))
+
+            guard var queue = storedChainSockets[chainId], !queue.isEmpty else { return nil }
+
+            let socket = queue.removeFirst()
+            storedChainSockets[chainId] = queue
+            return socket
+        }
+    }
+
     func retainConnections(_: ConnectionRetainScope) -> ConnectionRetainToken { ConnectionRetainToken() }
     func getRuntimeProvider(for chainId: ChainModel.Id) -> RuntimeProviderProtocol? { runtimeProviders[chainId] }
     func switchSync(mode _: ChainSyncMode, chainId _: ChainModel.Id) throws {}

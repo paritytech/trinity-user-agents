@@ -50,22 +50,8 @@ extension IdentityDetailsInteractor: IdentityDetailsInteractorInputProtocol {
         subscribeToProfile()
     }
 
-    func shareAddress(
-        username: Username,
-        image: UIImage
-    ) -> [Any] {
-        guard
-            let address = try? wallet.getRawPublicKey().toAddress(using: chain.chainFormat)
-        else {
-            assertionFailure()
-            return []
-        }
-
-        return shareFactory.createSources(
-            name: username.value,
-            address: address,
-            qrImage: image
-        )
+    func shareMessage(username: Username, image: UIImage) -> [Any] {
+        shareFactory.createSources(username: username, qrImage: image)
     }
 
     func generateQrCode(for size: CGSize) {

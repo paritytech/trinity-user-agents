@@ -15,7 +15,8 @@ public final class DSTabBarContentPanelView: UIView {
     override public init(frame: CGRect) {
         super.init(frame: frame)
 
-        container.clipsToBounds = true
+        // Clipping cut the hosted content's soft glass edge into a seam along the panel's bottom.
+        container.clipsToBounds = false
         container.alpha = 0
         // A closed panel keeps the open panel's frame and would otherwise
         // hit-test as itself, swallowing touches meant for whatever sits
@@ -129,6 +130,11 @@ public final class DSTabBarContentPanelView: UIView {
         // then race a reopen during the fade. Interaction can flip immediately instead.
         isUserInteractionEnabled = open
 
+        // A drag that ended in a close leaves the content clipped behind it.
+        if open {
+            setContentClipped(false)
+        }
+
         let apply = { [self] in
             container.alpha = open ? 1 : 0
         }
@@ -139,6 +145,14 @@ public final class DSTabBarContentPanelView: UIView {
         }
 
         animator.addAnimations(apply)
+    }
+
+    /// Clips the hosted content while an interactive drag shrinks the panel. The content keeps
+    /// its own height, so without this it spills past the panel's bottom edge and shows through
+    /// the capsule. Clipping stays off at rest, where it would cut the content's soft glass edge
+    /// into a seam along the bottom.
+    public func setContentClipped(_ clipped: Bool) {
+        container.clipsToBounds = clipped
     }
 
     override public func layoutSubviews() {

@@ -13,15 +13,16 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -61,7 +62,8 @@ private fun SpaSheetScreenInternal(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(SHEET_HEIGHT_FRACTION),
+                // Not fillMaxHeight: the incoming max height already excludes the system bars and the surface padding.
+                .height(LocalWindowInfo.current.containerDpSize.height * SHEET_SCREEN_HEIGHT_FRACTION),
             contentAlignment = Alignment.Center,
         ) {
             when {
@@ -137,7 +139,7 @@ private fun DotNsLoadProgressCircle(progress: DotNsLoadProgress) {
     )
 }
 
-private const val SHEET_HEIGHT_FRACTION = 0.75f
+private const val SHEET_SCREEN_HEIGHT_FRACTION = 0.8f
 private const val RESOLVE_BAND_END = 0.1f
 private const val DOWNLOAD_BAND_END = 0.9f
 private const val BAND_ANIM_MILLIS = 300

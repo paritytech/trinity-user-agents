@@ -294,7 +294,8 @@ class RealIncomingChatRequestProcessor @Inject constructor(
             welcomeMessageId = incomingData.chatRequestId,
             timestamp = incomingData.request.message.timestamp.toLong(),
             direction = ChatRequest.Direction.INCOMING,
-            status = ChatRequest.Status.PENDING
+            status = ChatRequest.Status.PENDING,
+            delivery = ChatRequest.Delivery.Delivered,
         )
     }
 
@@ -306,7 +307,7 @@ class RealIncomingChatRequestProcessor @Inject constructor(
     ): IncomingRequestProcessingResult {
         val peerAccountId = data.request.peerIdentityAccountId()
         val consumerInfo = resourcesRepository
-            .requireConsumerInfo(chainRegistry.getChain(knownChains.people), peerAccountId)
+            .requireConsumerInfo(chainRegistry.getChain(knownChains.assetHub), peerAccountId)
             .getOrThrow()
 
         return createNewIncomingRequestChat(data, consumerInfo.username, (consumerInfo.identifierKey.x25519OrNull() ?: error("Peer account uses an unsupported chat encryption key type")))
@@ -323,7 +324,8 @@ class RealIncomingChatRequestProcessor @Inject constructor(
             welcomeMessageId = data.request.message.messageId,
             timestamp = data.request.message.timestamp.toLong(),
             direction = ChatRequest.Direction.INCOMING,
-            status = ChatRequest.Status.PENDING
+            status = ChatRequest.Status.PENDING,
+            delivery = ChatRequest.Delivery.Delivered,
         )
         chatRequestRepository.save(request)
 
@@ -400,8 +402,10 @@ class RealIncomingChatRequestProcessor @Inject constructor(
     ) {
         val ourPAppDevice = buildPAppDevice()
 
+        // We use a fresh message id here: this will duplicate "Chat accepted" upon reinstall and it is expected for now
+        // NB: Using deterministic id is not trivial since it would count as "already present" on recipient side
+        // and wont trigger save message processors
         val chatMessage = ChatMessage.new(
-            messageId = "$ACCEPTED_MESSAGE_ID_PREFIX$requestId",
             chatId = ChatId.fromContact(peerAccountId),
             content = ChatMessage.Content.DeviceChatAccepted(requestId, ourPAppDevice),
             origin = ChatMessageOrigin.User,

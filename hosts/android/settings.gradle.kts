@@ -58,7 +58,7 @@ run {
         error(
             "A truapi checkout is required to build this project ($configured). " +
                 "Run scripts/setup-truapi.py, which clones " +
-                "https://github.com/paritytech/host-rust-core at the `truapi_ref` pin from " +
+                "https://github.com/paritytech/trinity-user-agents at the `truapi_ref` pin from " +
                 ".github/actions/install/action.yaml and sets truapi.dir in local.properties. " +
                 "Pass --dir to keep the checkout somewhere else, or set TRUAPI_DIR yourself.",
         )
@@ -119,22 +119,13 @@ include(":feature:wallet:api")
 include(":feature:wallet:impl")
 include(":feature:xcm:api")
 include(":feature:xcm:impl")
-include(":feature:videogame:api")
 include(":feature:videogame:impl")
 include(":feature:people:api")
 include(":feature:people:impl")
 include(":feature:members:api")
 include(":feature:members:impl")
-include(":feature:vouchers:api")
-include(":feature:vouchers:impl")
-include(":feature:become-citizen:api")
-include(":feature:become-citizen:impl")
 include(":feature:backup:api")
 include(":feature:backup:impl")
-include(":feature:mobrules:api")
-include(":feature:mobrules:impl")
-include(":feature:identity:api")
-include(":feature:identity:impl")
 include(":feature:products:api")
 include(":feature:products:impl")
 include(":feature:coinage:api")
@@ -143,8 +134,6 @@ include(":feature:dotns:api")
 include(":feature:dotns:impl")
 include(":feature:dotns-gateway:api")
 include(":feature:dotns-gateway:impl")
-include(":feature:upgrade-username:api")
-include(":feature:upgrade-username:impl")
 include(":feature:connection-status:api")
 include(":feature:connection-status:impl")
 include(":feature:revive:api")

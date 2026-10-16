@@ -785,27 +785,23 @@ private class Ref<T> {
 
 private func awaitBoard(
     _ board: StallBoard,
+    timeout: Duration = .seconds(30),
     condition: @escaping @MainActor (StallBoard) -> Bool
 ) async throws {
-    let boardCheck = Task<Void, Error> {
-        for _ in 0 ..< 1_000 {
-            if await MainActor.run(body: { condition(board) }) {
-                return
-            }
-            try await Task.sleep(for: .milliseconds(10))
-        }
-        throw AwaitBoardTimeout()
-    }
-
-    let timeoutTask = Task<Void, Error> {
-        try await Task.sleep(for: .seconds(10))
-        throw AwaitBoardTimeout()
-    }
-
+    // Both waits are child tasks, so cancelAll() stops the loser and the call returns as soon as one finishes.
     try await withThrowingTaskGroup(of: Void.self) { group in
-        group.addTask { try await boardCheck.value }
-        group.addTask { try await timeoutTask.value }
-        _ = try await group.next()!
+        group.addTask {
+            while await !MainActor.run(body: { condition(board) }) {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        }
+
+        group.addTask {
+            try await Task.sleep(for: timeout)
+            throw AwaitBoardTimeout()
+        }
+
+        _ = try await group.next()
         group.cancelAll()
     }
 }

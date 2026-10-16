@@ -19,12 +19,18 @@ on:
 jobs:
   register_device:
     runs-on: macos-26
-    # Registering a device mutates signing state at Apple, so this is limited
-    # to named people. fromJSON, not a bare string: contains() on a string is a
-    # substring test, which any login appearing inside another would pass.
-    if: contains(fromJSON('["sergkononenko","ERussel","stepanLav","kogeler","TarikGul","pgherveou","filvecchiato","valentinfernandez1"]'), github.actor)
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # Registering a device mutates signing state at Apple and spends one of a
+      # limited number of device slots.
+      # Narrower than write access: see the action for why, and
+      # IOS_SIGNING_ACTORS for who.
+      - name: Require an iOS signing actor
+        uses: ./.github/actions/require-ios-signing-actor
+        with:
+          allowed: ${{ vars.IOS_SIGNING_ACTORS }}
+          actor: ${{ github.triggering_actor }}
 
       - name: Setup iOS Environment
         uses: ./hosts/ios/.github/actions/install

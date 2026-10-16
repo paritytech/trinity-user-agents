@@ -1,5 +1,16 @@
 # @parity/truapi-provider
 
+## 0.3.1
+
+### Patch Changes
+
+- b92e186: `ChainProviderBuilder.setConnectionTypes({ secure, localhost, unsecure })` limits the kinds of connection the
+  light client opens to peers: `wss://`, plain `ws://` to localhost, and plain `ws://` to any other peer. Each defaults
+  to `true`; a page served over `https` can pass `{ unsecure: false }`, since the browser blocks those dials there as
+  mixed content.
+- b92e186: The bundled Paseo and previewnet relay chain specs carry warp-sync checkpoints at blocks 1264462 and 158908,
+  so a cold-start light client warp-syncs from a recent finalized block.
+
 ## 0.3.0
 
 ### Minor Changes

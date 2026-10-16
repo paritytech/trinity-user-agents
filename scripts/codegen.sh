@@ -2,7 +2,7 @@
 # Regenerate js/packages/truapi/src/generated/* from rust/crates/truapi.
 #
 # Pipeline:
-#   1. cargo +nightly doc -p truapi --no-default-features
+#   1. cargo +<pinned nightly> doc -p truapi --no-default-features
 #      -> target/doc/truapi.json, the protocol definitions alone, kept as
 #      target/doc/truapi_protocol.json
 #   2. cargo run -p truapi-codegen -- --input target/doc/truapi_protocol.json
@@ -10,7 +10,7 @@
 #                                     --rust-output rust/crates/truapi/src/generated
 #      The runtime includes the dispatcher, so it has to exist before the
 #      runtime can be documented.
-#   3. cargo +nightly doc -p truapi -p truapi-provider
+#   3. cargo +<pinned nightly> doc -p truapi -p truapi-provider
 #      -> target/doc/{truapi,truapi_provider}.json, with the runtime
 #   4. cargo run -p truapi-codegen -- --input target/doc/truapi_protocol.json
 #                                     --output js/packages/truapi/src/generated
@@ -36,7 +36,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-NIGHTLY_TOOLCHAIN="${TRUAPI_NIGHTLY_TOOLCHAIN:-nightly}"
+# The dated nightly CI runs, from nightly-toolchain; TRUAPI_NIGHTLY_TOOLCHAIN
+# overrides it.
+NIGHTLY_TOOLCHAIN="${TRUAPI_NIGHTLY_TOOLCHAIN:-$(head -n1 "$ROOT/nightly-toolchain" | tr -d '[:space:]')}"
 
 # Homebrew LLVM on DYLD_LIBRARY_PATH makes rustc and rustdoc load a mismatched
 # libLLVM, which dies with SIGSEGV in initialize_available_targets.

@@ -18,6 +18,8 @@ import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.common.R
 import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFormatter
 import io.paritytech.polkadotapp.common.presentation.formatters.time.TimeFormatter
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.Info
@@ -167,6 +169,7 @@ private fun FundingOperationsPreview() {
     PolkadotTheme {
         CompositionLocalProvider(
             LocalTokenAmountFormatter provides TokenAmountFormatter.mocked,
+            LocalPaymentAssetBrand provides PaymentAssetBrand.mocked,
             LocalConversionFormatter provides ConversionFormatter.mocked,
             LocalKnownTokenFormatter provides KnownTokenFormatter.mocked,
             LocalTimeFormatter provides TimeFormatter.mocked(LocalContext.current),

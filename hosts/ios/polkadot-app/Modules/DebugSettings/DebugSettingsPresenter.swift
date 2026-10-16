@@ -56,6 +56,14 @@ extension DebugSettingsPresenter: DebugSettingsPresenterProtocol {
         wireframe.showProducts(from: view)
     }
 
+    func showPocketFacePreview() {
+        wireframe.showPocketFacePreview(from: view)
+    }
+
+    func showPocketCards() {
+        wireframe.showPocketCards(from: view)
+    }
+
     func showDotNsBrowser() {
         wireframe.showDotNsBrowser(from: view)
     }
@@ -125,6 +133,12 @@ extension DebugSettingsPresenter: DebugSettingsPresenterProtocol {
     func openTrUAPIPlayground() {
         wireframe.showTrUAPIPlayground(from: view)
     }
+
+    #if DEBUG
+        func openDevServer() {
+            wireframe.showDevServer(from: view)
+        }
+    #endif
 
     func resetTips() {
         interactor.resetTips()

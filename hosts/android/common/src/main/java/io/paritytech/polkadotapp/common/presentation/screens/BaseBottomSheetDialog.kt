@@ -2,13 +2,13 @@ package io.paritytech.polkadotapp.common.presentation.screens
 
 import android.content.Context
 import android.view.View
-import android.widget.FrameLayout
 import androidx.activity.ComponentDialog
 import androidx.activity.setViewTreeOnBackPressedDispatcherOwner
 import androidx.annotation.StyleRes
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.google.android.material.R as RMaterial
 
 abstract class BaseBottomSheetDialog(
     context: Context,
@@ -23,8 +23,8 @@ abstract class BaseBottomSheetDialog(
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         window?.let { it.decorView.systemUiVisibility = (it.decorView.systemUiVisibility or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION) }
-        val containerView = findViewById<FrameLayout>(com.google.android.material.R.id.container)
-        containerView?.apply { fitsSystemWindows = false }
+        findViewById<View>(RMaterial.id.container)?.fitsSystemWindows = false
+        findViewById<View>(RMaterial.id.coordinator)?.fitsSystemWindows = false
     }
 
     private fun ComponentDialog.initViewTreeOwners() {

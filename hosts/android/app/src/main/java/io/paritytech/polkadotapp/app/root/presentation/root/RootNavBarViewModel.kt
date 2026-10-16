@@ -78,10 +78,6 @@ class RootNavBarViewModel @Inject constructor(
         bottomNavHeightProvider.set(value)
     }
 
-    fun openUsernameSearch() {
-        rootRouter.openAddContact()
-    }
-
     fun dismissScannerTooltip() {
         if (!isScannerTooltipVisible.value) return
         isScannerTooltipVisible.value = false

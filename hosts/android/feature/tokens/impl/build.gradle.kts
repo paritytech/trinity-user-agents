@@ -13,6 +13,8 @@ android {
 dependencies {
     api(project(":feature:tokens:api"))
 
+    implementation(project(":tools:remoteconfig:api"))
+
     implementation(libs.hilt.lifecycle.viewmodel.compose)
     implementation(libs.androidx.fragment.ktx)
 

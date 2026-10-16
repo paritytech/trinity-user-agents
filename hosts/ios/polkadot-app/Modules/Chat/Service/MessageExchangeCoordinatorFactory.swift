@@ -24,6 +24,7 @@ final class MessageExchangeCoordinatorFactory {
     private let entropyManager: RootEntropyManaging
     private let storageFacade: StorageFacadeProtocol
     private let bulletInManager: AllowanceManaging
+    private let statementStoreMonitor: StatementStoreActivityMonitoring
     private let operationQueue: OperationQueue
     private let logger: LoggerProtocol
 
@@ -31,12 +32,14 @@ final class MessageExchangeCoordinatorFactory {
         entropyManager: RootEntropyManaging = RootEntropyManager.shared,
         storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared,
         bulletInManager: AllowanceManaging,
+        statementStoreMonitor: StatementStoreActivityMonitoring,
         operationQueue: OperationQueue = OperationManagerFacade.sharedDefaultQueue,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.entropyManager = entropyManager
         self.storageFacade = storageFacade
         self.bulletInManager = bulletInManager
+        self.statementStoreMonitor = statementStoreMonitor
         self.operationQueue = operationQueue
         self.logger = logger
     }
@@ -102,7 +105,8 @@ extension MessageExchangeCoordinatorFactory: MessageExchangeCoordinatorMaking {
                 operationQueue: operationQueue,
                 logger: logger
             ),
-            messageExchangeModeProvider: messageExchangeModeProvider
+            messageExchangeModeProvider: messageExchangeModeProvider,
+            statementStoreMonitor: statementStoreMonitor
         )
     }
 

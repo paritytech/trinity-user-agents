@@ -58,6 +58,7 @@ public final class DSTabBarView: UIView {
 
     private let content = UIView()
     private let lens = DSTabBarSelectionLens()
+    private let keyboardShadow = DSTabBarKeyboardShadowView()
 
     private var itemViews: [DSTabBarItemView] = []
     private var selectedItemViews: [DSTabBarItemView] = []
@@ -114,6 +115,11 @@ public final class DSTabBarView: UIView {
         applyActiveAction()
     }
 
+    /// Shown while the capsule sits under the keyboard, so the keys read as being above it.
+    public func setKeyboardShadowVisible(_ visible: Bool) {
+        keyboardShadow.alpha = visible ? 1 : 0
+    }
+
     /// Anchor view for a popover pointing at a bar item. Re-read it rather than caching:
     /// item views are recreated whenever `items` changes. Nil until frames are assigned in
     /// `layoutSubviews` — an empty source rect makes UIKit centre the popover on screen.
@@ -129,6 +135,7 @@ public final class DSTabBarView: UIView {
         super.layoutSubviews()
 
         content.frame = bounds
+        keyboardShadow.frame = bounds
 
         let inset = DSTabBarMetrics.innerInset
         lens.frame = content.bounds.insetBy(dx: inset, dy: inset)
@@ -169,6 +176,7 @@ private extension DSTabBarView {
     func setupHierarchy() {
         addSubview(content)
         content.addSubview(lens)
+        addSubview(keyboardShadow)
     }
 
     func setupGesture() {

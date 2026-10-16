@@ -41,7 +41,7 @@ class TrUAPIBootstrapInstallerTest {
                             null
                         }
 
-                    TrUAPIBootstrapInstaller().installerFor(webView, productOrigins)("endpoint();")
+                    TrUAPIBootstrapInstaller(context).installerFor(productOrigins)("endpoint();")(webView)
 
                     assertEquals(
                         listOf(
@@ -67,7 +67,7 @@ class TrUAPIBootstrapInstallerTest {
             features.`when`<Boolean> { WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) }.thenReturn(true)
 
             assertThrows(FileNotFoundException::class.java) {
-                TrUAPIBootstrapInstaller().installerFor(webView, productOrigins)
+                TrUAPIBootstrapInstaller(context).installerFor(productOrigins)
             }
             verifyNoInteractions(chromeClient)
         }
@@ -79,13 +79,12 @@ class TrUAPIBootstrapInstallerTest {
             features.`when`<Boolean> { WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) }.thenReturn(false)
 
             assertThrows(IllegalStateException::class.java) {
-                TrUAPIBootstrapInstaller().installerFor(webView, productOrigins)
+                TrUAPIBootstrapInstaller(context).installerFor(productOrigins)
             }
         }
     }
 
     private fun withContainerAsset() {
-        whenever(webView.context).thenReturn(context)
         whenever(webView.webChromeClient).thenReturn(chromeClient)
         whenever(context.assets).thenReturn(assets)
         whenever(assets.open("truapi-container.js")).thenReturn(ByteArrayInputStream("container();".toByteArray()))

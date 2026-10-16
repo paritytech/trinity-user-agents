@@ -16,7 +16,7 @@ not change rustdoc output) or purely TS-side.
 Expected output: `Generated client at js/packages/truapi/src/generated/`,
 `Generated playground metadata ...`.
 
-The script is `cargo +nightly rustdoc --output-format json` →
+The script is `cargo +$(cat nightly-toolchain) rustdoc --output-format json` →
 `truapi-codegen` → `prettier --write` → `npm run build` in
 `js/packages/truapi`.
 
@@ -34,7 +34,7 @@ nothing is committed, CI regenerates them from the Rust changes.
 
 ## Failure modes
 
-- Missing nightly toolchain → install with `rustup toolchain install nightly`.
+- Missing nightly toolchain → install with `rustup toolchain install "$(cat nightly-toolchain)"`.
 - `unresolved link to ...` warnings from rustdoc break codegen quietly:
   `truapi-codegen` will still emit, but you may miss an item in the
   generated TS. Fix by turning the link into a fully-qualified path

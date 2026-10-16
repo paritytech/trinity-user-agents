@@ -4,12 +4,12 @@ import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
+import io.parity.truapi.ChatHostBridge
+import io.parity.truapi.GameHostBridge
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
-import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.parity.truapi.WebSocketChainProvider
@@ -19,6 +19,7 @@ import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
+import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toUri
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
@@ -31,6 +32,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.RemotePermissionRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.job
@@ -38,21 +40,24 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import timber.log.Timber
+import uniffi.truapi.AuthState
+import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
+import uniffi.truapi.HostNavigateToException
 import uniffi.truapi.HostPushNotificationRequest
+import uniffi.truapi.HostRejection
 import uniffi.truapi.HostThemeSubscribeItem
+import uniffi.truapi.ProductExecutionConfig
+import uniffi.truapi.ProductExecutionKind
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.ThemeName
-import uniffi.truapi.AuthState
-import uniffi.truapi.HostChainSet
 import uniffi.truapi.UserConfirmationReview
-import uniffi.truapi.HostNavigateToException
-import uniffi.truapi.HostRejection
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Instant
-import uniffi.truapi.ThemeVariant as NativeThemeVariant
 import uniffi.truapi.PermissionDecision as TrUAPIPermissionDecision
+import uniffi.truapi.ThemeVariant as NativeThemeVariant
 
 /**
  * Native platform callbacks ([io.parity.truapi.HostBridge]) for one product
@@ -75,6 +80,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val appLifecycleObserver: AppLifecycleObserver,
     private val dotNsTldProvider: DotNsTldProvider,
     private val pocketCardStore: PocketCardStore,
+    private val productGameReminder: ProductGameReminder,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -119,9 +125,10 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private fun buildBridge(
         callingProductId: ProductId,
         navigation: NavigationPolicy,
+        card: ExpandedCardFace?,
     ) = object : HostBridge {
         override val storage: HostStorage =
-            EncryptedHostStorage(encryptedPreferences, productStorageNamespace(callingProductId.value))
+            EncryptedHostStorage(encryptedPreferences, callingProductId.value)
 
         override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
 
@@ -189,17 +196,26 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             product: ProductExecutionConfig,
             request: HostDevicePermissionRequest,
         ): TrUAPIPermissionDecision =
-            hostApiInteractor
-                .requestDevicePermissionDecision(callingProductId, request.toCapability())
-                .getOrElse { throw it }
-                .toNative()
+            // Android WebView serves motion sensors without asking, so the
+            // capability is granted without a prompt. Allow once keeps the core
+            // from storing a grant that no settings screen can revoke.
+            if (request == HostDevicePermissionRequest.MOTION) {
+                TrUAPIPermissionDecision.ALLOW_ONCE
+            } else {
+                hostApiInteractor
+                    .requestDevicePermissionDecision(callingProductId, request.toCapability())
+                    .getOrElse { throw it }
+                    .toNative()
+            }
 
         override suspend fun remotePermission(
             product: ProductExecutionConfig,
             request: RemotePermission,
         ): TrUAPIPermissionDecision =
-            hostApiInteractor
-                .requestRemotePermissionDecision(callingProductId, request.toDomain())
+            when (val domain = request.toDomain()) {
+                null -> hostApiInteractor.requestBalanceAccessDecision(callingProductId)
+                else -> hostApiInteractor.requestRemotePermissionDecision(callingProductId, domain)
+            }
                 .getOrElse { throw it }
                 .toNative()
 
@@ -224,6 +240,17 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             chainProvider.send(connectionId, request)
 
         override fun chainClose(connectionId: UInt) = chainProvider.close(connectionId)
+
+        override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
+            card?.setFaceShown(shown) ?: ExpandedCardFaceOutcome.UNSUPPORTED
+    }
+
+    internal fun gameBridge(callingProductId: ProductId) = object : GameHostBridge {
+        override suspend fun scheduleReminder(startsAt: ULong) =
+            productGameReminder.schedule(callingProductId, startsAt.toLong())
+                .getOrElse { throw HostRejection.Rejected(it.message.orEmpty()) }
+
+        override suspend fun cancelReminder() = productGameReminder.cancel(callingProductId)
     }
 
     /**
@@ -241,7 +268,9 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         chains: TrUAPIChains,
         navigationPolicy: NavigationPolicy,
         kind: ProductExecutionKind,
-        onReadyToInject: (bootstrap: String) -> Unit,
+        chat: ChatHostBridge? = null,
+        card: ExpandedCardFace? = null,
+        onReadyToInject: suspend (bootstrap: String) -> Unit,
     ): Result<TrUAPIProductExecution> {
         execution?.let {
             Timber.w("truapi.attach: already attached to %s, ignoring", productId.value)
@@ -253,9 +282,11 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             cachedChains.set(chains)
             val pocket = ProductPocketHostBridge(productId, pocketCardStore, scope)
             val opened = runtime.openProductExecution(
-                bridge = buildBridge(productId, navigationPolicy),
+                bridge = buildBridge(productId, navigationPolicy, card),
                 configuration = ProductExecutionConfig(productId.value, kind),
+                chat = chat,
                 pocket = pocket,
+                game = gameBridge(productId),
             )
             execution = opened
             pocketBridge = pocket
@@ -361,14 +392,17 @@ private fun HostDevicePermissionRequest.toCapability(): DeviceCapabilityType = w
     HostDevicePermissionRequest.CLIPBOARD -> DeviceCapabilityType.Clipboard
     HostDevicePermissionRequest.OPEN_URL -> DeviceCapabilityType.OpenUrl
     HostDevicePermissionRequest.BIOMETRICS -> DeviceCapabilityType.Biometrics
+    HostDevicePermissionRequest.MOTION -> DeviceCapabilityType.Motion
 }
 
-private fun RemotePermission.toDomain(): RemotePermissionRequest = when (this) {
+/** `null` for balance access, which this host asks about as a product permission. */
+private fun RemotePermission.toDomain(): RemotePermissionRequest? = when (this) {
     is RemotePermission.Remote -> RemotePermissionRequest.Remote(domains)
     RemotePermission.WebRtc -> RemotePermissionRequest.WebRtc
     RemotePermission.ChainSubmit -> RemotePermissionRequest.ChainSubmit
     RemotePermission.PreimageSubmit -> RemotePermissionRequest.PreimageSubmit
     RemotePermission.StatementSubmit -> RemotePermissionRequest.StatementSubmit
+    RemotePermission.BalanceAccess -> null
 }
 
 private fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this) {

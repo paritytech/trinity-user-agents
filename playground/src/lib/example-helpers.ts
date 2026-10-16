@@ -281,7 +281,7 @@ export function createBuildCreateTransactionPayload(
         builder,
         chainState,
       ),
-      txExtVersion: txExtVersionFromMetadata(unified),
+      txExtVersion: 0,
       contacts: opts.contacts ?? [],
     });
   };
@@ -540,25 +540,21 @@ function nonceFromRuntimeApiOutput(output: HexString): number {
   ).getUint32(0, true);
 }
 
-function txExtVersionFromMetadata(metadata: UnifiedMetadata): number {
-  const latestVersion = metadata.extrinsic.version.reduce(
-    (max, version) => Math.max(max, version),
-    0,
-  );
-  return latestVersion === 4 ? 0 : latestVersion;
-}
-
 function encodeSignedExtensions(
   metadata: UnifiedMetadata,
   lookupFn: LookupFn,
   builder: DynamicBuilder,
   chainState: ChainState,
 ): TxPayloadExtension[] {
-  const exts = metadata.extrinsic.signedExtensions[0] as Array<{
-    identifier: string;
-    type: number;
-    additionalSigned: number;
-  }>;
+  const exts = (
+    metadata.extrinsic.signedExtensions[0] as Array<{
+      identifier: string;
+      type: number;
+      additionalSigned: number;
+    }>
+  )
+    // Left out, VerifyMultiSignature is filled by the host with its signature.
+    .filter((ext) => ext.identifier !== "VerifyMultiSignature");
 
   return exts.map((ext) => {
     const values = signedExtensionValues(ext, lookupFn, chainState);
@@ -611,8 +607,6 @@ function signedExtensionValues(
         extra: { type: "Immortal" },
         additionalSigned: toHex(chainState.genesisHash),
       };
-    case "VerifyMultiSignature":
-      return { extra: { type: "Disabled" }, additionalSigned: undefined };
     case "ChargeAssetTxPayment":
       return {
         extra: { tip: 0, asset_id: undefined },

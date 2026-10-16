@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -33,7 +34,7 @@ import io.paritytech.polkadotapp.design.components.text.PolkadotInputField
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.design.utils.conditionalNotNull
 
-private val SearchLeadingIconSize = 48.dp
+private val SearchSlotSize = 48.dp
 
 @Composable
 fun PolkadotSearchField(
@@ -48,6 +49,9 @@ fun PolkadotSearchField(
     imeAction: ImeAction = ImeAction.Search,
     focusRequester: FocusRequester? = null,
     onClick: (() -> Unit)? = null,
+    showClear: Boolean = value.isNotEmpty(),
+    contentPadding: PaddingValues = PaddingValues(PolkadotTheme.spacings.tiny),
+    clearButtonSize: PolkadotIconButtonSize = PolkadotIconButtonSize.mediumIncreased(),
 ) {
     val placeholderContent: (@Composable () -> Unit)? = placeholder?.let { text ->
         {
@@ -70,7 +74,7 @@ fun PolkadotSearchField(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(PolkadotTheme.spacings.tiny),
+                .padding(contentPadding),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.tiny),
         ) {
@@ -86,7 +90,7 @@ fun PolkadotSearchField(
                 )
             } else {
                 Box(
-                    modifier = Modifier.size(SearchLeadingIconSize),
+                    modifier = Modifier.size(SearchSlotSize),
                     contentAlignment = Alignment.Center,
                 ) {
                     NovaIcon(
@@ -112,14 +116,19 @@ fun PolkadotSearchField(
                 ),
             )
 
-            if (value.isNotEmpty()) {
-                PolkadotIconButton(
-                    icon = NovaIcons.Close,
-                    onClick = onClear,
-                    style = PolkadotButtonStyle.ghost(),
-                    size = PolkadotIconButtonSize.mediumIncreased(),
-                    shape = PolkadotButtonShape.pill,
-                )
+            if (showClear) {
+                Box(
+                    modifier = Modifier.size(SearchSlotSize),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    PolkadotIconButton(
+                        icon = NovaIcons.Close,
+                        onClick = onClear,
+                        style = PolkadotButtonStyle.ghost(),
+                        size = clearButtonSize,
+                        shape = PolkadotButtonShape.pill,
+                    )
+                }
             }
         }
     }

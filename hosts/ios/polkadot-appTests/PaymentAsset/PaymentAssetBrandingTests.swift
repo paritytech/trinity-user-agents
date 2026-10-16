@@ -91,7 +91,6 @@ private extension PaymentAssetBrandingTests {
         RemoteAppConfig(
             identityBackendUrl: nil,
             ipfsGatewayUrl: nil,
-            gameDashboardUrl: nil,
             dotNsResolver: nil,
             dotNsNameRegistry: nil,
             coinageInstanceId: nil,
@@ -100,7 +99,8 @@ private extension PaymentAssetBrandingTests {
             accountDataStoreContract: nil,
             paymentAsset: published
                 ? PaymentAssetConfig(symbol: symbol, squareIconURL: square, wideIconURL: wide)
-                : nil
+                : nil,
+            appSharingUrl: nil
         )
     }
 }

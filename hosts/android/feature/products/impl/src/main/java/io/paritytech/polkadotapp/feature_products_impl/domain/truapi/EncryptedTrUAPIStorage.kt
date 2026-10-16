@@ -3,33 +3,39 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
-import uniffi.truapi.HostRejection
 import uniffi.truapi.HostLocalStorageReadException
+import uniffi.truapi.HostRejection
+import java.text.Normalizer
 
 /**
  * Product-scoped storage for the Rust core, encrypted at rest.
  *
- * [namespace] carries the product id, matching how the native host namespaces
- * `localStorageRead`/`Write`/`Clear`: one product must not be able to read
- * another's keys.
+ * Reads go to the product the core named as the key's owner, which is another
+ * product on a granted foreign read. Writes and clears stay in [productId]'s
+ * namespace.
  */
 class EncryptedHostStorage(
     private val preferences: EncryptedPreferences,
-    private val namespace: String,
+    private val productId: String,
 ) : HostStorage {
-    override fun read(key: String): ByteArray? = readValue(preferences, qualify(key))
+    private val normalizedProductId = normalizeProductId(productId)
 
-    override fun write(key: String, value: ByteArray) {
+    override suspend fun read(key: String): ByteArray? = readValue(preferences, "${productStorageNamespace(ownerOf(key))}/$key")
+
+    override suspend fun write(key: String, value: ByteArray) {
         writeValue(preferences, qualify(key), value)
             ?.let { throw storageFailure("product storage: $it") }
     }
 
-    override fun clear(key: String) {
+    override suspend fun clear(key: String) {
         runCatching { preferences.removeKey(qualify(key)) }
             .getOrElse { throw storageFailure("failed to clear product storage key: ${it.message}") }
     }
 
-    private fun qualify(key: String) = "$namespace/$key"
+    private fun qualify(key: String) = "${productStorageNamespace(productId)}/$key"
+
+    private fun ownerOf(key: String): String =
+        productStorageKeyOwner(key)?.takeUnless { it == normalizedProductId } ?: productId
 }
 
 /**
@@ -44,14 +50,14 @@ class EncryptedHostStorage(
 class EncryptedHostCoreStorage(
     private val preferences: EncryptedPreferences,
 ) : HostCoreStorage {
-    override fun read(key: ByteArray): ByteArray? = readValue(preferences, qualify(key))
+    override suspend fun read(key: ByteArray): ByteArray? = readValue(preferences, qualify(key))
 
-    override fun write(key: ByteArray, value: ByteArray) {
+    override suspend fun write(key: ByteArray, value: ByteArray) {
         writeValue(preferences, qualify(key), value)
             ?.let { throw HostRejection.Rejected("core storage: $it") }
     }
 
-    override fun clear(key: ByteArray) {
+    override suspend fun clear(key: ByteArray) {
         runCatching { preferences.removeKey(qualify(key)) }
             .getOrElse { throw HostRejection.Rejected("failed to clear core storage key: ${it.message}") }
     }
@@ -65,6 +71,23 @@ class EncryptedHostCoreStorage(
 
 /** Namespace for one product's core-facing local storage. */
 fun productStorageNamespace(productId: String): String = "truapi/product/$productId"
+
+private const val PRODUCT_STORAGE_KEY_PREFIX = "truapi:product-storage:v1:"
+
+/** Mirrors `ProductStorageKey::decode` in truapi: `truapi:product-storage:v1:<byte length>:<product id>:<key>`. */
+internal fun productStorageKeyOwner(key: String): String? {
+    if (!key.startsWith(PRODUCT_STORAGE_KEY_PREFIX)) return null
+    val rest = key.removePrefix(PRODUCT_STORAGE_KEY_PREFIX).encodeToByteArray()
+    val colon = rest.indexOf(':'.code.toByte()).takeIf { it > 0 } ?: return null
+    val length = rest.decodeToString(0, colon).toIntOrNull()?.takeIf { it > 0 } ?: return null
+    val start = colon + 1
+    if (length > rest.size - start - 1 || rest[start + length] != ':'.code.toByte()) return null
+    return runCatching { rest.decodeToString(start, start + length, throwOnInvalidSequence = true) }.getOrNull()
+}
+
+/** Matches the core's `normalize_product_identifier`, the form written into keys. */
+internal fun normalizeProductId(productId: String): String =
+    Normalizer.normalize(productId.trim(), Normalizer.Form.NFC).lowercase()
 
 /**
  * `EncryptionUtil` reports both a failed encrypt and a failed decrypt by

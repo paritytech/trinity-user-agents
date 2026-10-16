@@ -63,6 +63,23 @@ final class MockStatementStore {
 
         observers = observers.filter { $0 !== observer }
     }
+
+    func failSubscriptions(with error: Error) {
+        takeObservers().forEach { $0.continuation.finish(throwing: error) }
+    }
+
+    func endSubscriptions() {
+        takeObservers().forEach { $0.continuation.finish() }
+    }
+
+    private func takeObservers() -> [Observer] {
+        mutex.lock()
+        defer { mutex.unlock() }
+
+        let taken = observers
+        observers = []
+        return taken
+    }
 }
 
 extension MockStatementStore: StatementStoreSubmitting {

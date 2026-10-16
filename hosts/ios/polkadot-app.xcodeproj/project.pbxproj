@@ -36,16 +36,17 @@
 		A5B437012E96B82E00CFF21D /* MessageExchangeKit in Frameworks */ = {isa = PBXBuildFile; productRef = A5B437002E96B82E00CFF21D /* MessageExchangeKit */; };
 		A5B5899C2F5F0F4E00A9458D /* OperationExt in Frameworks */ = {isa = PBXBuildFile; productRef = A5B5899B2F5F0F4E00A9458D /* OperationExt */; };
 		A5C0DE022FDB2A5C00000002 /* Revive in Frameworks */ = {isa = PBXBuildFile; productRef = A5C0DE012FDB2A5C00000001 /* Revive */; };
+		A5F553C33066BB820077443B /* IssueMonitoring in Frameworks */ = {isa = PBXBuildFile; productRef = A5F553C23066BB820077443B /* IssueMonitoring */; };
 		A5FB979E2F855E9D001A2D6A /* FoundationExt in Frameworks */ = {isa = PBXBuildFile; productRef = A5FB979D2F855E9D001A2D6A /* FoundationExt */; };
 		B10000022F7C000000000AAA /* Products in Frameworks */ = {isa = PBXBuildFile; productRef = B10000012F7C000000000AAA /* Products */; };
 		B10000042F7C000000000BBB /* BulletinChain in Frameworks */ = {isa = PBXBuildFile; productRef = B10000032F7C000000000BBB /* BulletinChain */; };
 		B1A2C3D42F8A000000000001 /* BlurHash in Frameworks */ = {isa = PBXBuildFile; productRef = B1A2C3D42F8A000000000002 /* BlurHash */; };
+		C5C7E5710000000000000001 /* StructuredConcurrencyTestSupport in Frameworks */ = {isa = PBXBuildFile; productRef = C5C7E5710000000000000002 /* StructuredConcurrencyTestSupport */; };
 		CC0CC0102FBA000100CCAA01 /* ChainRegistry in Frameworks */ = {isa = PBXBuildFile; productRef = CC0CC0202FBA000100CCAA02 /* ChainRegistry */; };
 		CC0CC0302FBA000100CCAA03 /* ChainRegistry in Frameworks */ = {isa = PBXBuildFile; productRef = CC0CC0402FBA000100CCAA04 /* ChainRegistry */; };
 		CC0CC0502FBA000100CCAA05 /* EventCenter in Frameworks */ = {isa = PBXBuildFile; productRef = CC0CC0602FBA000100CCAA06 /* EventCenter */; };
 		CC0CC0702FBA000100CCAA07 /* EventCenter in Frameworks */ = {isa = PBXBuildFile; productRef = CC0CC0802FBA000100CCAA08 /* EventCenter */; };
 		D0D0D0022FDA0000000D0002 /* DurableTransactions in Frameworks */ = {isa = PBXBuildFile; productRef = D0D0D0012FDA0000000D0001 /* DurableTransactions */; };
-		E9C7172E2ECDD6730014841F /* JailbreakDetection in Frameworks */ = {isa = PBXBuildFile; productRef = E9C7172D2ECDD6730014841F /* JailbreakDetection */; };
 		EA11ACCE000000000000B001 /* ExternalAccessibility in Frameworks */ = {isa = PBXBuildFile; productRef = EA11ACCE000000000000B002 /* ExternalAccessibility */; };
 /* End PBXBuildFile section */
 
@@ -89,11 +90,6 @@
 
 /* Begin PBXFileReference section */
 		0C6EC9592EC629FB00C9B292 /* NotificationServiceExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NotificationServiceExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		0C88BDA32FEED6A800895B94 /* MetadataShortenerApi.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = MetadataShortenerApi.xcodeproj; sourceTree = "<group>"; };
-		0C88CD992FEED62E00895B94 /* MetadataShortenerApi.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = MetadataShortenerApi.xcodeproj; sourceTree = "<group>"; };
-		0CA025802F74DBAF0000CDC9 /* ProtocolBuffers_iOS.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = ProtocolBuffers_iOS.xcodeproj; sourceTree = "<group>"; };
-		0CA025812F74DBAF0000CDC9 /* ProtocolBuffers_OSX.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = ProtocolBuffers_OSX.xcodeproj; sourceTree = "<group>"; };
-		0CA025822F74DBAF0000CDC9 /* ProtocolBuffers_tvOS.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = ProtocolBuffers_tvOS.xcodeproj; sourceTree = "<group>"; };
 		65E2C5D62E971DC0004FBA34 /* polkadot-appIntegrationTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "polkadot-appIntegrationTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A5EDAAD52E93ECAF005DDA62 /* polkadot-app.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "polkadot-app.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A5EDAAE32E93ECB0005DDA62 /* polkadot-appTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "polkadot-appTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -342,7 +338,6 @@
 				0C6058402FB598D70008050F /* AssetsManagement in Frameworks */,
 				0C148EF42EAA61E8002497EC /* XcmDefinition in Frameworks */,
 				0C148EF02EAA61DC002497EC /* HydrationSdk in Frameworks */,
-				E9C7172E2ECDD6730014841F /* JailbreakDetection in Frameworks */,
 				0C0DFC2F2F90983800D9D574 /* Individuality in Frameworks */,
 				0CA3EA882EAA711100C43F10 /* AssetHubSdk in Frameworks */,
 				A5B437012E96B82E00CFF21D /* MessageExchangeKit in Frameworks */,
@@ -355,6 +350,7 @@
 				A5A948F22F4CA925001E5150 /* ExtrinsicServiceExt in Frameworks */,
 				0C2A9D532F868F4F00E753AE /* SubstrateSdkExt in Frameworks */,
 				A57CAF662F45ECB70066D722 /* StructuredConcurrency in Frameworks */,
+				A5F553C33066BB820077443B /* IssueMonitoring in Frameworks */,
 				0CEC59AC2F08EBFC0009CC37 /* FoundationExt in Frameworks */,
 				EA11ACCE000000000000B001 /* ExternalAccessibility in Frameworks */,
 				0C62514C2F50808100A92259 /* HandoffService in Frameworks */,
@@ -375,47 +371,13 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C5C7E5710000000000000001 /* StructuredConcurrencyTestSupport in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		0C88C2662FEED6A800895B94 /* Products */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			name = Products;
-			sourceTree = "<group>";
-		};
-		0C88CD9C2FEED62E00895B94 /* Products */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			name = Products;
-			sourceTree = "<group>";
-		};
-		0CA02DE42F74DBAF0000CDC9 /* Products */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			name = Products;
-			sourceTree = "<group>";
-		};
-		0CA02DE62F74DBAF0000CDC9 /* Products */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			name = Products;
-			sourceTree = "<group>";
-		};
-		0CA02DE82F74DBAF0000CDC9 /* Products */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			name = Products;
-			sourceTree = "<group>";
-		};
 		0CEC59AA2F08EBFC0009CC37 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
@@ -537,7 +499,6 @@
 				0C148EF32EAA61E8002497EC /* XcmDefinition */,
 				0CA3EA872EAA711100C43F10 /* AssetHubSdk */,
 				A526CB2F2EBBA06D00D2987B /* PolkadotUI */,
-				E9C7172D2ECDD6730014841F /* JailbreakDetection */,
 				0CEC59AB2F08EBFC0009CC37 /* FoundationExt */,
 				EA11ACCE000000000000B002 /* ExternalAccessibility */,
 				A57CAF652F45ECB70066D722 /* StructuredConcurrency */,
@@ -558,6 +519,7 @@
 				CC0CC0602FBA000100CCAA06 /* EventCenter */,
 				2D0A51D62FFE94810095ECAE /* BackgroundExecution */,
 				B1A2C3D42F8A000000000002 /* BlurHash */,
+				A5F553C23066BB820077443B /* IssueMonitoring */,
 			);
 			productName = "polkadot-app";
 			productReference = A5EDAAD52E93ECAF005DDA62 /* polkadot-app.app */;
@@ -580,6 +542,9 @@
 				A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */,
 			);
 			name = "polkadot-appTests";
+			packageProductDependencies = (
+				C5C7E5710000000000000002 /* StructuredConcurrencyTestSupport */,
+			);
 			productName = "polkadot-appTests";
 			productReference = A5EDAAE32E93ECB0005DDA62 /* polkadot-appTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -624,28 +589,6 @@
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A5EDAAD62E93ECAF005DDA62 /* Products */;
 			projectDirPath = "";
-			projectReferences = (
-				{
-					ProductGroup = 0C88CD9C2FEED62E00895B94 /* Products */;
-					ProjectRef = 0C88CD992FEED62E00895B94 /* MetadataShortenerApi.xcodeproj */;
-				},
-				{
-					ProductGroup = 0C88C2662FEED6A800895B94 /* Products */;
-					ProjectRef = 0C88BDA32FEED6A800895B94 /* MetadataShortenerApi.xcodeproj */;
-				},
-				{
-					ProductGroup = 0CA02DE42F74DBAF0000CDC9 /* Products */;
-					ProjectRef = 0CA025802F74DBAF0000CDC9 /* ProtocolBuffers_iOS.xcodeproj */;
-				},
-				{
-					ProductGroup = 0CA02DE62F74DBAF0000CDC9 /* Products */;
-					ProjectRef = 0CA025812F74DBAF0000CDC9 /* ProtocolBuffers_OSX.xcodeproj */;
-				},
-				{
-					ProductGroup = 0CA02DE82F74DBAF0000CDC9 /* Products */;
-					ProjectRef = 0CA025822F74DBAF0000CDC9 /* ProtocolBuffers_tvOS.xcodeproj */;
-				},
-			);
 			projectRoot = "";
 			targets = (
 				A5EDAAD42E93ECAF005DDA62 /* polkadot-app */,
@@ -1115,6 +1058,8 @@
 		};
 		A539854B2E93F1A600A5BB13 /* DevCI */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.devci.xcconfig";
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -1351,6 +1296,8 @@
 		};
 		A5EDAAFB2E93ECB0005DDA62 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.debug.xcconfig";
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -1375,6 +1322,8 @@
 		};
 		A5EDAAFC2E93ECB0005DDA62 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.release.xcconfig";
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -1501,6 +1450,8 @@
 		};
 		A6F1C0102F00A10000AA0003 /* Safetynet */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.safetynet.xcconfig";
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -1685,6 +1636,8 @@
 		};
 		E97BAB582F7BDE6700ED9B80 /* Nightly */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = A5EDAAE62E93ECB0005DDA62 /* polkadot-appTests */;
+			baseConfigurationReferenceRelativePath = "Configs/polkadot-appTests.nightly.xcconfig";
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -1943,6 +1896,10 @@
 			isa = XCSwiftPackageProductDependency;
 			productName = Revive;
 		};
+		A5F553C23066BB820077443B /* IssueMonitoring */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = IssueMonitoring;
+		};
 		A5FB979D2F855E9D001A2D6A /* FoundationExt */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = FoundationExt;
@@ -1958,6 +1915,10 @@
 		B1A2C3D42F8A000000000002 /* BlurHash */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = BlurHash;
+		};
+		C5C7E5710000000000000002 /* StructuredConcurrencyTestSupport */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StructuredConcurrencyTestSupport;
 		};
 		CC0CC0202FBA000100CCAA02 /* ChainRegistry */ = {
 			isa = XCSwiftPackageProductDependency;
@@ -1978,10 +1939,6 @@
 		D0D0D0012FDA0000000D0001 /* DurableTransactions */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = DurableTransactions;
-		};
-		E9C7172D2ECDD6730014841F /* JailbreakDetection */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = JailbreakDetection;
 		};
 		EA11ACCE000000000000B002 /* ExternalAccessibility */ = {
 			isa = XCSwiftPackageProductDependency;

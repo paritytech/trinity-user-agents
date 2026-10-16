@@ -46,16 +46,17 @@ import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.AssetHub
 import io.paritytech.polkadotapp.design.components.icon.vectors.Bulletin
 import io.paritytech.polkadotapp.design.components.icon.vectors.People
+import io.paritytech.polkadotapp.design.components.icon.vectors.StatementStore
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.tooltip.NonFocusablePopupProperties
 import io.paritytech.polkadotapp.design.components.tooltip.PolkadotTooltip
 import io.paritytech.polkadotapp.design.components.tooltip.PolkadotTooltipContent
 import io.paritytech.polkadotapp.design.components.tooltip.TooltipAlignment
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
-import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainGlyph
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthIndicator
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthIndicatorsModel
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthItemModel
+import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.IndicatorRow
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ProductionBand
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
@@ -155,8 +156,9 @@ fun ChainHealthBar(
 }
 
 /**
- * One indicator per monitored chain. The inner glyph names the chain; the disc or ring around it draws
- * [ChainHealthIndicator]. Display-only — the row carries no press target of its own.
+ * One indicator per monitored chain, plus one for the statement store. The inner glyph names the row; the
+ * disc or ring around it draws [ChainHealthIndicator]. Display-only — the row carries no press target of
+ * its own.
  */
 @Composable
 fun ChainHealthIndicators(
@@ -170,21 +172,21 @@ fun ChainHealthIndicators(
             horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.tiny),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            model.chains.forEach { item -> ChainIndicator(item = item, indicatorSize = indicatorSize) }
+            model.rows.forEach { item -> RowIndicator(item = item, indicatorSize = indicatorSize) }
         }
     }
 }
 
 @Composable
-internal fun ChainIndicator(
+internal fun RowIndicator(
     modifier: Modifier = Modifier,
     item: ChainHealthItemModel,
     indicatorSize: ChainIndicatorSize,
 ) {
     val description = stringResource(
         RCommon.string.chain_health_indicator_description,
-        item.chainName,
-        stringResource(item.indicator.labelRes()),
+        stringResource(item.row.nameRes()),
+        stringResource(item.labelRes()),
     )
 
     Box(modifier = modifier) {
@@ -385,16 +387,17 @@ private fun scallopPath(centre: Offset, crest: Float, trough: Float): Path {
 private fun Glyph(item: ChainHealthItemModel, tint: Color, indicatorSize: ChainIndicatorSize) {
     NovaIcon(
         modifier = Modifier.requiredSize(indicatorSize.glyph),
-        imageVector = item.glyph.imageVector(),
+        imageVector = item.row.imageVector(),
         tint = tint,
         contentDescription = null,
     )
 }
 
-private fun ChainGlyph.imageVector(): ImageVector = when (this) {
-    ChainGlyph.People -> NovaIcons.People
-    ChainGlyph.AssetHub -> NovaIcons.AssetHub
-    ChainGlyph.Bulletin -> NovaIcons.Bulletin
+private fun IndicatorRow.imageVector(): ImageVector = when (this) {
+    IndicatorRow.People -> NovaIcons.People
+    IndicatorRow.AssetHub -> NovaIcons.AssetHub
+    IndicatorRow.Bulletin -> NovaIcons.Bulletin
+    IndicatorRow.StatementStore -> NovaIcons.StatementStore
 }
 
 @Preview(showBackground = true, backgroundColor = 0xFF000000)
@@ -405,14 +408,17 @@ private fun ChainHealthIndicatorsPreview() {
             modifier = Modifier.padding(PolkadotTheme.spacings.medium),
             model = ChainHealthIndicatorsModel(
                 persistentListOf(
-                    previewItem("People", ChainGlyph.People, ChainHealthIndicator.of(share = 1f, PREVIEW_BLOCK_TIME)),
-                    previewItem("Asset Hub", ChainGlyph.AssetHub, ChainHealthIndicator.Outage),
-                    previewItem("Bulletin", ChainGlyph.Bulletin, ChainHealthIndicator.of(share = 0.8f, PREVIEW_BLOCK_TIME)),
-                    previewItem("Warning", ChainGlyph.People, ChainHealthIndicator.of(share = 0.4f, PREVIEW_BLOCK_TIME)),
-                    previewItem("Error", ChainGlyph.AssetHub, ChainHealthIndicator.of(share = 0.2f, PREVIEW_BLOCK_TIME)),
-                    previewItem("Connecting", ChainGlyph.AssetHub, ChainHealthIndicator.Connecting),
-                    previewItem("Broken", ChainGlyph.Bulletin, ChainHealthIndicator.Disconnected),
-                    previewItem("Offline", ChainGlyph.People, ChainHealthIndicator.Offline),
+                    previewItem(IndicatorRow.People, ChainHealthIndicator.of(share = 1f, PREVIEW_BLOCK_TIME)),
+                    previewItem(IndicatorRow.AssetHub, ChainHealthIndicator.Outage),
+                    previewItem(IndicatorRow.Bulletin, ChainHealthIndicator.of(share = 0.8f, PREVIEW_BLOCK_TIME)),
+                    previewItem(IndicatorRow.People, ChainHealthIndicator.of(share = 0.4f, PREVIEW_BLOCK_TIME)),
+                    previewItem(IndicatorRow.AssetHub, ChainHealthIndicator.of(share = 0.2f, PREVIEW_BLOCK_TIME)),
+                    previewItem(IndicatorRow.AssetHub, ChainHealthIndicator.Connecting),
+                    previewItem(IndicatorRow.Bulletin, ChainHealthIndicator.Disconnected),
+                    previewItem(IndicatorRow.People, ChainHealthIndicator.Offline),
+                    previewItem(IndicatorRow.StatementStore, ChainHealthIndicator.Healthy(liveness = null)),
+                    previewItem(IndicatorRow.StatementStore, ChainHealthIndicator.Connecting),
+                    previewItem(IndicatorRow.StatementStore, ChainHealthIndicator.Disconnected),
                 ),
             ),
         )
@@ -434,7 +440,7 @@ private fun ChainProductionScalePreview() {
                         produced
                             .map { blocks ->
                                 val share = blocks.toFloat() / PREVIEW_EXPECTED_BLOCKS
-                                previewItem("$blocks", ChainGlyph.People, ChainHealthIndicator.of(share, PREVIEW_BLOCK_TIME))
+                                previewItem(IndicatorRow.People, ChainHealthIndicator.of(share, PREVIEW_BLOCK_TIME))
                             }
                             .toImmutableList(),
                     ),
@@ -444,9 +450,7 @@ private fun ChainProductionScalePreview() {
     }
 }
 
-private fun previewItem(name: String, glyph: ChainGlyph, indicator: ChainHealthIndicator) = ChainHealthItemModel(
-    chainId = name,
-    chainName = name,
-    glyph = glyph,
+private fun previewItem(row: IndicatorRow, indicator: ChainHealthIndicator) = ChainHealthItemModel(
+    row = row,
     indicator = indicator,
 )

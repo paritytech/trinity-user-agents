@@ -20,6 +20,7 @@ import io.paritytech.polkadotapp.common.utils.shareInBackground
 import io.paritytech.polkadotapp.common.utils.stateInBackground
 import io.paritytech.polkadotapp.feature_chats_api.domain.chatRequest.ChatRequestServiceCoordinator
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatBotStateController
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatOverlay
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
 import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.ExternalPaymentWorkerStarter
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageServiceStarter
@@ -63,18 +64,20 @@ class RootViewModel @Inject constructor(
     private val jwtAuthWarmUpService: JwtAuthWarmUpService,
     chatBotStateController: ChatBotStateController,
     chatEngine: ChatEngine,
+    featureOverlays: Set<@JvmSuppressWildcards ChatOverlay>,
     observeAccountOnboardingStatus: ObserveAccountOnboardingStatusUseCase,
     bottomNavHeightProvider: BottomNavHeightProvider,
     chainHealthMixinFactory: ChainHealthMixin.Factory,
     coroutineDispatchers: CoroutineDispatchers,
 ) : BaseViewModel(), RootContract {
-    override val chatOverlays = chatEngine.observeActiveOverlays()
+    // Prepended: each overlay gets its own padded box, so appending would push the extension overlays up.
+    override val chatOverlays = chatEngine.observeActiveOverlays().map { featureOverlays.toList() + it }
     override val isOnboarded = observeAccountOnboardingStatus().map { it.isOnboarded }
     override val bottomNavHeight = bottomNavHeightProvider.heightDp
     override val chainsHealth = chainHealthMixinFactory.create(this).model
 
     private val networkStatusTooltipDismissed = MutableStateFlow(!rootInteractor.shouldShowNetworkStatusTooltip())
-    private val chainRingsOnScreen = chainsHealth.map { it.chains.isNotEmpty() }
+    private val chainRingsOnScreen = chainsHealth.map { it.rows.isNotEmpty() }
 
     override val isNetworkStatusTooltipVisible = combine(
         networkStatusTooltipDismissed,
@@ -88,6 +91,11 @@ class RootViewModel @Inject constructor(
 
     init {
         with(servicesScope) {
+            // Durability must not hang off the remote config fetch: a failed sync would otherwise skip
+            // handoff release and transaction recovery for the whole session.
+            coinageServiceStarter.start()
+            externalPaymentWorkerStarter.start()
+
             launch {
                 remoteConfigService.sync()
                     .onSuccess { launchServicesBasedOnRemoteConfig() }
@@ -95,7 +103,7 @@ class RootViewModel @Inject constructor(
 
             launch { jwtAuthWarmUpService.warmUpToken() }
             launch { chatRequestServiceCoordinator.runChatRequestServices() }
-            launch { chatBotStateController.activateDefaultBots() }
+            launch { chatBotStateController.applyDefaultBotStates() }
             launch { rootInteractor.printAccountAddresses() }
             launch { checkDevReset() }
         }
@@ -109,8 +117,6 @@ class RootViewModel @Inject constructor(
             launch { syncPriceCurrencyChange.startObserving() }
             launch { statementStoreSlotAllocator.scheduleSlotRenewals() }
 
-            coinageServiceStarter.start()
-            externalPaymentWorkerStarter.start()
             rootInteractor.startUpdateSystems().shareInBackground()
         }
         warmUpWebProducts(servicesScope)

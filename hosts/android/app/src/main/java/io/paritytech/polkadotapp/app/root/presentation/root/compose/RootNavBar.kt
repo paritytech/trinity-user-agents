@@ -1,7 +1,9 @@
 package io.paritytech.polkadotapp.app.root.presentation.root.compose
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -14,33 +16,47 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
@@ -71,11 +87,13 @@ import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.design.utils.modifyIf
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthPanel
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthIndicatorsModel
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.TabInfo
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableMap
+import kotlinx.coroutines.flow.first
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private const val APPS_PER_ROW = 5
@@ -91,6 +109,8 @@ private val CenterPillHeight = 54.dp
 
 // Corner radius shared by the bar (a pill at its height) and the products container — same rounding.
 private val NavBarCornerRadius = 32.dp
+
+private const val CAMERA_START_AT_OPENING_FRACTION = 0.3f
 
 private val AppMenuIconSize = 20.dp
 private val AppMenuShadowElevation = 8.dp
@@ -123,8 +143,9 @@ fun RootNavBar(
     onAppClose: (Long) -> Unit,
     onScanClicked: () -> Unit,
     onScanHandled: (navigate: (() -> Unit)?) -> Unit,
-    onUsernameSearchClick: () -> Unit,
+    onScanDismiss: () -> Unit,
     onScannerTooltipDismiss: () -> Unit,
+    onRestingHeightChange: (Dp) -> Unit,
 ) {
     val availableTabs = BottomTab.availableEntries
     val fullTabBar = FeatureOption.FULL_TAB_BAR.isEnabled
@@ -134,16 +155,39 @@ fun RootNavBar(
     val networkStatusSlot = availableTabs.size
     val selectedIndex = if (networkStatusUp) networkStatusSlot else availableTabs.indexOf(currentTab).coerceAtLeast(0)
 
+    val scanPanel = updateTransition(targetState = scanExpanded, label = "ScanPanel")
+    val scanPanelShown = scanPanel.currentState || scanPanel.targetState
+    val focusManager = LocalFocusManager.current
+
+    // The scan panel holds the username field. Its focus goes as soon as the panel starts closing, so the keyboard
+    // leaves while the panel animates out and the bar, still padded above it, rides down with it.
+    LaunchedEffect(scanExpanded) {
+        if (!scanExpanded) focusManager.clearFocus()
+    }
+
+    val density = LocalDensity.current
+    var tabRowHeight by remember { mutableStateOf(0.dp) }
+    val topPadding = PolkadotTheme.spacings.small
+    val bottomPadding = PolkadotTheme.spacings.small
+
+    val navigationBarsBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val currentOnRestingHeightChange by rememberUpdatedState(onRestingHeightChange)
+    LaunchedEffect(tabRowHeight, navigationBarsBottom) {
+        if (tabRowHeight > 0.dp) {
+            currentOnRestingHeightChange(topPadding + tabRowHeight + bottomPadding + navigationBarsBottom)
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = PolkadotTheme.spacings.small)
-            .navigationBarsPadding(),
+            .padding(top = topPadding, bottom = bottomPadding)
+            .navigationBarsPadding()
+            .modifyIf(scanPanelShown) {
+                windowInsetsPadding(WindowInsets.ime.exclude(WindowInsets(bottom = tabRowHeight + bottomPadding)))
+            },
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        ExpandablePanel(visible = scanExpanded) {
-            ScanPanel(onScanHandled = onScanHandled, onUsernameSearchClick = onUsernameSearchClick)
-        }
         ExpandablePanel(visible = appsExpanded) {
             OpenAppsRow(apps = apps, onAppClick = onAppClick, onAppClose = onAppClose)
         }
@@ -153,58 +197,114 @@ fun RootNavBar(
             }
         }
 
-        PolkadotNavigationBar(
-            selectedIndex = selectedIndex,
-            itemCount = availableTabs.size + if (networkStatusItem) 1 else 0,
-            shape = RoundedCornerShape(NavBarCornerRadius),
-            fillWidth = pillBar,
-            centerContent = {
-                if (pillBar) {
-                    CenterPill(
-                        scannerTooltipVisible = scannerTooltipVisible,
-                        scanActive = scanExpanded,
-                        onScanClicked = onScanClicked,
-                        onScannerTooltipDismiss = onScannerTooltipDismiss,
-                        tabsVisible = FeatureOption.BROWSE_TAB.isEnabled,
-                        tabsCount = apps.size,
-                        appsExpanded = appsExpanded,
-                        onTabsClicked = onCountClicked,
-                    )
-                } else {
-                    ScannerButton(
-                        scannerTooltipVisible = scannerTooltipVisible,
-                        active = scanExpanded,
-                        onScanClicked = onScanClicked,
-                        onScannerTooltipDismiss = onScannerTooltipDismiss,
-                        shape = PolkadotTheme.shapes.full,
-                    )
+        // Weighted so that on a short screen the panel, not the bar below it, gives up height.
+        BarContainer(modifier = Modifier.weight(1f, fill = false)) {
+            scanPanel.AnimatedVisibility(
+                visible = { it },
+                modifier = Modifier.weight(1f, fill = false),
+                enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
+                exit = shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut(),
+            ) {
+                var cameraActive by remember { mutableStateOf(false) }
+                LaunchedEffect(scanExpanded) {
+                    if (scanExpanded) {
+                        snapshotFlow {
+                            val playTime = scanPanel.playTimeNanos
+                            scanPanel.currentState ||
+                                (playTime > 0 && playTime >= scanPanel.totalDurationNanos * CAMERA_START_AT_OPENING_FRACTION)
+                        }.first { it }
+                        cameraActive = true
+                    }
                 }
-            },
-        ) {
-            availableTabs.fastForEach { tab ->
-                PolkadotNavigationBarItem(
-                    selected = tab == currentTab && !networkStatusUp,
-                    onClick = { onTabSelected(tab) },
-                    icon = tab.icon(),
-                    label = if (fullTabBar) tab.title() else null,
-                    hasNotification = tabWarnings[tab] == true,
+
+                BackHandler(enabled = scanExpanded, onBack = onScanDismiss)
+
+                val dragState = rememberScanPanelDragState(onDismiss = onScanDismiss)
+                LaunchedEffect(scanExpanded) {
+                    if (scanExpanded) dragState.reset()
+                }
+
+                val panelPadding = PolkadotTheme.spacings.small
+                ScanPanel(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .dragToDismiss(dragState)
+                        .padding(panelPadding),
+                    scannerShape = RoundedCornerShape(NavBarCornerRadius - panelPadding),
+                    cameraActive = cameraActive,
+                    onScanHandled = onScanHandled,
                 )
             }
-            if (networkStatusItem) {
-                PolkadotNavigationBarItem(
-                    selected = networkStatusExpanded,
-                    onClick = onNetworkStatusClicked,
-                    label = null,
-                ) { contentColor ->
-                    NovaIcon(
-                        modifier = Modifier.fillMaxSize(),
-                        imageVector = NovaIcons.NetworkStatus,
-                        tint = contentColor,
-                        contentDescription = stringResource(RCommon.string.chain_health_panel_title),
+
+            PolkadotNavigationBar(
+                modifier = Modifier
+                    .onSizeChanged { tabRowHeight = with(density) { it.height.toDp() } },
+                selectedIndex = selectedIndex,
+                itemCount = availableTabs.size + if (networkStatusItem) 1 else 0,
+                shape = RoundedCornerShape(NavBarCornerRadius),
+                color = Color.Transparent,
+                border = null,
+                fillWidth = pillBar,
+                centerContent = {
+                    if (pillBar) {
+                        CenterPill(
+                            scannerTooltipVisible = scannerTooltipVisible,
+                            scanActive = scanExpanded,
+                            onScanClicked = onScanClicked,
+                            onScannerTooltipDismiss = onScannerTooltipDismiss,
+                            tabsVisible = FeatureOption.BROWSE_TAB.isEnabled,
+                            tabsCount = apps.size,
+                            appsExpanded = appsExpanded,
+                            onTabsClicked = onCountClicked,
+                        )
+                    } else {
+                        ScannerButton(
+                            scannerTooltipVisible = scannerTooltipVisible,
+                            active = scanExpanded,
+                            onScanClicked = onScanClicked,
+                            onScannerTooltipDismiss = onScannerTooltipDismiss,
+                            shape = PolkadotTheme.shapes.full,
+                        )
+                    }
+                },
+            ) {
+                availableTabs.fastForEach { tab ->
+                    PolkadotNavigationBarItem(
+                        selected = tab == currentTab && !networkStatusUp,
+                        onClick = { onTabSelected(tab) },
+                        icon = tab.icon(),
+                        label = if (fullTabBar) tab.title() else null,
+                        hasNotification = tabWarnings[tab] == true,
                     )
+                }
+                if (networkStatusItem) {
+                    PolkadotNavigationBarItem(
+                        selected = networkStatusExpanded,
+                        onClick = onNetworkStatusClicked,
+                        label = null,
+                    ) { contentColor ->
+                        NovaIcon(
+                            modifier = Modifier.fillMaxSize(),
+                            imageVector = NovaIcons.NetworkStatus,
+                            tint = contentColor,
+                            contentDescription = stringResource(RCommon.string.chain_health_panel_title),
+                        )
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun BarContainer(modifier: Modifier, content: @Composable ColumnScope.() -> Unit) {
+    PolkadotSurface(
+        modifier = modifier,
+        shape = RoundedCornerShape(NavBarCornerRadius),
+        color = PolkadotTheme.colors.bg.surface.container,
+        border = BorderStroke(PolkadotTheme.borders.default, PolkadotTheme.colors.stroke.primary),
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, content = content)
     }
 }
 
@@ -295,10 +395,9 @@ private fun ScannerButton(
 ) {
     Box(
         modifier = Modifier
-            .height(CenterPillHeight)
+            .size(CenterPillHeight)
             .clip(shape)
-            .clickable(onClick = onScanClicked)
-            .padding(horizontal = PolkadotTheme.spacings.medium),
+            .clickable(onClick = onScanClicked),
         contentAlignment = Alignment.Center,
     ) {
         ScannerIconWithTooltip(

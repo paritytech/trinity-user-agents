@@ -13,6 +13,7 @@ final class EmbeddedQRScannerViewLayout: QRScannerViewLayout {
     }
 
     let previewView = CameraPreviewView()
+    private var previewSide: CGFloat = 0
 
     override func setupLayout() {
         backgroundColor = .clear
@@ -29,9 +30,6 @@ final class EmbeddedQRScannerViewLayout: QRScannerViewLayout {
         }
 
         qrFrameView.addSubview(previewView)
-        previewView.snp.makeConstraints { make in
-            make.edges.equalToSuperview()
-        }
 
         messageLabel.textColor = .fgPrimary
         addSubview(messageLabel)
@@ -47,9 +45,34 @@ final class EmbeddedQRScannerViewLayout: QRScannerViewLayout {
         }
     }
 
-    /// Hides the overlay message while the preview is a thumbnail. The reticle, title and dimming
-    /// cut-out are already absent from this layout, so nothing else needs suppressing.
-    func setPreviewCompact(_ compact: Bool) {
-        messageLabel.isHidden = compact
+    /// Drops the preview back to the placeholder while the session is stopped: a restarted session
+    /// renders black until its first frame, which would otherwise blink through the expand.
+    /// `didAttachPreview` fades it back when the presenter reports the restarted session.
+    func hidePreview() {
+        qrFrameView.alpha = 0
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layoutPreview()
+    }
+}
+
+private extension EmbeddedQRScannerViewLayout {
+    /// A resized `AVCaptureVideoPreviewLayer` lays its video out at the final size immediately, pinned to
+    /// the top-left, so the preview keeps the widest size it has had and is scaled around its center.
+    func layoutPreview() {
+        let side = qrFrameView.bounds.width
+
+        guard side > 0 else {
+            return
+        }
+
+        previewSide = max(previewSide, side)
+        previewView.bounds = CGRect(x: 0, y: 0, width: previewSide, height: previewSide)
+        previewView.center = CGPoint(x: qrFrameView.bounds.midX, y: qrFrameView.bounds.midY)
+
+        let scale = side / previewSide
+        previewView.transform = CGAffineTransform(scaleX: scale, y: scale)
     }
 }

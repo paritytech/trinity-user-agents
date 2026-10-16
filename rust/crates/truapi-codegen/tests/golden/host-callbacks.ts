@@ -10,6 +10,7 @@ import {
   AllocatableResource,
   Bytes32,
   ChainIdentifier,
+  CodeFormat,
   HostAccountSignVrfRequest,
   HostDevicePermissionRequest,
   HostSignPayloadRequest,
@@ -33,14 +34,24 @@ import type {
   HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
+  HostChatSetRoomFooterRequest,
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
   HostLocalStorageChangeItem,
   HostLocaleSubscribeItem,
+  HostPaymentBalanceSubscribeError,
+  HostPaymentBalanceSubscribeItem,
+  HostPaymentRequest,
+  HostPaymentStatusSubscribeError,
+  HostPaymentStatusSubscribeItem,
+  HostPaymentTopUpRequest,
+  HostPaymentTopUpStatusSubscribeError,
+  HostPaymentTopUpStatusSubscribeItem,
   HostPocketListSubscribeItem,
   HostPocketRemoveCardRequest,
   HostPushNotificationRequest,
   HostPushNotificationResponse,
+  HostScannerScanRequest,
   HostThemeSubscribeItem,
   HostWorkerBeginOperationResponse,
   Result,
@@ -246,6 +257,18 @@ export type CreateTransactionReview =
   | { tag: "LegacyAccount"; value: LegacyAccountTxPayload };
 
 /**
+ * A kind of signature a product makes with another product's account.
+ *
+ * The user approves each kind separately: approving one never lets another
+ * through without a prompt.
+ */
+export type CrossProductSignatureKind =
+  | "Payload"
+  | "Transaction"
+  | "Raw"
+  | "StatementProof";
+
+/**
  * What the operating system currently says about a device capability.
  *
  * Distinct from `PermissionAuthorizationStatus`, which is the product-scoped
@@ -258,6 +281,15 @@ export type DevicePermissionStatus =
   | "Denied"
   | "NotDetermined"
   | "NotApplicable";
+
+/**
+ * What the host did with a request to show or hide the expanded card face.
+ */
+export type ExpandedCardFaceOutcome =
+  | "Applied"
+  | "NotPresented"
+  | "UserMoving"
+  | "Unsupported";
 
 /**
  * One chain a host serves: a protocol chain role mapped to the concrete
@@ -353,6 +385,30 @@ export type HostContactPick =
   | { tag: "Unsupported"; value?: undefined };
 
 /**
+ * How the host's scanner ended.
+ */
+export type HostScan =
+  /**
+   * The user scanned a code the request accepts.
+   */
+  | { tag: "Scanned"; value: { text: string; format: CodeFormat } }
+  /**
+   * The user closed the viewfinder without scanning.
+   */
+  | { tag: "Dismissed"; value?: undefined }
+  /**
+   * The device has no camera, or the user refused the host application one.
+   * The host has already told the user how to turn it on.
+   */
+  | { tag: "CameraUnavailable"; value?: undefined }
+  /**
+   * The requesting App or Widget is not the screen the user sees, so the
+   * host opened nothing. A Worker's request was already checked by the core
+   * and is never answered this way.
+   */
+  | { tag: "NotVisible"; value?: undefined };
+
+/**
  * Review shown before a product learns the user's primary identity.
  */
 export interface IdentityDisclosureReview {
@@ -388,7 +444,16 @@ export type PermissionAuthorizationRequest =
   /**
    * Product-scoped permission to access another product's account context.
    */
-  | { tag: "AccountAccess"; value: { targetProductId: string } };
+  | { tag: "AccountAccess"; value: { targetProductId: string } }
+  /**
+   * Product-scoped approval to make one kind of signature with another
+   * product's accounts. It is held in memory only and ends when the product
+   * execution closes.
+   */
+  | {
+      tag: "CrossProductSignature";
+      value: { targetProductId: string; kind: CrossProductSignatureKind };
+    };
 
 /**
  * Authorization status for a permission request.
@@ -405,16 +470,6 @@ export type PermissionAuthorizationStatus =
  * User decision including how long an authorization should last.
  */
 export type PermissionDecision = "AllowOnce" | "AllowAlways" | "Deny";
-
-/**
- * Review shown before a preimage is submitted.
- */
-export interface PreimageSubmitReview {
-  /**
-   * Size of the preimage in bytes.
-   */
-  size: bigint;
-}
 
 /**
  * Product identity attached to one product-facing TrUAPI connection.
@@ -651,10 +706,6 @@ export type UserConfirmationReview =
    */
   | { tag: "ResourceAllocation"; value: ResourceAllocationReview }
   /**
-   * Submit a preimage to the host-selected backend.
-   */
-  | { tag: "PreimageSubmit"; value: PreimageSubmitReview }
-  /**
    * Allow a product to access another product account.
    */
   | { tag: "AccountAccess"; value: AccountAccessReview }
@@ -791,6 +842,18 @@ export const CreateTransactionReview: S.Codec<CreateTransactionReview> = S.lazy(
 );
 
 /**
+ * A kind of signature a product makes with another product's account.
+ *
+ * The user approves each kind separately: approving one never lets another
+ * through without a prompt.
+ */
+export const CrossProductSignatureKind: S.Codec<CrossProductSignatureKind> =
+  S.lazy(
+    (): S.Codec<CrossProductSignatureKind> =>
+      S.Status("Payload", "Transaction", "Raw", "StatementProof"),
+  );
+
+/**
  * What the operating system currently says about a device capability.
  *
  * Distinct from `PermissionAuthorizationStatus`, which is the product-scoped
@@ -801,6 +864,14 @@ export const CreateTransactionReview: S.Codec<CreateTransactionReview> = S.lazy(
 export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
   (): S.Codec<DevicePermissionStatus> =>
     S.Status("Granted", "Denied", "NotDetermined", "NotApplicable"),
+);
+
+/**
+ * What the host did with a request to show or hide the expanded card face.
+ */
+export const ExpandedCardFaceOutcome: S.Codec<ExpandedCardFaceOutcome> = S.lazy(
+  (): S.Codec<ExpandedCardFaceOutcome> =>
+    S.Status("Applied", "NotPresented", "UserMoving", "Unsupported"),
 );
 
 /**
@@ -869,6 +940,22 @@ export const HostContactPick: S.Codec<HostContactPick> = S.lazy(
 );
 
 /**
+ * How the host's scanner ended.
+ */
+export const HostScan: S.Codec<HostScan> = S.lazy(
+  (): S.Codec<HostScan> =>
+    S.TaggedUnion({
+      Scanned: S.Struct({ text: S.str, format: CodeFormat }) as S.Codec<{
+        text: string;
+        format: CodeFormat;
+      }>,
+      Dismissed: S._void,
+      CameraUnavailable: S._void,
+      NotVisible: S._void,
+    }),
+);
+
+/**
  * Review shown before a product learns the user's primary identity.
  */
 export const IdentityDisclosureReview: S.Codec<IdentityDisclosureReview> =
@@ -899,6 +986,13 @@ export const PermissionAuthorizationRequest: S.Codec<PermissionAuthorizationRequ
         AccountAccess: S.Struct({ targetProductId: S.str }) as S.Codec<{
           targetProductId: string;
         }>,
+        CrossProductSignature: S.Struct({
+          targetProductId: S.str,
+          kind: CrossProductSignatureKind,
+        }) as S.Codec<{
+          targetProductId: string;
+          kind: CrossProductSignatureKind;
+        }>,
       }),
   );
 
@@ -920,14 +1014,6 @@ export const PermissionAuthorizationStatus: S.Codec<PermissionAuthorizationStatu
 export const PermissionDecision: S.Codec<PermissionDecision> = S.lazy(
   (): S.Codec<PermissionDecision> =>
     S.Status("AllowOnce", "AllowAlways", "Deny"),
-);
-
-/**
- * Review shown before a preimage is submitted.
- */
-export const PreimageSubmitReview: S.Codec<PreimageSubmitReview> = S.lazy(
-  (): S.Codec<PreimageSubmitReview> =>
-    S.Struct({ size: S.u64 }) as S.Codec<PreimageSubmitReview>,
 );
 
 /**
@@ -1074,19 +1160,18 @@ export const StatementStoreProductSignReview: S.Codec<StatementStoreProductSignR
  */
 export const UserConfirmationReview: S.Codec<UserConfirmationReview> = S.lazy(
   (): S.Codec<UserConfirmationReview> =>
-    S.TaggedUnion({
-      SignPayload: SignPayloadReview,
-      SignRaw: SignRawReview,
-      StatementStoreProductSign: StatementStoreProductSignReview,
-      CreateTransaction: CreateTransactionReview,
-      AccountAlias: AccountAliasReview,
-      CreateProof: CreateProofReview,
-      IdentityDisclosure: IdentityDisclosureReview,
-      ResourceAllocation: ResourceAllocationReview,
-      PreimageSubmit: PreimageSubmitReview,
-      AccountAccess: AccountAccessReview,
-      SignVrf: SignVrfReview,
-      ProductSubtree: ProductSubtreeReview,
+    S.indexedTaggedUnion({
+      SignPayload: [0, SignPayloadReview] as const,
+      SignRaw: [1, SignRawReview] as const,
+      StatementStoreProductSign: [2, StatementStoreProductSignReview] as const,
+      CreateTransaction: [3, CreateTransactionReview] as const,
+      AccountAlias: [4, AccountAliasReview] as const,
+      CreateProof: [5, CreateProofReview] as const,
+      IdentityDisclosure: [6, IdentityDisclosureReview] as const,
+      ResourceAllocation: [7, ResourceAllocationReview] as const,
+      AccountAccess: [9, AccountAccessReview] as const,
+      SignVrf: [10, SignVrfReview] as const,
+      ProductSubtree: [11, ProductSubtreeReview] as const,
     }),
 );
 
@@ -1102,6 +1187,26 @@ export interface AuthPresenter {
    * no auth UI.
    */
   authStateChanged?(state: AuthState): void;
+}
+
+/**
+ * Host-implemented balance view: what a payment request can spend right now,
+ * the figure the host checks a payment against. Optional: a host that omits
+ * it leaves balance subscriptions answered `Unsupported`.
+ *
+ * The core asks for the product's balance access before calling here.
+ */
+export interface BalancePlatform {
+  /**
+   * Emit the balance of `purse` (``undefined`` for the main purse) now and on
+   * every change.
+   */
+  subscribeBalance(
+    product: ProductContext,
+    purse: number | undefined,
+  ): AsyncIterable<
+    Result<HostPaymentBalanceSubscribeItem, HostPaymentBalanceSubscribeError>
+  >;
 }
 
 /**
@@ -1127,9 +1232,9 @@ export interface ChainProvider {
  * answered `Unsupported`. See `OptionalPlatform`.
  *
  * The core bounds and screens the product-supplied fields it forwards. Ids,
- * names and icons on `create_chat_room`, `register_chat_bot` and
- * `post_chat_message` are NFC-normalized and rejected for control and bidi
- * characters. Message bodies are bounded and screened but pass through
+ * names and icons on `create_chat_room`, `register_chat_bot`,
+ * `post_chat_message` and `set_chat_room_footer` are NFC-normalized and rejected for control and
+ * bidi characters. Message bodies are bounded and screened but pass through
  * byte-for-byte, keeping line breaks and tabs, so a product reads back the
  * bytes it sent. Counts and byte budgets are enforced, and any URL a host may
  * fetch or open is restricted to `https` or an inline raster image and
@@ -1173,6 +1278,17 @@ export interface ChatPlatform {
     product: ProductContext,
     request: HostChatPostMessageRequest,
   ): Promise<HostChatPostMessageResponse>;
+
+  /**
+   * Set what a product-scoped room shows below its messages, for the room
+   * as it is now and every later time it is shown. The core has already
+   * checked the product created the room. A room the product never set a
+   * footer on shows the text input.
+   */
+  setChatRoomFooter(
+    product: ProductContext,
+    request: HostChatSetRoomFooterRequest,
+  ): Promise<void>;
 
   /**
    * Emit the current product-scoped room list and later replacements.
@@ -1370,6 +1486,20 @@ export interface CoreStorage {
 }
 
 /**
+ * Host control of the card face drawn above an opened card's Widget.
+ *
+ * Carried per connection on `ConnectionAdapters`, because the host owns one
+ * drawer per product execution. A connection without one tells products
+ * `Unsupported`.
+ */
+export interface ExpandedCardHost {
+  /**
+   * Show (`true`) or hide (`false`) the face above the calling Widget.
+   */
+  setExpandedCardFaceShown(shown: boolean): Promise<ExpandedCardFaceOutcome>;
+}
+
+/**
  * Feature-support probing. The host answers whether it can service a given
  * capability (currently scoped to per-chain support).
  */
@@ -1386,6 +1516,37 @@ export interface Features {
    * `get_chain_info` requests against the returned set.
    */
   supportedChains(): Promise<HostChainSet>;
+}
+
+/**
+ * Host-implemented adapter that holds a product's next-game reminder.
+ * Optional: a host that omits it leaves Game requests answered `Unsupported`.
+ * See `OptionalPlatform`.
+ *
+ * The core serves only the game product and refuses a start that is not in
+ * the future before it calls here; it asks for no per-product consent. The
+ * host asks the OS for what the reminder needs, rings an alarm where the OS
+ * allows one and delivers an ordinary notification otherwise, and may add the
+ * game to the user's calendar. A host keeps one reminder per product: a
+ * schedule replaces the reminder the same product already holds and leaves
+ * other products' reminders alone. The host keeps each reminder across app
+ * kill and device reboot and drops it once its game has started.
+ */
+export interface GamePlatform {
+  /**
+   * Hold `starts_at` (Unix milliseconds, UTC) as the product's reminder,
+   * replacing any it holds. An error, including an OS that allows neither
+   * alarms nor notifications, reaches the product as a host failure.
+   */
+  scheduleGameReminder(
+    product: ProductContext,
+    startsAt: bigint,
+  ): Promise<void>;
+
+  /**
+   * Drop the product's reminder. Idempotent: dropping none succeeds.
+   */
+  cancelGameReminder(product: ProductContext): Promise<void>;
 }
 
 /**
@@ -1470,6 +1631,38 @@ export interface PairingHostAdmin {
    * decoding that blob into live `SessionState` / `AuthState`.
    */
   notifySessionStoreChanged(): void;
+}
+
+/**
+ * Host-implemented payment engine: pays from the user's balance to an
+ * account, once the user approves. Optional: a host that omits it leaves
+ * payment requests answered `Unsupported`.
+ *
+ * The core hashes the product into the id before calling, so ids never
+ * collide across products. The host owns the approval sheet, the transfer
+ * and its persistence.
+ */
+export interface PaymentPlatform {
+  /**
+   * Ask the user to approve `request`. Returns once the user has decided:
+   * `Ok` when they authorized it and the host took it on; the payment's
+   * outcome arrives through its status.
+   */
+  requestPayment(
+    product: ProductContext,
+    request: HostPaymentRequest,
+  ): Promise<void>;
+
+  /**
+   * Emit a payment's current status and every later one, ending after a
+   * terminal status.
+   */
+  subscribePaymentStatus(
+    product: ProductContext,
+    id: Bytes32,
+  ): AsyncIterable<
+    Result<HostPaymentStatusSubscribeItem, HostPaymentStatusSubscribeError>
+  >;
 }
 
 /**
@@ -1589,9 +1782,11 @@ export interface ProductOperations {
 /**
  * Product-scoped key-value storage.
  *
- * The core namespaces product keys before calling this trait. Host
- * implementations may treat `key` as opaque or decode it with
- * `ProductStorageKey` when their physical storage is separated by product.
+ * The core namespaces product keys before calling this trait, and the key
+ * names the product that owns the value. Host implementations may treat
+ * `key` as opaque in one shared store. A host that separates physical storage
+ * by product must decode the owner with `ProductStorageKey` on read, since
+ * that owner is another product on a granted foreign read.
  * Storage errors are pinned to `v01` rather than taken from `truapi::latest`.
  * The read error gained a cross-product refusal in v0.2 that the core decides
  * before it ever calls a host, so a host has no way to produce it and should
@@ -1601,10 +1796,11 @@ export interface ProductStorage {
   /**
    * Read a value by key.
    *
-   * Always the calling product's own storage. A read addressed at another
-   * product is adjudicated in the core against that product's manifest and
-   * refused there, so a host is never asked to enforce a grant and has no
-   * variant for one.
+   * `key` belongs to the calling product, or to another product the core
+   * has already found granting the caller read access in its manifest. The
+   * core refuses every other foreign read itself, so a host is never asked
+   * to enforce a grant and has no variant for one. Writes and clears always
+   * carry the calling product's own keys.
    */
   read(key: string): Promise<Uint8Array | undefined>;
 
@@ -1633,6 +1829,28 @@ export interface ProductStorage {
 }
 
 /**
+ * Host-owned viewfinder for QR codes and barcodes. Optional. The Swift and
+ * Kotlin bridges and the JS `scanner` callbacks follow the same rules.
+ *
+ * - Title the viewfinder with the product id. Show `request.hint` under it as the product's words.
+ * - Pass every code the camera reads to a `ScanFilter` built from `request`, and never follow a
+ *   scanned link.
+ * - Answer `HostScan::NotVisible` for an App or Widget that is not on screen. A Worker reaching
+ *   the host already passed the core's tap check.
+ * - Close the viewfinder when the core drops the future, and close any still open before opening
+ *   another. A JS host is not told about a drop.
+ */
+export interface ScannerPlatform {
+  /**
+   * Open the viewfinder on behalf of `product` and wait for the user.
+   */
+  scanCode(
+    product: ProductContext,
+    request: HostScannerScanRequest,
+  ): Promise<HostScan>;
+}
+
+/**
  * Host theme source.
  */
 export interface ThemeHost {
@@ -1641,6 +1859,39 @@ export interface ThemeHost {
    * named themes report `ThemeName::Default`.
    */
   subscribeTheme(): AsyncIterable<Result<HostThemeSubscribeItem, GenericError>>;
+}
+
+/**
+ * Host-implemented top-up engine: claims a source's funds into the user's
+ * balance through the host's coinage onboarding. Optional: a host that omits
+ * it leaves top-ups answered `Unsupported`.
+ *
+ * The core validates the source keys and hashes the product into the id
+ * before calling, so ids never collide across products. The host owns
+ * retries, partial claims and persistence.
+ */
+export interface TopUpPlatform {
+  /**
+   * Start a top-up. Returns once the host has accepted it.
+   */
+  topUp(
+    product: ProductContext,
+    request: HostPaymentTopUpRequest,
+  ): Promise<void>;
+
+  /**
+   * Emit a top-up's current status and every later one, ending after a
+   * terminal status.
+   */
+  subscribeTopUpStatus(
+    product: ProductContext,
+    id: Bytes32,
+  ): AsyncIterable<
+    Result<
+      HostPaymentTopUpStatusSubscribeItem,
+      HostPaymentTopUpStatusSubscribeError
+    >
+  >;
 }
 
 /**
@@ -1685,8 +1936,10 @@ export interface HostCallbacks {
   productOperations: ProductOperations;
   chat?: ChatPlatform;
   contacts?: ContactsPlatform;
+  game?: GamePlatform;
   permissionStatus?: PermissionStatusHost;
   pocket?: PocketPlatform;
+  scanner?: ScannerPlatform;
 }
 
 export interface RequiredHostCallbacks {
@@ -1705,6 +1958,8 @@ export interface RequiredHostCallbacks {
   productOperations: Required<ProductOperations>;
   chat?: Required<ChatPlatform>;
   contacts?: Required<ContactsPlatform>;
+  game?: Required<GamePlatform>;
   permissionStatus?: Required<PermissionStatusHost>;
   pocket?: Required<PocketPlatform>;
+  scanner?: Required<ScannerPlatform>;
 }

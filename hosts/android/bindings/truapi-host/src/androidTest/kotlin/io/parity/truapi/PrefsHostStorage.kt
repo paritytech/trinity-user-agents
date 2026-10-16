@@ -13,13 +13,13 @@ import uniffi.truapi.HostLocalStorageReadException
  * corrupt entry reads back as a miss.
  */
 class PrefsHostStorage(private val prefs: SharedPreferences) : HostStorage {
-    override fun read(key: String): ByteArray? = decodeOrNull(prefs.getString(key, null))
-    override fun write(key: String, value: ByteArray) {
+    override suspend fun read(key: String): ByteArray? = decodeOrNull(prefs.getString(key, null))
+    override suspend fun write(key: String, value: ByteArray) {
         if (!prefs.edit().putString(key, bytesToHex(value)).commit()) {
             throw storageFailure("failed to persist product storage key")
         }
     }
-    override fun clear(key: String) {
+    override suspend fun clear(key: String) {
         if (!prefs.edit().remove(key).commit()) {
             throw storageFailure("failed to clear product storage key")
         }
@@ -32,14 +32,14 @@ class PrefsHostStorage(private val prefs: SharedPreferences) : HostStorage {
  * not be lost on process death; failures surface as the declared [HostRejection].
  */
 class PrefsHostCoreStorage(private val prefs: SharedPreferences) : HostCoreStorage {
-    override fun read(key: ByteArray): ByteArray? =
+    override suspend fun read(key: ByteArray): ByteArray? =
         decodeOrNull(prefs.getString(bytesToHex(key), null))
-    override fun write(key: ByteArray, value: ByteArray) {
+    override suspend fun write(key: ByteArray, value: ByteArray) {
         if (!prefs.edit().putString(bytesToHex(key), bytesToHex(value)).commit()) {
             throw HostRejection.Rejected("failed to persist core storage key")
         }
     }
-    override fun clear(key: ByteArray) {
+    override suspend fun clear(key: ByteArray) {
         if (!prefs.edit().remove(bytesToHex(key)).commit()) {
             throw HostRejection.Rejected("failed to clear core storage key")
         }

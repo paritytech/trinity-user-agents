@@ -14,6 +14,7 @@ import io.paritytech.polkadotapp.feature_products_impl.data.repository.TopUpRepo
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.TopUpSourceStorage
 import io.paritytech.polkadotapp.feature_transactions.api.domain.model.TransactionSignerSource
 import io.paritytech.polkadotapp.test_shared.any
+import io.paritytech.polkadotapp.test_shared.eq
 import io.paritytech.polkadotapp.test_shared.testDispatchers
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.flow.Flow
@@ -409,6 +410,24 @@ class RealTopUpServiceTest {
         assertEquals(1, executeTopUpUseCase.runs)
     }
 
+    /**
+     * A source that stopped resolving is permanent, and every launch reaches it before the top-ups recorded
+     * after it. Letting it end the sweep would leave those unresumed for as long as the bad one is kept.
+     */
+    @Test
+    fun `a top-up that cannot be resumed does not stop the rest being picked up`() = runTest {
+        withUnresolvableSource()
+        withResolvableSource(SECOND_SOURCE)
+        givenUnfinished(SOURCE)
+        givenUnfinished(SECOND_SOURCE, SECOND_ID)
+        executeTopUpUseCase.emits(TopUpStatus.Claiming)
+
+        service().resumeUnfinished()
+        advanceUntilIdle()
+
+        assertEquals(1, executeTopUpUseCase.runs)
+    }
+
     // ---- harness ----
 
     private fun TestScope.service(): TopUpService = RealTopUpService(
@@ -427,14 +446,20 @@ class RealTopUpServiceTest {
         whenever(sourceResolver.resolve(any(), any())).thenReturn(Result.success(resolved))
     }
 
+    private suspend fun withResolvableSource(source: PaymentTopUpSource) {
+        val resolved = TopUpSource.Onboard(TransactionSignerSource.FromAccount(mock<MetaAccount>()))
+
+        whenever(sourceResolver.resolve(any(), eq(source))).thenReturn(Result.success(resolved))
+    }
+
     private suspend fun withUnresolvableSource() {
         whenever(sourceResolver.resolve(any(), any()))
             .thenReturn(Result.failure(IllegalStateException("no such account")))
     }
 
     /** A top-up a previous run registered and left unfinished, with its source still held. */
-    private suspend fun givenUnfinished(source: PaymentTopUpSource) {
-        val operation = operation()
+    private suspend fun givenUnfinished(source: PaymentTopUpSource, id: PaymentTopUpId = ID) {
+        val operation = operation(id)
         repository.insert(operation)
         sourceStorage.put(operation.groupId, source)
     }
@@ -450,7 +475,7 @@ class RealTopUpServiceTest {
         repository.settle(operation, outcome)
     }
 
-    private fun operation() = TopUpOperation(ID, PRODUCT, REQUESTED, NOW, outcome = null)
+    private fun operation(id: PaymentTopUpId = ID) = TopUpOperation(id, PRODUCT, REQUESTED, NOW, outcome = null)
 
     private fun coins(vararg keys: DataByteArray) = PaymentTopUpSource.Coins(keys.toList())
 
@@ -458,6 +483,7 @@ class RealTopUpServiceTest {
         val DOT_TLD: DotNsTld = requireNotNull(DotNsTld.parse("dot"))
 
         val ID = topUpId("topup-1")
+        val SECOND_ID = topUpId("topup-2")
         val PRODUCT: ProductId = ProductId.fromString("alice.dot", DOT_TLD).getOrThrow()
         val OTHER_PRODUCT: ProductId = ProductId.fromString("bob.dot", DOT_TLD).getOrThrow()
         val REQUESTED: Balance = 100.intoBalance()
@@ -465,6 +491,7 @@ class RealTopUpServiceTest {
         val COIN_B: DataByteArray = byteArrayOf(2).toDataByteArray()
 
         val SOURCE = PaymentTopUpSource.Coins(listOf(COIN_A))
+        val SECOND_SOURCE = PaymentTopUpSource.Coins(listOf(COIN_B))
         val PRODUCT_ACCOUNT = PaymentTopUpSource.ProductAccount(DerivationIndex32.fromUInt(0u))
         val NOW: Instant = Instant.fromEpochSeconds(1_000_000)
     }

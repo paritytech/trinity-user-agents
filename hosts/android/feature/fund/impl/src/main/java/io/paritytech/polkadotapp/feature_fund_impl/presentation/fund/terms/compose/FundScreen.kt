@@ -21,6 +21,8 @@ import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain.Asset.Typ
 import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFormatter
 import io.paritytech.polkadotapp.common.presentation.formatters.time.TimeFormatter
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.design.components.progress.LoadingScreenState
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
@@ -123,6 +125,7 @@ private fun FundScreenInternalPreview() {
     PolkadotTheme {
         CompositionLocalProvider(
             LocalTokenAmountFormatter provides TokenAmountFormatter.mocked,
+            LocalPaymentAssetBrand provides PaymentAssetBrand.mocked,
             LocalConversionFormatter provides ConversionFormatter.mocked,
             LocalKnownTokenFormatter provides KnownTokenFormatter.mocked,
             LocalTimeFormatter provides TimeFormatter.mocked(LocalContext.current),

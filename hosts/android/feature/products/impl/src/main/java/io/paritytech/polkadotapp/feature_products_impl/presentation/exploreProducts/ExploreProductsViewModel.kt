@@ -26,10 +26,11 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUA
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPISessionStarter
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -72,8 +73,9 @@ class ExploreProductsViewModel @Inject constructor(
         createComponents()
     }.filterNotNull().shareInBackground()
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     val webViewFlow = componentsFlow
-        .map { it.provider.getWebView() }
+        .flatMapLatest { it.provider.webViews() }
         .stateIn(scope = this, started = SharingStarted.Eagerly, initialValue = null)
 
     fun onProductSelected(productId: ProductId) {

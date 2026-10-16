@@ -221,6 +221,7 @@ private extension PolkadotSigningRequestResultFactory {
 
         let resolved = try extensionResolver.resolve(
             extensions: payload.extensions,
+            extensionVersion: payload.txExtVersion,
             codingFactory: codingFactory
         )
 

@@ -108,8 +108,12 @@ class QRScannerPresenter: QRScannerPresenterProtocol {
         stopServiceIfNeeded()
     }
 
-    func setRecognitionArmed(_ armed: Bool) {
-        qrScanService.setRecognitionArmed(armed)
+    func setCaptureActive(_ active: Bool) {
+        if active {
+            startServiceIfNeeded()
+        } else {
+            stopServiceIfNeeded()
+        }
     }
 }
 

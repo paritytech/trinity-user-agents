@@ -8,6 +8,9 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub mod attestation;
 pub mod contact_substitution;
+// Only native hosts open a page from a development server.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod dev_server;
 pub mod device_key;
 pub mod dotns;
 pub mod dotns_gateway;
@@ -15,6 +18,7 @@ pub mod entropy;
 pub mod features;
 pub mod product_account;
 pub mod raw_signing;
+pub mod scanner;
 pub mod session;
 pub mod session_store;
 pub mod sso;

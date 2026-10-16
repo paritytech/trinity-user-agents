@@ -30,7 +30,6 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -50,7 +49,7 @@ class NativeSpaHost @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) : SpaHost {
     context(scope: ComputationalScope, messageDisplay: MessageDisplay)
-    override fun createSession(initialUrl: String): SpaHostSession {
+    override fun createSession(initialUrl: String, underCard: Boolean): SpaHostSession {
         lateinit var webViewProvider: BrowserWebViewProvider
 
         val webViewNavigation = NavigationPolicy.InlineNavigation(
@@ -114,7 +113,7 @@ class NativeSpaHost @Inject constructor(
             }
         }
 
-        val webViewFlow: StateFlow<WebView?> = flow { emit(webViewProvider.getWebView()) }
+        val webViewFlow: StateFlow<WebView?> = webViewProvider.webViews()
             .stateIn(scope, SharingStarted.Eagerly, null)
 
         val loadProgressFlow: StateFlow<DotNsLoadProgress> = webViewProvider.loadProgress

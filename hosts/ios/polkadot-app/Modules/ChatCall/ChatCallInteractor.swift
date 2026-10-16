@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 final class ChatCallInteractor {
     static let terminalStateDwellSeconds: TimeInterval = 1.5
@@ -21,7 +22,11 @@ final class ChatCallInteractor {
     private var callKitEndTask: Task<Void, Never>?
     private var callKitMutedTask: Task<Void, Never>?
     private var audioRouteTask: Task<Void, Never>?
-    private var isEnding: Bool = false
+    private var remoteMediaStateTask: Task<Void, Never>?
+    private var videoStateTask: Task<Void, Never>?
+    private var videoCaptureFailureTask: Task<Void, Never>?
+    private let videoToggleTask = OSAllocatedUnfairLock<Task<Void, Never>?>(initialState: nil)
+    private(set) var isEnding: Bool = false
 
     init(
         callKitManager: VoIPCallKitManaging = VoIPCallKitManager.shared,
@@ -60,29 +65,17 @@ final class ChatCallInteractor {
 
 private extension ChatCallInteractor {
     func provideLocalRendererModel() async {
-        switch callType {
-        case .audio:
-            let localModel = ChatCallRendererModel(attach: nil)
-            await presenter?.didReceiveLocalRenderer(model: localModel)
-        case .video:
-            let localModel = ChatCallRendererModel { [weak callEngine] view in
-                callEngine?.attach(localRenderer: view)
-            }
-            await presenter?.didReceiveLocalRenderer(model: localModel)
+        let localModel = ChatCallRendererModel { [weak callEngine] view in
+            callEngine?.attach(localRenderer: view)
         }
+        await presenter?.didReceiveLocalRenderer(model: localModel)
     }
 
     func provideRemoteRendererModel() async {
-        switch callType {
-        case .audio:
-            let remoteModel = ChatCallRendererModel(attach: nil)
-            await presenter?.didReceiveRemoteRenderer(model: remoteModel)
-        case .video:
-            let remoteModel = ChatCallRendererModel { [weak callEngine] view in
-                callEngine?.attach(remoteRenderer: view)
-            }
-            await presenter?.didReceiveRemoteRenderer(model: remoteModel)
+        let remoteModel = ChatCallRendererModel { [weak callEngine] view in
+            callEngine?.attach(remoteRenderer: view)
         }
+        await presenter?.didReceiveRemoteRenderer(model: remoteModel)
     }
 
     func setupCallKit() {
@@ -120,7 +113,11 @@ private extension ChatCallInteractor {
             }
             do {
                 for try await isMuted in sequence.compactMap({ $0 }) {
-                    await self?.setMuted(isMuted, notifiesCallKit: false)
+                    if isMuted {
+                        await self?.setMuted(true, notifiesCallKit: false)
+                    } else {
+                        await self?.unmute(notifiesCallKit: false)
+                    }
                 }
             } catch {
                 self?.logger.error("Pending muted task failure: \(error.localizedDescription)")
@@ -143,6 +140,20 @@ private extension ChatCallInteractor {
 
         audioRouteTask?.cancel()
         audioRouteTask = nil
+
+        remoteMediaStateTask?.cancel()
+        remoteMediaStateTask = nil
+
+        videoStateTask?.cancel()
+        videoStateTask = nil
+
+        videoCaptureFailureTask?.cancel()
+        videoCaptureFailureTask = nil
+
+        videoToggleTask.withLock { task in
+            task?.cancel()
+            task = nil
+        }
     }
 
     func observeCallEngineState() {
@@ -158,6 +169,54 @@ private extension ChatCallInteractor {
                 }
             } catch {
                 self?.logger.error("State observation failed: \(error)")
+            }
+        }
+    }
+
+    func observeRemoteMediaState() {
+        remoteMediaStateTask = Task { [weak self] in
+            guard let sequence = self?.callEngine.observeRemoteMediaState() else {
+                return
+            }
+
+            do {
+                for try await state in sequence {
+                    await self?.presenter?.didUpdateRemoteMediaState(state)
+                }
+            } catch {
+                self?.logger.error("Remote media state observation failed: \(error)")
+            }
+        }
+    }
+
+    func observeVideoState() {
+        videoStateTask = Task { [weak self] in
+            guard let sequence = self?.callEngine.observeVideoState() else {
+                return
+            }
+
+            do {
+                for try await isEnabled in sequence {
+                    await self?.presenter?.didUpdateVideoState(isEnabled)
+                }
+            } catch {
+                self?.logger.error("Video state observation failed: \(error)")
+            }
+        }
+    }
+
+    func observeVideoCaptureFailure() {
+        videoCaptureFailureTask = Task { [weak self] in
+            guard let sequence = self?.callEngine.observeVideoCaptureFailure() else {
+                return
+            }
+
+            do {
+                for try await _ in sequence {
+                    await self?.presenter?.didFailVideoCapture()
+                }
+            } catch {
+                self?.logger.error("Video capture failure observation failed: \(error)")
             }
         }
     }
@@ -219,6 +278,8 @@ private extension ChatCallInteractor {
             return
         }
 
+        await applyInitialVideoState()
+
         callKitManager.startOutgoingCall(with: makeCallKitInput())
         discoverCapabilities()
         callEngine.connect()
@@ -232,13 +293,15 @@ private extension ChatCallInteractor {
             return
         }
 
-        guard await ensureCallPermissions() else {
-            return
-        }
+        let microphoneAccess = await permissionsService.resolveMicrophoneAccess(prompting: .whenActive)
+
+        await applyInitialVideoState()
 
         if notifiesCallKit {
             callKitManager.answerFromAppOrEnsureStarted(with: makeCallKitInput())
         }
+
+        await startMutedIfNeeded(for: microphoneAccess)
 
         discoverCapabilities()
         callEngine.connect()
@@ -315,26 +378,35 @@ private extension ChatCallInteractor {
         logger.debug("Call ended")
     }
 
-    func setMuted(_ isMuted: Bool, notifiesCallKit: Bool) async {
-        if notifiesCallKit {
-            callKitManager.requestMutedFromApp(isMuted)
+    func applyInitialVideoState() async {
+        await callEngine.setVideoEnabled(callType == .video && permissionsService.isCameraGranted)
+    }
+
+    func performVideoToggle() async {
+        if await callEngine.isVideoEnabled {
+            await callEngine.setVideoEnabled(false)
+        } else {
+            await enableVideoIfPermitted()
+        }
+    }
+
+    func enableVideoIfPermitted() async {
+        guard await permissionsService.ensureCameraAccess() else {
+            if permissionsService.isCameraDenied {
+                await presenter?.didRequireCameraAccess()
+            }
+
+            return
         }
 
-        let result = await callEngine.setMuted(isMuted)
-        callKitManager.confirmMutedState(isSuccessful: isMuted == result)
-
-        await presenter?.didUpdateMuteState(result)
+        await callEngine.setVideoEnabled(true)
     }
 
     @MainActor
     func ensureCallPermissions() async -> Bool {
-        guard await permissionsService.ensurePermissions(for: callType) else {
+        guard await permissionsService.ensurePermissions() else {
             logger.warning("Microphone permission denied, ending the call")
-            // Decline through the shared end sequence so it never depends on the
-            // alert being dismissed (the alert can't present on a locked screen).
-            await performEndCall(notifiesCallKit: true, notifiesRemote: true) {
-                presenter?.didDenyMicrophonePermission()
-            }
+            await performEndCall(notifiesCallKit: true, notifiesRemote: true)
             return false
         }
 
@@ -368,13 +440,17 @@ private extension ChatCallInteractor {
 
     func discoverCapabilities() {
         Task { [weak self] in
-            await self?.presenter?.didReceiveCapability([.mute, .audioRoute])
+            await self?.presenter?.didReceiveCapability([.mute, .audioRoute, .video])
         }
     }
 }
 
 extension ChatCallInteractor: ChatCallInteractorInputProtocol {
     func setup() {
+        observeRemoteMediaState()
+        observeVideoState()
+        observeVideoCaptureFailure()
+
         Task {
             await performSetup()
         }
@@ -394,8 +470,22 @@ extension ChatCallInteractor: ChatCallInteractorInputProtocol {
 
     func toggleMute() {
         Task {
-            let isMuted = await callEngine.isMuted
-            await setMuted(!isMuted, notifiesCallKit: true)
+            if await callEngine.isMuted {
+                await unmute(notifiesCallKit: true)
+            } else {
+                await setMuted(true, notifiesCallKit: true)
+            }
+        }
+    }
+
+    func toggleVideo() {
+        videoToggleTask.withLock { task in
+            guard task == nil else { return }
+
+            task = Task { [weak self] in
+                await self?.performVideoToggle()
+                self?.videoToggleTask.withLock { $0 = nil }
+            }
         }
     }
 

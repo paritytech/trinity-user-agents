@@ -17,12 +17,10 @@ private func makeHostBridge(
     chainRegistry: ChainRegistryProtocol = MockChainRegistry(),
     confirmationPresenter: MockConfirmationPresenter = MockConfirmationPresenter()
 ) -> RustHostRuntimeBridge {
-    let chainConnections = TrUAPIChainConnectionPool(
-        engineResolver: { genesisHash in
-            chainRegistry.getChainByGenesis(for: genesisHash.toHex()).flatMap { chain in
-                chainRegistry.getConnection(for: chain.chainId)
-            }
-        },
+    let chainConnections = TrUAPIV2SpecConnectionPool(
+        chainRegistry: chainRegistry,
+        applicationHandler: MockApplicationHandler(),
+        dateProvider: MockDateProvider(),
         logger: Logger.shared
     )
     return RustHostRuntimeBridge(
@@ -143,7 +141,8 @@ struct TrUAPIHostRuntimeProviderConfigTests {
                 chainRegistry: MockChainRegistry(),
                 secret: Data([0x01]),
                 liteUsername: nil,
-                networkSuffix: "paseo"
+                networkSuffix: "paseo",
+                databaseDirectory: NSTemporaryDirectory()
             )
         }
     }

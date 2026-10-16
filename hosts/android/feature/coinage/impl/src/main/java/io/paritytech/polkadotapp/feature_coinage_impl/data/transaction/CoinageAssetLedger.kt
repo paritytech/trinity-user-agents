@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_coinage_impl.data.transaction
 
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageAssetState
+import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageAssetStates
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageOperationGroupId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageTransactionId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageTransactionState
@@ -76,13 +77,9 @@ interface CoinageAssetLedger {
 
     fun subscribeGroupStatuses(groupId: CoinageOperationGroupId): Flow<List<CoinageTransactionState>>
 
-    fun subscribeAssetStates(): Flow<Map<OwnAsset, CoinageAssetState>>
+    fun subscribeAssetStates(): Flow<CoinageAssetStates>
 
     suspend fun getAssetState(asset: OwnAsset): Result<CoinageAssetState>
 
-    /**
-     * The state of each of [assets], including ones the ledger has never heard of — those come back
-     * untracked, since it only holds assets some transaction of ours has touched.
-     */
-    suspend fun getAssetStates(assets: List<OwnAsset>): Result<Map<OwnAsset, CoinageAssetState>>
+    suspend fun getAssetStates(assets: List<OwnAsset>): Result<CoinageAssetStates>
 }

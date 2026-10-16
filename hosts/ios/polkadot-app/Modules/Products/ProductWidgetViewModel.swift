@@ -52,12 +52,14 @@ final class ProductWidgetViewModel: WidgetNodeProviding {
                     messageData: messageData
                 )
                 switch outcome {
-                case .cancelled, .ended(drew: true):
+                case .cancelled,
+                     .ended(drew: true):
                     return
                 case let .failed(error) where error is CancellationError:
                     // The runtime is disposed: every reopen would fail the same way.
                     return
-                case .ended(drew: false), .failed:
+                case .ended(drew: false),
+                     .failed:
                     break
                 }
 
@@ -107,13 +109,14 @@ private extension ProductWidgetViewModel {
             for try await output in stream {
                 guard !Task.isCancelled else { return .cancelled }
 
-                let resolved: CustomMessageWidgetNode? = switch output {
-                case let .scaleEncoded(hexString):
-                    try ScaleWidget.decode(from: hexString)
-                        .toWidgetNode(resolver: tokenResolver)
-                case let .native(node):
-                    node.toWidgetNode(resolver: tokenResolver)
-                }
+                let resolved: CustomMessageWidgetNode? =
+                    switch output {
+                    case let .scaleEncoded(hexString):
+                        try ScaleWidget.decode(from: hexString)
+                            .toWidgetNode(resolver: tokenResolver)
+                    case let .native(node):
+                        node.toWidgetNode(resolver: tokenResolver)
+                    }
                 await MainActor.run { self.node = resolved }
                 drew = true
                 #if targetEnvironment(simulator)

@@ -14,7 +14,7 @@ import timber.log.Timber
 /**
  * [JsRuntime] implementation backed by a [WebViewProvider].
  *
- * Each instance is 1:1 with a WebView. For the future QuickJS pooling,
+ * Each instance is 1:1 with a [WebViewProvider]. For the future QuickJS pooling,
  * a different [JsRuntime] implementation would be used instead.
  */
 class WebViewRuntime(
@@ -33,11 +33,11 @@ class WebViewRuntime(
             webViewProvider.addOnPageFinishedListener {
                 _state.value = RuntimeState.Ready
             }
-            webViewProvider.setOnWebViewDestroyed {
+            webViewProvider.addOnWebViewDestroyedListener {
                 _state.value = RuntimeState.Error("Render process gone")
             }
 
-            webViewProvider.accessWebView {
+            webViewProvider.addWebViewSetup {
                 it.addJavascriptInterface(jsBridge, "Android")
             }
 
@@ -83,7 +83,7 @@ class WebViewRuntime(
     override suspend fun injectDocumentStartScript(js: String, allowedOriginRules: Set<String>): Boolean {
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return false
 
-        webViewProvider.accessWebView {
+        webViewProvider.addWebViewSetup {
             WebViewCompat.addDocumentStartJavaScript(it, js, allowedOriginRules)
         }
         return true

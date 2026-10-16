@@ -1,10 +1,11 @@
-import Operation_iOS
 import SubstrateSdk
-import SubstrateSdkExt
 import ChainRegistry
 import Foundation_iOS
 import os
 import AsyncExtensions
+import Products
+
+private typealias SearchAccountSections = AccountSearchSections<RecentContactModelWithUsername, ContactSearchPayload>
 
 final class SearchAccountInteractor {
     // MARK: Properties
@@ -19,6 +20,7 @@ final class SearchAccountInteractor {
     private let searchRunner = SearchRunner()
     private let logger: LoggerProtocol
     private let chainAsset: ChainAsset
+    private let fundingDomainProvider: FundingDomainProviding
     private let stateLock: OSAllocatedUnfairLock<State>
 
     private static let maximumPrefixCount = 32
@@ -32,18 +34,21 @@ final class SearchAccountInteractor {
         >,
         chatOpenResolver: ChatOpenModelResolving,
         chainAsset: ChainAsset,
-        logger: LoggerProtocol
+        logger: LoggerProtocol,
+        fundingDomainProvider: FundingDomainProviding
     ) {
         self.accountSearching = accountSearching
         self.chatOpenResolver = chatOpenResolver
         self.chainAsset = chainAsset
         self.logger = logger
+        self.fundingDomainProvider = fundingDomainProvider
         stateLock = OSAllocatedUnfairLock(initialState: State())
     }
 
     deinit {
         replaceSearchTask(with: nil)
         replaceSetupTask(with: nil)
+        replaceWithdrawTask(with: nil)
     }
 }
 
@@ -68,7 +73,7 @@ extension SearchAccountInteractor: SearchAccountInteractorInputProtocol {
         stateLock.withLock { $0.query = query }
 
         guard isSearchable(query) else {
-            emit(.result(SearchAccountResult(recent: [], contacts: [], global: [])), for: query)
+            emit(.result(SearchAccountResult(recent: [], contacts: [])), for: query)
             return
         }
 
@@ -93,6 +98,19 @@ extension SearchAccountInteractor: SearchAccountInteractorInputProtocol {
             }
         }
     }
+
+    func openWithdrawProduct() {
+        let task = Task { [weak presenter, fundingDomainProvider] in
+            do {
+                let page = try await RampAction.withdraw.resolvePage(using: fundingDomainProvider)
+                await presenter?.didResolveWithdrawProduct(.success(page))
+            } catch {
+                await presenter?.didResolveWithdrawProduct(.failure(error))
+            }
+        }
+
+        replaceWithdrawTask(with: task)
+    }
 }
 
 // MARK: - Private
@@ -103,6 +121,7 @@ private extension SearchAccountInteractor {
         var globalContacts: [AccountId: Chat.RemoteContact] = [:]
         var searchTask: Task<Void, Never>?
         var setupTask: Task<Void, Never>?
+        var withdrawTask: Task<Void, Never>?
     }
 
     func isSearchable(_ query: String) -> Bool {
@@ -138,13 +157,10 @@ private extension SearchAccountInteractor {
             guard let self else { return }
 
             do {
-                let sections = try await accountSearching.search(query: nil)
-                let result = SearchAccountResult(
-                    recent: sections.recent.map(\.payload),
-                    contacts: mapToContacts(sections.contacts),
-                    global: []
-                )
-                emit(.result(result), for: nil)
+                for try await sections in accountSearching.searchPhases(query: nil) {
+                    guard !Task.isCancelled else { return }
+                    emit(.result(makeResult(from: sections)), for: nil)
+                }
             } catch {
                 logger.error("Load idle state failed: \(error)")
             }
@@ -154,47 +170,60 @@ private extension SearchAccountInteractor {
     }
 
     func performSearch(query: String) {
-        let task = Task { [weak self, searchRunner] in
-            let stream = searchRunner.run { await self?.makeSearchResult(for: query) }
+        let task = Task { [weak self, searchRunner, accountSearching] in
+            guard let self else { return }
+
+            let stream = searchRunner.run(
+                { accountSearching.searchPhases(query: query).mapToResult() },
+                hasContent: \.hasContent
+            )
 
             for await state in stream {
                 guard !Task.isCancelled else { return }
-                self?.emit(state, for: query)
+
+                await handle(state, for: query)
             }
         }
 
         replaceSearchTask(with: task)
     }
 
-    func makeSearchResult(for query: String) async -> SearchAccountResult? {
-        do {
-            let sections = try await accountSearching.search(query: query)
-            try Task.checkCancellation()
-
-            let globalContacts = sections.global.compactMap { row -> (AccountId, Chat.RemoteContact)? in
-                switch row.payload {
-                case let .remote(contact): (row.accountId, contact)
-                case .local: nil
-                }
-            }
-
-            stateLock.withLock { state in
-                state.globalContacts = Dictionary(uniqueKeysWithValues: globalContacts)
-            }
-
-            return SearchAccountResult(
-                recent: sections.recent.map(\.payload),
-                contacts: mapToContacts(sections.contacts),
-                global: mapToContacts(sections.global)
-            )
-        } catch {
-            guard !Task.isCancelled else { return nil }
-
+    /// A failure empties the list so that stale rows do not outlive a failed search.
+    func handle(
+        _ state: SearchRunner.State<Result<SearchAccountSections, Error>>,
+        for query: String
+    ) async {
+        switch state {
+        case .started:
+            emit(.started, for: query)
+        case .waiting:
+            emit(.waiting, for: query)
+        case let .result(.success(sections)):
+            emit(.result(makeResult(from: sections)), for: query)
+        case let .result(.failure(error)):
             logger.error("Search failed: \(error)")
             await presenter?.didReceiveSearchError(message: error.localizedDescription)
-
-            return SearchAccountResult(recent: [], contacts: [], global: [])
+            emit(.result(SearchAccountResult(recent: [], contacts: [])), for: query)
         }
+    }
+
+    func makeResult(from sections: SearchAccountSections) -> SearchAccountResult {
+        let globalContacts = sections.global.rows.compactMap { row -> (AccountId, Chat.RemoteContact)? in
+            switch row.payload {
+            case let .remote(contact): (row.accountId, contact)
+            case .local: nil
+            }
+        }
+
+        stateLock.withLock { state in
+            state.globalContacts = Dictionary(uniqueKeysWithValues: globalContacts)
+        }
+
+        return SearchAccountResult(
+            recent: sections.recent.map(\.payload),
+            contacts: mapToContacts(sections.contacts),
+            global: sections.global.map(mapToContacts)
+        )
     }
 
     func mapToContacts(_ rows: [SearchRow<ContactSearchPayload>]) -> [SearchAccountResult.Contact] {
@@ -236,5 +265,23 @@ private extension SearchAccountInteractor {
         }
 
         previous?.cancel()
+    }
+
+    func replaceWithdrawTask(with task: Task<Void, Never>?) {
+        let previous = stateLock.withLock { state in
+            let previous = state.withdrawTask
+            state.withdrawTask = task
+            return previous
+        }
+
+        previous?.cancel()
+    }
+}
+
+private extension Result where Success == SearchAccountSections, Failure == Error {
+    var hasContent: Bool {
+        guard case let .success(sections) = self else { return false }
+
+        return sections.hasContent
     }
 }

@@ -2,15 +2,11 @@ package io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ContactAccountId
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ContactDevice
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isPendingOutgoing
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatRequestRepository
-import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactDevicesRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactsRepository
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatMessageSaveProcessor
-import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.DeviceInfo
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -26,7 +22,6 @@ import javax.inject.Singleton
 class ChatRequestAcceptProcessor @Inject constructor(
     private val chatRequestRepository: ChatRequestRepository,
     private val contactsRepository: ContactsRepository,
-    private val contactDevicesRepository: ContactDevicesRepository,
     private val incomingChatRequestProcessor: IncomingChatRequestProcessor,
 ) : ChatMessageSaveProcessor {
     override suspend fun onMessageSaved(message: ChatMessage) {
@@ -46,14 +41,7 @@ class ChatRequestAcceptProcessor @Inject constructor(
 
         val shouldAccept = when (val content = message.content) {
             // Condition 1a: V2 acceptance with single accepting device
-            is ChatMessage.Content.DeviceChatAccepted -> {
-                if (content.requestId == request.id) {
-                    saveAcceptorDevice(contact.accountId, content.device)
-                    true
-                } else {
-                    false
-                }
-            }
+            is ChatMessage.Content.DeviceChatAccepted -> content.requestId == request.id
             // Condition 1b: Legacy V1 acceptance
             is ChatMessage.Content.ChatAccepted -> content.requestId == request.id
             // Condition 2: Any message after request timestamp (hole punching)
@@ -65,18 +53,5 @@ class ChatRequestAcceptProcessor @Inject constructor(
 
             incomingChatRequestProcessor.markOutgoingRequestAccepted(contact, request)
         }
-    }
-
-    private suspend fun saveAcceptorDevice(
-        contactAccountId: ContactAccountId,
-        device: DeviceInfo,
-    ) {
-        contactDevicesRepository.addDevice(
-            ContactDevice(
-                contactAccountId = contactAccountId,
-                statementAccountId = device.statementAccountId,
-                encryptionPublicKey = device.encryptionPublicKey,
-            )
-        )
     }
 }

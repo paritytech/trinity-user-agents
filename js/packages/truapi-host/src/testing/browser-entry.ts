@@ -34,13 +34,17 @@ const accounts = params
     const name = entry.slice(0, separator);
     const hex = entry.slice(separator + 1);
     const bytes = hex.match(/../g) ?? [];
-    return { name, entropy: Uint8Array.from(bytes.map((b) => parseInt(b, 16))) };
+    return {
+      name,
+      entropy: Uint8Array.from(bytes.map((b) => parseInt(b, 16))),
+    };
   });
 const login = params.get("login");
 const productId = params.get("productId") ?? undefined;
 const rawRuntimeConfig = params.get("runtimeConfig");
 const topology = params.get("topology");
 const allowances = params.get("allowances");
+const withheld = params.get("withheld");
 const logLevel = params.get("logLevel") ?? undefined;
 
 void startTestHost({
@@ -57,6 +61,7 @@ void startTestHost({
   loginBehavior: login === "manual" ? "manual" : "auto",
   topology: topology === "main-thread" ? "main-thread" : "worker",
   allowances: allowances === "chain" ? "chain" : "granted",
+  withheldResources: withheld ? withheld.split(",").filter(Boolean) : undefined,
   logLevel,
 }).catch((error: unknown) => {
   // Surface boot failures in the page rather than only the console: a fixture

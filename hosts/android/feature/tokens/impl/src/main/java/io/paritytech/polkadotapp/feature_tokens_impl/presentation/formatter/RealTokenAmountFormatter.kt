@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.common.presentation.formatters.number.NumberFor
 import io.paritytech.polkadotapp.common.presentation.formatters.number.NumberFormatterFactory.Params
 import io.paritytech.polkadotapp.common.presentation.formatters.number.NumberFormatterFactory.Params.KnownAbbreviation
 import io.paritytech.polkadotapp.common.presentation.formatters.number.NumberFormatterFactory.Params.SmallNumberParams
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrandProvider
 import io.paritytech.polkadotapp.common.utils.Fraction
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.RoundPrecision
@@ -17,6 +18,7 @@ import javax.inject.Singleton
 @Singleton
 class RealTokenAmountFormatter @Inject constructor(
     private val numberFormatterFactory: NumberFormatterFactory,
+    private val paymentAssetBrandProvider: PaymentAssetBrandProvider,
 ) : TokenAmountFormatter {
     private val tokenAmountFormatterFiat = createTokenAmountFormatter(RoundPrecision.FIAT)
 
@@ -68,7 +70,7 @@ class RealTokenAmountFormatter @Inject constructor(
         val formatter = precision.formatter()
         return buildString {
             val number = when (tokenAmount.appearance) {
-                is TokenSymbolAppearance.DigitalDollar -> tokenAmount.amount.formatAsDigitalDollar()
+                TokenSymbolAppearance.DigitalDollar -> tokenAmount.amount.formatAsDigitalDollar()
 
                 is TokenSymbolAppearance.Symbol -> formatter.format(tokenAmount.amount)
             }
@@ -88,7 +90,10 @@ class RealTokenAmountFormatter @Inject constructor(
         }
     }
 
-    override fun formatToSymbol(tokenAmount: TokenAmountModel): String = tokenAmount.appearance.symbol
+    override fun formatToSymbol(tokenAmount: TokenAmountModel): String = when (val appearance = tokenAmount.appearance) {
+        TokenSymbolAppearance.DigitalDollar -> paymentAssetBrandProvider.brand.value.symbol
+        is TokenSymbolAppearance.Symbol -> appearance.symbol
+    }
 
     override fun formatAmount(amount: BigDecimal, precision: RoundPrecision): String {
         return precision.formatter().format(amount)

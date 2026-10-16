@@ -122,6 +122,10 @@ private extension SPAViewController {
                 )
             case let .directURL(url):
                 DirectURLNavigationDecisionHandler(baseURL: url)
+            #if DEBUG
+                case let .devServer(url, _):
+                    DirectURLNavigationDecisionHandler(baseURL: url)
+            #endif
             }
 
         let engine = SPAJSEngine(
@@ -289,6 +293,8 @@ private extension SPAViewController {
 // MARK: - SPAViewProtocol
 
 extension SPAViewController: SPAViewProtocol {
+    var pageScrollView: UIScrollView { rootView.webView.scrollView }
+
     func navigate(to url: URL) {
         resetChromeCollapse()
         rootView.webView.load(URLRequest(url: url))

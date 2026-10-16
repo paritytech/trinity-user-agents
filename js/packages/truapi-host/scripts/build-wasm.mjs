@@ -186,10 +186,14 @@ async function build(crate, outName, target, subdir, features = [], env = {}) {
     } → ${outDir}\n`,
   );
   try {
-    await execFileAsync("wasm-pack", args(crate, outName, target, outDir, features), {
-      cwd: repoRoot,
-      env: { ...process.env, ...env },
-    });
+    await execFileAsync(
+      "wasm-pack",
+      args(crate, outName, target, outDir, features),
+      {
+        cwd: repoRoot,
+        env: { ...process.env, ...env },
+      },
+    );
   } catch (err) {
     if (err?.code === "ENOENT") {
       console.error(
@@ -228,15 +232,22 @@ const env = {
     .update(await readFile(verifiableWasm))
     .digest("hex"),
 };
+// `--web-only` skips the testing bundle, for a caller that needs only what
+// ships to products.
+const bundles = process.argv.includes("--web-only")
+  ? ["web"]
+  : ["web", "testing"];
 await build("truapi", "truapi_server", "web", "web", ["runtime"], env);
-await build(
-  "truapi",
-  "truapi_server",
-  "web",
-  "testing",
-  ["wasm-signing-host", "test-host"],
-  env,
-);
+if (bundles.includes("testing")) {
+  await build(
+    "truapi",
+    "truapi_server",
+    "web",
+    "testing",
+    ["wasm-signing-host", "test-host"],
+    env,
+  );
+}
 // The compressed sidecars exist only in a release build.
 const verifiableFiles = [
   "truapi_verifiable.js",
@@ -245,7 +256,7 @@ const verifiableFiles = [
     ? ["truapi_verifiable_bg.wasm.br", "truapi_verifiable_bg.wasm.gz"]
     : []),
 ];
-for (const bundle of ["web", "testing"]) {
+for (const bundle of bundles) {
   for (const file of verifiableFiles) {
     await cp(
       resolve(verifiableStage, file),

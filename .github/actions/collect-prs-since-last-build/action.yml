@@ -45,6 +45,9 @@ outputs:
   pr_count:
     description: How many pull requests the range covers.
     value: ${{ steps.collect.outputs.pr_count }}
+  breaking_count:
+    description: How many of those pull requests are titled as breaking changes.
+    value: ${{ steps.collect.outputs.breaking_count }}
   base_sha:
     description: The commit the last successful run built, empty when there was none.
     value: ${{ steps.collect.outputs.base_sha }}
@@ -66,6 +69,7 @@ runs:
           const emitNothing = (notes) => {
             core.setOutput('release_notes', notes || '');
             core.setOutput('pr_count', '0');
+            core.setOutput('breaking_count', '0');
             core.setOutput('base_sha', '');
           };
           try {
@@ -75,6 +79,7 @@ runs:
             const empty = (notes) => {
               core.setOutput('release_notes', notes || '');
               core.setOutput('pr_count', '0');
+              core.setOutput('breaking_count', '0');
             };
 
             // The workflow is read from this run. Inside a reusable workflow that
@@ -170,14 +175,22 @@ runs:
               return;
             }
 
-            // The same shape the release-branch diff produces, so an announcement
-            // reads the same whichever route built it.
-            const notes = merged
-              .map((pr) => `- [#${pr.number}](${pr.html_url}): ${pr.title}`.trimEnd())
-              .join('\n');
+            // One line per pull request, the same shape the release-branch diff
+            // produces. A title carrying `!` is a breaking change by this
+            // repository's convention (.claude/skills/semver-pr-title). Those
+            // come first and say so inside their own line: the announcement
+            // renders every line as a list item, so a heading line would show
+            // up as an item of its own.
+            const isBreaking = (pr) => /^\w+(\([^)]*\))?!:/.test(pr.title || '');
+            const line = (pr) =>
+              `- [#${pr.number}](${pr.html_url}): ${isBreaking(pr) ? 'Breaking: ' : ''}${pr.title}`.trimEnd();
+            const breaking = merged.filter(isBreaking);
+            const rest = merged.filter((pr) => !isBreaking(pr));
+            const notes = [...breaking, ...rest].map(line).join('\n');
             core.info(notes);
             core.setOutput('release_notes', notes);
             core.setOutput('pr_count', String(merged.length));
+            core.setOutput('breaking_count', String(breaking.length));
           } catch (error) {
             // Warn rather than fail. An announcement without its list is worse
             // than one with it and better than no build at all.

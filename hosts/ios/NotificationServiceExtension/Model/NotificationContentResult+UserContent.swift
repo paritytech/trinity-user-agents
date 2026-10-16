@@ -34,6 +34,9 @@ extension NotificationContentResult {
         if let accountId {
             userInfo[PushNotificationKeys.accountId] = accountId
         }
+        if isFromBlockedContact {
+            userInfo[PushNotificationKeys.blockedContact] = true
+        }
         content.userInfo = userInfo
 
         return content

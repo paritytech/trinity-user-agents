@@ -115,11 +115,10 @@ class ProductPocketHostBridgeTest {
         scope.cancel()
     }
 
-    // removeCard blocks the core's dispatcher thread, which serves every product's traffic. The
-    // snapshot is set before each republish, so it holds every card the product can have been
-    // shown: one missing from it is absent, and a storage round trip for it only stalls the core.
+    // The snapshot is set before each republish, so it holds every card the product can have been
+    // shown: one missing from it is absent, and a storage round trip for it is wasted.
     @Test
-    fun `a card the product was never shown is absent without a blocking store read`() = runTest {
+    fun `a card the product was never shown is absent without a store read`() = runTest {
         val scope = executionScope()
         val removalsReachingStore = mutableListOf<PocketCardKey>()
         val countingStore = object : PocketCardStore by store {

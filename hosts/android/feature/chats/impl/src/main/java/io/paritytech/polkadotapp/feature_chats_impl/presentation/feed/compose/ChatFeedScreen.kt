@@ -20,6 +20,8 @@ import io.paritytech.polkadotapp.common.presentation.formatters.time.TimeFormatt
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
 import io.paritytech.polkadotapp.common.presentation.loading.onLoaded
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
 import io.paritytech.polkadotapp.design.components.avatar.Mock
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
@@ -271,7 +273,8 @@ private fun ChatFeedPreview() {
         CompositionLocalProvider(
             LocalChatMessageTimeFormatter provides ChatMessageTimeFormatter.mocked(),
             LocalTimeFormatter provides TimeFormatter.mocked(LocalContext.current),
-            LocalChatFeedTimestampAnchor provides System.currentTimeMillis()
+            LocalChatFeedTimestampAnchor provides System.currentTimeMillis(),
+            LocalPaymentAssetBrand provides PaymentAssetBrand.mocked
         ) {
             PolkadotSurface {
                 val text = remember { mutableStateOf("") }

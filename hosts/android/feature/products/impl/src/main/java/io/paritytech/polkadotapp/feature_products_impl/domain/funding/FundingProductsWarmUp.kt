@@ -22,7 +22,6 @@ class RealFundingProductsWarmUp @Inject constructor(
     private val resolveProductUseCase: ResolveProductUseCase,
     private val dotNsResolver: DotNsResolver,
 ) : FundingProductsWarmUp {
-
     override suspend fun warmUp() {
         fundingDomainProvider.getFundingProductIds()
             .flatMap { productIds -> productIds.mapAsync { warmUp(it) }.flattenUnit() }

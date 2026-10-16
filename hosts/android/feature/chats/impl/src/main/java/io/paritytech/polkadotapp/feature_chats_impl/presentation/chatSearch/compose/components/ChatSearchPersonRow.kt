@@ -16,6 +16,7 @@ import io.paritytech.polkadotapp.design.components.avatar.PolkadotAvatar
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.SpeakerXMark
+import io.paritytech.polkadotapp.design.components.progress.NovaCircularProgressIndicator
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.chatSearch.models.ChatSearchRowStatus
@@ -23,6 +24,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.co
 
 internal val ChatSearchPersonAvatarSize = 40.dp
 private val MuteIconSize = 20.dp
+private val LoadingIndicatorSize = 20.dp
 
 @Composable
 internal fun ChatSearchPersonRow(
@@ -31,6 +33,7 @@ internal fun ChatSearchPersonRow(
     status: ChatSearchRowStatus,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
+    loading: Boolean = false,
 ) {
     Row(
         modifier = Modifier
@@ -68,9 +71,17 @@ internal fun ChatSearchPersonRow(
             }
         }
 
-        ChatItemBadges(
-            badge = status.badge,
-            hasReaction = status.hasReaction,
-        )
+        if (loading) {
+            NovaCircularProgressIndicator(
+                modifier = Modifier.size(LoadingIndicatorSize),
+                color = PolkadotTheme.colors.fg.primary,
+                strokeWidth = 2.dp
+            )
+        } else {
+            ChatItemBadges(
+                badge = status.badge,
+                hasReaction = status.hasReaction,
+            )
+        }
     }
 }

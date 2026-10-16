@@ -123,6 +123,12 @@ private extension SceneDelegate {
             guard let window else { return }
             attachRootPresenter(to: window)
         }
+
+        func showResetPlaceholder() {
+            let placeholder = UIViewController()
+            placeholder.view.backgroundColor = .bgSurfaceMain
+            window?.rootViewController = placeholder
+        }
     }
 #endif
 

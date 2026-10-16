@@ -1,6 +1,6 @@
 [package]
 name = "truapi-host-cli"
-version = "0.22.0"
+version = "0.25.0"
 edition.workspace = true
 description = "Headless TrUAPI hosts: a signing-host companion and a pairing host that pair over the real People-chain statement store, for end-to-end testing without an external signer service"
 license = "MIT"
@@ -14,7 +14,12 @@ path = "src/main.rs"
 rustix = { workspace = true, features = ["process"] }
 
 [lints.rust]
+missing_docs = "warn"
 unsafe_code = "forbid"
+
+[lints.clippy]
+complexity = "warn"
+correctness = "warn"
 
 [dependencies]
 truapi = { path = "../truapi" }

@@ -18,6 +18,7 @@ final class TransferAmountPresenter {
 
     let dataValidationFactory: TransferDataValidatorFactoryProtocol
     let balanceViewModelFactory: BalanceViewModelFactoryProtocol
+    let availableBalanceViewModelFactory: BalanceViewModelFactoryProtocol
     let amountInputStrategy: AmountInputStrategyProtocol
     let paymentAssetViewModelFactory: PaymentAssetViewModelMaking
 
@@ -40,6 +41,7 @@ final class TransferAmountPresenter {
         wireframe: TransferAmountWireframeProtocol,
         chainAsset: ChainAsset,
         balanceViewModelFactory: BalanceViewModelFactoryProtocol,
+        availableBalanceViewModelFactory: BalanceViewModelFactoryProtocol,
         amountInputStrategy: AmountInputStrategyProtocol,
         dataValidationFactory: TransferDataValidatorFactoryProtocol,
         config: TransferAmountConfig = .default,
@@ -49,6 +51,7 @@ final class TransferAmountPresenter {
         self.wireframe = wireframe
         self.chainAsset = chainAsset
         self.balanceViewModelFactory = balanceViewModelFactory
+        self.availableBalanceViewModelFactory = availableBalanceViewModelFactory
         self.amountInputStrategy = amountInputStrategy
         self.dataValidationFactory = dataValidationFactory
         self.config = config
@@ -144,7 +147,7 @@ private extension TransferAmountPresenter {
             return
         }
 
-        let amount = balanceViewModelFactory.plainAmountFromValue(breakdown.availablePrivate).value(for: .current)
+        let amount = availableBalanceViewModelFactory.amountFromValue(breakdown.availablePrivate).value(for: .current)
         view?.didReceive(availableBalance: amount)
     }
 

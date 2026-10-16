@@ -15,6 +15,7 @@ import AsyncExtensions
 final class ContactPickSearchProvider: AccountSearching {
     typealias RecentPayload = ContactSearchPayload
     typealias MatchPayload = ContactSearchPayload
+    typealias Sections = AccountSearchSections<RecentPayload, MatchPayload>
 
     private let localContactSearch: LocalContactSearching
     private let ownAccountId: AccountId
@@ -37,6 +38,27 @@ final class ContactPickSearchProvider: AccountSearching {
         sourcesChangedNotifier.sequence()
     }
 
+    /// One phase: every section here is read locally, so there is no global
+    /// result to stream in after the first.
+    func searchPhases(
+        query: String?
+    ) -> AsyncThrowingStream<Sections, Error> {
+        let (stream, continuation) = AsyncThrowingStream<Sections, Error>.makeStream()
+
+        let task = Task {
+            do {
+                let sections = try await search(query: query)
+                continuation.yield(sections)
+                continuation.finish()
+            } catch {
+                continuation.finish(throwing: error)
+            }
+        }
+        continuation.onTermination = { _ in task.cancel() }
+
+        return stream
+    }
+
     func search(query: String?) async throws -> AccountSearchSections<RecentPayload, MatchPayload> {
         // One read after the other: a picker opens once, so overlapping two
         // reads of the same store buys nothing and only widens what has to be
@@ -49,7 +71,7 @@ final class ContactPickSearchProvider: AccountSearching {
             query: query,
             recent: [],
             contacts: contacts,
-            global: [],
+            global: .loaded([]),
             excluding: excluded
         )
     }

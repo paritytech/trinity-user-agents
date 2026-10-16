@@ -16,6 +16,8 @@ import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain.Asset
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain.Asset.Type
 import io.paritytech.polkadotapp.common.R
 import io.paritytech.polkadotapp.common.presentation.compose.withCurrencyTickerStyle
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.Close
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
@@ -105,7 +107,8 @@ private fun SimpleAssetListScreenInternal(
 @Composable
 private fun WalletScreenPreview() {
     CompositionLocalProvider(
-        LocalKnownTokenFormatter provides KnownTokenFormatter.mocked
+        LocalKnownTokenFormatter provides KnownTokenFormatter.mocked,
+        LocalPaymentAssetBrand provides PaymentAssetBrand.mocked
     ) {
         PolkadotTheme {
             SimpleAssetListScreenInternal(

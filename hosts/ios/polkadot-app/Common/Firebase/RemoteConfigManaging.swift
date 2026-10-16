@@ -8,7 +8,6 @@ protocol RemoteConfigManaging: AnyObject {
     func asyncWaitXcmTransfers<T: Decodable>() -> CompoundOperationWrapper<T>
     func asyncWaitXcmGeneralConfig<T: Decodable>() -> CompoundOperationWrapper<T>
     func asyncWaitW3sMerchants<T: Decodable>() -> CompoundOperationWrapper<T>
-    func syncedCollectiblesEnabled() -> Bool
 
     /// Per-chain transaction-extension version, keyed by chain id, from the standalone
     /// `transaction_extension_versions` remote-config key.
@@ -21,4 +20,13 @@ protocol RemoteConfigManaging: AnyObject {
 /// no registry.
 protocol ChainRegistryConfiguring: AnyObject {
     func set(chainRegistry: ChainRegistryProtocol)
+}
+
+/// Lets an in-process restart wait for a config fetched after it, instead of resolving with the one already applied
+/// or the one Firebase activated earlier.
+protocol AppliedConfigDiscarding: AnyObject {
+    /// Until the next successful fetch, waiters stay pending and the activated cache is not applied. The values
+    /// applied so far stay readable, so code still running against them does not trap.
+    @MainActor
+    func discardAppliedConfig()
 }

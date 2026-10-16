@@ -45,26 +45,20 @@ jobs:
         with:
           bun-version: "1.4.2"
 
-      # codegen.sh formats its generated Rust with `cargo +nightly fmt`, so the
+      # codegen.sh formats its generated Rust with the pinned nightly rustfmt, so the
       # nightly toolchain needs rustfmt, exactly as the release job installs it.
-      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
+      - uses: ./.github/actions/rust-nightly
         with:
-          toolchain: nightly
           components: rustfmt
 
       - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
         with:
           toolchain: stable
 
-      # A cache written on a pull request is visible only to that pull request,
-      # so every branch would store its own copy of the same key and the copies
-      # would evict each other from the repository's cache budget. This workflow
-      # is called from CI as well as from a release, so the test is the event
-      # rather than `== 'push'`: a release runs under `workflow_run` or
-      # `workflow_dispatch` and has to keep seeding the key it restores from.
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      # A release run restores without saving, like every release job.
+      - uses: ./.github/actions/rust-cache
         with:
-          save-if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
+          save: ${{ inputs.version == '' && 'true' || 'false' }}
 
       # The runner imports @parity/truapi from source, so the generated client
       # has to exist before it can be bundled.
@@ -123,10 +117,10 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           shared-key: cli-release-${{ matrix.target }}
-          save-if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
+          save: ${{ inputs.version == '' && 'true' || 'false' }}
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:

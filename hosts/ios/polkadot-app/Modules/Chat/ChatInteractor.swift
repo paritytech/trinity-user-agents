@@ -11,6 +11,7 @@ final class ChatInteractor {
     private let reactionRepository: ChatReactionRepositoryProtocol
     private let logger: LoggerProtocol
     private let usernameStorage: UsernameStoring
+    private let permissionsService: CallPermissionsServicing
 
     private var messagesTask: Task<Void, Never>?
     private var metadataTask: Task<Void, Never>?
@@ -26,6 +27,7 @@ final class ChatInteractor {
         engine: ChatEngineProtocol,
         reactionRepository: ChatReactionRepositoryProtocol,
         usernameStorage: UsernameStoring = UsernameStorage(),
+        permissionsService: CallPermissionsServicing = CallPermissionsService(),
         logger: LoggerProtocol = Logger.shared,
         foregroundVisibilityReporter: PushForegroundVisibilityReporting?,
         notificationsCleaner: any PushNotificationsCleaning
@@ -34,6 +36,7 @@ final class ChatInteractor {
         self.engine = engine
         self.reactionRepository = reactionRepository
         self.usernameStorage = usernameStorage
+        self.permissionsService = permissionsService
         self.logger = logger
         self.foregroundVisibilityReporter = foregroundVisibilityReporter
         self.notificationsCleaner = notificationsCleaner
@@ -112,6 +115,10 @@ extension ChatInteractor: ChatInteractorInputProtocol {
         subscribeMetadata()
         subscribeMessages()
         subscribeFooter()
+    }
+
+    func isMicrophoneDenied() -> Bool {
+        permissionsService.isMicrophoneDenied
     }
 
     func send(

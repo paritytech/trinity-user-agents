@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,6 +27,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.common.presentation.compose.withCurrencyTickerStyle
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.Alert
@@ -120,7 +123,9 @@ private fun AppNotificationItem(notification: AppNotification) {
 
 @Preview
 @Composable
-private fun AppNotificationItemSuccessPreview() {
+private fun AppNotificationItemSuccessPreview() = CompositionLocalProvider(
+    LocalPaymentAssetBrand provides PaymentAssetBrand.mocked
+) {
     PolkadotTheme {
         AppNotificationItem(notification = AppNotification.Success("Device connected"))
     }
@@ -128,7 +133,9 @@ private fun AppNotificationItemSuccessPreview() {
 
 @Preview
 @Composable
-private fun AppNotificationItemErrorPreview() {
+private fun AppNotificationItemErrorPreview() = CompositionLocalProvider(
+    LocalPaymentAssetBrand provides PaymentAssetBrand.mocked
+) {
     PolkadotTheme {
         AppNotificationItem(notification = AppNotification.Error("Something went wrong. Please try again."))
     }

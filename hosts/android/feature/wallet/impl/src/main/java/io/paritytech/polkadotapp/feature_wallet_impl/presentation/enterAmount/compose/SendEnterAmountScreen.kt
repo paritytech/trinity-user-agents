@@ -20,9 +20,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.paritytech.polkadotapp.common.presentation.compose.TickerWordmark
 import io.paritytech.polkadotapp.common.presentation.compose.withCurrencyTickerStyle
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.validation.compose.rememberValidationActionHandle
+import io.paritytech.polkadotapp.common.utils.CurrencyConfig
 import io.paritytech.polkadotapp.common.utils.progressStallReport.StallReportContent
 import io.paritytech.polkadotapp.common.utils.progressStallReport.previewStallReportOperations
 import io.paritytech.polkadotapp.common.utils.progressStallReport.previewStallReportSteps
@@ -40,6 +44,7 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddress
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
+import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.formatFiatSigned
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.RoundPrecision
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.enterAmount.SendEnterAmountContract
@@ -52,6 +57,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.enterAmount.co
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.enterAmount.compose.components.EnterAmountToolbar
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.enterAmount.domain.ConfirmGainingPrivacySpendDecision
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.enterAmount.domain.ConfirmGainingPrivacySpendUserAction
+import kotlinx.coroutines.android.awaitFrame
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
@@ -106,6 +112,8 @@ private fun SendEnterAmountScreenInternal(
     val keyboardController = LocalSoftwareKeyboardController.current
 
     LaunchedEffect(Unit) {
+        // The amount field is composed during measure (BoxWithConstraints), so it exists only after the first frame
+        awaitFrame()
         focusRequester.requestFocus()
         keyboardController?.show()
     }
@@ -114,7 +122,7 @@ private fun SendEnterAmountScreenInternal(
         formatter.formatToSymbol(state.available)
     }
     val amount = remember(state.spendable) {
-        formatter.formatTokenAmount(state.spendable, RoundPrecision.FIAT, withSymbol = false)
+        formatter.formatFiatSigned(state.spendable, withSymbol = true)
     }
     val gainingPrivacy = remember(state.gainingPrivacy) {
         state.gainingPrivacy?.let { formatter.formatTokenAmount(it, RoundPrecision.FIAT, withSymbol = false) }
@@ -158,7 +166,8 @@ private fun SendEnterAmountScreenInternal(
                     horizontal = PolkadotTheme.spacings.mediumIncreased
                 ),
                 input = state.input,
-                symbol = symbol,
+                fiatSymbol = CurrencyConfig.fiatSymbol,
+                ticker = symbol,
                 showError = state.showBalanceError,
                 enabled = state.sendProgress is SendProgress.Idle && !state.isAmountLocked,
                 focusRequester = focusRequester,
@@ -185,7 +194,7 @@ private fun SendEnterAmountScreenInternal(
                 is SendProgress.Idle ->
                     if (state.isAmountPositive) {
                         stringResource(RCommon.string.send_enter_amount_send_button, state.input, symbol)
-                            .withCurrencyTickerStyle(PolkadotTheme.typography.title.medium)
+                            .withCurrencyTickerStyle(PolkadotTheme.typography.title.medium, TickerWordmark.SmallCaps)
                     } else {
                         AnnotatedString(stringResource(RCommon.string.common_send))
                     }
@@ -244,7 +253,8 @@ private fun PreviewStallReport() {
 @Composable
 private fun SendEnterAmountScreenAllWidgetPreview() {
     CompositionLocalProvider(
-        LocalTokenAmountFormatter provides TokenAmountFormatter.mocked
+        LocalTokenAmountFormatter provides TokenAmountFormatter.mocked,
+        LocalPaymentAssetBrand provides PaymentAssetBrand.mocked
     ) {
         PolkadotTheme {
             SendEnterAmountScreenInternal(

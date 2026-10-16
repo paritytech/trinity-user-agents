@@ -63,6 +63,13 @@ syncs from the checkpoint in the chain spec on every run.
 anything the client would load for it. `saveDatabase(genesisHash)` forces a write
 at a moment the host chooses.
 
+The light client dials peers over `wss://`, and over plain `ws://` to localhost
+and to other hosts. A page whose browser blocks some of those can turn them off:
+
+```js
+builder.setConnectionTypes({ unsecure: false }); // mixed content on an https page
+```
+
 A light-client connection holds its requests until the chain first syncs, then
 sends them in order. Chain-spec queries, statement-store and Bitswap calls are
 answered at once. To show sync

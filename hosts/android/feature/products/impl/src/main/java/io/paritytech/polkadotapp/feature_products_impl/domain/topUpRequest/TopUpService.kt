@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.flatMap
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.TopUpRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.TopUpSourceStorage
@@ -138,8 +139,16 @@ class RealTopUpService @Inject constructor(
         Timber.tag(COINAGE_LOG_TAG).i("Top-ups to resume on launch: ${unfinished.size}")
 
         unfinished.forEach { operation ->
-            runningGuard.withLock {
-                if (!running.containsKey(operation.groupId.value)) attach(operation)
+            // Per operation, because one that can no longer be resumed stays unfinished for good: letting it
+            // out of the sweep would cost every top-up recorded after it a resume, on this launch and each
+            // one after.
+            runCancellableCatching {
+                runningGuard.withLock {
+                    if (!running.containsKey(operation.groupId.value)) attach(operation)
+                }
+            }.onFailure { error ->
+                Timber.tag(COINAGE_LOG_TAG)
+                    .e(error, "Top-up failed to resume product=${operation.productId.value} id=${operation.id.asHex()}")
             }
         }
     }

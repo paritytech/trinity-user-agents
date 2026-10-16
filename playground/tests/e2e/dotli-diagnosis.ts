@@ -52,7 +52,7 @@ const signingHostConfig: SigningHostCliConfig = {
       resolve(repoRoot, ".e2e-dotli/signing-host"),
   ),
   network: signingHostNetwork,
-  liteUsernamePrefix: process.env.HOST_CLI_SIGNER_MNEMONIC?.trim()
+  session: process.env.HOST_CLI_SIGNER_MNEMONIC?.trim()
     ? undefined
     : "dotlitest",
 };

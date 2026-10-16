@@ -19,7 +19,8 @@ public protocol ProductHostProviding: Sendable {
     func resolveHost(rawString: String) async throws -> ProductHost?
 
     /// Awaits the TLD, then parses a product destination into a page.
-    func resolvePage(destination: String) async throws -> ProductPage?
+    /// Throws ``ProductPageResolutionError`` when the TLD is unknown or the destination is not on this network.
+    func resolvePage(destination: String) async throws -> ProductPage
 }
 
 public final class ProductHostFactory: ProductHostProviding {
@@ -63,8 +64,21 @@ public final class ProductHostFactory: ProductHostProviding {
         return ProductHost.parse(rawString, tld: tld)
     }
 
-    public func resolvePage(destination: String) async throws -> ProductPage? {
-        let tld = try await tldProvider.resolveTld()
-        return ProductPage.fromNavigationDestination(destination, tld: tld)
+    public func resolvePage(destination: String) async throws -> ProductPage {
+        let tld: String
+
+        do {
+            tld = try await tldProvider.resolveTld()
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            throw ProductPageResolutionError.tldUnavailable(underlying: error)
+        }
+
+        guard let page = ProductPage.fromNavigationDestination(destination, tld: tld) else {
+            throw ProductPageResolutionError.destinationNotOnNetwork(destination: destination, tld: tld)
+        }
+
+        return page
     }
 }

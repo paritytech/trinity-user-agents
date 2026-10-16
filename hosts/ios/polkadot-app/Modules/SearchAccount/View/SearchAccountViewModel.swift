@@ -19,6 +19,7 @@ struct SearchAccountViewModel {
 
 extension SearchAccountViewModel {
     enum Section: Hashable {
+        case selfTransfer
         case contacts
         case recentContacts
         case globalSearch
@@ -34,12 +35,18 @@ extension SearchAccountViewModel {
         var selectedAccount: AccountType?
     }
 
+    struct Status {
+        let message: String?
+        let showsLoader: Bool
+    }
+
     struct Content {
         let recent: [RecipientViewModel]
         let contacts: [AccountType]
         let global: [AccountType]
+        var showsSelfTransfer: Bool
 
-        static let empty = Content(recent: [], contacts: [], global: [])
+        static let empty = Content(recent: [], contacts: [], global: [], showsSelfTransfer: false)
     }
 }
 
@@ -63,6 +70,7 @@ extension SearchAccountViewModel.AccountType {
 extension SearchAccountViewModel.Section {
     var title: String? {
         switch self {
+        case .selfTransfer: nil
         case .contacts: String(localized: .transactionSearchMyContacts)
         case .recentContacts: String(localized: .transactionSearchRecentContacts)
         case .globalSearch: String(localized: .transactionSearchAllUsers)

@@ -37,7 +37,7 @@ class TrUAPIPocketFaceStreamsTest {
                 includesChat = false,
                 includesPocket = true,
                 pocketCards = listOf(
-                    PocketCardDefinition(PocketCardId("loyalty"), "Loyalty", PocketCardPreview.Archive("face.json")),
+                    PocketCardDefinition(PocketCardId("loyalty"), "Loyalty", PocketCardPreview.Archive("face.json"), faceShown = true),
                 ),
             ),
         ),

@@ -12,7 +12,8 @@ final class SearchContactPresenter {
 
     private var currentSearch = CurrentSearch(
         query: "",
-        state: .result(.sections(AccountSearchSections(recent: [], contacts: [], global: [])))
+        latestResult: .sections(AccountSearchSections(recent: [], contacts: [])),
+        didReceiveWaiting: false
     )
 
     private var selection: [String: ContactSearchPayload] = [:]
@@ -29,7 +30,7 @@ final class SearchContactPresenter {
 extension SearchContactPresenter: SearchContactPresenterProtocol {
     func setup() {
         interactor.setup()
-        provideViewModel(sections: AccountSearchSections(recent: [], contacts: [], global: []))
+        provideViewModel(sections: AccountSearchSections(recent: [], contacts: []))
     }
 
     func search(username: String) {
@@ -70,36 +71,56 @@ private extension SearchContactPresenter {
     }
 
     func applySearchState(_ state: SearchContactSearchState, for query: String) {
-        currentSearch = CurrentSearch(query: query, state: state)
+        currentSearch = makeCurrentSearch(applying: state, for: query)
 
         switch state {
         case let .result(.sections(sections)):
             selection = Dictionary(
-                (sections.recent + sections.contacts + sections.global)
+                (sections.recent + sections.contacts + sections.global.rows)
                     .map { ($0.payload.accountId.toHex(), $0.payload) },
                 uniquingKeysWith: { first, _ in first }
             )
             provideViewModel(sections: sections)
         case .result(.error):
             selection = [:]
-            provideViewModel(sections: AccountSearchSections(recent: [], contacts: [], global: []))
+            provideViewModel(sections: AccountSearchSections(recent: [], contacts: []))
         case .started,
-             .waiting,
-             .waitingLong:
+             .waiting:
             provideStatus()
+        }
+    }
+
+    /// The `.waiting` signal only records that the loader is due; whether it shows is decided
+    /// from the latest phase, which may land either before or after the signal.
+    func makeCurrentSearch(applying state: SearchContactSearchState, for query: String) -> CurrentSearch {
+        switch state {
+        case .started:
+            CurrentSearch(query: query, latestResult: nil, didReceiveWaiting: false)
+        case .waiting:
+            CurrentSearch(
+                query: query,
+                latestResult: currentSearch.latestResult,
+                didReceiveWaiting: true
+            )
+        case let .result(result):
+            CurrentSearch(
+                query: query,
+                latestResult: result,
+                didReceiveWaiting: currentSearch.didReceiveWaiting
+            )
         }
     }
 
     func makeStatus() -> SearchContactResultsView.StatusViewModel {
         SearchContactResultsView.StatusViewModel(
             message: makeStatusMessage(),
-            showsLoader: currentSearch.showsLoader,
-            loaderText: currentSearch.loaderText
+            showsLoader: currentSearch.showsLoader
         )
     }
 
     /// Shown instead of the rows once the search settles: the failure reason, or the
-    /// no-recents hint when the field is empty.
+    /// no-recents hint when the field is empty. A failed global lookup stays silent while
+    /// recent or contact rows are on screen, since those are still usable.
     func makeStatusMessage() -> NSAttributedString? {
         guard !currentSearch.isSearching else {
             return nil
@@ -108,7 +129,9 @@ private extension SearchContactPresenter {
         let query = currentSearch.query
         let allEmpty = selection.isEmpty
 
-        if currentSearch.queryFailed || (!query.isEmpty && allEmpty) {
+        if currentSearch.globalFailed {
+            return allEmpty ? makeCenteredMessage(String(localized: .accountSearchGlobalFailed)) : nil
+        } else if currentSearch.queryFailed || (!query.isEmpty && allEmpty) {
             return makeCenteredMessage(String(localized: .searchContactNoSuchUsername(username: query)))
         } else if allEmpty, query.isEmpty {
             return makeCenteredMessage(String(localized: .searchContactNoRecentSearches))
@@ -153,7 +176,7 @@ private extension SearchContactPresenter {
             makeViewSection(
                 id: "global",
                 title: String(localized: .transactionSearchAllUsers),
-                rows: sections.global
+                rows: sections.global.rows
             )
         ].compactMap { $0 }
     }
@@ -195,42 +218,49 @@ private extension SearchContactPresenter {
 
     struct CurrentSearch {
         let query: String
-        let state: SearchContactSearchState
+        /// The latest phase received for this query, or nil while none has arrived yet.
+        let latestResult: SearchContactSearchResult?
+        let didReceiveWaiting: Bool
 
         var queryFailed: Bool {
-            guard case .result(.error) = state else {
+            guard case .error = latestResult else {
                 return false
             }
             return true
         }
 
+        var globalFailed: Bool {
+            sections?.global.hasFailed == true
+        }
+
+        /// A phase whose global lookup is still pending counts as searching, so the no-results
+        /// message does not flash over an empty screen before the global rows land.
         var isSearching: Bool {
-            switch state {
-            case .started,
-                 .waiting,
-                 .waitingLong:
-                true
-            case .result:
-                false
+            guard latestResult != nil else {
+                return true
             }
+            return sections?.global.isPending == true
         }
 
         var showsLoader: Bool {
-            switch state {
-            case .waiting,
-                 .waitingLong:
-                true
-            case .started,
-                 .result:
-                false
+            guard didReceiveWaiting else {
+                return false
             }
+            guard latestResult != nil else {
+                return true
+            }
+            guard let sections, sections.global.isPending else {
+                return false
+            }
+            return sections.recent.isEmpty && sections.contacts.isEmpty
         }
 
-        var loaderText: String? {
-            guard case .waitingLong = state else {
+        /// The latest phase's sections, or nil when no phase has arrived or the search failed outright.
+        private var sections: AccountSearchSections<ContactSearchPayload, ContactSearchPayload>? {
+            guard case let .sections(sections) = latestResult else {
                 return nil
             }
-            return String(localized: .searchContactLoadingLong)
+            return sections
         }
     }
 }

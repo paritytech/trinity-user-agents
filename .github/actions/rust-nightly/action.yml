@@ -1,0 +1,52 @@
+name: Install the pinned nightly
+description: >-
+  Installs the nightly toolchain named in the repository's nightly-toolchain
+  file and exports it as TRUAPI_NIGHTLY_TOOLCHAIN, which scripts/codegen.sh
+  and the codegen golden tests read. Later steps run it as
+  cargo +"$TRUAPI_NIGHTLY_TOOLCHAIN".
+
+inputs:
+  components:
+    description: Comma-separated rustup components to install with it.
+    required: false
+    default: rustfmt
+  targets:
+    description: Comma-separated extra targets to install with it.
+    required: false
+    default: ""
+
+outputs:
+  toolchain:
+    description: The pinned toolchain, for example nightly-2026-09-01.
+    value: ${{ steps.pin.outputs.toolchain }}
+
+runs:
+  using: composite
+  steps:
+    # One dated nightly for every job. A floating one changes rustfmt, clippy
+    # and rustdoc's JSON format under an unchanged tree, and because
+    # rust-cache folds every installed toolchain's version into its cache key,
+    # it also discards each Rust cache the day it moves. The value reaches an
+    # action input interpolated into a shell command, so it is constrained to
+    # the dated-nightly shape and to a single line.
+    - name: Read the pinned nightly
+      id: pin
+      shell: bash
+      run: |
+        set -euo pipefail
+        toolchain="$(head -n1 "${GITHUB_WORKSPACE}/nightly-toolchain" | tr -d '[:space:]')"
+        case "${toolchain}" in
+          nightly-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+          *)
+            echo "::error::nightly-toolchain must name a dated nightly, got '${toolchain}'"
+            exit 1
+            ;;
+        esac
+        echo "toolchain=${toolchain}" >> "$GITHUB_OUTPUT"
+        echo "TRUAPI_NIGHTLY_TOOLCHAIN=${toolchain}" >> "$GITHUB_ENV"
+
+    - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # pinned nightly
+      with:
+        toolchain: ${{ steps.pin.outputs.toolchain }}
+        components: ${{ inputs.components }}
+        targets: ${{ inputs.targets }}

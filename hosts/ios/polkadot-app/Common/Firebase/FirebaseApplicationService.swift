@@ -51,14 +51,19 @@ final class FirebaseApplicationService: RemoteConfigManaging {
     func fetchRemoteConfigValues() {
         Task {
             do {
-                let signal: CustomSignal = .environment
-                try await remoteConfig.setCustomSignals([signal.key: signal.value])
-                let status = try await remoteConfig.fetchAndActivate()
-                handleRemoteConfigStatus(status)
+                try await fetchAndActivateRemoteConfig()
+                delegate?.remoteConfig(didFinishLoading: .success(()))
             } catch {
                 delegate?.remoteConfig(didFinishLoading: .failure(error))
             }
         }
+    }
+
+    func fetchAndActivateRemoteConfig() async throws {
+        let signal: CustomSignal = .environment
+        try await remoteConfig.setCustomSignals([signal.key: signal.value])
+        let status = try await remoteConfig.fetchAndActivate()
+        handleRemoteConfigStatus(status)
     }
 
     func asyncWaitChainsForRemoteConfigValues() -> CompoundOperationWrapper<[RemoteChainModel]> {
@@ -73,20 +78,8 @@ final class FirebaseApplicationService: RemoteConfigManaging {
         asyncWaitForRemoteConfigValues(for: .generalXcmConfig)
     }
 
-    func asyncWaitGameResultsFallbackURL() -> CompoundOperationWrapper<URL> {
-        asyncWaitForRemoteConfigValues(for: .gameResultsFallbackURL)
-    }
-
     func asyncWaitW3sMerchants<T: Decodable>() -> CompoundOperationWrapper<T> {
         asyncWaitForRemoteConfigValues(for: .w3sMerchants)
-    }
-
-    func asyncWaitCollectiblesFallbackURL() -> CompoundOperationWrapper<URL> {
-        asyncWaitForRemoteConfigValues(for: .collectiblesFallbackURL)
-    }
-
-    func syncedCollectiblesEnabled() -> Bool {
-        remoteConfig[.collectiblesEnabled].boolValue
     }
 
     func syncedTxExtensionVersions() -> [ChainModel.Id: UInt8] {
@@ -104,14 +97,14 @@ final class FirebaseApplicationService: RemoteConfigManaging {
         RemoteAppConfig(
             identityBackendUrl: url(for: .identityBackendUrl),
             ipfsGatewayUrl: url(for: .ipfsGatewayUrl),
-            gameDashboardUrl: url(for: .gameDashboardUrl),
             dotNsResolver: dotNsResolverAddress(),
             dotNsNameRegistry: dotNsNameRegistryAddress(),
             coinageInstanceId: coinageInstanceId(),
             fundingUrl: fundingConfigValue(.onrampUrl),
             offrampUrl: fundingConfigValue(.offrampUrl),
             accountDataStoreContract: accountDataStoreContractAddress(),
-            paymentAsset: paymentAssetConfig()
+            paymentAsset: paymentAssetConfig(),
+            appSharingUrl: url(for: .appSharingUrl)
         )
     }
 
@@ -133,13 +126,11 @@ private extension FirebaseApplicationService {
     private func configurationRemoteConfigSettings() {
         let remoteConfigSettings = RemoteConfigSettings()
         remoteConfigSettings.minimumFetchInterval = .zero
+        remoteConfigSettings.fetchTimeout = 10
         remoteConfig.configSettings = remoteConfigSettings
     }
 
     private func handleRemoteConfigStatus(_ status: RemoteConfigFetchAndActivateStatus) {
-        defer {
-            delegate?.remoteConfig(didFinishLoading: .success(()))
-        }
         switch status {
         case .successFetchedFromRemote:
             logger.info("RemoteConfig fetched from remote and activated")
@@ -258,6 +249,8 @@ private extension FirebaseApplicationService {
             case .environment:
                 #if UNSTABLE
                     "unstable"
+                #elseif SAFETYNET
+                    "safetynet"
                 #elseif NIGHTLY
                     "nightly"
                 #else
@@ -275,14 +268,10 @@ private extension String {
     static let chains = "chains_v2"
     static let xcmTransfers = "cross_chain_transfers"
     static let generalXcmConfig = "xcm_general_config"
-    static let gameResultsFallbackURL = "game_results_fallback_url"
     static let w3sMerchants = "w3s_merchants"
-    static let collectiblesFallbackURL = "collectibles_fallback_url"
-    static let collectiblesEnabled = "collectibles_enabled"
     static let txExtensionVersions = "transaction_extension_versions"
     static let identityBackendUrl = "identity_backend_url"
     static let ipfsGatewayUrl = "ipfs_gateway_url"
-    static let gameDashboardUrl = "game_dashboard_url"
     static let dotNsResolver = "dot_ns_config"
     static let coinageInstanceId = "coinage_instance_id"
     static let fundingConfig = "funding_config"
@@ -291,6 +280,7 @@ private extension String {
     static let accountDataStoreConfig = "account_data_store_config"
     static let contractAddress = "contractAddress"
     static let paymentAssetConfig = "payment_asset_config"
+    static let appSharingUrl = "app_sharing_url"
     static let issueProxyUrl = "issue_proxy_url"
     static let issueProxyApiKey = "issue_proxy_api_key"
 }

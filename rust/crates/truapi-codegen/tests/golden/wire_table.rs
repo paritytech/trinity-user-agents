@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "ea1a1441ff0219b1";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "6a267e1b8d40de6c";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -254,6 +254,12 @@ pub const CHAT_ACTION_SUBSCRIBE: MethodIds = MethodIds {
     method_id: 4,
 };
 
+/// Wire discriminants for `chat_set_room_footer`.
+pub const CHAT_SET_ROOM_FOOTER: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 6,
+};
+
 /// Wire discriminants for `coin_payment_create_purse`.
 pub const COIN_PAYMENT_CREATE_PURSE: MethodIds = MethodIds {
     trait_id: 5,
@@ -372,6 +378,12 @@ pub const PAYMENT_REQUEST: MethodIds = MethodIds {
 pub const PAYMENT_STATUS_SUBSCRIBE: MethodIds = MethodIds {
     trait_id: 9,
     method_id: 3,
+};
+
+/// Wire discriminants for `payment_top_up_status_subscribe`.
+pub const PAYMENT_TOP_UP_STATUS_SUBSCRIBE: MethodIds = MethodIds {
+    trait_id: 9,
+    method_id: 4,
 };
 
 /// Wire discriminants for `permissions_request_device_permission`.
@@ -542,6 +554,30 @@ pub const CONTACTS_PICK: MethodIds = MethodIds {
     method_id: 0,
 };
 
+/// Wire discriminants for `game_remind_next_game`.
+pub const GAME_REMIND_NEXT_GAME: MethodIds = MethodIds {
+    trait_id: 21,
+    method_id: 0,
+};
+
+/// Wire discriminants for `game_cancel_next_game`.
+pub const GAME_CANCEL_NEXT_GAME: MethodIds = MethodIds {
+    trait_id: 21,
+    method_id: 1,
+};
+
+/// Wire discriminants for `expanded_card_set_face_shown`.
+pub const EXPANDED_CARD_SET_FACE_SHOWN: MethodIds = MethodIds {
+    trait_id: 23,
+    method_id: 0,
+};
+
+/// Wire discriminants for `scanner_scan`.
+pub const SCANNER_SCAN: MethodIds = MethodIds {
+    trait_id: 25,
+    method_id: 0,
+};
+
 /// The full wire table. Trait ids and per-trait method ordering are
 /// part of the wire protocol; only ever append within a trait.
 /// Removed methods leave their slot empty.
@@ -687,6 +723,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
         kind: WireKind::Subscription(CHAT_ACTION_SUBSCRIBE),
     },
     WireEntry {
+        method: "chat_set_room_footer",
+        kind: WireKind::Request(CHAT_SET_ROOM_FOOTER),
+    },
+    WireEntry {
         method: "coin_payment_create_purse",
         kind: WireKind::Request(COIN_PAYMENT_CREATE_PURSE),
     },
@@ -765,6 +805,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "payment_status_subscribe",
         kind: WireKind::Subscription(PAYMENT_STATUS_SUBSCRIBE),
+    },
+    WireEntry {
+        method: "payment_top_up_status_subscribe",
+        kind: WireKind::Subscription(PAYMENT_TOP_UP_STATUS_SUBSCRIBE),
     },
     WireEntry {
         method: "permissions_request_device_permission",
@@ -877,5 +921,21 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "contacts_pick",
         kind: WireKind::Request(CONTACTS_PICK),
+    },
+    WireEntry {
+        method: "game_remind_next_game",
+        kind: WireKind::Request(GAME_REMIND_NEXT_GAME),
+    },
+    WireEntry {
+        method: "game_cancel_next_game",
+        kind: WireKind::Request(GAME_CANCEL_NEXT_GAME),
+    },
+    WireEntry {
+        method: "expanded_card_set_face_shown",
+        kind: WireKind::Request(EXPANDED_CARD_SET_FACE_SHOWN),
+    },
+    WireEntry {
+        method: "scanner_scan",
+        kind: WireKind::Request(SCANNER_SCAN),
     },
 ];

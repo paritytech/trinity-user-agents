@@ -47,9 +47,9 @@ struct RootInteractorSetupTests {
         #expect(spy.didDecideCallCount == 0, "Expected no destination decision (gate holds)")
     }
 
-    @Test("setup deadline expiry reports failure and no destination")
+    @Test("a hanging config does not fail at the setup deadline")
     @MainActor
-    func setupDeadlineExpiryReportsFailureAndNoDestination() async throws {
+    func hangingConfigDoesNotFailAtSetupDeadline() async throws {
         let spy = RootSetupOutputSpy()
         let chainRegistry = MockChainRegistry()
         chainRegistry.chainsOnSubscribe = [
@@ -59,6 +59,68 @@ struct RootInteractorSetupTests {
         ]
         let remoteConfigManager = MockRemoteConfigManager()
         remoteConfigManager.hangs = true
+        let pathMonitor = MockNetworkPathMonitor()
+        let clock = TestClock<Duration>()
+
+        let interactor = makeInteractor(
+            chainRegistry: chainRegistry,
+            pathMonitor: pathMonitor,
+            remoteConfigManager: remoteConfigManager,
+            clock: clock
+        )
+        interactor.presenter = spy
+
+        interactor.setup()
+
+        await clock.advance(by: .seconds(11))
+
+        for _ in 0 ..< 10 {
+            await Task.yield()
+        }
+
+        pathMonitor.send(false)
+
+        let kind = await spy.nextFailureKind()
+
+        #expect(kind == .connectivity, "Expected connectivity failure, not the deadline")
+        #expect(spy.didFailSetupCallCount == 1)
+        #expect(spy.didDecideCallCount == 0)
+    }
+
+    @Test("offline during the config wait fails at the offline deadline")
+    @MainActor
+    func offlineDuringConfigWaitFailsAtOfflineDeadline() async throws {
+        let spy = RootSetupOutputSpy()
+        let chainRegistry = MockChainRegistry()
+        let remoteConfigManager = MockRemoteConfigManager()
+        remoteConfigManager.hangs = true
+        let pathMonitor = MockNetworkPathMonitor(initial: false)
+        let clock = TestClock<Duration>()
+
+        let interactor = makeInteractor(
+            chainRegistry: chainRegistry,
+            pathMonitor: pathMonitor,
+            remoteConfigManager: remoteConfigManager,
+            clock: clock
+        )
+        interactor.presenter = spy
+
+        interactor.setup()
+
+        await clock.advance(by: .seconds(4))
+
+        let kind = await spy.nextFailureKind()
+
+        #expect(kind == .connectivity)
+    }
+
+    @Test("invalid config fails at the config stage even without chains")
+    @MainActor
+    func invalidConfigFailsAtConfigStageEvenWithoutChains() async throws {
+        let spy = RootSetupOutputSpy()
+        let chainRegistry = MockChainRegistry()
+        let remoteConfigManager = MockRemoteConfigManager()
+        remoteConfigManager.errorToThrow = RemoteConfigError.invalidConfig
         let clock = TestClock<Duration>()
 
         let interactor = makeInteractor(
@@ -70,14 +132,10 @@ struct RootInteractorSetupTests {
 
         interactor.setup()
 
-        // Advance the clock past the full deadline (10s) to trigger timeout
-        await clock.advance(by: .seconds(11))
-
         let kind = await spy.nextFailureKind()
 
-        #expect(kind == .unknown, "Expected the unknown failure kind")
-        #expect(spy.didFailSetupCallCount == 1, "Expected failure reported after deadline")
-        #expect(spy.didDecideCallCount == 0, "Expected no destination reported")
+        #expect(kind == .configuration(.config))
+        #expect(chainRegistry.chainsUnsubscribeCallCount == 0)
     }
 
     @Test("unsatisfied path outranks a TLD failure")
@@ -363,14 +421,14 @@ private extension RootInteractorSetupTests {
             RemoteAppConfig(
                 identityBackendUrl: URL(string: "https://example.com"),
                 ipfsGatewayUrl: URL(string: "https://ipfs.example.com"),
-                gameDashboardUrl: URL(string: "https://game.example.com"),
                 dotNsResolver: "resolver.example.com",
                 dotNsNameRegistry: nil,
                 coinageInstanceId: 1,
                 fundingUrl: nil,
                 offrampUrl: nil,
                 accountDataStoreContract: nil,
-                paymentAsset: nil
+                paymentAsset: nil,
+                appSharingUrl: nil
             )
         },
         clock: any Clock<Duration> = TestClock<Duration>()

@@ -20,10 +20,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.designsystem.colors.PolkadotColorsPalette
-import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainGlyph
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthIndicator
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthIndicatorsModel
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthItemModel
+import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.IndicatorRow
 import kotlinx.collections.immutable.persistentListOf
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -77,6 +77,30 @@ class ChainHealthIndicatorsScreenshotTest {
     fun offlineIsTheSameDottedRing() =
         renderAndAssert("offline", ChainHealthIndicator.Offline, DOTTED_MIN, DOTTED_MAX) { it.stroke.secondary }
 
+    @Test
+    fun statementStoreConnectedIsAFilledDisc() =
+        renderStatementStore("statement-store-connected", CONNECTED, FULL_RING, null) { it.fg.primary }
+
+    @Test
+    fun statementStoreConnectingIsAColourlessRing() =
+        renderStatementStore("statement-store-connecting", ChainHealthIndicator.Connecting, FULL_RING, null) { it.stroke.secondary }
+
+    @Test
+    fun statementStoreDisconnectedIsADottedRing() = renderStatementStore(
+        "statement-store-disconnected",
+        ChainHealthIndicator.Disconnected,
+        DOTTED_MIN,
+        DOTTED_MAX,
+    ) { it.stroke.secondary }
+
+    @Test
+    fun statementStoreOfflineIsTheSameDottedRing() = renderStatementStore(
+        "statement-store-offline",
+        ChainHealthIndicator.Offline,
+        DOTTED_MIN,
+        DOTTED_MAX,
+    ) { it.stroke.secondary }
+
     // The panel draws the same states larger; a size not threaded through one drawing shows up here as a
     // ring band sampled at the wrong radius.
     @Test
@@ -120,12 +144,28 @@ class ChainHealthIndicatorsScreenshotTest {
         assertTrue("the cross must not be the ring colour", !pixels[x, y].isClose(ring))
     }
 
+    private fun renderStatementStore(
+        name: String,
+        indicator: ChainHealthIndicator,
+        minimumShare: Float,
+        maximumShare: Float?,
+        surround: (PolkadotColorsPalette) -> Color,
+    ) = renderAndAssert(
+        name = name,
+        indicator = indicator,
+        minimumShare = minimumShare,
+        maximumShare = maximumShare,
+        model = { ChainHealthIndicatorsModel(persistentListOf(item(IndicatorRow.StatementStore, it))) },
+        surround = surround,
+    )
+
     private fun renderAndAssert(
         name: String,
         indicator: ChainHealthIndicator,
         minimumShare: Float,
         maximumShare: Float?,
         indicatorSize: ChainIndicatorSize = ChainIndicatorSize.Bar,
+        model: (ChainHealthIndicator) -> ChainHealthIndicatorsModel = ::model,
         surround: (PolkadotColorsPalette) -> Color,
     ) {
         var expected = Color.Unspecified
@@ -159,16 +199,15 @@ class ChainHealthIndicatorsScreenshotTest {
 
     private fun model(indicator: ChainHealthIndicator) = ChainHealthIndicatorsModel(
         persistentListOf(
-            item("people", ChainGlyph.People, indicator),
-            item("hub", ChainGlyph.AssetHub, indicator),
-            item("bulletin", ChainGlyph.Bulletin, indicator),
+            item(IndicatorRow.People, indicator),
+            item(IndicatorRow.AssetHub, indicator),
+            item(IndicatorRow.Bulletin, indicator),
+            item(IndicatorRow.StatementStore, indicator),
         ),
     )
 
-    private fun item(name: String, glyph: ChainGlyph, indicator: ChainHealthIndicator) = ChainHealthItemModel(
-        chainId = name,
-        chainName = name,
-        glyph = glyph,
+    private fun item(row: IndicatorRow, indicator: ChainHealthIndicator) = ChainHealthItemModel(
+        row = row,
         indicator = indicator,
     )
 
@@ -219,5 +258,6 @@ class ChainHealthIndicatorsScreenshotTest {
         const val QUARTER_MIN = 0.18f
         const val QUARTER_MAX = 0.36f
         val BLOCK_TIME = 2.seconds
+        val CONNECTED = ChainHealthIndicator.Healthy(liveness = null)
     }
 }

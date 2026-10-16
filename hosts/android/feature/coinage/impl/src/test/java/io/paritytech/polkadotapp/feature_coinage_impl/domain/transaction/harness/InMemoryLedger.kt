@@ -1,11 +1,13 @@
 package io.paritytech.polkadotapp.feature_coinage_impl.domain.transaction.harness
 
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageAssetState
+import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageAssetStates
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageInput
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageOperationGroupId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageTransactionId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageTransactionState
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.OwnAsset
+import io.paritytech.polkadotapp.feature_coinage_impl.TEST_INSTALLATION
 import io.paritytech.polkadotapp.feature_coinage_impl.data.transaction.AssetPublicKey
 import io.paritytech.polkadotapp.feature_coinage_impl.data.transaction.AssetRegistration
 import io.paritytech.polkadotapp.feature_coinage_impl.data.transaction.CoinageAssetKind
@@ -347,6 +349,11 @@ private class InMemoryCoinageAssetLedger(private val store: InMemoryLedger) : Co
                 .CoinageRegistrationError.HandoffOfClaimedAsset(it)
         }
 
+        assets.firstOrNull { it.publicKey in store.handoffs }?.asset?.let {
+            throw io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model
+                .CoinageRegistrationError.HandoffOfHandedOffAsset(it)
+        }
+
         assets.forEach { asset ->
             val owned = asset.asset ?: return@forEach
             if (asset.publicKey !in store.handoffs) {
@@ -385,19 +392,14 @@ private class InMemoryCoinageAssetLedger(private val store: InMemoryLedger) : Co
         groupId: CoinageOperationGroupId,
     ): Flow<List<CoinageTransactionState>> = store.revisions.map { store.groupStates(groupId) }
 
-    override fun subscribeAssetStates(): Flow<Map<OwnAsset, CoinageAssetState>> =
-        store.revisions.map { store.assetStates() }
+    override fun subscribeAssetStates(): Flow<CoinageAssetStates> =
+        store.revisions.map { CoinageAssetStates(store.assetStates(), TEST_INSTALLATION) }
 
     override suspend fun getAssetState(asset: OwnAsset): Result<CoinageAssetState> =
-        store.read { store.assetStates()[asset] ?: CoinageAssetState.UNTRACKED }
+        store.read { CoinageAssetStates(store.assetStates(), TEST_INSTALLATION).getAssetStateOf(asset) }
 
-    override suspend fun getAssetStates(
-        assets: List<OwnAsset>,
-    ): Result<Map<OwnAsset, CoinageAssetState>> = store.read {
-        val states = store.assetStates()
-
-        assets.associateWith { states[it] ?: CoinageAssetState.UNTRACKED }
-    }
+    override suspend fun getAssetStates(assets: List<OwnAsset>): Result<CoinageAssetStates> =
+        store.read { CoinageAssetStates(store.assetStates(), TEST_INSTALLATION) }
 }
 
 private fun InMemoryLedger.insert(registration: DurableTxRegistration): DurableTxId {

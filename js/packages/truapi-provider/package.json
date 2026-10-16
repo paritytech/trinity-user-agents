@@ -1,17 +1,17 @@
 {
   "name": "@parity/truapi-provider",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Network provider backends for the TrUAPI ChainProvider: an embedded smoldot light client and remote WebSocket JSON-RPC nodes, compiled to WebAssembly for browser hosts",
   "license": "MIT AND Apache-2.0",
   "author": "Parity Technologies <admin@parity.io>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/paritytech/host-rust-core.git",
+    "url": "git+https://github.com/paritytech/trinity-user-agents.git",
     "directory": "js/packages/truapi-provider"
   },
-  "homepage": "https://github.com/paritytech/host-rust-core#readme",
+  "homepage": "https://github.com/paritytech/trinity-user-agents#readme",
   "bugs": {
-    "url": "https://github.com/paritytech/host-rust-core/issues"
+    "url": "https://github.com/paritytech/trinity-user-agents/issues"
   },
   "type": "module",
   "main": "dist/truapi_provider.js",

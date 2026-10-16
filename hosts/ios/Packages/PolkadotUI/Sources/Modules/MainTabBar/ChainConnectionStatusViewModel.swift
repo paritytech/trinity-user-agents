@@ -11,6 +11,7 @@ public enum ChainStatusIcon: Hashable {
     case people
     case bulletin
     case assetHub
+    case statementStore
 }
 
 public struct ChainConnectionStatusViewModel: Hashable, Identifiable {
@@ -22,6 +23,7 @@ public struct ChainConnectionStatusViewModel: Hashable, Identifiable {
     public let indication: ChainStatusIndication
     public let liveness: Double?
     public let expectedBlockSeconds: Double
+    public let showsChainMetrics: Bool
 
     public init(
         id: String,
@@ -31,7 +33,8 @@ public struct ChainConnectionStatusViewModel: Hashable, Identifiable {
         icon: ChainStatusIcon,
         indication: ChainStatusIndication,
         liveness: Double?,
-        expectedBlockSeconds: Double
+        expectedBlockSeconds: Double,
+        showsChainMetrics: Bool = true
     ) {
         self.id = id
         self.title = title
@@ -41,6 +44,7 @@ public struct ChainConnectionStatusViewModel: Hashable, Identifiable {
         self.indication = indication
         self.liveness = liveness
         self.expectedBlockSeconds = expectedBlockSeconds
+        self.showsChainMetrics = showsChainMetrics
     }
 
     public func withIndication(
@@ -55,7 +59,8 @@ public struct ChainConnectionStatusViewModel: Hashable, Identifiable {
             icon: icon,
             indication: indication,
             liveness: liveness,
-            expectedBlockSeconds: expectedBlockSeconds
+            expectedBlockSeconds: expectedBlockSeconds,
+            showsChainMetrics: showsChainMetrics
         )
     }
 }

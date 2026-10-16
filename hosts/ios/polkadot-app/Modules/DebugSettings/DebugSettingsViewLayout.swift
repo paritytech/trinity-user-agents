@@ -3,6 +3,7 @@ import UIKit_iOS
 import SnapKit
 import PolkadotUI
 import DesignSystem
+import TrUAPIHost
 
 final class DebugSettingsViewLayout: UIView {
     let clearBackupButton: RoundedButton = .create { button in
@@ -72,9 +73,24 @@ final class DebugSettingsViewLayout: UIView {
     }
 
     #if DEBUG
+        let openDevServerButton: RoundedButton = .create { button in
+            button.applyMainStyle()
+            button.imageWithTitleView?.title = "Open dev server"
+        }
+
         let openTrUAPIPlaygroundButton: RoundedButton = .create { button in
             button.applyMainStyle()
             button.imageWithTitleView?.title = "Open TrUAPI Playground"
+        }
+
+        let pocketFacePreviewButton: RoundedButton = .create { button in
+            button.applyMainStyle()
+            button.imageWithTitleView?.title = "Pocket Face Preview"
+        }
+
+        let pocketCardsButton: RoundedButton = .create { button in
+            button.applyMainStyle()
+            button.imageWithTitleView?.title = "Pocket Cards"
         }
     #endif
 
@@ -83,7 +99,7 @@ final class DebugSettingsViewLayout: UIView {
     private let truApiRuntimeLabel: Label = .create { (view: Label) in
         view.typography = .bodyMedium
         view.textColor = .fgPrimary
-        view.text = "TrUAPI Runtime"
+        view.text = "TrUAPI Runtime (\(truapiHostVersion()))"
     }
 
     private let truApiRuntimeRow: UIStackView = .create { stack in
@@ -169,7 +185,12 @@ final class DebugSettingsViewLayout: UIView {
         ]
 
         #if DEBUG
-            rows.append(openTrUAPIPlaygroundButton)
+            rows.append(contentsOf: [
+                openDevServerButton,
+                openTrUAPIPlaygroundButton,
+                pocketFacePreviewButton,
+                pocketCardsButton
+            ])
         #endif
 
         rows.append(contentsOf: [strategyDebugRow, truApiRuntimeRow, hostPlacedRow])

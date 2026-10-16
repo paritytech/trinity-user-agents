@@ -65,7 +65,7 @@ cargo run -p truapi-codegen -- \
 ## Typical workflow
 
 ```bash
-cargo +nightly rustdoc -p truapi -- -Z unstable-options --output-format json
+cargo +$(cat nightly-toolchain) rustdoc -p truapi -- -Z unstable-options --output-format json
 cargo run -p truapi-codegen -- \
   --input target/doc/truapi.json \
   --output js/packages/truapi/src/generated

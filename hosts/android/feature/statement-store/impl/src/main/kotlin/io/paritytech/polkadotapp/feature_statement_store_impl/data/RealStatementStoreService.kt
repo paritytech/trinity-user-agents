@@ -9,7 +9,6 @@ import io.novasama.substrate_sdk_android.wsrpc.request.DeliveryType
 import io.novasama.substrate_sdk_android.wsrpc.subscription.response.SubscriptionChange
 import io.novasama.substrate_sdk_android.wsrpc.subscriptionFlow
 import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
-import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
 import io.paritytech.polkadotapp.chains.multiNetwork.getSocket
 import io.paritytech.polkadotapp.feature_statement_store_api.data.Statement
 import io.paritytech.polkadotapp.feature_statement_store_api.data.StatementStoreService
@@ -40,8 +39,8 @@ private val RETRY_DELAY = 2.seconds
 private const val MAX_RETRIES = 10
 
 class RealStatementStoreService @Inject constructor(
-    private val knownChains: KnownChains,
     private val chainRegistry: ChainRegistry,
+    private val peer: RealStatementStorePeer,
     private val gson: Gson
 ) : StatementStoreService {
     override suspend fun submitStatement(statement: Statement): Result<Unit> = runCatching {
@@ -113,22 +112,24 @@ class RealStatementStoreService @Inject constructor(
         allStatements
     }
 
-    override fun subscribeStatements(filter: TopicFilter): Flow<Result<StatementsPage>> = flow {
-        val socketService = getSocketService()
+    override fun subscribeStatements(filter: TopicFilter): Flow<Result<StatementsPage>> = peer.track(
+        flow {
+            val socketService = getSocketService()
 
-        emitAll(
-            socketService.subscriptionFlow(
-                request = SubscribeStatementRequest(filter),
-                unsubscribeMethod = "statement_unsubscribeStatement"
-            ).map { change ->
-                runCatching {
-                    val response = parseSubscriptionChange(change)
-                    val statements = response.data.statements.map { parseStatement(it) }
-                    StatementsPage(statements = statements, isComplete = response.data.remaining == 0)
+            emitAll(
+                socketService.subscriptionFlow(
+                    request = SubscribeStatementRequest(filter),
+                    unsubscribeMethod = "statement_unsubscribeStatement"
+                ).map { change ->
+                    runCatching {
+                        val response = parseSubscriptionChange(change)
+                        val statements = response.data.statements.map { parseStatement(it) }
+                        StatementsPage(statements = statements, isComplete = response.data.remaining == 0)
+                    }
                 }
-            }
-        )
-    }
+            )
+        }
+    )
 
     private fun parseSubscriptionChange(change: SubscriptionChange): StatementSubscriptionResponse {
         val tree = gson.toJsonTree(change.params.result)
@@ -141,6 +142,6 @@ class RealStatementStoreService @Inject constructor(
     }
 
     private suspend fun getSocketService(): SocketService {
-        return chainRegistry.getSocket(knownChains.people)
+        return chainRegistry.getSocket(peer.chainId)
     }
 }

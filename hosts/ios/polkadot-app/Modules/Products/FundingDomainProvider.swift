@@ -12,27 +12,33 @@ protocol FundingDomainProviding: Sendable {
 }
 
 enum FundingDomainError: Error {
-    case unavailable
+    case remoteConfigUnavailable
+    case destinationNotConfigured
+    case networkUnavailable(underlying: Error)
+    case destinationNotOnNetwork(destination: String, tld: String)
 }
 
 final class FundingDomainProvider: FundingDomainProviding, @unchecked Sendable {
     private let hostProvider: ProductHostProviding
     private let remoteConfig: @Sendable () -> RemoteAppConfig?
+    private let logger: LoggerProtocol
 
     init(
         hostProvider: ProductHostProviding,
-        remoteConfig: @escaping @Sendable () -> RemoteAppConfig? = { AppConfigProvider.shared.getRemoteConfig() }
+        remoteConfig: @escaping @Sendable () -> RemoteAppConfig? = { AppConfigProvider.shared.getRemoteConfig() },
+        logger: LoggerProtocol = Logger.shared
     ) {
         self.hostProvider = hostProvider
         self.remoteConfig = remoteConfig
+        self.logger = logger
     }
 
     func fundingPage() async throws -> ProductPage {
-        try await page(for: remoteConfig()?.fundingUrl)
+        try await page(for: requireRemoteConfig().fundingUrl)
     }
 
     func offrampPage() async throws -> ProductPage {
-        try await page(for: remoteConfig()?.offrampUrl)
+        try await page(for: requireRemoteConfig().offrampUrl)
     }
 
     func fundingLabels() -> Set<String> {
@@ -45,16 +51,30 @@ final class FundingDomainProvider: FundingDomainProviding, @unchecked Sendable {
 }
 
 private extension FundingDomainProvider {
+    func requireRemoteConfig() throws -> RemoteAppConfig {
+        guard let config = remoteConfig() else {
+            logger.error("Funding page unresolved: remote config is not loaded")
+            throw FundingDomainError.remoteConfigUnavailable
+        }
+
+        return config
+    }
+
     /// Awaits the chain TLD through the host provider, then parses the destination into a page.
     func page(for destination: String?) async throws -> ProductPage {
         guard let destination, !destination.isEmpty else {
-            throw FundingDomainError.unavailable
+            logger.error("Funding page unresolved: destination is not configured")
+            throw FundingDomainError.destinationNotConfigured
         }
 
-        guard let page = try await hostProvider.resolvePage(destination: destination) else {
-            throw FundingDomainError.unavailable
+        do {
+            return try await hostProvider.resolvePage(destination: destination)
+        } catch let ProductPageResolutionError.tldUnavailable(underlying) {
+            logger.error("Funding page unresolved: network TLD is unavailable: \(underlying)")
+            throw FundingDomainError.networkUnavailable(underlying: underlying)
+        } catch let ProductPageResolutionError.destinationNotOnNetwork(destination, tld) {
+            logger.error("Funding page unresolved: \(destination) is not a product of .\(tld)")
+            throw FundingDomainError.destinationNotOnNetwork(destination: destination, tld: tld)
         }
-
-        return page
     }
 }
