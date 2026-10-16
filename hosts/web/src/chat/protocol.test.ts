@@ -269,7 +269,12 @@ describe("control messages", () => {
             Uint8Array.of(platform),
           ),
         ).content,
-      ).toEqual({ kind: "control", control: "token" });
+      ).toEqual({
+        kind: "control",
+        control: "token",
+        token: Uint8Array.of(9, 9, 9),
+        platform,
+      });
     expect(() =>
       decodeMessage(
         concat(

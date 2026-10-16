@@ -6,13 +6,29 @@
  * Events hold metadata only: shortened public accounts, shortened request and
  * message ids, message kind numbers, sizes, store answers, error text with
  * long hex runs shortened, and the statement-store topics a subscription
- * names, in full. A topic is a public routing identifier the store sees on
- * every statement, a hash and not a key. Never keys, shared secrets, message
- * text, push tokens or decrypted payloads. They are kept in memory, at most
+ * names, in full, and the hash of each statement received or sent. A topic
+ * and a statement hash are public: the store sees both on every statement,
+ * and neither is a key. Never keys, shared secrets, message text, push tokens
+ * or decrypted payloads. They are kept in memory, at most
  * {@link DIAGNOSTICS_LIMIT} of them, and cleared when the session changes.
+ *
+ * Payloads are apart, in {@link ChatDiagnostics.payloads}: off unless the
+ * user turns capture on for the session.
  */
 
+import { PayloadCapture, type CaptureLevel } from "./capture.js";
 import { ACKNOWLEDGED } from "./protocol.js";
+
+/** The statement an event is about. */
+interface Carried {
+  /** BLAKE2b-256 of the statement's encoded bytes, as 32-byte hex. */
+  statement?: string;
+  /**
+   * For a statement received, how many times it has arrived in this session,
+   * this time included. Set when the event is recorded.
+   */
+  arrival?: number;
+}
 
 export type ChatEventBody =
   | {
@@ -33,12 +49,12 @@ export type ChatEventBody =
        */
       topicIds: string[];
     }
-  | {
+  | ({
       type: "set-aside";
       stream: "requests" | "sessions";
       reason: string;
-    }
-  | {
+    } & Carried)
+  | ({
       type: "request";
       requestId: string;
       peer: string;
@@ -51,7 +67,7 @@ export type ChatEventBody =
         | "contact active"
         | "answers ours";
       problem?: string;
-    }
+    } & Carried)
   | {
       type: "lookup";
       account: string;
@@ -60,7 +76,7 @@ export type ChatEventBody =
       from?: ("asset hub" | "people")[];
       reason?: string;
     }
-  | {
+  | ({
       type: "session";
       peer: string;
       data: "request" | "response" | "multi-device";
@@ -70,8 +86,8 @@ export type ChatEventBody =
       duplicates?: number;
       code?: number;
       matched?: boolean;
-    }
-  | {
+    } & Carried)
+  | ({
       type: "submit";
       purpose: "chat request" | "accept" | "messages" | "ack";
       peer: string;
@@ -80,7 +96,7 @@ export type ChatEventBody =
       result: "stored" | "refused" | "error";
       status?: string;
       reason?: string;
-    }
+    } & Carried)
   | { type: "action-failed"; action: string; reason: string };
 
 export type ChatEvent = ChatEventBody & { seq: number; at: number };
@@ -141,23 +157,70 @@ export function sanitizeReason(reason: string): string {
     : `${shortened.slice(0, REASON_LIMIT)}…`;
 }
 
-/** A bounded, in-memory list of chat events. */
+/** The most statement hashes whose arrivals are counted at once. */
+const ARRIVALS_LIMIT = 4096;
+
+/** Keep `statement` only as 32-byte hex, and number the arrivals of one received. */
+function withStatement(
+  event: ChatEventBody,
+  arrivals: Map<string, number>,
+): ChatEventBody {
+  if (!("statement" in event) || event.statement === undefined) return event;
+  const { statement, arrival: _ignored, ...rest } = event;
+  const hash = statement.toLowerCase();
+  if (!TOPIC_ID.test(hash)) return rest as ChatEventBody;
+  if (event.type === "submit")
+    return { ...rest, statement: hash } as ChatEventBody;
+  const arrival = (arrivals.get(hash) ?? 0) + 1;
+  arrivals.delete(hash);
+  arrivals.set(hash, arrival);
+  if (arrivals.size > ARRIVALS_LIMIT)
+    arrivals.delete(arrivals.keys().next().value!);
+  return { ...rest, statement: hash, arrival } as ChatEventBody;
+}
+
+/** A bounded, in-memory list of chat events, and the session's payload capture. */
 export class ChatDiagnostics {
   private events: ChatEvent[] = [];
   private seq = 0;
   private evicted = 0;
+  private arrivals = new Map<string, number>();
+  private captureFrom: number | null = null;
+  private captureLevel: CaptureLevel = "off";
   private readonly listeners = new Set<() => void>();
+  /** Payloads, kept only while the user has capture on for the session. */
+  readonly payloads: PayloadCapture;
 
   constructor(
     private readonly limit = DIAGNOSTICS_LIMIT,
     private readonly now: () => number = Date.now,
-  ) {}
+  ) {
+    this.payloads = new PayloadCapture(undefined, now);
+    this.payloads.onChange(() => {
+      const level = this.payloads.level;
+      if (level !== this.captureLevel) {
+        if (level === "off") this.captureFrom = null;
+        else if (this.captureLevel === "off") this.captureFrom = this.seq + 1;
+        this.captureLevel = level;
+      }
+      this.notify();
+    });
+  }
+
+  /**
+   * The sequence number of the first event recorded since capture was last
+   * turned on, or null while it is off. Statements of earlier events were
+   * not kept.
+   */
+  captureStart(): number | null {
+    return this.captureFrom;
+  }
 
   readonly record: ChatEventSink = (event) => {
     const body: ChatEventBody =
       event.type === "subscription"
         ? { ...event, topicIds: allowedTopicIds(event.topicIds) }
-        : event;
+        : withStatement(event, this.arrivals);
     this.events.push({ ...body, seq: ++this.seq, at: this.now() });
     if (this.events.length > this.limit) {
       const over = this.events.length - this.limit;
@@ -177,9 +240,22 @@ export class ChatDiagnostics {
     return this.evicted;
   }
 
+  /** Forget the session: its events, its payloads, and the choice to capture them. */
   clear(): void {
+    this.forgetEvents();
+    this.payloads.reset();
+  }
+
+  /** Forget the events and payloads recorded so far, keeping the capture level. */
+  forget(): void {
+    this.forgetEvents();
+    this.payloads.forget();
+  }
+
+  private forgetEvents(): void {
     this.events = [];
     this.evicted = 0;
+    this.arrivals = new Map();
     this.notify();
   }
 
@@ -428,12 +504,18 @@ export function eventSummary(event: ChatEventBody): string {
 }
 
 /** What links events to each other: the shortened account or id they carry. */
-export type RelatedBy = "account" | "id";
+export type RelatedBy = "account" | "id" | "statement";
 
-/** The shortened account and request id an event names, if any. */
+/** The hash of the statement an event is about, if any. */
+export const statementOf = (event: ChatEventBody): string | undefined =>
+  "statement" in event ? event.statement : undefined;
+
+/** The shortened account, request id and statement hash an event names, if any. */
 export function relatedKeys(
   event: ChatEventBody,
 ): Partial<Record<RelatedBy, string>> {
+  const statement = statementOf(event);
+  const carried = statement === undefined ? {} : { statement };
   switch (event.type) {
     case "request":
     case "submit":
@@ -441,12 +523,34 @@ export function relatedKeys(
       return {
         account: event.peer,
         ...(event.requestId !== undefined ? { id: event.requestId } : {}),
+        ...carried,
       };
     case "lookup":
       return { account: event.account };
     default:
-      return {};
+      return carried;
   }
+}
+
+const ordinal = (count: number): string =>
+  count === 2 ? "2nd" : count === 3 ? "3rd" : `${count}th`;
+
+/** The statement fields of an event that names one. */
+function statementFields(event: ChatEventBody): EventField[] {
+  const statement = statementOf(event);
+  if (statement === undefined) return [];
+  const arrival = "arrival" in event ? event.arrival : undefined;
+  return [
+    ...field("Statement hash", statement, "statement"),
+    ...field(
+      "Arrival",
+      arrival === undefined
+        ? undefined
+        : arrival === 1
+          ? "first time in this session"
+          : `repeat: the ${ordinal(arrival)} time in this session`,
+    ),
+  ];
 }
 
 /** One labelled value of an event, for its detail view. */
@@ -472,6 +576,10 @@ const textField = (label: string, value: string | undefined): EventField[] =>
 
 /** The event's own values, labelled. Message kinds are left to the caller. */
 export function eventFields(event: ChatEventBody): EventField[] {
+  return [...ownFields(event), ...statementFields(event)];
+}
+
+function ownFields(event: ChatEventBody): EventField[] {
   switch (event.type) {
     case "lifecycle":
       return [
@@ -582,6 +690,7 @@ export function eventSearchText(event: ChatEventBody): string {
     eventSummary(event),
     describeEvent(event),
     ...(event.type === "subscription" ? event.topicIds : []),
+    statementOf(event) ?? "",
   ]
     .join(" ")
     .toLowerCase();

@@ -217,6 +217,114 @@
   overflow: auto;
 }
 
+/* Transport layers */
+
+.chat-diagnostics .cdv-badge-repeat {
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.3);
+}
+
+.chat-diagnostics .cdv-capture.cdv-capturing {
+  border-color: rgba(74, 222, 128, 0.5);
+  color: #4ade80;
+}
+
+.chat-diagnostics .cdv-transport {
+  margin: 0 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+}
+
+.chat-diagnostics .cdv-transport-title {
+  margin: 0;
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+  color: #94a3b8;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.chat-diagnostics .cdv-layer-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px 0;
+}
+
+.chat-diagnostics .cdv-layer,
+.chat-diagnostics .cdv-transport > .cdv-layer-note,
+.chat-diagnostics .cdv-transport > .cdv-gap,
+.chat-diagnostics .cdv-transport > .cdv-block {
+  padding: 6px 8px 8px;
+}
+
+.chat-diagnostics .cdv-layer-note,
+.chat-diagnostics .cdv-gap {
+  margin: 0 0 6px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.chat-diagnostics .cdv-layer-public {
+  color: #4ade80;
+}
+
+.chat-diagnostics .cdv-layer-sensitive {
+  color: #fbbf24;
+}
+
+.chat-diagnostics .cdv-layer-derived {
+  color: #c084fc;
+}
+
+.chat-diagnostics .cdv-gap {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.chat-diagnostics .cdv-block {
+  margin: 0 0 8px;
+}
+
+.chat-diagnostics .cdv-block-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin-bottom: 4px;
+}
+
+.chat-diagnostics .cdv-block-title {
+  color: #e0e0e0;
+  font-size: 11px;
+}
+
+.chat-diagnostics .cdv-block-note {
+  flex: 1;
+  min-width: 0;
+  color: #6b7280;
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+}
+
+.chat-diagnostics .cdv-block .ins-method {
+  cursor: pointer;
+}
+
+.chat-diagnostics .cdv-bytes {
+  max-height: 260px;
+  overflow: auto;
+  word-break: break-all;
+}
+
+.chat-diagnostics .ins-status .cdv-capture-decrypted {
+  color: #fbbf24;
+}
+
 /* Status line */
 
 .chat-diagnostics .ins-status {

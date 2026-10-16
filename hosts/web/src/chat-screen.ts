@@ -269,12 +269,14 @@ export class ChatScreen {
       openStore: async () =>
         new StatementStore(
           await session.chain.connect(hexToBytes(session.genesis.people)),
+          this.diagnostics.payloads.connectionTap(),
         ),
       directory: chainDirectory(session.chain, session.genesis),
       storage: this.storage,
       recordKey: chatRecordKey(session.network, session.walletId),
       writes: () => true,
       diagnostics: this.diagnostics.record,
+      payloads: this.diagnostics.payloads,
     });
     this.engine = engine;
     this.stopListening = engine.onChange(() => {

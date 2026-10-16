@@ -4,6 +4,12 @@ import {
   TRACE_DETAIL_CSS,
 } from "@parity/truapi-debugger";
 import "./chat-diagnostics-view.css";
+import type { CaptureLevel } from "./chat/capture.js";
+import {
+  renderTransport,
+  transportCopyText,
+  type Layer,
+} from "./chat-transport-view.js";
 import {
   EVENT_TYPE_LABELS,
   eventDirection,
@@ -16,6 +22,7 @@ import {
   kindLabel,
   outcomeWord,
   relatedKeys,
+  shortHex,
   type ChatDiagnostics,
   type ChatEvent,
   type EventDirection,
@@ -72,7 +79,12 @@ const OUTCOMES: Record<EventOutcome, string> = {
 const RELATED_NAMES: Record<RelatedBy, string> = {
   account: "account",
   id: "request id",
+  statement: "statement",
 };
+
+/** A related value as a button shows it: statement hashes are shortened, the filter keeps them whole. */
+const relatedLabel = (by: RelatedBy, value: string): string =>
+  by === "statement" ? shortHex(value) : value;
 
 const TYPES = Object.keys(EVENT_TYPE_LABELS) as ChatEvent["type"][];
 const DIRECTION_KEYS = Object.keys(DIRECTIONS) as EventDirection[];
@@ -88,6 +100,12 @@ function clock(at: number, withMs = false): string {
   const date = new Date(at);
   const seconds = `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
   return withMs ? `${seconds}.${pad(date.getMilliseconds(), 3)}` : seconds;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function elapsed(ms: number): string {
@@ -179,6 +197,16 @@ function createRow(event: ChatEvent): Row {
   const badges = element("span", "td-op-badges");
   const mark = badge(event);
   if (mark !== null) badges.append(mark);
+  const arrival = "arrival" in event ? event.arrival : undefined;
+  if (arrival !== undefined && arrival > 1) {
+    const repeat = element(
+      "span",
+      "td-badge cdv-badge-repeat",
+      `repeat ×${arrival}`,
+    );
+    repeat.title = `This statement has arrived ${arrival} times in this session`;
+    badges.append(repeat);
+  }
   const when = element("time", "td-op-meta", clock(event.at));
   when.dateTime = new Date(event.at).toISOString();
   item.append(
@@ -218,6 +246,7 @@ const ROLE_CLASSES: Record<EventDirection, string> = {
 function createDetail(
   event: ChatEvent,
   previous: ChatEvent | undefined,
+  transport: HTMLElement | null,
 ): HTMLDivElement {
   const detail = element("div", "cdv-detail");
   const direction = eventDirection(event);
@@ -279,7 +308,10 @@ function createDetail(
     RelatedBy,
     string,
   ][]) {
-    const filter = button("ins-method", `only ${RELATED_NAMES[by]} ${value}`);
+    const filter = button(
+      "ins-method",
+      `only ${RELATED_NAMES[by]} ${relatedLabel(by, value)}`,
+    );
     filter.dataset.relatedBy = by;
     filter.dataset.relatedValue = value;
     filter.append(" ", element("b", "cdv-n"));
@@ -296,7 +328,13 @@ function createDetail(
   );
   record.setAttribute("aria-label", "Event metadata");
 
-  detail.append(drilldown, fields, actions, record);
+  detail.append(
+    drilldown,
+    fields,
+    actions,
+    ...(transport ? [transport] : []),
+    record,
+  );
   return detail;
 }
 
@@ -334,6 +372,19 @@ export function mountChatDiagnostics(
     option.value = type;
     typeSelect.append(option);
   }
+  const captureSelect = element("select", "ins-sort cdv-capture");
+  captureSelect.setAttribute("aria-label", "Payload capture");
+  captureSelect.title =
+    "Keep what chat sends and receives, from now on, in this tab only. Off by default and again after a session change.";
+  for (const [value, label] of [
+    ["off", "payloads: off"],
+    ["wire", "payloads: wire"],
+    ["decrypted", "payloads: wire + decrypted"],
+  ] as const) {
+    const option = element("option", undefined, label);
+    option.value = value;
+    captureSelect.append(option);
+  }
   const channels = element("span", "ins-channels");
   channels.setAttribute("role", "group");
   channels.setAttribute("aria-label", "Show events by direction");
@@ -366,9 +417,10 @@ export function mountChatDiagnostics(
   const copyShown = button("ins-chan", "copy");
   copyShown.title = "Copy the shown events as JSON (metadata only)";
   const clear = button("ins-chan", "clear");
-  clear.title = "Forget the recorded events";
+  clear.title =
+    "Forget the recorded events and payloads; capture stays as chosen";
   tools.append(follow, copyShown, clear);
-  top.append(title, filter, typeSelect, channels, tools);
+  top.append(title, filter, typeSelect, captureSelect, channels, tools);
 
   const summary = element("div", "ins-summary empty");
   const bodyEl = element("div", "ins-body");
@@ -391,7 +443,7 @@ export function mountChatDiagnostics(
   const statusCount = element("span");
   const statusFollow = element("span");
   const newer = button("cdv-newer", "");
-  const statusNote = element("span", undefined, "metadata only · this session");
+  const statusNote = element("span");
   const statusEvicted = element("span", "mismatch");
   const announcer = element("span", "cdv-unseen");
   announcer.setAttribute("aria-live", "polite");
@@ -413,6 +465,8 @@ export function mountChatDiagnostics(
   let related: { by: RelatedBy; value: string } | null = null;
   let selected: number | null = null;
   let shownDetail: number | null = null;
+  let shownGeneration = -1;
+  let layer: Layer = "raw";
   /** The newest event shown while paused; null while following. */
   let pausedAt: number | null = null;
   let lastSeq = 0;
@@ -474,10 +528,14 @@ export function mountChatDiagnostics(
   };
 
   const drawDetail = () => {
-    if (selected === shownDetail) return;
+    const generation = diagnostics.payloads.generation;
+    if (selected === shownDetail && generation === shownGeneration) return;
+    const sameEvent = selected === shownDetail;
     shownDetail = selected;
+    shownGeneration = generation;
     const events = diagnostics.list();
     const index = events.findIndex((event) => event.seq === selected);
+    const scroll = detailPane.scrollTop;
     detailPane.replaceChildren(
       index === -1
         ? element(
@@ -485,9 +543,19 @@ export function mountChatDiagnostics(
             "td-detail-empty",
             "Select an event to inspect it. ↑ ↓ move, Esc closes.",
           )
-        : createDetail(events[index], events[index - 1]),
+        : createDetail(
+            events[index],
+            events[index - 1],
+            renderTransport(
+              events[index],
+              diagnostics.payloads,
+              diagnostics.captureStart(),
+              layer,
+              (chosen) => (layer = chosen),
+            ),
+          ),
     );
-    detailPane.scrollTop = 0;
+    detailPane.scrollTop = sameEvent ? scroll : 0;
   };
 
   const drawSummary = (shown: readonly ChatEvent[]) => {
@@ -609,7 +677,7 @@ export function mountChatDiagnostics(
     problemsChip.setAttribute("aria-pressed", String(problemsOnly));
     relatedChip.hidden = related === null;
     if (related !== null)
-      relatedChip.textContent = `${RELATED_NAMES[related.by]} ${related.value} ✕`;
+      relatedChip.textContent = `${RELATED_NAMES[related.by]} ${relatedLabel(related.by, related.value)} ✕`;
 
     follow.classList.toggle("active", pausedAt === null);
     follow.setAttribute("aria-pressed", String(pausedAt === null));
@@ -630,6 +698,27 @@ export function mountChatDiagnostics(
     const evicted = diagnostics.dropped();
     statusEvicted.hidden = evicted === 0;
     statusEvicted.textContent = `${evicted} evicted`;
+    const payloads = diagnostics.payloads;
+    captureSelect.value = payloads.level;
+    captureSelect.classList.toggle("cdv-capturing", payloads.level !== "off");
+    if (payloads.level === "off") {
+      statusNote.className = "";
+      statusNote.textContent = "metadata only · this session";
+    } else {
+      const usage = payloads.usage();
+      const losses = payloads.losses();
+      statusNote.className =
+        payloads.level === "decrypted" ? "cdv-capture-decrypted" : "live";
+      statusNote.textContent = [
+        `capturing ${payloads.level === "decrypted" ? "wire + decrypted" : "wire"}`,
+        `${usage.frames} frames · ${usage.statements} statements`,
+        `${formatBytes(usage.bytes)} of ${formatBytes(usage.budget)}`,
+        losses.evicted > 0 ? `${losses.evicted} evicted` : "",
+        losses.truncated > 0 ? `${losses.truncated} cut` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+    }
 
     if (pausedAt === null && atEnd) list.scrollTop = list.scrollHeight;
   };
@@ -664,12 +753,14 @@ export function mountChatDiagnostics(
     announceTimer = setTimeout(() => (announcer.textContent = ""), 2000);
   };
 
-  const copy = async (payload: unknown, source: HTMLButtonElement) => {
+  const copy = (payload: unknown, source: HTMLButtonElement) =>
+    copyText(JSON.stringify(payload, null, 2), source);
+  const copyText = async (text: string, source: HTMLButtonElement) => {
     const label = source.firstChild!;
     const original = label.textContent;
     let result: string;
     try {
-      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      await navigator.clipboard.writeText(text);
       result = "copied";
     } catch {
       result = "copy failed";
@@ -727,7 +818,10 @@ export function mountChatDiagnostics(
         copyShown,
       ),
   );
-  clear.addEventListener("click", () => diagnostics.clear());
+  clear.addEventListener("click", () => diagnostics.forget());
+  captureSelect.addEventListener("change", () =>
+    diagnostics.payloads.setLevel(captureSelect.value as CaptureLevel),
+  );
 
   const relatedClick = (event: Event): boolean => {
     const target = (event.target as Element).closest<HTMLButtonElement>(
@@ -743,6 +837,14 @@ export function mountChatDiagnostics(
   summary.addEventListener("click", relatedClick);
   detailPane.addEventListener("click", (event) => {
     if (relatedClick(event)) return;
+    const layerCopy = (event.target as Element).closest<HTMLButtonElement>(
+      "[data-copy-layer]",
+    );
+    const text = layerCopy === null ? undefined : transportCopyText(layerCopy);
+    if (layerCopy !== null && text !== undefined) {
+      void copyText(text, layerCopy);
+      return;
+    }
     const source = (event.target as Element).closest<HTMLButtonElement>(
       "[data-copy-event]",
     );

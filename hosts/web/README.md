@@ -421,8 +421,33 @@ not a product, so none of this is a TrUAPI frame, and it is listed apart from th
 shortened accounts and ids, kinds, counts and error text with hex shortened. A subscription also lists, in full hex, the
 statement-store topics it filters on, at most 32: the request inbox topic,
 `blake2b-256("chat-request" ‖ identity account)`, and one session topic per contact. A topic is a hash every statement
-on it carries in public, not a key. The events never hold keys, shared secrets, message text, push tokens or decrypted
-payloads. The last 300 are kept in memory and cleared when the session changes.
+on it carries in public, not a key. An event about a statement names it by `blake2b-256` of its encoded bytes, the hash
+the store gives it, and counts each arrival, so a replay shows as a repeat. The events never hold keys, shared secrets,
+message text, push tokens or decrypted payloads. The last 300 are kept in memory and cleared when the session changes.
+
+**Chat payloads.** The tab's **payloads** menu keeps what chat sends and receives, from the moment it is chosen, for
+debugging the protocol. It is off by default and turns off again when the session changes. Nothing is kept while it is
+off, so earlier events stay metadata only. An event's **Transport** part shows three layers:
+
+- **Raw**, public: each JSON-RPC text the statement store sent or received, exactly as it went to or came from the
+  connection, and the encoded signed statement. A frame is matched to a statement by the hash of the statement bytes it
+  carries, and an answer to its request by connection and JSON-RPC id.
+- **Decrypted**, sensitive and kept only at **wire + decrypted**: the statement's data as decryption returned it, or as
+  the engine sealed it. It holds message text, push tokens and device keys. When there is none, it says why, such as a
+  statement that does not decrypt.
+- **Decoded**, derived, in two parts that copy apart or together. **Protocol fields** are the values read from the
+  statement and the plaintext, in wire order. The binary has no names, so keys are the schema's field names, from the
+  statement store's `Statement` and the Polkadot app's chat types; enum indexes, option tags, list counts and length
+  prefixes are kept as read, so a push token's `platform` is `1` and a device's keys are `Vec<u8>` with their `length`.
+  **Inspector annotations** are what this host adds, keyed by the protocol path they describe: names such as `Token` or
+  `IOS`, ISO times, the statement hash, sizes, offsets, notes, and where and why reading stopped, with the bytes it did
+  not read. Rich text, replies and other kinds with a plain layout are read as the schema lays them out; a kind the host
+  cannot read stops there, with its bytes.
+
+Each layer copies as text, hex or JSON. Bytes come only from the store's JSON-RPC tap, the statements the engine
+receives or submits, and their plaintext, never from keys or the secrets derived from them. They are held in memory in
+this tab, at most 300 frames, 300 statements and 4 MB, with a frame or statement cut at 256 KB, and the status line
+counts what is evicted or cut. Lowering the level drops what it no longer keeps.
 
 **Versions.** The menu shows client, host and core, provider and debugger versions, read from the linked packages and
 the loaded `testing` bundle. A warning appears only when the core's wire schema differs from the client's. **Technical
@@ -585,7 +610,9 @@ opens, so the light client reaches no chain. It checks that:
 Two narrower browser tests use no wallet. `browser/inspector-dock.spec.ts` loads the host page with every request
 outside loopback refused, and checks that on a wide window the inspector is docked under a Phone-sized product across
 the width the menu leaves, for both inspector views, that its top edge sets its height, and that a narrow window keeps
-it a bottom sheet. `browser/chat-diagnostics.spec.ts` mounts the inspector's Chat view alone on made-up events.
+it a bottom sheet. `browser/chat-diagnostics.spec.ts` mounts the inspector's Chat view alone on made-up events, and runs
+a chat exchange between two synthetic wallets over an in-memory JSON-RPC statement store to check each payload layer,
+the copies, the capture levels, and that no key or secret shows.
 
 The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
 `dist/` from the host you will use, as described in [Static build](#static-build-and-github-pages).
@@ -609,7 +636,9 @@ and layout on narrow screens.
 - `src/chat/`: the chat engine. `gate.ts` refuses the public development phrase, `keys.ts` derives the keys,
   `protocol.ts` and `statement.ts` are the wire, `statement-store.ts` the store's JSON-RPC, `directory.ts` the chain
   reads, `store.ts` the saved conversations and `engine.ts` ties them together, and `diagnostics.ts` holds its events.
-  `src/chat-screen.ts` draws the Chat screen and `src/chat-diagnostics-view.ts` the inspector's Chat tab.
+  `capture.ts` keeps payloads when the user asks, `inspect.ts` decodes them, and `memory-rpc.ts` is the in-memory store
+  tests use. `src/chat-screen.ts` draws the Chat screen, `src/chat-diagnostics-view.ts` the inspector's Chat tab and
+  `src/chat-transport-view.ts` an event's payload layers.
 - `src/worker-manifest.ts`, `src/product-workers.ts`: finding a product's worker and running it. `src/product-chat.ts`:
   the host side of TrUAPI Chat. `src/product-room-view.ts`, `src/product-render.ts`: a product room and the cards its
   worker draws.

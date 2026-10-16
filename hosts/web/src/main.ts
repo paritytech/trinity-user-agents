@@ -256,7 +256,7 @@ const chatDiagnosticsView = mountChatDiagnostics(
 const inspectorNote = element("inspector-note");
 const INSPECTOR_NOTES = {
   wire: "Frames stay in this tab and may carry sensitive payloads.",
-  chat: "Chat events are not TrUAPI frames. Metadata only, kept in memory and cleared when the session changes.",
+  chat: "Chat events are not TrUAPI frames. Metadata only unless payload capture is on; kept in memory and cleared when the session changes.",
 } as const;
 const inspectorViewButtons = [
   ...document.querySelectorAll<HTMLButtonElement>("[data-inspector-view]"),
