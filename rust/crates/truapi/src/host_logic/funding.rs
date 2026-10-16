@@ -21,10 +21,15 @@ const SESSION_WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
 /// newest first, so a host that never records them cannot grow the store
 /// without bound.
 const UNACKNOWLEDGED_LIMIT: usize = 200;
-/// Version of the stored sessions blob, which leads it as a `u16`. A change
-/// to how [`FundingSession`] encodes bumps it, and [`decode_sessions`] keeps
-/// reading every earlier version, so an upgrade keeps the sessions in flight.
+/// Format of the stored sessions blob, which leads it as a `u16`. The stored
+/// enums pin their SCALE indexes, so variants added later decode alongside
+/// the ones a blob was written with. A blob that leads with another format is
+/// set aside rather than read.
 const SESSIONS_FORMAT: u16 = 1;
+/// How many unreadable blobs [`CoreStorageKey::FundingSessionsUnreadable`]
+/// keeps, oldest dropped first, so repeated bad writes cannot grow it without
+/// bound.
+const UNREADABLE_LIMIT: usize = 8;
 
 /// What the core knows about one session, independent of any host surface.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -56,8 +61,10 @@ pub struct FundingSession {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingStage {
 	/// In flight.
+	#[codec(index = 0)]
 	Open,
 	/// Ended without success.
+	#[codec(index = 1)]
 	Failed {
 		/// Why it ended.
 		reason: FundingFailure,
@@ -65,6 +72,7 @@ pub enum FundingStage {
 		settled_at_ms: u64,
 	},
 	/// Inbound success.
+	#[codec(index = 2)]
 	Delivered {
 		/// Amount credited, which may differ from the amount requested.
 		credited: u128,
@@ -72,6 +80,7 @@ pub enum FundingStage {
 		settled_at_ms: u64,
 	},
 	/// Outbound success.
+	#[codec(index = 3)]
 	Released {
 		/// Amount debited.
 		debited: u128,
@@ -196,11 +205,12 @@ pub fn retained(sessions: impl IntoIterator<Item = FundingSession>) -> Vec<Fundi
 
 /// Read every persisted session.
 ///
-/// A blob that does not decode is moved to
+/// A blob that does not decode is appended to the list kept under
 /// [`CoreStorageKey::FundingSessionsUnreadable`] and reads as no sessions, so
-/// one bad write cannot disable funding for good and the next store cannot
-/// overwrite sessions it never read. If it cannot be moved, loading fails and
-/// the blob stays where it is.
+/// one bad write cannot disable funding for good, the next store cannot
+/// overwrite sessions it never read, and a later bad blob does not replace an
+/// earlier one. If it cannot be set aside, loading fails and the blob stays
+/// where it is.
 pub async fn load_sessions(
 	storage: &(impl CoreStorage + ?Sized),
 ) -> Result<Vec<FundingSession>, FundingSessionError> {
@@ -216,8 +226,20 @@ pub async fn load_sessions(
 		return Ok(sessions);
 	}
 	error!(bytes = blob.len(), "funding sessions do not decode; keeping them aside");
+	let mut aside = match storage
+		.read_core_storage(CoreStorageKey::FundingSessionsUnreadable)
+		.await
+		.map_err(storage_error)?
+	{
+		Some(kept) => Vec::<Vec<u8>>::decode(&mut &kept[..]).unwrap_or_else(|_| vec![kept]),
+		None => Vec::new(),
+	};
+	aside.push(blob);
+	if aside.len() > UNREADABLE_LIMIT {
+		aside.drain(..aside.len() - UNREADABLE_LIMIT);
+	}
 	storage
-		.write_core_storage(CoreStorageKey::FundingSessionsUnreadable, blob)
+		.write_core_storage(CoreStorageKey::FundingSessionsUnreadable, aside.encode())
 		.await
 		.map_err(storage_error)?;
 	Ok(Vec::new())
@@ -381,7 +403,24 @@ mod tests {
 		assert_eq!(block_on(load_sessions(storage.as_ref())), Ok(Vec::new()));
 		assert_eq!(
 			block_on(storage.read_core_storage(CoreStorageKey::FundingSessionsUnreadable)),
-			Ok(Some(blob))
+			Ok(Some(vec![blob].encode()))
+		);
+	}
+
+	#[test]
+	fn a_second_unreadable_blob_is_kept_alongside_the_first() {
+		let storage = stub_platform();
+		let first = vec![0xff, 0x01];
+		let second = vec![0xff, 0x02];
+		for blob in [&first, &second] {
+			block_on(storage.write_core_storage(CoreStorageKey::FundingSessions, blob.clone()))
+				.expect("written");
+			assert_eq!(block_on(load_sessions(storage.as_ref())), Ok(Vec::new()));
+		}
+
+		assert_eq!(
+			block_on(storage.read_core_storage(CoreStorageKey::FundingSessionsUnreadable)),
+			Ok(Some(vec![first, second].encode()))
 		);
 	}
 
@@ -395,7 +434,7 @@ mod tests {
 		assert_eq!(block_on(load_sessions(storage.as_ref())), Ok(Vec::new()));
 		assert_eq!(
 			block_on(storage.read_core_storage(CoreStorageKey::FundingSessionsUnreadable)),
-			Ok(Some(blob))
+			Ok(Some(vec![blob].encode()))
 		);
 	}
 

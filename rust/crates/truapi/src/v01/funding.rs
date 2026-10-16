@@ -6,9 +6,11 @@ use parity_scale_codec::{Decode, Encode};
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingDirection {
 	/// Value moves in, credited to the user's balance.
+	#[codec(index = 0)]
 	In,
 	/// Value moves out of the user's balance under the user's authorization;
 	/// the off-chain leg is the provider's obligation.
+	#[codec(index = 1)]
 	Out,
 }
 
@@ -20,28 +22,39 @@ pub enum FundingDirection {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingFailure {
 	/// Not offered in the user's market.
+	#[codec(index = 0)]
 	RegionUnavailable,
 	/// The user must complete verification first.
+	#[codec(index = 1)]
 	VerificationRequired,
 	/// Verification was attempted and refused.
+	#[codec(index = 2)]
 	VerificationRefused,
 	/// Below the route's minimum.
+	#[codec(index = 3)]
 	BelowMinimum,
 	/// Above the route's maximum.
+	#[codec(index = 4)]
 	AboveMaximum,
 	/// The user's balance does not cover an outbound session.
+	#[codec(index = 5)]
 	InsufficientBalance,
 	/// The session's window closed before it completed.
+	#[codec(index = 6)]
 	Expired,
 	/// Funds arrived in the wrong asset or on the wrong chain.
+	#[codec(index = 7)]
 	WrongAssetOrChain,
 	/// The provider stopped responding.
+	#[codec(index = 8)]
 	ProviderTimeout,
 	/// The user abandoned the flow, or declined to authorize an outbound
 	/// release.
+	#[codec(index = 9)]
 	Cancelled,
 	/// Outcome not covered above. Clients render the message and treat the
 	/// code as opaque.
+	#[codec(index = 10)]
 	Other {
 		/// Stable machine-readable code.
 		code: String,
@@ -71,12 +84,16 @@ pub struct HostFundingResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostFundingError {
 	/// User is not logged in.
+	#[codec(index = 0)]
 	NotConnected,
 	/// The user dismissed the funding screen without starting a session.
+	#[codec(index = 1)]
 	Rejected,
 	/// The amount sought is zero.
+	#[codec(index = 3)]
 	InvalidAmount,
 	/// Catch-all.
+	#[codec(index = 2)]
 	Unknown {
 		/// Human-readable failure reason.
 		reason: String,
@@ -99,23 +116,27 @@ pub struct HostFundingStatusSubscribeRequest {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum HostFundingStatusSubscribeItem {
 	/// In flight. The host draws its steps; a product only waits for the end.
+	#[codec(index = 0)]
 	InProgress {
 		/// When the session expires unless funds are already moving, in Unix
 		/// milliseconds. `None` once it no longer expires.
 		expires_at: Option<u64>,
 	},
 	/// Inbound terminal success. Funds credited to the user's balance.
+	#[codec(index = 1)]
 	Delivered {
 		/// Amount credited, which may differ from the amount requested.
 		credited: u128,
 	},
 	/// Outbound terminal success. Funds left the user's balance under the
 	/// user's authorization.
+	#[codec(index = 2)]
 	Released {
 		/// Amount debited.
 		debited: u128,
 	},
 	/// Terminal failure.
+	#[codec(index = 3)]
 	Failed {
 		/// Why it ended.
 		reason: FundingFailure,
@@ -128,8 +149,10 @@ pub enum HostFundingStatusSubscribeItem {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostFundingStatusSubscribeError {
 	/// No such session, or it does not belong to the caller.
+	#[codec(index = 0)]
 	NotFound,
 	/// Catch-all.
+	#[codec(index = 1)]
 	Unknown {
 		/// Human-readable failure reason.
 		reason: String,
