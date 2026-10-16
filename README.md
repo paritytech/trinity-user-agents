@@ -377,6 +377,18 @@ it from `TRUAPI_SCAN_TEXT`, or with a dismissal when it is unset, so the
 battery runs it. The playground's
 Diagnosis skips it, since dot.li has no viewfinder and answers `Unsupported`.
 
+`Share` (`share`) opens the host's own share sheet with one text (RFC "Host
+share sheet"). The iOS app draws it. A Worker may open it only within 5 seconds
+of a press of the user on something the host drew for it, such as a button of
+one of its rooms. The CLI host roles and dot.li have no sheet and answer
+`Unsupported`, so the battery and the playground's Diagnosis skip it.
+
+`chat.onOpenLink` gives a chat product the text after `#` of a room link the
+user opened, `polkadot://<product>/-/chat/<room>#<payload>` or its web form
+`https://<name>.<root>.li/-/chat/<room>#<payload>` (RFC "Chat Extension v2
+additions", "Room link payloads"). The iOS app also reads a room link from its
+main scanner.
+
 To run the playground locally in a plain browser tab, against a signing host on
 your own machine:
 

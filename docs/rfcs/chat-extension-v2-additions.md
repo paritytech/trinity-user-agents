@@ -11,8 +11,8 @@ status: draft
 [Chat Extension v2](chat-extension-v2.md) lets a product's Worker own the data of its chat rooms while the host draws
 them. This RFC adds what the base leaves out: a product can ask the host what it serves, declare optional features per
 room, decorate a message with a thread summary, a branch position or a reasoning flag, put a call into a room, learn
-what the user does with these features, and answer a search the host asks. `Chat` gains six methods, ids `22` to `27`,
-and no existing request, item or event of the base changes. The host also gains behaviour that needs no wire method:
+what the user does with these features, answer a search the host asks, and take the payload of a room link the user
+opens. `Chat` gains seven methods, ids `22` to `28`, and no existing request, item or event of the base changes. The host also gains behaviour that needs no wire method:
 large attachments stored as preimages paid by the product, bounded worker wakes, bots as personas, and the user's own
 mute and archive state. This RFC names the base and does not change it, so the base can be accepted on its own.
 
@@ -34,6 +34,8 @@ The base gives a product a complete chat room, and a product that wants more lea
   [Realtime Media Sessions](https://github.com/paritytech/host-rust-core/blob/rfc/realtime-media-sessions/docs/rfcs/realtime-media-sessions.md)
   design has no way to show a session inside a chat room.
 - The user cannot mute or archive a product room, and a product cannot respect a choice it never hears of.
+- A room link opens a room, but a product cannot be given anything with it. A chat product that shares an invitation,
+  a contact link or a ticket as a link has no way to receive it when someone else opens that link.
 
 ## Approach
 
@@ -46,7 +48,7 @@ The design has these parts:
 - **Room features, meta and calls**: the rules of the new requests.
 - **Room events**: the second event stream and its snapshot.
 - **Features**: bots, mute and archive, preimage attachments, search, threads, branches, reasoning rows, read aloud,
-  wakes and calls.
+  wakes, calls and room link payloads.
 - **Limits and timeouts**: the bounds the core enforces and the time the host waits.
 
 ### Rules
@@ -71,7 +73,7 @@ The design has these parts:
 
 ### Trait
 
-`Chat` keeps trait id `4` and every method of the base. The new methods take ids `22` to `27`, and every one has a
+`Chat` keeps trait id `4` and every method of the base. The new methods take ids `22` to `28`, and every one has a
 default body that answers `unavailable`.
 
 ```rust
@@ -113,13 +115,19 @@ default body that answers `unavailable`.
     #[wire(host_initiated, id = 27)]
     fn search_query(&self, cx: &CallContext, request: ProductChatSearchQueryRequest)
         -> Subscription<ProductChatSearchQueryItem, CallError<ProductChatQueryError>>;
+
+    /// The payload of a room link that the user opened. One item, then
+    /// complete.
+    #[wire(host_initiated, id = 28)]
+    fn open_link(&self, cx: &CallContext, request: ProductChatOpenLinkRequest)
+        -> Subscription<ProductChatOpenLinkItem, CallError<ProductChatQueryError>>;
 ```
 
 Versions of each leg:
 
 | Method                              | Leg       | Version                                    |
 | ----------------------------------- | --------- | ------------------------------------------ |
-| `22` to `27`                        | All legs  | `V1`, first shape                          |
+| `22` to `28`                        | All legs  | `V1`, first shape                          |
 | Every method `0` to `21`            | All legs  | Unchanged                                  |
 | `register_bot` (`1`)                | All legs  | Unchanged; the meaning is in [Bots](#bots) |
 
@@ -244,6 +252,17 @@ pub struct ProductChatSearchQueryItem {
     /// Cursor for older matches; `None` ends them.
     pub next: Option<String>,
 }
+
+pub struct ProductChatOpenLinkRequest {
+    /// The room the link names.
+    pub room_id: String,
+    /// The text after `#` in the link, percent-decoded. The host does not read it.
+    pub payload: String,
+}
+pub struct ProductChatOpenLinkItem {
+    /// The room the host shows next; `None` keeps the room of the link.
+    pub room_id: Option<String>,
+}
 ```
 
 As in the base, the variant order of every enum is part of the wire: a later addition goes after the last variant.
@@ -270,6 +289,7 @@ end to end on that build.
 | `wake`                                                        | Notification wakes and `Woken` events ([Wakes](#wakes))                                                   |
 | `call_buttons`                                                | Header buttons, `Ringing`, the call bar and the four call events ([Calls](#calls))                        |
 | `room_calls`                                                  | `Active { media_session: Some(_) }` presented by the host ([Calls](#calls))                               |
+| `room_link_payloads`                                          | The payload of an opened room link reaches the product ([Room link payloads](#room-link-payloads))         |
 
 The core answers the host's list minus what it cannot back: `custom_bodies` and `custom_footer` without a `Renderer`
 host, `room_calls` while the runtime serves no Media service, and `payment_button` until the footer payment path
@@ -464,6 +484,28 @@ service of Realtime Media Sessions.
   to the Realtime Media Sessions RFC: a session bound to a room is presented by the host, `set_surfaces` for it is
   refused, and the core checks that the session belongs to the product that binds it.
 
+### Room link payloads
+
+A room link is `polkadot://<product>.<tld>/-/chat/<room_id>`, or its web form on a share host,
+`https://<name>.<root>.li/-/chat/<room_id>`, which a phone opens in the app. The text after `#` is a **payload** for
+the product. A product puts in it what it wants the person who opens the link to give it: a contact link, an
+invitation, a ticket. A browser does not send the fragment of a web link to a server, so the payload stays between the
+person who shares the link and the host of the person who opens it.
+
+- The host reads the room from the link and shows it, as for any room link, or the App of the product when it has no
+  such room yet. Then it asks the product `open_link { room_id, payload }` with the payload percent-decoded, and holds
+  the worker until the answer. The host does not read, show or store the payload.
+- The product answers the room the host shows next, or `None` to keep the room of the link. A product without a
+  handler answers `Unsupported`, and the user stays in the room of the link: a product built before this method keeps
+  working.
+- The core asks for any room of the product, needs no declaration, and answers `NotAvailable` itself for a room the
+  product does not have. It refuses an empty payload or one above the bound with `Unknown`, and refuses an answer that
+  names an invalid room.
+- An opened link is the user's choice, but the link can come from anyone. A product treats the payload as untrusted
+  input, and asks the user before it acts on it with an effect the user did not ask for, such as a connection.
+- A host scanner that reads a room link of a product, in either form, gives it to the link pipeline of the app, so a
+  QR code of a room link works from the main scanner of the host and from the camera of the phone.
+
 ### Limits
 
 The core enforces these bounds before a host sees a value, with the identifier and display-text screening of the base:
@@ -485,6 +527,7 @@ The core enforces these bounds before a host sees a value, with the identifier a
 | Wake                                                                                                                     | 30 s per hold; at most 12 notification wakes per product per rolling hour                |
 | Meta kept for a product-source room                                                                                      | Newest 2,000 messages by timestamp                                                       |
 | Room events queued with no subscriber                                                                                    | 64 per product, oldest dropped                                                           |
+| Room link `payload`                                                                                                      | 1 byte to 8 KiB of UTF-8                                                                 |
 
 A rate over its bound fails with `RateLimited`, and any other bound fails with `Unknown` naming the field.
 
@@ -496,6 +539,7 @@ How long the host waits:
 | Staging a preimage  | The `Preimage::submit` time-out, 360 s                      | The message is `Failed` with retry                   |
 | Wake hold           | 30 s, extended only by the product's own `begin_operation` | Releases the reference                               |
 | `Ringing`           | The product's `set_room_call(None)`, or 60 s                | The ringing clears                                   |
+| `open_link`         | 90 s, without blocking the screen: the link can start the worker | Logs the failure; the user stays in the room of the link |
 
 ## Trade-offs
 
