@@ -1098,6 +1098,7 @@ function changeSession(
     try {
       await change(runtime);
     } finally {
+      // A card's Widget is opened again as a Widget, not as the product's App.
       if (reopen && how)
         await openTarget(
           runtime,
@@ -1105,6 +1106,7 @@ function changeSession(
           reopen.productId,
           entered,
           scope,
+          reopen.executionKind === "Widget" ? "Widget" : "App",
         );
     }
   });

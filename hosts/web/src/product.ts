@@ -47,6 +47,8 @@ export const PRODUCT_FRAME_POLICY = "camera; microphone";
 export interface OpenProduct {
   url: URL;
   productId: string;
+  /** What the core runs the frame as, kept so the product can be opened again as the same. */
+  executionKind: "App" | "Widget" | "Worker";
   /** The product's channel to the core, for host-initiated renders and actions. */
   provider: TrUApiProductProvider;
   /**
@@ -172,6 +174,7 @@ export async function openProduct(
   return {
     url,
     productId,
+    executionKind,
     provider,
     setVisible(visible) {
       frame.iframe.style.display = visible ? "" : "none";
