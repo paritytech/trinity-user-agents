@@ -208,6 +208,11 @@ a single package with tree-shakeable subpath entries:
 
 ### Chain transport
 
+The runtime registers each live product before it starts chain work. Pending and
+ready connections share an entry within that product's registry. Closing a product
+removes its registry, rejects delayed setup, and aborts its established follows;
+closed product IDs are not retained.
+
 A host that serves chain traffic itself embeds the `truapi-provider` crate: an
 embedded smoldot light client plus a bundled chain-spec catalog, addressed by
 genesis hash, so the host ships no chain specs and never refreshes them. The light
@@ -510,6 +515,12 @@ xcrun simctl launch booted io.parity.polkadotapp.develop
 
 It is an arm64 simulator slice, so it needs an Apple Silicon Mac and cannot be
 installed on a device.
+
+### A product from your Mac on a phone
+
+Debug builds of both apps open a product from a development server on your Mac,
+on the simulator, the emulator or a phone, without a deploy. See
+[docs/dev-server-on-a-phone.md](docs/dev-server-on-a-phone.md).
 
 ### A build that installs on a phone
 

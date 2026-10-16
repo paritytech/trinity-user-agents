@@ -365,6 +365,16 @@ Core side (`feature/products/impl/.../domain/truapi/`):
 Demo: `feature/products/product-sample/pocket-worker`, a worker on the core's own client that publishes one card,
 draws its face live and gives it up on its Remove button.
 
+### Host-placed chat
+
+The chat analogue of the pinned card. `HostPlacedProducts` (`feature/products/impl/.../domain/bot/external/`) names
+the products the host itself puts in chat, Jollity on the reserved game product, and `ProductExternalExtensionProvider`
+unions them with the installed chat products, placed first and listed once when the user also installed one. Nothing
+is written to the product tables, so nothing can uninstall them, and the product the registry sees never changes, so
+the worker is not restarted over a resolved name. A placed product's chat extension holds the worker like any other,
+and the product registers its rooms through its own `createRoom`. A host-placed chat is pinned above the rest
+(`ProductChatPreviewDelegate`, through `Order.PinToTop`, for the `PlacedByHost` origin) and its menu offers no removal.
+
 ---
 
 ## Where new things live

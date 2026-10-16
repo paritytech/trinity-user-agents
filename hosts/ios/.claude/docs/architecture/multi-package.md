@@ -52,8 +52,9 @@ The project uses local SPM packages under `Packages/`, with `AppDependencies` as
   (xcframework + uniffi bindings), the `TrUAPIHostCore` wrapper (`TrUAPIHostCoreProtocol`
   seam), and the bundled truapi lockdown container behind `ContainerScriptBundle.load()`.
   The container TypeScript source and its esbuild live in the truapi repo, not here.
-  App-side glue — `RustRuntimeBridge`, `Connection/` (chain connection pool with injected
-  genesis→engine resolver, rpc adapter, frames), `Storage/` (`TrUAPILocalStorage`),
+  App-side glue — `RustRuntimeBridge`, `Connection/` (per-lease raw socket pool
+  `TrUAPIV2SpecConnectionPool` with an injected genesis→`ChainSocket` resolver, plus the
+  `TrUAPIChainConnecting` seam), `Storage/` (`TrUAPILocalStorage`),
   `Preimage/` (`TrUAPIPreimageCache` on `CoalescingTask`) — lives in
   `polkadot-app/Modules/Products/TrUAPI/`, not in a package
 

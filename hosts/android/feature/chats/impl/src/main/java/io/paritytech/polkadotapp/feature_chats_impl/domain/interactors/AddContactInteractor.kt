@@ -62,12 +62,13 @@ class RealAddContactInteractor @Inject constructor(
         return resourcesRepository.resolveConsumers(knownChains.assetHub, foundUsers.map { it.accountId })
             .map { onChainUsers ->
                 foundUsers
-                    .filter { it.accountId in onChainUsers }
+                    .filter {
+                        val onChainUser = onChainUsers[it.accountId] ?: return@filter false
+                        val displayUsername = it.username.getDisplayUsername()
+                        onChainUser.liteUsername == displayUsername || onChainUser.fullUsername == displayUsername
+                    }
                     .map {
-                        ContactSearchResult(
-                            accountId = it.accountId,
-                            username = it.username
-                        )
+                        ContactSearchResult(accountId = it.accountId, username = it.username)
                     }
             }
     }
