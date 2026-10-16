@@ -678,21 +678,28 @@ struct StallBoardTests {
         try await awaitBoard(board) { $0.ingestedActivities.count == 1 }
         await MainActor.run { board.refresh() }
 
-        for _ in 0 ..< 1_000 {
-            if source.dismissedIds.contains(activityId) {
-                break
-            }
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await source.waitForDismissal(of: activityId)
 
         let dismissCount1 = source.dismissedIds.count
         #expect(dismissCount1 == 1)
 
+        // Refresh #2 would enqueue a duplicate dismiss first. The barrier's dismiss is enqueued later on the
+        // serial main executor, so once it is recorded any duplicate for `activityId` already is too.
         await MainActor.run { board.refresh() }
-        try await Task.sleep(for: .milliseconds(50))
+        let barrierId = UUID()
+        let barrier = StallActivity(
+            id: barrierId,
+            title: "barrier",
+            subtitle: nil,
+            startedAt: date(),
+            endedAt: date(),
+            visibility: .whenStale,
+            steps: []
+        )
+        await source.push([activity, barrier])
+        try await source.waitForDismissal(of: barrierId)
 
-        let dismissCount2 = source.dismissedIds.count
-        #expect(dismissCount2 == 1)
+        #expect(source.dismissCalls.filter { $0 == activityId }.count == 1)
     }
 
     @Test("isTicking false when only latched activity is ended")
@@ -744,11 +751,11 @@ struct StallBoardTests {
 
 final class TestActivitySource: StallActivitySource {
     private let activitiesSubject: AsyncCurrentValueSubject<[StallActivity]>
-    private let dismissedIdsSubject: AsyncCurrentValueSubject<Set<UUID>>
+    private let dismissCallsSubject: AsyncCurrentValueSubject<[UUID]>
 
     init() {
         activitiesSubject = AsyncCurrentValueSubject([])
-        dismissedIdsSubject = AsyncCurrentValueSubject([])
+        dismissCallsSubject = AsyncCurrentValueSubject([])
     }
 
     var activities: AnyAsyncSequence<[StallActivity]> {
@@ -759,14 +766,25 @@ final class TestActivitySource: StallActivitySource {
         activitiesSubject.value = activities
     }
 
-    func dismiss(id: UUID) async {
-        var dismissed = dismissedIdsSubject.value
-        dismissed.insert(id)
-        dismissedIdsSubject.value = dismissed
+    @MainActor func dismiss(id: UUID) async {
+        dismissCallsSubject.value.append(id)
+    }
+
+    var dismissCalls: [UUID] {
+        dismissCallsSubject.value
     }
 
     var dismissedIds: Set<UUID> {
-        dismissedIdsSubject.value
+        Set(dismissCallsSubject.value)
+    }
+
+    func waitForDismissal(of id: UUID) async throws {
+        try await withTimeout(.seconds(5)) { [dismissCallsSubject] in
+            for await calls in dismissCallsSubject where calls.contains(id) {
+                return
+            }
+            throw CancellationError()
+        }
     }
 }
 
