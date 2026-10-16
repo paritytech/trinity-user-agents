@@ -35,6 +35,10 @@ const TOP_UP_LIMIT: usize = 3;
 /// cannot hold the session and its worker for good. A bank transfer can take
 /// days, so this is longer than the unassigned window.
 const PROVIDER_SILENCE_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
+/// How many ended sessions the host has recorded the core keeps per owner,
+/// newest first, so a product that watches one again after the host recorded
+/// it still learns how it ended.
+const RECORDED_PER_OWNER: usize = 64;
 /// Format of the stored sessions blob, which leads it as a `u16`. The stored
 /// enums pin their SCALE indexes, so variants added later decode alongside
 /// the ones a blob was written with. A blob that leads with another format is
@@ -42,7 +46,7 @@ const PROVIDER_SILENCE_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 const SESSIONS_FORMAT: u16 = 1;
 /// How many unreadable blobs [`CoreStorageKey::FundingSessionsUnreadable`]
 /// keeps, oldest dropped first, so repeated bad writes cannot grow it without
-/// bound.
+/// bound. The core never reads them back: they are kept for diagnosis only.
 const UNREADABLE_LIMIT: usize = 8;
 
 /// What the core knows about one session, independent of any host surface.
@@ -165,8 +169,14 @@ pub struct FundingProgress {
 	pub status: FundingStatus,
 	/// When the status turns to [`FundingStatus::TakingLonger`] unless the
 	/// provider reports first, in Unix milliseconds, so the host reads the
-	/// progress again then.
+	/// progress again then. `None` while the session waits on the user's
+	/// payment.
 	pub longer_at_ms: Option<u64>,
+	/// Whether money moved: the provider started or named a top-up or
+	/// payment, or holds the user's payment. Until then a second cancel ends
+	/// the session; from then on a cancel is a request the provider answers,
+	/// and only the provider can end the session.
+	pub money_moved: bool,
 }
 
 /// Where a session stands, one line for the host to word: in flight by
@@ -200,8 +210,8 @@ pub enum FundingStatus {
 	/// Inbound: the provider is retrying, with another top-up after one
 	/// claimed only part of the amount.
 	Retrying,
-	/// Nothing came from the provider for longer than its quote said the
-	/// session takes.
+	/// The provider holds the user's payment and nothing came from it for
+	/// longer than its quote said the session takes.
 	TakingLonger,
 	/// Inbound, ended: the balance was credited.
 	ToppedUp,
@@ -378,7 +388,7 @@ pub enum CancelOutcome {
 	Requested,
 	/// A cancel is already with the provider, or accepted and being settled.
 	Pending,
-	/// Too late: the user's balance was already credited.
+	/// Too late: the provider already started crediting the user's balance.
 	TooLate,
 	/// Not cancellable here: the session ended, or its overlay is still up.
 	Refused,
@@ -630,6 +640,7 @@ impl FundingSession {
 			refunded: self.refund.as_ref().and_then(|refund| refund.refunded),
 			status: self.status(now_ms),
 			longer_at_ms: self.longer_at_ms().filter(|at_ms| *at_ms > now_ms),
+			money_moved: self.money_moved(),
 		}
 	}
 
@@ -718,14 +729,25 @@ impl FundingSession {
 
 	/// When a session the provider still works on counts as taking longer:
 	/// its chosen quote's time after the provider's latest report, or after
-	/// it was assigned. `None` without a quoted time or once it ended.
+	/// it was assigned. `None` without a quoted time, before the provider
+	/// holds the user's payment, or once it ended.
 	fn longer_at_ms(&self) -> Option<u64> {
-		if !self.serves_provider() {
+		if !self.serves_provider() || !self.holds_payment() {
 			return None;
 		}
 		let eta_ms = self.choice.as_ref()?.quote.eta_secs?.saturating_mul(1_000);
 		let heard_at_ms = self.updates.last().map(|record| record.at_ms).or(self.assigned_at_ms)?;
 		Some(heard_at_ms.saturating_add(eta_ms))
+	}
+
+	/// Whether the provider holds the user's payment: inbound, once money
+	/// moved; outbound, once the withdrawal is released. Until then the
+	/// session waits on the user, not the provider.
+	fn holds_payment(&self) -> bool {
+		match self.direction {
+			FundingDirection::In => self.money_moved(),
+			FundingDirection::Out => matches!(self.stage, FundingStage::Released { .. }),
+		}
 	}
 
 	/// Whether the provider is retrying: it named another top-up after a
@@ -822,7 +844,9 @@ impl FundingSession {
 			self.stage = FundingStage::Failed { reason: reason.clone(), settled_at_ms: now_ms };
 		}
 		self.updates.push(FundingUpdateRecord { update, at_ms: now_ms });
-		if self.is_terminal() {
+		// A provider that reports its next step has carried on, so the decline
+		// it was owed reached it and is not repeated.
+		if self.is_terminal() || matches!(self.cancel, Some(FundingCancel::Declined)) {
 			self.cancel = None;
 		}
 		Ok(())
@@ -1255,7 +1279,9 @@ impl FundingSession {
 
 	/// What the provider still has to hear about the user's cancel when its
 	/// serve stream opens: a request it has not answered, or an answer to its
-	/// offer.
+	/// offer. A decline is repeated on every open until the provider reports
+	/// its next step, as a worker that stopped before handling it would
+	/// otherwise wait for an answer that never comes.
 	pub fn pending_cancel_item(&self) -> Option<HostFundingServeSubscribeItem> {
 		let intent = self.intent.clone();
 		match self.cancel.as_ref()? {
@@ -1473,17 +1499,35 @@ impl<D> From<FundingSessionError> for crate::CallError<D> {
 }
 
 /// The sessions worth keeping: every one its provider still has work on,
-/// then the ended ones the host has not recorded yet, newest first up to a
-/// fixed bound. The host owns the history; a session it has recorded is no
-/// longer kept.
+/// the ended ones the host has not recorded yet, newest first up to a fixed
+/// bound, and the newest ended ones it has recorded, up to a fixed bound per
+/// owner. The host owns the history; a recorded session is kept only so its
+/// owner can still read how it ended.
 pub fn retained(sessions: impl IntoIterator<Item = FundingSession>) -> Vec<FundingSession> {
-	let (mut open, mut unrecorded): (Vec<_>, Vec<_>) = sessions
-		.into_iter()
-		.filter(FundingSession::needs_handoff)
-		.partition(FundingSession::serves_provider);
+	let (mut open, ended): (Vec<_>, Vec<_>) =
+		sessions.into_iter().partition(FundingSession::serves_provider);
+	let (mut unrecorded, mut recorded): (Vec<_>, Vec<_>) =
+		ended.into_iter().partition(|session| !session.acknowledged);
 	unrecorded.sort_by_key(|session| core::cmp::Reverse(session.settled_at_ms()));
 	unrecorded.truncate(UNACKNOWLEDGED_LIMIT);
+	// Grouped by owner, newest first within each, so each owner's newest run is
+	// what survives the per-owner bound.
+	recorded.sort_by(|a, b| {
+		a.owner_product_id
+			.cmp(&b.owner_product_id)
+			.then_with(|| b.settled_at_ms().cmp(&a.settled_at_ms()))
+	});
 	open.append(&mut unrecorded);
+	let mut owner_run = 0;
+	for session in recorded {
+		let same_owner = open
+			.last()
+			.is_some_and(|kept| kept.owner_product_id == session.owner_product_id);
+		owner_run = if same_owner { owner_run + 1 } else { 1 };
+		if owner_run <= RECORDED_PER_OWNER {
+			open.push(session);
+		}
+	}
 	open
 }
 
@@ -1543,7 +1587,7 @@ fn decode_sessions(blob: &[u8]) -> Option<Vec<FundingSession>> {
 /// Replace the persisted set with `sessions`, clearing the slot when empty.
 pub async fn store_sessions(
 	storage: &(impl CoreStorage + ?Sized),
-	sessions: &[FundingSession],
+	sessions: &[&FundingSession],
 ) -> Result<(), FundingSessionError> {
 	let written = if sessions.is_empty() {
 		storage.clear_core_storage(CoreStorageKey::FundingSessions).await
@@ -1644,6 +1688,39 @@ mod tests {
 		}
 	}
 
+	// Recorded sessions are kept only so their owner can read how they ended,
+	// so each owner keeps its newest ones and no owner can crowd out another.
+	#[test]
+	fn recorded_sessions_keep_the_newest_per_owner() {
+		let recorded = |intent: String, owner: &str, settled_at_ms: u64| FundingSession {
+			acknowledged: true,
+			owner_product_id: Some(owner.to_string()),
+			..expired(&intent, settled_at_ms)
+		};
+		let mut sessions: Vec<FundingSession> = (0..RECORDED_PER_OWNER as u64 + 2)
+			.map(|n| recorded(format!("a_{n}"), "a.dot", NOW + n))
+			.collect();
+		sessions.push(recorded("b_0".to_string(), "b.dot", NOW));
+		sessions.push(session(FundingDirection::In));
+
+		let kept = retained(sessions);
+		let count = |owner: &str| {
+			kept.iter()
+				.filter(|session| session.owner_product_id.as_deref() == Some(owner))
+				.count()
+		};
+
+		assert_eq!(
+			(
+				count("a.dot"),
+				count("b.dot"),
+				kept.iter().any(|session| session.intent == "a_0" || session.intent == "a_1"),
+				kept.iter().any(|session| !session.is_terminal()),
+			),
+			(RECORDED_PER_OWNER, 1, false, true)
+		);
+	}
+
 	// A product only waits for the outcome; the host draws the steps, so an
 	// open session reads the same whichever way value moves.
 	#[test]
@@ -1732,11 +1809,11 @@ mod tests {
 		assert_eq!(session, expired("fs_1", NOW));
 	}
 
-	// The host owns the history: a session it recorded is dropped, one it has
-	// not recorded is kept for it, newest first and not without bound, and
-	// open sessions always come first.
+	// The host owns the history: open sessions come first, then the ones it
+	// has not recorded, newest first and not without bound, then the recorded
+	// ones kept only so their owner can read how they ended.
 	#[test]
-	fn the_core_keeps_only_open_and_unrecorded_sessions() {
+	fn the_core_keeps_open_then_unrecorded_then_recorded_sessions() {
 		let ended = |index: usize, acknowledged| FundingSession {
 			acknowledged,
 			..expired(&format!("fs_s{index}"), NOW + index as u64)
@@ -1752,9 +1829,13 @@ mod tests {
 
 		let newest_unrecorded =
 			(101..101 + UNACKNOWLEDGED_LIMIT).rev().map(|index| format!("fs_s{index}"));
+		let recorded_newest_first = (0..3).rev().map(|index| format!("fs_s{index}"));
 		assert_eq!(
 			kept,
-			std::iter::once("fs_1".to_string()).chain(newest_unrecorded).collect::<Vec<_>>()
+			std::iter::once("fs_1".to_string())
+				.chain(newest_unrecorded)
+				.chain(recorded_newest_first)
+				.collect::<Vec<_>>()
 		);
 	}
 
@@ -1866,6 +1947,32 @@ mod tests {
 				CancelConfirmation::Declined,
 				false,
 				Some(HostFundingServeSubscribeItem::CancelDeclined { intent: "fs_1".into() }),
+			)
+		);
+	}
+
+	// A provider that reports its next step after a decline has carried on,
+	// so the decline is not handed to it again on every reopen.
+	#[test]
+	fn a_decline_stops_repeating_once_the_provider_carries_on() {
+		let mut session = served(FundingDirection::In);
+		reported(
+			&mut session,
+			&[FundingUpdate::PaymentReceived { finalized: true, mismatch: None }],
+		);
+		cancelled(&mut session);
+		reported(&mut session, &[offer(5, 95, None)]);
+		session.confirm_cancel(None, NOW);
+		let before = session.pending_cancel_item();
+
+		reported(&mut session, &[FundingUpdate::Converting]);
+
+		assert_eq!(
+			(before, session.pending_cancel_item(), session.cancel.clone()),
+			(
+				Some(HostFundingServeSubscribeItem::CancelDeclined { intent: "fs_1".into() }),
+				None,
+				None,
 			)
 		);
 	}
@@ -2502,27 +2609,72 @@ mod tests {
 		);
 	}
 
-	// A provider that stays silent past the time its quote gave is taking a
-	// little longer, which the host learns to read again for; a report starts
-	// the clock again.
+	// A provider that holds the payment and stays silent past the time its
+	// quote gave is taking a little longer, which the host learns to read
+	// again for; a report starts the clock again.
 	#[test]
 	fn a_session_past_its_quoted_time_is_taking_longer() {
 		let mut session = chosen(FundingDirection::In, FundingRail::Card);
 		if let Some(choice) = session.choice.as_mut() {
 			choice.quote.eta_secs = Some(60);
 		}
+		report_at(
+			&mut session,
+			FundingUpdate::PaymentReceived { finalized: false, mismatch: None },
+			NOW,
+		);
 		let before = session.progress(NOW + 59_999);
 		let after = session.status(NOW + 60_000);
-		report_at(&mut session, FundingUpdate::AwaitingPayment, NOW + 60_001);
+		report_at(&mut session, FundingUpdate::Converting, NOW + 60_001);
 
 		assert_eq!(
 			(before.status, before.longer_at_ms, after, session.status(NOW + 60_002)),
 			(
-				FundingStatus::WaitingForPayment,
+				FundingStatus::ConvertingToCash,
 				Some(NOW + 60_000),
 				FundingStatus::TakingLonger,
-				FundingStatus::WaitingForPayment,
+				FundingStatus::ConvertingToCash,
 			)
+		);
+	}
+
+	// Until the provider holds the payment the session waits on the user: a
+	// transfer or deposit that takes days is not the provider taking longer,
+	// so the waiting status stays and the host has no time to read again at.
+	#[test]
+	fn a_session_waiting_on_the_users_payment_is_never_taking_longer() {
+		let quoted = |direction, rail| {
+			let mut session = chosen(direction, rail);
+			if let Some(choice) = session.choice.as_mut() {
+				choice.quote.eta_secs = Some(60);
+			}
+			session
+		};
+		let mut withdrawal = quoted(FundingDirection::Out, FundingRail::Bank);
+		report_at(
+			&mut withdrawal,
+			FundingUpdate::Collecting { payment_id: [2; 32], amount: 100 },
+			NOW,
+		);
+		let later = NOW + 600_000;
+		let waiting = |session: &FundingSession| {
+			let progress = session.progress(later);
+			(progress.status, progress.longer_at_ms)
+		};
+
+		assert_eq!(
+			[
+				waiting(&quoted(FundingDirection::In, FundingRail::Bank)),
+				waiting(&quoted(FundingDirection::In, FundingRail::Crypto)),
+				waiting(&quoted(FundingDirection::In, FundingRail::Card)),
+				waiting(&withdrawal),
+			],
+			[
+				(FundingStatus::WaitingForTransfer, None),
+				(FundingStatus::WaitingForDeposit, None),
+				(FundingStatus::WaitingForPayment, None),
+				(FundingStatus::TransactionInitiated, None),
+			]
 		);
 	}
 
@@ -2586,6 +2738,22 @@ mod tests {
 
 	fn steps(progress: &FundingProgress) -> Vec<(FundingStep, Option<u64>)> {
 		progress.steps.iter().map(|step| (step.step, step.reached_at_ms)).collect()
+	}
+
+	// Hosts decide from this whether a second cancel can still end the
+	// session, so it must say exactly what the core's own rule says.
+	#[test]
+	fn progress_reports_money_moved_as_the_core_rules_it() {
+		let fresh = served(FundingDirection::In);
+		let mut paid = served(FundingDirection::In);
+		reported(&mut paid, &[FundingUpdate::PaymentReceived { finalized: false, mismatch: None }]);
+		let mut started = served(FundingDirection::Out);
+		assert!(started.record_start([7; 32], 100));
+
+		let states = [&fresh, &paid, &started]
+			.map(|session| (session.progress(NOW).money_moved, session.money_moved()));
+
+		assert_eq!(states, [(false, false), (true, true), (true, true)]);
 	}
 
 	// The bar follows the design per rail: a card payment is approved once it
@@ -2899,15 +3067,17 @@ mod tests {
 	}
 
 	// The host may record a withdrawal as soon as it is released, but the
-	// provider has yet to pay the user out, so the session is kept and
-	// served until it reports how that went.
+	// provider has yet to pay the user out, so the session is served until it
+	// reports how that went. After that it stays only as a record its owner
+	// can read.
 	#[test]
 	fn a_recorded_withdrawal_is_kept_until_its_payout_is_reported() {
 		let mut released = served(FundingDirection::Out);
 		reported(&mut released, &[FundingUpdate::Collecting { payment_id: [3; 32], amount: 100 }]);
 		assert!(released.settle(100, NOW + 1));
 		released.acknowledged = true;
-		let kept_before = retained([released.clone()]).len();
+		let served_before =
+			retained([released.clone()]).iter().any(FundingSession::serves_provider);
 		released
 			.report(
 				PROVIDER,
@@ -2918,7 +3088,15 @@ mod tests {
 			.expect("reported");
 		released.acknowledged = true;
 
-		assert_eq!((kept_before, retained([released]).len()), (1, 0));
+		let kept_after = retained([released]);
+		assert_eq!(
+			(
+				served_before,
+				kept_after.len(),
+				kept_after.iter().any(FundingSession::serves_provider)
+			),
+			(true, 1, false)
+		);
 	}
 
 	// A failed payout leaves the user's CASH with the provider, so the
@@ -3125,7 +3303,8 @@ mod tests {
 		let storage = stub_platform();
 		let sessions = vec![session(FundingDirection::In), expired("fs_2", NOW)];
 
-		block_on(store_sessions(storage.as_ref(), &sessions)).expect("stored");
+		block_on(store_sessions(storage.as_ref(), &sessions.iter().collect::<Vec<_>>()))
+			.expect("stored");
 
 		assert_eq!(block_on(load_sessions(storage.as_ref())).expect("loaded"), sessions);
 	}
@@ -3179,7 +3358,7 @@ mod tests {
 	#[test]
 	fn storing_nothing_clears_the_slot() {
 		let storage = stub_platform();
-		block_on(store_sessions(storage.as_ref(), &[session(FundingDirection::In)]))
+		block_on(store_sessions(storage.as_ref(), &[&session(FundingDirection::In)]))
 			.expect("stored");
 
 		block_on(store_sessions(storage.as_ref(), &[])).expect("cleared");

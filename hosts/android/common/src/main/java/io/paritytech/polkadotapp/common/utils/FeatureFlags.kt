@@ -18,7 +18,8 @@ object FeatureFlags {
             FeatureOption.ALL_CHAT_EXTENSIONS,
             FeatureOption.LINKED_DEVICES,
             FeatureOption.PRODUCT_SETTINGS,
-            FeatureOption.PERSONHOOD -> fullFeatured
+            FeatureOption.PERSONHOOD,
+            FeatureOption.COLLECTIBLES -> fullFeatured
 
             FeatureOption.TAB_BAR_CONNECTIVITY_INDICATOR -> BuildConfig.TAB_BAR_CONNECTIVITY_INDICATOR
             FeatureOption.COINAGE_DEBUG_FEATURES -> BuildConfig.COINAGE_DEBUG_FEATURES
@@ -56,6 +57,7 @@ enum class FeatureOption {
     LINKED_DEVICES,
     PRODUCT_SETTINGS,
     PERSONHOOD,
+    COLLECTIBLES,
     ARBITRARY_PRODUCTS,
 
     // Adding and withdrawing CASH through a funding provider. Its provider runs as a bundled product, which only
