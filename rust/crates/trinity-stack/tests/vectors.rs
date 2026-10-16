@@ -130,30 +130,55 @@ fn signature_parts() -> (Vec<u8>, [u8; 64]) {
 	(payload, signature.try_into().unwrap())
 }
 
-/// A signature that holds only under the cofactored equation: its `R` carries an order-8
-/// component, which `8R` cancels and the cofactorless check does not.
-fn cofactored_only(payload: &[u8]) -> [u8; 64] {
+/// `SECRET`'s scalar `a`, as Ed25519 derives it.
+fn secret_scalar() -> Scalar {
 	let expanded = Sha512::digest(SECRET);
 	let mut clamped: [u8; 32] = expanded[..32].try_into().unwrap();
 	clamped[0] &= 248;
 	clamped[31] &= 127;
 	clamped[31] |= 64;
-	let secret_scalar = Scalar::from_bytes_mod_order(clamped);
-	let nonce = Scalar::from_bytes_mod_order([3; 32]);
-	let r = (ED25519_BASEPOINT_POINT * nonce + EIGHT_TORSION[1]).compress();
-	let mut message = b"trinity-stack/descriptor/v1".to_vec();
-	message.extend_from_slice(payload);
-	let challenge = Scalar::from_hash(
+	Scalar::from_bytes_mod_order(clamped)
+}
+
+/// The challenge `k = H(R || A || prefix || payload)`.
+fn challenge(r: &[u8; 32], key: &[u8; 32], payload: &[u8]) -> Scalar {
+	Scalar::from_hash(
 		Sha512::new()
-			.chain_update(r.as_bytes())
-			.chain_update(public_key(&SECRET))
-			.chain_update(&message),
-	);
-	let s = nonce + challenge * secret_scalar;
+			.chain_update(r)
+			.chain_update(key)
+			.chain_update(b"trinity-stack/descriptor/v1")
+			.chain_update(payload),
+	)
+}
+
+fn signature_of(r: &[u8; 32], s: Scalar) -> [u8; 64] {
 	let mut signature = [0; 64];
-	signature[..32].copy_from_slice(r.as_bytes());
+	signature[..32].copy_from_slice(r);
 	signature[32..].copy_from_slice(s.as_bytes());
 	signature
+}
+
+/// A signature that holds only under the cofactored equation: its `R` carries an order-8
+/// component, which `8R` cancels and the cofactorless check does not.
+fn cofactored_only(payload: &[u8]) -> [u8; 64] {
+	let nonce = Scalar::from_bytes_mod_order([3; 32]);
+	let r = (ED25519_BASEPOINT_POINT * nonce + EIGHT_TORSION[1]).compress().to_bytes();
+	let s = nonce + challenge(&r, &public_key(&SECRET), payload) * secret_scalar();
+	signature_of(&r, s)
+}
+
+/// A signature the cofactorless equation accepts under the identity key: with `A` the
+/// identity, `S·B = R + k·A` holds for `R = S·B`. Only the small-order key is wrong.
+fn valid_under_identity_key() -> [u8; 64] {
+	let s = Scalar::from_bytes_mod_order([5; 32]);
+	signature_of(&(ED25519_BASEPOINT_POINT * s).compress().to_bytes(), s)
+}
+
+/// A signature by `SECRET` the equation accepts with `R` the identity: `S = k·a` gives
+/// `S·B = k·A = R + k·A`. Only the small-order `R` is wrong.
+fn valid_with_identity_r(payload: &[u8]) -> [u8; 64] {
+	let r = identity_point();
+	signature_of(&r, challenge(&r, &public_key(&SECRET), payload) * secret_scalar())
 }
 
 /// The Ed25519 group order `L`, little-endian.
@@ -162,10 +187,12 @@ const GROUP_ORDER: [u8; 32] = [
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
 ];
 
-/// `y = p + 1`: the identity point under a non-canonical encoding.
+/// `y = p + 3`: a point of large order under a non-canonical encoding, so it breaks only the
+/// encoding rule. No signature can verify under a key or `R` nobody knows the discrete log of,
+/// so these cases also fail the equation: readers check encodings first.
 fn non_canonical_point() -> [u8; 32] {
 	let mut encoding = [0xff; 32];
-	encoding[0] = 0xee;
+	encoding[0] = 0xf0;
 	encoding[31] = 0x7f;
 	encoding
 }
@@ -463,6 +490,24 @@ fn document_cases() -> Vec<DocumentCase> {
 			"chain-id",
 		),
 		plain(
+			"chain-id-above-u32",
+			with(|value| value["services"][2]["chainId"] = json!(11_297_108_109u64)),
+			"ok",
+		),
+		plain(
+			"chain-id-above-2-53",
+			with(|value| value["services"][2]["chainId"] = json!(1u64 << 53)),
+			"chain-id",
+		),
+		plain(
+			"url-with-credentials",
+			with(|value| {
+				value["services"][0]["urls"] =
+					json!(["https://previewnet.substrate.dev@evil.example/"])
+			}),
+			"invalid-url",
+		),
+		plain(
 			"fork-without-forked-at",
 			with(|value| value["fork"] = json!({ "of": { "url": URL }, "at": TWO_HOURS_AGO })),
 			"forked-at",
@@ -505,7 +550,12 @@ fn document_cases() -> Vec<DocumentCase> {
 			hex(&non_canonical_point()),
 			"non-canonical-key",
 		),
-		keyed("key-small-order", signed(&base()), hex(&identity_point()), "small-order-key"),
+		keyed(
+			"key-small-order",
+			envelope(1, &payload, &valid_under_identity_key()),
+			hex(&identity_point()),
+			"small-order-key",
+		),
 		keyed(
 			"signature-r-non-canonical",
 			tampered(&|signature| signature[..32].copy_from_slice(&non_canonical_point())),
@@ -514,7 +564,7 @@ fn document_cases() -> Vec<DocumentCase> {
 		),
 		keyed(
 			"signature-r-small-order",
-			tampered(&|signature| signature[..32].copy_from_slice(&identity_point())),
+			envelope(1, &payload, &valid_with_identity_r(&payload)),
 			key(),
 			"small-order-r",
 		),
@@ -771,6 +821,28 @@ fn pointer_of(case: &Value) -> Pointer {
 fn sign_refuses_a_fork_with_its_sources_key() {
 	let refused = sign(&bytes(&fork()), &SECRET).map_err(|error| error.code());
 	assert_eq!(refused, Err("fork-signed-with-source-key"));
+}
+
+/// The small-order cases must break only the small-order rule, so a reader that checks the
+/// equation first still gets the expected code. dalek's non-strict `verify` runs the same
+/// cofactorless equation without refusing small-order points.
+#[test]
+fn small_order_cases_pass_the_equation_and_the_non_canonical_point_is_not_small() {
+	use curve25519_dalek::edwards::CompressedEdwardsY;
+	use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+	let (payload, _) = signature_parts();
+	let message = [b"trinity-stack/descriptor/v1".as_slice(), &payload].concat();
+	let identity = VerifyingKey::from_bytes(&identity_point()).unwrap();
+	assert!(
+		identity
+			.verify(&message, &Signature::from_bytes(&valid_under_identity_key()))
+			.is_ok()
+	);
+	let ours = VerifyingKey::from_bytes(&public_key(&SECRET)).unwrap();
+	let identity_r = Signature::from_bytes(&valid_with_identity_r(&payload));
+	assert!(ours.verify(&message, &identity_r).is_ok());
+	let point = CompressedEdwardsY(non_canonical_point()).decompress().unwrap();
+	assert!(!point.is_small_order());
 }
 
 /// Runs the committed files, as any other reader would.

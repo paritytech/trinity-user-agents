@@ -45,7 +45,9 @@ pub fn url(value: &str, schemes: Schemes) -> Result<Url, Error> {
 	let hierarchical = value
 		.split_once("://")
 		.is_some_and(|(scheme, _)| scheme.eq_ignore_ascii_case(parsed.scheme()));
-	let web = hierarchical && canonical_address(&parsed, value);
+	// A user name or password would let `https://trusted.example@evil.example/` read as trusted.
+	let no_credentials = parsed.username().is_empty() && parsed.password().is_none();
+	let web = hierarchical && no_credentials && canonical_address(&parsed, value);
 	let allowed = match (schemes, parsed.scheme()) {
 		(Schemes::Stun, scheme) => scheme == "stun",
 		(Schemes::Web, "https" | "wss") => web,
@@ -121,6 +123,8 @@ mod tests {
 			"ws://10.1:9944",
 			"ws://0x7f.1/",
 			"http://user@10.1/",
+			"https://previewnet.substrate.dev@evil.example/",
+			"wss://user:secret@a.example/",
 			"wss://10.1/",
 			"https://0x08080808/",
 		] {

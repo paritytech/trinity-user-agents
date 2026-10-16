@@ -122,10 +122,14 @@ pub struct Service {
 	pub kind: String,
 	/// Endpoints, most preferred first.
 	pub urls: Vec<String>,
-	/// The EVM chain id; set on `eth-rpc` only.
+	/// The EVM chain id; set on `eth-rpc` only. Up to 2^53 - 1, since EVM chain ids can exceed
+	/// 2^32 and every JSON reader holds that range exactly.
 	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
-	pub chain_id: Option<u32>,
+	pub chain_id: Option<u64>,
 }
+
+/// The largest `chainId`: every JSON reader holds integers up to 2^53 - 1 exactly.
+const MAX_CHAIN_ID: u64 = (1 << 53) - 1;
 
 /// An asset readers treat specially.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,7 +255,9 @@ impl Descriptor {
 			if !kinds.insert(service.kind.as_str()) {
 				return Err(Error::DuplicateServiceKind(service.kind.clone()));
 			}
-			if (service.kind == "eth-rpc") != service.chain_id.is_some() {
+			if (service.kind == "eth-rpc") != service.chain_id.is_some() ||
+				service.chain_id.is_some_and(|id| id > MAX_CHAIN_ID)
+			{
 				return Err(Error::ChainId);
 			}
 			if service.urls.is_empty() {
