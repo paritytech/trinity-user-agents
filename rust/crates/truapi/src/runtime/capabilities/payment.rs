@@ -181,11 +181,8 @@ impl ProductRuntimeHost {
 			.await?)
 	}
 
-	/// Drop the record of funds the host refused to start, if `recorded`.
-	async fn forget_funding_start(&self, recorded: bool, host_id: [u8; 32]) {
-		if !recorded {
-			return;
-		}
+	/// Drop the record of funds the host refused to start.
+	async fn forget_funding_start(&self, host_id: [u8; 32]) {
 		let forgotten = self
 			.services
 			.funding()
@@ -335,12 +332,17 @@ impl ProductRuntimeHost {
 		}
 		request.id = host_payment_id(&self.product, request.id);
 		let (host_id, amount) = (request.id, request.amount);
-		let recorded = self
-			.record_funding_start(latest::FundingDirection::Out, host_id, amount)
+		self.record_funding_start(latest::FundingDirection::Out, host_id, amount)
 			.await?;
 		let requested = platform.request_payment(&self.product, request).await;
-		if requested.is_err() {
-			self.forget_funding_start(recorded, host_id).await;
+		// A repeat of a payment the host already holds keeps its record; any
+		// other failure means no money moves under this id, even when an
+		// earlier call recorded it.
+		if requested
+			.as_ref()
+			.is_err_and(|error| !matches!(error, latest::HostPaymentError::AlreadyExists))
+		{
+			self.forget_funding_start(host_id).await;
 		}
 		match requested {
 			Ok(()) => Ok(()),
@@ -371,11 +373,15 @@ impl ProductRuntimeHost {
 		}
 		request.id = host_payment_id(&self.product, request.id);
 		let (host_id, amount) = (request.id, request.amount);
-		let recorded =
-			self.record_funding_start(latest::FundingDirection::In, host_id, amount).await?;
+		self.record_funding_start(latest::FundingDirection::In, host_id, amount).await?;
 		let started = platform.top_up(&self.product, request).await;
-		if started.is_err() {
-			self.forget_funding_start(recorded, host_id).await;
+		// As for payments: only a top-up the host already holds keeps its
+		// record.
+		if started
+			.as_ref()
+			.is_err_and(|error| !matches!(error, latest::HostPaymentTopUpError::AlreadyExists))
+		{
+			self.forget_funding_start(host_id).await;
 		}
 		started.map_err(CallError::Domain)
 	}

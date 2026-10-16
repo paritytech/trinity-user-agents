@@ -1472,8 +1472,9 @@ pub enum CoreStorageKey {
 	/// each record trusted for twelve hours.
 	#[codec(index = 16)]
 	FundingSupport,
-	/// The last funding sessions blob the core could not read, kept as it was
-	/// so a stored session is never overwritten unread.
+	/// Funding sessions blobs the core could not read, as a SCALE list of the
+	/// raw blobs, newest last, so a stored session is never overwritten
+	/// unread and a later bad blob does not replace an earlier one.
 	#[codec(index = 17)]
 	FundingSessionsUnreadable,
 }
