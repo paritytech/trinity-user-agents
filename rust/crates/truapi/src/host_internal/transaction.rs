@@ -78,7 +78,15 @@ pub fn sign_extrinsic_payload(
 			&extensions,
 		)
 	});
-	Ok(HostSignPayloadResponse { signature: signature.encode(), signed_transaction })
+	let response = HostSignPayloadResponse { signature: signature.encode(), signed_transaction };
+	super::signature_log::record(
+		"sign payload",
+		"transaction",
+		&response.signature,
+		&keypair.public.to_bytes(),
+		response.signed_transaction.as_deref(),
+	);
+	Ok(response)
 }
 
 /// Encode the standard signed extensions in the order declared by the target
