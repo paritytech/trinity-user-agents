@@ -12,6 +12,7 @@ final class ContactsListInteractor {
     let scope: ChatListScope
     let userStates: ChatRoomUserStateServicing?
     let searchService: ChatSearchServicing
+    let productSearch: ChatListProductSearching
     let logger: LoggerProtocol
 
     /// The chats that the search of the list goes through: every chat that a list shows, archived rooms included.
@@ -29,6 +30,7 @@ final class ContactsListInteractor {
         scope: ChatListScope = .main,
         userStates: ChatRoomUserStateServicing? = nil,
         searchService: ChatSearchServicing = ChatSearchService(),
+        productSearch: ChatListProductSearching? = nil,
         logger: LoggerProtocol
     ) {
         self.chatContactDataProviderFactory = chatContactDataProviderFactory
@@ -38,6 +40,7 @@ final class ContactsListInteractor {
         self.scope = scope
         self.userStates = userStates
         self.searchService = searchService
+        self.productSearch = productSearch ?? ChatListProductSearch(registry: chatExtensionsRegistry, logger: logger)
         self.logger = logger
     }
 
@@ -82,6 +85,10 @@ extension ContactsListInteractor: ContactsListInteractorInputProtocol {
             let results = await searchResults(for: query)
             guard !Task.isCancelled else { return }
             await presenter?.didReceive(searchResults: results)
+
+            // The product-source rooms answer later, so the stored hits show first.
+            guard let withProducts = await addingProductHits(to: results), !Task.isCancelled else { return }
+            await presenter?.didReceive(searchResults: withProducts)
         }
     }
 
@@ -223,7 +230,7 @@ private extension ContactsListInteractor {
         let normalizedQuery = ChatSearchText.normalized(query)
         let named = chats.filter { ChatSearchText.normalized($0.peerMetadata.name).contains(normalizedQuery) }
 
-        // A product-source room keeps its messages in the product: the list matches it by its name only.
+        // A product-source room keeps its messages in the product: `addingProductHits` asks its product.
         let stored = chats.filter { $0.chat.roomPolicy?.messageStore != .product }
         let byChatId = Dictionary(stored.map { ($0.chat.chatId, $0) }, uniquingKeysWith: { first, _ in first })
 
@@ -244,5 +251,19 @@ private extension ContactsListInteractor {
             chats: named,
             hits: hits.compactMap { hit in byChatId[hit.chatId].map { ChatListMessageHit(hit: hit, chat: $0) } }
         )
+    }
+
+    /// The results with the hits of the product-source rooms that declare `search`, newest rooms first. Nil when no
+    /// such room is in the list.
+    func addingProductHits(to results: ChatListSearchResults) async -> ChatListSearchResults? {
+        let rooms = searchableChats.withLock { $0 }.filter { chat in
+            guard let policy = chat.chat.roomPolicy else { return false }
+            return policy.messageStore == .product && policy.offersSearch
+        }
+        guard !rooms.isEmpty else { return nil }
+
+        let byChatId = Dictionary(rooms.map { ($0.chat.chatId, $0) }, uniquingKeysWith: { first, _ in first })
+        let hits = await productSearch.search(results.query, in: rooms.map(\.chat.chatId))
+        return results.adding(productHits: hits, chats: byChatId, limit: Self.searchHitLimit)
     }
 }

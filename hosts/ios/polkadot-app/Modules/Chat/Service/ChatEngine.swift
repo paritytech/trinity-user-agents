@@ -324,7 +324,8 @@ extension ChatEngine: ChatEngineProtocol {
 
     func processAction(_ action: Chat.Action) async {
         let actionContext = ChatExtensionActionContext(
-            messageRepository: messageRepository
+            messageRepository: messageRepository,
+            chatId: chatId
         )
         let extensions = chatExtensionRegistry.getExtensions(for: chatId)
         for chatExtension in extensions {

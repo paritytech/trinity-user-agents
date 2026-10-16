@@ -35,12 +35,16 @@ final class ProductRoomFixture {
         .chatExtension(bot.identifier, roomId: roomId)
     }
 
-    func bridge(feedListeners: ProductFeedListeners = ProductFeedListeners()) async -> RustChatExecutionBridge {
+    func bridge(
+        feedListeners: ProductFeedListeners = ProductFeedListeners(),
+        pageCache: ProductMessageCaching = ProductMessageCache()
+    ) async -> RustChatExecutionBridge {
         let productId = productId
         return await RustChatExecutionBridge(
             dependencies: MainActor.run { makeChatBridgeDependencies(productId: productId) },
             chatMessaging: surface,
-            feedListeners: feedListeners
+            feedListeners: feedListeners,
+            pageCache: pageCache
         )
     }
 

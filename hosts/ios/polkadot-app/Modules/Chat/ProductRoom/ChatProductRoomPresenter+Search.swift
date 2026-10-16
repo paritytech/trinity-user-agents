@@ -51,6 +51,12 @@ extension ChatProductRoomPresenter {
         }
     }
 
+    /// Shows a message that the search of the chat list found. The room asks its source to page to the message.
+    /// The source of a host-store room has every message already.
+    func showListSearchHit(_ messageId: Chat.MessageId) {
+        interactor?.jump(to: messageId)
+    }
+
     /// The E2E harness reads where a jump went (S17, S61, S62).
     func markJump(to messageId: Chat.MessageId, found: Bool) {
         mark("jumped", "\(productMessageId(messageId)) found=\(found)")
