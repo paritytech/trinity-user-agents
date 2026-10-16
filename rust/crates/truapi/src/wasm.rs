@@ -23,6 +23,7 @@ use std::{
 };
 
 use crate::platform::{
+
     ChainProvider, ChatPlatform, ContactsPlatform, GamePlatform, HopProvider, HostInfo,
     JsonRpcConnection, MediaPlatform,
     PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform, ProductContext,

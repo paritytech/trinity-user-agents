@@ -334,7 +334,7 @@ pub fn has_dotns_tld(normalized: &str) -> bool {
 ///
 /// These products default to authorized except for device access. Explicit
 /// stored denials still govern their remote, identity and account permissions.
-/// Calling always requires scoped consent.
+/// Calling always requires explicit network/account-scoped consent.
 pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", GAME_PRODUCT_LABEL, "stash"];
 
 /// The bare label of the game product, Jollity, on every network.
@@ -343,7 +343,7 @@ const GAME_PRODUCT_LABEL: &str = "dim2";
 /// Hosts available to every product unless a stored permission decision blocks them.
 pub const BLESSED_REMOTE_DOMAINS: &[&str] = &["fonts.googleapis.com", "fonts.gstatic.com"];
 
-/// Whether `product_id` holds ordinary remote permissions without prompting.
+/// Whether `product_id` defaults to ordinary remote permissions without prompting.
 ///
 /// This never authorizes [`RemotePermission::Calling`], which requires scoped consent.
 ///

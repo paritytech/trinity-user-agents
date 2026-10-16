@@ -102,6 +102,7 @@ pub(crate) struct PermissionAuthorizationSnapshot {
     key: CoreStorageKey,
     request: PermissionAuthorizationRequest,
     expected: Vec<u8>,
+    /// Shared in-process policy revision, in addition to the persisted CAS generation.
     revision: u64,
 }
 
@@ -700,8 +701,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
                 reason: "Upload consent requires an active account scope".into(),
             }),
 			PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
-				Ok(
-					if self.temporary_permissions.authorize(
+                Ok(if self.temporary_permissions.authorize(
 						&cross_product_signature_key(self.product_id(), target_product_id, *kind),
 						false,
 					) {
@@ -802,6 +802,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         if snapshot.key != key || snapshot.request != *request {
             return Ok(false);
         }
+
         let committed = self.storage.compare_exchange_core_storage(
             key,
             Some(snapshot.expected.clone()),
@@ -811,26 +812,11 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         Ok(committed && scope.revision() == snapshot.revision)
     }
 
-    async fn set_stamped_authorization(
-        &self,
-        key: CoreStorageKey,
-        status: PermissionAuthorizationStatus,
-    ) -> Result<(), GenericError> {
-        for _ in 0..AUTHORIZATION_CAS_ATTEMPTS {
-            let expected = self.storage.read_core_storage(key.clone()).await?;
-            if self.storage.compare_exchange_core_storage(
-                key.clone(), expected, stamped_authorization(status)?, true,
-            ).await? {
-                return Ok(());
-            }
-        }
-        Err(authorization_contention())
-    }
 
     /// Update the stored authorization status for a permission request.
     ///
-    /// `NotDetermined` restores the default and retains a legacy-import tombstone,
-    /// stamping a fresh generation for Calling/Device.
+    /// `NotDetermined` stamps a fresh Ask for Calling/Device and retains a
+    /// legacy-import tombstone for other persisted scopes.
     /// Unscoped remote calling grants are rejected; calling consent must name
     /// the authenticated network and authority-derived account.
     pub async fn set_authorization_status(
@@ -996,12 +982,8 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
             }
         };
         self.temporary_permissions.revoke(&key);
-        if matches!(request, PermissionAuthorizationRequest::Calling { .. } | PermissionAuthorizationRequest::Device(_)) {
-            self.set_stamped_authorization(key, status).await
-        } else {
             set_authorization_status(self.storage, key, status).await
         }
-    }
 
     /// Resolve the product's identity-disclosure grant, prompting once when no
     /// durable user decision exists.
@@ -1261,6 +1243,8 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         if snapshot.status != PermissionAuthorizationStatus::NotDetermined {
             return Ok(snapshot.status);
         }
+        // A prompt never blocks administrative mutation. Only a genuine answer
+        // may commit, against both the shared scope and the persisted generation.
         drop(mutation);
         let decision = match scope
             .prompt(revision, self.prompt.device_permission(self.product, permission))
@@ -1585,6 +1569,21 @@ async fn set_authorization_status<S: CoreStorage + ?Sized>(
     key: CoreStorageKey,
     status: PermissionAuthorizationStatus,
 ) -> Result<(), GenericError> {
+    if matches!(&key, CoreStorageKey::PermissionAuthorization {
+        request: PermissionAuthorizationRequest::Calling { .. }
+            | PermissionAuthorizationRequest::Device(_),
+        ..
+    }) {
+        for _ in 0..AUTHORIZATION_CAS_ATTEMPTS {
+            let expected = storage.read_core_storage(key.clone()).await?;
+            if storage.compare_exchange_core_storage(
+                key.clone(), expected, stamped_authorization(status)?, true,
+            ).await? {
+                return Ok(());
+            }
+        }
+        return Err(authorization_contention());
+    }
     storage
         .write_core_storage(key.clone(), status_into_stored(status).encode())
         .await?;
@@ -3965,7 +3964,7 @@ mod tests {
         );
         assert_eq!(
             status.asked(),
-			vec![HostDevicePermissionRequest::Camera, HostDevicePermissionRequest::Microphone,],
+            vec![HostDevicePermissionRequest::Camera, HostDevicePermissionRequest::Microphone],
         );
     }
 
@@ -4423,7 +4422,6 @@ mod tests {
             );
         });
     }
-
     #[test]
     fn shared_policy_invalidation_discards_media_snapshots_without_changing_their_slot() {
         futures::executor::block_on(async {

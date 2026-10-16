@@ -718,9 +718,9 @@ impl NativeTrUApiHostRuntime {
     /// Open a connection-scoped execution with immutable trusted context.
     /// `chat_callbacks` installs the host's Chat adapter; hosts without the
     /// Chat modality pass `None`. `pocket_callbacks` does the same for the
-    /// card collection. `media_callbacks` installs the entire Media backend;
-    /// hosts without complete capture/RTC/compositing support pass `None`.
-    /// `game_callbacks` installs game reminders.
+    /// card collection. `game_callbacks` does the same for game reminders.
+    /// `media_callbacks` installs the entire Media backend; hosts without
+    /// complete capture/RTC/compositing support pass `None`.
     pub fn open_product_execution(
         &self,
         callbacks: Arc<dyn HostCallbacks>,

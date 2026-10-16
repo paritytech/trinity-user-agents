@@ -16,6 +16,7 @@ struct TrUAPIWorkerRuntimeTests {
         let runtime = makeRuntime(engine: engine, execution: execution)
 
         try await runtime.start()
+        #expect(engine.mediaHandlerWasInstalledAtInitialization)
 
         let capture = try #require(engine.deviceCapabilityHandler)
         #expect(try await capture(.camera) == .denied)
