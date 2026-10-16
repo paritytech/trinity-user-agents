@@ -171,11 +171,34 @@ impl NativeEventBus {
 
 	/// End the response stream of a connection the host closed.
 	pub fn notify_chain_closed(&self, connection_id: u32) {
-		let mut events = self.chain_events.lock().expect("native chain subscribers mutex poisoned");
-		if events.responses.remove(&connection_id).is_none() {
+		if !self.close_chain_if_registered(connection_id) {
 			// Native callbacks can close a connection before returning its ID.
-			events.early_close_generation = events.early_close_generation.wrapping_add(1);
+			self.note_early_chain_close();
 		}
+	}
+
+	/// End the response stream of `connection_id` and report whether this bus
+	/// was the one holding it.
+	///
+	/// A product execution reports a close to its own bus and to the shared
+	/// one, because either may hold the connection. Exactly one of them does,
+	/// so a miss here is routine and must not be mistaken for a close that
+	/// raced a connect: see [`Self::note_early_chain_close`].
+	pub fn close_chain_if_registered(&self, connection_id: u32) -> bool {
+		self.chain_events
+			.lock()
+			.expect("native chain subscribers mutex poisoned")
+			.responses
+			.remove(&connection_id)
+			.is_some()
+	}
+
+	/// Record that the host closed a connection whose id no bus recognised,
+	/// which is what a close arriving before `chain_connect` returns looks
+	/// like. Invalidates connects that read the generation before it.
+	pub fn note_early_chain_close(&self) {
+		let mut events = self.chain_events.lock().expect("native chain subscribers mutex poisoned");
+		events.early_close_generation = events.early_close_generation.wrapping_add(1);
 	}
 
 	/// Stop routing responses for a connection the core closed.
