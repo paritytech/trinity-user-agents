@@ -356,7 +356,7 @@ jobs:
           # survive. `@parity/truapi` is here because the runner inlines it from
           # source, and bundling it is a step no other job performs. A release
           # is the wrong place to find out one of them moved.
-          gate cli_package '^(rust/crates/(truapi-host-cli|truapi|truapi-codegen|truapi-macros)/|js/container/|js/packages/truapi/(src/|package\.json$|tsconfig[^/]*\.json$)|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|package\.json$|package-lock\.json$|scripts/(codegen\.sh|build-cli-runner\.ts|cli-runner-package\.test\.ts)$|\.github/workflows/(ci|cli-package|release-cli)\.yml$)'
+          gate cli_package '^(rust/crates/(truapi-host-cli|truapi|truapi-codegen|truapi-macros|trinity-stack)/|js/container/|js/packages/truapi/(src/|package\.json$|tsconfig[^/]*\.json$)|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|package\.json$|package-lock\.json$|scripts/(codegen\.sh|build-cli-runner\.ts|cli-runner-package\.test\.ts)$|\.github/workflows/(ci|cli-package|release-cli)\.yml$)'
 
           # Include generators, dependency pins and package build configuration:
           # these can change a published artifact without touching its sources.
