@@ -29,10 +29,11 @@ public extension DotnsGatewayPallet {
             full?.label ?? lite?.label
         }
 
-        /// The chat key to reach the account with: whichever entry carries one, since a full
-        /// label can be registered without the key its lite label already holds.
+        /// The chat key to reach the account with: the full entry's where it carries one,
+        /// otherwise the lite entry's, since a full label can be registered without the key its
+        /// lite label already holds.
         public var chatKey: Data? {
-            lite?.chat?.wrappedValue
+            full?.chat?.wrappedValue ?? lite?.chat?.wrappedValue
         }
     }
 
