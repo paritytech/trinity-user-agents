@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use super::model::{
-	DurableTxEntry, DurableTxId, FailureKind, PolicyId, PolicyParams, ScheduledDurableTx,
+	DurableTxEntry, DurableTxId, PolicyId, PolicyParams, ScheduledDurableTx, VerdictFailureKind,
 };
 use crate::chain::MortalExtrinsic;
 
@@ -17,12 +17,12 @@ pub trait SubmissionPolicy: Send + Sync {
 
 	/// Whether `entry`, which failed for `failure`, goes back to
 	/// [`Self::prepare`] instead of failing for good. Asked while its verdict
-	/// is written, so it must not read the chain.
-	async fn can_retry(
+	/// is written, so it decides from what it is given and never waits.
+	fn can_retry(
 		&self,
 		entry: &DurableTxEntry,
 		params: &PolicyParams,
-		failure: FailureKind,
+		failure: VerdictFailureKind,
 	) -> bool;
 
 	/// What to do with each transaction of `batch`, which share a domain, a

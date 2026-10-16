@@ -229,20 +229,19 @@ mod tests {
 		sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 	};
 
-	use futures::{executor::block_on, future::ready};
+	use futures::executor::block_on;
 
 	use super::*;
 	use crate::{
 		chain::{HeadEvent, Heads},
 		chain_runtime::RuntimeFailure,
 		durable::{
-			model::{DomainId, DurableTxEntry, DurableTxStatus, FailureKind, HeadKind},
+			model::{DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxStatus, HeadKind},
 			oracle::{CompletionOracle, DurableRegistry, LedgerView, PassScope},
 			policy::Preparation,
 			testing::{
-				FakeChain, GENESIS, ManualTimer, PrepareScript, REBUILD_POLICY, RetryAnswer,
-				ScriptedPolicy, block, engine_with, engine_with_policies, extrinsic, insert,
-				leave_waiting, rebuild_plan,
+				FakeChain, GENESIS, ScheduledTxHarness, ScriptedPolicy, answer_all_with, block,
+				engine_with, extrinsic, insert,
 			},
 		},
 		test_support::wait_until,
@@ -538,53 +537,25 @@ mod tests {
 		assert_eq!(block_on(engine.run_until_settled()), Ok(()));
 	}
 
-	/// An engine with a `rebuild` policy, and what a test steers it with.
-	struct PolicyFixture {
-		_dir: tempfile::TempDir,
-		engine: Arc<DurableTxEngine>,
-		policy: Arc<ScriptedPolicy>,
-		timer: Arc<ManualTimer>,
-		heads: mpsc::UnboundedSender<Result<HeadEvent, RuntimeFailure>>,
-	}
-
-	/// A policy that gives up on every row once `give_up` is set, and has
-	/// nothing to say before.
-	fn gives_up_once_set(give_up: Arc<AtomicBool>) -> PrepareScript {
-		Box::new(move |ids| {
-			let answer = match give_up.load(Ordering::SeqCst) {
-				true => ids.iter().map(|id| (*id, Preparation::GiveUp)).collect(),
-				false => HashMap::new(),
-			};
-			Box::pin(ready(Ok(answer)))
+	/// A policy with nothing to say about any row until `give_up` is set,
+	/// and giving up on every row from then on.
+	fn giving_up_once_set(give_up: Arc<AtomicBool>) -> ScriptedPolicy {
+		ScriptedPolicy::answering_with(move |ids| match give_up.load(Ordering::SeqCst) {
+			true => answer_all_with(ids, Preparation::GiveUp),
+			false => Ok(HashMap::new()),
 		})
-	}
-
-	/// An engine serving the `test` domain whose `rebuild` policy answers with
-	/// `script`.
-	fn policy_fixture(script: PrepareScript) -> PolicyFixture {
-		let chain = FakeChain::new(130, 140);
-		let heads = chain.script_heads();
-		let policy = ScriptedPolicy::new(REBUILD_POLICY, RetryAnswer::Final, script);
-		let (dir, engine, timer) =
-			engine_with_policies(&chain, &[test_domain()], vec![policy.clone()]);
-		PolicyFixture { _dir: dir, engine, policy, timer, heads }
-	}
-
-	fn finalize(heads: &mpsc::UnboundedSender<Result<HeadEvent, RuntimeFailure>>, number: u64) {
-		let head = HeadEvent::Finalized(block(number));
-		heads.unbounded_send(Ok(head)).unwrap();
 	}
 
 	/// The app was killed before a scheduled transaction was built. Recovery
 	/// is all that runs on the next launch, so it must build it.
 	#[test]
 	fn recovery_builds_what_a_previous_process_left_waiting() {
-		let fixture = policy_fixture(gives_up_once_set(Arc::default()));
-		let id = leave_waiting(&fixture.engine.db, test_domain(), rebuild_plan(vec![]));
+		let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::answering_nothing());
+		let id = harness.leave_waiting_from_previous_process();
 
-		let _running = run_in_background(&fixture.engine);
+		let _running = run_in_background(harness.engine());
 
-		wait_until(|| fixture.policy.batches() == vec![vec![id]], "recovery builds the row");
+		wait_until(|| harness.policy().batches() == vec![vec![id]], "recovery builds the row");
 	}
 
 	/// Nothing on chain can decide a transaction that was never submitted,
@@ -593,21 +564,20 @@ mod tests {
 	#[test]
 	fn recovery_runs_until_waiting_transactions_are_decided() {
 		let give_up = Arc::new(AtomicBool::new(false));
-		let fixture = policy_fixture(gives_up_once_set(give_up.clone()));
-		let id = leave_waiting(&fixture.engine.db, test_domain(), rebuild_plan(vec![]));
-		let running = run_in_background(&fixture.engine);
-		wait_until(|| fixture.policy.batches().len() == 1, "the row is asked about");
+		let harness = ScheduledTxHarness::with_policy(giving_up_once_set(give_up.clone()));
+		let id = harness.leave_waiting_from_previous_process();
+		let running = run_in_background(harness.engine());
+		wait_until(|| harness.policy().batches().len() == 1, "the row is asked about");
 
-		finalize(&fixture.heads, 131);
-		std::thread::sleep(Duration::from_millis(50));
+		harness.finalize(131);
+		harness.settle();
 		assert!(!running.is_finished());
 		give_up.store(true, Ordering::SeqCst);
-		wait_until(|| fixture.timer.sleeps() == 1, "the bucket backs off");
-		fixture.timer.advance(Duration::from_secs(2));
-		let abandoned = Some(DurableTxStatus::Failure(FailureKind::Abandoned));
-		let failed = || block_on(fixture.engine.status(id)).unwrap() == abandoned;
-		wait_until(failed, "the policy gives up");
-		finalize(&fixture.heads, 132);
+		wait_until(|| harness.timer().sleeps() == 1, "the bucket backs off");
+		harness.timer().advance(Duration::from_secs(2));
+		let abandoned = DurableTxStatus::Failure(DurableTxFailureKind::Abandoned);
+		harness.wait_for(id, abandoned);
+		harness.finalize(132);
 
 		assert_eq!(running.join().unwrap(), Ok(()));
 	}

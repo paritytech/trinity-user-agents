@@ -5,6 +5,7 @@
 //! never blocks the runtime's executor. [`Db::observe`] turns a query into a
 //! stream that follows every commit.
 
+mod migration;
 mod observe;
 
 use std::{
@@ -14,8 +15,9 @@ use std::{
 
 use async_sqlite::{JournalMode, Pool, PoolBuilder};
 use rusqlite::{OpenFlags, TransactionBehavior};
-use rusqlite_migration::{M, Migrations};
+use rusqlite_migration::Migrations;
 
+pub use migration::core_migrations;
 pub use observe::ObservedStatement;
 use observe::{Invalidation, authorize_for_change_tracking, track_changes};
 
@@ -46,62 +48,6 @@ pub const CORE_DB_FILE: &str = "core.sqlite3";
 
 /// Read-only connections opened for the core database.
 const CORE_DB_READERS: usize = 2;
-
-/// Schema of the core database, one migration per change, in order.
-pub fn core_migrations() -> Migrations<'static> {
-	Migrations::new(CORE_SCHEMA_CHANGES.map(M::up).to_vec())
-}
-
-/// The SQL of each core schema version. A released migration never changes.
-const CORE_SCHEMA_CHANGES: [&str; 2] = [
-	"CREATE TABLE durable_tx (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        domain TEXT NOT NULL,
-        group_id TEXT,
-        tx_hash BLOB,
-        birth_number INTEGER,
-        birth_hash BLOB,
-        period INTEGER,
-        success_number INTEGER,
-        success_hash BLOB,
-        scanned_number INTEGER,
-        status TEXT NOT NULL CHECK (status IN
-            ('PENDING_SUBMISSION', 'PENDING', 'PENDING_SUCCESS', 'FINALIZED_SUCCESS', 'FAILURE')),
-        failure_kind TEXT CHECK (failure_kind IN ('EXPIRED', 'DISPATCH_FAILED', 'REJECTED')),
-        policy_id TEXT,
-        policy_params BLOB
-    );
-    CREATE INDEX durable_tx_group ON durable_tx(domain, group_id);
-    CREATE INDEX durable_tx_status ON durable_tx(domain, status);",
-	// SQLite cannot alter a CHECK, so the table is rebuilt. The id sequence is
-	// carried over so an id is never handed out twice.
-	"CREATE TABLE durable_tx_abandonable (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        domain TEXT NOT NULL,
-        group_id TEXT,
-        tx_hash BLOB,
-        birth_number INTEGER,
-        birth_hash BLOB,
-        period INTEGER,
-        success_number INTEGER,
-        success_hash BLOB,
-        scanned_number INTEGER,
-        status TEXT NOT NULL CHECK (status IN
-            ('PENDING_SUBMISSION', 'PENDING', 'PENDING_SUCCESS', 'FINALIZED_SUCCESS', 'FAILURE')),
-        failure_kind TEXT CHECK (failure_kind IN
-            ('EXPIRED', 'DISPATCH_FAILED', 'REJECTED', 'ABANDONED')),
-        policy_id TEXT,
-        policy_params BLOB
-    );
-    INSERT INTO durable_tx_abandonable SELECT * FROM durable_tx;
-    DELETE FROM sqlite_sequence WHERE name = 'durable_tx_abandonable';
-    INSERT INTO sqlite_sequence (name, seq)
-        SELECT 'durable_tx_abandonable', seq FROM sqlite_sequence WHERE name = 'durable_tx';
-    DROP TABLE durable_tx;
-    ALTER TABLE durable_tx_abandonable RENAME TO durable_tx;
-    CREATE INDEX durable_tx_group ON durable_tx(domain, group_id);
-    CREATE INDEX durable_tx_status ON durable_tx(domain, status);",
-];
 
 /// The core database configuration for a host-provided directory.
 pub fn core_db_config(directory: &Path) -> DbConfig {
@@ -380,58 +326,6 @@ mod tests {
 		.unwrap();
 
 		assert_eq!((schema_version, notes(&reopened)), (2, vec!["kept".to_owned()]));
-	}
-
-	fn first_core_schema() -> Migrations<'static> {
-		Migrations::new(vec![M::up(CORE_SCHEMA_CHANGES[0])])
-	}
-
-	fn core_file_config(
-		dir: &tempfile::TempDir,
-		migrations: fn() -> Migrations<'static>,
-	) -> DbConfig {
-		DbConfig {
-			location: DbLocation::File(dir.path().join(CORE_DB_FILE)),
-			migrations,
-			readers: 2,
-		}
-	}
-
-	fn insert_failure(tx: &rusqlite::Transaction<'_>, kind: &str) -> Result<i64, DbError> {
-		let id = tx.query_row(
-			"INSERT INTO durable_tx (domain, status, failure_kind)
-             VALUES ('test', 'FAILURE', ?1) RETURNING id",
-			[kind],
-			|row| row.get(0),
-		)?;
-		Ok(id)
-	}
-
-	#[test]
-	fn upgrading_the_core_schema_keeps_rows_and_never_reuses_an_id() {
-		// A reused id would hand a domain's rows another transaction's verdict.
-		let dir = tempfile::tempdir().unwrap();
-		let first = block_on(Db::open(core_file_config(&dir, first_core_schema))).unwrap();
-		block_on(first.write(|tx| insert_failure(tx, "EXPIRED"))).unwrap();
-		block_on(first.write(|tx| {
-			let last = insert_failure(tx, "REJECTED")?;
-			tx.execute("DELETE FROM durable_tx WHERE id = ?1", [last])?;
-			Ok(())
-		}))
-		.unwrap();
-		block_on(first.close()).unwrap();
-
-		let upgraded = block_on(Db::open(core_file_config(&dir, core_migrations))).unwrap();
-		let abandoned = block_on(upgraded.write(|tx| insert_failure(tx, "ABANDONED"))).unwrap();
-		let kinds: Vec<String> = block_on(upgraded.read(|conn| {
-			let mut stmt = conn.prepare("SELECT failure_kind FROM durable_tx ORDER BY id")?;
-			let rows = stmt.query_map([], |row| row.get(0))?;
-			Ok(rows.collect::<Result<_, _>>()?)
-		}))
-		.unwrap();
-
-		assert_eq!(abandoned, 3);
-		assert_eq!(kinds, ["EXPIRED", "ABANDONED"]);
 	}
 
 	#[test]

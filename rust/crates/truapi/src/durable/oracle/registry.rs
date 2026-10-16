@@ -75,10 +75,7 @@ impl DurableRegistry {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::durable::{
-		oracle::Unobservable,
-		testing::{REBUILD_POLICY, RetryAnswer, ScriptedPolicy},
-	};
+	use crate::durable::{oracle::Unobservable, testing::ScriptedPolicy};
 
 	#[test]
 	#[should_panic(expected = "registered twice")]
@@ -93,7 +90,7 @@ mod tests {
 	#[should_panic(expected = "registered twice")]
 	fn a_policy_registered_twice_is_a_wiring_bug() {
 		let _ = DurableRegistry::new()
-			.with_policy(ScriptedPolicy::never_building(REBUILD_POLICY, RetryAnswer::Final))
-			.with_policy(ScriptedPolicy::never_building(REBUILD_POLICY, RetryAnswer::Retry));
+			.with_policy(Arc::new(ScriptedPolicy::never_answering()))
+			.with_policy(Arc::new(ScriptedPolicy::giving_up()));
 	}
 }

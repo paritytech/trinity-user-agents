@@ -16,7 +16,7 @@ use crate::{
 	durable::{
 		dao,
 		ladder::{PinnedView, RecordedCanonicity, RuleOutcome, evaluate_ladder},
-		model::{DomainId, DurableTxEntry, DurableTxId, Verdict},
+		model::{DomainId, DurableTxEntry, DurableTxId, DurableTxStatus, Verdict},
 		oracle::{CompletionOracle, LedgerView},
 		search::PinnedChain,
 	},
@@ -164,7 +164,7 @@ impl DurableTxEngine {
 	/// evidence for another round.
 	async fn write_if_changed(&self, tx: &DurableTxEntry, verdict: Verdict) -> bool {
 		let scan_moved = verdict.scanned_to.is_some_and(|scanned| Some(scanned) != tx.scanned_to);
-		let restated = verdict.status == tx.status;
+		let restated = DurableTxStatus::from(verdict.status) == tx.status;
 		if restated && !scan_moved {
 			return false;
 		}
@@ -233,7 +233,7 @@ mod tests {
 		chain::{DispatchOutcome, HashAndNumber, Heads},
 		chain_runtime::RuntimeFailure,
 		durable::{
-			model::{DurableTxStatus, FailureKind, HeadKind},
+			model::{DurableTxFailureKind, DurableTxStatus, HeadKind},
 			oracle::{DurableRegistry, PassScope, Unobservable},
 			testing::{FakeChain, GENESIS, ScriptedScope, block, engine_with, extrinsic, insert},
 		},
@@ -549,7 +549,7 @@ mod tests {
 
 		block_on(engine.run_pass());
 
-		assert_eq!(status(&engine.db, id), DurableTxStatus::Failure(FailureKind::Expired));
+		assert_eq!(status(&engine.db, id), DurableTxStatus::Failure(DurableTxFailureKind::Expired));
 	}
 
 	/// Recovery runs on every finalized head while a transaction stays
@@ -575,7 +575,7 @@ mod tests {
 	fn record_success(db: &Db, id: DurableTxId, at: HashAndNumber) {
 		block_on(db.write(move |tx| {
 			let observed = dao::entry(tx, id)?.unwrap();
-			dao::compare_and_set(tx, &observed, &DurableTxStatus::PendingSuccess { at }.into())?;
+			dao::compare_and_set(tx, &observed, DurableTxStatus::PendingSuccess { at }, None)?;
 			Ok(())
 		}))
 		.unwrap();

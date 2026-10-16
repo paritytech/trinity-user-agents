@@ -1,30 +1,36 @@
-//! [`ScriptedPolicy`]: a submission policy whose answers a test scripts,
-//! and the fixtures for rows that name a policy.
+//! [`ScriptedPolicy`]: a submission policy whose answers a test scripts.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+	collections::HashMap,
+	sync::atomic::{AtomicU8, Ordering},
+};
 
-use futures::future::BoxFuture;
+use futures::future::{BoxFuture, pending, ready};
 use parking_lot::Mutex;
-use tempfile::TempDir;
 
-use super::{FakeChain, GENESIS, ManualTimer, engine_with, insert_with_plan};
+use super::{extrinsic, insert_with_plan};
 use crate::{
-	chain::MortalExtrinsic,
+	chain::{EncodedExtrinsic, MortalExtrinsic},
 	durable::{
-		dao,
-		engine::{DurableSubmission, DurableTxEngine},
+		engine::DurableSubmission,
 		model::{
-			DomainId, DurableTxEntry, DurableTxId, FailureKind, PolicyId, PolicyParams,
-			ScheduledDurableTx, SubmissionPlan,
+			DomainId, DurableTxEntry, DurableTxId, PolicyId, PolicyParams, ScheduledDurableTx,
+			SubmissionPlan, VerdictFailureKind,
 		},
-		oracle::{DurableRegistry, Unobservable},
 		policy::{PolicyError, Preparation, SubmissionPolicy},
 	},
 	store::Db,
 };
 
-/// The policy most tests register.
-pub const REBUILD_POLICY: PolicyId = PolicyId::from_static("rebuild");
+/// The id of the policy a test uses unless it needs a second one.
+pub fn test_policy_id() -> PolicyId {
+	PolicyId::new("test-policy")
+}
+
+/// A plan of the test policy with `params`.
+pub fn test_plan(params: Vec<u8>) -> SubmissionPlan {
+	SubmissionPlan { policy: test_policy_id(), params: PolicyParams(params) }
+}
 
 /// What a [`ScriptedPolicy`] answers for one batch.
 pub type PrepareAnswer = Result<HashMap<DurableTxId, Preparation>, PolicyError>;
@@ -35,15 +41,13 @@ pub type PrepareScript =
 
 /// What a [`ScriptedPolicy`] answers to every retry question.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RetryAnswer {
-	/// The failed transaction is built again.
+enum RetryAnswer {
 	Retry,
-	/// The failure is final.
 	Final,
 }
 
-/// A policy that answers retries with a fixed choice and batches with a
-/// script, recording every question.
+/// A policy that answers batches with a script and retries every failure
+/// unless told otherwise, recording every question.
 pub struct ScriptedPolicy {
 	id: PolicyId,
 	retry_answer: RetryAnswer,
@@ -60,26 +64,63 @@ pub struct RetryQuestion {
 	/// The params its row stores.
 	pub params: PolicyParams,
 	/// Why it failed.
-	pub failure: FailureKind,
+	pub failure: VerdictFailureKind,
 }
 
 impl ScriptedPolicy {
-	/// A policy named `id` that answers `retry_answer` to every retry
-	/// question and `script` to every batch.
-	pub fn new(id: PolicyId, retry_answer: RetryAnswer, script: PrepareScript) -> Arc<Self> {
-		Arc::new(Self {
-			id,
-			retry_answer,
+	/// The test policy, answering every batch with `script`.
+	pub fn from_script(script: PrepareScript) -> Self {
+		Self {
+			id: test_policy_id(),
+			retry_answer: RetryAnswer::Retry,
 			script,
 			retry_questions: Mutex::new(Vec::new()),
 			batches: Mutex::new(Vec::new()),
+		}
+	}
+
+	/// The test policy, answering every batch at once with what `answer`
+	/// gives for its ids.
+	pub fn answering_with(
+		answer: impl Fn(&[DurableTxId]) -> PrepareAnswer + Send + Sync + 'static,
+	) -> Self {
+		Self::from_script(Box::new(move |ids| Box::pin(ready(answer(ids)))))
+	}
+
+	/// The test policy, building every row it is asked about into new bytes:
+	/// [`nth_build`] for its `n`th build.
+	pub fn building_everything() -> Self {
+		let builds = AtomicU8::new(0);
+		Self::answering_with(move |ids| {
+			let answers = ids.iter().map(|id| (*id, Preparation::Ready(next_build(&builds))));
+			Ok(answers.collect())
 		})
 	}
 
-	/// A policy that answers `retry_answer` and never builds anything.
-	pub fn never_building(id: PolicyId, retry_answer: RetryAnswer) -> Arc<Self> {
-		let script: PrepareScript = Box::new(|_| Box::pin(futures::future::pending()));
-		Self::new(id, retry_answer, script)
+	/// The test policy, with nothing to say about any row yet, so every row
+	/// keeps waiting.
+	pub fn answering_nothing() -> Self {
+		Self::answering_with(|_| Ok(HashMap::new()))
+	}
+
+	/// The test policy, giving up on every row it is asked about.
+	pub fn giving_up() -> Self {
+		Self::answering_with(|ids| answer_all_with(ids, Preparation::GiveUp))
+	}
+
+	/// The test policy, whose builds never finish.
+	pub fn never_answering() -> Self {
+		Self::from_script(Box::new(|_| Box::pin(pending())))
+	}
+
+	/// This policy under the id `id`, for a test with a second policy.
+	pub fn named(self, id: PolicyId) -> Self {
+		Self { id, ..self }
+	}
+
+	/// This policy, answering that no failure is worth another attempt.
+	pub fn declining_retries(self) -> Self {
+		Self { retry_answer: RetryAnswer::Final, ..self }
 	}
 
 	/// Every retry question asked, in order.
@@ -99,11 +140,11 @@ impl SubmissionPolicy for ScriptedPolicy {
 		self.id.clone()
 	}
 
-	async fn can_retry(
+	fn can_retry(
 		&self,
 		entry: &DurableTxEntry,
 		params: &PolicyParams,
-		failure: FailureKind,
+		failure: VerdictFailureKind,
 	) -> bool {
 		let question = RetryQuestion { entry: entry.clone(), params: params.clone(), failure };
 		self.retry_questions.lock().push(question);
@@ -117,9 +158,25 @@ impl SubmissionPolicy for ScriptedPolicy {
 	}
 }
 
-/// A plan of [`REBUILD_POLICY`] with `params`.
-pub fn rebuild_plan(params: Vec<u8>) -> SubmissionPlan {
-	SubmissionPlan { policy: REBUILD_POLICY, params: PolicyParams(params) }
+/// The same `preparation` for every id of `ids`.
+pub fn answer_all_with(ids: &[DurableTxId], preparation: Preparation) -> PrepareAnswer {
+	Ok(ids.iter().map(|id| (*id, preparation.clone())).collect())
+}
+
+/// The bytes the `n`th build of [`ScriptedPolicy::building_everything`]
+/// signs, counting from 0.
+pub fn nth_build(n: u8) -> MortalExtrinsic {
+	extrinsic(100 + n, 100, 64)
+}
+
+/// What the first `count` builds of [`ScriptedPolicy::building_everything`]
+/// broadcast, in order.
+pub fn first_builds(count: u8) -> Vec<EncodedExtrinsic> {
+	(0..count).map(|n| nth_build(n).extrinsic).collect()
+}
+
+fn next_build(builds: &AtomicU8) -> MortalExtrinsic {
+	nth_build(builds.fetch_add(1, Ordering::SeqCst))
 }
 
 /// `extrinsics` as presigned submissions with no plan to rebuild them.
@@ -139,28 +196,4 @@ pub fn insert_retryable(
 	plan: SubmissionPlan,
 ) -> DurableTxId {
 	insert_with_plan(db, domain, extrinsic, Some(plan))
-}
-
-/// A row of `domain` waiting to be built through `plan`, written as a
-/// previous process would have left it: no executor hears of it.
-pub fn leave_waiting(db: &Db, domain: DomainId, plan: SubmissionPlan) -> DurableTxId {
-	let write = db.write(move |tx| dao::schedule(tx, &domain, None, &plan));
-	futures::executor::block_on(write).unwrap()
-}
-
-/// An engine over `chain` serving `domains`, which nothing on chain decides,
-/// with `policies`.
-pub fn engine_with_policies(
-	chain: &Arc<FakeChain>,
-	domains: &[DomainId],
-	policies: Vec<Arc<ScriptedPolicy>>,
-) -> (TempDir, Arc<DurableTxEngine>, Arc<ManualTimer>) {
-	let mut registry = DurableRegistry::new();
-	for domain in domains {
-		registry = registry.with_domain(domain.clone(), Arc::new(Unobservable(GENESIS)));
-	}
-	for policy in policies {
-		registry = registry.with_policy(policy);
-	}
-	engine_with(chain, registry)
 }

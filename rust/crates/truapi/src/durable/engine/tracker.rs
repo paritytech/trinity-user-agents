@@ -18,7 +18,7 @@ use crate::{
 	chain::{DispatchOutcome, EncodedExtrinsic, HashAndNumber, MortalExtrinsic, WatchEvent},
 	durable::{
 		dao,
-		model::{DurableTxId, DurableTxStatus, FailureKind, Verdict},
+		model::{DurableTxId, Verdict, VerdictFailureKind, VerdictStatus},
 	},
 };
 
@@ -84,7 +84,7 @@ impl DurableTxEngine {
 			return true;
 		};
 		debug!(id = attempt.id.0, ?reason, "durable transaction refused before submission");
-		self.propose(attempt, DurableTxStatus::Failure(FailureKind::Rejected).into())
+		self.propose(attempt, VerdictStatus::Failure(VerdictFailureKind::Rejected).into())
 			.await;
 		false
 	}
@@ -141,7 +141,7 @@ impl DurableTxEngine {
 	/// not final, so it proposes nothing.
 	async fn on_best_block(&self, attempt: Attempt, hash: &H256) {
 		if let Some((block, DispatchOutcome::Succeeded)) = self.outcome_at(attempt, *hash).await {
-			let success = DurableTxStatus::PendingSuccess { at: block };
+			let success = VerdictStatus::PendingSuccess { at: block };
 			self.propose(attempt, success.into()).await;
 		}
 	}
@@ -151,10 +151,10 @@ impl DurableTxEngine {
 	async fn on_finalized_block(&self, attempt: Attempt, hash: H256) -> ControlFlow<()> {
 		let status = match self.outcome_at(attempt, hash).await {
 			Some((block, DispatchOutcome::Succeeded)) => {
-				DurableTxStatus::FinalizedSuccess { at: Some(block) }
+				VerdictStatus::FinalizedSuccess { at: Some(block) }
 			},
 			Some((_, DispatchOutcome::Failed)) => {
-				DurableTxStatus::Failure(FailureKind::DispatchFailed)
+				VerdictStatus::Failure(VerdictFailureKind::DispatchFailed)
 			},
 			None => return ControlFlow::Break(()),
 		};
@@ -191,7 +191,7 @@ impl DurableTxEngine {
 		};
 		let recorded = entry.status.success_block();
 		if recorded.map(|block| block.hash) == Some(retracted) {
-			self.propose(attempt, DurableTxStatus::Pending.into()).await;
+			self.propose(attempt, VerdictStatus::Pending.into()).await;
 		}
 	}
 
@@ -234,7 +234,7 @@ mod tests {
 		chain_runtime::RuntimeFailure,
 		durable::{
 			engine::DurableRequest,
-			model::{DomainId, DurableTxEntry},
+			model::{DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxStatus},
 		},
 	};
 	use std::sync::atomic::{AtomicUsize, Ordering};
@@ -365,7 +365,7 @@ mod tests {
 
 		events.unbounded_send(WatchEvent::InFinalizedBlock(block_hash(125))).unwrap();
 
-		fixture.wait_for(DurableTxStatus::Failure(FailureKind::DispatchFailed));
+		fixture.wait_for(DurableTxStatus::Failure(DurableTxFailureKind::DispatchFailed));
 	}
 
 	/// The node rejects the extrinsic during validation, for example because
@@ -378,7 +378,7 @@ mod tests {
 			None
 		});
 
-		fixture.wait_for(DurableTxStatus::Failure(FailureKind::Rejected));
+		fixture.wait_for(DurableTxStatus::Failure(DurableTxFailureKind::Rejected));
 		fixture.wait_released();
 		assert_eq!(fixture.chain.state().submitted.len(), 0);
 		assert!(!fixture.nudged());

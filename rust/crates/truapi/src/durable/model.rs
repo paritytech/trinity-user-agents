@@ -1,7 +1,5 @@
 //! What the ledger records about a durable transaction.
 
-use std::borrow::Cow;
-
 use subxt::utils::H256;
 
 use crate::chain::{HashAndNumber, Mortality};
@@ -28,17 +26,12 @@ pub struct DurableTxId(pub i64);
 
 /// A submission policy's name, as the ledger stores it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct PolicyId(Cow<'static, str>);
+pub struct PolicyId(String);
 
 impl PolicyId {
-	/// A policy named by a compile-time constant.
-	pub const fn from_static(name: &'static str) -> Self {
-		Self(Cow::Borrowed(name))
-	}
-
-	/// A policy named at run time, such as one read back from the ledger.
+	/// A policy with this name.
 	pub fn new(name: impl Into<String>) -> Self {
-		Self(Cow::Owned(name.into()))
+		Self(name.into())
 	}
 
 	/// The name stored in the ledger.
@@ -97,7 +90,18 @@ pub enum DurableTxStatus {
 		at: Option<HashAndNumber>,
 	},
 	/// Can no longer take effect. Terminal.
-	Failure(FailureKind),
+	Failure(DurableTxFailureKind),
+}
+
+impl From<VerdictStatus> for DurableTxStatus {
+	fn from(status: VerdictStatus) -> Self {
+		match status {
+			VerdictStatus::Pending => Self::Pending,
+			VerdictStatus::PendingSuccess { at } => Self::PendingSuccess { at },
+			VerdictStatus::FinalizedSuccess { at } => Self::FinalizedSuccess { at },
+			VerdictStatus::Failure(kind) => Self::Failure(kind.into()),
+		}
+	}
 }
 
 impl DurableTxStatus {
@@ -123,7 +127,7 @@ impl DurableTxStatus {
 
 /// Why a transaction failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FailureKind {
+pub enum DurableTxFailureKind {
 	/// Its era ended without it being included.
 	Expired,
 	/// It was included and its dispatch failed.
@@ -132,6 +136,49 @@ pub enum FailureKind {
 	Rejected,
 	/// It waited to be built and its policy will never build it.
 	Abandoned,
+}
+
+impl From<VerdictFailureKind> for DurableTxFailureKind {
+	fn from(kind: VerdictFailureKind) -> Self {
+		match kind {
+			VerdictFailureKind::Expired => Self::Expired,
+			VerdictFailureKind::DispatchFailed => Self::DispatchFailed,
+			VerdictFailureKind::Rejected => Self::Rejected,
+		}
+	}
+}
+
+/// What a verdict decides about a submitted attempt. A verdict never
+/// schedules a transaction or abandons one: only the submission executor
+/// does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerdictStatus {
+	/// No evidence either way yet.
+	Pending,
+	/// Took effect at a block that is not finalized yet.
+	PendingSuccess {
+		/// The block it was seen at.
+		at: HashAndNumber,
+	},
+	/// Took effect at a finalized block.
+	FinalizedSuccess {
+		/// The block it was seen at, when the proof named one.
+		at: Option<HashAndNumber>,
+	},
+	/// The attempt can no longer take effect.
+	Failure(VerdictFailureKind),
+}
+
+/// Why a submitted attempt failed: what a policy is asked about when it
+/// decides whether to build the transaction again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerdictFailureKind {
+	/// Its era ended without it being included.
+	Expired,
+	/// It was included and its dispatch failed.
+	DispatchFailed,
+	/// The node refused it before it reached the pool.
+	Rejected,
 }
 
 /// Which head a question is asked at.
@@ -175,6 +222,9 @@ pub struct ScheduledDurableTx {
 	pub group: Option<GroupId>,
 	/// How it gets built.
 	pub plan: SubmissionPlan,
+	/// How many attempts its policy already built it into, which sets how
+	/// long the next build waits.
+	pub attempts: u32,
 }
 
 /// A transaction's id and status, as a group lists them.
@@ -191,15 +241,15 @@ pub struct DurableTxState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Verdict {
 	/// The status to write.
-	pub status: DurableTxStatus,
+	pub status: VerdictStatus,
 	/// How far the search has now read without finding the attempt. `None`
 	/// keeps the recorded [`DurableTxEntry::scanned_to`].
 	pub scanned_to: Option<u64>,
 }
 
-impl From<DurableTxStatus> for Verdict {
+impl From<VerdictStatus> for Verdict {
 	/// A verdict that leaves the recorded search cursor as it is.
-	fn from(status: DurableTxStatus) -> Self {
+	fn from(status: VerdictStatus) -> Self {
 		Self { status, scanned_to: None }
 	}
 }

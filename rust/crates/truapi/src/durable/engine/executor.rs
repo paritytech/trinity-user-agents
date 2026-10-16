@@ -25,21 +25,19 @@ use super::DurableTxEngine;
 use crate::{
 	durable::{
 		dao,
-		model::{DomainId, DurableTxId, GroupId, PolicyId, ScheduledDurableTx},
+		model::{DomainId, GroupId, PolicyId, ScheduledDurableTx},
 	},
 	store::DbError,
 };
 use bucket::BucketRun;
 
-/// The executor's tasks and what they remember between rounds. Held in
-/// memory only: after a restart every waiting row is simply built again.
+/// The executor's running tasks. Held in memory only: after a restart every
+/// waiting row is simply built again.
 #[derive(Default)]
 pub struct SubmissionExecutor {
 	collector: Mutex<Option<AbortHandle>>,
 	/// The running bucket tasks. A bucket in the map is being worked on.
 	buckets: Mutex<HashMap<SubmissionBucket, AbortHandle>>,
-	/// How many attempts each row was built into, for the rebuild cooldown.
-	attempts_started: Mutex<HashMap<DurableTxId, u32>>,
 }
 
 /// The rows one task builds together: one domain's, of one policy and group.
@@ -56,8 +54,8 @@ pub struct SubmissionBucket {
 	group: Option<GroupId>,
 }
 
-impl SubmissionBucket {
-	fn of(scheduled: &ScheduledDurableTx) -> Self {
+impl From<&ScheduledDurableTx> for SubmissionBucket {
+	fn from(scheduled: &ScheduledDurableTx) -> Self {
 		Self {
 			domain: scheduled.domain.clone(),
 			policy: scheduled.plan.policy.clone(),
@@ -75,25 +73,6 @@ impl SubmissionExecutor {
 		for (_, bucket) in self.buckets.lock().drain() {
 			bucket.abort();
 		}
-	}
-
-	/// Drops what is remembered about row `id`, once nothing will build it
-	/// again.
-	pub fn forget_attempts(&self, id: DurableTxId) {
-		self.attempts_started.lock().remove(&id);
-	}
-
-	/// Counts one more attempt built for row `id`.
-	fn count_started_attempt(&self, id: DurableTxId) {
-		let mut started = self.attempts_started.lock();
-		*started.entry(id).or_default() += 1;
-	}
-
-	/// The most attempts any row of `rows` was built into.
-	fn most_attempts(&self, rows: &[ScheduledDurableTx]) -> u32 {
-		let started = self.attempts_started.lock();
-		let attempts = rows.iter().filter_map(|row| started.get(&row.id)).max();
-		attempts.copied().unwrap_or(0)
 	}
 }
 
@@ -116,7 +95,8 @@ impl DurableTxEngine {
 
 	/// Starts a task for every bucket of `waiting` that has none.
 	fn launch_buckets(self: &Arc<Self>, waiting: &[ScheduledDurableTx]) {
-		let buckets: HashSet<SubmissionBucket> = waiting.iter().map(SubmissionBucket::of).collect();
+		let buckets: HashSet<SubmissionBucket> =
+			waiting.iter().map(SubmissionBucket::from).collect();
 		for bucket in buckets {
 			self.launch_if_idle(bucket);
 		}

@@ -27,8 +27,9 @@ pub use engine::{
 	EmptyRequest, RecoveryError, RegistrationError,
 };
 pub use model::{
-	DomainId, DurableTxEntry, DurableTxId, DurableTxState, DurableTxStatus, FailureKind, GroupId,
-	HeadKind, PolicyId, PolicyParams, ScheduledDurableTx, SubmissionPlan, Verdict,
+	DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxId, DurableTxState, DurableTxStatus,
+	GroupId, HeadKind, PolicyId, PolicyParams, ScheduledDurableTx, SubmissionPlan, Verdict,
+	VerdictFailureKind, VerdictStatus,
 };
 pub use oracle::{
 	CompletionOracle, DurableRegistry, LedgerView, Monotone, MonotoneEffect, PassScope,

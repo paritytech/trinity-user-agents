@@ -9,8 +9,8 @@ use rusqlite::{
 use subxt::utils::H256;
 
 use super::model::{
-	DomainId, DurableTxEntry, DurableTxId, DurableTxState, DurableTxStatus, FailureKind, GroupId,
-	PolicyId, PolicyParams, ScheduledDurableTx, SubmissionPlan, Verdict,
+	DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxId, DurableTxState, DurableTxStatus,
+	GroupId, PolicyId, PolicyParams, ScheduledDurableTx, SubmissionPlan,
 };
 use crate::{
 	chain::{HashAndNumber, MortalExtrinsic, Mortality},
@@ -78,7 +78,7 @@ pub fn schedule(
 const START_ATTEMPT: &str = "UPDATE durable_tx
     SET status = 'PENDING', tx_hash = :tx_hash, birth_number = :birth_number,
     birth_hash = :birth_hash, period = :period, success_number = NULL, success_hash = NULL,
-    scanned_number = NULL
+    scanned_number = NULL, attempts = attempts + 1
     WHERE id = :id AND status = 'PENDING_SUBMISSION'";
 
 /// Gives a waiting row the attempt `extrinsic` makes. Returns whether the row
@@ -122,10 +122,7 @@ pub fn submission_plan(
 	Ok(rows.next()?.map(SubmissionPlan::from_row).transpose()?)
 }
 
-// `tx_hash` is selected only so a row handed back with a new previous attempt
-// differs from how it was last reported: an observer emits nothing for a
-// result equal to its last one.
-const PENDING_SUBMISSIONS: &str = "SELECT id, domain, group_id, policy_id, policy_params, tx_hash
+const PENDING_SUBMISSIONS: &str = "SELECT id, domain, group_id, policy_id, policy_params, attempts
     FROM durable_tx WHERE status = 'PENDING_SUBMISSION' ORDER BY id";
 
 /// Every row waiting to be built, in registration order, re-read after every
@@ -146,7 +143,7 @@ pub fn has_pending_submissions(conn: &Connection) -> Result<bool, DbError> {
 	Ok(waiting)
 }
 
-const BUCKET_SUBMISSIONS: &str = "SELECT id, domain, group_id, policy_id, policy_params
+const BUCKET_SUBMISSIONS: &str = "SELECT id, domain, group_id, policy_id, policy_params, attempts
     FROM durable_tx WHERE status = 'PENDING_SUBMISSION' AND domain = :domain
     AND policy_id = :policy_id AND group_id IS :group_id ORDER BY id";
 
@@ -174,20 +171,22 @@ const COMPARE_AND_SET: &str = "UPDATE durable_tx
     WHERE id = :id AND status = :expected AND tx_hash = :expected_hash
     AND status IN ('PENDING', 'PENDING_SUCCESS')";
 
-/// Writes `verdict` only while the row still awaits a verdict in the status
-/// and attempt `observed` holds. Returns whether it wrote.
+/// Writes `status`, and `scanned_to` unless it is `None`, only while the row
+/// still awaits a verdict in the status and attempt `observed` holds.
+/// Returns whether it wrote.
 pub fn compare_and_set(
 	tx: &Transaction<'_>,
 	observed: &DurableTxEntry,
-	verdict: &Verdict,
+	status: DurableTxStatus,
+	scanned_to: Option<u64>,
 ) -> Result<bool, DbError> {
-	let success = verdict.status.success_block();
+	let success = status.success_block();
 	let changed = tx.prepare_cached(COMPARE_AND_SET)?.execute(named_params! {
-		":status": status_name(verdict.status),
+		":status": status_name(status),
 		":success_number": success.map(|block| block.number),
 		":success_hash": success.map(|block| block.hash.0),
-		":failure_kind": failure_kind(verdict.status),
-		":scanned_number": verdict.scanned_to,
+		":failure_kind": failure_kind(status),
+		":scanned_number": scanned_to,
 		":id": observed.id.0,
 		":expected": status_name(observed.status),
 		":expected_hash": observed.tx_hash.0,
@@ -356,6 +355,7 @@ impl ScheduledDurableTx {
 			domain: domain_from_row(row)?,
 			group: group_from_row(row)?,
 			plan: SubmissionPlan::from_row(row)?,
+			attempts: row.get("attempts")?,
 		})
 	}
 }
@@ -421,14 +421,14 @@ fn status_name(status: DurableTxStatus) -> &'static str {
 }
 
 /// The `failure_kind` column's value for `status`.
-fn failure_kind(status: DurableTxStatus) -> Option<FailureKind> {
+fn failure_kind(status: DurableTxStatus) -> Option<DurableTxFailureKind> {
 	match status {
 		DurableTxStatus::Failure(kind) => Some(kind),
 		_ => None,
 	}
 }
 
-impl ToSql for FailureKind {
+impl ToSql for DurableTxFailureKind {
 	fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
 		Ok(ToSqlOutput::from(match self {
 			Self::Expired => "EXPIRED",
@@ -439,7 +439,7 @@ impl ToSql for FailureKind {
 	}
 }
 
-impl FromSql for FailureKind {
+impl FromSql for DurableTxFailureKind {
 	fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
 		match value.as_str()? {
 			"EXPIRED" => Ok(Self::Expired),
@@ -464,7 +464,7 @@ mod tests {
 	use super::*;
 	use crate::{
 		durable::testing::{
-			REBUILD_POLICY, block, extrinsic, insert_retryable, open_db, rebuild_plan,
+			block, extrinsic, insert_retryable, open_db, test_plan, test_policy_id,
 		},
 		test_support::wait_until,
 	};
@@ -489,8 +489,17 @@ mod tests {
 		block_on(db.read(f)).unwrap()
 	}
 
-	fn write_verdict(db: &Db, observed: DurableTxEntry, verdict: Verdict) -> bool {
-		block_on(db.write(move |tx| compare_and_set(tx, &observed, &verdict))).unwrap()
+	fn write_status(db: &Db, observed: DurableTxEntry, status: DurableTxStatus) -> bool {
+		write_scanned(db, observed, status, None)
+	}
+
+	fn write_scanned(
+		db: &Db,
+		observed: DurableTxEntry,
+		status: DurableTxStatus,
+		scanned_to: Option<u64>,
+	) -> bool {
+		block_on(db.write(move |tx| compare_and_set(tx, &observed, status, scanned_to))).unwrap()
 	}
 
 	#[test]
@@ -537,8 +546,7 @@ mod tests {
 		let observed = read(&db, move |conn| entry(conn, id)).unwrap();
 		let at = block(120);
 
-		let wrote =
-			write_verdict(&db, observed.clone(), DurableTxStatus::PendingSuccess { at }.into());
+		let wrote = write_status(&db, observed.clone(), DurableTxStatus::PendingSuccess { at });
 
 		assert!(wrote);
 		assert_eq!(
@@ -555,14 +563,10 @@ mod tests {
 		let (_dir, db) = open_db();
 		let id = register(&db, None, 1);
 		let observed = read(&db, move |conn| entry(conn, id)).unwrap();
-		write_verdict(
-			&db,
-			observed.clone(),
-			DurableTxStatus::PendingSuccess { at: block(120) }.into(),
-		);
-		let expired = DurableTxStatus::Failure(FailureKind::Expired);
+		write_status(&db, observed.clone(), DurableTxStatus::PendingSuccess { at: block(120) });
+		let expired = DurableTxStatus::Failure(DurableTxFailureKind::Expired);
 
-		let wrote = write_verdict(&db, observed, expired.into());
+		let wrote = write_status(&db, observed, expired);
 
 		assert!(!wrote);
 		assert_eq!(
@@ -581,11 +585,7 @@ mod tests {
 		let mut observed = read(&db, move |conn| entry(conn, id)).unwrap();
 		observed.tx_hash = H256::repeat_byte(0xee);
 
-		assert!(!write_verdict(
-			&db,
-			observed,
-			DurableTxStatus::FinalizedSuccess { at: None }.into()
-		));
+		assert!(!write_status(&db, observed, DurableTxStatus::FinalizedSuccess { at: None }));
 	}
 
 	#[test]
@@ -593,15 +593,17 @@ mod tests {
 		let (_dir, db) = open_db();
 		let id = register(&db, None, 1);
 		let observed = read(&db, move |conn| entry(conn, id)).unwrap();
-		write_verdict(&db, observed.clone(), DurableTxStatus::Failure(FailureKind::Expired).into());
-		let terminal =
-			DurableTxEntry { status: DurableTxStatus::Failure(FailureKind::Expired), ..observed };
-
-		assert!(!write_verdict(
+		write_status(
 			&db,
-			terminal,
-			DurableTxStatus::FinalizedSuccess { at: None }.into()
-		));
+			observed.clone(),
+			DurableTxStatus::Failure(DurableTxFailureKind::Expired),
+		);
+		let terminal = DurableTxEntry {
+			status: DurableTxStatus::Failure(DurableTxFailureKind::Expired),
+			..observed
+		};
+
+		assert!(!write_status(&db, terminal, DurableTxStatus::FinalizedSuccess { at: None }));
 	}
 
 	/// Each status is read back with the evidence it was written with: the
@@ -613,9 +615,9 @@ mod tests {
 			DurableTxStatus::PendingSuccess { at: block(120) },
 			DurableTxStatus::FinalizedSuccess { at: Some(block(121)) },
 			DurableTxStatus::FinalizedSuccess { at: None },
-			DurableTxStatus::Failure(FailureKind::Expired),
-			DurableTxStatus::Failure(FailureKind::DispatchFailed),
-			DurableTxStatus::Failure(FailureKind::Rejected),
+			DurableTxStatus::Failure(DurableTxFailureKind::Expired),
+			DurableTxStatus::Failure(DurableTxFailureKind::DispatchFailed),
+			DurableTxStatus::Failure(DurableTxFailureKind::Rejected),
 		];
 
 		let read_back: Vec<_> = (1..)
@@ -623,7 +625,7 @@ mod tests {
 			.map(|(tag, status)| {
 				let id = register(&db, None, tag);
 				let observed = read(&db, move |conn| entry(conn, id)).unwrap();
-				write_verdict(&db, observed, status.into());
+				write_status(&db, observed, status);
 				read(&db, move |conn| super::status(conn, id)).unwrap()
 			})
 			.collect();
@@ -640,15 +642,10 @@ mod tests {
 		let (_dir, db) = open_db();
 		let id = register(&db, None, 7);
 		let observed = read(&db, move |conn| entry(conn, id)).unwrap();
-		let scanned = Verdict { status: DurableTxStatus::Pending, scanned_to: Some(120) };
-		write_verdict(&db, observed, scanned);
+		write_scanned(&db, observed, DurableTxStatus::Pending, Some(120));
 		let scanned_entry = read(&db, move |conn| entry(conn, id)).unwrap();
 
-		write_verdict(
-			&db,
-			scanned_entry,
-			DurableTxStatus::PendingSuccess { at: block(125) }.into(),
-		);
+		write_status(&db, scanned_entry, DurableTxStatus::PendingSuccess { at: block(125) });
 
 		let recorded = read(&db, move |conn| entry(conn, id)).unwrap();
 		assert_eq!(recorded.scanned_to, Some(120));
@@ -694,7 +691,7 @@ mod tests {
 		assert_eq!(read(&db, live_domains), vec![domain()]);
 
 		let observed = read(&db, move |conn| entry(conn, id)).unwrap();
-		write_verdict(&db, observed, DurableTxStatus::FinalizedSuccess { at: None }.into());
+		write_status(&db, observed, DurableTxStatus::FinalizedSuccess { at: None });
 
 		assert_eq!(read(&db, live_domains), Vec::<DomainId>::new());
 	}
@@ -724,7 +721,7 @@ mod tests {
 	}
 
 	fn schedule_in(db: &Db, domain: DomainId, group: Option<GroupId>) -> DurableTxId {
-		let plan = rebuild_plan(vec![1]);
+		let plan = test_plan(vec![1]);
 		let write = db.write(move |tx| schedule(tx, &domain, group.as_ref(), &plan));
 		block_on(write).unwrap()
 	}
@@ -741,8 +738,8 @@ mod tests {
 		block_on(db.write(move |tx| abandon_submission(tx, id))).unwrap()
 	}
 
-	fn insert_rebuilt_by(db: &Db, params: u8) -> DurableTxId {
-		insert_retryable(db, &domain(), extrinsic(1, 100, 64), rebuild_plan(vec![params]))
+	fn insert_rebuildable(db: &Db, params: u8) -> DurableTxId {
+		insert_retryable(db, &domain(), extrinsic(1, 100, 64), test_plan(vec![params]))
 	}
 
 	#[test]
@@ -756,7 +753,8 @@ mod tests {
 				id,
 				domain: domain(),
 				group: Some(GroupId::new("payment")),
-				plan: rebuild_plan(vec![1]),
+				plan: test_plan(vec![1]),
+				attempts: 0,
 			}]
 		);
 		assert_eq!(
@@ -817,6 +815,23 @@ mod tests {
 		);
 	}
 
+	/// The rebuild cooldown grows with every attempt a row was built into, and
+	/// it must keep growing after a restart, so the count lives in the row.
+	#[test]
+	fn every_attempt_a_row_is_built_into_is_counted() {
+		let (_dir, db) = open_db();
+		let id = schedule_in(&db, domain(), None);
+		for tag in [9, 10] {
+			start_attempt_tagged(&db, id, tag);
+			let attempt = read(&db, move |conn| entry(conn, id)).unwrap();
+			write_status(&db, attempt, DurableTxStatus::PendingSubmission);
+		}
+
+		let attempts: Vec<u32> = pending_rows(&db).iter().map(|row| row.attempts).collect();
+
+		assert_eq!(attempts, vec![2]);
+	}
+
 	/// A rebuilt attempt has its own hash and birth, so the blocks searched
 	/// for the previous one prove nothing about it.
 	#[test]
@@ -825,10 +840,9 @@ mod tests {
 		let id = schedule_in(&db, domain(), None);
 		start_attempt_tagged(&db, id, 9);
 		let first = read(&db, move |conn| entry(conn, id)).unwrap();
-		let scanned = Verdict { scanned_to: Some(120), ..Verdict::from(DurableTxStatus::Pending) };
-		write_verdict(&db, first, scanned);
+		write_scanned(&db, first, DurableTxStatus::Pending, Some(120));
 		let searched = read(&db, move |conn| entry(conn, id)).unwrap();
-		write_verdict(&db, searched, DurableTxStatus::PendingSubmission.into());
+		write_status(&db, searched, DurableTxStatus::PendingSubmission);
 
 		start_attempt_tagged(&db, id, 10);
 
@@ -847,7 +861,7 @@ mod tests {
 		assert!(!abandon_waiting(&db, submitted));
 		assert_eq!(
 			read(&db, move |conn| status(conn, waiting)),
-			Some(DurableTxStatus::Failure(FailureKind::Abandoned))
+			Some(DurableTxStatus::Failure(DurableTxFailureKind::Abandoned))
 		);
 		assert_eq!(read(&db, move |conn| status(conn, submitted)), Some(DurableTxStatus::Pending));
 	}
@@ -857,17 +871,18 @@ mod tests {
 	#[test]
 	fn a_verdict_can_send_a_submitted_row_back_to_its_policy() {
 		let (_dir, db) = open_db();
-		let id = insert_rebuilt_by(&db, 3);
+		let id = insert_rebuildable(&db, 3);
 		let observed = read(&db, move |conn| entry(conn, id)).unwrap();
 
-		assert!(write_verdict(&db, observed, DurableTxStatus::PendingSubmission.into()));
+		assert!(write_status(&db, observed, DurableTxStatus::PendingSubmission));
 		assert_eq!(
 			pending_rows(&db),
 			vec![ScheduledDurableTx {
 				id,
 				domain: domain(),
 				group: None,
-				plan: rebuild_plan(vec![3]),
+				plan: test_plan(vec![3]),
+				attempts: 0,
 			}]
 		);
 	}
@@ -875,12 +890,12 @@ mod tests {
 	#[test]
 	fn a_row_names_the_policy_it_was_registered_with() {
 		let (_dir, db) = open_db();
-		let with_policy = insert_rebuilt_by(&db, 3);
+		let with_policy = insert_rebuildable(&db, 3);
 		let without = register(&db, None, 2);
 
 		assert_eq!(
 			read(&db, move |conn| submission_plan(conn, with_policy)),
-			Some(rebuild_plan(vec![3]))
+			Some(test_plan(vec![3]))
 		);
 		assert_eq!(read(&db, move |conn| submission_plan(conn, without)), None);
 	}
@@ -896,7 +911,7 @@ mod tests {
 		schedule_in(&db, domain(), Some(GroupId::new("g2")));
 		let bucket = |group: Option<GroupId>| {
 			read(&db, move |conn| {
-				bucket_submissions(conn, &domain(), &REBUILD_POLICY, group.as_ref())
+				bucket_submissions(conn, &domain(), &test_policy_id(), group.as_ref())
 			})
 			.iter()
 			.map(|scheduled| scheduled.id)
@@ -934,7 +949,7 @@ mod tests {
 
 		start_attempt_tagged(&db, id, 9);
 		let attempt = read(&db, move |conn| entry(conn, id)).unwrap();
-		write_verdict(&db, attempt, DurableTxStatus::PendingSubmission.into());
+		write_status(&db, attempt, DurableTxStatus::PendingSubmission);
 
 		let reported_again = || {
 			let emitted = waiting.next().now_or_never();

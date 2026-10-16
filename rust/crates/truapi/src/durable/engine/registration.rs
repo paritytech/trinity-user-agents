@@ -136,7 +136,7 @@ impl DurableRequest {
 	}
 
 	/// Whether anything in the request is built or rebuilt by a policy.
-	fn names_a_policy(&self) -> bool {
+	fn uses_submission_policy(&self) -> bool {
 		self.named_plans().next().is_some()
 	}
 
@@ -184,8 +184,9 @@ impl DurableTxEngine {
 			+ 'static,
 		T: Send + 'static,
 	{
-		let genesis = self.genesis_if_registered(&request)?;
-		if request.names_a_policy() {
+		let genesis = self.registered_chain(&request.domain)?;
+		self.check_policies_registered(&request)?;
+		if request.uses_submission_policy() {
 			self.ensure_submissions_started();
 		}
 		// Detached from the caller: once queued, the write commits on the
@@ -200,18 +201,21 @@ impl DurableTxEngine {
 		outcome.await.unwrap_or(Err(RegistrationError::Db(DbError::Closed)))
 	}
 
-	/// The genesis of the request's chain, once every domain and policy it
-	/// names is registered.
-	fn genesis_if_registered(&self, request: &DurableRequest) -> Result<H256, RegistrationError> {
-		let genesis = self
-			.chain_of(&request.domain)
-			.ok_or_else(|| RegistrationError::UnknownDomain(request.domain.clone()))?;
-		let unknown_policy = request
+	/// The genesis of the chain `domain` lives on, when it is registered.
+	fn registered_chain(&self, domain: &DomainId) -> Result<H256, RegistrationError> {
+		self.chain_of(domain)
+			.ok_or_else(|| RegistrationError::UnknownDomain(domain.clone()))
+	}
+
+	/// Refuses a request naming a policy that is not registered, which
+	/// nothing could ever build.
+	fn check_policies_registered(&self, request: &DurableRequest) -> Result<(), RegistrationError> {
+		let unknown = request
 			.named_plans()
 			.find(|plan| self.registry.submission_policy(&plan.policy).is_none());
-		match unknown_policy {
+		match unknown {
 			Some(plan) => Err(RegistrationError::UnknownPolicy(plan.policy.clone())),
-			None => Ok(genesis),
+			None => Ok(()),
 		}
 	}
 
@@ -296,8 +300,8 @@ mod tests {
 		durable::{
 			model::{DurableTxState, DurableTxStatus, PolicyParams},
 			testing::{
-				FakeChain, REBUILD_POLICY, RetryAnswer, ScriptedPolicy, engine_with_policies,
-				extrinsic, rebuild_plan, test_engine, without_plan,
+				FakeChain, ScheduledTxHarness, ScriptedPolicy, extrinsic, test_engine, test_plan,
+				without_plan,
 			},
 		},
 		test_support::wait_until,
@@ -473,16 +477,13 @@ mod tests {
 		));
 	}
 
-	/// An engine serving the `test` domain with the `rebuild` policy, which
-	/// never builds anything.
-	fn engine_with_policy(chain: &Arc<FakeChain>) -> (tempfile::TempDir, Arc<DurableTxEngine>) {
-		let policy = ScriptedPolicy::never_building(REBUILD_POLICY, RetryAnswer::Final);
-		let (dir, engine, _timer) = engine_with_policies(chain, &[domain()], vec![policy]);
-		(dir, engine)
+	/// Schedules `plans` in the `op` group of the test domain.
+	fn scheduled_in_op(plans: Vec<SubmissionPlan>) -> DurableRequest {
+		DurableRequest::scheduled(domain(), Some(GroupId::new("op")), plans).unwrap()
 	}
 
-	fn scheduled(plans: Vec<SubmissionPlan>) -> DurableRequest {
-		DurableRequest::scheduled(domain(), Some(GroupId::new("op")), plans).unwrap()
+	fn op_group(engine: &DurableTxEngine) -> Vec<DurableTxState> {
+		block_on(engine.group(&domain(), &GroupId::new("op"))).unwrap()
 	}
 
 	#[test]
@@ -494,20 +495,17 @@ mod tests {
 	/// row waits for its policy.
 	#[test]
 	fn a_scheduled_transaction_waits_for_its_policy_and_broadcasts_nothing() {
-		let chain = FakeChain::new(130, 140);
-		let (_dir, engine) = engine_with_policy(&chain);
+		let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::never_answering());
+		let engine = harness.engine();
 
-		let ids =
-			block_on(engine.execute(scheduled(vec![rebuild_plan(vec![1]), rebuild_plan(vec![1])])))
-				.unwrap();
+		let ids = harness.schedule(scheduled_in_op(vec![test_plan(vec![1]), test_plan(vec![1])]));
 
-		assert_eq!(
-			block_on(engine.group(&domain(), &GroupId::new("op"))).unwrap(),
-			ids.iter()
-				.map(|id| DurableTxState { id: *id, status: DurableTxStatus::PendingSubmission })
-				.collect::<Vec<_>>()
-		);
-		assert_eq!(chain.state().submitted.len(), 0);
+		let waiting = |id: &DurableTxId| DurableTxState {
+			id: *id,
+			status: DurableTxStatus::PendingSubmission,
+		};
+		assert_eq!(op_group(engine), ids.iter().map(waiting).collect::<Vec<_>>());
+		assert_eq!(harness.broadcast(), vec![]);
 		assert!(ids.iter().all(|id| !engine.ownership.is_owned(*id)));
 	}
 
@@ -515,56 +513,51 @@ mod tests {
 	/// failure, so the row must remember which policy that is.
 	#[test]
 	fn a_presigned_transaction_keeps_the_policy_that_rebuilds_it() {
-		let chain = FakeChain::new(130, 140);
-		let (_dir, engine) = engine_with_policy(&chain);
-		let submission = DurableSubmission {
-			extrinsic: extrinsic(1, 100, 64),
-			plan: Some(rebuild_plan(vec![1])),
-		};
+		let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::never_answering());
+		let submission =
+			DurableSubmission { extrinsic: extrinsic(1, 100, 64), plan: Some(test_plan(vec![1])) };
 		let request = DurableRequest::presigned(domain(), None, vec![submission]).unwrap();
 
-		let ids = block_on(engine.execute(request)).unwrap();
+		let id = harness.schedule(request)[0];
 
-		let id = ids[0];
-		let plan = block_on(engine.db.read(move |conn| dao::submission_plan(conn, id)));
-		assert_eq!(plan.unwrap(), Some(rebuild_plan(vec![1])));
-		wait_until(|| chain.state().submitted.len() == 1, "the presigned extrinsic is broadcast");
+		let plan = block_on(harness.engine().db.read(move |conn| dao::submission_plan(conn, id)));
+		assert_eq!(plan.unwrap(), Some(test_plan(vec![1])));
+		let presigned_sent = || harness.broadcast() == vec![extrinsic(1, 100, 64).extrinsic];
+		wait_until(presigned_sent, "the presigned extrinsic is broadcast");
 	}
 
 	/// A policy missing from the registry is a wiring bug: refused at the
 	/// call site instead of surfacing as a failed transaction later.
 	#[test]
 	fn a_request_naming_an_unregistered_policy_writes_nothing() {
-		let chain = FakeChain::new(130, 140);
-		let (_dir, engine) = engine_with_policy(&chain);
-		let unknown = SubmissionPlan {
-			policy: PolicyId::from_static("unknown"),
-			params: PolicyParams::default(),
-		};
+		let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::never_answering());
+		let engine = harness.engine();
+		let unknown =
+			SubmissionPlan { policy: PolicyId::new("unknown"), params: PolicyParams::default() };
 
-		let result = block_on(engine.execute(scheduled(vec![rebuild_plan(vec![1]), unknown])));
+		let result = block_on(engine.execute(scheduled_in_op(vec![test_plan(vec![1]), unknown])));
 
 		assert!(matches!(
 			result,
-			Err(RegistrationError::UnknownPolicy(policy)) if policy == PolicyId::from_static("unknown")
+			Err(RegistrationError::UnknownPolicy(policy)) if policy == PolicyId::new("unknown")
 		));
-		assert_eq!(block_on(engine.group(&domain(), &GroupId::new("op"))).unwrap(), vec![]);
+		assert_eq!(op_group(engine), vec![]);
 	}
 
 	/// The domain locks what the scheduled transaction will spend in the same
 	/// write. When that fails, the schedule must roll back with it, or a row
 	/// would be built that spends nothing locked.
 	#[test]
-	fn a_schedule_whose_hook_fails_rolls_back_with_it() {
-		let chain = FakeChain::new(130, 140);
-		let (_dir, engine) = engine_with_policy(&chain);
+	fn a_schedule_rolls_back_when_locking_what_it_spends_fails() {
+		let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::never_answering());
+		let engine = harness.engine();
+		let request = scheduled_in_op(vec![test_plan(vec![1])]);
 
-		let result =
-			block_on(engine.execute_with(scheduled(vec![rebuild_plan(vec![1])]), |_, _| {
-				Err::<(), _>(DbError::Connection("domain refused".into()))
-			}));
+		let result = block_on(engine.execute_with(request, |_, _| {
+			Err::<(), _>(DbError::Connection("locking the spent funds failed".into()))
+		}));
 
 		assert!(matches!(result, Err(RegistrationError::Db(_))));
-		assert_eq!(block_on(engine.group(&domain(), &GroupId::new("op"))).unwrap(), vec![]);
+		assert_eq!(op_group(engine), vec![]);
 	}
 }

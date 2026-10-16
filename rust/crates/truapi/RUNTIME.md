@@ -243,7 +243,8 @@ and fails each `GiveUp`, backing off after rounds that decide nothing. A
 presigned submission may carry a plan as well. When a verdict proves a
 transaction with a policy failed, the verdict writer asks the policy's
 `can_retry`, and a yes sends the row back to be built instead of failing it.
-The executor starts with the engine in `set_core_db` and again in every
+It is built again after a cooldown that grows with the attempts the row
+records, so the wait survives a restart. The executor starts with the engine in `set_core_db` and again in every
 recovery run.
 
 The engine reports whether work is pending, including rows waiting to be

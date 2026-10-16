@@ -1,10 +1,12 @@
 //! Fixtures shared by the durable engine's tests.
 
+mod harness;
 mod policy;
 
+pub use harness::{ScheduledTxHarness, other_domain, test_domain};
 pub use policy::{
-	PrepareAnswer, PrepareScript, REBUILD_POLICY, RetryAnswer, RetryQuestion, ScriptedPolicy,
-	engine_with_policies, insert_retryable, leave_waiting, rebuild_plan, without_plan,
+	PrepareAnswer, PrepareScript, RetryQuestion, ScriptedPolicy, answer_all_with, first_builds,
+	insert_retryable, nth_build, test_plan, test_policy_id, without_plan,
 };
 
 use core::time::Duration;
@@ -399,7 +401,8 @@ impl ManualTimer {
 		}
 	}
 
-	/// How many sleeps were started.
+	/// How many sleeps were started. A zero-duration sleep does not count:
+	/// it never waits.
 	pub fn sleeps(&self) -> usize {
 		self.sleeps.load(Ordering::SeqCst)
 	}
@@ -407,6 +410,9 @@ impl ManualTimer {
 
 impl Timer for ManualTimer {
 	fn sleep(&self, duration: Duration) -> BoxFuture<'static, ()> {
+		if duration.is_zero() {
+			return Box::pin(futures::future::ready(()));
+		}
 		let (wake, woken) = oneshot::channel();
 		let mut state = self.state.lock();
 		let deadline = state.now + duration;

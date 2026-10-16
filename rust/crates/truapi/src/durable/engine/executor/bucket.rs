@@ -6,17 +6,16 @@ use std::{
 	sync::{Arc, Weak},
 };
 
-use futures::future::AbortHandle;
+use futures::future::{AbortHandle, join_all};
 use subxt::utils::H256;
 use tracing::{error, warn};
 
 use super::{
 	SubmissionBucket, SubmissionExecutor,
-	attempt::{give_up_submission, start_built_attempt},
+	attempt::{LedgerChange, give_up_submission, start_built_attempt},
 	backoff::{backoff, cooldown},
 };
 use crate::{
-	chain::MortalExtrinsic,
 	durable::{
 		dao,
 		engine::DurableTxEngine,
@@ -63,12 +62,17 @@ enum BucketExit {
 	Stay,
 }
 
-impl RoundOutcome {
-	/// [`Self::Progress`] when the ledger `changed`.
-	fn of(changed: bool) -> Self {
-		if changed { Self::Progress } else { Self::NoProgress }
+impl From<LedgerChange> for RoundOutcome {
+	/// [`Self::Progress`] when the ledger changed.
+	fn from(change: LedgerChange) -> Self {
+		match change {
+			LedgerChange::Changed => Self::Progress,
+			LedgerChange::Unchanged => Self::NoProgress,
+		}
 	}
+}
 
+impl RoundOutcome {
 	/// [`Self::Progress`] when either `self` or `other` is.
 	fn or(self, other: Self) -> Self {
 		if self == Self::Progress { self } else { other }
@@ -95,13 +99,13 @@ impl BucketRun {
 	/// Runs rounds until the bucket is drained, backing off after every round
 	/// that decided nothing.
 	pub async fn run_until_drained(self) {
-		let mut fruitless_rounds = 0;
+		let mut rounds_without_progress = 0;
 		while self.engine.strong_count() > 0 {
 			match self.decide_round().await {
-				RoundOutcome::Progress => fruitless_rounds = 0,
+				RoundOutcome::Progress => rounds_without_progress = 0,
 				RoundOutcome::NoProgress => {
-					fruitless_rounds += 1;
-					self.timer.sleep(backoff(fruitless_rounds)).await;
+					rounds_without_progress += 1;
+					self.timer.sleep(backoff(rounds_without_progress)).await;
 				},
 			}
 			if self.leave_if_drained().await == BucketExit::Leave {
@@ -188,38 +192,19 @@ impl BucketRun {
 		let Some(engine) = self.engine.upgrade() else {
 			return RoundOutcome::NoProgress;
 		};
-		let changed = match preparation {
+		let change = match preparation {
 			Preparation::Ready(extrinsic) => {
-				self.start_attempt(&engine, genesis, id, extrinsic).await
+				start_built_attempt(&engine, id, genesis, extrinsic).await
 			},
 			Preparation::GiveUp => give_up_submission(&engine, id).await,
 		};
-		RoundOutcome::of(changed)
-	}
-
-	/// Starts the attempt `extrinsic` makes and counts it towards the row's
-	/// rebuild cooldown. Returns whether it started.
-	async fn start_attempt(
-		&self,
-		engine: &Arc<DurableTxEngine>,
-		genesis: H256,
-		id: DurableTxId,
-		extrinsic: MortalExtrinsic,
-	) -> bool {
-		if !start_built_attempt(engine, id, genesis, extrinsic).await {
-			return false;
-		}
-		self.executor.count_started_attempt(id);
-		true
+		RoundOutcome::from(change)
 	}
 
 	/// Waits out the cooldown of the most rebuilt row of `rows`.
 	async fn cool_down(&self, rows: &[ScheduledDurableTx]) {
-		let attempts = self.executor.most_attempts(rows);
-		let wait = cooldown(attempts);
-		if !wait.is_zero() {
-			self.timer.sleep(wait).await;
-		}
+		let attempts = rows.iter().map(|row| row.attempts).max().unwrap_or(0);
+		self.timer.sleep(cooldown(attempts)).await;
 	}
 
 	/// Leaves once no row is left. A row scheduled while the task leaves is
@@ -273,10 +258,10 @@ async fn abandon_unbuildable(
 ) -> RoundOutcome {
 	let ids: Vec<i64> = rows.iter().map(|row| row.id.0).collect();
 	error!(%bucket, ?ids, "durable submissions name a policy or domain that is not registered, failing them");
-	let mut outcome = RoundOutcome::NoProgress;
-	for row in rows {
-		let abandoned = give_up_submission(engine, row.id).await;
-		outcome = outcome.or(RoundOutcome::of(abandoned));
-	}
-	outcome
+	let abandons = rows.iter().map(|row| give_up_submission(engine, row.id));
+	let abandoned = join_all(abandons).await;
+	abandoned
+		.into_iter()
+		.map(RoundOutcome::from)
+		.fold(RoundOutcome::NoProgress, RoundOutcome::or)
 }
