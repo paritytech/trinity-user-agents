@@ -7,7 +7,10 @@ import TrUAPIHost
 
 // MARK: - Helpers
 
-private func makeConfiguration(contentSource: SPAContentSource) throws -> SPAConfiguration {
+private func makeConfiguration(
+    contentSource: SPAContentSource,
+    cardFace: (any ExpandedCardFaceShowing)? = nil
+) throws -> SPAConfiguration {
     let tldProvider = StubTldProvider()
     let factory = ProductHostFactory(tldProvider: tldProvider)
     let host = try #require(factory.host(rawString: "test.dot"))
@@ -17,7 +20,8 @@ private func makeConfiguration(contentSource: SPAContentSource) throws -> SPACon
         isRootScreen: false,
         showMoreButton: false,
         page: ProductPage(host: host),
-        contentSource: contentSource
+        contentSource: contentSource,
+        cardFace: cardFace
     )
 }
 
@@ -84,6 +88,36 @@ struct SPARustRuntimeTests {
         await runtime.dispose()
     }
 
+    #if DEBUG
+        /// A device reaches the Mac by its LAN address, but the product runs under the identifier
+        /// the core gave it, so the page loads from one and the product runs under the other.
+        @Test func devServerLoadsItsAddressAndRunsUnderTheCoresIdentifier() async throws {
+            let address = try #require(URL(string: "http://192.168.1.59:3000/app?product_id=humanity.dot"))
+            let configuration = try makeConfiguration(
+                contentSource: .devServer(url: address, productId: "humanity.dot")
+            )
+            let resolver = StubDotNsResolver()
+            let runtime = makeRuntime(configuration: configuration, dotNsResolver: resolver)
+
+            let url = try await runtime.start(with: MockJSEngine())
+
+            #expect(url == address)
+            #expect(resolver.resolvedNames.isEmpty)
+            #expect(configuration.productId == "humanity.dot")
+
+            await runtime.dispose()
+        }
+    #endif
+
+    /// The playground opens through a direct URL under its own dotNS name, not as a dev server.
+    @Test func directURLKeepsTheProductIdentifierOfItsPage() throws {
+        let configuration = try makeConfiguration(
+            contentSource: .directURL(#require(URL(string: "http://localhost:3000")))
+        )
+
+        #expect(configuration.productId == "test.dot")
+    }
+
     @Test func startWithDotNsResolvesContentAndReturnsProductURL() async throws {
         let configuration = try makeConfiguration(contentSource: .dotNs)
         let resolver = StubDotNsResolver()
@@ -99,6 +133,38 @@ struct SPARustRuntimeTests {
         #expect(engine.initializedScripts[0]
             .content == #"window.__truapi_localhost = { url: "ws://127.0.0.1:0/?t=test" };"#)
 
+        await runtime.dispose()
+    }
+
+    /// A card's page loads the product's widget rather than its app, since the
+    /// widget is what an expanded card runs.
+    @Test @MainActor func startForACardsPageLoadsTheWidget() async throws {
+        let configuration = try makeConfiguration(contentSource: .dotNs, cardFace: StubCardFace())
+        let resolver = StubDotNsResolver()
+        let widget = ProductExecutable.Widget(
+            identifier: "widget.test.dot",
+            appVersion: .zero,
+            description: nil,
+            heights: [1],
+            width: 1
+        )
+        let product = ResolvedProduct(
+            id: "test.dot",
+            displayName: "Test",
+            description: nil,
+            icon: nil,
+            executables: ProductExecutables(app: nil, widget: widget, worker: nil),
+            hasManifest: true
+        )
+        let runtime = makeRuntime(
+            configuration: configuration,
+            dotNsResolver: resolver,
+            productResolver: StubProductResolver(alwaysResolvingTo: product)
+        )
+
+        _ = try await runtime.start(with: MockJSEngine())
+
+        #expect(resolver.resolvedNames == ["widget.test.dot"])
         await runtime.dispose()
     }
 

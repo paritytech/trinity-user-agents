@@ -383,6 +383,10 @@ impl JsonRpcConnection for NativeJsonRpcConnection {
 			return;
 		}
 		self.events.unregister_chain(self.id);
+		self.callbacks.on_core_log(
+			"truapi.native.callback.chain_closing".to_string(),
+			format!("connection {}", self.id),
+		);
 		if let Err(err) = self.callbacks.chain_close(self.id) {
 			self.callbacks.on_core_log(
 				"truapi.native.callback.chain_close_failed".to_string(),
@@ -396,6 +400,11 @@ impl Drop for NativeJsonRpcConnection {
 	fn drop(&mut self) {
 		self.close();
 	}
+}
+
+/// Lowercase hex for a genesis hash in a log line.
+fn hex_lower(bytes: &[u8]) -> String {
+	bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[async_trait]
@@ -426,6 +435,14 @@ impl ChainProvider for CallbackPlatform {
 				reason: "chain connection closed during setup".to_string(),
 			});
 		}
+		// The core opens one connection per chain per caller scope, so the
+		// count of these for one genesis hash is the count of live scopes
+		// using that chain. Logged on the host's own channel because the
+		// core's tracing level stays at ERROR unless a host raises it.
+		self.callbacks.on_core_log(
+			"truapi.native.callback.chain_connected".to_string(),
+			format!("connection {connection_id} for chain {}", hex_lower(&genesis_hash)),
+		);
 		Ok(Box::new(connection))
 	}
 }

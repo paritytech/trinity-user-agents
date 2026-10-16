@@ -30,6 +30,7 @@ mod ws_bridge;
 pub use crate::{
 	host_internal::sso_messages::SsoRequestOutcome,
 	host_logic::{
+		dev_server::{DevServerError, DevServerProduct},
 		dotns::{NavigateDecision, PocketDeeplinkAction},
 		scanner::{ScanFilter, ScanVerdict},
 	},
@@ -71,6 +72,14 @@ pub fn parse_navigate(input: String) -> NavigateDecision {
 #[uniffi::export]
 pub fn truapi_host_version() -> String {
 	env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// The development product a debug build opens for an address the developer
+/// typed. Hosts call it only in development builds, since the product it
+/// returns runs with the core's development wildcard or as a named product.
+#[uniffi::export]
+pub fn parse_dev_server(input: String) -> Result<DevServerProduct, DevServerError> {
+	input.parse()
 }
 
 /// The bridge script a host injects into a product's web view, for the `port`

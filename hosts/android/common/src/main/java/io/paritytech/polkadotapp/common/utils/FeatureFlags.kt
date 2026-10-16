@@ -10,6 +10,7 @@ object FeatureFlags {
             FeatureOption.SHORT_WORKER_BACKOFF -> BuildConfig.DEBUG
 
             FeatureOption.DEBUG_MENU -> BuildConfig.DEBUG_TOOLS_ENABLED
+            FeatureOption.DEV_SERVER_PRODUCTS -> BuildConfig.BUILD_TYPE == "debug"
 
             FeatureOption.ARBITRARY_PRODUCTS,
             FeatureOption.BROWSE_TAB,
@@ -30,6 +31,12 @@ enum class FeatureOption {
     SHORT_WORKER_BACKOFF,
     SAMPLE_BOT,
     DEBUG_MENU,
+
+    // Opening a product from a development server on the developer's machine. The server's address
+    // becomes a `localhost` product, which the core grants a development wildcard, so this is the debug
+    // build type alone: nightly and safetynet are debuggable too, and src/debug's network config, which
+    // lets the WebView reach the server in the clear, does not apply to them.
+    DEV_SERVER_PRODUCTS,
     BROWSE_TAB,
 
     // The chain-health indicators repeated in the tab bar, with the expandable details above it. Carried

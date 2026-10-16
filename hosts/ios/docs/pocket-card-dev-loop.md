@@ -59,6 +59,39 @@ A product with **no published worker**, driven by hand.
    share one scroll, so scrolling past the card leaves the product the whole
    screen.
 
+## The expanded card, live
+
+An opened card's page can call `truapi.expandedCard.setFaceShown({ shown })` to
+move the face away and back. To try it with the
+[`pocket-worker`](../../android/feature/products/product-sample/pocket-worker/README.md)
+test page:
+
+1. Build it against this checkout's client, as its README says, and serve it
+   with `npx serve -l 5173 dist`.
+2. Run Loop B with worker URL `http://127.0.0.1:5173/worker.js`, card
+   `loyalty`, face URL `http://127.0.0.1:5173/faces/loyalty.json` and widget
+   URL `http://127.0.0.1:5173/`. Use `/`, not `/index.html`, which `serve`
+   redirects without its query. The app appends `card=<id>` to the widget URL.
+   Add `?hideOnLoad` to test a call made as the page loads, and turn on **Open
+   with the face away** to open the card with the face hidden.
+3. Add the card and open it.
+
+A card with a widget URL always loads through the TrUAPI runtime. A published
+widget needs **Debug → TrUAPI Runtime** on, which applies at the next launch.
+
+The page logs each answer, and a red bar pinned to its bottom edge goes missing
+when the page is sized wrong.
+
+| Answer | When |
+|---|---|
+| `ok` | the face moved, or was already where the page asked |
+| `UserMoving` | the user is dragging the face or it is still gliding, and nothing moves |
+| `NotPresented` | the card is closed and its page is still loaded |
+| `Denied` | the page is shown somewhere other than a card |
+
+A card's page stays loaded after the card closes. After editing a widget URL,
+open another card first or relaunch.
+
 ## What fails where
 
 Work down this list. Each step rules out the one below it.
@@ -82,3 +115,30 @@ Work down this list. Each step rules out the one below it.
 - **A card id that fails screening reads as no card**, not as an error. If a card
   never arrives, check the id before anything else.
 - **Confirm a tap actually lands** before concluding an action was dropped.
+
+## When you are ready to publish
+
+Declare the card in the worker's manifest:
+
+```json
+{
+  "$v": 1,
+  "kind": "worker",
+  "appVersion": [1, 0, 0],
+  "entrypoint": "worker.js",
+  "includes": { "chat": false, "pocket": true },
+  "pocket": {
+    "cards": [{ "id": "loyalty", "title": "Loyalty", "preview": "faces/loyalty.json", "faceShown": false }]
+  }
+}
+```
+
+`faceShown: false` opens the card with its face away. Left out or `null`, the
+face shows. A value that is not a boolean drops all of the product's cards.
+
+The card opens before its product answers. With no answer within five seconds
+the face stays shown, and an answer that comes after the user or the page has
+moved the face is ignored.
+
+A debug card's widget URL still opens in place of the published widget until
+the debug card is deleted.
