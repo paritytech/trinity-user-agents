@@ -294,9 +294,10 @@ fn document_cases() -> Vec<DocumentCase> {
 		),
 		plain(
 			"sequence-out-of-range",
-			with(|value| value["sequence"] = json!(1u64 << 53)),
+			with(|value| value["sequence"] = json!(1u64 << 32)),
 			"sequence-out-of-range",
 		),
+		plain("sequence-at-maximum", with(|value| value["sequence"] = json!(u32::MAX)), "ok"),
 		raw(
 			"sequence-with-fraction",
 			&compact.replace(r#""sequence":42"#, r#""sequence":42.0"#),

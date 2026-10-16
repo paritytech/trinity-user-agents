@@ -10,7 +10,8 @@ pub enum Fetched<'a> {
 }
 
 /// What [`accept`] did with a fetched descriptor.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, strum::IntoStaticStr)]
+#[strum(serialize_all = "kebab-case")]
 pub enum Status {
 	/// The fetched descriptor replaces the stored one.
 	Updated,
@@ -29,14 +30,7 @@ pub enum Status {
 impl Status {
 	/// The status's name, as the conformance vectors spell it.
 	pub fn code(&self) -> &'static str {
-		match self {
-			Self::Updated => "updated",
-			Self::Unchanged => "unchanged",
-			Self::Conflict => "conflict",
-			Self::Rollback => "rollback",
-			Self::Unreachable => "unreachable",
-			Self::Refused(_) => "refused",
-		}
+		self.into()
 	}
 }
 
