@@ -1,14 +1,25 @@
 //! Runtime helper for People-chain statement-store JSON-RPC.
 //!
-//! Statement traffic opens short-lived host RPC connections for its own
-//! subscription lifetimes instead of riding the shared
+//! Statement subscriptions open their own host RPC connection for their
+//! lifetime instead of riding the shared
 //! [`crate::chain_runtime::ChainRuntime`] chainHead runtime. If a host shares
 //! same-topic statement subscriptions on one upstream connection, the host
 //! broker must fan out and ref-count same-upstream-token notifications.
+//!
+//! Submissions and the allowance paths carry no statement subscription, so
+//! they ride the [`ChainRuntime`]'s pooled People-chain connection. A
+//! submission left unanswered for [`SUBMIT_TIMEOUT`] closes that connection,
+//! and a submission whose connection closed is sent once more over a fresh
+//! one. The store answers a statement it already holds with `known`, which
+//! counts as accepted.
 
 use std::sync::Arc;
 
-use core::time::Duration;
+use core::{future::Future, time::Duration};
+use futures::{
+	future::{Either, select},
+	pin_mut,
+};
 use serde_json::{Value, json};
 
 use crate::platform::{JsonRpcConnection, Platform, ProviderError};
@@ -20,6 +31,7 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::{
+	chain_runtime::{ChainRuntime, RuntimeFailure},
 	host_logic::statement_store::{
 		SUBMIT_STATEMENT_METHOD, SUBSCRIBE_STATEMENT_METHOD, TopicFilterKind,
 		UNSUBSCRIBE_STATEMENT_METHOD, hex_topic,
@@ -34,6 +46,12 @@ const SSO_NO_ALLOWANCE_RETRY_ATTEMPTS: usize = 11;
 const SSO_NO_ALLOWANCE_RETRY_DELAY: Duration = Duration::from_secs(2);
 #[cfg(test)]
 const SSO_NO_ALLOWANCE_RETRY_DELAY: Duration = Duration::from_millis(1);
+/// Longest wait for one submission's answer on the pooled connection before
+/// taking that connection as stalled.
+#[cfg(not(test))]
+const SUBMIT_TIMEOUT: Duration = Duration::from_secs(15);
+#[cfg(test)]
+const SUBMIT_TIMEOUT: Duration = Duration::from_millis(50);
 
 /// Error opening a statement-store RPC client over the host platform.
 #[derive(Debug, Error)]
@@ -46,6 +64,9 @@ pub enum StatementStoreRpcClientError {
 		/// Chain provider error.
 		error: ProviderError,
 	},
+	/// The pooled People-chain connection could not be opened.
+	#[error(transparent)]
+	Chain(#[from] RuntimeFailure),
 }
 
 /// People-chain statement-store RPC client factory.
@@ -54,16 +75,19 @@ pub struct StatementStoreRpc {
 	platform: Arc<dyn Platform>,
 	people_chain_genesis_hash: [u8; 32],
 	spawner: Spawner,
+	chain: ChainRuntime,
 }
 
 impl StatementStoreRpc {
-	/// Build a helper backed by the platform-owned chain provider.
+	/// Build a helper that opens subscription connections through
+	/// `platform` and sends requests over `chain`'s pooled connection.
 	pub fn new(
 		platform: Arc<dyn Platform>,
+		chain: ChainRuntime,
 		people_chain_genesis_hash: [u8; 32],
 		spawner: Spawner,
 	) -> Self {
-		Self { platform, people_chain_genesis_hash, spawner }
+		Self { platform, people_chain_genesis_hash, spawner, chain }
 	}
 
 	/// Open a People-chain RPC client already scoped to its genesis hash, for
@@ -73,13 +97,15 @@ impl StatementStoreRpc {
 		label: &'static str,
 	) -> Result<crate::runtime::statement_allowance::ChainClient, StatementStoreRpcClientError> {
 		Ok(crate::runtime::statement_allowance::ChainClient::new(
-			crate::runtime::statement_allowance::rpc::RpcClient::new(self.client(label).await?),
+			crate::runtime::statement_allowance::rpc::RpcClient::new(RpcClient::new(
+				self.request_client(label).await?,
+			)),
 			self.people_chain_genesis_hash,
 		))
 	}
 
-	/// Open a statement-store RPC client over the host-provided People-chain
-	/// connection.
+	/// Open a statement-store RPC client over its own host-provided
+	/// People-chain connection, for statement subscriptions.
 	pub async fn client(
 		&self,
 		label: &'static str,
@@ -90,16 +116,18 @@ impl StatementStoreRpc {
 
 	/// Submit a SCALE-encoded statement and wait for the JSON-RPC ack.
 	pub async fn submit(&self, statement: Vec<u8>, label: &'static str) -> Result<(), String> {
-		let rpc_client = self.client(label).await.map_err(|err| err.to_string())?;
-		submit(&rpc_client, statement).await
+		self.send_with_reconnect(label, |rpc_client| {
+			let statement = statement.clone();
+			async move { submit(&RpcClient::new(rpc_client), statement).await }
+		})
+		.await
 	}
 
 	/// Submit an SSO statement, tolerating the short propagation window after
 	/// an allowance registration is included but not yet visible to the
 	/// Statement Store RPC backend.
 	pub async fn submit_sso(&self, statement: Vec<u8>, label: &'static str) -> Result<(), String> {
-		let rpc_client = self.client(label).await.map_err(|err| err.to_string())?;
-		submit_sso(&rpc_client, statement, label).await
+		retry_until_allowance_visible(label, || self.submit(statement.clone(), label)).await
 	}
 
 	/// Submit a SCALE-encoded statement without waiting for the JSON-RPC ack.
@@ -108,13 +136,45 @@ impl StatementStoreRpc {
 		statement: Vec<u8>,
 		label: &'static str,
 	) -> Result<(), String> {
-		let connection = self.connect(label).await.map_err(|err| err.to_string())?;
-		HostRpcClient::new(connection, self.spawner.clone())
-			.send_fire_and_forget(
-				SUBMIT_STATEMENT_METHOD,
-				rpc_params![format!("0x{}", hex::encode(&statement))].build(),
-			)
-			.map_err(rpc_error_message)
+		self.send_with_reconnect(label, |rpc_client| {
+			let result = rpc_client
+				.send_fire_and_forget(
+					SUBMIT_STATEMENT_METHOD,
+					rpc_params![format!("0x{}", hex::encode(&statement))].build(),
+				)
+				.map_err(rpc_error_message);
+			async move { result }
+		})
+		.await
+	}
+
+	/// Run `send` over the pooled connection, and once more over a fresh one
+	/// when it failed because that connection closed or stalled.
+	async fn send_with_reconnect<SendFn, SendFuture>(
+		&self,
+		label: &'static str,
+		send: SendFn,
+	) -> Result<(), String>
+	where
+		SendFn: Fn(HostRpcClient) -> SendFuture,
+		SendFuture: Future<Output = Result<(), String>>,
+	{
+		let rpc_client = self.request_client(label).await.map_err(|err| err.to_string())?;
+		match within_submit_timeout(&rpc_client, send(rpc_client.clone())).await {
+			Err(_) if rpc_client.is_closed() => {
+				warn!(label, "statement-store connection closed; resending");
+				let rpc_client = self.request_client(label).await.map_err(|err| err.to_string())?;
+				within_submit_timeout(&rpc_client, send(rpc_client.clone())).await
+			},
+			result => result,
+		}
+	}
+
+	async fn request_client(
+		&self,
+		label: &'static str,
+	) -> Result<HostRpcClient, StatementStoreRpcClientError> {
+		Ok(self.chain.rpc_client(label, &self.people_chain_genesis_hash).await?)
 	}
 
 	async fn connect(
@@ -177,8 +237,38 @@ pub async fn submit_sso(
 	statement: Vec<u8>,
 	label: &'static str,
 ) -> Result<(), String> {
+	retry_until_allowance_visible(label, || submit(rpc_client, statement.clone())).await
+}
+
+/// Await `sent`, closing `rpc_client` when no answer arrives within
+/// [`SUBMIT_TIMEOUT`].
+async fn within_submit_timeout(
+	rpc_client: &HostRpcClient,
+	sent: impl Future<Output = Result<(), String>>,
+) -> Result<(), String> {
+	let timeout = futures_timer::Delay::new(SUBMIT_TIMEOUT);
+	pin_mut!(sent);
+	match select(sent, timeout).await {
+		Either::Left((result, _)) => result,
+		Either::Right(_) => {
+			rpc_client.close();
+			Err(format!("statement_submit unanswered after {SUBMIT_TIMEOUT:?}"))
+		},
+	}
+}
+
+/// Run `submit` until it succeeds, fails with anything but `noAllowance`, or
+/// runs out of attempts.
+async fn retry_until_allowance_visible<SubmitFn, SubmitFuture>(
+	label: &'static str,
+	submit: SubmitFn,
+) -> Result<(), String>
+where
+	SubmitFn: Fn() -> SubmitFuture,
+	SubmitFuture: Future<Output = Result<(), String>>,
+{
 	for attempt in 1..=SSO_NO_ALLOWANCE_RETRY_ATTEMPTS {
-		match submit(rpc_client, statement.clone()).await {
+		match submit().await {
 			Ok(()) => return Ok(()),
 			Err(reason)
 				if is_no_allowance_rejection(&reason) &&
@@ -223,7 +313,200 @@ pub fn rpc_error_message(error: subxt_rpcs::Error) -> String {
 
 #[cfg(test)]
 mod tests {
-	use super::is_no_allowance_rejection;
+	use std::sync::{
+		Arc, Mutex,
+		atomic::{AtomicUsize, Ordering},
+	};
+
+	use async_trait::async_trait;
+	use futures::{
+		channel::mpsc,
+		stream::{BoxStream, StreamExt},
+	};
+	use serde_json::json;
+
+	use super::{StatementStoreRpc, is_no_allowance_rejection};
+	use crate::{
+		chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
+		platform::JsonRpcConnection,
+		test_support::{StubPlatform, test_spawner},
+	};
+
+	const PEOPLE_GENESIS: [u8; 32] = [0x11; 32];
+
+	/// What one People-chain connection does with the requests it receives.
+	#[derive(Clone, Copy)]
+	enum Upstream {
+		/// Closes as soon as a request arrives.
+		Drops,
+		/// Never answers.
+		Stalls,
+		/// Answers every submission with this status.
+		Answers(&'static str),
+	}
+
+	/// Chain whose n-th connection behaves as the n-th scripted [`Upstream`],
+	/// the last one repeating.
+	struct PeopleChain {
+		upstreams: Vec<Upstream>,
+		connects: AtomicUsize,
+		requests: Arc<AtomicUsize>,
+	}
+
+	impl PeopleChain {
+		fn new(upstreams: Vec<Upstream>) -> Arc<Self> {
+			Arc::new(Self { upstreams, connects: AtomicUsize::new(0), requests: Arc::default() })
+		}
+
+		fn connects(&self) -> usize {
+			self.connects.load(Ordering::SeqCst)
+		}
+
+		fn requests(&self) -> usize {
+			self.requests.load(Ordering::SeqCst)
+		}
+	}
+
+	#[async_trait]
+	impl RuntimeChainProvider for PeopleChain {
+		async fn connect(
+			&self,
+			_genesis_hash: Vec<u8>,
+		) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
+			let earlier_connects = self.connects.fetch_add(1, Ordering::SeqCst);
+			let upstream = self.upstreams[earlier_connects.min(self.upstreams.len() - 1)];
+			let (sender, receiver) = mpsc::unbounded();
+			Ok(Arc::new(PeopleChainConnection {
+				upstream,
+				requests: self.requests.clone(),
+				sender: Mutex::new(Some(sender)),
+				receiver: Mutex::new(Some(receiver)),
+			}))
+		}
+	}
+
+	struct PeopleChainConnection {
+		upstream: Upstream,
+		requests: Arc<AtomicUsize>,
+		sender: Mutex<Option<mpsc::UnboundedSender<String>>>,
+		receiver: Mutex<Option<mpsc::UnboundedReceiver<String>>>,
+	}
+
+	impl JsonRpcConnection for PeopleChainConnection {
+		fn send(&self, request: String) {
+			self.requests.fetch_add(1, Ordering::SeqCst);
+			let mut sender = self.sender.lock().unwrap();
+			let status = match self.upstream {
+				Upstream::Drops => {
+					sender.take();
+					return;
+				},
+				Upstream::Stalls => return,
+				Upstream::Answers(status) => status,
+			};
+			let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+			let response = json!({
+				"jsonrpc": "2.0",
+				"id": request["id"],
+				"result": { "status": status, "reason": "noAllowance" },
+			});
+			if let Some(sender) = sender.as_ref() {
+				let _ = sender.unbounded_send(response.to_string());
+			}
+		}
+
+		fn responses(&self) -> BoxStream<'static, String> {
+			self.receiver.lock().unwrap().take().unwrap().boxed()
+		}
+
+		fn close(&self) {
+			self.sender.lock().unwrap().take();
+		}
+	}
+
+	fn statement_store(chain: &Arc<PeopleChain>) -> StatementStoreRpc {
+		StatementStoreRpc::new(
+			Arc::new(StubPlatform::default()),
+			ChainRuntime::new(chain.clone(), test_spawner()),
+			PEOPLE_GENESIS,
+			test_spawner(),
+		)
+	}
+
+	/// A product sends one statement per chat message, so a connection per
+	/// submit puts a WebSocket handshake in front of every message.
+	#[test]
+	fn consecutive_submits_share_one_connection() {
+		let chain = PeopleChain::new(vec![Upstream::Answers("new")]);
+		let statement_store = statement_store(&chain);
+
+		futures::executor::block_on(async {
+			statement_store.submit(vec![1], "first").await.unwrap();
+			statement_store.submit(vec![2], "second").await.unwrap();
+		});
+
+		assert_eq!(chain.connects(), 1);
+	}
+
+	/// A kept-open connection can drop between messages. The statement that
+	/// finds it closed must still go out, over a fresh connection.
+	#[test]
+	fn a_submit_whose_connection_drops_is_resent_over_a_fresh_one() {
+		let chain = PeopleChain::new(vec![Upstream::Drops, Upstream::Answers("new")]);
+		let statement_store = statement_store(&chain);
+
+		let result = futures::executor::block_on(statement_store.submit(vec![1], "submit"));
+
+		assert_eq!((result, chain.connects()), (Ok(()), 2));
+	}
+
+	/// A socket that died without closing never ends its stream, so only the
+	/// timeout can tell. The submit must not wait on it forever.
+	#[test]
+	fn a_submit_on_a_stalled_connection_is_resent_over_a_fresh_one() {
+		let chain = PeopleChain::new(vec![Upstream::Stalls, Upstream::Answers("new")]);
+		let statement_store = statement_store(&chain);
+
+		let result = futures::executor::block_on(statement_store.submit(vec![1], "submit"));
+
+		assert_eq!((result, chain.connects()), (Ok(()), 2));
+	}
+
+	/// The resend is bounded: a chain that keeps dropping fails the submit
+	/// after one fresh connection instead of dialling forever.
+	#[test]
+	fn a_submit_is_resent_only_once() {
+		let chain = PeopleChain::new(vec![Upstream::Drops]);
+		let statement_store = statement_store(&chain);
+
+		let result = futures::executor::block_on(statement_store.submit(vec![1], "submit"));
+
+		assert_eq!((result.is_err(), chain.connects()), (true, 2));
+	}
+
+	/// A rejection is the store's answer, not a transport failure. Resending
+	/// the statement would only repeat the rejection.
+	#[test]
+	fn a_rejected_submit_is_not_resent() {
+		let chain = PeopleChain::new(vec![Upstream::Answers("rejected")]);
+		let statement_store = statement_store(&chain);
+
+		let result = futures::executor::block_on(statement_store.submit(vec![1], "submit"));
+
+		assert_eq!((result.is_err(), chain.requests()), (true, 1));
+	}
+
+	/// SSO statements carry pairing and responses, so a dropped pooled
+	/// connection must not lose one either.
+	#[test]
+	fn an_sso_submit_survives_a_dropped_connection() {
+		let chain = PeopleChain::new(vec![Upstream::Drops, Upstream::Answers("new")]);
+		let statement_store = statement_store(&chain);
+
+		let result = futures::executor::block_on(statement_store.submit_sso(vec![1], "sso"));
+
+		assert_eq!((result, chain.connects()), (Ok(()), 2));
+	}
 
 	#[test]
 	fn identifies_no_allowance_submit_rejections() {
