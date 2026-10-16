@@ -50,7 +50,6 @@ impl ProductRuntimeHost {
 	/// cannot hold back the withdrawn call's answer.
 	async fn stop_withdrawn_broadcast(&self, genesis_hash: Vec<u8>, operation_id: String) {
 		let stop = self
-			.services
 			.chain
 			.remote_chain_transaction_stop(latest::RemoteChainTransactionStopRequest {
 				genesis_hash,
@@ -82,12 +81,12 @@ impl Chain for ProductRuntimeHost {
 		let inner = request.into_latest();
 		let follow_subscription_id = self.follow_id(cx.request_id());
 		let stream =
-			self.services.chain.remote_chain_head_follow(follow_subscription_id, inner).map(
-				move |item| {
+			self.chain
+				.remote_chain_head_follow(follow_subscription_id, inner)
+				.map(move |item| {
 					item.map(|value| RemoteChainHeadFollowItem::from_latest(value, version))
 						.map_err(runtime_failure_to_call_error)
-				},
-			);
+				});
 		Subscription::new(stream)
 	}
 
@@ -100,8 +99,7 @@ impl Chain for ProductRuntimeHost {
 		let version = request.version();
 		let mut inner = request.into_latest();
 		inner.follow_subscription_id = self.follow_id(&inner.follow_subscription_id);
-		self.services
-			.chain
+		self.chain
 			.remote_chain_head_header(inner)
 			.await
 			.map(|value| RemoteChainHeadHeaderResponse::from_latest(value, version))
@@ -117,8 +115,7 @@ impl Chain for ProductRuntimeHost {
 		let version = request.version();
 		let mut inner = request.into_latest();
 		inner.follow_subscription_id = self.follow_id(&inner.follow_subscription_id);
-		self.services
-			.chain
+		self.chain
 			.remote_chain_head_body(inner)
 			.await
 			.map(|value| RemoteChainHeadBodyResponse::from_latest(value, version))
@@ -134,8 +131,7 @@ impl Chain for ProductRuntimeHost {
 		let version = request.version();
 		let mut inner = request.into_latest();
 		inner.follow_subscription_id = self.follow_id(&inner.follow_subscription_id);
-		self.services
-			.chain
+		self.chain
 			.remote_chain_head_storage(inner)
 			.await
 			.map(|value| RemoteChainHeadStorageResponse::from_latest(value, version))
@@ -151,8 +147,7 @@ impl Chain for ProductRuntimeHost {
 		let version = request.version();
 		let mut inner = request.into_latest();
 		inner.follow_subscription_id = self.follow_id(&inner.follow_subscription_id);
-		self.services
-			.chain
+		self.chain
 			.remote_chain_head_call(inner)
 			.await
 			.map(|value| RemoteChainHeadCallResponse::from_latest(value, version))
@@ -168,8 +163,7 @@ impl Chain for ProductRuntimeHost {
 		let version = request.version();
 		let mut inner = request.into_latest();
 		inner.follow_subscription_id = self.follow_id(&inner.follow_subscription_id);
-		self.services
-			.chain
+		self.chain
 			.remote_chain_head_unpin(inner)
 			.await
 			.map(|()| RemoteChainHeadUnpinResponse::from_latest((), version))
@@ -185,8 +179,7 @@ impl Chain for ProductRuntimeHost {
 		let version = request.version();
 		let mut inner = request.into_latest();
 		inner.follow_subscription_id = self.follow_id(&inner.follow_subscription_id);
-		self.services
-			.chain
+		self.chain
 			.remote_chain_head_continue(inner)
 			.await
 			.map(|()| RemoteChainHeadContinueResponse::from_latest((), version))
@@ -203,8 +196,7 @@ impl Chain for ProductRuntimeHost {
 		let version = request.version();
 		let mut inner = request.into_latest();
 		inner.follow_subscription_id = self.follow_id(&inner.follow_subscription_id);
-		self.services
-			.chain
+		self.chain
 			.remote_chain_head_stop_operation(inner)
 			.await
 			.map(|()| RemoteChainHeadStopOperationResponse::from_latest((), version))
@@ -219,8 +211,7 @@ impl Chain for ProductRuntimeHost {
 	) -> Result<RemoteChainSpecGenesisHashResponse, CallError<RemoteChainSpecGenesisHashError>> {
 		let version = request.version();
 		let inner = request.into_latest();
-		self.services
-			.chain
+		self.chain
 			.remote_chain_spec_genesis_hash(inner.genesis_hash)
 			.await
 			.map(|value| RemoteChainSpecGenesisHashResponse::from_latest(value, version))
@@ -235,8 +226,7 @@ impl Chain for ProductRuntimeHost {
 	) -> Result<RemoteChainSpecChainNameResponse, CallError<RemoteChainSpecChainNameError>> {
 		let version = request.version();
 		let inner = request.into_latest();
-		self.services
-			.chain
+		self.chain
 			.remote_chain_spec_chain_name(inner.genesis_hash)
 			.await
 			.map(|value| RemoteChainSpecChainNameResponse::from_latest(value, version))
@@ -251,8 +241,7 @@ impl Chain for ProductRuntimeHost {
 	) -> Result<RemoteChainSpecPropertiesResponse, CallError<RemoteChainSpecPropertiesError>> {
 		let version = request.version();
 		let inner = request.into_latest();
-		self.services
-			.chain
+		self.chain
 			.remote_chain_spec_properties(inner.genesis_hash)
 			.await
 			.map(|value| RemoteChainSpecPropertiesResponse::from_latest(value, version))
@@ -282,7 +271,6 @@ impl Chain for ProductRuntimeHost {
 		}
 		let genesis_hash = inner.genesis_hash.clone();
 		let response = self
-			.services
 			.chain
 			.remote_chain_transaction_broadcast(inner)
 			.await
@@ -309,8 +297,7 @@ impl Chain for ProductRuntimeHost {
 		// ChainRuntime resolves this product-visible host handle to the
 		// provider's short-lived operation id and makes stopping an operation
 		// that completed between broadcast and stop idempotent.
-		self.services
-			.chain
+		self.chain
 			.remote_chain_transaction_stop(inner)
 			.await
 			.map(|()| RemoteChainTransactionStopResponse::from_latest((), version))
