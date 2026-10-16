@@ -11,6 +11,7 @@ import TrUAPIHost
 final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
     private let subject = AsyncCurrentValueSubject<[ProductId: TrUAPIProductExecutionProtocol]>([:])
     private let openContexts = OSAllocatedUnfairLock<[ProductId: ProductWorkerContext]>(initialState: [:])
+    /// Long by default so a loaded runner never trips it; tests about a worker that never comes up pass a short one.
     private let startupWindow: Duration
     private let entered = AsyncStream<Void>.makeStream()
     private let gate = AsyncStream<Void>.makeStream()
@@ -24,7 +25,7 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
 
     private(set) var demands: [(productId: ProductId, transition: WorkerTransition)] = []
 
-    init(references: StubWorkerReferences = StubWorkerReferences(), startupWindow: Duration = .seconds(1)) {
+    init(references: StubWorkerReferences = StubWorkerReferences(), startupWindow: Duration = .seconds(10)) {
         let (delivered, continuation) = AsyncStream.makeStream(of: Void.self)
         deliveredSignal = continuation
         deliveredSignals = delivered.makeAsyncIterator()
