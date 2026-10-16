@@ -15,6 +15,7 @@ TrUAPI (Triangle User-Agent Programming Interface) is the API surface that hosts
 
 - [TrUAPI reference](https://docs.polkadot.com/reference/apps/protocol/truapi/)
 - [Rust API reference](https://paritytech.github.io/trinity-user-agents/)
+- [Building the iOS and Android apps](docs/mobile-builds.md)
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
 
@@ -468,6 +469,8 @@ pull requests in it, and what has to be done to finish the work. Completing that
 pull request means running the command above and deleting the file.
 
 ### Working on the iOS host
+
+[docs/mobile-builds.md](docs/mobile-builds.md) is the short version of this section and the ones after it: which label builds what, and when the nightlies run.
 
 `hosts/ios/` is the iOS app, and it resolves the core from this tree rather than
 from a published version. The core's bindings, xcframework and FFI headers are
