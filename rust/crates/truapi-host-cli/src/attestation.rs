@@ -21,7 +21,7 @@ use std::{collections::BTreeSet, sync::Mutex};
 use subxt_rpcs::client::RpcClient;
 use tracing::{debug, warn};
 use truapi::host_logic::{
-	attestation::{RegistrationSignatureForms, account_signature_form, build_lite_registration},
+	attestation::{build_lite_registration, signing_context_for},
 	dotns_gateway::{MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_registrable_full_label},
 	product_account::{
 		SR25519_SIGNING_CONTEXT, derive_identity_keypair, derive_root_keypair_from_entropy,
@@ -319,7 +319,8 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 		}
 	}
 
-	let signature_forms = registration_signature_forms(config, &reader).await?;
+	let (people_signing_context, asset_hub_signing_context) =
+		registration_signing_contexts(config, &reader).await?;
 	let verifier = fetch_verifier(&client, &config.backend_base).await?;
 	let registration = build_lite_registration(
 		&config.entropy,
@@ -328,7 +329,8 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 		&config.username_base,
 		config.reserved_username.as_deref(),
 		signed_at,
-		signature_forms,
+		people_signing_context,
+		asset_hub_signing_context,
 	)
 	.map_err(|reason| anyhow::anyhow!("failed to build registration params: {reason}"))?;
 	debug!(
@@ -344,13 +346,14 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 	identity.lite_username.context("registered dotNS identity has no lite username")
 }
 
-/// The forms the registration signatures take. Each follows the runtime of the
-/// chain that checks it: People for the candidate and consumer registration
-/// signatures, Asset Hub for the dotNS reservation signature.
-async fn registration_signature_forms(
+/// The People and Asset Hub signing contexts the registration signatures go
+/// in. Each follows the runtime of the chain that checks it: People for the
+/// candidate and consumer registration signatures, Asset Hub for the dotNS
+/// reservation signature.
+async fn registration_signing_contexts(
 	config: &AttestConfig,
 	reader: &AssetHubReader,
-) -> Result<RegistrationSignatureForms> {
+) -> Result<(Option<[u8; 32]>, Option<[u8; 32]>)> {
 	let people = RpcClient::from_insecure_url(&config.people_ws)
 		.await
 		.with_context(|| format!("connect {}", config.people_ws))?;
@@ -358,14 +361,10 @@ async fn registration_signature_forms(
 		runtime_version(&people).await.context("read People runtime version")?;
 	let (asset_hub_name, asset_hub_version) =
 		reader.runtime_version().await.context("read Asset Hub runtime version")?;
-	Ok(RegistrationSignatureForms {
-		people: account_signature_form(&people_name, people_version, &config.network_suffix),
-		asset_hub: account_signature_form(
-			&asset_hub_name,
-			asset_hub_version,
-			&config.network_suffix,
-		),
-	})
+	Ok((
+		signing_context_for(&people_name, people_version, &config.network_suffix),
+		signing_context_for(&asset_hub_name, asset_hub_version, &config.network_suffix),
+	))
 }
 
 /// Resolves the on-chain lite username for an already-attested signer: the
@@ -729,12 +728,9 @@ mod tests {
 		let server = tokio::spawn(serve_candidate_bound_registration(listener));
 
 		let entropy = [7u8; 16];
-		let plain = RegistrationSignatureForms {
-			people: truapi::host_logic::attestation::AccountSignatureForm::Plain,
-			asset_hub: truapi::host_logic::attestation::AccountSignatureForm::Plain,
-		};
-		let registration =
-			build_lite_registration(&entropy, "paseo", [9u8; 32], "testing", None, 123, plain)?;
+		let registration = build_lite_registration(
+			&entropy, "paseo", [9u8; 32], "testing", None, 123, None, None,
+		)?;
 		let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
 		let config = AttestConfig {
 			backend_base: backend_base.clone(),

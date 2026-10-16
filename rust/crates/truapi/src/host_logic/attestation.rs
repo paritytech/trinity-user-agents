@@ -8,8 +8,8 @@
 //!
 //! Individuality runtimes above spec version 3004000 check the account
 //! signatures over the personhood signing context followed by the message,
-//! and earlier ones over the message alone. [`account_signature_form`] picks
-//! the form from the verifying chain's runtime version. The ring-VRF proof
+//! and earlier ones over the message alone. [`signing_context_for`] picks the
+//! context from the verifying chain's runtime version. The ring-VRF proof
 //! always signs the message alone.
 //!
 //! Byte layout mirrors signing-bot `src/core/attestation.ts` for backend
@@ -49,50 +49,27 @@ const LAST_PLAIN_SPEC_VERSION: u32 = 3_004_000;
 /// The individuality runtimes that verify the registration signatures.
 const INDIVIDUALITY_SPEC_NAMES: [&str; 2] = ["next-people-paseo", "next-asset-hub-paseo"];
 
-/// The message form a runtime accepts for an account signature over a
-/// non-transaction message.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AccountSignatureForm {
-	/// The message alone.
-	Plain,
-	/// The personhood signing context followed by the message.
-	InContext([u8; 32]),
-}
-
-impl AccountSignatureForm {
-	/// Returns the bytes the account signs for `message` in this form.
-	pub fn signed_bytes(&self, message: &[u8]) -> Vec<u8> {
-		match self {
-			Self::Plain => message.to_vec(),
-			Self::InContext(context) => [context.as_slice(), message].concat(),
-		}
-	}
-}
-
-/// The signature forms of the two chains that check a registration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RegistrationSignatureForms {
-	/// The People runtime's form, for the candidate and consumer registration
-	/// signatures.
-	pub people: AccountSignatureForm,
-	/// The Asset Hub runtime's form, for the dotNS reservation signature.
-	pub asset_hub: AccountSignatureForm,
-}
-
-/// The form a runtime with `spec_name` and `spec_version` accepts for a
-/// personhood account signature on the network with `network_suffix`.
+/// The personhood signing context a runtime with `spec_name` and
+/// `spec_version` checks account signatures in, on the network with
+/// `network_suffix`. `None` means the message alone.
 ///
-/// Individuality runtimes above spec version 3004000 use the personhood
-/// signing context. Earlier versions and other runtimes use the message alone.
-pub fn account_signature_form(
+/// Individuality runtimes above spec version 3004000 use the context. Earlier
+/// versions and other runtimes do not.
+pub fn signing_context_for(
 	spec_name: &str,
 	spec_version: u32,
 	network_suffix: &str,
-) -> AccountSignatureForm {
-	if INDIVIDUALITY_SPEC_NAMES.contains(&spec_name) && spec_version > LAST_PLAIN_SPEC_VERSION {
-		AccountSignatureForm::InContext(signing_context(&personhood_product_id(network_suffix)))
-	} else {
-		AccountSignatureForm::Plain
+) -> Option<[u8; 32]> {
+	(INDIVIDUALITY_SPEC_NAMES.contains(&spec_name) && spec_version > LAST_PLAIN_SPEC_VERSION)
+		.then(|| signing_context(&personhood_product_id(network_suffix)))
+}
+
+/// The bytes an account signs for `message`: `context` followed by `message`,
+/// or `message` alone.
+fn signed_bytes(context: Option<[u8; 32]>, message: &[u8]) -> Vec<u8> {
+	match context {
+		Some(context) => [context.as_slice(), message].concat(),
+		None => message.to_vec(),
 	}
 }
 
@@ -115,8 +92,8 @@ pub struct LiteRegistration {
 	pub candidate_account_id: String,
 	/// Raw 32-byte candidate public key (the account the username is recorded for).
 	pub candidate_public_key: [u8; 32],
-	/// sr25519 signature over `prefix ‖ candidate_pub ‖ ring_vrf_key` in the
-	/// People form.
+	/// sr25519 signature over `prefix ‖ candidate_pub ‖ ring_vrf_key`, after
+	/// the People signing context if any.
 	pub candidate_signature: [u8; 64],
 	/// Bandersnatch ring-VRF member key.
 	pub ring_vrf_key: [u8; 32],
@@ -125,12 +102,12 @@ pub struct LiteRegistration {
 	/// 65-byte CHAT-RFC-0004 identifier key: the `0x00` X25519 type byte, the
 	/// 32-byte public key, then 32 zero bytes. It doubles as the dotNS chat key.
 	pub identifier_key: [u8; 65],
-	/// sr25519 signature over the SCALE consumer-registration tuple in the
-	/// People form.
+	/// sr25519 signature over the SCALE consumer-registration tuple, after the
+	/// People signing context if any.
 	pub consumer_registration_signature: [u8; 64],
-	/// sr25519 signature over the dotNS gateway reservation message in the
-	/// Asset Hub form. It authorizes `pallet_dotns_gateway::reserve_name` on
-	/// Asset Hub.
+	/// sr25519 signature over the dotNS gateway reservation message, after the
+	/// Asset Hub signing context if any. It authorizes
+	/// `pallet_dotns_gateway::reserve_name` on Asset Hub.
 	pub dotns_signature: [u8; 64],
 }
 
@@ -155,8 +132,9 @@ pub enum LiteRegistrationError {
 /// claim on dotNS. `dotns_signed_at_secs` must be Asset Hub chain time, meaning
 /// `Timestamp.Now` in seconds. The local wall clock will not do: the gateway
 /// rejects signatures more than 30 seconds in the chain's future.
-/// `signature_forms` are the forms the People and Asset Hub runtimes accept,
-/// from [`account_signature_form`].
+/// `people_signing_context` and `asset_hub_signing_context` come from
+/// [`signing_context_for`] on each chain.
+#[allow(clippy::too_many_arguments)]
 pub fn build_lite_registration(
 	entropy: &[u8],
 	network_suffix: &str,
@@ -164,7 +142,8 @@ pub fn build_lite_registration(
 	username_base: &str,
 	reserved_username: Option<&str>,
 	dotns_signed_at_secs: u64,
-	signature_forms: RegistrationSignatureForms,
+	people_signing_context: Option<[u8; 32]>,
+	asset_hub_signing_context: Option<[u8; 32]>,
 ) -> Result<LiteRegistration, LiteRegistrationError> {
 	// Registration, local activation, and the SSO responder all use the
 	// RFC-0022 `uid.<suffix>` default product account.
@@ -184,7 +163,7 @@ pub fn build_lite_registration(
 		.secret
 		.sign_simple(
 			SR25519_SIGNING_CONTEXT,
-			&signature_forms.people.signed_bytes(&proof_message),
+			&signed_bytes(people_signing_context, &proof_message),
 			&candidate.public,
 		)
 		.to_bytes();
@@ -205,7 +184,7 @@ pub fn build_lite_registration(
 		.secret
 		.sign_simple(
 			SR25519_SIGNING_CONTEXT,
-			&signature_forms.people.signed_bytes(&consumer_message),
+			&signed_bytes(people_signing_context, &consumer_message),
 			&candidate.public,
 		)
 		.to_bytes();
@@ -222,7 +201,7 @@ pub fn build_lite_registration(
 		.secret
 		.sign_simple(
 			SR25519_SIGNING_CONTEXT,
-			&signature_forms.asset_hub.signed_bytes(&reservation_message),
+			&signed_bytes(asset_hub_signing_context, &reservation_message),
 			&candidate.public,
 		)
 		.to_bytes();
@@ -260,10 +239,6 @@ mod tests {
 
 	const ENTROPY: [u8; 16] = [0xAB; 16];
 	const NETWORK_SUFFIX: &str = "paseo";
-	const PLAIN: RegistrationSignatureForms = RegistrationSignatureForms {
-		people: AccountSignatureForm::Plain,
-		asset_hub: AccountSignatureForm::Plain,
-	};
 
 	#[test]
 	fn registration_params_have_expected_shapes_and_verify() {
@@ -275,7 +250,8 @@ mod tests {
 			"headlesstester",
 			None,
 			1_749_573_123,
-			PLAIN,
+			None,
+			None,
 		)
 		.unwrap();
 		assert_eq!(
@@ -380,7 +356,8 @@ mod tests {
 			"headlesstester",
 			Some("reservedbase"),
 			77,
-			PLAIN,
+			None,
+			None,
 		)
 		.unwrap();
 		let public = PublicKey::from_bytes(&reg.candidate_public_key).unwrap();
@@ -452,7 +429,8 @@ mod tests {
 			"aliceheadless",
 			None,
 			1,
-			PLAIN,
+			None,
+			None,
 		)
 		.unwrap();
 		let again = build_lite_registration(
@@ -462,7 +440,8 @@ mod tests {
 			"aliceheadless",
 			None,
 			1,
-			PLAIN,
+			None,
+			None,
 		)
 		.unwrap();
 		assert_eq!(first.candidate_public_key, again.candidate_public_key);
@@ -484,10 +463,8 @@ mod tests {
 			"headlesstester",
 			None,
 			9,
-			RegistrationSignatureForms {
-				people: AccountSignatureForm::InContext(people),
-				asset_hub: AccountSignatureForm::InContext(asset_hub),
-			},
+			Some(people),
+			Some(asset_hub),
 		)
 		.unwrap();
 		let public = PublicKey::from_bytes(&reg.candidate_public_key).unwrap();
@@ -541,25 +518,13 @@ mod tests {
 	}
 
 	#[test]
-	fn signature_form_follows_the_individuality_spec_version() {
+	fn signing_context_follows_the_individuality_spec_version() {
 		let context = signing_context(&personhood_product_id("paseo"));
 
-		assert_eq!(
-			account_signature_form("next-people-paseo", 3_004_000, "paseo"),
-			AccountSignatureForm::Plain
-		);
-		assert_eq!(
-			account_signature_form("next-people-paseo", 3_004_001, "paseo"),
-			AccountSignatureForm::InContext(context)
-		);
-		assert_eq!(
-			account_signature_form("next-asset-hub-paseo", 3_004_001, "paseo"),
-			AccountSignatureForm::InContext(context)
-		);
+		assert_eq!(signing_context_for("next-people-paseo", 3_004_000, "paseo"), None);
+		assert_eq!(signing_context_for("next-people-paseo", 3_004_001, "paseo"), Some(context));
+		assert_eq!(signing_context_for("next-asset-hub-paseo", 3_004_001, "paseo"), Some(context));
 		// Other runtimes keep the plain message whatever their version.
-		assert_eq!(
-			account_signature_form("people-paseo", 9_000_000, "paseo"),
-			AccountSignatureForm::Plain
-		);
+		assert_eq!(signing_context_for("people-paseo", 9_000_000, "paseo"), None);
 	}
 }
