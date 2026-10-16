@@ -172,6 +172,15 @@
       }
     },
     {
+      "expect": "ok",
+      "file": "documents/sequence-at-maximum.json",
+      "name": "sequence-at-maximum",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
       "expect": "malformed",
       "file": "documents/sequence-with-fraction.json",
       "name": "sequence-with-fraction",

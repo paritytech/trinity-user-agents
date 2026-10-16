@@ -201,7 +201,8 @@ schemes.
 - Each chain `role`, each service `kind` and each `Asset.role` MUST appear at most once. A descriptor MUST have exactly
   one `Relay` chain, and `paraId` values MUST be unique. `Asset.chain` and `coinage.chain` MUST name a role present in
   `chains`. Chain roles are those of [RFC 0026](0026-supported-chains.md), plus others such as `Web3Storage`.
-- `sequence` MUST be an integer from 0 to 2^53 - 1. Times are RFC 3339 in UTC, ending in `Z`.
+- `sequence` MUST be an integer from 0 to 2^32 - 1, which holds a publish time in seconds until 2106. Times are RFC 3339
+  in UTC, ending in `Z`.
 - Hex values MUST be 0x-prefixed and lowercase. Genesis hashes, block hashes, SHA-256 digests and keys are 32 bytes,
   signatures 64 bytes, and `contracts` addresses are 20-byte Asset Hub contract addresses.
 - When `fork` is set, every chain MUST have `forkedAt`, and no chain may have it otherwise. `fork.of` follows the same
