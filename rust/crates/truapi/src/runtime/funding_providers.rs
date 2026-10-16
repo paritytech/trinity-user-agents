@@ -358,6 +358,11 @@ fn offered_providers(
 			.map_err(|reason| FundingSessionError::InvalidProvider {
 				reason: format!("{product_id}: {reason}"),
 			})?;
+		if entry.origin == FundingProviderOrigin::Bundled && snapshot.is_none() {
+			return Err(FundingSessionError::InvalidProvider {
+				reason: format!("{product_id}: a bundled provider needs its manifest"),
+			});
+		}
 		if offered.iter().all(|kept| kept.product_id != product_id) {
 			offered.push(OfferedProvider { product_id, snapshot, origin: entry.origin });
 		}

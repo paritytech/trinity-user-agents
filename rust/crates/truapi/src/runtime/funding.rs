@@ -111,6 +111,12 @@ pub struct FundingRegistry {
 	services: Weak<RuntimeServices>,
 }
 
+/// Whether a provider still works on `session`: it serves it, or still owes
+/// the user for it.
+fn provider_works_on(session: &FundingSession) -> bool {
+	session.provider_id.is_some() && session.serves_provider()
+}
+
 impl FundingRegistry {
 	/// Install the host's funding surface. Set-once; returns whether this call
 	/// installed it.
@@ -299,9 +305,8 @@ impl FundingRegistry {
 					((!session.is_terminal() && session.direction == direction) ||
 						(direction == FundingDirection::In && session.awaits_refund()))
 			};
-			let asks = |session: &FundingSession| match session.stage {
-				crate::host_logic::funding::FundingStage::Released { debited, .. } => debited,
-				_ => session.amount.unwrap_or_default(),
+			let asks = |session: &FundingSession| {
+				session.refund_due().or(session.amount).unwrap_or_default()
 			};
 			let matching: Vec<String> = sessions
 				.values()
@@ -376,9 +381,21 @@ impl FundingRegistry {
 	/// Whether a provider still works on any session: one in flight, or a
 	/// withdrawal whose payout or refund it has not reported.
 	pub fn in_progress(&self) -> bool {
-		self.lock_sessions()
-			.values()
-			.any(|session| session.provider_id.is_some() && session.serves_provider())
+		self.lock_sessions().values().any(provider_works_on)
+	}
+
+	/// [`Self::in_progress`], reading storage when the sessions are not
+	/// loaded yet. It writes nothing back and starts nothing.
+	pub async fn in_progress_stored(
+		&self,
+		storage: &(impl CoreStorage + ?Sized),
+	) -> Result<bool, FundingSessionError> {
+		let loaded = self.writes.lock().await;
+		if *loaded {
+			return Ok(self.in_progress());
+		}
+		drop(loaded);
+		Ok(load_sessions(storage).await?.iter().any(provider_works_on))
 	}
 
 	/// Every session the user started that the core keeps, for the host's
@@ -1038,9 +1055,7 @@ impl RuntimeServices {
 	/// sessions are loaded: a host asking at launch, before funding resumes,
 	/// gets the answer from storage rather than an empty registry.
 	pub async fn funding_in_progress(&self) -> Result<bool, FundingSessionError> {
-		let registry = self.funding();
-		registry.sweep(self.platform.as_ref(), current_unix_millis()).await?;
-		Ok(registry.in_progress())
+		self.funding().in_progress_stored(self.platform.as_ref()).await
 	}
 
 	/// Record that the host wrote ended session `intent` into its own

@@ -354,7 +354,9 @@ export interface FundingPresentation {
 export interface FundingQuoteList {
   /**
    * The request this list answers, as `request_funding_quotes` returned
-   * it. A host shows only the lists of its latest request.
+   * it. Ids only grow, and a list can reach the host before the call that
+   * returns its id does, so a host shows a list only when its id is at
+   * least the latest it has seen, and drops the rest.
    */
   requestId: bigint;
 

@@ -936,7 +936,10 @@ impl SigningHostRuntime {
 					},
 				)
 			})
-			.unwrap_or_default()
+			.unwrap_or(crate::host_logic::funding_providers::FundingAmountLimits {
+				min: Some(crate::host_logic::funding_providers::FUNDING_MIN_AMOUNT),
+				max: None,
+			})
 	}
 
 	/// The country the host detected for the user, which quotes go by until

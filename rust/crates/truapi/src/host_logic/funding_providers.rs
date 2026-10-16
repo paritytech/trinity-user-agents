@@ -344,6 +344,11 @@ pub fn amount_limits(
 				support.country.as_deref() == scope.country &&
 				support.is_fresh(now_ms)
 		});
+		// A provider that refused the scope outright cannot fund it, so it
+		// does not widen the range.
+		if record.is_some_and(|support| !support.supported) {
+			continue;
+		}
 		mins.push(record.and_then(|support| LearnedLimit::fresh(support.min, now_ms)));
 		maxes.push(record.and_then(|support| LearnedLimit::fresh(support.max, now_ms)));
 	}

@@ -834,11 +834,14 @@ impl FundingSession {
 			return Err(HostFundingReportError::NotFound);
 		}
 		if let FundingUpdate::Refunding { top_up_id, amount } = &update {
-			let over_debit = matches!(
-				self.stage,
-				FundingStage::Released { debited, .. } if *amount > debited
-			);
-			if !self.awaits_refund() || over_debit {
+			// A cancel the user accepted is refunded on its terms; a failed
+			// payout up to what was debited.
+			let fits = match (&self.cancel, &self.stage) {
+				(Some(FundingCancel::Accepted { refund, .. }), _) => *amount == *refund,
+				(_, FundingStage::Released { debited, .. }) => *amount <= *debited,
+				_ => false,
+			};
+			if !self.awaits_refund() || !fits {
 				return Err(HostFundingReportError::OutOfOrder);
 			}
 			let named = host_id(top_up_id);
@@ -855,11 +858,18 @@ impl FundingSession {
 				.updates
 				.iter()
 				.any(|record| matches!(record.update, FundingUpdate::Converting));
+			// A payout that lands although the user accepted a cancel won the
+			// race: the session ends as paid out. Anything else on the way to
+			// a payout is refused once the cancel was accepted.
+			let lands = matches!(update, FundingUpdate::Payout { .. });
 			if self.payout().is_some() ||
-				self.cancel_accepted() ||
+				(self.cancel_accepted() && !lands) ||
 				(matches!(update, FundingUpdate::Converting) && converting)
 			{
 				return Err(HostFundingReportError::OutOfOrder);
+			}
+			if matches!(update, FundingUpdate::Payout { outcome: FundingPayout::PaidOut }) {
+				self.cancel = None;
 			}
 		}
 		self.updates.push(FundingUpdateRecord { update, at_ms: now_ms });
@@ -895,6 +905,18 @@ impl FundingSession {
 			self.refund.is_none() &&
 			(matches!(self.payout(), Some(FundingPayout::Failed { .. })) ||
 				self.cancel_accepted())
+	}
+
+	/// What a refund top-up for this released withdrawal moves: the refund
+	/// of a cancel the user accepted, otherwise what was debited.
+	pub fn refund_due(&self) -> Option<u128> {
+		match (&self.cancel, &self.stage) {
+			(Some(FundingCancel::Accepted { refund, .. }), FundingStage::Released { .. }) => {
+				Some(*refund)
+			},
+			(_, FundingStage::Released { debited, .. }) => Some(*debited),
+			_ => None,
+		}
 	}
 
 	/// Whether the user accepted the provider's cancel offer.
@@ -1103,7 +1125,12 @@ impl FundingSession {
 	/// never ends the session itself. An inbound session whose credit
 	/// started is too late to cancel.
 	pub fn cancel(&mut self, now_ms: u64) -> CancelOutcome {
-		if !self.serves_provider() {
+		// A withdrawal whose payout failed or whose refund was reported is
+		// owed its refund in full, so there is nothing left to cancel.
+		if !self.serves_provider() ||
+			matches!(self.payout(), Some(FundingPayout::Failed { .. })) ||
+			self.refund.is_some()
+		{
 			return CancelOutcome::Refused;
 		}
 		if self.provider_id.is_none() {
@@ -1417,8 +1444,8 @@ impl<D> From<FundingSessionError> for crate::CallError<D> {
 
 /// The sessions worth keeping: every one its provider still has work on,
 /// then the ended ones the host has not recorded yet, newest first up to a
-/// fixed bound. The host owns the
-/// history; a session it has recorded is no longer kept.
+/// fixed bound. The host owns the history; a session it has recorded is no
+/// longer kept.
 pub fn retained(sessions: impl IntoIterator<Item = FundingSession>) -> Vec<FundingSession> {
 	let (mut open, mut unrecorded): (Vec<_>, Vec<_>) = sessions
 		.into_iter()
@@ -2075,6 +2102,82 @@ mod tests {
 		);
 	}
 
+	// A payout already in flight can land after the user accepted a cancel.
+	// The payout wins: the session ends paid out instead of waiting for a
+	// refund the provider can no longer make.
+	#[test]
+	fn a_payout_landing_after_an_accepted_cancel_ends_the_withdrawal() {
+		let mut released = served(FundingDirection::Out);
+		reported(&mut released, &[FundingUpdate::Collecting { payment_id: [3; 32], amount: 100 }]);
+		assert!(released.settle(100, NOW + 1));
+		released.cancel(NOW + 1);
+		released
+			.report(PROVIDER, offer(5, 95, None), |id| *id, NOW + 2)
+			.expect("offered");
+		released.confirm_cancel(Some(CancelTerms { fee: 5, refund: 95 }), NOW + 2);
+		let mut failed = released.clone();
+
+		let landed = released.report(
+			PROVIDER,
+			FundingUpdate::Payout { outcome: FundingPayout::PaidOut },
+			|id| *id,
+			NOW + 3,
+		);
+		let failed_payout = failed.report(
+			PROVIDER,
+			FundingUpdate::Payout { outcome: FundingPayout::Failed { reason: "bank".into() } },
+			|id| *id,
+			NOW + 3,
+		);
+
+		assert_eq!(
+			(
+				landed,
+				released.cancel.clone(),
+				released.awaits_provider(),
+				failed_payout,
+				failed.awaits_refund(),
+			),
+			(Ok(()), None, false, Ok(()), true)
+		);
+	}
+
+	// A refund after a failed payout is owed in full, so the user cannot be
+	// steered into a fee by cancelling then.
+	#[test]
+	fn no_cancel_once_a_refund_is_owed() {
+		let mut released = served(FundingDirection::Out);
+		reported(&mut released, &[FundingUpdate::Collecting { payment_id: [3; 32], amount: 100 }]);
+		assert!(released.settle(100, NOW + 1));
+		released
+			.report(
+				PROVIDER,
+				FundingUpdate::Payout { outcome: FundingPayout::Failed { reason: "bank".into() } },
+				|id| *id,
+				NOW + 2,
+			)
+			.expect("failed payout");
+
+		assert_eq!(released.cancel(NOW + 3), CancelOutcome::Refused);
+	}
+
+	// A refund top-up is sized by the refund the user accepted, not by the
+	// debit, so it is recorded on the withdrawal it pays back.
+	#[test]
+	fn the_refund_due_follows_the_accepted_terms() {
+		let mut released = served(FundingDirection::Out);
+		reported(&mut released, &[FundingUpdate::Collecting { payment_id: [3; 32], amount: 100 }]);
+		assert!(released.settle(100, NOW + 1));
+		let before = released.refund_due();
+		released.cancel(NOW + 1);
+		released
+			.report(PROVIDER, offer(5, 95, None), |id| *id, NOW + 2)
+			.expect("offered");
+		released.confirm_cancel(Some(CancelTerms { fee: 5, refund: 95 }), NOW + 2);
+
+		assert_eq!((before, released.refund_due()), (Some(100), Some(95)));
+	}
+
 	// A released withdrawal stays with its provider until it pays out, so
 	// the user can still cancel it: on terms the user accepts, the provider
 	// refunds the debit less its fee instead of paying out, and the session
@@ -2097,10 +2200,10 @@ mod tests {
 			|id| *id,
 			NOW + 3,
 		);
-		assert!(released.record_start([6; 32], 101));
-		let over_debit = released.clone().report(
+		assert!(released.record_start([6; 32], 90));
+		let off_terms = released.clone().report(
 			PROVIDER,
-			FundingUpdate::Refunding { top_up_id: [6; 32], amount: 101 },
+			FundingUpdate::Refunding { top_up_id: [6; 32], amount: 90 },
 			|id| *id,
 			NOW + 3,
 		);
@@ -2115,8 +2218,8 @@ mod tests {
 				offered,
 				answer,
 				cancelling,
-				paid_out,
-				over_debit,
+				paid_out.map(|()| ()),
+				off_terms,
 				named,
 				settled,
 				released.status(NOW + 4),
@@ -2127,7 +2230,7 @@ mod tests {
 				FundingStatus::CancelOffered { fee: 5, refund: 95 },
 				CancelConfirmation::Accepted,
 				FundingStatus::Cancelling,
-				Err(HostFundingReportError::OutOfOrder),
+				Ok(()),
 				Err(HostFundingReportError::OutOfOrder),
 				Ok(()),
 				true,
