@@ -1,5 +1,6 @@
 import UIKit
 import UIKitExt
+import DesignSystem
 
 @MainActor
 protocol WalletQRScanPresentable {
@@ -20,7 +21,7 @@ extension WalletQRScanPresentable {
                 backgroundColor: nil,
                 shadow: nil,
                 shadowColor: nil,
-                tintColor: .white100,
+                tintColor: .fgStaticWhite,
                 backImage: nil,
                 backgroundEffect: nil,
                 titleAttributes: nil,

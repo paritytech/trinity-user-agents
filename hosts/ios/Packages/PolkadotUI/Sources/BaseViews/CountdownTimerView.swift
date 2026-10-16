@@ -37,7 +37,7 @@ public struct CountdownTimerView: View {
                         lineJoin: .round
                     )
                 )
-                .foregroundStyle(Color(.white100))
+                .foregroundStyle(Color.fgStaticWhite)
                 .rotationEffect(.degrees(isSpinning ? 360 : 0))
                 .animation(
                     .easeInOut(duration: 1.0)
@@ -48,7 +48,7 @@ public struct CountdownTimerView: View {
             Text(.countdownSec(Int32(ceil(remainingTime))))
                 .typography(.paragraphSmall)
                 .monospacedDigit()
-                .foregroundStyle(Color(.white100))
+                .foregroundStyle(Color.fgStaticWhite)
                 .contentTransition(.numericText(countsDown: true))
         }
         .frame(width: size.width, height: size.height)
