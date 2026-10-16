@@ -4,7 +4,7 @@ use std::{path::Path, sync::Arc};
 
 use anyhow::{Context, Result};
 use truapi::{
-	HostAdmin, SigningHostRuntime, WasmEnv, WasmWorker,
+	HostAdmin, SigningHostRuntime, WasmEnv, WasmWorker, WorkerStop,
 	platform::{ProductContext, ProductExecutionKind},
 };
 
@@ -34,11 +34,14 @@ pub async fn run(
 /// surface shows the rooms of the worker. What a person does on the page
 /// reaches the worker through `chat.actionSubscribe()`, and the queries of the
 /// page, such as a page of a room the product keeps, reach its handlers.
+/// `stop` stops the worker; it then gets a short grace time to write what it
+/// holds in memory.
 pub async fn run_on_surface(
 	runtime: &SigningHostRuntime,
 	surface: &Arc<ChatSurface>,
 	product_id: &str,
 	path: &Path,
+	stop: WorkerStop,
 	log: impl Fn(&str) + Send + Sync + 'static,
 ) -> Result<()> {
 	let wasm = std::fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
@@ -48,7 +51,7 @@ pub async fn run_on_surface(
 	let product_runtime = Arc::new(product_runtime);
 	let chat: Arc<dyn ChatWorker> = product_runtime.clone();
 	let attachment = surface.attach_worker(&chat);
-	let outcome = worker.with_log(log).run().await;
+	let outcome = worker.with_stopper(stop).with_log(log).run().await;
 	drop(attachment);
 	product_runtime.dispose();
 	Ok(outcome?)
