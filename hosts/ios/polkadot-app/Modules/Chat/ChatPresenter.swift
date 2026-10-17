@@ -171,6 +171,21 @@ extension ChatPresenter: ChatInteractorOutputProtocol {
         productRoom?.mark("screen", "removed")
         wireframe.dismissChat(from: view)
     }
+
+    /// The user sees why, and finds the text in the input again, with its reply or its edit.
+    func didRefuseSend(_ refused: ChatRefusedSend) {
+        didRefuseUserAction(reason: refused.reason)
+
+        if let editedMessageId = refused.editedMessageId {
+            view?.showEdit(messageId: editedMessageId, currentText: refused.text)
+            return
+        }
+
+        if let replyToMessageId = refused.replyToMessageId {
+            handleReplyAction(for: replyToMessageId)
+        }
+        view?.restoreInput(text: refused.text)
+    }
 }
 
 private extension ChatPresenter {

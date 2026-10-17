@@ -796,6 +796,11 @@ public extension ChatViewLayout {
         focusTextField()
     }
 
+    /// Puts a refused text in the input again, so the user can change it and send it.
+    func restoreInputText(_ text: String) {
+        chatInputHostView.textInputInterface?.restoreText(text)
+    }
+
     func activateEdit(messageId: String, currentText: String) {
         clearReplyContext()
 

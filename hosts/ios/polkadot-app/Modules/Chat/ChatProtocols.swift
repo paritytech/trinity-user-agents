@@ -17,6 +17,8 @@ protocol ChatViewProtocol: ControllerBackedProtocol {
     func scrollToMessage(_ messageId: String)
     /// Shows why an action of the user did not happen.
     func showActionFailure(_ message: String)
+    /// Puts a refused text in the input again.
+    func restoreInput(text: String)
 }
 
 @MainActor
@@ -107,12 +109,29 @@ protocol ChatInteractorOutputProtocol: AnyObject {
 
     /// The product refused an action of the user. The reason is for the user, when the product gave one.
     func didRefuseUserAction(reason: String?)
+
+    /// The product refused a new message, a reply or an edit with this text. The text goes back into the input.
+    func didRefuseSend(_ refused: ChatRefusedSend)
 }
 
 extension ChatInteractorOutputProtocol {
     func didJump(to _: Chat.MessageId, found _: Bool) {}
 
     func didRefuseUserAction(reason _: String?) {}
+
+    func didRefuseSend(_ refused: ChatRefusedSend) {
+        didRefuseUserAction(reason: refused.reason)
+    }
+}
+
+/// A text that the product refused, with what the user did with it.
+struct ChatRefusedSend: Equatable {
+    let text: String
+    /// The message that the text replied to.
+    var replyToMessageId: String?
+    /// The message that the text edited.
+    var editedMessageId: String?
+    let reason: String?
 }
 
 @MainActor

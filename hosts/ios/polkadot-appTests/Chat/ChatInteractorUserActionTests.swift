@@ -40,13 +40,25 @@ struct ChatInteractorUserActionTests {
         #expect(await nextRefusal() == .refused(reason: "Not now"))
     }
 
-    @Test func aRefusedSendShowsTheReason() async {
+    /// A refused text goes back to the presenter with its reply, so it returns to the input (PARITY D2).
+    @Test func aRefusedSendGivesBackItsTextAndReply() async {
         engine.sendError = ChatUserActionRefusal(reason: "Too long")
         let interactor = makeInteractor()
 
-        interactor.send(text: "hello", attachments: nil, replyToMessageId: nil)
+        interactor.send(text: "hello", attachments: nil, replyToMessageId: "m1")
 
-        #expect(await nextRefusal() == .refused(reason: "Too long"))
+        let refused = ChatRefusedSend(text: "hello", replyToMessageId: "m1", reason: "Too long")
+        #expect(await nextRefusal() == .refusedSend(refused))
+    }
+
+    @Test func aRefusedEditGivesBackItsText() async {
+        engine.sendError = ChatUserActionRefusal(reason: "Too long")
+        let interactor = makeInteractor()
+
+        interactor.sendEdit(messageId: "m2", newText: "longer")
+
+        let refused = ChatRefusedSend(text: "longer", editedMessageId: "m2", reason: "Too long")
+        #expect(await nextRefusal() == .refusedSend(refused))
     }
 
     @Test func aRefusedDeleteShowsADefaultText() async {
@@ -134,8 +146,10 @@ private extension ChatInteractorUserActionTests {
 
     func nextRefusal() async -> RecordingChatInteractorOutput.Event? {
         for await event in output.events {
-            if case .refused = event {
-                return event
+            switch event {
+            case .refused,
+                 .refusedSend: return event
+            default: continue
             }
         }
         return nil

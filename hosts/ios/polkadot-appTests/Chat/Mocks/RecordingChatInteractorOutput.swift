@@ -15,6 +15,7 @@ final class RecordingChatInteractorOutput: ChatInteractorOutputProtocol {
         case removedChat
         case jumped(Chat.MessageId, found: Bool)
         case refused(reason: String?)
+        case refusedSend(ChatRefusedSend)
     }
 
     /// The last list model that the interactor gave.
@@ -38,6 +39,10 @@ final class RecordingChatInteractorOutput: ChatInteractorOutputProtocol {
 
     func didRefuseUserAction(reason: String?) {
         continuation.yield(.refused(reason: reason))
+    }
+
+    func didRefuseSend(_ refused: ChatRefusedSend) {
+        continuation.yield(.refusedSend(refused))
     }
 
     func didJump(to messageId: Chat.MessageId, found: Bool) {

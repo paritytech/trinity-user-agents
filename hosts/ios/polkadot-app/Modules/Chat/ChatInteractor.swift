@@ -170,6 +170,12 @@ extension ChatInteractor: ChatInteractorInputProtocol {
                 }
 
                 try await self.engine.sendUserMessage(with: content)
+            } catch let refusal as ChatUserActionRefusal where !(text ?? "").isEmpty {
+                await self.presenter?.didRefuseSend(ChatRefusedSend(
+                    text: text ?? "",
+                    replyToMessageId: replyToMessageId,
+                    reason: refusal.reason
+                ))
             } catch {
                 await self.report(error)
             }
@@ -308,6 +314,12 @@ extension ChatInteractor: ChatInteractorInputProtocol {
 
                 // Send to peer
                 try await engine.sendUserMessage(with: .edited(editedContent))
+            } catch let refusal as ChatUserActionRefusal {
+                await presenter?.didRefuseSend(ChatRefusedSend(
+                    text: newText,
+                    editedMessageId: messageId,
+                    reason: refusal.reason
+                ))
             } catch {
                 await report(error)
             }

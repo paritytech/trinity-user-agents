@@ -227,6 +227,10 @@ extension ChatProductInputView: ChatTextInputPresenting {
     func activateTextField() {
         input?.activateTextField()
     }
+
+    func restoreText(_ text: String) {
+        input?.restoreText(text)
+    }
 }
 
 extension ChatProductInputView: ChatInputReplyPresenting {

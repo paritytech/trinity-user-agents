@@ -151,6 +151,10 @@ extension ChatViewController: ChatViewProtocol {
         showToast(message: message, type: .error)
     }
 
+    func restoreInput(text: String) {
+        rootView.restoreInputText(text)
+    }
+
     func didReceive(callActions: [ChatCallType]) {
         navigationBarController.apply(callActions: callActions)
     }
