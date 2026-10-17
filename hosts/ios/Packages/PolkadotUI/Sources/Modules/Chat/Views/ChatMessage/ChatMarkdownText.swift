@@ -12,6 +12,8 @@ public struct ChatMarkdownText: View, Hashable {
     /// The "Show more" button of a long text that shows only its start. Nil for a text that shows in full.
     let collapse: ChatTextCollapse?
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     /// - Parameter collapse: When not nil, a text longer than ``ChatTextCollapse/collapsedLength`` shows only its
     ///   start and the button.
     public init(markdown: String, onOpenLink: ((URL) -> Void)?, collapse: ChatTextCollapse? = nil) {
@@ -26,11 +28,14 @@ public struct ChatMarkdownText: View, Hashable {
     public var body: some View {
         VStack(alignment: .leading, spacing: DSSpacings.extraTiny) {
             // The text follows the text size that the user picks (P7.2).
-            Text(attributedText)
-                .scaledTypography(.paragraphLarge)
-                .foregroundStyle(.fgPrimary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .environment(\.openURL, OpenURLAction(handler: openLinkAction(onOpenLink)))
+            Text(ChatTextFaces.applying(
+                to: attributedText,
+                size: ScaledTypography.font(for: .paragraphLarge, dynamicTypeSize: dynamicTypeSize).pointSize
+            ))
+            .scaledTypography(.paragraphLarge)
+            .foregroundStyle(.fgPrimary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .environment(\.openURL, OpenURLAction(handler: openLinkAction(onOpenLink)))
 
             if let collapse {
                 ChatShowMoreButton(title: collapse.title, color: .fgPrimary, action: collapse.onExpand)

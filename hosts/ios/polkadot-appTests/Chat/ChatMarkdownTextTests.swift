@@ -13,6 +13,21 @@ struct ChatMarkdownTextTests {
         #expect(try intent(of: "code", in: text)?.contains(.code) == true)
     }
 
+    /// The design-system family has no italic and no monospaced face, so an italic run and a code run get a
+    /// system face at the size of the text. Other runs keep the font of the view (PARITY-NATIVE-IOS D3).
+    @Test func italicAndCodeRunsGetAFaceThatDrawsThem() throws {
+        let text = ChatTextFaces.applying(to: render("a **bold** and *slanted* `code`"), size: 16)
+
+        let plain = try #require(text.range(of: "a "))
+        let bold = try #require(text.range(of: "bold"))
+        let slanted = try #require(text.range(of: "slanted"))
+        let code = try #require(text.range(of: "code"))
+        #expect(text[plain].swiftUI.font == nil)
+        #expect(text[bold].swiftUI.font == nil)
+        #expect(text[slanted].swiftUI.font != nil)
+        #expect(text[code].swiftUI.font != nil)
+    }
+
     @Test func aHeadingIsABoldParagraph() throws {
         let text = render("## Results\nbody")
 

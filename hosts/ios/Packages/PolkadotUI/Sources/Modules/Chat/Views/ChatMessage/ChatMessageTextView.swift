@@ -6,8 +6,18 @@ public struct ChatMessageTextView: View, Hashable {
 
     public let viewModel: ViewModel
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     public init(viewModel: ViewModel) {
         self.viewModel = viewModel
+    }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.viewModel == rhs.viewModel
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(viewModel)
     }
 
     public var body: some View {
@@ -28,10 +38,16 @@ public struct ChatMessageTextView: View, Hashable {
     /// of the design system.
     @ViewBuilder private var styledText: some View {
         if viewModel.scalesWithTextSize {
-            (Text(viewModel.attributedText) + statusPlaceholder).scaledTypography(.paragraphLarge)
+            (Text(faced(at: dynamicTypeSize)) + statusPlaceholder).scaledTypography(.paragraphLarge)
         } else {
-            (Text(viewModel.attributedText) + statusPlaceholder).typography(.paragraphLarge)
+            (Text(faced(at: .large)) + statusPlaceholder).typography(.paragraphLarge)
         }
+    }
+
+    /// The text with the faces of its italic and code runs at the text size of `size`.
+    private func faced(at size: DynamicTypeSize) -> AttributedString {
+        let font = ScaledTypography.font(for: .paragraphLarge, dynamicTypeSize: size)
+        return ChatTextFaces.applying(to: viewModel.attributedText, size: font.pointSize)
     }
 
     private var statusPlaceholder: Text {
