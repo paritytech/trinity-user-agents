@@ -48,6 +48,37 @@ struct ChatProductExtrasTests {
         #expect(sent.isEmpty)
     }
 
+    // MARK: - Input events
+
+    /// A room that declares `input_events` gets the text once the user stops typing, not each key, and the quick
+    /// replies stay while the user types.
+    @Test func aRoomThatFollowsTheInputGetsTheTextAfterAPause() async throws {
+        let presenter = try makePresenter(inputEvents: true)
+        #expect(presenter.accessory.followsInput)
+
+        presenter.accessory.onInputText?("a")
+        presenter.accessory.onInputText?("al")
+        presenter.accessory.onInputText?("ali")
+        await room.waitForEvents(1)
+        try await Task.sleep(for: .milliseconds(400))
+        presenter.accessory.onInputText?("ali")
+        presenter.accessory.onInputText?(String(repeating: "a", count: 257))
+        presenter.accessory.onInputText?("")
+        await room.waitForEvents(2)
+
+        #expect(room.events == [.inputChanged(text: "ali"), .inputChanged(text: "")])
+    }
+
+    @Test func aRoomThatDoesNotFollowTheInputGetsNoText() async throws {
+        let presenter = try makePresenter()
+        #expect(!presenter.accessory.followsInput)
+
+        presenter.accessory.onInputText?("ali")
+        try await Task.sleep(for: .milliseconds(400))
+
+        #expect(room.events.isEmpty)
+    }
+
     // MARK: - Commands (S39)
 
     @Test func theCatalogueMatchesTheTypedPrefixOnly() {
@@ -105,7 +136,7 @@ struct ChatProductExtrasTests {
 }
 
 private extension ChatProductExtrasTests {
-    func makePresenter() throws -> ChatProductRoomPresenter {
+    func makePresenter(inputEvents: Bool = false) throws -> ChatProductRoomPresenter {
         let presenter = try #require(ChatProductRoomPresenter(
             chatId: Data.chatId,
             room: room,
@@ -124,6 +155,13 @@ private extension ChatProductExtrasTests {
                     .init(name: "help", description: "Lists the commands", argumentHint: nil),
                     .init(name: "post", description: "Posts a body", argumentHint: "<kind>")
                 ]
+            )).with(features: Chat.RoomFeatures(
+                preimageAttachments: false,
+                search: false,
+                calls: nil,
+                threadOf: nil,
+                readAloud: false,
+                inputEvents: inputEvents
             )),
             messages: []
         )
@@ -135,5 +173,13 @@ private extension ChatProductExtrasTests {
             try await Task.sleep(for: .milliseconds(5))
         }
         #expect(condition())
+    }
+}
+
+private extension ChatRoomPolicy {
+    func with(features: Chat.RoomFeatures) -> ChatRoomPolicy {
+        var policy = self
+        policy.features = features
+        return policy
     }
 }

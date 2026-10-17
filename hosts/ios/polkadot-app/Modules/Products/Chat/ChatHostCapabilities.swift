@@ -38,6 +38,7 @@ enum ChatHostCapabilities {
         "inline_attachments",
         "room_links",
         "sealed_attachments",
+        "input_events",
         "search",
         "bot_personas",
         "mute_archive",

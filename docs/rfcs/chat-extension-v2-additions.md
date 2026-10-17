@@ -297,6 +297,7 @@ end to end on that build.
 | `call_buttons`                                                | Header buttons, `Ringing`, the call bar and the four call events ([Calls](#calls))                        |
 | `room_calls`                                                  | `Active { media_session: Some(_) }` presented by the host ([Calls](#calls))                               |
 | `room_link_payloads`                                          | The payload of an opened room link reaches the product ([Room link payloads](#room-link-payloads))         |
+| `input_events`                                                | The text of the input field while the user types ([Input events](#input-events))                           |
 
 The core answers the host's list minus what it cannot back: `custom_bodies` and `custom_footer` without a `Renderer`
 host, `room_calls` while the runtime serves no Media service, and `payment_button` until the footer payment path
@@ -458,6 +459,24 @@ pub enum ChatResource {
   attachments, and does not list the feature until its emulator scenarios pass. The CLI host roles seal and list the
   feature; their development page shows a sealed item as its size and parts, as it shows a preimage as its key. The web
   hosts do not list the feature, and a product keeps the 1 MiB inline rule there.
+
+### Input events
+
+A product that suggests while the user types, such as usernames that start with what the user wrote, declares
+`input_events` in the features of the room. The host then sends `ChatEvent::InputChanged { text }` with the text of the
+input field:
+
+- after the user stops typing for about 300 ms, and again with an empty text when the user clears the field or sends;
+- only while the text is at most `CHAT_INPUT_EVENT_MAX_BYTES` (256 bytes); a longer text is not sent, and the core
+  refuses one;
+- only for a room that declares the feature, and only while its screen is open.
+
+The product answers with the quick replies of the room (`set_room_suggestions`), for example "Add @alice.42" with
+`sends_text`. The text is not a press: it does not open the share sheet or the scanner.
+
+**Privacy.** The product sees what the user types before the user sends it. A room declares the feature only for its own
+purpose, and the host lists it as `input_events`. A user who does not want a product to see drafts uses a room that does
+not declare it. The iOS app sends the events. Android, the web hosts and the CLI host roles do not list the feature.
 
 ### Search
 

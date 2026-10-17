@@ -41,6 +41,8 @@ fun ChatRoomFeaturesModel.toCore() = ChatRoomFeatures(
     threadOf = threadOf?.let { ChatThreadParent(it.roomId, it.messageId) },
     readAloud = readAloud,
     sealedAttachments = sealedAttachments,
+    // This host does not send the text of the input, and does not list `input_events`.
+    inputEvents = false,
 )
 
 fun ChatMessageMeta.toModel() = ChatMessageMetaModel(

@@ -60,6 +60,15 @@ public final class ChatRoomAccessoryModel {
     /// The user pressed a quick reply.
     public var onSuggestion: ((Suggestion) -> Void)?
 
+    /// The room declares `input_events`: the quick replies stay while the user types, because the product suggests
+    /// for the text, and each change of the text goes to `onInputText`.
+    public var followsInput = false {
+        didSet { if followsInput != oldValue { notify() } }
+    }
+
+    /// The text of the input changed. It is empty after the user sends.
+    public var onInputText: ((String) -> Void)?
+
     private var observers: [UUID: () -> Void] = [:]
 
     public init() {}

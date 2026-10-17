@@ -416,7 +416,8 @@ public extension ChatRoomFeatures {
             calls: nil,
             threadOf: nil,
             readAloud: false,
-            sealedAttachments: false
+            sealedAttachments: false,
+            inputEvents: false
         )
     }
 }

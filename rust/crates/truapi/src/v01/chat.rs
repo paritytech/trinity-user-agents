@@ -1322,6 +1322,14 @@ pub enum ChatEvent {
 	RoomOpened,
 	/// The room screen closed.
 	RoomClosed,
+	/// The text in the input field of a room that declares `input_events`
+	/// changed. It is empty when the user cleared the field or sent the
+	/// message. The host sends it after the user stops typing for a moment,
+	/// and only while the text is at most `CHAT_INPUT_EVENT_MAX_BYTES` long.
+	InputChanged {
+		/// The text in the input field.
+		text: String,
+	},
 }
 
 /// The Chat features a host serves, and its attachment bounds.
@@ -1382,6 +1390,10 @@ pub struct ChatRoomFeatures {
 	/// product pays for, and gives the product a `ChatResource::Sealed`.
 	/// The host never stores such an attachment in plain form.
 	pub sealed_attachments: bool,
+	/// The host sends the text in the input field as `ChatEvent::InputChanged`
+	/// while the user types, so the product can suggest. The product sees the
+	/// text before the user sends it.
+	pub input_events: bool,
 }
 
 /// Request to declare the optional features of a room.

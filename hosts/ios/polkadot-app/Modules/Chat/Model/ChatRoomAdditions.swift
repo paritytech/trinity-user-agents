@@ -29,6 +29,8 @@ extension Chat {
         let readAloud: Bool
         /// A user attachment above the inline bound is sealed: the core encrypts it and stores the ciphertext.
         let sealedAttachments: Bool
+        /// The host sends the text of the input to the product while the user types (`InputChanged`).
+        let inputEvents: Bool
 
         init(
             preimageAttachments: Bool,
@@ -36,7 +38,8 @@ extension Chat {
             calls: RoomCalls?,
             threadOf: ThreadParent?,
             readAloud: Bool,
-            sealedAttachments: Bool = false
+            sealedAttachments: Bool = false,
+            inputEvents: Bool = false
         ) {
             self.preimageAttachments = preimageAttachments
             self.search = search
@@ -44,6 +47,7 @@ extension Chat {
             self.threadOf = threadOf
             self.readAloud = readAloud
             self.sealedAttachments = sealedAttachments
+            self.inputEvents = inputEvents
         }
 
         /// The features of a room that declares none.

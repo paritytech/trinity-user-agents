@@ -1097,6 +1097,7 @@ fn features_json(features: &ChatRoomFeatures) -> Value {
 	json!({
 		"preimageAttachments": features.preimage_attachments,
 		"sealedAttachments": features.sealed_attachments,
+		"inputEvents": features.input_events,
 		"search": features.search,
 		"calls": features.calls.map(|calls| json!({ "audio": calls.audio, "video": calls.video })),
 		"threadOf": features.thread_of.as_ref().map(|parent| json!({
@@ -2842,6 +2843,7 @@ mod tests {
 			json!({
 				"preimageAttachments": true,
 				"sealedAttachments": false,
+				"inputEvents": false,
 				"search": false,
 				"calls": { "audio": true, "video": false },
 				"threadOf": null,

@@ -7708,6 +7708,29 @@ fn a_worker_scans_only_shortly_after_the_user_taps_its_card() {
 }
 
 #[test]
+fn the_input_text_reaches_the_product_bounded_and_is_no_press() {
+	// The text of the input field is what the user types, not a press: it
+	// opens no scanner. A text above the bound never reaches the product.
+	let scanner = StubScannerPlatform::answering(HostScan::Dismissed);
+	let host = scanner_host_for(ProductExecutionKind::Worker, Some(scanner.clone()));
+	let typed = |text: String| latest::HostChatActionSubscribeItem {
+		event: latest::ChatEvent::InputChanged { text },
+		..room_press()
+	};
+
+	host.chat.publish(typed("ali".into()), &host.services.spawner).unwrap();
+	assert!(matches!(
+		host.chat.publish(
+			typed("a".repeat(crate::platform::CHAT_INPUT_EVENT_MAX_BYTES + 1)),
+			&host.services.spawner
+		),
+		Err(crate::host_core::ProductRuntimeError::Rejected { .. })
+	));
+	assert_eq!(scan(&host), Err(CallError::Domain(v01::HostScannerScanError::NotVisible)));
+	assert!(scanner.asked().is_empty());
+}
+
+#[test]
 fn each_host_answer_reaches_the_product_as_its_own_result() {
 	// `Unsupported` tells a product to use its own camera code, a dismissal is
 	// worth offering again, and a code the request does not accept never

@@ -13,8 +13,24 @@ extension ChatProductRoomPresenter {
         accessory.commands = (policy?.roomCommands ?? []).map {
             ChatRoomAccessoryModel.Command(name: $0.name, description: $0.description, argumentHint: $0.argumentHint)
         }
+        accessory.followsInput = policy?.features.inputEvents == true
         mark("suggestions", accessory.suggestions.map(\.suggestionId).joined(separator: ","))
         mark("commands", "count=\(accessory.commands.count)")
+    }
+
+    /// The text of the input, for a room that declares `input_events`. The product gets it after the user stops
+    /// typing for a moment, and only while it fits the bound of the core. A text that the product saw last is not
+    /// sent again.
+    func inputTextChanged(_ text: String) {
+        inputEventTask?.cancel()
+        guard policy?.features.inputEvents == true else { return }
+        let text = text.utf8.count <= Self.inputEventMaxBytes ? text : nil
+        inputEventTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.inputEventDelay)
+            guard let self, !Task.isCancelled, let text, text != lastInputEventText else { return }
+            lastInputEventText = text
+            publish(.inputChanged(text: text))
+        }
     }
 
     /// A quick reply with `sends_text` sends its text as a message of the user. Another one sends

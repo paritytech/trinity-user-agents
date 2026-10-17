@@ -66,6 +66,14 @@ final class ChatProductRoomPresenter {
     var footerWidget: ProductFooterWidgetViewModel?
     /// Sends a text as a message of the user, as the input sends it.
     var sendText: ((String) -> Void)?
+    /// The pending `InputChanged` of the text that the user types.
+    var inputEventTask: Task<Void, Never>?
+    /// The text of the last `InputChanged`.
+    var lastInputEventText = ""
+    /// The longest text of `InputChanged` (`CHAT_INPUT_EVENT_MAX_BYTES`).
+    static let inputEventMaxBytes = 256
+    /// The pause in the typing after which the product gets the text.
+    static let inputEventDelay = Duration.milliseconds(300)
     /// Sends a content as a message of the user through the message source of the room (P6.7).
     var sendContent: ((Chat.LocalMessage.Content) async throws -> Void)?
     /// Closes the room while the app is in the background, and opens it again after (P6.9).
@@ -117,6 +125,7 @@ final class ChatProductRoomPresenter {
         )
         participants.onChange = { [weak self] in self?.onChange?() }
         accessory.onSuggestion = { [weak self] suggestion in self?.selectSuggestion(suggestion.suggestionId) }
+        accessory.onInputText = { [weak self] text in self?.inputTextChanged(text) }
         activityTask = followActivity(activityStore)
         callTask = followCall(calls)
         bindCallBar()

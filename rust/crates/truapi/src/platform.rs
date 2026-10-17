@@ -854,6 +854,9 @@ pub const CHAT_SEALED_ATTACHMENT_MAX_BYTES: usize = 32 * 1024 * 1024;
 /// Largest accepted number of parts of one sealed resource.
 pub const CHAT_SEALED_PARTS_MAX: usize = 64;
 
+/// The longest text of a `ChatEvent::InputChanged`, in bytes of UTF-8.
+pub const CHAT_INPUT_EVENT_MAX_BYTES: usize = 256;
+
 /// Length of the authentication tag that the sealing adds, in bytes.
 pub const CHAT_SEALED_TAG_BYTES: usize = 16;
 
@@ -894,7 +897,7 @@ pub const CHAT_PERSONA_PREFIX: &str = "bot:";
 /// The Chat feature names of the Chat Extension v2 additions RFC, in the
 /// order the core lists them. A host lists a name only when it serves that
 /// feature from end to end.
-pub const CHAT_FEATURE_NAMES: [&str; 27] = [
+pub const CHAT_FEATURE_NAMES: [&str; 28] = [
 	"product_source_rooms",
 	"reaction_details",
 	"participants",
@@ -922,6 +925,7 @@ pub const CHAT_FEATURE_NAMES: [&str; 27] = [
 	"call_buttons",
 	"room_calls",
 	"room_link_payloads",
+	"input_events",
 ];
 
 /// The bot id of a persona participant id `bot:<bot_id>`, or `None` for

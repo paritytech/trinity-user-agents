@@ -353,7 +353,8 @@ fn event_v1_payload(event: &v01::ChatEvent) -> Option<v01::ChatActionPayload> {
 		v01::ChatEvent::ToolbarActionTriggered { .. } |
 		v01::ChatEvent::SuggestionSelected { .. } |
 		v01::ChatEvent::RoomOpened |
-		v01::ChatEvent::RoomClosed => None,
+		v01::ChatEvent::RoomClosed |
+		v01::ChatEvent::InputChanged { .. } => None,
 	}
 }
 

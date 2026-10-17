@@ -119,6 +119,16 @@ impl ChatEventChannel {
 		item: latest::HostChatActionSubscribeItem,
 		spawner: &Spawner,
 	) -> Result<(), ProductRuntimeError> {
+		if let latest::ChatEvent::InputChanged { text } = &item.event &&
+			text.len() > crate::platform::CHAT_INPUT_EVENT_MAX_BYTES
+		{
+			return Err(ProductRuntimeError::Rejected {
+				reason: format!(
+					"the input text is longer than {} bytes",
+					crate::platform::CHAT_INPUT_EVENT_MAX_BYTES
+				),
+			});
+		}
 		if is_press(&item.event) {
 			self.tapped_at_secs
 				.store(crate::unix_time::current_unix_secs(), Ordering::Release);

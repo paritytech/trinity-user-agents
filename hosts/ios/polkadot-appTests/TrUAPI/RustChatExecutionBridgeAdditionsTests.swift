@@ -40,7 +40,8 @@ struct RustChatExecutionBridgeAdditionsTests {
             calls: nil,
             threadOf: nil,
             readAloud: true,
-            sealedAttachments: false
+            sealedAttachments: false,
+            inputEvents: false
         )
         try await bridge.setRoomFeatures(roomId: "lobby", features: readAloudOnly)
         #expect(try await bridge.roomFeatures(roomId: "lobby") == readAloudOnly)
@@ -253,7 +254,8 @@ private extension RustChatExecutionBridgeAdditionsTests {
             calls: ChatRoomCalls(audio: true, video: false),
             threadOf: ChatThreadParent(roomId: "parent", messageId: "root"),
             readAloud: true,
-            sealedAttachments: true
+            sealedAttachments: true,
+            inputEvents: true
         )
     }
 

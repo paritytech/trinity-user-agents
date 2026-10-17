@@ -616,6 +616,7 @@ val HOST_DEFAULT_CHAT_ROOM_FEATURES: ChatRoomFeatures =
         threadOf = null,
         readAloud = false,
         sealedAttachments = false,
+        inputEvents = false,
     )
 
 /**

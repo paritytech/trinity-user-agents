@@ -392,6 +392,11 @@ itself. The Android app does the same behind its attachment staging gate, and
 does not list the feature yet. Both CLI host roles seal and list it; their chat
 page shows a sealed item as its size and parts. The web hosts do not list it.
 
+A room that declares `input_events` gets `ChatEvent::InputChanged` with the
+text of the input field while the user types, at most 256 bytes, so the
+product can suggest through the quick replies of the room (RFC "Chat Extension
+v2 additions", "Input events"). The iOS app sends it.
+
 `Usernames` (`usernames`) lets a product search the usernames of the network
 and ask the host to add a person to the contacts of the app (RFC "Host
 username directory"). The iOS app searches with its chat contact search and

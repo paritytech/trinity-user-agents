@@ -153,7 +153,7 @@ private extension ChatProductInputView {
         readAloudButton.configuration?.title = model.readAloudStopTitle
         readAloudButton.isHidden = model.readAloudStopTitle == nil
         suggestionsStrip.bind(model.suggestions)
-        suggestionsStrip.isHidden = model.suggestions.isEmpty || !text.isEmpty
+        suggestionsStrip.isHidden = model.suggestions.isEmpty || (!text.isEmpty && !model.followsInput)
         catalogue.bind(model.matchingCommands(for: text))
         catalogue.superview?.isHidden = catalogue.isHidden
 
@@ -193,6 +193,9 @@ extension ChatProductInputView: ChatInputHandling {
     func chatInputDidSend(_ text: String) {
         handler?.chatInputDidSend(text)
         refresh(notify: true)
+        if configuration.accessory.followsInput {
+            configuration.accessory.onInputText?("")
+        }
     }
 
     func chatInputDidTransfer() {
@@ -218,6 +221,9 @@ extension ChatProductInputView: ChatInputHandling {
     func chatInputDidChange() {
         refresh(notify: false)
         handler?.chatInputDidChange()
+        if configuration.accessory.followsInput {
+            configuration.accessory.onInputText?(typedText)
+        }
     }
 }
 

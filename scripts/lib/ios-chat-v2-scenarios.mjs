@@ -135,6 +135,9 @@ export const IOS_CHAT_FEATURE_ROWS = Object.freeze({
   // S27 opens a room link. The payload of a link reaches only a product with
   // an `openLink` handler; the verbosity product run (B2) checks that path.
   room_link_payloads: ["S27"],
+  // No sample row: the verbosity product run types the start of a username
+  // in its home room and gets Add suggestions (B2 in the verbosity plan).
+  input_events: [],
   // Not `preimage_attachments` (P10.3): no staged attachment can reach the
   // product on the simulator. The harness identity has no Bulletin allowance
   // (it is not a personhood ring member), and the live chain stores at most
