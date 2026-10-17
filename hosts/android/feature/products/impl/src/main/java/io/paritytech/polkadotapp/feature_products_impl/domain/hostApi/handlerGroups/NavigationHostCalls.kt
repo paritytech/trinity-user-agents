@@ -19,7 +19,10 @@ class NavigationHostCalls(
         bridge.registerHandler<NavigateToParams, Unit>("navigateTo") { params ->
             dotNsTldProvider.getTld().flatMap { tld ->
                 val origin = callingProductIdProvider.getProductId().getOrNull()?.toUri()
-                val destination = params.destination.toUri()
+                val destination = params.destination.toUri().let { uri ->
+                    // A bare product name (`dim2.paseo`) parses as a path with no host, which no deeplink handler takes.
+                    if (uri.scheme == null) DotNsUtils.normalize(uri, tld) ?: uri else uri
+                }
                 val type = DotNsUtils.classifyNavigation(origin, destination, tld)
                 when (navigationPolicy.handleNavigation(type, destination)) {
                     NavigationResult.INTERCEPTED_BY_POLICY -> Result.success(Unit)
