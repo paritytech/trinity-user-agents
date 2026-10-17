@@ -57,6 +57,8 @@ final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecke
         from _: String
     ) async throws -> TrUAPIPermissionDecision {
         switch review {
+        case let .preimageSubmit(preimageReview):
+            try await presentPreimagePermission(preimageReview)
         case let .identityDisclosure(identityReview):
             try await presentPermission(
                 promptMapper.makePermissionRequest(from: identityReview)
@@ -78,7 +80,7 @@ final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecke
                 promptMapper.makePermissionRequest(from: profileReview)
             )
         default:
-            .deny
+            throw HostRejection.Rejected(reason: "unsupported permission review")
         }
     }
 }
@@ -86,6 +88,8 @@ final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecke
 private extension TrUAPIConfirmationPresenter {
     func dispatch(review: UserConfirmationReview, from requesterName: String) async throws -> Bool {
         switch review {
+        case let .calling(calling):
+            await confirmCalling(calling)
         case .signPayload,
              .signRaw,
              .createTransaction:
@@ -96,10 +100,9 @@ private extension TrUAPIConfirmationPresenter {
             await confirmStatementSign(
                 promptMapper.makeStatementSignRequest(from: statementReview)
             )
-        case let .preimageSubmit(preimageReview):
-            await confirmAction(
-                promptMapper.makeActionRequest(from: preimageReview, requester: requesterName)
-            )
+        case .preimageSubmit:
+            // A boolean caller cannot express durable upload consent.
+            false
         case let .productSubtree(subtreeReview):
             await confirmAction(promptMapper.makeActionRequest(from: subtreeReview))
         // Unsupported permission reviews throw; `confirm` still fails closed for single actions.
@@ -121,6 +124,22 @@ private extension TrUAPIConfirmationPresenter {
             try await confirmSignVrf(
                 promptMapper.makeSignVrfRequest(from: vrfReview)
             )
+        }
+    }
+
+    func confirmCalling(_ review: CallingReview) async -> Bool {
+        let presentation = NativeMediaPresentation(productId: review.productId)
+        return await withTaskCancellationHandler {
+            do {
+                let result = try await presentation.confirmCalling(network: review.network, account: review.account)
+                await presentation.close()
+                return !Task.isCancelled && result
+            } catch {
+                await presentation.close()
+                return false
+            }
+        } onCancel: {
+            Task { @MainActor in presentation.cancelPrompt() }
         }
     }
 
@@ -176,6 +195,28 @@ private extension TrUAPIConfirmationPresenter {
                 }
             }
         }
+    }
+
+    func presentPreimagePermission(_ review: PreimageSubmitReview) async throws -> TrUAPIPermissionDecision {
+        let result: Result<TrUAPIPermissionDecision, HostRejection> = await awaitDecision(
+            cancelled: .failure(.Rejected(reason: "permission prompt cancelled"))
+        ) { [routerFacade] in
+            var presented = false
+            let decision: TrUAPIPermissionDecision = await withCheckedContinuation { continuation in
+                let context = TrUAPIPreimageConfirmationContext(review: review)
+                context.setContinuation(continuation)
+                let prompt = TrUAPIActionPromptViewFactory.createPreimageView(context: context)
+                presented = routerFacade.productsRouter.present(view: prompt)
+                if !presented {
+                    context.deliver(.deny)
+                }
+            }
+            guard presented else {
+                return .failure(.Rejected(reason: "permission prompt presentation unavailable"))
+            }
+            return .success(decision)
+        }
+        return try result.get()
     }
 
     func presentPermission(_ request: TrUAPIPermissionRequest) async throws -> TrUAPIPermissionDecision {

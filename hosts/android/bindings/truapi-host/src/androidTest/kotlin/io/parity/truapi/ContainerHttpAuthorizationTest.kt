@@ -187,6 +187,7 @@ class ContainerHttpAuthorizationTest {
     }
 
     private class MemoryStorage : HostStorage, HostCoreStorage {
+        override val storageIdentifier = "http-policy-${java.util.UUID.randomUUID()}"
         private val values = ConcurrentHashMap<Any, ByteArray>()
         override suspend fun keys(): List<ByteArray> =
             values.keys.filterIsInstance<List<Byte>>().map { it.toByteArray() }

@@ -142,30 +142,37 @@ class RealProductPermissionRepository @Inject constructor(
     override suspend fun grant(productId: ProductId, permission: ProductPermission) = set(productId, permission, true)
     override suspend fun revoke(productId: ProductId, permission: ProductPermission) = set(productId, permission, false)
 
-    private suspend fun set(productId: ProductId, permission: ProductPermission, granted: Boolean) = mutationMutex.withLock {
-        checkRevision(productId, permission)
-        val product = id(productId)
-        val request = permission.canonicalRequest()
-        val revision = currentCoroutineContext()[RequestRevision]
-        if (!granted) {
-            changes.changed(product)
-            oneTimeGrants.keys.removeAll { it.product == product }
-        }
-        if (request != null) {
-            val runtime = runtime()
-            val status = if (granted) PermissionAuthorizationStatus.AUTHORIZED else PermissionAuthorizationStatus.DENIED
-            if (revision == null) {
-                runtime.setPermissionAuthorizationStatus(product, request, status)
-            } else if (!runtime.setPermissionAuthorizationStatusIfCurrent(product, request, status, requireNotNull(revision.core))) {
-                throw ProductPermissionDeniedException(permission)
+    private suspend fun set(productId: ProductId, permission: ProductPermission, granted: Boolean) {
+        val changedRuntime = mutationMutex.withLock {
+            checkRevision(productId, permission)
+            val product = id(productId)
+            val request = permission.canonicalRequest()
+            val revision = currentCoroutineContext()[RequestRevision]
+            if (!granted) {
+                changes.changed(product)
+                oneTimeGrants.keys.removeAll { it.product == product }
             }
-        } else {
-            dao.insert(ProductPermissionGrantLocal(productId.value, permission.typeName, permission.key, granted, System.currentTimeMillis()))
-            changes.changed(product)
+            val changedRuntime = if (request != null) {
+                val runtime = runtime()
+                val status = if (granted) PermissionAuthorizationStatus.AUTHORIZED else PermissionAuthorizationStatus.DENIED
+                if (revision == null) {
+                    runtime.setPermissionAuthorizationStatus(product, request, status)
+                } else if (!runtime.setPermissionAuthorizationStatusIfCurrent(product, request, status, requireNotNull(revision.core))) {
+                    throw ProductPermissionDeniedException(permission)
+                }
+                runtime
+            } else {
+                dao.insert(ProductPermissionGrantLocal(productId.value, permission.typeName, permission.key, granted, System.currentTimeMillis()))
+                changes.changed(product)
+                null
+            }
+            // Conditional authorization preserves the core revision. Never recapture it here:
+            // an external revoke must remain visible to the next write in a batched prompt.
+            if (request == null) revision?.local = changes.revision(product)
+            changedRuntime
         }
-        // Conditional authorization preserves the core revision. Never recapture it here:
-        // an external revoke must remain visible to the next write in a batched prompt.
-        if (request == null) revision?.local = changes.revision(product)
+        // Cross-root Media refresh may re-enter host authority; never drain under the mutation lock.
+        changedRuntime?.awaitCoreStorageChanges()
     }
 
     override suspend fun getAllByProduct(productId: ProductId): List<ProductPermissionStatus> {
@@ -213,6 +220,14 @@ class RealProductPermissionRepository @Inject constructor(
         observeAllByProduct(productId).map { it.isNotEmpty() }
 
     override suspend fun revokeAllByProduct(productId: ProductId) {
+        val dedicated = canonicalEntries(productId).filter { it.request.hasDedicatedSettings() }
         getAllByProduct(productId).forEach { revoke(productId, it.permission) }
+        if (dedicated.isNotEmpty()) {
+            val runtime = runtime()
+            for (entry in dedicated) {
+                runtime.setPermissionAuthorizationStatus(id(productId), entry.request, PermissionAuthorizationStatus.DENIED)
+            }
+            runtime.awaitCoreStorageChanges()
+        }
     }
 }

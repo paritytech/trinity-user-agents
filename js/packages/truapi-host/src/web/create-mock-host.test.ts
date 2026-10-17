@@ -81,6 +81,29 @@ describe("createMockHost callbacks", () => {
     expect(await callbacks.coreStorage.readCoreStorage(key)).toBeUndefined();
   });
 
+  it("compares exact core bytes and records only successful policy commits", async () => {
+    const host = createMockHost();
+    const storage = host.callbacks.coreStorage;
+    const key: CoreStorageKey = { tag: "AuthSession" };
+    const empty = new Uint8Array();
+    expect(await storage.compareExchangeCoreStorage(key, empty, empty, true)).toBe(false);
+    expect(await storage.compareExchangeCoreStorage(key, undefined, empty, false)).toBe(true);
+    expect(await storage.compareExchangeCoreStorage(key, undefined, empty, true)).toBe(false);
+    expect(host.coreStorageChanges()).toEqual([]);
+
+    const replacement = new Uint8Array([1, 2]);
+    expect(await Promise.all([
+      storage.compareExchangeCoreStorage(key, empty, replacement, true),
+      storage.compareExchangeCoreStorage(key, empty, new Uint8Array([3]), true),
+    ])).toEqual([true, false]);
+    replacement[0] = 9;
+    const observed = (await storage.readCoreStorage(key))!;
+    observed[0] = 8;
+    expect(await storage.readCoreStorage(key)).toEqual(new Uint8Array([1, 2]));
+    await storage.clearCoreStorage(key);
+    expect(host.coreStorageChanges()).toEqual([key]);
+  });
+
   it("permissions follow per-capability policy", async () => {
     const { callbacks } = createMockHost({
       devicePermissions: "allow-all",

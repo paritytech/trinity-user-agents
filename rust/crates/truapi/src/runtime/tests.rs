@@ -1,8 +1,10 @@
 //! Shared runtime fixtures and cross-capability integration tests.
 
+mod automatic_preimage;
+
 use std::sync::{
-	Mutex,
-	atomic::{AtomicBool, Ordering},
+    Mutex,
+    atomic::{AtomicBool, Ordering},
 };
 
 use crate::platform::{
@@ -3733,24 +3735,33 @@ fn profile_handle_presentation_hides_absence_and_removed_contacts_in_an_unrelate
             .expect("contacts mutex poisoned")
             .as_slice(),
         [
-            ("notes.dot".to_string(), crate::platform::PresentedContactProfile {
-                shared: None,
-                peer_identity: account,
-                username: None,
-            }),
-            ("notes.dot".to_string(), crate::platform::PresentedContactProfile {
-                shared: Some(crate::platform::SharedContactProfile {
-                    reference: CONTACTS_REFERENCE.to_string(),
-                    shared_at: 1,
-                }),
-                peer_identity: account,
-                username: None,
-            }),
-            ("notes.dot".to_string(), crate::platform::PresentedContactProfile {
-                shared: None,
-                peer_identity: account,
-                username: None,
-            }),
+            (
+                "notes.dot".to_string(),
+                crate::platform::PresentedContactProfile {
+                    shared: None,
+                    peer_identity: account,
+                    username: None,
+                }
+            ),
+            (
+                "notes.dot".to_string(),
+                crate::platform::PresentedContactProfile {
+                    shared: Some(crate::platform::SharedContactProfile {
+                        reference: CONTACTS_REFERENCE.to_string(),
+                        shared_at: 1,
+                    }),
+                    peer_identity: account,
+                    username: None,
+                }
+            ),
+            (
+                "notes.dot".to_string(),
+                crate::platform::PresentedContactProfile {
+                    shared: None,
+                    peer_identity: account,
+                    username: None,
+                }
+            ),
         ],
         "absence and retraction reach only host UI; invalid or removed handles do not",
     );
@@ -3784,7 +3795,9 @@ fn profile_v2_read_failures_and_invalid_references_are_not_presented_as_absence(
         assert_eq!(
             present_selected_contact(
                 &host,
-                truapi::latest::ProfileContact::Peer { peer_identity: account },
+                truapi::latest::ProfileContact::Peer {
+                    peer_identity: account
+                },
             ),
             Ok(HostProfilePresentContactResponse::V2),
         );
@@ -3828,9 +3841,11 @@ fn profile_v2_empty_presentation_is_discarded_after_a_wallet_switch_during_looku
         let presentation = Profile::present_contact(
             &host,
             &context,
-            HostProfilePresentContactRequest::V2(truapi::latest::HostProfilePresentContactRequest {
-                contact: truapi::latest::ProfileContact::Handle { handle },
-            }),
+            HostProfilePresentContactRequest::V2(
+                truapi::latest::HostProfilePresentContactRequest {
+                    contact: truapi::latest::ProfileContact::Handle { handle },
+                },
+            ),
         );
         futures::pin_mut!(presentation);
         assert!(futures::poll!(presentation.as_mut()).is_pending());
@@ -3839,7 +3854,10 @@ fn profile_v2_empty_presentation_is_discarded_after_a_wallet_switch_during_looku
             ..session_info()
         });
         release.send(()).unwrap();
-        assert_eq!(presentation.await, Ok(HostProfilePresentContactResponse::V2));
+        assert_eq!(
+            presentation.await,
+            Ok(HostProfilePresentContactResponse::V2)
+        );
     });
     assert!(presenter.contacts.lock().unwrap().is_empty());
 }
@@ -3870,7 +3888,9 @@ fn profile_v2_presentation_does_not_expose_host_parse_failures() {
     assert_eq!(
         present_selected_contact(
             &host,
-            truapi::latest::ProfileContact::Peer { peer_identity: account },
+            truapi::latest::ProfileContact::Peer {
+                peer_identity: account
+            },
         ),
         Ok(HostProfilePresentContactResponse::V2),
         "an adapter without empty-profile feedback must not expose absence",
@@ -6161,6 +6181,112 @@ fn cancel_notification_delegates_host_id() {
         ),
         (HostPushNotificationCancelResponse::V1, vec![42], vec![])
     );
+}
+
+#[test]
+fn notification_activation_unsupported_does_not_request_permission() {
+    use truapi::versioned::notifications::{
+        NotificationActivationAcknowledgeError, NotificationActivationAcknowledgeRequest,
+        NotificationActivationEventsError, NotificationActivationEventsRequest,
+    };
+
+    let platform = Arc::new(StubPlatform {
+        device_permission_decisions: Mutex::new([crate::platform::PermissionDecision::Deny].into()),
+        ..Default::default()
+    });
+    let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+    let cx = CallContext::default();
+    let unsupported = v01::GenericError {
+        reason: "notification activation is unsupported".to_string(),
+    };
+
+    assert_eq!(
+        futures::executor::block_on(
+            host.activation_events(&cx, NotificationActivationEventsRequest::V1)
+        ),
+        Err(CallError::Domain(NotificationActivationEventsError::V1(
+            unsupported.clone()
+        )))
+    );
+    for sequence in [0, 1, u64::MAX] {
+        assert_eq!(
+            futures::executor::block_on(host.acknowledge_activation(
+                &cx,
+                NotificationActivationAcknowledgeRequest::V1(
+                    v01::NotificationActivationAcknowledgeRequest { sequence }
+                ),
+            )),
+            Err(CallError::Domain(
+                NotificationActivationAcknowledgeError::V1(unsupported.clone())
+            ))
+        );
+    }
+    assert!(
+        platform
+            .device_permission_requests
+            .lock()
+            .is_ok_and(|calls| calls.is_empty())
+    );
+    assert!(
+        platform
+            .remote_permission_requests
+            .lock()
+            .is_ok_and(|calls| calls.is_empty())
+    );
+    assert!(
+        platform
+            .pushed_notifications
+            .lock()
+            .is_ok_and(|calls| calls.is_empty())
+    );
+    assert!(
+        platform
+            .cancelled_notifications
+            .lock()
+            .is_ok_and(|calls| calls.is_empty())
+    );
+}
+
+#[test]
+fn notification_activation_rejects_oversized_platform_batch() {
+    use truapi::versioned::notifications::NotificationActivationEventsRequest;
+
+    for count in [0, 32, 33] {
+        let platform = Arc::new(StubPlatform {
+            notification_activations: Some(v01::NotificationActivations {
+                events: (0..count)
+                    .map(|sequence| v01::NotificationActivation {
+                        sequence,
+                        notification_id: 42,
+                        route: "/inbox".to_string(),
+                    })
+                    .collect(),
+            }),
+            ..Default::default()
+        });
+        let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+        let response = futures::executor::block_on(host.activation_events(
+            &CallContext::default(),
+            NotificationActivationEventsRequest::V1,
+        ));
+        if count > 32 {
+            assert!(matches!(response, Err(CallError::HostFailure { .. })));
+        } else {
+            assert!(response.is_ok());
+        }
+        assert!(
+            platform
+                .device_permission_requests
+                .lock()
+                .is_ok_and(|calls| calls.is_empty())
+        );
+        assert!(
+            platform
+                .remote_permission_requests
+                .lock()
+                .is_ok_and(|calls| calls.is_empty())
+        );
+    }
 }
 
 #[test]

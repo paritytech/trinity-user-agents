@@ -95,6 +95,9 @@ struct HostBridgeDefaultsTests {
         try await runtime.setPermissionAuthorizationStatus(productId: "demo.paseo", request: request, status: .notDetermined)
         #expect(product.isClosed())
         #expect(!other.isClosed())
+        // Cross-core storage fanout must still reach the process policy after
+        // canonical revocation has closed the originating connection.
+        try await product.refreshPermissionAuthorization(request: request)
         #expect(try await runtime.setPermissionAuthorizationStatusIfCurrent(
             productId: "demo.paseo", request: request, status: .authorized, revision: revision
         ) == false)

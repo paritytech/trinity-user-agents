@@ -13,6 +13,7 @@ mod allowances;
 /// Core-owned auth/session UI state machine.
 pub mod auth_state;
 mod authority;
+mod automatic_preimage;
 /// In-core Bulletin preimage submission over the shared Subxt client.
 pub mod bulletin_rpc;
 mod capabilities;
@@ -25,16 +26,19 @@ pub mod contacts;
 mod dotns_lookup;
 mod host_channel;
 mod identity;
+mod media;
+mod media_identity;
+mod media_signaling;
 pub mod login_failure;
 mod native_chat;
+/// Transport-independent authenticated notification frames.
+pub mod notification_envelope;
 mod pairing_host;
 pub mod product_manifest;
 mod product_subtree;
 mod profile;
 /// Durable, host-owned notification registration and activation policy.
 pub mod receiving;
-/// Transport-independent authenticated notification frames.
-pub mod notification_envelope;
 mod renderer;
 mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
@@ -352,6 +356,9 @@ pub struct ProductRuntimeHost {
     renderer: Arc<ActionChannel<HostRendererActionSubscribeItem>>,
     pocket_platform: Option<Arc<dyn crate::platform::PocketPlatform>>,
     profile_platform: Option<Arc<dyn crate::platform::ProfilePlatform>>,
+    media_platform: Option<Arc<dyn crate::platform::MediaPlatform>>,
+    media: std::sync::OnceLock<Arc<media::MediaService>>,
+    media_closed: std::sync::atomic::AtomicBool,
     game_platform: Option<Arc<dyn crate::platform::GamePlatform>>,
     scanner_platform: Option<Arc<dyn crate::platform::ScannerPlatform>>,
     /// Control of the card face above this connection's Widget, when the host draws one.
@@ -368,6 +375,7 @@ pub const USER_TAP_WINDOW_SECS: u64 = 5;
 
 impl Drop for ProductRuntimeHost {
     fn drop(&mut self) {
+        self.close_media();
         self.release_open_operations();
         self.release_contact_avatars();
         self.release_contact_labels();
@@ -404,6 +412,9 @@ impl ProductRuntimeHost {
             open_operations: Mutex::new(HashSet::new()),
             #[cfg(not(target_arch = "wasm32"))]
             jam_peers: crate::jam_peer_transport::session::JamPeerSession::new(),
+            media_platform: adapters.media_platform,
+            media: std::sync::OnceLock::new(),
+            media_closed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -417,6 +428,11 @@ impl ProductRuntimeHost {
     /// Role-neutral services shared with the owning host runtime.
     pub fn services(&self) -> &Arc<RuntimeServices> {
         &self.services
+    }
+
+    /// Trusted connection identity; never supplied by a product frame.
+    pub(crate) fn runtime_id(&self) -> u64 {
+        self.core_instance
     }
 
     /// Permission service for this product.
@@ -548,6 +564,9 @@ impl ProductRuntimeHost {
             open_operations: Mutex::new(HashSet::new()),
             #[cfg(not(target_arch = "wasm32"))]
             jam_peers: crate::jam_peer_transport::session::JamPeerSession::new(),
+            media_platform: None,
+            media: std::sync::OnceLock::new(),
+            media_closed: std::sync::atomic::AtomicBool::new(false),
         };
         (host, pairing_host)
     }
@@ -705,6 +724,10 @@ impl ProductRuntimeHost {
         &self,
         request: PermissionAuthorizationRequest,
     ) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
+        if let PermissionAuthorizationRequest::AutomaticPreimageSubmit { root_public_key } = request
+        {
+            return self.automatic_upload_status(root_public_key).await;
+        }
         let service = self.permissions_service();
         service.authorization_status(&request).await
     }
@@ -716,7 +739,16 @@ impl ProductRuntimeHost {
         requests: Vec<PermissionAuthorizationRequest>,
     ) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
         let service = self.permissions_service();
-        service.authorization_statuses(&requests).await
+        let mut statuses = Vec::with_capacity(requests.len());
+        for request in requests {
+            statuses.push(match request {
+                PermissionAuthorizationRequest::AutomaticPreimageSubmit { root_public_key } => {
+                    self.automatic_upload_status(root_public_key).await?
+                }
+                _ => service.authorization_status(&request).await?,
+            });
+        }
+        Ok(statuses)
     }
 
     /// Update a stored permission authorization status. `NotDetermined`
@@ -727,16 +759,92 @@ impl ProductRuntimeHost {
         request: PermissionAuthorizationRequest,
         status: PermissionAuthorizationStatus,
     ) -> Result<(), v01::GenericError> {
+        self.set_authorization_status(request, status, false).await
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) async fn set_canonical_permission_authorization_status(
+        &self,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) -> Result<(), v01::GenericError> {
+        self.set_authorization_status(request, status, true).await
+    }
+
+    async fn set_authorization_status(
+        &self,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+        canonical: bool,
+    ) -> Result<(), v01::GenericError> {
+        if let PermissionAuthorizationRequest::AutomaticPreimageSubmit { root_public_key } = request
+        {
+            return self
+                .set_automatic_upload_status(root_public_key, status)
+                .await;
+        }
+        let product_id = self.product_id();
+        if status != PermissionAuthorizationStatus::Authorized {
+            // Stop live resources before waiting for a pending decision or
+            // unavailable storage. Persistence failure must not keep them alive.
+            self.services.notify_media_permission_revoked(&product_id, &request);
+        }
+        let _guard = self.services.media_permission_gate.lock().await;
         let service = self.permissions_service();
+        self.services.advance_media_permission_revision()?;
         let contacts_changed = matches!(request, PermissionAuthorizationRequest::ChatAuthority);
         if contacts_changed {
             self.services.invalidate_contacts();
         }
-        let result = service.set_authorization_status(&request, status).await;
+        let result = if canonical {
+            service.set_canonical_authorization_status(&request, status).await
+        } else {
+            service.set_authorization_status(&request, status).await
+        };
         if contacts_changed {
             self.services.invalidate_contacts();
         }
-        result
+        result?;
+        if status != PermissionAuthorizationStatus::Authorized {
+            self.services.notify_media_permission_revoked(&product_id, &request);
+        }
+        Ok(())
+    }
+
+    /// Apply a stored policy notification without prompting, writing
+    /// storage, consulting the OS, or starting Media.
+    #[instrument(skip_all, fields(runtime.method = "permissions.refresh_authorization"))]
+    pub(crate) async fn refresh_permission_authorization(
+        &self,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<(), v01::GenericError> {
+        if !matches!(
+            &request,
+            PermissionAuthorizationRequest::Calling { .. }
+                | PermissionAuthorizationRequest::Device(
+                    v01::HostDevicePermissionRequest::Microphone
+                        | v01::HostDevicePermissionRequest::Camera
+                )
+        ) {
+            return Ok(());
+        }
+        let _guard = self.services.media_permission_gate.lock().await;
+        let product_id = self.product_id();
+        let status = self.permissions_service()
+            .stored_authorization_status(request.clone()).await;
+        if matches!(&status, Ok(PermissionAuthorizationStatus::Authorized)) {
+            // Origin notifications include successful grants. Advancing here
+            // would invalidate the next device dialog in the same operation;
+            // exact-byte CAS already rejects stale decisions in other cores.
+            return Ok(());
+        }
+        let revision = self.services.advance_media_permission_revision();
+        // Denied, unanswered, or unreadable policy fails closed only for this
+        // precise product/capability or Calling network/account, even if the
+        // original CAS requester disappeared before locally fencing its denial.
+        self.services.notify_media_permission_revoked(&product_id, &request);
+        status?;
+        revision
     }
 
     #[instrument(skip_all, fields(runtime.method = "permissions.remote_authorization"))]
@@ -2280,10 +2388,12 @@ impl Profile for ProductRuntimeHost {
             }
         };
         let shared = match received.and_then(|received| {
-            received.reference.map(|reference| crate::platform::SharedContactProfile {
-                reference,
-                shared_at: received.timestamp,
-            })
+            received
+                .reference
+                .map(|reference| crate::platform::SharedContactProfile {
+                    reference,
+                    shared_at: received.timestamp,
+                })
         }) {
             Some(shared) => {
                 // A stored reference passed the same screen when it arrived;

@@ -36,6 +36,7 @@ class AndroidHostCoreStorage(context: Context, namespace: String) : HostCoreStor
     }
     private val keyAlias = "io.parity.truapi.core.$namespace"
     private val databaseFile = File(context.noBackupFilesDir, "truapi-core-$namespace.sqlite")
+    override val storageIdentifier: String = databaseFile.canonicalPath
     private val database = object : SQLiteOpenHelper(
         context, databaseFile.absolutePath, 1,
         // OpenParams configures every pooled/reopened connection, unlike a
@@ -52,6 +53,21 @@ class AndroidHostCoreStorage(context: Context, namespace: String) : HostCoreStor
         }
     }
     private var encryptionKey: SecretKey? = null
+
+    override suspend fun keys(): List<ByteArray> = storageCall {
+        database.readableDatabase.query(
+            "core_slots", arrayOf("slot"), null, null, null, null, null,
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    val encoded = cursor.getString(0)
+                    val key = android.util.Base64.decode(encoded, android.util.Base64.NO_WRAP)
+                    check(slot(key) == encoded) { "Invalid private core storage key" }
+                    add(key)
+                }
+            }
+        }
+    }
 
     override suspend fun read(key: ByteArray): ByteArray? = storageCall {
         database.readableDatabase.query(

@@ -1,5 +1,4 @@
 import Foundation
-import os
 import FoundationExt
 import TrUAPIHost
 import Products
@@ -39,29 +38,66 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
 
     let storage: HostStorageBackend
     let coreStorage: HostCoreStorageBackend
+    let media: NativeMediaBackend
 
     private let dependencies: Dependencies
     private weak var execution: TrUAPIProductExecutionProtocol?
-    private let cachedTheme = OSAllocatedUnfairLock(
-        uncheckedState: HostThemeSubscribeItem(name: .default, variant: .dark)
-    )
+    private let themeLock = NSLock()
+    private var theme: HostThemeSubscribeItem
     private var themeObservation: Task<Void, Never>?
 
+    @MainActor
     init(dependencies: Dependencies) {
         self.dependencies = dependencies
+        media = NativeMediaBackend(productId: dependencies.productId)
         storage = ProductStorageBackend(storage: dependencies.productStorage)
         coreStorage = CoreStorageBackend(storage: dependencies.coreStorage)
-    }
+        theme = dependencies.themeManager.theme.hostThemeSubscribeItem
 
-    /// Attach the opened execution so callbacks can notify it in place.
-    func attach(_ execution: TrUAPIProductExecutionProtocol) {
-        self.execution = execution
-        dependencies.chainConnections.eventHandler = self
-        observeTheme()
+        // Register before opening the execution: its synchronous currentTheme
+        // callback already has the selected theme, and no transition is lost
+        // between the snapshot and starting the consumer.
+        let themes = dependencies.themeManager.observeTheme()
+        themeObservation = Task { @MainActor [weak self] in
+            for await theme in themes {
+                guard !Task.isCancelled else { break }
+                self?.themeDidChange(theme)
+            }
+        }
     }
 
     deinit {
         themeObservation?.cancel()
+    }
+
+    /// Attach the opened execution so callbacks can notify it in place.
+    @MainActor
+    func attach(_ execution: TrUAPIProductExecutionProtocol) {
+        self.execution = execution
+        dependencies.chainConnections.eventHandler = self
+    }
+
+    /// Stop forwarding before the runtime closes the execution. MainActor
+    /// serialization fences both buffered themes and a notification in flight.
+    @MainActor
+    func detach() {
+        themeObservation?.cancel()
+        themeObservation = nil
+        execution = nil
+        dependencies.chainConnections.eventHandler = nil
+    }
+
+    @MainActor
+    private func themeDidChange(_ next: Theme) {
+        let next = next.hostThemeSubscribeItem
+        let changed = themeLock.withLock {
+            guard theme != next else { return false }
+            theme = next
+            return true
+        }
+        if changed {
+            execution?.notifyThemeChanged(theme: next)
+        }
     }
 
     func permissionAuthorizationsChanged(productId: String) {
@@ -119,9 +155,12 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         product _: ProductExecutionConfig,
         request: RemotePermission
     ) async throws -> TrUAPIPermissionDecision {
-        try await dependencies.permissionGuard.requestPermissionsDecision(
+        // Calling consent belongs to the core's account-scoped Media flow,
+        // never an empty legacy permission batch.
+        guard let domainRequest = request.toDomainRequest() else { return .deny }
+        return try await dependencies.permissionGuard.requestPermissionsDecision(
             productId: dependencies.productId,
-            permissions: request.toDomainRequest().toDomainPermissions()
+            permissions: domainRequest.toDomainPermissions()
         ).hostDecision
     }
 
@@ -210,7 +249,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func currentTheme() throws -> HostThemeSubscribeItem {
-        cachedTheme.withLock { $0 }
+        themeLock.withLock { theme }
     }
 
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool {
@@ -232,6 +271,10 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func authStateChanged(state: AuthState) {
+        switch state {
+        case .disconnected, .loginFailed: media.authorityLost()
+        default: break
+        }
         let details =
             switch state {
             case .disconnected:
@@ -250,22 +293,6 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 }
 
-// MARK: - Theme
-
-private extension RustProductExecutionBridge {
-    func observeTheme() {
-        themeObservation?.cancel()
-        let themeManager = dependencies.themeManager
-        themeObservation = Task { @MainActor [weak self] in
-            for await theme in themeManager.observeTheme() {
-                guard let self else { return }
-                let item = theme.hostThemeSubscribeItem
-                cachedTheme.withLock { $0 = item }
-                execution?.notifyThemeChanged(theme: item)
-            }
-        }
-    }
-}
 
 // MARK: - Notify-back event handlers
 
@@ -336,7 +363,7 @@ extension HostDevicePermissionRequest {
 
 extension RemotePermission {
     /// Maps the TrUAPI remote permission to the Products domain request.
-    func toDomainRequest() -> Products.RemotePermissionRequest {
+    func toDomainRequest() -> Products.RemotePermissionRequest? {
         switch self {
         case let .remote(domains): .remote(domains: domains)
         case .webRtc: .webRTC
@@ -344,6 +371,7 @@ extension RemotePermission {
         case .preimageSubmit: .preimageSubmit
         case .statementSubmit: .statementSubmit
         case let .jamPeers(genesis): .jamPeers(genesis: genesis.toHex(includePrefix: true))
+        case .calling: nil
         }
     }
 }

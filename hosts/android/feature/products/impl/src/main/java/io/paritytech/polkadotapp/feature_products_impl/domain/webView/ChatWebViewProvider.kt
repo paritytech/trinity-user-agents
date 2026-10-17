@@ -22,6 +22,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
 import kotlinx.coroutines.CoroutineScope
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 
 class ChatWebViewProvider @AssistedInject constructor(
     @param:ApplicationContext private val context: Context,
@@ -41,6 +42,7 @@ class ChatWebViewProvider @AssistedInject constructor(
 
     private val productId: ProductId = config.productId
     private val workerScript: WorkerScript = config.workerScript
+    private var nativeBridge: ProductTrUAPIHostBridge? = null
 
     override val callingProductIdProvider = FixedProductId(productId)
 
@@ -79,6 +81,7 @@ class ChatWebViewProvider @AssistedInject constructor(
                 }
 
                 override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail?): Boolean {
+                    nativeBridge?.releaseMedia()
                     discardDeadWebView(view)
                     return true
                 }
@@ -94,6 +97,10 @@ class ChatWebViewProvider @AssistedInject constructor(
 
     fun useTrUAPIPermissions(execution: TrUAPIProductExecution) {
         permissionClient.useTrUAPIPermissions(productId, execution, scope)
+    }
+
+    fun bindTrUAPILifecycle(bridge: ProductTrUAPIHostBridge) {
+        nativeBridge = bridge
     }
 
     override suspend fun loadInitialContent() {

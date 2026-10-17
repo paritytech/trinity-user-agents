@@ -1,13 +1,13 @@
 {
   "sourceLanguage": "en",
   "strings": {
-    "action.preimage.body": {
+    "action.preimage.consent.body": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "%1$(productId)@ wants to submit %2$(size)@ bytes of data to the Bulletin chain."
+            "value": "%1$(productId)@ wants to upload %2$(size)@ bytes.\n\nRoot account: %3$(rootAccount)@\nBulletin network (genesis): %4$(bulletinNetwork)@\n\nAllow once approves only this upload. Allow bounded automatic uploads also approves future uploads by this product for this root account on this Bulletin network: at most %5$(maxBytes)@ bytes per upload and %6$(maxUploads)@ uploads in any rolling %7$(windowSeconds)@ seconds. Larger uploads or an exhausted budget still require approval. Regranting does not reset the budget. Revoke automatic uploads in this app’s permission settings."
           }
         }
       }
@@ -19,6 +19,39 @@
           "stringUnit": {
             "state": "translated",
             "value": "Submit Data"
+          }
+        }
+      }
+    },
+    "action.preimage.allowAutomatic": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow Bounded Automatic Uploads"
+          }
+        }
+      }
+    },
+    "app.permission.automaticPreimage.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatic Bulletin Uploads"
+          }
+        }
+      }
+    },
+    "app.permission.automaticPreimage.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow this app to upload automatically: up to 262144 bytes per upload and 4 uploads per rolling 3600 seconds, only for root account %1$(rootAccount)@ on Bulletin network %2$(bulletinNetwork)@. Turn off to revoke automatic approval; individual uploads can still ask. Turning on again does not reset the budget. This does not change remote upload access."
           }
         }
       }

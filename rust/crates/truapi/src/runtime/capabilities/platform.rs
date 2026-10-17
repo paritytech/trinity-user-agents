@@ -1,5 +1,7 @@
 //! Product-facing platform capability adapters.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::platform::PermissionAuthorizationStatus;
 use futures::StreamExt;
 use parity_scale_codec::{Decode, Encode};
@@ -55,17 +57,78 @@ use truapi::{
 		},
 	},
 };
-
 use super::from_latest_error;
-
 use crate::{
-	host_internal::product_manifest::Granted,
-	host_logic::{
-		dotns::{NavigateDecision, parse_navigate},
-		features::feature_supported,
-	},
-	runtime::{PERMISSION_DENIED_REASON, ProductRuntimeHost},
+    platform::{PermissionAuthorizationRequest, PermissionDecision},
+    host_internal::{
+        permissions::PermissionAuthorizationSnapshot,
+        product_manifest::Granted,
+    },
+    host_logic::{
+        dotns::{NavigateDecision, parse_navigate},
+        features::feature_supported,
+    },
+    runtime::{PERMISSION_DENIED_REASON, ProductRuntimeHost},
 };
+
+impl ProductRuntimeHost {
+    /// Resolve a host settings slot without prompting, advertising or starting Media.
+    pub(crate) async fn calling_permission_authorization_request(
+        &self,
+    ) -> Result<PermissionAuthorizationRequest, latest::GenericError> {
+        let (_, identity) = crate::runtime::media_identity::resolve_identity(
+            &self.services,
+            self.authority.as_ref(),
+            &self.product,
+            &CallContext::default(),
+        )
+        .await
+        .map_err(|_| latest::GenericError {
+            reason: "Calling identity is unavailable".into(),
+        })?;
+        Ok(PermissionAuthorizationRequest::Calling {
+            network: identity.network,
+            account: identity.account,
+        })
+    }
+
+    async fn commit_permission_answer(
+        &self,
+        product_id: &str,
+        request: &PermissionAuthorizationRequest,
+        snapshot: &PermissionAuthorizationSnapshot,
+        decision: PermissionDecision,
+        revision: &AtomicU64,
+        current: &(impl Fn() -> bool + Sync),
+    ) -> Result<PermissionAuthorizationStatus, latest::GenericError> {
+        let _guard = self.services.media_permission_gate.lock().await;
+        if !current() {
+            return Ok(PermissionAuthorizationStatus::NotDetermined);
+        }
+        let service = self.permissions_service();
+        // Recheck the live OS overlay, without rebasing the captured generation.
+        if service.authorization_status(request).await?
+            != PermissionAuthorizationStatus::NotDetermined
+        {
+            return Ok(PermissionAuthorizationStatus::NotDetermined);
+        }
+        if !current() {
+            return Ok(PermissionAuthorizationStatus::NotDetermined);
+        }
+        // No await between these final guards and CAS dispatch. Cancellation
+        // after dispatch does not roll back an accepted product decision.
+        self.services.advance_media_permission_revision()?;
+        revision.store(self.services.media_permission_revision(), Ordering::Release);
+        let status = service.record_permission_decision_if_unchanged(snapshot, decision, false).await?;
+        if status == PermissionAuthorizationStatus::NotDetermined {
+            return Ok(status);
+        }
+        if status != PermissionAuthorizationStatus::Authorized {
+            self.services.notify_media_permission_revoked(product_id, request);
+        }
+        Ok(status)
+    }
+}
 
 #[truapi::async_trait]
 impl System for ProductRuntimeHost {
@@ -219,15 +282,47 @@ impl Permissions for ProductRuntimeHost {
     #[instrument(skip_all, fields(runtime.method = "permissions.request_device_permission"))]
     async fn request_device_permission(
         &self,
-        _cx: &CallContext,
+        cx: &CallContext,
         request: HostDevicePermissionRequest,
     ) -> Result<HostDevicePermissionResponse, CallError<HostDevicePermissionError>> {
-		let version = request.version();
-		let inner = request.into_latest();
+        let version = request.version();
+        let inner = request.into_latest();
+        let product_id = self.product_id();
         let service = self.permissions_service();
-        match service.check_or_prompt_device(inner).await {
-			Ok(decision) => Ok(HostDevicePermissionResponse::from_latest(
-				latest::HostDevicePermissionResponse {
+        let request = PermissionAuthorizationRequest::Device(inner);
+        let session = self.authority.current_session();
+        let revision = {
+            let _guard = self.services.media_permission_gate.lock().await;
+            AtomicU64::new(self.services.media_permission_revision())
+        };
+        let current = || {
+            self.services.media_permission_revision() == revision.load(Ordering::Acquire)
+                && self.authority.current_session() == session
+                && !cx.cancel().is_cancelled()
+        };
+        let decision = service.check_or_prompt_device_fenced(inner, |snapshot, decision| {
+            let current = &current;
+            let revision = &revision;
+            let request = &request;
+            let product_id = &product_id;
+            async move {
+                self.commit_permission_answer(product_id, request, &snapshot, decision, revision, current).await
+            }
+        }).await;
+        let _guard = self.services.media_permission_gate.lock().await;
+        if !current() {
+            return Err(CallError::Denied);
+        }
+        let decision = match decision {
+            Ok(_) => service.authorization_status(&request).await,
+            Err(error) => Err(error),
+        };
+        if !current() {
+            return Err(CallError::Denied);
+        }
+        match decision {
+            Ok(decision) => Ok(HostDevicePermissionResponse::from_latest(
+                latest::HostDevicePermissionResponse {
                     granted: decision == PermissionAuthorizationStatus::Authorized,
                 },
 				version,
@@ -241,15 +336,69 @@ impl Permissions for ProductRuntimeHost {
     #[instrument(skip_all, fields(runtime.method = "permissions.request_remote_permission"))]
     async fn request_remote_permission(
         &self,
-        _cx: &CallContext,
+        cx: &CallContext,
         request: RemotePermissionRequest,
     ) -> Result<RemotePermissionResponse, CallError<RemotePermissionError>> {
-		let version = request.version();
-		let inner = request.into_latest();
+        let version = request.version();
+        let inner = request.into_latest();
+        let product_id = self.product_id();
         let service = self.permissions_service();
-        match service.check_or_prompt_remote(inner).await {
-			Ok(decision) => Ok(RemotePermissionResponse::from_latest(
-				latest::RemotePermissionResponse {
+        let decision = if matches!(inner.permission, latest::RemotePermission::Calling) {
+            let (session, identity) = crate::runtime::media_identity::resolve_identity(
+                &self.services,
+                self.authority.as_ref(),
+                &self.product,
+                cx,
+            )
+            .await
+            .map_err(|_| CallError::Denied)?;
+            let request = PermissionAuthorizationRequest::Calling {
+                network: identity.network,
+                account: identity.account,
+            };
+            let revision = {
+                let _guard = self.services.media_permission_gate.lock().await;
+                AtomicU64::new(self.services.media_permission_revision())
+            };
+            let current = || {
+                self.services.media_permission_revision() == revision.load(Ordering::Acquire)
+                    && self.authority.current_session().as_ref() == Some(&session)
+                    && !cx.cancel().is_cancelled()
+            };
+            let decision = service
+                .check_or_prompt_calling(identity.network, identity.account, |snapshot, status| {
+                    let request = &request;
+                    let current = &current;
+                    let revision = &revision;
+                    let product_id = &product_id;
+                    async move {
+                        let decision = match status {
+                            PermissionAuthorizationStatus::Authorized => PermissionDecision::AllowAlways,
+                            PermissionAuthorizationStatus::Denied => PermissionDecision::Deny,
+                            PermissionAuthorizationStatus::NotDetermined => return Ok(status),
+                        };
+                        self.commit_permission_answer(product_id, request, &snapshot, decision, revision, current).await
+                    }
+                })
+                .await;
+            let _guard = self.services.media_permission_gate.lock().await;
+            if !current() {
+                return Err(CallError::Denied);
+            }
+            let decision = match decision {
+                Ok(_) => service.authorization_status(&request).await,
+                Err(error) => Err(error),
+            };
+            if !current() {
+                return Err(CallError::Denied);
+            }
+            decision
+        } else {
+            service.check_or_prompt_remote(inner).await
+        };
+        match decision {
+            Ok(decision) => Ok(RemotePermissionResponse::from_latest(
+                latest::RemotePermissionResponse {
                     granted: decision == PermissionAuthorizationStatus::Authorized,
                 },
 				version,
@@ -596,20 +745,20 @@ impl Notifications for ProductRuntimeHost {
         let version = request.version();
         let () = request.into_latest();
         let result = async {
-            if let Some(status) = self.forwarded_receiving(2, Vec::new()).await? {
+        if let Some(status) = self.forwarded_receiving(2, Vec::new()).await? {
                 return Ok(status);
-            }
-            let authority = match self.receiving_execution_authority().await {
-                Ok(authority) => authority,
+        }
+        let authority = match self.receiving_execution_authority().await {
+            Ok(authority) => authority,
                 Err(CallError::Domain(latest::HostNotificationReceivingError::Unsupported)) => {
                     return Ok(latest::HostNotificationReceiverStatus {
-                        supported: false, os_permission: false, consent: false, enabled: false,
-                        revision: 0, sync_pending: false, transport_ready: false,
+                    supported: false, os_permission: false, consent: false, enabled: false,
+                    revision: 0, sync_pending: false, transport_ready: false,
                     });
                 }
-                Err(error) => return Err(error),
-            };
-            self.services.receiving.for_execution(authority).status().await
+            Err(error) => return Err(error),
+        };
+        self.services.receiving.for_execution(authority).status().await
                 .map_err(CallError::Domain)
         }.await;
         result
@@ -625,25 +774,25 @@ impl Notifications for ProductRuntimeHost {
         let version = request.version();
         let request = request.into_latest();
         let result = async {
-            let status = self.permissions_service()
+        let status = self.permissions_service()
                 .authorize_device(latest::HostDevicePermissionRequest::Notifications).await
                 .map_err(|error| CallError::Domain(latest::HostNotificationReceivingError::Storage {
                     reason: format!("permission storage failed: {error:?}"),
                 }))?;
-            if status != PermissionAuthorizationStatus::Authorized {
+        if status != PermissionAuthorizationStatus::Authorized {
                 return Err(CallError::Domain(latest::HostNotificationReceivingError::PermissionDenied));
-            }
-            if let Some(reason) = cx.cancel().reason() {
+        }
+        if let Some(reason) = cx.cancel().reason() {
                 return Err(CallError::Domain(latest::HostNotificationReceivingError::InvalidRequest {
                     reason: format!("receiving enrollment {reason}"),
                 }));
-            }
-            if let Some(status) = self.forwarded_receiving(3, request.encode()).await? {
+        }
+        if let Some(status) = self.forwarded_receiving(3, request.encode()).await? {
                 return Ok(status);
-            }
-            let authority = self.receiving_execution_authority().await?;
-            self.services.receiving.for_execution(authority)
-                .replace(request.expected_revision, request.watches).await
+        }
+        let authority = self.receiving_execution_authority().await?;
+        self.services.receiving.for_execution(authority)
+            .replace(request.expected_revision, request.watches).await
                 .map_err(CallError::Domain)
         }.await;
         result
@@ -659,11 +808,11 @@ impl Notifications for ProductRuntimeHost {
         let version = request.version();
         let request = request.into_latest();
         let result = async {
-            if let Some(status) = self.forwarded_receiving(4, request.encode()).await? {
+        if let Some(status) = self.forwarded_receiving(4, request.encode()).await? {
                 return Ok(status);
-            }
-            let authority = self.receiving_execution_authority().await?;
-            self.services.receiving.for_execution(authority).disable(request.expected_revision).await
+        }
+        let authority = self.receiving_execution_authority().await?;
+        self.services.receiving.for_execution(authority).disable(request.expected_revision).await
                 .map_err(CallError::Domain)
         }.await;
         result
@@ -679,12 +828,12 @@ impl Notifications for ProductRuntimeHost {
         let version = request.version();
         let request = request.into_latest();
         let result = async {
-            if let Some(outcome) = self.forwarded_receiving(5, request.encode()).await? {
+        if let Some(outcome) = self.forwarded_receiving(5, request.encode()).await? {
                 return Ok(outcome);
-            }
-            let authority = self.receiving_execution_authority().await?;
-            self.services.receiving.for_execution(authority).receipt(
-                request.revision, request.watch_id, request.event_id, request.kind,
+        }
+        let authority = self.receiving_execution_authority().await?;
+        self.services.receiving.for_execution(authority).receipt(
+            request.revision, request.watch_id, request.event_id, request.kind,
             ).await.map_err(CallError::Domain)
         }.await;
         result
@@ -700,11 +849,11 @@ impl Notifications for ProductRuntimeHost {
         let version = request.version();
         let request = request.into_latest();
         let result = async {
-            if let Some(events) = self.forwarded_receiving(6, request.encode()).await? {
+        if let Some(events) = self.forwarded_receiving(6, request.encode()).await? {
                 return Ok(events);
-            }
-            let authority = self.receiving_execution_authority().await?;
-            self.services.receiving.for_execution(authority).events(request.after_sequence).await
+        }
+        let authority = self.receiving_execution_authority().await?;
+        self.services.receiving.for_execution(authority).events(request.after_sequence).await
                 .map_err(CallError::Domain)
         }.await;
         result
@@ -720,11 +869,11 @@ impl Notifications for ProductRuntimeHost {
         let version = request.version();
         let request = request.into_latest();
         let result = async {
-            if let Some(()) = self.forwarded_receiving(7, request.encode()).await? {
+        if let Some(()) = self.forwarded_receiving(7, request.encode()).await? {
                 return Ok(());
-            }
-            let authority = self.receiving_execution_authority().await?;
-            self.services.receiving.for_execution(authority).acknowledge(request.sequence).await
+        }
+        let authority = self.receiving_execution_authority().await?;
+        self.services.receiving.for_execution(authority).acknowledge(request.sequence).await
                 .map_err(CallError::Domain)
         }.await;
         result

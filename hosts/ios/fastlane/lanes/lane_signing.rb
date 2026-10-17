@@ -22,7 +22,7 @@ lane :prepare_code_signing do
     setup_ci_keychain
 
     # Prepare array of identifiers to fetch profiles for
-    identifiers = [app_identifier]
+    identifiers = [app_identifier, "#{app_identifier}.MediaBroadcastExtension"]
     identifiers << extension_identifier if extension_identifier && !extension_identifier.empty?
 
     match_type_mapping = {
@@ -66,17 +66,21 @@ lane :update_signing_data do
     signing_profiles = {
       "development" => [
         "io.parity.polkadotapp.develop",
-        "io.parity.polkadotapp.develop.NotificationServiceExtension"
+        "io.parity.polkadotapp.develop.NotificationServiceExtension",
+        "io.parity.polkadotapp.develop.MediaBroadcastExtension"
       ],
       "adhoc" => [
         "io.parity.polkadotapp.develop",
-        "io.parity.polkadotapp.develop.NotificationServiceExtension"
+        "io.parity.polkadotapp.develop.NotificationServiceExtension",
+        "io.parity.polkadotapp.develop.MediaBroadcastExtension"
       ],
       "appstore" => [
         "io.parity.polkadotapp",
         "io.parity.polkadotapp.NotificationServiceExtension",
+        "io.parity.polkadotapp.MediaBroadcastExtension",
         "io.parity.polkadotapp.safety",
-        "io.parity.polkadotapp.safety.NotificationServiceExtension"
+        "io.parity.polkadotapp.safety.NotificationServiceExtension",
+        "io.parity.polkadotapp.safety.MediaBroadcastExtension"
       ]
     }
 

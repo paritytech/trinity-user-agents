@@ -48,6 +48,8 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- Resolve paired usernames from already-minted pending dotNS claims regardless of reservation age, while requiring current forward-registry ownership and rejecting conflicting atomic/subnode owners during lookup. Read-only Rust probes resolve the public `session.14`, `session.18`, and `session.42` accounts; legacy names without PoP provenance remain unresolved. Actual mobile-pairing qualification remains outstanding.
+- Continue dotNS identity enumeration past conflicting or zero-owner candidates without accepting them, and fall back to the root account when the preferred account has no usable owned username. Preserve first-owned-name precedence by skipping filled slots before further views; transport and ABI failures remain errors, and explicit Chat forward-owner lookups still reject unusable records.
 - Browser receiving synchronizes and revokes each authority scope independently, so account or verified-artifact replacement cannot leave the current enrollment in a revoke/register loop.
 - Message catch-up receipts preserve an already queued notification activation until the product explicitly acknowledges its sequence.
 - Generated WASM bridges preserve owned `String` parameters instead of emitting unsized `str` arguments.

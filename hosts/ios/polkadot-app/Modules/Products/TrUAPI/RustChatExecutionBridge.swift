@@ -11,6 +11,7 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
     // The base class keeps `dependencies` private; hold on to the logger here.
     private let logger: LoggerProtocol
 
+    @MainActor
     init(dependencies: Dependencies, chatMessaging: any ProductChatMessaging) {
         self.chatMessaging = chatMessaging
         logger = dependencies.logger
@@ -55,17 +56,17 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
 
         let message: ProductBotMessage =
             switch content {
-            case let .text(text):
-                .text(text)
-            case let .custom(custom):
+        case let .text(text):
+            .text(text)
+        case let .custom(custom):
                 .custom(messageType: custom.messageType, data: custom.payload, alt: alt)
             case .richText,
                  .actions,
                  .file,
                  .reaction,
                  .reactionRemoved:
-                throw HostRejection.Rejected(reason: "this host renders text and custom messages only")
-            }
+            throw HostRejection.Rejected(reason: "this host renders text and custom messages only")
+        }
         return try await chatMessaging.sendMessage(message, roomId: roomId)
     }
 
@@ -98,9 +99,9 @@ extension RoomInfo {
     func toChatRoom() -> ChatRoom {
         let participatingAs: ChatRoomParticipation =
             switch participation {
-            case .roomHost: .roomHost
-            case .bot: .bot
-            }
+        case .roomHost: .roomHost
+        case .bot: .bot
+        }
         return ChatRoom(roomId: roomId, participatingAs: participatingAs)
     }
 }

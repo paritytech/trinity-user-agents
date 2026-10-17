@@ -103,6 +103,8 @@ pub enum ConfirmKind {
     MainPurseChatPayment,
     /// [`UserConfirmationReview::ProfileDisclosure`].
     ProfileDisclosure,
+    /// [`UserConfirmationReview::Calling`].
+    Calling,
 }
 
 impl ConfirmKind {
@@ -125,6 +127,7 @@ impl ConfirmKind {
             UserConfirmationReview::ChatAuthority(_) => ConfirmKind::ChatAuthority,
             UserConfirmationReview::MainPurseChatPayment(_) => ConfirmKind::MainPurseChatPayment,
             UserConfirmationReview::ProfileDisclosure(_) => ConfirmKind::ProfileDisclosure,
+            UserConfirmationReview::Calling(_) => ConfirmKind::Calling,
         }
     }
 }
@@ -280,6 +283,7 @@ impl Default for MockConfig {
 pub struct MockPlatform {
     config: Arc<MockConfig>,
     storage: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    core_storage_changes: Arc<Mutex<Vec<CoreStorageKey>>>,
     preimages: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
     navigations: Arc<Mutex<Vec<String>>>,
     notifications: Arc<Mutex<Vec<latest::HostPushNotificationRequest>>>,
@@ -337,6 +341,7 @@ impl MockPlatform {
         Self {
             config: Arc::new(config),
             storage: Arc::new(Mutex::new(HashMap::new())),
+            core_storage_changes: Arc::new(Mutex::new(Vec::new())),
             preimages: Arc::new(Mutex::new(HashMap::new())),
             navigations: Arc::new(Mutex::new(Vec::new())),
             notifications: Arc::new(Mutex::new(Vec::new())),
@@ -367,6 +372,15 @@ impl MockPlatform {
     /// URLs the core asked the host to open, in order.
     pub fn navigations(&self) -> Vec<String> {
 		self.navigations.lock().expect("navigations poisoned").clone()
+    }
+
+    /// Explicit core-storage policy notifications queued across every clone.
+    /// Raw writes and clears do not appear here.
+    pub fn core_storage_changes(&self) -> Vec<CoreStorageKey> {
+        self.core_storage_changes
+            .lock()
+            .expect("core storage changes poisoned")
+            .clone()
     }
 
     /// Notifications the core asked the host to show, in order.
@@ -818,6 +832,15 @@ fn core_key(key: &CoreStorageKey) -> String {
             format!("core:product-manifest:{product_id}")
         }
         CoreStorageKey::NotificationReceiving => "core:notification-receiving".to_string(),
+        CoreStorageKey::AutomaticPreimageUploads {
+            product_id,
+            root_public_key,
+            genesis_hash,
+        } => format!(
+            "core:automatic-preimage-uploads:{}:{}:{product_id}",
+            hex_key(root_public_key),
+            hex_key(genesis_hash)
+        ),
         CoreStorageKey::AllowanceKeys { session_id } => {
             format!("core:allowance-keys:{session_id}")
 		},
@@ -932,6 +955,37 @@ impl CoreStorage for MockPlatform {
 		self.storage.lock().expect("storage poisoned").remove(&core_key(&key));
         Ok(())
     }
+
+    async fn compare_exchange_core_storage(
+        &self,
+        key: CoreStorageKey,
+        expected: Option<Vec<u8>>,
+        replacement: Vec<u8>,
+        notify_on_success: bool,
+    ) -> Result<bool, latest::GenericError> {
+        if let Some(reason) = &self.config.faults.storage_error {
+            return Err(latest::GenericError {
+                reason: reason.clone(),
+            });
+        }
+        let mut storage = self.storage.lock().expect("storage poisoned");
+        let slot = core_key(&key);
+        if storage.get(&slot) != expected.as_ref() {
+            return Ok(false);
+        }
+        storage.insert(slot, replacement);
+        if notify_on_success {
+            self.core_storage_changed(key);
+        }
+        Ok(true)
+    }
+
+    fn core_storage_changed(&self, key: CoreStorageKey) {
+        self.core_storage_changes
+            .lock()
+            .expect("core storage changes poisoned")
+            .push(key);
+    }
 }
 
 #[async_trait]
@@ -1035,6 +1089,7 @@ fn remote_permission_key(permission: &latest::RemotePermission) -> &'static str 
         Permission::PreimageSubmit => "PreimageSubmit",
         Permission::StatementSubmit => "StatementSubmit",
         Permission::JamPeers { .. } => "JamPeers",
+        Permission::Calling => "Calling",
     }
 }
 
@@ -1508,6 +1563,33 @@ mod tests {
         );
         block_on(p.clear_core_storage(CoreStorageKey::AuthSession)).unwrap();
 		assert_eq!(block_on(p.read_core_storage(CoreStorageKey::AuthSession)).unwrap(), None);
+    }
+
+    #[test]
+    fn automatic_preimage_storage_is_scoped_by_product_root_and_genesis() {
+        let p = MockPlatform::new();
+        let keys = [
+            ("mock.dot", [0xab; 32], [0xcd; 32]),
+            ("other.dot", [0xab; 32], [0xcd; 32]),
+            ("mock.dot", [0xef; 32], [0xcd; 32]),
+            ("mock.dot", [0xab; 32], [0xef; 32]),
+        ]
+        .map(|(product_id, root_public_key, genesis_hash)| {
+            CoreStorageKey::AutomaticPreimageUploads {
+                product_id: product_id.to_string(),
+                root_public_key,
+                genesis_hash,
+            }
+        });
+        for (value, key) in (1u8..).zip(&keys) {
+            block_on(p.write_core_storage(key.clone(), vec![value])).unwrap();
+        }
+        for (value, key) in (1u8..).zip(&keys) {
+            assert_eq!(
+                block_on(p.read_core_storage(key.clone())).unwrap(),
+                Some(vec![value])
+            );
+        }
     }
 
     #[test]

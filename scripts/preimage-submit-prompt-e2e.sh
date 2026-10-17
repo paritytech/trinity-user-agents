@@ -2,13 +2,12 @@
 # `preimage.submit` under a `PreimageSubmit` grant against a real signing-host
 # CLI, driven through the `@parity/truapi` client.
 #
-# The product is granted `PreimageSubmit` once and uploads three preimages to
-# Bulletin. The approvals transcript must contain the permission prompt and
-# one size review for each upload.
+# Grant the capability once, then attempt three uploads without an interactive
+# reviewer. `--auto-accept` must not grant bounded automatic-upload consent:
+# the transcript must contain the permission prompt and three denied reviews.
 #
-# This builds `truapi-host` from the checkout, so it always tests the code in
-# front of it rather than whatever binary is installed. The uploads are real
-# Bulletin submissions.
+# Build from the checkout and exercise the real signing host. No upload should
+# reach Bulletin because explicit upload consent is absent.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -33,12 +32,12 @@ echo "==> building truapi-host"
 cargo build -q -p truapi-host-cli
 host="target/debug/truapi-host"
 
-echo "==> uploading as $product"
+echo "==> checking explicit upload consent as $product"
 "$host" signing-host \
   --network "$network" \
   --base-path "$state" \
   --product-id "$product" \
   --auto-accept \
-  --script "$script"
+  --script "$script" </dev/null
 
 echo "==> preimage submit prompt e2e passed"

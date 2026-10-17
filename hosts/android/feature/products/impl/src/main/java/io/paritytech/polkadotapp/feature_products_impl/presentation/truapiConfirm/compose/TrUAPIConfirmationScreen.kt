@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -36,6 +38,7 @@ fun TrUAPIConfirmationScreen(contract: TrUAPIConfirmationContract) {
             state = data,
             onApprove = contract::onApproveClicked,
             onReject = contract::onRejectClicked,
+            onApproveAutomatically = contract::onApproveAutomaticallyClicked,
         )
     }
 }
@@ -45,10 +48,11 @@ private fun TrUAPIConfirmationScreenInternal(
     state: TrUAPIConfirmationUiState,
     onApprove: () -> Unit,
     onReject: () -> Unit,
+    onApproveAutomatically: () -> Unit,
 ) {
     NovaBottomSheetSurface {
         Column(
-            modifier = Modifier.padding(
+            modifier = Modifier.verticalScroll(rememberScrollState()).padding(
                 top = PolkadotTheme.spacings.large,
                 bottom = PolkadotTheme.spacings.mediumIncreased,
                 start = PolkadotTheme.spacings.mediumIncreased,
@@ -85,10 +89,23 @@ private fun TrUAPIConfirmationScreenInternal(
 
             PolkadotTextButton(
                 modifier = Modifier.fillMaxWidth(),
-                text = stringResource(RCommon.string.truapi_confirm_approve),
+                text = stringResource(
+                    if (state.allowsAutomaticUploads) RCommon.string.truapi_confirm_upload_once
+                    else RCommon.string.truapi_confirm_approve,
+                ),
                 style = PolkadotButtonStyle.secondary(),
                 onClick = onApprove,
             )
+
+            if (state.allowsAutomaticUploads) {
+                VerticalSpacer { small }
+                PolkadotTextButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    text = stringResource(RCommon.string.truapi_confirm_allow_automatic_uploads),
+                    style = PolkadotButtonStyle.secondary(),
+                    onClick = onApproveAutomatically,
+                )
+            }
 
             VerticalSpacer { small }
 
@@ -117,6 +134,7 @@ private fun DetailRow(detail: TrUAPIConfirmationDetail) {
             text = when (val value = detail.value) {
                 is DetailValue.Text -> value.text
                 is DetailValue.Resource -> stringResource(value.res)
+                is DetailValue.FormattedResource -> stringResource(value.res, *value.arguments.toTypedArray())
             },
             style = PolkadotTheme.typography.body.medium,
             color = PolkadotTheme.colors.fg.primary,
@@ -141,6 +159,7 @@ private fun TrUAPIConfirmationScreenPreview() {
             ),
             onApprove = {},
             onReject = {},
+            onApproveAutomatically = {},
         )
     }
 }

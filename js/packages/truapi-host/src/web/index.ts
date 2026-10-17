@@ -39,3 +39,10 @@ export type {
   BulletinQuota,
   WalletAllowanceSnapshot,
 } from "../wallet-allowances.js";
+export type {
+  BrowserMediaBackend,
+  BrowserMediaBackendOptions,
+  BrowserMediaConsentContext,
+  BrowserMediaGeometry,
+} from "./browser-media-backend.js";
+export { createBrowserMediaBackend } from "./browser-media-backend.js";

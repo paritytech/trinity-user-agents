@@ -75,7 +75,7 @@ class TransactionSignViewModel @Inject constructor(
 
         signingContext.approve { interactor.sign() }
             .onSuccess {
-                showMessage(RCommon.string.sign_transaction_signed)
+                if (signingContext.signsOnApproval) showMessage(RCommon.string.sign_transaction_signed)
 
                 router.back()
             }
