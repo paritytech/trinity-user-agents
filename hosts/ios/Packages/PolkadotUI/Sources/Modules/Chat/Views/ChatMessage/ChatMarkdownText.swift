@@ -2,8 +2,9 @@ import DesignSystem
 import SwiftUI
 
 /// The Markdown subset of product rich text: paragraphs, bold, italic, inline code, fenced code, lists, block
-/// quotes and `https` links. A heading shows as a bold paragraph. Raw HTML tags, images, tables and other
-/// links show as their text only. A line ending inside a paragraph shows as a line break, as in a chat message.
+/// quotes, `https` and `http` links, and bare web addresses. A heading shows as a bold paragraph. Raw HTML tags,
+/// images, tables and other links show as their text only. A line ending inside a paragraph shows as a line break,
+/// as in a chat message.
 public struct ChatMarkdownText: View, Hashable {
     let markdown: String
     let attributedText: AttributedString
@@ -68,7 +69,7 @@ public struct ChatMarkdownText: View, Hashable {
             return AttributedString(markdown)
         }
 
-        return ChatMarkdownRenderer().render(parsed)
+        return AttributedString.addingWebLinks(to: ChatMarkdownRenderer().render(parsed))
     }
 }
 
@@ -194,7 +195,7 @@ private extension ChatMarkdownRenderer {
         piece.presentationIntent = nil
         piece.imageURL = nil
 
-        if let link = piece.link, link.scheme?.lowercased() != "https" {
+        if let link = piece.link, !["https", "http"].contains(link.scheme?.lowercased() ?? "") {
             piece.link = nil
         }
 

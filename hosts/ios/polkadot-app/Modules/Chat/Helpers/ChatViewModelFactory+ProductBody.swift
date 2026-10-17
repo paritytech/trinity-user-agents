@@ -54,7 +54,7 @@ extension Chat.LocalMessage.Content.ProductBody {
 
 extension ChatViewModelFactory {
     /// The format of a text in a product room: the Markdown subset for a `RichText` body with no media, else plain
-    /// text with its `https` links. A tapped link opens through the host. Nil in a person chat, which keeps inline
+    /// text with its web links. A tapped link opens through the host. Nil in a person chat, which keeps inline
     /// Markdown and the links that the system finds.
     func productText(
         of message: Chat.LocalMessage,

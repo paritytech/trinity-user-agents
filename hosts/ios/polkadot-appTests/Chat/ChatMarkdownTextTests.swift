@@ -57,7 +57,24 @@ struct ChatMarkdownTextTests {
         #expect(text[range].link == URL(string: "https://example.com/docs"))
     }
 
-    @Test(arguments: ["[x](http://example.com)", "[x](javascript:alert(1))", "[x](tel:123)"])
+    @Test func anHttpLinkStaysALink() throws {
+        let text = render("see [docs](http://example.com/docs)")
+        let range = try #require(text.range(of: "docs"))
+
+        #expect(text[range].link == URL(string: "http://example.com/docs"))
+    }
+
+    /// A person writes a bare address in a Markdown text too. A bare domain opens as `https`; code stays text.
+    @Test func aBareAddressIsALinkOutOfCode() throws {
+        let text = render("**read** www.example.net and `example.org`")
+        let domain = try #require(text.range(of: "www.example.net"))
+        let code = try #require(text.range(of: "example.org"))
+
+        #expect(text[domain].link == URL(string: "https://www.example.net"))
+        #expect(text[code].link == nil)
+    }
+
+    @Test(arguments: ["[x](javascript:alert(1))", "[x](tel:123)", "[x](mailto:a@example.com)"])
     func anyOtherLinkIsOnlyText(markdown: String) throws {
         let text = render(markdown)
         let range = try #require(text.range(of: "x"))

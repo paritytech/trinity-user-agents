@@ -1368,10 +1368,11 @@ product removes all its rooms.
 
 The host draws everything in its own theme; a product sends no colours, fonts or layout.
 
-- `Text` is plain, with its `https` links detected. `RichText` text is CommonMark limited to paragraphs, bold, italic,
-  inline and fenced code, lists, block quotes and `https` links; headings draw as bold paragraphs, and anything else
-  draws as its text. A line ending inside a paragraph draws as a line break, as in a chat message. The host asks
-  before it opens a link.
+- `Text` is plain, with its web links detected: `https` and `http` addresses as written, and a bare domain as
+  `https`. `RichText` text is CommonMark limited to paragraphs, bold, italic, inline and fenced code, lists, block
+  quotes and `https` and `http` links, with bare web addresses linked as in `Text`; headings draw as bold paragraphs,
+  and anything else draws as its text. A line ending inside a paragraph draws as a line break, as in a chat message.
+  The host asks before it opens a link.
 - Media draws at its stated size with the BlurHash until the bytes arrive. A preimage that cannot be fetched draws the
   placeholder with a retry.
 - `Actions` draws its buttons in a column or a grid. The host disables none; the product removes them by editing the

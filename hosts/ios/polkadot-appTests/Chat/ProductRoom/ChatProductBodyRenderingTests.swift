@@ -19,10 +19,10 @@ struct ChatProductBodyRenderingTests {
 
     // MARK: - Text (O18)
 
-    /// A `Text` body of a product is plain: no Markdown. Its `https` addresses are links that open through the
-    /// host; other addresses are text (02-DESIGN §6.1).
-    @Test func aProductTextIsPlainWithItsHttpsLinks() async throws {
-        let raw = "**not bold** and https://example.com/a, http://example.org and www.example.net"
+    /// A `Text` body of a product is plain: no Markdown. Its web addresses are links that open through the host:
+    /// `https` and `http` as written, a bare domain as `https`. A mail address is text (02-DESIGN §6.1).
+    @Test func aProductTextIsPlainWithItsWebLinks() async throws {
+        let raw = "**not bold** and https://example.com/a, http://example.org, www.example.net and a@example.com"
         let (factory, presenter) = try makeFactory()
         defer { withExtendedLifetime(presenter) {} }
 
@@ -31,7 +31,11 @@ struct ChatProductBodyRenderingTests {
         #expect(text.rawText == raw)
         #expect(String(text.attributedText.characters) == raw)
         let links = text.attributedText.runs.compactMap(\.link)
-        #expect(links == [URL(string: "https://example.com/a")])
+        #expect(links == [
+            URL(string: "https://example.com/a"),
+            URL(string: "http://example.org"),
+            URL(string: "https://www.example.net")
+        ])
         let range = try #require(text.attributedText.range(of: "https://example.com/a"))
         #expect(text.attributedText[range].link == URL(string: "https://example.com/a"))
         #expect(text.openLink != nil)

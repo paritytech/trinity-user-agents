@@ -33,7 +33,7 @@ public extension ChatMessageContainerConfiguration {
     /// How the text of a product body draws (02-DESIGN §6.1). A person chat draws its text with no such value.
     struct ProductText {
         enum Format {
-            /// A `Text` body: plain text with no Markdown, and its `https` links. A tapped link opens through the
+            /// A `Text` body: plain text with no Markdown, and its web links. A tapped link opens through the
             /// host.
             case plain(openLink: ((URL) -> Void)?)
             /// A `RichText` body: the Markdown subset of ``ChatMarkdownText``. A tapped link opens through the host.
