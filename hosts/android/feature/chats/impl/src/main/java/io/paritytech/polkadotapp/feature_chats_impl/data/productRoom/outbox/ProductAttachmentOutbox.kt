@@ -2,11 +2,17 @@ package io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.outbox
 
 import io.novasama.substrate_sdk_android.extensions.fromHex
 import io.novasama.substrate_sdk_android.extensions.toHexString
+import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.BinaryScale
+import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.decodeFromByteArray
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMediaMetaModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.scale.ChatResourceLocal
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.scale.toDomain
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.scale.toLocal
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,6 +23,7 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToByteArray
 import timber.log.Timber
 import java.io.File
 import java.util.Properties
@@ -74,6 +81,10 @@ data class ProductOutboxEntry(
     val key: DataByteArray?,
     /** Null while the host sends the attachment. */
     val failure: ProductAttachmentFailure?,
+    /** The room declares `sealed_attachments`: the host seals the file in place of a preimage. */
+    val seals: Boolean,
+    /** The sealed file, after the sealing. A retry then only sends the message. */
+    val sealed: ChatResourceModel.Sealed?,
 ) {
     val isFailed: Boolean
         get() = failure != null
@@ -102,7 +113,13 @@ class ProductAttachmentOutbox(
 
     suspend fun get(id: ChatMessageId): ProductOutboxEntry? = loaded()[id]
 
-    suspend fun add(chatId: ChatId, draft: ProductAttachmentDraft, text: String?, replyTo: ChatMessageId?): ProductOutboxEntry =
+    suspend fun add(
+        chatId: ChatId,
+        draft: ProductAttachmentDraft,
+        text: String?,
+        replyTo: ChatMessageId?,
+        seals: Boolean = false,
+    ): ProductOutboxEntry =
         mutex.withLock {
             val entry = ProductOutboxEntry(
                 id = ID_PREFIX + UUID.randomUUID(),
@@ -115,6 +132,8 @@ class ProductAttachmentOutbox(
                 replyTo = replyTo,
                 key = null,
                 failure = null,
+                seals = seals,
+                sealed = null,
             )
             withContext(io) {
                 val folder = folderOf(entry.id).apply { mkdirs() }
@@ -204,6 +223,8 @@ class ProductAttachmentOutbox(
         entry.text?.let { properties[TEXT] = it }
         entry.replyTo?.let { properties[REPLY_TO] = it }
         entry.key?.let { properties[KEY] = it.value.toHexString() }
+        if (entry.seals) properties[SEALS] = true.toString()
+        entry.sealed?.let { properties[SEALED] = BinaryScale.encodeToByteArray(it.toLocal()).toHexString() }
         entry.failure?.let { failure -> writeFailure(properties, failure) }
 
         val folder = folderOf(entry.id).apply { mkdirs() }
@@ -236,6 +257,8 @@ class ProductAttachmentOutbox(
             replyTo = value(REPLY_TO),
             key = value(KEY)?.fromHex()?.toDataByteArray(),
             failure = readFailure(properties),
+            seals = value(SEALS).toBoolean(),
+            sealed = value(SEALED)?.let { BinaryScale.decodeFromByteArray<ChatResourceLocal.Sealed>(it.fromHex()).toDomain() },
         )
     }
 
@@ -288,6 +311,8 @@ class ProductAttachmentOutbox(
         private const val TEXT = "text"
         private const val REPLY_TO = "replyTo"
         private const val KEY = "key"
+        private const val SEALS = "seals"
+        private const val SEALED = "sealed"
         private const val FAILURE = "failure"
         private const val FAILURE_DETAIL = "failureDetail"
 

@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_chats_api.domain.productRoom
 
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 
 /**
  * Stores a user attachment of a product room as one Bulletin preimage through the TrUAPI core (07-LATER §7). The
@@ -16,6 +17,12 @@ interface ProductAttachmentStaging {
 
     /** Gives the 32-byte key of the preimage, or a [ProductAttachmentStageException]. */
     suspend fun stage(chatId: ChatId, mimeType: String, bytes: ByteArray): Result<DataByteArray>
+
+    /**
+     * Encrypts [bytes] with a new key and stores the ciphertext as Bulletin parts that the product pays for, in a room
+     * that declares `sealed_attachments`. Gives the resource that opens the file, or a [ProductAttachmentStageException].
+     */
+    suspend fun seal(chatId: ChatId, bytes: ByteArray): Result<ChatResourceModel.Sealed>
 }
 
 /** Why the core did not stage an attachment (`NativeChatStageRejection`). */

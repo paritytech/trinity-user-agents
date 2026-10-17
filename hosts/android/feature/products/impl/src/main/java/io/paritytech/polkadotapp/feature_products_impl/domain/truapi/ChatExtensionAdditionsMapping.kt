@@ -31,6 +31,7 @@ fun ChatRoomFeatures.toModel() = ChatRoomFeaturesModel(
     calls = calls?.let { ChatRoomCallsModel(it.audio, it.video) },
     threadOf = threadOf?.let { ChatThreadParentModel(it.roomId, it.messageId) },
     readAloud = readAloud,
+    sealedAttachments = sealedAttachments,
 )
 
 fun ChatRoomFeaturesModel.toCore() = ChatRoomFeatures(
@@ -39,7 +40,7 @@ fun ChatRoomFeaturesModel.toCore() = ChatRoomFeatures(
     calls = calls?.let { ChatRoomCalls(it.audio, it.video) },
     threadOf = threadOf?.let { ChatThreadParent(it.roomId, it.messageId) },
     readAloud = readAloud,
-    sealedAttachments = false,
+    sealedAttachments = sealedAttachments,
 )
 
 fun ChatMessageMeta.toModel() = ChatMessageMetaModel(

@@ -388,7 +388,8 @@ inline bound as `ChatResource::Sealed` (RFC "Chat Extension v2 additions",
 "Sealed attachments"): the core encrypts it with a new key and stores the
 ciphertext in Bulletin parts that the product's allowance pays for, up to
 32 MiB. The iOS app seals through `sealChatAttachment` and opens sealed media
-itself; the other hosts do not list the feature.
+itself. The Android app does the same behind its attachment staging gate, and
+does not list the feature yet; the other hosts do not list it.
 
 `Usernames` (`usernames`) lets a product search the usernames of the network
 and ask the host to add a person to the contacts of the app (RFC "Host

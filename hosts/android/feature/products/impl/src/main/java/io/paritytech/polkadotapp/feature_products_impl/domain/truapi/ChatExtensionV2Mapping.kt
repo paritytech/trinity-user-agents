@@ -87,8 +87,13 @@ fun ChatRoomPreview.toModel() = ChatRoomPreviewModel(
 fun ChatResource.toModel(): ChatResourceModel = when (this) {
     is ChatResource.Inline -> ChatResourceModel.Inline(mimeType, bytes.toDataByteArray())
     is ChatResource.Preimage -> ChatResourceModel.Preimage(key.toDataByteArray())
-    // This host lists no `sealed_attachments` and cannot open one, so it draws no bytes.
-    is ChatResource.Sealed -> ChatResourceModel.Inline("application/octet-stream", ByteArray(0).toDataByteArray())
+    is ChatResource.Sealed -> ChatResourceModel.Sealed(
+        parts = parts.map { it.toDataByteArray() },
+        key = key.toDataByteArray(),
+        nonce = nonce.toDataByteArray(),
+        size = size.toLong(),
+        digest = digest.toDataByteArray(),
+    )
 }
 
 /** Null for a v1 address, which no v2 value can carry. */
@@ -96,6 +101,7 @@ fun ChatResourceModel.toCore(): ChatResource? = when (this) {
     is ChatResourceModel.Inline -> ChatResource.Inline(mimeType, bytes.value)
     is ChatResourceModel.Preimage -> ChatResource.Preimage(key.value)
     is ChatResourceModel.Url -> null
+    is ChatResourceModel.Sealed -> ChatResource.Sealed(parts.map { it.value }, key.value, nonce.value, size.toULong(), digest.value)
 }
 
 fun ChatToolbarAction.toModel() = ChatToolbarActionModel(

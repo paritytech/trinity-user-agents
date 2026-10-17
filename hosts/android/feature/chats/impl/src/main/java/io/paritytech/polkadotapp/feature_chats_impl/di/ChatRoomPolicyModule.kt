@@ -8,6 +8,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import io.paritytech.polkadotapp.feature_chats_impl.data.resources.ChatResourceDiskCache
+import io.paritytech.polkadotapp.feature_chats_impl.data.resources.ChatSealedFileStore
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicyProvider
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.RealChatRoomPolicyProvider
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatMediaLoader
@@ -39,5 +40,10 @@ interface ChatRoomPolicyModule {
         @Singleton
         fun provideChatResourceDiskCache(@ApplicationContext context: Context): ChatResourceDiskCache =
             ChatResourceDiskCache(File(context.cacheDir, "chat_resources"), ChatResourceDiskCache.MAX_BYTES)
+
+        @Provides
+        @Singleton
+        fun provideChatSealedFileStore(@ApplicationContext context: Context): ChatSealedFileStore =
+            ChatSealedFileStore(ChatResourceDiskCache(File(context.filesDir, "chat_sealed_files"), ChatSealedFileStore.MAX_BYTES))
     }
 }

@@ -30,7 +30,8 @@ fun interface ProductImageShrinker {
  * a product room. An image that is too large is encoded again until it fits. A larger video or file is refused.
  *
  * When the room stages attachments (07-LATER §7), an attachment above 1 MiB and up to 8 MiB becomes a
- * [ProductAttachmentDraft] that keeps the original bytes. An image above 8 MiB is encoded again to go inline.
+ * [ProductAttachmentDraft] that keeps the original bytes. When the room seals attachments, the bound is 32 MiB. An image
+ * above the bound is encoded again to go inline.
  */
 class ProductAttachmentEncoder @Inject constructor(
     private val contentResolver: ContentResolver,
@@ -60,18 +61,27 @@ class ProductAttachmentEncoder @Inject constructor(
         }
     }
 
-    /** True when an attachment of [size] goes through staging in a room that stages attachments. */
-    fun goesToStaging(mimeType: String, size: InformationSize): Boolean =
-        size > LIMIT && (size <= STAGED_LIMIT || !mimeType.startsWith(IMAGE_PREFIX))
+    /**
+     * True when an attachment of [size] goes through staging in a room that stages attachments, or that seals them when
+     * [seals] is true.
+     */
+    fun goesToStaging(mimeType: String, size: InformationSize, seals: Boolean = false): Boolean =
+        size > LIMIT && (size <= stagedLimit(seals) || !mimeType.startsWith(IMAGE_PREFIX))
 
-    /** Reads an attachment for staging, with its meta. Refuses an attachment above [STAGED_LIMIT]. */
-    suspend fun prepareStaged(uri: Uri, mimeType: String, size: InformationSize): Result<ProductAttachmentDraft> =
+    /** Reads an attachment for staging, with its meta. Refuses an attachment above the bound of staging or sealing. */
+    suspend fun prepareStaged(
+        uri: Uri,
+        mimeType: String,
+        size: InformationSize,
+        seals: Boolean = false,
+    ): Result<ProductAttachmentDraft> =
         withContext(dispatchers.io) {
             runCatching {
-                if (size > STAGED_LIMIT) throw FileTooLargeException(size, STAGED_LIMIT)
+                val limit = stagedLimit(seals)
+                if (size > limit) throw FileTooLargeException(size, limit)
                 val meta = metaBuilder.build(uri, mimeType, size)
                 val bytes = read(uri)
-                if (bytes.size > STAGED_LIMIT_BYTES) throw FileTooLargeException(bytes.size.bytes, STAGED_LIMIT)
+                if (bytes.size > limit.inWholeBytes) throw FileTooLargeException(bytes.size.bytes, limit)
 
                 when (meta) {
                     is Attachment.Meta.Image -> ProductAttachmentDraft(
@@ -97,6 +107,8 @@ class ProductAttachmentEncoder @Inject constructor(
                 }
             }
         }
+
+    private fun stagedLimit(seals: Boolean): InformationSize = if (seals) SEALED_LIMIT else STAGED_LIMIT
 
     private fun image(uri: Uri, meta: Attachment.Meta.Image): ChatMediaItemModel.Image {
         val original = read(uri)
@@ -138,6 +150,9 @@ class ProductAttachmentEncoder @Inject constructor(
         /** The largest attachment that the core stages (`CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES`). */
         val STAGED_LIMIT = 8.megabytes
         val STAGED_LIMIT_BYTES = STAGED_LIMIT.inWholeBytes.toInt()
+
+        /** The largest attachment that the core seals (`CHAT_SEALED_ATTACHMENT_MAX_BYTES`). */
+        val SEALED_LIMIT = 32.megabytes
 
         private const val DEFAULT_FILE_NAME = "file"
         private const val IMAGE_PREFIX = "image/"

@@ -33,6 +33,15 @@ class ChatRoomAdditionsScaleConformanceTest {
     }
 
     @Test
+    fun `features that seal are kept with version 2, and a version 1 value reads with no sealing`() {
+        val sealing = FEATURES_DECLARED_MODEL.copy(sealedAttachments = true)
+
+        assertEquals("02" + FEATURES_DECLARED.drop(2) + "01", sealing.encode().toHexString())
+        assertEquals(sealing, sealing.encode().decodeFeatures())
+        assertEquals(false, FEATURES_DECLARED.fromHex().decodeFeatures()?.sealedAttachments)
+    }
+
+    @Test
     fun `decode message meta from encoded bytes`() {
         assertEquals(META_FULL_MODEL, META_FULL.fromHex().decodeMessageMeta())
         assertEquals(META_WIDE_MODEL, META_WIDE.fromHex().decodeMessageMeta())
@@ -65,6 +74,7 @@ class ChatRoomAdditionsScaleConformanceTest {
             calls = ChatRoomCallsModel(audio = true, video = false),
             threadOf = ChatThreadParentModel(roomId = "lobby", messageId = "m1"),
             readAloud = true,
+            sealedAttachments = false,
         )
 
         val META_FULL_MODEL = ChatMessageMetaModel(

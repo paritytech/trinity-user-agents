@@ -123,6 +123,19 @@ sealed interface ChatResourceModel {
 
     /** An address of a v1 message body (`https` or `data:`). A v2 declaration never carries it. */
     data class Url(val url: String) : ChatResourceModel
+
+    /**
+     * A file that a host sealed (`sealed_attachments`): XChaCha20-Poly1305 of the file under [key] and [nonce], stored
+     * on the Bulletin chain as [parts], each the 32-byte key of one preimage. [size] is the length of the ciphertext and
+     * [digest] its SHA-512.
+     */
+    data class Sealed(
+        val parts: List<DataByteArray>,
+        val key: DataByteArray,
+        val nonce: DataByteArray,
+        val size: Long,
+        val digest: DataByteArray,
+    ) : ChatResourceModel
 }
 
 /** What the host does when the user selects a product action (`ChatActionHandler`). */

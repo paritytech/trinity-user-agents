@@ -71,6 +71,9 @@ class RealChatResourceResolver @Inject constructor(
             .map { ResolvedChatImage.Remote(it) }
 
         is ChatResourceModel.Url -> resolveIcon(resource.url)
+
+        // The core seals user files only, never an avatar, an icon or a badge.
+        is ChatResourceModel.Sealed -> Result.failure(IllegalArgumentException("A sealed file is not an image of a room"))
     }
 
     override fun resolveIcon(icon: String): Result<ResolvedChatImage> {

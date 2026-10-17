@@ -15,11 +15,22 @@ import timber.log.Timber
 /** The version byte of the first stored shape of the additions. */
 private const val ADDITIONS_FORMAT_V1: Byte = 1
 
-fun ChatRoomFeaturesModel.encode(): ByteArray = encodeV1(toLocal())
+/** The version byte of the features with `sealed_attachments`. */
+private const val FEATURES_FORMAT_V2: Byte = 2
+
+// Features without sealed attachments keep the first shape, so that a value stays readable by an older version.
+fun ChatRoomFeaturesModel.encode(): ByteArray =
+    if (sealedAttachments) byteArrayOf(FEATURES_FORMAT_V2) + BinaryScale.encodeToByteArray(toLocalV2()) else encodeV1(toLocal())
 
 fun ChatMessageMetaModel.encode(): ByteArray = encodeV1(toLocal())
 
-fun ByteArray.decodeFeatures(): ChatRoomFeaturesModel? = decodeV1<ChatRoomFeaturesLocal>("features")?.toDomain()
+fun ByteArray.decodeFeatures(): ChatRoomFeaturesModel? {
+    if (firstOrNull() != FEATURES_FORMAT_V2) return decodeV1<ChatRoomFeaturesLocal>("features")?.toDomain()
+    return runCatching { BinaryScale.decodeFromByteArray<ChatRoomFeaturesLocalV2>(copyOfRange(1, size)) }
+        .onFailure { Timber.w(it, "Cannot decode the features of a chat room") }
+        .getOrNull()
+        ?.toDomain()
+}
 
 fun ByteArray.decodeMessageMeta(): ChatMessageMetaModel? = decodeV1<ChatMessageMetaValueLocal>("message meta")?.toDomain()
 
@@ -50,6 +61,25 @@ fun ChatRoomFeaturesLocal.toDomain() = ChatRoomFeaturesModel(
     calls = calls?.let { ChatRoomCallsModel(it.audio, it.video) },
     threadOf = threadOf?.let { ChatThreadParentModel(it.roomId, it.messageId) },
     readAloud = readAloud,
+    sealedAttachments = false,
+)
+
+private fun ChatRoomFeaturesModel.toLocalV2() = ChatRoomFeaturesLocalV2(
+    preimageAttachments = preimageAttachments,
+    search = search,
+    calls = calls?.let { ChatRoomCallsLocal(it.audio, it.video) },
+    threadOf = threadOf?.let { ChatThreadParentLocal(it.roomId, it.messageId) },
+    readAloud = readAloud,
+    sealedAttachments = sealedAttachments,
+)
+
+private fun ChatRoomFeaturesLocalV2.toDomain() = ChatRoomFeaturesModel(
+    preimageAttachments = preimageAttachments,
+    search = search,
+    calls = calls?.let { ChatRoomCallsModel(it.audio, it.video) },
+    threadOf = threadOf?.let { ChatThreadParentModel(it.roomId, it.messageId) },
+    readAloud = readAloud,
+    sealedAttachments = sealedAttachments,
 )
 
 fun ChatMessageMetaModel.toLocal() = ChatMessageMetaValueLocal(

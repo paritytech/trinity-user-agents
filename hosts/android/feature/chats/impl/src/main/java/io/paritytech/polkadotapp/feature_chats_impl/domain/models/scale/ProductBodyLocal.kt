@@ -60,6 +60,17 @@ sealed interface ChatResourceLocal {
     @Serializable
     @EnumIndex(2)
     class Url(val url: String) : ChatResourceLocal
+
+    /** [size] holds the bits of a `u64`. */
+    @Serializable
+    @EnumIndex(3)
+    class Sealed(
+        val parts: List<ByteArray>,
+        val key: ByteArray,
+        val nonce: ByteArray,
+        val size: Long,
+        val digest: ByteArray,
+    ) : ChatResourceLocal
 }
 
 @Serializable

@@ -71,6 +71,9 @@ object ChatHostCapabilities {
     /** The call buttons of the header, a ringing call, the call bar and the call events: S72 to S74. */
     const val CALL_BUTTONS = "call_buttons"
 
+    /** A user file above 1 MiB and up to 32 MiB goes encrypted, as Bulletin parts that the product pays for. */
+    const val SEALED_ATTACHMENTS = "sealed_attachments"
+
     /** The names in the order of the feature table of the RFC. */
     val features: List<String> = listOf(
         PRODUCT_SOURCE_ROOMS,

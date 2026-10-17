@@ -40,6 +40,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
 import uniffi.truapi.ChatActivity
 import uniffi.truapi.ChatMessageMeta
+import uniffi.truapi.ChatResource
 import uniffi.truapi.ChatRoomCall
 import uniffi.truapi.ChatRoomEvent
 import uniffi.truapi.ChatRoomFeatures
@@ -1205,6 +1206,20 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         mimeType: String,
         bytes: ByteArray,
     ): ByteArray = inner.chatStageAttachment(productId, roomId, mimeType, bytes)
+
+    /**
+     * Seal a user file of a room that declares `sealed_attachments`: the core
+     * encrypts it with a new key and stores the ciphertext as Bulletin parts
+     * that the allowance of the product pays for, up to 32 MiB. It gives the
+     * `ChatResource.Sealed` that opens the file and throws
+     * [NativeChatStageRejection] as [stageChatAttachment] does.
+     */
+    @Throws(NativeChatStageRejection::class)
+    suspend fun sealChatAttachment(
+        productId: String,
+        roomId: String,
+        bytes: ByteArray,
+    ): ChatResource = inner.chatSealAttachment(productId, roomId, bytes)
 
     /**
      * Tell the pairing host behind [deeplink] that allowance allocation is

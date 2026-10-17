@@ -18,6 +18,8 @@ data class ChatRoomFeaturesModel(
     val threadOf: ChatThreadParentModel?,
     /** The host offers "Read aloud" on text messages. */
     val readAloud: Boolean,
+    /** A user file above the inline bound goes encrypted, as Bulletin parts that the product pays for. */
+    val sealedAttachments: Boolean,
 ) {
     companion object {
         val HOST_DEFAULT = ChatRoomFeaturesModel(
@@ -26,6 +28,7 @@ data class ChatRoomFeaturesModel(
             calls = null,
             threadOf = null,
             readAloud = false,
+            sealedAttachments = false,
         )
     }
 }

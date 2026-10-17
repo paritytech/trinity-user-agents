@@ -392,6 +392,7 @@ class ProductChatHostBridgeTest {
             calls = ChatRoomCallsModel(audio = true, video = false),
             threadOf = ChatThreadParentModel("lobby", "m1"),
             readAloud = true,
+            sealedAttachments = false,
         )
         coEvery { messaging.roomDeclarations(ProductChatIdParameter(ROOM)) } returns
             Result.success(ChatRoomDeclarations.EMPTY.copy(features = declared))

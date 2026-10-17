@@ -4,6 +4,7 @@ import dagger.Lazy
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.extensionOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductAttachmentStageException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductAttachmentStaging
@@ -64,6 +65,26 @@ class TrUAPIProductAttachmentStaging @Inject constructor(
 
         return try {
             Result.success(runtime.stageChatAttachment(productId.value, room.value, mimeType, bytes).toDataByteArray())
+        } catch (rejection: NativeChatStageRejection) {
+            Result.failure(rejection.toModel())
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            Result.failure(ProductAttachmentStageException.SubmitFailed(error.message ?: error.toString()))
+        }
+    }
+
+    override suspend fun seal(chatId: ChatId, bytes: ByteArray): Result<ChatResourceModel.Sealed> {
+        val (productId, room) = chatId.productRoom()
+            ?: return Result.failure(ProductAttachmentStageException.NotDeclared())
+        val runtime = runtimeProvider.get().runtime()
+            .getOrElse { return Result.failure(ProductAttachmentStageException.SubmitFailed(it.message ?: it.toString())) }
+
+        return try {
+            when (val resource = runtime.sealChatAttachment(productId.value, room.value, bytes).toModel()) {
+                is ChatResourceModel.Sealed -> Result.success(resource)
+                else -> Result.failure(ProductAttachmentStageException.SubmitFailed("the core gave no sealed resource"))
+            }
         } catch (rejection: NativeChatStageRejection) {
             Result.failure(rejection.toModel())
         } catch (error: CancellationException) {

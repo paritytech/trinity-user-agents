@@ -4,6 +4,8 @@ import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.outbox.ChatOutboxPreviews
 import io.paritytech.polkadotapp.feature_chats_impl.data.resources.ChatResourceDiskCache
+import io.paritytech.polkadotapp.feature_chats_impl.data.resources.ChatSealedFile
+import io.paritytech.polkadotapp.feature_chats_impl.data.resources.ChatSealedFileStore
 import io.paritytech.polkadotapp.tools_ipfs_api.IpfsContentLookup
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -29,6 +31,7 @@ class RealChatMediaLoader @Inject constructor(
     private val ipfsContentLookup: IpfsContentLookup,
     private val cache: ChatResourceDiskCache,
     private val dispatchers: CoroutineDispatchers,
+    private val sealedFiles: ChatSealedFileStore,
     private val outboxPreviews: ChatOutboxPreviews = ChatOutboxPreviews { null },
 ) : ChatMediaLoader {
     override suspend fun load(resource: ChatResourceModel, extension: String?): Result<File> = withContext(dispatchers.io) {
@@ -41,6 +44,16 @@ class RealChatMediaLoader @Inject constructor(
 
                 // A failed lookup is not kept, so that the retry of the user asks again.
                 ipfsContentLookup.lookupRawHash(resource.key.value).mapCatching { bytes -> keep(key, extension, bytes).getOrThrow() }
+            }
+
+            // An opened sealed file stays out of the cache: the chain keeps its parts for about two weeks only.
+            is ChatResourceModel.Sealed -> {
+                val key = SEALED_KEY_PREFIX + resource.digest.value.toHex()
+                sealedFiles.cache.file(key, extension)?.let { return@withContext Result.success(it) }
+
+                val file = ChatSealedFile.read(resource) { part -> ipfsContentLookup.lookupRawHash(part).getOrNull() }
+                    ?: return@withContext Result.failure(IOException("The sealed file did not open"))
+                sealedFiles.cache.store(key, extension, file)
             }
 
             // An attachment that waits in the outbox shows its kept file (07-LATER §7).
@@ -71,6 +84,7 @@ class RealChatMediaLoader @Inject constructor(
     private companion object {
         const val INLINE_KEY_PREFIX = "inline:"
         const val PREIMAGE_KEY_PREFIX = "preimage:"
+        const val SEALED_KEY_PREFIX = "sealed:"
         const val DATA_SCHEME = "data:"
         const val BASE64_SUFFIX = ";base64"
     }

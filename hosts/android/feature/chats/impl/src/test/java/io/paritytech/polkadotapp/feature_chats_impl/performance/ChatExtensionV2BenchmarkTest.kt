@@ -22,6 +22,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMes
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipantsPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 import io.paritytech.polkadotapp.feature_chats_impl.data.resources.ChatResourceDiskCache
+import io.paritytech.polkadotapp.feature_chats_impl.data.resources.ChatSealedFileStore
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatFeedSnapshot
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatPagingState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomReadiness
@@ -230,7 +231,12 @@ class ChatExtensionV2BenchmarkTest {
 
     @Test
     fun `B4 a 1 MiB inline image to a file of the cache`() = runBlocking<Unit> {
-        val loader = RealChatMediaLoader(mockk(), ChatResourceDiskCache(folder.newFolder("b4"), ChatResourceDiskCache.MAX_BYTES), TestCoroutineDispatchers(Dispatchers.IO))
+        val loader = RealChatMediaLoader(
+            mockk(),
+            ChatResourceDiskCache(folder.newFolder("b4"), ChatResourceDiskCache.MAX_BYTES),
+            TestCoroutineDispatchers(Dispatchers.IO),
+            ChatSealedFileStore(ChatResourceDiskCache(folder.newFolder("b4-sealed"), ChatResourceDiskCache.MAX_BYTES)),
+        )
         val first = (1..10).map { run ->
             val image = ChatResourceModel.Inline("image/png", ByteArray(1024 * 1024) { (it * 31 + run).toByte() }.toDataByteArray())
             measureNanoTime { loader.load(image, "png").getOrThrow() } / 1e6

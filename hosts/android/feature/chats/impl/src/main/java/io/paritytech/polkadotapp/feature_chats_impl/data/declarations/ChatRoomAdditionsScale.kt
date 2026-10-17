@@ -15,6 +15,17 @@ class ChatRoomFeaturesLocal(
     val readAloud: Boolean,
 )
 
+/** The features with `sealed_attachments`, stored with version 2. */
+@Serializable
+class ChatRoomFeaturesLocalV2(
+    val preimageAttachments: Boolean,
+    val search: Boolean,
+    val calls: ChatRoomCallsLocal?,
+    val threadOf: ChatThreadParentLocal?,
+    val readAloud: Boolean,
+    val sealedAttachments: Boolean,
+)
+
 @Serializable
 class ChatRoomCallsLocal(val audio: Boolean, val video: Boolean)
 

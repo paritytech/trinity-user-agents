@@ -296,7 +296,8 @@ class ChatFeedInteractor @Inject internal constructor(
      * An attachment in a product room goes inline, up to 1 MiB, as rich text with one media item (02-DESIGN §3.5). The
      * product of a product-source room gets it as `NewMessage`; the product of a host-store room gets `MessagePosted`.
      * In a room that stages attachments, a larger attachment goes to the outbox, and a background job stages it as a
-     * preimage and then sends it (07-LATER §7).
+     * preimage and then sends it (07-LATER §7). In a room that seals attachments, the job seals it in place of a
+     * preimage.
      */
     private suspend fun sendProductAttachment(
         chatId: ChatId,
@@ -307,8 +308,9 @@ class ChatFeedInteractor @Inject internal constructor(
         replyToMessageId: ChatMessageId?
     ): Result<ChatSourceActionOutcome> {
         if (stagesAttachments(chatId, mimeType, fileSize)) {
-            return productAttachmentEncoder.prepareStaged(contentUri, mimeType, fileSize).map { draft ->
-                attachmentStager.enqueue(chatId, draft, text, replyToMessageId)
+            val seals = sealsAttachments(chatId)
+            return productAttachmentEncoder.prepareStaged(contentUri, mimeType, fileSize, seals).map { draft ->
+                attachmentStager.enqueue(chatId, draft, text, replyToMessageId, seals)
                 ChatSourceActionOutcome.Done
             }
         }
@@ -318,11 +320,13 @@ class ChatFeedInteractor @Inject internal constructor(
 
     /**
      * The name of the product when the user must see the public-storage notice before the host stages this
-     * attachment, or null. The host shows the notice one time for each product (07-LATER §7.2).
+     * attachment, or null. The host shows the notice one time for each product (07-LATER §7.2). A sealed file is
+     * encrypted, so it needs no notice.
      */
     suspend fun publicStorageNoticeFor(chatId: ChatId, mimeType: String, fileSize: InformationSize): String? {
         // The host refuses an attachment above the staging bound before it shows the notice.
         if (fileSize > ProductAttachmentEncoder.STAGED_LIMIT || !stagesAttachments(chatId, mimeType, fileSize)) return null
+        if (sealsAttachments(chatId)) return null
         val extensionId = chatId.extensionOrNull()?.extensionId ?: return null
         if (publicStorageNotice.isAccepted(extensionId)) return null
 
@@ -339,10 +343,14 @@ class ChatFeedInteractor @Inject internal constructor(
 
     private suspend fun stagesAttachments(chatId: ChatId, mimeType: String, fileSize: InformationSize): Boolean {
         if (!stagingGate.isServed) return false
-        if (!productAttachmentEncoder.goesToStaging(mimeType, fileSize)) return false
+        val features = roomPolicyProvider.observePolicy(chatId).first()?.features ?: return false
+        if (!features.preimageAttachments && !features.sealedAttachments) return false
 
-        return roomPolicyProvider.observePolicy(chatId).first()?.features?.preimageAttachments == true
+        return productAttachmentEncoder.goesToStaging(mimeType, fileSize, features.sealedAttachments)
     }
+
+    private suspend fun sealsAttachments(chatId: ChatId): Boolean =
+        roomPolicyProvider.observePolicy(chatId).first()?.features?.sealedAttachments == true
 
     private suspend fun sendInlineProductAttachment(
         chatId: ChatId,

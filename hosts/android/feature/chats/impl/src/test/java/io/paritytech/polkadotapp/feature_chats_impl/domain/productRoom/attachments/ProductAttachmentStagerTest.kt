@@ -47,6 +47,13 @@ class ProductAttachmentStagerTest {
 
     private val room = ChatId.forExtensionRoom("ProductBot_sample.dot", "host")
     private val key = ByteArray(32) { 9 }.toDataByteArray()
+    private val sealed = ChatResourceModel.Sealed(
+        parts = listOf(ByteArray(32) { 1 }.toDataByteArray(), ByteArray(32) { 2 }.toDataByteArray()),
+        key = ByteArray(32) { 3 }.toDataByteArray(),
+        nonce = ByteArray(24) { 4 }.toDataByteArray(),
+        size = 3L * 1024 * 1024 + 16,
+        digest = ByteArray(64) { 5 }.toDataByteArray(),
+    )
     private val bytes = ByteArray(3 * 1024 * 1024) { (it % 251).toByte() }
 
     private val outbox by lazy { ProductAttachmentOutbox(folder.root, Dispatchers.Unconfined) { 1_000L } }
@@ -139,6 +146,36 @@ class ProductAttachmentStagerTest {
         assertEquals(2, staging.staged.size)
         assertEquals(1, rooms.saved.size)
         assertNull(outbox.get(entry.id))
+    }
+
+    @Test
+    fun `a room that seals sends the sealed file and stages no preimage`() = runBlocking {
+        val entry = stager.enqueue(room, draft(), text = null, replyTo = null, seals = true)
+
+        stager.process(entry.id)
+
+        val body = (rooms.saved.single().second as ChatMessage.Content.ProductBody).body as ProductMessageBody.RichText
+        assertEquals(sealed, body.media.single().resource)
+        assertArrayEquals(bytes, staging.sealedFiles.single())
+        assertTrue(staging.staged.isEmpty())
+        assertNull(outbox.get(entry.id))
+    }
+
+    @Test
+    fun `a sealed file that was not delivered is kept, so a retry seals nothing again`() = runBlocking {
+        rooms.saveFailure = IllegalStateException("database closed")
+        val entry = stager.enqueue(room, draft(), text = null, replyTo = null, seals = true)
+        stager.process(entry.id)
+        val reread = ProductAttachmentOutbox(folder.root, Dispatchers.Unconfined) { 1_000L }.get(entry.id)!!
+        assertEquals(sealed, reread.sealed)
+        assertTrue(reread.seals)
+
+        rooms.saveFailure = null
+        stager.retry(entry.id)
+        stager.process(entry.id)
+
+        assertEquals(1, staging.sealedFiles.size)
+        assertEquals(1, rooms.saved.size)
     }
 
     @Test
@@ -239,6 +276,7 @@ class ProductAttachmentStagerTest {
     private inner class FakeStaging : ProductAttachmentStaging {
         var result: Result<DataByteArray> = Result.success(key)
         val staged = mutableListOf<ByteArray>()
+        val sealedFiles = mutableListOf<ByteArray>()
         var holds = 0
 
         override suspend fun <T> holdingWorker(chatId: ChatId, block: suspend () -> T): T {
@@ -249,6 +287,11 @@ class ProductAttachmentStagerTest {
         override suspend fun stage(chatId: ChatId, mimeType: String, bytes: ByteArray): Result<DataByteArray> {
             staged += bytes
             return result
+        }
+
+        override suspend fun seal(chatId: ChatId, bytes: ByteArray): Result<ChatResourceModel.Sealed> {
+            sealedFiles += bytes
+            return Result.success(sealed)
         }
     }
 

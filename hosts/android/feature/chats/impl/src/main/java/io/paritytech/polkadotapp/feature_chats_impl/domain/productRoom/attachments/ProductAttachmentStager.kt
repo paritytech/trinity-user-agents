@@ -68,7 +68,8 @@ data class ProductAttachmentFailureEvent(val chatId: ChatId, val entryId: ChatMe
 
 /**
  * Sends the attachments of the outbox (07-LATER §7). The core stages the bytes as one preimage that the product pays
- * for, and the stager then sends the message with the key of the preimage: `user_action` `NewMessage` in a
+ * for, or, in a room that declares `sealed_attachments`, seals them as encrypted Bulletin parts. The stager then sends
+ * the message with the resource: `user_action` `NewMessage` in a
  * product-source room, a stored message and `MessagePosted` in a host-store room. A failure keeps the entry with its
  * reason. Retry stages again, or only sends the message when the key exists. Delete removes the entry and its bytes.
  */
@@ -90,8 +91,14 @@ class ProductAttachmentStager @Inject constructor(
     /** The failures of the entries of a room, as they occur. */
     fun observeFailures(chatId: ChatId): Flow<ProductAttachmentFailureEvent> = failures.filter { it.chatId == chatId }
 
-    suspend fun enqueue(chatId: ChatId, draft: ProductAttachmentDraft, text: String?, replyTo: ChatMessageId?): ProductOutboxEntry {
-        val entry = outbox.add(chatId, draft, text, replyTo)
+    suspend fun enqueue(
+        chatId: ChatId,
+        draft: ProductAttachmentDraft,
+        text: String?,
+        replyTo: ChatMessageId?,
+        seals: Boolean = false,
+    ): ProductOutboxEntry {
+        val entry = outbox.add(chatId, draft, text, replyTo, seals)
         scheduler.schedule(entry.id)
         return entry
     }
@@ -124,10 +131,15 @@ class ProductAttachmentStager @Inject constructor(
     }
 
     private suspend fun send(entry: ProductOutboxEntry) {
-        val key = entry.key ?: stage(entry) ?: return
-        val staged = outbox.update(entry.id) { it.copy(key = key) } ?: return
+        val (staged, resource) = if (entry.seals) {
+            val sealed = entry.sealed ?: seal(entry) ?: return
+            (outbox.update(entry.id) { it.copy(sealed = sealed) } ?: return) to sealed
+        } else {
+            val key = entry.key ?: stage(entry) ?: return
+            (outbox.update(entry.id) { it.copy(key = key) } ?: return) to ChatResourceModel.Preimage(key)
+        }
 
-        deliver(staged, key)
+        deliver(staged, resource)
             .onSuccess {
                 outbox.remove(staged.id)
                 Timber.i("truapi.chat.stage %s sent", staged.id)
@@ -139,17 +151,23 @@ class ProductAttachmentStager @Inject constructor(
             }
     }
 
-    private suspend fun stage(entry: ProductOutboxEntry): DataByteArray? {
+    private suspend fun stage(entry: ProductOutboxEntry): DataByteArray? =
+        upload(entry, "stage") { bytes -> staging.stage(entry.chatId, entry.meta.mimeType, bytes) }
+
+    private suspend fun seal(entry: ProductOutboxEntry): ChatResourceModel.Sealed? =
+        upload(entry, "seal") { bytes -> staging.seal(entry.chatId, bytes) }
+
+    private suspend fun <T> upload(entry: ProductOutboxEntry, step: String, upload: suspend (ByteArray) -> Result<T>): T? {
         val bytes = outbox.bytes(entry.id) ?: run {
             fail(entry, ProductAttachmentFailure.Failed("the bytes of the attachment are gone"))
             return null
         }
 
         val started = System.nanoTime()
-        val outcome = staging.stage(entry.chatId, entry.meta.mimeType, bytes)
+        val outcome = upload(bytes)
         val elapsedMs = (System.nanoTime() - started) / NANOS_IN_MILLI
         // The emulator launcher reads this line for the upload time of B7.
-        Timber.i("truapi.chat.stage %s %d B in %d ms: %s", entry.id, bytes.size, elapsedMs, outcome.outcomeName())
+        Timber.i("truapi.chat.%s %s %d B in %d ms: %s", step, entry.id, bytes.size, elapsedMs, outcome.outcomeName())
 
         return outcome.getOrElse { error ->
             if (error is CancellationException) throw error
@@ -158,9 +176,9 @@ class ProductAttachmentStager @Inject constructor(
         }
     }
 
-    private suspend fun deliver(entry: ProductOutboxEntry, key: DataByteArray): Result<Unit> {
+    private suspend fun deliver(entry: ProductOutboxEntry, resource: ChatResourceModel): Result<Unit> {
         val policy = rooms.policy(entry.chatId) ?: return Result.failure(IllegalStateException("the room is gone"))
-        val content = entry.content(ChatResourceModel.Preimage(key))
+        val content = entry.content(resource)
 
         if (policy.messageStore == ChatRoomPolicy.MessageStore.HOST) {
             return runCatching { rooms.saveUserMessage(entry.chatId, content, entry.replyTo) }
@@ -180,7 +198,7 @@ class ProductAttachmentStager @Inject constructor(
         failures.emit(ProductAttachmentFailureEvent(entry.chatId, entry.id, failure))
     }
 
-    private fun Result<DataByteArray>.outcomeName(): String =
+    private fun Result<*>.outcomeName(): String =
         exceptionOrNull()?.let { "${it::class.simpleName ?: "Failure"} (${it.message})" } ?: "Staged"
 
     private fun Throwable.toStageFailure(): ProductAttachmentFailure = when (this) {

@@ -36,12 +36,24 @@ fun ChatResourceModel.toLocal(): ChatResourceLocal = when (this) {
     is ChatResourceModel.Inline -> ChatResourceLocal.Inline(mimeType, bytes.value)
     is ChatResourceModel.Preimage -> ChatResourceLocal.Preimage(key.value)
     is ChatResourceModel.Url -> ChatResourceLocal.Url(url)
+    is ChatResourceModel.Sealed -> toLocal()
 }
+
+fun ChatResourceModel.Sealed.toLocal() = ChatResourceLocal.Sealed(parts.map { it.value }, key.value, nonce.value, size, digest.value)
+
+fun ChatResourceLocal.Sealed.toDomain() = ChatResourceModel.Sealed(
+    parts = parts.map { it.toDataByteArray() },
+    key = key.toDataByteArray(),
+    nonce = nonce.toDataByteArray(),
+    size = size,
+    digest = digest.toDataByteArray(),
+)
 
 fun ChatResourceLocal.toDomain(): ChatResourceModel = when (this) {
     is ChatResourceLocal.Inline -> ChatResourceModel.Inline(mimeType, bytes.toDataByteArray())
     is ChatResourceLocal.Preimage -> ChatResourceModel.Preimage(key.toDataByteArray())
     is ChatResourceLocal.Url -> ChatResourceModel.Url(url)
+    is ChatResourceLocal.Sealed -> toDomain()
 }
 
 private fun ChatMediaItemModel.toLocal(): ChatMediaItemLocal = when (this) {
