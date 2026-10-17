@@ -23,14 +23,66 @@ use web_time::Instant;
 
 use super::from_latest_error;
 use crate::{
-	host_internal::bulletin::preimage_key,
+	host_internal::bulletin::{allowance_signer, preimage_key},
 	runtime::{
-		PERMISSION_DENIED_REASON, PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-		PREIMAGE_SUBMIT_TIMEOUT, ProductRuntimeHost, bulletin_allowance_error_reason,
-		bulletin_rpc::BulletinSubmitError, preimage_submit_error, remote_authority_call,
-		remote_authority_context_until,
+		AuthoritySession, BulletinAllowanceKey, PERMISSION_DENIED_REASON,
+		PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, PREIMAGE_SUBMIT_TIMEOUT, ProductRuntimeHost,
+		bulletin_allowance_error_reason,
+		bulletin_rpc::BulletinSubmitError,
+		preimage_submit_error, remote_authority_call, remote_authority_context_until,
+		statement_allowance::{
+			fetch_bulletin_allowance, rpc::RpcClient, wait_bulletin_authorization,
+		},
 	},
 };
+use subxt::tx::Signer;
+
+impl ProductRuntimeHost {
+	/// Extend the product's Bulletin authorization before signing a payload it
+	/// cannot hold, so the chain never rejects a submission the host could see coming.
+	async fn bulletin_allowance_for(
+		&self,
+		cx: &CallContext,
+		deadline: Instant,
+		session: &AuthoritySession,
+		allowance: BulletinAllowanceKey,
+		size: u64,
+	) -> Result<BulletinAllowanceKey, String> {
+		let rpc = RpcClient::new(
+			self.connection
+				.services
+				.bulletin
+				.client("Bulletin authorization")
+				.await
+				.map_err(|error| error.to_string())?,
+		);
+		let target = allowance_signer(&allowance)?.account_id().0;
+		let current = fetch_bulletin_allowance(&rpc, &target)
+			.await
+			.map_err(|error| error.to_string())?;
+		if current.is_some_and(|info| info.can_store(size)) {
+			return Ok(allowance);
+		}
+		let authority_cx = remote_authority_context_until(
+			cx,
+			PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+			deadline,
+		);
+		let allowance = remote_authority_call(
+			&authority_cx,
+			self.accounts.refresh_bulletin_allowance_key(&authority_cx, session),
+		)
+		.await
+		.map_err(bulletin_allowance_error_reason)?;
+		let replacement = allowance_signer(&allowance)?.account_id().0;
+		let baseline = (replacement == target).then_some(current).flatten();
+		let timeout = deadline.saturating_duration_since(Instant::now());
+		wait_bulletin_authorization(&rpc, &replacement, baseline, size, timeout)
+			.await
+			.map_err(|error| error.to_string())?;
+		Ok(allowance)
+	}
+}
 
 #[truapi::async_trait]
 impl Preimage for ProductRuntimeHost {
@@ -142,6 +194,16 @@ impl Preimage for ProductRuntimeHost {
 				return Ok(key.to_vec());
 			}
 
+			let allowance = self
+				.bulletin_allowance_for(
+					cx,
+					submission_deadline,
+					&session,
+					allowance,
+					value.len() as u64,
+				)
+				.await
+				.map_err(preimage_submit_error)?;
 			let key = match bulletin
 				.submit_preimage(cx, submission_deadline, &allowance, &value)
 				.await

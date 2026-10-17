@@ -747,15 +747,15 @@ impl SigningHost {
 		let keypair = self.product_keypair(&request.account)?;
 		let (current, activation_generation) = self.require_current_session(session)?;
 		let granted = authenticated_caller &&
-			super::authority::is_blessed_owner(
+			(super::authority::is_blessed_owner(
 				&calling_product_id,
 				&request.account.dot_ns_identifier,
 			) || self.has_auto_signing_grant(
-			activation_generation,
-			current.public_key,
-			&calling_product_id,
-			&request.account.dot_ns_identifier,
-		);
+				activation_generation,
+				current.public_key,
+				&calling_product_id,
+				&request.account.dot_ns_identifier,
+			));
 		if !granted {
 			let confirmed =
 				super::until_cancelled(
