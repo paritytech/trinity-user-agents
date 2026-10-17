@@ -174,6 +174,15 @@ pub trait ChatWorker: Send + Sync {
 		mime_type: String,
 		bytes: Vec<u8>,
 	) -> BoxFuture<'static, Result<Vec<u8>, ChatStageRejection>>;
+
+	/// Seal a user attachment of `room_id` as encrypted Bulletin parts that
+	/// the product's allowance pays for, through the core, and give the
+	/// resource that opens it.
+	fn seal_chat_attachment(
+		&self,
+		room_id: String,
+		bytes: Vec<u8>,
+	) -> BoxFuture<'static, Result<ChatResource, ChatStageRejection>>;
 }
 
 impl ChatWorker for ProductRuntime {
@@ -253,6 +262,15 @@ impl ChatWorker for ProductRuntime {
 	) -> BoxFuture<'static, Result<Vec<u8>, ChatStageRejection>> {
 		let control = self.control();
 		Box::pin(async move { control.stage_chat_attachment(&room_id, &mime_type, bytes).await })
+	}
+
+	fn seal_chat_attachment(
+		&self,
+		room_id: String,
+		bytes: Vec<u8>,
+	) -> BoxFuture<'static, Result<ChatResource, ChatStageRejection>> {
+		let control = self.control();
+		Box::pin(async move { control.seal_chat_attachment(&room_id, bytes).await })
 	}
 }
 
@@ -743,6 +761,7 @@ impl ChatSurface {
 				"features": crate::chat::CLI_CHAT_FEATURES,
 				"inlineAttachmentMaxBytes": truapi::platform::CHAT_INLINE_MEDIA_MAX_BYTES,
 				"preimageAttachmentMaxBytes": truapi::platform::CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES,
+				"sealedAttachmentMaxBytes": truapi::platform::CHAT_SEALED_ATTACHMENT_MAX_BYTES,
 			},
 			"rooms": snapshot.rooms,
 			"bots": snapshot.bots,
@@ -1246,8 +1265,9 @@ impl ChatSurface {
 	}
 
 	/// The resource of an attachment: inline up to the inline bound, else a
-	/// preimage the core stages through the newest worker connection. A
-	/// refusal names why, and then nothing was uploaded.
+	/// preimage the core stages through the newest worker connection, or the
+	/// sealed parts in a room that declares `sealed_attachments`. A refusal
+	/// names why, and then nothing was uploaded.
 	async fn attachment_resource(
 		&self,
 		room_id: &str,
@@ -1261,6 +1281,12 @@ impl ChatSurface {
 			.worker_by(Instant::now() + self.timeouts.send)
 			.await
 			.ok_or_else(|| "no worker is connected to stage the attachment".to_string())?;
+		if self.chat.seals_attachments(room_id) {
+			return worker
+				.seal_chat_attachment(room_id.to_string(), bytes)
+				.await
+				.map_err(|rejection| format!("not sealed: {rejection}"));
+		}
 		worker
 			.stage_chat_attachment(room_id.to_string(), mime_type.to_string(), bytes)
 			.await
@@ -1711,6 +1737,7 @@ mod tests {
 		/// What the worker staged, as `(room, size)`, and the refusal it
 		/// answers instead of a key.
 		staged: Mutex<Vec<(String, usize)>>,
+		sealed: Mutex<Vec<(String, usize)>>,
 		stage_refusal: Mutex<Option<ChatStageRejection>>,
 	}
 
@@ -1842,6 +1869,15 @@ mod tests {
 			}
 			Box::pin(async move { refusal.map_or(Ok(vec![7; 32]), Err) })
 		}
+
+		fn seal_chat_attachment(
+			&self,
+			room_id: String,
+			bytes: Vec<u8>,
+		) -> BoxFuture<'static, Result<ChatResource, ChatStageRejection>> {
+			self.sealed.lock().expect("not poisoned").push((room_id, bytes.len()));
+			Box::pin(async { Ok(sealed_resource()) })
+		}
 	}
 
 	/// A worker connection the core refuses Chat to.
@@ -1927,6 +1963,14 @@ mod tests {
 		) -> BoxFuture<'static, Result<Vec<u8>, ChatStageRejection>> {
 			Box::pin(async { Err(ChatStageRejection::NotDeclared) })
 		}
+
+		fn seal_chat_attachment(
+			&self,
+			_room_id: String,
+			_bytes: Vec<u8>,
+		) -> BoxFuture<'static, Result<ChatResource, ChatStageRejection>> {
+			Box::pin(async { Err(ChatStageRejection::NotDeclared) })
+		}
 	}
 
 	const SHORT: Timeouts = Timeouts {
@@ -1937,6 +1981,16 @@ mod tests {
 		retry: Duration::from_millis(20),
 		search: Duration::from_millis(300),
 	};
+
+	fn sealed_resource() -> ChatResource {
+		ChatResource::Sealed {
+			parts: vec![vec![1; 32], vec![2; 32]],
+			key: vec![3; 32],
+			nonce: vec![4; 24],
+			size: 3 * 1024 * 1024 + 16,
+			digest: vec![5; 64],
+		}
+	}
 
 	fn product() -> ProductContext {
 		ProductContext::new("chat.dot".to_string()).expect("valid product id")
@@ -2737,6 +2791,7 @@ mod tests {
 				"features": crate::chat::CLI_CHAT_FEATURES,
 				"inlineAttachmentMaxBytes": 1024 * 1024,
 				"preimageAttachmentMaxBytes": 8 * 1024 * 1024,
+				"sealedAttachmentMaxBytes": 32 * 1024 * 1024,
 			})
 		);
 	}
@@ -2777,6 +2832,49 @@ mod tests {
 			.filter(|event| matches!(event, ChatEvent::MessagePosted { .. }))
 			.collect();
 		assert_eq!(posted.len(), 2, "both attachments reach the product");
+	}
+
+	// A room that declares `sealed_attachments` gets an attachment above the
+	// inline bound as its sealed parts, and the page never sees the key.
+	#[tokio::test]
+	async fn a_room_that_seals_sends_the_sealed_parts_without_the_key() {
+		let surface = surface(None);
+		let (worker, _attachment) = attach(&surface);
+		futures::executor::block_on(surface.chat().set_chat_room_features(
+			&product(),
+			truapi::latest::HostChatSetRoomFeaturesRequest {
+				room_id: "daily".to_string(),
+				features: truapi::latest::ChatRoomFeatures {
+					sealed_attachments: true,
+					..Default::default()
+				},
+			},
+		))
+		.expect("the room exists");
+
+		let large = run(
+			&surface,
+			json!({
+				"op": "attach", "reqId": 4, "roomId": "daily", "kind": "Image",
+				"mimeType": "image/jpeg", "fileName": "big.jpg",
+				"data": BASE64.encode(vec![1u8; 3 * 1024 * 1024]),
+			}),
+		)
+		.await;
+
+		assert_eq!(
+			large["ok"]["message"]["body"]["media"][0]["resource"],
+			json!({
+				"type": "Sealed",
+				"size": 3 * 1024 * 1024 + 16,
+				"parts": [format!("0x{}", "01".repeat(32)), format!("0x{}", "02".repeat(32))],
+			})
+		);
+		assert_eq!(
+			*worker.sealed.lock().expect("not poisoned"),
+			[("daily".to_string(), 3 * 1024 * 1024)]
+		);
+		assert!(worker.staged.lock().expect("not poisoned").is_empty());
 	}
 
 	// S61: the host searches a room it keeps itself, case and diacritics

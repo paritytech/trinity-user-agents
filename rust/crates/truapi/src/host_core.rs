@@ -1986,6 +1986,20 @@ impl ProductRuntimeControl {
 		runtime.stage_chat_attachment(room_id, mime_type, bytes).await
 	}
 
+	/// Seal a user attachment of `room_id` as encrypted Bulletin parts that
+	/// the allowance of the product pays for, and answer the resource that
+	/// opens it; see `ProductRuntimeHost::seal_chat_attachment`.
+	pub async fn seal_chat_attachment(
+		&self,
+		room_id: &str,
+		bytes: Vec<u8>,
+	) -> Result<truapi::latest::ChatResource, crate::ChatStageRejection> {
+		let runtime = self.runtime().map_err(|error| crate::ChatStageRejection::SubmitFailed {
+			reason: error.to_string(),
+		})?;
+		runtime.seal_chat_attachment(room_id, bytes).await
+	}
+
 	/// Run one chat query: check the room declares the handler, hold a worker
 	/// reference while the product answers, take the first item, screen it,
 	/// and stop the product's stream.

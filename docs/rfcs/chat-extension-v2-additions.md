@@ -455,8 +455,9 @@ pub enum ChatResource {
   accepted, else from the features the host keeps. A room that declares both kinds gets sealed attachments.
 - **Images and icons.** A `Sealed` resource is a media item only. The core refuses it as an avatar, an icon or a badge.
 - **Hosts.** The iOS app seals and opens. The Android app seals and opens behind the same gate as preimage
-  attachments, and does not list the feature until its emulator scenarios pass. The web hosts and the CLI host roles do
-  not list the feature, and a product keeps the 1 MiB inline rule there.
+  attachments, and does not list the feature until its emulator scenarios pass. The CLI host roles seal and list the
+  feature; their development page shows a sealed item as its size and parts, as it shows a preimage as its key. The web
+  hosts do not list the feature, and a product keeps the 1 MiB inline rule there.
 
 ### Search
 

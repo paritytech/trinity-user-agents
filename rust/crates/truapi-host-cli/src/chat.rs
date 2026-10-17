@@ -75,7 +75,7 @@ const SENT_A_MESSAGE: &str = "Sent a message";
 /// `CHAT_FEATURE_NAMES`. The page has no renderer and no room links, so
 /// `custom_bodies`, `custom_footer` and `room_links` are not here. A P10 item
 /// adds its name when the page serves it.
-pub const CLI_CHAT_FEATURES: [&str; 19] = [
+pub const CLI_CHAT_FEATURES: [&str; 20] = [
 	"product_source_rooms",
 	"reaction_details",
 	"participants",
@@ -87,6 +87,7 @@ pub const CLI_CHAT_FEATURES: [&str; 19] = [
 	"activity",
 	"inline_attachments",
 	"preimage_attachments",
+	"sealed_attachments",
 	"search",
 	"bot_personas",
 	"mute_archive",
@@ -481,6 +482,14 @@ impl CliChatHost {
 			.rooms
 			.get(room_id)
 			.map(|room| (room.features.calls, room.call.clone()))
+	}
+
+	/// Whether `room_id` declares `sealed_attachments`.
+	pub fn seals_attachments(&self, room_id: &str) -> bool {
+		self.lock()
+			.rooms
+			.get(room_id)
+			.is_some_and(|room| room.features.sealed_attachments)
 	}
 
 	/// Whether `room_id` declared the command `name`. Only a declared name
@@ -1087,6 +1096,7 @@ fn room_json(room_id: &str, room: &RoomRecord) -> Value {
 fn features_json(features: &ChatRoomFeatures) -> Value {
 	json!({
 		"preimageAttachments": features.preimage_attachments,
+		"sealedAttachments": features.sealed_attachments,
 		"search": features.search,
 		"calls": features.calls.map(|calls| json!({ "audio": calls.audio, "video": calls.video })),
 		"threadOf": features.thread_of.as_ref().map(|parent| json!({
@@ -2831,6 +2841,7 @@ mod tests {
 			room_view(&host, "support")["features"],
 			json!({
 				"preimageAttachments": true,
+				"sealedAttachments": false,
 				"search": false,
 				"calls": { "audio": true, "video": false },
 				"threadOf": null,

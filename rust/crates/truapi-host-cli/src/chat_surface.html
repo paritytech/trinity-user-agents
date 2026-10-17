@@ -394,7 +394,7 @@ const state = {
   worker: { configured: true, connected: 0 },
   timeouts: { page: 10000, send: 30000, action: 10000, query: 5000 },
   // What the host lists in `capabilities`: feature names and attachment bounds.
-  capabilities: { features: [], inlineAttachmentMaxBytes: 0, preimageAttachmentMaxBytes: 0 },
+  capabilities: { features: [], inlineAttachmentMaxBytes: 0, preimageAttachmentMaxBytes: 0, sealedAttachmentMaxBytes: 0 },
   rooms: new Map(),
   bots: [],
   // roomId -> messages in screen order (host store, or the product's pages plus updates).
@@ -660,7 +660,9 @@ function mediaNode(item) {
     } else {
       const placeholder = el("div", "mediabox", res.type === "Preimage"
         ? `image from preimage ${shortKey(res.key)}\nnot fetched on the dev page`
-        : `image (${res.mimeType || "unknown type"}) not drawn`);
+        : res.type === "Sealed"
+          ? `sealed image, ${humanSize(res.size)} in ${res.parts.length} parts\nnot opened on the dev page`
+          : `image (${res.mimeType || "unknown type"}) not drawn`);
       placeholder.dataset.preimage = res.key || "";
       placeholder.title = res.key || "";
       box.appendChild(placeholder);
@@ -682,6 +684,8 @@ function mediaNode(item) {
       box.appendChild(play);
     } else if (res.type === "Preimage") {
       poster.textContent += `\npreimage ${shortKey(res.key)}`;
+    } else if (res.type === "Sealed") {
+      poster.textContent += `\nsealed, ${humanSize(res.size)} in ${res.parts.length} parts`;
     }
   } else {
     const file = el("div", "file");
@@ -693,7 +697,8 @@ function mediaNode(item) {
       a.download = item.fileName || "file";
       info.appendChild(a);
     } else {
-      info.appendChild(el("span", null, `${item.fileName || "file"} (preimage ${shortKey(res.key)})`));
+      const where = res.type === "Sealed" ? `sealed in ${res.parts.length} parts` : `preimage ${shortKey(res.key)}`;
+      info.appendChild(el("span", null, `${item.fileName || "file"} (${where})`));
     }
     info.appendChild(el("small", null, `${meta.mimeType || "unknown"} · ${humanSize(meta.sizeBytes ?? res.size)}`));
     file.appendChild(info);
@@ -1415,6 +1420,7 @@ function declaredFeatures(room) {
   const declared = [];
   const add = (label, name) => declared.push(served.has(name) ? label : `${label} (not served)`);
   if (f.preimageAttachments) add("preimage attachments", "preimage_attachments");
+  if (f.sealedAttachments) add("sealed attachments", "sealed_attachments");
   if (f.search) add("search", "search");
   if (f.calls && (f.calls.audio || f.calls.video)) {
     const kinds = [f.calls.audio && "audio", f.calls.video && "video"].filter(Boolean).join("+");
@@ -1429,7 +1435,7 @@ function renderCapabilities() {
   const caps = state.capabilities;
   const bytes = (n) => n >= 1024 * 1024 ? `${n / (1024 * 1024)} MiB` : `${n} B`;
   $("capabilities").textContent =
-    `${caps.features.join(", ") || "none"} · inline ${bytes(caps.inlineAttachmentMaxBytes)} · preimage ${caps.preimageAttachmentMaxBytes ? bytes(caps.preimageAttachmentMaxBytes) : "none"}`;
+    `${caps.features.join(", ") || "none"} · inline ${bytes(caps.inlineAttachmentMaxBytes)} · preimage ${caps.preimageAttachmentMaxBytes ? bytes(caps.preimageAttachmentMaxBytes) : "none"} · sealed ${caps.sealedAttachmentMaxBytes ? bytes(caps.sealedAttachmentMaxBytes) : "none"}`;
 }
 
 function runHandler(handler, onCallback) {
@@ -1659,17 +1665,20 @@ function renderCatalogue(room) {
 
 // A photo, video or file of the user. Up to the inline bound it travels in
 // the message; above it the host stages it as a preimage, which the product
-// pays for, where the room declares `preimageAttachments`. The core refuses
-// the rest, and then nothing is uploaded.
+// pays for, where the room declares `preimageAttachments`, or seals it as
+// encrypted parts where the room declares `sealedAttachments`. The core
+// refuses the rest, and then nothing is uploaded.
 function sendAttachment(room, kind, file) {
   const caps = state.capabilities;
   const staged = file.size > caps.inlineAttachmentMaxBytes;
-  const bound = caps.features.includes("preimage_attachments") ? caps.preimageAttachmentMaxBytes : caps.inlineAttachmentMaxBytes;
+  const seals = Boolean(room.features && room.features.sealedAttachments) && caps.features.includes("sealed_attachments");
+  const bound = seals ? caps.sealedAttachmentMaxBytes
+    : caps.features.includes("preimage_attachments") ? caps.preimageAttachmentMaxBytes : caps.inlineAttachmentMaxBytes;
   if (file.size > bound) {
     setStatus(`not sent: ${file.name} is ${humanSize(file.size)}, above ${humanSize(bound)}`, "err");
     return;
   }
-  setStatus(`${staged ? "staging" : "sending"} ${file.name} (${humanSize(file.size)})…`, "ok");
+  setStatus(`${staged ? (seals ? "sealing" : "staging") : "sending"} ${file.name} (${humanSize(file.size)})…`, "ok");
   file.arrayBuffer().then((buffer) => {
     const bytes = new Uint8Array(buffer);
     let binary = "";
@@ -1677,7 +1686,7 @@ function sendAttachment(room, kind, file) {
     ask("attach", { roomId: room.roomId, kind, mimeType: file.type || "application/octet-stream", fileName: file.name, data: btoa(binary) }, (frame) => {
       if (frame.error) { setStatus(`not sent: ${describeError(frame.error)}`, "err"); return; }
       if (frame.ok && frame.ok.message) upsertMessage(room.roomId, frame.ok.message);
-      setStatus(`${file.name} sent ${staged ? "as a preimage" : "inline"}`, "ok");
+      setStatus(`${file.name} sent ${staged ? (seals ? "sealed" : "as a preimage") : "inline"}`, "ok");
       if (room.roomId === state.selected) renderRoom(true);
     });
   });
