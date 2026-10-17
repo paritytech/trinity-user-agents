@@ -180,6 +180,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         )
         runtime.setContacts(contactsBridge)
         runtime.setShare(AppShareHostBridge(routerFacade: confirmationRouterFacade))
+        runtime.setScanner(AppScannerHostBridge(routerFacade: confirmationRouterFacade))
         runtime.setUsernames(AppUsernamesHostBridge(
             routerFacade: confirmationRouterFacade,
             repositoryFactory: ChatContactRepositoryFactory()

@@ -372,7 +372,7 @@ withdrawn before it reaches the host, the absence of any permission prompt, and
 host failures.
 
 `Scanner` (`scan`) opens the host's own QR and barcode viewfinder (RFC
-"Host-drawn scanner"). The Android app draws it. Both CLI host roles answer
+"Host-drawn scanner"). The Android and iOS apps draw it. Both CLI host roles answer
 it from `TRUAPI_SCAN_TEXT`, or with a dismissal when it is unset, so the
 battery runs it. The playground's
 Diagnosis skips it, since dot.li has no viewfinder and answers `Unsupported`.

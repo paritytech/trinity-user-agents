@@ -892,6 +892,28 @@
           }
         }
       }
+    },
+    "product.scan.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(product)@ asks you to scan a code"
+          }
+        }
+      }
+    },
+    "product.scan.not.for.product": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This code is not for %1$(product)@."
+          }
+        }
+      }
     }
   },
   "version": "1.1"
