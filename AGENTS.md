@@ -49,6 +49,9 @@ js/packages/
                           same-page host, no server, no dial). @parity/truapi has
                           no debug seam. Where the app ultimately lives is still
                           an open decision.
+  trinity-stack/          @parity/trinity-stack: the trinity-stack crate built to wasm/
+                          by `npm run build:wasm`, plus read/publish; its bun tests
+                          run the crate's vectors
 js/container/              Shared TS lockdown container for native web views and CLI dev; scripts reuse its web API gates
                            `npm run build` bundles it into ios/truapi-host/Sources/TrUAPIHost/Resources/
 ios/truapi-provider/       TrUAPIProvider Swift package (chain transport over UniFFI);
