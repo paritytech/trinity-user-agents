@@ -104,13 +104,17 @@ extension ChatViewModelFactory {
                 alt: richText.alt(at: index)
             )
         }
+        let isOutgoing = context.status.isOutgoing
+        let status = mediaStatus(context: context, hasText: text != nil)
         let view = ChatMediaStackView(
             items: items,
             text: text.map { text in
                 ChatMarkdownText(
                     markdown: text,
                     onOpenLink: context.actions?.openLink,
-                    collapse: productTextCollapse(of: context.messageId, text: text)
+                    collapse: productTextCollapse(of: context.messageId, text: text),
+                    textColor: isOutgoing ? .fgPrimaryInverted : .fgPrimary,
+                    statusPlaceholderImage: status?.placeholderImage
                 )
             },
             loader: productMediaLoader,
@@ -120,12 +124,14 @@ extension ChatViewModelFactory {
 
         var configuration = ChatMessageContainerConfiguration(
             innerContent: SwiftUIContentConfiguration(view: view),
-            side: .leading,
-            bubbleColor: .bgSurfaceContainer,
+            side: isOutgoing ? .trailing : .leading,
+            bubbleColor: isOutgoing ? .bgSurfaceContainerInverted : .bgSurfaceContainer,
+            statusConfiguration: status,
             canReply: context.canReply,
             addReaction: addReaction(context: context),
             messageReaction: messageReaction(context: context),
             contentInsets: .zero,
+            statusViewInsets: Self.mediaStatusInsets,
             layoutType: context.layoutContext.layoutType,
             identifier: ChatMediaStackView.reuseIdentifier
         )
@@ -217,6 +223,25 @@ extension ChatViewModelFactory {
 // MARK: - Product media (02-DESIGN §6.2, PARITY row 4)
 
 private extension ChatViewModelFactory {
+    static let mediaStatusInsets = UIEdgeInsets(top: 0, left: 0, bottom: 8, right: 8)
+
+    /// The time and the tick of a media message, as in a person chat: over the media when there is no text, and at
+    /// the end of the text when there is one.
+    func mediaStatus(context: ProductBodyRenderContext, hasText: Bool) -> ChatMessageStatusViewConfiguration? {
+        let background: ChatMessageStatusViewConfiguration.Background? = hasText ? nil : .mediaOverlay
+        switch context.status {
+        case let .outgoing(status):
+            return .outbox(
+                date: context.deliveryDate,
+                formatter: timeFormatter,
+                status: status.configurationStatus(),
+                background: background
+            )
+        case .incoming:
+            return context.deliveryDate.map { .inbox(date: $0, formatter: timeFormatter, background: background) }
+        }
+    }
+
     static func mediaKind(_ info: Chat.LocalMessage.Content.ProductMediaInfo) -> ChatMediaStackItem.Kind {
         switch info.kind {
         case .image:

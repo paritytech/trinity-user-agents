@@ -196,6 +196,36 @@ struct ChatProductBodyRenderingTests {
         #expect(stack.opening != nil)
     }
 
+    /// The media of the user is on the right, as the text of the user, with its time and tick, and a caption in
+    /// the color of an own bubble. The media of the contact stays on the left with its time and no tick.
+    @Test func theOwnMediaOfTheUserIsOnTheRightWithItsTick() async throws {
+        let (factory, presenter) = try makeFactory()
+        defer { withExtendedLifetime(presenter) {} }
+        let photo = Chat.LocalMessage.Content.ProductBody.richText(.init(text: nil, media: ["preimage:ab"]))
+        let captioned = Chat.LocalMessage.Content.ProductBody.richText(.init(text: "hi", media: ["preimage:ab"]))
+        let own = Data.message("m1", content: .productBody(photo), origin: .user, status: .outgoing(.delivered))
+        let ownCaptioned = Data.message(
+            "m2",
+            content: .productBody(captioned),
+            origin: .user,
+            status: .outgoing(.delivered)
+        )
+        let contact = Data.message("m3", content: .productBody(photo))
+
+        let ownBubble = try await bubble(factory, own)
+        let contactBubble = try await bubble(factory, contact)
+        let caption = try #require(try await mediaStack(factory, ownCaptioned).text)
+
+        #expect(ownBubble.side == .trailing)
+        #expect(ownBubble.statusConfiguration?.image != nil)
+        #expect(ownBubble.statusConfiguration?.background == .mediaOverlay)
+        #expect(contactBubble.side == .leading)
+        #expect(contactBubble.statusConfiguration?.mode.text != nil)
+        #expect(contactBubble.statusConfiguration?.image == nil)
+        #expect(caption.textColor == .fgPrimaryInverted)
+        #expect(caption.statusPlaceholderImage != nil)
+    }
+
     /// A body that a host stored before it kept the kinds: an inline video is a video, the rest are images.
     @Test func aStoredBodyWithoutKindsReadsTheKindFromTheSource() {
         let richText = Chat.LocalMessage.Content.ProductRichText(

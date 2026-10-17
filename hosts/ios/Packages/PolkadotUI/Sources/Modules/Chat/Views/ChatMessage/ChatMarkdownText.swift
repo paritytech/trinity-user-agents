@@ -11,36 +11,55 @@ public struct ChatMarkdownText: View, Hashable {
     let onOpenLink: ((URL) -> Void)?
     /// The "Show more" button of a long text that shows only its start. Nil for a text that shows in full.
     let collapse: ChatTextCollapse?
+    let textColor: UIColor
+    /// An empty image of the size of the status of the bubble. The text keeps this space free at its end.
+    let statusPlaceholderImage: UIImage?
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// - Parameter collapse: When not nil, a text longer than ``ChatTextCollapse/collapsedLength`` shows only its
     ///   start and the button.
-    public init(markdown: String, onOpenLink: ((URL) -> Void)?, collapse: ChatTextCollapse? = nil) {
+    public init(
+        markdown: String,
+        onOpenLink: ((URL) -> Void)?,
+        collapse: ChatTextCollapse? = nil,
+        textColor: UIColor = .fgPrimary,
+        statusPlaceholderImage: UIImage? = nil
+    ) {
         self.markdown = markdown
         let full = Self.attributedString(from: markdown)
         let start = collapse.flatMap { _ in ChatTextCollapse.collapsed(full) }
         attributedText = start ?? full
         self.onOpenLink = onOpenLink
         self.collapse = start == nil ? nil : collapse
+        self.textColor = textColor
+        self.statusPlaceholderImage = statusPlaceholderImage
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: DSSpacings.extraTiny) {
             // The text follows the text size that the user picks (P7.2).
-            Text(ChatTextFaces.applying(
+            (Text(ChatTextFaces.applying(
                 to: attributedText,
                 size: ScaledTypography.font(for: .paragraphLarge, dynamicTypeSize: dynamicTypeSize).pointSize
-            ))
-            .scaledTypography(.paragraphLarge)
-            .foregroundStyle(.fgPrimary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .environment(\.openURL, OpenURLAction(handler: openLinkAction(onOpenLink)))
+            )) + statusPlaceholder)
+                .scaledTypography(.paragraphLarge)
+                .foregroundStyle(Color(textColor))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .environment(\.openURL, OpenURLAction(handler: openLinkAction(onOpenLink)))
 
             if let collapse {
-                ChatShowMoreButton(title: collapse.title, color: .fgPrimary, action: collapse.onExpand)
+                ChatShowMoreButton(title: collapse.title, color: Color(textColor), action: collapse.onExpand)
             }
         }
+    }
+
+    private var statusPlaceholder: Text {
+        guard let statusPlaceholderImage else {
+            return Text(verbatim: "")
+        }
+        return Text(Image(uiImage: statusPlaceholderImage))
+            .baselineOffset(-6)
     }
 
     /// True when the text shows only its start.
@@ -49,12 +68,14 @@ public struct ChatMarkdownText: View, Hashable {
     }
 
     public static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.markdown == rhs.markdown && lhs.isCollapsed == rhs.isCollapsed
+        lhs.markdown == rhs.markdown && lhs.isCollapsed == rhs.isCollapsed && lhs.textColor == rhs.textColor
+            && lhs.statusPlaceholderImage?.size == rhs.statusPlaceholderImage?.size
     }
 
     public func hash(into hasher: inout Hasher) {
         hasher.combine(markdown)
         hasher.combine(isCollapsed)
+        hasher.combine(textColor)
     }
 
     public static func attributedString(from markdown: String) -> AttributedString {
