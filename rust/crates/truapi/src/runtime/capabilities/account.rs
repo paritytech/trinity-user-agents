@@ -404,7 +404,7 @@ impl Account for ProductRuntimeHost {
         if chat_requires_preimage_submit(&operation) {
             self.require_remote_permission(
                 latest::RemotePermission::PreimageSubmit,
-                latest::HostProductDeviceChatError::AccessNotGranted,
+                    latest::HostProductDeviceChatError::AccessNotGranted,
             )
             .await?;
         }
@@ -421,7 +421,7 @@ impl Account for ProductRuntimeHost {
         )
         .await
         .map_err(product_device_chat_authority_error)
-        }
+    }
         .await;
         result
             .map(|response| HostProductDeviceChatResponse::from_latest(response, version))
@@ -485,11 +485,11 @@ impl Account for ProductRuntimeHost {
         _cx: &CallContext,
 		request: HostGetUserIdRequest,
     ) -> Result<HostGetUserIdResponse, CallError<HostGetUserIdError>> {
-		let version = request.version();
-		let () = request.into_latest();
-		let result = async {
-        let Some(session) = self.authority.current_session() else {
-				return Err(CallError::Domain(latest::HostGetUserIdError::NotConnected));
+        let version = request.version();
+        let () = request.into_latest();
+        let result = async {
+        let Some(mut session) = self.authority.current_session() else {
+            return Err(CallError::Domain(latest::HostGetUserIdError::NotConnected));
         };
 
         match self.identity_disclosure_authorization().await {
@@ -509,15 +509,24 @@ impl Account for ProductRuntimeHost {
                 .await
                 .map_err(|reason| CallError::HostFailure { reason })?;
         }
-        // Consent and chain resolution both await. Never disclose a cached
-        // name for an account that was disconnected or replaced meanwhile.
+        // Consent and chain resolution both await. Revalidate this product's
+        // authority and identity owner without revoking unrelated products.
         let session = self
             .authority
             .current_session()
-            .filter(|current| {
-                current.validation_id == session.validation_id
-                    && current.public_key == session.public_key
-                    && current.identity_account_id == session.identity_account_id
+            .and_then(|current| {
+                if current.public_key != session.public_key
+                    || current.identity_account_id != session.identity_account_id
+                {
+                    return None;
+                }
+                // Refresh display metadata without adopting a newer authority
+                // token that could hide revocation while consent was pending.
+                session.lite_username = current.lite_username;
+                session.full_username = current.full_username;
+                self.authority
+                    .session_is_current(&session, Some(&self.product.product_id))
+                    .then_some(session)
             })
             .ok_or(CallError::Domain(latest::HostGetUserIdError::NotConnected))?;
         let primary_username = session.primary_username().ok_or_else(|| {

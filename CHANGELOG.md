@@ -17,6 +17,7 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 - migrate the generic runtime and Rust client to SDK 0.16's scoped wire codec 3;
   the handshake requires an exact codec match, so product guests built against
   an earlier codec must be rebuilt
+- Code-generation verification checks deterministic protocol and host output instead of pinning implementation-text snapshots; generated bindings are compiled and exercised against the runtime.
 - integrate the current native SDK with PolkaVM host runtime `0.3.2-rc.9`,
   pinned to `959ad63f7312a2f4598b9f718ccc2516927cbbff`, retaining canonical
   permission administration and live-execution revocation (#540)
@@ -39,8 +40,19 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
   subscription interrupts, and host-initiated Renderer subscription codecs.
 - Generate complete App, Widget, Worker, and Worker-only method catalogs from
   the canonical protocol schema.
+- Host-owned background notification receiving on Notifications actions 2 through 7, with durable consent, revision-fenced watches and receipts, authenticated delivery and activation, and resident native/WASM transport hooks. Receipt results distinguish confirmed OS display from an outstanding display claim; explicit display failures release the claim. Hosts without an adapter explicitly report unsupported.
+- Generic Ed25519 notification assertions in bounded standard Gordian envelopes, with opaque byte-leaf digest witnesses and exact chain/channel plus authenticated topic filtering, exposed through `@parity/truapi/notification-envelope`.
+- A wallet-free, single-writer browser receiving runtime and immutable execution-scope dispatch. Receiving consent lasts only through its approved watch expiry (at most 30 days); transport leases may renew within that bound without product UI. Native/provider adapters and real-device qualification remain host responsibilities; resident hooks do not imply delivery after a desktop host fully quits.
+- Browser host account selection fences all persisted product authorities, including closed products. Explicit logout durably revokes every authority before identity removal; ordinary client closure retains consent. Receiving storage uses reserved key 20 without colliding with the PolkaVM runtime's existing keys.
+- Foreground receipts distinguish confirmed OS display from an unresolved durable display reservation. Hosts confirm successful presentation or cancel a known failure; an unknown outcome after restart remains pending until event expiry and must not trigger a competing OS alert. Provider-rendered APNs alerts remain advisory until authenticated local processing.
 
 ### Fixed
+
+- Browser receiving synchronizes and revokes each authority scope independently, so account or verified-artifact replacement cannot leave the current enrollment in a revoke/register loop.
+- Message catch-up receipts preserve an already queued notification activation until the product explicitly acknowledges its sequence.
+- Generated WASM bridges preserve owned `String` parameters instead of emitting unsized `str` arguments.
+- Generated host tagged-union codecs preserve explicit SCALE discriminants, including receiving storage slot 20 when slots 13–19 are absent from the generic runtime.
+- Swift's unsupported receiving callbacks use the generated native rejection case.
 
 - persist typed Statement Store allowance approvals and denials per product and
   account selector for implicit, idempotent provisioning; explicit requests for

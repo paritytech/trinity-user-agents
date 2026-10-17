@@ -73,6 +73,7 @@ private extension ProductPermissionPromptViewFactory {
         permission: ProductPermission
     ) -> PromptContent {
         let title: String
+        let body: String
         switch permission {
         case let .deviceCapability(capability):
             title = String(
@@ -81,10 +82,13 @@ private extension ProductPermissionPromptViewFactory {
                     capability: capabilityDisplayName(capability)
                 )
             )
+            body = permission.permissionDescription
         case .networkAccess, .networkAccessBundle:
             title = String(localized: .Products.permissionTitleNetworkAccess(productId: productId))
+            body = permission.permissionDescription
         case .accountAccess:
             title = String(localized: .Products.permissionTitleAccountAccess(productId: productId))
+            body = permission.permissionDescription
         case .balanceAccess,
              .webRtcAccess,
              .chainSubmitAccess,
@@ -92,18 +96,26 @@ private extension ProductPermissionPromptViewFactory {
              .statementSubmitAccess,
              .userIdentityAccess:
             title = String(localized: .Products.permissionTitleRemote(productId: productId))
+            body = permission.permissionDescription
+        case let .jamPeersAccess(genesis):
+            title = String(
+                localized: .Products.permissionTitleJamPeers(
+                    productId: productId,
+                    shortGenesis: ProductPermission.shortGenesis(genesis)
+                )
+            )
+            body = String(localized: .Products.permissionBodyJamPeers) + "\n\n" + genesis
         case .chatAuthority:
             title = String(localized: .Products.permissionTitleChatAuthority(productId: productId))
+            body = permission.permissionDescription
         case .profileDisclosure:
             title = String(localized: .Products.permissionTitleProfileDisclosure(productId: productId))
+            body = permission.permissionDescription
         case .statementStoreAllowance:
             title = String(localized: .Products.permissionTitleStatementStoreAllowance(productId: productId))
+            body = permission.permissionDescription
         }
-        return PromptContent(
-            title: title,
-            body: permission.permissionDescription,
-            icon: makeIcon(systemName: permission.permissionIconSystemName)
-        )
+        return PromptContent(title: title, body: body, icon: makeIcon(systemName: permission.permissionIconSystemName))
     }
 
     static func makeBatchedContent(

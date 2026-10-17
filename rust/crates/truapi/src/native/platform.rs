@@ -292,8 +292,55 @@ impl Notifications for CallbackPlatform {
 
     async fn cancel_notification(&self, id: u32) -> Result<(), v01::GenericError> {
         self.callbacks
-			.on_core_log("truapi.native.callback.cancel_notification".to_string(), id.to_string());
-		self.callbacks.cancel_notification(id).map_err(v01::GenericError::from)
+            .on_core_log("truapi.native.callback.cancel_notification".to_string(), id.to_string());
+        self.callbacks
+            .cancel_notification(id)
+            .map_err(v01::GenericError::from)
+    }
+
+    async fn receiver_authority(
+        &self,
+        product_id: &str,
+    ) -> Result<Option<crate::platform::ReceivingAuthority>, v01::GenericError> {
+        self.callbacks.receiver_authority(product_id.to_owned()).await
+            .map_err(v01::GenericError::from)
+    }
+
+    async fn receiver_consent(
+        &self,
+        authority: crate::platform::ReceivingAuthority,
+        watches: Vec<crate::latest::ReceivingWatch>,
+    ) -> Result<bool, v01::GenericError> {
+        self.callbacks.receiver_consent(authority, watches).await
+            .map_err(v01::GenericError::from)
+    }
+
+    async fn receiver_changed(&self) -> Result<(), v01::GenericError> {
+        self.callbacks.receiver_changed().await.map_err(v01::GenericError::from)
+    }
+
+    async fn receiver_command(
+        &self, product_id: String, action: u8, payload: Vec<u8>,
+    ) -> Result<Option<Vec<u8>>, v01::GenericError> {
+        self.callbacks.receiver_command(product_id, action, payload).await.map_err(v01::GenericError::from)
+    }
+
+    async fn activation_events(&self) -> Result<v01::NotificationActivations, v01::GenericError> {
+        self.callbacks
+            .activation_events()
+            .await
+            .map(|events| v01::NotificationActivations { events })
+            .map_err(v01::GenericError::from)
+    }
+
+    async fn acknowledge_activation(
+        &self,
+        request: v01::NotificationActivationAcknowledgeRequest,
+    ) -> Result<(), v01::GenericError> {
+        self.callbacks
+            .acknowledge_activation(request.sequence)
+            .await
+            .map_err(v01::GenericError::from)
     }
 }
 

@@ -60,6 +60,12 @@ session name requires at least six lowercase ASCII letters after digits and
 separators are omitted. A new `/session foo` fails immediately as too short;
 existing saved accounts and aliases still restore normally.
 
+CLI approval reviews belong to their waiting request. Cancelling a signing
+request withdraws both its chain-permission prerequisite and its signature
+review; disconnecting its product socket also removes the review. Withdrawn
+queued reviews are skipped, late answers cannot authorize them, and the command
+draft is restored before the next request is reviewed.
+
 The signing host registers its built-in full and lite personhood keys when an
 authorized product first lists `peopl.<network suffix>` (for example,
 `peopl.paseo`). The first listing reads People-chain metadata; later listings
@@ -67,6 +73,18 @@ reuse the saved registrations, including after restart. Registration makes the
 handles discoverable; proof creation still checks permission and ring membership.
 The `listRingVrfKeys` example checks that both built-in keys are discoverable
 under `peopl.paseo` on Paseo.
+
+Local signing-host product clearing revokes only that product's grants and
+in-flight authority. Unrelated products and account-scoped authority remain valid.
+Reactivating, replacing or clearing the account still invalidates every prior
+authority snapshot. Resource reviews and allowance-cache commits revalidate
+the relevant product and account before granting or retaining authority.
+Contact resolution, picking and labels use the same product-scoped authority
+check. Independent directory-mutation fences still apply: product clearing
+invalidates the shared contact directory, so an interrupted selection must be
+retried without treating an unrelated product clear as account disconnection.
+Labels invalidated while drawing are withdrawn before the call returns;
+directory-only invalidation reports an interruption, not `NotConnected`.
 
 Preimage lookups that miss the core's cache read the selected network's Bulletin
 node through `bitswap_v1_get`. The CLI verifies the returned bytes against the
@@ -202,6 +220,19 @@ navigation and requires `Notifications` for push delivery. Hosts preserve the us
 `Deny` choice; Rust owns one-use grants for Rust-backed executions. Android permission prompts belong to one request and
 close when it finishes or is cancelled, including cancellation while the app is backgrounded.
 
+Background receiving appends actions 2–7 to Notifications without changing send/cancel.
+The resident Rust service owns consent, revision-fenced watches, authenticated delivery,
+receipts and activation; each product execution supplies an immutable verified authority.
+The browser's single-writer `WasmNotificationReceiver` uses the same service without
+starting a wallet or product runtime. Enrollment needs a host receiving adapter and
+separate consent; unsupported hosts report that explicitly. Logout revokes locally
+without waiting for a relay. See the [host receiving contract](js/packages/truapi-host/README.md)
+and [product notification helpers](js/packages/truapi/README.md). These hooks do not
+establish OS/provider delivery guarantees or replace the separate PolkaVM runtime.
+Relay revocation and synchronization acknowledgements use the full receiving
+authority, so retained records from a previous account or verified artifact cannot
+revoke the current enrollment.
+
 The shared Rust core auto-grants remote permissions to trusted products (`peopl`, `dim2` and `stash`,
 on every supported network) only when no stored decision overrides that default. Recorded denials still apply.
 Device permissions, identity disclosure, account access and Chat authority retain their separate consent checks.
@@ -262,12 +293,19 @@ The native composition pins release `v0.3.2-rc.9` at immutable source revision
 `959ad63f7312a2f4598b9f718ccc2516927cbbff`; `Cargo.toml`, `Cargo.lock`, and
 `truapi-polkavm-host`'s public provenance constants identify the same runtime.
 
-Taking a screenshot opens **Report app issue** wherever the shake-opened Debug menu is, which is every build except the
-store submission: `DEBUG_TOOLS_ENABLED` on Android, false only for the `release` build type, and `TESTNET_FEATURE` on
-iOS, unset only for the `Release` configuration. Android screenshot detection requires Android 14+. The modal includes a
-snapshot of the app screen, a description, and ZIP logs. Send uploads the report through
-[issue-proxy](https://github.com/paritytech/issue-proxy). Configure these Firebase Remote Config string parameters for
-each mobile environment:
+The native JAM peer transport's live fixture targets JAM-TEST-INSTANCE.
+Run `cargo test -p truapi --features mock --test live_jam_test_instance -- --include-ignored`
+with network access to its six validators; see the
+[peer transport contract](rust/crates/truapi/RUNTIME.md#jam-peer-transport).
+
+Taking a screenshot opens **Report app issue** wherever the shake-opened Debug
+menu is, which is every build except the store submission: `DEBUG_TOOLS_ENABLED`
+on Android, false only for the `release` build type, and `TESTNET_FEATURE` on
+iOS, unset only for the `Release` configuration. Android screenshot detection
+requires Android 14+.
+The modal includes a snapshot of the app screen, a description, and ZIP logs.
+Send uploads the report through [issue-proxy](https://github.com/paritytech/issue-proxy).
+Configure these Firebase Remote Config string parameters for each mobile environment:
 
 | Parameter             | Value                                                     |
 | --------------------- | --------------------------------------------------------- |

@@ -87,29 +87,44 @@ pub mod latest {
     use crate::versioned::{self, Versioned};
 
     pub use crate::v01::{
-        AvatarRect,
-        AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
-        BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
-        ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
-		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
-		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
-		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
-		Dimensions, Effect, EffectProps, GenericError, HorizontalAlignment,
-		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
-		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
-		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
-		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
-        HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
-		OperationStartedResult, PocketCard, ProductAccount, ProductAccountId, ProductProofContext,
-		RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
-		RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
-		RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
-		RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, ResourceAllocationError,
-		RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi,
-		RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
-        StatementProof, StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps,
-        TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
-        VrfSignature,
+        AllocatableResource, AllocationOutcome, Arrangement, AvatarRect, Background, BlendingMode,
+        BorderStyle, BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction,
+        ChatActionLayout, ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile,
+        ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
+        ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
+        ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect,
+        EffectProps, GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
+        HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
+        HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
+        HostAccountSignVrfError, HostAccountSignVrfRequest, HostJamPeerTransportCloseError,
+        HostJamPeerTransportCloseRequest, HostJamPeerTransportDialError,
+        HostJamPeerTransportDialRequest, HostJamPeerTransportDialResponse,
+        HostJamPeerTransportEventsError, HostJamPeerTransportEventsResponse,
+        HostJamPeerTransportOpenError, HostJamPeerTransportOpenRequest,
+        HostJamPeerTransportOpenResponse, HostJamPeerTransportRecvError,
+        HostJamPeerTransportRecvRequest, HostJamPeerTransportRecvResponse,
+        HostJamPeerTransportResetError, HostJamPeerTransportResetRequest,
+        HostJamPeerTransportSendError, HostJamPeerTransportSendRequest,
+        HostNotificationAcknowledgeReceiverEventRequest, HostNotificationDisableReceiverRequest,
+        HostNotificationReceiptResult, HostNotificationReceiverEventsRequest,
+        HostNotificationReceiverStatus, HostNotificationReceivingError,
+        HostNotificationRecordReceiptRequest, HostNotificationReplaceReceiverRequest, HostPlatform,
+        HostSignPayloadData, HostWorkerOperationError, ImageFit, ImageProps, ImageSource,
+        JAM_PEER_TRANSPORT_MAX_BUFFERED_BYTES_PER_CONNECTION, JAM_PEER_TRANSPORT_MAX_CONNECTIONS,
+        JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES, JAM_PEER_TRANSPORT_MAX_STREAMS_PER_CONNECTION,
+        JamPeerTransportEvent, Modifier, OperationStartedResult, PocketCard, ProductAccountId,
+        ProductProofContext, RawPayload, ReceivingEvent, ReceivingEventKind, ReceivingReceiptKind,
+        ReceivingWatch, RegisteredRingVrfKey, RemotePermission,
+        RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
+        RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
+        RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, RingLocation,
+        RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType,
+        ScanOutcome, Shape, SignedStatement, Size, Statement, StatementProof, StorageQueryItem,
+        StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
+        TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature,
+        ChatRoomFooter, HostAccountGetError, HostWorkerBeginOperationRequest, ProductAccount,
+        RemoteChainTransactionStopRequest, ResourceAllocationError,
+        NotificationActivation, NotificationActivations, NotificationActivationAcknowledgeRequest,
     };
     pub use crate::v02::{
         HostNativeChatAcknowledgment, HostNativeChatAttachment, HostNativeChatAttachmentKind,
@@ -766,6 +781,8 @@ pub mod transport;
 #[cfg(feature = "runtime")]
 mod truapi_core;
 
+#[cfg(feature = "runtime")]
+pub mod jam_peer_transport;
 #[cfg(feature = "runtime")]
 #[cfg(test)]
 mod test_support;

@@ -26,6 +26,7 @@ console_error_panic_hook = "0.1"
 convert_case = "0.6"
 crossterm = "0.29"
 derive_more = { version = "2", default-features = false }
+ed25519-dalek = { version = "2", default-features = false, features = ["alloc"] }
 flate2 = "1"
 frame-metadata = { version = "23", default-features = false }
 fs2 = "0.4"

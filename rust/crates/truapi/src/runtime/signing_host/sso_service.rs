@@ -15,8 +15,8 @@ use truapi::latest as api;
 use super::{
 	SigningHost,
 	sso_responder::{
-		AllowanceAllocationError, allocate_bulletin_allowance,
-		allocate_product_statement_store_allowance, allocate_smart_contract_allowance,
+    AllowanceAllocationError, allocate_bulletin_allowance,
+    allocate_product_statement_store_allowance, allocate_smart_contract_allowance,
     allocate_statement_store_allowance,
 	},
 };
@@ -439,12 +439,12 @@ impl SigningHostSsoService {
             }
 
             self.signing_host
-                .require_current_session(&cx.session)
+                .require_current_product_session(&cx.session, &request.calling_product_id)
                 .map_err(|err| err.to_string())?;
             let mut outcomes = Vec::with_capacity(request.resources.len());
             for resource in request.resources {
                 self.signing_host
-                    .require_current_session(&cx.session)
+                    .require_current_product_session(&cx.session, &request.calling_product_id)
                     .map_err(|err| err.to_string())?;
                 if cx.call.cancel().is_cancelled() {
                     return Err(WITHDRAWN.to_string());
@@ -458,7 +458,7 @@ impl SigningHostSsoService {
                     )
                     .await;
                 self.signing_host
-                    .require_current_session(&cx.session)
+                    .require_current_product_session(&cx.session, &request.calling_product_id)
                     .map_err(|err| err.to_string())?;
                 outcomes.push(outcome.unwrap_or_else(|err| {
                     let reason = err.to_string();
@@ -632,7 +632,7 @@ impl SigningHostSsoService {
         };
 
         self.signing_host
-            .require_current_session(&cx.session)
+            .require_current_product_session(&cx.session, &request.calling_product_id)
             .map_err(|_| WireError::V1(api::HostProductDeviceChatError::NotConnected))?;
         let calling_product_id = normalize_product_identifier(&request.calling_product_id)
             .map_err(|_| WireError::V1(api::HostProductDeviceChatError::InvalidRequest))?;

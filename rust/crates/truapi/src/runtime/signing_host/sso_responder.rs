@@ -931,7 +931,10 @@ pub async fn allocate_statement_store_allowance(
     product_id: &str,
     policy: OnExistingAllowancePolicy,
 ) -> Result<StatementStoreAllocation, AllowanceAllocationError> {
-    signing_host.require_current_session(session)?;
+    #[cfg(any(test, not(target_arch = "wasm32")))]
+    use super::allowance_renewal::{self, StatementRenewalTarget};
+
+    signing_host.require_current_product_session(session, product_id)?;
     let entropy = signing_host.root_entropy()?;
     let allowance =
         derive_sr25519_hard_path(&entropy, &["allowance", "statement-store", product_id])?;
@@ -955,7 +958,18 @@ pub async fn allocate_statement_store_allowance(
         policy,
     )
     .await?;
-    signing_host.require_current_session(session)?;
+    #[cfg(any(test, not(target_arch = "wasm32")))]
+    if let Err(reason) = allowance_renewal::track(
+        signing_host,
+        vec![StatementRenewalTarget::ProductStatementAllowance {
+            product_id: product_id.to_string(),
+        }],
+    )
+    .await
+    {
+        warn!(%product_id, %reason, "failed to record statement-store renewal target");
+    }
+    signing_host.require_current_product_session(session, product_id)?;
     Ok(StatementStoreAllocation {
         secret: allowance.secret.to_bytes().to_vec(),
         period,
@@ -970,7 +984,7 @@ pub(super) async fn allocate_product_statement_store_allowance(
     derivation_index: &api::DerivationIndex,
     policy: OnExistingAllowancePolicy,
 ) -> Result<(), AllowanceAllocationError> {
-    signing_host.require_current_session(session)?;
+    signing_host.require_current_product_session(session, product_id)?;
     #[cfg(feature = "test-host")]
     if signing_host.grants_allowances_unchecked() {
         return Ok(());
@@ -1000,7 +1014,7 @@ async fn register_statement_store_target(
         register_statement_account_pooled, scan_collections,
     };
 
-    signing_host.require_current_session(session)?;
+    signing_host.require_current_product_session(session, product_id)?;
     let candidates = signing_host.reserved_person_collection_candidates(session)?;
 	let client = services.statement_store.chain_client("statement-store allowance").await?;
     let rpc = client.rpc();
@@ -1023,7 +1037,7 @@ async fn register_statement_store_target(
         reuse_existing,
     )
     .await?;
-    signing_host.require_current_session(session)?;
+    signing_host.require_current_product_session(session, product_id)?;
     if let Some((collection, seq)) = allocated_in(&scans) {
         debug!(
             %product_id,
@@ -1041,7 +1055,7 @@ async fn register_statement_store_target(
                 resource: "statement-store",
             });
         }
-        signing_host.require_current_session(session)?;
+        signing_host.require_current_product_session(session, product_id)?;
         let outcome = register_statement_account_pooled(
             rpc,
             &chain.metadata,
@@ -1085,7 +1099,7 @@ async fn register_statement_store_target(
 		},
         }
     }
-    signing_host.require_current_session(session)?;
+    signing_host.require_current_product_session(session, product_id)?;
     Ok(period)
 }
 
@@ -1102,7 +1116,7 @@ pub async fn allocate_bulletin_allowance(
 		find_including_rings, wait_bulletin_authorization,
     };
 
-    signing_host.require_current_session(session)?;
+    signing_host.require_current_product_session(session, product_id)?;
     let entropy = signing_host.root_entropy()?;
     let allowance = derive_sr25519_hard_path(&entropy, &["allowance", "bulletin", product_id])?;
     #[cfg(feature = "test-host")]
@@ -1123,7 +1137,7 @@ pub async fn allocate_bulletin_allowance(
 	if matches!(policy, OnExistingAllowancePolicy::Ignore) &&
 		current_allowance.is_some_and(|allowance| allowance.available())
     {
-        signing_host.require_current_session(session)?;
+        signing_host.require_current_product_session(session, product_id)?;
         return Ok(allowance.secret.to_bytes().to_vec());
     }
 
@@ -1146,7 +1160,7 @@ pub async fn allocate_bulletin_allowance(
         current_unix_secs()?,
         period_duration,
     )?;
-    signing_host.require_current_session(session)?;
+    signing_host.require_current_product_session(session, product_id)?;
     let outcome = claim_long_term_storage(
         statement_allowance::LongTermStorageClaim {
             rpc: people_rpc,
@@ -1158,7 +1172,11 @@ pub async fn allocate_bulletin_allowance(
             period,
             ring: &membership.ring,
         },
-        || signing_host.require_current_session(session).is_ok(),
+        || {
+            signing_host
+                .require_current_product_session(session, product_id)
+                .is_ok()
+        },
     )
     .await?;
 	let statement_allowance::LongTermStorageOutcome::Claimed { block_hash, counter, ring_index } =
@@ -1184,7 +1202,7 @@ pub async fn allocate_bulletin_allowance(
         remained_transactions = authorization.remained_transactions,
         "Bulletin authorization visible"
     );
-    signing_host.require_current_session(session)?;
+    signing_host.require_current_product_session(session, product_id)?;
     Ok(allowance.secret.to_bytes().to_vec())
 }
 
@@ -1214,7 +1232,7 @@ pub async fn allocate_smart_contract_allowance(
 		runtime::statement_allowance::{self, ChainClient, find_including_rings, pgas},
 	};
 
-    signing_host.require_current_session(session)?;
+    signing_host.require_current_product_session(session, product_id)?;
 
     // PGAS credits the product account the caller named.
     let target = signing_host
@@ -1248,7 +1266,7 @@ pub async fn allocate_smart_contract_allowance(
 		pgas::holds_a_full_claim(asset_hub_client.rpc(), &asset_hub.metadata, &target).await?
     {
         debug!(%product_id, "PGAS allowance already funded; leaving it alone");
-        signing_host.require_current_session(session)?;
+        signing_host.require_current_product_session(session, product_id)?;
         return Ok(());
     }
     let network_suffix =
@@ -1266,7 +1284,7 @@ pub async fn allocate_smart_contract_allowance(
         .next()
         .ok_or(AllowanceAllocationError::MissingPersonhoodMembership { resource: "PGAS" })?;
 
-    signing_host.require_current_session(session)?;
+    signing_host.require_current_product_session(session, product_id)?;
     let outcome = pgas::claim_pgas(pgas::PgasClaim {
         asset_hub_rpc: asset_hub_client.rpc(),
         asset_hub: &asset_hub,
@@ -1286,7 +1304,7 @@ pub async fn allocate_smart_contract_allowance(
         block = %outcome.block_hash,
         "claimed PGAS allowance"
     );
-    signing_host.require_current_session(session)?;
+    signing_host.require_current_product_session(session, product_id)?;
     Ok(())
 }
 
