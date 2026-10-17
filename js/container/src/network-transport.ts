@@ -6,23 +6,11 @@ export type NetworkAuthorization = (
   decide: (allowed: boolean) => void,
 ) => () => void;
 
-export type WebRtcAuthorization = (
-  decide: (allowed: boolean) => void,
-) => () => void;
-
-export type MediaAuthorization = (
-  audio: boolean,
-  video: boolean,
-  decide: (allowed: boolean) => void,
-) => () => void;
-
 export function createPermissionAuthorization(
   win: Window & typeof globalThis,
   client?: InternalTrUApiClient,
 ): {
   network: NetworkAuthorization;
-  webRtc: WebRtcAuthorization | false;
-  media: MediaAuthorization | false;
 } {
   const NativeURL = win.URL;
   const NativeAbortController = win.AbortController;
@@ -72,18 +60,5 @@ export function createPermissionAuthorization(
       try { decide(false); } catch { /* Product callbacks are independent. */ }
       return () => {};
     },
-    webRtc: client ? decide => remote({ tag: 'WebRtc' }, decide) : false,
-    media: client ? (audio, video, decide) => authorize(async signal => {
-      if (!audio && !video) return false;
-      if (video) {
-        const result = await client.permissions.authorizeDevicePermission('Camera', { signal });
-        if (result.isErr() || result.value.granted !== true || signal.aborted) return false;
-      }
-      if (audio) {
-        const result = await client.permissions.authorizeDevicePermission('Microphone', { signal });
-        if (result.isErr() || result.value.granted !== true) return false;
-      }
-      return true;
-    }, decide) : false,
   };
 }

@@ -22,7 +22,7 @@ use crate::{DevicePairingObserver, PairedSsoPeer, host_logic::worker::WorkerTran
 
 use super::{
 	callbacks::{
-		HostCallbacks, NativeChatCallbacks, NativeCoinageCallbacks, NativeContactsCallbacks,
+    HostCallbacks, NativeChatCallbacks, NativeCoinageCallbacks, NativeContactsCallbacks,
 		NativeGameCallbacks,
 		NativePocketCallbacks, NativePocketRemoval, NativeScannerCallbacks,
 	},
@@ -450,6 +450,23 @@ impl CoreStorage for CallbackPlatform {
         }
         Ok(())
     }
+
+    async fn compare_exchange_core_storage(
+        &self,
+        key: CoreStorageKey,
+        expected: Option<Vec<u8>>,
+        replacement: Vec<u8>,
+        notify_on_success: bool,
+    ) -> Result<bool, v01::GenericError> {
+        self.callbacks
+            .compare_exchange_core_storage(key.encode(), expected, replacement, notify_on_success)
+            .await
+            .map_err(v01::GenericError::from)
+    }
+
+    fn core_storage_changed(&self, key: CoreStorageKey) {
+        self.callbacks.core_storage_changed(key.encode());
+    }
 }
 
 struct NativeJsonRpcConnection {
@@ -819,8 +836,8 @@ impl crate::platform::PocketPlatform for PocketCallbackPlatform {
                 }
                 Ok(())
 			},
+            }
         }
-    }
 }
 
 /// [`crate::platform::GamePlatform`] served by host-provided

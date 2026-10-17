@@ -186,6 +186,8 @@ pub struct EventCallbacks {
         Option<futures::channel::oneshot::Receiver<Result<PermissionDecision, HostRejection>>>,
     >,
     pub core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+    /// Keys reported through `core_storage_changed`, in arrival order.
+    pub storage_changes: Mutex<Vec<Vec<u8>>>,
     pub permission_changes: parking_lot::Mutex<Vec<String>>,
     pub core_storage_write_failure: std::sync::atomic::AtomicBool,
     pub core_storage_keys_failure: std::sync::atomic::AtomicBool,
@@ -239,6 +241,7 @@ impl EventCallbacks {
             remote_permission_result: Ok(PermissionDecision::Deny),
             remote_permission_reply: Mutex::new(None),
             core_storage: Mutex::default(),
+            storage_changes: Mutex::default(),
             permission_changes: parking_lot::Mutex::default(),
             core_storage_write_failure: std::sync::atomic::AtomicBool::new(false),
             core_storage_keys_failure: std::sync::atomic::AtomicBool::new(false),
@@ -388,6 +391,28 @@ impl HostCallbacks for EventCallbacks {
     async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection> {
         self.core_storage.lock().unwrap().remove(&key);
         Ok(())
+    }
+    async fn compare_exchange_core_storage(
+        &self,
+        key: Vec<u8>,
+        expected: Option<Vec<u8>>,
+        replacement: Vec<u8>,
+        notify_on_success: bool,
+    ) -> Result<bool, HostRejection> {
+        let mut storage = self.core_storage.lock().unwrap();
+        if storage.get(&key) != expected.as_ref() {
+            return Ok(false);
+        }
+        let notification = notify_on_success.then(|| key.clone());
+        storage.insert(key, replacement);
+        drop(storage);
+        if let Some(key) = notification {
+            self.core_storage_changed(key);
+        }
+        Ok(true)
+    }
+    fn core_storage_changed(&self, key: Vec<u8>) {
+        self.storage_changes.lock().unwrap().push(key);
     }
     fn chain_connect(&self, genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {
         self.chain_connects
@@ -672,6 +697,7 @@ pub fn native_product_execution(
         None,
         None,
         None,
+        None,
         native_execution_config(product_id, ProductExecutionKind::App),
     )
     .expect("product execution config should be valid")
@@ -771,7 +797,7 @@ fn the_deeplink_entry_points_reject_what_they_cannot_decode() {
 
     for (deeplink, expected) in UNDECODABLE_DEEPLINKS {
         let answered = futures::executor::block_on(host.establish_pairing(deeplink.to_string()))
-            .expect_err("an undecodable deeplink cannot be answered");
+                .expect_err("an undecodable deeplink cannot be answered");
         let announced = futures::executor::block_on(
             host.notify_pairing_allowance_allocation(deeplink.to_string()),
         )
@@ -807,8 +833,8 @@ fn a_decodable_deeplink_that_fails_is_not_reported_as_undecodable() {
     let answered = futures::executor::block_on(host.establish_pairing(deeplink.clone()))
         .expect_err("no session means no handshake to answer");
     let announced = futures::executor::block_on(host.notify_pairing_allowance_allocation(deeplink))
-        .err()
-        .expect("no session means no notice to sign");
+            .err()
+            .expect("no session means no notice to sign");
 
     for failure in [answered, announced] {
         assert!(
@@ -1021,6 +1047,7 @@ fn native_chat_entrypoint_is_unsupported_without_an_adapter() {
             None,
             None,
             None,
+            None,
             native_execution_config("chat-product.dot", ProductExecutionKind::Worker),
         )
         .expect("Chat execution should open");
@@ -1164,7 +1191,7 @@ fn native_chat_room_subscription_emits_current_then_notified_replacement() {
 	let platform = ChatCallbackPlatform { chat: callbacks, events: events.clone() };
     let product =
         ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-            .unwrap();
+    .unwrap();
     let mut stream = crate::platform::ChatPlatform::subscribe_chat_rooms(&platform, &product);
 
     let first = ready_rooms(stream.as_mut(), "initial room list");
@@ -1212,7 +1239,7 @@ fn native_chat_adapter_forwards_every_message_variant() {
     };
     let product =
         ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-            .unwrap();
+    .unwrap();
 	let reaction =
 		v01::ChatReaction { message_id: "message-1".to_string(), emoji: "\u{1f3b2}".to_string() };
     // Every variant the protocol advertises reaches the host, so a product
@@ -1316,7 +1343,7 @@ fn a_posted_action_set_round_trips_to_the_product_that_posted_it() {
     };
     let product =
         ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-            .unwrap();
+    .unwrap();
     let connection = crate::runtime::ActionChannel::chat();
 
     let posted = futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
@@ -1380,9 +1407,9 @@ fn native_chat_adapter_surfaces_a_message_rejection() {
     };
     let product =
         ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-            .unwrap();
+    .unwrap();
 	*callbacks.chat_post_rejection.lock().expect("post rejection mutex poisoned") =
-		Some("cannot render a file card".to_string());
+        Some("cannot render a file card".to_string());
 
     let error = futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
         &platform,
@@ -1420,7 +1447,7 @@ fn native_chat_adapter_surfaces_a_bot_registration_rejection() {
     };
     let product =
         ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-            .unwrap();
+    .unwrap();
 	*callbacks.chat_bot_rejection.lock().expect("bot rejection mutex poisoned") =
 		Some("keychain locked".to_string());
 
@@ -1457,7 +1484,7 @@ fn native_chat_adapter_preserves_bot_status_and_leaves_rooms_alone() {
 	let platform = ChatCallbackPlatform { chat: callbacks.clone(), events: events.clone() };
     let product =
         ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-            .unwrap();
+    .unwrap();
     let request = v01::HostChatRegisterBotRequest {
         bot_id: "flipper".to_string(),
         name: "Flipper".to_string(),
@@ -1517,7 +1544,7 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
     };
     let product =
         ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-            .unwrap();
+    .unwrap();
     let request = v01::HostChatCreateRoomRequest {
         room_id: "support".to_string(),
         name: "Support".to_string(),
@@ -1829,7 +1856,11 @@ fn runtime_config_rejects_non_https_host_icon() {
 /// `AlreadyRunning` rather than silently leaking a worker thread.
 #[test]
 fn start_ws_bridge_twice_returns_already_running() {
-    struct Noop;
+    #[derive(Default)]
+    struct Noop {
+        storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+        storage_changes: Mutex<Vec<Vec<u8>>>,
+    }
     #[async_trait::async_trait]
     impl HostCallbacks for Noop {
         async fn pick_chat_files(&self, _: crate::platform::NativeChatFilePickRequest) -> Result<Vec<crate::platform::NativeChatPickedFile>, HostRejection> { unavailable_chat_files() }
@@ -1900,18 +1931,45 @@ fn start_ws_bridge_twice_returns_already_running() {
             Ok(PermissionDecision::Deny)
         }
         fn auth_state_changed(&self, _state: AuthState) {}
-        async fn core_storage_read(&self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
-            Ok(None)
+        async fn core_storage_read(
+            &self,
+            key: Vec<u8>,
+        ) -> Result<Option<Vec<u8>>, HostRejection> {
+            Ok(self.storage.lock().unwrap().get(&key).cloned())
         }
         async fn core_storage_write(
             &self,
-            _key: Vec<u8>,
-            _value: Vec<u8>,
+            key: Vec<u8>,
+            value: Vec<u8>,
         ) -> Result<(), HostRejection> {
+            self.storage.lock().unwrap().insert(key, value);
             Ok(())
         }
-        async fn core_storage_clear(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
+        async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection> {
+            self.storage.lock().unwrap().remove(&key);
             Ok(())
+        }
+        async fn compare_exchange_core_storage(
+            &self,
+            key: Vec<u8>,
+            expected: Option<Vec<u8>>,
+            replacement: Vec<u8>,
+            notify_on_success: bool,
+        ) -> Result<bool, HostRejection> {
+            let mut storage = self.storage.lock().unwrap();
+            if storage.get(&key) != expected.as_ref() {
+                return Ok(false);
+            }
+            let notification = notify_on_success.then(|| key.clone());
+            storage.insert(key, replacement);
+            drop(storage);
+            if let Some(key) = notification {
+                self.core_storage_changed(key);
+            }
+            Ok(true)
+        }
+        fn core_storage_changed(&self, key: Vec<u8>) {
+            self.storage_changes.lock().unwrap().push(key);
         }
         fn chain_connect(&self, _genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {
             Ok(None)
@@ -1994,9 +2052,13 @@ fn start_ws_bridge_twice_returns_already_running() {
         }
     }
 
-    let execution = native_product_execution(Arc::new(Noop), "dotli.dot");
-	let _first = execution.start_ws_bridge(0).expect("first start must succeed");
-	let err = execution.start_ws_bridge(0).expect_err("second start must error");
+    let execution = native_product_execution(Arc::new(Noop::default()), "dotli.dot");
+    let _first = execution
+        .start_ws_bridge(0)
+        .expect("first start must succeed");
+    let err = execution
+        .start_ws_bridge(0)
+        .expect_err("second start must error");
     assert!(matches!(err, WsBridgeStartError::AlreadyRunning));
     execution.stop_ws_bridge();
 }
@@ -2017,6 +2079,8 @@ fn pending_permission_decision_does_not_stall_bridge() {
     /// `device_permission` stays pending until the test sends on
     /// `release`; every other callback is a trivial success.
     struct GatedPermissionCallbacks {
+        storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+        storage_changes: Mutex<Vec<Vec<u8>>>,
         permission_entered: Arc<AtomicBool>,
         release: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<()>>,
         permission_changes: parking_lot::Mutex<Vec<String>>,
@@ -2099,18 +2163,45 @@ fn pending_permission_decision_does_not_stall_bridge() {
             Ok(PermissionDecision::Deny)
         }
         fn auth_state_changed(&self, _state: AuthState) {}
-        async fn core_storage_read(&self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
-            Ok(None)
+        async fn core_storage_read(
+            &self,
+            key: Vec<u8>,
+        ) -> Result<Option<Vec<u8>>, HostRejection> {
+            Ok(self.storage.lock().unwrap().get(&key).cloned())
         }
         async fn core_storage_write(
             &self,
-            _key: Vec<u8>,
-            _value: Vec<u8>,
+            key: Vec<u8>,
+            value: Vec<u8>,
         ) -> Result<(), HostRejection> {
+            self.storage.lock().unwrap().insert(key, value);
             Ok(())
         }
-        async fn core_storage_clear(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
+        async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection> {
+            self.storage.lock().unwrap().remove(&key);
             Ok(())
+        }
+        async fn compare_exchange_core_storage(
+            &self,
+            key: Vec<u8>,
+            expected: Option<Vec<u8>>,
+            replacement: Vec<u8>,
+            notify_on_success: bool,
+        ) -> Result<bool, HostRejection> {
+            let mut storage = self.storage.lock().unwrap();
+            if storage.get(&key) != expected.as_ref() {
+                return Ok(false);
+            }
+            let notification = notify_on_success.then(|| key.clone());
+            storage.insert(key, replacement);
+            drop(storage);
+            if let Some(key) = notification {
+                self.core_storage_changed(key);
+            }
+            Ok(true)
+        }
+        fn core_storage_changed(&self, key: Vec<u8>) {
+            self.storage_changes.lock().unwrap().push(key);
         }
         fn chain_connect(&self, _genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {
             Ok(None)
@@ -2197,6 +2288,8 @@ fn pending_permission_decision_does_not_stall_bridge() {
     let permission_entered = Arc::new(AtomicBool::new(false));
     let execution = native_product_execution(
         Arc::new(GatedPermissionCallbacks {
+            storage: Default::default(),
+            storage_changes: Default::default(),
             permission_entered: permission_entered.clone(),
             release: tokio::sync::Mutex::new(release_rx),
             permission_changes: parking_lot::Mutex::default(),
@@ -2261,35 +2354,35 @@ fn pending_permission_decision_does_not_stall_bridge() {
             .expect("send feature_supported");
 
         let feature_response = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            loop {
-                match ws.next().await {
-                    Some(Ok(WsMessage::Binary(bytes))) => {
+                loop {
+                    match ws.next().await {
+                        Some(Ok(WsMessage::Binary(bytes))) => {
                         break ProtocolMessage::decode(&mut &bytes[..]).expect("decode response");
 					},
-                    Some(Ok(_)) => continue,
-                    Some(Err(err)) => panic!("ws error: {err}"),
-                    None => panic!("connection closed before response"),
+                        Some(Ok(_)) => continue,
+                        Some(Err(err)) => panic!("ws error: {err}"),
+                        None => panic!("connection closed before response"),
+                    }
                 }
-            }
-        })
-        .await
-        .expect("feature_supported must answer while the permission decision is pending");
+            })
+            .await
+            .expect("feature_supported must answer while the permission decision is pending");
 
 		release_tx.send(()).await.expect("release permission callback");
         let permission_response = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            loop {
-                match ws.next().await {
-                    Some(Ok(WsMessage::Binary(bytes))) => {
+                loop {
+                    match ws.next().await {
+                        Some(Ok(WsMessage::Binary(bytes))) => {
                         break ProtocolMessage::decode(&mut &bytes[..]).expect("decode response");
 					},
-                    Some(Ok(_)) => continue,
-                    Some(Err(err)) => panic!("ws error: {err}"),
-                    None => panic!("connection closed before response"),
+                        Some(Ok(_)) => continue,
+                        Some(Err(err)) => panic!("ws error: {err}"),
+                        None => panic!("connection closed before response"),
+                    }
                 }
-            }
-        })
-        .await
-        .expect("released permission must answer");
+            })
+            .await
+            .expect("released permission must answer");
 
         (feature_response, permission_response)
     });
@@ -2324,6 +2417,7 @@ fn closing_an_execution_releases_its_callbacks_while_the_host_lives() {
             None,
             None,
             None,
+            None,
             native_execution_config("first.dot", ProductExecutionKind::App),
         )
         .expect("open execution");
@@ -2354,6 +2448,7 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
     let executions = [(1, "first.dot"), (2, "second.dot")].map(|(index, product_id)| {
         host.open_product_execution(
             callbacks[index].clone(),
+            None,
             None,
             None,
             None,
@@ -2428,6 +2523,7 @@ fn two_executions_share_one_bridge_through_the_native_api() {
             None,
             None,
             None,
+            None,
             native_execution_config("shared.dot", ProductExecutionKind::App),
         )
         .expect("App execution should open");
@@ -2436,6 +2532,7 @@ fn two_executions_share_one_bridge_through_the_native_api() {
         .open_product_execution(
             chat_host.clone(),
             Some(chat_host),
+            None,
             None,
             None,
             native_execution_config("shared.dot", ProductExecutionKind::Worker),
@@ -2589,7 +2686,7 @@ fn bytes32_fields_survive_the_ffi_roundtrip() {
     <UserConfirmationReview as uniffi::Lower<crate::UniFfiTag>>::write(review.clone(), &mut buf);
     let lifted =
         <UserConfirmationReview as uniffi::Lift<crate::UniFfiTag>>::try_read(&mut buf.as_slice())
-            .expect("review must lift back");
+    .expect("review must lift back");
     assert_eq!(lifted, review);
 }
 
@@ -2607,6 +2704,7 @@ fn native_remote_authorization_uses_the_execution_permission_callback() {
         let execution = host
             .open_product_execution(
                 callbacks.clone(),
+                None,
                 None,
                 None,
                 None,
@@ -2677,6 +2775,7 @@ fn native_remote_authorization_reuses_stored_product_decisions() {
                 None,
                 None,
                 None,
+                None,
                 native_execution_config(product_id, ProductExecutionKind::App),
             )
             .unwrap()
@@ -2724,6 +2823,7 @@ fn native_remote_authorization_rejects_closed_and_closing_executions() {
                 None,
                 None,
                 None,
+                None,
                 native_execution_config("fetch.dot", ProductExecutionKind::App),
             )
             .unwrap();
@@ -2763,6 +2863,7 @@ fn a_native_status_read_follows_the_os_gate() {
     let execution = host
         .open_product_execution(
 			Arc::new(EventCallbacks::refusing(v01::HostDevicePermissionRequest::Camera)),
+            None,
             None,
             None,
             None,

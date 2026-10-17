@@ -3,12 +3,12 @@ import Foundation
 
 func makeExecutionModel(
     execution: MockProductExecution = MockProductExecution(),
-    chainConnections: MockChainConnections = MockChainConnections(),
-    osPermissionAsker: MockOSPermissionAsker = MockOSPermissionAsker()
+    chainConnections: MockChainConnections = MockChainConnections()
 ) -> RustRuntimeEnvironment.ExecutionModel {
     RustRuntimeEnvironment.ExecutionModel(
         execution: execution,
         chainConnections: chainConnections,
-        osPermissionAsker: osPermissionAsker
+        osPermissionAsker: OSPermissionAsker(),
+        media: NativeMediaBackend(productId: "test.dot")
     )
 }

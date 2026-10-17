@@ -20,6 +20,7 @@ use super::{
     SignRawWithLegacyAccountRequest, SignRawWithLegacyAccountResponse, SignRequest, SignResponse,
     SignVrfResponse, SsoProductDeviceChatOperation, StatementStoreProductSignRequest,
     StatementStoreProductSignResponse, Withdrawal,
+    MediaEndpointCertificationRequest, MediaEndpointCertificationResponse,
 };
 
 /// v1 messages exchanged with the paired signing host over the encrypted SSO channel.
@@ -112,4 +113,10 @@ pub enum RemoteMessage {
     /// Account Holder's answer after incoming funding has been credited.
     #[codec(index = 205)]
     PaymentTopUpResponse(Response<PaymentTopUpResponse>),
+    /// Certify a core-owned endpoint under the private Media account domain.
+    #[codec(index = 30)]
+    MediaEndpointCertificationRequest(MediaEndpointCertificationRequest),
+    /// Account Holder's fixed-domain endpoint signature.
+    #[codec(index = 31)]
+    MediaEndpointCertificationResponse(Response<MediaEndpointCertificationResponse>),
 }

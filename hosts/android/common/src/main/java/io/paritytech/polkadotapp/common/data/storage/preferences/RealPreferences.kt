@@ -17,6 +17,28 @@ class RealPreferences @Inject constructor(
     @ApplicationContext context: Context
 ) : Preferences {
     private val sharedPreferences = context.getSharedPreferences(SHARED_PREFERENCES_FILE, Context.MODE_PRIVATE)
+    val storageIdentifier: String =
+        java.io.File(context.applicationInfo.dataDir, "shared_prefs/$SHARED_PREFERENCES_FILE.xml").canonicalPath
+    private companion object {
+        // SharedPreferences mutates memory even when commit fails. Keep every
+        // adapter for those same physical slots from treating that value as durable.
+        val physicalFailures = java.util.concurrent.ConcurrentHashMap<String, MutableSet<String>>()
+    }
+    private val failedCommits = physicalFailures.computeIfAbsent(storageIdentifier) {
+        java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    }
+
+    fun putStringCommitted(field: String, value: String) {
+        failedCommits.add(field)
+        check(sharedPreferences.edit().putString(field, value).commit()) { "Preferences commit failed" }
+        failedCommits.remove(field)
+    }
+
+    fun removeFieldCommitted(field: String) {
+        failedCommits.add(field)
+        check(sharedPreferences.edit().remove(field).commit()) { "Preferences commit failed" }
+        failedCommits.remove(field)
+    }
 
     /*
     SharedPreferencesImpl stores listeners in a WeakHashMap,
@@ -27,7 +49,10 @@ class RealPreferences @Inject constructor(
      */
     private val listeners = mutableSetOf<SharedPreferences.OnSharedPreferenceChangeListener>()
 
-    override fun contains(field: String) = sharedPreferences.contains(field)
+    override fun contains(field: String): Boolean {
+        check(field !in failedCommits) { "Preferences durability unavailable" }
+        return sharedPreferences.contains(field)
+    }
 
     override fun keys(): Set<String> = sharedPreferences.all.keys
 
@@ -42,10 +67,12 @@ class RealPreferences @Inject constructor(
         field: String,
         defaultValue: String,
     ): String {
+        check(field !in failedCommits) { "Preferences durability unavailable" }
         return sharedPreferences.getString(field, defaultValue) ?: defaultValue
     }
 
     override fun getString(field: String): String? {
+        check(field !in failedCommits) { "Preferences durability unavailable" }
         return sharedPreferences.getString(field, null)
     }
 

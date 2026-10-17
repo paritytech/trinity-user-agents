@@ -137,6 +137,7 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
             try await authority().setPermissionAuthorizationStatus(
                 productId: productId, request: request, status: .denied
             )
+            notifyMediaRevocation(productId: productId, permissions: [permission])
             return
         }
         let grant = ProductPermissionGrant(
@@ -149,6 +150,7 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
         clearOneTimeGrant(for: grant.identifier)
 
         try await repository.saveOperation({ [grant] }, { [] }).asyncExecute()
+        notifyMediaRevocation(productId: productId, permissions: [permission])
     }
 
     func revoke(productId: String, permission: ProductPermission) async throws {
@@ -157,6 +159,7 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
             try await authority().setPermissionAuthorizationStatus(
                 productId: productId, request: request, status: .notDetermined
             )
+            notifyMediaRevocation(productId: productId, permissions: [permission])
             return
         }
         let identifier = ProductPermissionGrant.makeIdentifier(
@@ -167,6 +170,7 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
         clearOneTimeGrant(for: identifier)
 
         try await repository.saveOperation({ [] }, { [identifier] }).asyncExecute()
+        notifyMediaRevocation(productId: productId, permissions: [permission])
     }
 
     func revoke(productId: String, permissions: [ProductPermission]) async throws {
@@ -176,6 +180,15 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
     }
 
     func revokeAllByProduct(productId: String) async throws {
+        let runtime = try authority()
+        let entries = try await runtime.permissionAuthorizations(productId: productId)
+        for entry in entries {
+            if case .calling = entry.request {
+                try await runtime.setPermissionAuthorizationStatus(
+                    productId: productId, request: entry.request, status: .notDetermined
+                )
+            }
+        }
         let grants = try await getAllByProduct(productId: productId)
         try await revoke(productId: productId, permissions: grants.map(\.permission))
     }
@@ -281,6 +294,20 @@ extension ProductPermissionRepository: ProductPermissionRepositoryProtocol {
 }
 
 private extension ProductPermissionRepository {
+    func notifyMediaRevocation(productId: String, permissions: [ProductPermission]) {
+        let revoked: [NativeMediaRevokedPermission] = permissions.compactMap {
+            switch $0 {
+            case .deviceCapability(.camera): .camera
+            case .deviceCapability(.microphone): .microphone
+            default: nil
+            }
+        }
+        for permission in revoked {
+            NotificationCenter.default.post(name: NativeMediaBackend.permissionRevokedNotification, object: nil,
+                userInfo: ["productId": productId, "permission": permission])
+        }
+    }
+
     func hasOneTimeGrant(for key: String, productId: String) -> Bool {
         guard let revision = try? authority().permissionAuthorizationRevision(productId: productId) else {
             return false
@@ -437,7 +464,7 @@ extension ProductPermission {
             return [try .statementStoreAllowance(derivationIndex: derivationIndex?.toSelector())]
         case let .accountAccess(targetProductId):
             return [.accountAccess(targetProductId: bareProductLabel(targetProductId))]
-        case .crossProductSignature:
+        case .crossProductSignature, .calling:
             return []
         }
     }

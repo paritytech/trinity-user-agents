@@ -54,13 +54,13 @@ class TrUAPISessionStarter @Inject constructor(
     ): Result<Unit> {
         // A debug page served from a loopback url carries no product in its host.
         val productId = explicitProductId ?: run {
-            val tld = dotNsTldProvider.getTld().getOrElse { return Result.failure(it) }
-            // A page that is not a product (the debug SPA browser opening any URL) has no bridge to
-            // attach, but it is still a page to show.
+        val tld = dotNsTldProvider.getTld().getOrElse { return Result.failure(it) }
+        // A page that is not a product (the debug SPA browser opening any URL) has no bridge to
+        // attach, but it is still a page to show.
             ProductId.fromUrl(productUrl.toUri(), tld).getOrNull() ?: run {
-                Timber.d("Loading %s without a TrUAPI bridge: not a product URL", productUrl)
-                return runCatching { provider.loadInitialContent() }
-            }
+            Timber.d("Loading %s without a TrUAPI bridge: not a product URL", productUrl)
+            return runCatching { provider.loadInitialContent() }
+        }
         }
 
         provider.addWebViewSetup { webView -> visibleProducts.track(productId.value, webView) }
@@ -78,9 +78,14 @@ class TrUAPISessionStarter @Inject constructor(
                 card = card,
                 onPermissionRevoked = { provider.disposeRevokedExecution() },
             ) { bootstrap ->
-                provider.addWebViewSetup(installBootstrap(bootstrap))
+                val install = installBootstrap(bootstrap)
+                provider.addWebViewSetup { webView ->
+                    install(webView)
+                    bridge.attachMediaView(webView)
+                }
             }
             .mapCatching { execution ->
+                provider.bindTrUAPILifecycle(bridge)
                 provider.useTrUAPIPermissions(productId, execution)
                 provider.loadInitialContent()
             }

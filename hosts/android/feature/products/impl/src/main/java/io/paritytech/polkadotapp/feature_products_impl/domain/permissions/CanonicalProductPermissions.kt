@@ -40,6 +40,8 @@ internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermissio
     is PermissionAuthorizationRequest.Device -> ProductPermission.DeviceCapability(DeviceCapabilityType.entries.single { it.native() == v1 })
     is PermissionAuthorizationRequest.AccountAccess -> ProductPermission.AccountAccess(targetProductId)
     PermissionAuthorizationRequest.IdentityDisclosure -> ProductPermission.UserIdentityAccess
+    is PermissionAuthorizationRequest.CrossProductSignature -> null
+    is PermissionAuthorizationRequest.Calling -> null
     PermissionAuthorizationRequest.ChatAuthority -> ProductPermission.ChatAuthority
     is PermissionAuthorizationRequest.StatementStoreAllowance -> ProductPermission.StatementStoreAllowance(
         when (val selector = derivationIndex) {

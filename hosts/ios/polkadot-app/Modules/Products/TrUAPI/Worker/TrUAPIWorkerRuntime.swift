@@ -65,6 +65,8 @@ actor TrUAPIWorkerRuntime {
 
         engineMonitor?.stop()
         engineMonitor = nil
+        await executionModel.media.close()
+
 
         let moduleBridge = moduleBridge
         self.moduleBridge = nil
@@ -81,14 +83,11 @@ actor TrUAPIWorkerRuntime {
         logger.debug("[truapi] worker stopped: \(productUrl)")
     }
 
-    /// The capability handler is installed before the page exists, so a script
-    /// that asks for a camera on its first line is prompted rather than denied.
+    /// Direct page capture stays denied; the native Media backend owns capture.
     private func bootEngine(scripts: [JSEngineScript]) async throws -> JSEngineProtocol {
         let jsEngine = engineFactory()
         do {
-            await jsEngine.registerJSDeviceCapabilityHandler(
-                executionModel.osPermissionAsker.makeDeviceCapabilityHandler()
-            )
+            await jsEngine.registerJSDeviceCapabilityHandler { _ in .denied }
             try checkNotDisposed()
             try await jsEngine.initialize(with: scripts)
             guard await jsEngine.getState() == .ready else { throw ScriptExecutorError.engineInitFailed }
@@ -97,6 +96,17 @@ actor TrUAPIWorkerRuntime {
             await jsEngine.destroy()
             throw error
         }
+        await executionModel.media.watchEngine {
+            switch await jsEngine.getState() {
+            case .destroyed, .error: return false
+            default: return true
+            }
+        }
+        guard !disposed else {
+            await jsEngine.destroy()
+            throw CancellationError()
+        }
+
 
         let monitor = JSEngineMonitor(
             engine: jsEngine,

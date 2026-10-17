@@ -45,6 +45,7 @@ pub mod expanded_card;
 pub mod game;
 pub mod local_storage;
 pub mod locale;
+pub mod media;
 pub mod notifications;
 pub mod payment;
 pub mod permissions;

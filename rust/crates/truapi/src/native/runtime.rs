@@ -36,6 +36,7 @@ use super::callbacks::{
     HostCallbacks, NativeChatCallbacks, NativeCoinageCallbacks, NativeContactsCallbacks,
     NativeGameCallbacks, NativePocketCallbacks, NativeScannerCallbacks,
 };
+use super::media::{MediaCallbackPlatform, NativeMediaCallbacks};
 use super::config::{
     HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
     ProductExecutionConfig,
@@ -93,7 +94,7 @@ impl NativeTrUApiHostRuntime {
         let core_db =
             futures::executor::block_on(Db::open(core_db_config(directory))).map_err(|err| {
                 NativeRuntimeConfigError::DatabaseUnavailable {
-                    reason: format!("{}: {err}", directory.display()),
+                reason: format!("{}: {err}", directory.display()),
                 }
             })?;
         let events = Arc::new(NativeEventBus::default());
@@ -161,6 +162,7 @@ impl NativeTrUApiHostRuntime {
         chat_callbacks: Option<Arc<dyn NativeChatCallbacks>>,
         pocket_callbacks: Option<Arc<dyn NativePocketCallbacks>>,
         game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
+        media_callbacks: Option<Arc<dyn NativeMediaCallbacks>>,
         product: ProductContext,
     ) -> Arc<NativeProductExecution> {
         let events = Arc::new(NativeEventBus::default());
@@ -188,16 +190,20 @@ impl NativeTrUApiHostRuntime {
                     events: events.clone(),
                 })
             });
+        let media = media_callbacks.map(|callbacks| -> Arc<dyn crate::platform::MediaPlatform> {
+            Arc::new(MediaCallbackPlatform { callbacks })
+        });
         let game: Option<Arc<dyn crate::platform::GamePlatform>> =
             game_callbacks.map(|game| -> Arc<dyn crate::platform::GamePlatform> {
                 Arc::new(GameCallbackPlatform { game })
-            });
+        });
         let execution = Arc::new(NativeProductExecution {
             runtime: self.runtime.clone(),
             product: product.clone(),
             platform,
             chat,
             pocket,
+            media,
             game,
             permission_status,
             expanded_card,
@@ -552,12 +558,15 @@ impl NativeTrUApiHostRuntime {
     /// `chat_callbacks` installs the host's Chat adapter; hosts without the
     /// Chat modality pass `None`. `pocket_callbacks` does the same for the
     /// card collection. `game_callbacks` does the same for game reminders.
+    /// `media_callbacks` installs the entire Media backend; hosts without
+    /// complete capture/RTC/compositing support pass `None`.
     pub fn open_product_execution(
         &self,
         callbacks: Arc<dyn HostCallbacks>,
         chat_callbacks: Option<Arc<dyn NativeChatCallbacks>>,
         pocket_callbacks: Option<Arc<dyn NativePocketCallbacks>>,
         game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
+        media_callbacks: Option<Arc<dyn NativeMediaCallbacks>>,
         execution_config: ProductExecutionConfig,
     ) -> Result<Arc<NativeProductExecution>, NativeRuntimeConfigError> {
         let product: ProductContext = execution_config.try_into()?;
@@ -566,6 +575,7 @@ impl NativeTrUApiHostRuntime {
             chat_callbacks,
             pocket_callbacks,
             game_callbacks,
+            media_callbacks,
             product,
         ))
     }
@@ -687,6 +697,18 @@ impl NativeTrUApiHostRuntime {
     /// Core-owned logout for the process-wide authentication session.
     pub fn disconnect(&self) {
         futures::executor::block_on(self.runtime.disconnect_session());
+    }
+
+    /// Refresh exactly one product's stored policy after another host core writes it.
+    pub async fn refresh_permission_authorization(
+        &self,
+        product_id: String,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<(), HostRejection> {
+        self.runtime
+            .refresh_permission_authorization(&product_id, request)
+            .await?;
+        Ok(())
     }
 
     /// Record the accounts a renewal pass should keep allowed. The ledger
@@ -874,6 +896,7 @@ pub struct NativeProductExecution {
     platform: Arc<dyn crate::platform::Platform>,
     chat: Option<Arc<dyn crate::platform::ChatPlatform>>,
     pocket: Option<Arc<dyn crate::platform::PocketPlatform>>,
+    media: Option<Arc<dyn crate::platform::MediaPlatform>>,
     game: Option<Arc<dyn crate::platform::GamePlatform>>,
     /// The same `CallbackPlatform` as `platform`, kept separately because
     /// `Arc<dyn Platform>` cannot be downcast to the optional capability.
@@ -915,6 +938,7 @@ impl NativeProductExecution {
             chat: self.chat_connection.clone(),
             renderer: self.renderer_connection.clone(),
             pocket_platform: self.pocket.clone(),
+            media_platform: self.media.clone(),
             expanded_card: Some(self.expanded_card.clone()),
             game_platform: self.game.clone(),
             scanner_platform: None,
@@ -985,6 +1009,24 @@ impl NativeProductExecution {
         Ok(response.into_latest().granted)
     }
 
+    /// Canonical context used by this execution's core permission/storage scope.
+    pub fn product_context(&self) -> ProductContext {
+        self.product.clone()
+    }
+
+    /// Resolve the current authority-derived Calling settings slot, without
+    /// consent UI, backend initialization or signaling.
+    pub async fn calling_permission_authorization_request(
+        &self,
+    ) -> Result<PermissionAuthorizationRequest, HostRejection> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(HostRejection::Rejected {
+                reason: "Product execution is closed".into(),
+            });
+        }
+        Ok(self.admin().calling_permission_authorization_request().await?)
+    }
+
     /// Read a product-scoped permission authorization without prompting.
     ///
     /// A device capability resolves the host application's OS gate as well as
@@ -1001,6 +1043,15 @@ impl NativeProductExecution {
     /// Whether administration or lifecycle teardown closed this execution.
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Acquire)
+    }
+
+    /// Re-read stored product authorization without prompting or OS queries.
+    pub async fn refresh_permission_authorization(
+        &self,
+        request: PermissionAuthorizationRequest,
+    ) -> Result<(), HostRejection> {
+        self.admin().refresh_permission_authorization(request).await?;
+        Ok(())
     }
 
     /// Read the active session's X25519 chat identity private key, or `None`
@@ -1267,6 +1318,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    None,
                     native_execution_config("wallet.dot", ProductExecutionKind::Worker),
                 )
                 .expect("product opens without supplying wallet callbacks")
@@ -1333,12 +1385,14 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 native_execution_config("myapp.dot", ProductExecutionKind::App),
             )
             .expect("open app execution");
         let worker = host
             .open_product_execution(
                 callbacks.clone(),
+                None,
                 None,
                 None,
                 None,
@@ -1375,6 +1429,7 @@ mod tests {
         let execution = host
             .open_product_execution(
                 callbacks.clone(),
+                None,
                 None,
                 None,
                 None,
@@ -1432,6 +1487,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 native_execution_config("shared.dot", ProductExecutionKind::App),
             )
             .expect("App execution should open");
@@ -1440,6 +1496,7 @@ mod tests {
             .open_product_execution(
                 chat_host.clone(),
                 Some(chat_host.clone()),
+                None,
                 None,
                 None,
                 native_execution_config("shared.dot", ProductExecutionKind::Worker),
@@ -1458,6 +1515,7 @@ mod tests {
             .open_product_execution(
                 chat_host.clone(),
                 Some(chat_host.clone()),
+                None,
                 None,
                 None,
                 native_execution_config("shared.dot", ProductExecutionKind::Worker),
@@ -1484,6 +1542,7 @@ mod tests {
         let execution = host
             .open_product_execution(
                 Arc::new(EventCallbacks::new()),
+                None,
                 None,
                 None,
                 None,
@@ -1542,6 +1601,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    None,
                     native_execution_config(product_id, ProductExecutionKind::Widget),
                 )
                 .expect("Widget execution should open");
@@ -1581,6 +1641,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 native_execution_config("chain.dot", ProductExecutionKind::App),
             )
             .expect("App execution should open");
@@ -1615,6 +1676,7 @@ mod tests {
         let open = || {
             host.open_product_execution(
                 callbacks.clone(),
+                None,
                 None,
                 None,
                 None,

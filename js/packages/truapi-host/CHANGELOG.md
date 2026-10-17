@@ -7,6 +7,10 @@
 - Keep monitoring accepted Lite username claims until chain ownership is confirmed
   or the wallet activation is disposed. Recover from transient chain-read failures
   without resubmitting registration or reporting a fixed polling cutoff as failure.
+- Treat browser screen capture as optional Media functionality. Browsers such as
+  Mobile Safari can open calls and render host-composited video without
+  `getDisplayMedia`; requesting screen capture still fails closed when the API
+  is unavailable.
 - Preserve per-product game reminder callbacks across the worker boundary, and
   keep test-host resource/preimage policy changes from invalidating the active
   local identity or interrupting an in-flight Lite username claim.
