@@ -388,8 +388,7 @@ inline bound as `ChatResource::Sealed` (RFC "Chat Extension v2 additions",
 "Sealed attachments"): the core encrypts it with a new key and stores the
 ciphertext in Bulletin parts that the product's allowance pays for, up to
 32 MiB. The iOS app seals through `sealChatAttachment` and opens sealed media
-itself. The Android app does the same behind its attachment staging gate, and
-does not list the feature yet. Both CLI host roles seal and list it; their chat
+itself, and so does the Android app. Both CLI host roles seal and list it; their chat
 page shows a sealed item as its size and parts. The web hosts do not list it.
 
 A room that declares `input_events` gets `ChatEvent::InputChanged` with the
