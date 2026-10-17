@@ -73,8 +73,11 @@ public struct ChatMediaOpening {
 public struct ChatMediaStackView: View, Hashable {
     public static let reuseIdentifier = "ChatMediaStackView"
 
-    private enum Layout {
+    fileprivate enum Layout {
         static let imageHeight: CGFloat = 200
+        /// The bounds of the width of an image or a video, at the image height.
+        static let minImageWidth: CGFloat = 120
+        static let maxImageWidth: CGFloat = 260
     }
 
     let items: [ChatMediaStackItem]
@@ -138,7 +141,6 @@ public struct ChatMediaStackView: View, Hashable {
                 titles: opening?.titles,
                 onOpen: opening.map { opening in { await opening.open(index) } }
             )
-            .frame(maxWidth: .infinity)
             .frame(height: Layout.imageHeight)
             .clipped()
             .accessibilityLabel(Text(alt(at: index) ?? ""))
@@ -215,6 +217,7 @@ private struct ChatRemoteMedia: View {
                     .accessibilityHidden(true)
             }
         }
+        .frame(width: Self.width(of: image))
         .contentShape(Rectangle())
         .onTapGesture {
             guard image != nil, let onOpen else { return }
@@ -231,6 +234,17 @@ private struct ChatRemoteMedia: View {
             image = loaded
             failed = loaded == nil
         }
+    }
+
+    /// The width at the image height, from the aspect of the image: a small preview draws as large as its file. An
+    /// item that did not load yet is 4:3.
+    static func width(of image: UIImage?) -> CGFloat {
+        let height = ChatMediaStackView.Layout.imageHeight
+        let aspect = image.flatMap { $0.size.height > 0 ? $0.size.width / $0.size.height : nil } ?? 4 / 3
+        return min(
+            max(height * aspect, ChatMediaStackView.Layout.minImageWidth),
+            ChatMediaStackView.Layout.maxImageWidth
+        )
     }
 
     private var hint: String {
