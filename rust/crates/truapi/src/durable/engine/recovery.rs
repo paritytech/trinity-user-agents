@@ -1,7 +1,10 @@
 //! The recovery loop: passes on every head and wake until nothing is live.
 
 use core::ops::ControlFlow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+	collections::{BTreeMap, BTreeSet},
+	sync::Arc,
+};
 
 use futures::{
 	FutureExt,
@@ -17,6 +20,7 @@ use crate::{
 	chain::HeadEvent,
 	chain_runtime::RuntimeFailure,
 	durable::{dao, model::DomainId},
+	store::DbError,
 };
 
 /// What wakes the loop.
@@ -72,10 +76,12 @@ pub enum RecoveryError {
 
 impl DurableTxEngine {
 	/// Runs recovery passes until no pending transaction is left whose outcome
-	/// recovery can look up.
+	/// recovery can look up, and none waits to be built.
 	///
 	/// Recovery looks up a transaction's outcome on chain only when no sending
-	/// task is following it and its domain has a registered oracle.
+	/// task is following it and its domain has a registered oracle. It also
+	/// starts building waiting transactions, since after a restart nothing
+	/// else does.
 	///
 	/// The first pass runs as soon as this is called. After that, a pass runs on
 	/// each new block of a registered chain, and whenever a sending task stops
@@ -87,7 +93,8 @@ impl DurableTxEngine {
 	/// then fails with [`RecoveryError::HeadsLost`] if that chain still has
 	/// pending transactions. Failing or being dropped leaves every pending
 	/// transaction in the ledger for the next run.
-	pub async fn run_until_settled(&self) -> Result<(), RecoveryError> {
+	pub async fn run_until_settled(self: &Arc<Self>) -> Result<(), RecoveryError> {
+		self.ensure_submissions_started();
 		let wakes = self.recovery_wakes.subscribe();
 		let mut lost = LostChains::default();
 		self.run_pass().await;
@@ -130,10 +137,11 @@ impl DurableTxEngine {
 	}
 
 	/// Whether recovery goes on after a pass. It goes on while a transaction
-	/// some registered domain can decide is live on a chain whose heads it
-	/// still receives. Rows of a domain without an oracle do not count: no
-	/// pass could decide them. Once it stops, it fails if a chain whose
-	/// heads were lost still has live transactions.
+	/// waits to be built, or while one some registered domain can decide is
+	/// live on a chain whose heads it still receives. Rows of a domain
+	/// without an oracle do not count: no pass could decide them. Once it
+	/// stops, it fails if a chain whose heads were lost still has live
+	/// transactions.
 	async fn after_pass(&self, lost: &LostChains) -> ControlFlow<Result<(), RecoveryError>> {
 		let Some(live_chains) = self.readable_live_chains().await else {
 			return ControlFlow::Continue(());
@@ -147,17 +155,27 @@ impl DurableTxEngine {
 		}
 	}
 
-	/// The chains with live transactions, or `None` when the ledger cannot
-	/// be read. An unreadable ledger keeps recovery running: abandoning
-	/// transactions is far worse than one more pass.
+	/// The chains with live transactions, or `None` while recovery has to go
+	/// on whatever their heads do. An unreadable ledger keeps recovery
+	/// running: abandoning transactions is far worse than one more pass.
 	async fn readable_live_chains(&self) -> Option<BTreeSet<H256>> {
-		match self.db.read(dao::live_domains).await {
-			Ok(domains) => Some(self.chains_of(&domains)),
+		match self.read_live_chains().await {
+			Ok(chains) => chains,
 			Err(error) => {
 				warn!(%error, "durable recovery could not read the ledger");
 				None
 			},
 		}
+	}
+
+	/// The chains live transactions are on, or `None` while one waits to be
+	/// built: building follows no chain's heads, so no lost chain ends it.
+	async fn read_live_chains(&self) -> Result<Option<BTreeSet<H256>>, DbError> {
+		if self.db.read(dao::has_pending_submissions).await? {
+			return Ok(None);
+		}
+		let domains = self.db.read(dao::live_domains).await?;
+		Ok(Some(self.chains_of(&domains)))
 	}
 
 	/// The chains `domains` live on, skipping domains without an oracle.
@@ -205,9 +223,10 @@ fn record(trigger: Trigger, lost: &mut LostChains) {
 
 #[cfg(test)]
 mod tests {
-	use std::sync::{
-		Arc,
-		atomic::{AtomicUsize, Ordering},
+	use core::time::Duration;
+	use std::{
+		collections::HashMap,
+		sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 	};
 
 	use futures::executor::block_on;
@@ -217,9 +236,13 @@ mod tests {
 		chain::{HeadEvent, Heads},
 		chain_runtime::RuntimeFailure,
 		durable::{
-			model::{DomainId, DurableTxEntry, DurableTxStatus, HeadKind},
+			model::{DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxStatus, HeadKind},
 			oracle::{CompletionOracle, DurableRegistry, LedgerView, PassScope},
-			testing::{FakeChain, GENESIS, block, engine_with, extrinsic, insert},
+			policy::Preparation,
+			testing::{
+				FakeChain, GENESIS, ScheduledTxHarness, ScriptedPolicy, answer_all_with, block,
+				engine_with, extrinsic, insert,
+			},
 		},
 		test_support::wait_until,
 	};
@@ -512,5 +535,50 @@ mod tests {
 		);
 
 		assert_eq!(block_on(engine.run_until_settled()), Ok(()));
+	}
+
+	/// A policy with nothing to say about any row until `give_up` is set,
+	/// and giving up on every row from then on.
+	fn giving_up_once_set(give_up: Arc<AtomicBool>) -> ScriptedPolicy {
+		ScriptedPolicy::answering_with(move |ids| match give_up.load(Ordering::SeqCst) {
+			true => answer_all_with(ids, Preparation::GiveUp),
+			false => Ok(HashMap::new()),
+		})
+	}
+
+	/// The app was killed before a scheduled transaction was built. Recovery
+	/// is all that runs on the next launch, so it must build it.
+	#[test]
+	fn recovery_builds_what_a_previous_process_left_waiting() {
+		let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::answering_nothing());
+		let id = harness.leave_waiting_from_previous_process();
+
+		let _running = run_in_background(harness.engine());
+
+		wait_until(|| harness.policy().batches() == vec![vec![id]], "recovery builds the row");
+	}
+
+	/// Nothing on chain can decide a transaction that was never submitted,
+	/// but it is still work: the host must keep recovery running until it is
+	/// built or given up.
+	#[test]
+	fn recovery_runs_until_waiting_transactions_are_decided() {
+		let give_up = Arc::new(AtomicBool::new(false));
+		let harness = ScheduledTxHarness::with_policy(giving_up_once_set(give_up.clone()));
+		let id = harness.leave_waiting_from_previous_process();
+		let running = run_in_background(harness.engine());
+		wait_until(|| harness.policy().batches().len() == 1, "the row is asked about");
+
+		harness.finalize(131);
+		harness.settle();
+		assert!(!running.is_finished());
+		give_up.store(true, Ordering::SeqCst);
+		wait_until(|| harness.timer().sleeps() == 1, "the bucket backs off");
+		harness.timer().advance(Duration::from_secs(2));
+		let abandoned = DurableTxStatus::Failure(DurableTxFailureKind::Abandoned);
+		harness.wait_for(id, abandoned);
+		harness.finalize(132);
+
+		assert_eq!(running.join().unwrap(), Ok(()));
 	}
 }
