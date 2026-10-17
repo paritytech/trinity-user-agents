@@ -362,6 +362,7 @@ class ProductChatHostBridgeTest {
                 "custom_bodies",
                 "custom_footer",
                 "inline_attachments",
+                "sealed_attachments",
                 "search",
                 "bot_personas",
                 "mute_archive",
@@ -399,7 +400,7 @@ class ProductChatHostBridgeTest {
 
         val features = ProductChatHostBridge(productId, messaging, storedState).roomFeatures(ROOM)
 
-        assertEquals(ChatRoomFeatures(true, false, ChatRoomCalls(true, false), ChatThreadParent("lobby", "m1"), true, false), features)
+        assertEquals(ChatRoomFeatures(true, false, ChatRoomCalls(true, false), ChatThreadParent("lobby", "m1"), true, false, false), features)
     }
 
     @Test

@@ -19,6 +19,9 @@ class ProductAttachmentStagingGate @Inject constructor() {
     val isServed: Boolean
         get() = servedForE2E || ChatHostCapabilities.PREIMAGE_ATTACHMENTS in ChatHostCapabilities.features
 
+    val sealsServed: Boolean
+        get() = servedForE2E || ChatHostCapabilities.SEALED_ATTACHMENTS in ChatHostCapabilities.features
+
     /** Only the debug E2E hook calls this. */
     fun serveForE2E() {
         servedForE2E = true

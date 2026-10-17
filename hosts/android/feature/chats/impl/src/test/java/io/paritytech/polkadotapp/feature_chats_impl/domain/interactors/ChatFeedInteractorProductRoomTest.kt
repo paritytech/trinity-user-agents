@@ -69,6 +69,7 @@ class ChatFeedInteractorProductRoomTest {
     private val publicStorageNotice = mockk<PublicStorageNotice>(relaxed = true)
     private val stagingGate = mockk<ProductAttachmentStagingGate> {
         every { isServed } returns true
+        every { sealsServed } returns false
     }
 
     @Test
@@ -113,10 +114,27 @@ class ChatFeedInteractorProductRoomTest {
     }
 
     @Test
+    fun `a room that seals takes a file up to 32 MiB with no preimage staging and no public-storage notice`() = runBlocking<Unit> {
+        val draft = mockk<ProductAttachmentDraft>()
+        val size = (20 * 1024 * 1024).bytes
+        every { roomPolicyProvider.observePolicy(roomId) } returns flowOf(sealingRoom)
+        every { stagingGate.isServed } returns false
+        every { stagingGate.sealsServed } returns true
+        coEvery { productAttachmentEncoder.prepareStaged(uri, "video/mp4", size, true) } returns Result.success(draft)
+
+        val outcome = interactor().sendAttachmentMessage(roomId, uri, "video/mp4", size, text = null, replyToMessageId = null)
+
+        assertEquals(ChatSourceActionOutcome.Done, outcome.getOrThrow())
+        assertEquals(null, interactor().publicStorageNoticeFor(roomId, "video/mp4", (2 * 1024 * 1024).bytes))
+        coVerify { attachmentStager.enqueue(roomId, draft, null, null, true) }
+    }
+
+    @Test
     fun `a host that does not serve staging sends an attachment above 1 MiB inline in a room that declares it`() = runBlocking<Unit> {
         coEvery { roomSource.productSource() } returns null
         every { roomPolicyProvider.observePolicy(roomId) } returns flowOf(stagingRoom)
         every { stagingGate.isServed } returns false
+        every { stagingGate.sealsServed } returns false
         val size = (ProductAttachmentEncoder.LIMIT_BYTES + 1).bytes
 
         interactor().sendAttachmentMessage(roomId, uri, "image/jpeg", size, text = null, replyToMessageId = null)
@@ -185,6 +203,10 @@ class ChatFeedInteractorProductRoomTest {
 
     private val stagingRoom = ChatRoomPolicy.Defaults.copy(
         features = ChatRoomPolicy.Defaults.features.copy(preimageAttachments = true),
+    )
+
+    private val sealingRoom = ChatRoomPolicy.Defaults.copy(
+        features = ChatRoomPolicy.Defaults.features.copy(sealedAttachments = true),
     )
 
     private fun interactor() = ChatFeedInteractor(

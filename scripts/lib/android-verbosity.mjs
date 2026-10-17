@@ -134,6 +134,9 @@ export function writeAppFile(serial, packageName, path, bytes, { mode } = {}) {
  * lock of the emulator, so the launcher, which answers permission prompts,
  * and a driver do not dump the screen at the same time.
  */
+/** A sealed file of 32 MiB takes some minutes to reach the Bulletin chain. */
+const ATTACH_TIMEOUT_MS = 600_000;
+
 export class EmulatorUser {
   constructor({ name, serial, packageName, productHost, appLog, lock }) {
     Object.assign(this, { name, serial, packageName, productHost, appLog, lock });
@@ -210,6 +213,31 @@ export class EmulatorUser {
   }
 
   /** Type `text` into a room and send it, as the user does on its screen. */
+  /**
+   * Send the file `path` of the host as an attachment of the user in `room`,
+   * through the path of the photo picker after the pick. The app sends it
+   * inline, staged or sealed, as the room declares it.
+   */
+  async attach(room, path, mimeType) {
+    const name = `truapi-e2e/attach-${randomBytes(4).toString("hex")}`;
+    writeAppFile(this.serial, this.packageName, `files/${name}`, readFileSync(path));
+    return this.hookAndWait(
+      [
+        ["--es", "product_id", this.productHost],
+        ["--es", "room_id", room],
+        ["--es", "attach_file", name],
+        ["--es", "mime_type", mimeType],
+      ],
+      "attachment sent",
+      ATTACH_TIMEOUT_MS,
+    );
+  }
+
+  /** Open the attachment staging gate of the app, which the launcher of the sample product opens too. */
+  async serveStaging() {
+    return this.hookAndWait([["--ez", "serve_preimage_attachments", "true"]], "preimage attachments served");
+  }
+
   async send(room, text) {
     await this.open(room);
     let typed;

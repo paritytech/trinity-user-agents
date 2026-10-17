@@ -511,6 +511,9 @@ export const ANDROID_CHAT_FEATURE_ROWS = Object.freeze({
   reasoning_rows: ["S66", "S68"],
   read_aloud: ["S67"],
   call_buttons: ["S72", "S73", "S74"],
+  // No sample row: the verbosity product run seals a 3 MiB photo on one
+  // emulator and opens it on the other (D6/D7 in the verbosity plan).
+  sealed_attachments: [],
 });
 
 /**

@@ -5,6 +5,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
@@ -14,7 +15,9 @@ import io.paritytech.polkadotapp.feature_backup_impl.ManualMnemonicInteractor
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatMessageSender
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
+import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatFeedInteractor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.ProductAttachmentStagingGate
+import io.paritytech.polkadotapp.common.utils.InformationSize.Companion.bytes
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.e2e.E2EAcks
@@ -69,6 +72,7 @@ class E2EHookReceiver : BroadcastReceiver() {
         fun trUAPIWorkerSupervisor(): TrUAPIWorkerSupervisor
         fun trUAPIHostRuntimeProvider(): TrUAPIHostRuntimeProvider
         fun productAttachmentStagingGate(): ProductAttachmentStagingGate
+        fun chatFeedInteractor(): ChatFeedInteractor
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -118,6 +122,16 @@ class E2EHookReceiver : BroadcastReceiver() {
             if (productId == null) logError("stage_probe", "requires $EXTRA_PRODUCT_ID") else probeStaging(hooks, productId, probeBytes)
         }
 
+        intent.stringExtra(EXTRA_ATTACH_FILE)?.let { path ->
+            val roomId = intent.stringExtra(EXTRA_ROOM_ID)
+            val mimeType = intent.stringExtra(EXTRA_MIME_TYPE) ?: PROBE_MIME_TYPE
+            when {
+                productId == null -> logError("attach", "attach requires $EXTRA_PRODUCT_ID")
+                roomId == null -> logError("attach", "attach requires $EXTRA_ROOM_ID")
+                else -> attach(hooks, productId, roomId, File(context.filesDir, path), mimeType)
+            }
+        }
+
         if (message != null) {
             val roomId = intent.stringExtra(EXTRA_ROOM_ID)
             when {
@@ -160,6 +174,25 @@ class E2EHookReceiver : BroadcastReceiver() {
             .fold(
                 onSuccess = { log(E2EAcks.messageSent(productId.value, roomId)) },
                 onFailure = { logError("message", it) },
+            )
+    }
+
+    // The path of the photo picker after the pick: the interactor sends the file inline, staged or sealed, as the room
+    // declares it.
+    private suspend fun attach(
+        hooks: Hooks,
+        productId: ProductId,
+        roomId: String,
+        file: File,
+        mimeType: String,
+    ) {
+        if (!file.isFile) return logError("attach", "no file ${file.name} in the files of the app")
+        val chatId = ChatId.forExtensionRoom(productId.toChatExtensionId(), roomId)
+        hooks.chatFeedInteractor()
+            .sendAttachmentMessage(chatId, Uri.fromFile(file), mimeType, file.length().bytes, text = null, replyToMessageId = null)
+            .fold(
+                onSuccess = { log("$ATTACH_ACK ${file.length()} B to $roomId") },
+                onFailure = { logError("attach", it) },
             )
     }
 
@@ -269,6 +302,9 @@ class E2EHookReceiver : BroadcastReceiver() {
         const val EXTRA_RESET_PREIMAGE_PERMISSION = "reset_preimage_permission"
         const val EXTRA_STAGE_PROBE = "stage_probe"
         const val EXTRA_SERVE_PREIMAGE_ATTACHMENTS = "serve_preimage_attachments"
+        const val EXTRA_ATTACH_FILE = "attach_file"
+        const val EXTRA_MIME_TYPE = "mime_type"
+        const val ATTACH_ACK = "attachment sent"
 
         const val PREIMAGE_PERMISSION_RESET_ACK = "preimage permission reset"
         const val SERVE_PREIMAGE_ATTACHMENTS_ACK = "preimage attachments served"

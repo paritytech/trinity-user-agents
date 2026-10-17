@@ -10,6 +10,8 @@
 //   node scripts/android-verbosity.mjs <user> open <room>
 //   node scripts/android-verbosity.mjs <user> send <room> <text>
 //   node scripts/android-verbosity.mjs <user> press <room> <button-label> [text-of-the-message]
+//   node scripts/android-verbosity.mjs <user> attach <room> <file> <mime-type>
+//   node scripts/android-verbosity.mjs <user> serve-staging
 //   node scripts/android-verbosity.mjs <user> wait-room <pattern> [timeout-ms]
 //   node scripts/android-verbosity.mjs <user> wait-message <room> <text> [timeout-ms]
 //   node scripts/android-verbosity.mjs <user> screen
@@ -52,6 +54,8 @@ const commands = {
   },
   send: (room, ...words) => user.send(room, words.join(" ")),
   press: (room, label, ...near) => user.press(room, label, near.length > 0 ? near.join(" ") : undefined),
+  attach: (room, file, mimeType) => user.attach(room, resolve(file), mimeType),
+  "serve-staging": () => user.serveStaging(),
   "wait-room": (pattern, timeout) => user.waitForRoom(new RegExp(pattern), Number(timeout ?? 120_000)),
   "wait-message": (room, text, timeout) => user.waitForMessage(room, text, Number(timeout ?? 120_000)),
   screen: () => user.texts(),

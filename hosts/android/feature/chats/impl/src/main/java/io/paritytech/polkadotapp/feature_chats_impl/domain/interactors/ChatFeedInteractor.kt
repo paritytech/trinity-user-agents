@@ -342,15 +342,15 @@ class ChatFeedInteractor @Inject internal constructor(
         attachmentStager.observeFailures(chatId).map { it.failure }
 
     private suspend fun stagesAttachments(chatId: ChatId, mimeType: String, fileSize: InformationSize): Boolean {
-        if (!stagingGate.isServed) return false
-        val features = roomPolicyProvider.observePolicy(chatId).first()?.features ?: return false
-        if (!features.preimageAttachments && !features.sealedAttachments) return false
+        val seals = sealsAttachments(chatId)
+        val stages = stagingGate.isServed && roomPolicyProvider.observePolicy(chatId).first()?.features?.preimageAttachments == true
+        if (!seals && !stages) return false
 
-        return productAttachmentEncoder.goesToStaging(mimeType, fileSize, features.sealedAttachments)
+        return productAttachmentEncoder.goesToStaging(mimeType, fileSize, seals)
     }
 
     private suspend fun sealsAttachments(chatId: ChatId): Boolean =
-        roomPolicyProvider.observePolicy(chatId).first()?.features?.sealedAttachments == true
+        stagingGate.sealsServed && roomPolicyProvider.observePolicy(chatId).first()?.features?.sealedAttachments == true
 
     private suspend fun sendInlineProductAttachment(
         chatId: ChatId,

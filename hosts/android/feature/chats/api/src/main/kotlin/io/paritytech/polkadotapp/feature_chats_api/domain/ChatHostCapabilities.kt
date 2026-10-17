@@ -71,7 +71,10 @@ object ChatHostCapabilities {
     /** The call buttons of the header, a ringing call, the call bar and the call events: S72 to S74. */
     const val CALL_BUTTONS = "call_buttons"
 
-    /** A user file above 1 MiB and up to 32 MiB goes encrypted, as Bulletin parts that the product pays for. */
+    /**
+     * A user file above 1 MiB and up to 32 MiB goes encrypted, as Bulletin parts that the product pays for. The
+     * verbosity product run proves it on two emulators: a 3 MiB photo sealed and opened (VERBOSITY-WASM-PRODUCT D6).
+     */
     const val SEALED_ATTACHMENTS = "sealed_attachments"
 
     /** The names in the order of the feature table of the RFC. */
@@ -88,6 +91,7 @@ object ChatHostCapabilities {
         CUSTOM_BODIES,
         CUSTOM_FOOTER,
         INLINE_ATTACHMENTS,
+        SEALED_ATTACHMENTS,
         SEARCH,
         BOT_PERSONAS,
         MUTE_ARCHIVE,
