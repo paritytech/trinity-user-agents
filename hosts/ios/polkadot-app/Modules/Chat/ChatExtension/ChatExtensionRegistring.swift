@@ -9,12 +9,17 @@ protocol ChatExtensionsRegistering {
 
     func getExtensions(for chatId: Chat.Id) -> [ChatExtending]
     func getChatExtensionBot(for extensionId: ChatExtension.Id) -> ChatExtensionBotProtocol?
+
+    /// How the chat list draws the extension's rooms: its bot's metadata, or the product's own
+    /// while the bot is not built. Nil for an extension the host does not know.
+    func peerMetadata(for extensionId: ChatExtension.Id) -> Chat.PeerMetadata?
+
     func getWidgetProviders() -> [ChatExtensionWidgetProvider]
 }
 
 extension ChatExtensionsRegistering {
     func hasChatExtension(for extensionId: ChatExtension.Id) -> Bool {
-        getChatExtensionBot(for: extensionId) != nil
+        peerMetadata(for: extensionId) != nil
     }
 
     func getOwningExtension(for model: ChatOpenModel) -> ChatExtending? {
@@ -37,7 +42,7 @@ extension ChatExtensionsRegistering {
     }
 }
 
-enum ChatExtensionRegistryChange {
+enum ChatExtensionRegistryChange: Equatable {
     case enabled(Set<ChatExtension.Id>)
     case disabled(Set<ChatExtension.Id>)
 }
@@ -127,6 +132,11 @@ extension ChatExtensionsRegistry: ChatExtensionsRegistering {
 
     func getChatExtensionBot(for extensionId: ChatExtension.Id) -> ChatExtensionBotProtocol? {
         extensionStore.getChatExtensionBot(for: extensionId)
+    }
+
+    func peerMetadata(for extensionId: ChatExtension.Id) -> Chat.PeerMetadata? {
+        extensionStore.getChatExtensionBot(for: extensionId)?.peerMetadata
+            ?? extensionStore.product(for: extensionId)?.peerMetadataWithoutBot
     }
 
     func getWidgetProviders() -> [ChatExtensionWidgetProvider] {
