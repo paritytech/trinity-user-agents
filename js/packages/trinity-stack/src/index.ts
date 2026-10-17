@@ -1,47 +1,20 @@
 // Trinity stack descriptors, as docs/rfcs/trinity-stack-descriptor.md defines them. Every rule a
 // reader applies runs in the trinity-stack crate; this module adds the operator side and I/O.
+import type { Descriptor, SpecFile } from "../wasm/trinity_stack.js";
 import { wasm } from "./wasm.js";
 
-/** A `$v: 1` descriptor. */
-export type Descriptor = {
-  $v: 1;
-  sequence: number;
-  generation: string;
-  id: string;
-  name: string;
-  network: string;
-  tld: string;
-  /** Unix seconds. */
-  expiresAt?: number;
-  /** Unix seconds. */
-  validUntil?: number;
-  fork?: Fork;
-  chains: Chain[];
-  services: Service[];
-  assets?: Asset[];
-  contracts?: Record<string, string>;
-  coinage?: { chain: string; instance: number };
-};
-
-export type Chain = {
-  role: string;
-  genesisHash: string;
-  paraId?: number;
-  rpc: string[];
-  statementStore?: boolean;
-  lightSpec?: SpecFile;
-  fullSpec?: SpecFile;
-  forkedAt?: { number: number; hash: string };
-};
-
-export type SpecFile = { url: string; sha256: string };
-
-export type Service = { kind: string; urls: string[]; chainId?: number };
-
-export type Asset = { role: string; chain: string; pallet: string; id: number };
-
-/** `at` is Unix seconds. */
-export type Fork = { of: Pointer; at: number };
+// Generated from the crate's types by the wasm build.
+export type {
+  Asset,
+  Block,
+  Chain,
+  Coinage,
+  Descriptor,
+  Fork,
+  ForkSource,
+  Service,
+  SpecFile,
+} from "../wasm/trinity_stack.js";
 
 /** Where a descriptor lives, and the key that signs it when it is signed. */
 export type Pointer = { url: string; key?: string };
