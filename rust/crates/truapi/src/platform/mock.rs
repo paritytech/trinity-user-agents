@@ -101,6 +101,8 @@ pub enum ConfirmKind {
     ChatAuthority,
     /// [`UserConfirmationReview::MainPurseChatPayment`].
     MainPurseChatPayment,
+    /// [`UserConfirmationReview::ProfileDisclosure`].
+    ProfileDisclosure,
 }
 
 impl ConfirmKind {
@@ -122,6 +124,7 @@ impl ConfirmKind {
             UserConfirmationReview::ProductSubtree(_) => ConfirmKind::ProductSubtree,
             UserConfirmationReview::ChatAuthority(_) => ConfirmKind::ChatAuthority,
             UserConfirmationReview::MainPurseChatPayment(_) => ConfirmKind::MainPurseChatPayment,
+            UserConfirmationReview::ProfileDisclosure(_) => ConfirmKind::ProfileDisclosure,
         }
     }
 }
@@ -768,6 +771,36 @@ fn core_key(key: &CoreStorageKey) -> String {
             "core:native-chat-products:{}:{}",
             hex_key(root_public_key),
             hex_key(genesis_hash)
+        ),
+        CoreStorageKey::ProfileDisclosure {
+            root_public_key,
+            genesis_hash,
+        } => format!(
+            "core:profile-disclosure:{}:{}",
+            hex_key(root_public_key),
+            hex_key(genesis_hash)
+        ),
+        CoreStorageKey::ProfileReferencesReceived {
+            root_public_key,
+            genesis_hash,
+            product_id,
+        } => format!(
+            "core:profile-references-received:{}:{}:{product_id}",
+            hex_key(root_public_key),
+            hex_key(genesis_hash)
+        ),
+        CoreStorageKey::ProfilePersonalReferencesReceived {
+            root_public_key,
+            genesis_hash,
+        } => format!(
+            "core:profile-personal-references-received:{}:{}",
+            hex_key(root_public_key),
+            hex_key(genesis_hash)
+        ),
+		CoreStorageKey::HostChannelPeers { root_public_key, genesis_hash } => format!(
+			"core:host-channel-peers:{}:{}",
+			hex_key(root_public_key),
+			hex_key(genesis_hash)
         ),
         CoreStorageKey::NativeChatFileChunk {
             root_public_key,

@@ -204,8 +204,7 @@ impl ThemeHost for WireShapePlatform {
 impl LocaleHost for WireShapePlatform {
     fn subscribe_locale(
         &self,
-    ) -> BoxStream<'static, Result<truapi::latest::HostLocaleSubscribeItem, v01::GenericError>>
-    {
+	) -> BoxStream<'static, Result<truapi::latest::HostLocaleSubscribeItem, v01::GenericError>> {
         Box::pin(stream::empty())
     }
 }
@@ -220,9 +219,7 @@ impl PreimageHost for WireShapePlatform {
 }
 
 fn unavailable_chat_files<T>() -> Result<T, v01::GenericError> {
-    Err(v01::GenericError {
-        reason: "native Chat files unavailable in this fixture".into(),
-    })
+	Err(v01::GenericError { reason: "native Chat files unavailable in this fixture".into() })
 }
 
 #[truapi::platform::async_trait]

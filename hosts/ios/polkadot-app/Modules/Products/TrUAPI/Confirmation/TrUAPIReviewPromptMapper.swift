@@ -21,6 +21,7 @@ struct TrUAPIAllowanceRequest: Equatable {
 protocol TrUAPIReviewPromptMapping: Sendable {
     func makePermissionRequest(from review: IdentityDisclosureReview) -> TrUAPIPermissionRequest
     func makePermissionRequest(from review: ChatAuthorityReview) -> TrUAPIPermissionRequest
+    func makePermissionRequest(from review: ProfileDisclosureReview) -> TrUAPIPermissionRequest
     func makeActionRequest(from review: PreimageSubmitReview, requester: ProductId) -> TrUAPIActionConfirmationRequest
     func makePermissionRequest(from review: AccountAccessReview) -> TrUAPIPermissionRequest
     func makeActionRequest(from review: ProductSubtreeReview) -> TrUAPIActionConfirmationRequest
@@ -45,6 +46,13 @@ struct TrUAPIReviewPromptMapper: TrUAPIReviewPromptMapping {
         TrUAPIPermissionRequest(
             productId: review.productId,
             permissions: [.chatAuthority]
+        )
+    }
+
+    func makePermissionRequest(from review: ProfileDisclosureReview) -> TrUAPIPermissionRequest {
+        TrUAPIPermissionRequest(
+            productId: review.productId,
+            permissions: [.profileDisclosure]
         )
     }
 

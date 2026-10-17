@@ -17,6 +17,7 @@ internal fun ProductPermission.canonicalRequest(): PermissionAuthorizationReques
     ProductPermission.BalanceAccess -> null
     ProductPermission.UserIdentityAccess -> PermissionAuthorizationRequest.IdentityDisclosure
     ProductPermission.ChatAuthority -> PermissionAuthorizationRequest.ChatAuthority
+    ProductPermission.ProfileDisclosure -> PermissionAuthorizationRequest.ProfileDisclosure
     is ProductPermission.StatementStoreAllowance -> PermissionAuthorizationRequest.StatementStoreAllowance(
         when (val selector = derivationIndex) {
             null -> null
@@ -36,11 +37,13 @@ internal fun ProductPermission.canonicalRequest(): PermissionAuthorizationReques
     }))
 }
 
+/** `null` for a cross-product signature approval, which the core keeps per execution and never lists. */
 internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermission? = when (this) {
     is PermissionAuthorizationRequest.Device -> ProductPermission.DeviceCapability(DeviceCapabilityType.entries.single { it.native() == v1 })
     is PermissionAuthorizationRequest.AccountAccess -> ProductPermission.AccountAccess(targetProductId)
     PermissionAuthorizationRequest.IdentityDisclosure -> ProductPermission.UserIdentityAccess
     PermissionAuthorizationRequest.ChatAuthority -> ProductPermission.ChatAuthority
+    PermissionAuthorizationRequest.ProfileDisclosure -> ProductPermission.ProfileDisclosure
     is PermissionAuthorizationRequest.StatementStoreAllowance -> ProductPermission.StatementStoreAllowance(
         when (val selector = derivationIndex) {
             null -> null
@@ -48,7 +51,6 @@ internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermissio
             is DerivationIndex.Raw -> AllowanceAccountSelector.Raw(selector.v1.toDataByteArray())
         }
     )
-    is PermissionAuthorizationRequest.CrossProductSignature -> null
     is PermissionAuthorizationRequest.Remote -> when (val remote = v1.permission) {
         is RemotePermission.Remote -> {
             val domains = remote.domains.map(::canonicalDomain).distinct().sorted()
@@ -61,6 +63,7 @@ internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermissio
         RemotePermission.StatementSubmit -> ProductPermission.RemotePermission.StatementSubmitAccess
         RemotePermission.PreimageSubmit -> ProductPermission.RemotePermission.PreimageSubmitAccess
     }
+    is PermissionAuthorizationRequest.CrossProductSignature -> null
 }
 
 private fun DeviceCapabilityType.native(): HostDevicePermissionRequest = when (this) {

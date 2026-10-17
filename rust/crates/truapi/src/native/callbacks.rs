@@ -454,6 +454,20 @@ pub trait NativeContactsCallbacks: Send + Sync {
         &self,
         product_id: String,
     ) -> Result<crate::platform::HostContactPick, HostRejection>;
+
+    /// Edit the complete selected audience in host-owned UI.
+    async fn pick_contacts(
+        &self,
+        product_id: String,
+        selection: crate::platform::ContactSelection,
+    ) -> Result<crate::platform::HostContactsPick, HostRejection>;
+
+    /// Replace the names drawn over a product surface without returning names.
+    async fn place_contact_labels(
+        &self,
+        product_id: String,
+        placed: crate::platform::PlacedContactLabels,
+    ) -> Result<(), crate::latest::HostContactsPlaceLabelsError>;
 }
 
 /// Native form of [`crate::platform::ScannerPlatform`], whose rules it follows.

@@ -26,6 +26,7 @@ use crate::platform::{
     ChainProvider, ChatPlatform, ContactsPlatform, GamePlatform, HopProvider, HostInfo,
     JsonRpcConnection,
     PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform, ProductContext,
+    ProfilePlatform,
 	ProductExecutionKind, ProviderError, RuntimeConfigValidationError, ScannerPlatform,
 };
 use futures::{
@@ -928,6 +929,7 @@ struct WasmPlatformAdapters {
     contacts_platform: Option<Arc<dyn ContactsPlatform>>,
     status_host: Option<Arc<dyn PermissionStatusHost>>,
     pocket_platform: Option<Arc<dyn PocketPlatform>>,
+    profile_platform: Option<Arc<dyn ProfilePlatform>>,
     #[cfg(feature = "wasm-signing-host")]
     identity_backend_host: Option<Arc<dyn IdentityBackendHost>>,
     #[cfg(feature = "wasm-signing-host")]
@@ -942,6 +944,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
     let has_contacts = bridge.has_contacts();
     let has_permission_status = bridge.has_permission_status();
     let has_pocket = bridge.has_pocket();
+    let has_profile = bridge.has_profile();
     #[cfg(feature = "wasm-signing-host")]
     let has_identity_backend = bridge.has_identity_backend();
     #[cfg(feature = "wasm-signing-host")]
@@ -953,6 +956,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
     let contacts = has_contacts.then(|| platform.clone() as Arc<dyn ContactsPlatform>);
     let status = has_permission_status.then(|| platform.clone() as Arc<dyn PermissionStatusHost>);
     let pocket = has_pocket.then(|| platform.clone() as Arc<dyn PocketPlatform>);
+    let profile = has_profile.then(|| platform.clone() as Arc<dyn ProfilePlatform>);
     #[cfg(feature = "wasm-signing-host")]
     let identity_backend =
         has_identity_backend.then(|| platform.clone() as Arc<dyn IdentityBackendHost>);
@@ -966,6 +970,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
         contacts_platform: contacts,
         status_host: status,
         pocket_platform: pocket,
+        profile_platform: profile,
         #[cfg(feature = "wasm-signing-host")]
         identity_backend_host: identity_backend,
         #[cfg(feature = "wasm-signing-host")]
@@ -988,6 +993,7 @@ fn connection_adapters_from_js(
         contacts_platform,
         status_host,
         pocket_platform,
+        profile_platform,
         game_platform,
         scanner_platform,
         ..
@@ -1000,6 +1006,7 @@ fn connection_adapters_from_js(
         // One-use grants belong to this execution, not the shared host.
         permission_grants: Arc::default(),
         pocket_platform,
+        profile_platform,
         game_platform,
         scanner_platform,
         expanded_card: None,
@@ -1081,6 +1088,7 @@ impl WasmPairingHostRuntime {
             contacts_platform,
             status_host,
             pocket_platform,
+            profile_platform,
             game_platform,
             scanner_platform,
             ..
@@ -1101,6 +1109,9 @@ impl WasmPairingHostRuntime {
         }
         if let Some(pocket_platform) = pocket_platform {
             runtime.set_pocket_platform(pocket_platform);
+        }
+        if let Some(profile_platform) = profile_platform {
+            runtime.set_profile_platform(profile_platform);
         }
         if let Some(game_platform) = game_platform {
             runtime.set_game_platform(game_platform);
@@ -1409,6 +1420,7 @@ impl WasmSigningHostRuntime {
             contacts_platform,
             status_host,
             pocket_platform,
+            profile_platform,
             identity_backend_host,
             native_wallet,
             game_platform,
@@ -1434,6 +1446,9 @@ impl WasmSigningHostRuntime {
         }
         if let Some(pocket_platform) = pocket_platform {
             runtime.set_pocket_platform(pocket_platform);
+        }
+        if let Some(profile_platform) = profile_platform {
+            runtime.set_profile_platform(profile_platform);
         }
         if let Some(game_platform) = game_platform {
             runtime.set_game_platform(game_platform);
@@ -1817,6 +1832,7 @@ impl WasmProductRuntime {
             contacts_platform,
             status_host,
             pocket_platform,
+            profile_platform,
             game_platform,
             scanner_platform,
             ..
@@ -1834,6 +1850,9 @@ impl WasmProductRuntime {
         }
         if let Some(pocket_platform) = pocket_platform {
             pairing.set_pocket_platform(pocket_platform);
+        }
+        if let Some(profile_platform) = profile_platform {
+            pairing.set_profile_platform(profile_platform);
         }
         if let Some(game_platform) = game_platform {
             pairing.set_game_platform(game_platform);

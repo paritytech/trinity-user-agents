@@ -94,6 +94,8 @@ private extension ProductPermissionPromptViewFactory {
             title = String(localized: .Products.permissionTitleRemote(productId: productId))
         case .chatAuthority:
             title = String(localized: .Products.permissionTitleChatAuthority(productId: productId))
+        case .profileDisclosure:
+            title = String(localized: .Products.permissionTitleProfileDisclosure(productId: productId))
         case .statementStoreAllowance:
             title = String(localized: .Products.permissionTitleStatementStoreAllowance(productId: productId))
         }

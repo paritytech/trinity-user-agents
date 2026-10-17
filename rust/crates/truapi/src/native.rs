@@ -80,11 +80,8 @@ pub struct NativeCoreStorageKeyDescription {
 pub fn native_describe_core_storage_key(
     encoded: Vec<u8>,
 ) -> Result<NativeCoreStorageKeyDescription, HostRejection> {
-    let description = crate::platform::describe_core_storage_key(&encoded).map_err(|error| {
-        HostRejection::Rejected {
-            reason: error.to_string(),
-        }
-    })?;
+	let description = crate::platform::describe_core_storage_key(&encoded)
+		.map_err(|error| HostRejection::Rejected { reason: error.to_string() })?;
     Ok(NativeCoreStorageKeyDescription {
         kind: description.kind.to_owned(),
         product_id: description.product_id,

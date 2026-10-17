@@ -339,11 +339,7 @@ mod tests {
                 .unwrap_or_else(|error| panic!("{} is not in the catalog: {error:?}", config.id));
             assert_eq!(
                 (catalog.people, catalog.assethub, catalog.bulletin),
-                (
-                    config.people_genesis,
-                    config.asset_hub_genesis,
-                    config.bulletin_genesis
-                ),
+				(config.people_genesis, config.asset_hub_genesis, config.bulletin_genesis),
                 "{} genesis hashes differ from the light-client catalog",
                 config.id
             );

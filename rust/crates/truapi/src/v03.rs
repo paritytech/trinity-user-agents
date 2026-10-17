@@ -4,5 +4,7 @@
 //! Unchanged public metadata and errors retain their [`crate::v02`] types.
 
 mod account;
+mod profile;
 
 pub use account::*;
+pub use profile::*;

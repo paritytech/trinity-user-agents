@@ -31,7 +31,8 @@
 //! Remote permissions, identity disclosure and account access have one exception.
 //! A product listed in [`crate::platform::REMOTE_PERMISSION_TRUSTED_LABELS`]
 //! is authorized without a prompt when no explicit denial is stored. An
-//! administrative denial overrides that default. Device permissions are never covered.
+//! administrative denial overrides that default. Device permissions, Chat authority
+//! and profile disclosure are never covered.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Weak};
@@ -47,8 +48,9 @@ use crate::platform::{
     BLESSED_REMOTE_DOMAINS, ChatAuthorityReview, CoreStorage, CoreStorageKey,
     DevicePermissionStatus, IdentityDisclosureReview, PermissionAuthorizationRequest,
     PermissionAuthorizationStatus, PermissionDecision, PermissionStatusHost, Permissions,
-    ProductContext, UserConfirmation, UserConfirmationReview, has_trusted_remote_permissions,
-    is_valid_remote_domain_pattern, normalize_remote_domain, remote_domain_candidates,
+    ProductContext, ProfileDisclosureReview, UserConfirmation, UserConfirmationReview,
+    has_trusted_remote_permissions, is_valid_remote_domain_pattern, normalize_remote_domain,
+    remote_domain_candidates,
 };
 
 /// Persisted answer for a single permission request. Keep `Authorized` at
@@ -590,6 +592,13 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
                 )
                 .await
             }
+            PermissionAuthorizationRequest::ProfileDisclosure => {
+                authorization_status(
+                    self.storage,
+                    CoreStorageKey::profile_disclosure_authorization(self.product_id()),
+                )
+                .await
+            }
 			PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
 				Ok(
 					if self.temporary_permissions.authorize(
@@ -755,6 +764,9 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
                     derivation_index.clone(),
                 )
             }
+            PermissionAuthorizationRequest::ProfileDisclosure => {
+                CoreStorageKey::profile_disclosure_authorization(self.product_id())
+            }
         };
         self.temporary_permissions.revoke(&key);
         set_authorization_status(self.storage, key, status).await
@@ -851,6 +863,47 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
                 Ok(ChatAuthorityConsent::Refused)
             }
         }
+    }
+
+    /// Resolve the product's grant to disclose a profile reference to the
+    /// user's Chat contacts, prompting once when no durable user decision
+    /// exists.
+    pub async fn check_or_prompt_profile_disclosure(
+        &self,
+    ) -> Result<PermissionAuthorizationStatus, GenericError>
+    where
+        P: UserConfirmation,
+    {
+        let request = PermissionAuthorizationRequest::ProfileDisclosure;
+        let scope = self.scope();
+        let revision = scope.revision();
+        let cached = self.authorization_status(&request).await?;
+        if cached != PermissionAuthorizationStatus::NotDetermined {
+            return Ok(cached);
+        }
+        let decision = match scope
+            .prompt(
+                revision,
+                self.prompt.confirm_permission(UserConfirmationReview::ProfileDisclosure(
+                    ProfileDisclosureReview {
+                        product_id: self.product_id().to_string(),
+                    },
+                )),
+            )
+            .await
+        {
+            Ok(decision) => decision,
+            Err(_) => return Ok(PermissionAuthorizationStatus::NotDetermined),
+        };
+        let _mutation = scope.mutation.lock().await;
+        scope.require_revision(revision)?;
+        let status = match decision {
+            PermissionDecision::AllowOnce => return Ok(PermissionAuthorizationStatus::Authorized),
+            PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
+            PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
+        };
+        self.write_authorization_status(&request, status).await?;
+        Ok(status)
     }
 
     /// Resolves a device capability against both the OS state and the stored
@@ -1120,6 +1173,9 @@ pub(crate) fn authorization_key(
         }
         PermissionAuthorizationRequest::StatementStoreAllowance { derivation_index } => {
             CoreStorageKey::statement_store_allowance_authorization(product, derivation_index.clone())
+        }
+        PermissionAuthorizationRequest::ProfileDisclosure => {
+            CoreStorageKey::profile_disclosure_authorization(product)
         }
         PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
             cross_product_signature_key(product, target_product_id, *kind)
@@ -2640,6 +2696,43 @@ mod tests {
                     PermissionAuthorizationStatus::Denied
                 );
             }
+        });
+    }
+
+    #[test]
+    fn trusted_products_still_require_profile_disclosure() {
+        let storage = MemStorage::default();
+        let prompt = ScriptedPrompt::new(vec![], vec![]);
+        let service = trusted_service(&storage, &prompt);
+        assert_eq!(
+            futures::executor::block_on(
+                service.authorization_status(&PermissionAuthorizationRequest::ProfileDisclosure)
+            )
+            .unwrap(),
+            PermissionAuthorizationStatus::NotDetermined
+        );
+    }
+
+    #[test]
+    fn administration_cancels_pending_profile_disclosure() {
+        futures::executor::block_on(async {
+            let storage = MemStorage::default();
+            let prompt = ScriptedPrompt::decisions(vec![], vec![PermissionDecision::AllowAlways]);
+            let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
+            let request = PermissionAuthorizationRequest::ProfileDisclosure;
+            let pending_answer = prompt.remote_answers.lock().await;
+            let mut consent = Box::pin(service.check_or_prompt_profile_disclosure());
+            assert!(futures::poll!(&mut consent).is_pending());
+            service
+                .set_authorization_status(&request, PermissionAuthorizationStatus::Denied)
+                .await
+                .unwrap();
+            assert_eq!(consent.await.unwrap(), PermissionAuthorizationStatus::NotDetermined);
+            drop(pending_answer);
+            assert_eq!(
+                service.authorization_status(&request).await.unwrap(),
+                PermissionAuthorizationStatus::Denied
+            );
         });
     }
 

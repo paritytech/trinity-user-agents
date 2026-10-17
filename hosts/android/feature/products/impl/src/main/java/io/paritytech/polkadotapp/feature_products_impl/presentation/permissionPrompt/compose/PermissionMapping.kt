@@ -30,6 +30,7 @@ internal val ProductPermission.icon: ImageVector
         is ProductPermission.BalanceAccess -> NovaIcons.Dollar
         is ProductPermission.UserIdentityAccess -> NovaIcons.PeopleOutline
         ProductPermission.ChatAuthority -> NovaIcons.PeopleOutline
+        ProductPermission.ProfileDisclosure -> NovaIcons.PeopleOutline
         is ProductPermission.StatementStoreAllowance -> NovaIcons.CloudOn
         is ProductPermission.RemotePermission.NetworkAccess -> NovaIcons.WiFi
         is ProductPermission.RemotePermission.NetworkAccessSet -> NovaIcons.WiFi
@@ -59,6 +60,7 @@ internal fun ProductPermission.title(productId: String): String {
         is ProductPermission.BalanceAccess -> stringResource(RCommon.string.product_permission_balance_title, productId)
         is ProductPermission.UserIdentityAccess -> stringResource(RCommon.string.product_permission_user_identity_title, productId)
         ProductPermission.ChatAuthority -> stringResource(RCommon.string.product_permission_chat_authority_title, productId)
+        ProductPermission.ProfileDisclosure -> stringResource(RCommon.string.product_permission_profile_disclosure_title, productId)
         is ProductPermission.StatementStoreAllowance -> stringResource(RCommon.string.product_permission_allowance_title, productId)
         is ProductPermission.DeviceCapability -> capability.title(productId)
         is ProductPermission.RemotePermission.NetworkAccess -> stringResource(RCommon.string.product_permission_network_title, productId, domain)
@@ -94,6 +96,7 @@ internal fun ProductPermission.subtitle(): String {
         is ProductPermission.BalanceAccess -> stringResource(RCommon.string.product_permission_balance_subtitle, manageLater)
         is ProductPermission.UserIdentityAccess -> stringResource(RCommon.string.product_permission_user_identity_subtitle, manageLater)
         ProductPermission.ChatAuthority -> stringResource(RCommon.string.product_permission_chat_authority_description)
+        ProductPermission.ProfileDisclosure -> stringResource(RCommon.string.product_permission_profile_disclosure_description)
         is ProductPermission.StatementStoreAllowance -> stringResource(RCommon.string.product_permission_allowance_description)
         is ProductPermission.DeviceCapability -> capability.subtitle(manageLater)
         is ProductPermission.RemotePermission.NetworkAccess -> stringResource(RCommon.string.product_permission_network_subtitle, manageLater)

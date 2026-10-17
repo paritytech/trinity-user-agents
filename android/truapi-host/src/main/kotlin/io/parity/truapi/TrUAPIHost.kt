@@ -106,6 +106,10 @@ import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
+import uniffi.truapi.ContactSelection
+import uniffi.truapi.HostContactsPick
+import uniffi.truapi.PlacedContactLabels
+import uniffi.truapi.HostContactsPlaceLabelsException
 import uniffi.truapi.NativeContactsCallbacks
 import uniffi.truapi.SsoRequestOutcome
 import uniffi.truapi.HostScan
@@ -894,6 +898,17 @@ interface ContactsHostBridge {
      */
     @Throws(HostRejection::class)
     suspend fun pickContact(productId: String): HostContactPick
+
+    /** Edit the complete audience; cancelling does not confirm an empty one. */
+    @Throws(HostRejection::class)
+    suspend fun pickContacts(productId: String, selection: ContactSelection): HostContactsPick =
+        HostContactsPick.Unsupported
+
+    /** Replace names on the host surface without exposing them to products. */
+    @Throws(HostContactsPlaceLabelsException::class)
+    suspend fun placeContactLabels(productId: String, placed: PlacedContactLabels) {
+        throw HostContactsPlaceLabelsException.Unsupported()
+    }
 }
 
 private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : NativeContactsCallbacks {
@@ -902,6 +917,19 @@ private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : 
 
     override suspend fun pickContact(productId: String): HostContactPick =
         withHostRejection { bridge.pickContact(productId) }
+
+    override suspend fun pickContacts(productId: String, selection: ContactSelection): HostContactsPick =
+        withHostRejection { bridge.pickContacts(productId, selection) }
+
+    override suspend fun placeContactLabels(productId: String, placed: PlacedContactLabels) {
+        try {
+            bridge.placeContactLabels(productId, placed)
+        } catch (error: HostContactsPlaceLabelsException) {
+            throw error
+        } catch (error: Throwable) {
+            throw HostContactsPlaceLabelsException.Unknown("contact label callback failed")
+        }
+    }
 }
 
 /**

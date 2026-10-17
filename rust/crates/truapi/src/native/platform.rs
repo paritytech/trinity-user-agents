@@ -9,7 +9,8 @@ use crate::platform::{
     NativeChatFileExportRequest, NativeChatFilePickRequest, NativeChatFilesHost,
     NativeChatPickedFile, NativeCoinageRequest, NativeCoinageResponse, Navigation, Notifications,
     PermissionDecision, Permissions, PreimageHost, ProductContext, ProductOperations,
-    ProductStorage, ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview, async_trait,
+    ProductStorage, ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview,
+    async_trait,
 };
 use futures::{
 	channel::mpsc,
@@ -22,8 +23,8 @@ use crate::{DevicePairingObserver, PairedSsoPeer, host_logic::worker::WorkerTran
 
 use super::{
 	callbacks::{
-		HostCallbacks, NativeChatCallbacks, NativeCoinageCallbacks, NativeContactsCallbacks,
-		NativeGameCallbacks,
+    HostCallbacks, NativeChatCallbacks, NativeCoinageCallbacks, NativeContactsCallbacks,
+    NativeGameCallbacks,
 		NativePocketCallbacks, NativePocketRemoval, NativeScannerCallbacks,
 	},
 	errors::HostRejection,
@@ -58,7 +59,10 @@ impl NativeChatFilesHost for CallbackPlatform {
         &self,
         request: NativeChatFilePickRequest,
     ) -> Result<Vec<NativeChatPickedFile>, v01::GenericError> {
-        self.callbacks.pick_chat_files(request).await.map_err(Into::into)
+        self.callbacks
+            .pick_chat_files(request)
+            .await
+            .map_err(Into::into)
     }
 
     async fn read_chat_file(
@@ -67,18 +71,27 @@ impl NativeChatFilesHost for CallbackPlatform {
         offset: u64,
         length: u32,
     ) -> Result<Vec<u8>, v01::GenericError> {
-        self.callbacks.read_chat_file(source_id, offset, length).await.map_err(Into::into)
+        self.callbacks
+            .read_chat_file(source_id, offset, length)
+            .await
+            .map_err(Into::into)
     }
 
     async fn release_chat_file(&self, source_id: String) -> Result<(), v01::GenericError> {
-        self.callbacks.release_chat_file(source_id).await.map_err(Into::into)
+        self.callbacks
+            .release_chat_file(source_id)
+            .await
+            .map_err(Into::into)
     }
 
     async fn begin_chat_file_export(
         &self,
         request: NativeChatFileExportRequest,
     ) -> Result<Option<String>, v01::GenericError> {
-        self.callbacks.begin_chat_file_export(request).await.map_err(Into::into)
+        self.callbacks
+            .begin_chat_file_export(request)
+            .await
+            .map_err(Into::into)
     }
 
     async fn write_chat_file_export(
@@ -87,15 +100,24 @@ impl NativeChatFilesHost for CallbackPlatform {
         offset: u64,
         data: Vec<u8>,
     ) -> Result<(), v01::GenericError> {
-        self.callbacks.write_chat_file_export(export_id, offset, data).await.map_err(Into::into)
+        self.callbacks
+            .write_chat_file_export(export_id, offset, data)
+            .await
+            .map_err(Into::into)
     }
 
     async fn finish_chat_file_export(&self, export_id: String) -> Result<(), v01::GenericError> {
-        self.callbacks.finish_chat_file_export(export_id).await.map_err(Into::into)
+        self.callbacks
+            .finish_chat_file_export(export_id)
+            .await
+            .map_err(Into::into)
     }
 
     async fn cancel_chat_file_export(&self, export_id: String) -> Result<(), v01::GenericError> {
-        self.callbacks.cancel_chat_file_export(export_id).await.map_err(Into::into)
+        self.callbacks
+            .cancel_chat_file_export(export_id)
+            .await
+            .map_err(Into::into)
     }
 }
 
@@ -106,7 +128,8 @@ impl crate::platform::IdentityBackendHost for CallbackPlatform {
         username: String,
         people_chain_genesis_hash: [u8; 32],
     ) -> Result<Vec<[u8; 32]>, v01::GenericError> {
-        let candidates = self.callbacks
+        let candidates = self
+            .callbacks
             .identity_username_candidates(username, people_chain_genesis_hash.to_vec())
             .await
             .map_err(v01::GenericError::from)?;
@@ -114,17 +137,22 @@ impl crate::platform::IdentityBackendHost for CallbackPlatform {
     }
 }
 
-fn decode_identity_candidates(candidates: Vec<Vec<u8>>) -> Result<Vec<[u8; 32]>, v01::GenericError> {
+fn decode_identity_candidates(
+    candidates: Vec<Vec<u8>>,
+) -> Result<Vec<[u8; 32]>, v01::GenericError> {
     if candidates.len() > 32 {
         return Err(v01::GenericError {
             reason: "too many username candidates".into(),
         });
     }
-    candidates.into_iter().map(|candidate| {
-        candidate.try_into().map_err(|_| v01::GenericError {
-            reason: "username candidate is not AccountId32".into(),
+    candidates
+        .into_iter()
+        .map(|candidate| {
+            candidate.try_into().map_err(|_| v01::GenericError {
+                reason: "username candidate is not AccountId32".into(),
+            })
         })
-    }).collect()
+        .collect()
 }
 
 /// [`crate::platform::ContactsPlatform`] served by host-provided
@@ -154,6 +182,30 @@ impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
             .await
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
+
+    async fn pick_contacts(
+        &self,
+        product: &ProductContext,
+        selection: crate::platform::ContactSelection,
+    ) -> Result<crate::platform::HostContactsPick, v01::GenericError> {
+        self.contacts
+            .pick_contacts(product.product_id.clone(), selection)
+            .await
+            .map_err(|error| v01::GenericError {
+                reason: error.to_string(),
+            })
+    }
+
+    async fn place_contact_labels(
+        &self,
+        product: &ProductContext,
+        placed: crate::platform::PlacedContactLabels,
+    ) -> Result<bool, crate::latest::HostContactsPlaceLabelsError> {
+        self.contacts
+            .place_contact_labels(product.product_id.clone(), placed)
+            .await
+            .map(|()| true)
+    }
 }
 
 /// [`crate::platform::ScannerPlatform`] served by host-provided

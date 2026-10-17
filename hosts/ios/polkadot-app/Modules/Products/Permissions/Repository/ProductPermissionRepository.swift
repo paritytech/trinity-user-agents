@@ -379,6 +379,8 @@ extension ProductPermission {
             return .identityDisclosure
         case .chatAuthority:
             return .chatAuthority
+        case .profileDisclosure:
+            return .profileDisclosure
         case let .statementStoreAllowance(derivationIndex):
             return .statementStoreAllowance(derivationIndex: try derivationIndex.map(Self.authorizationSelector))
         case .balanceAccess:
@@ -433,11 +435,14 @@ extension ProductPermission {
             return [.userIdentityAccess]
         case .chatAuthority:
             return [.chatAuthority]
+        case .profileDisclosure:
+            return [.profileDisclosure]
         case let .statementStoreAllowance(derivationIndex):
             return [try .statementStoreAllowance(derivationIndex: derivationIndex?.toSelector())]
         case let .accountAccess(targetProductId):
             return [.accountAccess(targetProductId: bareProductLabel(targetProductId))]
         case .crossProductSignature:
+            // The core keeps these per execution and never lists them.
             return []
         }
     }

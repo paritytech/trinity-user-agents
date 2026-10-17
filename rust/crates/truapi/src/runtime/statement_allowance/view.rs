@@ -85,8 +85,8 @@ async fn read_u32(
         }));
     }
     let id = definition.id;
-    if at.is_none()
-        && let Some(value) = metadata.cached_view_u32(&id)
+	if at.is_none() &&
+		let Some(value) = metadata.cached_view_u32(&id)
     {
         return Ok(value);
     }
@@ -195,12 +195,13 @@ impl ViewFunctionError {
         let encoded = response
             .as_str()
             .ok_or_else(|| view_error(ViewFunctionFailure::ResultNotString { pallet, function }))?;
-        let bytes = hex::decode(encoded.strip_prefix("0x").unwrap_or(encoded)).map_err(|source| {
+		let bytes =
+			hex::decode(encoded.strip_prefix("0x").unwrap_or(encoded)).map_err(|source| {
 		view_error(ViewFunctionFailure::ResponseHex { pallet, function, source })
         })?;
         let mut cursor = &bytes[..];
-        let dispatched =
-            Result::<Vec<u8>, ViewFunctionDispatchError>::decode(&mut cursor).map_err(|source| {
+		let dispatched = Result::<Vec<u8>, ViewFunctionDispatchError>::decode(&mut cursor)
+			.map_err(|source| {
 			view_error(ViewFunctionFailure::ResponseDecode { pallet, function, source })
             })?;
         if !cursor.is_empty() {

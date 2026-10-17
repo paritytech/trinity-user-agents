@@ -829,6 +829,7 @@ impl PairingHost {
             lifecycle.advance();
             let previous = self.session_state.current();
             self.session_state.clear_session();
+            self.services.contacts_session_changed();
             previous
         };
         self.stop_session_channel(previous.as_ref());
@@ -900,6 +901,7 @@ impl PairingHost {
             }
             let previous = self.session_state.current();
             self.session_state.set_session(session.clone());
+            self.services.contacts_session_changed();
             lifecycle.external_session_active = external_session;
             previous
         };

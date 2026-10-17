@@ -9,7 +9,7 @@ use indoc::{formatdoc, writedoc};
 use crate::{
 	platform::{PlatformDefinition, PlatformInner, PlatformMethod, PlatformTrait},
 	platform_callbacks::{
-		callback_namespace, collect_local_bridge_payload_types, composed_traits,
+    callback_namespace, collect_local_bridge_payload_types, composed_traits,
         is_scale_vector_result, optional_trait_names, platform_trait_names, raw_callback_field_name, raw_callback_name,
 		raw_callback_wire_name, snake_case, stream_item, trait_object_return_name,
 	},
@@ -650,6 +650,9 @@ fn validate_error_type(err: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<()> {
     validate_error_name(name, ctx, &mut seen)
 }
 
+/// `seen` holds the envelopes on the path from the root, not every name
+/// visited: two versions of one envelope may carry the same payload, which is
+/// sharing, not recursion.
 fn validate_error_name<'a>(
     name: &'a str,
     ctx: &BridgeCtx<'a>,
@@ -661,6 +664,16 @@ fn validate_error_name<'a>(
     if !seen.insert(name) {
         bail!("platform error type `{name}` contains a recursive alias/envelope");
     }
+    let result = validate_error_def(name, ctx, seen);
+    seen.remove(name);
+    result
+}
+
+fn validate_error_def<'a>(
+    name: &'a str,
+    ctx: &BridgeCtx<'a>,
+    seen: &mut BTreeSet<&'a str>,
+) -> Result<()> {
     let Some(type_def) = resolve_alias_type(name, ctx) else {
         bail!("platform error type `{name}` is not present in the API definition");
     };

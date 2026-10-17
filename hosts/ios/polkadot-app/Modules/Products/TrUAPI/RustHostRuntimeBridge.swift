@@ -141,7 +141,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     }
 
     func confirmPermission(review: UserConfirmationReview) async throws -> TrUAPIPermissionDecision {
-        await confirmationPresenter.confirmPermission(review: review, from: "host")
+        try await confirmationPresenter.confirmPermission(review: review, from: "host")
     }
 
     func identityUsernameCandidates(username: String, peopleChainGenesisHash: Data) async throws -> [Data] {

@@ -18,10 +18,10 @@ use crate::{
 		PlatformTrait,
 	},
 	platform_callbacks::{
-		callback_namespace, collect_local_bridge_payload_types, composed_traits,
+    callback_namespace, collect_local_bridge_payload_types, composed_traits,
         is_scale_vector_result, optional_trait_names, platform_trait_names, raw_callback_adapter_name, raw_callback_name,
 		raw_callback_type_name, raw_callback_wire_name, stream_item, to_camel_case,
-		trait_object_return_name,
+    trait_object_return_name,
 	},
 	rustdoc::{FieldDef, TypeDef, TypeDefKind, TypeRef, VariantDef, VariantFields},
 	ts::ts_string_literal,
@@ -191,11 +191,10 @@ fn emit_wasm_adapter(
     {
         support_imports.insert("unavailableNativeChatFilesHost".to_string());
     }
-    if traits
-        .iter()
-        .any(|trait_def| trait_def.name == "CoinageWalletHost")
-    {
-        support_imports.insert("coinageWalletHostAdapter".to_string());
+    for trait_def in &traits {
+        if let Some(adapter) = optional_host_adapter(&trait_def.name) {
+            support_imports.insert(adapter.to_string());
+        }
     }
     for trait_def in &traits {
         for method in &trait_def.methods {
@@ -310,14 +309,13 @@ fn emit_wasm_adapter(
     // narrowed reference rather than re-reading a possibly-absent member.
     for name in &optional_traits {
         let namespace = callback_namespace(name);
-        if name == "CoinageWalletHost" {
-            writeln!(
+        match optional_host_adapter(name) {
+            Some(adapter) => writeln!(
                 out,
-                "  const {namespace} = coinageWalletHostAdapter(callbacks.{namespace});"
+                "  const {namespace} = {adapter}(callbacks.{namespace});"
             )
-            .unwrap();
-        } else {
-            writeln!(out, "  const {namespace} = callbacks.{namespace};").unwrap();
+            .unwrap(),
+            None => writeln!(out, "  const {namespace} = callbacks.{namespace};").unwrap(),
         }
     }
     // HOP remains a required Rust capability. Older JS embeddings get its
@@ -360,6 +358,21 @@ fn emit_wasm_adapter(
     }
     out.push_str("  };\n}\n");
     Ok(out)
+}
+
+/// The hand-written `adapter-support` wrapper an optional capability group
+/// passes through before the adapter binds it, if it has one.
+///
+/// `ProfilePlatform`'s wrapper applies `present_contact_profile`'s Rust default
+/// for a host built before that callback, so the core never reaches a missing
+/// function for it.
+fn optional_host_adapter(trait_name: &str) -> Option<&'static str> {
+    match trait_name {
+        "CoinageWalletHost" => Some("coinageWalletHostAdapter"),
+        "ContactsPlatform" => Some("contactsHostAdapter"),
+        "ProfilePlatform" => Some("profileHostAdapter"),
+        _ => None,
+    }
 }
 
 /// Emit the generated callback metadata/proxy used by the Web Worker bridge.
@@ -1637,6 +1650,9 @@ fn emit_host_callback_composites(
     let required_members = composes
         .iter()
         .map(|trait_name| {
+            if trait_name == "ContactsPlatform" {
+                return format!("  {}?: ContactsPlatform;", callback_namespace(trait_name));
+            }
             format!(
                 "  {}{}: Required<{}>;",
                 callback_namespace(trait_name),

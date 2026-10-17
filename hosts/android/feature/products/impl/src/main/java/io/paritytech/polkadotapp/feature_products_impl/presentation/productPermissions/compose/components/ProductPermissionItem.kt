@@ -61,6 +61,7 @@ private fun ProductPermission.displayName(): String {
         is ProductPermission.BalanceAccess -> stringResource(RCommon.string.product_permission_type_balance_access)
         is ProductPermission.UserIdentityAccess -> stringResource(RCommon.string.product_permission_type_user_identity_access)
         ProductPermission.ChatAuthority -> stringResource(RCommon.string.product_permission_type_chat_authority)
+        ProductPermission.ProfileDisclosure -> stringResource(RCommon.string.product_permission_type_profile_disclosure)
         is ProductPermission.StatementStoreAllowance -> {
             val account = when (val selector = derivationIndex) {
                 null -> stringResource(RCommon.string.product_permission_allowance_legacy_account)
@@ -103,6 +104,7 @@ private fun ProductPermission.descriptionRes(): Int = when (this) {
     is ProductPermission.BalanceAccess -> RCommon.string.product_permission_type_balance_access_description
     is ProductPermission.UserIdentityAccess -> RCommon.string.product_permission_type_user_identity_access_description
     ProductPermission.ChatAuthority -> RCommon.string.product_permission_chat_authority_description
+    ProductPermission.ProfileDisclosure -> RCommon.string.product_permission_profile_disclosure_description
     is ProductPermission.StatementStoreAllowance -> RCommon.string.product_permission_allowance_description
     is ProductPermission.RemotePermission.NetworkAccess -> RCommon.string.product_permission_type_network_access
     is ProductPermission.RemotePermission.NetworkAccessSet -> RCommon.string.product_permission_type_network_access

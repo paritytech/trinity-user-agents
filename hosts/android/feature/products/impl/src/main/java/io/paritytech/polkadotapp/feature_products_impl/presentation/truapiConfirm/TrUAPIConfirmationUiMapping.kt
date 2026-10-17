@@ -36,6 +36,10 @@ fun TrUAPIConfirmation.Prompt.toUiState(): TrUAPIConfirmationUiState = when (thi
         RCommon.string.truapi_confirm_title_chat_authority,
     )
 
+    is TrUAPIConfirmation.ProfileDisclosure -> build(
+        RCommon.string.truapi_confirm_title_profile_disclosure,
+    )
+
     is TrUAPIConfirmation.ResourceAllocation -> build(
         RCommon.string.truapi_confirm_title_resource_allocation,
         *resources.map { detail(RCommon.string.truapi_confirm_label_resource, it) }.toTypedArray(),

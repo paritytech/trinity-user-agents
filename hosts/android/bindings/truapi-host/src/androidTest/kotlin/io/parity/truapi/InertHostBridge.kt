@@ -20,6 +20,8 @@ class InertHostBridge(
         context.getSharedPreferences("truapi_inert_bridge_core", Context.MODE_PRIVATE),
     )
 
+    override fun permissionAuthorizationsChanged(productId: String) = Unit
+
     override suspend fun navigateTo(url: String) = Unit
 
     override suspend fun devicePermission(

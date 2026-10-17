@@ -555,7 +555,7 @@ impl SigningHost {
     fn install_local_session(&self, secret: Zeroizing<Vec<u8>>, session: SessionInfo) {
 		let mut state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
         state.advance_activation();
-        self.services.contact_handles.clear();
+        self.services.contacts_session_changed();
         *self
             .root_entropy
             .lock()
@@ -566,6 +566,7 @@ impl SigningHost {
         if let Some(session) = self.current_local_session()
             && let Ok(context) = self.native_chat_context(&session)
         {
+			self.native_chat.ensure_host_channel(context.clone());
             self.native_chat.resume_wallet_recovery(context);
         }
     }
@@ -573,7 +574,7 @@ impl SigningHost {
     fn clear_local_session(&self) {
 		let mut state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
         state.advance_activation();
-        self.services.contact_handles.clear();
+        self.services.contacts_session_changed();
         self.root_entropy
             .lock()
             .expect("signing host entropy mutex poisoned")
@@ -1491,6 +1492,24 @@ impl ProductAuthority for SigningHost {
             .map_err(PaymentTopUpAuthorityError::Domain)
     }
 
+    fn profile_disclosure_changed(&self, session: &AuthoritySession) {
+        if let Ok(context) = self.native_chat_context(session) {
+            self.native_chat.relay_profile_disclosure(context);
+        }
+    }
+
+    async fn contact_username(
+        &self,
+        session: &AuthoritySession,
+        product_id: &str,
+        peer_identity: [u8; 32],
+    ) -> Option<String> {
+        let context = self.native_chat_context(session).ok()?;
+        self.native_chat
+            .contact_username(&context, product_id, peer_identity)
+            .await
+    }
+
     async fn allocate_resources(
         &self,
         cx: &CallContext,
@@ -1757,7 +1776,7 @@ mod tests {
 			extrinsic::tests::split_v4,
 			permissions::PermissionsService,
 			sso_messages::{
-				ProductDeviceChatResponse, ProductRequest, RemoteMessage, RemoteMessageData,
+        ProductDeviceChatResponse, ProductRequest, RemoteMessage, RemoteMessageData,
 				RingVrfError, SsoProductDeviceChatOperation, v1,
 			},
 			transaction::{extrinsic_payload_extensions, extrinsic_payload_preimage},
@@ -1767,8 +1786,8 @@ mod tests {
 			derive_ring_vrf_entropy, derive_root_keypair_from_entropy, index_bytes,
 		},
 		platform::{
-			HostInfo, PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform,
-			PlatformInfo, ProductContext, SigningHostConfig,
+        HostInfo, PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform,
+        PlatformInfo, ProductContext, SigningHostConfig,
 		},
 		runtime::{sso_service::Dispatch, statement_allowance::collection::PersonhoodCollection},
 		test_support::{StubPlatform, test_spawner},
@@ -1783,8 +1802,8 @@ mod tests {
 		v01,
 		versioned::{
 			account::{
-				HostAccountGetError, HostAccountGetRequest, HostProductDeviceChatError,
-				HostProductDeviceChatRequest, HostProductDeviceChatResponse,
+        HostAccountGetError, HostAccountGetRequest, HostProductDeviceChatError,
+        HostProductDeviceChatRequest, HostProductDeviceChatResponse,
 			},
 			entropy::HostDeriveEntropyRequest,
 			resource_allocation::{
@@ -4970,8 +4989,9 @@ mod tests {
                 .unwrap();
             let runtime = product_runtime(services.clone(), activation.clone());
             let cx = CallContext::default();
-            let chat =
-                |request| runtime.product_device_chat(&cx, HostProductDeviceChatRequest::V2(request));
+            let chat = |request| {
+                runtime.product_device_chat(&cx, HostProductDeviceChatRequest::V2(request))
+            };
             chat(truapi::latest::HostProductDeviceChatRequest::Initialize)
                 .await
                 .unwrap();
@@ -5292,7 +5312,8 @@ mod tests {
                 crate::platform::ProductExecutionKind::Worker,
             )
             .expect("test product id is valid");
-            let permissions = PermissionsService::new(platform.as_ref(), platform.as_ref(), &product);
+            let permissions =
+                PermissionsService::new(platform.as_ref(), platform.as_ref(), &product);
             assert_eq!(
                 permissions
                     .authorization_status(&PermissionAuthorizationRequest::ChatAuthority)
