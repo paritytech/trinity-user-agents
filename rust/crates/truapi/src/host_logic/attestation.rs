@@ -6,6 +6,12 @@
 //! consumer-registration signature. The backend submits the on-chain
 //! `register_lite_person` extrinsic; the host never signs a chain extrinsic.
 //!
+//! Individuality runtimes above spec version 3004000 check the account
+//! signatures over the personhood signing context followed by the message,
+//! and earlier ones over the message alone. [`signing_context_for`] picks the
+//! context from the verifying chain's runtime version. The ring-VRF proof
+//! always signs the message alone.
+//!
 //! Byte layout mirrors signing-bot `src/core/attestation.ts` for backend
 //! parity. The registered account is the account whose secret signs here; the
 //! paired host resolves the username from the dotNS contracts on Asset Hub
@@ -21,7 +27,8 @@ use crate::host_logic::{
 	dotns_gateway::build_reservation_message,
 	product_account::{
 		ProductAccountError, SR25519_SIGNING_CONTEXT, derive_identity_keypair,
-		derive_lite_person_ring_vrf_entropy, product_public_key_to_address,
+		derive_lite_person_ring_vrf_entropy, personhood_product_id, product_public_key_to_address,
+		signing_context,
 	},
 	sso::pairing::{derive_identity_chat_private_key, x25519_public_key},
 };
@@ -35,6 +42,36 @@ use crate::host_logic::{
 const REGISTER_PREFIX: &[u8] = b"pop:people-lite:register using";
 /// CHAT-RFC-0004 keypair type byte for an X25519 identifier key.
 const IDENTIFIER_KEY_TAG_X25519: u8 = 0x00;
+/// The last individuality spec version that checks account signatures over
+/// the message alone. Delete the plain form once every network runs a later
+/// release.
+const LAST_PLAIN_SPEC_VERSION: u32 = 3_004_000;
+/// The individuality runtimes that verify the registration signatures.
+const INDIVIDUALITY_SPEC_NAMES: [&str; 2] = ["next-people-paseo", "next-asset-hub-paseo"];
+
+/// The personhood signing context a runtime with `spec_name` and
+/// `spec_version` checks account signatures in, on the network with
+/// `network_suffix`. `None` means the message alone.
+///
+/// Individuality runtimes above spec version 3004000 use the context. Earlier
+/// versions and other runtimes do not.
+pub fn signing_context_for(
+	spec_name: &str,
+	spec_version: u32,
+	network_suffix: &str,
+) -> Option<[u8; 32]> {
+	(INDIVIDUALITY_SPEC_NAMES.contains(&spec_name) && spec_version > LAST_PLAIN_SPEC_VERSION)
+		.then(|| signing_context(&personhood_product_id(network_suffix)))
+}
+
+/// The bytes an account signs for `message`: `context` followed by `message`,
+/// or `message` alone.
+fn signed_bytes(context: Option<[u8; 32]>, message: &[u8]) -> Vec<u8> {
+	match context {
+		Some(context) => [context.as_slice(), message].concat(),
+		None => message.to_vec(),
+	}
+}
 
 /// SCALE payload signed for a lite consumer registration.
 ///
@@ -55,7 +92,8 @@ pub struct LiteRegistration {
 	pub candidate_account_id: String,
 	/// Raw 32-byte candidate public key (the account the username is recorded for).
 	pub candidate_public_key: [u8; 32],
-	/// sr25519 signature over `prefix ‖ candidate_pub ‖ ring_vrf_key`.
+	/// sr25519 signature over `prefix ‖ candidate_pub ‖ ring_vrf_key`, after
+	/// the People signing context if any.
 	pub candidate_signature: [u8; 64],
 	/// Bandersnatch ring-VRF member key.
 	pub ring_vrf_key: [u8; 32],
@@ -64,10 +102,12 @@ pub struct LiteRegistration {
 	/// 65-byte CHAT-RFC-0004 identifier key: the `0x00` X25519 type byte, the
 	/// 32-byte public key, then 32 zero bytes. It doubles as the dotNS chat key.
 	pub identifier_key: [u8; 65],
-	/// sr25519 signature over the SCALE consumer-registration tuple.
+	/// sr25519 signature over the SCALE consumer-registration tuple, after the
+	/// People signing context if any.
 	pub consumer_registration_signature: [u8; 64],
-	/// sr25519 signature over the dotNS gateway reservation message. It
-	/// authorizes `pallet_dotns_gateway::reserve_name` on Asset Hub.
+	/// sr25519 signature over the dotNS gateway reservation message, after the
+	/// Asset Hub signing context if any. It authorizes
+	/// `pallet_dotns_gateway::reserve_name` on Asset Hub.
 	pub dotns_signature: [u8; 64],
 }
 
@@ -92,6 +132,9 @@ pub enum LiteRegistrationError {
 /// claim on dotNS. `dotns_signed_at_secs` must be Asset Hub chain time, meaning
 /// `Timestamp.Now` in seconds. The local wall clock will not do: the gateway
 /// rejects signatures more than 30 seconds in the chain's future.
+/// `people_signing_context` and `asset_hub_signing_context` come from
+/// [`signing_context_for`] on each chain.
+#[allow(clippy::too_many_arguments)]
 pub fn build_lite_registration(
 	entropy: &[u8],
 	network_suffix: &str,
@@ -99,6 +142,8 @@ pub fn build_lite_registration(
 	username_base: &str,
 	reserved_username: Option<&str>,
 	dotns_signed_at_secs: u64,
+	people_signing_context: Option<[u8; 32]>,
+	asset_hub_signing_context: Option<[u8; 32]>,
 ) -> Result<LiteRegistration, LiteRegistrationError> {
 	// Registration, local activation, and the SSO responder all use the
 	// RFC-0022 `uid.<suffix>` default product account.
@@ -116,7 +161,11 @@ pub fn build_lite_registration(
 
 	let candidate_signature = candidate
 		.secret
-		.sign_simple(SR25519_SIGNING_CONTEXT, &proof_message, &candidate.public)
+		.sign_simple(
+			SR25519_SIGNING_CONTEXT,
+			&signed_bytes(people_signing_context, &proof_message),
+			&candidate.public,
+		)
 		.to_bytes();
 	let proof_of_ownership = BandersnatchVrfVerifiable::sign(&vrf_secret, &proof_message)
 		.map_err(LiteRegistrationError::ProofOfOwnership)?;
@@ -133,7 +182,11 @@ pub fn build_lite_registration(
 	.encode();
 	let consumer_registration_signature = candidate
 		.secret
-		.sign_simple(SR25519_SIGNING_CONTEXT, &consumer_message, &candidate.public)
+		.sign_simple(
+			SR25519_SIGNING_CONTEXT,
+			&signed_bytes(people_signing_context, &consumer_message),
+			&candidate.public,
+		)
 		.to_bytes();
 
 	let reservation_message = build_reservation_message(
@@ -146,7 +199,11 @@ pub fn build_lite_registration(
 	);
 	let dotns_signature = candidate
 		.secret
-		.sign_simple(SR25519_SIGNING_CONTEXT, &reservation_message, &candidate.public)
+		.sign_simple(
+			SR25519_SIGNING_CONTEXT,
+			&signed_bytes(asset_hub_signing_context, &reservation_message),
+			&candidate.public,
+		)
 		.to_bytes();
 
 	Ok(LiteRegistration {
@@ -193,6 +250,8 @@ mod tests {
 			"headlesstester",
 			None,
 			1_749_573_123,
+			None,
+			None,
 		)
 		.unwrap();
 		assert_eq!(
@@ -297,6 +356,8 @@ mod tests {
 			"headlesstester",
 			Some("reservedbase"),
 			77,
+			None,
+			None,
 		)
 		.unwrap();
 		let public = PublicKey::from_bytes(&reg.candidate_public_key).unwrap();
@@ -361,14 +422,109 @@ mod tests {
 	#[test]
 	fn registration_is_deterministic_per_entropy_and_username() {
 		let verifier = [0x22u8; 32];
-		let first =
-			build_lite_registration(&ENTROPY, NETWORK_SUFFIX, verifier, "aliceheadless", None, 1)
-				.unwrap();
-		let again =
-			build_lite_registration(&ENTROPY, NETWORK_SUFFIX, verifier, "aliceheadless", None, 1)
-				.unwrap();
+		let first = build_lite_registration(
+			&ENTROPY,
+			NETWORK_SUFFIX,
+			verifier,
+			"aliceheadless",
+			None,
+			1,
+			None,
+			None,
+		)
+		.unwrap();
+		let again = build_lite_registration(
+			&ENTROPY,
+			NETWORK_SUFFIX,
+			verifier,
+			"aliceheadless",
+			None,
+			1,
+			None,
+			None,
+		)
+		.unwrap();
 		assert_eq!(first.candidate_public_key, again.candidate_public_key);
 		assert_eq!(first.ring_vrf_key, again.ring_vrf_key);
 		assert_eq!(first.candidate_account_id, again.candidate_account_id);
+	}
+
+	#[test]
+	fn signatures_in_context_verify_only_with_the_context() {
+		// Above spec 3004000 the runtimes reject the plain message, so each
+		// account signature must cover the context of the chain that checks it.
+		let verifier = [0x44u8; 32];
+		let people = [0x01u8; 32];
+		let asset_hub = [0x02u8; 32];
+		let reg = build_lite_registration(
+			&ENTROPY,
+			NETWORK_SUFFIX,
+			verifier,
+			"headlesstester",
+			None,
+			9,
+			Some(people),
+			Some(asset_hub),
+		)
+		.unwrap();
+		let public = PublicKey::from_bytes(&reg.candidate_public_key).unwrap();
+		let verifies = |signature: &[u8; 64], message: &[u8]| {
+			public
+				.verify_simple(
+					SR25519_SIGNING_CONTEXT,
+					message,
+					&Signature::from_bytes(signature).unwrap(),
+				)
+				.is_ok()
+		};
+		let in_context = |context: [u8; 32], message: &[u8]| [context.as_slice(), message].concat();
+
+		let mut proof_message = Vec::new();
+		proof_message.extend_from_slice(REGISTER_PREFIX);
+		proof_message.extend_from_slice(&reg.candidate_public_key);
+		proof_message.extend_from_slice(&reg.ring_vrf_key);
+		let consumer_message = (
+			reg.candidate_public_key,
+			verifier,
+			reg.identifier_key,
+			b"headlesstester".as_slice(),
+			None::<Vec<u8>>,
+		)
+			.encode();
+		let reservation_message = build_reservation_message(
+			&reg.candidate_public_key,
+			&verifier,
+			b"headlesstester",
+			&reg.identifier_key,
+			None,
+			9,
+		);
+
+		assert!(verifies(&reg.candidate_signature, &in_context(people, &proof_message)));
+		assert!(!verifies(&reg.candidate_signature, &proof_message));
+		assert!(verifies(
+			&reg.consumer_registration_signature,
+			&in_context(people, &consumer_message)
+		));
+		assert!(!verifies(&reg.consumer_registration_signature, &consumer_message));
+		assert!(verifies(&reg.dotns_signature, &in_context(asset_hub, &reservation_message)));
+		assert!(!verifies(&reg.dotns_signature, &in_context(people, &reservation_message)));
+		// The ring-VRF proof keeps signing the message alone.
+		assert!(BandersnatchVrfVerifiable::verify_signature(
+			&reg.proof_of_ownership,
+			&proof_message,
+			&reg.ring_vrf_key
+		));
+	}
+
+	#[test]
+	fn signing_context_follows_the_individuality_spec_version() {
+		let context = signing_context(&personhood_product_id("paseo"));
+
+		assert_eq!(signing_context_for("next-people-paseo", 3_004_000, "paseo"), None);
+		assert_eq!(signing_context_for("next-people-paseo", 3_004_001, "paseo"), Some(context));
+		assert_eq!(signing_context_for("next-asset-hub-paseo", 3_004_001, "paseo"), Some(context));
+		// Other runtimes keep the plain message whatever their version.
+		assert_eq!(signing_context_for("people-paseo", 9_000_000, "paseo"), None);
 	}
 }

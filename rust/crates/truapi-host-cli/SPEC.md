@@ -1214,7 +1214,11 @@ A new auto account:
    unminted on the dotNS registrar (`DotnsRegistrar.ownerOf` reverts for its
    node under the network TLD): a reservation for a registered name could never
    be claimed and would hold that stem's reservation queue for the whole
-   reservation window;
+   reservation window. Each account signature follows the runtime of the
+   chain that checks it. Individuality runtimes above spec version 3004000
+   check the candidate and consumer registration signatures (People) and the
+   reservation signature (Asset Hub) over the personhood signing context
+   followed by the message. Earlier runtimes check the message alone;
 8. polls the dotNS contracts on Asset Hub for the final `name.discriminator`;
 9. waits for inclusion in a personhood ring; and
 10. marks and saves the account as attested.
