@@ -71,8 +71,7 @@ text anywhere by itself. Cancelling the call closes the sheet and answers `Dismi
 **Only for what the user is looking at.** An App or Widget may share only while it is the screen the user sees. A Worker
 has no screen, so it may share only within 5 seconds of a press of the user on something the host drew for it: a
 renderer action of one of its bodies, or a button, a menu entry, a quick reply or a command of one of its chat rooms. A
-posted message does not count. The scanner keeps its stricter rule, because a viewfinder that opens by surprise shows
-the camera, and a share sheet sends nothing until the user picks a target.
+posted message does not count. The scanner follows the same rule.
 
 **One sheet.** The core allows one open share sheet per host and answers `Busy` to a second.
 
@@ -87,5 +86,5 @@ and answer `Unsupported`; a product falls back to a text the user can copy.
   optional field.
 - The product does not learn the target. A product that wants to know whether its invitation arrived reads its own
   protocol, not the sheet.
-- Chat presses count for the share sheet but not for the scanner. The difference follows what each surface exposes when
-  it opens unasked.
+- Chat presses count for the share sheet and for the scanner. A press opens the sheet or the viewfinder within 5
+  seconds only, and a posted message never does.

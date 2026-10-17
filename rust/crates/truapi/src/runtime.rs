@@ -358,8 +358,7 @@ impl Drop for ProductConnection {
 
 impl ProductConnection {
 	/// Whether the host published a renderer action, which only the user
-	/// causes, within the last [`USER_TAP_WINDOW_SECS`]. A Worker may scan only
-	/// shortly after one, because it has no screen the user could be looking at.
+	/// causes, within the last [`USER_TAP_WINDOW_SECS`].
 	pub fn recently_tapped(&self) -> bool {
 		self.renderer.published_within(USER_TAP_WINDOW_SECS)
 	}
@@ -367,7 +366,8 @@ impl ProductConnection {
 	/// Whether the user pressed something the host drew for the product
 	/// within the last [`USER_TAP_WINDOW_SECS`]: a renderer action, or a
 	/// button, menu entry, quick reply or command of one of its rooms. A
-	/// Worker may open the share sheet only shortly after one.
+	/// Worker may open the share sheet or the scanner only shortly after one,
+	/// because it has no screen the user could be looking at.
 	pub fn recently_pressed(&self) -> bool {
 		self.recently_tapped() || self.chat.pressed_within(USER_TAP_WINDOW_SECS)
 	}

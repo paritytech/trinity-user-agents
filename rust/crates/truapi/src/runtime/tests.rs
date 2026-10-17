@@ -7731,6 +7731,28 @@ fn the_input_text_reaches_the_product_bounded_and_is_no_press() {
 }
 
 #[test]
+fn a_worker_scans_shortly_after_a_press_in_its_room_but_not_after_a_message() {
+	// A chat Worker offers a scan from a button or a command of its room. A
+	// posted message can come from another person, so it opens nothing.
+	let scanner = StubScannerPlatform::answering(HostScan::Dismissed);
+	let host = scanner_host_for(ProductExecutionKind::Worker, Some(scanner.clone()));
+	let posted = latest::HostChatActionSubscribeItem {
+		event: latest::ChatEvent::MessagePosted {
+			message_id: "m2".into(),
+			body: latest::ChatMessageBody::Text { text: "scan".into() },
+			reply_to: None,
+		},
+		..room_press()
+	};
+	host.chat.publish(posted, &host.services.spawner).unwrap();
+	assert_eq!(scan(&host), Err(CallError::Domain(v01::HostScannerScanError::NotVisible)));
+	assert!(scanner.asked().is_empty());
+
+	host.chat.publish(room_press(), &host.services.spawner).unwrap();
+	assert_eq!(scan(&host), Ok(v01::ScanOutcome::Dismissed));
+}
+
+#[test]
 fn each_host_answer_reaches_the_product_as_its_own_result() {
 	// `Unsupported` tells a product to use its own camera code, a dismissal is
 	// worth offering again, and a code the request does not accept never

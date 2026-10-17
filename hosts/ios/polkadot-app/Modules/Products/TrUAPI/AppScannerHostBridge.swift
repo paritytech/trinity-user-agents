@@ -47,6 +47,11 @@ final class AppScannerHostBridge: ScannerHostBridge, @unchecked Sendable {
 final class ProductScanViewfinder: AppNavigationController, ControllerBackedProtocol {
     let presenter: ProductScanPresenter
 
+    #if targetEnvironment(simulator)
+        /// The open viewfinder, for the E2E harness.
+        weak static var current: ProductScanViewfinder?
+    #endif
+
     @MainActor
     init(product: String, request: HostScannerScanRequest, session: ProductScanSession) {
         let captureService = QRCaptureService(
@@ -80,6 +85,9 @@ final class ProductScanViewfinder: AppNavigationController, ControllerBackedProt
             shouldSetCloseButton: true
         )
         modalPresentationStyle = .fullScreen
+        #if targetEnvironment(simulator)
+            Self.current = self
+        #endif
     }
 
     @available(*, unavailable)
@@ -166,6 +174,13 @@ final class ProductScanPresenter: QRScannerPresenterProtocol {
     /// without a camera, first tells the user how to turn the camera on.
     func handle(error: Error) {
         guard let captureError = error as? QRCaptureServiceError, captureError != .unsupportedFormat else { return }
+        #if targetEnvironment(simulator)
+            // The simulator has no camera. The viewfinder stays open, so the E2E harness can give it a code.
+            if captureError == .deviceAccessRestricted {
+                view?.present(message: "No camera on the simulator", animated: false, autoDismiss: false)
+                return
+            }
+        #endif
         guard captureError != .deviceAccessDeniedNow else {
             endWithoutCamera()
             return

@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import TrUAPIHost
 import UIKit
@@ -46,6 +47,14 @@ import UIKit
                  "share-send",
                  "dismiss":
                 TrUAPIE2EShareActions.run(action: action, argument: argument, room: room, productId: productId)
+            case "scan-code":
+                // The code that the camera of the open viewfinder reads, as a QR code.
+                guard let viewfinder = ProductScanViewfinder.current, let argument else {
+                    Logger.shared.warning("[e2e:ui] scan-code: no viewfinder or no code")
+                    return
+                }
+                viewfinder.presenter.handle(code: argument, type: .qr)
+                Logger.shared.debug("[e2e:ui] scan-code \(argument)")
             case "staging-fault":
                 // S59: the next stage fails as a failed submit.
                 TrUAPIE2EStagingFault.set(.submitFailed(reason: "E2E fault"))

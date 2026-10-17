@@ -54,11 +54,11 @@ struct AppScannerHostBridgeTests {
         #expect(outcome == .cameraUnavailable)
     }
 
-    @Test func aDeviceWithNoCameraEndsTheScanAfterTheSettingsQuestion() async throws {
+    @Test func aCameraRefusedBeforeEndsTheScanAfterTheSettingsQuestion() async throws {
         let scan = makeScan()
 
         let outcome = try await scan.answer {
-            scan.presenter.handle(error: QRCaptureServiceError.deviceAccessRestricted)
+            scan.presenter.handle(error: QRCaptureServiceError.deviceAccessDeniedPreviously)
         }
 
         #expect(outcome == .cameraUnavailable)
