@@ -8,6 +8,7 @@ pub mod contacts;
 pub mod entropy;
 pub mod expanded_card;
 pub mod game;
+pub mod jam_peer_transport;
 pub mod local_storage;
 pub mod locale;
 pub mod notifications;
@@ -32,6 +33,7 @@ pub use contacts::Contacts;
 pub use entropy::Entropy;
 pub use expanded_card::ExpandedCard;
 pub use game::Game;
+pub use jam_peer_transport::JamPeerTransport;
 pub use local_storage::LocalStorage;
 pub use locale::Locale;
 pub use notifications::Notifications;
@@ -50,59 +52,61 @@ pub use worker::Worker;
 
 /// The unified TrUAPI contract.
 pub trait TrUApi:
-	Account
-	+ Chain
-	+ Chat
-	+ CoinPayment
-	+ Contacts
-	+ Entropy
-	+ ExpandedCard
-	+ Game
-	+ LocalStorage
-	+ Locale
-	+ Notifications
-	+ Payment
-	+ Permissions
-	+ Pocket
-	+ Preimage
-	+ Renderer
-	+ ResourceAllocation
-	+ Scanner
-	+ Signing
-	+ StatementStore
-	+ System
-	+ Theme
-	+ Worker
-	+ Send
-	+ Sync
+    Account
+    + Chain
+    + Chat
+    + CoinPayment
+    + Contacts
+    + Entropy
+    + JamPeerTransport
+    + ExpandedCard
+    + Game
+    + LocalStorage
+    + Locale
+    + Notifications
+    + Payment
+    + Permissions
+    + Pocket
+    + Preimage
+    + Renderer
+    + ResourceAllocation
+    + Scanner
+    + Signing
+    + StatementStore
+    + System
+    + Theme
+    + Worker
+    + Send
+    + Sync
 {
 }
 
 impl<T> TrUApi for T where
-	T: Account
-		+ Chain
-		+ Chat
-		+ CoinPayment
-		+ Contacts
-		+ Entropy
-		+ ExpandedCard
-		+ Game
-		+ LocalStorage
-		+ Locale
-		+ Notifications
-		+ Payment
-		+ Permissions
-		+ Pocket
-		+ Preimage
-		+ Renderer
-		+ ResourceAllocation
-		+ Scanner
-		+ Signing
-		+ StatementStore
-		+ System
-		+ Theme
-		+ Worker
-		+ Send
-		+ Sync
+    T: Account
+        + Chain
+        + Chat
+        + CoinPayment
+        + Contacts
+        + Entropy
+        + JamPeerTransport
+        + ExpandedCard
+        + Game
+        + LocalStorage
+        + Locale
+        + Notifications
+        + Payment
+        + Permissions
+        + Pocket
+        + Preimage
+        + Renderer
+        + ResourceAllocation
+        + Scanner
+        + Signing
+        + StatementStore
+        + System
+        + Theme
+        + Worker
+        + Send
+        + Sync
 {
 }

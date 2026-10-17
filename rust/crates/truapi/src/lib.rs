@@ -89,6 +89,18 @@ pub mod latest {
         AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
         BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
         ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
+        HostJamPeerTransportCloseError,
+        HostJamPeerTransportCloseRequest, HostJamPeerTransportDialError,
+        HostJamPeerTransportDialRequest, HostJamPeerTransportDialResponse,
+        HostJamPeerTransportEventsError, HostJamPeerTransportEventsResponse,
+        HostJamPeerTransportOpenError, HostJamPeerTransportOpenRequest,
+        HostJamPeerTransportOpenResponse, HostJamPeerTransportRecvError,
+        HostJamPeerTransportRecvRequest, HostJamPeerTransportRecvResponse,
+        HostJamPeerTransportResetError, HostJamPeerTransportResetRequest,
+        HostJamPeerTransportSendError, HostJamPeerTransportSendRequest,
+        JAM_PEER_TRANSPORT_MAX_BUFFERED_BYTES_PER_CONNECTION, JAM_PEER_TRANSPORT_MAX_CONNECTIONS,
+        JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES, JAM_PEER_TRANSPORT_MAX_STREAMS_PER_CONNECTION,
+        JamPeerTransportEvent,
 		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
 		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
@@ -710,6 +722,8 @@ pub mod transport;
 #[cfg(feature = "runtime")]
 mod truapi_core;
 
+#[cfg(feature = "runtime")]
+pub mod jam_peer_transport;
 #[cfg(feature = "runtime")]
 #[cfg(test)]
 mod test_support;

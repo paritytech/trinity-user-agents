@@ -1914,7 +1914,8 @@ impl ProductRuntime {
     /// Dispose this host core. Idempotent.
     ///
     /// Disposal suppresses future outgoing frames, aborts in-flight dispatch
-    /// futures, and cancels active subscriptions.
+    /// futures, cancels active subscriptions and closes the connection's JAM
+    /// peer connections.
     #[instrument(skip_all, fields(runtime.method = "product_runtime.dispose"))]
     pub fn dispose(&self) {
         // Aborting under the lock can wake code that re-enters disposal.
@@ -1934,6 +1935,8 @@ impl ProductRuntime {
         self.admin.product_runtime.detach_chat();
         self.admin.product_runtime.detach_renderer();
         self.admin.product_runtime.release_open_operations();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.admin.product_runtime.close_jam_peer_transport();
         self.host_subscriptions.close();
         self.core.cancel_subscriptions();
     }

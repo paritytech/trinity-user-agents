@@ -6,4 +6,5 @@ sealed interface RemotePermissionRequest {
     data object ChainSubmit : RemotePermissionRequest
     data object StatementSubmit : RemotePermissionRequest
     data object PreimageSubmit : RemotePermissionRequest
+    data class JamPeers(val genesis: String) : RemotePermissionRequest
 }

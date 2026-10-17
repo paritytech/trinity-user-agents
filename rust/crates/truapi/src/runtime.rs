@@ -87,7 +87,11 @@ use crate::platform::{
 pub use signing_host::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use signing_host::TrackedStatementRenewalTarget;
+#[cfg(any(test, not(target_arch = "wasm32")))]
+use tracing::Instrument;
 use tracing::{instrument, warn};
+#[cfg(any(test, not(target_arch = "wasm32")))]
+use truapi::versioned::jam_peer_transport::HostJamPeerTransportDialError;
 use truapi::{
 	CallContext, CallError, CancellationReason, Subscription,
 	api::{Chat, Contacts, Pocket, Renderer},
@@ -321,6 +325,9 @@ pub struct ProductRuntimeHost {
     /// Control of the card face above this connection's Widget, when the host draws one.
     expanded_card: Option<Arc<dyn crate::platform::ExpandedCardHost>>,
     open_operations: Mutex<HashSet<u32>>,
+    /// This connection's JAM peer connections, closed on dispose.
+    #[cfg(not(target_arch = "wasm32"))]
+    jam_peers: crate::jam_peer_transport::session::JamPeerSession,
 }
 
 /// How long after a tap a Worker may still open the scanner, as browsers bound
@@ -360,6 +367,8 @@ impl ProductRuntimeHost {
             game_platform: adapters.game_platform,
             scanner_platform: adapters.scanner_platform,
             open_operations: Mutex::new(HashSet::new()),
+            #[cfg(not(target_arch = "wasm32"))]
+            jam_peers: crate::jam_peer_transport::session::JamPeerSession::new(),
         }
     }
 
@@ -501,6 +510,8 @@ impl ProductRuntimeHost {
             game_platform: None,
             scanner_platform: None,
             open_operations: Mutex::new(HashSet::new()),
+            #[cfg(not(target_arch = "wasm32"))]
+            jam_peers: crate::jam_peer_transport::session::JamPeerSession::new(),
         };
         (host, pairing_host)
     }
@@ -755,6 +766,67 @@ impl ProductRuntimeHost {
     async fn require_chain_submit<E>(&self, denied_error: E) -> Result<(), CallError<E>> {
         self.require_remote_permission(v01::RemotePermission::ChainSubmit, denied_error)
             .await
+    }
+
+    /// Gate `JamPeerTransport::dial` on
+    /// [`RemotePermission::JamPeers`](v01::RemotePermission::JamPeers) for
+    /// `genesis`, before anything connects.
+    ///
+    /// Like [`Self::require_remote_permission`], this reads the product's
+    /// stored decision, prompts only while it is undetermined and persists the
+    /// answer per product and genesis. Unlike it, a one-use grant is not spent
+    /// by the first dial: it lives as long as the execution's one-use grants,
+    /// so a light client dialing several validators of one chain is asked once
+    /// per genesis. Anything short of a grant, including a dismissed prompt,
+    /// is `NotGranted`.
+    ///
+    /// The check owns what it reads, so it may outlive the dial that started
+    /// it: an answer given after the dial stopped waiting is still persisted.
+    #[cfg(any(test, not(target_arch = "wasm32")))]
+    pub(crate) fn require_jam_peers(
+        &self,
+        genesis: [u8; 32],
+    ) -> impl Future<Output = Result<(), CallError<HostJamPeerTransportDialError>>> + Send + 'static
+    {
+        let platform = self.platform.clone();
+        let product = self.product.clone();
+        let permission_status = self.permission_status.clone();
+        let temporary_permissions = self.temporary_permissions.clone();
+        let permission_authority = self.services.permissions.clone();
+        let request = v01::RemotePermissionRequest {
+            permission: v01::RemotePermission::JamPeers { genesis },
+        };
+        async move {
+            let status = PermissionsService::new(platform.as_ref(), platform.as_ref(), &product)
+                .with_status_host(permission_status.as_deref())
+                .with_temporary_permissions(temporary_permissions)
+                .with_authority(permission_authority)
+                .check_or_prompt_remote(request)
+                .await;
+            match status {
+                Ok(PermissionAuthorizationStatus::Authorized) => Ok(()),
+                Ok(
+                    PermissionAuthorizationStatus::Denied
+                    | PermissionAuthorizationStatus::NotDetermined,
+                ) => Err(CallError::Domain(HostJamPeerTransportDialError::V1(
+                    v01::HostJamPeerTransportDialError::NotGranted,
+                ))),
+                Err(err) => Err(CallError::HostFailure {
+                    reason: format!("permission storage failed: {err:?}"),
+                }),
+            }
+        }
+        .instrument(tracing::info_span!(
+            "require_jam_peers",
+            runtime.method = "jam_peer_transport.require_jam_peers"
+        ))
+    }
+
+    /// Close this connection's JAM peer connections; every later
+    /// `JamPeerTransport` call is `Denied`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn close_jam_peer_transport(&self) {
+        self.jam_peers.revoke();
     }
 
     #[instrument(skip_all, fields(runtime.method = "permissions.identity_disclosure_authorization"))]

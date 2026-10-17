@@ -166,6 +166,11 @@ The native composition pins release `v0.3.2-rc.9` at immutable source revision
 `959ad63f7312a2f4598b9f718ccc2516927cbbff`; `Cargo.toml`, `Cargo.lock`, and
 `truapi-polkavm-host`'s public provenance constants identify the same runtime.
 
+The native JAM peer transport's live fixture targets JAM-TEST-INSTANCE.
+Run `cargo test -p truapi --features mock --test live_jam_test_instance -- --include-ignored`
+with network access to its six validators; see the
+[peer transport contract](rust/crates/truapi/RUNTIME.md#jam-peer-transport).
+
 Taking a screenshot opens **Report app issue** wherever the shake-opened Debug
 menu is, which is every build except the store submission: `DEBUG_TOOLS_ENABLED`
 on Android, false only for the `release` build type, and `TESTNET_FEATURE` on
