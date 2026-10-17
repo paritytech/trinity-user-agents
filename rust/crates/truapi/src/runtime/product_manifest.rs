@@ -496,23 +496,9 @@ pub async fn ring_vrf_key_access_granted(
 	calling_product_id: &str,
 	handle: &v01::ProductAccountId,
 ) -> Result<AuthorizedAccess, RingVrfError> {
-	// A caller id that does not normalize names no product, so it holds no key
-	// and no manifest can grant it. It takes the same refusal as a product that
-	// granted nothing rather than an error carrying the string back: on the wire
-	// path this field is peer-supplied, and one refusal for every reason is the
-	// whole design of this seam.
 	let Ok(caller) = normalize_product_identifier(calling_product_id) else {
 		return Err(RingVrfError::NotAllowlisted);
 	};
-	// The handle is normalized here, not only at the frontend. The frontend
-	// does it before delegating, but `sso_responder` hands a wire request
-	// straight to the authority unnormalized, so without this the two doors
-	// disagree: an owner naming its own key `PEOPL.DOT` over the wire is
-	// refused where the same request from a local product runtime succeeds.
-	//
-	// A handle that does not normalize names no product, so it owns no key and
-	// no manifest can grant it: it takes the same refusal as a product that
-	// granted nothing, rather than a distinguishable error.
 	let Ok(owner) = normalize_product_identifier(&handle.dot_ns_identifier) else {
 		return Err(RingVrfError::NotAllowlisted);
 	};

@@ -18,6 +18,8 @@ class RealPreferences @Inject constructor(
 ) : Preferences {
     private val sharedPreferences = context.getSharedPreferences(SHARED_PREFERENCES_FILE, Context.MODE_PRIVATE)
 
+    override fun keys(): Set<String> = sharedPreferences.all.keys
+
     /*
     SharedPreferencesImpl stores listeners in a WeakHashMap,
     meaning listener is subject to GC if it is not kept anywhere else.
@@ -209,5 +211,7 @@ class RealPreferences @Inject constructor(
         override fun apply() {
             editor.apply()
         }
+
+        override fun commit(): Boolean = editor.commit()
     }
 }

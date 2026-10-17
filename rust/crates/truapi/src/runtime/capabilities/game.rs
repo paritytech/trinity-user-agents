@@ -19,7 +19,7 @@ use truapi::{
 use super::from_latest_error;
 use crate::{
 	platform::GamePlatform,
-	runtime::{ProductConnection, ProductRuntimeHost},
+	runtime::{AccountHolder, ProductConnection, ProductRuntimeHost},
 	unix_time::current_unix_secs,
 };
 
@@ -47,7 +47,7 @@ impl ProductConnection {
 }
 
 #[truapi::async_trait]
-impl Game for ProductRuntimeHost {
+impl<H: AccountHolder> Game for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "game.remind_next_game"))]
 	async fn remind_next_game(
 		&self,

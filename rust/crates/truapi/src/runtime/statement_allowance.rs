@@ -55,6 +55,9 @@ use slot::{SlotError, SlotSelection};
 /// for allowance authorization.
 #[derive(Debug, Error)]
 pub enum StatementAllowanceError {
+	/// The selected wallet can no longer authorize this operation.
+	#[error(transparent)]
+	Authority(#[from] crate::runtime::authority::AuthorityError),
 	/// JSON-RPC transport, request, subscription, or storage hex failure.
 	#[error(transparent)]
 	Rpc(#[from] rpc::RpcError),
@@ -471,7 +474,12 @@ enum BulletinAuthorizationScope {
 impl BulletinAllowanceInfo {
 	/// Returns whether the snapshot still permits at least one submission.
 	pub fn available(self) -> bool {
-		self.remained_size > 0 &&
+		self.can_store(1)
+	}
+
+	/// Require enough bytes and a live transaction allowance for this payload.
+	pub fn can_store(self, size: u64) -> bool {
+		self.remained_size >= size &&
 			self.remained_transactions > 0 &&
 			self.fetched_at < self.expires_in
 	}
@@ -546,6 +554,7 @@ pub async fn find_including_rings(
 			// One collection's failure must not take down the others. A device
 			// that can only prove light personhood should still get its
 			// allowance when the full-personhood storage is unreadable.
+			Err(err @ StatementAllowanceError::Authority(_)) => return Err(err),
 			Err(err) => {
 				warn!(%collection, %err, "could not resolve this collection");
 				if first_error.is_none() {
@@ -774,6 +783,10 @@ pub async fn scan_collections(
 	.await;
 	let mut scans = Vec::new();
 	for (collection, selection) in selections {
+		let selection = match selection {
+			Err(err @ StatementAllowanceError::Authority(_)) => return Err(err),
+			other => other,
+		};
 		if allocated_in(&scans).is_some() {
 			continue;
 		}
@@ -1064,6 +1077,7 @@ pub async fn wait_bulletin_authorization(
 	rpc: &RpcClient,
 	target: &[u8; 32],
 	current: Option<BulletinAllowanceInfo>,
+	size: u64,
 	timeout: Duration,
 ) -> Result<BulletinAllowanceInfo, StatementAllowanceError> {
 	let started = Instant::now();
@@ -1073,7 +1087,7 @@ pub async fn wait_bulletin_authorization(
 			wait_before_next_bulletin_authorization_poll(started, timeout).await?;
 			continue;
 		};
-		if authorization_refreshed(info, baseline) {
+		if info.can_store(size) && authorization_refreshed(info, baseline) {
 			return Ok(info);
 		}
 		wait_before_next_bulletin_authorization_poll(started, timeout).await?;
@@ -1191,6 +1205,18 @@ mod tests {
 		expires_in: u32,
 	) -> BulletinAllowanceInfo {
 		BulletinAllowanceInfo { remained_size, remained_transactions, expires_in, fetched_at: 10 }
+	}
+
+	#[test]
+	fn bulletin_authorization_covers_the_whole_submission() {
+		let results = [
+			allowance(128, 1, 11),
+			allowance(127, 1, 11),
+			allowance(128, 0, 11),
+			allowance(128, 1, 10),
+		]
+		.map(|info| info.can_store(128));
+		assert_eq!(results, [true, false, false, false]);
 	}
 
 	#[test]
@@ -1982,6 +2008,78 @@ mod tests {
 		assert_eq!(memberships.len(), 1, "LitePeople should still resolve");
 		assert_eq!(memberships[0].collection, PersonhoodCollection::LitePeople);
 		assert_eq!(memberships[0].members, vec![proof::member_key_now(lite_entropy)]);
+	}
+
+	/// A wallet that stops signing is not one broken collection. Skipping it and
+	/// carrying on with the next collection would build an allocation for a wallet
+	/// that is gone, so the whole resolution stops with the wallet's error.
+	#[test]
+	fn a_wallet_change_stops_ring_resolution_instead_of_skipping_a_collection() {
+		use crate::runtime::authority::AuthorityError;
+
+		/// Signs with fixed keys, except that the wallet is gone for People.
+		struct WalletGoneForPeople<'a>(FixedPersonhoodSigner<'a>);
+
+		impl PersonhoodSigner for WalletGoneForPeople<'_> {
+			fn member(
+				&self,
+				collection: PersonhoodCollection,
+			) -> Result<[u8; 32], StatementAllowanceError> {
+				if collection == PersonhoodCollection::People {
+					return Err(AuthorityError::Disconnected.into());
+				}
+				self.0.member(collection)
+			}
+
+			fn alias(
+				&self,
+				collection: PersonhoodCollection,
+				context: &[u8],
+			) -> Result<[u8; 32], StatementAllowanceError> {
+				self.0.alias(collection, context)
+			}
+
+			fn prove(
+				&self,
+				ring: &RingParams,
+				context: &[u8],
+				message: &[u8],
+			) -> Result<Vec<u8>, StatementAllowanceError> {
+				self.0.prove(ring, context, message)
+			}
+		}
+
+		let metadata = test_fixtures::people();
+		let candidates = pooled_candidates();
+		let signer = WalletGoneForPeople(
+			futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap(),
+		);
+		let lite_entropy = candidates[1].entropy;
+		let page = format!(r#""0x04{}""#, hex::encode(proof::member_key_now(lite_entropy)));
+		// LitePeople would resolve if the resolution kept going after People.
+		let responses = [
+			r#""0xfinal""#.to_string(),
+			LIVE_LITE_COLLECTION.to_string(),
+			r#""0x00000000""#.to_string(),
+			page,
+			"null".to_string(),
+			"null".to_string(),
+		];
+		let scripted = ScriptedRpc::new(responses.iter().map(String::as_str).collect::<Vec<_>>());
+		let rpc = RpcClient::new(HostRpcClient::new(scripted));
+
+		let err = futures::executor::block_on(find_including_rings(
+			&rpc,
+			metadata,
+			&signer,
+			&PersonhoodCollection::ALL,
+			u32::MAX,
+		))
+		.expect_err("a wallet change must stop the resolution");
+		assert!(
+			matches!(err, StatementAllowanceError::Authority(AuthorityError::Disconnected)),
+			"unexpected error: {err:?}"
+		);
 	}
 
 	/// Every candidate failing is an outage, not an answer. Reporting it as "no

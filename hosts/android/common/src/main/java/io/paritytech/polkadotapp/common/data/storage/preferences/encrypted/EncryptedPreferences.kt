@@ -8,7 +8,13 @@ interface EncryptedPreferences {
         value: String,
     )
 
+    fun putEncryptedStringCommitted(field: String, value: String)
+
     fun getDecryptedString(field: String): String?
+
+    fun getDecryptedStringOrThrow(field: String): String?
+
+    fun removeKeyCommitted(field: String)
 
     fun hasKey(field: String): Boolean
 

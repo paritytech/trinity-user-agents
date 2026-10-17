@@ -1146,7 +1146,15 @@ pub fn describe_core_storage_key_for_wasm(encoded: Vec<u8>) -> Result<JsValue, J
 	let description = crate::platform::describe_core_storage_key(&encoded)
 		.map_err(|error| JsValue::from_str(&error.to_string()))?;
 	let value = js_sys::Object::new();
-	Reflect::set(&value, &JsValue::from_str("kind"), &JsValue::from_str(description.kind))?;
+	Reflect::set(&value, &JsValue::from_str("kind"), &JsValue::from_str(&description.kind))?;
+	Reflect::set(
+		&value,
+		&JsValue::from_str("protection"),
+		&JsValue::from_str(match description.protection {
+			crate::platform::CoreStorageProtection::Secret => "secret",
+			crate::platform::CoreStorageProtection::Public => "public",
+		}),
+	)?;
 	if let Some(product_id) = description.product_id {
 		Reflect::set(&value, &JsValue::from_str("productId"), &JsValue::from_str(&product_id))?;
 	}

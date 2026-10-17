@@ -41,9 +41,16 @@ public protocol HostStorageBackend: AnyObject, Sendable {
 /// `truapi::platform::CoreStorageKey` values, so embedders can persist them
 /// opaquely or decode them to choose a secure backing store per slot.
 public protocol HostCoreStorageBackend: AnyObject, Sendable {
+    func keys() throws -> [Data]
     func read(key: Data) throws -> Data?
     func write(key: Data, value: Data) throws
     func clear(key: Data) throws
+}
+
+public extension HostCoreStorageBackend {
+    func keys() throws -> [Data] {
+        throw HostRejection.Rejected(reason: "Core storage enumeration is unavailable")
+    }
 }
 
 /// Host-side callback bundle that the Rust core invokes for capabilities the
@@ -604,6 +611,10 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         bridge.authStateChanged(state: state)
     }
 
+    func coreStorageKeys() throws -> [Data] {
+        try withHostRejection { try bridge.coreStorage.keys() }
+    }
+
     func coreStorageRead(key: Data) throws -> Data? {
         try withHostRejection {
             try bridge.coreStorage.read(key: key)
@@ -944,6 +955,16 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.coreDatabaseStatus()
     }
 
+    /// Revoke retained grants when a product is uninstalled.
+    public func clearProductState(productId: String) async throws {
+        try await inner.clearProductState(productId: productId)
+    }
+
+    /// Revoke retained grants owned by a deleted wallet.
+    public func clearWalletState(owner: Data) async throws {
+        try await inner.clearWalletState(owner: owner)
+    }
+
     /// Decides durable transactions from the chain until none is live, then
     /// returns. Await it from the background task
     /// ``HostBridge/durableWorkChanged(pending:)`` asks for; a throw means
@@ -959,16 +980,15 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try inner.activateLocalSession(secret: secret, liteUsername: liteUsername)
     }
 
-    /// Answer one decrypted SSO remote message from the wallet-managed
-    /// statement-store session. `message` is one SCALE-encoded
-    /// `RemoteMessage` exactly as decrypted. `.response` carries the
-    /// SCALE-encoded reply to post back over the same session;
-    /// `.disconnected` means the peer ended the session (perform native
-    /// teardown); `.ignored` means the message was not a request.
-    /// Confirmation-gated requests await `confirmUserAction`, so this can
-    /// take arbitrarily long — call from a `Task`, never the main thread.
-    public func handleSsoRequest(message: Data) async throws -> SsoRequestOutcome {
-        try await inner.handleSsoRequest(message: message)
+    /// Bind one peer to the wallet matching the transport's public keys.
+    public func openSsoService(
+        ownStatementAccountId: Data,
+        ownEncryptionPublicKey: Data
+    ) throws -> SsoAccountHolderService {
+        try inner.openSsoService(
+            ownStatementAccountId: ownStatementAccountId,
+            ownEncryptionPublicKey: ownEncryptionPublicKey
+        )
     }
 
     /// Build the SCALE-encoded `Disconnected` message to post over a

@@ -1,14 +1,5 @@
-use super::{SigningHost, product_authority_error};
-use crate::{
-	host_logic::{
-		product_account::{derive_identity_keypair, derive_root_keypair_from_entropy},
-		session::SessionInfo,
-		sso::pairing::derive_identity_chat_private_key,
-	},
-	runtime::{authority::AuthorityError, connected_session_ui_info},
-};
-
-use zeroize::Zeroizing;
+use super::SigningHost;
+use crate::runtime::{authority::AuthorityError, connected_session_ui_info};
 
 /// Activate the wallet from entropy supplied by the embedding host.
 #[async_trait::async_trait]
@@ -37,28 +28,9 @@ impl LocalActivation for SigningHost {
 		secret: Vec<u8>,
 		lite_username: Option<String>,
 	) -> Result<(), AuthorityError> {
-		let secret = Zeroizing::new(secret);
-		let root = derive_root_keypair_from_entropy(&secret).map_err(product_authority_error)?;
-		let public_key = root.public.to_bytes();
-		let identity_account_id = derive_identity_keypair(&secret, self.network_suffix())
-			.map_err(product_authority_error)?
-			.public
-			.to_bytes();
-		let identity_chat_private_key = derive_identity_chat_private_key(&secret);
-		let session = SessionInfo {
-			public_key,
-			sso: None,
-			root_entropy_source: None,
-			identity_account_id: Some(identity_account_id),
-			identity_chat_private_key: Some(identity_chat_private_key),
-			// A local session has no answering remote device to address.
-			device_enc_public_key: None,
-			lite_username,
-			full_username: None,
-		};
-		let ui_info = connected_session_ui_info(&session);
-		self.install_local_session(secret, session);
-		self.auth_state.connected(&ui_info);
+		let activation = self.wallet.prepare_activation(secret, lite_username)?;
+		let session = self.accounts.change_activation(|| self.wallet.install(activation));
+		self.auth_state.connected(&connected_session_ui_info(&session));
 		Ok(())
 	}
 }

@@ -16,7 +16,7 @@ use crate::{
 	generated::dispatcher,
 	host_logic::session::SessionState,
 	runtime::{
-		HostSession, PairingHostRole, ProductAuthority, ProductRuntimeHost, RuntimeServices,
+		AccountHolder, HostAccounts, HostSession, PairingHost, ProductRuntimeHost, RuntimeServices,
 	},
 	subscription::Spawner,
 	transport::Transport,
@@ -26,6 +26,19 @@ use crate::{
 pub struct TrUApiCore {
 	dispatcher: Dispatcher,
 	session_state: Arc<SessionState>,
+}
+
+/// Build a dispatcher core around an already-created product runtime.
+#[instrument(skip_all, fields(runtime.method = "core.from_product_runtime"))]
+pub fn from_product_runtime<H: AccountHolder + 'static>(
+	runtime: Arc<ProductRuntimeHost<H>>,
+	spawner: Spawner,
+) -> TrUApiCore {
+	let execution_kind = runtime.connection().execution_kind();
+	let session_state = runtime.host_session().session_state();
+	let mut dispatcher = Dispatcher::for_execution(spawner, execution_kind);
+	dispatcher::register(&mut dispatcher, runtime);
+	TrUApiCore { dispatcher, session_state }
 }
 
 impl TrUApiCore {
@@ -64,41 +77,32 @@ impl TrUApiCore {
 			host_config.asset_hub_chain_genesis_hash,
 			spawner.clone(),
 		);
-		let pairing_host = PairingHostRole::new(services.clone(), host_config);
-		pairing_host.clone().start_session_store_sync(spawner);
-		Self::from_runtime_parts(services, pairing_host.clone(), pairing_host, product)
+		let pairing = PairingHost::new(services.clone(), host_config);
+		pairing.session().clone().start_session_store_sync(spawner);
+		Self::from_runtime_parts(
+			services,
+			pairing.accounts().clone(),
+			pairing.session().clone(),
+			product,
+		)
 	}
 
-	/// Build a product-facing core from shared services and authority.
+	/// Build a product-facing core over shared accounts and session lifecycle.
 	#[instrument(skip_all, fields(runtime.method = "core.from_runtime_parts"))]
-	fn from_runtime_parts(
+	fn from_runtime_parts<H: AccountHolder + 'static>(
 		services: Arc<RuntimeServices>,
-		authority: Arc<dyn ProductAuthority>,
+		accounts: Arc<HostAccounts<H>>,
 		host_session: Arc<dyn HostSession>,
 		product: ProductContext,
 	) -> Self {
-		let session_state = host_session.session_state();
 		let runtime = Arc::new(ProductRuntimeHost::from_services(
 			services.clone(),
 			crate::host_core::ConnectionAdapters::from_services(&services),
-			authority,
+			accounts,
 			host_session,
 			product,
 		));
-		Self::from_product_runtime(runtime, services.spawner.clone(), session_state)
-	}
-
-	/// Build a dispatcher core around an already-created product runtime.
-	#[instrument(skip_all, fields(runtime.method = "core.from_product_runtime"))]
-	pub fn from_product_runtime(
-		runtime: Arc<ProductRuntimeHost>,
-		spawner: Spawner,
-		session_state: Arc<SessionState>,
-	) -> Self {
-		let execution_kind = runtime.connection().execution_kind();
-		let mut dispatcher = Dispatcher::for_execution(spawner, execution_kind);
-		dispatcher::register(&mut dispatcher, runtime);
-		Self { dispatcher, session_state }
+		from_product_runtime(runtime, services.spawner.clone())
 	}
 
 	/// Handle to the shared session-state holder used by subscriptions and

@@ -24,16 +24,14 @@ mod executor;
 mod platform;
 mod renderer;
 mod runtime;
+mod sso;
 mod subscribers;
 mod ws_bridge;
 
-pub use crate::{
-	host_internal::sso_messages::SsoRequestOutcome,
-	host_logic::{
-		dev_server::{DevServerError, DevServerProduct},
-		dotns::{NavigateDecision, PocketDeeplinkAction},
-		scanner::{ScanFilter, ScanVerdict},
-	},
+pub use crate::host_logic::{
+	dev_server::{DevServerError, DevServerProduct},
+	dotns::{NavigateDecision, PocketDeeplinkAction},
+	scanner::{ScanFilter, ScanVerdict},
 };
 pub use callbacks::{
 	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
@@ -48,6 +46,7 @@ pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
 	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
 };
+pub use sso::SsoRequestOutcome;
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
 use parity_scale_codec::{DecodeLimit, Encode};
@@ -57,6 +56,15 @@ use truapi::latest;
 #[cfg(doc)]
 use crate::SigningHostRuntime;
 use crate::{PairingProposal, host_logic::dotns};
+
+/// Classify a core slot so native hosts can choose its storage protection.
+#[uniffi::export]
+pub fn core_storage_key_description(
+	encoded: Vec<u8>,
+) -> Result<crate::platform::CoreStorageKeyDescription, HostRejection> {
+	crate::platform::describe_core_storage_key(&encoded)
+		.map_err(|error| HostRejection::Rejected { reason: error.to_string() })
+}
 
 /// Classify a navigation input exactly like the core's internal navigate host
 /// call: dotNS first, then `localhost`, then normalized external, with
