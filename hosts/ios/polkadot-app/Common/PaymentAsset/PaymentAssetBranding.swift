@@ -123,14 +123,17 @@ final class KingfisherRemoteImageLoader: RemoteImageLoading {
 
     private func retrieve(_ url: URL, options: KingfisherOptionsInfo) async throws -> UIImage {
         try await withCheckedThrowingContinuation { continuation in
+            // Kingfisher can call the completion more than once for one retrieval, for example with the cached
+            // image and then the downloaded one. A continuation resumes once, so the first result wins.
+            let once = ResumeOnce(continuation)
             KingfisherManager.shared.retrieveImage(with: url, options: options) { result in
                 switch result {
                 case let .success(retrieved) where retrieved.image.hasPixels:
-                    continuation.resume(returning: retrieved.image)
+                    once.resume(with: .success(retrieved.image))
                 case .success:
-                    continuation.resume(throwing: RemoteImageError.emptyImage)
+                    once.resume(with: .failure(RemoteImageError.emptyImage))
                 case let .failure(error):
-                    continuation.resume(throwing: error)
+                    once.resume(with: .failure(error))
                 }
             }
         }
@@ -143,6 +146,24 @@ final class KingfisherRemoteImageLoader: RemoteImageLoading {
 
 enum RemoteImageError: Error {
     case emptyImage
+}
+
+/// A continuation that resumes on the first result only.
+private final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<UIImage, Error>?
+
+    init(_ continuation: CheckedContinuation<UIImage, Error>) {
+        self.continuation = continuation
+    }
+
+    func resume(with result: Result<UIImage, Error>) {
+        let pending: CheckedContinuation<UIImage, Error>? = lock.withLock {
+            defer { continuation = nil }
+            return continuation
+        }
+        pending?.resume(with: result)
+    }
 }
 
 private extension UIImage {
