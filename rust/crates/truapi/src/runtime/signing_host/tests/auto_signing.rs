@@ -69,7 +69,8 @@ fn a_granted_product_signs_raw_without_a_prompt() {
 		"the grant waives the prompt",
 	);
 	let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-	let keypair = derive_product_keypair(&root, "myapp.dot", index_bytes(0)).unwrap();
+	let keypair =
+		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
 	let signature =
 		schnorrkel::Signature::from_bytes(&response.signature).expect("64-byte signature");
 	assert!(
@@ -186,7 +187,10 @@ fn a_blessed_vrf_signature_skips_the_prompt_only_locally_for_its_own_account() {
 	let Dispatch::Response(answer) = futures::executor::block_on(
 		SigningHostSsoService::new(activation).answer(RemoteMessage::request(
 			"relayed-vrf".to_string(),
-			ProductRequest { calling_product_id: "dim2.paseo".to_string(), payload: request },
+			ProductRequest {
+				calling_product_id: ProductId::for_test("dim2.paseo"),
+				payload: request,
+			},
 		)),
 	) else {
 		panic!("expected a VRF response")

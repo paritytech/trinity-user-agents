@@ -46,7 +46,7 @@ impl ResourceAllocation for ProductRuntimeHost {
 				self.connection
 					.confirm_product_action(UserConfirmationReview::ResourceAllocation(
 						ResourceAllocationReview {
-							calling_product_id: self.connection.product_id(),
+							calling_product_id: self.connection.product_id().clone(),
 							resources: inner.resources.clone(),
 						},
 					)),

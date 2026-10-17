@@ -374,16 +374,19 @@ are exposed through the trait signatures below. `ProductContext` and
 `ProductExecutionKind` are defined here instead, and codegen emits their host
 codecs from these definitions. Both are SCALE-encodable so they can cross the
 wasm callback boundary, where every parameter is encoded with
-`parity-scale-codec`; `ProductContext` decodes through its validating
-constructor, so a context off the wire carries a normalized product id.
+`parity-scale-codec`; `ProductContext` holds a `ProductId`, which decodes by
+parsing, so a context off the wire carries a normalized product id.
 
 ### Product Identity
 
-`normalize_product_identifier` is the single chokepoint that turns a host- or
-wire-supplied product id into the canonical form derivation, product storage and
-permission scopes are keyed by; `is_product_identifier` is its boolean form.
+Parsing a `ProductId` (its `FromStr` implementation) is the single chokepoint
+that turns a host- or wire-supplied product id into the canonical form
+derivation, product storage and permission scopes are keyed by. Nothing else
+builds a `ProductId`, so holding one means the id is normalized. Code that reads
+an id uses its methods, such as `bare_label`, `has_trusted_remote_permissions`
+and `manifest_cache_key`.
 
-`DOTNS_TLDS` (`dot`, `paseo`, `test`) backs it: the TLDs dotNS deployments
+`DOTNS_TLDS` (`dot`, `paseo`, `testnet`) backs it: the TLDs dotNS deployments
 register product names under, one entry per network a host can be pointed at. A
 name ending in one of them is also what navigation resolves back into the host's
 own product surface, so it bypasses the outbound domain grant.

@@ -30,7 +30,7 @@ use crate::platform::{
 	CoreStorage as PlatformCoreStorage, CoreStorageKey, CreateTransactionReview,
 	Features as PlatformFeatures, HostInfo, JsonRpcConnection, LocaleHost,
 	Navigation as PlatformNavigation, Notifications as PlatformNotifications, PairingHostConfig,
-	Permissions as PlatformPermissions, PlatformInfo, PreimageHost, ProductContext,
+	Permissions as PlatformPermissions, PlatformInfo, PreimageHost, ProductContext, ProductId,
 	ProductOperations as PlatformProductOperations, ProductStorage as PlatformProductStorage,
 	ProductSubtreeReview, ProviderError, ResourceAllocationReview, SignPayloadReview,
 	SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
@@ -231,9 +231,9 @@ pub struct StubPlatform {
 	pub storage_subscribers: Arc<Mutex<Vec<(String, StorageChangeSender)>>>,
 	/// Every `begin_operation` as `(product_id, label)`, in order. The
 	/// returned id is the call's 1-based position.
-	pub begun_operations: Arc<Mutex<Vec<(String, String)>>>,
+	pub begun_operations: Arc<Mutex<Vec<(ProductId, String)>>>,
 	/// Every `end_operation` as `(product_id, id)`, in order.
-	pub ended_operations: Arc<Mutex<Vec<(String, u32)>>>,
+	pub ended_operations: Arc<Mutex<Vec<(ProductId, u32)>>>,
 	/// Held open by a test so `begin_operation` is still in flight while the
 	/// dispatch awaiting it goes away.
 	pub begin_operation_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,

@@ -8,7 +8,7 @@ use std::{
 
 use crate::platform::{
 	CoreAdmin, PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductContext,
-	ProductExecutionKind,
+	ProductExecutionKind, ProductId,
 };
 use parity_scale_codec::Encode;
 use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
@@ -64,7 +64,7 @@ pub struct NativeTrUApiHostRuntime {
 	spawner: Spawner,
 	ws_bridge: Arc<SharedWsBridge>,
 	/// The one Worker execution per product; opening another replaces it.
-	worker_executions: Mutex<HashMap<String, Weak<NativeProductExecution>>>,
+	worker_executions: Mutex<HashMap<ProductId, Weak<NativeProductExecution>>>,
 	/// The host's top-up engine, once installed, which later statuses are
 	/// pushed through.
 	top_up: OnceLock<Arc<TopUpCallbackPlatform>>,
@@ -273,16 +273,20 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Report a later status of `product_id`'s top-up `id` to the products
-	/// following it.
+	/// following it. `MyApp.dot` reaches the same products as `myapp.dot`.
+	///
+	/// Returns a `Result` so a `product_id` UniFFI cannot parse throws in Swift
+	/// and Kotlin.
 	pub fn notify_top_up_status(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 		id: crate::Bytes32,
 		status: v01::HostPaymentTopUpStatusSubscribeItem,
-	) {
+	) -> Result<(), HostRejection> {
 		if let Some(platform) = self.top_up.get() {
 			platform.notify_status(product_id, id, status);
 		}
+		Ok(())
 	}
 
 	/// Install the host's payment engine. Set-once; answers whether this
@@ -294,16 +298,20 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Report a later status of `product_id`'s payment `id` to the products
-	/// following it.
+	/// following it. `MyApp.dot` reaches the same products as `myapp.dot`.
+	///
+	/// Returns a `Result` so a `product_id` UniFFI cannot parse throws in Swift
+	/// and Kotlin.
 	pub fn notify_payment_status(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 		id: crate::Bytes32,
 		status: v01::HostPaymentStatusSubscribeItem,
-	) {
+	) -> Result<(), HostRejection> {
 		if let Some(platform) = self.payments.get() {
 			platform.notify_status(product_id, id, status);
 		}
+		Ok(())
 	}
 
 	/// Install the host's balance view. Set-once; answers whether this call
@@ -368,6 +376,9 @@ impl NativeTrUApiHostRuntime {
 	/// `chat_callbacks` installs the host's Chat adapter; hosts without the
 	/// Chat modality pass `None`. `pocket_callbacks` does the same for the
 	/// card collection. `game_callbacks` does the same for game reminders.
+	///
+	/// Returns a `Result` so an `execution_config.product_id` UniFFI cannot
+	/// parse throws in Swift and Kotlin.
 	pub fn open_product_execution(
 		&self,
 		callbacks: Arc<dyn HostCallbacks>,
@@ -376,29 +387,40 @@ impl NativeTrUApiHostRuntime {
 		game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
 		execution_config: ProductExecutionConfig,
 	) -> Result<Arc<NativeProductExecution>, NativeRuntimeConfigError> {
-		let product: ProductContext = execution_config.try_into()?;
 		Ok(self.open_product_execution_with_callbacks(
 			callbacks,
 			chat_callbacks,
 			pocket_callbacks,
 			game_callbacks,
-			product,
+			execution_config.into(),
 		))
 	}
 
 	/// Take one reference on the product's worker for a modality holder. The
 	/// first one reports [`WorkerTransition::Start`] to the runtime's
 	/// [`HostCallbacks::worker_demand_changed`]; pair every call with one
-	/// [`Self::release_worker`].
+	/// [`Self::release_worker`]. An id that is not a product id is logged and
+	/// dropped.
 	pub fn acquire_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().acquire(&product_id);
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
+			Err(error) => {
+				tracing::warn!(%error, "worker reference for an id that is not a product id")
+			},
+		}
 	}
 
 	/// Release one reference. The last one reports
 	/// [`WorkerTransition::Stop`], after which the host may stop the worker;
-	/// releasing with none held is a no-op.
+	/// releasing with none held is a no-op, and so is an id that is not a
+	/// product id.
 	pub fn release_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().release(&product_id);
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().release(&product_id),
+			Err(error) => {
+				tracing::warn!(%error, "worker reference for an id that is not a product id")
+			},
+		}
 	}
 
 	/// Tell the pairing host behind `deeplink` that allowance allocation is
@@ -866,8 +888,11 @@ impl NativeProductExecution {
 		product_id: String,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<Bytes32>, HostRejection> {
+		let product_id = product_id
+			.parse::<ProductId>()
+			.map_err(|error| v01::GenericError { reason: error.to_string() })?;
 		Ok(futures::executor::block_on(
-			self.admin().get_product_subtree_public_key(product_id, timeout_ms),
+			self.admin().get_product_subtree_public_key(&product_id, timeout_ms),
 		)?)
 	}
 

@@ -26,7 +26,7 @@ use truapi::{
 		GenericError, HostPocketListSubscribeItem, HostPocketRemoveCardError,
 		HostPocketRemoveCardRequest,
 	},
-	platform::{PocketPlatform, ProductContext, async_trait},
+	platform::{PocketPlatform, ProductContext, ProductId, async_trait},
 	v01,
 };
 
@@ -46,7 +46,7 @@ struct ProductCards {
 /// and remove the other's cards after a `/product` switch.
 pub struct CliPocketHost {
 	seed: BTreeMap<String, bool>,
-	products: Mutex<BTreeMap<String, ProductCards>>,
+	products: Mutex<BTreeMap<ProductId, ProductCards>>,
 	transcript: Option<PathBuf>,
 }
 
@@ -85,7 +85,7 @@ impl CliPocketHost {
 		Arc::new(Self { seed: cards, products: Mutex::new(BTreeMap::new()), transcript })
 	}
 
-	fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, ProductCards>> {
+	fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<ProductId, ProductCards>> {
 		self.products.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 	}
 
@@ -93,7 +93,7 @@ impl CliPocketHost {
 	/// from the same spec and diverges from there.
 	fn entry<'a>(
 		&self,
-		products: &'a mut BTreeMap<String, ProductCards>,
+		products: &'a mut BTreeMap<ProductId, ProductCards>,
 		product: &ProductContext,
 	) -> &'a mut ProductCards {
 		products

@@ -27,8 +27,11 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use serde::Deserialize;
-use truapi::{encode_cached_root_manifest, platform::CoreStorage};
+use serde::{Deserialize, Deserializer, de::Error as _};
+use truapi::{
+	encode_cached_root_manifest,
+	platform::{CoreStorage, ProductId},
+};
 
 /// The developer-authored config for one product.
 ///
@@ -39,9 +42,10 @@ use truapi::{encode_cached_root_manifest, platform::CoreStorage};
 #[derive(Debug, Clone, Deserialize)]
 pub struct LocalProductConfig {
 	/// The product's dotNS base name, e.g. `peopl.paseo`. The id its grants and
-	/// its storage are resolved under.
-	#[serde(rename = "productName")]
-	pub product_name: String,
+	/// its storage are resolved under. A name that is not a product id fails
+	/// the read.
+	#[serde(rename = "productName", deserialize_with = "product_id_from_name")]
+	pub product_name: ProductId,
 	/// Human-readable name, carried into the seeded manifest so what the host
 	/// resolves looks like what the publisher will write.
 	#[serde(rename = "displayName", default)]
@@ -69,7 +73,7 @@ impl LocalProductConfig {
 	fn root_manifest_json(&self) -> String {
 		let trusted = serde_json::to_string(&self.trusted_products)
 			.expect("a map of strings to strings always serializes");
-		let display = self.display_name.as_deref().unwrap_or(&self.product_name);
+		let display = self.display_name.as_deref().unwrap_or(self.product_name.as_str());
 		let display = serde_json::to_string(display).expect("a string always serializes");
 		format!(
 			r#"{{"$v":1,"displayName":{display},"description":"Served locally by truapi-host.","icon":{{"cid":"","format":"png"}},"trustedProducts":{trusted}}}"#
@@ -89,6 +93,12 @@ impl LocalProductConfig {
 			.join(", ");
 		format!("{}: {grants}", self.product_name)
 	}
+}
+
+fn product_id_from_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<ProductId, D::Error> {
+	let name = String::deserialize(deserializer)?;
+	name.parse::<ProductId>()
+		.map_err(|_| D::Error::custom(format!("productName {name:?} is not a product id")))
 }
 
 /// What [`apply`] seeded, so a caller can report it before serving anything.
@@ -122,7 +132,7 @@ pub async fn apply(
 	for config in configs {
 		platform
 			.write_core_storage(
-				truapi::manifest_cache_key(&config.product_name),
+				config.product_name.manifest_cache_key(),
 				encode_cached_root_manifest(Some(&config.root_manifest_json()), now_secs),
 			)
 			.await

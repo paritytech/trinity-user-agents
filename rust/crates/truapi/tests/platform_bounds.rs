@@ -3,7 +3,7 @@
 //! `async_trait`.
 
 use truapi::platform::{
-	HostIdentity, HostInfo, PairingHostConfig, Platform, PlatformInfo, ProductContext,
+	HostIdentity, HostInfo, PairingHostConfig, Platform, PlatformInfo, ProductContext, ProductId,
 	ProductStorageKey, RuntimeConfigValidationError,
 };
 
@@ -108,24 +108,26 @@ fn pairing_config_validation_cases() {
 #[test]
 fn product_context_validation_cases() {
 	let dotli = ProductContext::new("Dotli.DOT".to_string()).expect("dot product id is valid");
-	assert_eq!(dotli.product_id, "dotli.dot");
+	assert_eq!(dotli.product_id.as_str(), "dotli.dot");
 
 	let localhost =
 		ProductContext::new(" localhost:3000 ".to_string()).expect("localhost product id is valid");
-	assert_eq!(localhost.product_id, "localhost:3000");
+	assert_eq!(localhost.product_id.as_str(), "localhost:3000");
 
 	assert_eq!(
-		ProductContext::new("localhost".to_string()).map(|context| context.product_id),
+		ProductContext::new("localhost".to_string())
+			.map(|context| String::from(context.product_id)),
 		Ok("localhost".to_string())
 	);
 	assert_eq!(ProductContext::new("dotli.dot".to_string()).map(|_| ()), Ok(()));
 	assert_eq!(
 		ProductContext::new("Host-Playground44.PASEO".to_string())
-			.map(|context| context.product_id),
+			.map(|context| String::from(context.product_id)),
 		Ok("host-playground44.paseo".to_string())
 	);
 	assert_eq!(
-		ProductContext::new("Browse.TESTNET".to_string()).map(|context| context.product_id),
+		ProductContext::new("Browse.TESTNET".to_string())
+			.map(|context| String::from(context.product_id)),
 		Ok("browse.testnet".to_string())
 	);
 	for domain in ["example.com", "example.org", "dotli.dotty"] {
@@ -143,11 +145,14 @@ fn product_context_validation_cases() {
 
 #[test]
 fn product_storage_key_round_trips_scopes_and_arbitrary_keys() {
-	let key = ProductStorageKey::new("Tést.DOT", "settings:theme").expect("valid product key");
+	let key = ProductStorageKey::new(
+		"Test.DOT".parse::<ProductId>().expect("valid product key"),
+		"settings:theme",
+	);
 	let encoded = key.encode();
 	let decoded = ProductStorageKey::decode(&encoded).expect("decode product key");
 
-	assert_eq!(decoded.product_id(), "tést.dot");
+	assert_eq!(decoded.product_id().as_str(), "test.dot");
 	assert_eq!(decoded.key(), "settings:theme");
 	assert_eq!(decoded, key);
 	assert!(ProductStorageKey::decode("unknown:key").is_err());

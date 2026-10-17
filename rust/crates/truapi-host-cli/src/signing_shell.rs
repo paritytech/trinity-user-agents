@@ -5,7 +5,7 @@ use std::{
 	path::{Path, PathBuf},
 };
 
-use truapi::platform::normalize_product_identifier;
+use truapi::platform::ProductId;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{LogLevel, sessions};
@@ -16,7 +16,7 @@ pub enum ProductCommand {
 	/// Print the currently selected product.
 	Current,
 	/// Switch to the validated, normalized product id.
-	Switch(String),
+	Switch(ProductId),
 }
 
 /// Operation selected through `/devices`.
@@ -270,8 +270,7 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
 			if argument.is_empty() {
 				return Ok(ShellCommand::Product(ProductCommand::Current));
 			}
-			let product_id =
-				normalize_product_identifier(argument).map_err(|error| error.to_string())?;
+			let product_id = argument.parse::<ProductId>().map_err(|error| error.to_string())?;
 			Ok(ShellCommand::Product(ProductCommand::Switch(product_id)))
 		},
 		"/session" => {
@@ -924,7 +923,7 @@ mod tests {
 		assert_eq!(parse_command("/product"), Ok(ShellCommand::Product(ProductCommand::Current)));
 		assert_eq!(
 			parse_command("/product Dotli.DOT"),
-			Ok(ShellCommand::Product(ProductCommand::Switch("dotli.dot".to_string())))
+			Ok(ShellCommand::Product(ProductCommand::Switch(ProductId::for_test("dotli.dot"))))
 		);
 		assert_eq!(parse_command("/copy"), Ok(ShellCommand::Copy));
 		assert_eq!(parse_command("/renew"), Ok(ShellCommand::Renew));

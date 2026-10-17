@@ -46,8 +46,9 @@ use truapi::latest;
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
 	HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision,
-	Permissions, PreimageHost, ProductContext, ProductOperations, ProductStorage, ProviderError,
-	ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview, async_trait,
+	Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
+	ProviderError, ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview,
+	async_trait,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -128,7 +129,7 @@ pub enum PermissionKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenOperation {
 	/// Product that began it.
-	pub product_id: String,
+	pub product_id: ProductId,
 	/// Id the mock handed back, unique among this product's open operations.
 	pub id: u32,
 	/// Label the product gave, empty when it gave none.
@@ -1331,7 +1332,7 @@ mod tests {
 
 	fn resource_review() -> UserConfirmationReview {
 		UserConfirmationReview::ResourceAllocation(crate::platform::ResourceAllocationReview {
-			calling_product_id: "mock.dot".to_string(),
+			calling_product_id: crate::platform::ProductId::for_test("mock.dot"),
 			resources: vec![],
 		})
 	}
@@ -1547,7 +1548,7 @@ mod tests {
 		assert_eq!(
 			p.open_operations(),
 			vec![OpenOperation {
-				product_id: "mock.dot".to_string(),
+				product_id: crate::platform::ProductId::for_test("mock.dot"),
 				id,
 				label: "sync".to_string(),
 			}]
@@ -1704,7 +1705,7 @@ mod tests {
 
 	fn allocation_review(product: &str) -> UserConfirmationReview {
 		UserConfirmationReview::ResourceAllocation(crate::platform::ResourceAllocationReview {
-			calling_product_id: product.to_string(),
+			calling_product_id: crate::platform::ProductId::for_test(product),
 			resources: vec![],
 		})
 	}
@@ -1736,7 +1737,7 @@ mod tests {
 			vec![ConfirmKind::ResourceAllocation; 2],
 			"the kind view should see two identical kinds",
 		);
-		let products: Vec<String> = p
+		let products: Vec<crate::platform::ProductId> = p
 			.reviews()
 			.into_iter()
 			.map(|review| match review {
@@ -1744,7 +1745,13 @@ mod tests {
 				other => panic!("unexpected review {other:?}"),
 			})
 			.collect();
-		assert_eq!(products, vec!["first.dot", "second.dot"]);
+		assert_eq!(
+			products,
+			vec![
+				crate::platform::ProductId::for_test("first.dot"),
+				crate::platform::ProductId::for_test("second.dot")
+			]
+		);
 	}
 
 	#[test]
