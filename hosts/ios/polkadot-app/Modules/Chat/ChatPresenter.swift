@@ -52,6 +52,7 @@ extension ChatPresenter: ChatPresenterProtocol {
         interactor.setup()
         subscribeToPaymentAsset()
         productRoom?.onChange = { [weak self] in self?.provideViewModel() }
+        productRoom?.onHeaderChange = { [weak self] in self?.provideMoreActions() }
     }
 
     func viewWillAppear() {

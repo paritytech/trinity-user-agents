@@ -90,6 +90,54 @@ struct ChatParticipantSheetTests {
         wireframe.selectSheetEntry?(.openProduct(productId: "a.dot"))
         #expect(wireframe.openedProducts == ["a.dot"])
     }
+
+    /// In a room of the user and one other participant, the menu of that participant is in the header, as the native
+    /// person chat shows Block (PARITY-NATIVE-IOS C15).
+    @Test func aRoomOfTwoShowsTheMenuOfThePeerInTheHeader() async throws {
+        room.participantsAnswer = { _ in
+            .success(.page(
+                participants: [.init(participantId: "c7", participant: .custom(nickname: "bob", avatar: nil))],
+                next: nil
+            ))
+        }
+        room.participantMenuAnswer = .success(.init(menu: .custom(actions: [
+            Data.wireAction("block", destructive: true),
+            Data.wireAction("note")
+        ])))
+        let presenter = try makePresenter(participantActions: true)
+        for _ in 0 ..< 200 where presenter.peerMenu.isEmpty {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        #expect(presenter.peerMenu.map(\.action.actionId) == ["note", "block"])
+        let header = presenter.peerMenuActions().compactMap { action -> Chat.CustomPeerAction? in
+            if case let .custom(custom) = action { custom } else { nil }
+        }
+        #expect(header.map { $0.titleProvider() } == ["note", "block"])
+        #expect(header.map(\.destructive) == [false, true])
+
+        header.last?.handler()
+        await room.waitForEvents(1)
+        #expect(room.events == [.participantActionTriggered(participantId: "c7", actionId: "block")])
+    }
+
+    @Test func aRoomOfMoreThanTwoKeepsItsHeader() async throws {
+        room.participantsAnswer = { _ in
+            .success(.page(
+                participants: [
+                    .init(participantId: "c7", participant: .custom(nickname: "bob", avatar: nil)),
+                    .init(participantId: "c8", participant: .custom(nickname: "carol", avatar: nil))
+                ],
+                next: nil
+            ))
+        }
+        room.participantMenuAnswer = .success(.init(menu: .custom(actions: [Data.wireAction("block")])))
+        let presenter = try makePresenter(participantActions: true)
+        try await Task.sleep(for: .milliseconds(200))
+
+        #expect(presenter.peerMenu.isEmpty)
+        #expect(room.calls.participantMenus.isEmpty)
+    }
 }
 
 private extension ChatParticipantSheetTests {

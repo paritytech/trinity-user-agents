@@ -1337,6 +1337,9 @@ What the host does for an aspect the product does not declare:
 | Placeholder                | The host's text                                                                                     | `placeholder`                                         |
 | Suggestions, commands, activity line | None                                                                                      | `set_room_suggestions`, `set_room_commands`, `set_room_activity` |
 
+In a room of the user and exactly one other participant, the host also shows the product entries of that
+participant's menu in the room header, as a person chat shows Block; a destructive entry draws as destructive there.
+
 ### Lifecycle
 
 The host persists every declaration, keyed by product and room, so the chat list draws the product's rooms without

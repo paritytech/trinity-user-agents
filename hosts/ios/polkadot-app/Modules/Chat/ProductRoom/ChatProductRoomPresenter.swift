@@ -15,6 +15,8 @@ final class ChatProductRoomPresenter {
 
     /// Asks the room screen to draw the room again, for example when the product answered a question.
     var onChange: (() -> Void)?
+    /// Asks the room screen to make the menu of its header again, for example when the menu of the peer arrived.
+    var onHeaderChange: (() -> Void)?
 
     let chatId: Chat.Id
     let roomId: String
@@ -37,6 +39,9 @@ final class ChatProductRoomPresenter {
     /// The messages of the window that the room screen shows, by id.
     private(set) var messages: [Chat.MessageId: Chat.LocalMessage] = [:]
     private var icons: [ChatResource: UIImage] = [:]
+    /// The entries of the menu of the one other participant of a room of two, which the header shows.
+    var peerMenu: [ChatPeerMenuEntry] = []
+    var peerMenuTask: Task<Void, Never>?
     private var activityTask: Task<Void, Never>?
     private var callTask: Task<Void, Never>?
     /// Sends the call events of the user to the product.
@@ -160,6 +165,9 @@ final class ChatProductRoomPresenter {
         }
 
         loadParticipantsIfDeclared()
+        if previous == nil || previous?.configGeneration != policy?.configGeneration {
+            loadPeerMenu()
+        }
         provideCall()
         mark("call-buttons", policy?.callButtonsE2EDescription ?? "none")
         loadThreadRootIfNeeded()

@@ -124,7 +124,11 @@ final class ChatWireframe: ChatWireframeProtocol, ApplicationSettingsPresentable
                 }
             case let .custom(action):
                 UIDeferredMenuElement.uncached { completion in
-                    let item = UIAction(title: action.titleProvider(), image: action.image) { _ in
+                    let item = UIAction(
+                        title: action.titleProvider(),
+                        image: action.image,
+                        attributes: action.destructive ? .destructive : []
+                    ) { _ in
                         action.handler()
                     }
                     completion([item])

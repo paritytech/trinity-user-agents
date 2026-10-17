@@ -6,6 +6,10 @@ import UIKitExt
 extension ChatProductRoomPresenter {
     /// The entries of the header menu. The titles follow the state when the menu opens.
     func headerMenuActions() -> [Chat.PeerAction] {
+        userStateActions() + peerMenuActions()
+    }
+
+    private func userStateActions() -> [Chat.PeerAction] {
         guard userStates != nil else { return [] }
 
         let mute = Chat.CustomPeerAction(
