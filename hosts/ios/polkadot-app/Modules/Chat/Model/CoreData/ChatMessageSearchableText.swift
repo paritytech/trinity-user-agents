@@ -57,7 +57,8 @@ private extension Chat.LocalMessage.Content.ProductBody {
         switch self {
         case let .file(file): file.text ?? file.fileName
         case .richText,
-             .actions:
+             .actions,
+             .notice:
             text
         }
     }

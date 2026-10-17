@@ -582,6 +582,11 @@ pub enum ChatMessageBody {
         /// One line the host shows wherever it does not draw the body, such as the chat list.
         preview_text: Option<String>,
     },
+    /// A line about the room, such as "You are connected with Bob", drawn as a system row.
+    Notice {
+        /// The text, plain.
+        text: String,
+    },
 }
 
 /// The reactions of one emoji on one message.
@@ -1378,6 +1383,8 @@ The host draws everything in its own theme; a product sends no colours, fonts or
   The host asks before it opens a link.
 - Media draws at its stated size with the BlurHash until the bytes arrive. A preimage that cannot be fetched draws the
   placeholder with a retry.
+- `Notice` draws as a system row in the middle of the room, as the host draws "contact added" in a person chat: no
+  bubble, no author, no reactions and no menu. A V1 subscriber receives it as `Text`.
 - `Actions` draws its buttons in a column or a grid. The host disables none; the product removes them by editing the
   message.
 - `Custom` bodies and the `Custom` footer draw through `Renderer::render`; a host without `Renderer` draws

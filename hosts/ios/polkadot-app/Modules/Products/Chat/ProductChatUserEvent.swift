@@ -54,7 +54,8 @@ extension Chat.LocalMessage.Content.ProductBody {
             switch self {
             case let .richText(richText): richText.media
             case let .file(file): [file.url]
-            case .actions: []
+            case .actions,
+                 .notice: []
             }
         return sources.contains { source in
             if case .preimage = ChatResource(source: source) { true } else { false }

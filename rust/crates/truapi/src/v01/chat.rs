@@ -600,6 +600,13 @@ pub enum ChatMessageBody {
 		/// it.
 		preview_text: Option<String>,
 	},
+	/// A line about the room rather than a message of a participant, for
+	/// example "You are connected with Bob". The host draws it as a system
+	/// row in the middle of the room, with no bubble, no author and no menu.
+	Notice {
+		/// Text of the line, plain.
+		text: String,
+	},
 }
 
 /// How many participants reacted to a message with one emoji.

@@ -338,6 +338,7 @@ fn event_v1_payload(event: &v01::ChatEvent) -> Option<v01::ChatActionPayload> {
 				},
 				Body::RichText { text, .. } => Content::Text { text: text? },
 				Body::Actions(actions) => Content::Text { text: actions.text? },
+				Body::Notice { text } => Content::Text { text },
 			};
 			Some(Payload::MessagePosted(content))
 		},

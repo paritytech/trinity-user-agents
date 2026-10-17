@@ -113,6 +113,8 @@ extension ChatMessageBody {
                 identifier: messageType,
                 alt: previewText
             ))
+        case let .notice(text):
+            .productBody(.notice(text))
         }
     }
 
@@ -123,6 +125,7 @@ extension ChatMessageBody {
         case let .richText(text, _): text
         case let .actions(actions): actions.text
         case let .custom(_, _, previewText): previewText
+        case let .notice(text): text
         }
     }
 }

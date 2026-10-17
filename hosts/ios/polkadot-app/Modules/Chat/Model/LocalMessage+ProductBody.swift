@@ -7,6 +7,8 @@ extension Chat.LocalMessage.Content {
         case richText(ProductRichText)
         case actions(ProductActions)
         case file(ProductFile)
+        /// A line about the room, which the room draws as a system row (`ChatMessageBody::Notice`).
+        case notice(String)
     }
 
     /// Text with media. Each media item is an `https` URL or an inline `data:` image.
@@ -93,6 +95,7 @@ extension Chat.LocalMessage.Content.ProductBody {
         case let .richText(richText): richText.text
         case let .actions(actions): actions.text
         case let .file(file): file.text
+        case let .notice(text): text
         }
     }
 }
@@ -104,6 +107,7 @@ extension Chat.LocalMessage.Content.ProductBody: ScaleCodable {
         case richText = 0
         case actions = 1
         case file = 2
+        case notice = 3
     }
 
     init(scaleDecoder: any ScaleDecoding) throws {
@@ -115,6 +119,8 @@ extension Chat.LocalMessage.Content.ProductBody: ScaleCodable {
             self = try .actions(.init(scaleDecoder: scaleDecoder))
         case .file:
             self = try .file(.init(scaleDecoder: scaleDecoder))
+        case .notice:
+            self = try .notice(String(scaleDecoder: scaleDecoder))
         case .none:
             throw ScaleCodingError.unexpectedDecodedValue
         }
@@ -131,6 +137,9 @@ extension Chat.LocalMessage.Content.ProductBody: ScaleCodable {
         case let .file(content):
             try Tag.file.rawValue.encode(scaleEncoder: scaleEncoder)
             try content.encode(scaleEncoder: scaleEncoder)
+        case let .notice(text):
+            try Tag.notice.rawValue.encode(scaleEncoder: scaleEncoder)
+            try text.encode(scaleEncoder: scaleEncoder)
         }
     }
 }

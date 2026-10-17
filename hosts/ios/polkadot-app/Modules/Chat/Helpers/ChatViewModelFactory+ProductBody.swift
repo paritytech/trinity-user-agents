@@ -46,6 +46,7 @@ extension Chat.LocalMessage.Content.ProductBody {
         case .richText: return String(localized: .Common.mediaFile)
         case .actions: return String(localized: .ChatExtension.messagePreviewActions)
         case let .file(file): return file.fileName
+        case let .notice(text): return text
         }
     }
 }

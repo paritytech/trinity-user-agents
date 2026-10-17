@@ -38,6 +38,8 @@ fun ChatMessageBody.toContent(rendererId: String): ChatMessage.Content = when (t
         rendererId = rendererId,
         content = Result.success(ProductsMessageContent(messageType, payload.toDataByteArray(), previewText)),
     )
+    // Android draws a line about the room as a text until it has a system row for products.
+    is ChatMessageBody.Notice -> ChatMessage.Content.Text(text)
 }
 
 /**

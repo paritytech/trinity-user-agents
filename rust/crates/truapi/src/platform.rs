@@ -1322,6 +1322,9 @@ pub fn validate_chat_message_body(
 		ChatMessageBody::Actions(actions) => {
 			ChatMessageBody::Actions(validate_chat_action_set(actions)?)
 		},
+		ChatMessageBody::Notice { text } => {
+			ChatMessageBody::Notice { text: validate_chat_body("text", &text)? }
+		},
 		ChatMessageBody::Custom { message_type, payload, preview_text } => {
 			if payload.len() > CHAT_CUSTOM_PAYLOAD_MAX_BYTES {
 				return Err(ChatFieldError::TooLong {

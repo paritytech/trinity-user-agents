@@ -292,6 +292,7 @@ private extension ContactsListViewModelFactory {
         case .richText: return String(localized: .chatLastMessageMediaFile)
         case let .file(file): return file.fileName
         case .actions: return String(localized: .ChatExtension.messagePreviewActions)
+        case let .notice(text): return text
         }
     }
 

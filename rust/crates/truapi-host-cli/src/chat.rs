@@ -1025,6 +1025,7 @@ pub fn preview_text(message: &ChatMessage) -> String {
 			.or_else(|| media.first().and_then(|item| media_meta(item).alt.clone())),
 		ChatMessageBody::Actions(actions) => actions.text.clone(),
 		ChatMessageBody::Custom { preview_text, .. } => preview_text.clone(),
+		ChatMessageBody::Notice { text } => Some(text.clone()),
 	};
 	text.filter(|text| !text.trim().is_empty())
 		.unwrap_or_else(|| SENT_A_MESSAGE.to_string())
@@ -1291,6 +1292,7 @@ pub fn body_json(body: &ChatMessageBody) -> Value {
 			"payloadHex": hex::encode(payload),
 			"previewText": preview_text,
 		}),
+		ChatMessageBody::Notice { text } => json!({ "type": "Notice", "text": text }),
 	}
 }
 
@@ -1393,6 +1395,7 @@ fn body_variant(body: &ChatMessageBody) -> &'static str {
 		ChatMessageBody::RichText { .. } => "RichText",
 		ChatMessageBody::Actions(_) => "Actions",
 		ChatMessageBody::Custom { .. } => "Custom",
+		ChatMessageBody::Notice { .. } => "Notice",
 	}
 }
 

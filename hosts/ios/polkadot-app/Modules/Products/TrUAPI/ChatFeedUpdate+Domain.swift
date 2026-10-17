@@ -54,6 +54,8 @@ extension ChatMessageBody {
             Self.actionsContent(actions)
         case let .custom(messageType, payload, previewText):
             ProductBotMessage.custom(messageType: messageType, data: payload, alt: previewText).toChatMessageContent()
+        case let .notice(text):
+            .productBody(.notice(text))
         }
     }
 

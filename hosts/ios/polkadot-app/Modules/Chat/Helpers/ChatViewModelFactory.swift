@@ -576,6 +576,8 @@ private extension ChatViewModelFactory {
             productFileConfiguration(file, context: context)
         case let .actions(productActions):
             productActionsConfiguration(productActions, context: context)
+        case let .notice(text):
+            .init(id: context.messageId, configuration: ChatInfoMessageConfiguration.notice(text))
         case .richText:
             textMessageConfiguration(
                 messageId: context.messageId,

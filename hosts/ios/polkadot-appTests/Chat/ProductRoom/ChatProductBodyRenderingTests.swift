@@ -207,6 +207,21 @@ struct ChatProductBodyRenderingTests {
         #expect(richText.info(at: 1).kind == .image)
     }
 
+    /// A `Notice` body is a line about the room, which the room draws as a system row (PARITY-NATIVE-IOS D15). The
+    /// host stores it and gives it back to the product as it came.
+    @Test func aNoticeIsAProductBodyThatTheHostStores() throws {
+        let local = productMessage("m9", body: .notice(text: "You are connected with bob."), replyTo: nil)
+        #expect(local.content == .productBody(.notice("You are connected with bob.")))
+        #expect(local.productQueryMessage(in: Data.chatId).body == .notice(text: "You are connected with bob."))
+
+        let encoder = ScaleEncoder()
+        let body = Chat.LocalMessage.Content.ProductBody.notice("You are connected with bob.")
+        try body.encode(scaleEncoder: encoder)
+        let decoded = try Chat.LocalMessage.Content.ProductBody(scaleDecoder: ScaleDecoder(data: encoder.encode()))
+        #expect(decoded == body)
+        #expect(decoded.replyPreview == "You are connected with bob.")
+    }
+
     @Test func theKindsAreStoredWithTheBodyAndAnOlderRowDecodesWithout() throws {
         let richText = Chat.LocalMessage.Content.ProductRichText(
             text: "hi",

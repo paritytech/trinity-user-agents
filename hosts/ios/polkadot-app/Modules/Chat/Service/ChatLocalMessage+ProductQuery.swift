@@ -103,6 +103,8 @@ private extension Chat.LocalMessage.Content.ProductBody {
             ))
         case let .file(file):
             .richText(text: file.text, media: [])
+        case let .notice(text):
+            .notice(text: text)
         }
     }
 }

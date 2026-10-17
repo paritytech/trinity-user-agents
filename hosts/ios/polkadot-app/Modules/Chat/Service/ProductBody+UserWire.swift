@@ -27,7 +27,8 @@ extension Chat.LocalMessage.Content.ProductBody {
                 ?? staged.mediaItem(source: file.url, fileName: file.fileName)
             guard let item else { return nil }
             return .richText(text: file.text, media: [item])
-        case .actions:
+        case .actions,
+             .notice:
             return nil
         }
     }

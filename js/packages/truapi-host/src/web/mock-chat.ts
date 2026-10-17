@@ -549,6 +549,8 @@ function previewLine(message: ChatMessage): string {
       return body.value.text ?? "Sent a message";
     case "Custom":
       return body.value.previewText ?? "Sent a message";
+    case "Notice":
+      return body.value.text;
   }
 }
 

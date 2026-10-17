@@ -115,7 +115,8 @@ extension ChatProductRoomPresenter {
             )
         case .richText,
              .file,
-             .actions:
+             .actions,
+             .notice:
             return nil
         }
     }
