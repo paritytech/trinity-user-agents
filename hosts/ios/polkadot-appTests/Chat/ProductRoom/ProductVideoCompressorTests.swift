@@ -37,7 +37,7 @@ struct ProductVideoCompressorTests {
     }
 }
 
-private extension ProductVideoCompressorTests {
+extension ProductVideoCompressorTests {
     /// A 1280x720 H.264 video of random pixels at a high bit rate, so that it is larger than the inline limit.
     static func noiseVideo(seconds: Int) async throws -> Data {
         let url = FileManager.default.temporaryDirectory.appending(path: "noise-\(UUID().uuidString).mov")

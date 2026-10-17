@@ -87,17 +87,17 @@ final class ProductStagedMediaRegistry: @unchecked Sendable {
     }
 }
 
-/// The dimensions and the BlurHash of the bytes of an attachment. Only an image has them.
+/// The dimensions and the BlurHash of the bytes of an attachment: an image, or the first frame of a video.
 struct ProductStagedMediaFacts {
     let width: UInt32?
     let height: UInt32?
     let blurHash: String?
 
     init(mimeType: String, data: Data) {
-        let image = mimeType.hasPrefix("image/") ? ProductImageFacts(data) : nil
-        width = image?.width
-        height = image?.height
-        blurHash = image?.blurHash
+        let facts = ProductVisualFacts(mimeType: mimeType, data: data)
+        width = facts?.width
+        height = facts?.height
+        blurHash = facts?.blurHash
     }
 }
 
