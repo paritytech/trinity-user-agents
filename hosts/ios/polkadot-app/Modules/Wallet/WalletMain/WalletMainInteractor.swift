@@ -68,14 +68,15 @@ private extension WalletMainInteractor {
     func showCollectibles() {
         guard remoteConfig.syncedCollectiblesEnabled() else { return }
 
-        resolutionTask = Task { [weak self, tldProvider, hostProvider] in
+        resolutionTask = Task { [weak presenter, tldProvider, hostProvider] in
             guard
                 await tldProvider.tldRetrying() != nil,
-                let host = hostProvider.host(label: AppConfig.DotNs.dotNsCollectibles)
+                let host = hostProvider.host(label: AppConfig.DotNs.dotNsCollectibles),
+                let presenter
             else { return }
 
             await MainActor.run {
-                self?.presenter?.didReceiveCollectibles(page: ProductPage(host: host))
+                presenter.didReceiveCollectibles(page: ProductPage(host: host))
             }
         }
     }

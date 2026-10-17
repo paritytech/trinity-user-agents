@@ -60,7 +60,7 @@ impl System for ProductRuntimeHost {
 	) -> Result<HostFeatureSupportedResponse, CallError<HostFeatureSupportedError>> {
 		let version = request.version();
 		let inner = request.into_latest();
-		feature_supported(self.platform.as_ref(), inner)
+		feature_supported(self.connection.platform.as_ref(), inner)
 			.await
 			.map(|value| HostFeatureSupportedResponse::from_latest(value, version))
 			.map_err(|err| CallError::Domain(HostFeatureSupportedError::from_latest(err, version)))
@@ -74,7 +74,7 @@ impl System for ProductRuntimeHost {
 	) -> Result<HostInfoResponse, CallError<HostInfoError>> {
 		let version = request.version();
 		let () = request.into_latest();
-		let info = &self.services.host_info;
+		let info = &self.connection.services.host_info;
 		Ok(HostInfoResponse::from_latest(
 			latest::HostInfoResponse {
 				platform: info.platform.clone(),
@@ -110,6 +110,7 @@ impl System for ProductRuntimeHost {
 			NavigateDecision::PocketCollection { canonical_url, .. } => canonical_url,
 			NavigateDecision::External { url } => {
 				let status = self
+					.connection
 					.permissions_service()
 					.authorize_device(latest::HostDevicePermissionRequest::OpenUrl)
 					.await
@@ -131,7 +132,8 @@ impl System for ProductRuntimeHost {
 				version,
 			)));
 		}
-		self.platform
+		self.connection
+			.platform
 			.navigate_to(resolved)
 			.await
 			.map(|()| HostNavigateToResponse::from_latest((), version))
@@ -147,7 +149,9 @@ impl System for ProductRuntimeHost {
 		let version = request.version();
 		let () = request.into_latest();
 		Ok(HostGetProductContextResponse::from_latest(
-			latest::HostGetProductContextResponse { product_id: self.product.product_id.clone() },
+			latest::HostGetProductContextResponse {
+				product_id: self.connection.product.product_id.clone(),
+			},
 			version,
 		))
 	}
@@ -163,7 +167,7 @@ impl Permissions for ProductRuntimeHost {
 	) -> Result<HostDevicePermissionResponse, CallError<HostDevicePermissionError>> {
 		let version = request.version();
 		let inner = request.into_latest();
-		let service = self.permissions_service();
+		let service = self.connection.permissions_service();
 		match service.authorize_device(inner).await {
 			Ok(decision) => Ok(HostDevicePermissionResponse::from_latest(
 				latest::HostDevicePermissionResponse {
@@ -185,7 +189,7 @@ impl Permissions for ProductRuntimeHost {
 	) -> Result<RemotePermissionResponse, CallError<RemotePermissionError>> {
 		let version = request.version();
 		let inner = request.into_latest();
-		let service = self.permissions_service();
+		let service = self.connection.permissions_service();
 		match service.authorize_remote(inner).await {
 			Ok(decision) => Ok(RemotePermissionResponse::from_latest(
 				latest::RemotePermissionResponse {
@@ -207,7 +211,7 @@ impl Permissions for ProductRuntimeHost {
 	) -> Result<HostDevicePermissionResponse, CallError<HostDevicePermissionError>> {
 		let version = request.version();
 		let inner = request.into_latest();
-		let service = self.permissions_service();
+		let service = self.connection.permissions_service();
 		match service.check_or_prompt_device(inner).await {
 			Ok(decision) => Ok(HostDevicePermissionResponse::from_latest(
 				latest::HostDevicePermissionResponse {
@@ -229,7 +233,7 @@ impl Permissions for ProductRuntimeHost {
 	) -> Result<RemotePermissionResponse, CallError<RemotePermissionError>> {
 		let version = request.version();
 		let inner = request.into_latest();
-		let service = self.permissions_service();
+		let service = self.connection.permissions_service();
 		match service.check_or_prompt_remote(inner).await {
 			Ok(decision) => Ok(RemotePermissionResponse::from_latest(
 				latest::RemotePermissionResponse {
@@ -261,7 +265,7 @@ impl LocalStorage for ProductRuntimeHost {
 		// opaque bytes nobody could inspect to approve.
 		let owner = match product {
 			Some(target) => {
-				match self.cross_product_scope_target(&target, Granted::Storage).await {
+				match self.connection.cross_product_scope_target(&target, Granted::Storage).await {
 					Some(owner) => owner,
 					None => {
 						return Err(CallError::Domain(HostLocalStorageReadError::from_latest(
@@ -271,11 +275,12 @@ impl LocalStorage for ProductRuntimeHost {
 					},
 				}
 			},
-			None => self.product_id(),
+			None => self.connection.product_id(),
 		};
 
-		self.platform
-			.read(self.product_storage_key(&owner, key))
+		self.connection
+			.platform
+			.read(self.connection.product_storage_key(&owner, key))
 			.await
 			.map(|value| {
 				HostLocalStorageReadResponse::from_latest(
@@ -296,8 +301,11 @@ impl LocalStorage for ProductRuntimeHost {
 	) -> Result<HostLocalStorageWriteResponse, CallError<HostLocalStorageWriteError>> {
 		let version = request.version();
 		let latest::HostLocalStorageWriteRequest { key, value } = request.into_latest();
-		let storage_key = self.product_storage_key(self.product.product_id.as_str(), key);
-		self.platform
+		let storage_key = self
+			.connection
+			.product_storage_key(self.connection.product.product_id.as_str(), key);
+		self.connection
+			.platform
 			.write(storage_key, value)
 			.await
 			.map(|()| HostLocalStorageWriteResponse::from_latest((), version))
@@ -312,8 +320,12 @@ impl LocalStorage for ProductRuntimeHost {
 	) -> Result<HostLocalStorageClearResponse, CallError<HostLocalStorageClearError>> {
 		let version = request.version();
 		let latest::HostLocalStorageClearRequest { key } = request.into_latest();
-		self.platform
-			.clear(self.product_storage_key(self.product.product_id.as_str(), key))
+		self.connection
+			.platform
+			.clear(
+				self.connection
+					.product_storage_key(self.connection.product.product_id.as_str(), key),
+			)
 			.await
 			.map(|()| HostLocalStorageClearResponse::from_latest((), version))
 			.map_err(|err| CallError::Domain(HostLocalStorageClearError::from_latest(err, version)))
@@ -333,8 +345,12 @@ impl LocalStorage for ProductRuntimeHost {
 		// would hide it from a host hanging quota or sync off it.
 		let mut delivered: Option<Option<Vec<u8>>> = None;
 		let stream = self
+			.connection
 			.platform
-			.subscribe_storage(self.product_storage_key(self.product.product_id.as_str(), key))
+			.subscribe_storage(
+				self.connection
+					.product_storage_key(self.connection.product.product_id.as_str(), key),
+			)
 			.filter_map(move |item| {
 				let next = match item {
 					Ok(item) if delivered.as_ref() == Some(&item.value) => None,
@@ -366,13 +382,14 @@ impl Worker for ProductRuntimeHost {
 	) -> Result<HostWorkerBeginOperationResponse, CallError<HostWorkerBeginOperationError>> {
 		let version = request.version();
 		let latest::HostWorkerBeginOperationRequest { label } = request.into_latest();
-		let response =
-			self.begin_operation_with_host(label.unwrap_or_default())
-				.await
-				.map_err(|error| {
-					CallError::Domain(HostWorkerBeginOperationError::from_latest(error, version))
-				})?;
-		self.hold_worker_for_operation(response.id);
+		let response = self
+			.connection
+			.begin_operation_with_host(label.unwrap_or_default())
+			.await
+			.map_err(|error| {
+			CallError::Domain(HostWorkerBeginOperationError::from_latest(error, version))
+		})?;
+		self.connection.hold_worker_for_operation(response.id);
 		Ok(HostWorkerBeginOperationResponse::from_latest(response, version))
 	}
 
@@ -384,12 +401,12 @@ impl Worker for ProductRuntimeHost {
 	) -> Result<HostWorkerEndOperationResponse, CallError<HostWorkerEndOperationError>> {
 		let version = request.version();
 		let latest::HostWorkerEndOperationRequest { id } = request.into_latest();
-		let ended = self.platform.end_operation(&self.product, id).await;
+		let ended = self.connection.platform.end_operation(&self.connection.product, id).await;
 		// The product has declared the operation over, so the core stops
 		// counting it whatever the host made of the call. A host that dropped
 		// the operation and still failed would otherwise leave demand standing
 		// with nothing left able to end it, and a retry releases nothing.
-		self.release_worker_for_operation(id);
+		self.connection.release_worker_for_operation(id);
 		ended.map_err(|error| {
 			CallError::Domain(HostWorkerEndOperationError::from_latest(error, version))
 		})?;
@@ -407,7 +424,7 @@ impl Theme for ProductRuntimeHost {
 	) -> Subscription<HostThemeSubscribeItem, CallError<HostThemeSubscribeError>> {
 		let version = request.version();
 		let () = request.into_latest();
-		let stream = self.platform.subscribe_theme().map(move |item| match item {
+		let stream = self.connection.platform.subscribe_theme().map(move |item| match item {
 			Ok(item) => Ok(HostThemeSubscribeItem::from_latest(item, version)),
 			Err(error) => {
 				warn!(reason = %error.reason, "theme platform stream failed");
@@ -428,7 +445,7 @@ impl Locale for ProductRuntimeHost {
 	) -> Subscription<HostLocaleSubscribeItem, CallError<HostLocaleSubscribeError>> {
 		let version = request.version();
 		let () = request.into_latest();
-		let stream = self.platform.subscribe_locale().map(move |item| match item {
+		let stream = self.connection.platform.subscribe_locale().map(move |item| match item {
 			Ok(item) => Ok(HostLocaleSubscribeItem::from_latest(item, version)),
 			Err(error) => {
 				warn!(reason = %error.reason, "locale platform stream failed");
@@ -453,6 +470,7 @@ impl Notifications for ProductRuntimeHost {
 		let version = request.version();
 		let inner = request.into_latest();
 		let status = self
+			.connection
 			.permissions_service()
 			.authorize_device(latest::HostDevicePermissionRequest::Notifications)
 			.await
@@ -475,7 +493,8 @@ impl Notifications for ProductRuntimeHost {
 				version,
 			)));
 		}
-		self.platform
+		self.connection
+			.platform
 			.push_notification(inner)
 			.await
 			.map(|value| HostPushNotificationResponse::from_latest(value, version))
@@ -495,7 +514,8 @@ impl Notifications for ProductRuntimeHost {
 	) -> Result<HostPushNotificationCancelResponse, CallError<HostPushNotificationCancelError>> {
 		let version = request.version();
 		let latest::HostPushNotificationCancelRequest { id } = request.into_latest();
-		self.platform
+		self.connection
+			.platform
 			.cancel_notification(id)
 			.await
 			.map(|()| HostPushNotificationCancelResponse::from_latest((), version))
