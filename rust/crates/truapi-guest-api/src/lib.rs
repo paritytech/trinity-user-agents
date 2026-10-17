@@ -65,7 +65,7 @@ pub use truapi::{
 		renderer::guest as renderer, resource_allocation::guest as resource_allocation,
 		scanner::guest as scanner, share::guest as share, signing::guest as signing,
 		statement_store::guest as statement_store, system::guest as system, theme::guest as theme,
-		worker::guest as worker,
+		usernames::guest as usernames, worker::guest as worker,
 	},
 	guest::Sink,
 	latest, v01, v02, versioned,

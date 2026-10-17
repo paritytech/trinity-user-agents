@@ -327,6 +327,7 @@ impl<H: TrUApi + 'static> WasmEnv<H> {
 		env.link_resource_allocation();
 		env.link_scanner();
 		env.link_share();
+		env.link_usernames();
 		env.link_signing();
 		env.link_statement_store();
 		env.link_theme();

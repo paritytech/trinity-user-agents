@@ -23,7 +23,7 @@ use super::{
 		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
 		NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks, NativePocketRemoval,
 		NativeScannerCallbacks, NativeShareCallbacks, NativeTopUpCallbacks,
-		NativeWakeRelayCallbacks,
+		NativeUsernamesCallbacks, NativeWakeRelayCallbacks,
 	},
 	errors::HostRejection,
 	events::NativeEventBus,
@@ -75,6 +75,38 @@ impl crate::platform::ScannerPlatform for ScannerCallbackPlatform {
 	) -> Result<crate::platform::HostScan, v01::GenericError> {
 		self.scanner
 			.scan_code(product.product_id.clone(), product.execution_kind, request.clone())
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+}
+
+/// [`crate::platform::UsernamesPlatform`] served by host-provided
+/// [`NativeUsernamesCallbacks`]; constructed only when the host passed one.
+pub struct UsernamesCallbackPlatform {
+	/// Host username directory.
+	pub usernames: Arc<dyn NativeUsernamesCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::UsernamesPlatform for UsernamesCallbackPlatform {
+	async fn search_usernames(
+		&self,
+		product: &ProductContext,
+		prefix: &str,
+	) -> Result<Vec<String>, v01::GenericError> {
+		self.usernames
+			.search_usernames(product.product_id.clone(), prefix.to_string())
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+
+	async fn add_contact(
+		&self,
+		product: &ProductContext,
+		username: &str,
+	) -> Result<crate::platform::HostContactAdd, v01::GenericError> {
+		self.usernames
+			.add_contact(product.product_id.clone(), product.execution_kind, username.to_string())
 			.await
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}

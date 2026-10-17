@@ -22,7 +22,8 @@ use crate::platform::{
 	BalancePlatform, ChatPlatform, ContactsPlatform, CoreAdmin, ExpandedCardHost, GamePlatform,
 	PairingHostAdmin, PairingHostConfig, PaymentPlatform, PermissionAuthorizationRequest,
 	PermissionAuthorizationStatus, PermissionStatusHost, Platform, PocketPlatform, ProductContext,
-	ScannerPlatform, SharePlatform, SigningHostConfig, TopUpPlatform, normalize_product_identifier,
+	ScannerPlatform, SharePlatform, SigningHostConfig, TopUpPlatform, UsernamesPlatform,
+	normalize_product_identifier,
 };
 use futures::{
 	FutureExt, StreamExt,
@@ -329,6 +330,13 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_share_platform"))]
 	pub fn set_share_platform(&self, platform: Arc<dyn SharePlatform>) -> bool {
 		self.services.install_share_platform(platform)
+	}
+
+	/// Install the host's [`UsernamesPlatform`] before serving any product
+	/// runtime. Set-once: returns whether this call installed it.
+	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_usernames_platform"))]
+	pub fn set_usernames_platform(&self, platform: Arc<dyn UsernamesPlatform>) -> bool {
+		self.services.install_usernames_platform(platform)
 	}
 
 	/// Install the host's [`ContactsPlatform`], which owns the contact list and
@@ -794,6 +802,13 @@ impl SigningHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_share_platform"))]
 	pub fn set_share_platform(&self, platform: Arc<dyn SharePlatform>) -> bool {
 		self.services.install_share_platform(platform)
+	}
+
+	/// Install the host's [`UsernamesPlatform`] before serving any product
+	/// runtime. Set-once: returns whether this call installed it.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_usernames_platform"))]
+	pub fn set_usernames_platform(&self, platform: Arc<dyn UsernamesPlatform>) -> bool {
+		self.services.install_usernames_platform(platform)
 	}
 
 	/// Install the host's [`ContactsPlatform`], which owns the contact list and

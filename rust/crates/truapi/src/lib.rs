@@ -97,18 +97,18 @@ pub mod latest {
 	use crate::versioned::{self, Versioned};
 
 	pub use crate::v01::{
-		ActionTrigger, AllocatableResource, AllocationOutcome, Arrangement, Background,
-		BlendingMode, BorderStyle, BoxProps, ButtonProps, ButtonVariant, ChainIdentifier,
-		ChatAction, ChatActionHandler, ChatActionLayout, ChatActions, ChatActivity,
-		ChatBotRegistrationStatus, ChatBranchPosition, ChatBuiltInMessageAction, ChatCommand,
-		ChatCommandSpec, ChatCustomMessage, ChatEvent, ChatFeedUpdate, ChatFile, ChatInputConfig,
-		ChatInputPayment, ChatMedia, ChatMediaItem, ChatMediaMeta, ChatMessage, ChatMessageBody,
-		ChatMessageContent, ChatMessageMenu, ChatMessageMeta, ChatMessageOrigin, ChatMessageStatus,
-		ChatPageAnchor, ChatParticipant, ChatParticipantEntry, ChatParticipantMenu,
-		ChatParticipantsQuery, ChatProductAction, ChatReaction, ChatReactionDetail,
-		ChatReactionSummary, ChatReasoning, ChatResource, ChatRichText, ChatRoom, ChatRoomBadge,
-		ChatRoomCall, ChatRoomCalls, ChatRoomConfig, ChatRoomEvent, ChatRoomFeatures,
-		ChatRoomMetadata, ChatRoomOrder, ChatRoomParticipation, ChatRoomPreview,
+		ActionTrigger, AddContactOutcome, AllocatableResource, AllocationOutcome, Arrangement,
+		Background, BlendingMode, BorderStyle, BoxProps, ButtonProps, ButtonVariant,
+		ChainIdentifier, ChatAction, ChatActionHandler, ChatActionLayout, ChatActions,
+		ChatActivity, ChatBotRegistrationStatus, ChatBranchPosition, ChatBuiltInMessageAction,
+		ChatCommand, ChatCommandSpec, ChatCustomMessage, ChatEvent, ChatFeedUpdate, ChatFile,
+		ChatInputConfig, ChatInputPayment, ChatMedia, ChatMediaItem, ChatMediaMeta, ChatMessage,
+		ChatMessageBody, ChatMessageContent, ChatMessageMenu, ChatMessageMeta, ChatMessageOrigin,
+		ChatMessageStatus, ChatPageAnchor, ChatParticipant, ChatParticipantEntry,
+		ChatParticipantMenu, ChatParticipantsQuery, ChatProductAction, ChatReaction,
+		ChatReactionDetail, ChatReactionSummary, ChatReasoning, ChatResource, ChatRichText,
+		ChatRoom, ChatRoomBadge, ChatRoomCall, ChatRoomCalls, ChatRoomConfig, ChatRoomEvent,
+		ChatRoomFeatures, ChatRoomMetadata, ChatRoomOrder, ChatRoomParticipation, ChatRoomPreview,
 		ChatRoomPreviewText, ChatRoomRegistrationStatus, ChatSuggestion, ChatThreadParent,
 		ChatThreadSummary, ChatToolbarAction, ChatUserAction, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
@@ -347,6 +347,23 @@ pub mod latest {
 	pub type HostShareResponse = LatestOf<versioned::share::HostShareResponse>;
 	/// Share sheet failure.
 	pub type HostShareError = LatestOf<versioned::share::HostShareError>;
+	/// Username search request.
+	pub type HostUsernamesSearchRequest =
+		LatestOf<versioned::usernames::HostUsernamesSearchRequest>;
+	/// Usernames that a search found.
+	pub type HostUsernamesSearchResponse =
+		LatestOf<versioned::usernames::HostUsernamesSearchResponse>;
+	/// Username search failure.
+	pub type HostUsernamesSearchError = LatestOf<versioned::usernames::HostUsernamesSearchError>;
+	/// Request to add a contact to the app.
+	pub type HostUsernamesAddContactRequest =
+		LatestOf<versioned::usernames::HostUsernamesAddContactRequest>;
+	/// Outcome of an add of a contact.
+	pub type HostUsernamesAddContactResponse =
+		LatestOf<versioned::usernames::HostUsernamesAddContactResponse>;
+	/// Failure of an add of a contact.
+	pub type HostUsernamesAddContactError =
+		LatestOf<versioned::usernames::HostUsernamesAddContactError>;
 	/// Contextual alias derivation result.
 	pub type HostAccountGetAliasResponse =
 		LatestOf<versioned::account::HostAccountGetAliasResponse>;

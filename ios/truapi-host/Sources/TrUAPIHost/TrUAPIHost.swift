@@ -531,6 +531,18 @@ public protocol ShareHostBridge: AnyObject, Sendable {
     ) async throws -> HostShare
 }
 
+/// The username directory of the host, following the rules on the core's
+/// `UsernamesPlatform`. Closes an open question when the task is cancelled.
+public protocol UsernamesHostBridge: AnyObject, Sendable {
+    func searchUsernames(productId: String, prefix: String) async throws -> [String]
+
+    func addContact(
+        productId: String,
+        executionKind: ProductExecutionKind,
+        username: String
+    ) async throws -> HostContactAdd
+}
+
 /// The push relay client of the host. The core gives it the wake topics of
 /// every product and the key of the device; the host adds what identifies the
 /// device to its relay (the push token and the app id) and sends the
@@ -856,6 +868,32 @@ private final class ShareCallbackAdapter: NativeShareCallbacks, @unchecked Senda
     }
 }
 
+/// Adapter that bridges the public `UsernamesHostBridge` to the generated UniFFI
+/// `NativeUsernamesCallbacks` protocol.
+private final class UsernamesCallbackAdapter: NativeUsernamesCallbacks, @unchecked Sendable {
+    private let bridge: UsernamesHostBridge
+
+    init(bridge: UsernamesHostBridge) {
+        self.bridge = bridge
+    }
+
+    func searchUsernames(productId: String, prefix: String) async throws -> [String] {
+        try await withHostRejection {
+            try await bridge.searchUsernames(productId: productId, prefix: prefix)
+        }
+    }
+
+    func addContact(
+        productId: String,
+        executionKind: ProductExecutionKind,
+        username: String
+    ) async throws -> HostContactAdd {
+        try await withHostRejection {
+            try await bridge.addContact(productId: productId, executionKind: executionKind, username: username)
+        }
+    }
+}
+
 /// Adapter that bridges the public `HostBridge` to the generated UniFFI
 /// `HostCallbacks` protocol. Kept private so the generated names never
 /// leak into consumers.
@@ -1091,6 +1129,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     private var contactsRetainer: NativeContactsCallbacks?
     private var scannerRetainer: NativeScannerCallbacks?
     private var shareRetainer: NativeShareCallbacks?
+    private var usernamesRetainer: NativeUsernamesCallbacks?
     private let wakeRelayLock = NSLock()
     private var wakeRelayAdapter: NativeWakeRelayCallbacks?
 
@@ -1157,6 +1196,15 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         let adapter = ShareCallbackAdapter(bridge: share)
         shareRetainer = adapter
         return inner.setShareCallbacks(callbacks: adapter)
+    }
+
+    /// Install the host's username directory before opening any product
+    /// execution. Set-once: answers whether this call installed it.
+    @discardableResult
+    public func setUsernames(_ usernames: UsernamesHostBridge) -> Bool {
+        let adapter = UsernamesCallbackAdapter(bridge: usernames)
+        usernamesRetainer = adapter
+        return inner.setUsernamesCallbacks(callbacks: adapter)
     }
 
     /// Install the host's push relay client, or remove it with `nil`. The core

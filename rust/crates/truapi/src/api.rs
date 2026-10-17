@@ -23,6 +23,7 @@ pub mod signing;
 pub mod statement_store;
 pub mod system;
 pub mod theme;
+pub mod usernames;
 pub mod worker;
 
 pub use account::Account;
@@ -48,6 +49,7 @@ pub use signing::Signing;
 pub use statement_store::StatementStore;
 pub use system::System;
 pub use theme::Theme;
+pub use usernames::Usernames;
 pub use worker::Worker;
 
 /// The unified TrUAPI contract.
@@ -71,6 +73,7 @@ pub trait TrUApi:
 	+ ResourceAllocation
 	+ Scanner
 	+ Share
+	+ Usernames
 	+ Signing
 	+ StatementStore
 	+ System
@@ -101,6 +104,7 @@ impl<T> TrUApi for T where
 		+ ResourceAllocation
 		+ Scanner
 		+ Share
+		+ Usernames
 		+ Signing
 		+ StatementStore
 		+ System

@@ -794,6 +794,39 @@
         }
       }
     },
+    "product.add.contact.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add a contact"
+          }
+        }
+      }
+    },
+    "product.add.contact.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(product)@ asks to add @%2$(username)@ to your contacts. You then send them a chat request."
+          }
+        }
+      }
+    },
+    "product.add.contact.confirm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add"
+          }
+        }
+      }
+    },
     "message.show.more": {
       "extractionState": "manual",
       "localizations": {

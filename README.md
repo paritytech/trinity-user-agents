@@ -383,6 +383,14 @@ of a press of the user on something the host drew for it, such as a button of
 one of its rooms. The CLI host roles and dot.li have no sheet and answer
 `Unsupported`, so the battery and the playground's Diagnosis skip it.
 
+`Usernames` (`usernames`) lets a product search the usernames of the network
+and ask the host to add a person to the contacts of the app (RFC "Host
+username directory"). The iOS app searches with its chat contact search and
+adds a person through its chat request screen. An add asks the user, so a
+Worker may ask only within 5 seconds of a press, as for `Share`. The CLI host
+roles and dot.li have no directory and answer `Unsupported`, so the battery and
+the playground's Diagnosis skip it.
+
 `chat.onOpenLink` gives a chat product the text after `#` of a room link the
 user opened, `polkadot://<product>/-/chat/<room>#<payload>` or its web form
 `https://<name>.<root>.li/-/chat/<room>#<payload>` (RFC "Chat Extension v2

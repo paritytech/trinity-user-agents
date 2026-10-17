@@ -41,7 +41,8 @@ pub use crate::{
 pub use callbacks::{
 	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
 	NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks, NativePocketRemoval,
-	NativeScannerCallbacks, NativeShareCallbacks, NativeTopUpCallbacks, NativeWakeRelayCallbacks,
+	NativeScannerCallbacks, NativeShareCallbacks, NativeTopUpCallbacks, NativeUsernamesCallbacks,
+	NativeWakeRelayCallbacks,
 };
 pub use chat_query::{
 	NativeChatQuery, NativeChatQueryAnswer, NativeChatQueryObserver, NativeChatQueryRefusal,

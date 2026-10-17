@@ -12,6 +12,7 @@ mod resources;
 mod scanner;
 mod share;
 mod signing;
+mod usernames;
 
 use crate::{CallError, versioned::FromLatest};
 

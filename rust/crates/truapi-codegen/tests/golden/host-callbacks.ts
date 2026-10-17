@@ -396,6 +396,16 @@ export interface HostChainSet {
 }
 
 /**
+ * How the host's add of a contact ended.
+ */
+export type HostContactAdd =
+  | "Added"
+  | "AlreadyContact"
+  | "Dismissed"
+  | "NotFound"
+  | "NotVisible";
+
+/**
  * Contact handles the core needs turned back into accounts, and the key they
  * were minted under.
  *
@@ -1013,6 +1023,14 @@ export const HostChainSet: S.Codec<HostChainSet> = S.lazy(
       network: S.str,
       chains: S.Vector(HostChainEntry),
     }) as S.Codec<HostChainSet>,
+);
+
+/**
+ * How the host's add of a contact ended.
+ */
+export const HostContactAdd: S.Codec<HostContactAdd> = S.lazy(
+  (): S.Codec<HostContactAdd> =>
+    S.Status("Added", "AlreadyContact", "Dismissed", "NotFound", "NotVisible"),
 );
 
 /**
@@ -2218,6 +2236,33 @@ export interface UserConfirmation {
    * dismiss its prompt when that happens.
    */
   confirmUserAction(review: UserConfirmationReview): Promise<boolean>;
+}
+
+/**
+ * Host-owned directory of the usernames of the network. Optional; a host
+ * without one leaves every product search and add `Unsupported`.
+ *
+ * - Search the way the host's own contact search does, and give at most 20 usernames.
+ * - Ask the user before an add, naming the product, and add the person the way the host adds a
+ *   contact itself.
+ * - Answer `HostContactAdd::NotVisible` for an App or Widget that is not on screen.
+ */
+export interface UsernamesPlatform {
+  /**
+   * Find the usernames that start with `prefix`.
+   */
+  searchUsernames(
+    product: ProductContext,
+    prefix: string,
+  ): Promise<Array<string>>;
+
+  /**
+   * Ask the user to add the owner of `username` to the contacts of the app.
+   */
+  addContact(
+    product: ProductContext,
+    username: string,
+  ): Promise<HostContactAdd>;
 }
 
 /**

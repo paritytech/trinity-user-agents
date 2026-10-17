@@ -8577,6 +8577,163 @@ fn a_worker_shares_only_shortly_after_the_user_presses_something_of_its_rooms() 
 	);
 }
 
+/// A username directory that records what it was asked, finds `found` and
+/// answers an add with `answer`.
+struct StubUsernamesPlatform {
+	found: Vec<String>,
+	answer: crate::platform::HostContactAdd,
+	asked: Mutex<Vec<String>>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::UsernamesPlatform for StubUsernamesPlatform {
+	async fn search_usernames(
+		&self,
+		product: &crate::platform::ProductContext,
+		prefix: &str,
+	) -> Result<Vec<String>, truapi::latest::GenericError> {
+		self.asked
+			.lock()
+			.unwrap()
+			.push(format!("{} searches {prefix}", product.product_id));
+		Ok(self.found.clone())
+	}
+
+	async fn add_contact(
+		&self,
+		product: &crate::platform::ProductContext,
+		username: &str,
+	) -> Result<crate::platform::HostContactAdd, truapi::latest::GenericError> {
+		self.asked
+			.lock()
+			.unwrap()
+			.push(format!("{} adds {username}", product.product_id));
+		Ok(self.answer)
+	}
+}
+
+fn usernames_host(
+	kind: ProductExecutionKind,
+	directory: Arc<StubUsernamesPlatform>,
+) -> ProductRuntimeHost {
+	let host = scanner_host_for(kind, None);
+	host.services.install_usernames_platform(directory);
+	host
+}
+
+fn search_usernames(
+	host: &ProductRuntimeHost,
+	prefix: &str,
+) -> Result<Vec<String>, CallError<v01::HostUsernamesSearchError>> {
+	use truapi::versioned::usernames as wire;
+	let result = futures::executor::block_on(truapi::api::Usernames::search(
+		host,
+		&CallContext::default(),
+		wire::HostUsernamesSearchRequest::V1(v01::HostUsernamesSearchRequest {
+			prefix: prefix.into(),
+		}),
+	));
+	match result {
+		Ok(wire::HostUsernamesSearchResponse::V1(response)) => Ok(response.usernames),
+		Err(CallError::Domain(wire::HostUsernamesSearchError::V1(error))) => {
+			Err(CallError::Domain(error))
+		},
+		Err(CallError::Unsupported) => Err(CallError::Unsupported),
+		Err(other) => panic!("unexpected search error: {other:?}"),
+	}
+}
+
+fn add_contact(
+	host: &ProductRuntimeHost,
+	username: &str,
+) -> Result<v01::AddContactOutcome, CallError<v01::HostUsernamesAddContactError>> {
+	use truapi::versioned::usernames as wire;
+	let result = futures::executor::block_on(truapi::api::Usernames::add_contact(
+		host,
+		&CallContext::default(),
+		wire::HostUsernamesAddContactRequest::V1(v01::HostUsernamesAddContactRequest {
+			username: username.into(),
+		}),
+	));
+	match result {
+		Ok(wire::HostUsernamesAddContactResponse::V1(response)) => Ok(response.outcome),
+		Err(CallError::Domain(wire::HostUsernamesAddContactError::V1(error))) => {
+			Err(CallError::Domain(error))
+		},
+		Err(CallError::Unsupported) => Err(CallError::Unsupported),
+		Err(other) => panic!("unexpected add error: {other:?}"),
+	}
+}
+
+#[test]
+fn a_search_gives_only_usernames_and_at_most_twenty() {
+	// The host is not trusted with the limits: a product gets usernames only,
+	// each one time, and never more than the maximum.
+	let mut found = vec!["alice.1".to_string(), "alice.1".into(), "not a name".into()];
+	found.extend((2..40).map(|n| format!("alice.{n}")));
+	let directory = Arc::new(StubUsernamesPlatform {
+		found,
+		answer: crate::platform::HostContactAdd::Added,
+		asked: Mutex::default(),
+	});
+	let host = usernames_host(ProductExecutionKind::Worker, directory.clone());
+	let expected: Vec<String> = (1..=20).map(|n| format!("alice.{n}")).collect();
+	assert_eq!(search_usernames(&host, " @Ali"), Ok(expected));
+	assert!(matches!(
+		search_usernames(&host, "a"),
+		Err(CallError::Domain(v01::HostUsernamesSearchError::InvalidRequest { .. }))
+	));
+	assert_eq!(*directory.asked.lock().unwrap(), ["greenmarket.dot searches ali"]);
+	assert_eq!(
+		search_usernames(&scanner_host_for(ProductExecutionKind::App, None), "ali"),
+		Err(CallError::Unsupported)
+	);
+}
+
+#[test]
+fn a_worker_adds_a_contact_only_shortly_after_the_user_presses_an_entry_of_its_menus() {
+	// The host asks the user, so the question must follow a tap: here an
+	// entry of the menu of a participant of the room of the product.
+	let directory = Arc::new(StubUsernamesPlatform {
+		found: Vec::new(),
+		answer: crate::platform::HostContactAdd::Added,
+		asked: Mutex::default(),
+	});
+	let host = usernames_host(ProductExecutionKind::Worker, directory.clone());
+	let not_visible = Err(CallError::Domain(v01::HostUsernamesAddContactError::NotVisible));
+	assert_eq!(add_contact(&host, "bob.7"), not_visible);
+	assert!(directory.asked.lock().unwrap().is_empty());
+
+	let menu_press = latest::HostChatActionSubscribeItem {
+		event: latest::ChatEvent::ParticipantActionTriggered {
+			participant_id: "c7".into(),
+			action_id: "app-contact".into(),
+		},
+		..room_press()
+	};
+	host.chat.publish(menu_press, &host.services.spawner).unwrap();
+	assert!(matches!(
+		add_contact(&host, "bob 7"),
+		Err(CallError::Domain(v01::HostUsernamesAddContactError::InvalidRequest { .. }))
+	));
+	assert_eq!(add_contact(&host, "@Bob.7"), Ok(v01::AddContactOutcome::Added));
+	assert_eq!(*directory.asked.lock().unwrap(), ["greenmarket.dot adds bob.7"]);
+}
+
+#[test]
+fn an_add_that_the_host_did_not_show_is_not_visible() {
+	let directory = Arc::new(StubUsernamesPlatform {
+		found: Vec::new(),
+		answer: crate::platform::HostContactAdd::NotVisible,
+		asked: Mutex::default(),
+	});
+	let host = usernames_host(ProductExecutionKind::App, directory);
+	assert_eq!(
+		add_contact(&host, "bob.7"),
+		Err(CallError::Domain(v01::HostUsernamesAddContactError::NotVisible))
+	);
+}
+
 #[test]
 fn a_share_without_a_sheet_or_with_a_bad_text_never_reaches_the_host() {
 	assert_eq!(

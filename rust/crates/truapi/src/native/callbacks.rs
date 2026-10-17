@@ -579,6 +579,30 @@ pub trait NativeWakeRelayCallbacks: Send + Sync {
 	) -> Result<(), HostRejection>;
 }
 
+/// Native form of [`crate::platform::UsernamesPlatform`], whose rules it
+/// follows. Installed with [`NativeTrUApiHostRuntime::set_usernames_callbacks`].
+///
+/// [`NativeTrUApiHostRuntime::set_usernames_callbacks`]: super::NativeTrUApiHostRuntime::set_usernames_callbacks
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeUsernamesCallbacks: Send + Sync {
+	/// Find the usernames that start with `prefix`, on behalf of `product_id`.
+	async fn search_usernames(
+		&self,
+		product_id: String,
+		prefix: String,
+	) -> Result<Vec<String>, HostRejection>;
+
+	/// Ask the user to add the owner of `username` to the contacts of the app,
+	/// on behalf of `product_id`'s execution of `execution_kind`.
+	async fn add_contact(
+		&self,
+		product_id: String,
+		execution_kind: crate::platform::ProductExecutionKind,
+		username: String,
+	) -> Result<crate::platform::HostContactAdd, HostRejection>;
+}
+
 /// Native form of [`crate::platform::SharePlatform`], whose rules it follows.
 /// Installed with [`NativeTrUApiHostRuntime::set_share_callbacks`].
 #[uniffi::export(rust, foreign)]

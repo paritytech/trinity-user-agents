@@ -5265,6 +5265,48 @@ pub trait SharePlatform: Send + Sync {
 	) -> Result<HostShare, GenericError>;
 }
 
+/// How the host's add of a contact ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum HostContactAdd {
+	/// The host started to add the person.
+	Added,
+	/// The person is a contact of the app already.
+	AlreadyContact,
+	/// The user said no.
+	Dismissed,
+	/// The network has no such username.
+	NotFound,
+	/// The requesting App or Widget is not the screen the user sees, so the
+	/// host asked nothing. A Worker's request was already checked by the core
+	/// and is never answered this way.
+	NotVisible,
+}
+
+/// Host-owned directory of the usernames of the network. Optional; a host
+/// without one leaves every product search and add `Unsupported`.
+///
+/// - Search the way the host's own contact search does, and give at most 20 usernames.
+/// - Ask the user before an add, naming the product, and add the person the way the host adds a
+///   contact itself.
+/// - Answer [`HostContactAdd::NotVisible`] for an App or Widget that is not on screen.
+#[async_trait]
+pub trait UsernamesPlatform: Send + Sync {
+	/// Find the usernames that start with `prefix`.
+	async fn search_usernames(
+		&self,
+		product: &ProductContext,
+		prefix: &str,
+	) -> Result<Vec<String>, GenericError>;
+
+	/// Ask the user to add the owner of `username` to the contacts of the app.
+	async fn add_contact(
+		&self,
+		product: &ProductContext,
+		username: &str,
+	) -> Result<HostContactAdd, GenericError>;
+}
+
 /// Combined platform interface. A host must provide every capability trait
 /// listed here. Members marked optional may be omitted; the core answers their
 /// product calls with `Unsupported`. See [`OptionalPlatform`].

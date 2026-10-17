@@ -42,7 +42,8 @@ use super::{
 	callbacks::{
 		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
 		NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks, NativeScannerCallbacks,
-		NativeShareCallbacks, NativeTopUpCallbacks, NativeWakeRelayCallbacks,
+		NativeShareCallbacks, NativeTopUpCallbacks, NativeUsernamesCallbacks,
+		NativeWakeRelayCallbacks,
 	},
 	config::{
 		HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -55,7 +56,7 @@ use super::{
 		BalanceCallbackPlatform, CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform,
 		GameCallbackPlatform, PaymentCallbackPlatform, PocketCallbackPlatform,
 		ScannerCallbackPlatform, ShareCallbackPlatform, TopUpCallbackPlatform,
-		WakeRelayCallbackPlatform,
+		UsernamesCallbackPlatform, WakeRelayCallbackPlatform,
 	},
 };
 #[cfg(doc)]
@@ -370,6 +371,13 @@ impl NativeTrUApiHostRuntime {
 	pub fn set_share_callbacks(&self, callbacks: Arc<dyn NativeShareCallbacks>) -> bool {
 		self.runtime
 			.set_share_platform(Arc::new(ShareCallbackPlatform { share: callbacks }))
+	}
+
+	/// Install the host's username directory before opening any product
+	/// execution. Set-once: answers whether this call installed it.
+	pub fn set_usernames_callbacks(&self, callbacks: Arc<dyn NativeUsernamesCallbacks>) -> bool {
+		self.runtime
+			.set_usernames_platform(Arc::new(UsernamesCallbackPlatform { usernames: callbacks }))
 	}
 
 	/// Tell the core the host's contacts changed. Call it whenever a contact

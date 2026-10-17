@@ -32,6 +32,7 @@ use truapi::api::{
     ResourceAllocation,
     Scanner,
     Share,
+    Usernames,
     Signing,
     StatementStore,
     System,
@@ -73,6 +74,7 @@ where
     register_resource_allocation(dispatcher, host.clone());
     register_scanner(dispatcher, host.clone());
     register_share(dispatcher, host.clone());
+    register_usernames(dispatcher, host.clone());
     register_signing(dispatcher, host.clone());
     register_statement_store(dispatcher, host.clone());
     register_system(dispatcher, host.clone());
@@ -2835,6 +2837,68 @@ where
                 let result: Result<versioned::share::HostShareResponse, truapi::CallError<versioned::share::HostShareError>> =
                     match host.share(&cx, request).await {
                         Ok(response) => Ok(<versioned::share::HostShareResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+}
+
+fn register_usernames<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
+where
+    P: Usernames + Send + Sync + 'static,
+{
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::USERNAMES_SEARCH, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::usernames::HostUsernamesSearchRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::usernames::HostUsernamesSearchError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::usernames::HostUsernamesSearchResponse, truapi::CallError<versioned::usernames::HostUsernamesSearchError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::usernames::HostUsernamesSearchResponse, truapi::CallError<versioned::usernames::HostUsernamesSearchError>> =
+                    match host.search(&cx, request).await {
+                        Ok(response) => Ok(<versioned::usernames::HostUsernamesSearchResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_request(wire_table::USERNAMES_ADD_CONTACT, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::usernames::HostUsernamesAddContactRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::usernames::HostUsernamesAddContactError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::usernames::HostUsernamesAddContactResponse, truapi::CallError<versioned::usernames::HostUsernamesAddContactError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::usernames::HostUsernamesAddContactResponse, truapi::CallError<versioned::usernames::HostUsernamesAddContactError>> =
+                    match host.add_contact(&cx, request).await {
+                        Ok(response) => Ok(<versioned::usernames::HostUsernamesAddContactResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),

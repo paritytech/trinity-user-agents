@@ -20,7 +20,7 @@ use crate::{
 	platform::{
 		BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, JsonRpcConnection,
 		PaymentPlatform, PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform,
-		SharePlatform, TopUpPlatform,
+		SharePlatform, TopUpPlatform, UsernamesPlatform,
 	},
 	runtime::{
 		bulletin_rpc::BulletinRpc, signing_host::DevicePairingObserver,
@@ -83,6 +83,9 @@ pub struct RuntimeServices {
 	/// Whether a share sheet is open. Shared by every product runtime of this
 	/// host, because the screen shows one sheet.
 	share_open: AtomicBool,
+	/// Host username directory, installed once at startup by a host that has
+	/// one. Unset leaves every product search and add `Unsupported`.
+	usernames_platform: OnceLock<Arc<dyn UsernamesPlatform>>,
 	/// Host observer told when a device finishes pairing with this signing
 	/// host. Unset leaves a paired device unannounced.
 	device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
@@ -189,6 +192,7 @@ impl RuntimeServices {
 			scan_open: AtomicBool::new(false),
 			share_platform: OnceLock::new(),
 			share_open: AtomicBool::new(false),
+			usernames_platform: OnceLock::new(),
 			device_pairing_observer: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			core_db: OnceLock::new(),
@@ -372,6 +376,17 @@ impl RuntimeServices {
 	/// The host's share sheet, when one is installed.
 	pub fn share_platform(&self) -> Option<Arc<dyn SharePlatform>> {
 		self.share_platform.get().cloned()
+	}
+
+	/// Install the host's username directory. Answers whether this call was
+	/// the one that installed it.
+	pub fn install_usernames_platform(&self, platform: Arc<dyn UsernamesPlatform>) -> bool {
+		self.usernames_platform.set(platform).is_ok()
+	}
+
+	/// The host's username directory, when one is installed.
+	pub fn usernames_platform(&self) -> Option<Arc<dyn UsernamesPlatform>> {
+		self.usernames_platform.get().cloned()
 	}
 
 	/// Claim the one open share sheet, or `None` while another holds it.

@@ -55,6 +55,7 @@ describe("generated-example battery", () => {
       ["Payment", "Payment service not yet wired up by hosts"],
       ["Scanner", "Scanner service not yet wired up by hosts"],
       ["Share", "Share service not yet wired up by hosts"],
+      ["Usernames", "Usernames service not yet wired up by hosts"],
       [
         "Game",
         "Game serves only the game product; the truapi runtime tests cover it",
