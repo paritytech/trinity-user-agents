@@ -16,6 +16,8 @@ extension ChatRoomParticipant {
                 .custom(nickname: nickname, avatar: .inline(mimeType: mimeType, data: bytes))
             case let .custom(nickname, .preimage(key)?):
                 .custom(nickname: nickname, avatar: .preimage(key: key))
+            case let .custom(nickname, .sealed?):
+                .custom(nickname: nickname, avatar: nil)
             case let .custom(nickname, nil):
                 .custom(nickname: nickname, avatar: nil)
             }

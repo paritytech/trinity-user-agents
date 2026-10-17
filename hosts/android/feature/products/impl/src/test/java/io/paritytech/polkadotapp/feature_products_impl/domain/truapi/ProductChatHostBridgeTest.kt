@@ -398,7 +398,7 @@ class ProductChatHostBridgeTest {
 
         val features = ProductChatHostBridge(productId, messaging, storedState).roomFeatures(ROOM)
 
-        assertEquals(ChatRoomFeatures(true, false, ChatRoomCalls(true, false), ChatThreadParent("lobby", "m1"), true), features)
+        assertEquals(ChatRoomFeatures(true, false, ChatRoomCalls(true, false), ChatThreadParent("lobby", "m1"), true, false), features)
     }
 
     @Test

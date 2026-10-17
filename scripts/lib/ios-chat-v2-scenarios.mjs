@@ -121,6 +121,9 @@ export const IOS_CHAT_FEATURE_ROWS = Object.freeze({
   custom_footer: ["S35"],
   inline_attachments: ["S36"],
   room_links: ["S27", "S24"],
+  // No sample row: the verbosity product run sends a sealed photo and video
+  // (results of D6/D7 larger files in the verbosity plan).
+  sealed_attachments: [],
   search: ["S61", "S62", "S63"],
   bot_personas: ["S53"],
   mute_archive: ["S54", "S55", "S56"],

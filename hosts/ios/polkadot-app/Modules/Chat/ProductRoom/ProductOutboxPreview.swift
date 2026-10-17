@@ -47,8 +47,8 @@ struct ProductStagedMedia: Equatable, Sendable {
     }
 }
 
-/// The facts of the media that the stager staged, by preimage key. The body of a host-store message keeps only the
-/// key, so the event to the product reads the facts here.
+/// The facts of the media that the stager staged, by preimage key, or by the digest of a sealed file. The body of a
+/// host-store message keeps only the resource, so the event to the product reads the facts here.
 final class ProductStagedMediaRegistry: @unchecked Sendable {
     static let shared = ProductStagedMediaRegistry()
 
@@ -62,14 +62,24 @@ final class ProductStagedMediaRegistry: @unchecked Sendable {
         media.withLock { $0[key] }
     }
 
-    /// The media item of a preimage source (`preimage:<hex>`), or nil for another source. A key with no facts here
-    /// goes with the facts that the source gives: a file name, or nothing.
+    /// The media item of a preimage source (`preimage:<hex>`) or of a sealed source, or nil for another source. A
+    /// resource with no facts here goes with the facts that the source gives: a file name, or nothing.
     func mediaItem(source: String, fileName: String?) -> ChatMediaItem? {
-        guard case let .preimage(key)? = ChatResource(source: source) else {
-            return nil
+        switch ChatResource(source: source) {
+        case let .preimage(key)?:
+            mediaItem(.preimage(key: key), facts: media(for: key), fileName: fileName)
+        case let .sealed(sealed)?:
+            mediaItem(sealed.wireResource, facts: media(for: sealed.digest), fileName: fileName)
+        default:
+            nil
         }
+    }
 
-        let staged = media(for: key)
+    private func mediaItem(
+        _ resource: TrUAPIChatResource,
+        facts staged: ProductStagedMedia?,
+        fileName: String?
+    ) -> ChatMediaItem {
         let meta = staged?.meta ?? ChatMediaMeta(
             mimeType: "application/octet-stream",
             sizeBytes: nil,
@@ -79,11 +89,23 @@ final class ProductStagedMediaRegistry: @unchecked Sendable {
             alt: nil
         )
         if let fileName {
-            return .file(resource: .preimage(key: key), meta: meta, fileName: fileName)
+            return .file(resource: resource, meta: meta, fileName: fileName)
         }
         return staged?.kind == .video
-            ? .video(resource: .preimage(key: key), meta: meta)
-            : .image(resource: .preimage(key: key), meta: meta)
+            ? .video(resource: resource, meta: meta)
+            : .image(resource: resource, meta: meta)
+    }
+}
+
+extension ChatSealedResource {
+    /// The resource that the product receives.
+    var wireResource: TrUAPIChatResource {
+        .sealed(parts: parts, key: key, nonce: nonce, size: size, digest: digest)
+    }
+
+    init?(_ resource: TrUAPIChatResource) {
+        guard case let .sealed(parts, key, nonce, size, digest) = resource else { return nil }
+        self.init(parts: parts, key: key, nonce: nonce, size: size, digest: digest)
     }
 }
 
@@ -129,14 +151,15 @@ enum ProductOutboxPreview {
         }
     }
 
-    /// The message that the product gets: one media item with the preimage key and the facts of the bytes.
-    static func sentBody(of entry: ProductOutboxEntry, key: Data) -> ChatMessageBody {
+    /// The message that the product gets: one media item with the preimage key or the sealed file, and the facts
+    /// of the bytes.
+    static func sentBody(of entry: ProductOutboxEntry, resource: TrUAPIChatResource) -> ChatMessageBody {
         let meta = ProductStagedMedia(entry).meta
         let item: ChatMediaItem =
             switch entry.kind {
-            case .image: .image(resource: .preimage(key: key), meta: meta)
-            case .video: .video(resource: .preimage(key: key), meta: meta)
-            case let .file(name): .file(resource: .preimage(key: key), meta: meta, fileName: name)
+            case .image: .image(resource: resource, meta: meta)
+            case .video: .video(resource: resource, meta: meta)
+            case let .file(name): .file(resource: resource, meta: meta, fileName: name)
             }
         return .richText(text: nil, media: [item])
     }

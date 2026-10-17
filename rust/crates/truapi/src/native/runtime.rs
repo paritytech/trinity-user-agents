@@ -81,6 +81,23 @@ pub struct NativeTrUApiHostRuntime {
 }
 
 impl NativeTrUApiHostRuntime {
+	/// The admin of the open Worker execution of `product_id`, else a new
+	/// admin of the product with the runtime's callbacks.
+	fn worker_admin(&self, product_id: String) -> Result<crate::HostAdmin, String> {
+		let product = ProductContext::new_with_execution(product_id, ProductExecutionKind::Worker)
+			.map_err(|error| error.to_string())?;
+		let execution = self
+			.worker_executions
+			.lock()
+			.expect("native worker execution registry mutex poisoned")
+			.get(&product.product_id)
+			.and_then(Weak::upgrade);
+		Ok(match execution {
+			Some(execution) => execution.admin(),
+			None => self.runtime.product_admin(product),
+		})
+	}
+
 	fn from_resolved(
 		callbacks: Arc<dyn HostCallbacks>,
 		runtime_config: NativeResolvedHostRuntimeConfig,
@@ -518,23 +535,39 @@ impl NativeTrUApiHostRuntime {
 		mime_type: String,
 		bytes: Vec<u8>,
 	) -> Result<Vec<u8>, NativeChatStageRejection> {
-		let product = ProductContext::new_with_execution(product_id, ProductExecutionKind::Worker)
-			.map_err(|error| NativeChatStageRejection::SubmitFailed {
-				reason: error.to_string(),
-			})?;
-		let execution = self
-			.worker_executions
-			.lock()
-			.expect("native worker execution registry mutex poisoned")
-			.get(&product.product_id)
-			.and_then(Weak::upgrade);
-		let admin = match execution {
-			Some(execution) => execution.admin(),
-			None => self.runtime.product_admin(product),
-		};
+		let admin = self
+			.worker_admin(product_id)
+			.map_err(|reason| NativeChatStageRejection::SubmitFailed { reason })?;
 		admin
 			.product_runtime()
 			.stage_chat_attachment(&room_id, &mime_type, bytes)
+			.await
+			.map_err(Into::into)
+	}
+
+	/// Seal a user attachment of a room: the core encrypts it with a new key,
+	/// stores the ciphertext as Bulletin preimages in parts that the
+	/// allowance of the product pays for, and returns the
+	/// `ChatResource::Sealed` that names them. The host sends that resource
+	/// to the product in place of the bytes.
+	///
+	/// The core refuses a room whose features do not declare
+	/// `sealed_attachments`, an attachment above 32 MiB, and a product the
+	/// user refused `PreimageSubmit`; it prompts when the user did not decide
+	/// yet. It reads the room's features as [`Self::chat_stage_attachment`]
+	/// does.
+	pub async fn chat_seal_attachment(
+		&self,
+		product_id: String,
+		room_id: String,
+		bytes: Vec<u8>,
+	) -> Result<truapi::latest::ChatResource, NativeChatStageRejection> {
+		let admin = self
+			.worker_admin(product_id)
+			.map_err(|reason| NativeChatStageRejection::SubmitFailed { reason })?;
+		admin
+			.product_runtime()
+			.seal_chat_attachment(&room_id, bytes)
 			.await
 			.map_err(Into::into)
 	}

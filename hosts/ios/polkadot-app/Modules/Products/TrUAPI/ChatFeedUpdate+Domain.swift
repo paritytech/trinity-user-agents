@@ -73,7 +73,7 @@ extension ChatMessageBody {
     private static func richTextContent(text: String?, media: [ChatMediaItem]) -> Chat.LocalMessage.Content {
         if media.count == 1, case let .file(_, meta, fileName) = media[0] {
             let message = ProductBotMessage.file(ProductBotFile(
-                url: media[0].productResource.source,
+                url: media[0].source,
                 fileName: fileName,
                 mimeType: meta.mimeType,
                 sizeBytes: meta.sizeBytes ?? 0,
@@ -84,7 +84,7 @@ extension ChatMessageBody {
 
         return .productBody(.richText(.init(
             text: text,
-            media: media.map(\.productResource.source),
+            media: media.map(\.source),
             alts: media.map(\.alt),
             items: media.map(\.info)
         )))
@@ -102,16 +102,27 @@ extension ChatMediaItem {
         }
     }
 
-    var productResource: Chat.ProductResource {
+    /// The source string that a product body keeps for the item (see ``ChatResource/init(source:)``).
+    var source: String {
         switch self {
         case let .image(.inline(mimeType, bytes), _),
              let .video(.inline(mimeType, bytes), _),
              let .file(.inline(mimeType, bytes), _, _):
-            .inline(mimeType: mimeType, data: bytes)
+            Chat.ProductResource.inline(mimeType: mimeType, data: bytes).source
         case let .image(.preimage(key), _),
              let .video(.preimage(key), _),
              let .file(.preimage(key), _, _):
-            .preimage(key: key)
+            ChatResource.preimageSource(key: key)
+        case let .image(.sealed(parts, key, nonce, size, digest), _),
+             let .video(.sealed(parts, key, nonce, size, digest), _),
+             let .file(.sealed(parts, key, nonce, size, digest), _, _):
+            ChatResource.sealedSource(ChatSealedResource(
+                parts: parts,
+                key: key,
+                nonce: nonce,
+                size: size,
+                digest: digest
+            ))
         }
     }
 

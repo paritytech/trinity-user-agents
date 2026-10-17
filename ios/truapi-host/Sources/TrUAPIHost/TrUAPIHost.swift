@@ -402,6 +402,10 @@ public extension ChatHostBridge {
     }
 }
 
+/// The resource type of Chat Extension v2, under a name that a host app with a
+/// `ChatResource` type of its own can still write.
+public typealias TrUAPIChatResource = ChatResource
+
 public extension ChatRoomFeatures {
     /// The features of a room that declares none: the room shows what a
     /// room of Chat Extension v2 shows.
@@ -411,7 +415,8 @@ public extension ChatRoomFeatures {
             search: false,
             calls: nil,
             threadOf: nil,
-            readAloud: false
+            readAloud: false,
+            sealedAttachments: false
         )
     }
 }
@@ -1338,6 +1343,18 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
             mimeType: mimeType,
             bytes: bytes
         )
+    }
+
+    /// Seal a user attachment of a room: the core encrypts it with a new key,
+    /// stores the ciphertext as Bulletin preimages in parts that the
+    /// allowance of the product pays for, and returns the
+    /// ``ChatResource/sealed(parts:key:nonce:size:digest:)`` that names them.
+    /// The core throws ``NativeChatStageRejection``: `notDeclared` for a room
+    /// whose features do not declare `sealed_attachments`, `tooLarge` above
+    /// 32 MiB, `permissionDenied`, `allowanceUnavailable` and `submitFailed`,
+    /// as ``stageChatAttachment(productId:roomId:mimeType:bytes:)`` does.
+    public func sealChatAttachment(productId: String, roomId: String, bytes: Data) async throws -> ChatResource {
+        try await inner.chatSealAttachment(productId: productId, roomId: roomId, bytes: bytes)
     }
 
     /// Tell the pairing host behind `deeplink` that allowance allocation is

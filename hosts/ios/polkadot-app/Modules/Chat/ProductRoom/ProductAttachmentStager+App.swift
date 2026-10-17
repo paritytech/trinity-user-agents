@@ -10,8 +10,8 @@ extension ProductAttachmentStager {
         outbox: ProductOutboxDirectory.shared,
         staging: TrUAPIProductAttachmentStaging(),
         delivery: ProductOutboxDelivery.shared,
-        primeResolver: { key, bytes in
-            await ChatResourceResolver.shared.store(bytes, for: .preimage(key: key))
+        primeResolver: { resource, bytes in
+            await ChatResourceResolver.shared.store(bytes, for: resource)
         }
     )
 }
@@ -64,6 +64,26 @@ struct TrUAPIProductAttachmentStaging: ProductAttachmentStaging {
         } catch let rejection as NativeChatStageRejection {
             throw ProductStageFailure(rejection)
         }
+    }
+
+    func seal(productId: String, roomId: String, bytes: Data) async throws -> ChatSealedResource {
+        let runtime: TrUAPIHostRuntime
+        do {
+            runtime = try self.runtime()
+        } catch {
+            throw ProductStageFailure.submitFailed(reason: "the runtime is not ready: \(error)")
+        }
+
+        let resource: TrUAPIChatResource
+        do {
+            resource = try await runtime.sealChatAttachment(productId: productId, roomId: roomId, bytes: bytes)
+        } catch let rejection as NativeChatStageRejection {
+            throw ProductStageFailure(rejection)
+        }
+        guard let sealed = ChatSealedResource(resource) else {
+            throw ProductStageFailure.submitFailed(reason: "the core gave no sealed file")
+        }
+        return sealed
     }
 
     /// Takes a worker reference, and then waits until the execution of the worker runs. On a cold start, the core

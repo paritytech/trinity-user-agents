@@ -848,6 +848,15 @@ pub const CHAT_PREVIEW_UPDATES_PER_SECOND: u32 = 5;
 /// Largest attachment a host stores as a preimage, in bytes.
 pub const CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES: usize = 8 * 1024 * 1024;
 
+/// Largest attachment a host seals, in bytes (`sealed_attachments`).
+pub const CHAT_SEALED_ATTACHMENT_MAX_BYTES: usize = 32 * 1024 * 1024;
+
+/// Largest accepted number of parts of one sealed resource.
+pub const CHAT_SEALED_PARTS_MAX: usize = 64;
+
+/// Length of the authentication tag that the sealing adds, in bytes.
+pub const CHAT_SEALED_TAG_BYTES: usize = 16;
+
 /// Largest accepted number of feature names in `capabilities`.
 pub const CHAT_FEATURES_MAX: usize = 64;
 
@@ -885,7 +894,7 @@ pub const CHAT_PERSONA_PREFIX: &str = "bot:";
 /// The Chat feature names of the Chat Extension v2 additions RFC, in the
 /// order the core lists them. A host lists a name only when it serves that
 /// feature from end to end.
-pub const CHAT_FEATURE_NAMES: [&str; 26] = [
+pub const CHAT_FEATURE_NAMES: [&str; 27] = [
 	"product_source_rooms",
 	"reaction_details",
 	"participants",
@@ -901,6 +910,7 @@ pub const CHAT_FEATURE_NAMES: [&str; 26] = [
 	"payment_button",
 	"room_links",
 	"preimage_attachments",
+	"sealed_attachments",
 	"search",
 	"bot_personas",
 	"mute_archive",
@@ -1129,11 +1139,12 @@ pub fn validate_chat_image_resource(
 			})
 		},
 		ChatResource::Preimage { key } => validate_chat_preimage_key(field, key),
+		ChatResource::Sealed { .. } => Err(ChatFieldError::RejectedScheme { field }),
 	}
 }
 
 /// Validate the resource of a media item: inline bytes of at most
-/// [`CHAT_INLINE_MEDIA_MAX_BYTES`], or a preimage key.
+/// [`CHAT_INLINE_MEDIA_MAX_BYTES`], a preimage key, or sealed parts.
 fn validate_chat_media_resource(
 	field: &'static str,
 	resource: ChatResource,
@@ -1144,7 +1155,44 @@ fn validate_chat_media_resource(
 			bytes: validate_chat_inline_bytes(field, bytes, CHAT_INLINE_MEDIA_MAX_BYTES)?,
 		}),
 		ChatResource::Preimage { key } => validate_chat_preimage_key(field, key),
+		sealed @ ChatResource::Sealed { .. } => validate_chat_sealed(field, sealed),
 	}
+}
+
+/// Check the shape of a sealed resource: 1 to [`CHAT_SEALED_PARTS_MAX`] part
+/// keys, a 32-byte key, a 24-byte nonce, a SHA-512 digest, and a ciphertext
+/// size of at most [`CHAT_SEALED_ATTACHMENT_MAX_BYTES`] and its tag.
+fn validate_chat_sealed(
+	field: &'static str,
+	resource: ChatResource,
+) -> Result<ChatResource, ChatFieldError> {
+	let ChatResource::Sealed { parts, key, nonce, size, digest } = &resource else {
+		return Ok(resource);
+	};
+	if parts.is_empty() {
+		return Err(ChatFieldError::Empty { field });
+	}
+	if parts.len() > CHAT_SEALED_PARTS_MAX {
+		return Err(ChatFieldError::TooMany { field, limit: CHAT_SEALED_PARTS_MAX });
+	}
+	let wrong = |length| ChatFieldError::WrongLength { field, length };
+	if parts.iter().any(|part| part.len() != CHAT_PREIMAGE_KEY_BYTES) {
+		return Err(wrong(CHAT_PREIMAGE_KEY_BYTES));
+	}
+	if key.len() != 32 {
+		return Err(wrong(32));
+	}
+	if nonce.len() != 24 {
+		return Err(wrong(24));
+	}
+	if digest.len() != 64 {
+		return Err(wrong(64));
+	}
+	let limit = CHAT_SEALED_ATTACHMENT_MAX_BYTES + CHAT_SEALED_TAG_BYTES;
+	if *size <= CHAT_SEALED_TAG_BYTES as u64 || *size > limit as u64 {
+		return Err(ChatFieldError::TooLong { field, limit });
+	}
+	Ok(resource)
 }
 
 /// A media type is matched against allowlists, so it is lower-cased and

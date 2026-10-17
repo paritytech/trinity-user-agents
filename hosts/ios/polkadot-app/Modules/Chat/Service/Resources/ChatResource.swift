@@ -1,13 +1,14 @@
 import CryptoKit
 import Foundation
 
-/// An image or a file that a product gives to a chat: inline bytes, a preimage key, or an address.
+/// An image or a file that a product gives to a chat: inline bytes, a preimage key, a sealed file, or an address.
 ///
 /// Chat Extension v1 gives an address as a string: an `https` URL or an inline `data:` image. The
 /// address case also carries the archive and gateway addresses of product widget images.
 enum ChatResource: Hashable, Sendable {
     case inline(mimeType: String, data: Data)
     case preimage(key: Data)
+    case sealed(ChatSealedResource)
     case address(URL)
 
     /// Reads a resource string: an inline image, an `https` URL, or a preimage key that a Chat Extension v2
@@ -20,6 +21,11 @@ enum ChatResource: Hashable, Sendable {
 
         if let key = Self.preimageKey(source: source) {
             self = .preimage(key: key)
+            return
+        }
+
+        if let sealed = Self.sealed(source: source) {
+            self = .sealed(sealed)
             return
         }
 
@@ -37,6 +43,26 @@ extension ChatResource {
     /// The source string of a preimage key: `preimage:` and the key in lowercase hex.
     static func preimageSource(key: Data) -> String {
         preimageScheme + key.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static let sealedScheme = "sealed:"
+
+    /// The source string of a sealed file: `sealed:` and its JSON in base64url. The string holds the key of the file,
+    /// so it stays on this device.
+    static func sealedSource(_ sealed: ChatSealedResource) -> String {
+        let json = (try? JSONEncoder().encode(sealed)) ?? Data()
+        return sealedScheme + json.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+    }
+
+    private static func sealed(source: String) -> ChatSealedResource? {
+        guard source.hasPrefix(sealedScheme) else { return nil }
+
+        let base64 = source.dropFirst(sealedScheme.count)
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        return Data(base64Encoded: base64).flatMap { try? JSONDecoder().decode(ChatSealedResource.self, from: $0) }
     }
 
     private static func preimageKey(source: String) -> Data? {

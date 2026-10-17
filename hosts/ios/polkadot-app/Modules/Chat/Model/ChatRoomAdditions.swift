@@ -27,6 +27,24 @@ extension Chat {
         /// The room is the thread of a message of another room. The chat list does not show a thread room.
         let threadOf: ThreadParent?
         let readAloud: Bool
+        /// A user attachment above the inline bound is sealed: the core encrypts it and stores the ciphertext.
+        let sealedAttachments: Bool
+
+        init(
+            preimageAttachments: Bool,
+            search: Bool,
+            calls: RoomCalls?,
+            threadOf: ThreadParent?,
+            readAloud: Bool,
+            sealedAttachments: Bool = false
+        ) {
+            self.preimageAttachments = preimageAttachments
+            self.search = search
+            self.calls = calls
+            self.threadOf = threadOf
+            self.readAloud = readAloud
+            self.sealedAttachments = sealedAttachments
+        }
 
         /// The features of a room that declares none.
         static let hostDefault = RoomFeatures(

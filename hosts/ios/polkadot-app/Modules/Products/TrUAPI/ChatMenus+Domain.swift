@@ -10,7 +10,8 @@ extension Chat.ProductMenuAction {
             switch action.icon {
             case let .inline(mimeType, bytes): .inline(mimeType: mimeType, data: bytes)
             case let .preimage(key): .preimage(key: key)
-            case nil: nil
+            case .sealed,
+                 nil: nil
             }
 
         self.init(

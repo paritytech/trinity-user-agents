@@ -1211,7 +1211,8 @@ pub fn handler_json(handler: &ChatActionHandler) -> Value {
 }
 
 /// The surface view of a resource. Inline bytes travel as a `data:` URL the
-/// page can draw; a preimage travels as its key, which the page shows.
+/// page can draw; a preimage travels as its key, which the page shows; a
+/// sealed resource travels as its parts, with no key.
 pub fn resource_json(resource: &ChatResource) -> Value {
 	match resource {
 		ChatResource::Inline { mime_type, bytes } => json!({
@@ -1223,6 +1224,12 @@ pub fn resource_json(resource: &ChatResource) -> Value {
 		ChatResource::Preimage { key } => json!({
 			"type": "Preimage",
 			"key": format!("0x{}", hex::encode(key)),
+		}),
+		// The page gets no key: it shows the size and the parts only.
+		ChatResource::Sealed { parts, size, .. } => json!({
+			"type": "Sealed",
+			"size": size,
+			"parts": parts.iter().map(|part| format!("0x{}", hex::encode(part))).collect::<Vec<_>>(),
 		}),
 	}
 }

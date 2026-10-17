@@ -51,7 +51,8 @@ extension ChatRoomMetadata {
         switch avatar {
         case let .inline(mimeType, bytes): Chat.ProductResource.inline(mimeType: mimeType, data: bytes).roomImage
         case let .preimage(key): .preimage(key: key)
-        case nil: nil
+        case .sealed,
+             nil: nil
         }
     }
 }
@@ -77,6 +78,8 @@ extension Chat.RoomBadge {
             self = .image(Chat.ProductResource.inline(mimeType: mimeType, data: bytes).roomImage)
         case let .image(.preimage(key)):
             self = .image(.preimage(key: key))
+        case .image(.sealed):
+            self = .none
         }
     }
 }
@@ -102,10 +105,12 @@ extension Chat.RoomToolbarAction {
 }
 
 extension ChatToolbarAction {
+    /// The core refuses a sealed icon, so an icon is inline bytes or a preimage key.
     var productIcon: Chat.ProductResource {
         switch icon {
         case let .inline(mimeType, bytes): .inline(mimeType: mimeType, data: bytes)
         case let .preimage(key): .preimage(key: key)
+        case .sealed: .inline(mimeType: "application/octet-stream", data: Data())
         }
     }
 }

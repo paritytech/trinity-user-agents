@@ -63,7 +63,9 @@ use authority::{AuthorityCancelError, AuthoritySession};
 pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
 pub use call_holds::{CHAT_RINGING_HOLD_MS, ChatCallHolds};
 pub use chat::{ChatEventChannel, ChatHandler, ChatRoomEventHub, chat_platform_for};
-pub use chat_staging::{ChatStageRejection, ChatStagingDeclarations};
+pub use chat_staging::{
+	CHAT_SEALED_AAD, ChatOpenRejection, ChatStageRejection, ChatStagingDeclarations,
+};
 pub use contacts::ContactResolutionError;
 pub use host_session::HostSession;
 

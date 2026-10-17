@@ -383,6 +383,13 @@ of a press of the user on something the host drew for it, such as a button of
 one of its rooms. The CLI host roles and dot.li have no sheet and answer
 `Unsupported`, so the battery and the playground's Diagnosis skip it.
 
+Chat rooms that declare `sealed_attachments` get a user attachment above the
+inline bound as `ChatResource::Sealed` (RFC "Chat Extension v2 additions",
+"Sealed attachments"): the core encrypts it with a new key and stores the
+ciphertext in Bulletin parts that the product's allowance pays for, up to
+32 MiB. The iOS app seals through `sealChatAttachment` and opens sealed media
+itself; the other hosts do not list the feature.
+
 `Usernames` (`usernames`) lets a product search the usernames of the network
 and ask the host to add a person to the contacts of the app (RFC "Host
 username directory"). The iOS app searches with its chat contact search and

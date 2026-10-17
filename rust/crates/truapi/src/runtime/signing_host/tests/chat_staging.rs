@@ -307,3 +307,55 @@ fn the_core_stages_for_the_declaration_it_accepted() {
 	.expect("deleted");
 	assert_eq!(stage(&later, "main", &bytes), Err(ChatStageRejection::NotDeclared));
 }
+
+/// A chat host whose room `room_id` declares only `sealed_attachments`.
+fn sealing_host(room_id: &str) -> Arc<FeatureHost> {
+	let host = FeatureHost::default();
+	host.features.lock().unwrap().insert(
+		room_id.to_string(),
+		latest::ChatRoomFeatures { sealed_attachments: true, ..Default::default() },
+	);
+	Arc::new(host)
+}
+
+// A sealed attachment goes to the Bulletin chain as encrypted parts, so the
+// chain never holds the bytes. Only a holder of the resource, which the
+// product sends through its own encrypted channel, reads them back.
+#[test]
+fn a_sealed_attachment_is_encrypted_parts_that_its_resource_opens() {
+	let (services, authority) = staging_host(StubPlatform::default(), &[]);
+	let runtime = connection(&services, &authority, Some(sealing_host("main")));
+	let bytes: Vec<u8> = (0..5 * 1024 * 1024).map(|index| (index % 251) as u8).collect();
+
+	let resource = block_on(runtime.seal_chat_attachment("main", bytes.clone()))
+		.expect("the room declares sealed attachments");
+
+	let latest::ChatResource::Sealed { parts, size, .. } = &resource else {
+		panic!("a sealed resource, got {resource:?}");
+	};
+	assert_eq!(parts.len(), 3);
+	assert_eq!(*size, bytes.len() as u64 + 16);
+	let reader = connection(&services, &authority, None);
+	let stored: Vec<u8> = parts
+		.iter()
+		.flat_map(|part| lookup(&reader, part).expect("the part is stored"))
+		.collect();
+	assert_eq!(stored.len() as u64, *size);
+	assert!(!stored.windows(64).any(|window| window == &bytes[..64]));
+	assert_eq!(block_on(reader.open_sealed_chat_resource(&resource)), Ok(bytes));
+}
+
+// A room states which kind it takes: a sealed room never stores an
+// attachment in plain form, and a plain room gets no sealed one.
+#[test]
+fn each_kind_of_attachment_needs_its_own_declaration() {
+	let (services, authority) = staging_host(StubPlatform::default(), &[]);
+	let sealed_room = connection(&services, &authority, Some(sealing_host("main")));
+	assert_eq!(stage(&sealed_room, "main", b"plain"), Err(ChatStageRejection::NotDeclared));
+
+	let plain_room = connection(&services, &authority, Some(FeatureHost::declaring("other", true)));
+	assert_eq!(
+		block_on(plain_room.seal_chat_attachment("other", b"secret".to_vec())),
+		Err(ChatStageRejection::NotDeclared)
+	);
+}

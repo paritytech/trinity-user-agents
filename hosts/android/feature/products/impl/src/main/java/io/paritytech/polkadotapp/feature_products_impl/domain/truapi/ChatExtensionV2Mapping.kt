@@ -87,6 +87,8 @@ fun ChatRoomPreview.toModel() = ChatRoomPreviewModel(
 fun ChatResource.toModel(): ChatResourceModel = when (this) {
     is ChatResource.Inline -> ChatResourceModel.Inline(mimeType, bytes.toDataByteArray())
     is ChatResource.Preimage -> ChatResourceModel.Preimage(key.toDataByteArray())
+    // This host lists no `sealed_attachments` and cannot open one, so it draws no bytes.
+    is ChatResource.Sealed -> ChatResourceModel.Inline("application/octet-stream", ByteArray(0).toDataByteArray())
 }
 
 /** Null for a v1 address, which no v2 value can carry. */

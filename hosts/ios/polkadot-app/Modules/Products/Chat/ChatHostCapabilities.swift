@@ -20,6 +20,9 @@ enum ChatHostCapabilities {
     /// A user attachment above the inline limit is staged as a preimage (P10.3).
     static let preimageAttachments = "preimage_attachments"
 
+    /// A user attachment above the inline limit is sealed: the core encrypts it and stores the ciphertext in parts.
+    static let sealedAttachments = "sealed_attachments"
+
     static let served: [String] = [
         "product_source_rooms",
         "reaction_details",
@@ -34,6 +37,7 @@ enum ChatHostCapabilities {
         "custom_footer",
         "inline_attachments",
         "room_links",
+        "sealed_attachments",
         "search",
         "bot_personas",
         "mute_archive",

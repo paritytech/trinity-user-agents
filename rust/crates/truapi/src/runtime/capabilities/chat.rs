@@ -44,13 +44,14 @@ use super::from_latest_error;
 use crate::{
 	platform::{
 		CHAT_INLINE_MEDIA_MAX_BYTES, CHAT_PERSONA_PREFIX, CHAT_PERSONAS_MAX,
-		CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES, ChatFieldError, ChatPlatform, ChatRateLimiter,
-		chat_persona_bot_id, known_chat_feature_names, normalize_chat_identifier,
-		validate_chat_activity, validate_chat_commands, validate_chat_feed_update,
-		validate_chat_icon, validate_chat_message_content, validate_chat_message_meta,
-		validate_chat_name, validate_chat_room_call, validate_chat_room_config,
-		validate_chat_room_features, validate_chat_room_footer, validate_chat_room_metadata,
-		validate_chat_room_preview, validate_chat_suggestions, validate_chat_toolbar,
+		CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES, CHAT_SEALED_ATTACHMENT_MAX_BYTES, ChatFieldError,
+		ChatPlatform, ChatRateLimiter, chat_persona_bot_id, known_chat_feature_names,
+		normalize_chat_identifier, validate_chat_activity, validate_chat_commands,
+		validate_chat_feed_update, validate_chat_icon, validate_chat_message_content,
+		validate_chat_message_meta, validate_chat_name, validate_chat_room_call,
+		validate_chat_room_config, validate_chat_room_features, validate_chat_room_footer,
+		validate_chat_room_metadata, validate_chat_room_preview, validate_chat_suggestions,
+		validate_chat_toolbar,
 	},
 	runtime::{ChatHandler, ProductRuntimeHost, renderer_access_for},
 	unix_time::current_unix_millis,
@@ -694,11 +695,17 @@ impl ProductRuntimeHost {
 			.map(str::to_string)
 			.collect();
 		let stages = features.iter().any(|name| name == "preimage_attachments");
+		let seals = features.iter().any(|name| name == "sealed_attachments");
 		Ok(latest::HostChatCapabilitiesResponse {
 			features,
 			inline_attachment_max_bytes: CHAT_INLINE_MEDIA_MAX_BYTES as u32,
 			preimage_attachment_max_bytes: if stages {
 				CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES as u32
+			} else {
+				0
+			},
+			sealed_attachment_max_bytes: if seals {
+				CHAT_SEALED_ATTACHMENT_MAX_BYTES as u32
 			} else {
 				0
 			},
@@ -1707,6 +1714,7 @@ mod tests {
 			"room_calls",
 			"payment_button",
 			"preimage_attachments",
+			"sealed_attachments",
 			"custom_footer",
 			"a_name_from_a_later_rfc",
 			"search",
@@ -1718,11 +1726,18 @@ mod tests {
 		assert_eq!(
 			capabilities(&runtime),
 			latest::HostChatCapabilitiesResponse {
-				features: ["custom_footer", "preimage_attachments", "search", "call_buttons"]
-					.map(str::to_string)
-					.to_vec(),
+				features: [
+					"custom_footer",
+					"preimage_attachments",
+					"sealed_attachments",
+					"search",
+					"call_buttons"
+				]
+				.map(str::to_string)
+				.to_vec(),
 				inline_attachment_max_bytes: 1024 * 1024,
 				preimage_attachment_max_bytes: 8 * 1024 * 1024,
+				sealed_attachment_max_bytes: 32 * 1024 * 1024,
 			}
 		);
 	}

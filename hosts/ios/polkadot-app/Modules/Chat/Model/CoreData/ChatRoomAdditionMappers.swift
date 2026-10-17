@@ -114,6 +114,7 @@ extension Chat.RoomFeatures: ScaleCodable {
         calls = try ScaleOption<Chat.RoomCalls>(scaleDecoder: scaleDecoder).value
         threadOf = try ScaleOption<Chat.ThreadParent>(scaleDecoder: scaleDecoder).value
         readAloud = try Bool(scaleDecoder: scaleDecoder)
+        sealedAttachments = scaleDecoder.remained > 0 ? try Bool(scaleDecoder: scaleDecoder) : false
     }
 
     func encode(scaleEncoder: any ScaleEncoding) throws {
@@ -122,6 +123,7 @@ extension Chat.RoomFeatures: ScaleCodable {
         try ScaleOption(value: calls).encode(scaleEncoder: scaleEncoder)
         try ScaleOption(value: threadOf).encode(scaleEncoder: scaleEncoder)
         try readAloud.encode(scaleEncoder: scaleEncoder)
+        try sealedAttachments.encode(scaleEncoder: scaleEncoder)
     }
 }
 

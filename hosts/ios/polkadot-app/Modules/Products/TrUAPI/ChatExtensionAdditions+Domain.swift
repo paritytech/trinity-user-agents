@@ -11,7 +11,8 @@ extension Chat.RoomFeatures {
             search: features.search,
             calls: features.calls.map { Chat.RoomCalls(audio: $0.audio, video: $0.video) },
             threadOf: features.threadOf.map { Chat.ThreadParent(roomId: $0.roomId, messageId: $0.messageId) },
-            readAloud: features.readAloud
+            readAloud: features.readAloud,
+            sealedAttachments: features.sealedAttachments
         )
     }
 
@@ -21,7 +22,8 @@ extension Chat.RoomFeatures {
             search: search,
             calls: calls.map { ChatRoomCalls(audio: $0.audio, video: $0.video) },
             threadOf: threadOf.map { ChatThreadParent(roomId: $0.roomId, messageId: $0.messageId) },
-            readAloud: readAloud
+            readAloud: readAloud,
+            sealedAttachments: sealedAttachments
         )
     }
 }

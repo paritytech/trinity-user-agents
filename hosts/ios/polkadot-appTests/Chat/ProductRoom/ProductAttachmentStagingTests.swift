@@ -73,6 +73,40 @@ struct ProductAttachmentStagingTests {
 
     // MARK: - Stager
 
+    /// A room that seals gets the sealed file, never a preimage of the plain bytes. A retry after a failed delivery
+    /// sends the same sealed file again and does not seal again.
+    @Test func theStagerSealsAndSendsTheSealedFile() async throws {
+        let harness = try StagerHarness()
+        harness.delivery.answer = .failure(.notDelivered(reason: "the product does not run"))
+        let size = 3 * Self.mebibyte
+
+        let entry = try await harness.stager.send(
+            ProductAttachment(kind: .video, mimeType: "video/mp4", data: Foundation.Data(count: size)),
+            productId: "verbosity.dot",
+            roomId: "dm-7",
+            store: .product,
+            seals: true
+        )
+        await harness.stager.waitUntilIdle(entry.id)
+        harness.delivery.answer = .success(nil)
+        #expect(await harness.stager.retry(entry.id))
+        await harness.stager.waitUntilIdle(entry.id)
+
+        let sealed = RecordingStaging.sealed(size: size)
+        #expect(harness.staging.calls == [
+            StagingCall(productId: "verbosity.dot", roomId: "dm-7", mimeType: "sealed", size: size)
+        ])
+        #expect(harness.delivery.delivered.count == 2)
+        guard case let .richText(nil, media)? = harness.delivery.delivered.last,
+              case let .video(resource, meta)? = media.first else {
+            Issue.record("the product receives the video")
+            return
+        }
+        #expect(ChatSealedResource(resource) == sealed)
+        #expect(meta.sizeBytes == UInt64(size))
+        #expect(harness.outbox.entries().isEmpty)
+    }
+
     /// S57: the core stages the bytes, and the product receives the preimage key with the facts of the media.
     @Test func theStagerStagesAndSendsTheMessageWithThePreimageKey() async throws {
         let harness = try StagerHarness()

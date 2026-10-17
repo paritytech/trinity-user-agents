@@ -941,10 +941,10 @@ pub use runtime::{
 };
 #[cfg(feature = "runtime")]
 pub use runtime::{
-	CHAT_NOTIFICATION_WAKES_PER_HOUR, CHAT_RINGING_HOLD_MS, CHAT_WAKE_HOLD_MS, ChatStageRejection,
-	ChatWakeOutcome, ChatWakeReason, PushWakeDelivery, PushWakeOutcome, PushWakeRejection,
-	WAKE_PUSH_PAYLOAD_KEY, WakePush, WakeRelay, WakeRelayRegistration, statement_hash,
-	wake_push_mac,
+	CHAT_NOTIFICATION_WAKES_PER_HOUR, CHAT_RINGING_HOLD_MS, CHAT_SEALED_AAD, CHAT_WAKE_HOLD_MS,
+	ChatOpenRejection, ChatStageRejection, ChatWakeOutcome, ChatWakeReason, PushWakeDelivery,
+	PushWakeOutcome, PushWakeRejection, WAKE_PUSH_PAYLOAD_KEY, WakePush, WakeRelay,
+	WakeRelayRegistration, statement_hash, wake_push_mac,
 };
 
 #[cfg(feature = "runtime")]

@@ -26,17 +26,21 @@ final class ChatResourceResolver: ChatResourceResolving, @unchecked Sendable {
 
     private let preimages: TrUAPIPreimageLookuping
     private let cache: ChatResourceCaching
+    /// The opened sealed files. They outlive the two weeks that the Bulletin chain keeps the ciphertext (O31).
+    private let sealedFiles: ChatResourceCaching
     private let fetch: Fetch
     private let images = NSCache<NSString, UIImage>()
 
     init(
         preimages: TrUAPIPreimageLookuping,
         cache: ChatResourceCaching,
+        sealedFiles: ChatResourceCaching? = nil,
         fetch: @escaping Fetch = ChatResourceResolver.fetchOverNetwork,
         imageCountLimit: Int = 200
     ) {
         self.preimages = preimages
         self.cache = cache
+        self.sealedFiles = sealedFiles ?? cache
         self.fetch = fetch
         images.countLimit = imageCountLimit
         images.totalCostLimit = Self.decodedBytesLimit
@@ -51,6 +55,8 @@ final class ChatResourceResolver: ChatResourceResolving, @unchecked Sendable {
         case .preimage,
              .address:
             await cachedData(for: resource)
+        case let .sealed(sealed):
+            await sealedData(sealed)
         }
     }
 
@@ -73,7 +79,11 @@ extension ChatResourceResolver {
     /// Keeps bytes that the app has already, for example an attachment that the user staged (P10.3). Then the
     /// first draw of the resource needs no fetch.
     func store(_ data: Data, for resource: ChatResource) async {
-        await cache.store(data, for: resource.cacheKey)
+        if case .sealed = resource {
+            await sealedFiles.store(data, for: resource.cacheKey)
+        } else {
+            await cache.store(data, for: resource.cacheKey)
+        }
     }
 }
 
@@ -82,6 +92,7 @@ extension ChatResourceResolver: ChatResourceEvicting {
         for resource in resources {
             images.removeObject(forKey: resource.cacheKey as NSString)
             await cache.remove(for: resource.cacheKey)
+            await sealedFiles.remove(for: resource.cacheKey)
         }
     }
 }
@@ -95,8 +106,22 @@ extension ChatResourceResolver {
         cache: ChatResourceDiskCache(
             directory: URL.cachesDirectory.appending(path: "ChatResources", directoryHint: .isDirectory),
             maxBytes: 64 * 1_024 * 1_024
+        ),
+        sealedFiles: ChatResourceDiskCache(
+            directory: sealedFilesDirectory,
+            maxBytes: 512 * 1_024 * 1_024
         )
     )
+
+    /// The opened sealed files: in Application Support, which the system does not purge, and out of backups.
+    static let sealedFilesDirectory: URL = {
+        var directory = URL.applicationSupportDirectory.appending(path: "ChatSealedFiles", directoryHint: .isDirectory)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? directory.setResourceValues(values)
+        return directory
+    }()
 
     /// The memory that the decoded pictures of the cache can take: 64 MiB.
     static let decodedBytesLimit = 64 * 1_024 * 1_024
@@ -154,6 +179,19 @@ extension ChatResourceResolver {
 }
 
 private extension ChatResourceResolver {
+    func sealedData(_ sealed: ChatSealedResource) async -> Data? {
+        let key = ChatResource.sealed(sealed).cacheKey
+        if let data = await sealedFiles.data(for: key) {
+            return data
+        }
+
+        let opened = await sealed.read { [preimages] part in await preimages.lookup(key: part) }
+        if let opened {
+            await sealedFiles.store(opened, for: key)
+        }
+        return opened
+    }
+
     func cachedData(for resource: ChatResource) async -> Data? {
         let key = resource.cacheKey
         if let data = await cache.data(for: key) {
@@ -168,6 +206,8 @@ private extension ChatResourceResolver {
                 try? await fetch(url)
             case let .inline(_, data):
                 data
+            case let .sealed(sealed):
+                await sealed.read { [preimages] part in await preimages.lookup(key: part) }
             }
 
         if let fetched {
@@ -184,6 +224,8 @@ private extension ChatResource {
             "inline:\(mimeType):\(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined())"
         case let .preimage(key):
             "preimage:\(key.base64EncodedString())"
+        case let .sealed(sealed):
+            "sealed:\(sealed.digest.base64EncodedString())"
         case let .address(url):
             "address:\(url.absoluteString)"
         }

@@ -878,7 +878,8 @@ fn inline_icon_url(avatar: &truapi::latest::ChatResource) -> Option<String> {
 		truapi::latest::ChatResource::Inline { mime_type, bytes } => {
 			Some(format!("data:{mime_type};base64,{}", BASE64.encode(bytes)))
 		},
-		truapi::latest::ChatResource::Preimage { .. } => None,
+		truapi::latest::ChatResource::Preimage { .. } |
+		truapi::latest::ChatResource::Sealed { .. } => None,
 	}
 }
 

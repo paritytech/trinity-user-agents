@@ -347,6 +347,24 @@ pub enum ChatResource {
 		/// The key `Preimage::lookup_subscribe` takes.
 		key: Vec<u8>,
 	},
+	/// Bytes that a host encrypted and stored on the Bulletin chain in parts
+	/// (`sealed_attachments`). The ciphertext is XChaCha20-Poly1305 of the
+	/// bytes under `key` and `nonce`, with the associated data
+	/// `truapi/chat/sealed/v1`, cut into `parts` in order. Only a holder of
+	/// the key reads the bytes, so a product sends the resource only through
+	/// an encrypted channel.
+	Sealed {
+		/// The preimage key of each part, in order.
+		parts: Vec<Vec<u8>>,
+		/// The 32-byte key of the encryption.
+		key: Vec<u8>,
+		/// The 24-byte nonce of the encryption.
+		nonce: Vec<u8>,
+		/// The length of the ciphertext, in bytes.
+		size: u64,
+		/// SHA-512 of the ciphertext.
+		digest: Vec<u8>,
+	},
 }
 
 /// What a timeline needs to draw a media item before its bytes arrive.
@@ -1317,6 +1335,9 @@ pub struct HostChatCapabilitiesResponse {
 	/// Largest attachment the host stores as a preimage, in bytes. `0` when
 	/// the host does not serve `preimage_attachments`.
 	pub preimage_attachment_max_bytes: u32,
+	/// Largest attachment the host seals, in bytes. `0` when the host does
+	/// not serve `sealed_attachments`.
+	pub sealed_attachment_max_bytes: u32,
 }
 
 /// The call buttons in the header of a room.
@@ -1356,6 +1377,11 @@ pub struct ChatRoomFeatures {
 	pub thread_of: Option<ChatThreadParent>,
 	/// The host offers "Read aloud" on text messages.
 	pub read_aloud: bool,
+	/// The host encrypts a user attachment above the inline bound, stores the
+	/// ciphertext on the Bulletin chain in parts that the allowance of the
+	/// product pays for, and gives the product a `ChatResource::Sealed`.
+	/// The host never stores such an attachment in plain form.
+	pub sealed_attachments: bool,
 }
 
 /// Request to declare the optional features of a room.

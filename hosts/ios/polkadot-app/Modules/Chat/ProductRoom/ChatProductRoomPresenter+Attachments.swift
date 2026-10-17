@@ -43,23 +43,36 @@ extension ChatProductRoomPresenter {
         policy?.features.preimageAttachments == true && staging.hostListsFeature
     }
 
+    /// True when the room seals an attachment above the inline limit (`sealed_attachments`). Sealing goes before
+    /// staging: the bytes never go to the chain in plain form.
+    var sealsAttachments: Bool {
+        policy?.features.sealedAttachments == true && staging.hostListsSealing
+    }
+
+    /// The largest video that goes as it is. A larger one is exported at 640x480 first. Nil in a room that stages
+    /// in plain form, which refuses a video above its limit.
+    private var videoLimit: Int? {
+        if sealsAttachments { return ProductAttachmentStagingPolicy.sealedMaxBytes }
+        return stagesAttachments ? nil : ProductAttachmentEncoder.inlineLimit
+    }
+
     /// Makes the attachment inline, or stages it, and sends it as a message of the user. In a room that the host
     /// stores, the product receives `MessagePosted`. In a room that the product keeps, it receives `NewMessage`.
     ///
     /// In a room that does not stage attachments, a video above the inline limit is exported at 640x480 first
     /// (``ProductVideoCompressor``). A video that is still too large is refused with its size.
     func sendAttachment(_ picked: PickedAttachment) {
-        if case let .video(data, _) = picked, !stagesAttachments, data.count > ProductAttachmentEncoder.inlineLimit {
-            compressAndSend(data)
+        if case let .video(data, _) = picked, let videoLimit, data.count > videoLimit {
+            compressAndSend(data, limit: videoLimit)
             return
         }
 
+        let policy = sealsAttachments
+            ? ProductAttachmentStagingPolicy(allowed: true, maxBytes: ProductAttachmentStagingPolicy.sealedMaxBytes)
+            : ProductAttachmentStagingPolicy(allowed: stagesAttachments, maxBytes: staging.limit)
         let route: ProductAttachmentRoute
         do {
-            route = try ProductAttachmentEncoder.route(
-                picked,
-                staging: ProductAttachmentStagingPolicy(allowed: stagesAttachments, maxBytes: staging.limit)
-            )
+            route = try ProductAttachmentEncoder.route(picked, staging: policy)
         } catch let ProductAttachmentError.tooLarge(bytes) {
             logger.debug("Attachment of \(bytes) bytes refused in room \(roomId)")
             mark("failure", "attachment too large \(bytes)")
@@ -78,21 +91,20 @@ extension ChatProductRoomPresenter {
         switch route {
         case let .inline(attachment):
             sendInline(attachment)
+        case let .staged(attachment) where sealsAttachments:
+            stage(attachment, seals: true)
         case let .staged(attachment):
             confirmPublicStorage { [weak self] in
-                self?.stage(attachment)
+                self?.stage(attachment, seals: false)
             }
         }
     }
 
-    private func compressAndSend(_ data: Data) {
+    private func compressAndSend(_ data: Data, limit: Int) {
         mark("video", "compress \(data.count)")
         Task { [weak self] in
             do {
-                let smaller = try await ProductVideoCompressor.compress(
-                    data,
-                    limit: ProductAttachmentEncoder.inlineLimit
-                )
+                let smaller = try await ProductVideoCompressor.compress(data, limit: limit)
                 self?.mark("video", "compressed \(data.count) to \(smaller.count)")
                 self?.sendAttachment(.video(smaller, mimeType: "video/mp4"))
             } catch let ProductVideoCompressor.Failure.tooLarge(bytes, limit) {
@@ -139,7 +151,7 @@ extension ChatProductRoomPresenter {
         }
     }
 
-    private func stage(_ attachment: ProductAttachment) {
+    private func stage(_ attachment: ProductAttachment, seals: Bool) {
         let store: ProductOutboxEntry.Store = policy?.messageStore == .product ? .product : .host
         Task { [weak self, staging, roomId, appearanceFactory] in
             do {
@@ -147,7 +159,8 @@ extension ChatProductRoomPresenter {
                     attachment,
                     productId: appearanceFactory.productId,
                     roomId: roomId,
-                    store: store
+                    store: store,
+                    seals: seals
                 )
             } catch {
                 self?.logger.error("Attachment of room \(roomId) not put in the outbox: \(error)")
@@ -231,6 +244,8 @@ final class ProductRoomStaging {
     let notice: ProductStagingNotice
     /// The host lists `preimage_attachments` in its capabilities.
     let hostListsFeature: Bool
+    /// The host lists `sealed_attachments` in its capabilities.
+    let hostListsSealing: Bool
     /// The largest attachment that the room stages. It goes down to the Bulletin bound when the core gives one.
     var limit = ProductAttachmentStagingPolicy.coreMaxBytes
     /// Counts for the markers of the E2E harness, so that each marker has a new value.
@@ -241,11 +256,13 @@ final class ProductRoomStaging {
     init(
         stager: ProductAttachmentStager = .shared,
         notice: ProductStagingNotice = ProductStagingNotice(),
-        hostListsFeature: Bool = ProductRoomStaging.hostListsStaging
+        hostListsFeature: Bool = ProductRoomStaging.hostListsStaging,
+        hostListsSealing: Bool = ChatHostCapabilities.serves(ChatHostCapabilities.sealedAttachments)
     ) {
         self.stager = stager
         self.notice = notice
         self.hostListsFeature = hostListsFeature
+        self.hostListsSealing = hostListsSealing
     }
 
     deinit {

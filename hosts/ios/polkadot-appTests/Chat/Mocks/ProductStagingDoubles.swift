@@ -60,6 +60,26 @@ final class RecordingStaging: ProductAttachmentStaging, @unchecked Sendable {
         return key
     }
 
+    /// Seals as the core does: the parts and the key are fixed, so that a test can name them.
+    func seal(productId: String, roomId: String, bytes: Foundation.Data) async throws -> ChatSealedResource {
+        let failure: ProductStageFailure? = lock.withLock {
+            recorded.append(StagingCall(productId: productId, roomId: roomId, mimeType: "sealed", size: bytes.count))
+            return failures.isEmpty ? nil : failures.removeFirst()
+        }
+        if let failure { throw failure }
+        return Self.sealed(size: bytes.count)
+    }
+
+    static func sealed(size: Int) -> ChatSealedResource {
+        ChatSealedResource(
+            parts: [Foundation.Data(repeating: 1, count: 32), Foundation.Data(repeating: 2, count: 32)],
+            key: Foundation.Data(repeating: 3, count: 32),
+            nonce: Foundation.Data(repeating: 4, count: 24),
+            size: UInt64(size + 16),
+            digest: Foundation.Data(repeating: 5, count: 64)
+        )
+    }
+
     func holdWorker(productId: String) {
         lock.withLock { recordedHolds.append("hold \(productId)") }
     }

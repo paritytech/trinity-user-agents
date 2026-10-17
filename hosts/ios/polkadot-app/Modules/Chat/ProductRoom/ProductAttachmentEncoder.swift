@@ -59,6 +59,9 @@ struct ProductAttachmentStagingPolicy: Equatable {
     /// attachment.
     static let coreMaxBytes = 8 * 1_048_576
 
+    /// The largest attachment that the core seals (`CHAT_SEALED_ATTACHMENT_MAX_BYTES`, 32 MiB).
+    static let sealedMaxBytes = 32 * 1_048_576
+
     /// A room that keeps the inline limit.
     static let inlineOnly = ProductAttachmentStagingPolicy(allowed: false, maxBytes: 0)
 }

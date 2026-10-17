@@ -43,6 +43,11 @@ struct ProductOutboxEntry: Codable, Equatable, Sendable {
     /// stage again.
     var key: Data?
     var state: State
+    /// True when the core seals the bytes (`sealed_attachments`) instead of staging them in plain form.
+    var seals: Bool? = nil
+    /// The sealed file, after the core sealed the bytes. A retry then sends the message again and does not seal
+    /// again.
+    var sealed: ChatSealedResource? = nil
 
     var chatId: Chat.Id {
         .chatExtension(productId, roomId: roomId)

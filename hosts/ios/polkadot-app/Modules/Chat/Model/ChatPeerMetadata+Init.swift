@@ -46,6 +46,7 @@ private extension Chat.RoomMetadata {
         case let .inline(_, data): return .image(data)
         case .address: return .resource(icon)
         case .preimage,
+             .sealed,
              nil: return nil
         }
     }

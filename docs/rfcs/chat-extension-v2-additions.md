@@ -150,6 +150,9 @@ pub struct HostChatCapabilitiesResponse {
     /// Largest attachment the host stores as a preimage; 0 when the host
     /// does not list `preimage_attachments`.
     pub preimage_attachment_max_bytes: u32,
+    /// Largest attachment the host seals; 0 when the host does not list
+    /// `sealed_attachments`.
+    pub sealed_attachment_max_bytes: u32,
 }
 // Error: `HostChatCapabilitiesError { V1 => GenericError }`.
 
@@ -173,6 +176,9 @@ pub struct ChatRoomFeatures {
     pub thread_of: Option<ChatThreadParent>,
     /// The host offers "Read aloud" on text messages.
     pub read_aloud: bool,
+    /// A user attachment above the inline bound is sealed: encrypted by the
+    /// core and stored in parts paid from the product's Bulletin allowance.
+    pub sealed_attachments: bool,
 }
 pub struct HostChatSetRoomFeaturesRequest { pub room_id: String, pub features: ChatRoomFeatures }
 
@@ -282,6 +288,7 @@ end to end on that build.
 | `payment_button`                                              | `ChatInputPayment` drawn and wired                                                                        |
 | `room_links`                                                  | `polkadot://<product>.<tld>/-/chat/<room>` opens the room                                                 |
 | `preimage_attachments`                                        | User attachments above the inline bound stored as preimages ([Preimage attachments](#preimage-attachments)) |
+| `sealed_attachments`                                          | User attachments above the inline bound sealed and stored in parts ([Sealed attachments](#sealed-attachments)) |
 | `search`                                                      | In-room search, and `search_query` for product-source rooms ([Search](#search))                           |
 | `bot_personas`                                                | Personas drawn for `bot:<bot_id>` participants ([Bots](#bots))                                            |
 | `mute_archive`                                                | The user's mute and archive of product rooms ([Mute and archive](#mute-and-archive))                      |
@@ -293,8 +300,8 @@ end to end on that build.
 
 The core answers the host's list minus what it cannot back: `custom_bodies` and `custom_footer` without a `Renderer`
 host, `room_calls` while the runtime serves no Media service, and `payment_button` until the footer payment path
-exists. It drops names it does not know. The two bounds are core constants: 1 MiB inline, and 8 MiB for a preimage, or
-0 when `preimage_attachments` is not listed. The Bulletin chain's own per-transaction bound can be lower; staging
+exists. It drops names it does not know. The bounds are core constants: 1 MiB inline, 8 MiB for a preimage, or 0 when
+`preimage_attachments` is not listed, and 32 MiB for a sealed attachment, or 0 when `sealed_attachments` is not listed. The Bulletin chain's own per-transaction bound can be lower; staging
 reports it.
 
 A product that wants a feature reads `capabilities` first and falls back when the name is missing. On a host that
@@ -416,8 +423,39 @@ worker need not run.
 - The product receives a preimage item and fetches its bytes with `Preimage::lookup_subscribe` when it needs them.
 - Without the flag, the host keeps the 1 MiB inline rule. A host can make an attachment above the bound smaller
   before it refuses it: the iOS host encodes a photo again as JPEG and scales it down, and exports a video at 640x480.
-  A product that encrypts its files keeps the flag off, takes the inline item, and stores the ciphertext itself with
-  `Preimage::submit`, as the verbosity chat does.
+  A product that encrypts its files declares `sealed_attachments` instead ([Sealed attachments](#sealed-attachments)).
+
+### Sealed attachments
+
+A room that declares `sealed_attachments` lets the user send an attachment above the inline bound that the Bulletin
+chain never holds in plain form. The host seals it through a runtime call of the core, and sends the message with a new
+resource:
+
+```rust
+pub enum ChatResource {
+    Inline { mime_type: String, bytes: Vec<u8> },
+    Preimage { key: Vec<u8> },
+    /// XChaCha20-Poly1305 of the bytes under `key` and `nonce`, with the
+    /// associated data `truapi/chat/sealed/v1`, cut into `parts` in order.
+    Sealed { parts: Vec<Vec<u8>>, key: Vec<u8>, nonce: Vec<u8>, size: u64, digest: Vec<u8> },
+}
+```
+
+- **Sealing.** The core makes a new 32-byte key and 24-byte nonce for each attachment, encrypts the bytes, cuts the
+  ciphertext into parts of at most one Bulletin transaction (the `MaxTransactionSize` it reads at runtime), and
+  submits each part from the product's Bulletin allowance under `PreimageSubmit`, as for a preimage attachment.
+  `size` is the length of the ciphertext and `digest` its SHA-512. At most 32 MiB and 64 parts.
+- **Who reads it.** The resource holds the key, so a product sends it only through its own encrypted channel; the
+  verbosity chat puts the parts and the key in the file description of its end-to-end encrypted message. A host that
+  draws a `Sealed` item reads the parts with its preimage lookup, checks each part against its key and the
+  ciphertext against `size` and `digest`, and decrypts. The core offers the same opening for hosts that draw through it.
+  A host keeps an opened file, so that it outlives the two weeks that the chain keeps the parts.
+- **No notice.** The chain holds only ciphertext, so the host shows no public-storage notice.
+- **The declaration.** As for preimage attachments: the core reads the flag from the last `set_room_features` it
+  accepted, else from the features the host keeps. A room that declares both kinds gets sealed attachments.
+- **Images and icons.** A `Sealed` resource is a media item only. The core refuses it as an avatar, an icon or a badge.
+- **Hosts.** The iOS app seals and opens. Android, the web hosts and the CLI host roles do not list the feature, and a
+  product keeps the 1 MiB inline rule there.
 
 ### Search
 

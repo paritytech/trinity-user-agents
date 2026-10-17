@@ -52,6 +52,8 @@ enum ProductStageFailure: Error, Equatable, Sendable {
 protocol ProductAttachmentStaging: Sendable {
     /// Stages the bytes and gives the preimage key. Throws ``ProductStageFailure``.
     func stage(productId: String, roomId: String, mimeType: String, bytes: Data) async throws -> Data
+    /// Seals the bytes and gives the sealed file. Throws ``ProductStageFailure``.
+    func seal(productId: String, roomId: String, bytes: Data) async throws -> ChatSealedResource
     /// Keeps the worker of the product while the host stages and sends, also after the room screen closes. Returns
     /// when the worker runs, or after a bound. The core reads the declaration of the room through the open execution
     /// (D36), so a stage before the worker runs can fail with `NotDeclared`.
@@ -91,7 +93,7 @@ actor ProductAttachmentStager {
     private let staging: ProductAttachmentStaging
     private let delivery: ProductOutboxDelivering
     private let media: ProductStagedMediaRegistry
-    private let primeResolver: @Sendable (Data, Data) async -> Void
+    private let primeResolver: @Sendable (ChatResource, Data) async -> Void
     private let now: @Sendable () -> UInt64
     private let logger: LoggerProtocol
 
@@ -107,7 +109,7 @@ actor ProductAttachmentStager {
         staging: ProductAttachmentStaging,
         delivery: ProductOutboxDelivering,
         media: ProductStagedMediaRegistry = .shared,
-        primeResolver: @escaping @Sendable (Data, Data) async -> Void = { _, _ in },
+        primeResolver: @escaping @Sendable (ChatResource, Data) async -> Void = { _, _ in },
         now: @escaping @Sendable () -> UInt64 = { Date().toChatTimestamp() },
         logger: LoggerProtocol = Logger.shared
     ) {
@@ -170,13 +172,15 @@ actor ProductAttachmentStager {
 
     // MARK: - Actions
 
-    /// Puts the attachment in the outbox and starts to stage it. Gives the entry, whose id is the id of the message.
+    /// Puts the attachment in the outbox and starts to stage it, or to seal it when `seals` is true. Gives the entry,
+    /// whose id is the id of the message.
     @discardableResult
     func send(
         _ attachment: ProductAttachment,
         productId: String,
         roomId: String,
-        store: ProductOutboxEntry.Store
+        store: ProductOutboxEntry.Store,
+        seals: Bool = false
     ) throws -> ProductOutboxEntry {
         let facts = ProductStagedMediaFacts(mimeType: attachment.mimeType, data: attachment.data)
         let prefix = store == .product ? ProductMessageSource.localIdPrefix : ""
@@ -193,7 +197,8 @@ actor ProductAttachmentStager {
             placeholder: facts.blurHash,
             createdAt: now(),
             key: nil,
-            state: .sending
+            state: .sending,
+            seals: seals
         )
         try outbox.save(entry, bytes: attachment.data)
         start(entry.id)
@@ -278,12 +283,12 @@ private extension ProductAttachmentStager {
         defer { staging.releaseWorker(productId: entry.productId) }
 
         do {
-            let key = try await stagedKey(of: &entry, bytes: bytes)
+            let resource = try await stagedResource(of: &entry, bytes: bytes)
             // The user can delete the entry while the core stages it.
             guard outbox.entry(id) != nil, !Task.isCancelled else {
                 return
             }
-            let body = ProductOutboxPreview.sentBody(of: entry, key: key)
+            let body = ProductOutboxPreview.sentBody(of: entry, resource: resource)
             let created = try await delivery.deliver(entry, body: body)
             outbox.remove(id)
             logger.debug("[staging] \(entry.roomId) delivered \(entry.id)")
@@ -291,6 +296,29 @@ private extension ProductAttachmentStager {
         } catch {
             await fail(entry, error: error)
         }
+    }
+
+    func stagedResource(of entry: inout ProductOutboxEntry, bytes: Data) async throws -> TrUAPIChatResource {
+        guard entry.seals == true else {
+            return try await .preimage(key: stagedKey(of: &entry, bytes: bytes))
+        }
+        if let sealed = entry.sealed {
+            return sealed.wireResource
+        }
+
+        let started = ContinuousClock.now
+        let sealed = try await staging.seal(productId: entry.productId, roomId: entry.roomId, bytes: bytes)
+        let elapsed = started.duration(to: .now)
+        logger
+            .debug(
+                "[staging] \(entry.roomId) sealed \(entry.sizeBytes) B in \(sealed.parts.count) parts in \(elapsed.milliseconds) ms"
+            )
+
+        entry.sealed = sealed
+        try? outbox.update(entry)
+        media.register(key: sealed.digest, meta: ProductStagedMedia(entry))
+        await primeResolver(.sealed(sealed), bytes)
+        return sealed.wireResource
     }
 
     func stagedKey(of entry: inout ProductOutboxEntry, bytes: Data) async throws -> Data {
@@ -311,7 +339,7 @@ private extension ProductAttachmentStager {
         entry.key = key
         try? outbox.update(entry)
         media.register(key: key, meta: ProductStagedMedia(entry))
-        await primeResolver(key, bytes)
+        await primeResolver(.preimage(key: key), bytes)
         return key
     }
 
