@@ -24,19 +24,15 @@ lane :test_build do |options|
     output_types: "junit,html",
     output_files: "report.junit,report.html",
     result_bundle: true,
+    buildlog_path: "./fastlane/build_logs/",
+    include_simulator_logs: true,
     disable_concurrent_testing: true
   }
 
-  # DEBUG MODE: Helps diagnose build failures (Crashlytics, dependencies, etc.)
-  # Enables: verbose logs, saves build artifacts, continues on failure
-  # Use when: normal builds fail with unclear errors
+  # Raw console output is optional; result bundles and logs are always retained.
   if debug_mode
-    UI.important "🔍 Debug mode enabled - verbose logging and artifacts will be collected"
-    scan_params.merge!({
-      buildlog_path: "./fastlane/build_logs/",  # Saves xcodebuild logs for analysis
-      xcpretty_args: "--verbose",               # Shows full xcodebuild output
-      fail_build: false                          # Continues to collect maximum info even on failure
-    })
+    UI.important "Debug mode enabled - showing raw xcodebuild output"
+    scan_params[:xcodebuild_formatter] = ""
   end
 
   scan(scan_params)

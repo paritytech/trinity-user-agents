@@ -22,6 +22,18 @@ struct TrUAPIReviewPromptMapperTests {
     }
 
     @Test
+    func mapsChatAuthorityToDedicatedPermission() {
+        let request = mapper.makePermissionRequest(
+            from: ChatAuthorityReview(productId: "chat.dot")
+        )
+
+        #expect(request == TrUAPIPermissionRequest(
+            productId: "chat.dot",
+            permissions: [.chatAuthority]
+        ))
+    }
+
+    @Test
     func mapsPreimageSubmitToActionWithRequesterAndSize() {
         let request = mapper.makeActionRequest(
             from: PreimageSubmitReview(size: 1_024),
@@ -106,7 +118,8 @@ struct TrUAPIReviewPromptMapperTests {
                 .statementStoreAllowance,
                 .bulletinAllowance,
                 .smartContractAllowance(.index(4)),
-                .autoSigning
+                .autoSigning,
+                .productStatementStoreAllowance(.index(7))
             ]
         ))
 
@@ -116,7 +129,8 @@ struct TrUAPIReviewPromptMapperTests {
                 .statementStoreAllowance,
                 .bulletInAllowance,
                 .smartContractAllowance(dest: .index(4)),
-                .autoSigning
+                .autoSigning,
+                .productStatementStoreAllowance(dest: .index(7))
             ]
         ))
     }

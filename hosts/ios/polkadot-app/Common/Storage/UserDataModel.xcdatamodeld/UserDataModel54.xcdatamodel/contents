@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="24901" systemVersion="25F71" minimumToolsVersion="Automatic" sourceLanguage="Swift" usedWithSwiftData="YES" userDefinedModelVersionIdentifier="">
+
     <entity name="CDAllowanceRecord" representedClassName="CDAllowanceRecord" syncable="YES" codeGenerationType="class">
         <attribute name="accountId" optional="YES" attributeType="Binary"/>
         <attribute name="allocatedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
@@ -8,6 +9,7 @@
         <attribute name="latestRenewedPeriod" optional="NO" attributeType="Integer 64" defaultValueString="-1" usesScalarValueType="YES"/>
         <attribute name="priorityLevel" optional="NO" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
     </entity>
+
     <entity name="CDChat" representedClassName="CDChat" syncable="YES" codeGenerationType="class">
         <attribute name="chatType" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
         <attribute name="chatTypeContext" optional="YES" attributeType="String"/>
@@ -41,6 +43,7 @@
         <relationship name="chat" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChat" inverseName="contact" inverseEntity="CDChat"/>
         <relationship name="chatRequest" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatRequest" inverseName="contact" inverseEntity="CDChatRequest"/>
         <relationship name="devices" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CDContactDevice" inverseName="contact" inverseEntity="CDContactDevice"/>
+
     </entity>
     <entity name="CDChatExtensionHistory" representedClassName="CDChatExtensionHistory" syncable="YES" codeGenerationType="class">
         <attribute name="chatId" optional="YES" attributeType="String"/>
@@ -124,12 +127,14 @@
         <attribute name="statementAccountId" attributeType="Binary"/>
         <relationship name="contact" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatContact" inverseName="devices" inverseEntity="CDChatContact"/>
     </entity>
+
     <entity name="CDIncomingPayment" representedClassName="CDIncomingPayment" syncable="YES" codeGenerationType="class">
         <attribute name="actualClaimed" optional="YES" attributeType="String"/>
         <attribute name="amount" attributeType="String"/>
         <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="identifier" attributeType="String"/>
         <attribute name="outcomeTag" optional="YES" attributeType="String"/>
+        <attribute name="ownerId" optional="YES" attributeType="Binary"/>
         <attribute name="paymentId" attributeType="String"/>
         <attribute name="productId" attributeType="String"/>
         <fetchIndex name="byIncomingPaymentIdentifier">
@@ -150,6 +155,7 @@
         <attribute name="surplusInPlanks" optional="YES" attributeType="String"/>
         <attribute name="updatedAt" attributeType="Date" usesScalarValueType="NO"/>
     </entity>
+
     <entity name="CDLocalDevice" representedClassName="CDLocalDevice" syncable="YES" codeGenerationType="class">
         <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="encryptionPublicKey" attributeType="Binary"/>
@@ -371,5 +377,14 @@
         <attribute name="actualValue" optional="YES" attributeType="String"/>
         <attribute name="status" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
         <relationship name="message" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatMessage" inverseName="outgoingTransferState" inverseEntity="CDChatMessage"/>
+    </entity>
+    <entity name="CDNativeCoinageRecord" representedClassName="NSManagedObject" syncable="YES">
+        <attribute name="identifier" attributeType="String"/>
+        <attribute name="payload" attributeType="Binary"/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="identifier"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
     </entity>
 </model>

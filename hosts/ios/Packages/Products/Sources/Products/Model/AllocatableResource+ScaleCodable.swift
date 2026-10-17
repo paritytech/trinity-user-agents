@@ -17,6 +17,9 @@ extension AllocatableResource: ScaleCodable {
             self = .smartContractAllowance(dest: dest)
         case 3:
             self = .autoSigning
+        case 4:
+            let dest = try ProductAccountSelector(scaleDecoder: scaleDecoder)
+            self = .productStatementStoreAllowance(dest: dest)
         default:
             throw ScaleCodingError.unexpectedDecodedValue
         }
@@ -30,7 +33,8 @@ extension AllocatableResource: ScaleCodable {
              .bulletInAllowance,
              .autoSigning:
             break
-        case let .smartContractAllowance(dest):
+        case let .smartContractAllowance(dest),
+             let .productStatementStoreAllowance(dest):
             try dest.encode(scaleEncoder: scaleEncoder)
         }
     }
@@ -41,6 +45,7 @@ extension AllocatableResource: ScaleCodable {
         case .bulletInAllowance: 1
         case .smartContractAllowance: 2
         case .autoSigning: 3
+        case .productStatementStoreAllowance: 4
         }
     }
 }
@@ -103,6 +108,8 @@ extension AllocatedResource: ScaleCodable {
         case 3:
             let secrets = try AutoSigningSecrets(scaleDecoder: scaleDecoder)
             self = .autoSigning(secrets)
+        case 4:
+            self = .productStatementStoreAllowance
         default:
             throw ScaleCodingError.unexpectedDecodedValue
         }
@@ -116,7 +123,8 @@ extension AllocatedResource: ScaleCodable {
             try key.encode(scaleEncoder: scaleEncoder)
         case let .bulletInAllowance(key):
             try key.encode(scaleEncoder: scaleEncoder)
-        case .smartContractAllowance:
+        case .smartContractAllowance,
+             .productStatementStoreAllowance:
             break
         case let .autoSigning(secrets):
             try secrets.encode(scaleEncoder: scaleEncoder)
@@ -129,6 +137,7 @@ extension AllocatedResource: ScaleCodable {
         case .bulletInAllowance: 1
         case .smartContractAllowance: 2
         case .autoSigning: 3
+        case .productStatementStoreAllowance: 4
         }
     }
 }

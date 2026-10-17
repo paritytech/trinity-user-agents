@@ -58,6 +58,15 @@ final class FakeRegistrationEngine: DurableTxServicing, @unchecked Sendable {
         fatalError("installation registration never schedules")
     }
 
+    func schedule(
+        domain _: TxDomainId,
+        groupId _: DurableTxGroupId?,
+        policies _: [SubmissionPolicy],
+        onRegister _: @escaping DurableTxRegistrationHook
+    ) async throws -> [DurableTxId] {
+        fatalError("installation registration never schedules")
+    }
+
     func subscribeTransactionStatus(_: DurableTxId) -> AnyAsyncSequence<DurableTxStatus> {
         AsyncStream<DurableTxStatus> { $0.finish() }.eraseToAnyAsyncSequence()
     }

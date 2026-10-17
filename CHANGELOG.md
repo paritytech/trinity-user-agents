@@ -14,14 +14,22 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
   deadlines, multi-touch input, and image clipboard output (#540)
 - let browser signing hosts request personhood-backed Statement Store
   allowances for products instead of reporting the allocator as native-only
-- migrate the generic runtime and Rust client to SDK 0.16's scoped wire codec 2;
-  product guests must be rebuilt rather than sending codec-1 frames
+- migrate the generic runtime and Rust client to SDK 0.16's scoped wire codec 3;
+  the handshake requires an exact codec match, so product guests built against
+  an earlier codec must be rebuilt
 - integrate the current native SDK with PolkaVM host runtime `0.3.2-rc.9`,
   pinned to `959ad63f7312a2f4598b9f718ccc2516927cbbff`, retaining canonical
   permission administration and live-execution revocation (#540)
 
 ### Added
 
+- Add shared native and browser Chat main-purse payment authority, explicit
+  payment review and durable receipt state; keep Chat cryptography inside the
+  Host rather than product or platform adapters (#709).
+
+- Add `account.deviceChat` for host-private Chat v2 identity binding and
+  identity-route sealing/opening through local or paired account authorities,
+  guarded by a dedicated, product-scoped Chat-authority permission.
 - report local-wallet registration stages and retryable chain-read errors through
   a request-scoped browser callback without resubmitting accepted claims
 - expose local signing-wallet username registration and chain-verified identity
@@ -34,6 +42,15 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- persist typed Statement Store allowance approvals and denials per product and
+  account selector for implicit, idempotent provisioning; explicit requests for
+  additional quota retain per-operation confirmation and increase semantics.
+  Stop unscoped product background renewal, including previously recorded
+  targets, so artifact-scoped revocation cannot be bypassed.
+- require separate Chat-authority consent on the local product API as well as
+  SSO; existing username-disclosure grants do not authorize Chat operations,
+  and denial or revocation blocks subsequent binding, sealing, and opening (#709)
+- move the secret-bearing SSO pairing result instead of cloning it (#709)
 - keep host-backed allowance helpers available on Wasm with browser-compatible
   polling clocks, while excluding the native-only renewal driver (#540)
 - report the immutable PolkaVM runtime revision actually pinned by the optional

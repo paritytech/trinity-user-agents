@@ -20,7 +20,7 @@ fn request() -> PermissionAuthorizationRequest {
 }
 
 fn host(callbacks: &Arc<EventCallbacks>) -> Arc<NativeTrUApiHostRuntime> {
-    NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), native_host_runtime_config())
+    NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), native_host_runtime_config(), None)
         .unwrap()
 }
 

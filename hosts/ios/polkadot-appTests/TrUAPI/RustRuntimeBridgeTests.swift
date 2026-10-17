@@ -110,6 +110,7 @@ private func makeBridge(
         productStorage: productStorage,
         coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
         confirmationPresenter: confirmationPresenter,
+        chatFiles: UnavailableNativeChatFiles(),
         preimageCache: preimageCache,
         hostProvider: hostProvider,
         themeManager: themeManager,
@@ -558,6 +559,7 @@ struct RustRuntimeBridgeTests {
         }
     }
 
+
     // MARK: attach
 
     /// Not attached: event forwarding is a no-op and must not crash.
@@ -604,6 +606,7 @@ struct RustRuntimeBridgeTests {
             ),
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
             confirmationPresenter: MockConfirmationPresenter(),
+            chatFiles: UnavailableNativeChatFiles(),
             preimageCache: TrUAPIPreimageCache { _ in nil },
             hostProvider: StubHostProvider(),
             themeManager: MockThemeManager(),

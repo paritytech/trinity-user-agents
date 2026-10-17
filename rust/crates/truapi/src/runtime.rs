@@ -17,10 +17,15 @@ mod authority;
 pub mod bulletin_rpc;
 mod capabilities;
 mod chat;
+mod chat_device;
+mod chat_identity;
+mod coinage_chain;
+mod coinage_store;
 pub mod contacts;
 mod dotns_lookup;
 mod identity;
 pub mod login_failure;
+mod native_chat;
 mod pairing_host;
 pub mod product_manifest;
 mod product_subtree;
@@ -50,10 +55,11 @@ use std::{
 };
 
 pub use actions::ActionChannel;
-use authority::{AuthorityCancelError, AuthoritySession};
+use authority::{AuthorityCancelError, AuthoritySession, ProductDeviceChatAuthorityError};
 pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
+pub use native_chat::{NativeChatContact, NativeChatContactsSnapshot};
 
 /// The host's contact picker plus the key its handles are minted under:
 /// everything one `contacts.pick` call needs from the connection.
@@ -78,7 +84,7 @@ pub use vrf::ring_vrf_member;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 use crate::platform::{
-	AccountAccessReview, ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview,
+	AccountAccessReview, ChatFieldError, CrossProductSignatureKind,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision, Platform,
 	ProductContext, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
 	normalize_chat_identifier, normalize_product_identifier, validate_chat_icon,
@@ -681,7 +687,15 @@ impl ProductRuntimeHost {
         status: PermissionAuthorizationStatus,
     ) -> Result<(), v01::GenericError> {
         let service = self.permissions_service();
-        service.set_authorization_status(&request, status).await
+        let contacts_changed = matches!(request, PermissionAuthorizationRequest::ChatAuthority);
+        if contacts_changed {
+            self.services.contact_handles.clear();
+        }
+        let result = service.set_authorization_status(&request, status).await;
+        if contacts_changed {
+            self.services.contact_handles.clear();
+        }
+        result
     }
 
     #[instrument(skip_all, fields(runtime.method = "permissions.remote_authorization"))]
@@ -761,49 +775,20 @@ impl ProductRuntimeHost {
     async fn identity_disclosure_authorization(
         &self,
     ) -> Result<PermissionAuthorizationStatus, String> {
-        let product_id = self.product_id();
-        let request = PermissionAuthorizationRequest::IdentityDisclosure;
-        let service = self.permissions_service();
-        let scope = service.scope();
-        let revision = scope.revision();
-        let cached = service
-            .authorization_status(&request)
+        self.permissions_service()
+            .check_or_prompt_identity_disclosure()
             .await
-            .map_err(|err| format!("permission storage failed: {err:?}"))?;
-        if cached != PermissionAuthorizationStatus::NotDetermined {
-            return Ok(cached);
-        }
+            .map_err(|err| format!("permission storage failed: {err:?}"))
+    }
 
-        // A dismissed/unavailable confirmation has no durable user decision.
-        // Fail the current disclosure request closed but keep authorization in
-        // the ask/default state so the next request can prompt again.
-        let decision = match scope
-            .prompt(
-                revision,
-                self.platform
-                    .confirm_permission(UserConfirmationReview::IdentityDisclosure(
-                        IdentityDisclosureReview {
-                            product_id: product_id.clone(),
-                        },
-                    )),
-            )
+    #[instrument(skip_all, fields(runtime.method = "permissions.chat_authority_authorization"))]
+    async fn chat_authority_authorization(
+        &self,
+    ) -> Result<crate::host_internal::permissions::ChatAuthorityConsent, String> {
+        self.permissions_service()
+            .check_or_prompt_chat_authority()
             .await
-        {
-            Ok(decision) => decision,
-            Err(_) => return Ok(PermissionAuthorizationStatus::NotDetermined),
-        };
-        let _mutation = scope.mutation.lock().await;
-        scope.require_revision(revision).map_err(|err| err.reason)?;
-        let status = match decision {
-            PermissionDecision::AllowOnce => return Ok(PermissionAuthorizationStatus::Authorized),
-            PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
-            PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
-        };
-        service
-            .write_authorization_status(&request, status)
-            .await
-            .map_err(|err| format!("permission storage failed: {err:?}"))?;
-        Ok(status)
+            .map_err(|err| format!("permission storage failed: {err:?}"))
     }
 
     async fn classify_legacy_address_signer(
@@ -965,6 +950,12 @@ fn account_get_authority_error(err: AuthorityError) -> CallError<latest::HostAcc
 		AuthorityError::Unknown { reason } => latest::HostAccountGetError::Unknown { reason },
     };
 	CallError::Domain(error)
+}
+
+fn product_device_chat_authority_error(
+    error: ProductDeviceChatAuthorityError,
+) -> CallError<latest::HostProductDeviceChatError> {
+    CallError::Domain(error.into())
 }
 
 fn ring_vrf_alias_error(err: RingVrfError) -> latest::HostAccountGetAliasError {

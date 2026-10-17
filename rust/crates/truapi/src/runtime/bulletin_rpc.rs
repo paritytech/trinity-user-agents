@@ -255,7 +255,7 @@ impl BulletinRpc {
         }
     }
 
-    /// The chain used by the allowance reader and submission service.
+    /// Configured Bulletin identity, used by the allowance reader and to select trusted HOP endpoints.
     pub(crate) fn genesis_hash(&self) -> [u8; 32] {
         self.genesis_hash
     }
@@ -359,7 +359,7 @@ impl BulletinRpc {
         let signer =
             allowance_signer(allowance).map_err(BulletinSubmitError::InvalidAllowanceKey)?;
         let signed = self
-			.build_signed_and_dry_run(&mut best_blocks, head, &signer, value)
+            .build_signed_and_dry_run(&mut best_blocks, head, &signer, value)
             .await?;
         drop(best_blocks);
 
@@ -1200,28 +1200,28 @@ mod tests {
 					let mut parent_hash = BLOCK_HASH.to_string();
 					for index in 1..=state.next_best_block {
 						let block_hash = scripted_block_hash(index);
-						frames.push(follow_event(json!({
+                        frames.push(follow_event(json!({
 							"event": "newBlock", "blockHash": block_hash,
 							"parentBlockHash": parent_hash, "newRuntime": null
-						})));
+                        })));
 						parent_hash = block_hash;
-					}
+                    }
 					frames.push(follow_event(json!({
 						"event": "bestBlockChanged", "bestBlockHash": state.current_best_hash
 					})));
-					frames
+                    frames
 				},
-				"chainHead_v1_header" if state.stall_headers => Vec::new(),
-				"chainHead_v1_header" => {
+                "chainHead_v1_header" if state.stall_headers => Vec::new(),
+                "chainHead_v1_header" => {
 					let hash = request["params"][1].as_str().unwrap();
 					let number = if hash == BLOCK_HASH || hash == INCLUDED_HASH {
-						1
+                        1
 					} else if let Some(number) = state.best_block_number {
 						number
-					} else {
+                    } else {
 						u32::from_str_radix(hash.trim_start_matches("0x"), 16).unwrap() + 1
-					};
-					vec![response(json!(encoded_header(number)))]
+                    };
+                    vec![response(json!(encoded_header(number)))]
 				},
                 "chainHead_v1_call" => {
                     state.next_operation += 1;
@@ -1383,7 +1383,7 @@ mod tests {
 				2 => BLOCK_HASH.parse().unwrap(),
 				_ => scripted_block_hash((number - 2) as usize).parse().unwrap(),
 			};
-			let mut bytes = Vec::new();
+            let mut bytes = Vec::new();
 			parent.encode_to(&mut bytes);
             Compact(number).encode_to(&mut bytes);
             [0u8; 32].encode_to(&mut bytes);

@@ -118,6 +118,27 @@ final class StubGroupTxService: CoinageTxServicing, @unchecked Sendable {
         throw Failure()
     }
 
+    func scheduleTransactions(
+        _: [CoinageScheduledTxRequest],
+        groupId _: CoinageTxGroupId?,
+        custody _: NativeTransferCustody,
+        authorization _: @escaping @Sendable () throws -> Void
+    ) async throws -> [CoinageTxId] {
+        throw Failure()
+    }
+
+    func retainNativeTransfer(
+        _: NativeTransferCustody, authorization _: @escaping @Sendable () throws -> Void
+    ) async throws -> any CoinageHandoffCommit {
+        throw Failure()
+    }
+
+    func retainedNativeTransfer(
+        custodyId _: String
+    ) async throws -> (custody: NativeTransferCustody, handoffCommit: any CoinageHandoffCommit)? {
+        throw Failure()
+    }
+
     func releaseUncommittedHandoffs() async throws {}
 }
 

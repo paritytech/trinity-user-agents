@@ -15,6 +15,10 @@ public protocol CoinageGroupVerdictResolving: Sendable {
     ) async throws -> CoinageTransferDetection
 }
 
+enum CoinageGroupObservationError: Error {
+    case endedBeforeSettlement
+}
+
 final class CoinageGroupVerdictResolver: CoinageGroupVerdictResolving, @unchecked Sendable {
     private let txService: any CoinageTxServicing
     private let coinService: any CoinServiceProtocol
@@ -35,14 +39,13 @@ final class CoinageGroupVerdictResolver: CoinageGroupVerdictResolving, @unchecke
         amount: Balance,
         context: DenominationBreakdownContext
     ) async throws -> CoinageTransferDetection {
-        var last: [CoinageTxEntry] = []
         for try await states in txService.subscribeOperationGroupStatuses(groupId) {
-            last = states
-            if states.allSatisfy({ !$0.status.isLive }) { break }
+            if states.allSatisfy({ !$0.status.isLive }) {
+                let value = try await value(of: states.finalizedSuccess(), context: context)
+                return .verdict(finalized: value, of: amount)
+            }
         }
-
-        let value = try await value(of: last.finalizedSuccess(), context: context)
-        return .verdict(finalized: value, of: amount)
+        throw CoinageGroupObservationError.endedBeforeSettlement
     }
 }
 

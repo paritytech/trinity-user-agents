@@ -1674,7 +1674,8 @@ client from `truapi-provider` instead. It resolves every chain of the preset fro
 the provider's bundled catalog by genesis hash, answers the all-zero sentinel from
 People, and keeps one idle connection open per chain so a chain stays synced and
 keeps its statement-store peers between the runtime's per-call connections. The
-direct RPC reads made during account setup and dotNS username lookup are unchanged.
+direct RPC reads made during account setup and dotNS username lookup are unchanged,
+and HOP connections still go to the preset's WSS relays.
 
 A rustls ring crypto provider is installed at process startup for `wss://`
 connections.

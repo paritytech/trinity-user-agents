@@ -45,9 +45,11 @@ use truapi::latest;
 
 use crate::platform::{
     AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
-	HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision,
-	Permissions, PreimageHost, ProductContext, ProductOperations, ProductStorage, ProviderError,
-	ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview, async_trait,
+    HopProvider, JsonRpcConnection, LocaleHost, NativeChatFileExportRequest,
+    NativeChatFilePickRequest, NativeChatFilesHost, NativeChatPickedFile, Navigation,
+    HostScan, ScannerPlatform, Notifications, PermissionDecision, Permissions, PreimageHost,
+    ProductContext, ProductOperations, ProductStorage, ProviderError, ThemeHost,
+    UserConfirmation, UserConfirmationReview, async_trait,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -95,6 +97,10 @@ pub enum ConfirmKind {
     SignVrf,
     /// [`UserConfirmationReview::ProductSubtree`].
     ProductSubtree,
+    /// [`UserConfirmationReview::ChatAuthority`].
+    ChatAuthority,
+    /// [`UserConfirmationReview::MainPurseChatPayment`].
+    MainPurseChatPayment,
 }
 
 impl ConfirmKind {
@@ -114,6 +120,8 @@ impl ConfirmKind {
 			},
             UserConfirmationReview::SignVrf(_) => ConfirmKind::SignVrf,
             UserConfirmationReview::ProductSubtree(_) => ConfirmKind::ProductSubtree,
+            UserConfirmationReview::ChatAuthority(_) => ConfirmKind::ChatAuthority,
+            UserConfirmationReview::MainPurseChatPayment(_) => ConfirmKind::MainPurseChatPayment,
         }
     }
 }
@@ -734,8 +742,45 @@ fn core_key(key: &CoreStorageKey) -> String {
             hex_key(root_public_key),
             hex_key(peer_statement_account_id),
             hex_key(peer_encryption_public_key)
-			)
-		},
+            )
+        },
+        CoreStorageKey::MainPurseCoinage {
+            root_public_key,
+            genesis_hash,
+        } => format!(
+            "core:main-purse-coinage:{}:{}",
+            hex_key(root_public_key),
+            hex_key(genesis_hash)
+        ),
+        CoreStorageKey::NativeChatDevice {
+            root_public_key,
+            genesis_hash,
+            product_id,
+        } => format!(
+            "core:native-chat-device:{}:{}:{product_id}",
+            hex_key(root_public_key),
+            hex_key(genesis_hash)
+        ),
+        CoreStorageKey::NativeChatProducts {
+            root_public_key,
+            genesis_hash,
+        } => format!(
+            "core:native-chat-products:{}:{}",
+            hex_key(root_public_key),
+            hex_key(genesis_hash)
+        ),
+        CoreStorageKey::NativeChatFileChunk {
+            root_public_key,
+            genesis_hash,
+            product_id,
+            attachment_id,
+            chunk_index,
+        } => format!(
+            "core:native-chat-file-chunk:{}:{}:{product_id}:{}:{chunk_index}",
+            hex_key(root_public_key),
+            hex_key(genesis_hash),
+            hex_key(attachment_id)
+        ),
         CoreStorageKey::ProductManifest { product_id } => {
             format!("core:product-manifest:{product_id}")
 		},
@@ -1187,6 +1232,68 @@ impl ProductOperations for MockPlatform {
 }
 
 #[async_trait]
+impl NativeChatFilesHost for MockPlatform {
+    async fn pick_chat_files(
+        &self,
+        _request: NativeChatFilePickRequest,
+    ) -> Result<Vec<NativeChatPickedFile>, latest::GenericError> {
+        Err(native_chat_files_unavailable())
+    }
+
+    async fn read_chat_file(
+        &self,
+        _source_id: String,
+        _offset: u64,
+        _length: u32,
+    ) -> Result<Vec<u8>, latest::GenericError> {
+        Err(native_chat_files_unavailable())
+    }
+
+    async fn release_chat_file(&self, _source_id: String) -> Result<(), latest::GenericError> {
+        Err(native_chat_files_unavailable())
+    }
+
+    async fn begin_chat_file_export(
+        &self,
+        _request: NativeChatFileExportRequest,
+    ) -> Result<Option<String>, latest::GenericError> {
+        Err(native_chat_files_unavailable())
+    }
+
+    async fn write_chat_file_export(
+        &self,
+        _export_id: String,
+        _offset: u64,
+        _data: Vec<u8>,
+    ) -> Result<(), latest::GenericError> {
+        Err(native_chat_files_unavailable())
+    }
+
+    async fn finish_chat_file_export(
+        &self,
+        _export_id: String,
+    ) -> Result<(), latest::GenericError> {
+        Err(native_chat_files_unavailable())
+    }
+
+    async fn cancel_chat_file_export(
+        &self,
+        _export_id: String,
+    ) -> Result<(), latest::GenericError> {
+        Err(native_chat_files_unavailable())
+    }
+}
+
+#[async_trait]
+impl HopProvider for MockPlatform {}
+
+fn native_chat_files_unavailable() -> latest::GenericError {
+    latest::GenericError {
+        reason: "native chat files unavailable".to_string(),
+    }
+}
+
+#[async_trait]
 impl ScannerPlatform for MockPlatform {
 	async fn scan_code(
 		&self,
@@ -1194,7 +1301,7 @@ impl ScannerPlatform for MockPlatform {
 		_request: &latest::HostScannerScanRequest,
 	) -> Result<HostScan, latest::GenericError> {
 		Ok(self.scan_answer.lock().expect("scan answer poisoned").clone())
-	}
+    }
 }
 
 #[async_trait]
@@ -1366,6 +1473,33 @@ mod tests {
         );
         block_on(p.clear_core_storage(CoreStorageKey::AuthSession)).unwrap();
 		assert_eq!(block_on(p.read_core_storage(CoreStorageKey::AuthSession)).unwrap(), None);
+    }
+
+    #[test]
+    fn native_chat_file_chunks_have_independent_storage_slots() {
+        let platform = MockPlatform::new();
+        let key = |chunk_index| CoreStorageKey::NativeChatFileChunk {
+            root_public_key: [1; 32],
+            genesis_hash: [2; 32],
+            product_id: "chat.dot".into(),
+            attachment_id: [3; 32],
+            chunk_index,
+        };
+        block_on(platform.write_core_storage(key(0), vec![10])).unwrap();
+        block_on(platform.write_core_storage(key(1), vec![20])).unwrap();
+        assert_eq!(
+            block_on(platform.read_core_storage(key(0))).unwrap(),
+            Some(vec![10]),
+        );
+        assert_eq!(
+            block_on(platform.read_core_storage(key(1))).unwrap(),
+            Some(vec![20]),
+        );
+        block_on(platform.clear_core_storage(key(0))).unwrap();
+        assert_eq!(
+            block_on(platform.read_core_storage(key(1))).unwrap(),
+            Some(vec![20]),
+        );
     }
 
     #[test]

@@ -5,11 +5,12 @@ use futures::stream::{self, BoxStream};
 use truapi::{
 	platform::{
     AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, Features, HostInfo,
-    JsonRpcConnection, LocaleHost, Navigation, Notifications, PairingHostConfig, Permissions,
-		PlatformInfo, PreimageHost, ProductContext, ProductOperations, ProductStorage,
-		ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview,
-	},
-	v01,
+    JsonRpcConnection, LocaleHost, NativeChatFileExportRequest, NativeChatFilePickRequest,
+    NativeChatFilesHost, NativeChatPickedFile, Navigation, Notifications, PairingHostConfig,
+    Permissions, PlatformInfo, PreimageHost, ProductContext, ProductOperations, ProductStorage,
+    ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview,
+    },
+    v01,
 };
 
 /// Runtime configuration shared by integration tests.
@@ -157,6 +158,9 @@ impl ChainProvider for WireShapePlatform {
     }
 }
 
+#[truapi::platform::async_trait]
+impl truapi::platform::HopProvider for WireShapePlatform {}
+
 impl AuthPresenter for WireShapePlatform {}
 
 #[truapi::platform::async_trait]
@@ -212,5 +216,52 @@ impl PreimageHost for WireShapePlatform {
         _key: Vec<u8>,
     ) -> BoxStream<'static, Result<Option<Vec<u8>>, v01::GenericError>> {
         Box::pin(stream::empty())
+    }
+}
+
+fn unavailable_chat_files<T>() -> Result<T, v01::GenericError> {
+    Err(v01::GenericError {
+        reason: "native Chat files unavailable in this fixture".into(),
+    })
+}
+
+#[truapi::platform::async_trait]
+impl NativeChatFilesHost for WireShapePlatform {
+    async fn pick_chat_files(
+        &self,
+        _: NativeChatFilePickRequest,
+    ) -> Result<Vec<NativeChatPickedFile>, v01::GenericError> {
+        unavailable_chat_files()
+    }
+    async fn read_chat_file(
+        &self,
+        _: String,
+        _: u64,
+        _: u32,
+    ) -> Result<Vec<u8>, v01::GenericError> {
+        unavailable_chat_files()
+    }
+    async fn release_chat_file(&self, _: String) -> Result<(), v01::GenericError> {
+        unavailable_chat_files()
+    }
+    async fn begin_chat_file_export(
+        &self,
+        _: NativeChatFileExportRequest,
+    ) -> Result<Option<String>, v01::GenericError> {
+        unavailable_chat_files()
+    }
+    async fn write_chat_file_export(
+        &self,
+        _: String,
+        _: u64,
+        _: Vec<u8>,
+    ) -> Result<(), v01::GenericError> {
+        unavailable_chat_files()
+    }
+    async fn finish_chat_file_export(&self, _: String) -> Result<(), v01::GenericError> {
+        unavailable_chat_files()
+    }
+    async fn cancel_chat_file_export(&self, _: String) -> Result<(), v01::GenericError> {
+        unavailable_chat_files()
     }
 }

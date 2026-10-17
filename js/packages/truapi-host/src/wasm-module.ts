@@ -6,6 +6,7 @@
 import type { PermissionAuthorizationRuntime } from "./worker-permission-authorization.js";
 import type { LocalIdentity } from "./worker-protocol.js";
 import type { WalletAllowanceSnapshot } from "./wallet-allowances.js";
+import type { NativeChatContactsSnapshot } from "./runtime.js";
 
 /** Cancellable handle on one live render stream inside the core. */
 export interface WorkerRendererSubscription {
@@ -79,6 +80,7 @@ export interface WorkerHostRuntime extends PermissionAuthorizationRuntime {
 
 /** The long-lived pairing-host runtime product cores are created from. */
 export interface WorkerPairingHostRuntime extends WorkerHostRuntime {
+  getNativeChatContacts(): Promise<NativeChatContactsSnapshot>;
   cancelPairing(): void;
   notifySessionStoreChanged(): void;
   deviceStatementKey(): Uint8Array | undefined;
@@ -98,9 +100,9 @@ export interface WorkerPairingHostRuntime extends WorkerHostRuntime {
 export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
 
   activateLocalSession(secret: Uint8Array): Promise<void>;
-  /** Only on a core built with `wasm-signing-host`. */
+  /** Only on a core built with the non-production `test-host` feature. */
   setGrantAllowancesUnchecked?(granted: boolean): void;
-  /** Only on a core built with `wasm-signing-host`. */
+  /** Only on a core built with the non-production `test-host` feature. */
   setWithheldResources?(tags: string[]): void;
   /**
    * Activate and give the session a display name, which is what
@@ -125,6 +127,7 @@ export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
     activationId: string,
     productIds: string[],
   ): Promise<WalletAllowanceSnapshot>;
+  getNativeChatContacts(): Promise<NativeChatContactsSnapshot>;
 }
 
 /** Module surface the wasm-pack glue exports. */

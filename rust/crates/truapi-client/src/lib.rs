@@ -477,6 +477,77 @@ mod tests {
     }
 
     #[test]
+    fn native_chat_uses_method_twelve_with_v2_envelopes() {
+        use truapi::{latest as dto, versioned::account};
+
+        let request = account::HostProductDeviceChatRequest::V2(
+            dto::HostProductDeviceChatRequest::Initialize,
+        );
+        assert_eq!(
+            encode_request::<AccountProductDeviceChat>("p:1", &request),
+            [12, b'p', b':', b'1', 2, 12, 0, 1, 0],
+        );
+        let denomination_request = account::HostProductDeviceChatRequest::V2(
+            dto::HostProductDeviceChatRequest::PaymentDenomination,
+        );
+        assert_eq!(
+            encode_request::<AccountProductDeviceChat>("p:1", &denomination_request),
+            [12, b'p', b':', b'1', 2, 12, 0, 1, 12],
+        );
+
+        let response =
+            account::HostProductDeviceChatResponse::V2(dto::HostProductDeviceChatResponse {
+                device: dto::HostNativeChatDevice {
+                    identity_account_id: [1; 32],
+                    identity_chat_public_key: [2; 32],
+                    product_account: v01::ProductAccountId {
+                        dot_ns_identifier: "chat.dot".into(),
+                        derivation_index: v01::DerivationIndex::Index(0),
+                    },
+                    account_id: [3; 32],
+                    chat_public_key: [4; 32],
+                },
+                peers: vec![],
+                binding: None,
+                opened: vec![],
+                prepared: vec![],
+                payments: vec![],
+                rich_messages: vec![],
+                migration: None,
+                migration_id: None,
+                open_page: None,
+                migration_invitations: vec![],
+                state_page: None,
+                coinage_cents_unit: None,
+            });
+        let mut frame = vec![12, b'p', b':', b'1', 2, 12, 1, 0];
+        response.encode_to(&mut frame);
+        assert_eq!(frame[8], 1, "response envelope is V2");
+        assert_eq!(
+            decode_response::<AccountProductDeviceChat>(&frame),
+            Ok(Decoded {
+                request_id: "p:1".into(),
+                value: Ok(response),
+            }),
+        );
+
+        frame[5] = 11;
+        assert_eq!(
+            decode_response::<AccountProductDeviceChat>(&frame),
+            Err(DecodeError::UnexpectedMethod {
+                expected: MethodIds {
+                    trait_id: 2,
+                    method_id: 12,
+                },
+                actual: MethodIds {
+                    trait_id: 2,
+                    method_id: 11,
+                },
+            }),
+        );
+    }
+
+    #[test]
     fn worker_serves_unified_renderer() {
         use truapi::versioned::renderer::{
             ProductRendererRenderItem, ProductRendererRenderRequest,

@@ -52,7 +52,8 @@ private extension AllowancePromptViewFactory {
 
     static func resourceDescription(for resource: AllocatableResource) -> String {
         switch resource {
-        case .statementStoreAllowance:
+        case .statementStoreAllowance,
+             .productStatementStoreAllowance:
             String(localized: .Products.allowanceResourceStatementStore)
         case .bulletInAllowance:
             String(localized: .Products.allowanceResourceBulletIn)

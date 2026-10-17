@@ -51,6 +51,26 @@ class RealProductPermissionGuardTest {
     }
 
     @Test
+    fun `canonical feature authority never uses local one-time grants or legacy prompts`() = runBlocking<Unit> {
+        val permissions = listOf(ProductPermission.ChatAuthority, ProductPermission.StatementStoreAllowance(null))
+        coEvery { repository.hasOneTimeGrant(any(), any()) } returns true
+        coEvery { repository.consumeOneTimeGrant(any(), any()) } returns true
+        for (feature in permissions) {
+            coEvery { repository.isGranted(productId, feature) } returns false
+            assertFalse(guard.check(productId, feature))
+            assertFalse(guard.requestPermission(productId, feature))
+            assertFalse(guard.consumePermission(productId, feature))
+            coEvery { repository.isGranted(productId, feature) } returns true
+            assertTrue(guard.check(productId, feature))
+            assertTrue(guard.consumePermission(productId, feature))
+            verify(requester, never()).prompt(productId, feature)
+        }
+        coVerify(exactly = 0) { repository.grant(any(), any()) }
+        coVerify(exactly = 0) { repository.grantOneTime(any(), any()) }
+        coVerify(exactly = 0) { repository.consumeOneTimeGrant(any(), any()) }
+    }
+
+    @Test
     fun `requestPermission returns true without prompting when already granted`() = runBlocking<Unit> {
         withAlreadyGranted()
 

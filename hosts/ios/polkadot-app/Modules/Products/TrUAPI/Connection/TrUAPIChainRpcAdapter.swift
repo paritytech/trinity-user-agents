@@ -10,7 +10,7 @@ public protocol TrUAPIChainRpcAdapterDelegate: AnyObject {
 }
 
 /// Verbatim JSON-RPC pipe adapter for ONE logical chain connection: parses
-/// core frames and drives the shared typed engine. The engine owns wire ids,
+/// core frames and drives the host's typed engine. The engine owns wire ids,
 /// queueing, reconnection, and remote-call routing; the adapter synthesizes
 /// response envelopes with the core's original request ids.
 ///
@@ -47,13 +47,15 @@ public final class TrUAPIChainRpcAdapter: @unchecked Sendable {
     public weak var delegate: TrUAPIChainRpcAdapterDelegate?
 
     private let engine: JSONRPCEngine
-    private let logger: SDKLoggerProtocol
+    private let logger: SDKLoggerProtocol?
+    private let resendOnReconnect: Bool
     private let state = OSAllocatedUnfairLock<State>(initialState: State())
     private let jsonEncoder = JSONEncoder()
 
-    public init(engine: JSONRPCEngine, logger: SDKLoggerProtocol) {
+    public init(engine: JSONRPCEngine, logger: SDKLoggerProtocol?, resendOnReconnect: Bool = true) {
         self.engine = engine
         self.logger = logger
+        self.resendOnReconnect = resendOnReconnect
     }
 
     /// Handle one raw outgoing frame from the core.
@@ -62,9 +64,9 @@ public final class TrUAPIChainRpcAdapter: @unchecked Sendable {
         case let .request(id, method, params):
             route(id: id, method: method, params: params)
         case let .notification(method, _):
-            logger.warning("TrUAPI rpc adapter: dropping core notification \(method)")
+            logger?.warning("TrUAPI rpc adapter: dropping core notification \(method)")
         case .unsupported:
-            logger.error("TrUAPI rpc adapter: unsupported frame dropped")
+            logger?.error("TrUAPI rpc adapter: unsupported frame dropped")
         }
     }
 
@@ -98,7 +100,7 @@ private extension TrUAPIChainRpcAdapter {
 
     func call(id: TrUAPIRpcId, method: String, params: JSON?) {
         do {
-            logger.debug("calling [\(id)] \(method) with params: \(String(describing: params))")
+            logger?.debug("calling [\(id)] \(method) with params: \(String(describing: params))")
 
             // Written once before the completion can observe it; the engine
             // invokes the completion only after callMethod returns.
@@ -106,9 +108,9 @@ private extension TrUAPIChainRpcAdapter {
             engineId = try engine.callMethod(
                 method,
                 params: params,
-                options: JSONRPCOptions(resendOnReconnect: true)
+                options: JSONRPCOptions(resendOnReconnect: resendOnReconnect)
             ) { [weak self, logger] (result: Result<JSON, Error>) in
-                logger.debug("call [\(id)] completed \(result)")
+                logger?.debug("call [\(id)] completed \(result)")
                 self?.finishCall(engineId: engineId, originalId: id, result: result)
             }
 
@@ -125,7 +127,7 @@ private extension TrUAPIChainRpcAdapter {
         family: TrUAPISubscriptionMethods.Family
     ) {
         if family.events == nil {
-            logger.warning(
+            logger?.warning(
                 "TrUAPI rpc adapter: legacy subscription \(method) will not survive reconnects"
             )
         }
@@ -133,7 +135,7 @@ private extension TrUAPIChainRpcAdapter {
         let subscription = SubscriptionState(family: family, pendingRequestId: id)
 
         do {
-            logger.debug("subscribing [\(id)] \(method) with params: \(String(describing: params))")
+            logger?.debug("subscribing [\(id)] \(method) with params: \(String(describing: params))")
 
             let engineId = try engine.subscribe(
                 method,
@@ -147,7 +149,7 @@ private extension TrUAPIChainRpcAdapter {
                     self?.deliverUpdate(subscription: subscription, frame: frame)
                 },
                 failureClosure: { [weak self, logger] error, _ in
-                    logger.debug("subscription failed [\(id)] \(method) with error: \(error)")
+                    logger?.debug("subscription failed [\(id)] \(method) with error: \(error)")
                     self?.finishSubscription(subscription: subscription, error: error)
                 }
             )
@@ -162,7 +164,7 @@ private extension TrUAPIChainRpcAdapter {
     }
 
     func unsubscribe(id: TrUAPIRpcId, params: JSON?, family: TrUAPISubscriptionMethods.Family) {
-        logger.debug("unsubscribe [\(id)] with params: \(String(describing: params))")
+        logger?.debug("unsubscribe [\(id)] with params: \(String(describing: params))")
 
         let remoteId = params?.arrayValue?.first.flatMap(TrUAPISubscriptionId.init(paramValue:))
 
@@ -237,7 +239,7 @@ private extension TrUAPIChainRpcAdapter {
         do {
             data = try jsonEncoder.encode(frame)
         } catch {
-            logger.error("TrUAPI rpc adapter: update forwarding failed: \(error)")
+            logger?.error("TrUAPI rpc adapter: update forwarding failed: \(error)")
             return
         }
 
@@ -273,7 +275,7 @@ private extension TrUAPIChainRpcAdapter {
 
         guard let engineId else { return }
         engine.cancelForIdentifiers([engineId], sendUnsubscribe: false)
-        logger.debug("TrUAPI rpc adapter: subscription released by terminal event \(event)")
+        logger?.debug("TrUAPI rpc adapter: subscription released by terminal event \(event)")
     }
 
     func finishSubscription(subscription: SubscriptionState, error: Error) {
@@ -298,7 +300,7 @@ private extension TrUAPIChainRpcAdapter {
                 result: events.connectionLossEvent
             )
         } else {
-            logger.debug("TrUAPI rpc adapter: subscription ended: \(error)")
+            logger?.debug("TrUAPI rpc adapter: subscription ended: \(error)")
         }
     }
 }
@@ -338,7 +340,7 @@ private extension TrUAPIChainRpcAdapter {
             guard let json = String(data: data, encoding: .utf8) else { return }
             delegate?.adapter(self, didProduce: json)
         } catch {
-            logger.error("TrUAPI rpc adapter: envelope encoding failed: \(error)")
+            logger?.error("TrUAPI rpc adapter: envelope encoding failed: \(error)")
         }
     }
 }

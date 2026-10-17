@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models
 
 import androidx.compose.runtime.Immutable
+import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 
 @Immutable
 sealed interface ProductPermission {
@@ -88,6 +89,26 @@ sealed interface ProductPermission {
         override val key: String get() = ""
     }
 
+    data object ChatAuthority : ProductPermission {
+        const val TYPE_NAME = "chat_authority"
+        override val typeName: String get() = TYPE_NAME
+        override val key: String get() = ""
+    }
+
+    /** Null is the legacy allowance account, not product account zero. */
+    data class StatementStoreAllowance(val derivationIndex: AllowanceAccountSelector?) : ProductPermission {
+        override val typeName: String get() = TYPE_NAME
+        override val key: String get() = when (val selector = derivationIndex) {
+            null -> "legacy"
+            is AllowanceAccountSelector.Index -> "index:${selector.value}"
+            is AllowanceAccountSelector.Raw -> "raw:${selector.value}"
+        }
+
+        companion object {
+            const val TYPE_NAME = "statement_store_allowance"
+        }
+    }
+
     companion object {
         fun fromLocal(typeName: String, key: String): ProductPermission {
             return when (typeName) {
@@ -95,6 +116,15 @@ sealed interface ProductPermission {
                 AccountAccess.TYPE_NAME -> AccountAccess(key)
                 BalanceAccess.TYPE_NAME -> BalanceAccess
                 UserIdentityAccess.TYPE_NAME -> UserIdentityAccess
+                ChatAuthority.TYPE_NAME -> ChatAuthority
+                StatementStoreAllowance.TYPE_NAME -> StatementStoreAllowance(
+                    when {
+                        key == "legacy" -> null
+                        key.startsWith("index:") -> AllowanceAccountSelector.Index(key.removePrefix("index:").toUInt())
+                        key.startsWith("raw:") -> AllowanceAccountSelector.Raw(DataByteArray.fromHex(key.removePrefix("raw:")))
+                        else -> error("Unknown allowance account selector: $key")
+                    }
+                )
                 RemotePermission.NetworkAccess.TYPE_NAME -> RemotePermission.NetworkAccess(key)
                 RemotePermission.WebRtcAccess.TYPE_NAME -> RemotePermission.WebRtcAccess
                 RemotePermission.ChainSubmitAccess.TYPE_NAME -> RemotePermission.ChainSubmitAccess
@@ -102,6 +132,16 @@ sealed interface ProductPermission {
                 RemotePermission.PreimageSubmitAccess.TYPE_NAME -> RemotePermission.PreimageSubmitAccess
                 else -> error("Unknown permission type: $typeName")
             }
+        }
+    }
+}
+
+/** Preserve the canonical enum tag as well as its bytes; Raw is not an Index alias. */
+sealed interface AllowanceAccountSelector {
+    data class Index(val value: UInt) : AllowanceAccountSelector
+    data class Raw(val value: DataByteArray) : AllowanceAccountSelector {
+        init {
+            require(value.value.size == 32) { "Raw allowance account selector must be 32 bytes" }
         }
     }
 }

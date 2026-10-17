@@ -5,6 +5,10 @@ import TrUAPIHost
 protocol TrUAPIConfirmationPresenting: Sendable {
     /// Present an action review, using the bridge's requester name when the review omits it.
     func confirm(review: UserConfirmationReview, from requesterName: String) async -> Bool
+    func confirmNativeCoinage(
+        review: MainPurseChatPaymentReview,
+        requiresPrivacyConfirmation: Bool
+    ) async -> Bool
     func confirmPermission(
         review: UserConfirmationReview,
         from requesterName: String
@@ -41,6 +45,13 @@ final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecke
         }
     }
 
+    func confirmNativeCoinage(
+        review: MainPurseChatPaymentReview,
+        requiresPrivacyConfirmation: Bool
+    ) async -> Bool {
+        await confirmMainPursePayment(review, requiresPrivacyConfirmation: requiresPrivacyConfirmation)
+    }
+
     func confirmPermission(
         review: UserConfirmationReview,
         from _: String
@@ -58,6 +69,10 @@ final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecke
             await presentPermission(
                 promptMapper.makePermissionRequest(from: aliasReview)
             )
+        case let .chatAuthority(chatReview):
+            await presentPermission(
+                promptMapper.makePermissionRequest(from: chatReview)
+            )
         default:
             .deny
         }
@@ -71,6 +86,8 @@ private extension TrUAPIConfirmationPresenter {
              .signRaw,
              .createTransaction:
             try await confirmSigning(for: review, from: requesterName)
+        case let .mainPurseChatPayment(paymentReview):
+            await confirmMainPursePayment(paymentReview)
         case let .statementStoreProductSign(statementReview):
             await confirmStatementSign(
                 promptMapper.makeStatementSignRequest(from: statementReview)
@@ -82,6 +99,7 @@ private extension TrUAPIConfirmationPresenter {
         case let .productSubtree(subtreeReview):
             await confirmAction(promptMapper.makeActionRequest(from: subtreeReview))
         case .identityDisclosure,
+             .chatAuthority,
              .accountAccess,
              .accountAlias:
             await confirmPermission(review: review, from: requesterName) != .deny
@@ -132,6 +150,25 @@ private extension TrUAPIConfirmationPresenter {
                 routerFacade.productsRouter.showStatementSignPrompt(context: context)
             }
             return decision == .approved
+        }
+    }
+
+    func confirmMainPursePayment(
+        _ review: MainPurseChatPaymentReview,
+        requiresPrivacyConfirmation: Bool = false
+    ) async -> Bool {
+        await awaitDecision(cancelled: false) { [routerFacade] in
+            await withCheckedContinuation { continuation in
+                let context = MainPursePaymentConfirmationContext(
+                    review: review,
+                    requiresPrivacyConfirmation: requiresPrivacyConfirmation
+                )
+                context.setContinuation(continuation)
+                let prompt = MainPursePaymentPromptViewFactory.createView(context: context)
+                if !routerFacade.productsRouter.present(view: prompt) {
+                    context.deliver(false)
+                }
+            }
         }
     }
 

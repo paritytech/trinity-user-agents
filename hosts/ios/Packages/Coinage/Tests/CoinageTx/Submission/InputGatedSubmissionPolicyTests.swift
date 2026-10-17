@@ -332,8 +332,16 @@ private struct StubAssetLedger: CoinageAssetLedgerProtocol {
     func registerAssets(
         _: [CoinageAssetRegistration],
         for _: [CoinageTxId],
+        custody _: NativeTransferCustody?,
+        authorization _: (@Sendable () throws -> Void)?,
         in _: any DurableTxRegistrationScope
     ) throws {}
+
+    func retainNativeTransfer(
+        _: NativeTransferCustody, authorization _: @escaping @Sendable () throws -> Void
+    ) async throws {}
+
+    func retainedNativeTransfer(custodyId _: String) async throws -> NativeTransferCustody? { nil }
 
     func getAllEntries() async throws -> [CoinageTxEntry] { [] }
     func getEntry(id _: CoinageTxId) async throws -> CoinageTxEntry? { nil }

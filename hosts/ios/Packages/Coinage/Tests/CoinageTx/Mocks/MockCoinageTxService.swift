@@ -46,24 +46,29 @@ actor MockCoinageTxService: CoinageTxServicing {
     private(set) var handoffAssets: [OwnAsset] = []
 
     private let submissionOutcome: SubmissionOutcome
+    private let beforeRegistration: (@Sendable () async throws -> Void)?
 
-    enum SubmissionOutcome {
+    enum SubmissionOutcome: Equatable {
         /// Registration succeeds and the entry resolves to `finalizedSuccess`.
         case success
         /// Registration succeeds and the entry resolves to `failure`.
         case chainFailure
         /// `submit` throws before registering.
         case thrown
+        /// Durable custody committed, but the caller never receives the submission result.
+        case registeredThenThrown
     }
 
     init(
         store: MockCoinageTxRepository = MockCoinageTxRepository(),
         callJournal: CallJournal = CallJournal(),
-        submissionOutcome: SubmissionOutcome = .success
+        submissionOutcome: SubmissionOutcome = .success,
+        beforeRegistration: (@Sendable () async throws -> Void)? = nil
     ) {
         self.store = store
         self.callJournal = callJournal
         self.submissionOutcome = submissionOutcome
+        self.beforeRegistration = beforeRegistration
     }
 
     @discardableResult
@@ -76,6 +81,54 @@ actor MockCoinageTxService: CoinageTxServicing {
             try await ids.append(recordSubmission(request, groupId: groupId))
         }
         return ids
+    }
+
+    /// Native scheduling registers through the real in-memory store and ledger, so custody, marks and
+    /// transaction rows commit or roll back together, then resolves each row like a submission.
+    @discardableResult
+    func scheduleTransactions(
+        _ requests: [CoinageScheduledTxRequest],
+        groupId: CoinageTxGroupId?,
+        custody: NativeTransferCustody,
+        authorization: @escaping @Sendable () throws -> Void
+    ) async throws -> [CoinageTxId] {
+        callJournal.record("schedule")
+        if case .thrown = submissionOutcome { throw StubError.boom }
+        try await beforeRegistration?()
+        let ledger = store.ledger
+        let assets = requests.map { CoinageAssetRegistration(inputs: $0.inputs, outputs: $0.outputs) }
+        let ids = try await store.durable.schedule(
+            requests.map { DurableTxSchedule(domainId: .coinage, groupId: groupId, policy: $0.policy) },
+            in: nil
+        ) { scope, ids in
+            try ledger.registerAssets(assets, for: ids, custody: custody, authorization: authorization, in: scope)
+        }
+        recorded.withLock { current in
+            current.scheduled.append(contentsOf: requests)
+            current.inputs.append(contentsOf: requests.map(\.inputs))
+            current.outputs.append(contentsOf: requests.map(\.outputs))
+        }
+        handoffAssets += custody.assets
+        if case .registeredThenThrown = submissionOutcome { throw StubError.boom }
+        for id in ids {
+            try await store.updateStatus(id, to: submissionOutcome == .chainFailure ? .failure : .finalizedSuccess)
+        }
+        return ids
+    }
+
+    func retainNativeTransfer(
+        _ custody: NativeTransferCustody, authorization: @escaping @Sendable () throws -> Void
+    ) async throws -> any CoinageHandoffCommit {
+        try await store.ledger.retainNativeTransfer(custody, authorization: authorization)
+        handoffAssets += custody.assets
+        return StoreHandoffCommit(assets: custody.assets, ledger: store.ledger)
+    }
+
+    func retainedNativeTransfer(
+        custodyId: String
+    ) async throws -> (custody: NativeTransferCustody, handoffCommit: any CoinageHandoffCommit)? {
+        guard let custody = try await store.ledger.retainedNativeTransfer(custodyId: custodyId) else { return nil }
+        return (custody, StoreHandoffCommit(assets: custody.assets, ledger: store.ledger))
     }
 
     private func recordSubmission(_ request: CoinageTxRequest, groupId: CoinageTxGroupId?) async throws -> CoinageTxId {
@@ -98,6 +151,7 @@ actor MockCoinageTxService: CoinageTxServicing {
             mortality: 300
         )
         try await store.register(entry)
+        if case .registeredThenThrown = submissionOutcome { throw StubError.boom }
 
         // Drive the entry to a terminal status so a caller awaiting the outcome via
         // `subscribeTransactionStatus` resolves immediately.
@@ -105,7 +159,7 @@ actor MockCoinageTxService: CoinageTxServicing {
             switch submissionOutcome {
             case .chainFailure: .failure
             case .success,
-                 .thrown: .finalizedSuccess
+                 .thrown, .registeredThenThrown: .finalizedSuccess
             }
         try await store.updateStatus(entry.id, to: terminal)
 
@@ -169,7 +223,9 @@ actor MockCoinageTxService: CoinageTxServicing {
     func preCommitHandoff(_ assets: [OwnAsset]) async throws -> any CoinageHandoffCommit {
         callJournal.record("preCommitHandoff")
         handoffAssets.append(contentsOf: assets)
-        try await store.precommitHandOff(assets) { _ in }
+        try await store.precommitHandOff(assets) { context in
+            try CoinageTxRegistrationValidator().validateHandoff(Set(assets.map(\.publicKey)), transaction: context)
+        }
         return StoreHandoffCommit(assets: assets, ledger: store.ledger)
     }
 

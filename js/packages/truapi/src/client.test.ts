@@ -1,5 +1,5 @@
 import type { Result } from "neverthrow";
-import { describe, expect, it, jest } from "bun:test";
+import { describe, expect, it, jest, spyOn } from "bun:test";
 
 import { createTransport, RequestTimeoutError } from "./client.js";
 import * as S from "./scale.js";
@@ -131,17 +131,10 @@ function accountGetResponsePayload(
     return S.Result(
         T.VersionedHostAccountGetResponse,
         S.CallError(T.VersionedHostAccountGetError),
-    ).enc(
-        value.success
-            ? { success: true, value: { tag: "V1", value: value.value } }
-            : value,
-    );
+    ).enc(value.success ? { success: true, value: { tag: "V1", value: value.value } } : value);
 }
 
-function rendererStart(
-    requestId: string,
-    request: T.ProductRendererRenderRequest,
-): Uint8Array {
+function rendererStart(requestId: string, request: T.ProductRendererRenderRequest): Uint8Array {
     return wireFrame(
         requestId,
         W.RENDERER_RENDER,
@@ -176,9 +169,7 @@ function rendererInterrupt(requestId: string): Uint8Array {
         requestId,
         W.RENDERER_RENDER,
         MESSAGE_TYPE_INTERRUPT,
-        new Uint8Array([
-            1, 4, 44, 117, 110, 97, 118, 97, 105, 108, 97, 98, 108, 101,
-        ]),
+        new Uint8Array([1, 4, 44, 117, 110, 97, 118, 97, 105, 108, 97, 98, 108, 101]),
     );
 }
 
@@ -224,11 +215,7 @@ function protocolError(requestId: string, payload: Uint8Array): Uint8Array {
     );
 }
 
-function unsupportedMessage(
-    requestId: string,
-    traitId: number,
-    methodId: number,
-): Uint8Array {
+function unsupportedMessage(requestId: string, traitId: number, methodId: number): Uint8Array {
     // [0] version index, [0] variant index, then the unsupported pair.
     return protocolError(requestId, new Uint8Array([0, 0, traitId, methodId]));
 }
@@ -268,10 +255,31 @@ describe("generated client transport", () => {
         expect(toHex(fixture.sent[0])).toBe(toHex(expectedFrame));
     });
 
-    it("uses the transport codec version for generated handshake calls", () => {
+    it("keeps V2 methods callable with V1 domain errors", async () => {
         const fixture = providerFixture();
-        const transport = createTransport(fixture.provider);
-        const client = createClient(transport);
+        const client = createClient(createTransport(fixture.provider));
+        const ids = { trait: 2, method: 12 };
+        const responseCodec = S.Result(
+            T.VersionedHostProductDeviceChatResponse,
+            S.CallError(T.VersionedHostProductDeviceChatError),
+        );
+        const denied = client.account.deviceChat({ tag: "PaymentDenomination" });
+        expect(fixture.sent[0]).toEqual(
+            wireFrame("p:1", ids, MESSAGE_TYPE_REQUEST, new Uint8Array([1, 12])),
+        );
+        const reason = { tag: "V1", value: "StorageUnavailable" } as const;
+        fixture.receive(
+            wireFrame(
+                "p:1",
+                ids,
+                MESSAGE_TYPE_RESPONSE,
+                responseCodec.enc({
+                    success: false,
+                    value: { tag: "Domain", value: reason },
+                }),
+            ),
+        );
+        expect((await denied)._unsafeUnwrapErr()).toEqual({ tag: "Domain", value: reason });
 
         void client.system.handshake();
 
@@ -279,12 +287,36 @@ describe("generated client transport", () => {
             tag: "V1",
             value: { codecVersion: TRUAPI_CODEC_VERSION },
         });
-        const expectedFrame = new Uint8Array(str.enc("p:1").length + 3 + expectedPayload.length);
-        expectedFrame.set(str.enc("p:1"), 0);
-        expectedFrame[str.enc("p:1").length] = 1; // system trait
-        expectedFrame[str.enc("p:1").length + 1] = 0; // handshake
-        expectedFrame[str.enc("p:1").length + 2] = MESSAGE_TYPE_REQUEST;
-        expectedFrame.set(expectedPayload, str.enc("p:1").length + 3);
+        // Second request on this client, so the handshake carries id `p:2`.
+        const expectedFrame = new Uint8Array(str.enc("p:2").length + 3 + expectedPayload.length);
+        expectedFrame.set(str.enc("p:2"), 0);
+        expectedFrame[str.enc("p:2").length] = 1; // system trait
+        expectedFrame[str.enc("p:2").length + 1] = 0; // handshake
+        expectedFrame[str.enc("p:2").length + 2] = MESSAGE_TYPE_REQUEST;
+        expectedFrame.set(expectedPayload, str.enc("p:2").length + 3);
+
+        expect(toHex(fixture.sent[fixture.sent.length - 1])).toBe(toHex(expectedFrame));
+    });
+
+    it("uses the transport codec version for generated handshake calls", () => {
+        const fixture = providerFixture();
+        const transport = createTransport(fixture.provider);
+        const client = createClient(transport);
+
+        expect(TRUAPI_CODEC_VERSION).toBe(3);
+        void client.system.handshake();
+
+        const expectedPayload = T.VersionedHostHandshakeRequest.enc({
+            tag: "V1",
+            value: { codecVersion: 3 },
+        });
+        const requestId = str.enc("p:1");
+        const expectedFrame = new Uint8Array(requestId.length + 3 + expectedPayload.length);
+        expectedFrame.set(requestId, 0);
+        expectedFrame[requestId.length] = 1; // system trait
+        expectedFrame[requestId.length + 1] = 0; // handshake
+        expectedFrame[requestId.length + 2] = MESSAGE_TYPE_REQUEST;
+        expectedFrame.set(expectedPayload, requestId.length + 3);
 
         expect(toHex(fixture.sent[0])).toBe(toHex(expectedFrame));
     });
@@ -565,13 +597,7 @@ describe("generated client transport", () => {
         );
 
         expect(fixture.sent.map(toHex)).toEqual([
-            toHex(
-                unsupportedMessage(
-                    "h:known",
-                    W.RENDERER_RENDER.trait,
-                    W.RENDERER_RENDER.method,
-                ),
-            ),
+            toHex(unsupportedMessage("h:known", W.RENDERER_RENDER.trait, W.RENDERER_RENDER.method)),
         ]);
     });
 
@@ -633,27 +659,59 @@ describe("generated client transport", () => {
         expect(subscriptionFixture.sent).toHaveLength(2);
     });
 
-    it("logs a protocol violation for a known pair's out-of-range message type", () => {
+    it("logs a known pair's out-of-range message type", () => {
         const fixture = providerFixture();
         createTransport(fixture.provider);
 
-        const warnings: unknown[][] = [];
-        const originalWarn = console.warn;
-        console.warn = (...args: unknown[]) => {
-            warnings.push(args);
-        };
+        const warn = spyOn(console, "warn").mockImplementation(() => {});
         try {
             fixture.receive(wireFrame("unrelated:1", W.LOCAL_STORAGE_READ, 99));
+            expect(
+                warn.mock.calls.some((args) =>
+                    String(args[0]).includes("unexpected messageType 99"),
+                ),
+            ).toBe(true);
         } finally {
-            console.warn = originalWarn;
+            warn.mockRestore();
         }
 
         expect(fixture.sent).toHaveLength(0);
-        expect(
-            warnings.some((args) =>
-                String(args[0]).includes("unexpected messageType 99"),
-            ),
-        ).toBe(true);
+    });
+
+    it("ignores a late response to a timed-out request but logs one never sent", async () => {
+        jest.useFakeTimers();
+        const warn = spyOn(console, "warn").mockImplementation(() => {});
+        try {
+            const fixture = providerFixture();
+            const transport = createTransport(fixture.provider, { requestTimeoutMs: 25 });
+            const outcome = Promise.resolve(
+                transport.request<undefined, CallErrorValue<never>>({
+                    ids: { ...W.LOCAL_STORAGE_READ, kind: "request" },
+                    payload: new Uint8Array(),
+                    decodeResponse: () => ({ success: true, value: undefined }),
+                }),
+            );
+            jest.advanceTimersByTime(26);
+            await expect(outcome).rejects.toBeInstanceOf(RequestTimeoutError);
+
+            fixture.receive(wireFrame("p:1", W.LOCAL_STORAGE_READ, MESSAGE_TYPE_RESPONSE));
+            expect(warn).not.toHaveBeenCalled();
+
+            // Another transport on the same connection owns this id.
+            fixture.receive(wireFrame("host:3", W.LOCAL_STORAGE_READ, MESSAGE_TYPE_RESPONSE));
+            expect(warn).not.toHaveBeenCalled();
+
+            fixture.receive(wireFrame("p:1", W.LOCAL_STORAGE_READ, MESSAGE_TYPE_RESPONSE));
+            fixture.receive(wireFrame("p:99", W.LOCAL_STORAGE_READ, MESSAGE_TYPE_RESPONSE));
+            expect(
+                warn.mock.calls.filter((args) =>
+                    String(args[0]).includes("no such request was sent"),
+                ),
+            ).toHaveLength(2);
+        } finally {
+            warn.mockRestore();
+            jest.useRealTimers();
+        }
     });
 
     it("auto-responds to an inbound handshake with the versioned-result shape", () => {
@@ -662,7 +720,7 @@ describe("generated client transport", () => {
 
         const requestPayload = T.VersionedHostHandshakeRequest.enc({
             tag: "V1",
-            value: { codecVersion: TRUAPI_CODEC_VERSION },
+            value: { codecVersion: 3 },
         });
         const requestFrame = wireFrame(
             "h:1",
@@ -846,9 +904,9 @@ describe("generated client transport", () => {
 
     it("refuses a non-positive request deadline", () => {
         const fixture = providerFixture();
-        expect(() =>
-            createTransport(fixture.provider, { requestTimeoutMs: 0 }),
-        ).toThrow("requestTimeoutMs must be a positive finite number");
+        expect(() => createTransport(fixture.provider, { requestTimeoutMs: 0 })).toThrow(
+            "requestTimeoutMs must be a positive finite number",
+        );
     });
 
     it("rejects the handshake call when the host never answers", async () => {
@@ -863,9 +921,7 @@ describe("generated client transport", () => {
             const client = createClient(createTransport(fixture.provider));
             const outcome = Promise.resolve(client.system.handshake());
             jest.advanceTimersByTime(10_001);
-            await expect(outcome).rejects.toThrow(
-                "TrUAPI handshake timed out after 10000ms",
-            );
+            await expect(outcome).rejects.toThrow("TrUAPI handshake timed out after 10000ms");
         } finally {
             jest.useRealTimers();
         }
@@ -1129,7 +1185,11 @@ describe("generated client transport", () => {
                 rendererStart(`h:${index}`, {
                     context: {
                         tag: "ChatMessage",
-                        value: { roomId: "room", messageId: `message-${index}`, messageType: "vote" },
+                        value: {
+                            roomId: "room",
+                            messageId: `message-${index}`,
+                            messageType: "vote",
+                        },
                     },
                     payload: "0x",
                 }),
@@ -1303,9 +1363,7 @@ describe("generated client transport", () => {
             sub.subscriptionId,
             W.PAYMENT_BALANCE_SUBSCRIBE,
             MESSAGE_TYPE_INTERRUPT,
-            S.Option(
-                S.CallError(T.VersionedHostPaymentBalanceSubscribeError),
-            ).enc(callError),
+            S.Option(S.CallError(T.VersionedHostPaymentBalanceSubscribeError)).enc(callError),
         );
         fixture.receive(frame);
 
@@ -1335,9 +1393,7 @@ describe("generated client transport", () => {
             sub.subscriptionId,
             W.COIN_PAYMENT_REBALANCE_PURSE,
             MESSAGE_TYPE_INTERRUPT,
-            S.Option(
-                S.CallError(T.VersionedHostCoinPaymentRebalancePurseError),
-            ).enc(callError),
+            S.Option(S.CallError(T.VersionedHostCoinPaymentRebalancePurseError)).enc(callError),
         );
         fixture.receive(frame);
 

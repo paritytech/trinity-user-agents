@@ -35,6 +35,15 @@ final class RecordingEngine: DurableTxServicing, @unchecked Sendable {
         []
     }
 
+    func schedule(
+        domain _: TxDomainId,
+        groupId _: DurableTxGroupId?,
+        policies _: [SubmissionPolicy],
+        onRegister _: @escaping DurableTxRegistrationHook
+    ) async throws -> [DurableTxId] {
+        []
+    }
+
     func subscribeTransactionStatus(_: DurableTxId) -> AnyAsyncSequence<DurableTxStatus> {
         AsyncStream<DurableTxStatus> { $0.finish() }.eraseToAnyAsyncSequence()
     }

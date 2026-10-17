@@ -18,6 +18,20 @@ struct IncomingPaymentContextTests {
         }
     }
 
+    @Test func rejectedSetupDoesNotCancelTheCurrentDriver() async throws {
+        struct Stale: Error {}
+        let context = IncomingPaymentContext(logger: StubLogger())
+        let driver = Task<Void, Never> { try? await Task.sleep(for: .seconds(100)) }
+        defer { driver.cancel() }
+        await context.setup { driver }
+
+        await #expect(throws: Stale.self) {
+            try await context.setup { throw Stale() }
+        }
+
+        #expect(!driver.isCancelled)
+    }
+
     @Test func dedupsByGroupId() async {
         let context = IncomingPaymentContext(logger: StubLogger())
         // `process` invokes the runner synchronously, so the count is exact once both calls return —
