@@ -1,0 +1,49 @@
+// `@parity/truapi-host/node`: the pairing host for a Node process, such as a
+// CLI that pairs with the user's wallet. The Node counterpart of `./web`: the
+// same callbacks, options and runtime, with the core in a worker thread
+// instead of a Web Worker.
+
+import {
+  createWebWorkerPairingHostRuntime,
+  type CreateWebWorkerPairingHostRuntimeOptions,
+  type WebWorkerHostCallbacks,
+  type WorkerPairingHostRuntime,
+} from "../web/create-worker-host-runtime.js";
+import { ThreadWorker } from "./thread-worker.js";
+
+export type {
+  CreateWebWorkerPairingHostRuntimeOptions,
+  WebWorkerHostCallbacks,
+  WebWorkerHostConfig,
+  WorkerPairingHostRuntime,
+} from "../web/create-worker-host-runtime.js";
+export {
+  createHeadlessHostCallbacks,
+  type HeadlessHostOptions,
+} from "./default-callbacks.js";
+
+/**
+ * Start a pairing host whose core runs in a worker thread. Resolves once the
+ * core is loaded; `dispose()` stops the thread.
+ */
+export function createNodePairingHostRuntime(
+  callbacks: WebWorkerHostCallbacks,
+  options: CreateWebWorkerPairingHostRuntimeOptions,
+): Promise<WorkerPairingHostRuntime> {
+  const thread = new ThreadWorker(new URL("./worker.js", import.meta.url));
+  // A browser worker left behind costs nothing, but a thread keeps the process
+  // alive, so stop it whenever setup fails.
+  const stopThread = (error: unknown): never => {
+    thread.terminate();
+    throw error;
+  };
+  try {
+    return createWebWorkerPairingHostRuntime(
+      thread as unknown as Worker,
+      callbacks,
+      options,
+    ).catch(stopThread);
+  } catch (error) {
+    return stopThread(error);
+  }
+}

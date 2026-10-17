@@ -116,7 +116,8 @@ js/packages/
   truapi/                  @parity/truapi TypeScript client
   truapi-host/            @parity/truapi-host: WASM-backed host runtime; entries `.`
                           (shared host types), `/web` (iframe + Web Worker),
-                          `/worker-runtime`, and the test host: `/testing`
+                          `/node` (worker thread), `/worker-runtime`, and the
+                          test host: `/testing`
                           (createMockHost), `/testing/playwright`,
                           `/testing/server`, `/testing/client`,
                           `/testing/dev-accounts`, `/testing/host-page`
@@ -203,6 +204,8 @@ a single package with tree-shakeable subpath entries:
 - `@parity/truapi-host` (the `.` entry) exposes shared host runtime types and generated callback contracts.
 - `@parity/truapi-host/web` wires the WASM provider into a browser host: the iframe
   MessageChannel handshake (`createIframeHost`) plus `createWebWorkerProvider`.
+- `@parity/truapi-host/node` runs the same pairing host in a Node process, with the core in
+  a `node:worker_threads` thread (`createNodePairingHostRuntime`, `createHeadlessHostCallbacks`).
 - `@parity/truapi-host/worker-runtime` is the Web Worker entrypoint so the WASM core can
   run off the page main thread.
 
