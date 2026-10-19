@@ -24,8 +24,9 @@ dispatcher → role-neutral product runtime) is minted once per host↔product
 connection by the role handle and lives for that product's whole session; a
 **shared per-host** band owns role-neutral infrastructure (`RuntimeServices`)
 and the role object (`PairingHost` or `SigningHost`), which is itself the
-`ProductAuthority`. Pure `host_logic` is a no-I/O library both bands call, not a
-stage in the frame path; the host's `Platform` impl is the syscall floor.
+`ProductAuthority` and the `HostSession`. Pure `host_logic` is a no-I/O library
+both bands call, not a stage in the frame path; the host's `Platform` impl is
+the syscall floor.
 
 ```text
    ┌───────────────────────────────────────────────────────┐
@@ -52,14 +53,16 @@ stage in the frame path; the host's `Platform` impl is the syscall floor.
    └───────────────────────────────────────────────────────┘
                               │  wallet-authority tail :
                               │  sign · alias · entropy · alloc
-                              │  via  Arc<dyn ProductAuthority>
+                              │  via  ProductAccounts, the role
+                              │  bound to this product
                               ▼
 
  ══ shared per host app ( one per host, all connections ) ══════
      the PairingHostRuntime | SigningHostRuntime handle owns both:
    ┌─────────────────────────────┐   ┌────────────────────────┐
    │ role  =  ProductAuthority   │   │ RuntimeServices        │
-   │ PairingHost | SigningHost   │   │ platform · chain · RPC │
+   │          + HostSession      │   │ platform · chain · RPC │
+   │ PairingHost | SigningHost   │   │                        │
    └─────────────────────────────┘   └────────────────────────┘
               │
               │  PairingHost only : encrypted SSO channel
@@ -84,9 +87,12 @@ stage in the frame path; the host's `Platform` impl is the syscall floor.
 `ProductRuntimeHost` handles everything role-neutral (id normalization,
 permission gating, confirmation, soft product-key derivation), then delegates
 the wallet-authority tail (`sign_*`, `create_transaction`, `account_alias`,
-`create_proof`, `allocate_resources`, `derive_entropy`) through an
-`Arc<dyn ProductAuthority>` handle with an `AuthoritySession` snapshot the
-role revalidates before touching key material.
+`create_proof`, `allocate_resources`, `derive_entropy`) through a
+`ProductAccounts` handle bound to its product, with an `AuthoritySession`
+snapshot the role revalidates before touching key material. Its
+per-connection state (adapters, permissions, action channels, open operations
+and its own chain connection) lives in a `ProductConnection`, and login, logout
+and connection state go through the role's `HostSession`.
 
 `runtime.rs` owns the product runtime and shared helpers. The trait adapters
 are grouped by surface under `runtime/capabilities/`; cross-capability fixtures
@@ -237,8 +243,9 @@ awaiting `run_durable_recovery()`, which returns once nothing is live.
 
 ### The two roles
 
-Both implement the role-neutral **`ProductAuthority`** trait; each owns its
-role-specific lifecycle, so no method exists on a role that can't mean it:
+Both implement the role-neutral **`ProductAuthority`** and **`HostSession`**
+traits; each owns its role-specific lifecycle, so no method exists on a role
+that can't mean it:
 
 - **`PairingHost`** (seedless): the user's keys live in an external wallet, so
   signing/aliases/entropy relay over an encrypted SSO channel (statement store

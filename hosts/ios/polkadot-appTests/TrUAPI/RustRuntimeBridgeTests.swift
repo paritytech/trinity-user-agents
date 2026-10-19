@@ -5,6 +5,7 @@ import ChainRegistry
 import Products
 import SubstrateSdk
 import Keystore_iOS
+import StructuredConcurrency
 import TrUAPIHost
 
 // Scoped import: the TrUAPIHost module also declares a *type* named TrUAPIHost,
@@ -114,13 +115,6 @@ private func makeBridge(
         themeManager: themeManager,
         logger: Logger.shared
     ), cardFace: cardFace)
-}
-
-@MainActor
-private func waitUntil(_ condition: () -> Bool) async {
-    for _ in 0 ..< 200 where !condition() {
-        try? await Task.sleep(for: .milliseconds(5))
-    }
 }
 
 // MARK: - Tests
@@ -655,7 +649,7 @@ struct RustRuntimeBridgeTests {
         let execution = MockProductExecution()
         bridge.attach(execution)
 
-        await waitUntil { !execution.themeChanges.isEmpty }
+        try await withTimeout(.seconds(5)) { await execution.awaitThemeChange() }
 
         let expected = HostThemeSubscribeItem(
             name: ThemeName.custom(themeManager.theme.id),
@@ -671,10 +665,10 @@ struct RustRuntimeBridgeTests {
         let bridge = makeBridge(themeManager: themeManager)
         let execution = MockProductExecution()
         bridge.attach(execution)
-        await waitUntil { execution.themeChanges.count == 1 }
+        try await withTimeout(.seconds(5)) { await execution.awaitThemeChange() }
 
         themeManager.select(.app(.berlinDay))
-        await waitUntil { execution.themeChanges.count == 2 }
+        try await withTimeout(.seconds(5)) { await execution.awaitThemeChange() }
 
         let current = try bridge.currentTheme()
         #expect(execution.themeChanges.map(\.variant) == [ThemeVariant.dark, ThemeVariant.light])
