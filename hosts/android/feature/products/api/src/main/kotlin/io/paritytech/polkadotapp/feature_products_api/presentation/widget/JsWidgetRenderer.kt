@@ -249,7 +249,7 @@ private fun JsButtonRenderer(
         }
     }
 
-    val buttonModifier = modifier.then(widget.modifiers.toComposeModifier())
+    val buttonModifier = modifier.then(widget.modifiers.toComposeModifier()).fillMaxWidth()
 
     when (widget.variant) {
         JsButtonVariant.PRIMARY -> {
