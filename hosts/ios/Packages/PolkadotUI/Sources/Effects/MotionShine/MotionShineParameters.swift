@@ -40,4 +40,13 @@ public extension MotionShineParameters {
         length: 0.25,
         center: 0.5
     )
+
+    static func collectibles(isExpanded: Bool) -> MotionShineParameters {
+        MotionShineParameters(
+            intensity: 0.08,
+            dimming: 0.17,
+            width: 0.1,
+            center: isExpanded ? 0.5 : 0.25
+        )
+    }
 }

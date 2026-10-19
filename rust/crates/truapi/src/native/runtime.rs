@@ -1248,7 +1248,7 @@ mod tests {
 		let delivered = delivered.expect("expected a renderer action item").into_latest();
 		assert_eq!(delivered, published);
 		// The scanner checks taps on a connection, while hosts publish them here.
-		assert!(admin.product_runtime().recently_tapped());
+		assert!(admin.product_runtime().connection().recently_tapped());
 	}
 
 	#[test]
