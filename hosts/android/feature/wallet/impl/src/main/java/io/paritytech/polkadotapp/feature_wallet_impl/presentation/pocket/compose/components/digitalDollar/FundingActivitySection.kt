@@ -1,21 +1,27 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
@@ -52,29 +58,49 @@ private val COUNT_SPINNER_SIZE = 32.dp
 private val SPINNER_STROKE = 2.dp
 private val DIVIDER_HEIGHT = 1.dp
 private val CHEVRON_SIZE = 24.dp
+private val HISTORY_ROW_HEIGHT = 76.dp
+private val DOCK_ROW_HEIGHT = 84.dp
+private val DOCK_HEADER_HEIGHT = 48.dp
+private val DOCK_MAX_HEIGHT = 635.dp
+private val DOCK_SHAPE = RoundedCornerShape(24.dp)
+private const val TINT_ALPHA = 0.24f
 
-/** The ended sessions by day, newest first. */
-@Composable
-fun FundingHistorySection(
+/** The key of day [index]'s header in the history list, so the screen can tell which day has scrolled past. */
+fun fundingDayKey(index: Int): String = "funding-day-$index"
+
+/** The key of the history row for session [id]. */
+fun fundingRowKey(id: String): String = "funding-row-$id"
+
+/**
+ * The ended sessions by day, newest first, as items of the screen's list: each day's header, then its rows with a
+ * divider between them.
+ */
+fun LazyListScope.fundingHistory(
     days: ImmutableList<FundingActivityDayUi>,
     onRowClick: (id: String) -> Unit,
-    modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.medium),
-    ) {
-        days.forEach { day ->
-            Column {
-                NovaText(
-                    modifier = Modifier.padding(bottom = PolkadotTheme.spacings.small),
-                    text = dayTitle(day.title),
-                    style = PolkadotTheme.typography.title.small,
-                    color = PolkadotTheme.colors.fg.primary,
-                )
-                day.rows.forEachIndexed { index, row ->
+    days.forEachIndexed { dayIndex, day ->
+        item(key = fundingDayKey(dayIndex), contentType = "funding-day") {
+            NovaText(
+                modifier = Modifier.padding(
+                    top = if (dayIndex == 0) 0.dp else PolkadotTheme.spacings.large,
+                    bottom = PolkadotTheme.spacings.small,
+                ),
+                text = dayTitle(day.title),
+                style = PolkadotTheme.typography.title.small,
+                color = PolkadotTheme.colors.fg.primary,
+            )
+        }
+        day.rows.forEachIndexed { index, row ->
+            item(key = fundingRowKey(row.id), contentType = "funding-row") {
+                Column {
                     if (index > 0) RowDivider()
-                    FundingActivityRow(modifier = Modifier.clickable { onRowClick(row.id) }, row = row)
+                    FundingActivityRow(
+                        modifier = Modifier
+                            .height(HISTORY_ROW_HEIGHT)
+                            .clickable { onRowClick(row.id) },
+                        row = row,
+                    )
                 }
             }
         }
@@ -82,8 +108,8 @@ fun FundingHistorySection(
 }
 
 /**
- * The newest session in flight, under the balance. With more than one the spinner counts them and a tap lists
- * them all; with one a tap opens it.
+ * The sessions in flight, floating over the screen above the navigation bar: the front one only, a delayed one
+ * before the newest. With more than one the spinner counts them and a tap opens the panel; with one a tap opens it.
  */
 @Composable
 fun FundingInProgressDock(
@@ -92,24 +118,26 @@ fun FundingInProgressDock(
     onRowClick: (id: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val top = rows.firstOrNull() ?: return
+    val front = rows.firstOrNull() ?: return
     val several = rows.size > 1
 
     PolkadotSurface(
         modifier = modifier.fillMaxWidth(),
-        shape = PolkadotTheme.shapes.large,
+        shape = DOCK_SHAPE,
         color = PolkadotTheme.colors.bg.surface.container,
-        onClick = { if (several) onExpand() else onRowClick(top.id) },
+        onClick = { if (several) onExpand() else onRowClick(front.id) },
     ) {
         FundingActivityRow(
-            modifier = Modifier.padding(horizontal = PolkadotTheme.spacings.medium),
-            row = top,
+            modifier = Modifier
+                .height(DOCK_ROW_HEIGHT)
+                .padding(horizontal = PolkadotTheme.spacings.medium),
+            row = front,
             count = rows.size.takeIf { several },
         )
     }
 }
 
-/** Every session in flight, laid over the card until collapsed. */
+/** Every session in flight, opened from the dock over a scrim; the header or the scrim folds it back. */
 @Composable
 fun FundingInProgressPanel(
     rows: ImmutableList<FundingActivityRowUi>,
@@ -118,16 +146,19 @@ fun FundingInProgressPanel(
     modifier: Modifier = Modifier,
 ) {
     PolkadotSurface(
-        modifier = modifier.fillMaxWidth(),
-        shape = PolkadotTheme.shapes.large,
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(max = DOCK_MAX_HEIGHT),
+        shape = DOCK_SHAPE,
         color = PolkadotTheme.colors.bg.surface.container,
     ) {
-        Column(modifier = Modifier.padding(horizontal = PolkadotTheme.spacings.medium)) {
+        Column {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .height(DOCK_HEADER_HEIGHT)
                     .clickable(onClick = onCollapse)
-                    .padding(vertical = PolkadotTheme.spacings.medium),
+                    .padding(horizontal = PolkadotTheme.spacings.mediumIncreased),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 NovaText(
@@ -141,14 +172,35 @@ fun FundingInProgressPanel(
 
             LazyColumn {
                 itemsIndexed(rows, key = { _, row -> row.id }) { index, row ->
-                    if (index > 0) RowDivider()
-                    FundingActivityRow(modifier = Modifier.clickable { onRowClick(row.id) }, row = row)
+                    Column(modifier = Modifier.padding(horizontal = PolkadotTheme.spacings.medium)) {
+                        if (index > 0) RowDivider()
+                        FundingActivityRow(
+                            modifier = Modifier
+                                .height(DOCK_ROW_HEIGHT)
+                                .clickable { onRowClick(row.id) },
+                            row = row,
+                        )
+                    }
                 }
             }
         }
     }
 }
 
+/** Behind the open panel: dims the screen, and a tap on it folds the panel back. */
+@Composable
+fun FundingInProgressScrim(onCollapse: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = SCRIM_ALPHA))
+            .clickable(interactionSource = null, indication = null, onClick = onCollapse),
+    )
+}
+
+private const val SCRIM_ALPHA = 0.48f
+
+/** A 1dp rule that starts under the text column, as the rows' dividers do. */
 @Composable
 private fun RowDivider() {
     PolkadotSurface(
@@ -165,37 +217,45 @@ private fun FundingActivityRow(row: FundingActivityRowUi, modifier: Modifier = M
     val warning = row.icon == FundingRowIcon.IN_PROGRESS_WARNING
 
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = PolkadotTheme.spacings.smallIncreased),
+        modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.medium),
     ) {
         RowIcon(row.icon, count)
 
         Column(modifier = Modifier.weight(1f)) {
-            NovaText(
-                text = stringResource(row.title.textRes()),
-                style = PolkadotTheme.typography.body.mediumEmphasized,
-                color = PolkadotTheme.colors.fg.primary,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.smallIncreased),
+            ) {
+                NovaText(
+                    modifier = Modifier.weight(1f),
+                    text = stringResource(row.title.textRes()),
+                    style = PolkadotTheme.typography.title.small,
+                    color = PolkadotTheme.colors.fg.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (row.amount != null) {
+                    NovaText(
+                        text = row.amount,
+                        style = PolkadotTheme.typography.title.small,
+                        color = when (row.amountTone) {
+                            FundingAmountTone.SUCCESS -> PolkadotTheme.colors.fg.success
+                            FundingAmountTone.PRIMARY -> PolkadotTheme.colors.fg.primary
+                            FundingAmountTone.SECONDARY -> PolkadotTheme.colors.fg.secondary
+                        },
+                        maxLines = 1,
+                    )
+                }
+            }
             VerticalSpacer { extraTiny }
             NovaText(
                 text = subtitle(row.subtitle),
                 style = PolkadotTheme.typography.body.small,
                 color = if (warning) PolkadotTheme.colors.fg.warning else PolkadotTheme.colors.fg.secondary,
-            )
-        }
-
-        if (row.amount != null) {
-            NovaText(
-                text = row.amount,
-                style = PolkadotTheme.typography.body.mediumEmphasized,
-                color = when (row.amountTone) {
-                    FundingAmountTone.SUCCESS -> PolkadotTheme.colors.fg.success
-                    FundingAmountTone.PRIMARY -> PolkadotTheme.colors.fg.primary
-                    FundingAmountTone.SECONDARY -> PolkadotTheme.colors.fg.secondary
-                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
@@ -205,10 +265,11 @@ private fun FundingActivityRow(row: FundingActivityRowUi, modifier: Modifier = M
 private fun RowIcon(icon: FundingRowIcon, count: Int?) {
     val (background, tint) = when (icon) {
         FundingRowIcon.IN_PROGRESS -> PolkadotTheme.colors.bg.surface.nested to PolkadotTheme.colors.fg.primary
-        FundingRowIcon.IN_PROGRESS_WARNING -> PolkadotTheme.colors.bg.status.warning to PolkadotTheme.colors.fg.warning
-        FundingRowIcon.MOVED_IN -> PolkadotTheme.colors.bg.illustration.dark to PolkadotTheme.colors.fg.primaryInverted
-        FundingRowIcon.MOVED_OUT -> PolkadotTheme.colors.bg.action.tertiary to PolkadotTheme.colors.fg.primary
-        FundingRowIcon.FAILED -> PolkadotTheme.colors.bg.status.error to PolkadotTheme.colors.fg.error
+        FundingRowIcon.IN_PROGRESS_WARNING ->
+            PolkadotTheme.colors.fg.warning.copy(alpha = TINT_ALPHA) to PolkadotTheme.colors.fg.warning
+        FundingRowIcon.MOVED_IN -> PolkadotTheme.colors.bg.action.primary to PolkadotTheme.colors.fg.primaryInverted
+        FundingRowIcon.MOVED_OUT -> PolkadotTheme.colors.bg.surface.nested to PolkadotTheme.colors.fg.primary
+        FundingRowIcon.FAILED -> PolkadotTheme.colors.fg.error.copy(alpha = TINT_ALPHA) to PolkadotTheme.colors.fg.error
     }
 
     PolkadotSurface(
@@ -262,8 +323,6 @@ private fun subtitle(subtitle: FundingRowSubtitle): String = when (subtitle) {
         FundingActivityStep.Cancelling -> stringResource(RCommon.string.funding_activity_cancelling)
     }
 
-    is FundingRowSubtitle.Refunded -> stringResource(RCommon.string.funding_activity_refunded_amount, subtitle.amount)
-
     is FundingRowSubtitle.Failed -> subtitle.reason.reasonText.text()
 
     is FundingRowSubtitle.Ended -> {
@@ -281,7 +340,7 @@ private fun moment(moment: FundingMoment): String = when (moment) {
 }
 
 @Composable
-private fun dayTitle(title: FundingDayTitle): String = when (title) {
+internal fun dayTitle(title: FundingDayTitle): String = when (title) {
     FundingDayTitle.Today -> stringResource(RCommon.string.funding_date_today)
     FundingDayTitle.Yesterday -> stringResource(RCommon.string.funding_date_yesterday)
     is FundingDayTitle.Date -> title.text

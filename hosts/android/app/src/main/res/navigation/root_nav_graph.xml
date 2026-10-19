@@ -111,6 +111,11 @@
         android:label="FundingBottomSheet" />
 
     <dialog
+        android:id="@+id/fundingEndedBottomSheet"
+        android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.funding.ended.FundingEndedBottomSheet"
+        android:label="FundingEndedBottomSheet" />
+
+    <dialog
         android:id="@+id/fundingProviderFrameBottomSheet"
         android:name="io.paritytech.polkadotapp.feature_products_impl.presentation.funding.frame.FundingProviderFrameBottomSheet"
         android:label="FundingProviderFrameBottomSheet" />
@@ -293,6 +298,10 @@
     <action
         android:id="@+id/action_global_to_fundingBottomSheet"
         app:destination="@id/fundingBottomSheet" />
+
+    <action
+        android:id="@+id/action_global_to_fundingEndedBottomSheet"
+        app:destination="@id/fundingEndedBottomSheet" />
 
     <action
         android:id="@+id/action_global_to_fundingProviderFrameBottomSheet"

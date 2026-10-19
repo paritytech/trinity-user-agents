@@ -31,15 +31,12 @@ import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.forma
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageCoins
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageCoinsMetrics
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageRun
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageRunMarkers
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageStripLayout
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.holdings.HoldingGeometry
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageBalanceBreakdownUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageUiState
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
-import kotlinx.collections.immutable.toImmutableList
 import io.paritytech.polkadotapp.common.R as RCommon
 
 /**
@@ -53,8 +50,8 @@ import io.paritytech.polkadotapp.common.R as RCommon
  * Spread out, a tap on a coin picks it out, large, with what it is beside it, and a tap on it or on empty
  * ground puts it back. The grid closes from the card's own heading, never from a tap among the coins.
  *
- * There is no bar, no legend and no list. The coins are the depiction: they are already grouped into the two
- * buckets, so a bar above them said the same thing twice, and a row per holding said it a third time.
+ * Under the strip a bar shows how much is still clearing, striped, with "Clearing" and "Ready" and what each comes
+ * to; with nothing clearing only "Ready" is shown. The coins stay the depiction of each holding.
  *
  * "Ready" and "Clearing" are deliberately not the pallet's words: "recycler" and its relatives stay in code
  * identifiers and never reach the screen. Clearing folds together everything that is not ready yet, whatever
@@ -106,10 +103,14 @@ internal fun CoinageStateCard(
                 BlockHeaders(metrics = metrics)
             }
 
-            // Only while the coins are in the strip: spread into the grid they have headers of their own, and
-            // the runs these rule no longer exist.
+            // Only while the coins are in the strip: spread into the grid they have headers of their own.
             AnimatedVisibility(visible = !detailsVisible, enter = fadeIn(), exit = fadeOut()) {
-                CoinageRunMarkers(runs = state.runs(metrics))
+                CoinageSplitBar(
+                    modifier = Modifier.fillMaxWidth(),
+                    clearing = state.clearingBalance,
+                    ready = state.readyBalance,
+                    total = state.totalBalance,
+                )
             }
         }
     }
@@ -156,25 +157,6 @@ private fun BlockHeaders(metrics: CoinageCoinsMetrics) {
         )
     }
 }
-
-@Composable
-private fun CoinageUiState.TokensState.runs(metrics: CoinageCoinsMetrics) =
-    metrics.runs.map { run ->
-        val formatter = LocalTokenAmountFormatter.current
-
-        CoinageRun(
-            partition = run.partition,
-            start = run.start,
-            end = run.end,
-            title = stringResource(run.partition.label),
-            amount = formatter.formatFiatSigned(
-                when (run.partition) {
-                    CoinageStripLayout.Partition.READY -> readyBalance
-                    CoinageStripLayout.Partition.CLEARING -> clearingBalance
-                }
-            )
-        )
-    }.toImmutableList()
 
 internal val CoinageStripLayout.Partition.label: Int
     get() = when (this) {
