@@ -151,7 +151,7 @@ pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
 }
 
 pub struct EventCallbacks {
-	pub logs: Mutex<Vec<String>>,
+	pub logs: Mutex<Vec<(String, String)>>,
 	pub face_requests: Mutex<Vec<bool>>,
 	pub chat_room_status: Mutex<v01::ChatRoomRegistrationStatus>,
 	pub chat_created_rooms: Mutex<Vec<(String, String, String)>>,
@@ -244,8 +244,8 @@ impl EventCallbacks {
 
 #[async_trait::async_trait]
 impl HostCallbacks for EventCallbacks {
-	fn on_core_log(&self, marker: String, _detail: String) {
-		self.logs.lock().expect("logs mutex poisoned").push(marker);
+	fn on_core_log(&self, marker: String, detail: String) {
+		self.logs.lock().expect("logs mutex poisoned").push((marker, detail));
 	}
 	fn worker_demand_changed(&self, product_id: String, transition: WorkerTransition) {
 		self.worker_demand
@@ -2273,7 +2273,7 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
 					.lock()
 					.expect("logs mutex poisoned")
 					.iter()
-					.any(|marker| marker == "truapi.ws_bridge.text_frame_ignored")
+					.any(|(marker, _)| marker == "truapi.ws_bridge.text_frame_ignored")
 			})
 		},
 		"connection did not process the text frame",
@@ -2284,8 +2284,8 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
 			.lock()
 			.expect("logs mutex poisoned")
 			.iter()
+			.map(|(marker, _)| marker.clone())
 			.filter(|marker| marker.starts_with("truapi.ws_bridge."))
-			.cloned()
 			.collect::<Vec<_>>()
 	});
 	assert_eq!(

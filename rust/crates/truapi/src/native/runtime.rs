@@ -1069,7 +1069,6 @@ mod tests {
 		config.local_session_lite_username = None;
 		let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
 			.expect("host runtime config should be valid");
-		callbacks.logs.lock().unwrap().clear();
 
 		crate::logging::testing::forward(
 			&host._host_sink,
@@ -1077,7 +1076,11 @@ mod tests {
 			"chain call failed",
 		);
 
-		assert_eq!(*callbacks.logs.lock().unwrap(), vec!["truapi.tracing.warn".to_string()]);
+		let logs = callbacks.logs.lock().unwrap();
+		assert!(
+			logs.contains(&("truapi.tracing.warn".to_string(), "chain call failed".to_string())),
+			"{logs:?}"
+		);
 	}
 
 	#[test]

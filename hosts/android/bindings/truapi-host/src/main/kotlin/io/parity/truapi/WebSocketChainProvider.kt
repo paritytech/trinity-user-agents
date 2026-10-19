@@ -201,12 +201,13 @@ class WebSocketChainProvider(
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            onLog("chain connection $id closed on $dialledUrl: $code $reason")
+            val closeStatus = if (reason.isEmpty()) "$code" else "$code $reason"
+            onLog("chain connection $id closed on $dialledUrl: $closeStatus")
             finish()
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-            onLog("chain connection $id failed on $dialledUrl: ${t.javaClass.simpleName}: ${t.message}")
+            onLog("chain connection $id failed on $dialledUrl: ${t.describe()}")
             // Only a failure while still connecting is a dead node worth
             // replacing: anything else is a real close.
             if (state.get() == State.CONNECTING && connectNextEndpoint()) return
@@ -227,3 +228,5 @@ class WebSocketChainProvider(
         const val NORMAL_CLOSURE = 1000
     }
 }
+
+private fun Throwable.describe(): String = message?.let { "${javaClass.simpleName}: $it" } ?: javaClass.simpleName

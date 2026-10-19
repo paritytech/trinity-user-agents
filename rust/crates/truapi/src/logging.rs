@@ -70,21 +70,27 @@ pub fn init() {
 		return;
 	}
 	let (filter, handle) = reload::Layer::<LevelFilter, Registry>::new(DEFAULT_LEVEL);
-	let subscriber = Registry::default()
-		.with(ConsoleLayer.with_filter(filter))
-		.with(HostSinkLayer { sink: &HOST_SINK }.with_filter(HOST_SINK_LEVEL));
-	if tracing::subscriber::set_global_default(subscriber).is_ok() {
+	if tracing::subscriber::set_global_default(subscriber(filter, &HOST_SINK)).is_ok() {
 		let _ = RELOAD_HANDLE.set(handle);
 	}
+}
+
+fn subscriber(
+	filter: reload::Layer<LevelFilter, Registry>,
+	slot: &'static RwLock<Option<HostSink>>,
+) -> impl Subscriber {
+	Registry::default()
+		.with(ConsoleLayer.with_filter(filter))
+		.with(HostSinkLayer { sink: slot }.with_filter(HOST_SINK_LEVEL))
 }
 
 /// Send each event at [`HOST_SINK_LEVEL`] or above to `sink` as a marker
 /// (`truapi.tracing.warn` or `truapi.tracing.error`) and a detail line.
 ///
 /// One sink per process: the latest replaces any earlier one, and dropping the
-/// returned registration removes the sink unless a later one replaced it. A
-/// registration dropped before a later one replaces it leaves no sink, so build
-/// one runtime per process.
+/// returned registration removes the sink unless a later one replaced it.
+/// Between a registration dropping and the next one installing, no sink is
+/// set, so build one runtime per process.
 pub fn set_host_sink(sink: HostSink) -> HostSinkRegistration {
 	HostSinkRegistration::install(&HOST_SINK, sink)
 }
@@ -215,7 +221,7 @@ struct HostSinkLayer {
 impl<S: Subscriber> Layer<S> for HostSinkLayer {
 	fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
 		// Cloned out so a sink that logs again cannot deadlock on the lock.
-		let sink = self.sink.read().ok().and_then(|sink| sink.clone());
+		let sink = self.sink.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
 		let Some(sink) = sink else {
 			return;
 		};
@@ -322,6 +328,9 @@ pub mod testing {
 	/// Runs `emit` with the host sink layer on this thread and returns each line
 	/// it forwards as `marker detail`.
 	pub fn host_sink_lines(emit: impl FnOnce()) -> Vec<String> {
+		// A global default stops tracing-core from caching a callsite as never
+		// enabled when a thread with no subscriber registers it first.
+		init();
 		let lines = Arc::new(std::sync::Mutex::new(Vec::new()));
 		let recorded = lines.clone();
 		let sink: HostSink = Arc::new(move |marker, detail| {
@@ -329,9 +338,10 @@ pub mod testing {
 		});
 		// Leaked so each call gets its own slot and parallel tests cannot share a sink.
 		let slot: &'static RwLock<Option<HostSink>> = Box::leak(Box::new(RwLock::new(Some(sink))));
-		let subscriber =
-			Registry::default().with(HostSinkLayer { sink: slot }.with_filter(HOST_SINK_LEVEL));
-		tracing::subscriber::with_default(subscriber, emit);
+		tracing::subscriber::with_default(
+			subscriber(reload::Layer::new(LevelFilter::OFF).0, slot),
+			emit,
+		);
 		core::mem::take(&mut *lines.lock().unwrap())
 	}
 
