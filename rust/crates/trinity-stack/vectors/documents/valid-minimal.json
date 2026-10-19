@@ -1,0 +1,19 @@
+{
+  "$v": 1,
+  "chains": [
+    {
+      "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+      "role": "Relay",
+      "rpc": [
+        "ws://127.0.0.1:9944"
+      ]
+    }
+  ],
+  "generation": "g",
+  "id": "local",
+  "name": "Local",
+  "network": "local",
+  "sequence": 0,
+  "services": [],
+  "tld": "local"
+}

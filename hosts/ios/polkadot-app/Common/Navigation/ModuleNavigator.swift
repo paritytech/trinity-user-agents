@@ -45,6 +45,44 @@ extension ModuleNavigator: ModuleNavigating {
             return
         }
 
+        PresentedPageDismissal.dismissingPresented(on: view, unless: Self.isPinnedPresentation) { [weak view] in
+            guard let view else {
+                return
+            }
+            Self.showChat(model, in: view)
+        }
+    }
+
+    func openProduct(page: ProductPage) {
+        guard let tabBar = UIWindow.keyWindow?.rootViewController as? MainTabBarViewController else {
+            return
+        }
+
+        tabBar.openProduct(page: page)
+    }
+
+    func openPocket() {
+        guard let view = UIApplication.shared.mainTabBarController else {
+            return
+        }
+
+        // A card is a modal over the tabs, so the Pocket would be selected unseen.
+        view.presentedViewController?.dismiss(animated: true)
+        view.select(tab: .wallet)
+    }
+
+    func openScanPanel() {
+        UIApplication.shared.mainTabBarController?.openScanPanel()
+    }
+}
+
+@MainActor
+private extension ModuleNavigator {
+    static func isPinnedPresentation(_ controller: UIViewController) -> Bool {
+        controller is any LocalAuthViewProtocol
+    }
+
+    static func showChat(_ model: ChatOpenModel, in view: MainTabBarViewController) {
         view.select(tab: .chat)
         let tabNavigation = view.view(for: .chat) as? UINavigationController
 
@@ -76,27 +114,5 @@ extension ModuleNavigator: ModuleNavigating {
             return
         }
         tabNavigation.viewControllers = [rootViewController, topViewController]
-    }
-
-    func openProduct(page: ProductPage) {
-        guard let tabBar = UIWindow.keyWindow?.rootViewController as? MainTabBarViewController else {
-            return
-        }
-
-        tabBar.openProduct(page: page)
-    }
-
-    func openPocket() {
-        guard let view = UIApplication.shared.mainTabBarController else {
-            return
-        }
-
-        // A card is a modal over the tabs, so the Pocket would be selected unseen.
-        view.presentedViewController?.dismiss(animated: true)
-        view.select(tab: .wallet)
-    }
-
-    func openScanPanel() {
-        UIApplication.shared.mainTabBarController?.openScanPanel()
     }
 }
