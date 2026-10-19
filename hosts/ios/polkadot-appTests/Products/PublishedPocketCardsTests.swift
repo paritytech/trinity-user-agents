@@ -1,5 +1,7 @@
 import Foundation
 import Products
+import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 import Testing
 @testable import polkadot_app
 
@@ -157,15 +159,19 @@ struct PublishedPocketCardsTests {
     /// A chain read that hangs must not fold the face long after the card
     /// opened, nor keep running once the open stops counting on its answer.
     @Test
-    func opensWithItsFaceWhenTheProductDoesNotAnswerInTime() async {
-        await confirmation { lookupStopped in
-            let cards = LateCards { lookupStopped() }
+    func opensWithItsFaceWhenTheProductDoesNotAnswerInTime() async throws {
+        let clock = ManualClock()
 
-            let faceShown = await PocketCardFaceOnOpen.faceShown(
-                for: loyaltyKey,
-                cards: cards,
-                timeout: .milliseconds(10)
-            )
+        try await confirmation { lookupStopped in
+            let cards = LateCards(clock: clock) { lookupStopped() }
+            let opening = Task {
+                await PocketCardFaceOnOpen.faceShown(for: loyaltyKey, cards: cards, timeout: .seconds(5), clock: clock)
+            }
+
+            try await withTimeout(.seconds(5)) { await clock.resumeSleep(for: .seconds(5)) }
+            let faceShown = try await withTimeout(.seconds(5)) {
+                await withTaskCancellationHandler { await opening.value } onCancel: { opening.cancel() }
+            }
 
             #expect(faceShown)
         }
@@ -217,14 +223,15 @@ private func gameResolver(worker: ProductExecutable.Worker?) -> StubProductResol
     ))
 }
 
-/// Publishes the card with its face away a second after being asked, unless
-/// cancelled first, which it reports.
+/// Publishes the card with its face away ten seconds after being asked on
+/// `clock`, unless cancelled first, which it reports.
 private struct LateCards: PublishedPocketCardsResolving {
+    let clock: ManualClock
     let onCancel: @Sendable () -> Void
 
     func find(productId: ProductId, cardId _: PocketCardId) async throws -> PublishedPocketCard {
         try await withTaskCancellationHandler {
-            try await Task.sleep(for: .seconds(1))
+            try await clock.sleep(for: .seconds(10))
             return PublishedPocketCard(
                 productId: productId,
                 productName: "Game",

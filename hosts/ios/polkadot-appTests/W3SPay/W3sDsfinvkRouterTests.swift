@@ -96,6 +96,10 @@ private final class StubRemoteConfig: RemoteConfigManaging, @unchecked Sendable 
         self.merchants = merchants
     }
 
+    func syncedCollectiblesEnabled() -> Bool {
+        true
+    }
+
     func syncedTxExtensionVersions() -> [ChainModel.Id: UInt8] {
         [:]
     }

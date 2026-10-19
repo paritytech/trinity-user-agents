@@ -16,11 +16,26 @@ final class FakeRegistrationEngine: DurableTxServicing, @unchecked Sendable {
         var groups: [DurableTxGroupId: [DurableTxEntry]] = [:]
         var observers: [DurableTxGroupId: [AsyncStream<[DurableTxEntry]>.Continuation]] = [:]
         var recoveryStarts = 0
+        var subscriptions = 0
     }
 
     private let state = OSAllocatedUnfairLock(initialState: State())
+    private let subscriptionCount: AsyncStream<Int>.Continuation
+    private let subscriptionCountStream: AsyncStream<Int>
+
+    init() {
+        (subscriptionCountStream, subscriptionCount) = AsyncStream<Int>.makeStream()
+    }
 
     var recoveryStarts: Int { state.withLock { $0.recoveryStarts } }
+    var subscriptions: Int { state.withLock { $0.subscriptions } }
+
+    func waitForSubscriptions(_ count: Int) async {
+        guard subscriptions < count else { return }
+        for await total in subscriptionCountStream where total >= count {
+            return
+        }
+    }
 
     func current(_ group: DurableTxGroupId) -> [DurableTxEntry] {
         state.withLock { $0.groups[group] ?? [] }
@@ -71,6 +86,8 @@ final class FakeRegistrationEngine: DurableTxServicing, @unchecked Sendable {
         return AsyncStream<[DurableTxEntry]> { continuation in
             let snapshot = state.withLock { state -> [DurableTxEntry] in
                 state.observers[groupId, default: []].append(continuation)
+                state.subscriptions += 1
+                subscriptionCount.yield(state.subscriptions)
                 return state.groups[groupId] ?? []
             }
             continuation.yield(snapshot)
