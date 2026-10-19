@@ -122,6 +122,10 @@ private extension SPAViewController {
                 )
             case let .directURL(url):
                 DirectURLNavigationDecisionHandler(baseURL: url)
+            #if DEBUG
+                case let .devServer(url, _):
+                    DirectURLNavigationDecisionHandler(baseURL: url)
+            #endif
             }
 
         let engine = SPAJSEngine(
@@ -132,6 +136,10 @@ private extension SPAViewController {
 
         engine.onNavigationIntercepted = { [weak self] url in
             self?.presenter.didInterceptNavigation(to: url)
+        }
+
+        engine.onDeeplinkRequested = { [weak self] url in
+            self?.presenter.didRequestDeeplink(url)
         }
 
         presenter.setup(engine: engine)

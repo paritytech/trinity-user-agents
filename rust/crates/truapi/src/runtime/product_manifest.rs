@@ -228,7 +228,7 @@ pub fn encode_cached_root_manifest(json: Option<&str>, fetched_at_secs: u64) -> 
 /// to parse alike, and whoever debugs it goes to fix a manifest that is already
 /// correct.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RefusedBecause {
+enum RefusedBecause {
 	/// The published manifest does not name this caller for this scope.
 	NotGranted,
 	/// The user has already refused this pair.
@@ -271,7 +271,7 @@ pub async fn grants_scope(
 }
 
 /// Published access subject to this host's stored account-access refusals.
-pub async fn scope_grant(
+async fn scope_grant(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
 	caller_id: &str,
@@ -392,8 +392,8 @@ async fn with_ceiling<T>(ceiling: Duration, future: impl Future<Output = T>) -> 
 /// With `peopl.paseo` granting `dim2next` its key:
 /// - `dim2next.paseo` may prove in `dim2.paseo`'s context when `dim2.paseo` grants `dim2next`
 ///   `context`.
-/// - It may not prove in `stash.paseo`'s, which grants nothing, nor in a `raw:` context or a
-///   namesake's on another network.
+/// - It may not prove in `stash.paseo`'s, which grants nothing, nor in a namesake's on another
+///   network.
 ///
 /// Guards the alias read as well as the proof: both come from one VRF evaluation.
 pub async fn require_context_access(
@@ -413,8 +413,7 @@ pub async fn require_context_access(
 	// one that arrives straight off the request payload, so leaving it raw would
 	// refuse a grantee for spelling its own context `DIM2.paseo`, the hazard
 	// the gate exists to remove, one layer down. A context that names no
-	// product, `raw:` among them, has no manifest to consent with, so it fails
-	// closed.
+	// product has no manifest to consent with, so it fails closed.
 	let Ok(context_id) = normalize_product_identifier(&context.product_id) else {
 		return Err(RingVrfError::NotAllowlisted);
 	};

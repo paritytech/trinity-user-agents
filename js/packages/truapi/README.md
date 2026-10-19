@@ -77,13 +77,6 @@ sub.unsubscribe();
 - **Sandbox bootstrap** (`@parity/truapi/sandbox`) that detects the host environment, builds the
   matching provider, and exposes a cached client - see below.
 
-## Development escape hatches
-
-- **`development_createAccountProof(client, request)`** — `account.createAccountProof`
-  with `context` given as the exact 32-byte hex the proof is bound to, instead of a
-  product-namespaced `ProductProofContext`. Yet to be removed before a production
-  release; it lives entirely in `src/development.ts`.
-
 ## Sandbox bootstrap
 
 `@parity/truapi/sandbox` wires up a client for browser-embedded hosts: it detects whether the app

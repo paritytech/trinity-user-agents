@@ -11,8 +11,8 @@ use sp_crypto_hashing::{blake2_256, twox_128};
 use thiserror::Error;
 
 use super::{
-	StatementAllowanceError, collection::PersonhoodCollection, extension::Metadata,
-	key_hash::blake2_128_concat, proof::vrf_error, rpc::RpcClient, view,
+	PersonhoodSigner, StatementAllowanceError, collection::PersonhoodCollection,
+	extension::Metadata, key_hash::blake2_128_concat, proof::ProofError, rpc::RpcClient, view,
 };
 
 /// StatementStore allowance period: one UTC day, in seconds.
@@ -202,48 +202,53 @@ pub fn derive_long_term_storage_context(
 	)
 }
 
-/// The slot alias for our `entropy` at `(period, seq)`.
-pub async fn slot_alias(
-	entropy: [u8; 32],
+/// The slot alias for the selected collection at `(period, seq)`.
+pub fn slot_alias(
+	signer: &dyn PersonhoodSigner,
+	collection: PersonhoodCollection,
 	network_suffix: &[u8],
 	period: u32,
 	seq: u32,
 ) -> Result<[u8; 32], StatementAllowanceError> {
 	let context = derive_slot_context(network_suffix, period, seq);
-	alias_in_context(entropy, &context, "statement-store slot").await
+	alias_in_context(signer, collection, &context, "statement-store slot")
 }
 
-/// The PGAS claim alias for our `entropy` at `(day, slot_index)`.
-pub async fn pgas_alias(
-	entropy: [u8; 32],
+/// The PGAS claim alias for the selected collection at `(day, slot_index)`.
+pub fn pgas_alias(
+	signer: &dyn PersonhoodSigner,
+	collection: PersonhoodCollection,
 	network_suffix: &[u8],
 	day: u32,
 	slot_index: u32,
 ) -> Result<[u8; 32], StatementAllowanceError> {
 	let context = derive_pgas_context(network_suffix, day, slot_index);
-	alias_in_context(entropy, &context, "PGAS claim slot").await
+	alias_in_context(signer, collection, &context, "PGAS claim slot")
 }
 
-/// The long-term-storage slot alias for our `entropy` at `(period, counter)`.
-pub async fn long_term_storage_alias(
-	entropy: [u8; 32],
+fn long_term_storage_alias(
+	signer: &dyn PersonhoodSigner,
+	collection: PersonhoodCollection,
 	network_suffix: &[u8],
 	period: u32,
 	counter: u8,
 ) -> Result<[u8; 32], StatementAllowanceError> {
 	let context = derive_long_term_storage_context(network_suffix, period, counter);
-	alias_in_context(entropy, &context, "long-term-storage slot").await
+	alias_in_context(signer, collection, &context, "long-term-storage slot")
 }
 
-/// The alias of the key for `entropy` in `context`, named `name` in errors.
-async fn alias_in_context(
-	entropy: [u8; 32],
+fn alias_in_context(
+	signer: &dyn PersonhoodSigner,
+	collection: PersonhoodCollection,
 	context: &[u8],
 	name: &'static str,
 ) -> Result<[u8; 32], StatementAllowanceError> {
-	let vrf = crate::runtime::vrf::load().await.map_err(vrf_error)?;
-	vrf.alias(&entropy, context)
-		.map_err(|err| SlotError::AliasInContext { context: name, error: err.to_string() }.into())
+	signer.alias(collection, context).map_err(|error| match error {
+		StatementAllowanceError::Proof(ProofError::Vrf(error)) => {
+			SlotError::AliasInContext { context: name, error }.into()
+		},
+		other => other,
+	})
 }
 
 /// `Resources.StatementStoreAllowances[period][alias]` storage key.
@@ -402,14 +407,11 @@ pub async fn replacement_cooldown(
 /// `block_hash` (`None` when the slot entry is absent).
 pub async fn read_slot_account_at(
 	rpc: &RpcClient,
-	entropy: [u8; 32],
-	network_suffix: &[u8],
+	alias: &[u8; 32],
 	period: u32,
-	seq: u32,
 	block_hash: &str,
 ) -> Result<Option<[u8; 32]>, StatementAllowanceError> {
-	let alias = slot_alias(entropy, network_suffix, period, seq).await?;
-	let key = statement_store_allowance_key(period, &alias);
+	let key = statement_store_allowance_key(period, alias);
 	Ok(rpc
 		.get_storage_at(&key, block_hash)
 		.await?
@@ -439,13 +441,12 @@ pub enum SlotSelection {
 	FreeSlotsExcluded,
 }
 
-/// Inputs for one statement-store slot scan. The collection fixes both the slot
-/// budget and the alias space, so it travels with the entropy that derives them.
+/// Public selection and synchronous alias signing for one slot scan.
 pub struct SlotScan<'a> {
 	/// Collection whose alias space and slot budget are scanned.
 	pub collection: PersonhoodCollection,
-	/// Our bandersnatch entropy for `collection`.
-	pub entropy: [u8; 32],
+	/// Authorizes aliases for the selected collection.
+	pub signer: &'a dyn PersonhoodSigner,
 	/// Runtime-wide suffix used for product-scoped aliases.
 	pub network_suffix: &'a [u8],
 	/// Statement-store period to scan.
@@ -465,12 +466,12 @@ pub async fn scan_slot_excluding(
 	metadata: &Metadata,
 	scan: SlotScan<'_>,
 ) -> Result<SlotSelection, StatementAllowanceError> {
-	let SlotScan { collection, entropy, network_suffix, period, target, excluded, reuse_existing } =
+	let SlotScan { collection, signer, network_suffix, period, target, excluded, reuse_existing } =
 		scan;
 	let max = max_slots(rpc, metadata, collection).await?;
 	let mut keys = Vec::with_capacity(max as usize);
 	for seq in 0..max {
-		let alias = slot_alias(entropy, network_suffix, period, seq).await?;
+		let alias = slot_alias(signer, collection, network_suffix, period, seq)?;
 		keys.push(statement_store_allowance_key(period, &alias));
 	}
 	let entries = rpc.get_storage_many(&keys).await?;
@@ -526,13 +527,13 @@ pub async fn scan_pgas_slot_excluding(
 	rpc: &RpcClient,
 	metadata: &Metadata,
 	collection: PersonhoodCollection,
-	entropy: [u8; 32],
+	signer: &dyn PersonhoodSigner,
 	network_suffix: &[u8],
 	day: u32,
 	excluded: &[u32],
 ) -> Result<u32, StatementAllowanceError> {
 	let max = max_pgas_claims(metadata, collection)?;
-	scan_pgas_slot_in(rpc, entropy, network_suffix, day, max, excluded).await
+	scan_pgas_slot_in(rpc, signer, collection, network_suffix, day, max, excluded).await
 }
 
 /// The scan itself, over a known slot count.
@@ -540,7 +541,8 @@ pub async fn scan_pgas_slot_excluding(
 /// Split from the constant read so it can be exercised without Asset Hub metadata.
 async fn scan_pgas_slot_in(
 	rpc: &RpcClient,
-	entropy: [u8; 32],
+	signer: &dyn PersonhoodSigner,
+	collection: PersonhoodCollection,
 	network_suffix: &[u8],
 	day: u32,
 	max: u32,
@@ -557,7 +559,7 @@ async fn scan_pgas_slot_in(
 		}
 		let mut keys = Vec::with_capacity(batch.len());
 		for &slot_index in &batch {
-			let alias = pgas_alias(entropy, network_suffix, day, slot_index).await?;
+			let alias = pgas_alias(signer, collection, network_suffix, day, slot_index)?;
 			keys.push(claimed_gas_alias_key(day, &alias));
 		}
 		let claimed = rpc.get_storage_many(&keys).await?;
@@ -580,23 +582,21 @@ async fn scan_pgas_slot_in(
 /// on success, so its presence at the included block is what distinguishes the two.
 pub async fn pgas_slot_is_claimed_at(
 	rpc: &RpcClient,
-	entropy: [u8; 32],
-	network_suffix: &[u8],
+	alias: &[u8; 32],
 	day: u32,
-	slot_index: u32,
 	block_hash: &str,
 ) -> Result<bool, StatementAllowanceError> {
-	let alias = pgas_alias(entropy, network_suffix, day, slot_index).await?;
-	let key = claimed_gas_alias_key(day, &alias);
+	let key = claimed_gas_alias_key(day, alias);
 	Ok(rpc.get_storage_at(&key, block_hash).await?.is_some())
 }
 
 /// Scan long-term-storage aliases `0..max` for `period`, returning the first
-/// free counter not listed in `excluded`. `entropy` is our bandersnatch entropy.
+/// free counter not listed in `excluded`.
 pub async fn scan_long_term_storage_counter_excluding(
 	rpc: &RpcClient,
 	metadata: &Metadata,
-	entropy: [u8; 32],
+	signer: &dyn PersonhoodSigner,
+	collection: PersonhoodCollection,
 	network_suffix: &[u8],
 	period: u32,
 	excluded: &[u8],
@@ -606,7 +606,7 @@ pub async fn scan_long_term_storage_counter_excluding(
 		if excluded.contains(&counter) {
 			continue;
 		}
-		let alias = long_term_storage_alias(entropy, network_suffix, period, counter).await?;
+		let alias = long_term_storage_alias(signer, collection, network_suffix, period, counter)?;
 		let key = spent_long_term_storage_alias_key(period, &alias);
 		if rpc.get_storage(&key).await?.is_none() {
 			return Ok(counter);
@@ -619,7 +619,16 @@ pub async fn scan_long_term_storage_counter_excluding(
 pub mod testing {
 	//! Scripted chain answers for slot scans.
 
+	use crate::runtime::statement_allowance::{
+		CollectionCandidate, FixedPersonhoodSigner, collection::PersonhoodCollection,
+	};
+
 	use super::{slot_alias, statement_store_allowance_key};
+
+	/// The only membership a test signer holds: `entropy` in LitePeople.
+	pub fn lite_people(entropy: [u8; 32]) -> [CollectionCandidate; 1] {
+		[CollectionCandidate { collection: PersonhoodCollection::LitePeople, entropy }]
+	}
 
 	/// A `state_queryStorageAt` answer for `entropy`'s `period` row, where
 	/// `entries[seq]` is slot `seq`'s JSON storage value. Like the node, it
@@ -630,16 +639,19 @@ pub mod testing {
 		period: u32,
 		entries: &[Option<String>],
 	) -> String {
+		let candidates = lite_people(entropy);
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
 		let changes: Vec<String> = entries
 			.iter()
 			.enumerate()
 			.filter_map(|(seq, entry)| {
-				let alias = futures::executor::block_on(slot_alias(
-					entropy,
+				let alias = slot_alias(
+					&signer,
+					PersonhoodCollection::LitePeople,
 					network_suffix,
 					period,
 					seq as u32,
-				))
+				)
 				.unwrap();
 				let key = hex::encode(statement_store_allowance_key(period, &alias));
 				Some(format!(r#"["0x{key}",{}]"#, entry.as_ref()?))
@@ -655,8 +667,10 @@ mod tests {
 
 	use super::{
 		super::{rpc::testing::ScriptedRpc, test_fixtures},
+		testing::lite_people,
 		*,
 	};
+	use crate::runtime::statement_allowance::FixedPersonhoodSigner;
 
 	/// Fixture metadata captured from paseo-next-v2; its
 	/// `LiteStmtStoreSlotsPerPeriod` is 10.
@@ -682,6 +696,8 @@ mod tests {
 	/// Run `scan_slot_excluding` for `[0x22; 32]` against a scripted period
 	/// whose slot occupancy is `slots`.
 	fn scripted_find(slots: &[Option<[u8; 32]>]) -> SlotSelection {
+		let candidates = lite_people([0x11; 32]);
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
 		let metadata = test_fixtures::people();
 		let entries: Vec<String> = slots
 			.iter()
@@ -695,7 +711,7 @@ mod tests {
 			metadata,
 			SlotScan {
 				collection: PersonhoodCollection::LitePeople,
-				entropy: [0x11; 32],
+				signer: &signer,
 				network_suffix: NETWORK_SUFFIX,
 				period: 7,
 				target: &[0x22; 32],
@@ -736,6 +752,8 @@ mod tests {
 	/// another, cost seconds per statement proof against a live chain.
 	#[test]
 	fn the_slot_scan_reads_its_row_in_one_round_trip() {
+		let candidates = lite_people([0x11; 32]);
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
 		let mut entries = vec!["null".to_string(); SLOTS];
 		entries[SLOTS - 1] = slot_entry([0x22; 32]);
 		let scripted = ScriptedRpc::new(entries.iter().map(String::as_str));
@@ -746,7 +764,7 @@ mod tests {
 			test_fixtures::people(),
 			SlotScan {
 				collection: PersonhoodCollection::LitePeople,
-				entropy: [0x11; 32],
+				signer: &signer,
 				network_suffix: NETWORK_SUFFIX,
 				period: 7,
 				target: &[0x22; 32],
@@ -784,6 +802,8 @@ mod tests {
 	/// carry them through rather than discard them.
 	#[test]
 	fn the_scan_reports_each_occupied_slots_age() {
+		let candidates = lite_people([0x11; 32]);
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
 		let metadata = test_fixtures::people();
 		let entries: Vec<String> =
 			(0..SLOTS).map(|seq| entry_with_since([0x99; 32], 1_000 + seq as u64)).collect();
@@ -796,7 +816,7 @@ mod tests {
 				metadata,
 				SlotScan {
 					collection: PersonhoodCollection::LitePeople,
-					entropy: [0x11; 32],
+					signer: &signer,
 					network_suffix: NETWORK_SUFFIX,
 					period: 7,
 					target: &[0x22; 32],
@@ -908,6 +928,8 @@ mod tests {
 	/// treats this as full would replace a live slot for nothing.
 	#[test]
 	fn an_excluded_free_slot_is_not_reported_as_a_full_period() {
+		let candidates = lite_people([0x11; 32]);
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
 		let metadata = test_fixtures::people();
 		// Only seq 9 is free, and the caller already excluded it.
 		let mut entries: Vec<String> = (0..SLOTS - 1).map(|_| slot_entry([0x99; 32])).collect();
@@ -920,7 +942,7 @@ mod tests {
 			metadata,
 			SlotScan {
 				collection: PersonhoodCollection::LitePeople,
-				entropy: [0x11; 32],
+				signer: &signer,
 				network_suffix: NETWORK_SUFFIX,
 				period: 7,
 				target: &[0x22; 32],
@@ -938,7 +960,8 @@ mod tests {
 	/// against a live chain when the early slots were taken.
 	#[test]
 	fn the_pgas_scan_reads_a_batch_per_round_trip() {
-		const ENTROPY: [u8; 32] = [0x11; 32];
+		let candidates = lite_people([0x11; 32]);
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
 		const DAY: u32 = 20678;
 
 		// Slots 0-2 are claimed; 3 is free. The batch of ten is answered key by key.
@@ -949,7 +972,8 @@ mod tests {
 
 		let chosen = futures::executor::block_on(scan_pgas_slot_in(
 			&rpc,
-			ENTROPY,
+			&signer,
+			PersonhoodCollection::LitePeople,
 			NETWORK_SUFFIX,
 			DAY,
 			40,
@@ -968,7 +992,10 @@ mod tests {
 	/// dispatch error is caught.
 	#[test]
 	fn a_claim_is_only_recorded_when_the_alias_is_spent() {
-		const ENTROPY: [u8; 32] = [0x11; 32];
+		let candidates = lite_people([0x11; 32]);
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
+		let alias =
+			pgas_alias(&signer, PersonhoodCollection::LitePeople, NETWORK_SUFFIX, DAY, 0).unwrap();
 		const DAY: u32 = 20678;
 
 		let spent = ScriptedRpc::new(vec![r#""0x""#]);
@@ -977,22 +1004,18 @@ mod tests {
 		assert!(
 			futures::executor::block_on(pgas_slot_is_claimed_at(
 				&RpcClient::new(HostRpcClient::new(spent)),
-				ENTROPY,
-				NETWORK_SUFFIX,
+				&alias,
 				DAY,
-				0,
-				"0xb10c",
+				"0xb10c"
 			))
 			.unwrap()
 		);
 		assert!(
 			!futures::executor::block_on(pgas_slot_is_claimed_at(
 				&RpcClient::new(HostRpcClient::new(absent)),
-				ENTROPY,
-				NETWORK_SUFFIX,
+				&alias,
 				DAY,
-				0,
-				"0xb10c",
+				"0xb10c"
 			))
 			.unwrap()
 		);
@@ -1128,7 +1151,8 @@ mod tests {
 
 	#[test]
 	fn long_term_storage_scan_uses_the_requested_network_suffix() {
-		const ENTROPY: [u8; 32] = [0x11; 32];
+		let candidates = lite_people([0x11; 32]);
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
 		const PERIOD: u32 = 7;
 		const SUFFIX: &[u8] = b"previewnet";
 
@@ -1139,7 +1163,8 @@ mod tests {
 		let counter = futures::executor::block_on(scan_long_term_storage_counter_excluding(
 			&rpc,
 			metadata,
-			ENTROPY,
+			&signer,
+			PersonhoodCollection::LitePeople,
 			SUFFIX,
 			PERIOD,
 			&[],
@@ -1147,9 +1172,13 @@ mod tests {
 		.unwrap();
 		let calls = (0..=1)
 			.map(|counter| {
-				let alias = futures::executor::block_on(long_term_storage_alias(
-					ENTROPY, SUFFIX, PERIOD, counter,
-				))
+				let alias = long_term_storage_alias(
+					&signer,
+					PersonhoodCollection::LitePeople,
+					SUFFIX,
+					PERIOD,
+					counter,
+				)
 				.unwrap();
 				(
 					"state_getStorage".to_string(),
