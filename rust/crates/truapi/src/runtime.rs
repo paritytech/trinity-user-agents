@@ -65,6 +65,7 @@ use futures::{FutureExt, StreamExt, pin_mut};
 #[cfg(test)]
 use pairing_host::PairingHost;
 pub use pairing_host::PairingHost as PairingHostRole;
+use payment_id::host_funding_intent;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
 pub use signing_host::{
@@ -1590,7 +1591,7 @@ impl Funding for ProductRuntimeHost {
 		request: HostFundingRequest,
 	) -> Result<HostFundingResponse, CallError<HostFundingError>> {
 		let version = request.version();
-		let latest::HostFundingRequest { direction, amount } = request.into_latest();
+		let latest::HostFundingRequest { id, direction, amount } = request.into_latest();
 		let domain = |error| CallError::Domain(HostFundingError::from_latest(error, version));
 		// A capability the host does not serve is a framework answer; a
 		// missing session is one the product handles.
@@ -1600,15 +1601,25 @@ impl Funding for ProductRuntimeHost {
 		if self.authority.current_session().is_none() {
 			return Err(domain(latest::HostFundingError::NotConnected));
 		}
-		let session = self
-			.services
-			.open_funding(Some(&self.product), direction, amount)
+		self.services
+			.open_funding(
+				Some(&self.product),
+				host_funding_intent(&self.product, id),
+				direction,
+				amount,
+			)
 			.await
 			.map_err(|error| match error {
 				funding::OpenFundingError::Unsupported => CallError::Unsupported,
 				funding::OpenFundingError::Dismissed => domain(latest::HostFundingError::Rejected),
 				funding::OpenFundingError::InvalidAmount => {
 					domain(latest::HostFundingError::InvalidAmount)
+				},
+				funding::OpenFundingError::AlreadyExists => {
+					domain(latest::HostFundingError::AlreadyExists)
+				},
+				funding::OpenFundingError::Stopped => {
+					CallError::HostFailure { reason: error.to_string() }
 				},
 				funding::OpenFundingError::Present(error) => {
 					CallError::HostFailure { reason: error.reason }
@@ -1617,10 +1628,7 @@ impl Funding for ProductRuntimeHost {
 					CallError::HostFailure { reason: error.to_string() }
 				},
 			})?;
-		Ok(HostFundingResponse::from_latest(
-			latest::HostFundingResponse { intent: session.intent },
-			version,
-		))
+		Ok(HostFundingResponse::from_latest((), version))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "funding.status_subscribe"))]
@@ -1630,11 +1638,15 @@ impl Funding for ProductRuntimeHost {
 		request: HostFundingStatusSubscribeRequest,
 	) -> Subscription<HostFundingStatusSubscribeItem, CallError<HostFundingStatusSubscribeError>> {
 		let version = request.version();
-		let latest::HostFundingStatusSubscribeRequest { intent } = request.into_latest();
+		let latest::HostFundingStatusSubscribeRequest { id } = request.into_latest();
 		let registry = self.services.funding();
 		if registry.platform().is_none() {
 			return Subscription::interrupted(CallError::Unsupported);
 		}
+		if let Err(error) = self.require_session() {
+			return Subscription::interrupted(error);
+		}
+		let intent = host_funding_intent(&self.product, id);
 		if let Err(error) = registry.load(&self.services).await {
 			return Subscription::interrupted(CallError::HostFailure { reason: error.to_string() });
 		}

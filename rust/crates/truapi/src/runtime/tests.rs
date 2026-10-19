@@ -2874,10 +2874,19 @@ fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
 	let platform =
 		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 	assert!(services.funding().install_platform(platform.clone()));
-	let intent =
-		futures::executor::block_on(services.open_funding(None, v01::FundingDirection::Out, None))
-			.expect("opened")
-			.intent;
+	let opening =
+		services.open_funding(None, "fs_resume".to_string(), v01::FundingDirection::Out, None);
+	let intent = futures::executor::block_on(async {
+		futures::pin_mut!(opening);
+		assert!(futures::poll!(&mut opening).is_pending());
+		// The overlay runs on a task of its own, which these held tasks run.
+		for task in tasks.take() {
+			task.await;
+		}
+		opening.await
+	})
+	.expect("opened")
+	.intent;
 	assert_eq!(
 		futures::executor::block_on(services.cancel_funding(&intent)).expect("cancelled"),
 		CancelOutcome::Ended
@@ -2946,6 +2955,7 @@ fn a_session_is_stored_only_once_the_user_starts_it() {
 
 	futures::executor::block_on(services.open_funding(
 		None,
+		"fs_observed".to_string(),
 		v01::FundingDirection::In,
 		Some(1_000),
 	))
@@ -3010,6 +3020,7 @@ fn a_session_that_does_not_start_is_gone_even_when_storage_fails() {
 
 		let opened = futures::executor::block_on(services.open_funding(
 			None,
+			"fs_failing".to_string(),
 			v01::FundingDirection::In,
 			None,
 		));
@@ -3074,6 +3085,22 @@ fn funding_host(
 	host
 }
 
+/// A fresh intent for a session the test opens itself.
+fn new_intent() -> String {
+	format!("fs_{}", nanoid::nanoid!(10))
+}
+
+/// The funding id the tests' products choose.
+const FUNDING_ID: [u8; 32] = [7; 32];
+
+fn funding_request(id: [u8; 32]) -> truapi::versioned::funding::HostFundingRequest {
+	truapi::versioned::funding::HostFundingRequest::V1(v01::HostFundingRequest {
+		id,
+		direction: v01::FundingDirection::In,
+		amount: Some(1_000),
+	})
+}
+
 fn request_funding(
 	host: &ProductRuntimeHost,
 ) -> Result<
@@ -3083,32 +3110,36 @@ fn request_funding(
 	futures::executor::block_on(truapi::api::Funding::request(
 		host,
 		&CallContext::default(),
-		truapi::versioned::funding::HostFundingRequest::V1(v01::HostFundingRequest {
-			direction: v01::FundingDirection::In,
-			amount: Some(1_000),
-		}),
+		funding_request(FUNDING_ID),
+	))
+}
+
+fn watch_funding(
+	host: &ProductRuntimeHost,
+	id: [u8; 32],
+) -> Subscription<
+	truapi::versioned::funding::HostFundingStatusSubscribeItem,
+	CallError<truapi::versioned::funding::HostFundingStatusSubscribeError>,
+> {
+	futures::executor::block_on(truapi::api::Funding::status_subscribe(
+		host,
+		&CallContext::default(),
+		truapi::versioned::funding::HostFundingStatusSubscribeRequest::V1(
+			v01::HostFundingStatusSubscribeRequest { id },
+		),
 	))
 }
 
 fn first_funding_status(
 	host: &ProductRuntimeHost,
-	intent: &str,
+	id: [u8; 32],
 ) -> Option<
 	Result<
 		truapi::versioned::funding::HostFundingStatusSubscribeItem,
 		CallError<truapi::versioned::funding::HostFundingStatusSubscribeError>,
 	>,
 > {
-	futures::executor::block_on(
-		futures::executor::block_on(truapi::api::Funding::status_subscribe(
-			host,
-			&CallContext::default(),
-			truapi::versioned::funding::HostFundingStatusSubscribeRequest::V1(
-				v01::HostFundingStatusSubscribeRequest { intent: intent.to_string() },
-			),
-		))
-		.next(),
-	)
+	futures::executor::block_on(watch_funding(host, id).next())
 }
 
 fn funding_not_found() -> CallError<truapi::versioned::funding::HostFundingStatusSubscribeError> {
@@ -3125,8 +3156,7 @@ fn a_funding_request_opens_the_overlay_and_only_its_product_can_watch_it() {
 	assert!(services.funding().install_platform(platform.clone()));
 	let owner = funding_host(&services, "wallet.dot", true);
 
-	let truapi::versioned::funding::HostFundingResponse::V1(response) =
-		request_funding(&owner).expect("request accepted");
+	request_funding(&owner).expect("request accepted");
 
 	let presented = platform.presented.lock().expect("presented mutex poisoned").clone();
 	assert_eq!(
@@ -3134,23 +3164,141 @@ fn a_funding_request_opens_the_overlay_and_only_its_product_can_watch_it() {
 		[(
 			Some("wallet.dot".to_string()),
 			crate::platform::FundingPresentation {
-				intent: response.intent.clone(),
+				intent: crate::runtime::payment_id::host_funding_intent(&owner.product, FUNDING_ID,),
 				direction: v01::FundingDirection::In,
 				amount: Some(1_000),
 			},
 		)]
 	);
 	assert!(matches!(
-		first_funding_status(&owner, &response.intent),
+		first_funding_status(&owner, FUNDING_ID),
 		Some(Ok(truapi::versioned::funding::HostFundingStatusSubscribeItem::V1(
 			v01::HostFundingStatusSubscribeItem::InProgress { .. }
 		)))
 	));
-	// Another product's session reads exactly like one that does not exist.
+	// Another product's session reads exactly like one that does not exist,
+	// even under the same id.
 	assert_eq!(
-		first_funding_status(&funding_host(&services, "other.dot", true), &response.intent),
+		first_funding_status(&funding_host(&services, "other.dot", true), FUNDING_ID),
 		Some(Err(funding_not_found()))
 	);
+}
+
+// An id names one session, so a retried request cannot open a second one.
+#[test]
+fn a_reused_funding_id_is_refused() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let host = funding_host(&services, "wallet.dot", true);
+	request_funding(&host).expect("request accepted");
+
+	assert_eq!(
+		request_funding(&host),
+		Err(CallError::Domain(truapi::versioned::funding::HostFundingError::V1(
+			v01::HostFundingError::AlreadyExists
+		)))
+	);
+}
+
+// Watching a session, like paying, needs a connected account.
+#[test]
+fn watching_a_funding_session_needs_a_session() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+
+	assert_eq!(
+		first_funding_status(&funding_host(&services, "wallet.dot", false), FUNDING_ID),
+		Some(Err(CallError::Denied))
+	);
+}
+
+/// A funding overlay that stays up until the test answers for the user.
+struct GatedFundingPlatform {
+	answer:
+		Mutex<Option<futures::channel::oneshot::Receiver<crate::platform::FundingPresentOutcome>>>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::FundingPlatform for GatedFundingPlatform {
+	async fn present_funding(
+		&self,
+		_product: Option<&ProductContext>,
+		_session: crate::platform::FundingPresentation,
+	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
+		let answer = self.answer.lock().expect("answer mutex poisoned").take();
+		Ok(answer.expect("overlay shown once").await.expect("answered"))
+	}
+	async fn present_provider_frame(
+		&self,
+		_provider: &ProductContext,
+		_intent: String,
+		_target: truapi::latest::FundingFrameTarget,
+	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
+		Ok(truapi::latest::FundingFrameOutcome::Closed)
+	}
+}
+
+// A product that reloads while the overlay is up drops its request, but the
+// overlay is the user's: it still ends the session, and the product, watching
+// by its id, hears how. A session the user dismisses ends as cancelled and
+// is not left presenting.
+#[test]
+fn a_request_dropped_under_the_overlay_still_ends_its_session() {
+	for (outcome, ends) in [
+		(crate::platform::FundingPresentOutcome::Dismissed, true),
+		(crate::platform::FundingPresentOutcome::Started, false),
+	] {
+		let services = funding_services();
+		let (answer, answered) = futures::channel::oneshot::channel();
+		assert!(services.funding().install_platform(Arc::new(GatedFundingPlatform {
+			answer: Mutex::new(Some(answered)),
+		})));
+		let host = funding_host(&services, "wallet.dot", true);
+		let cx = CallContext::default();
+		futures::executor::block_on(async {
+			let request = truapi::api::Funding::request(&host, &cx, funding_request(FUNDING_ID));
+			futures::pin_mut!(request);
+			assert!(futures::poll!(request).is_pending());
+		});
+
+		let mut watch = watch_funding(&host, FUNDING_ID);
+		let first = futures::executor::block_on(watch.next());
+		answer.send(outcome).expect("overlay waiting");
+		let intent = crate::runtime::payment_id::host_funding_intent(&host.product, FUNDING_ID);
+		let last = if ends {
+			futures::executor::block_on(watch.next())
+		} else {
+			wait_until(|| services.funding().sessions().len() == 1, "session started");
+			None
+		};
+
+		assert!(
+			matches!(
+				first,
+				Some(Ok(truapi::versioned::funding::HostFundingStatusSubscribeItem::V1(
+					v01::HostFundingStatusSubscribeItem::InProgress { .. }
+				)))
+			),
+			"{outcome:?}: {first:?}"
+		);
+		if ends {
+			assert_eq!(
+				(last, services.funding().get(&intent)),
+				(
+					Some(Ok(truapi::versioned::funding::HostFundingStatusSubscribeItem::V1(
+						v01::HostFundingStatusSubscribeItem::Failed {
+							reason: v01::FundingFailure::Cancelled,
+						}
+					))),
+					None,
+				)
+			);
+		}
+	}
 }
 
 #[test]
@@ -3167,8 +3315,7 @@ fn a_dismissed_funding_overlay_is_rejected_and_leaves_no_session() {
 			v01::HostFundingError::Rejected
 		)))
 	);
-	let intent = platform.presented.lock().expect("presented mutex poisoned")[0].1.intent.clone();
-	assert_eq!(first_funding_status(&host, &intent), Some(Err(funding_not_found())));
+	assert_eq!(first_funding_status(&host, FUNDING_ID), Some(Err(funding_not_found())));
 }
 
 // The host's in-flight pill reads these announcements, so a session the user
@@ -3196,11 +3343,13 @@ fn a_host_opened_funding_session_belongs_to_no_product() {
 		crate::platform::FundingPresentOutcome::Started,
 	)));
 	let session =
-		futures::executor::block_on(services.open_funding(None, v01::FundingDirection::Out, None))
-			.expect("opened");
+		futures::executor::block_on(services.open_host_funding(v01::FundingDirection::Out, None))
+			.expect("opened")
+			.expect("started");
 
+	assert!(services.funding().get(&session).is_some());
 	assert_eq!(
-		first_funding_status(&funding_host(&services, "wallet.dot", true), &session.intent),
+		first_funding_status(&funding_host(&services, "wallet.dot", true), FUNDING_ID),
 		Some(Err(funding_not_found()))
 	);
 }
@@ -3236,6 +3385,7 @@ fn a_test_host_settles_a_funding_session_once() {
 	)));
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
+		"fs_settled".to_string(),
 		v01::FundingDirection::In,
 		Some(1_000),
 	))
@@ -8394,6 +8544,7 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 	let before = start(&storage);
 	let intent = futures::executor::block_on(before.open_funding(
 		None,
+		new_intent(),
 		v01::FundingDirection::In,
 		Some(1_000),
 	))
@@ -8450,6 +8601,7 @@ fn a_session_settles_from_the_top_up_the_provider_started() {
 	assert!(services.install_top_up_platform(engine.clone()));
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
+		new_intent(),
 		v01::FundingDirection::In,
 		Some(1_000),
 	))
@@ -8489,10 +8641,14 @@ fn a_provider_frame_opens_only_https_pages() {
 	let platform =
 		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 	assert!(services.funding().install_platform(platform.clone()));
-	let intent =
-		futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, None))
-			.expect("opened")
-			.intent;
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		None,
+	))
+	.expect("opened")
+	.intent;
 	assert!(
 		futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot"))
 			.expect("selected")
@@ -8545,10 +8701,14 @@ fn only_the_assigned_provider_worker_reports() {
 	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
-	let intent =
-		futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, None))
-			.expect("opened")
-			.intent;
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		None,
+	))
+	.expect("opened")
+	.intent;
 	assert!(
 		futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot"))
 			.expect("selected")
@@ -8576,6 +8736,7 @@ fn only_the_assigned_provider_worker_reports() {
 fn served_session(services: &Arc<RuntimeServices>, amount: u128) -> String {
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
+		new_intent(),
 		v01::FundingDirection::In,
 		Some(amount),
 	))
@@ -8733,8 +8894,7 @@ fn a_second_cancel_ends_the_session_and_releases_the_worker() {
 			CancelOutcome::Ended,
 			0,
 			Some(v01::HostFundingStatusSubscribeItem::Failed {
-				reason: v01::FundingFailure::Cancelled,
-				moved: 0,
+				reason: v01::FundingFailure::Cancelled
 			}),
 		)
 	);
@@ -8840,8 +9000,7 @@ fn a_cancel_after_money_moved_is_negotiated_with_the_provider() {
 			CancelConfirmation::Accepted,
 			Some(v01::HostFundingServeSubscribeItem::CancelAccepted { intent: accepted.clone() }),
 			Some(v01::HostFundingStatusSubscribeItem::Failed {
-				reason: v01::FundingFailure::Cancelled,
-				moved: 0,
+				reason: v01::FundingFailure::Cancelled
 			}),
 			Some(v01::HostFundingServeSubscribeItem::CancelDeclined { intent: lapsing.clone() }),
 			Some(FundingCancel::Declined),
@@ -8909,9 +9068,13 @@ fn closing_the_overlay_after_choosing_a_provider_keeps_the_session_and_asks_it_t
 	assert!(platform.services.set(Arc::downgrade(&services)).is_ok());
 	assert!(services.funding().install_platform(platform.clone()));
 
-	let opened =
-		futures::executor::block_on(services.open_funding(None, v01::FundingDirection::In, None))
-			.map(|session| session.intent);
+	let opened = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		None,
+	))
+	.map(|session| session.intent);
 	let kept = opened.as_ref().ok().and_then(|intent| services.funding().get(intent));
 
 	assert_eq!(

@@ -297,7 +297,8 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_sessions()
 	}
 
-	/// Every funding session the host recorded, as summaries newest first,
+	/// Every ended funding session the host recorded or the core compacted,
+	/// as summaries newest first,
 	/// for rebuilding the host's own history when it was lost.
 	pub fn funding_history(&self) -> Vec<crate::host_logic::funding::FundingSessionSummary> {
 		self.runtime.funding_history()
