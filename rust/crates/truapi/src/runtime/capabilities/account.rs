@@ -30,14 +30,11 @@ use truapi::{
 use super::from_latest_error;
 use truapi::versioned::{FromLatest, IntoLatest, Versioned};
 
-use crate::{
-	host_internal::product_manifest::Granted,
-	runtime::{
-		ProductRuntimeHost, account_access_authorization, account_get_authority_error,
-		remote_authority_call, remote_authority_context, ring_vrf_alias_error, ring_vrf_list_error,
-		ring_vrf_proof_error, ring_vrf_register_error, ring_vrf_sign_error, until_cancelled,
-		validate_vrf_transcript, vrf_call_error,
-	},
+use crate::runtime::{
+	ProductRuntimeHost, account_access_authorization, account_get_authority_error,
+	product_manifest, remote_authority_call, remote_authority_context, ring_vrf_alias_error,
+	ring_vrf_list_error, ring_vrf_proof_error, ring_vrf_register_error, ring_vrf_sign_error,
+	until_cancelled, validate_vrf_transcript, vrf_call_error,
 };
 
 #[truapi::async_trait]
@@ -167,22 +164,21 @@ impl Account for ProductRuntimeHost {
 
 			let calling_product_id = self.connection.product_id();
 			let cx = remote_authority_context(cx);
-			let Some(owner) = self
-				.bounded_cross_product_scope_target(
-					&request.key_handle.dot_ns_identifier,
-					Granted::Context,
-					&cx,
-				)
-				.await
+			let Ok(Ok(access)) = until_cancelled(
+				&cx,
+				product_manifest::ring_vrf_key_access_granted_within(
+					&self.connection.services,
+					self.connection.platform.as_ref(),
+					&calling_product_id,
+					&request.key_handle,
+					cx.timeout(),
+				),
+			)
+			.await
 			else {
-				tracing::info!(
-					caller = %calling_product_id,
-					owner = %request.key_handle.dot_ns_identifier,
-					"cross-product ring-VRF access refused at the runtime frontend"
-				);
 				return Err(CallError::Domain(latest::HostAccountCreateProofError::NotAllowlisted));
 			};
-			request.key_handle.dot_ns_identifier = owner;
+			request.key_handle.dot_ns_identifier = access.owner;
 			remote_authority_call(&cx, self.accounts.create_proof(&session, &cx, request))
 				.await
 				.map_err(|err| CallError::Domain(ring_vrf_proof_error(err)))
@@ -271,22 +267,21 @@ impl Account for ProductRuntimeHost {
 			};
 			let calling_product_id = self.connection.product_id();
 			let cx = remote_authority_context(cx);
-			let Some(owner) = self
-				.bounded_cross_product_scope_target(
-					&request.key_handle.dot_ns_identifier,
-					Granted::Context,
-					&cx,
-				)
-				.await
+			let Ok(Ok(access)) = until_cancelled(
+				&cx,
+				product_manifest::ring_vrf_key_access_granted_within(
+					&self.connection.services,
+					self.connection.platform.as_ref(),
+					&calling_product_id,
+					&request.key_handle,
+					cx.timeout(),
+				),
+			)
+			.await
 			else {
-				tracing::info!(
-					caller = %calling_product_id,
-					owner = %request.key_handle.dot_ns_identifier,
-					"cross-product ring-VRF access refused at the runtime frontend"
-				);
 				return Err(CallError::Domain(latest::HostAccountRingVrfSignError::NotAllowlisted));
 			};
-			request.key_handle.dot_ns_identifier = owner;
+			request.key_handle.dot_ns_identifier = access.owner;
 			remote_authority_call(&cx, self.accounts.ring_vrf_sign(&session, &cx, request))
 				.await
 				.map_err(|err| CallError::Domain(ring_vrf_sign_error(err)))
