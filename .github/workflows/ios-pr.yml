@@ -550,9 +550,20 @@ jobs:
             bundle exec fastlane run_unit_tests
           fi
 
-      # Upload test artifacts for debugging - only when DEBUG_CI is enabled
+      # xcpretty drops Swift Testing results, so a failing @Test is named only
+      # in the result bundle.
+      - name: Report failed tests
+        if: failure()
+        working-directory: hosts/ios
+        run: |
+          result=fastlane/test_output/polkadot-app.xcresult
+          if [[ -d "$result" ]]; then
+            xcrun xcresulttool get test-results summary --path "$result"
+          fi
+
+      # Upload test artifacts on failure, or always when DEBUG_CI is enabled
       - name: Upload test artifacts
-        if: env.DEBUG_CI == 'true' && (failure() || success())
+        if: failure() || (env.DEBUG_CI == 'true' && success())
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-artifacts-${{ github.run_number }}

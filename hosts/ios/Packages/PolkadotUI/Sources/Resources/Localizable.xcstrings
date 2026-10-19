@@ -753,6 +753,17 @@
         }
       }
     },
+    "collectibles.card.action.view" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "View Collectibles"
+          }
+        }
+      }
+    },
     "common.accept" : {
       "comment" : "Accept button title",
       "extractionState" : "manual",
