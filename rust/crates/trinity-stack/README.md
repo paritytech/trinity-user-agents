@@ -41,6 +41,10 @@ fails or breaks a rule, and reports a new `generation` (drop cached chain data),
   an envelope that verifies under strict Ed25519.
 - `Pointer` encodes and decodes the links a QR code carries, and `same_stack` and `stack_id` say which stack it is.
 - `sign` wraps a descriptor in a signed envelope, after checking it.
+- `canonical` renders a descriptor with sorted keys, and `content_hash` hashes that form without `sequence`, so a
+  publisher raises `sequence` only when the content changes.
+- The `js` feature builds the wasm-bindgen surface `@parity/trinity-stack` ships, with TypeScript types for the crate's
+  values.
 - `light_spec_genesis` and `Chain::check_light_spec` check a light spec against its chain's genesis hash.
 
 Every error is one rule of the RFC, and `Error::code` is its stable name.
