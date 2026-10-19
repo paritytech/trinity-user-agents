@@ -28,6 +28,9 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     /// Requests passed to `render`, in order, including ones that threw, so
     /// `renderRequests.count` is the call count the retry tests assert on.
     private(set) var renderRequests: [ProductRendererRenderRequest] = []
+    /// The continuation behind each stream `render` returned, in order, so a
+    /// test can push a face into a stream that is already being drained.
+    private(set) var renderContinuations: [AsyncThrowingStream<RendererNode, Error>.Continuation] = []
     /// Errors thrown by successive `render` calls, consumed in order; once
     /// empty the call succeeds. Lets tests drive the startup retry loop.
     var renderErrors: [Error] = []
@@ -42,14 +45,24 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     private var renderSignals: AsyncStream<Void>.AsyncIterator
     private let closeSignal: AsyncStream<Void>.Continuation
     private var closeSignals: AsyncStream<Void>.AsyncIterator
+    private let pocketCardSignal: AsyncStream<[PocketCard]>.Continuation
+    private var pocketCardSignals: AsyncStream<[PocketCard]>.AsyncIterator
+    private let themeSignal: AsyncStream<Void>.Continuation
+    private var themeSignals: AsyncStream<Void>.AsyncIterator
 
     init() {
         let (renders, renderContinuation) = AsyncStream.makeStream(of: Void.self)
         let (closes, closeContinuation) = AsyncStream.makeStream(of: Void.self)
+        let (cardLists, cardListContinuation) = AsyncStream.makeStream(of: [PocketCard].self)
+        let (themes, themeContinuation) = AsyncStream.makeStream(of: Void.self)
         renderSignal = renderContinuation
         renderSignals = renders.makeAsyncIterator()
         closeSignal = closeContinuation
         closeSignals = closes.makeAsyncIterator()
+        pocketCardSignal = cardListContinuation
+        pocketCardSignals = cardLists.makeAsyncIterator()
+        themeSignal = themeContinuation
+        themeSignals = themes.makeAsyncIterator()
     }
 
     /// Returns once a `render` call has happened that no earlier call to this method consumed.
@@ -60,6 +73,16 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     /// Returns once a `close` call has happened that no earlier call to this method consumed.
     func awaitClose() async {
         _ = await closeSignals.next()
+    }
+
+    /// Returns the next card list pushed to the product that no earlier call to this method consumed.
+    func awaitPocketCardNotification() async -> [PocketCard]? {
+        await pocketCardSignals.next()
+    }
+
+    /// Returns once a theme notification has happened that no earlier call to this method consumed.
+    func awaitThemeChange() async {
+        _ = await themeSignals.next()
     }
 
     func startWsBridge(bindPort _: UInt16) throws -> WsBridgeEndpoint {
@@ -82,17 +105,20 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
 
     func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error> {
         renderRequests.append(request)
-        renderSignal.yield()
         if !renderErrors.isEmpty {
+            renderSignal.yield()
             throw renderErrors.removeFirst()
         }
 
         let nodes = renderNodes
         let staysOpen = keepsRenderStreamOpen
-        return AsyncThrowingStream { continuation in
+        let stream = AsyncThrowingStream<RendererNode, Error> { continuation in
             nodes.forEach { continuation.yield($0) }
             if !staysOpen { continuation.finish() }
+            self.renderContinuations.append(continuation)
         }
+        renderSignal.yield()
+        return stream
     }
 
     func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws {
@@ -118,6 +144,7 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
 
     func notifyThemeChanged(theme: HostThemeSubscribeItem) {
         themeChanges.append(theme)
+        themeSignal.yield()
     }
 
     func notifyLocaleChanged(locale _: HostLocaleSubscribeItem) {}
@@ -140,5 +167,6 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
 
     func notifyPocketCardsChanged(cards: [PocketCard]) {
         pocketCardNotifications.append(cards)
+        pocketCardSignal.yield(cards)
     }
 }
