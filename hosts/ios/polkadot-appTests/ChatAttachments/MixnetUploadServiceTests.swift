@@ -179,6 +179,7 @@ struct MixnetUploadServiceTests {
     @Test("message with existing uploadingInfo is skipped")
     func alreadyUploadedSkipped() async throws {
         let mockLoader = MockHOPFileLoader()
+        mockLoader.uploadEvents = [.onProgress(.init(uploaded: 1, total: 500, uploadedHashes: [Data()]))]
         mockLoader.shouldSuspend = true
 
         let env = makeTestEnv(loaderFactory: MockHOPFileLoaderFactory(loader: mockLoader))
@@ -195,16 +196,19 @@ struct MixnetUploadServiceTests {
             ))
         ))
 
-        _ = try await env.chatManager.sendMessage(
+        let skipped = try await env.chatManager.sendMessage(
             .richText(.init(text: nil, attachments: [uploadedAttachment])),
             status: .outgoing(.new)
         )
         env.service.setup()
 
-        try await Task.sleep(for: .milliseconds(500))
+        // Messages are processed in order, so barrier progress means the skipped message was handled.
+        let barrier = try await env.chatManager.sendMessage(makeUploadContent(), status: .outgoing(.new))
+        let barrierId = makeAttachmentId(message: barrier)
+        try await env.service.waitForFirstEvent(of: barrierId)
 
-        let taskCount = await env.service.context.tasks.count
-        #expect(taskCount == 0)
+        #expect(await env.service.context.state[makeAttachmentId(message: skipped)] == nil)
+        #expect(await Set(env.service.context.tasks.keys) == [barrierId])
 
         env.service.throttle()
     }
