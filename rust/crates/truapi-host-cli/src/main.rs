@@ -618,7 +618,7 @@ async fn dispatch(
 			println!(
 				"{}",
 				serde_json::json!({
-					"schemaVersion": 1,
+					"schema_version": 1,
 					"network": config.id,
 					"namespace": config.network_suffix,
 					"identity_backend_base": config.identity_backend_base,
