@@ -12,8 +12,9 @@ use anyhow::{Context, Result, anyhow, bail};
 use clap::Subcommand;
 use crossterm::style::Stylize;
 use reqwest::Url;
-use serde::{Deserialize, Serialize};
-use trinity_stack::{DEFAULT_LINK_BASE, Document, Fetched, Pointer, Status, accept};
+use trinity_stack::{
+	DEFAULT_LINK_BASE, Document, Fetched, Pointer, PublishState, Rendered, Status, accept, render,
+};
 use zeroize::Zeroizing;
 
 use crate::{platform, terminal_ui::qr_rows};
@@ -150,14 +151,6 @@ fn read_secret(path: &Path) -> Result<Zeroizing<[u8; 32]>> {
 	Ok(secret)
 }
 
-/// What `publish` remembers between runs.
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
-#[serde(rename_all = "camelCase")]
-struct PublishState {
-	sequence: u64,
-	content_hash: String,
-}
-
 fn publish(
 	model: &Path,
 	generation: &str,
@@ -175,9 +168,7 @@ fn publish(
 		.transpose()
 		.map_err(refused)?;
 	let model = fs::read(model).with_context(|| format!("read {}", model.display()))?;
-	let model: serde_json::Map<String, serde_json::Value> =
-		serde_json::from_slice(&model).context("the model is not a JSON object")?;
-	let state = match state_file {
+	let previous = match state_file {
 		Some(path) if path.exists() => {
 			let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
 			Some(
@@ -187,10 +178,11 @@ fn publish(
 		},
 		_ => None,
 	};
-	let (descriptor, state) = render(model, generation, state, unix_now())?;
+	let Rendered { plain, state } =
+		render(&model, generation, previous.as_ref(), unix_now()).map_err(refused)?;
 	let document = match secret {
-		Some(secret) => trinity_stack::sign(&descriptor, secret).map_err(refused)?,
-		None => descriptor,
+		Some(secret) => trinity_stack::sign(&plain, secret).map_err(refused)?,
+		None => plain,
 	};
 	let path = out.join(WELL_KNOWN);
 	// The state goes first: if the descriptor write then fails, a retry repeats the same
@@ -210,35 +202,6 @@ fn publish(
 /// umask's permissions, so a web server running as another user can serve it.
 fn write_atomically(path: &Path, contents: &[u8]) -> Result<()> {
 	platform::atomic_write(path, contents).map_err(anyhow::Error::msg)
-}
-
-/// Renders a model as a `$v: 1` descriptor and checks it. `sequence` stays the same while nothing
-/// changes and otherwise rises to the larger of the last one plus one and `now`, so a publisher
-/// with no saved state still never goes backwards.
-fn render(
-	mut model: serde_json::Map<String, serde_json::Value>,
-	generation: &str,
-	state: Option<PublishState>,
-	now: u64,
-) -> Result<(Vec<u8>, PublishState)> {
-	for owned in ["$v", "sequence", "generation"] {
-		model.remove(owned);
-	}
-	model.insert("$v".into(), trinity_stack::VERSION.into());
-	model.insert("generation".into(), generation.into());
-	model.insert("sequence".into(), 0.into());
-	// The crate hashes and renders the canonical form, as `@parity/trinity-stack`'s `publish` does,
-	// so equal hashes mean equal published bytes and a state file means the same thing to both.
-	let hash = trinity_stack::content_hash(&serde_json::to_vec(&model)?).map_err(refused)?;
-	let content_hash = format!("0x{}", hex::encode(hash));
-	let sequence = match state {
-		Some(state) if state.content_hash == content_hash => state.sequence,
-		Some(state) => (state.sequence + 1).max(now),
-		None => now,
-	};
-	model.insert("sequence".into(), sequence.into());
-	let descriptor = trinity_stack::canonical(&serde_json::to_vec(&model)?).map_err(refused)?;
-	Ok((descriptor, PublishState { sequence, content_hash }))
 }
 
 /// A link (any URL with a `url` parameter) or a descriptor URL as a pointer, with `key` filling in
@@ -370,68 +333,6 @@ fn unix_now() -> u64 {
 #[cfg(test)]
 mod tests {
 	use super::*;
-
-	fn model() -> serde_json::Map<String, serde_json::Value> {
-		serde_json::from_value(serde_json::json!({
-			"id": "local", "name": "Local", "network": "local", "tld": "local", "services": [],
-			"chains": [{
-				"role": "Relay",
-				"genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
-				"rpc": ["ws://127.0.0.1:9944"],
-			}],
-		}))
-		.unwrap()
-	}
-
-	#[test]
-	fn sequence_holds_while_nothing_changes_and_rises_when_something_does() {
-		let (_, first) = render(model(), "g1", None, 1_000).unwrap();
-		assert_eq!(first.sequence, 1_000);
-		let (_, again) = render(model(), "g1", Some(first), 2_000).unwrap();
-		assert_eq!(again.sequence, 1_000, "republishing the same content keeps sequence");
-		let (_, new_generation) = render(model(), "g2", Some(again), 900).unwrap();
-		assert_eq!(new_generation.sequence, 1_001, "a clock behind the state still moves forward");
-	}
-
-	#[test]
-	fn the_content_hash_is_the_crates() {
-		let (descriptor, state) = render(model(), "g1", None, 1_000).unwrap();
-		let expected =
-			format!("0x{}", hex::encode(trinity_stack::content_hash(&descriptor).unwrap()));
-		assert_eq!(state.content_hash, expected, "the npm package's publish keeps the same hash");
-	}
-
-	#[test]
-	fn a_service_kind_only_newer_readers_know_raises_sequence() {
-		let (_, first) = render(model(), "g1", None, 1_000).unwrap();
-		let mut future = model();
-		future["services"] =
-			serde_json::json!([{ "kind": "future-kind", "urls": ["https://a.example/"] }]);
-		let (_, again) = render(future, "g1", Some(first), 900).unwrap();
-		assert_eq!(again.sequence, 1_001);
-	}
-
-	#[test]
-	fn a_model_cannot_set_the_fields_publish_owns() {
-		let mut stale = model();
-		stale.insert("sequence".into(), 7.into());
-		stale.insert("generation".into(), "old".into());
-		let (descriptor, state) = render(stale, "g1", None, 1_000).unwrap();
-		let parsed = Document::parse(&descriptor).unwrap();
-		assert_eq!(
-			(parsed.descriptor().sequence, parsed.descriptor().generation.as_str()),
-			(1_000, "g1")
-		);
-		assert_eq!(state.sequence, 1_000);
-	}
-
-	#[test]
-	fn a_model_that_breaks_a_rule_is_refused_before_anything_is_written() {
-		let mut broken = model();
-		broken.insert("tld".into(), ".dot".into());
-		let error = render(broken, "g1", None, 1_000).unwrap_err();
-		assert!(error.to_string().contains("invalid-tld"), "{error}");
-	}
 
 	#[test]
 	fn a_key_that_contradicts_the_link_is_refused() {
