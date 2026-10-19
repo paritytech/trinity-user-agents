@@ -268,7 +268,8 @@ impl AccountStore {
 			.find(|record| {
 				record.network == network_id &&
 					record.origin == AccountOrigin::Auto &&
-					record.attested && !record.exhausted_statement_periods.contains(&period)
+					record.attested &&
+					!record.exhausted_statement_periods.contains(&period)
 			})
 			.cloned()
 	}
@@ -619,14 +620,12 @@ async fn attest_record(
 	reserved_username: Option<&str>,
 ) -> Result<String> {
 	let entropy = mnemonic_entropy(&record.mnemonic)?;
-	let lite_username = attestation::attest(&attestation::AttestConfig {
-		backend_base: network.identity_backend_base.to_string(),
-		asset_hub_ws: network.asset_hub_ws.to_string(),
-		network_suffix: network.network_suffix.to_string(),
+	let lite_username = attestation::attest(&attest_config(
+		network,
 		entropy,
-		username_base: record.lite_username.clone(),
-		reserved_username: reserved_username.map(str::to_string),
-	})
+		record.lite_username.clone(),
+		reserved_username,
+	))
 	.await
 	.with_context(|| format!("attest account {}", record.name))?;
 	debug!(
@@ -636,6 +635,22 @@ async fn attest_record(
 		"signer account attested"
 	);
 	Ok(lite_username)
+}
+
+fn attest_config(
+	network: NetworkConfig,
+	entropy: Vec<u8>,
+	username_base: String,
+	reserved_username: Option<&str>,
+) -> attestation::AttestConfig {
+	attestation::AttestConfig {
+		backend_base: network.identity_backend_base.to_string(),
+		asset_hub_ws: network.asset_hub_ws.to_string(),
+		network_suffix: network.network_suffix.to_string(),
+		entropy,
+		username_base,
+		reserved_username: reserved_username.map(str::to_string),
+	}
 }
 
 fn resolved_lite_username(username: &str) -> bool {
@@ -782,15 +797,9 @@ pub async fn attest_mnemonic(
 ) -> Result<AttestedIdentity> {
 	let username_base = lite_username_base(username_base)?;
 	let identity = identity_from_mnemonic(mnemonic, network.network_suffix)?;
-	let lite_username = attestation::attest(&attestation::AttestConfig {
-		backend_base: network.identity_backend_base.to_string(),
-		asset_hub_ws: network.asset_hub_ws.to_string(),
-		network_suffix: network.network_suffix.to_string(),
-		entropy: identity.entropy.clone(),
-		username_base,
-		reserved_username: None,
-	})
-	.await?;
+	let lite_username =
+		attestation::attest(&attest_config(network, identity.entropy.clone(), username_base, None))
+			.await?;
 	wait_for_ring_membership(network, &identity.entropy).await?;
 	Ok(AttestedIdentity {
 		address: identity.address,
