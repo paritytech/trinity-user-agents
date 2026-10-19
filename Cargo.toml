@@ -91,6 +91,7 @@ tokio-tungstenite = "0.24"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false }
 trybuild = "1"
+tsify = { version = "0.5", default-features = false, features = ["js"] }
 unicode-normalization = "0.1"
 unicode-width = "0.2"
 uniffi = "0.32.0"

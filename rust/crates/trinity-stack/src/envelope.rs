@@ -6,6 +6,7 @@ use crate::{
 use base64::{Engine, engine::general_purpose::STANDARD};
 use curve25519_dalek::{edwards::CompressedEdwardsY, scalar::Scalar};
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use serde::Serialize;
 
 /// A document as served: a plain descriptor, or a descriptor inside a signed envelope.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,13 +25,15 @@ pub enum Document {
 }
 
 /// A descriptor that passed a pointer's rules.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "js", derive(tsify::Tsify), tsify(hashmap_as_object))]
 pub struct Verified {
 	/// The descriptor.
 	pub descriptor: Descriptor,
 	/// Whether a signature was checked against the pointer's key.
 	pub signed: bool,
 	/// The descriptor's own bytes: the payload of an envelope, or the whole plain document.
+	#[serde(skip)]
 	content: Vec<u8>,
 }
 
