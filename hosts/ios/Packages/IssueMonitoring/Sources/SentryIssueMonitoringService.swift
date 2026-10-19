@@ -4,6 +4,7 @@
 
     final class SentryIssueMonitoringService: IssueMonitoringServiceProtocol {
         private let dsn: String
+        private let deviceReadings = SentryDeviceReadingsReporter()
 
         init(dsn: String) {
             self.dsn = dsn
@@ -25,9 +26,7 @@
                 options.tracesSampleRate = 0
             }
 
-            Task { @MainActor in
-                SentryDeviceReadingsReporter().start()
-            }
+            deviceReadings.start()
         }
     }
 #endif

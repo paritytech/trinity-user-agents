@@ -8,10 +8,15 @@ import android.os.PowerManager
 import android.os.Process
 import android.os.StatFs
 import android.os.SystemClock
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.data.platform.BatteryService
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
+import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.sentry.Sentry
 import io.sentry.metrics.MetricsUnit
 import kotlinx.coroutines.Dispatchers
@@ -22,7 +27,7 @@ import javax.inject.Inject
 import kotlin.time.Duration.Companion.minutes
 
 class DeviceReadingsInitializer @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
     private val batteryService: BatteryService,
 ) : AppInitializer {
     private val activityManager = context.getSystemService(ActivityManager::class.java)
@@ -34,12 +39,16 @@ class DeviceReadingsInitializer @Inject constructor(
         if (!Sentry.isEnabled()) return@runCatching
 
         scope.launch(Dispatchers.Default) {
-            var previousCpu: CpuSample? = null
-            while (isActive) {
-                val cpu = CpuSample.now()
-                report(previousCpu?.let { cpu.usagePercentSince(it, coreCount) })
-                previousCpu = cpu
-                delay(REPORT_INTERVAL)
+            ProcessLifecycleOwner.get().repeatOnLifecycle(Lifecycle.State.STARTED) {
+                var previousCpu: CpuSample? = null
+                while (isActive) {
+                    runCancellableCatching {
+                        val cpu = CpuSample.now()
+                        report(previousCpu?.let { cpu.usagePercentSince(it, coreCount) })
+                        previousCpu = cpu
+                    }.logFailure("Device readings tick failed")
+                    delay(REPORT_INTERVAL)
+                }
             }
         }
     }
@@ -72,21 +81,21 @@ class DeviceReadingsInitializer @Inject constructor(
         return powerManager.getThermalHeadroom(0).takeUnless(Float::isNaN)
     }
 
-    private class CpuSample(
-        val processCpuMillis: Long,
-        val elapsedRealtimeMillis: Long,
-    ) {
-        fun usagePercentSince(previous: CpuSample, coreCount: Int): Double {
-            val wallMillis = (elapsedRealtimeMillis - previous.elapsedRealtimeMillis) * coreCount
-            return (processCpuMillis - previous.processCpuMillis) * 100.0 / wallMillis
-        }
-
-        companion object {
-            fun now() = CpuSample(Process.getElapsedCpuTime(), SystemClock.elapsedRealtime())
-        }
-    }
-
     private companion object {
         val REPORT_INTERVAL = 1.minutes
+    }
+}
+
+internal class CpuSample(
+    val processCpuMillis: Long,
+    val elapsedRealtimeMillis: Long,
+) {
+    fun usagePercentSince(previous: CpuSample, coreCount: Int): Double {
+        val wallMillis = (elapsedRealtimeMillis - previous.elapsedRealtimeMillis) * coreCount
+        return (processCpuMillis - previous.processCpuMillis) * 100.0 / wallMillis
+    }
+
+    companion object {
+        fun now() = CpuSample(Process.getElapsedCpuTime(), SystemClock.elapsedRealtime())
     }
 }

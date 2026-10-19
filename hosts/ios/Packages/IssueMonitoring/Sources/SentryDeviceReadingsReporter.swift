@@ -3,47 +3,71 @@
     import Sentry
     import UIKit
 
-    /// Sends the device readings the OS gives without a permission to Sentry as gauges, once a minute.
-    @MainActor
     final class SentryDeviceReadingsReporter {
-        private let device = UIDevice.current
         private let processInfo = ProcessInfo.processInfo
         private let host = mach_host_self()
-        private var previousCPUSample: CPUSample?
+        private var loop: Task<Void, Never>?
+        private var observers: [NSObjectProtocol] = []
 
         func start() {
-            device.isBatteryMonitoringEnabled = true
-
-            Task {
-                while !Task.isCancelled {
-                    report()
-                    try? await Task.sleep(for: .seconds(60))
+            let center = NotificationCenter.default
+            observers = [
+                center.addObserver(
+                    forName: UIApplication.didBecomeActiveNotification,
+                    object: nil,
+                    queue: .main
+                ) { [weak self] _ in
+                    self?.resume()
+                },
+                center.addObserver(
+                    forName: UIApplication.willResignActiveNotification,
+                    object: nil,
+                    queue: .main
+                ) { [weak self] _ in
+                    self?.loop?.cancel()
                 }
-            }
+            ]
         }
     }
 
     private extension SentryDeviceReadingsReporter {
         struct CPUSample {
             let processSeconds: Double
-            let wallClock: Date
+            let instant: ContinuousClock.Instant
 
             static func now() -> CPUSample {
                 var usage = rusage()
                 getrusage(RUSAGE_SELF, &usage)
-                return CPUSample(processSeconds: usage.ru_utime.seconds + usage.ru_stime.seconds, wallClock: Date())
+                return CPUSample(
+                    processSeconds: usage.ru_utime.seconds + usage.ru_stime.seconds,
+                    instant: ContinuousClock.now
+                )
             }
 
             func usagePercent(since previous: CPUSample, coreCount: Int) -> Double {
-                let wallSeconds = wallClock.timeIntervalSince(previous.wallClock) * Double(coreCount)
+                let wallSeconds = previous.instant.duration(to: instant) / .seconds(1) * Double(coreCount)
                 return (processSeconds - previous.processSeconds) * 100 / wallSeconds
             }
         }
 
-        func report() {
+        func resume() {
+            loop?.cancel()
+            loop = Task {
+                await enableBatteryMonitoring()
+                var previousCPUSample: CPUSample?
+                while !Task.isCancelled {
+                    let cpuSample = CPUSample.now()
+                    await report(processCPUUsage: previousCPUSample.map {
+                        cpuSample.usagePercent(since: $0, coreCount: processInfo.activeProcessorCount)
+                    })
+                    previousCPUSample = cpuSample
+                    try? await Task.sleep(for: .seconds(60))
+                }
+            }
+        }
+
+        func report(processCPUUsage: Double?) async {
             let coreCount = processInfo.activeProcessorCount
-            let cpuSample = CPUSample.now()
-            let processCPUUsage = previousCPUSample.map { cpuSample.usagePercent(since: $0, coreCount: coreCount) }
             let storage = try? URL(fileURLWithPath: NSHomeDirectory()).resourceValues(
                 forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey]
             )
@@ -58,10 +82,8 @@
             gauge("device.storage.free", freeStorage, unit: .byte)
             gauge("device.storage.total", totalStorage, unit: .byte)
             gauge("device.thermal.state", Double(processInfo.thermalState.rawValue))
-            gauge("device.battery.level", batteryPercent(), unit: .percent)
-            gauge("device.battery.charging", batteryCharging())
-
-            previousCPUSample = cpuSample
+            await gauge("device.battery.level", batteryPercent(), unit: .percent)
+            await gauge("device.battery.charging", batteryCharging())
         }
 
         func gauge(_ key: String, _ value: Double?, unit: SentryUnit? = nil) {
@@ -103,12 +125,20 @@
             return result == KERN_SUCCESS ? info : nil
         }
 
-        func batteryPercent() -> Double? {
-            device.batteryLevel < 0 ? nil : Double(device.batteryLevel) * 100
+        @MainActor
+        func enableBatteryMonitoring() {
+            UIDevice.current.isBatteryMonitoringEnabled = true
         }
 
+        @MainActor
+        func batteryPercent() -> Double? {
+            let level = UIDevice.current.batteryLevel
+            return level < 0 ? nil : Double(level) * 100
+        }
+
+        @MainActor
         func batteryCharging() -> Double? {
-            switch device.batteryState {
+            switch UIDevice.current.batteryState {
             case .charging,
                  .full:
                 1
