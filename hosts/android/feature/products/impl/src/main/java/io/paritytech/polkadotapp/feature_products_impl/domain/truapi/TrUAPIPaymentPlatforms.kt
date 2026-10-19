@@ -12,6 +12,7 @@ import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.presentation.subscribeIsForeground
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.PaymentStatus
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TotalBalanceUseCase
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
@@ -93,6 +94,7 @@ class TrUAPIPaymentPlatforms @Inject constructor(
         isTerminal = { it.isTerminal },
         isNotFound = { it is TopUpError.NotFound },
         unknownYet = TopUpStatus.Detecting,
+        abandoned = TopUpStatus.NotClaimed,
         notify = { productId, id, status -> sink?.topUpStatus(productId, id, status.toNative()) },
     )
 
@@ -101,6 +103,7 @@ class TrUAPIPaymentPlatforms @Inject constructor(
         isTerminal = { it !is PaymentStatus.Processing },
         isNotFound = { it is PaymentRequestError.NotFound },
         unknownYet = PaymentStatus.Processing,
+        abandoned = PaymentStatus.Failed("its status stream ended before a final status"),
         notify = { productId, id, status ->
             // Logged here, once per status the engine reports, rather than on every ask that reads a kept one.
             if (status is PaymentStatus.Failed) Timber.tag(PAYMENTS_LOG_TAG).w("Payment failed: %s", status.reason)
@@ -208,12 +211,21 @@ class TrUAPIPaymentPlatforms @Inject constructor(
     private fun forwardBalance() {
         if (!balanceForwarding.compareAndSet(false, true)) return
 
+        // On a failure forwarding stops, and the core's next balance ask starts it again.
         scope.launch {
-            appLifecycleObserver.subscribeIsForeground().collectLatest { foreground ->
-                if (!foreground) return@collectLatest
-                totalBalanceUseCase.subscribeSpendableByProducts()
-                    .distinctUntilChanged()
-                    .collect { sink?.balance(it) }
+            try {
+                appLifecycleObserver.subscribeIsForeground().collectLatest { foreground ->
+                    if (!foreground) return@collectLatest
+                    totalBalanceUseCase.subscribeSpendableByProducts()
+                        .distinctUntilChanged()
+                        .collect { sink?.balance(it) }
+                }
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Throwable) {
+                Timber.tag(PAYMENTS_LOG_TAG).w(error, "Balance forwarding failed")
+            } finally {
+                balanceForwarding.set(false)
             }
         }
     }
@@ -235,15 +247,20 @@ class TrUAPIPaymentPlatforms @Inject constructor(
  *
  * The ask runs on the core's thread, so it waits on the engine only briefly.
  * An operation the engine has not answered for by then reads as [unknownYet],
- * and its real status is pushed once the engine has it. One that turns out
- * unknown or failed after that keeps nothing, so the next ask reads the engine
- * again and answers `null` or the failure.
+ * and its real status is pushed once the engine has it.
+ *
+ * A run ends at its first terminal status, or when the engine's statuses fail
+ * or complete. Once the core has been told a non-terminal status, by a push or
+ * by an ask, it waits for a terminal one, so a run ending without one pushes
+ * [abandoned]. That status is not kept: the next ask reads the engine again and
+ * answers its record, `null`, or the failure.
  */
 internal class StatusForwarder<S : Any>(
     private val scope: CoroutineScope,
     private val isTerminal: (S) -> Boolean,
     private val isNotFound: (Throwable) -> Boolean,
     private val unknownYet: S,
+    private val abandoned: S,
     private val notify: (productId: String, id: ByteArray, status: S) -> Unit,
 ) {
     private sealed interface Latest<out T> {
@@ -253,12 +270,19 @@ internal class StatusForwarder<S : Any>(
 
         data object NotFound : Latest<Nothing>
 
-        data class Failed(val error: Throwable) : Latest<Nothing>
+        data object Failed : Latest<Nothing>
+    }
+
+    /** [latest] and [reported] change together under the run's lock, so a run ending races no ask. */
+    private class Run<S> {
+        val latest = MutableStateFlow<Latest<S>>(Latest.Pending)
+
+        var reported = false
     }
 
     private data class Key(val productId: String, val id: DataByteArray)
 
-    private val runs = ConcurrentHashMap<Key, MutableStateFlow<Latest<S>>>()
+    private val runs = ConcurrentHashMap<Key, Run<S>>()
 
     private val settled = object : LinkedHashMap<Key, S>() {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, S>) = size > SETTLED_KEPT
@@ -269,36 +293,37 @@ internal class StatusForwarder<S : Any>(
         synchronized(settled) { settled[keyOf(productId, id)] }?.let { return it }
 
         val run = runFor(productId, id, statuses)
-        val latest = run.value.takeIf { it !is Latest.Pending } ?: runBlocking {
-            withTimeoutOrNull(FIRST_STATUS_WAIT_MS) { run.first { it !is Latest.Pending } }
-        } ?: Latest.Pending
+        if (run.latest.value is Latest.Pending) {
+            runBlocking { withTimeoutOrNull(FIRST_STATUS_WAIT_MS) { run.latest.first { it !is Latest.Pending } } }
+        }
+
+        val latest = synchronized(run) {
+            run.latest.value.also { if (it is Latest.Pending) run.reported = true }
+        }
 
         return when (latest) {
             is Latest.Known -> latest.status
             Latest.NotFound -> null
             // The run logged the engine's error; the core passes this reason on to the product.
-            is Latest.Failed -> throw HostRejection.Rejected(STATUS_UNAVAILABLE)
+            Latest.Failed -> throw HostRejection.Rejected(STATUS_UNAVAILABLE)
             Latest.Pending -> unknownYet
         }
     }
 
     private fun keyOf(productId: String, id: ByteArray) = Key(productId, id.toDataByteArray())
 
-    /**
-     * Forwards the operation's statuses unless a run for it is already going. The run ends at the first terminal
-     * status, or when [statuses] fails or completes.
-     */
+    /** Forwards the operation's statuses unless a run for it is already going. */
     fun follow(productId: String, id: ByteArray, statuses: () -> Flow<S>) {
         runFor(productId, id, statuses)
     }
 
-    private fun runFor(productId: String, id: ByteArray, statuses: () -> Flow<S>): MutableStateFlow<Latest<S>> {
+    private fun runFor(productId: String, id: ByteArray, statuses: () -> Flow<S>): Run<S> {
         val key = keyOf(productId, id)
-        val fresh = MutableStateFlow<Latest<S>>(Latest.Pending)
+        val fresh = Run<S>()
         runs.putIfAbsent(key, fresh)?.let { return it }
 
         scope.launch {
-            try {
+            val failure: Latest<S>? = try {
                 statuses()
                     .transformWhile { status ->
                         emit(status)
@@ -306,25 +331,41 @@ internal class StatusForwarder<S : Any>(
                     }
                     .collect { status ->
                         if (isTerminal(status)) synchronized(settled) { settled[key] = status }
-                        fresh.value = Latest.Known(status)
+                        synchronized(fresh) {
+                            fresh.latest.value = Latest.Known(status)
+                            fresh.reported = true
+                        }
                         notify(productId, id, status)
                     }
+                null
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (error: Throwable) {
                 val notFound = isNotFound(error)
                 if (!notFound) Timber.tag(PAYMENTS_LOG_TAG).w(error, "Status forwarding failed for $productId")
-                fresh.value = if (notFound) Latest.NotFound else Latest.Failed(error)
-            } finally {
-                runs.remove(key, fresh)
+                if (notFound) Latest.NotFound else Latest.Failed
             }
+
+            val abandon = synchronized(fresh) {
+                val last = fresh.latest.value
+                // Statuses that complete without any status are an engine failure too.
+                fresh.latest.value = failure ?: last.takeIf { it !is Latest.Pending } ?: Latest.Failed
+                fresh.reported && !(last is Latest.Known && isTerminal(last.status))
+            }
+            if (abandon) {
+                runCancellableCatching { notify(productId, id, abandoned) }
+                    .onFailure { Timber.tag(PAYMENTS_LOG_TAG).w(it, "Ending status could not be pushed for $productId") }
+            }
+        }.invokeOnCompletion {
+            // Only after the ending push, so a later run's statuses cannot reach the core before it.
+            runs.remove(key, fresh)
         }
 
         return fresh
     }
 
     private companion object {
-        const val FIRST_STATUS_WAIT_MS = 1_000L
+        const val FIRST_STATUS_WAIT_MS = 250L
 
         const val SETTLED_KEPT = 256
     }

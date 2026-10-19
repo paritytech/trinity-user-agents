@@ -182,9 +182,9 @@ class TrUAPIPaymentPlatformsTest {
         assertEquals("status is unavailable", (error as HostRejection.Rejected).reason)
     }
 
-    /** The core was told detecting; once the engine says the top-up is unknown, the next ask must say so. */
+    /** The core was told detecting, so it is told the top-up ended; the next ask then says it is unknown. */
     @Test
-    fun `a top-up found unknown after the wait answers null on the next ask`() = runBlocking<Unit> {
+    fun `a top-up found unknown after the wait is pushed as not claimed and answers null next`() = runBlocking<Unit> {
         val engineAnswers = CompletableDeferred<Unit>()
         every { topUpService.status(product, topUpId) } returns flow {
             engineAnswers.await()
@@ -197,7 +197,20 @@ class TrUAPIPaymentPlatformsTest {
         withTimeout(5_000) {
             while (platforms.topUpStatus(product.value, rawId) != null) delay(20)
         }
-        assertTrue(pushedTopUps.value.isEmpty())
+        assertEquals(listOf(HostPaymentTopUpStatusSubscribeItem.NotClaimed), pushedTopUps.value)
+    }
+
+    /** The core waits for a final status once it has seen one that is not, so the product's stream cannot hang. */
+    @Test
+    fun `a top-up whose statuses end before a final one is pushed as not claimed`() = runBlocking<Unit> {
+        every { topUpService.status(product, topUpId) } returns flowOf(TopUpStatus.Detecting)
+
+        platforms.topUpStatus(product.value, rawId)
+
+        assertEquals(
+            listOf(HostPaymentTopUpStatusSubscribeItem.Detecting, HostPaymentTopUpStatusSubscribeItem.NotClaimed),
+            pushedTopUps.awaitSize(2),
+        )
     }
 
     @Test
@@ -342,6 +355,26 @@ class TrUAPIPaymentPlatformsTest {
         )
     }
 
+    @Test
+    fun `a payment whose engine fails while processing is pushed as failed with a fixed reason`() = runBlocking<Unit> {
+        coEvery { requestPaymentUseCase.requestPayment(product, paymentId, planks(25), any(), any()) } returns
+            Result.success(Unit)
+        every { requestPaymentUseCase.subscribeStatus(product, paymentId) } returns flow {
+            emit(PaymentStatus.Processing)
+            throw IllegalStateException("cheque store at /data/coinage is corrupt")
+        }
+
+        platforms.requestPayment(product.value, paymentRequest())
+
+        assertEquals(
+            listOf(
+                HostPaymentStatusSubscribeItem.Processing,
+                HostPaymentStatusSubscribeItem.Failed(reason = "payment did not complete"),
+            ),
+            pushedPayments.awaitSize(2),
+        )
+    }
+
     // ---- balance ----
 
     @Test
@@ -369,10 +402,34 @@ class TrUAPIPaymentPlatformsTest {
         pushedBalances.awaitSize(1)
 
         appState.value = AppLifecycleState.BACKGROUND
+        delay(100)
         balances.value = Result.success(balance(availablePrivate = 11, gainingPrivacy = 5))
+        delay(100)
+        assertEquals(listOf(planks(15)), pushedBalances.value)
+
         appState.value = AppLifecycleState.FOREGROUND
 
         assertEquals(listOf(planks(15), planks(16)), pushedBalances.awaitSize(2))
+    }
+
+    @Test
+    fun `a balance stream that fails stops forwarding until the next ask`() = runBlocking<Unit> {
+        coEvery { totalBalanceUseCase.getBalance() } returns Result.success(balance(availablePrivate = 10, gainingPrivacy = 5))
+        every { totalBalanceUseCase.subscribeTotalBalance() } returnsMany listOf(
+            flow { throw IllegalStateException("coinage not set up") },
+            flowOf(Result.success(balance(availablePrivate = 12, gainingPrivacy = 5))),
+        )
+
+        platforms.balance(product.value, purse = null)
+        withTimeout(1_000) {
+            while (true) {
+                platforms.balance(product.value, purse = null)
+                if (pushedBalances.value.isNotEmpty()) break
+                delay(20)
+            }
+        }
+
+        assertEquals(listOf(planks(17)), pushedBalances.value)
     }
 
     @Test
