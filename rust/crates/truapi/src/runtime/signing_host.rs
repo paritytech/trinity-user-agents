@@ -1062,25 +1062,32 @@ impl ProductAuthority for SigningHost {
 		self.require_current_session(session)?;
 		// Aliases expose the same identity as `create_proof`, so both must enforce
 		// the same RFC-0024 grant and context restrictions.
-		let granted = match self
-			.require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
-			.await
-		{
-			Ok(granted) => Some(granted),
+		let key_access = crate::runtime::product_manifest::ring_vrf_key_access_granted_or_consent(
+			&self.services,
+			self.platform.as_ref(),
+			&request.calling_product_id,
+			&request.payload.key_handle,
+		)
+		.await;
+		let granted = match key_access {
+			Ok(access) => Some(access),
 			Err(RingVrfError::NotAllowlisted) => None,
 			Err(err) => return Err(err),
 		};
 		// The context is held to the same rule as on `create_proof`: the alias and
 		// the proof come from one VRF evaluation.
 		let key_handle = match granted {
-			Some((key_handle, access)) => {
+			Some(access) => {
 				crate::runtime::product_manifest::require_context_access(
 					&self.services,
 					&access,
 					&request.payload.context,
 				)
 				.await?;
-				key_handle
+				v01::ProductAccountId {
+					dot_ns_identifier: access.owner,
+					derivation_index: request.payload.key_handle.derivation_index.clone(),
+				}
 			},
 			None => {
 				// Permission lookups and prompts must use the same canonical identifiers.
@@ -1803,32 +1810,206 @@ mod tests {
 	/// refusing a grant every other device admits is only explicable from this
 	/// line: how old its cached copy was, or that it cached a miss, and what
 	/// the manifest lists for the caller.
+	///
+	/// The publisher can list any number of scopes, so a long list is cut by
+	/// the host sink after the source rather than pushing the source out.
 	#[test]
 	fn a_refusal_tells_the_host_what_it_judged_by() {
+		let many_scopes = format!(r#"{{"dim2":[{}]}}"#, [r#""storage""#; 60].join(","));
 		let cases = [
-			(Some(r#"{"someone-else":["context"]}"#), "not granted, entry=dim2, scopes=None"),
-			(Some(r#"{"dim2":["storage"]}"#), "not granted, entry=dim2, scopes=Some([Storage])"),
-			(None, "manifest unavailable, entry=dim2, scopes=None"),
+			(Some(r#"{"someone-else":["context"]}"#), "not granted", "None".to_string()),
+			(Some(r#"{"dim2":["storage"]}"#), "not granted", "Some([Storage])".to_string()),
+			(
+				Some(many_scopes.as_str()),
+				"not granted",
+				format!("Some([{}])", ["Storage"; 60].join(", ")),
+			),
+			(None, "manifest unavailable", "None".to_string()),
 		];
-		for (trusted_products, judged) in cases {
-			assert_eq!(
-				refusal_lines_from_an_hour_old_cache(trusted_products),
-				vec![format!(
-					"truapi.tracing.warn truapi::runtime::product_manifest: ring-VRF access \
-					 refused {{because={judged}, caller=dim2.dot, owner=peopl.dot, \
-					 context=None, source=cache, 3600 s old}}"
-				)],
-				"{trusted_products:?}"
-			);
-		}
+		let (judged, expected): (Vec<_>, Vec<_>) = cases
+			.into_iter()
+			.map(|(trusted_products, because, scopes)| {
+				(
+					refusal_lines_from_an_hour_old_cache(trusted_products),
+					vec![refusal_line(&format!(
+						"because={because}, entry=dim2, caller=dim2.dot, owner=peopl.dot, \
+						 source=cache, 3600 s old, scopes={scopes}"
+					))],
+				)
+			})
+			.unzip();
+		assert_eq!(judged, expected);
 	}
 
-	/// The host log lines of `dim2.dot` asking for `peopl.dot`'s key, with
-	/// `peopl.dot`'s manifest cached an hour ago listing `trusted_products`, or
-	/// `None` for a cached answer that it publishes no manifest.
+	/// A lookup that read no manifest names the failure in the refusal, so it
+	/// is not mistaken for a product that publishes none.
+	#[test]
+	fn a_failed_lookup_is_named_in_the_refusal() {
+		let lines = crate::logging::testing::host_sink_lines(|| {
+			let _ = foreign_proof_through_the_authority(None);
+		});
+		assert_eq!(
+			lines,
+			vec![
+				"truapi.tracing.warn truapi::runtime::product_manifest: root manifest lookup \
+				 failed {target=peopl.dot, reason=Asset Hub follow initialization timed out}"
+					.to_string(),
+				refusal_line(
+					"because=manifest unavailable, entry=dim2, caller=dim2.dot, \
+					 owner=peopl.dot, source=dotNS lookup failed: Asset Hub follow \
+					 initialization timed out, scopes=None"
+				),
+			]
+		);
+	}
+
+	/// A refused signature reaches the host log as a refused proof does.
+	#[test]
+	fn a_refused_signature_tells_the_host_what_it_judged_by() {
+		let seeded_at_secs = crate::unix_time::current_unix_secs();
+		let lines = crate::logging::testing::host_sink_lines(|| {
+			let _ = foreign_ring_vrf_sign_through_the_authority(Some(
+				r#"{"someone-else":["context"]}"#,
+			));
+		});
+		assert_eq!(
+			pin_cache_ages(lines, seeded_at_secs, 0),
+			vec![refusal_line(
+				"because=not granted, entry=dim2, caller=dim2.dot, owner=peopl.dot, \
+				 source=cache, 0 s old, scopes=None"
+			)]
+		);
+	}
+
+	/// A refusal by the context check names the context it refused.
+	///
+	/// A stored denial lists the scopes the manifest grants, which shows the
+	/// manifest was not the reason. A context on another network reads no
+	/// manifest at all, so its line has no source.
+	#[test]
+	fn a_context_refusal_tells_the_host_which_context() {
+		let context_grants = Some(r#"{"dim2next":["context"]}"#);
+		let seeded_at_secs = crate::unix_time::current_unix_secs();
+		let denied = crate::logging::testing::host_sink_lines(|| {
+			let _ = third_product_context(
+				OWNER_GRANTS_DIM2NEXT,
+				context_grants,
+				context_of("dim2.dot"),
+				|platform| deny_account_access(platform, "dim2next.dot", "dim2.dot"),
+			);
+		});
+		let off_network = crate::logging::testing::host_sink_lines(|| {
+			let _ = third_product_context(
+				OWNER_GRANTS_DIM2NEXT,
+				context_grants,
+				context_of("dim2.paseo"),
+				|_| {},
+			);
+		});
+		let denied_line = refusal_line(
+			"because=user denied, entry=dim2next, caller=dim2next.dot, owner=peopl.dot, \
+			 context=dim2.dot, source=cache, 0 s old, scopes=Some([Context])",
+		);
+		let off_network_line = refusal_line(
+			"because=context on another network, entry=dim2next, caller=dim2next.dot, \
+			 owner=peopl.dot, context=dim2.paseo, scopes=None",
+		);
+		assert_eq!(
+			(pin_cache_ages(denied, seeded_at_secs, 0), off_network),
+			(
+				vec![denied_line.clone(), denied_line],
+				vec![off_network_line.clone(), off_network_line]
+			),
+			"one line for the proof and one for the alias read"
+		);
+	}
+
+	/// A granted proof and alias read stay off the host log.
+	#[test]
+	fn a_granted_proof_warns_nobody() {
+		let lines = crate::logging::testing::host_sink_lines(|| {
+			let (proof, alias) = third_product_context(
+				OWNER_GRANTS_DIM2NEXT,
+				Some(r#"{"dim2next":["context"]}"#),
+				context_of("dim2.dot"),
+				|_| {},
+			);
+			assert!(proof.is_ok() && alias.is_ok(), "both are granted: {proof:?}, {alias:?}");
+		});
+		assert_eq!(lines, Vec::<String>::new());
+	}
+
+	/// An alias read the owner did not grant falls back to the consent the user
+	/// already gave, so the key-grant refusal on the way is not a refusal.
+	#[test]
+	fn a_consented_alias_read_warns_nobody() {
+		let platform =
+			Arc::new(StubPlatform { account_access_confirmed: true, ..StubPlatform::default() });
+		// Cached, so no failed chain lookup warns on the way.
+		cache_grant(&platform, "peopl.dot", r#"{"someone-else":["context"]}"#);
+		let authority =
+			SigningHostRole::new_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+			.expect("activation succeeds");
+		let session = authority.current_session().expect("active session");
+		let ring_location = full_person_ring_location();
+		register_full_person_key(&authority, &session, &ring_location);
+
+		let lines = crate::logging::testing::host_sink_lines(|| {
+			futures::executor::block_on(authority.account_alias(
+				&CallContext::default(),
+				&session,
+				ProductRequest {
+					calling_product_id: "myapp.dot".to_string(),
+					payload: HostAccountGetAliasRequest {
+						key_handle: full_person_key_handle(),
+						context: context_of("other.dot"),
+						ring_location,
+					},
+				},
+			))
+			.expect("the user consented to the read");
+		});
+		assert_eq!(lines, Vec::<String>::new());
+	}
+
+	/// The host log line of a ring-VRF refusal carrying `fields`, cut where the
+	/// host sink cuts it.
+	fn refusal_line(fields: &str) -> String {
+		let detail: String =
+			format!("truapi::runtime::product_manifest: ring-VRF access refused {{{fields}}}")
+				.chars()
+				.take(crate::logging::HOST_SINK_DETAIL_MAX_CHARS)
+				.collect();
+		format!("truapi.tracing.warn {detail}")
+	}
+
+	/// `lines` with each cache age a lookup since `seeded_at_secs` can report
+	/// written as `age_at_seeding`, the age the entry had when it was seeded.
+	fn pin_cache_ages(lines: Vec<String>, seeded_at_secs: u64, age_at_seeding: u64) -> Vec<String> {
+		// The clock may tick between seeding and the lookup.
+		let elapsed = crate::unix_time::current_unix_secs() - seeded_at_secs;
+		let ages = age_at_seeding..=age_at_seeding + elapsed;
+		lines
+			.into_iter()
+			.map(|line| {
+				ages.clone().fold(line, |line, age| {
+					line.replace(
+						&format!("cache, {age} s old"),
+						&format!("cache, {age_at_seeding} s old"),
+					)
+				})
+			})
+			.collect()
+	}
+
+	/// The host log lines of `dim2.dot` asking for the key of `peopl.dot`, with
+	/// the manifest of `peopl.dot` cached an hour ago listing `trusted_products`,
+	/// or `None` for a cached answer that it publishes no manifest.
 	fn refusal_lines_from_an_hour_old_cache(trusted_products: Option<&str>) -> Vec<String> {
 		const HOUR_SECS: u64 = 60 * 60;
-		let fetched_at_secs = crate::unix_time::current_unix_secs() - HOUR_SECS;
+		let seeded_at_secs = crate::unix_time::current_unix_secs();
+		let fetched_at_secs = seeded_at_secs - HOUR_SECS;
 		let json = trusted_products.map(crate::host_internal::product_manifest::test_manifest_json);
 		let lines = crate::logging::testing::host_sink_lines(|| {
 			let _ = foreign_proof_through_the_authority_with(None, |platform| {
@@ -1845,16 +2026,7 @@ mod tests {
 				.expect("stub core storage accepts the entry");
 			});
 		});
-		// The clock may tick between seeding and the lookup.
-		let ages = HOUR_SECS..=crate::unix_time::current_unix_secs() - fetched_at_secs;
-		lines
-			.into_iter()
-			.map(|line| {
-				ages.clone().fold(line, |line, age| {
-					line.replace(&format!("{age} s old"), &format!("{HOUR_SECS} s old"))
-				})
-			})
-			.collect()
+		pin_cache_ages(lines, seeded_at_secs, HOUR_SECS)
 	}
 
 	/// **The one that matters.** Nothing in the request can stand in for the
@@ -2562,6 +2734,43 @@ mod tests {
 			prove("PEOPL.DOT").is_ok(),
 			"the owner must not be refused on its own key for spelling itself differently"
 		);
+	}
+
+	/// A granted alias read derives the key of the owner the gate normalized.
+	///
+	/// The alias read builds its key handle from the gate, apart from the proof.
+	/// Built from the handle as the request spells it, `PEOPL.DOT` would name a
+	/// key nobody owns instead of the key of `peopl.dot`.
+	#[test]
+	fn a_granted_alias_read_uses_the_normalized_owner_key() {
+		let platform = Arc::new(StubPlatform::default());
+		cache_grant(&platform, "peopl.dot", r#"{"myapp":["context"]}"#);
+		let (_services, authority) =
+			signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+			.expect("activation succeeds");
+		let session = authority.current_session().expect("active session");
+		let ring = full_person_ring_location();
+		register_full_person_key(&authority, &session, &ring);
+		let alias_of = |owner: &str| {
+			futures::executor::block_on(authority.account_alias(
+				&CallContext::default(),
+				&session,
+				ProductRequest {
+					calling_product_id: "myapp.dot".to_string(),
+					payload: HostAccountGetAliasRequest {
+						key_handle: v01::ProductAccountId {
+							dot_ns_identifier: owner.to_string(),
+							..full_person_key_handle()
+						},
+						context: context_of("myapp.dot"),
+						ring_location: ring.clone(),
+					},
+				},
+			))
+		};
+		let canonical = alias_of("peopl.dot").expect("control: the canonical spelling");
+		assert_eq!(alias_of("PEOPL.DOT"), Ok(canonical));
 	}
 
 	/// A refusal covers the product, not one spelling of it.

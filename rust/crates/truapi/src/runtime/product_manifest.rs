@@ -15,7 +15,7 @@ use crate::platform::{
 };
 use parity_scale_codec::{Decode, Encode};
 use tracing::{info, instrument, warn};
-use truapi::v01;
+use truapi::{CallContext, v01};
 
 use crate::{
 	chain_runtime::ChainRuntime,
@@ -172,6 +172,67 @@ mod tests {
 		assert_eq!(call[99], 8, "key length precedes its bytes");
 		assert_eq!(&call[100..108], b"manifest");
 	}
+
+	/// The source each lookup with nothing cached reports, for a host with no
+	/// Asset Hub, a chain that cannot be reached, and one that never answers.
+	#[test]
+	fn an_uncached_lookup_reports_why_it_read_no_manifest() {
+		let lookup = |platform: crate::test_support::StubPlatform,
+		              asset_hub_chain_genesis_hash: [u8; 32],
+		              ceiling: Duration| {
+			let platform = std::sync::Arc::new(platform);
+			let services = RuntimeServices::new(
+				platform.clone(),
+				crate::platform::HostInfo {
+					name: "Polkadot Mobile".to_string(),
+					icon: None,
+					version: None,
+					platform: truapi::latest::HostPlatform::Unknown,
+				},
+				[0; 32],
+				[0xbb; 32],
+				asset_hub_chain_genesis_hash,
+				crate::test_support::test_spawner(),
+			);
+			futures::executor::block_on(root_manifest_within(
+				ceiling,
+				&services,
+				platform.as_ref(),
+				"peopl.dot",
+			))
+		};
+		assert_eq!(
+			[
+				lookup(Default::default(), [0; 32], MANIFEST_RESOLUTION_CEILING),
+				lookup(
+					crate::test_support::StubPlatform {
+						chain_connect_error: Some("fixture serves no chain"),
+						..Default::default()
+					},
+					[0xcc; 32],
+					MANIFEST_RESOLUTION_CEILING,
+				),
+				lookup(
+					crate::test_support::StubPlatform {
+						chain_connect_pending: true,
+						..Default::default()
+					},
+					[0xcc; 32],
+					Duration::from_millis(10),
+				),
+			],
+			[
+				(None, ManifestSource::NoAssetHub),
+				(
+					None,
+					ManifestSource::LookupFailed {
+						reason: "Asset Hub follow stopped before initialization".to_string(),
+					},
+				),
+				(None, ManifestSource::TimedOut),
+			]
+		);
+	}
 }
 
 /// How long a cached root manifest is honoured.
@@ -239,6 +300,8 @@ enum RefusedBecause {
 	ManifestMalformed,
 	/// No manifest could be resolved at all.
 	ManifestUnavailable,
+	/// The proof context names a product on another network from the owner.
+	ContextOffNetwork,
 }
 
 impl RefusedBecause {
@@ -249,18 +312,19 @@ impl RefusedBecause {
 			Self::DecisionUnreadable => "stored decision unreadable",
 			Self::ManifestMalformed => "manifest malformed",
 			Self::ManifestUnavailable => "manifest unavailable",
+			Self::ContextOffNetwork => "context on another network",
 		}
 	}
 }
 
 /// Where a grant lookup got the manifest it judged by.
 ///
-/// Two devices can judge one grant differently only through this: a cached
-/// copy is up to [`MANIFEST_TTL_SECS`] old, and a cached miss refuses for as
-/// long as a cached document admits.
+/// A cached copy is up to [`MANIFEST_TTL_SECS`] old, and a cached miss refuses
+/// for that long, so two devices can judge one grant differently by where each
+/// got its manifest.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 enum ManifestSource {
-	/// Read from this device's cache, written `age_secs` ago.
+	/// Read from the cache on this device, written `age_secs` ago.
 	#[display("cache, {age_secs} s old")]
 	Cached { age_secs: u64 },
 	/// Read from dotNS by this lookup.
@@ -280,10 +344,49 @@ enum ManifestSource {
 /// Why a grant lookup refused, with what it judged by.
 struct Refusal {
 	because: RefusedBecause,
-	source: ManifestSource,
-	/// What the manifest lists under the caller's `trustedProducts` key, or
-	/// `None` when it has no such key or no manifest was read.
+	/// Where the manifest came from, or `None` for a refusal that read none.
+	source: Option<ManifestSource>,
+	/// What the manifest lists under the `trustedProducts` key for the caller,
+	/// or `None` when it has no such key or no manifest was read.
 	scopes: Option<Vec<Granted>>,
+}
+
+impl Refusal {
+	/// Record the refusal where a native host forwards it off the device.
+	///
+	/// A warning because the wire answers one refusal for every reason, so this
+	/// line is the only record of which it was. The detail is cut at
+	/// [`crate::logging::HOST_SINK_DETAIL_MAX_CHARS`], so the two unbounded
+	/// fields go last: the source, which carries the reason a lookup failed,
+	/// then the scopes the publisher lists. A failed lookup reads no scopes, so
+	/// the cut lands in whichever of the two the line carries.
+	fn warn(&self, caller: &str, owner: &str, context: Option<&str>) {
+		warn!(
+			because = %self.because.as_str(),
+			entry = %bare_product_label(caller),
+			caller = %caller,
+			owner = %owner,
+			context = context.map(tracing::field::display),
+			source = self.source.as_ref().map(tracing::field::display),
+			scopes = ?self.scopes,
+			"ring-VRF access refused"
+		);
+	}
+
+	/// Record a key-grant refusal the caller recovers from by asking the user,
+	/// on the device only, since it is a step towards a prompt rather than the
+	/// answer the product gets.
+	fn inform(&self, caller: &str, owner: &str) {
+		info!(
+			because = %self.because.as_str(),
+			entry = %bare_product_label(caller),
+			caller = %caller,
+			owner = %owner,
+			source = self.source.as_ref().map(tracing::field::display),
+			scopes = ?self.scopes,
+			"ring-VRF key access not granted by manifest, asking for user consent"
+		);
+	}
 }
 
 /// Scopes `target`'s published manifest grants `caller_id`.
@@ -303,25 +406,6 @@ pub async fn grants_scope(
 	scope_grant(services, platform, caller_id, target, scope).await.is_ok()
 }
 
-/// Record a refusal where a native host forwards it off the device.
-///
-/// A warning because the wire answers one refusal for every reason, so this
-/// line is the only record of which it was. The detail is cut at
-/// [`crate::logging::HOST_SINK_DETAIL_MAX_CHARS`], so the lookup failure,
-/// the one unbounded field, goes last.
-fn warn_refused(refusal: &Refusal, caller: &str, owner: &str, context: Option<&str>) {
-	warn!(
-		because = %refusal.because.as_str(),
-		entry = %bare_product_label(caller),
-		scopes = ?refusal.scopes,
-		caller = %caller,
-		owner = %owner,
-		context = ?context,
-		source = %refusal.source,
-		"ring-VRF access refused"
-	);
-}
-
 /// Published access subject to this host's stored account-access refusals.
 async fn scope_grant(
 	services: &RuntimeServices,
@@ -332,9 +416,8 @@ async fn scope_grant(
 ) -> Result<(), Refusal> {
 	// Incoming SSO has no caller deadline, so manifest resolution has its own ceiling.
 	let (json, source) =
-		with_ceiling(MANIFEST_RESOLUTION_CEILING, root_manifest(services, platform, target))
-			.await
-			.unwrap_or((None, ManifestSource::TimedOut));
+		root_manifest_within(MANIFEST_RESOLUTION_CEILING, services, platform, target).await;
+	let source = Some(source);
 	let Some(json) = json else {
 		return Err(Refusal { because: RefusedBecause::ManifestUnavailable, source, scopes: None });
 	};
@@ -437,6 +520,18 @@ async fn with_ceiling<T>(ceiling: Duration, future: impl Future<Output = T>) -> 
 	}
 }
 
+/// [`root_manifest`], or no manifest from a lookup that ran past `ceiling`.
+async fn root_manifest_within(
+	ceiling: Duration,
+	services: &RuntimeServices,
+	platform: &dyn Platform,
+	target: &str,
+) -> (Option<String>, ManifestSource) {
+	with_ceiling(ceiling, root_manifest(services, platform, target))
+		.await
+		.unwrap_or((None, ManifestSource::TimedOut))
+}
+
 /// Which proof contexts a caller granted another product's ring-VRF key may use.
 ///
 /// The owner's grant covers the key, not whose pseudonym the caller mints with
@@ -488,6 +583,11 @@ pub async fn require_context_access(
 	// the host's: an owner id from another network reads this host's manifests,
 	// as `ring_vrf_key_access_granted` already does for the key grant.
 	if !on_one_network(&context_id, &access.owner) {
+		Refusal { because: RefusedBecause::ContextOffNetwork, source: None, scopes: None }.warn(
+			&access.caller,
+			&access.owner,
+			Some(&context_id),
+		);
 		return Err(RingVrfError::NotAllowlisted);
 	}
 	let decision = scope_grant(
@@ -512,7 +612,7 @@ pub async fn require_context_access(
 			Ok(())
 		},
 		Err(refusal) => {
-			warn_refused(&refusal, &access.caller, &access.owner, Some(&context_id));
+			refusal.warn(&access.caller, &access.owner, Some(&context_id));
 			Err(RingVrfError::NotAllowlisted)
 		},
 	}
@@ -552,11 +652,67 @@ pub struct AuthorizedAccess {
 
 /// Own-key or published access, honoring stored account-access refusals.
 /// Returns canonical identities for key derivation and context checks.
+///
+/// A published refusal is recorded as a warning for the host.
 pub async fn ring_vrf_key_access_granted(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
 	calling_product_id: &str,
 	handle: &v01::ProductAccountId,
+) -> Result<AuthorizedAccess, RingVrfError> {
+	key_access(services, platform, calling_product_id, handle, None, |refusal, caller, owner| {
+		refusal.warn(caller, owner, None)
+	})
+	.await
+}
+
+/// [`ring_vrf_key_access_granted`] within the deadline and cancellation of a
+/// product call.
+///
+/// A lookup still running at the deadline is refused and recorded as timed
+/// out. A cancelled lookup is refused with no record, since no product waits
+/// for the answer.
+pub async fn ring_vrf_key_access_granted_within(
+	services: &RuntimeServices,
+	platform: &dyn Platform,
+	calling_product_id: &str,
+	handle: &v01::ProductAccountId,
+	cx: &CallContext,
+) -> Result<AuthorizedAccess, RingVrfError> {
+	key_access(
+		services,
+		platform,
+		calling_product_id,
+		handle,
+		Some(cx),
+		|refusal, caller, owner| refusal.warn(caller, owner, None),
+	)
+	.await
+}
+
+/// The same decision as [`ring_vrf_key_access_granted`], for a caller that
+/// answers a refusal by asking the user instead, so the refusal stays on the
+/// device.
+pub async fn ring_vrf_key_access_granted_or_consent(
+	services: &RuntimeServices,
+	platform: &dyn Platform,
+	calling_product_id: &str,
+	handle: &v01::ProductAccountId,
+) -> Result<AuthorizedAccess, RingVrfError> {
+	key_access(services, platform, calling_product_id, handle, None, Refusal::inform).await
+}
+
+/// Own-key or published access, handing a published refusal to `record_refusal`
+/// with the normalized caller and owner.
+///
+/// With `call`, the grant lookup runs within its deadline and cancellation.
+async fn key_access(
+	services: &RuntimeServices,
+	platform: &dyn Platform,
+	calling_product_id: &str,
+	handle: &v01::ProductAccountId,
+	call: Option<&CallContext>,
+	record_refusal: fn(&Refusal, &str, &str),
 ) -> Result<AuthorizedAccess, RingVrfError> {
 	// A caller id that does not normalize names no product, so it holds no key
 	// and no manifest can grant it. It takes the same refusal as a product that
@@ -581,7 +737,14 @@ pub async fn ring_vrf_key_access_granted(
 	if caller == owner {
 		return Ok(AuthorizedAccess { caller, owner });
 	}
-	match scope_grant(services, platform, &caller, &owner, Granted::Context).await {
+	let lookup = scope_grant(services, platform, &caller, &owner, Granted::Context);
+	let decision = match call {
+		Some(cx) => {
+			scope_grant_within_call(cx, lookup).await.ok_or(RingVrfError::NotAllowlisted)?
+		},
+		None => lookup.await,
+	};
+	match decision {
 		Ok(()) => {
 			info!(
 				caller = %caller,
@@ -591,9 +754,40 @@ pub async fn ring_vrf_key_access_granted(
 			Ok(AuthorizedAccess { caller, owner })
 		},
 		Err(refusal) => {
-			warn_refused(&refusal, &caller, &owner, None);
+			record_refusal(&refusal, &caller, &owner);
 			Err(RingVrfError::NotAllowlisted)
 		},
+	}
+}
+
+/// `lookup` within the deadline of `cx`, or `None` once `cx` is cancelled.
+///
+/// A deadline that passes first refuses as a lookup past its ceiling does. A
+/// cancelled call has nobody waiting for the decision, so it is not one.
+async fn scope_grant_within_call(
+	cx: &CallContext,
+	lookup: impl Future<Output = Result<(), Refusal>>,
+) -> Option<Result<(), Refusal>> {
+	use futures::FutureExt;
+	let lookup = lookup.fuse();
+	let cancelled = cx.cancel().cancelled().fuse();
+	futures::pin_mut!(lookup, cancelled);
+	let Some(budget) = cx.timeout() else {
+		return futures::select! {
+			decision = lookup => Some(decision),
+			_ = cancelled => None,
+		};
+	};
+	let deadline = futures_timer::Delay::new(budget).fuse();
+	futures::pin_mut!(deadline);
+	futures::select! {
+		decision = lookup => Some(decision),
+		_ = cancelled => None,
+		() = deadline => Some(Err(Refusal {
+			because: RefusedBecause::ManifestUnavailable,
+			source: Some(ManifestSource::TimedOut),
+			scopes: None,
+		})),
 	}
 }
 
@@ -614,8 +808,8 @@ pub fn manifest_cache_key(product_id: &str) -> CoreStorageKey {
 	CoreStorageKey::ProductManifest { product_id: bare_product_label(product_id).to_string() }
 }
 
-/// `target`'s root manifest JSON and where it came from: the cache when the
-/// entry is younger than [`MANIFEST_TTL_SECS`], dotNS otherwise.
+/// The root manifest JSON of `target` and where it came from: the cache when
+/// the entry is younger than [`MANIFEST_TTL_SECS`], dotNS otherwise.
 ///
 /// A freshly read manifest is cached even though the caller may not be granted
 /// anything by it: the document describes the product, not the asker. So is the
