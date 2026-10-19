@@ -1,4 +1,4 @@
-//! dotNS identity lookup used to resolve usernames for a paired session.
+//! dotNS identity lookup used to resolve usernames for a session.
 //!
 //! Usernames live in the dotNS contracts on Asset Hub. The gateway pallet
 //! storage anchors the `DotnsPopController`. The protocol registry locates the

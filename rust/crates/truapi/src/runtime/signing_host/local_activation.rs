@@ -5,7 +5,11 @@ use crate::{
 		session::SessionInfo,
 		sso::pairing::derive_identity_chat_private_key,
 	},
-	runtime::{authority::AuthorityError, connected_session_ui_info},
+	runtime::{
+		authority::AuthorityError, connected_session_ui_info,
+		identity::resolve_session_identity_with_chain,
+	},
+	session_usernames::SessionUsernames,
 };
 
 use zeroize::Zeroizing;
@@ -17,8 +21,8 @@ pub trait LocalActivation: Send + Sync {
 	/// public key and marking the session connected.
 	async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), AuthorityError>;
 
-	/// Activate a local session and attach known identity metadata from the
-	/// host's signer/account store.
+	/// Activate a local session under the host's known `lite_username` until
+	/// the dotNS record on Asset Hub answers. A record with a name replaces it.
 	async fn activate_local_session_with_identity(
 		&self,
 		secret: Vec<u8>,
@@ -57,8 +61,26 @@ impl LocalActivation for SigningHost {
 			full_username: None,
 		};
 		let ui_info = connected_session_ui_info(&session);
-		self.install_local_session(secret, session);
+		self.install_local_session(secret, session.clone());
 		self.auth_state.connected(&ui_info);
+
+		let services = self.services.clone();
+		let session_state = self.session_state.clone();
+		let auth_state = self.auth_state.clone();
+		(self.services.spawner)(Box::pin(async move {
+			let unnamed = SessionInfo { lite_username: None, ..session.clone() };
+			let resolved = resolve_session_identity_with_chain(
+				&services.chain,
+				services.asset_hub_chain_genesis_hash().unwrap_or_default(),
+				unnamed,
+			)
+			.await;
+			if resolved.has_username() &&
+				session_state.replace_session_if_current(&session, resolved.clone())
+			{
+				auth_state.connected(&connected_session_ui_info(&resolved));
+			}
+		}));
 		Ok(())
 	}
 }

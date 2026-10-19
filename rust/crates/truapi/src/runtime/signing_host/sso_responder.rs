@@ -1333,7 +1333,8 @@ mod tests {
 			PlatformInfo::default(),
 			[0; 32],
 			[0xbb; 32],
-			[0xcc; 32],
+			// No dotNS Asset Hub, so activation looks up no username.
+			[0; 32],
 			NETWORK_SUFFIX.to_string(),
 		)
 		.expect("signing host config is valid");
