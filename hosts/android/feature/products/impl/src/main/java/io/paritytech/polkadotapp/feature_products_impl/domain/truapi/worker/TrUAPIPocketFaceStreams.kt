@@ -2,11 +2,14 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketFaceStreams
+import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketPublishError
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PublishedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterNotNull
@@ -52,10 +55,17 @@ class TrUAPIPocketFaceStreams @Inject constructor(
         }
     }
 
-    private suspend fun PublishedPocketCards.isStreamable(key: PocketCardKey): Boolean =
-        find(key.productId, key.cardId)
-            .logFailure("Pocket face ${key.cardId.value} has no published card; it keeps the face it has")
-            .isSuccess
+    private suspend fun PublishedPocketCards.isStreamable(key: PocketCardKey): Boolean {
+        var attempt = 0L
+        while (true) {
+            val failure = find(key.productId, key.cardId)
+                .logFailure("Pocket face ${key.cardId.value} has no published card; it keeps the face it has")
+                .exceptionOrNull() ?: return true
+            // Only the manifest's own answer is final; a read that did not land says nothing about the card.
+            if (failure is PocketPublishError || failure is ProductResolutionError.MalformedManifest) return false
+            delay(reopenBackoff(attempt++))
+        }
+    }
 
     override fun sendAction(key: PocketCardKey, actionId: String, payload: ByteArray) {
         val execution = workers.currentExecution(key.productId) ?: return

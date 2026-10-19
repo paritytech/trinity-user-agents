@@ -650,9 +650,8 @@ pub async fn discover_pop_controller<T: DotnsTransport + ?Sized>(
 ///
 /// Two sources are merged. The controller's pending claims hold gateway-minted
 /// names the user has not settled into a `LabelStore` yet (`claimLabelStore`);
-/// those come first. A claim older than the controller's `reservationDuration`
-/// is lapsed — `claimLabelStore` skips it and `expirePendingClaim` will sweep
-/// it — so it is not a username here either, whether or not it has been swept. The user's
+/// those come first. A pending claim never lapses: the controller settles a
+/// claim of any age, so its `mintedAt` is not consulted. The user's
 /// `LabelStore`, when deployed, holds every name written for them: gateway names once settled, plus
 /// public registrations and incoming transfers. Store labels carry the network TLD
 /// (`alice01.paseo`), which is stripped here; subnames (`app.alice`) are dropped.
@@ -786,9 +785,9 @@ pub async fn label_available<T: DotnsTransport + ?Sized>(
 }
 
 /// Gateway-minted labels of `user` still waiting for `claimLabelStore`, paged
-/// out of `DotnsPopController.pendingClaims(address,uint256,uint256)`, without
-/// the entries that have lapsed (`mintedAt + reservationDuration < now`, the
-/// controller's own `_isExpired`; `now` is `Timestamp.Now` at the pinned block).
+/// out of `DotnsPopController.pendingClaims(address,uint256,uint256)`. Every
+/// entry counts, whatever its `mintedAt`: the controller no longer expires
+/// pending claims and settles one of any age.
 async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
 	transport: &mut T,
 	controller: &[u8; 20],
@@ -836,38 +835,7 @@ async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
 			);
 		}
 	}
-	if claims.is_empty() {
-		return Ok(Vec::new());
-	}
-	let duration_output =
-		transport
-			.view(controller, call_no_args("reservationDuration()"))
-			.await
-			.map_err(|err| format!("DotnsPopController.reservationDuration: {err}"))?;
-	let duration = decode_u64(&duration_output)
-		.map_err(|err| format!("DotnsPopController.reservationDuration: {err}"))?;
-	let now = chain_time_secs(transport).await?;
-	Ok(claims
-		.into_iter()
-		.filter(|(_, minted_at)| !claim_lapsed(*minted_at, duration, now))
-		.map(|(label, _)| label)
-		.collect())
-}
-
-/// Whether a pending claim minted at `minted_at` has lapsed at chain time
-/// `now`, mirroring `DotnsPopController._isExpired`.
-fn claim_lapsed(minted_at: u64, duration: u64, now: u64) -> bool {
-	minted_at.saturating_add(duration) < now
-}
-
-/// Asset Hub chain time in Unix seconds, from `Timestamp.Now` (milliseconds).
-async fn chain_time_secs<T: DotnsTransport + ?Sized>(transport: &mut T) -> Result<u64, String> {
-	let value = transport.storage(timestamp_now_key()).await?.ok_or("Timestamp.Now is unset")?;
-	let millis: [u8; 8] = value
-		.as_slice()
-		.try_into()
-		.map_err(|_| "Timestamp.Now is not a u64".to_string())?;
-	Ok(u64::from_le_bytes(millis) / 1000)
+	Ok(claims.into_iter().map(|(label, _)| label).collect())
 }
 
 /// `DotnsGateway.DispatcherAddress` storage key.
@@ -1192,14 +1160,6 @@ mod tests {
 		assert!(decode_bool(&high).is_err());
 	}
 
-	#[test]
-	fn a_pending_claim_lapses_after_the_reservation_duration() {
-		// DotnsPopController._isExpired: mintedAt + reservationDuration < now.
-		assert!(!claim_lapsed(1_000, 100, 1_100));
-		assert!(claim_lapsed(1_000, 100, 1_101));
-		assert!(!claim_lapsed(u64::MAX, 100, u64::MAX));
-	}
-
 	struct RevertingSecondClaimPage {
 		first_page: Vec<(String, u64)>,
 		pending_calls: usize,
@@ -1208,8 +1168,7 @@ mod tests {
 	#[crate::platform::async_trait]
 	impl DotnsTransport for RevertingSecondClaimPage {
 		async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
-			assert_eq!(key, timestamp_now_key());
-			Ok(Some(100_000u64.to_le_bytes().to_vec()))
+			panic!("unscripted storage read {}", hex::encode(key));
 		}
 
 		async fn view(
@@ -1230,9 +1189,6 @@ mod tests {
 				return Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
 					detail: "offset past end".to_string(),
 				}));
-			}
-			if function == selector("reservationDuration()") {
-				return Ok(abi_word(100).to_vec());
 			}
 			panic!("unscripted view {}", hex::encode(function));
 		}

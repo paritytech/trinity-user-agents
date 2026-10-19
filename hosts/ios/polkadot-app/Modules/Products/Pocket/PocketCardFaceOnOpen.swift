@@ -10,9 +10,10 @@ enum PocketCardFaceOnOpen {
     static func faceShown(
         for key: PocketCardKey,
         cards: any PublishedPocketCardsResolving,
-        timeout: Duration = .seconds(5)
+        timeout: Duration = .seconds(5),
+        clock: any Clock<Duration> = ContinuousClock()
     ) async -> Bool {
-        let published = try? await withTimeout(timeout) {
+        let published = try? await withTimeout(timeout, clock: clock) {
             try await cards.find(productId: key.productId, cardId: key.cardId).definition.faceShown
         }
 
