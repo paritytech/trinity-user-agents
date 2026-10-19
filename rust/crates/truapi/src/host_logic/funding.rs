@@ -244,63 +244,105 @@ pub struct FundingProgress {
 
 /// Where a session stands, one line for the host to word: in flight by
 /// rail, then how it ended.
+///
+/// Each variant names the row hosts show for it in their activity list,
+/// title then subtitle, so both apps word a session the same way. In
+/// flight, the title is "Topping up" (in) or "Sending" (out). An ended
+/// row's subtitle is "{Rail} · {moment}": the rail is "Card", "Bank" or
+/// "Crypto", and the moment is "Today at 08:25", "Yesterday at 08:25",
+/// "4 Oct at 08:25" or, in another year, "4 Oct 2025". Amounts read
+/// "+$50 CASH" in, "-$50 CASH" out, and unsigned once nothing moved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingStatus {
 	/// Inbound bank: waiting for the user's transfer.
+	///
+	/// Shown as Topping up · "Waiting for transfer".
 	WaitingForTransfer,
 	/// Inbound card: waiting for the user to pay on the provider's screens.
+	///
+	/// Shown as Topping up · "Upcoming receiving".
 	WaitingForPayment,
 	/// Inbound crypto: waiting for the user's deposit.
+	///
+	/// Shown as Topping up · "Upcoming receiving".
 	WaitingForDeposit,
 	/// Inbound: the provider has the payment and is turning it into the
 	/// user's balance asset.
+	///
+	/// Shown as Topping up · "Converting to Cash".
 	ConvertingToCash,
 	/// Outbound: the user started the withdrawal and pays the provider.
+	///
+	/// Shown as Sending · "Transaction initiated".
 	TransactionInitiated,
 	/// Outbound crypto, after release: the provider converts what it
 	/// collected to `asset`.
+	///
+	/// Shown as Sending · "Converting to {asset}".
 	ConvertingTo {
 		/// The asset the user receives.
 		asset: String,
 	},
 	/// Outbound card or bank, after release: the provider prepares the
 	/// payout.
+	///
+	/// Shown as Sending · "Preparing payout".
 	PreparingPayout,
 	/// Outbound, after release: a payout attempt failed and the provider
 	/// is trying again.
+	///
+	/// Shown as Sending · "Provider is retrying the payout", in amber.
 	RetryingPayout,
 	/// Inbound: the provider is retrying, with another top-up after one
 	/// claimed only part of the amount.
+	///
+	/// Shown as Topping up · "Provider is retrying your payment", in amber.
 	Retrying,
 	/// Nothing came from the provider for longer than its quote said the
 	/// session takes; on a top-up, only once the provider holds the user's
 	/// payment.
+	///
+	/// Shown as Topping up or Sending · "Taking a little longer", in amber.
 	TakingLonger,
 	/// Inbound, ended: the balance was credited.
+	///
+	/// Shown as "Topped up" · "{Rail} · {moment}".
 	ToppedUp,
 	/// Outbound, ended: the provider paid the user out.
+	///
+	/// Shown as "Sent" · "{Rail} · {moment}".
 	Sent,
 	/// Inbound, ended: the provider gave the user's payment back instead of
 	/// crediting it.
+	///
+	/// Shown as "Refunded" · "{Rail} · {moment}".
 	Refunded,
 	/// Outbound: the payout failed after the balance was debited. `refunded`
 	/// is what the provider's refund returned, once final.
+	///
+	/// Shown as "Payout failed" · "{Rail} · {moment}"; the amount is unsigned.
 	PayoutFailed {
 		/// What came back to the balance. `None` until the refund's claims
 		/// are final.
 		refunded: Option<u128>,
 	},
 	/// Ended without moving value.
+	///
+	/// Shown as "Top-up failed" or "Withdrawal failed" · the reason.
 	Failed {
 		/// Why.
 		reason: FundingFailure,
 	},
 	/// The user asked to cancel and the provider has not answered.
+	///
+	/// Shown as Topping up or Sending · "Cancel requested, waiting for the provider".
 	CancelRequested,
 	/// The provider can cancel on these terms and waits for the user, who
 	/// answers with `confirm_funding_cancel`. The offer's expiry is on the
 	/// session's `cancel`.
+	///
+	/// Shown as Topping up or Sending · "Cancel offer waiting for you".
 	CancelOffered {
 		/// What the provider keeps, in payment balance units.
 		fee: u128,
@@ -309,15 +351,21 @@ pub enum FundingStatus {
 	},
 	/// The provider will not cancel, and has reported nothing since. The
 	/// session carries on.
+	///
+	/// Shown as Topping up or Sending · "The provider can't cancel".
 	CancelRefused {
 		/// Why, as the provider put it.
 		reason: String,
 	},
 	/// The user accepted the provider's offer and the provider is refunding
 	/// the user.
+	///
+	/// Shown as Topping up or Sending · "Cancelling…".
 	Cancelling,
 	/// Outbound, ended: cancelled on the provider's terms after the balance
 	/// was debited. `refunded` is what came back, once final.
+	///
+	/// Shown as "Cancelled" · "{Rail} · {moment}".
 	Cancelled {
 		/// What came back to the balance. `None` until the refund's claims
 		/// are final.
@@ -325,6 +373,8 @@ pub enum FundingStatus {
 	},
 	/// Outbound, ended: the user accepted a cancel, but the payout landed
 	/// first, so the money reached its destination.
+	///
+	/// Shown as "Sent" · "{Rail} · {moment}".
 	PaidOutAfterCancel,
 }
 
