@@ -15,7 +15,7 @@ use crate::platform::{
 };
 use parity_scale_codec::{Decode, Encode};
 use tracing::{info, instrument, warn};
-use truapi::{CallContext, v01};
+use truapi::v01;
 
 use crate::{
 	chain_runtime::ChainRuntime,
@@ -403,20 +403,22 @@ pub async fn grants_scope(
 	target: &str,
 	scope: Granted,
 ) -> bool {
-	scope_grant(services, platform, caller_id, target, scope).await.is_ok()
+	scope_grant(services, platform, caller_id, target, scope, MANIFEST_RESOLUTION_CEILING)
+		.await
+		.is_ok()
 }
 
-/// Published access subject to this host's stored account-access refusals.
+/// Published access subject to this host's stored account-access refusals,
+/// with the manifest lookup bounded by `ceiling`.
 async fn scope_grant(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
 	caller_id: &str,
 	target: &str,
 	scope: Granted,
+	ceiling: Duration,
 ) -> Result<(), Refusal> {
-	// Incoming SSO has no caller deadline, so manifest resolution has its own ceiling.
-	let (json, source) =
-		root_manifest_within(MANIFEST_RESOLUTION_CEILING, services, platform, target).await;
+	let (json, source) = root_manifest_within(ceiling, services, platform, target).await;
 	let source = Some(source);
 	let Some(json) = json else {
 		return Err(Refusal { because: RefusedBecause::ManifestUnavailable, source, scopes: None });
@@ -596,6 +598,7 @@ pub async fn require_context_access(
 		&access.caller,
 		&context_id,
 		Granted::Context,
+		MANIFEST_RESOLUTION_CEILING,
 	)
 	.await;
 	// Recorded either way, for the reason `ring_vrf_key_access_granted` records
@@ -660,31 +663,36 @@ pub async fn ring_vrf_key_access_granted(
 	calling_product_id: &str,
 	handle: &v01::ProductAccountId,
 ) -> Result<AuthorizedAccess, RingVrfError> {
-	key_access(services, platform, calling_product_id, handle, None, |refusal, caller, owner| {
-		refusal.warn(caller, owner, None)
-	})
+	key_access(
+		services,
+		platform,
+		calling_product_id,
+		handle,
+		MANIFEST_RESOLUTION_CEILING,
+		|refusal, caller, owner| refusal.warn(caller, owner, None),
+	)
 	.await
 }
 
-/// [`ring_vrf_key_access_granted`] within the deadline and cancellation of a
-/// product call.
+/// [`ring_vrf_key_access_granted`] with the grant lookup bounded by `budget`.
 ///
-/// A lookup still running at the deadline is refused and recorded as timed
-/// out. A cancelled lookup is refused with no record, since no product waits
-/// for the answer.
+/// A lookup still running past the budget is refused and recorded as timed
+/// out. Cancelling the call is for the caller to handle, by dropping this
+/// future.
 pub async fn ring_vrf_key_access_granted_within(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
 	calling_product_id: &str,
 	handle: &v01::ProductAccountId,
-	cx: &CallContext,
+	budget: Option<Duration>,
 ) -> Result<AuthorizedAccess, RingVrfError> {
 	key_access(
 		services,
 		platform,
 		calling_product_id,
 		handle,
-		Some(cx),
+		budget
+			.map_or(MANIFEST_RESOLUTION_CEILING, |budget| budget.min(MANIFEST_RESOLUTION_CEILING)),
 		|refusal, caller, owner| refusal.warn(caller, owner, None),
 	)
 	.await
@@ -699,19 +707,27 @@ pub async fn ring_vrf_key_access_granted_or_consent(
 	calling_product_id: &str,
 	handle: &v01::ProductAccountId,
 ) -> Result<AuthorizedAccess, RingVrfError> {
-	key_access(services, platform, calling_product_id, handle, None, Refusal::inform).await
+	key_access(
+		services,
+		platform,
+		calling_product_id,
+		handle,
+		MANIFEST_RESOLUTION_CEILING,
+		Refusal::inform,
+	)
+	.await
 }
 
 /// Own-key or published access, handing a published refusal to `record_refusal`
 /// with the normalized caller and owner.
 ///
-/// With `call`, the grant lookup runs within its deadline and cancellation.
+/// The grant lookup is bounded by `ceiling`.
 async fn key_access(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
 	calling_product_id: &str,
 	handle: &v01::ProductAccountId,
-	call: Option<&CallContext>,
+	ceiling: Duration,
 	record_refusal: fn(&Refusal, &str, &str),
 ) -> Result<AuthorizedAccess, RingVrfError> {
 	// A caller id that does not normalize names no product, so it holds no key
@@ -737,14 +753,7 @@ async fn key_access(
 	if caller == owner {
 		return Ok(AuthorizedAccess { caller, owner });
 	}
-	let lookup = scope_grant(services, platform, &caller, &owner, Granted::Context);
-	let decision = match call {
-		Some(cx) => {
-			scope_grant_within_call(cx, lookup).await.ok_or(RingVrfError::NotAllowlisted)?
-		},
-		None => lookup.await,
-	};
-	match decision {
+	match scope_grant(services, platform, &caller, &owner, Granted::Context, ceiling).await {
 		Ok(()) => {
 			info!(
 				caller = %caller,
@@ -757,37 +766,6 @@ async fn key_access(
 			record_refusal(&refusal, &caller, &owner);
 			Err(RingVrfError::NotAllowlisted)
 		},
-	}
-}
-
-/// `lookup` within the deadline of `cx`, or `None` once `cx` is cancelled.
-///
-/// A deadline that passes first refuses as a lookup past its ceiling does. A
-/// cancelled call has nobody waiting for the decision, so it is not one.
-async fn scope_grant_within_call(
-	cx: &CallContext,
-	lookup: impl Future<Output = Result<(), Refusal>>,
-) -> Option<Result<(), Refusal>> {
-	use futures::FutureExt;
-	let lookup = lookup.fuse();
-	let cancelled = cx.cancel().cancelled().fuse();
-	futures::pin_mut!(lookup, cancelled);
-	let Some(budget) = cx.timeout() else {
-		return futures::select! {
-			decision = lookup => Some(decision),
-			_ = cancelled => None,
-		};
-	};
-	let deadline = futures_timer::Delay::new(budget).fuse();
-	futures::pin_mut!(deadline);
-	futures::select! {
-		decision = lookup => Some(decision),
-		_ = cancelled => None,
-		() = deadline => Some(Err(Refusal {
-			because: RefusedBecause::ManifestUnavailable,
-			source: Some(ManifestSource::TimedOut),
-			scopes: None,
-		})),
 	}
 }
 

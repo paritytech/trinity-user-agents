@@ -7516,7 +7516,7 @@ fn a_frontend_refusal_tells_the_host_what_it_judged_by() {
 /// its answer.
 #[test]
 fn a_frontend_lookup_past_its_deadline_tells_the_host_it_timed_out() {
-	let proof_lines = |cx: CallContext| {
+	let proof_and_signature_lines = |cx: CallContext| {
 		let platform =
 			Arc::new(StubPlatform { chain_connect_pending: true, ..StubPlatform::default() });
 		let host = dim2_with_a_pairing_session(platform, [0xcc; 32]);
@@ -7524,15 +7524,22 @@ fn a_frontend_lookup_past_its_deadline_tells_the_host_it_timed_out() {
 			let _ = futures::executor::block_on(
 				host.create_account_proof(&cx, create_proof_request("peopl.dot")),
 			);
+			let _ = futures::executor::block_on(
+				host.ring_vrf_sign(&cx, ring_vrf_sign_request("peopl.dot")),
+			);
 		})
 	};
 	let mut timed_out = CallContext::default();
 	timed_out.set_timeout(Duration::from_millis(10));
 	let withdrawn = CallContext::default();
 	withdrawn.cancel().cancel();
+	let gave_up = "truapi.tracing.warn truapi::runtime::product_manifest: manifest resolution \
+	               gave up {ceiling_secs=0}"
+		.to_string();
+	let refusal = frontend_refusal_line("manifest unavailable", "dotNS lookup timed out");
 	assert_eq!(
-		(proof_lines(timed_out), proof_lines(withdrawn)),
-		(vec![frontend_refusal_line("manifest unavailable", "dotNS lookup timed out")], Vec::new(),)
+		(proof_and_signature_lines(timed_out), proof_and_signature_lines(withdrawn)),
+		(vec![gave_up.clone(), refusal.clone(), gave_up, refusal], Vec::new())
 	);
 }
 

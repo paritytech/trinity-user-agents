@@ -164,12 +164,15 @@ impl Account for ProductRuntimeHost {
 
 			let calling_product_id = self.connection.product_id();
 			let cx = remote_authority_context(cx);
-			let Ok(access) = product_manifest::ring_vrf_key_access_granted_within(
-				&self.connection.services,
-				self.connection.platform.as_ref(),
-				&calling_product_id,
-				&request.key_handle,
+			let Ok(Ok(access)) = until_cancelled(
 				&cx,
+				product_manifest::ring_vrf_key_access_granted_within(
+					&self.connection.services,
+					self.connection.platform.as_ref(),
+					&calling_product_id,
+					&request.key_handle,
+					cx.timeout(),
+				),
 			)
 			.await
 			else {
@@ -264,12 +267,15 @@ impl Account for ProductRuntimeHost {
 			};
 			let calling_product_id = self.connection.product_id();
 			let cx = remote_authority_context(cx);
-			let Ok(access) = product_manifest::ring_vrf_key_access_granted_within(
-				&self.connection.services,
-				self.connection.platform.as_ref(),
-				&calling_product_id,
-				&request.key_handle,
+			let Ok(Ok(access)) = until_cancelled(
 				&cx,
+				product_manifest::ring_vrf_key_access_granted_within(
+					&self.connection.services,
+					self.connection.platform.as_ref(),
+					&calling_product_id,
+					&request.key_handle,
+					cx.timeout(),
+				),
 			)
 			.await
 			else {
