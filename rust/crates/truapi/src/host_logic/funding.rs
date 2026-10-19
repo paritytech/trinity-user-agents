@@ -23,9 +23,10 @@ use crate::platform::{CoreStorage, CoreStorageKey};
 
 /// How long a session may stay open before it expires.
 const SESSION_WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
-/// How many ended sessions the host has not recorded yet the core keeps,
-/// newest first, so a host that never records them cannot grow the store
-/// without bound.
+/// How many ended sessions the host has not recorded yet the core keeps in
+/// full, newest first, so a host that never records them cannot grow the
+/// sessions blob without bound. Older ones are compacted into the session
+/// pack.
 const UNACKNOWLEDGED_LIMIT: usize = 200;
 /// Most top-ups a provider may start for one session, as getcash claims in
 /// up to three attempts.
@@ -548,7 +549,7 @@ impl FundingStage {
 		match self {
 			Self::Open => HostFundingStatusSubscribeItem::InProgress { expires_at },
 			Self::Failed { reason, .. } => {
-				HostFundingStatusSubscribeItem::Failed { reason: reason.clone(), moved: 0 }
+				HostFundingStatusSubscribeItem::Failed { reason: reason.clone() }
 			},
 			Self::Delivered { credited, .. } => {
 				HostFundingStatusSubscribeItem::Delivered { credited: *credited }
@@ -1516,6 +1517,15 @@ pub enum FundingSessionError {
 		/// The session's amount.
 		amount: u128,
 	},
+	/// The stored funding records are in a format newer than this app reads,
+	/// as after a downgrade. They are left as they are, and the core writes
+	/// nothing over them, so funding stays unavailable until the app is
+	/// updated.
+	#[display("funding records were stored by a newer app (format {format})")]
+	NewerFormat {
+		/// The stored format.
+		format: u16,
+	},
 }
 
 /// `target` as the host may show it: an App route must stay inside the
@@ -1569,11 +1579,11 @@ impl<D> From<FundingSessionError> for crate::CallError<D> {
 	}
 }
 
-/// Split `sessions` into those kept in full and the recorded ones to compact.
+/// Split `sessions` into those kept in full and the ended ones to compact.
 /// Kept in full: every one its provider still has work on, the ended ones the
 /// host has not recorded yet, newest first up to a fixed bound, and the newest
-/// ended ones it has recorded, up to a fixed bound per owner. Older recorded
-/// ones go to the pack.
+/// ended ones it has recorded, up to a fixed bound per owner. The ended ones
+/// past either bound go to the pack, so no outcome is lost.
 pub fn retained(
 	sessions: impl IntoIterator<Item = FundingSession>,
 ) -> (Vec<FundingSession>, Vec<FundingSessionSummary>) {
@@ -1582,7 +1592,7 @@ pub fn retained(
 	let (mut unrecorded, mut recorded): (Vec<_>, Vec<_>) =
 		ended.into_iter().partition(|session| !session.acknowledged);
 	unrecorded.sort_by_key(|session| core::cmp::Reverse(session.settled_at_ms()));
-	unrecorded.truncate(UNACKNOWLEDGED_LIMIT);
+	let unrecorded_overflow = unrecorded.split_off(UNACKNOWLEDGED_LIMIT.min(unrecorded.len()));
 	// Grouped by owner, newest first within each, so each owner's newest run is
 	// what survives the per-owner bound.
 	recorded.sort_by(|a, b| {
@@ -1603,13 +1613,16 @@ pub fn retained(
 		owner_run <= RECORDED_PER_OWNER
 	});
 	open.extend(newest);
-	(open, older.into_iter().map(FundingSessionSummary::from).collect())
+	let compacted = older.into_iter().chain(unrecorded_overflow);
+	(open, compacted.map(FundingSessionSummary::from).collect())
 }
 
 /// Read every persisted session.
 ///
 /// A blob that does not decode is set aside under
-/// [`CoreStorageKey::FundingSessionsUnreadable`] and reads as no sessions.
+/// [`CoreStorageKey::FundingSessionsUnreadable`] and reads as no sessions; one
+/// in a newer format fails with [`FundingSessionError::NewerFormat`] and stays
+/// where it is.
 pub async fn load_sessions(
 	storage: &(impl CoreStorage + ?Sized),
 ) -> Result<Vec<FundingSession>, FundingSessionError> {
@@ -1619,7 +1632,9 @@ pub async fn load_sessions(
 /// Read the session pack, in no particular order.
 ///
 /// A blob that does not decode is set aside under
-/// [`CoreStorageKey::FundingSessionsUnreadable`] and reads as an empty pack.
+/// [`CoreStorageKey::FundingSessionsUnreadable`] and reads as an empty pack;
+/// one in a newer format fails with [`FundingSessionError::NewerFormat`] and
+/// stays where it is.
 pub async fn load_pack(
 	storage: &(impl CoreStorage + ?Sized),
 ) -> Result<Vec<FundingSessionSummary>, FundingSessionError> {
@@ -1633,7 +1648,9 @@ pub async fn load_pack(
 /// so one bad write cannot disable funding for good, the next store cannot
 /// overwrite records it never read, and a later bad blob does not replace an
 /// earlier one. If it cannot be set aside, loading fails and the blob stays
-/// where it is.
+/// where it is. A blob in a newer format is not this core's to move: loading
+/// fails with [`FundingSessionError::NewerFormat`] and leaves it, so the
+/// registry, which writes only after a load, never writes over it.
 async fn load_versioned<T: Decode>(
 	storage: &(impl CoreStorage + ?Sized),
 	key: CoreStorageKey,
@@ -1643,8 +1660,10 @@ async fn load_versioned<T: Decode>(
 	let Some(blob) = storage.read_core_storage(key.clone()).await.map_err(storage_error)? else {
 		return Ok(Vec::new());
 	};
-	if let Some(records) = decode_versioned(&blob, format) {
-		return Ok(records);
+	match decode_versioned(&blob, format) {
+		Decoded::Records(records) => return Ok(records),
+		Decoded::Newer(stored) => return Err(FundingSessionError::NewerFormat { format: stored }),
+		Decoded::Unreadable => {},
 	}
 	error!(?key, bytes = blob.len(), "funding records do not decode; keeping them aside");
 	let mut aside = match storage
@@ -1666,15 +1685,29 @@ async fn load_versioned<T: Decode>(
 	Ok(Vec::new())
 }
 
-/// Decode a stored list that leads with `format`, or `None` when the blob is
-/// not one.
-fn decode_versioned<T: Decode>(blob: &[u8], format: u16) -> Option<Vec<T>> {
+/// What a stored list turned out to be.
+enum Decoded<T> {
+	/// A list in the format this core writes.
+	Records(Vec<T>),
+	/// A list in a newer format, left for the app that wrote it.
+	Newer(u16),
+	/// Anything else: an older format or a corrupt blob.
+	Unreadable,
+}
+
+/// Decode a stored list that leads with `format`.
+fn decode_versioned<T: Decode>(blob: &[u8], format: u16) -> Decoded<T> {
 	let input = &mut &blob[..];
-	if u16::decode(input).ok()? != format {
-		return None;
+	let Ok(stored) = u16::decode(input) else {
+		return Decoded::Unreadable;
+	};
+	if stored > format {
+		return Decoded::Newer(stored);
 	}
-	let records = Vec::<T>::decode(input).ok()?;
-	input.is_empty().then_some(records)
+	match Vec::<T>::decode(input) {
+		Ok(records) if stored == format && input.is_empty() => Decoded::Records(records),
+		_ => Decoded::Unreadable,
+	}
 }
 
 /// Replace the persisted set with `sessions`, clearing the slot when empty.
@@ -1868,7 +1901,7 @@ mod tests {
 		assert!(session.expire_if_due(NOW + SESSION_WINDOW_MS));
 		assert_eq!(
 			session.wire_item(),
-			HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Expired, moved: 0 }
+			HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Expired }
 		);
 	}
 
@@ -1895,10 +1928,7 @@ mod tests {
 					expires_at: Some(heard_at + PROVIDER_SILENCE_MS)
 				},
 				true,
-				HostFundingStatusSubscribeItem::Failed {
-					reason: FundingFailure::Expired,
-					moved: 0
-				},
+				HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Expired },
 			)
 		);
 	}
@@ -1935,7 +1965,8 @@ mod tests {
 
 	// The host owns the history: open sessions come first, then the ones it
 	// has not recorded, newest first and not without bound, then the recorded
-	// ones kept only so their owner can read how they ended.
+	// ones kept only so their owner can read how they ended. An unrecorded
+	// session past the bound is compacted, not lost.
 	#[test]
 	fn the_core_keeps_open_then_unrecorded_then_recorded_sessions() {
 		let ended = |index: usize, acknowledged| FundingSession {
@@ -1946,21 +1977,21 @@ mod tests {
 		let recorded = (0..3).map(|index| ended(index, true));
 		let unrecorded = (100..101 + UNACKNOWLEDGED_LIMIT).map(|index| ended(index, false));
 
-		let kept: Vec<String> = retained(recorded.chain(unrecorded).chain([open]))
-			.0
-			.into_iter()
-			.map(|session| session.intent)
-			.collect();
+		let (kept, compacted) = retained(recorded.chain(unrecorded).chain([open]));
+		let kept: Vec<String> = kept.into_iter().map(|session| session.intent).collect();
 
 		let newest_unrecorded =
 			(101..101 + UNACKNOWLEDGED_LIMIT).rev().map(|index| format!("fs_s{index}"));
 		let recorded_newest_first = (0..3).rev().map(|index| format!("fs_s{index}"));
 		assert_eq!(
-			kept,
-			std::iter::once("fs_1".to_string())
-				.chain(newest_unrecorded)
-				.chain(recorded_newest_first)
-				.collect::<Vec<_>>()
+			(kept, compacted),
+			(
+				std::iter::once("fs_1".to_string())
+					.chain(newest_unrecorded)
+					.chain(recorded_newest_first)
+					.collect::<Vec<_>>(),
+				vec![FundingSessionSummary::from(ended(100, false))],
+			)
 		);
 	}
 
@@ -2004,10 +2035,7 @@ mod tests {
 			(open.cancel(NOW + 1), open.wire_item(), ended.cancel(NOW + 1)),
 			(
 				CancelOutcome::Ended,
-				HostFundingStatusSubscribeItem::Failed {
-					reason: FundingFailure::Cancelled,
-					moved: 0,
-				},
+				HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Cancelled },
 				CancelOutcome::Refused
 			)
 		);
@@ -2126,10 +2154,7 @@ mod tests {
 				CancelConfirmation::Accepted,
 				Some(HostFundingServeSubscribeItem::CancelAccepted { intent: "fs_1".into() }),
 				Ok(()),
-				HostFundingStatusSubscribeItem::Failed {
-					reason: FundingFailure::Cancelled,
-					moved: 0,
-				},
+				HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Cancelled },
 				None,
 			)
 		);
@@ -2568,10 +2593,7 @@ mod tests {
 			(
 				CancelOutcome::Requested,
 				CancelOutcome::Ended,
-				HostFundingStatusSubscribeItem::Failed {
-					reason: FundingFailure::Cancelled,
-					moved: 0,
-				},
+				HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Cancelled },
 			)
 		);
 	}
@@ -3404,7 +3426,6 @@ mod tests {
 						code: "not_claimed".to_string(),
 						message: "Nothing reached your balance".to_string(),
 					},
-					moved: 0,
 				},
 			)
 		);
@@ -3422,7 +3443,6 @@ mod tests {
 			(
 				HostFundingStatusSubscribeItem::Failed {
 					reason: FundingFailure::VerificationRefused,
-					moved: 0,
 				},
 				Some(&failure)
 			)
@@ -3458,8 +3478,13 @@ mod tests {
 	#[test]
 	fn a_second_unreadable_blob_is_kept_alongside_the_first() {
 		let storage = stub_platform();
-		let first = vec![0xff, 0x01];
-		let second = vec![0xff, 0x02];
+		let corrupt = |tail: u8| {
+			let mut blob = SESSIONS_FORMAT.encode();
+			blob.extend([0xff, tail]);
+			blob
+		};
+		let first = corrupt(1);
+		let second = corrupt(2);
 		for blob in [&first, &second] {
 			block_on(storage.write_core_storage(CoreStorageKey::FundingSessions, blob.clone()))
 				.expect("written");
@@ -3472,10 +3497,36 @@ mod tests {
 		);
 	}
 
+	// An app downgraded below the one that stored its sessions cannot read
+	// them, and must not move or overwrite them: the newer app reads them
+	// again once it is back.
 	#[test]
-	fn a_blob_of_an_unknown_version_is_kept_aside() {
+	fn a_blob_of_a_newer_format_is_left_where_it_is() {
 		let storage = stub_platform();
 		let blob = (SESSIONS_FORMAT + 1, vec![session(FundingDirection::In)]).encode();
+		block_on(storage.write_core_storage(CoreStorageKey::FundingSessions, blob.clone()))
+			.expect("written");
+
+		assert_eq!(
+			(
+				block_on(load_sessions(storage.as_ref())),
+				block_on(storage.read_core_storage(CoreStorageKey::FundingSessions)),
+				block_on(storage.read_core_storage(CoreStorageKey::FundingSessionsUnreadable)),
+			),
+			(
+				Err(FundingSessionError::NewerFormat { format: SESSIONS_FORMAT + 1 }),
+				Ok(Some(blob)),
+				Ok(None),
+			)
+		);
+	}
+
+	// A blob of an older format is not this core's either, but it is not
+	// coming back, so it is set aside like a corrupt one.
+	#[test]
+	fn a_blob_of_an_older_format_is_kept_aside() {
+		let storage = stub_platform();
+		let blob = (0u16, vec![session(FundingDirection::In)]).encode();
 		block_on(storage.write_core_storage(CoreStorageKey::FundingSessions, blob.clone()))
 			.expect("written");
 
@@ -3514,7 +3565,8 @@ mod tests {
 	#[test]
 	fn an_undecodable_pack_is_kept_aside_and_reads_as_empty() {
 		let storage = stub_platform();
-		let blob = vec![0xff, 0x01];
+		let mut blob = PACK_FORMAT.encode();
+		blob.extend([0xff, 0x01]);
 		block_on(storage.write_core_storage(CoreStorageKey::FundingSessionPack, blob.clone()))
 			.expect("written");
 
