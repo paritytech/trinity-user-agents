@@ -1,0 +1,417 @@
+{
+  "tag": "Box",
+  "value": {
+    "modifiers": [
+      {
+        "tag": "FillWidth",
+        "value": true
+      },
+      {
+        "tag": "FillHeight",
+        "value": true
+      },
+      {
+        "tag": "Background",
+        "value": {
+          "color": "BgSurfaceMain",
+          "shape": {
+            "tag": "Rounded",
+            "value": 24
+          }
+        }
+      }
+    ],
+    "props": {
+      "contentAlignment": "TopStart"
+    },
+    "children": [
+      {
+        "tag": "Box",
+        "value": {
+          "modifiers": [
+            {
+              "tag": "FillWidth",
+              "value": true
+            },
+            {
+              "tag": "FillHeight",
+              "value": true
+            },
+            {
+              "tag": "Opacity",
+              "value": 204
+            },
+            {
+              "tag": "Background",
+              "value": {
+                "color": "FgPrimary"
+              }
+            }
+          ],
+          "props": {},
+          "children": []
+        }
+      },
+      {
+        "tag": "Box",
+        "value": {
+          "modifiers": [
+            {
+              "tag": "FillWidth",
+              "value": true
+            },
+            {
+              "tag": "FillHeight",
+              "value": true
+            }
+          ],
+          "props": {
+            "contentAlignment": "TopStart"
+          },
+          "children": [
+            {
+              "tag": "Box",
+              "value": {
+                "modifiers": [
+                  {
+                    "tag": "FillWidth",
+                    "value": true
+                  },
+                  {
+                    "tag": "Height",
+                    "value": 1
+                  },
+                  {
+                    "tag": "Opacity",
+                    "value": 56
+                  },
+                  {
+                    "tag": "Background",
+                    "value": {
+                      "color": "FgPrimary"
+                    }
+                  }
+                ],
+                "props": {},
+                "children": []
+              }
+            }
+          ]
+        }
+      },
+      {
+        "tag": "Box",
+        "value": {
+          "modifiers": [
+            {
+              "tag": "FillWidth",
+              "value": true
+            },
+            {
+              "tag": "FillHeight",
+              "value": true
+            }
+          ],
+          "props": {
+            "contentAlignment": "BottomStart"
+          },
+          "children": [
+            {
+              "tag": "Box",
+              "value": {
+                "modifiers": [
+                  {
+                    "tag": "FillWidth",
+                    "value": true
+                  },
+                  {
+                    "tag": "Height",
+                    "value": 1
+                  },
+                  {
+                    "tag": "Opacity",
+                    "value": 38
+                  },
+                  {
+                    "tag": "Background",
+                    "value": {
+                      "color": "BgSurfaceMain"
+                    }
+                  }
+                ],
+                "props": {},
+                "children": []
+              }
+            }
+          ]
+        }
+      },
+      {
+        "tag": "Box",
+        "value": {
+          "modifiers": [
+            {
+              "tag": "FillWidth",
+              "value": true
+            },
+            {
+              "tag": "FillHeight",
+              "value": true
+            }
+          ],
+          "props": {
+            "contentAlignment": "BottomStart"
+          },
+          "children": [
+            {
+              "tag": "Box",
+              "value": {
+                "modifiers": [
+                  {
+                    "tag": "Padding",
+                    "value": {
+                      "top": 0,
+                      "end": 0,
+                      "bottom": 40,
+                      "start": 16
+                    }
+                  }
+                ],
+                "props": {
+                  "contentAlignment": "TopStart"
+                },
+                "children": [
+                  {
+                    "tag": "Text",
+                    "value": {
+                      "modifiers": [
+                        {
+                          "tag": "Opacity",
+                          "value": 36
+                        }
+                      ],
+                      "props": {
+                        "style": "HeadlineLarge",
+                        "color": "BgSurfaceMain"
+                      },
+                      "children": [
+                        {
+                          "tag": "String",
+                          "value": {
+                            "text": "Polkadot"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "tag": "Box",
+        "value": {
+          "modifiers": [
+            {
+              "tag": "FillWidth",
+              "value": true
+            },
+            {
+              "tag": "FillHeight",
+              "value": true
+            },
+            {
+              "tag": "Padding",
+              "value": {
+                "top": 12,
+                "end": 16,
+                "bottom": 0,
+                "start": 16
+              }
+            }
+          ],
+          "props": {
+            "contentAlignment": "TopStart"
+          },
+          "children": [
+            {
+              "tag": "Box",
+              "value": {
+                "modifiers": [],
+                "props": {
+                  "contentAlignment": "TopStart"
+                },
+                "children": [
+                  {
+                    "tag": "Box",
+                    "value": {
+                      "modifiers": [
+                        {
+                          "tag": "Width",
+                          "value": 44
+                        },
+                        {
+                          "tag": "Height",
+                          "value": 45
+                        },
+                        {
+                          "tag": "Opacity",
+                          "value": 25
+                        },
+                        {
+                          "tag": "Background",
+                          "value": {
+                            "color": "BgSurfaceMain",
+                            "shape": {
+                              "tag": "Circle"
+                            }
+                          }
+                        }
+                      ],
+                      "props": {},
+                      "children": []
+                    }
+                  },
+                  {
+                    "tag": "Box",
+                    "value": {
+                      "modifiers": [
+                        {
+                          "tag": "Padding",
+                          "value": {
+                            "top": 6,
+                            "end": 0,
+                            "bottom": 0,
+                            "start": 52
+                          }
+                        }
+                      ],
+                      "props": {
+                        "contentAlignment": "TopStart"
+                      },
+                      "children": [
+                        {
+                          "tag": "Box",
+                          "value": {
+                            "modifiers": [
+                              {
+                                "tag": "Width",
+                                "value": 140
+                              },
+                              {
+                                "tag": "Height",
+                                "value": 14
+                              },
+                              {
+                                "tag": "Opacity",
+                                "value": 45
+                              },
+                              {
+                                "tag": "Background",
+                                "value": {
+                                  "color": "BgSurfaceMain",
+                                  "shape": {
+                                    "tag": "Rounded",
+                                    "value": 7
+                                  }
+                                }
+                              }
+                            ],
+                            "props": {},
+                            "children": []
+                          }
+                        },
+                        {
+                          "tag": "Box",
+                          "value": {
+                            "modifiers": [
+                              {
+                                "tag": "Padding",
+                                "value": {
+                                  "top": 26,
+                                  "end": 0,
+                                  "bottom": 0,
+                                  "start": 0
+                                }
+                              }
+                            ],
+                            "props": {
+                              "contentAlignment": "TopStart"
+                            },
+                            "children": [
+                              {
+                                "tag": "Box",
+                                "value": {
+                                  "modifiers": [
+                                    {
+                                      "tag": "Width",
+                                      "value": 96
+                                    },
+                                    {
+                                      "tag": "Height",
+                                      "value": 10
+                                    },
+                                    {
+                                      "tag": "Opacity",
+                                      "value": 30
+                                    },
+                                    {
+                                      "tag": "Background",
+                                      "value": {
+                                        "color": "BgSurfaceMain",
+                                        "shape": {
+                                          "tag": "Rounded",
+                                          "value": 5
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "props": {},
+                                  "children": []
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "tag": "Box",
+        "value": {
+          "modifiers": [
+            {
+              "tag": "FillWidth",
+              "value": true
+            },
+            {
+              "tag": "FillHeight",
+              "value": true
+            },
+            {
+              "tag": "Border",
+              "value": {
+                "width": 1,
+                "color": "FgPrimary",
+                "shape": {
+                  "tag": "Rounded",
+                  "value": 24
+                }
+              }
+            }
+          ],
+          "props": {},
+          "children": []
+        }
+      }
+    ]
+  }
+}

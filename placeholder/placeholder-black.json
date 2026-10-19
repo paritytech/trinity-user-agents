@@ -1,0 +1,449 @@
+{
+  "tag": "Box",
+  "value": {
+    "modifiers": [
+      {
+        "tag": "FillWidth",
+        "value": true
+      },
+      {
+        "tag": "FillHeight",
+        "value": true
+      },
+      {
+        "tag": "Background",
+        "value": {
+          "color": "BgSurfaceMain",
+          "shape": {
+            "tag": "Rounded",
+            "value": 24
+          }
+        }
+      }
+    ],
+    "props": {
+      "contentAlignment": "TopStart"
+    },
+    "children": [
+      {
+        "tag": "Box",
+        "value": {
+          "modifiers": [
+            {
+              "tag": "FillWidth",
+              "value": true
+            },
+            {
+              "tag": "FillHeight",
+              "value": true
+            },
+            {
+              "tag": "Opacity",
+              "value": 8
+            },
+            {
+              "tag": "Background",
+              "value": {
+                "color": "FgPrimary"
+              }
+            }
+          ],
+          "props": {},
+          "children": []
+        }
+      },
+      {
+        "tag": "Box",
+        "value": {
+          "modifiers": [
+            {
+              "tag": "FillWidth",
+              "value": true
+            },
+            {
+              "tag": "FillHeight",
+              "value": true
+            },
+            {
+              "tag": "Opacity",
+              "value": 89
+            }
+          ],
+          "props": {},
+          "children": [
+            {
+              "tag": "Effect",
+              "value": {
+                "props": {
+                  "effect": "Rainbow"
+                },
+                "children": [
+                  {
+                    "tag": "Box",
+                    "value": {
+                      "modifiers": [
+                        {
+                          "tag": "FillWidth",
+                          "value": true
+                        },
+                        {
+                          "tag": "FillHeight",
+                          "value": true
+                        }
+                      ],
+                      "props": {},
+                      "children": []
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "tag": "Box",
+        "value": {
+          "modifiers": [
+            {
+              "tag": "FillWidth",
+              "value": true
+            },
+            {
+              "tag": "FillHeight",
+              "value": true
+            }
+          ],
+          "props": {
+            "contentAlignment": "TopStart"
+          },
+          "children": [
+            {
+              "tag": "Box",
+              "value": {
+                "modifiers": [
+                  {
+                    "tag": "FillWidth",
+                    "value": true
+                  },
+                  {
+                    "tag": "Height",
+                    "value": 1
+                  },
+                  {
+                    "tag": "Opacity",
+                    "value": 56
+                  },
+                  {
+                    "tag": "Background",
+                    "value": {
+                      "color": "FgPrimary"
+                    }
+                  }
+                ],
+                "props": {},
+                "children": []
+              }
+            }
+          ]
+        }
+      },
+      {
+        "tag": "Box",
+        "value": {
+          "modifiers": [
+            {
+              "tag": "FillWidth",
+              "value": true
+            },
+            {
+              "tag": "FillHeight",
+              "value": true
+            }
+          ],
+          "props": {
+            "contentAlignment": "BottomStart"
+          },
+          "children": [
+            {
+              "tag": "Box",
+              "value": {
+                "modifiers": [
+                  {
+                    "tag": "FillWidth",
+                    "value": true
+                  },
+                  {
+                    "tag": "Height",
+                    "value": 1
+                  },
+                  {
+                    "tag": "Opacity",
+                    "value": 38
+                  },
+                  {
+                    "tag": "Background",
+                    "value": {
+                      "color": "BgSurfaceMain"
+                    }
+                  }
+                ],
+                "props": {},
+                "children": []
+              }
+            }
+          ]
+        }
+      },
+      {
+        "tag": "Box",
+        "value": {
+          "modifiers": [
+            {
+              "tag": "FillWidth",
+              "value": true
+            },
+            {
+              "tag": "FillHeight",
+              "value": true
+            }
+          ],
+          "props": {
+            "contentAlignment": "BottomStart"
+          },
+          "children": [
+            {
+              "tag": "Box",
+              "value": {
+                "modifiers": [
+                  {
+                    "tag": "Padding",
+                    "value": {
+                      "top": 0,
+                      "end": 0,
+                      "bottom": 40,
+                      "start": 16
+                    }
+                  }
+                ],
+                "props": {
+                  "contentAlignment": "TopStart"
+                },
+                "children": [
+                  {
+                    "tag": "Text",
+                    "value": {
+                      "modifiers": [
+                        {
+                          "tag": "Opacity",
+                          "value": 36
+                        }
+                      ],
+                      "props": {
+                        "style": "HeadlineLarge",
+                        "color": "FgPrimary"
+                      },
+                      "children": [
+                        {
+                          "tag": "String",
+                          "value": {
+                            "text": "Polkadot"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "tag": "Box",
+        "value": {
+          "modifiers": [
+            {
+              "tag": "FillWidth",
+              "value": true
+            },
+            {
+              "tag": "FillHeight",
+              "value": true
+            },
+            {
+              "tag": "Padding",
+              "value": {
+                "top": 12,
+                "end": 16,
+                "bottom": 0,
+                "start": 16
+              }
+            }
+          ],
+          "props": {
+            "contentAlignment": "TopStart"
+          },
+          "children": [
+            {
+              "tag": "Box",
+              "value": {
+                "modifiers": [],
+                "props": {
+                  "contentAlignment": "TopStart"
+                },
+                "children": [
+                  {
+                    "tag": "Box",
+                    "value": {
+                      "modifiers": [
+                        {
+                          "tag": "Width",
+                          "value": 44
+                        },
+                        {
+                          "tag": "Height",
+                          "value": 45
+                        },
+                        {
+                          "tag": "Opacity",
+                          "value": 26
+                        },
+                        {
+                          "tag": "Background",
+                          "value": {
+                            "color": "FgPrimary",
+                            "shape": {
+                              "tag": "Circle"
+                            }
+                          }
+                        }
+                      ],
+                      "props": {},
+                      "children": []
+                    }
+                  },
+                  {
+                    "tag": "Box",
+                    "value": {
+                      "modifiers": [
+                        {
+                          "tag": "Padding",
+                          "value": {
+                            "top": 3,
+                            "end": 0,
+                            "bottom": 0,
+                            "start": 52
+                          }
+                        }
+                      ],
+                      "props": {
+                        "contentAlignment": "TopStart"
+                      },
+                      "children": [
+                        {
+                          "tag": "Text",
+                          "value": {
+                            "modifiers": [],
+                            "props": {
+                              "style": "TitleMediumRegular",
+                              "color": "FgPrimary"
+                            },
+                            "children": [
+                              {
+                                "tag": "String",
+                                "value": {
+                                  "text": "Humanity"
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "tag": "Box",
+                          "value": {
+                            "modifiers": [
+                              {
+                                "tag": "Padding",
+                                "value": {
+                                  "top": 22,
+                                  "end": 0,
+                                  "bottom": 0,
+                                  "start": 0
+                                }
+                              }
+                            ],
+                            "props": {
+                              "contentAlignment": "TopStart"
+                            },
+                            "children": [
+                              {
+                                "tag": "Text",
+                                "value": {
+                                  "modifiers": [
+                                    {
+                                      "tag": "Opacity",
+                                      "value": 158
+                                    }
+                                  ],
+                                  "props": {
+                                    "style": "BodySmallRegular",
+                                    "color": "FgPrimary"
+                                  },
+                                  "children": [
+                                    {
+                                      "tag": "String",
+                                      "value": {
+                                        "text": "PROOF OF PERSONHOOD"
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "tag": "Box",
+        "value": {
+          "modifiers": [
+            {
+              "tag": "FillWidth",
+              "value": true
+            },
+            {
+              "tag": "FillHeight",
+              "value": true
+            },
+            {
+              "tag": "Opacity",
+              "value": 166
+            },
+            {
+              "tag": "Border",
+              "value": {
+                "width": 1,
+                "color": "FgPrimary",
+                "shape": {
+                  "tag": "Rounded",
+                  "value": 24
+                }
+              }
+            }
+          ],
+          "props": {},
+          "children": []
+        }
+      }
+    ]
+  }
+}
