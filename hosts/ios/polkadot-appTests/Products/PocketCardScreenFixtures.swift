@@ -11,10 +11,7 @@ let loyaltyCard = PocketCardViewModel(
 )
 
 /// Where the Pocket shows the card, in window coordinates.
-let pocketSlot = CGRect(
-    origin: CGPoint(x: PocketCardSize.sideMargin, y: 420),
-    size: PocketCardSize.testFrame
-)
+let pocketSlot = CGRect(x: 24, y: 420, width: 345, height: PocketCardSize.height)
 
 @MainActor
 final class FakePocketCardOrigin: PocketCardOrigin {
