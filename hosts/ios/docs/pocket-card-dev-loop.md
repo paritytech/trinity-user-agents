@@ -25,6 +25,35 @@ Then draw `http://127.0.0.1:5173/pocket/<name>.json`.
 The size bound is the same one the approval sheet applies (256 KiB), so a face
 that draws here is one the sheet will accept.
 
+Images draw as they will on a published card:
+
+- A `Bulletin` CID loads from the same IPFS gateway the Pocket uses.
+- An `Archive` path loads from the server the face came from, at that path.
+  Serve the folder that becomes your worker archive, so `images/stamp.png` is at
+  `http://127.0.0.1:5173/images/stamp.png` here and at the same path inside the
+  archive once published.
+- An archive path is always read as a file on that server, as the archive reads
+  it. A path that climbs above the root with `..` draws as empty space.
+
+Pressing **Draw** again fetches the face and its images again, so an edited file
+shows without restarting the app.
+
+### Loop A on a physical iPhone
+
+A phone cannot reach `127.0.0.1` on your Mac. Give the dev server a public HTTPS
+address instead, for example with a Cloudflare quick tunnel:
+
+```sh
+cloudflared tunnel --url http://127.0.0.1:5173
+```
+
+It prints an address like `https://<random>.trycloudflare.com`. Draw
+`https://<random>.trycloudflare.com/pocket/<name>.json` in the face preview.
+Images resolve against that address in the same way.
+
+While the tunnel runs, anyone with the address can read what the server serves.
+Serve only test files and stop the tunnel when you are done.
+
 ## Loop B: the whole card, live
 
 A product with **no published worker**, driven by hand.

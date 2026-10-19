@@ -186,7 +186,7 @@ mod tests {
 	use crate::{
 		chain_runtime::{RuntimeChainProvider, RuntimeFailure},
 		host_logic::dotns_gateway::{
-			VIEW_CALL_ORIGIN, account_to_h160, dispatcher_address_key, selector, timestamp_now_key,
+			VIEW_CALL_ORIGIN, account_to_h160, dispatcher_address_key, selector,
 		},
 		platform::JsonRpcConnection,
 		subscription::thread_per_subscription_spawner,
@@ -269,11 +269,6 @@ mod tests {
 		out
 	}
 
-	/// Chain time the scripted `Timestamp.Now` reports, in seconds.
-	const NOW_SECS: u64 = 1_800_000_000;
-	/// The scripted controller's `reservationDuration()`.
-	const RESERVATION_DURATION: u64 = 604_800;
-
 	/// `ReviveApi_call` output carrying successful return `data`.
 	fn contract_result(data: &[u8]) -> Vec<u8> {
 		contract_result_with_flags(0, data)
@@ -315,18 +310,12 @@ mod tests {
 				assert_eq!(&input[4..36], abi_address(&account_to_h160(&ACCOUNT)).as_slice());
 				assert_eq!(&input[36..68], &abi_word(0));
 				assert_eq!(&input[68..100], &abi_word(16));
-				// One live claim and one that lapsed a second ago.
-				abi_pending_claims(&[
-					("alice.01", NOW_SECS - 10),
-					("stale.01", NOW_SECS - RESERVATION_DURATION - 1),
-				])
+				// Minted at the epoch: a pending claim never lapses.
+				abi_pending_claims(&[("alice.01", 1)])
 			},
 			(CONTROLLER, s) if s == selector("isPopIssued(string)") => {
-				// Both surviving labels were issued through the gateway.
+				// Both labels were issued through the gateway.
 				abi_word(1).to_vec()
-			},
-			(CONTROLLER, s) if s == selector("reservationDuration()") => {
-				abi_word(RESERVATION_DURATION).to_vec()
 			},
 			(CONTROLLER, s) if s == selector("protocolRegistry()") => abi_address(&REGISTRY),
 			(REGISTRY, s) if s == selector("get(bytes32)") => abi_address(&FACTORY),
@@ -414,13 +403,6 @@ mod tests {
 					let key_bytes = hex::decode(key.trim_start_matches("0x")).unwrap();
 					let mut frames =
 						vec![response(json!({"result": "started", "operationId": operation_id}))];
-					if key_bytes == timestamp_now_key() {
-						frames.push(follow_event(json!({
-                            "event": "operationStorageItems",
-                            "operationId": operation_id,
-                            "items": [{"key": key, "value": format!("0x{}", hex::encode((NOW_SECS * 1_000).to_le_bytes()))}]
-                        })));
-					}
 					if key_bytes == dispatcher_address_key() {
 						frames.push(follow_event(json!({
 							"event": "operationStorageItems",
@@ -537,13 +519,12 @@ mod tests {
 			.filter(|request| request.contains("chainHead_v1_call"))
 			.count();
 		// protocolRegistry (reverts on the dispatcher), TARGET, pendingClaims,
-		// reservationDuration, protocolRegistry, get(storeFactory), getLabelStore, tld,
-		// one short getLabels page, then one isPopIssued per surviving label
-		// (alice.01, myproject). A repointed chain resolves on the first probe
-		// and needs ten.
+		// protocolRegistry, get(storeFactory), getLabelStore, tld, one short
+		// getLabels page, then one isPopIssued per label (alice.01, myproject).
+		// A repointed chain resolves on the first probe and needs nine.
 		assert_eq!(
-			calls, 11,
-			"the discovery, label and provenance chain is exactly eleven views on a dispatcher chain"
+			calls, 10,
+			"the discovery, label and provenance chain is exactly ten views on a dispatcher chain"
 		);
 	}
 }

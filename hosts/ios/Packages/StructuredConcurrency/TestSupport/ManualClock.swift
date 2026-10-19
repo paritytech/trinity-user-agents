@@ -27,6 +27,7 @@ public final class ManualClock: Clock, Sendable {
     }
 
     fileprivate struct Waiter {
+        let id: UUID
         let duration: Duration
         let count: Int
         let continuation: CheckedContinuation<Void, Never>
@@ -64,19 +65,28 @@ public final class ManualClock: Clock, Sendable {
     }
 
     /// Suspends until at least `count` sleeps of `duration` are pending, without finishing them.
+    /// Returns early if the task is cancelled.
     public func waitForSleeps(for duration: Duration, count: Int) async {
-        await withCheckedContinuation { continuation in
-            let isPending = state.withLock { state in
-                guard state.pendingCount(of: duration) < count else { return true }
+        let id = UUID()
 
-                state.waiters.append(Waiter(duration: duration, count: count, continuation: continuation))
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let isPending = state.withLock { state in
+                    guard state.pendingCount(of: duration) < count, !Task.isCancelled else { return true }
 
-                return false
+                    state.waiters.append(
+                        Waiter(id: id, duration: duration, count: count, continuation: continuation)
+                    )
+
+                    return false
+                }
+
+                if isPending {
+                    continuation.resume()
+                }
             }
-
-            if isPending {
-                continuation.resume()
-            }
+        } onCancel: {
+            cancelWait(id: id)
         }
     }
 
@@ -149,6 +159,16 @@ private extension ManualClock {
         }
 
         sleeper?.continuation.resume(throwing: CancellationError())
+    }
+
+    func cancelWait(id: UUID) {
+        let waiter: Waiter? = state.withLock { state in
+            guard let index = state.waiters.firstIndex(where: { $0.id == id }) else { return nil }
+
+            return state.waiters.remove(at: index)
+        }
+
+        waiter?.continuation.resume()
     }
 }
 
