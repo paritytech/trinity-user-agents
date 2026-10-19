@@ -28,16 +28,20 @@ store gets no rollback protection. Errors from a rule of the RFC carry a `code`,
 ## Publishing a stack
 
 ```ts
-import { publish } from "@parity/trinity-stack";
+import { encodeLink, publicKey, publish } from "@parity/trinity-stack";
+import { writeFile } from "node:fs/promises";
 
+const url = "https://previewnet.example/.well-known/trinity-stack.json";
 const { document, state } = await publish(model, { generation, secret, state: previous });
+await writeFile("site/.well-known/trinity-stack.json", document); // deploy site/ so `url` serves it
+const link = encodeLink({ url, key: publicKey(secret) }); // what the QR code carries
 ```
 
-`model` is a descriptor without `$v`, `sequence` and `generation`. `publish` keeps `sequence` while nothing changes and
-raises it otherwise, never below the time in seconds. Keep `state` somewhere a wipe does not delete: without it, two
-publishes in the same second get the same `sequence`.
-
-`encodeLink` and `qrSvg` give the link and QR code a dashboard shows for a stack.
+`publish` does no I/O: it returns the bytes, and the operator serves them at the URL the link names, usually
+`/.well-known/trinity-stack.json` on the stack's domain. `model` is a descriptor without `$v`, `sequence` and
+`generation`. `publish` keeps `sequence` while nothing changes and raises it otherwise, never below the time in seconds.
+Keep `state` and `secret` somewhere a wipe does not delete: without `state`, two publishes in the same second get the
+same `sequence`, and the key in the link is the stack's identity. Any QR library can render `link`.
 
 ## Conformance
 
