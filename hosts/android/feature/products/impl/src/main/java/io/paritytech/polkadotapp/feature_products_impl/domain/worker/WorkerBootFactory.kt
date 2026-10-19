@@ -39,12 +39,15 @@ class RealWorkerBootFactory @Inject constructor(
     private val runtimeProvider: Lazy<TrUAPIHostRuntimeProvider>,
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     private val scriptResolver: ProductScriptResolver,
+    private val inAppRuntimes: Set<@JvmSuppressWildcards InAppProductRuntime>,
 ) : WorkerBootFactory {
     override suspend fun boot(
         productId: ProductId,
         botApi: BindableProductsBotApi,
         scope: CoroutineScope,
     ): ProductWorker {
+        inAppRuntimes.firstOrNull { it.productId == productId }?.let { return it.boot(botApi, scope) }
+
         return if (runtimeSettings.isTrUAPIRuntimeEnabled()) {
             bootCore(productId, botApi, scope)
         } else {

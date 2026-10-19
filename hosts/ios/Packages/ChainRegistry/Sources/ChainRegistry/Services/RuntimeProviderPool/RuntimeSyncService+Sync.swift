@@ -122,11 +122,7 @@ public extension RuntimeSyncService {
     }
 
     private func rescheduleRetryIfNeeded() {
-        guard retryScheduler == nil else {
-            return
-        }
-
-        guard let maxAttempt = retryAttempts.max(by: { $0.value.attempt < $1.value.attempt })?
+        guard retryScheduler == nil, let maxAttempt = retryAttempts.max(by: { $0.value.attempt < $1.value.attempt })?
             .value.attempt else {
             return
         }

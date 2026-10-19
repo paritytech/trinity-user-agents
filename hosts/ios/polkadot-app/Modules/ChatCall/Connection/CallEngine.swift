@@ -433,11 +433,8 @@ private extension CallEngine {
 
         logger.debug("Establishing data channel...")
 
-        guard let dataChannelConnected = await waitDataChannelConnected(from: connectionStateSequence) else {
-            return
-        }
-
-        guard !Task.isCancelled else {
+        guard let dataChannelConnected = await waitDataChannelConnected(from: connectionStateSequence),
+              !Task.isCancelled else {
             return
         }
 
@@ -683,11 +680,7 @@ private extension CallEngine {
     }
 
     func handleOfferDelivered() async {
-        guard role == .initiator else {
-            return
-        }
-
-        guard stateSubject.value == .contacting else {
+        guard role == .initiator, stateSubject.value == .contacting else {
             return
         }
 

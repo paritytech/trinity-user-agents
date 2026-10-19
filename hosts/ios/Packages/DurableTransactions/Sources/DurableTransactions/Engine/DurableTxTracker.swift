@@ -357,10 +357,7 @@ private extension DurableTxTracker {
     ) async -> ReadResult<DispatchOutcome> {
         guard
             let entry = try? await store.getEntry(id: id),
-            let block = await blockOf(blockHash, using: view)
-        else { return .failedRead }
-
-        guard let attempt = entry.attempt else { return .failedRead }
+            let block = await blockOf(blockHash, using: view), let attempt = entry.attempt else { return .failedRead }
 
         return await view.dispatchOutcome(txHash: attempt.txHash, at: block)
     }

@@ -38,16 +38,15 @@ extension MoneyPresentable {
                 })
 
                 amountFormatted?.append("\(separator)\(trallingZeros)")
-            } else if amountParts.count == 2, formattedParts?.count == 2 {
-                // check whether tralling decimal zeros were cut during formatting
-                if let decimalCount = formattedParts?[1].count, decimalCount < amountParts[1].count {
-                    let zerosCount = amountParts[1].count - decimalCount
-                    let trallingZeros = String((0 ..< zerosCount).map { _ in
-                        Character(MoneyPresentableConstants.singleZero)
-                    })
+            } else if amountParts.count == 2, formattedParts?.count == 2,
+                      // check whether tralling decimal zeros were cut during formatting
+                      let decimalCount = formattedParts?[1].count, decimalCount < amountParts[1].count {
+                let zerosCount = amountParts[1].count - decimalCount
+                let trallingZeros = String((0 ..< zerosCount).map { _ in
+                    Character(MoneyPresentableConstants.singleZero)
+                })
 
-                    amountFormatted?.append("\(trallingZeros)")
-                }
+                amountFormatted?.append("\(trallingZeros)")
             }
         }
 

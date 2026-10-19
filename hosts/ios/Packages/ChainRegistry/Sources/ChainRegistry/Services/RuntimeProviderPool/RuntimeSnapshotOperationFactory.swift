@@ -44,11 +44,8 @@ public final class RuntimeSnapshotFactory {
             let maybeChainTypes = try chainTypesFetchOperation.targetOperation.extractNoCancellableResultData()
 
             guard let runtimeMetadataItem = try runtimeMetadataOperation
-                .extractNoCancellableResultData() else {
-                return nil
-            }
-
-            guard let commonTypes = maybeCommonTypes, let chainTypes = maybeChainTypes else {
+                .extractNoCancellableResultData(), let commonTypes = maybeCommonTypes,
+                let chainTypes = maybeChainTypes else {
                 return nil
             }
 
@@ -92,11 +89,7 @@ public final class RuntimeSnapshotFactory {
             let maybeCommonTypes = try commonTypesFetchOperation.targetOperation.extractNoCancellableResultData()
 
             guard let runtimeMetadataItem = try runtimeMetadataOperation
-                .extractNoCancellableResultData() else {
-                return nil
-            }
-
-            guard let commonTypes = maybeCommonTypes else {
+                .extractNoCancellableResultData(), let commonTypes = maybeCommonTypes else {
                 return nil
             }
 
@@ -138,11 +131,7 @@ public final class RuntimeSnapshotFactory {
             let maybeOwnTypes = try chainTypesFetchOperation.targetOperation.extractNoCancellableResultData()
 
             guard let runtimeMetadataItem = try runtimeMetadataOperation
-                .extractNoCancellableResultData() else {
-                return nil
-            }
-
-            guard let ownTypes = maybeOwnTypes else {
+                .extractNoCancellableResultData(), let ownTypes = maybeOwnTypes else {
                 return nil
             }
 

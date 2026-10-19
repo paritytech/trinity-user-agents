@@ -35,6 +35,7 @@ extension DebugSettingsInteractor: DebugSettingsInteractorInputProtocol {
             provideStrategyDebugState()
             provideTruApiRuntimeState()
             provideHostPlacementState()
+            provideMockChatProductState()
         }
     }
 
@@ -95,6 +96,12 @@ extension DebugSettingsInteractor: DebugSettingsInteractorInputProtocol {
         provideHostPlacementState()
     }
 
+    func toggleMockChatProduct() {
+        let current = SettingsManager.shared.isMockChatProductEnabled
+        SettingsManager.shared.set(value: !current, for: .mockChatProductEnabled)
+        provideMockChatProductState()
+    }
+
     func restartApp() {
         Logger.shared.info("Debug settings changed — terminating for restart")
         exit(0)
@@ -152,6 +159,13 @@ private extension DebugSettingsInteractor {
         let enabled = SettingsManager.shared.isHostPlacementEnabled
         Task { @MainActor [weak presenter] in
             presenter?.didReceive(hostPlacementEnabled: enabled)
+        }
+    }
+
+    func provideMockChatProductState() {
+        let enabled = SettingsManager.shared.isMockChatProductEnabled
+        Task { @MainActor [weak presenter] in
+            presenter?.didReceive(mockChatProductEnabled: enabled)
         }
     }
 }

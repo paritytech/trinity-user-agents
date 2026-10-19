@@ -79,7 +79,7 @@ extension ChatProductRoomPresenter {
             additions.isOnScreen,
             let productId = additions.returnToMessageId,
             let messageId = Chat.ProductMessageId.candidates(productId, in: chatId)
-            .first(where: { messages[$0] != nil })
+                .first(where: { messages[$0] != nil })
         else {
             return
         }

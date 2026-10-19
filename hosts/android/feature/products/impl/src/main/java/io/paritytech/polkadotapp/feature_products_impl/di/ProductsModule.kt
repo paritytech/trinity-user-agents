@@ -30,6 +30,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardFa
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollection
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFaceSource
 import io.paritytech.polkadotapp.feature_products_api.domain.product.ProductContentWarmUp
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.MockChatProductSettings
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.PreimageSubmitSponsoring
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.StatementStoreSubmissionSponsoring
@@ -128,6 +129,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProduc
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.ProductBotManagementInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.RealProductBotManagementInteractor
+import io.paritytech.polkadotapp.feature_products_impl.domain.runtime.PrefsMockChatProductSettings
 import io.paritytech.polkadotapp.feature_products_impl.domain.runtime.PrefsProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_impl.domain.search.ProductChatSearchResultProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.serialization.JsWidgetSerializer
@@ -139,12 +141,13 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealE
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealTopUpService
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpService
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductChatRoomEventSink
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIChatRoomEventSink
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIProductAttachmentStaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIPocketFaceStreams
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.RealResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductServingHostResolver
+import io.paritytech.polkadotapp.feature_products_impl.domain.worker.InAppProductRuntime
+import io.paritytech.polkadotapp.feature_products_impl.domain.worker.InAppRoutingChatRoomEventSink
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RealProductWorkerRefCounter
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RealWorkerBootFactory
@@ -170,6 +173,9 @@ import javax.inject.Singleton
 internal interface ProductsModule {
     @Multibinds
     fun messageRenderObservers(): Set<ProductMessageRenderObserver>
+
+    @Multibinds
+    fun inAppProductRuntimes(): Set<InAppProductRuntime>
 
     @Binds
     @Singleton
@@ -231,7 +237,7 @@ internal interface ProductsModule {
     fun bindPocketFaceStreams(impl: TrUAPIPocketFaceStreams): PocketFaceStreams
 
     @Binds
-    fun bindProductChatRoomEventSink(impl: TrUAPIChatRoomEventSink): ProductChatRoomEventSink
+    fun bindProductChatRoomEventSink(impl: InAppRoutingChatRoomEventSink): ProductChatRoomEventSink
 
     @Binds
     fun bindProductAttachmentStaging(impl: TrUAPIProductAttachmentStaging): ProductAttachmentStaging
@@ -456,6 +462,11 @@ internal interface ProductsModule {
                 prefs = context.getSharedPreferences("debug_pocket_cards", Context.MODE_PRIVATE),
                 isDebugBuild = BuildConfig.DEBUG,
             )
+
+        @Provides
+        @Singleton
+        fun provideMockChatProductSettings(@ApplicationContext context: Context): MockChatProductSettings =
+            PrefsMockChatProductSettings(context.getSharedPreferences("mock_chat_product", Context.MODE_PRIVATE))
 
         @Provides
         @Singleton

@@ -65,7 +65,16 @@ final class ProductBotProvider: ProductBotProviding {
                     products.append(hostPlaced)
                 }
 
-                return await makeBots(for: products)
+                var bots = await makeBots(for: products)
+
+                #if TESTNET_FEATURE
+                    // Not a product of the repository: it resolves nothing, so it skips the resolve path.
+                    if let mock = MockChatProduct.bot(settingsManager: settingsManager) {
+                        bots.append(mock)
+                    }
+                #endif
+
+                return bots
             }
             .eraseToAnyAsyncSequence()
     }
@@ -101,9 +110,8 @@ private extension ProductBotProvider {
     /// The TLD wait is bounded because every other product's bot is built after it, and a device
     /// that can never read the TLD must not cost the products that do not need it.
     func hostPlacedProducts() async -> [Product] {
-        guard settingsManager.isHostPlacementEnabled else { return [] }
-
-        guard let tld = await tldProvider.tldRetrying(attempts: Self.tldAttempts) else { return [] }
+        guard settingsManager.isHostPlacementEnabled,
+              let tld = await tldProvider.tldRetrying(attempts: Self.tldAttempts) else { return [] }
 
         return HostPlacedProducts.all.map {
             Product(id: $0.productId(tld), name: $0.fallbackName)

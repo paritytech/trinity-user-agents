@@ -27,11 +27,8 @@ struct DeviceSyncChatAcceptedApplier {
         let sortedMessages = wireMessages.sorted { $0.remote.timestamp < $1.remote.timestamp }
 
         for wireMessage in sortedMessages {
-            guard let accepted = chatAccepted(from: wireMessage.remote) else {
-                continue
-            }
-
-            guard processedRequestIds.insert(accepted.requestId).inserted else {
+            guard let accepted = chatAccepted(from: wireMessage.remote),
+                  processedRequestIds.insert(accepted.requestId).inserted else {
                 continue
             }
 

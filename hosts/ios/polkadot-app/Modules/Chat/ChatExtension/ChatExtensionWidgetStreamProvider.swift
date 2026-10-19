@@ -150,11 +150,7 @@ private extension ChatExtensionWidgetStreamProvider {
 
     func sendWidgetUpdate(_ update: ChatExtensionWidgetUpdate) {
         workQueue.async { [weak self] in
-            guard let self else {
-                return
-            }
-
-            guard update.configuration == nil || widgetTasks[update.extensionId] != nil else {
+            guard let self, update.configuration == nil || widgetTasks[update.extensionId] != nil else {
                 return
             }
 

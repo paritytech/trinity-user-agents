@@ -109,6 +109,12 @@ final class DebugSettingsViewController: UIViewController, ViewHolder {
             for: .valueChanged
         )
 
+        rootView.mockChatProductSwitch.addTarget(
+            self,
+            action: #selector(actionToggleMockChatProduct),
+            for: .valueChanged
+        )
+
         #if DEBUG
             rootView.openDevServerButton.addTarget(
                 self,
@@ -189,6 +195,10 @@ final class DebugSettingsViewController: UIViewController, ViewHolder {
         presenter.toggleHostPlacement()
     }
 
+    @objc func actionToggleMockChatProduct() {
+        presenter.toggleMockChatProduct()
+    }
+
     #if DEBUG
         @objc func actionOpenDevServer() {
             presenter.openDevServer()
@@ -230,6 +240,10 @@ extension DebugSettingsViewController: DebugSettingsViewProtocol {
 
     func didReceive(hostPlacementEnabled: Bool) {
         rootView.hostPlacedSwitch.isOn = hostPlacementEnabled
+    }
+
+    func didReceive(mockChatProductEnabled: Bool) {
+        rootView.mockChatProductSwitch.isOn = mockChatProductEnabled
     }
 
     func didReceive(truApiRuntimeEnabled: Bool) {

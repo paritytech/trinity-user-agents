@@ -78,6 +78,18 @@ A product integrates with chat through its worker. On the core runtime, `TrUAPIW
 
 The native runtime (release builds, and debug builds with the toggle off) still runs chat products through `ChatHostCalls`. It serves v1 only: no room declarations, no queries, no product-source rooms.
 
+### Chat showcase
+
+The debug build type has a chat product that the app serves itself, for checking by hand what the room screen draws. Debug menu → "Chat showcase product" adds "Chat Showcase" and "Showcase (host store)" to the chat list, with no restart.
+
+The code is in `products-impl/src/debug/.../domain/bot/mock/`. `MockChatExtensionProvider` adds a `ProductChatExtension` for `chat-showcase.dot` while the setting is on. `RealWorkerBootFactory` boots an `InAppProductRuntime` for a product that one names, so the extension gets a `MockChatWorker` in place of `TrUAPIChatWorker`; it answers every query from memory through the same mappers. The worker declares its rooms and pushes its feed through a real `ProductChatHostBridge` with wire values, as a product worker does. The room events of the additions go to the core, which does not know the product, so `InAppRoutingChatRoomEventSink` sends them to its runtime. Other build types bind no `InAppProductRuntime`.
+
+- `showcase` keeps its messages in the product: every body kind, media kind, participant kind and message status, personas, reactions, replies, an edit, a reasoning row, a message with branches, a thread root, and 60 older messages for paging. It declares every configuration flag, the toolbar, quick replies, slash commands, search, read aloud and call buttons.
+- `showcase-thread` is the thread of one message of `showcase`, stored by the host. `store` is stored by the host.
+- The `/` commands show what messages alone cannot: `/stream`, `/typing`, `/ring`, `/call`, `/hangup`, `/footer <input|payment|empty|custom>`, `/preview <…>`, `/notice` and `/burst`. A message "reject" is refused and "fail" is created as failed.
+
+It cannot show what needs the core: preimage and sealed attachments, wakes, and calls with a media session. `MockChatShowcaseTest` (`src/testDebug`) fails when the wire gains a body, status, media, participant or renderer kind that the showcase does not show.
+
 ## Anti-patterns
 
 | Anti-pattern | Severity | Fix |

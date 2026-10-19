@@ -38,8 +38,7 @@ public extension ProductWorkerSource {
         for resolved: ResolvedProduct,
         serving modality: ProductWorkerModality
     ) -> ProductWorkerSource? {
-        guard let worker = resolved.executables.worker else { return nil }
-        guard worker.serves(modality) else { return nil }
+        guard let worker = resolved.executables.worker, worker.serves(modality) else { return nil }
 
         return ProductWorkerSource(contentId: worker.identifier, entryRelativePath: worker.entrypoint)
     }

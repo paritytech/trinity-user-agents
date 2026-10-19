@@ -89,10 +89,8 @@ final class TrUAPILocalStorage: TrUAPILocalStoring, @unchecked Sendable {
 
     func read(key: String) throws -> Data? {
         let prefix = readPrefix(key)
-        if let directory {
-            if let data = try Self.readFile(Self.fileURL(directory, prefix: prefix, key: key)) {
-                return data
-            }
+        if let directory, let data = try Self.readFile(Self.fileURL(directory, prefix: prefix, key: key)) {
+            return data
         }
         return defaults.data(forKey: "\(prefix).\(key)")
     }

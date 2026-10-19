@@ -420,11 +420,7 @@ private extension VoIPCallKitManager {
     func makeInput(pushPayload: [AnyHashable: Any]) async throws -> VoIPCallKitInput {
         guard let pushId = pushPayload[
             PushNotificationKeys.pushId
-        ] as? String else {
-            throw InputError.invalidMessageData
-        }
-
-        guard let messageHex = pushPayload[
+        ] as? String, let messageHex = pushPayload[
             PushNotificationKeys.message
         ] as? String else {
             throw InputError.invalidMessageData

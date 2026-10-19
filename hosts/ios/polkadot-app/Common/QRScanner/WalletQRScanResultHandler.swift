@@ -47,8 +47,8 @@ extension WalletQRScanResultHandler: WalletQRScanDelegate {
     }
 }
 
+@MainActor
 private extension WalletQRScanResultHandler {
-    @MainActor
     func dismissPresented(completion: @escaping () -> Void) {
         guard let presented = view?.controller.presentedViewController else {
             completion()

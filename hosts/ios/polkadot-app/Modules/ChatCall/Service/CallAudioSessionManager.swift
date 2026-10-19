@@ -138,10 +138,8 @@ private extension CallAudioSessionManager {
             + (systemAudioSession.availableInputs ?? [])
 
         for port in candidates {
-            guard CallAudioRouteState.externalOutputPorts.contains(port.portType) else {
-                continue
-            }
-            guard seenKeys.insert(port.callDeviceIdentifier).inserted else {
+            guard CallAudioRouteState.externalOutputPorts.contains(port.portType),
+                  seenKeys.insert(port.callDeviceIdentifier).inserted else {
                 continue
             }
             externalRoutes.append(.external(port))

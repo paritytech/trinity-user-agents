@@ -53,11 +53,8 @@ final class TabFactory: TabFactoryProtocol {
         func makeScanController() -> ScanPanelViewController? {
             let scannerView = WalletQRScanViewFactory.createView(for: scanResultHandler, presentation: .embedded)
 
-            guard let scanner = scannerView?.controller as? (UIViewController & ScanPanelScannerControlling) else {
-                return nil
-            }
-
-            guard let search = SearchContactModuleFactory.makeModule() else {
+            guard let scanner = scannerView?.controller as? (UIViewController & ScanPanelScannerControlling),
+                  let search = SearchContactModuleFactory.makeModule() else {
                 return nil
             }
 

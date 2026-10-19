@@ -19,11 +19,8 @@ extension Chat {
 extension Chat.DeviceSyncWireMessage {
     init?(from local: Chat.LocalMessage) {
         // Only contact chats are supported for sync
-        guard case let .person(accountId) = local.chatId else {
-            return nil
-        }
-
-        guard let remoteContent = local.content.toRemoteMessageContent() else {
+        guard case let .person(accountId) = local.chatId,
+              let remoteContent = local.content.toRemoteMessageContent() else {
             return nil
         }
 

@@ -14,11 +14,8 @@ enum ClaimUsernameViewFactory {
     static func createLiteClaimView(
         observer: RootStateObserving
     ) -> ClaimUsernameViewProtocol? {
-        guard let hasWallets = try? RootEntropyManager.shared.hasRootEntropy() else {
-            return nil
-        }
-
-        guard let interactor = createLiteInteractor(hasWallets: hasWallets) else {
+        guard let hasWallets = try? RootEntropyManager.shared.hasRootEntropy(),
+              let interactor = createLiteInteractor(hasWallets: hasWallets) else {
             return nil
         }
 

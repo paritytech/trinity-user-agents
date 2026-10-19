@@ -268,11 +268,7 @@ private extension DepositService {
     func subscribeDepositChangesIfNeeded() {
         let isInProgress = allExecutions.value.last?.isInProgress ?? false
 
-        guard !isInProgress else {
-            return
-        }
-
-        guard balanceTrackingTask == nil else {
+        guard !isInProgress, balanceTrackingTask == nil else {
             return
         }
 

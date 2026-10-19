@@ -229,8 +229,8 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
     }
 }
 
+@MainActor
 extension ServiceCoordinator {
-    @MainActor
     // swiftlint:disable:next function_body_length
     static func createDefault(spaFlowState: SPAFlowState) -> ServiceCoordinatorProtocol? {
         let walletRepo: WalletManagerRepositoryProtocol = .shared
@@ -308,7 +308,13 @@ extension ServiceCoordinator {
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
         // The seam of the room events: the mute and archive actions record through it (P10.10).
-        let roomEventPublisher = TrUAPIChatRoomEventPublisher(runtimeProvider: truapiRuntimeProvider)
+        #if TESTNET_FEATURE
+            let roomEventPublisher = MockChatProduct.routingRoomEvents(
+                to: TrUAPIChatRoomEventPublisher(runtimeProvider: truapiRuntimeProvider)
+            )
+        #else
+            let roomEventPublisher = TrUAPIChatRoomEventPublisher(runtimeProvider: truapiRuntimeProvider)
+        #endif
         RootDependencyLocator.setDependency(roomEventPublisher as ChatRoomEventPublishing)
         let userStateRecorder = ChatRoomUserStateRecorder(
             storageFacade: UserDataStorageFacade.shared,

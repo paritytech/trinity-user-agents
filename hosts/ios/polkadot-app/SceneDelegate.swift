@@ -19,11 +19,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         willConnectTo _: UISceneSession,
         options: UIScene.ConnectionOptions
     ) {
-        guard let windowScene = (scene as? UIWindowScene) else { return }
-
-        guard
-            !isUnitTesting,
-            !isPreviewBuild
+        guard let windowScene = (scene as? UIWindowScene),
+              !isUnitTesting,
+              !isPreviewBuild
         else {
             return
         }
@@ -90,8 +88,8 @@ extension SceneDelegate {
     private func handleUserActivities(_ activities: Set<NSUserActivity>) {
         guard
             let url = activities
-            .first(where: { $0.activityType == NSUserActivityTypeBrowsingWeb })?
-            .webpageURL
+                .first(where: { $0.activityType == NSUserActivityTypeBrowsingWeb })?
+                .webpageURL
         else {
             return
         }

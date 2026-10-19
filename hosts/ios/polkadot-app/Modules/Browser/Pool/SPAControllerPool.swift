@@ -24,14 +24,13 @@ final class SPAControllerPool: SPAControllerPooling {
 
         let flowState = flowStateProvider.flowState()
 
-        guard let page = tab.makeProductPage(hostProvider: flowState.hostProvider) else { return nil }
-
-        guard let view = SPAViewFactory.createView(
-            page: page,
-            flowState: flowState,
-            isBrowserTab: true,
-            browserTabId: tab.id
-        ) else {
+        guard let page = tab.makeProductPage(hostProvider: flowState.hostProvider),
+              let view = SPAViewFactory.createView(
+                  page: page,
+                  flowState: flowState,
+                  isBrowserTab: true,
+                  browserTabId: tab.id
+              ) else {
             return nil
         }
         controllers[tab.id] = view

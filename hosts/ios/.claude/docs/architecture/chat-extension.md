@@ -161,6 +161,32 @@ is `make ios-chat-v2-run` (`docs/chat-ios-simulator.md` at the repository root).
 `ChatProductRoomPresenter+E2E.swift`, `ChatParticipantsViewController+E2E.swift`) runs each gesture's code
 path and proves rows from Core Data, the product's event log and `[e2e:ui]` console markers.
 
+### Chat showcase
+
+Builds with `TESTNET_FEATURE` have a chat product that lives in the app, for checking by hand what the room screen
+draws. Debug settings (shake the device) → "Chat showcase product" turns it on, and the app restarts. The chat list then
+shows "Chat Showcase" and "Showcase (host store)".
+
+`Products/Chat/Mock/` holds it. `MockChatProduct` adds a `ProductBot` whose runtime is `MockChatRuntime`, an actor that
+keeps the rooms in memory in place of `TrUAPIChatHandler`. It needs no worker and no network. `MockChatHost` sends its
+declarations and feed updates the way `RustChatExecutionBridge` sends a worker's: wire values through the `+Domain`
+mappers into `ProductChatMessaging`, and live updates to `ProductFeedListeners`. The room events of the additions go to
+the core, which does not know this product, so `ServiceCoordinator` routes them to the runtime instead.
+
+- `showcase` keeps its messages in the product: every body kind, media kind, participant kind and message status,
+  personas, reactions, replies, an edit, a reasoning row, a message with branches, a thread root, and 60 older
+  messages for paging. It declares every configuration flag, the toolbar, quick replies that follow the input, slash
+  commands, search, read aloud and call buttons.
+- `showcase-thread` is the thread of one message of `showcase`. The host stores it, and the list hides it.
+- `store` is stored by the host, so its bodies go through Core Data and the message decoder.
+- The `/` commands show what messages alone cannot: `/stream`, `/typing`, `/ring`, `/call`, `/hangup`,
+  `/footer <input|payment|empty|custom>`, `/preview <…>`, `/notice` and `/burst`. A message "reject" is refused and
+  "fail" is created as failed.
+
+The showcase cannot show what needs the core: preimage and sealed attachments, wakes, and calls with a media session.
+`MockChatShowcaseTests` fails when the wire gains a body, status, media, participant or renderer kind that the
+showcase does not show.
+
 ## Hard Rules
 
 1. **Never hold the worker for the life of the product.** Hold it for an open room, a query or the bounded

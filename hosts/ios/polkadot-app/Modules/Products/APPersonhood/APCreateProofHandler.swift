@@ -79,11 +79,7 @@ private extension APCreateProofHandler {
             for: selection.ringIndex,
             collectionId: collectionId,
             blockHash: blockHash
-        ) else {
-            throw CreateProofError.ringNotFound
-        }
-
-        guard let revision = try await deps.proofParamsFetcher.fetchCurrentRevision(
+        ), let revision = try await deps.proofParamsFetcher.fetchCurrentRevision(
             for: selection.ringIndex,
             collectionId: collectionId,
             blockHash: blockHash

@@ -15,11 +15,7 @@ final class RecentChatsProvider {
         chatProvider.subscribeChatsWithPredicate(NSPredicate.chatWithNonBlockedContact())
             .map { chats in
                 chats.compactMap { chat -> SearchRow<ContactSearchPayload>? in
-                    guard case let .person(contact) = chat.peer else {
-                        return nil
-                    }
-
-                    guard !contact.hasIncomingChatRequest else {
+                    guard case let .person(contact) = chat.peer, !contact.hasIncomingChatRequest else {
                         return nil
                     }
 

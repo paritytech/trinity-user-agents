@@ -36,8 +36,9 @@ public protocol ImageViewModelProtocol {
     @MainActor func cancel(on imageView: UIImageView)
 }
 
+@MainActor
 public extension ImageViewModelProtocol {
-    @MainActor func loadImage(
+    func loadImage(
         on imageView: UIImageView,
         targetSize: CGSize,
         animated: Bool,
@@ -54,7 +55,7 @@ public extension ImageViewModelProtocol {
         loadImage(on: imageView, settings: settings, animated: animated, completion: completion)
     }
 
-    @MainActor func loadImage(
+    func loadImage(
         on imageView: UIImageView,
         targetSize: CGSize,
         cornerRadius: CGFloat,

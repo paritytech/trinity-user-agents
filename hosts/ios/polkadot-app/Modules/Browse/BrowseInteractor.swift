@@ -32,8 +32,8 @@ final class BrowseInteractor: BrowseInteractorInputProtocol {
 
 // MARK: - Private
 
+@MainActor
 private extension BrowseInteractor {
-    @MainActor
     func notify(host: ProductHost?) {
         if let host {
             presenter?.didResolve(host: host)

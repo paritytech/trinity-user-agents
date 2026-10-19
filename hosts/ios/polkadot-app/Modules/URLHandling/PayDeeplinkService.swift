@@ -19,17 +19,13 @@ final class PayDeeplinkService {
 
 extension PayDeeplinkService: URLHandlingServiceProtocol {
     func handle(url: URL) -> Bool {
-        guard url.host() == "pay", url.path.isEmpty else {
-            return false
-        }
-
-        guard
-            let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-            let queryItems = components.queryItems,
-            let addressString = queryItems.first(where: { $0.name == "address" })?.value,
-            let amountString = queryItems.first(where: { $0.name == "amount" })?.value,
-            let amount = BigUInt(amountString),
-            let accountId = try? addressString.toAccountId()
+        guard url.host() == "pay", url.path.isEmpty,
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let queryItems = components.queryItems,
+              let addressString = queryItems.first(where: { $0.name == "address" })?.value,
+              let amountString = queryItems.first(where: { $0.name == "amount" })?.value,
+              let amount = BigUInt(amountString),
+              let accountId = try? addressString.toAccountId()
         else {
             return false
         }

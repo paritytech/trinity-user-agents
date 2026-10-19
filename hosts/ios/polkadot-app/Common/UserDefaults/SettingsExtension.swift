@@ -30,6 +30,7 @@ enum SettingsKey: String {
     case coinageRecyclingStrategy
     case tabBarLabelsEnabled
     case debugPocketCards
+    case mockChatProductEnabled
     #if TESTNET_FEATURE
         case tipsResetPending
     #endif

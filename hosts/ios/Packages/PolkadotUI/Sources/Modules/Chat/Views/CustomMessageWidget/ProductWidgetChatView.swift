@@ -11,9 +11,10 @@ public protocol WidgetNodeProviding: AnyObject, Observable {
     @MainActor func bodyDisappeared()
 }
 
+@MainActor
 public extension WidgetNodeProviding {
-    @MainActor func bodyAppeared() {}
-    @MainActor func bodyDisappeared() {}
+    func bodyAppeared() {}
+    func bodyDisappeared() {}
 }
 
 public struct ProductWidgetChatView: View, Hashable {

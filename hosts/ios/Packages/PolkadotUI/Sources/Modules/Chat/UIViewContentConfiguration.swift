@@ -107,8 +107,7 @@ private final class UIViewContentView: UIView, UIContentView {
     }
 
     private func apply(_ any: UIContentConfiguration) {
-        guard let configuration = any as? UIViewContentConfiguration else { return }
-        guard appliedConfiguration != configuration else {
+        guard let configuration = any as? UIViewContentConfiguration, appliedConfiguration != configuration else {
             return
         }
         wrappedView?.removeFromSuperview()

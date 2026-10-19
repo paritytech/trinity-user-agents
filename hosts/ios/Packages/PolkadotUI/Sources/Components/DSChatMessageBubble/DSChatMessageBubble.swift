@@ -333,7 +333,6 @@ private extension DSChatMessageBubble.Sender {
 }
 
 #if DEBUG
-    @ViewBuilder
     private func dsChatBubblePreviewRow(
         _ sender: DSChatMessageBubble.Sender,
         @ViewBuilder _ bubble: () -> some View

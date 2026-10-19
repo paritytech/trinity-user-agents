@@ -93,8 +93,8 @@ extension ChatViewModelFactory {
     }
 }
 
+@MainActor
 private extension ChatViewModelFactory {
-    @MainActor
     func reasoningItem(
         _ message: Chat.LocalMessage,
         reasoning: Chat.Reasoning,
@@ -141,7 +141,6 @@ private extension ChatViewModelFactory {
         return Item(id: messageId, configuration: SwiftUIContentConfiguration(view: view))
     }
 
-    @MainActor
     func branchItem(
         _ message: Chat.LocalMessage,
         branch: Chat.BranchPosition,
@@ -166,7 +165,6 @@ private extension ChatViewModelFactory {
         return Item(id: messageId + "-branch", configuration: SwiftUIContentConfiguration(view: view))
     }
 
-    @MainActor
     func threadChipItem(
         _ message: Chat.LocalMessage,
         thread: Chat.ThreadSummary,

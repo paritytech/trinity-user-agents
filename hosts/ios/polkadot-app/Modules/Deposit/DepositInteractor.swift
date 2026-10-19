@@ -61,11 +61,7 @@ private extension DepositInteractor {
                     let assetId = self?.depositAsset.chainAssetId,
                     let info = try await self?.depositService.fetchDepositInfo(
                         for: assetId
-                    ) else {
-                    return
-                }
-
-                guard let summary = try await self?.createSummary(for: info) else {
+                    ), let summary = try await self?.createSummary(for: info) else {
                     return
                 }
 

@@ -8,6 +8,7 @@ protocol DebugSettingsViewProtocol: ControllerBackedProtocol {
     func didReceive(strategyDebugEnabled: Bool)
     func didReceive(truApiRuntimeEnabled: Bool)
     func didReceive(hostPlacementEnabled: Bool)
+    func didReceive(mockChatProductEnabled: Bool)
 }
 
 @MainActor
@@ -24,6 +25,7 @@ protocol DebugSettingsPresenterProtocol: AnyObject {
     func toggleStrategyDebug()
     func toggleTruApiRuntime()
     func toggleHostPlacement()
+    func toggleMockChatProduct()
     func openTrUAPIPlayground()
     #if DEBUG
         func openDevServer()
@@ -43,6 +45,7 @@ protocol DebugSettingsInteractorInputProtocol: AnyObject {
     func toggleStrategyDebug()
     func toggleTruApiRuntime()
     func toggleHostPlacement()
+    func toggleMockChatProduct()
     func restartApp()
     func resetTips()
 }
@@ -55,6 +58,7 @@ protocol DebugSettingsInteractorOutputProtocol: AnyObject {
     func didReceive(strategyDebugEnabled: Bool)
     func didReceive(truApiRuntimeEnabled: Bool)
     func didReceive(hostPlacementEnabled: Bool)
+    func didReceive(mockChatProductEnabled: Bool)
 }
 
 @MainActor

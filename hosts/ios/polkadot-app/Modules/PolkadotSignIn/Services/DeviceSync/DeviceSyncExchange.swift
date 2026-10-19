@@ -239,12 +239,7 @@ private extension DeviceSyncExchange {
     }
 
     func requestPushUpdate() async {
-        guard isDataChannelConnected else {
-            needsDeferredPush = true
-            return
-        }
-
-        guard !isPushInProgress, !snapshotAccounting.hasPendingUpdates else {
+        guard isDataChannelConnected, !isPushInProgress, !snapshotAccounting.hasPendingUpdates else {
             needsDeferredPush = true
             return
         }

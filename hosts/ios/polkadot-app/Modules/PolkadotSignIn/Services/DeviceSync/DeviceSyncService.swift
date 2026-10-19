@@ -245,10 +245,7 @@ private extension DeviceSyncService {
                 )
             },
             exchangeFactory: { [weak self] flow, failureHandler in
-                guard let self else {
-                    throw DeviceSyncPeerEngineError.dependenciesUnavailable
-                }
-                guard let currentDevice = try await fetchDevice(device.statementAccountId) else {
+                guard let self, let currentDevice = try await fetchDevice(device.statementAccountId) else {
                     throw DeviceSyncPeerEngineError.dependenciesUnavailable
                 }
                 return await makeExchange(

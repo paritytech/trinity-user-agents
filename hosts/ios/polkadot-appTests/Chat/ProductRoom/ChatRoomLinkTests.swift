@@ -120,7 +120,7 @@ final class RecordingModuleNavigator: ModuleNavigating {
     }
 
     func presentModally(_: UIViewController) {}
-    func presentFullScreen(_: UIViewController) {}
+    func presentFullScreen(_: UIViewController, transitioningDelegate _: UIViewControllerTransitioningDelegate?) {}
     func openProduct(page _: ProductPage) {}
     func openPocket() {}
     func openScanPanel() {}

@@ -103,7 +103,6 @@ struct WalletView: View {
         #endif
     }
 
-    @ViewBuilder
     private var identityCard: some View {
         IdentityDetailsViewLayout(
             viewModel: viewModel.identityDetailsViewModel,
@@ -120,7 +119,6 @@ struct WalletView: View {
         .allowsHitTesting(identityHitTest)
     }
 
-    @ViewBuilder
     private var assetCard: some View {
         AssetDetailsView(
             viewModel: viewModel.assetDetailsViewModel,
@@ -251,7 +249,6 @@ struct WalletView: View {
 }
 
 private extension WalletView {
-    @ViewBuilder
     var collectiblesCard: some View {
         CollectiblesCardView(
             isExpanded: viewModel.expandedSection == .collectiblesDetails,

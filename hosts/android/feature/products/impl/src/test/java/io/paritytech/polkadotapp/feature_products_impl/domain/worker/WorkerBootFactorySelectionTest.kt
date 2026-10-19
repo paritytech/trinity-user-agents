@@ -2,7 +2,9 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.worker
 
 import dagger.Lazy
 import io.parity.truapi.TrUAPIHostRuntime
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomEventModel
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
+import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.BindableProductsBotApi
@@ -35,6 +37,7 @@ class WorkerBootFactorySelectionTest {
         runtimeProvider: TrUAPIHostRuntimeProvider = mock(),
         workerSupervisor: TrUAPIWorkerSupervisor = mock(),
         scriptExecutorFactory: HostApiProductsScriptExecutor.Factory = mock(),
+        inAppRuntimes: Set<InAppProductRuntime> = emptySet(),
     ): RealWorkerBootFactory = RealWorkerBootFactory(
         scriptExecutorFactory = scriptExecutorFactory,
         runtimeSettings = runtimeSettings,
@@ -43,6 +46,7 @@ class WorkerBootFactorySelectionTest {
         scriptResolver = object : ProductScriptResolver {
             override suspend fun resolveWorker(productId: ProductId) = Result.failure<ProductExecutable.Worker>(IllegalStateException("no worker"))
         },
+        inAppRuntimes = inAppRuntimes,
     )
 
     private fun settingsWith(enabled: Boolean): ProductRuntimeSettings {
@@ -127,5 +131,32 @@ class WorkerBootFactorySelectionTest {
 
         assertTrue("a core boot failure must surface", failure is IllegalStateException)
         verifyNoInteractions(scriptExecutorFactory)
+    }
+
+    // The chat showcase of debug builds is served by the app: it must not reach the core or a script whatever the
+    // runtime setting says, and a product it does not name must not reach it.
+    @Test
+    fun `a product that the app serves itself boots its own runtime`() = runTest {
+        val runtimeProvider: TrUAPIHostRuntimeProvider = mock()
+        val scriptExecutorFactory: HostApiProductsScriptExecutor.Factory = mock()
+        val inAppWorker: ProductWorker = mock()
+        val inAppRuntime = object : InAppProductRuntime {
+            override val productId = this@WorkerBootFactorySelectionTest.productId
+
+            override fun boot(botApi: BindableProductsBotApi, scope: CoroutineScope) = inAppWorker
+
+            override suspend fun publishRoomEvent(room: ProductChatIdParameter, event: ChatRoomEventModel) = Result.success(Unit)
+        }
+        val factory = factory(
+            settingsWith(enabled = true),
+            runtimeProvider = runtimeProvider,
+            scriptExecutorFactory = scriptExecutorFactory,
+            inAppRuntimes = setOf(inAppRuntime),
+        )
+
+        val worker = factory.boot(productId, botApi, this)
+
+        assertSame(inAppWorker, worker)
+        verifyNoInteractions(runtimeProvider, scriptExecutorFactory)
     }
 }

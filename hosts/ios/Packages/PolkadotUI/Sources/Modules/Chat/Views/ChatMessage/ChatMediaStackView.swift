@@ -253,7 +253,7 @@ private struct ChatRemoteMedia: View {
         return isVideo ? titles.playVideo : titles.openImage
     }
 
-    @ViewBuilder private var retryButton: some View {
+    private var retryButton: some View {
         Button {
             attempt += 1
         } label: {

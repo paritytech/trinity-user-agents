@@ -157,13 +157,9 @@ extension ClaimUsernamePresenter: ClaimUsernamePresenterProtocol {
     }
 
     func confirm() {
-        guard claimTask == nil else {
-            return
-        }
-
-        guard
-            let usernameViewModel,
-            usernameViewModel.inputHandler.completed
+        guard claimTask == nil,
+              let usernameViewModel,
+              usernameViewModel.inputHandler.completed
         else {
             return
         }

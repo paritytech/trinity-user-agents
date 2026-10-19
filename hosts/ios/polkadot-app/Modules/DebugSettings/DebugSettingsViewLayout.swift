@@ -122,6 +122,20 @@ final class DebugSettingsViewLayout: UIView {
         stack.distribution = .equalSpacing
     }
 
+    let mockChatProductSwitch = UISwitch()
+
+    private let mockChatProductLabel: Label = .create { (view: Label) in
+        view.typography = .bodyMedium
+        view.textColor = .fgPrimary
+        view.text = "Chat showcase product"
+    }
+
+    private let mockChatProductRow: UIStackView = .create { stack in
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.distribution = .equalSpacing
+    }
+
     let chainLabel: Label = .create { (view: Label) in
         view.typography = .bodyMedium
         view.textColor = .fgSecondary
@@ -169,6 +183,7 @@ final class DebugSettingsViewLayout: UIView {
         strategyDebugRow.addArrangedSubviews([strategyDebugLabel, strategyDebugSwitch])
         truApiRuntimeRow.addArrangedSubviews([truApiRuntimeLabel, truApiRuntimeSwitch])
         hostPlacedRow.addArrangedSubviews([hostPlacedLabel, hostPlacedSwitch])
+        mockChatProductRow.addArrangedSubviews([mockChatProductLabel, mockChatProductSwitch])
 
         var rows: [UIView] = [
             chainLabel,
@@ -193,7 +208,7 @@ final class DebugSettingsViewLayout: UIView {
             ])
         #endif
 
-        rows.append(contentsOf: [strategyDebugRow, truApiRuntimeRow, hostPlacedRow])
+        rows.append(contentsOf: [strategyDebugRow, truApiRuntimeRow, hostPlacedRow, mockChatProductRow])
 
         stackView.addArrangedSubviews(rows)
 

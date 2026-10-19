@@ -295,6 +295,7 @@
     <string name="debug_menu_clear_jwt_token_stored">Clear JWT token (stored)</string>
     <string name="debug_menu_coinage_debug_widgets">Coinage debug overlays</string>
     <string name="debug_menu_truapi_runtime">TrUAPI Runtime (%1$s)</string>
+    <string name="debug_menu_mock_chat_product">Chat showcase product</string>
     <string name="debug_menu_runtime_restart_title">Restart required</string>
     <string name="debug_menu_runtime_restart_message">The product runtime changed. Restart the app to apply it — a running product keeps the runtime it started with, and the two do not share stored data.</string>
     <string name="debug_menu_runtime_restart_confirm">Restart</string>

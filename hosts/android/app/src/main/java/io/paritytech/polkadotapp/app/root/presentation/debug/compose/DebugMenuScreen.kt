@@ -63,6 +63,7 @@ fun DebugMenuScreen(contract: DebugMenuContract) {
         onClearJWTTokenClick = contract::onClearJWTTokenClick,
         onCoinageDebugWidgetsToggled = contract::onCoinageDebugWidgetsToggled,
         onTruapiRuntimeToggled = contract::onTruapiRuntimeToggled,
+        onMockChatProductToggled = contract::onMockChatProductToggled,
         onRuntimeRestartConfirmed = contract::onRuntimeRestartConfirmed,
         onRuntimeRestartCancelled = contract::onRuntimeRestartCancelled,
     )
@@ -90,6 +91,7 @@ private fun DebugMenuScreenInternal(
     onClearJWTTokenClick: () -> Unit,
     onCoinageDebugWidgetsToggled: (Boolean) -> Unit,
     onTruapiRuntimeToggled: (Boolean) -> Unit,
+    onMockChatProductToggled: (Boolean) -> Unit,
     onRuntimeRestartConfirmed: () -> Unit,
     onRuntimeRestartCancelled: () -> Unit,
 ) {
@@ -124,6 +126,16 @@ private fun DebugMenuScreenInternal(
                 checked = state.truapiRuntimeEnabled,
                 onCheckedChange = onTruapiRuntimeToggled
             )
+
+            if (state.mockChatProductAvailable) {
+                VerticalSpacer { large }
+
+                DebugMenuToggleItem(
+                    title = stringResource(RCommon.string.debug_menu_mock_chat_product),
+                    checked = state.mockChatProductEnabled,
+                    onCheckedChange = onMockChatProductToggled
+                )
+            }
 
             VerticalSpacer { extraLargeIncreased }
 
@@ -417,6 +429,7 @@ private fun DebugMenuScreenPreview() {
             onClearJWTTokenClick = {},
             onCoinageDebugWidgetsToggled = {},
             onTruapiRuntimeToggled = {},
+            onMockChatProductToggled = {},
             onRuntimeRestartConfirmed = {},
             onRuntimeRestartCancelled = {},
         )

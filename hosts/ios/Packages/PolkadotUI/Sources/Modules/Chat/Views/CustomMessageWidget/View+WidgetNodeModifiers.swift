@@ -4,7 +4,6 @@ extension View {
     /// `alignment` is where the body sits once a fill modifier has stretched
     /// its frame. A stack sizes to its widest child, so without this a filled
     /// node centres its content instead of honouring its own alignment.
-    @ViewBuilder
     func applyWidgetNodeModifiers(
         _ modifiers: CustomMessageWidgetNode.Modifiers,
         alignment: Alignment = .center
@@ -48,7 +47,6 @@ private struct NodeCompositingModifier: ViewModifier {
 private struct NodeBlendModeModifier: ViewModifier {
     let mode: BlendMode?
 
-    @ViewBuilder
     func body(content: Content) -> some View {
         if let mode {
             content.blendMode(mode)

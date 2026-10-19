@@ -398,13 +398,12 @@ private extension TransferAmountPresenter {
 // MARK: - DEBUG
 
 #if TESTNET_FEATURE
+    @MainActor
     extension TransferAmountPresenter {
-        @MainActor
         func didReceive(strategyDebugInfo: TransferStrategyDebugInfo?) {
             view?.didReceive(strategyDebugInfo: strategyDebugInfo)
         }
 
-        @MainActor
         func refreshStrategyPreview() {
             guard let amount = calculateInputAmount(), amount > 0 else {
                 view?.didReceive(strategyDebugInfo: nil)

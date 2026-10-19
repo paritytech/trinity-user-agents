@@ -39,6 +39,7 @@ class WorkerBootFactoryKeepAliveTest {
             override suspend fun resolveWorker(productId: ProductId) =
                 Result.success(mockk<ProductExecutable.Worker> { every { this@mockk.keepAlive } returns keepAlive })
         },
+        inAppRuntimes = emptySet(),
     )
 
     private suspend fun TestScope.bootAndDispose(keepAlive: WorkerKeepAlive) {

@@ -130,6 +130,26 @@ extension DebugSettingsPresenter: DebugSettingsPresenterProtocol {
         wireframe.present(viewModel: viewModel, style: .alert, from: view)
     }
 
+    /// The chat showcase is a bot, so it needs the same restart as the host-placed products.
+    func toggleMockChatProduct() {
+        interactor.toggleMockChatProduct()
+
+        let viewModel = AlertPresentableViewModel(
+            title: "Restart Required",
+            message: "The chat showcase changed. Restart the app to rebuild the chat list.",
+            actions: [
+                AlertPresentableAction(title: "Restart") { [weak self] in
+                    self?.interactor.restartApp()
+                },
+                AlertPresentableAction(title: "Cancel", style: .cancel) { [weak self] in
+                    self?.interactor.toggleMockChatProduct()
+                }
+            ]
+        )
+
+        wireframe.present(viewModel: viewModel, style: .alert, from: view)
+    }
+
     func openTrUAPIPlayground() {
         wireframe.showTrUAPIPlayground(from: view)
     }
@@ -177,6 +197,10 @@ extension DebugSettingsPresenter: DebugSettingsInteractorOutputProtocol {
 
     func didReceive(hostPlacementEnabled: Bool) {
         view?.didReceive(hostPlacementEnabled: hostPlacementEnabled)
+    }
+
+    func didReceive(mockChatProductEnabled: Bool) {
+        view?.didReceive(mockChatProductEnabled: mockChatProductEnabled)
     }
 
     func didReceive(truApiRuntimeEnabled: Bool) {

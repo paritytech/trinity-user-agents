@@ -51,10 +51,7 @@ struct CoinageCoreDataLedger {
 
     /// Reads the current status and applies a verdict through the production compare-and-set.
     func updateStatus(_ id: CoinageTxId, to status: CoinageTxStatus) async throws {
-        guard let current = try await durable.getEntry(id: id) else {
-            throw CoinageTxError.entryNotFound(id)
-        }
-        guard let attempt = current.attempt else {
+        guard let current = try await durable.getEntry(id: id), let attempt = current.attempt else {
             throw CoinageTxError.entryNotFound(id)
         }
 

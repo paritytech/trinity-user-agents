@@ -40,8 +40,7 @@ class ClaimUsernameViewController: UIHostingController<ClaimUsernameViewLayout> 
             presenter?.update(from: inputViewModel)
         }
         rootView.viewModel.onDigitsChanged = { [weak self, weak presenter] in
-            guard let self else { return }
-            guard let selected = rootView.viewModel.selectedDigits else { return }
+            guard let self, let selected = rootView.viewModel.selectedDigits else { return }
             presenter?.updateDigits(selected)
         }
         rootView.viewModel.onConfirm = { [weak presenter] in

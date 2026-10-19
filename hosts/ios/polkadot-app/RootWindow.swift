@@ -60,10 +60,7 @@ final class RootWindow: UIWindow {
                 isKeyWindow,
                 windowScene?.activationState == .foregroundActive,
                 issueReportController == nil,
-                let presenter = topmostViewController
-            else { return }
-
-            guard
+                let presenter = topmostViewController,
                 presenter.viewIfLoaded?.window === self,
                 !presenter.isBeingPresented,
                 !presenter.isBeingDismissed

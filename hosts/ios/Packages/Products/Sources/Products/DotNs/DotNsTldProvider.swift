@@ -117,8 +117,8 @@ private extension DotNsTldProvider {
     func claimStart(ignoringBackoff: Bool) -> Bool {
         state.withLock { state in
             let currentTime = now()
-            guard currentTime >= state.nextStartAllowedAt else { return false }
-            guard ignoringBackoff || currentTime >= state.nextAttemptAt else { return false }
+            guard currentTime >= state.nextStartAllowedAt,
+                  ignoringBackoff || currentTime >= state.nextAttemptAt else { return false }
             state.nextStartAllowedAt = currentTime.addingTimeInterval(Self.minimumInterAttemptInterval)
             return true
         }

@@ -2,8 +2,9 @@ import Foundation
 import Keystore_iOS
 import Operation_iOS
 
+@MainActor
 extension ChatExtensionsRegistry {
-    @MainActor static func createDefault(
+    static func createDefault(
         productBotProvider: ProductBotProviding
     ) -> ChatExtensionsRegistering {
         let storageFacade = UserDataStorageFacade.shared

@@ -195,11 +195,7 @@ private extension ChatDiscoveryService {
         while true {
             currentDayPoller?.stop()
 
-            guard !Task.isCancelled else {
-                return
-            }
-
-            guard let pagination = ChatRequest.paginationDay(from: Date()) else {
+            guard !Task.isCancelled, let pagination = ChatRequest.paginationDay(from: Date()) else {
                 return
             }
 

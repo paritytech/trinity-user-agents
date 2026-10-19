@@ -99,11 +99,9 @@ extension ChatWireframe: ChatProductRoomWireframing {
         }
 
         let below = navigation.viewControllers[index - 1] as? ChatViewController
-        guard below?.presenter.chatId != parentChatId else { return }
-
-        guard
-            let parentView = ChatViewFactory.createChatView(with: .existingChat(parentChatId), flowState: flowState),
-            let parentRoom = (parentView.controller as? ChatViewController)?.presenter as? ChatPresenter
+        guard below?.presenter.chatId != parentChatId,
+              let parentView = ChatViewFactory.createChatView(with: .existingChat(parentChatId), flowState: flowState),
+              let parentRoom = (parentView.controller as? ChatViewController)?.presenter as? ChatPresenter
         else {
             return
         }

@@ -56,9 +56,9 @@ struct ChatRoomCallScreen: View {
     }
 }
 
+@MainActor
 extension ChatRoomCallScreen {
     /// Shows the screen over `controller`. End sends the end of the call and closes the screen.
-    @MainActor
     static func present(
         from controller: UIViewController,
         title: String,

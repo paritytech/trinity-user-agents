@@ -17,10 +17,13 @@ import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.feature_coinage_api.domain.debug.CoinageDebugSettings
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.DevServerAddresses
+import io.paritytech.polkadotapp.feature_products_api.domain.runtime.MockChatProductSettings
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.tools_jwt_auth_impl.data.store.JWTTokenStore
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import uniffi.truapi.truapiHostVersion
 import javax.inject.Inject
@@ -40,11 +43,13 @@ class DebugMenuViewModel @Inject constructor(
     private val productRuntimeSettings: ProductRuntimeSettings,
     private val restartAppUseCase: RestartAppUseCase,
     private val devServerAddresses: DevServerAddresses,
+    private val mockChatProductSettings: MockChatProductSettings,
 ) : BaseViewModel(), DebugMenuContract {
     override val state = MutableStateFlow(
         DebugMenuState(
             truapiHostVersion = truapiHostVersion(),
             devServerAvailable = FeatureOption.DEV_SERVER_PRODUCTS.isEnabled,
+            mockChatProductAvailable = FeatureOption.MOCK_CHAT_PRODUCT.isEnabled,
         )
     )
 
@@ -52,6 +57,9 @@ class DebugMenuViewModel @Inject constructor(
         refreshJWTTokenState()
         refreshCoinageDebugWidgetsState()
         refreshTruapiRuntimeState()
+        mockChatProductSettings.observeEnabled()
+            .onEach { enabled -> state.update { it.copy(mockChatProductEnabled = enabled) } }
+            .launchIn(this)
     }
 
     override fun onBackClick() {
@@ -151,6 +159,11 @@ class DebugMenuViewModel @Inject constructor(
         productRuntimeSettings.setTrUAPIRuntimeEnabled(enabled)
         state.update { it.copy(runtimeRestartRevertsTo = previous) }
         refreshTruapiRuntimeState()
+    }
+
+    // The chat list follows the setting, so the showcase comes and goes without a restart.
+    override fun onMockChatProductToggled(enabled: Boolean) {
+        mockChatProductSettings.setEnabled(enabled)
     }
 
     override fun onRuntimeRestartConfirmed() {

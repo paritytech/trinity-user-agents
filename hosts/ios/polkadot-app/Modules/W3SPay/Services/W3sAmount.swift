@@ -11,8 +11,10 @@ extension W3sAmount {
     /// the W3S spec — so the regex must run before parsing.
     static func parse(_ raw: String, maxUnits: Decimal? = nil) -> W3sAmount? {
         let pattern = #"^[0-9]+(\.[0-9]{1,2})?$"#
-        guard raw.range(of: pattern, options: .regularExpression) != nil else { return nil }
-        guard let decimal = Decimal(string: raw, locale: Locale(identifier: "en_US_POSIX")) else { return nil }
+        guard raw.range(of: pattern, options: .regularExpression) != nil, let decimal = Decimal(
+            string: raw,
+            locale: Locale(identifier: "en_US_POSIX")
+        ) else { return nil }
         if let maxUnits, decimal > maxUnits { return nil }
         return fromValidatedDecimal(decimal)
     }

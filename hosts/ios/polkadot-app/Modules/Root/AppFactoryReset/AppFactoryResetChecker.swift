@@ -20,12 +20,7 @@
         }
 
         func checkIfResetNeeded(completion: @escaping (Bool) -> Void) {
-            guard storage.usernameClaimed else {
-                completion(false)
-                return
-            }
-
-            guard let accountId = try? walletRepo.main().getRawPublicKey() else {
+            guard storage.usernameClaimed, let accountId = try? walletRepo.main().getRawPublicKey() else {
                 completion(false)
                 return
             }
