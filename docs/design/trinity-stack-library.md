@@ -90,8 +90,9 @@ to the module. Values cross the boundary as plain objects of the crate's own typ
 generates, and errors as a `TrinityStackError` with the rule's `code`.
 
 - **Signing** runs in the crate too. That keeps one Ed25519 implementation and adds no JavaScript dependency.
-- **`publish`** renders a model (a descriptor without `$v`, `sequence` and `generation`) and owns `sequence`. It keeps
-  `PublishState { sequence, contentHash }`, leaves `sequence` alone when the content hash is unchanged, and otherwise
+- **`publish`** renders a model (a descriptor without `$v`, `sequence` and `generation`) and owns `sequence`, through the
+  crate's `render`, which every publisher calls: this package, `truapi-host stack publish` and services such as
+  testenv-manager. It keeps `PublishState { sequence, contentHash }`, leaves `sequence` alone when the content hash is unchanged, and otherwise
   raises it to the larger of the last value plus one and the time in seconds. With no state it uses the time, as the RFC
   says the CLI defaults to. `generation` is part of the content, so a new generation always raises `sequence`. Two
   publishes in the same second with no state get the same `sequence`, so an operator that publishes more often keeps the
