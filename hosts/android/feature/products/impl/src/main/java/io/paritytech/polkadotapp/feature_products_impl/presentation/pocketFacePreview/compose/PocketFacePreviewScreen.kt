@@ -12,16 +12,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil.request.CachePolicy
-import coil.request.ImageRequest
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
 import io.paritytech.polkadotapp.design.components.progress.NovaCircularProgressIndicator
@@ -33,7 +29,6 @@ import io.paritytech.polkadotapp.design.components.text.NovaTextField
 import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
 import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
-import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsWidgetRenderer
@@ -112,7 +107,7 @@ private fun PocketFacePreviewScreenInternal(
                         shape = PolkadotTheme.shapes.large,
                         color = PolkadotTheme.colors.bg.surface.container,
                     ) {
-                        CompositionLocalProvider(LocalJsImageResolver provides rememberUncachedArchive(imageResolver)) {
+                        CompositionLocalProvider(LocalJsImageResolver provides imageResolver) {
                             key(state.draws) {
                                 FaceOrExplanation(face = state.face)
                             }
@@ -146,29 +141,6 @@ private fun FaceOrExplanation(face: LoadingState<JsWidget>?) {
                 modifier = Modifier.fillMaxSize(),
                 jsEventHandler = { _, _ -> },
             )
-        }
-    }
-}
-
-// Drawing again is how an edited archive image is picked up, so no cache may answer for the dev server.
-// A Bulletin CID names content that never changes, so it keeps the cache.
-@Composable
-private fun rememberUncachedArchive(resolver: JsImageResolver): JsImageResolver {
-    val context = LocalContext.current
-
-    return remember(resolver, context) {
-        JsImageResolver { source ->
-            val address = resolver.resolve(source)
-
-            if (address == null || source is JsImageSource.Bulletin) {
-                address
-            } else {
-                ImageRequest.Builder(context)
-                    .data(address)
-                    .memoryCachePolicy(CachePolicy.DISABLED)
-                    .diskCachePolicy(CachePolicy.DISABLED)
-                    .build()
-            }
         }
     }
 }

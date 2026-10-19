@@ -13,6 +13,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import okio.Timeout
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -83,10 +84,18 @@ class OkHttpRemoteFaceSourceTest {
      * between draws, so an answer from the cache shows the face as it was before the edit.
      */
     @Test
-    fun `a face is always asked of its server`() = runBlocking {
-        source.fetch("http://127.0.0.1:5173/face.json")
+    fun `a face fetched past the cache is asked of its server`() = runBlocking {
+        source.fetch("http://127.0.0.1:5173/face.json", bypassCache = true)
 
         assertTrue(sent?.cacheControl?.noCache == true)
+    }
+
+    /** Adding a card previews its face from the same fetch, and that preview must still draw offline. */
+    @Test
+    fun `a face may otherwise be answered from the cache`() = runBlocking {
+        source.fetch("http://127.0.0.1:5173/face.json")
+
+        assertFalse(sent?.cacheControl?.noCache == true)
     }
 
     /** A dev server answering 404 for a mistyped path must say so, not decode its error page. */

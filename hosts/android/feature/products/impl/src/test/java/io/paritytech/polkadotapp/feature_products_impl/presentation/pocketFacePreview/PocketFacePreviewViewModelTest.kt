@@ -30,7 +30,7 @@ class PocketFacePreviewViewModelTest {
     private val fetched = mutableListOf<String>()
     private var answer: Result<RendererNode> = Result.success(RendererNode.String("drawn"))
     private val remoteFaces = object : RemoteFaceSource {
-        override suspend fun fetch(url: String): Result<RendererNode> {
+        override suspend fun fetch(url: String, bypassCache: Boolean): Result<RendererNode> {
             fetched += url
             return answer
         }
@@ -39,7 +39,7 @@ class PocketFacePreviewViewModelTest {
     private val router: ProductsRouter = mock()
 
     private fun viewModel() =
-        PocketFacePreviewViewModel(PocketFacePreviewInteractor(remoteFaces, mockk<IpfsContentLookup>()), router)
+        PocketFacePreviewViewModel(PocketFacePreviewInteractor(remoteFaces, mockk<IpfsContentLookup>()), router, mockk())
 
     @Before
     fun setUp() = Dispatchers.setMain(testDispatcher)

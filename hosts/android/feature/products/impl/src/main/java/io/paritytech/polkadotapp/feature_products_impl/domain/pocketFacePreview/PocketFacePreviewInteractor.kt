@@ -16,7 +16,9 @@ class PocketFacePreviewInteractor @Inject constructor(
     private val remoteFaces: RemoteFaceSource,
     private val ipfsContentLookup: IpfsContentLookup,
 ) {
-    suspend fun loadFace(url: String): Result<JsWidget> = remoteFaces.fetch(url.trim()).map { it.toJsWidget() }
+    // The face is edited between draws, so the app's HTTP cache must not answer for the server.
+    suspend fun loadFace(url: String): Result<JsWidget> =
+        remoteFaces.fetch(url.trim(), bypassCache = true).map { it.toJsWidget() }
 
     // The developer serves the folder that becomes the worker archive, so archive paths resolve on the face's server.
     suspend fun resolveImage(faceUrl: String, source: JsImageSource): Result<String> = when (source) {

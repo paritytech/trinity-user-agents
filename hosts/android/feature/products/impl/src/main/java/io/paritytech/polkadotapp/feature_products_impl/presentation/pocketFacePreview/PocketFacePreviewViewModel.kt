@@ -1,9 +1,14 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.pocketFacePreview
 
+import android.content.Context
+import coil.request.CachePolicy
+import coil.request.ImageRequest
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocketFacePreview.PocketFacePreviewInteractor
@@ -26,6 +31,7 @@ import javax.inject.Inject
 class PocketFacePreviewViewModel @Inject constructor(
     private val interactor: PocketFacePreviewInteractor,
     private val router: ProductsRouter,
+    @param:ApplicationContext private val context: Context,
 ) : BaseViewModel(), PocketFacePreviewContract {
     /** The attempt counter is what makes drawing the same URL again actually re-fetch it. */
     private data class Request(val url: String, val attempt: Int)
@@ -45,9 +51,21 @@ class PocketFacePreviewViewModel @Inject constructor(
     override val imageResolver = JsImageResolver { source ->
         val faceUrl = requests.value?.url ?: return@JsImageResolver null
 
-        interactor.resolveImage(faceUrl, source)
+        val address = interactor.resolveImage(faceUrl, source)
             .logFailure("PocketFacePreview: face image unavailable")
             .getOrNull()
+
+        // Drawing again is how an edited archive image is picked up, so no cache may answer for the dev server.
+        // A Bulletin CID names content that never changes, so it keeps the cache.
+        if (address == null || source is JsImageSource.Bulletin) {
+            address
+        } else {
+            ImageRequest.Builder(context)
+                .data(address)
+                .memoryCachePolicy(CachePolicy.DISABLED)
+                .diskCachePolicy(CachePolicy.DISABLED)
+                .build()
+        }
     }
 
     override fun onBackClick() {
