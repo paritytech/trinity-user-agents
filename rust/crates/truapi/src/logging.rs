@@ -328,6 +328,9 @@ pub mod testing {
 	/// Runs `emit` with the host sink layer on this thread and returns each line
 	/// it forwards as `marker detail`.
 	pub fn host_sink_lines(emit: impl FnOnce()) -> Vec<String> {
+		// A global default stops tracing-core from caching a callsite as never
+		// enabled when a thread with no subscriber registers it first.
+		init();
 		let lines = Arc::new(std::sync::Mutex::new(Vec::new()));
 		let recorded = lines.clone();
 		let sink: HostSink = Arc::new(move |marker, detail| {
