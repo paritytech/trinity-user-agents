@@ -301,6 +301,9 @@
     <string name="debug_spa_browser_title">Open SPA URL</string>
     <string name="debug_spa_browser_url_hint">Enter SPA URL</string>
     <string name="debug_spa_browser_open">Open</string>
+    <string name="debug_menu_open_dev_server">Open dev server</string>
+    <string name="debug_dev_server_title">Open dev server</string>
+    <string name="debug_dev_server_address_hint">192.168.x.x:3000, add ?product_id=name.dot to run as that product</string>
 
     <string name="settings_mnemonic_reveal_title">Recovery phrase</string>
     <string name="settings_mnemonic_reveal_description">Never share the recovery phrase. Anyone with the recovery phrase has full access to your account, cash and collectables.</string>
@@ -487,6 +490,8 @@
     <string name="product_permission_device_biometrics_subtitle">Biometric access is required for authentication. %1$s</string>
     <string name="product_permission_device_open_url_title">%1$s would like to open external links</string>
     <string name="product_permission_device_open_url_subtitle">The app will open links in your browser or other apps. %1$s</string>
+    <string name="product_permission_device_motion_title">%1$s would like to use motion sensors</string>
+    <string name="product_permission_device_motion_subtitle">Motion access lets the app respond to how you tilt and move your device. %1$s</string>
     <string name="product_permission_webrtc_title">%1$s would like to use WebRTC</string>
     <string name="product_permission_webrtc_subtitle">WebRTC access can reveal your IP address to remote peers. %1$s</string>
     <string name="product_permission_chain_submit_title">%1$s would like to submit transactions</string>
@@ -845,6 +850,7 @@
     <string name="product_permission_capability_clipboard">Clipboard</string>
     <string name="product_permission_capability_biometrics">Biometrics</string>
     <string name="product_permission_capability_open_url">External links</string>
+    <string name="product_permission_capability_motion">Motion</string>
     <string name="product_permission_type_webrtc">WebRTC</string>
     <string name="product_permission_type_chain_submit">Chain transactions</string>
     <string name="product_permission_type_statement_submit">Statement submission</string>
@@ -906,6 +912,8 @@
 
     <string name="pocket_digital_dollar_title">%1$s</string>
     <string name="pocket_digital_dollar_faucet_top_up">Faucet Top Up</string>
+    <string name="pocket_collectibles_open_button">View collectibles</string>
+    <string name="pocket_collectibles_title">Collectibles</string>
     <string name="pocket_action_get">Get</string>
     <string name="pocket_action_get_description">Add %1$s via bank, crypto or credit card</string>
     <string name="pocket_action_send_description">Move %1$s to your bank, crypto wallet or contacts</string>
@@ -914,6 +922,7 @@
     <string name="pocket_error_auto_fund_failed">Couldn\'t add test funds to this account. Try again.</string>
     <string name="pocket_error_share_coinage_logs_failed">Couldn\'t share the coinage logs. Try again.</string>
     <string name="pocket_pinned_card_humanity">Humanity</string>
+    <string name="host_placed_chat_jollity">Jollity</string>
     <string name="pocket_add_card_title">Add to Pocket</string>
     <string name="pocket_add_card_subtitle">%1$s wants to add a card to your Pocket. This is how it will look.</string>
     <string name="pocket_add_card_action">Add</string>

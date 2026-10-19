@@ -15,7 +15,6 @@ TrUAPI (Triangle User-Agent Programming Interface) is the API surface that hosts
 
 - [TrUAPI reference](https://docs.polkadot.com/reference/apps/protocol/truapi/)
 - [Rust API reference](https://paritytech.github.io/trinity-user-agents/)
-- [Labels](docs/labels.md)
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
 
@@ -111,6 +110,8 @@ rust/crates/
   truapi-macros/         TrUAPI wire annotations and inter-host SSO proc macros
   truapi-provider/       Network provider backends (WebSocket RPC or smoldot light-client) and chain-access traits
   truapi-verifiable/     Ring-VRF operations over `verifiable`; a lazily loaded WASM module in the browser
+  trinity-stack/         Trinity stack descriptors: parse, verify, sign, links, reader state;
+                         conformance vectors and JSON Schema
 js/packages/
   truapi/                  @parity/truapi TypeScript client
   truapi-host/            @parity/truapi-host: WASM-backed host runtime; entries `.`
@@ -207,6 +208,11 @@ a single package with tree-shakeable subpath entries:
 
 ### Chain transport
 
+The runtime registers each live product before it starts chain work. Pending and
+ready connections share an entry within that product's registry. Closing a product
+removes its registry, rejects delayed setup, and aborts its established follows;
+closed product IDs are not retained.
+
 A host that serves chain traffic itself embeds the `truapi-provider` crate: an
 embedded smoldot light client plus a bundled chain-spec catalog, addressed by
 genesis hash, so the host ships no chain specs and never refreshes them. The light
@@ -252,6 +258,14 @@ live by a previous process is decided by recovery rather than sent again.
 The host keeps recovery alive. `durableWorkChanged(pending: true)` asks it to
 run a background task that awaits `runDurableRecovery()`, which returns once
 nothing is live: a WorkManager worker on Android, a `BGProcessingTask` on iOS.
+
+### Trinity stack descriptors
+
+A stack descriptor describes one deployment of chains and services, as
+[RFC: Trinity stack descriptor](docs/rfcs/trinity-stack-descriptor.md) defines it. The
+[`trinity-stack`](rust/crates/trinity-stack) crate holds every rule a reader applies and the
+conformance vectors. The plan for it and the tools on top of it is in
+[docs/design/trinity-stack-library.md](docs/design/trinity-stack-library.md).
 
 ### Wire debugger
 
@@ -481,14 +495,14 @@ the device slice, which is enough for Simulator but not for an archive.
 
 Because the app builds against the core in this tree, a core change that breaks
 it fails here rather than at the next version bump. Every push to main runs the
-jobs below, and so does a pull request touching the app, or the crates its
-bindings come from, once it is labelled `ci: ios simulator`. They are macOS
-jobs, so a pull request without the label runs none of them. CI's
-`iOS package (Swift + WebKit)` job still compiles the TrUAPIHost package against
-the core on a pull request touching `ios/` or the core crates, but the app itself
-is compiled before merge only with the label. The first time a pull request
-touches the iOS or Android app, `build-label-hint.yml` comments with the labels
-that build it: `ci: ios simulator`, `ci: ios device` and `ci: android device`.
+jobs below. A pull request touching the app, or the crates its bindings come
+from, always runs `test`; `build` and `preview` are macOS time no test needs, so
+they run once it is labelled `ios-simulator-build`. CI's
+`iOS package (Swift + WebKit)` job also compiles the TrUAPIHost package against
+the core on a pull request touching `ios/` or the core crates. The first time a
+pull request touches the iOS or Android app, `build-label-hint.yml` comments with
+the labels that build it: `ios-simulator-build`, `ios-device-build` and
+`android-device-build`.
 
 - `build`, a DevCI compile, failing on any build warning the committed baseline
   does not already have
@@ -509,9 +523,15 @@ xcrun simctl launch booted io.parity.polkadotapp.develop
 It is an arm64 simulator slice, so it needs an Apple Silicon Mac and cannot be
 installed on a device.
 
+### A product from your Mac on a phone
+
+Debug builds of both apps open a product from a development server on your Mac,
+on the simulator, the emulator or a phone, without a deploy. See
+[docs/dev-server-on-a-phone.md](docs/dev-server-on-a-phone.md).
+
 ### A build that installs on a phone
 
-Label a pull request `ci: ios device` and `ios-device-preview.yml` produces a
+Label a pull request `ios-device-build` and `ios-device-preview.yml` produces a
 signed ad-hoc archive attached to the run, named for the commit it was built
 from. It uploads nowhere: not to Apple, not to any distribution service.
 
@@ -527,7 +547,7 @@ preview itself is tracked on #681.
 
 ### An Android build that installs on a phone
 
-Label a pull request `ci: android device` and `android-device-preview.yml`
+Label a pull request `android-device-build` and `android-device-preview.yml`
 attaches an installable APK to the run. Android needs no provisioning, so it
 installs on any phone rather than only on registered devices, and it is signed
 with the shared develop key so a new build replaces the last one rather than
@@ -602,7 +622,7 @@ Remote Config, keyed on an `environment` signal the build sets.
 ### Instrumented tests
 
 `android-instrumented-tests.yml` boots an emulator and runs the app module's
-connected tests. It starts from the `ci: android emulator tests` label rather
+connected tests. It starts from the `android-instrumented-tests` label rather
 than from every commit, because the runner is macOS and a cold emulator costs
 minutes before the first assertion. `workflow_dispatch` runs it without a pull
 request to carry the label.
