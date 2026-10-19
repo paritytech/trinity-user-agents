@@ -2,7 +2,10 @@ package io.paritytech.polkadotapp.design.components.avatar
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -24,7 +27,8 @@ import kotlin.math.abs
 sealed class AvatarUiModel {
     companion object;
 
-    data class Image(val url: String) : AvatarUiModel()
+    /** [placeholder] shows until the image at [url] has loaded, and stays if it never does. */
+    data class Image(val url: String, val placeholder: Name?) : AvatarUiModel()
 
     data class Name(val name: String, val colorScheme: AvatarColorScheme) : AvatarUiModel()
 }
@@ -39,6 +43,7 @@ fun PolkadotAvatar(
         is AvatarUiModel.Image -> ImageAvatar(
             modifier = modifier,
             url = model.url,
+            placeholder = model.placeholder,
             onClick = onClick
         )
 
@@ -55,6 +60,7 @@ fun PolkadotAvatar(
 private fun ImageAvatar(
     modifier: Modifier,
     url: String,
+    placeholder: AvatarUiModel.Name?,
     onClick: (() -> Unit)? = null
 ) {
     PolkadotSurface(
@@ -63,9 +69,21 @@ private fun ImageAvatar(
         color = PolkadotTheme.colors.bg.surface.container,
         onClick = onClick
     ) {
+        var imageLoaded by remember(url) { mutableStateOf(false) }
+
+        if (placeholder != null && !imageLoaded) {
+            LetterAvatar(
+                modifier = Modifier.matchParentSize(),
+                name = placeholder.name,
+                colorScheme = placeholder.colorScheme,
+                onClick = null
+            )
+        }
+
         NovaAsyncImage(
             model = url,
-            contentScale = ContentScale.Crop
+            contentScale = ContentScale.Crop,
+            onSuccess = { imageLoaded = true }
         )
     }
 }

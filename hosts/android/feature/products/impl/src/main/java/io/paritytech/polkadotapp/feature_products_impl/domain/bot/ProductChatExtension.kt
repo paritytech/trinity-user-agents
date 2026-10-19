@@ -25,6 +25,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.Produc
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.productIconUri
+import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerModalityApi
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.menu.ProductChatMenuRenderer
@@ -63,16 +65,17 @@ class ProductChatExtension(
     appContext: Context,
     val product: Product,
     private val workerRefCounter: ProductWorkerRefCounter,
+    resolveProduct: ResolveProductUseCase,
     val origin: ProductChatExtensionOrigin = ProductChatExtensionOrigin.InstalledByUser,
 ) : ExternalExtension() {
     override val id = product.id.toChatExtensionId()
 
     override val activationStateExternallyControlled: Boolean = false
 
-    override val defaultRoomMetadata: DefaultRoomMetadata = DefaultRoomMetadata(product.name, icon = null)
+    override val defaultRoomMetadata: DefaultRoomMetadata = DefaultRoomMetadata(product.name, icon = product.id.productIconUri())
 
     private val runningWorker = DeferredProductWorker()
-    private val messageRenderer = ProductsMessageRenderer(appContext, product, runningWorker)
+    private val messageRenderer = ProductsMessageRenderer(appContext, product, runningWorker, resolveProduct)
 
     private class Disposed : Exception("the product's chat extension was disposed")
 

@@ -16,6 +16,10 @@ import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 
 interface ChatRoomRepository : ReadOnlyChatRoomRepository {
+    /**
+     * A room that already exists takes the request's name and icon. An extension registers its rooms
+     * on every start and has no other way to describe one, such as a room the host placed first.
+     */
     suspend fun createRoom(request: CreateRoomRequest): CreateRoomResult
 
     suspend fun createRoomIfNotExists(chatId: ChatId)
@@ -33,6 +37,9 @@ class RealChatRoomRepository @Inject constructor(
     override suspend fun createRoom(request: CreateRoomRequest): CreateRoomResult {
         val existing = chatRoomDao.getRoom(request.chatId.toLocal())
         if (existing != null) {
+            if (existing.name != request.name || existing.icon != request.icon) {
+                updateRoomMetadata(request.chatId, RoomMetadata(request.name, request.icon))
+            }
             return CreateRoomResult(request.chatId, CreateRoomStatus.Exists)
         }
 
