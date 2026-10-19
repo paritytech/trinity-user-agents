@@ -253,7 +253,7 @@ mod tests {
 
 		let error = resolve_from(
 			base,
-			Some(path.into_os_string()),
+			Some(path.clone().into_os_string()),
 			None,
 			&[crate::network::PEOPLE_WS_ENV, crate::network::BULLETIN_WS_ENV],
 		)
@@ -265,8 +265,8 @@ mod tests {
 				message.contains(crate::network::BULLETIN_WS_ENV),
 			"{message}"
 		);
-		// Without the file the overrides are the fork routing, left as they are.
-		let fork = resolve_from(base, None, None, &[crate::network::PEOPLE_WS_ENV]).unwrap();
-		assert_eq!(fork.people_ws, base.people_ws);
+		// With no override set, the file routes the chains.
+		let local = resolve_from(base, Some(path.into_os_string()), None, &[]).unwrap();
+		assert_eq!(local.people_ws, "ws://127.0.0.1:10010");
 	}
 }
