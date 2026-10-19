@@ -102,6 +102,10 @@ extension SPAPresenter: SPAPresenterProtocol {
         wireframe.showProductSPA(from: view, productHost: productHost)
     }
 
+    func didRequestDeeplink(_ url: URL) {
+        wireframe.openDeeplink(url)
+    }
+
     func didUpdateWebViewTitle(_ title: String) {
         view?.updateTitle(title)
     }
