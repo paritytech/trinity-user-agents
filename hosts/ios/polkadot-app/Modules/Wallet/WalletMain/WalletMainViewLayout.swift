@@ -13,6 +13,8 @@ struct WalletView: View {
     private var cardOverlap: CGFloat { PocketCardSize.height - peekHeight }
     private let scrollTopAnchor = "walletScrollTop"
     @State private var overscroll: CGFloat = 0
+    @State private var purseCard: PurseScroll.Card?
+    @State private var purseDays: [PurseScroll.DayMark] = []
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -54,6 +56,11 @@ struct WalletView: View {
                 }
             }
         }
+        .coordinateSpace(name: PurseScroll.space)
+        .onPreferenceChange(PurseScroll.CardKey.self) { purseCard = $0 }
+        .onPreferenceChange(PurseScroll.DaysKey.self) { purseDays = $0 }
+        .overlay(alignment: .top) { purseStickyBar }
+        .overlay(alignment: .bottom) { purseDock }
         .modifier(
             ConditionalOverlayModifier(
                 available: viewModel.isCollectiblesAvailable,
@@ -61,6 +68,24 @@ struct WalletView: View {
             )
         )
         .animation(.spring(duration: 0.45, bounce: 0.15), value: viewModel.expandedSection)
+    }
+
+    private var isPurseOpen: Bool {
+        viewModel.expandedSection == .assetDetails
+    }
+
+    @ViewBuilder
+    private var purseStickyBar: some View {
+        if isPurseOpen, let bar = PurseScroll.bar(card: purseCard, days: purseDays) {
+            PurseStickyBar(bar: bar, cash: .current)
+        }
+    }
+
+    @ViewBuilder
+    private var purseDock: some View {
+        if isPurseOpen {
+            FundingInProgressDock(cash: .current)
+        }
     }
 
     /// Product-backed cards follow the host's own, and are hidden while a

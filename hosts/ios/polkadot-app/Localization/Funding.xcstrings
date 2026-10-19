@@ -56,6 +56,17 @@
         }
       }
     },
+    "activity.currentBalance" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Current balance"
+          }
+        }
+      }
+    },
     "activity.delayed" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -128,7 +139,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Retrying your payment…"
+            "value" : "Provider is retrying your payment"
           }
         }
       }
@@ -139,7 +150,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Retrying the payout…"
+            "value" : "Provider is retrying the payout"
           }
         }
       }
@@ -1888,7 +1899,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Waiting for payment"
+            "value" : "Upcoming receiving"
           }
         }
       }
@@ -1899,7 +1910,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Waiting for deposit"
+            "value" : "Upcoming receiving"
           }
         }
       }

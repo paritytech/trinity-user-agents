@@ -11,6 +11,9 @@ struct CoinageBalanceBreakdownViewModel {
     let availableNowBalance: String
     let gainingPrivacyBalance: String
     let symbol: String
+    /// The same three figures as values, for the Clearing bar and the
+    /// balance at the end of each history day.
+    let amounts: CoinageAmounts
     /// Every holding, in display order, drawn as coins. Clearing leads.
     let strip: [CoinageScene.Coin]
 }
