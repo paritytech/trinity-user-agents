@@ -10736,10 +10736,12 @@ fn a_kept_token_is_returned_only_to_the_account_that_stored_it() {
 	assert!(services.install_auth_token_platform(Arc::new(MemoryAuthTokens::default())));
 	let alice = payment_host(&services, "wallet.dot", true);
 	let (host_config, product) = runtime_config("wallet.dot");
+	let pairing_host = PairingHost::new(services.clone(), host_config);
 	let bob = ProductRuntimeHost::from_services(
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(&services),
-		PairingHost::new(services.clone(), host_config),
+		pairing_host.clone(),
+		pairing_host,
 		product,
 	);
 	install_pairing_session(&bob, SessionInfo { public_key: [0xb0; 32], ..session_info() });
@@ -10789,10 +10791,12 @@ fn the_service_cap_counts_only_the_signed_in_account() {
 	assert!(services.install_auth_token_platform(Arc::new(MemoryAuthTokens::default())));
 	let alice = payment_host(&services, "wallet.dot", true);
 	let (host_config, product) = runtime_config("wallet.dot");
+	let pairing_host = PairingHost::new(services.clone(), host_config);
 	let bob = ProductRuntimeHost::from_services(
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(&services),
-		PairingHost::new(services.clone(), host_config),
+		pairing_host.clone(),
+		pairing_host,
 		product,
 	);
 	install_pairing_session(&bob, SessionInfo { public_key: [0xb0; 32], ..session_info() });

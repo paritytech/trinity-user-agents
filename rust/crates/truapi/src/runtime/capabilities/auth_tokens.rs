@@ -31,12 +31,13 @@ impl ProductRuntimeHost {
 	/// product with a session. Tokens belong to the signed-in account, so
 	/// without a session there is nobody to keep them for.
 	fn auth_token_slot<E>(&self, service: &str) -> Result<AuthTokenSlot, CallError<E>> {
-		let platform = self.services.auth_token_platform().ok_or(CallError::Unsupported)?;
-		let session = self.authority.current_session().ok_or(CallError::Denied)?;
+		let platform =
+			self.connection.services.auth_token_platform().ok_or(CallError::Unsupported)?;
+		let session = self.accounts.current_session().ok_or(CallError::Denied)?;
 		Ok(AuthTokenSlot {
 			platform,
 			account: account_tag(&session.public_key),
-			key: storage_key(&session.public_key, &self.product.product_id, service),
+			key: storage_key(&session.public_key, &self.connection.product.product_id, service),
 		})
 	}
 }
@@ -76,8 +77,8 @@ impl AuthTokens for ProductRuntimeHost {
 		let result = async {
 			let AuthTokenSlot { platform, account, key } = self.auth_token_slot(&service)?;
 			check_store(&service, &token).map_err(CallError::Domain)?;
-			let product_id = self.product.product_id.as_str();
-			let _writes = self.services.auth_token_writes().await;
+			let product_id = self.connection.product.product_id.as_str();
+			let _writes = self.connection.services.auth_token_writes().await;
 			let replacing = platform.auth_token(product_id, &key).await.map_err(store_failure)?;
 			if replacing.is_none() &&
 				platform.auth_token_count(product_id, &account).await.map_err(store_failure)? >=
@@ -112,7 +113,7 @@ impl AuthTokens for ProductRuntimeHost {
 				return Err(CallError::Domain(latest::HostAuthTokensLookupError::InvalidService));
 			}
 			platform
-				.auth_token(&self.product.product_id, &key)
+				.auth_token(&self.connection.product.product_id, &key)
 				.await
 				.map(|token| latest::HostAuthTokensGetResponse { token })
 				.map_err(lookup_failure)
@@ -137,7 +138,7 @@ impl AuthTokens for ProductRuntimeHost {
 				return Err(CallError::Domain(latest::HostAuthTokensLookupError::InvalidService));
 			}
 			platform
-				.remove_auth_token(&self.product.product_id, &key)
+				.remove_auth_token(&self.connection.product.product_id, &key)
 				.await
 				.map_err(lookup_failure)
 		}
