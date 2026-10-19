@@ -1,3 +1,4 @@
+import SwiftUI
 import UIKit
 
 /// The Pocket a card is opened from: where the card sits in it, and which card
@@ -11,18 +12,27 @@ protocol PocketCardOrigin: AnyObject {
     func setOpenCard(_ key: PocketCardKey?)
 }
 
+/// One clock for everything a flight moves, in UIKit and in SwiftUI alike, so
+/// the card, its screen and the Pocket stay in step.
+enum PocketCardFlightTiming {
+    static let duration: TimeInterval = 0.5
+
+    /// Android's curve, which carries the card slightly past its place.
+    static var timing: UICubicTimingParameters {
+        UICubicTimingParameters(controlPoint1: CGPoint(x: 0.34, y: 1.2), controlPoint2: CGPoint(x: 0.64, y: 1))
+    }
+
+    static var animation: Animation {
+        .timingCurve(0.34, 1.2, 0.64, 1, duration: duration)
+    }
+}
+
 /// Moves an opened card between its place in the Pocket and the top of its
 /// screen, while the rest of the screen fades in or out around it, so the user
 /// sees one card move as on Android. A card the Pocket cannot place when the
 /// flight starts fades with the rest: the Pocket may no longer be what the
 /// screen opens from or closes to.
 final class PocketCardFlight: NSObject, UIViewControllerAnimatedTransitioning {
-    private static let duration: TimeInterval = 0.5
-    /// Android's curve, which carries the card slightly past its place.
-    private static let timing = UICubicTimingParameters(
-        controlPoint1: CGPoint(x: 0.34, y: 1.2),
-        controlPoint2: CGPoint(x: 0.64, y: 1)
-    )
     /// Most of a card in the Pocket sits under the next one, so the landed card
     /// fades into the Pocket's own instead of snapping behind its neighbour.
     private static let landingFade: TimeInterval = 0.12
@@ -40,7 +50,7 @@ final class PocketCardFlight: NSObject, UIViewControllerAnimatedTransitioning {
     }
 
     func transitionDuration(using _: UIViewControllerContextTransitioning?) -> TimeInterval {
-        opening ? Self.duration : Self.duration + Self.landingFade
+        opening ? PocketCardFlightTiming.duration : PocketCardFlightTiming.duration + Self.landingFade
     }
 
     func animateTransition(using context: UIViewControllerContextTransitioning) {
@@ -64,7 +74,10 @@ final class PocketCardFlight: NSObject, UIViewControllerAnimatedTransitioning {
             fading.forEach { $0.alpha = 0 }
         }
 
-        let animator = UIViewPropertyAnimator(duration: Self.duration, timingParameters: Self.timing)
+        let animator = UIViewPropertyAnimator(
+            duration: PocketCardFlightTiming.duration,
+            timingParameters: PocketCardFlightTiming.timing
+        )
         animator.addAnimations { [self] in
             screen.moveCard(by: opening ? .zero : toSlot ?? .zero)
             screen.setSurroundingsAlpha(alpha)
