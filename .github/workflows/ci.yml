@@ -661,7 +661,7 @@ jobs:
           SENTRY_ORG: ci
           SENTRY_PROJECT: ci
           TERMS_OF_USE_URL: https://example.invalid/terms
-        run: ./gradlew detekt --no-daemon
+        run: ./gradlew :config:detekt:rules:test detekt --no-daemon
 
   # The provider ships as its own AAR, so its bindings compile on a path the
   # host gate never touches. `make provider-android-check` generates first and
