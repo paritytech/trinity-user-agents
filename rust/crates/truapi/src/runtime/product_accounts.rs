@@ -1,12 +1,16 @@
 //! The account operations one product connection may call, bound to its product.
 
-use std::sync::Arc;
+use std::{
+	collections::HashMap,
+	sync::{Arc, Mutex},
+};
 
+use futures::future::{BoxFuture, FutureExt, WeakShared};
 use truapi::{
-	CallContext,
+	CallContext, CallError,
 	latest::{
 		HostAccountCreateProofRequest, HostAccountCreateProofResponse, HostAccountGetAliasRequest,
-		HostAccountGetAliasResponse, HostAccountListRingVrfKeysRequest,
+		HostAccountGetAliasResponse, HostAccountGetError, HostAccountListRingVrfKeysRequest,
 		HostAccountListRingVrfKeysResponse, HostAccountRegisterRingVrfKeyRequest,
 		HostAccountRegisterRingVrfKeyResponse, HostAccountRingVrfSignRequest,
 		HostAccountRingVrfSignResponse, HostAccountSignVrfRequest, HostCreateTransactionResponse,
@@ -22,14 +26,70 @@ use crate::{
 	platform::ProductContext,
 };
 
-use super::authority::{
-	AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
-	CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
-	SignRawAuthorityRequest, StatementStoreAllowanceKey,
+use super::{
+	authority::{
+		AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
+		CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
+		SignRawAuthorityRequest, StatementStoreAllowanceKey,
+	},
+	remote_authority_call, remote_authority_context,
 };
+
+type ProductAccountResolution = BoxFuture<'static, Result<(), CallError<HostAccountGetError>>>;
+
+/// Product-account resolutions in flight, at most one per authority session and
+/// product, shared by every product runtime of this host.
+///
+/// Entries are weak and a settled one is never joined, so a resolution every
+/// caller has walked away from is dropped, and a rejection or failed fetch is
+/// never remembered.
+#[derive(Default)]
+pub struct ProductAccountResolutions {
+	in_flight: Mutex<HashMap<ResolutionKey, WeakShared<ProductAccountResolution>>>,
+}
+
+#[derive(PartialEq, Eq, Hash)]
+struct ResolutionKey {
+	session_id: Vec<u8>,
+	product_id: String,
+}
+
+impl ProductAccountResolutions {
+	/// Wait on the resolution in flight for `session_id` and `product_id`, or
+	/// start the one `resolve` builds when there is none.
+	pub async fn join<F>(
+		&self,
+		session_id: Vec<u8>,
+		product_id: String,
+		resolve: impl FnOnce() -> F,
+	) -> Result<(), CallError<HostAccountGetError>>
+	where
+		F: Future<Output = Result<(), CallError<HostAccountGetError>>> + Send + 'static,
+	{
+		let resolution = {
+			let mut in_flight =
+				self.in_flight.lock().expect("product account resolutions poisoned");
+			in_flight.retain(|_, resolution| {
+				resolution.upgrade().is_some_and(|resolution| resolution.peek().is_none())
+			});
+			let key = ResolutionKey { session_id, product_id };
+			match in_flight.get(&key).and_then(WeakShared::upgrade) {
+				Some(resolution) => resolution,
+				None => {
+					let resolution = resolve().boxed().shared();
+					let weak = resolution.downgrade().expect("an unpolled resolution is pending");
+					in_flight.insert(key, weak);
+					resolution
+				},
+			}
+		};
+		resolution.await
+	}
+}
 
 /// The host's account authority as one product connection sees it: every call
 /// acts for that product, and host-level operations stay out of reach.
+#[derive(Clone)]
 pub struct ProductAccounts {
 	authority: Arc<dyn ProductAuthority>,
 	product: ProductContext,
@@ -57,14 +117,20 @@ impl ProductAccounts {
 		self.authority.cache_product_subtree_for_test(session, product_id, public_key);
 	}
 
-	/// Resolve the public key of `product_id`'s hard subtree.
+	/// Resolve the public key of `product_id`'s hard subtree, bounded by the
+	/// remote-authority timeout and by `cx`'s cancellation.
 	pub async fn product_subtree_public_key(
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
 		product_id: String,
 	) -> Result<[u8; 32], AuthorityError> {
-		self.authority.product_subtree_public_key(cx, session, product_id).await
+		let cx = remote_authority_context(cx);
+		remote_authority_call(
+			&cx,
+			self.authority.product_subtree_public_key(&cx, session, product_id),
+		)
+		.await
 	}
 
 	/// Whether resolving `product_id`'s subtree needs SSO and host consent.

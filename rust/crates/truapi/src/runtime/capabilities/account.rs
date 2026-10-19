@@ -5,6 +5,7 @@ use crate::platform::{
 	normalize_product_identifier,
 };
 use futures::StreamExt;
+use std::sync::Arc;
 use tracing::instrument;
 use truapi::{
 	CallContext, CallError, Subscription,
@@ -33,12 +34,38 @@ use truapi::versioned::{FromLatest, IntoLatest, Versioned};
 use crate::{
 	host_internal::product_manifest::Granted,
 	runtime::{
-		ProductRuntimeHost, account_access_authorization, account_get_authority_error,
-		remote_authority_call, remote_authority_context, ring_vrf_alias_error, ring_vrf_list_error,
-		ring_vrf_proof_error, ring_vrf_register_error, ring_vrf_sign_error, until_cancelled,
-		validate_vrf_transcript, vrf_call_error,
+		ProductConnection, ProductRuntimeHost, account_access_authorization,
+		account_get_authority_error, authority::AuthoritySession,
+		product_accounts::ProductAccounts, remote_authority_call, remote_authority_context,
+		ring_vrf_alias_error, ring_vrf_list_error, ring_vrf_proof_error, ring_vrf_register_error,
+		ring_vrf_sign_error, until_cancelled, validate_vrf_transcript, vrf_call_error,
 	},
 };
+
+/// Ask the user to approve the product's own account, then fetch its subtree
+/// so the waiting calls find it cached.
+async fn resolve_own_product_account(
+	connection: Arc<ProductConnection>,
+	accounts: ProductAccounts,
+	session: AuthoritySession,
+	cx: CallContext,
+	product_id: String,
+) -> Result<(), CallError<latest::HostAccountGetError>> {
+	let approved = connection
+		.confirm_product_action(UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
+			product_id: product_id.clone(),
+		}))
+		.await
+		.map_err(|err| CallError::HostFailure { reason: err.reason })?;
+	if !approved {
+		return Err(CallError::Domain(latest::HostAccountGetError::Rejected));
+	}
+	accounts
+		.product_subtree_public_key(&session, &cx, product_id)
+		.await
+		.map_err(account_get_authority_error)?;
+	Ok(())
+}
 
 #[truapi::async_trait]
 impl Account for ProductRuntimeHost {
@@ -85,20 +112,21 @@ impl Account for ProductRuntimeHost {
 				)
 				.await
 			{
-				let approved = until_cancelled(
-					cx,
-					self.connection.confirm_product_action(UserConfirmationReview::ProductSubtree(
-						ProductSubtreeReview {
-							product_id: product_account_id.dot_ns_identifier.clone(),
-						},
-					)),
-				)
-				.await
-				.map_err(account_get_authority_error)?
-				.map_err(|err| CallError::HostFailure { reason: err.reason })?;
-				if !approved {
-					return Err(CallError::Domain(latest::HostAccountGetError::Rejected));
-				}
+				let resolution = self.connection.services.product_account_resolutions.join(
+					session.validation_id.clone(),
+					product_account_id.dot_ns_identifier.clone(),
+					|| {
+						resolve_own_product_account(
+							self.connection.clone(),
+							self.accounts.clone(),
+							session.clone(),
+							// Others may join, so this call's cancel must not reach it.
+							CallContext::with_request_id(cx.request_id().to_string()),
+							product_account_id.dot_ns_identifier.clone(),
+						)
+					},
+				);
+				until_cancelled(cx, resolution).await.map_err(account_get_authority_error)??;
 			}
 
 			let public_key = self
