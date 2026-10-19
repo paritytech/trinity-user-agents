@@ -28,6 +28,7 @@ One binary, `truapi-host`:
 | `pgas-check` | Diagnose (or `--submit`) an Asset Hub PGAS allowance claim: ring membership on People, whether Asset Hub has imported that ring revision, the day's first unclaimed slot, and the `Pgas.claim_pgas` extrinsic. |
 | `attest` | Attest a given mnemonic's `uid.<tld>` identity for a lite username, wait for its ring membership, and print `{address, publicKey, liteUsername}` as JSON. For e2e suites that hold their own mnemonics. |
 | `local-network-check` | Validate the `HOST_CLI_LOCAL_NETWORK_CONFIG` file and print the resolved routing as JSON, without contacting a chain. |
+| `stack` | Trinity stack descriptors: `keygen`, `publish` a model to `.well-known/trinity-stack.json`, `verify` a link, URL or file, `bundle` the signed copy a host build ships, and print a pointer's `link` and QR code. The rules come from the [`trinity-stack`](../trinity-stack) crate. |
 
 The repository's `make e2e-dotli` target builds this binary and runs the
 dotli/playground Diagnosis suite with a non-interactive signing-host responder.
@@ -74,6 +75,7 @@ the version store. A command that finishes first waits for the download, so even
 a one-shot run lands the update; it prints a line while downloading. The running
 process is never replaced underneath itself: the new version takes effect the
 next time you start `truapi-host`, and the CLI says so when one is waiting.
+`stack` skips the check, since it runs inside builds and publish jobs.
 Every archive is checked against its published SHA-256 before it is unpacked.
 
 ```bash
@@ -918,6 +920,37 @@ That report is the reason the flag needs no build gate: a stale exported
 Frames are forwarded whole and the debugger decodes all of them, so a tapped
 signing host puts its payloads on that socket. Point it at a debugger you are
 running yourself.
+
+## Trinity stacks
+
+`truapi-host stack` publishes and checks the descriptor that tells hosts and
+tools which chains and services make up a stack. An operator publishing
+previewnet:
+
+```sh
+truapi-host stack keygen --out ~/.previewnet/stack.key   # prints the public key
+truapi-host stack publish previewnet.json --generation 2026-10-19 --out site \
+  --signing-key-file ~/.previewnet/stack.key --state ~/.previewnet/stack-state.json \
+  --url https://previewnet.example/.well-known/trinity-stack.json
+# deploy site/, then share the printed link or:
+truapi-host stack link https://previewnet.example/.well-known/trinity-stack.json --key 0x…
+```
+
+`previewnet.json` is a descriptor without `$v`, `sequence` and `generation`: the
+[JSON Schema](../trinity-stack/schema/trinity-stack.v1.schema.json) and the
+[RFC](../../../docs/rfcs/trinity-stack-descriptor.md) list its fields. Change
+`--generation` whenever the chains restart. Keep the key and the state
+file outside anything a wipe deletes.
+
+To check a published stack, or ship one in a host build:
+
+```sh
+truapi-host stack verify 'polkadotapp://stack?key=0x…&url=…'   # exits non-zero on a broken rule or expiry
+truapi-host stack bundle 'polkadotapp://stack?key=0x…&url=…' --out stack.json
+```
+
+`bundle` refuses a lower `sequence` than the copy already at `--out`, and an
+expired stack. [SPEC.md](SPEC.md#67-top-level-stack) has every option.
 
 ## Statement-store allowance
 

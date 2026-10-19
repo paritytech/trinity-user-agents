@@ -158,7 +158,7 @@ extension TrUAPIHostRuntimeProvider {
         networkSuffix: String,
         databaseDirectory: String
     ) throws -> HostRuntimeConfig {
-        let peopleChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.usernameChain)
+        let peopleChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.peopleChain)
         let bulletinChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.bulletInChain)
         let assetHubChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.assethubChain)
 

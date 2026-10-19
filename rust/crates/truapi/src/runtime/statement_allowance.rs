@@ -83,6 +83,14 @@ pub enum StatementAllowanceError {
 	/// Bulletin allowance polling timed out.
 	#[error("timed out waiting for Bulletin authorization")]
 	BulletinAuthorizationTimeout,
+	/// The extended Bulletin authorization still cannot hold the payload.
+	#[error("Bulletin authorization holds {remained_size} bytes after extension, {size} needed")]
+	BulletinAuthorizationTooSmall {
+		/// Payload size in bytes.
+		size: u64,
+		/// Bytes the extended authorization holds.
+		remained_size: u64,
+	},
 }
 
 /// Error while decoding generic chain state used by allowance registration.
@@ -451,7 +459,7 @@ pub struct LongTermStorageClaim<'a> {
 }
 
 /// Bulletin authorization state for one account.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BulletinAllowanceInfo {
 	/// Number of preimage bytes that remain available.
 	pub remained_size: u64,
@@ -471,7 +479,12 @@ enum BulletinAuthorizationScope {
 impl BulletinAllowanceInfo {
 	/// Returns whether the snapshot still permits at least one submission.
 	pub fn available(self) -> bool {
-		self.remained_size > 0 &&
+		self.can_store(1)
+	}
+
+	/// Require enough bytes and a live transaction allowance for this payload.
+	pub fn can_store(self, size: u64) -> bool {
+		self.remained_size >= size &&
 			self.remained_transactions > 0 &&
 			self.fetched_at < self.expires_in
 	}
@@ -1059,11 +1072,13 @@ pub async fn fetch_bulletin_allowance(
 	decode_bulletin_allowance(&bytes, fetched_at).map(Some)
 }
 
-/// Wait until Bulletin authorization is available and fresher than `current`.
+/// Wait until Bulletin authorization is available and fresher than `current`,
+/// then require it to hold `size` bytes.
 pub async fn wait_bulletin_authorization(
 	rpc: &RpcClient,
 	target: &[u8; 32],
 	current: Option<BulletinAllowanceInfo>,
+	size: u64,
 	timeout: Duration,
 ) -> Result<BulletinAllowanceInfo, StatementAllowanceError> {
 	let started = Instant::now();
@@ -1074,6 +1089,12 @@ pub async fn wait_bulletin_authorization(
 			continue;
 		};
 		if authorization_refreshed(info, baseline) {
+			if !info.can_store(size) {
+				return Err(StatementAllowanceError::BulletinAuthorizationTooSmall {
+					size,
+					remained_size: info.remained_size,
+				});
+			}
 			return Ok(info);
 		}
 		wait_before_next_bulletin_authorization_poll(started, timeout).await?;
@@ -1194,6 +1215,18 @@ mod tests {
 	}
 
 	#[test]
+	fn bulletin_authorization_covers_the_whole_submission() {
+		let results = [
+			allowance(128, 1, 11),
+			allowance(127, 1, 11),
+			allowance(128, 0, 11),
+			allowance(128, 1, 10),
+		]
+		.map(|info| info.can_store(128));
+		assert_eq!(results, [true, false, false, false]);
+	}
+
+	#[test]
 	fn bulletin_refresh_accepts_available_state_when_baseline_was_unusable() {
 		let exhausted_by_size = allowance(0, 4, 100);
 		let refreshed_same_transactions = allowance(4096, 4, 100);
@@ -1218,6 +1251,56 @@ mod tests {
 		let baseline = allowance(128, 4, 100);
 
 		assert!(!authorization_refreshed(baseline, Some(baseline)));
+	}
+
+	/// Wait for an extension of a 16-byte authorization that the chain shows
+	/// holding `remaining` bytes. The script answers exactly one read.
+	fn wait_for_extension(
+		remaining: u64,
+		size: u64,
+	) -> Result<BulletinAllowanceInfo, StatementAllowanceError> {
+		let entry = (0u32, 1u32, 0u64, 0u64, remaining, 100u32).encode();
+		let storage = format!(r#""0x{}""#, hex::encode(entry));
+		let scripted = ScriptedRpc::new([storage.as_str(), r#"{"number":"0x1"}"#]);
+		let rpc = RpcClient::new(HostRpcClient::new(scripted));
+		futures::executor::block_on(wait_bulletin_authorization(
+			&rpc,
+			&[0x22; 32],
+			Some(allowance(16, 1, 100)),
+			size,
+			Duration::from_secs(60),
+		))
+	}
+
+	#[test]
+	fn an_extension_that_holds_the_payload_is_returned() {
+		assert_eq!(
+			wait_for_extension(256, 128).ok(),
+			Some(BulletinAllowanceInfo {
+				remained_size: 256,
+				remained_transactions: 1,
+				expires_in: 100,
+				fetched_at: 1,
+			}),
+		);
+	}
+
+	/// One claim may add fewer bytes than a large payload needs. Polling for
+	/// more would only run out the submit deadline.
+	#[test]
+	fn an_extension_too_small_for_the_payload_fails_at_once() {
+		let result = wait_for_extension(64, 128);
+
+		assert!(
+			matches!(
+				result,
+				Err(StatementAllowanceError::BulletinAuthorizationTooSmall {
+					size: 128,
+					remained_size: 64,
+				})
+			),
+			"{result:?}"
+		);
 	}
 
 	#[test]
