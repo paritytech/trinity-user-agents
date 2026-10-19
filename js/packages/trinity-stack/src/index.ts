@@ -26,9 +26,6 @@ export type {
   Verified,
 } from "../wasm/trinity_stack.js";
 
-/** The link base the Polkadot app opens. */
-export const DEFAULT_LINK_BASE = "polkadotapp://stack";
-
 /** An error from a rule of the RFC. `code` names the rule, as the conformance vectors do. */
 export type TrinityStackError = Error & { code: string };
 
@@ -52,7 +49,7 @@ export function parse(bytes: Uint8Array): {
 
 /** Parses a document and applies the pointer's rules. */
 export function open(bytes: Uint8Array, pointer: Pointer): Verified {
-  return wasm.open(bytes, pointer.url, pointer.key);
+  return wasm.open(bytes, pointer);
 }
 
 /**
@@ -65,13 +62,7 @@ export function accept(
   fetched: Uint8Array | undefined,
   now: Date = new Date(),
 ): Accepted {
-  return wasm.accept(
-    pointer.url,
-    pointer.key,
-    stored,
-    fetched,
-    unixSeconds(now),
-  );
+  return wasm.accept(pointer, stored, fetched, unixSeconds(now));
 }
 
 /** The pointer a link carries, whatever its scheme or domain. */
@@ -79,22 +70,19 @@ export function decodeLink(link: string): Pointer {
   return wasm.decodeLink(link);
 }
 
-/** The link that carries a pointer. */
-export function encodeLink(
-  pointer: Pointer,
-  base: string = DEFAULT_LINK_BASE,
-): string {
-  return wasm.encodeLink(pointer.url, pointer.key, base);
+/** The link that carries a pointer, under `base`, which defaults to `polkadotapp://stack`. */
+export function encodeLink(pointer: Pointer, base?: string): string {
+  return wasm.encodeLink(pointer, base);
 }
 
 /** Whether two pointers name the same stack: the same key, or the same URL when unsigned. */
 export function sameStack(a: Pointer, b: Pointer): boolean {
-  return wasm.sameStack(a.url, a.key, b.url, b.key);
+  return wasm.sameStack(a, b);
 }
 
 /** What identifies a pointer's stack: its key, or its normalised URL when it has none. */
 export function stackId(pointer: Pointer): string {
-  return wasm.stackId(pointer.url, pointer.key);
+  return wasm.stackId(pointer);
 }
 
 /** Wraps a plain descriptor's bytes in a signed envelope. */
@@ -252,7 +240,7 @@ export async function fetchDescriptor(
   url: string,
   options: { fetch?: Fetch; timeoutMs?: number } = {},
 ): Promise<Uint8Array | undefined> {
-  wasm.stackId(url, undefined);
+  wasm.stackId({ url });
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(),
@@ -264,7 +252,9 @@ export async function fetchDescriptor(
       redirect: "error",
       signal: controller.signal,
     });
-    return response.ok ? await readCapped(response, controller) : undefined;
+    const bytes = response.ok ? await readCapped(response) : undefined;
+    if (!bytes) controller.abort();
+    return bytes;
   } catch (error) {
     const aborted =
       error instanceof DOMException &&
@@ -280,22 +270,23 @@ export async function fetchDescriptor(
 /** The largest descriptor `fetchDescriptor` reads. A descriptor is a few kilobytes. */
 export const MAX_DESCRIPTOR_BYTES = 1024 * 1024;
 
-async function readCapped(
-  response: Response,
-  controller: AbortController,
-): Promise<Uint8Array | undefined> {
+// Reads through `getReader`: Safari before 27 cannot iterate a `ReadableStream` with `for await`.
+async function readCapped(response: Response): Promise<Uint8Array | undefined> {
   if (Number(response.headers.get("content-length")) > MAX_DESCRIPTOR_BYTES)
     return undefined;
   if (!response.body) return new Uint8Array(await response.arrayBuffer());
+  const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let length = 0;
-  for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
-    length += chunk.length;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    length += value.length;
     if (length > MAX_DESCRIPTOR_BYTES) {
-      controller.abort();
+      await reader.cancel();
       return undefined;
     }
-    chunks.push(chunk);
+    chunks.push(value);
   }
   const bytes = new Uint8Array(length);
   let offset = 0;

@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import {
   type Model,
+  type SpecFile,
   accept,
+  checkSpec,
   decodeLink,
   encodeLink,
   generateSecret,
@@ -255,6 +257,15 @@ describe("read", () => {
     expect(accepted.status).toBe("unreachable");
   });
 
+  test("a body stream that cannot be iterated, as in Safari before 27, still reads", async () => {
+    const bytes = new TextEncoder().encode("{}");
+    const body = new Blob([bytes]).stream();
+    Object.defineProperty(body, Symbol.asyncIterator, { value: undefined });
+    const fetch = async () =>
+      ({ ok: true, headers: new Headers(), body }) as unknown as Response;
+    expect(await fetchDescriptor(URL_, { fetch })).toEqual(bytes);
+  });
+
   test("a body past the size cap is unreachable", async () => {
     const huge = new Uint8Array(MAX_DESCRIPTOR_BYTES + 1);
     const streaming = async () => new Response(new Blob([huge]).stream());
@@ -355,6 +366,17 @@ describe("links", () => {
     ).toBe(true);
     expect(sameStack(pointer, { url: URL_ })).toBe(false);
     expect(decodeLink(encodeLink({ url: URL_ }))).toStrictEqual({ url: URL_ });
+  });
+
+  test("a pointer breaking a rule keeps its code, and a key of the wrong type is never dropped", () => {
+    expect(codeOf(() => stackId({ url: "http://stack.example/s.json" }))).toBe(
+      "invalid-url",
+    );
+    const key = 1 as unknown as string;
+    expect(() => stackId({ url: URL_, key })).toThrow(TypeError);
+    expect(() =>
+      checkSpec({ url: URL_ } as SpecFile, new Uint8Array()),
+    ).toThrow(TypeError);
   });
 
   test("an unsigned stack is stored under its normalised URL", async () => {
