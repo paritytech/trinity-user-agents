@@ -17,9 +17,7 @@ wasm-opt = false
 wasm-opt = false
 
 [features]
-js = ["dep:wasm-bindgen", "dep:js-sys", "dep:tsify", "qr"]
-# QR codes for tools; readers such as the host core leave it out.
-qr = ["dep:qrcode"]
+js = ["dep:wasm-bindgen", "dep:js-sys", "dep:tsify"]
 
 [dependencies]
 base64.workspace = true
@@ -28,7 +26,6 @@ curve25519-dalek.workspace = true
 ed25519-dalek.workspace = true
 hex.workspace = true
 js-sys = { workspace = true, optional = true }
-qrcode = { workspace = true, features = ["svg"], optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 serde_with.workspace = true

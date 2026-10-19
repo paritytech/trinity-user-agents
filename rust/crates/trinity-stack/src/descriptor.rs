@@ -26,7 +26,7 @@ pub const SERVICE_KINDS: &[&str] =
 // adding `from_json`'s checks on the way in.
 #[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "js", derive(tsify::Tsify))]
+#[cfg_attr(feature = "js", derive(tsify::Tsify), tsify(hashmap_as_object))]
 #[serde(remote = "Self", rename_all = "camelCase")]
 pub struct Descriptor {
 	/// Format version; always [`VERSION`].

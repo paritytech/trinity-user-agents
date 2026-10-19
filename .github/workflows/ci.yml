@@ -910,6 +910,9 @@ jobs:
       - name: Install
         run: npm ci --ignore-scripts
 
+      - name: Check formatting
+        run: npm run format:check --prefix js/packages/trinity-stack
+
       - name: Build
         run: npm run build --prefix js/packages/trinity-stack
 
@@ -973,6 +976,7 @@ jobs:
         run: |
           npm run build:wasm --prefix js/packages/truapi-host -- --web-only
           npm run build --prefix js/packages/truapi-provider
+          npm run build --prefix js/packages/trinity-stack
 
       # What the truapi-* packages ship to products. The test host behind
       # truapi-host's `./testing` subpath is left out.
@@ -983,6 +987,7 @@ jobs:
             truapi-host      js/packages/truapi-host/dist  !wasm/testing/ !testing/ !testing.js !web/create-mock-host.js
             truapi-provider  js/packages/truapi-provider/dist
             truapi           js/packages/truapi/dist
+            trinity-stack    js/packages/trinity-stack  !node_modules/ !src/ !scripts/
 
   playground:
     name: Playground (build + lint + unit)

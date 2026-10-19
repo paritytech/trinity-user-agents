@@ -13,7 +13,6 @@ import {
   open,
   publicKey,
   publish,
-  qrSvg,
   read,
   sameStack,
   stackId,
@@ -73,7 +72,7 @@ describe("conformance vectors", () => {
             : "fetched";
         outcome = {
           status: accepted.status,
-          ...(accepted.refused ? { refused: accepted.refused } : {}),
+          ...("refused" in accepted ? { refused: accepted.refused } : {}),
           keeps,
           newGeneration: accepted.newGeneration,
           stale: accepted.stale,
@@ -220,6 +219,22 @@ describe("publish", () => {
 });
 
 describe("read", () => {
+  test("results are plain objects with bytes and maps as JS expects", async () => {
+    const contracts = { registry: `0x${"11".repeat(20)}` };
+    const { document } = await publish(
+      { ...MODEL, contracts },
+      { generation: "g1" },
+    );
+    const accepted = accept({ url: URL_ }, undefined, document);
+    expect(accepted.document).toBeInstanceOf(Uint8Array);
+    expect(Object.getPrototypeOf(accepted.descriptor.contracts)).toBe(
+      Object.prototype,
+    );
+    expect(accepted.descriptor.contracts).toEqual(contracts);
+    expect(accepted.descriptor.fork).toBeUndefined();
+    expect("fork" in accepted.descriptor).toBe(false);
+  });
+
   test("a server that never answers is unreachable after the timeout", async () => {
     const secret = generateSecret();
     const pointer = { url: URL_, key: publicKey(secret) };
@@ -339,7 +354,7 @@ describe("links", () => {
       }),
     ).toBe(true);
     expect(sameStack(pointer, { url: URL_ })).toBe(false);
-    expect(qrSvg(encodeLink(pointer))).toStartWith("<?xml");
+    expect(decodeLink(encodeLink({ url: URL_ }))).toStrictEqual({ url: URL_ });
   });
 
   test("an unsigned stack is stored under its normalised URL", async () => {
