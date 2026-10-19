@@ -90,6 +90,7 @@ impl Network {
 	pub fn cli_config(self) -> anyhow::Result<NetworkConfig> {
 		let overrides = ChainOverrides::from_env()?;
 		let set = overrides.set_names();
+		refuse_light_client(&set, std::env::var(crate::local_network::LIGHT_CLIENT_ENV).ok())?;
 		crate::local_network::resolve(
 			apply_chain_overrides(self.with_backend_override(), overrides),
 			&set,
@@ -136,6 +137,22 @@ impl Network {
 			},
 		}
 	}
+}
+
+/// A fork keeps the live genesis hashes, so the light client would find them in
+/// its catalog and sync the live chains instead.
+fn refuse_light_client(
+	chain_overrides: &[&str],
+	light_client: Option<String>,
+) -> anyhow::Result<()> {
+	anyhow::ensure!(
+		chain_overrides.is_empty() || light_client.as_deref() != Some("1"),
+		"{} and {}=1 cannot be used together: the light client syncs the live chains \
+         by genesis hash; unset one of them",
+		chain_overrides.join(", "),
+		crate::local_network::LIGHT_CLIENT_ENV
+	);
+	Ok(())
 }
 
 /// Replaces the preset's identity backend base with `base` when it carries a
@@ -673,6 +690,14 @@ mod tests {
 			assert_eq!(resolved.bulletin_ws, preset.bulletin_ws);
 			assert!(std::ptr::eq(resolved.live_chain_endpoints, preset.live_chain_endpoints));
 		}
+	}
+
+	#[test]
+	fn chain_overrides_are_refused_with_the_light_client() {
+		let error = refuse_light_client(&[PEOPLE_WS_ENV], Some("1".to_string())).unwrap_err();
+		assert!(error.to_string().contains(PEOPLE_WS_ENV), "{error}");
+		assert!(refuse_light_client(&[], Some("1".to_string())).is_ok());
+		assert!(refuse_light_client(&[PEOPLE_WS_ENV], None).is_ok());
 	}
 
 	#[test]
