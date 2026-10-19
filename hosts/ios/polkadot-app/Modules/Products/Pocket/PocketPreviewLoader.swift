@@ -71,7 +71,11 @@ struct PocketPreviewLoader {
 enum PocketPreviewFetch {
     @Sendable
     static func bounded(_ url: URL, maxBytes: Int) async throws -> Data {
-        let (bytes, _) = try await URLSession.shared.bytes(from: url)
+        try await read(URLRequest(url: url), maxBytes: maxBytes)
+    }
+
+    static func read(_ request: URLRequest, maxBytes: Int) async throws -> Data {
+        let (bytes, _) = try await URLSession.shared.bytes(for: request)
 
         var data = Data()
         for try await byte in bytes {
