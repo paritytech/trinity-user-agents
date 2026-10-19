@@ -4,7 +4,7 @@
 use std::time::Instant;
 
 use futures::StreamExt;
-use tracing::{instrument, warn};
+use tracing::{info, instrument, warn};
 use truapi::{
 	CallContext, CallError, Subscription,
 	api::Preimage,
@@ -61,8 +61,19 @@ impl ProductRuntimeHost {
 			.await
 			.map_err(|error| error.to_string())?;
 		if current.is_some_and(|info| info.can_store(size)) {
+			info!(
+				product = %self.connection.product_id(),
+				size,
+				"Bulletin authorization sufficient for the preimage"
+			);
 			return Ok(allowance);
 		}
+		info!(
+			product = %self.connection.product_id(),
+			size,
+			?current,
+			"extending Bulletin authorization before submitting the preimage"
+		);
 		let authority_cx = remote_authority_context_until(
 			cx,
 			PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
@@ -209,7 +220,12 @@ impl Preimage for ProductRuntimeHost {
 				.await
 			{
 				Ok(key) => key,
-				Err(BulletinSubmitError::AllowanceRejected { .. }) => {
+				Err(BulletinSubmitError::AllowanceRejected { phase }) => {
+					warn!(
+						product = %self.connection.product_id(),
+						%phase,
+						"Bulletin rejected the preimage allowance; extending it and resubmitting once"
+					);
 					let authority_cx = remote_authority_context_until(
 						cx,
 						PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
