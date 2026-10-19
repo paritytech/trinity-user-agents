@@ -28,6 +28,7 @@ class TrUAPIPocketFaceStreamsTest {
 
     private val publishing = ResolvedProduct(
         product = Product(id = gameProduct, name = "Game", icon = null),
+        description = null,
         executables = Executables(
             app = null,
             widget = null,
