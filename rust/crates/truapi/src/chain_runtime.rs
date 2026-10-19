@@ -450,7 +450,7 @@ impl ChainRuntime {
 		}
 		.boxed()
 		.shared();
-		self.follow_starts.lock().insert(follow_start_key, start.clone());
+		self.record_follow_start(follow_start_key, start.clone());
 		(self.spawner)(
 			async move {
 				let _ = start.await;
@@ -803,6 +803,23 @@ impl ChainRuntime {
 			groups.remove(&self.scope);
 		}
 		result
+	}
+
+	/// Records a follow's shared setup unless this scope has already been
+	/// released.
+	///
+	/// Holds the connections lock across the check and the insert for the same
+	/// reason [`Self::with_scope_group`] does: `release_scope` leaves
+	/// `connections` before it sweeps `follow_starts`, so a writer that sees
+	/// the scope cannot have its entry swept afterwards, and one that does not
+	/// see it never inserts. Without this the setup outlives the scope, and
+	/// `core_instance` never repeats, so nothing asks for that key again.
+	fn record_follow_start(&self, key: (Vec<u8>, String), start: LocalFollowStart) {
+		let connections = self.connections.lock().unwrap();
+		if !connections.contains_key(&self.scope) {
+			return;
+		}
+		self.follow_starts.lock().insert(key, start);
 	}
 
 	/// Genesis-pinned Subxt client for the chain identified by `genesis_hash`.
@@ -3068,14 +3085,23 @@ mod tests {
 		assert!(core.transaction_operations.lock().unwrap().is_empty());
 	}
 
+	/// A call that lands after `release_scope` leaves nothing behind, taken
+	/// through the public follow rather than the scope-group helpers, because
+	/// the public path writes `follow_starts` outside them. The spawner is
+	/// inert so the setup task never runs: its failure path would clear the
+	/// same entries and hide a missing release gate.
 	#[test]
 	fn a_call_finishing_after_release_leaves_nothing_behind() {
-		let core = ChainRuntime::new(broadcast_provider(STOPPED), spawner_for_tests());
+		let inert: Spawner = Arc::new(|_task| {});
+		let core = ChainRuntime::new(broadcast_provider(STOPPED), inert);
 		let genesis = vec![0x11; 32];
 		let product = core.for_product(1);
 		product.release_scope();
 
-		product.register_follow_intent(&genesis, "c1:late");
+		let _follow = product.remote_chain_head_follow(
+			"c1:late".to_owned(),
+			RemoteChainHeadFollowRequest { genesis_hash: genesis.clone(), with_runtime: false },
+		);
 		product.with_transaction_operations(|operations| {
 			operations.insert(
 				1,
@@ -3087,6 +3113,7 @@ mod tests {
 		});
 
 		assert!(core.follow_intents.lock().unwrap().is_empty());
+		assert!(core.follow_starts.lock().is_empty(), "a released scope kept its follow setup");
 		assert!(core.transaction_operations.lock().unwrap().is_empty());
 	}
 
