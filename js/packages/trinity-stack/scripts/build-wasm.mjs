@@ -41,10 +41,11 @@ try {
   throw err;
 }
 
-// This package's own package.json and ignore rules are authoritative.
+// This package's own package.json, ignore rules and README are authoritative.
 await Promise.all([
   rm(resolve(outDir, ".gitignore"), { force: true }),
   rm(resolve(outDir, "package.json"), { force: true }),
+  rm(resolve(outDir, "README.md"), { force: true }),
 ]);
 
 const wasm = await readFile(resolve(outDir, "trinity_stack_bg.wasm"));
