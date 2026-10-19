@@ -8,6 +8,7 @@ extension WidgetImageResolver {
     /// Kingfisher's cache, and logs a source that cannot be located or loaded.
     static func cached(
         logger: any LoggerProtocol & Sendable = Logger.shared,
+        options: @escaping @Sendable (CustomMessageWidgetNode.ImageSource) -> KingfisherOptionsInfo = { _ in [] },
         locate: @escaping @Sendable (CustomMessageWidgetNode.ImageSource) async -> URL?
     ) -> WidgetImageResolver {
         WidgetImageResolver { source in
@@ -16,12 +17,32 @@ extension WidgetImageResolver {
                 return nil
             }
             do {
-                return try await KingfisherManager.shared.retrieveImage(with: url).image
+                return try await InFlightImages.shared.image(at: url) {
+                    try await KingfisherManager.shared.retrieveImage(with: url, options: options(source)).image
+                }
             } catch {
                 guard !Task.isCancelled else { return nil }
                 logger.error("Widget image \(source) failed to load from \(url): \(error)")
                 return nil
             }
         }
+    }
+}
+
+/// Kingfisher's async retrieve never returns for the second of two overlapping
+/// loads of one address, so overlapping loads share the first one. Kingfisher
+/// 8.6.1 fixes this (onevcat/Kingfisher#2444); the app pins 8.2.0.
+actor InFlightImages {
+    static let shared = InFlightImages()
+
+    private var loads: [URL: Task<UIImage, Error>] = [:]
+
+    func image(at url: URL, load: @escaping @Sendable () async throws -> UIImage) async throws -> UIImage {
+        if let running = loads[url] { return try await running.value }
+
+        let task = Task { try await load() }
+        loads[url] = task
+        defer { loads[url] = nil }
+        return try await task.value
     }
 }
