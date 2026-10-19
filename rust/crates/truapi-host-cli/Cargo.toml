@@ -23,7 +23,7 @@ correctness = "warn"
 
 [dependencies]
 truapi = { path = "../truapi" }
-trinity-stack = { path = "../trinity-stack", features = ["qr"] }
+trinity-stack = { path = "../trinity-stack" }
 anyhow = { workspace = true }
 arboard = { workspace = true, features = ["image-data"] }
 async-trait = { workspace = true }

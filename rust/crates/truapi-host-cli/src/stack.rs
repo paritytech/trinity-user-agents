@@ -10,8 +10,9 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Subcommand;
+use qrcode::{QrCode, render::unicode::Dense1x2};
 use serde::{Deserialize, Serialize};
-use trinity_stack::{DEFAULT_LINK_BASE, Document, Fetched, Pointer, Status, accept, qr_terminal};
+use trinity_stack::{DEFAULT_LINK_BASE, Document, Fetched, Pointer, Status, accept};
 use zeroize::Zeroizing;
 
 /// Where `publish` writes the descriptor under its output directory.
@@ -101,7 +102,8 @@ pub async fn run(command: StackCommand) -> Result<()> {
 		StackCommand::Link { url, key } => {
 			let link =
 				Pointer::new(&url, key.as_deref()).map_err(refused)?.to_link(DEFAULT_LINK_BASE);
-			println!("{link}\n{}", qr_terminal(&link).map_err(refused)?);
+			let qr = QrCode::new(link.as_bytes()).context("link does not fit in a QR code")?;
+			println!("{link}\n{}", qr.render::<Dense1x2>().quiet_zone(true).build());
 			Ok(())
 		},
 	}
