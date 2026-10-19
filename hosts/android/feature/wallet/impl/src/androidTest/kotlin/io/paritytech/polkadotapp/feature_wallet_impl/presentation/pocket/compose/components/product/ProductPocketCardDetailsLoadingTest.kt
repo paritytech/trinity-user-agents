@@ -82,7 +82,7 @@ class ProductPocketCardDetailsLoadingTest {
         compose.mainClock.autoAdvance = false
         compose.setContent { Details(session = null) }
 
-        compose.mainClock.advanceTimeBy(1_400)
+        compose.mainClock.advanceTimeBy(PRODUCT_PROGRESS_DELAY.inWholeMilliseconds - 100)
         compose.onNodeWithTag(PocketTestTags.PRODUCT_LOADING).assertDoesNotExist()
 
         compose.mainClock.advanceTimeBy(200)
@@ -94,6 +94,34 @@ class ProductPocketCardDetailsLoadingTest {
     @Test
     fun aRequestFromAProductWhoseCardIsMovingIsHeldUntilTheCardSettles() {
         val session = FakeSession()
+        val arrival = showArriving(session)
+        assertEquals("not listening while the card moved", 1, session.faceRequests.subscriptionCount.value)
+
+        val reply = requestFaceHidden(session)
+        assertFalse("applied while the card was moving", reply.isCompleted)
+
+        compose.mainClock.advanceTimeUntil(timeoutMillis = 3_000) { reply.isCompleted }
+        assertTrue("applied before the card settled", arrival.isIdle)
+        assertEquals(FaceShownAnswer.APPLIED, runBlocking { reply.await() })
+    }
+
+    // A card closed before it settles never moves its face, so the product is told at once instead of
+    // waiting out its call.
+    @Test
+    fun aRequestHeldForACardThatLeavesBeforeSettlingIsNotPresented() {
+        val session = FakeSession()
+        val arrival = showArriving(session)
+        val reply = requestFaceHidden(session)
+
+        arrival.targetState = false
+        compose.mainClock.advanceTimeByFrame()
+        compose.mainClock.advanceTimeByFrame()
+
+        assertTrue("left unanswered when the card left", reply.isCompleted)
+        assertEquals(FaceShownAnswer.NOT_PRESENTED, runBlocking { reply.await() })
+    }
+
+    private fun showArriving(session: SpaHostSession): MutableTransitionState<Boolean> {
         val arrival = MutableTransitionState(false).apply { targetState = true }
         compose.mainClock.autoAdvance = false
         compose.setContent {
@@ -103,16 +131,14 @@ class ProductPocketCardDetailsLoadingTest {
         }
         compose.mainClock.advanceTimeByFrame()
         compose.mainClock.advanceTimeByFrame()
-        assertEquals("nobody listening, so the request is turned away", 1, session.faceRequests.subscriptionCount.value)
+        return arrival
+    }
 
+    private fun requestFaceHidden(session: FakeSession): CompletableDeferred<FaceShownAnswer> {
         val reply = CompletableDeferred<FaceShownAnswer>()
         assertTrue(session.faceRequests.tryEmit(FaceShownRequest(shown = false, reply = reply)))
         compose.mainClock.advanceTimeByFrame()
         compose.mainClock.advanceTimeByFrame()
-        assertFalse("applied while the card was moving", reply.isCompleted)
-
-        compose.mainClock.advanceTimeBy(2_000)
-        compose.waitForIdle()
-        assertEquals(FaceShownAnswer.APPLIED, runBlocking { reply.await() })
+        return reply
     }
 }

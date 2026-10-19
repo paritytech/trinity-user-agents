@@ -40,6 +40,7 @@ import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleAlignment
 import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
+import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.ProductWebViewHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.PocketTestTags
@@ -105,8 +106,12 @@ fun ProductPocketCardDetails(
         if (leaving) return@LaunchedEffect
         session?.faceShownRequests?.collect { request ->
             val handling = launch {
-                snapshotFlow { settled }.first { it }
-                request.reply.complete(fold.showFace(request.shown))
+                try {
+                    snapshotFlow { settled }.first { it }
+                    request.reply.complete(fold.showFace(request.shown))
+                } finally {
+                    request.reply.complete(FaceShownAnswer.NOT_PRESENTED)
+                }
             }
             // A withdrawn request was answered NotPresented, so its face must not move after all.
             request.reply.invokeOnCompletion { cause -> if (cause != null) handling.cancel() }
@@ -251,4 +256,4 @@ private fun ProductLoadProgress(progress: DotNsLoadProgress) {
 }
 
 private val PRODUCT_PROGRESS_SIZE = 48.dp
-private val PRODUCT_PROGRESS_DELAY = 1500.milliseconds
+internal val PRODUCT_PROGRESS_DELAY = 1500.milliseconds
