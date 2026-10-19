@@ -42,37 +42,69 @@ struct ChainOverrides {
 }
 
 impl ChainOverrides {
-	fn from_env() -> Self {
-		Self {
-			people_ws: std::env::var(PEOPLE_WS_ENV).ok(),
-			asset_hub_ws: std::env::var(ASSET_HUB_WS_ENV).ok(),
-			bulletin_ws: std::env::var(BULLETIN_WS_ENV).ok(),
-		}
+	fn from_env() -> anyhow::Result<Self> {
+		Self::parse(
+			[PEOPLE_WS_ENV, ASSET_HUB_WS_ENV, BULLETIN_WS_ENV].map(|name| std::env::var(name).ok()),
+		)
 	}
-}
 
-/// The chain URL override vars that carry a value. Blank ones keep the preset,
-/// so they do not count as set.
-pub fn chain_overrides_set() -> Vec<&'static str> {
-	[PEOPLE_WS_ENV, ASSET_HUB_WS_ENV, BULLETIN_WS_ENV]
+	/// Blank values keep the preset. Anything else must be a `ws` or `wss` URL.
+	fn parse([people_ws, asset_hub_ws, bulletin_ws]: [Option<String>; 3]) -> anyhow::Result<Self> {
+		let url = |name: &str, value: Option<String>| -> anyhow::Result<Option<String>> {
+			let Some(value) = value.map(|value| value.trim().to_string()).filter(|v| !v.is_empty())
+			else {
+				return Ok(None);
+			};
+			let url = reqwest::Url::parse(&value)
+				.map_err(|err| anyhow::anyhow!("{name} is not a URL ({err}): {value}"))?;
+			anyhow::ensure!(
+				matches!(url.scheme(), "ws" | "wss"),
+				"{name} must be a ws:// or wss:// URL: {value}"
+			);
+			Ok(Some(value))
+		};
+		Ok(Self {
+			people_ws: url(PEOPLE_WS_ENV, people_ws)?,
+			asset_hub_ws: url(ASSET_HUB_WS_ENV, asset_hub_ws)?,
+			bulletin_ws: url(BULLETIN_WS_ENV, bulletin_ws)?,
+		})
+	}
+
+	/// The env vars behind the overrides that are set.
+	fn set_names(&self) -> Vec<&'static str> {
+		[
+			(PEOPLE_WS_ENV, &self.people_ws),
+			(ASSET_HUB_WS_ENV, &self.asset_hub_ws),
+			(BULLETIN_WS_ENV, &self.bulletin_ws),
+		]
 		.into_iter()
-		.filter(|name| std::env::var(name).is_ok_and(|value| !value.trim().is_empty()))
+		.filter_map(|(name, value)| value.is_some().then_some(name))
 		.collect()
+	}
 }
 
 impl Network {
-	/// CLI resolution: the preset with the env overrides of [`Self::config`], or
+	/// CLI resolution: the preset with the backend and chain URL overrides, or
 	/// the opt-in disposable local-network configuration, which cannot be
 	/// combined with the chain URL overrides.
 	pub fn cli_config(self) -> anyhow::Result<NetworkConfig> {
-		crate::local_network::resolve(self.config())
+		let overrides = ChainOverrides::from_env()?;
+		let set = overrides.set_names();
+		crate::local_network::resolve(
+			apply_chain_overrides(self.with_backend_override(), overrides),
+			&set,
+		)
 	}
 
-	/// Preset resolved with any environment overrides applied.
+	/// [`Self::cli_config`] without the local-network file, for tests.
+	#[cfg(test)]
 	pub fn config(self) -> NetworkConfig {
-		let config =
-			apply_backend_override(self.preset(), std::env::var(IDENTITY_BACKEND_BASE_ENV).ok());
-		apply_chain_overrides(config, ChainOverrides::from_env())
+		let overrides = ChainOverrides::from_env().expect("valid chain URL overrides");
+		apply_chain_overrides(self.with_backend_override(), overrides)
+	}
+
+	fn with_backend_override(self) -> NetworkConfig {
+		apply_backend_override(self.preset(), std::env::var(IDENTITY_BACKEND_BASE_ENV).ok())
 	}
 
 	/// The unmodified preset values.
@@ -120,15 +152,10 @@ fn apply_backend_override(mut config: NetworkConfig, base: Option<String>) -> Ne
 }
 
 /// Points each overridden role at its new URL, in both the preset field and the
-/// genesis-keyed routing table, so the two cannot disagree. Blank values keep
-/// the preset. Overridden values are leaked like the backend override.
+/// genesis-keyed routing table, so the two cannot disagree. Overridden values
+/// are leaked like the backend override.
 fn apply_chain_overrides(mut config: NetworkConfig, overrides: ChainOverrides) -> NetworkConfig {
-	let leak = |value: Option<String>| {
-		value
-			.map(|url| url.trim().to_string())
-			.filter(|url| !url.is_empty())
-			.map(|url| &*Box::leak(url.into_boxed_str()))
-	};
+	let leak = |value: Option<String>| value.map(|url| &*Box::leak(url.into_boxed_str()));
 	let routes = [
 		(leak(overrides.people_ws), config.people_genesis),
 		(leak(overrides.asset_hub_ws), config.asset_hub_genesis),
@@ -637,14 +664,10 @@ mod tests {
 	fn no_chain_override_keeps_the_preset() {
 		for network in Network::value_variants() {
 			let preset = network.preset();
-			let resolved = apply_chain_overrides(
-				preset,
-				ChainOverrides {
-					people_ws: None,
-					asset_hub_ws: Some(String::new()),
-					bulletin_ws: Some("  ".to_string()),
-				},
-			);
+			let overrides =
+				ChainOverrides::parse([None, Some(String::new()), Some("  ".to_string())]).unwrap();
+			assert!(overrides.set_names().is_empty());
+			let resolved = apply_chain_overrides(preset, overrides);
 			assert_eq!(resolved.people_ws, preset.people_ws);
 			assert_eq!(resolved.asset_hub_ws, preset.asset_hub_ws);
 			assert_eq!(resolved.bulletin_ws, preset.bulletin_ws);
@@ -653,16 +676,25 @@ mod tests {
 	}
 
 	#[test]
+	fn chain_overrides_must_be_websocket_urls() {
+		for value in ["127.0.0.1:10010", "http://127.0.0.1:10010"] {
+			let error = ChainOverrides::parse([None, None, Some(value.to_string())])
+				.expect_err("a non-ws override is refused up front");
+			assert!(error.to_string().contains(BULLETIN_WS_ENV), "{error}");
+		}
+	}
+
+	#[test]
 	fn chain_overrides_move_the_field_and_the_route_together() {
 		let preset = Network::Previewnet.preset();
-		let overridden = apply_chain_overrides(
-			preset,
-			ChainOverrides {
-				people_ws: Some("ws://127.0.0.1:10010".to_string()),
-				asset_hub_ws: Some(" ".to_string()),
-				bulletin_ws: None,
-			},
-		);
+		let overrides = ChainOverrides::parse([
+			Some(" ws://127.0.0.1:10010 ".to_string()),
+			Some(" ".to_string()),
+			None,
+		])
+		.unwrap();
+		assert_eq!(overrides.set_names(), [PEOPLE_WS_ENV]);
+		let overridden = apply_chain_overrides(preset, overrides);
 
 		assert_eq!(overridden.people_ws, "ws://127.0.0.1:10010");
 		assert_eq!(

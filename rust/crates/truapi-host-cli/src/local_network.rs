@@ -32,12 +32,12 @@ struct LocalChain {
 
 /// An absent opt-in leaves live presets unchanged. An invalid opt-in is an error;
 /// it must never silently fall back to a live chain.
-pub fn resolve(base: NetworkConfig) -> Result<NetworkConfig> {
+pub fn resolve(base: NetworkConfig, chain_overrides: &[&str]) -> Result<NetworkConfig> {
 	resolve_from(
 		base,
 		std::env::var_os(CONFIG_ENV),
 		std::env::var(LIGHT_CLIENT_ENV).ok(),
-		&crate::network::chain_overrides_set(),
+		chain_overrides,
 	)
 }
 
