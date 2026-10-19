@@ -1,0 +1,27 @@
+[package]
+name = "trinity-stack"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Parses, verifies and signs Trinity stack descriptors"
+publish = false
+
+[dependencies]
+base64.workspace = true
+blake2b_simd.workspace = true
+curve25519-dalek.workspace = true
+ed25519-dalek.workspace = true
+hex.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+serde_with.workspace = true
+sha2.workspace = true
+strum.workspace = true
+thiserror.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+curve25519-dalek = { workspace = true, features = ["digest"] }
+
+[lints]
+workspace = true
