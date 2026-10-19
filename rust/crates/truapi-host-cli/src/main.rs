@@ -610,8 +610,9 @@ async fn dispatch(
 		Command::Update => update::run_update_command().await,
 		Command::LocalNetworkCheck { network } => {
 			anyhow::ensure!(
-				std::env::var_os(local_network::CONFIG_ENV).is_some(),
-				"HOST_CLI_LOCAL_NETWORK_CONFIG must be set"
+				local_network::config_path().is_some(),
+				"{} must be set",
+				local_network::CONFIG_ENV
 			);
 			let config = network.cli_config()?;
 			println!(

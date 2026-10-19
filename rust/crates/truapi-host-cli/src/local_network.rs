@@ -33,12 +33,16 @@ struct LocalChain {
 /// An absent opt-in leaves live presets unchanged. An invalid opt-in is an error;
 /// it must never silently fall back to a live chain.
 pub fn resolve(base: NetworkConfig, chain_overrides: &[&str]) -> Result<NetworkConfig> {
-	resolve_from(
-		base,
-		std::env::var_os(CONFIG_ENV),
-		std::env::var(LIGHT_CLIENT_ENV).ok(),
-		chain_overrides,
-	)
+	resolve_from(base, config_path(), std::env::var(LIGHT_CLIENT_ENV).ok(), chain_overrides)
+}
+
+/// The local-network file's path. A blank value is unset, like the other overrides.
+pub fn config_path() -> Option<std::ffi::OsString> {
+	non_blank(std::env::var_os(CONFIG_ENV))
+}
+
+fn non_blank(path: Option<std::ffi::OsString>) -> Option<std::ffi::OsString> {
+	path.filter(|path| !path.to_string_lossy().trim().is_empty())
 }
 
 fn resolve_from(
@@ -230,6 +234,14 @@ mod tests {
 		// Without the local config the light client's own preset is untouched.
 		let live = resolve_from(base, None, Some("1".to_owned()), &[]).unwrap();
 		assert_eq!(live.people_ws, base.people_ws);
+	}
+
+	#[test]
+	fn a_blank_path_is_unset() {
+		for value in ["", "  "] {
+			assert!(non_blank(Some(value.into())).is_none());
+		}
+		assert!(non_blank(Some("/tmp/local-network.json".into())).is_some());
 	}
 
 	#[test]
