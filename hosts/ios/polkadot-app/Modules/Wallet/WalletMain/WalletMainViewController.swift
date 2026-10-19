@@ -129,6 +129,14 @@ extension WalletMainViewController: WalletMainViewProtocol {
         rootView.viewModel.openPocketCard = key
     }
 
+    func moveOpenCard(by offset: CGSize, clearingPocket: Bool, animated: Bool) {
+        let viewModel = rootView.viewModel
+        withTransaction(Transaction(animation: animated ? PocketCardFlightTiming.animation : nil)) {
+            viewModel.openPocketCardOffset = offset
+            viewModel.isPocketCleared = clearingPocket
+        }
+    }
+
     @objc
     func didTapShare() {
         identityDetailsScene.share()

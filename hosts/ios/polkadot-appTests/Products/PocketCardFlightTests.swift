@@ -8,19 +8,43 @@ import UIKit
 /// screen, and back when closed, so the user sees one card move.
 @MainActor
 struct PocketCardFlightTests {
-    /// The screen draws the card for as long as it is up, so the Pocket's own
-    /// copy is hidden for that long. However the screen is closed, the Pocket
-    /// must get its card back, or a slot in it stays empty.
+    /// The Pocket draws the card while it flies, at its own depth in the stack,
+    /// so the cards below it stay in front of it. Once the screen is up, the
+    /// Pocket's card waits under the screen's at the same spot with the rest of
+    /// the Pocket cleared away, so a close starts with no jump. However the
+    /// screen is closed, the Pocket must get its card and its other cards back
+    /// in place, or the stack is left broken.
     @Test(arguments: [true, false])
-    func hidesTheCardInThePocketWhileItsScreenIsUp(closingAnimated: Bool) async throws {
+    func keepsDrawingTheOpenCardInThePocket(closingAnimated: Bool) async throws {
         let origin = FakePocketCardOrigin(slot: pocketSlot)
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), origin: origin)
 
         let window = try await presentCard(screen)
-        let whileOpen = origin.openCard
+        let screenCard = screen.cardFrame(in: window)
+        let whileOpen = origin.placement
         await closeCard(screen, animated: closingAnimated)
 
-        #expect([whileOpen, origin.openCard] == [loyaltyCard.key, nil])
+        let lifted = PocketPlacement(
+            openCard: loyaltyCard.key,
+            offset: CGSize(width: screenCard.minX - pocketSlot.minX, height: screenCard.minY - pocketSlot.minY),
+            cleared: true
+        )
+        #expect([whileOpen, origin.placement] == [lifted, PocketPlacement()])
+        withExtendedLifetime((window, origin)) {}
+    }
+
+    /// A card the Pocket cannot place fades with its screen instead of flying,
+    /// and the Pocket is left as it was.
+    @Test
+    func leavesThePocketInPlaceWhenItCannotPlaceTheCard() async throws {
+        let origin = FakePocketCardOrigin(slot: nil)
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), origin: origin)
+
+        let window = try await presentCard(screen)
+        let whileOpen = origin.placement
+        await closeCard(screen)
+
+        #expect([whileOpen, origin.placement] == [PocketPlacement(openCard: loyaltyCard.key), PocketPlacement()])
         withExtendedLifetime((window, origin)) {}
     }
 
@@ -52,7 +76,10 @@ private struct ScreenLook: Equatable {
     let navigationBackground: UIColor?
     let clipsToScreen: Bool?
     let faceTransform: CGAffineTransform?
+    let faceAlpha: CGFloat?
+    let productTransform: CGAffineTransform
     var productAlphaAfterClosing: CGFloat?
+    var productTransformAfterClosing: CGAffineTransform?
 }
 
 @MainActor
@@ -70,10 +97,13 @@ private func lookOfACardOpenedAndClosed(from origin: PocketCardOrigin?) async th
         background: screen.view.backgroundColor?.resolvedColor(with: traits),
         navigationBackground: screen.navigationController?.view.backgroundColor?.resolvedColor(with: traits),
         clipsToScreen: screen.scrollView?.clipsToBounds,
-        faceTransform: face?.view.transform
+        faceTransform: face?.view.transform,
+        faceAlpha: face?.view.alpha,
+        productTransform: product.controller.view.transform
     )
     await closeCard(screen)
     look.productAlphaAfterClosing = product.controller.view.alpha
+    look.productTransformAfterClosing = product.controller.view.transform
 
     withExtendedLifetime(window) {}
     return look

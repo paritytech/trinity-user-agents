@@ -135,7 +135,13 @@ extension PocketCardScreenViewController: UIViewControllerTransitioningDelegate 
     }
 
     private func flight(opening: Bool) -> PocketCardFlight? {
-        guard let origin, !UIAccessibility.isReduceMotionEnabled else { return nil }
+        guard let origin else { return nil }
+
+        guard !UIAccessibility.isReduceMotionEnabled else {
+            // Nothing carries the card back, so the Pocket is whole again before the screen slides off it.
+            origin.moveOpenCard(by: .zero, clearingPocket: false, animated: false)
+            return nil
+        }
 
         // From here on, not from when the flight starts: a face moved in
         // between would fly in already folded away.
@@ -164,13 +170,29 @@ extension PocketCardScreenViewController {
         navigationController?.view.backgroundColor = .clear
     }
 
+    /// Moves the card with its page hanging off it, so the page never covers
+    /// the card the Pocket draws in its place.
     func moveCard(by offset: CGPoint) {
         face.view.transform = CGAffineTransform(translationX: offset.x, y: offset.y)
+        product.controller.view.transform = face.view.transform
+    }
+
+    /// The Pocket draws the card while it flies.
+    func setCardHidden(_ hidden: Bool) {
+        face.view.alpha = hidden ? 0 : 1
     }
 
     /// All the screen draws besides the card once its backgrounds are cleared.
     func setSurroundingsAlpha(_ alpha: CGFloat) {
+        setBarAlpha(alpha)
+        setPageAlpha(alpha)
+    }
+
+    func setBarAlpha(_ alpha: CGFloat) {
         navigationController?.navigationBar.alpha = alpha
+    }
+
+    func setPageAlpha(_ alpha: CGFloat) {
         product.controller.view.alpha = alpha
     }
 
@@ -181,10 +203,13 @@ extension PocketCardScreenViewController {
         view.backgroundColor = .bgSurfaceMain
         navigationController?.view.backgroundColor = .bgSurfaceMain
         setSurroundingsAlpha(1)
+        moveCard(by: .zero)
+        setCardHidden(false)
         applyPendingFace(animated: true)
     }
 
     func showCardInPocket() {
+        origin?.moveOpenCard(by: .zero, clearingPocket: false, animated: false)
         origin?.setOpenCard(nil)
     }
 }
