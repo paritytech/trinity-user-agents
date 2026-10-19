@@ -7,7 +7,7 @@ use crate::{
 	},
 	runtime::{
 		authority::AuthorityError, connected_session_ui_info,
-		identity::resolve_session_identity_with_chain,
+		identity::lookup_session_identity,
 	},
 	session_usernames::SessionUsernames,
 };
@@ -68,17 +68,24 @@ impl LocalActivation for SigningHost {
 		let session_state = self.session_state.clone();
 		let auth_state = self.auth_state.clone();
 		(self.services.spawner)(Box::pin(async move {
-			let unnamed = SessionInfo { lite_username: None, ..session.clone() };
-			let resolved = resolve_session_identity_with_chain(
+			let Some(identity) = lookup_session_identity(
 				&services.chain,
 				services.asset_hub_chain_genesis_hash().unwrap_or_default(),
-				unnamed,
+				&session,
 			)
-			.await;
-			if resolved.has_username() &&
-				session_state.replace_session_if_current(&session, resolved.clone())
+			.await
+			else {
+				return;
+			};
+			let named = SessionInfo {
+				lite_username: identity.lite_username,
+				full_username: identity.full_username,
+				..session.clone()
+			};
+			if named.has_username() &&
+				session_state.replace_session_if_current(&session, named.clone())
 			{
-				auth_state.connected(&connected_session_ui_info(&resolved));
+				auth_state.connected(&connected_session_ui_info(&named));
 			}
 		}));
 		Ok(())

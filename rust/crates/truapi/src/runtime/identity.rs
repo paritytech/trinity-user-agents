@@ -41,49 +41,66 @@ pub async fn resolve_session_identity_with_chain(
 	asset_hub_chain_genesis_hash: [u8; 32],
 	mut session: SessionInfo,
 ) -> SessionInfo {
-	if session.has_username() || asset_hub_chain_genesis_hash == [0; 32] {
+	if session.has_username() {
 		return session;
 	}
-
+	if let Some(identity) =
+		lookup_session_identity(chain, asset_hub_chain_genesis_hash, &session).await
 	{
-		let budget = futures_timer::Delay::new(LOOKUP_BUDGET).fuse();
-		pin_mut!(budget);
-		let resolve = async {
-			let preferred_account = session.identity_account_id.unwrap_or(session.public_key);
-			if lookup_and_apply(
-				chain,
-				asset_hub_chain_genesis_hash,
-				preferred_account,
-				&mut session,
-				"identity",
-			)
-			.await == LookupOutcome::NoRecord &&
-				preferred_account != session.public_key
-			{
-				let public_key = session.public_key;
-				lookup_and_apply(
-					chain,
-					asset_hub_chain_genesis_hash,
-					public_key,
-					&mut session,
-					"root identity",
-				)
-				.await;
-			}
-		}
-		.fuse();
-		pin_mut!(resolve);
-		futures::select! {
-			() = resolve => {}
-			() = budget => {
-				warn!(
-					"dotNS username resolution ran out of budget; the session installs without one"
-				);
-			}
-		}
+		session.apply_usernames(identity.lite_username, identity.full_username);
+	}
+	session
+}
+
+/// Reads `session`'s usernames from the dotNS contracts on Asset Hub, whatever
+/// usernames it already carries. The identity account is tried first, then the
+/// root key when the identity account holds no record. Returns `None` when no
+/// Asset Hub is configured, neither account holds a record, or the lookup fails.
+#[instrument(skip_all, fields(runtime.method = "session.identity.lookup_session"))]
+pub async fn lookup_session_identity(
+	chain: &ChainRuntime,
+	asset_hub_chain_genesis_hash: [u8; 32],
+	session: &SessionInfo,
+) -> Option<DotnsIdentity> {
+	if asset_hub_chain_genesis_hash == [0; 32] {
+		return None;
 	}
 
-	session
+	let budget = futures_timer::Delay::new(LOOKUP_BUDGET).fuse();
+	pin_mut!(budget);
+	let lookup = async {
+		let preferred_account = session.identity_account_id.unwrap_or(session.public_key);
+		match lookup_with_retries(chain, asset_hub_chain_genesis_hash, preferred_account, "identity")
+			.await
+		{
+			LookupOutcome::Found(identity) => Some(identity),
+			LookupOutcome::NoRecord if preferred_account != session.public_key => {
+				match lookup_with_retries(
+					chain,
+					asset_hub_chain_genesis_hash,
+					session.public_key,
+					"root identity",
+				)
+				.await
+				{
+					LookupOutcome::Found(identity) => Some(identity),
+					LookupOutcome::NoRecord | LookupOutcome::Failed => None,
+				}
+			},
+			LookupOutcome::NoRecord | LookupOutcome::Failed => None,
+		}
+	}
+	.fuse();
+	pin_mut!(lookup);
+	futures::select! {
+		identity = lookup => identity,
+		() = budget => {
+			warn!(
+				"dotNS username resolution ran out of budget; the session installs without one"
+			);
+			None
+		}
+	}
 }
 
 /// Maximum lookup attempts per account on transient failure. The first attempt
@@ -91,23 +108,22 @@ pub async fn resolve_session_identity_with_chain(
 /// timeout therefore usually resolves immediately.
 const IDENTITY_LOOKUP_MAX_ATTEMPTS: usize = 3;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum LookupOutcome {
-	/// A username record was found and applied.
-	Applied,
+	/// A username record was found.
+	Found(DotnsIdentity),
 	/// The account has no dotNS labels. Definitive, not worth a retry.
 	NoRecord,
 	/// The lookup failed transiently after exhausting retries.
 	Failed,
 }
 
-/// Looks up `account`'s dotNS identity and applies any usernames to `session`.
-/// Transient failures are retried against the warmed connection.
-async fn lookup_and_apply(
+/// Looks up `account`'s dotNS identity, retrying transient failures against the
+/// warmed connection.
+async fn lookup_with_retries(
 	chain: &ChainRuntime,
 	asset_hub_chain_genesis_hash: [u8; 32],
 	account: [u8; 32],
-	session: &mut SessionInfo,
 	label: &str,
 ) -> LookupOutcome {
 	for attempt in 1..=IDENTITY_LOOKUP_MAX_ATTEMPTS {
@@ -119,8 +135,7 @@ async fn lookup_and_apply(
 					full_username = identity.full_username.as_deref().unwrap_or(""),
 					"dotNS {label} lookup found username"
 				);
-				session.apply_usernames(identity.lite_username, identity.full_username);
-				return LookupOutcome::Applied;
+				return LookupOutcome::Found(identity);
 			},
 			Ok(None) => {
 				debug!(
