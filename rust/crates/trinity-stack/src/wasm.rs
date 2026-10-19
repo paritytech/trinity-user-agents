@@ -2,8 +2,8 @@
 //! crate's own types, and errors as a `TrinityStackError` carrying the rule's [`Error::code`].
 
 use crate::{
-	Accepted, DEFAULT_LINK_BASE, Descriptor, Document, Error, Fetched, Pointer, SpecFile, Verified,
-	accept as accept_fetched, format, open as open_bytes,
+	Accepted, DEFAULT_LINK_BASE, Descriptor, Document, Error, Fetched, Pointer, PublishState,
+	Rendered, SpecFile, Verified, accept as accept_fetched, format, open as open_bytes,
 };
 use serde::Serialize;
 use tsify::{Ts, Tsify};
@@ -114,6 +114,24 @@ pub fn same_stack(pointer: Ts<Pointer>, other: Ts<Pointer>) -> Result<bool, JsVa
 #[wasm_bindgen(js_name = contentHash)]
 pub fn content_hash(descriptor: &[u8]) -> Result<String, JsValue> {
 	Ok(format::to_hex(&crate::content_hash(descriptor).map_err(to_js_error)?))
+}
+
+/// Renders a model as a checked descriptor, keeping `sequence` while the content matches
+/// `previous`.
+#[wasm_bindgen]
+pub fn render(
+	model: &[u8],
+	generation: &str,
+	previous: Option<Ts<PublishState>>,
+	now_unix_seconds: f64,
+) -> Result<Ts<Rendered>, JsValue> {
+	let previous = previous
+		.map(|state| state.to_rust())
+		.transpose()
+		.map_err(|_| type_error("a publish state needs sequence and contentHash"))?;
+	let rendered = crate::render(model, generation, previous.as_ref(), now_unix_seconds as u64)
+		.map_err(to_js_error)?;
+	to_js(&rendered)
 }
 
 /// A plain descriptor in its canonical form: sorted keys, unknown members kept.
