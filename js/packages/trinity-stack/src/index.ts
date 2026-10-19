@@ -3,6 +3,7 @@
 import type {
   Accepted,
   Descriptor,
+  ParsedDocument,
   Pointer,
   SpecFile,
   Verified,
@@ -19,6 +20,7 @@ export type {
   Descriptor,
   Fork,
   ForkSource,
+  ParsedDocument,
   Pointer,
   Service,
   SpecFile,
@@ -36,15 +38,9 @@ export function isTrinityStackError(
   return error instanceof Error && error.name === "TrinityStackError";
 }
 
-/**
- * Parses a document as served, without checking any key. Here `signed` says only that the
- * document is an envelope.
- */
-export function parse(bytes: Uint8Array): {
-  descriptor: Descriptor;
-  signed: boolean;
-} {
-  return JSON.parse(wasm.parse(bytes));
+/** Parses a document as served, without checking any key. */
+export function parse(bytes: Uint8Array): ParsedDocument {
+  return wasm.parse(bytes);
 }
 
 /** Parses a document and applies the pointer's rules. */
