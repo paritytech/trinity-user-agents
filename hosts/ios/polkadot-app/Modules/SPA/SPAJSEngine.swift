@@ -19,6 +19,7 @@ final class SPAJSEngine: NSObject, @unchecked Sendable {
     private let navigationDecisionHandler: SPANavigationDecisionHandling?
 
     var onNavigationIntercepted: ((URL) -> Void)?
+    var onDeeplinkRequested: ((URL) -> Void)?
 
     init(
         webView: WKWebView,
@@ -215,6 +216,9 @@ extension SPAJSEngine: WKNavigationDelegate {
         case let .intercept(url):
             decisionHandler(.cancel)
             onNavigationIntercepted?(url)
+        case let .openDeeplink(url):
+            decisionHandler(.cancel)
+            onDeeplinkRequested?(url)
         }
     }
 

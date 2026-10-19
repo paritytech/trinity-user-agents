@@ -27,6 +27,7 @@ protocol SPAPresenterProtocol: AnyObject {
     func didTapClose()
     func didTapRetry()
     func didInterceptNavigation(to url: URL)
+    func didRequestDeeplink(_ url: URL)
     func didUpdateWebViewTitle(_ title: String)
     func hasChatEntry() -> Bool
     func didTapOpenChat()
@@ -52,6 +53,7 @@ protocol SPAInteractorOutputProtocol: AnyObject {
 @MainActor
 protocol SPAWireframeProtocol: AlertPresentable, ErrorPresentable {
     func showProductSPA(from view: ControllerBackedProtocol?, productHost: ProductHost)
+    func openDeeplink(_ url: URL)
     func showMoreActions(
         from view: ControllerBackedProtocol?,
         actions: [SPAMoreAction],

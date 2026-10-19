@@ -163,17 +163,17 @@ impl ProductRuntimeHost {
 		host_id: [u8; 32],
 		amount: u128,
 	) -> Result<bool, CallError<E>> {
-		let registry = self.services.funding();
-		if self.product.execution_kind != ProductExecutionKind::Worker ||
+		let registry = self.connection.services.funding();
+		if self.connection.product.execution_kind != ProductExecutionKind::Worker ||
 			registry.platform().is_none()
 		{
 			return Ok(false);
 		}
 		Ok(registry
 			.record_start(
-				self.platform.as_ref(),
+				self.connection.platform.as_ref(),
 				current_unix_millis(),
-				&self.product.product_id,
+				&self.connection.product.product_id,
 				direction,
 				host_id,
 				amount,
@@ -184,12 +184,13 @@ impl ProductRuntimeHost {
 	/// Drop the record of funds the host refused to start.
 	async fn forget_funding_start(&self, host_id: [u8; 32]) {
 		let forgotten = self
+			.connection
 			.services
 			.funding()
 			.forget_start(
-				self.platform.as_ref(),
+				self.connection.platform.as_ref(),
 				current_unix_millis(),
-				&self.product.product_id,
+				&self.connection.product.product_id,
 				host_id,
 			)
 			.await;
@@ -210,13 +211,14 @@ impl Payment for ProductRuntimeHost {
 	{
 		let version = request.version();
 		let latest::HostPaymentBalanceSubscribeRequest { purse } = request.into_latest();
-		let Some(platform) = self.services.balance_platform() else {
+		let Some(platform) = self.connection.services.balance_platform() else {
 			return Subscription::interrupted(CallError::Unsupported);
 		};
 		if let Err(error) = self.require_session() {
 			return Subscription::interrupted(error);
 		}
 		if let Err(error) = self
+			.connection
 			.require_remote_permission(
 				latest::RemotePermission::BalanceAccess,
 				latest::HostPaymentBalanceSubscribeError::PermissionDenied,
@@ -225,7 +227,7 @@ impl Payment for ProductRuntimeHost {
 		{
 			return Subscription::interrupted(from_latest_error(error, version));
 		}
-		versioned_subscription(platform.subscribe_balance(&self.product, purse), version)
+		versioned_subscription(platform.subscribe_balance(&self.connection.product, purse), version)
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "payment.request"))]
@@ -249,14 +251,17 @@ impl Payment for ProductRuntimeHost {
 	) -> Subscription<HostPaymentStatusSubscribeItem, CallError<HostPaymentStatusSubscribeError>> {
 		let version = request.version();
 		let latest::HostPaymentStatusSubscribeRequest { id } = request.into_latest();
-		let Some(platform) = self.services.payment_platform() else {
+		let Some(platform) = self.connection.services.payment_platform() else {
 			return Subscription::interrupted(CallError::Unsupported);
 		};
 		if let Err(error) = self.require_session() {
 			return Subscription::interrupted(error);
 		}
 		versioned_subscription(
-			platform.subscribe_payment_status(&self.product, host_payment_id(&self.product, id)),
+			platform.subscribe_payment_status(
+				&self.connection.product,
+				host_payment_id(&self.connection.product, id),
+			),
 			version,
 		)
 	}
@@ -285,14 +290,17 @@ impl Payment for ProductRuntimeHost {
 	> {
 		let version = request.version();
 		let latest::HostPaymentTopUpStatusSubscribeRequest { id } = request.into_latest();
-		let Some(platform) = self.services.top_up_platform() else {
+		let Some(platform) = self.connection.services.top_up_platform() else {
 			return Subscription::interrupted(CallError::Unsupported);
 		};
 		if let Err(error) = self.require_session() {
 			return Subscription::interrupted(error);
 		}
 		versioned_subscription(
-			platform.subscribe_top_up_status(&self.product, host_payment_id(&self.product, id)),
+			platform.subscribe_top_up_status(
+				&self.connection.product,
+				host_payment_id(&self.connection.product, id),
+			),
 			version,
 		)
 	}
@@ -301,7 +309,7 @@ impl Payment for ProductRuntimeHost {
 impl ProductRuntimeHost {
 	/// `Denied` unless a pairing session is connected.
 	pub(crate) fn require_session<E>(&self) -> Result<(), CallError<E>> {
-		match self.authority.current_session() {
+		match self.accounts.current_session() {
 			Some(_) => Ok(()),
 			None => Err(CallError::Denied),
 		}
@@ -310,7 +318,8 @@ impl ProductRuntimeHost {
 	/// Whether the product already holds balance access, without asking.
 	async fn holds_balance_access(&self) -> bool {
 		matches!(
-			self.permissions_service()
+			self.connection
+				.permissions_service()
 				.peek_remote(&latest::RemotePermissionRequest {
 					permission: latest::RemotePermission::BalanceAccess,
 				})
@@ -325,16 +334,16 @@ impl ProductRuntimeHost {
 		&self,
 		mut request: latest::HostPaymentRequest,
 	) -> Result<(), CallError<latest::HostPaymentError>> {
-		let platform = self.services.payment_platform().ok_or(CallError::Unsupported)?;
+		let platform = self.connection.services.payment_platform().ok_or(CallError::Unsupported)?;
 		self.require_session()?;
 		if request.amount == 0 {
 			return Err(CallError::Domain(latest::HostPaymentError::InvalidAmount));
 		}
-		request.id = host_payment_id(&self.product, request.id);
+		request.id = host_payment_id(&self.connection.product, request.id);
 		let (host_id, amount) = (request.id, request.amount);
 		self.record_funding_start(latest::FundingDirection::Out, host_id, amount)
 			.await?;
-		let requested = platform.request_payment(&self.product, request).await;
+		let requested = platform.request_payment(&self.connection.product, request).await;
 		// A repeat of a payment the host already holds keeps its record; any
 		// other failure means no money moves under this id, even when an
 		// earlier call recorded it.
@@ -363,7 +372,7 @@ impl ProductRuntimeHost {
 		&self,
 		mut request: latest::HostPaymentTopUpRequest,
 	) -> Result<(), CallError<latest::HostPaymentTopUpError>> {
-		let platform = self.services.top_up_platform().ok_or(CallError::Unsupported)?;
+		let platform = self.connection.services.top_up_platform().ok_or(CallError::Unsupported)?;
 		self.require_session()?;
 		if request.amount == 0 {
 			return Err(CallError::Domain(latest::HostPaymentTopUpError::InvalidAmount));
@@ -371,10 +380,10 @@ impl ProductRuntimeHost {
 		if !source_keys_are_valid(&request.source) {
 			return Err(CallError::Domain(latest::HostPaymentTopUpError::InvalidSource));
 		}
-		request.id = host_payment_id(&self.product, request.id);
+		request.id = host_payment_id(&self.connection.product, request.id);
 		let (host_id, amount) = (request.id, request.amount);
 		self.record_funding_start(latest::FundingDirection::In, host_id, amount).await?;
-		let started = platform.top_up(&self.product, request).await;
+		let started = platform.top_up(&self.connection.product, request).await;
 		// As for payments: only a top-up the host already holds keeps its
 		// record.
 		if started
