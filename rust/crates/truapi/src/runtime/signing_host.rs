@@ -1797,6 +1797,66 @@ mod tests {
 		);
 	}
 
+	/// A refusal reaches the host log with what it was judged by.
+	///
+	/// The wire answers `NotAllowlisted` for every reason, so one device
+	/// refusing a grant every other device admits is only explicable from this
+	/// line: how old its cached copy was, or that it cached a miss, and what
+	/// the manifest lists for the caller.
+	#[test]
+	fn a_refusal_tells_the_host_what_it_judged_by() {
+		let cases = [
+			(Some(r#"{"someone-else":["context"]}"#), "not granted, entry=dim2, scopes=None"),
+			(Some(r#"{"dim2":["storage"]}"#), "not granted, entry=dim2, scopes=Some([Storage])"),
+			(None, "manifest unavailable, entry=dim2, scopes=None"),
+		];
+		for (trusted_products, judged) in cases {
+			assert_eq!(
+				refusal_lines_from_an_hour_old_cache(trusted_products),
+				vec![format!(
+					"truapi.tracing.warn truapi::runtime::product_manifest: ring-VRF access \
+					 refused {{because={judged}, caller=dim2.dot, owner=peopl.dot, \
+					 context=None, source=cache, 3600 s old}}"
+				)],
+				"{trusted_products:?}"
+			);
+		}
+	}
+
+	/// The host log lines of `dim2.dot` asking for `peopl.dot`'s key, with
+	/// `peopl.dot`'s manifest cached an hour ago listing `trusted_products`, or
+	/// `None` for a cached answer that it publishes no manifest.
+	fn refusal_lines_from_an_hour_old_cache(trusted_products: Option<&str>) -> Vec<String> {
+		const HOUR_SECS: u64 = 60 * 60;
+		let fetched_at_secs = crate::unix_time::current_unix_secs() - HOUR_SECS;
+		let json = trusted_products.map(crate::host_internal::product_manifest::test_manifest_json);
+		let lines = crate::logging::testing::host_sink_lines(|| {
+			let _ = foreign_proof_through_the_authority_with(None, |platform| {
+				futures::executor::block_on(
+					<StubPlatform as crate::platform::CoreStorage>::write_core_storage(
+						platform,
+						crate::runtime::product_manifest::manifest_cache_key("peopl.dot"),
+						crate::runtime::product_manifest::encode_cached_root_manifest(
+							json.as_deref(),
+							fetched_at_secs,
+						),
+					),
+				)
+				.expect("stub core storage accepts the entry");
+			});
+		});
+		// The clock may tick between seeding and the lookup.
+		let ages = HOUR_SECS..=crate::unix_time::current_unix_secs() - fetched_at_secs;
+		lines
+			.into_iter()
+			.map(|line| {
+				ages.clone().fold(line, |line, age| {
+					line.replace(&format!("{age} s old"), &format!("{HOUR_SECS} s old"))
+				})
+			})
+			.collect()
+	}
+
 	/// **The one that matters.** Nothing in the request can stand in for the
 	/// manifest.
 	///
