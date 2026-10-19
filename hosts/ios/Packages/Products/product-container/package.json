@@ -5,7 +5,8 @@
   "scripts": {
     "build": "esbuild src/index.ts --bundle --outfile=dist/container.js --format=iife --target=es2020 --define:process.env.NODE_ENV=\\\"production\\\"",
     "build:dev": "esbuild src/index.ts --bundle --outfile=dist/container.js --format=iife --target=es2020",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test test/"
   },
   "dependencies": {
     "@novasamatech/host-api": "0.12.0",

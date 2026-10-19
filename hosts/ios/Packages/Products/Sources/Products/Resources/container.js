@@ -5360,6 +5360,9 @@
       if (!entry)
         return;
       const msg = typeof payload === "string" ? JSON.parse(payload) : payload;
+      if (entry.timer !== void 0 && ("value" in msg || "error" in msg)) {
+        clearTimeout(entry.timer);
+      }
       if ("value" in msg) {
         entry.resolve?.(msg.value);
         pending.delete(id2);
@@ -5376,10 +5379,17 @@
       }
     };
     return {
-      callNative(method, params) {
+      callNative(method, params, options) {
         return new Promise((resolve, reject) => {
           const id2 = `r${nextId++}`;
-          pending.set(id2, { resolve, reject });
+          const entry = { resolve, reject };
+          if (options?.timeoutMs !== void 0) {
+            entry.timer = setTimeout(() => {
+              pending.delete(id2);
+              reject(Object.assign(new Error(`Native call '${method}' timed out`), { code: "timeout" }));
+            }, options.timeoutMs);
+          }
+          pending.set(id2, entry);
           sendToNative({ type: "request", id: id2, method, params });
         });
       },
@@ -5391,6 +5401,41 @@
           pending.delete(id2);
           sendToNative({ type: "unsubscribe", id: id2 });
         };
+      }
+    };
+  }
+
+  // src/network-gate.ts
+  function createNetworkGate(call, options) {
+    const now = options.now ?? (() => Date.now());
+    const allowedUntil = /* @__PURE__ */ new Map();
+    const inFlight = /* @__PURE__ */ new Map();
+    const hostOf = (url) => {
+      try {
+        return new URL(url, location.href).host || null;
+      } catch {
+        return null;
+      }
+    };
+    const ask = (url) => call(url, options.timeoutMs).then((response) => response.allowed);
+    return {
+      allow(url) {
+        const host = hostOf(url);
+        if (host === null)
+          return ask(url);
+        const until = allowedUntil.get(host);
+        if (until !== void 0 && until > now())
+          return Promise.resolve(true);
+        const pending = inFlight.get(host);
+        if (pending)
+          return pending;
+        const request = ask(url).then((allowed) => {
+          if (allowed)
+            allowedUntil.set(host, now() + options.ttlMs);
+          return allowed;
+        }).finally(() => inFlight.delete(host));
+        inFlight.set(host, request);
+        return request;
       }
     };
   }
@@ -6292,10 +6337,21 @@
     const json = JSON.stringify(message);
     window.webkit.messageHandlers.__container__.postMessage(json);
   });
+  var NETWORK_GRANT_TTL_MS = 6e4;
+  var NETWORK_CHECK_TIMEOUT_MS = 1e4;
+  var networkGate = createNetworkGate(
+    (url, timeoutMs) => callNative("allowNetworkAccess", { url }, { timeoutMs }),
+    { ttlMs: NETWORK_GRANT_TTL_MS, timeoutMs: NETWORK_CHECK_TIMEOUT_MS }
+  );
   freezeValue(window, "fetch", async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    const response = await callNative("allowNetworkAccess", { url });
-    if (!response.allowed) {
+    let allowed;
+    try {
+      allowed = await networkGate.allow(url);
+    } catch (e) {
+      return Promise.reject(new TypeError(`Network access check failed: ${e?.message ?? e}`));
+    }
+    if (!allowed) {
       return Promise.reject(new TypeError("Network access is not allowed"));
     }
     return _nativeFetch(input, init);
@@ -6305,14 +6361,20 @@
     const _open = xhr.open.bind(xhr);
     xhr.open = function(method, url, ...rest) {
       const resolvedUrl = typeof url === "string" ? url : url.href;
-      callNative("allowNetworkAccess", { url: resolvedUrl }).then((response) => {
-        if (!response.allowed) {
+      networkGate.allow(resolvedUrl).then(
+        (allowed) => {
+          if (!allowed) {
+            xhr.dispatchEvent(new Event("error"));
+            xhr.abort();
+            return;
+          }
+          _open(method, url, ...rest);
+        },
+        () => {
           xhr.dispatchEvent(new Event("error"));
           xhr.abort();
-          return;
         }
-        _open(method, url, ...rest);
-      });
+      );
     };
     return xhr;
   });
