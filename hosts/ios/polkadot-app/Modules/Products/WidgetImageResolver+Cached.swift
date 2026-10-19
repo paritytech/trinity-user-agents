@@ -16,7 +16,22 @@ extension WidgetImageResolver {
                 return nil
             }
             do {
-                return try await KingfisherManager.shared.retrieveImage(with: url).image
+                let processor = SVGImageProcessor()
+                let image = try await KingfisherManager.shared.retrieveImage(
+                    with: url,
+                    options: [.processor(processor), .cacheSerializer(RemoteImageSerializer.shared)]
+                ).image
+                // The SVG serializer answers bytes it cannot read with an empty
+                // image, which is not kept, so a later draw tries again.
+                guard image.size != .zero else {
+                    try? await KingfisherManager.shared.cache.removeImage(
+                        forKey: url.cacheKey,
+                        processorIdentifier: processor.identifier
+                    )
+                    logger.error("Widget image \(source) failed to load from \(url): not a picture")
+                    return nil
+                }
+                return image
             } catch {
                 guard !Task.isCancelled else { return nil }
                 logger.error("Widget image \(source) failed to load from \(url): \(error)")
