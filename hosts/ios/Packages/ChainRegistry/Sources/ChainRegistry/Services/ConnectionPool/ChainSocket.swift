@@ -193,14 +193,17 @@ private extension ChainSocket {
     }
 
     func didConnect() {
-        state.withLockUnchecked { [connection] state in
-            guard state.phase == .connecting else { return }
+        let openedDelegate = state.withLockUnchecked { [connection] state -> ChainSocketDelegate? in
+            guard state.phase == .connecting else { return nil }
             state.phase = .open
             state.cancelConnectDeadline()
             state.pending.forEach { connection.write(string: $0) }
             state.pending.removeAll()
             state.pingTick = makePingTick()
+            return state.delegate
         }
+
+        openedDelegate?.chainSocketDidOpen(self)
     }
 
     func deliver(_ text: String) {

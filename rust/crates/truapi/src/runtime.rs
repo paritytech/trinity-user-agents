@@ -877,6 +877,7 @@ fn parse_legacy_signer_hex(signer: &str) -> Option<[u8; 32]> {
 }
 
 fn runtime_failure_to_call_error<E>(failure: RuntimeFailure) -> CallError<E> {
+	tracing::warn!(kind = ?failure.kind(), reason = %failure, "chain call failed");
 	CallError::HostFailure { reason: failure.reason() }
 }
 

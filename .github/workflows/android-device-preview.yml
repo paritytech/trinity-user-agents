@@ -90,6 +90,7 @@ jobs:
           PRIVACY_POLICY_URL: https://example.invalid/privacy
           SENTRY_ORG: preview
           SENTRY_PROJECT: preview
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
           TERMS_OF_USE_URL: https://example.invalid/terms
           CI_KEYSTORE_PASS: ${{ secrets.CI_KEYSTORE_PASS }}
           CI_KEYSTORE_KEY_ALIAS: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}

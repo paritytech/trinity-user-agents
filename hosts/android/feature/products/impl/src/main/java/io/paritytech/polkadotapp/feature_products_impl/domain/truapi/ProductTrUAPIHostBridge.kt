@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import android.util.Log
 import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
@@ -104,7 +105,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         // would stall unrelated TrUAPI traffic.
         resolver = { genesisHash -> cachedChains.get().endpoints[genesisHash.hexKey()].orEmpty() },
         client = chainHttpClient,
-        onLog = { Timber.tag("truapi.chain").d("%s", it) },
+        onLog = { Timber.tag("truapi.chain").i("%s", it) },
     )
 
     private var execution: TrUAPIProductExecution? = null
@@ -133,7 +134,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
 
         override fun onCoreLog(marker: String, detail: String) {
-            Timber.tag("truapi.core").d("%s: %s", marker, detail)
+            logCoreLine(marker, detail)
         }
 
         /**
@@ -186,7 +187,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
          * ([TrUAPIHostRuntimeProvider.sessionState]); an execution only logs it.
          */
         override fun authStateChanged(state: AuthState) {
-            Timber.tag("truapi.auth").d("%s: %s", callingProductId.value, state.marker())
+            Timber.tag("truapi.auth").i("%s: %s", callingProductId.value, state.marker())
         }
 
         override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
@@ -410,6 +411,15 @@ private fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this
     PermissionDecision.AllowAlways -> TrUAPIPermissionDecision.ALLOW_ALWAYS
     PermissionDecision.Deny -> TrUAPIPermissionDecision.DENY
 }
+
+// Info lines leave the device. Other core markers carry notification bodies, URLs and permission
+// requests, so only the core tracing warnings and errors are raised to info.
+internal fun logCoreLine(marker: String, detail: String) {
+    val priority = if (marker.startsWith(CORE_TRACING_MARKER_PREFIX)) Log.INFO else Log.DEBUG
+    Timber.tag("truapi.core").log(priority, "%s: %s", marker, detail)
+}
+
+private const val CORE_TRACING_MARKER_PREFIX = "truapi.tracing."
 
 internal fun AuthState.marker(): String = when (this) {
     is AuthState.Disconnected -> "disconnected"

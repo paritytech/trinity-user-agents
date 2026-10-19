@@ -1,10 +1,43 @@
 import Foundation
 import Testing
 import ChainRegistry
+import SDKLogger
 @testable import polkadot_app
 
 struct TrUAPIV2SpecConnectionPoolTests {
     private let genesis = Data(repeating: 0xAA, count: 32)
+
+    /// The Android host logs a transport death as a failure and anything else as a close, so both
+    /// hosts read the same in Sentry.
+    @Test func transportDeathLogsAsFailureAndOtherClosesAsClose() throws {
+        struct Refused: Error {}
+        let url = try #require(URL(string: "wss://node.example"))
+
+        #expect(
+            TrUAPIV2SpecConnectionPool.closeLine(connectionId: 3, url: url, reason: .transport(Refused()))
+                == "chain connection 3 failed on wss://node.example: Refused()"
+        )
+        #expect(
+            TrUAPIV2SpecConnectionPool.closeLine(connectionId: 3, url: url, reason: .peerClosed)
+                == "chain connection 3 closed on wss://node.example: peerClosed"
+        )
+    }
+
+    /// Each open line names the connection its socket belongs to, so one connection reads end to end in Sentry.
+    @Test func anOpenedSocketLogsItsOwnConnection() throws {
+        let logger = RecordingLogger()
+        let pool = makePool(registry: makeRegistry(serving: [MockChainSocket(), MockChainSocket()]), logger: logger)
+
+        _ = try #require(pool.connect(genesisHash: genesis))
+        _ = try #require(pool.connect(genesisHash: genesis))
+
+        #expect(logger.lines == [
+            .info("[truapi.chain] chain connection 1 dialling wss://node.example"),
+            .info("[truapi.chain] chain connection 1 open on wss://node.example"),
+            .info("[truapi.chain] chain connection 2 dialling wss://node.example"),
+            .info("[truapi.chain] chain connection 2 open on wss://node.example")
+        ])
+    }
 
     @Test func eachConnectGetsItsOwnSocketAndId() throws {
         let sockets = [MockChainSocket(), MockChainSocket()]
@@ -290,14 +323,15 @@ private extension TrUAPIV2SpecConnectionPoolTests {
     func makePool(
         registry: MockChainRegistry,
         handler: RecordingChainEventHandler? = nil,
-        lifecycle: Lifecycle = Lifecycle()
+        lifecycle: Lifecycle = Lifecycle(),
+        logger: SDKLoggerProtocol = StubLogger()
     ) -> TrUAPIV2SpecConnectionPool {
         let pool = TrUAPIV2SpecConnectionPool(
             chainRegistry: registry,
             applicationHandler: lifecycle.applicationHandler,
             dateProvider: lifecycle.dateProvider,
             resumePolicy: .init(expiryThreshold: 30, probeTimeout: 5),
-            logger: StubLogger()
+            logger: logger
         )
         pool.eventHandler = handler
         return pool

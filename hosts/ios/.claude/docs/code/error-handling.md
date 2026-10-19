@@ -43,6 +43,8 @@ let decoded = try? decoder.decode(Model.self, from: data) ?? defaultValue
 - Use `SwiftyBeaver` for logging, not `print` or `NSLog`
 - Log at appropriate levels: error for failures, warning for recoverable issues, info for state changes, debug for development
 - Never log PII (except public AccountId/pubkey)
+- Lines written as `[truapi.<tag>] message` at info and above also go to Sentry logs in builds that link Sentry, through `HostLogSinkDestination`. The Android host sends the same lines with the same tags. Every other line stays on the device.
+- On `[truapi.core]`, only the core tracing markers (`truapi.tracing.warn` and `truapi.tracing.error`) are logged at info, through `logCoreLine`. Every other core marker stays at debug, because those lines carry notification bodies, URLs and permission requests.
 
 ## Critical Issue Reporting
 
