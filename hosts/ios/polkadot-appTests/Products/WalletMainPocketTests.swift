@@ -4,6 +4,7 @@ import os
 import ChainRegistry
 import PolkadotUI
 import Products
+import StructuredConcurrency
 import Testing
 import UIKit
 @testable import polkadot_app
@@ -27,11 +28,11 @@ struct WalletMainPocketTests {
         )
 
         interactor.setup()
-        try await settle()
+        try await presenter.waitForCards { _ in true }
         let beforeTheChange = presenter.pocketCards.count
 
         try await collection.add(loyalty, face: .nil)
-        try await settle()
+        try await presenter.waitForCards { $0.contains(loyalty.key) }
 
         #expect(presenter.pocketCards.count > beforeTheChange)
         #expect(presenter.pocketCards.last?.contains { $0.key == loyalty.key } == true)
@@ -46,11 +47,11 @@ struct WalletMainPocketTests {
         let interactor = makeInteractor(collection: collection, presenter: presenter)
 
         interactor.setup()
-        try await settle()
+        try await presenter.waitForCards { $0.contains(loyalty.key) }
         #expect(presenter.pocketCards.last?.contains { $0.key == loyalty.key } == true)
 
         _ = try await collection.removeCard(loyalty.key)
-        try await settle()
+        try await presenter.waitForCards { !$0.contains(loyalty.key) }
 
         #expect(presenter.pocketCards.last?.contains { $0.key == loyalty.key } == false)
     }
@@ -64,7 +65,7 @@ struct WalletMainPocketTests {
         let screen = CollectiblesScreen(tld: StubDotNsTldProvider(tld: network))
 
         screen.presenter.setup()
-        try await settle()
+        try await screen.view.waitForCollectibles()
         screen.presenter.showCollectibles()
 
         #expect(screen.view.showsCollectibles)
@@ -80,7 +81,6 @@ struct WalletMainPocketTests {
         let screen = CollectiblesScreen(tld: tld, collectiblesEnabled: false)
 
         screen.presenter.setup()
-        try await settle()
 
         #expect(!screen.view.showsCollectibles)
         #expect(tld.reads == 0)
@@ -93,10 +93,7 @@ struct WalletMainPocketTests {
         let screen = CollectiblesScreen(tld: LateTld())
 
         screen.presenter.setup()
-        let deadline = ContinuousClock.now + .seconds(10)
-        while !screen.view.showsCollectibles, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(100))
-        }
+        try await screen.view.waitForCollectibles(within: .seconds(10))
 
         #expect(screen.view.showsCollectibles)
     }
@@ -109,15 +106,6 @@ private let loyalty = PocketCardEntry(
     title: "Loyalty",
     privileged: false
 )
-
-/// The tab hands its reads to tasks, so the assertions wait for them rather
-/// than for a fixed time.
-private func settle() async throws {
-    for _ in 0 ..< 20 {
-        await Task.yield()
-    }
-    try await Task.sleep(for: .milliseconds(150))
-}
 
 @MainActor
 private func makeInteractor(
@@ -148,12 +136,30 @@ private func makeInteractor(
 @MainActor
 private final class RecordingPresenter: WalletMainInteractorOutputProtocol {
     private(set) var pocketCards: [[PocketCardViewModel]] = []
+    private let shown: AsyncStream<Set<PocketCardKey>>
+    private let continuation: AsyncStream<Set<PocketCardKey>>.Continuation
+
+    init() {
+        (shown, continuation) = AsyncStream<Set<PocketCardKey>>.makeStream()
+    }
 
     func didReceive(networkStatus _: NetworkStatus) {}
     func didReceiveCollectibles(page _: ProductPage) {}
 
     func didReceive(pocketCards: [PocketCardViewModel]) {
         self.pocketCards.append(pocketCards)
+        continuation.yield(Set(pocketCards.map(\.key)))
+    }
+
+    /// Returns once the presenter has shown a card list matching `predicate`,
+    /// failing rather than hanging if it never does.
+    func waitForCards(where predicate: @escaping @Sendable (Set<PocketCardKey>) -> Bool) async throws {
+        try await withTimeout(.seconds(5)) { [shown] in
+            for await keys in shown where predicate(keys) {
+                return
+            }
+            throw CancellationError()
+        }
     }
 }
 
@@ -179,9 +185,32 @@ private struct CollectiblesScreen {
 
 private final class RecordingWalletView: UIViewController, WalletMainViewProtocol {
     private(set) var showsCollectibles = false
+    private let availability: AsyncStream<Bool>
+    private let continuation: AsyncStream<Bool>.Continuation
+
+    init() {
+        (availability, continuation) = AsyncStream<Bool>.makeStream()
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
 
     func didReceive(isCollectiblesAvailable: Bool) {
         showsCollectibles = isCollectiblesAvailable
+        continuation.yield(isCollectiblesAvailable)
+    }
+
+    /// Returns once the collectibles card has been offered, failing rather than hanging if it never is.
+    func waitForCollectibles(within limit: Duration = .seconds(5)) async throws {
+        try await withTimeout(limit) { [availability] in
+            for await isAvailable in availability where isAvailable {
+                return
+            }
+            throw CancellationError()
+        }
     }
 
     func didReceive(pocketCards _: [PocketCardViewModel]) {}
