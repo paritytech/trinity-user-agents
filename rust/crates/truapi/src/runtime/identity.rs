@@ -70,8 +70,13 @@ pub async fn lookup_session_identity(
 	pin_mut!(budget);
 	let lookup = async {
 		let preferred_account = session.identity_account_id.unwrap_or(session.public_key);
-		match lookup_with_retries(chain, asset_hub_chain_genesis_hash, preferred_account, "identity")
-			.await
+		match lookup_with_retries(
+			chain,
+			asset_hub_chain_genesis_hash,
+			preferred_account,
+			"identity",
+		)
+		.await
 		{
 			LookupOutcome::Found(identity) => Some(identity),
 			LookupOutcome::NoRecord if preferred_account != session.public_key => {

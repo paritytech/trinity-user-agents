@@ -6,8 +6,7 @@ use crate::{
 		sso::pairing::derive_identity_chat_private_key,
 	},
 	runtime::{
-		authority::AuthorityError, connected_session_ui_info,
-		identity::lookup_session_identity,
+		authority::AuthorityError, connected_session_ui_info, identity::lookup_session_identity,
 	},
 	session_usernames::SessionUsernames,
 };
