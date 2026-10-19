@@ -1,5 +1,19 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -17,12 +31,23 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
@@ -30,7 +55,6 @@ import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowDropdown
 import io.paritytech.polkadotapp.design.components.icon.vectors.CardReceived
 import io.paritytech.polkadotapp.design.components.icon.vectors.CardSent
-import io.paritytech.polkadotapp.design.components.icon.vectors.Close
 import io.paritytech.polkadotapp.design.components.progress.NovaCircularProgressIndicator
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
@@ -40,6 +64,8 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActi
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.reasonText
 import io.paritytech.polkadotapp.feature_products_api.presentation.funding.text
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.PocketMotion
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.rememberReducedMotion
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityDayUi
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityRowUi
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingAmountTone
@@ -49,6 +75,8 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowSubtitle
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowTitle
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val ICON_SIZE = 48.dp
@@ -64,6 +92,12 @@ private val DOCK_HEADER_HEIGHT = 48.dp
 private val DOCK_MAX_HEIGHT = 635.dp
 private val DOCK_SHAPE = RoundedCornerShape(24.dp)
 private const val TINT_ALPHA = 0.24f
+private val CROSS_SIZE = 14.dp
+private val CROSS_STROKE = 2.4.dp
+private const val SPINNER_OUT_SPEED = 2f
+private const val SPINNER_OUT_SHRINK = 0.2f
+private const val GLYPH_START_SCALE = 0.42f
+private const val CHEVRON_UP = 180f
 
 /** The key of day [index]'s header in the history list, so the screen can tell which day has scrolled past. */
 fun fundingDayKey(index: Int): String = "funding-day-$index"
@@ -77,6 +111,8 @@ fun fundingRowKey(id: String): String = "funding-row-$id"
  */
 fun LazyListScope.fundingHistory(
     days: ImmutableList<FundingActivityDayUi>,
+    arrived: Set<String>,
+    onArrived: (id: String) -> Unit,
     onRowClick: (id: String) -> Unit,
 ) {
     days.forEachIndexed { dayIndex, day ->
@@ -93,13 +129,15 @@ fun LazyListScope.fundingHistory(
         }
         day.rows.forEachIndexed { index, row ->
             item(key = fundingRowKey(row.id), contentType = "funding-row") {
-                Column {
+                val arriving = row.id in arrived
+                ArrivingRow(arriving = arriving, onArrived = { onArrived(row.id) }) {
                     if (index > 0) RowDivider()
                     FundingActivityRow(
                         modifier = Modifier
                             .height(HISTORY_ROW_HEIGHT)
                             .clickable { onRowClick(row.id) },
                         row = row,
+                        animateIcon = arriving,
                     )
                 }
             }
@@ -118,22 +156,37 @@ fun FundingInProgressDock(
     onRowClick: (id: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val front = rows.firstOrNull() ?: return
-    val several = rows.size > 1
+    // The last rows stay on the dock while it slides away.
+    var shown by remember { mutableStateOf(rows) }
+    if (rows.isNotEmpty()) shown = rows
+    val reduced = rememberReducedMotion()
 
-    PolkadotSurface(
-        modifier = modifier.fillMaxWidth(),
-        shape = DOCK_SHAPE,
-        color = PolkadotTheme.colors.bg.surface.container,
-        onClick = { if (several) onExpand() else onRowClick(front.id) },
+    AnimatedVisibility(
+        modifier = modifier,
+        visible = rows.isNotEmpty(),
+        enter = if (reduced) EnterTransition.None else fadeIn(tween(PocketMotion.DOCK_EXIT_MILLIS)) +
+            slideInVertically(tween(PocketMotion.DOCK_EXIT_MILLIS, easing = PocketMotion.Standard)) { it / 6 },
+        exit = if (reduced) ExitTransition.None else fadeOut(tween(PocketMotion.DOCK_EXIT_MILLIS)) +
+            slideOutVertically(tween(PocketMotion.DOCK_EXIT_MILLIS, easing = PocketMotion.Standard)) { it / 6 },
     ) {
-        FundingActivityRow(
-            modifier = Modifier
-                .height(DOCK_ROW_HEIGHT)
-                .padding(horizontal = PolkadotTheme.spacings.medium),
-            row = front,
-            count = rows.size.takeIf { several },
-        )
+        val front = shown.firstOrNull()
+        if (front != null) {
+            val several = shown.size > 1
+            PolkadotSurface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = DOCK_SHAPE,
+                color = PolkadotTheme.colors.bg.surface.container,
+                onClick = { if (several) onExpand() else onRowClick(front.id) },
+            ) {
+                FundingActivityRow(
+                    modifier = Modifier
+                        .height(DOCK_ROW_HEIGHT)
+                        .padding(horizontal = PolkadotTheme.spacings.medium),
+                    row = front,
+                    count = shown.size.takeIf { several },
+                )
+            }
+        }
     }
 }
 
@@ -213,7 +266,12 @@ private fun RowDivider() {
 }
 
 @Composable
-private fun FundingActivityRow(row: FundingActivityRowUi, modifier: Modifier = Modifier, count: Int? = null) {
+private fun FundingActivityRow(
+    row: FundingActivityRowUi,
+    modifier: Modifier = Modifier,
+    count: Int? = null,
+    animateIcon: Boolean = false,
+) {
     val warning = row.icon == FundingRowIcon.IN_PROGRESS_WARNING
 
     Row(
@@ -221,7 +279,7 @@ private fun FundingActivityRow(row: FundingActivityRowUi, modifier: Modifier = M
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.medium),
     ) {
-        RowIcon(row.icon, count)
+        RowIcon(row.icon, count, animateIcon)
 
         Column(modifier = Modifier.weight(1f)) {
             Row(
@@ -262,7 +320,7 @@ private fun FundingActivityRow(row: FundingActivityRowUi, modifier: Modifier = M
 }
 
 @Composable
-private fun RowIcon(icon: FundingRowIcon, count: Int?) {
+private fun RowIcon(icon: FundingRowIcon, count: Int?, animate: Boolean) {
     val (background, tint) = when (icon) {
         FundingRowIcon.IN_PROGRESS -> PolkadotTheme.colors.bg.surface.nested to PolkadotTheme.colors.fg.primary
         FundingRowIcon.IN_PROGRESS_WARNING ->
@@ -271,28 +329,166 @@ private fun RowIcon(icon: FundingRowIcon, count: Int?) {
         FundingRowIcon.MOVED_OUT -> PolkadotTheme.colors.bg.surface.nested to PolkadotTheme.colors.fg.primary
         FundingRowIcon.FAILED -> PolkadotTheme.colors.fg.error.copy(alpha = TINT_ALPHA) to PolkadotTheme.colors.fg.error
     }
+    val shownBackground by animateColorAsState(background, tween(PocketMotion.ICON_GLYPH_MILLIS), label = "FundingIconBackground")
 
     PolkadotSurface(
         modifier = Modifier.size(ICON_SIZE),
         shape = PolkadotTheme.shapes.full,
-        color = background,
+        color = if (animate) shownBackground else background,
         contentAlignment = Alignment.Center,
     ) {
         when (icon) {
             FundingRowIcon.IN_PROGRESS, FundingRowIcon.IN_PROGRESS_WARNING -> if (count != null) {
-                Box(contentAlignment = Alignment.Center) {
-                    Spinner(size = COUNT_SPINNER_SIZE, tint = tint)
-                    NovaText(text = count.toString(), style = PolkadotTheme.typography.body.mediumEmphasized, color = tint)
-                }
+                CountRing(count = count, tint = tint)
             } else {
                 Spinner(size = SPINNER_SIZE, tint = tint)
             }
 
-            FundingRowIcon.MOVED_IN -> NovaIcon(modifier = Modifier.size(GLYPH_SIZE), imageVector = NovaIcons.CardReceived, tint = tint)
-            FundingRowIcon.MOVED_OUT -> NovaIcon(modifier = Modifier.size(GLYPH_SIZE), imageVector = NovaIcons.CardSent, tint = tint)
-            FundingRowIcon.FAILED -> NovaIcon(modifier = Modifier.size(GLYPH_SIZE), imageVector = NovaIcons.Close, tint = tint)
+            FundingRowIcon.MOVED_IN, FundingRowIcon.MOVED_OUT -> CompletedGlyph(animate = animate) {
+                NovaIcon(
+                    modifier = Modifier.size(GLYPH_SIZE),
+                    imageVector = if (icon == FundingRowIcon.MOVED_IN) NovaIcons.CardReceived else NovaIcons.CardSent,
+                    tint = tint,
+                )
+            }
+
+            FundingRowIcon.FAILED -> CrossGlyph(animate = animate, tint = tint)
         }
     }
+}
+
+/** A finished glyph; on arrival the spinner it replaces fades out, then the glyph grows in. */
+@Composable
+private fun CompletedGlyph(animate: Boolean, glyph: @Composable () -> Unit) {
+    val reduced = rememberReducedMotion()
+    val reveal = remember { Animatable(if (animate && !reduced) 0f else 1f) }
+    LaunchedEffect(Unit) {
+        if (reveal.value < 1f) {
+            reveal.animateTo(1f, tween(PocketMotion.ICON_GLYPH_MILLIS, PocketMotion.ICON_GLYPH_DELAY_MILLIS, PocketMotion.Standard))
+        }
+    }
+    Box(contentAlignment = Alignment.Center) {
+        if (reveal.value < 1f) {
+            Box(
+                modifier = Modifier.graphicsLayer {
+                    val out = (reveal.value * SPINNER_OUT_SPEED).coerceAtMost(1f)
+                    alpha = 1f - out
+                    scaleX = 1f - out * SPINNER_OUT_SHRINK
+                    scaleY = scaleX
+                },
+            ) { Spinner(size = SPINNER_SIZE, tint = PolkadotTheme.colors.fg.primary) }
+        }
+        Box(
+            modifier = Modifier.graphicsLayer {
+                alpha = reveal.value
+                scaleX = GLYPH_START_SCALE + (1f - GLYPH_START_SCALE) * reveal.value
+                scaleY = scaleX
+            },
+        ) { glyph() }
+    }
+}
+
+/** A failure's cross, drawn in two strokes on arrival. */
+@Composable
+private fun CrossGlyph(animate: Boolean, tint: Color) {
+    val reduced = rememberReducedMotion()
+    val start = if (animate && !reduced) 0f else 1f
+    val first = remember { Animatable(start) }
+    val second = remember { Animatable(start) }
+    LaunchedEffect(Unit) {
+        if (first.value < 1f) {
+            launch { first.animateTo(1f, tween(PocketMotion.CROSS_STROKE_MILLIS, PocketMotion.CROSS_FIRST_STROKE_DELAY_MILLIS)) }
+            second.animateTo(1f, tween(PocketMotion.CROSS_STROKE_MILLIS, PocketMotion.CROSS_SECOND_STROKE_DELAY_MILLIS))
+        }
+    }
+    Canvas(modifier = Modifier.size(CROSS_SIZE)) {
+        val stroke = CROSS_STROKE.toPx()
+        drawLine(tint, Offset(0f, 0f), Offset(size.width * first.value, size.height * first.value), stroke, StrokeCap.Round)
+        drawLine(
+            tint,
+            Offset(size.width, 0f),
+            Offset(size.width * (1f - second.value), size.height * second.value),
+            stroke,
+            StrokeCap.Round,
+        )
+    }
+}
+
+/**
+ * How many sessions are in flight, on a turning ring. The ring grows in when it first shows, the number slides
+ * with each change, and every few seconds it turns into a chevron hinting that the dock opens.
+ */
+@Composable
+private fun CountRing(count: Int, tint: Color) {
+    val reduced = rememberReducedMotion()
+    val grow = remember { Animatable(if (reduced) 1f else PocketMotion.COUNT_RING_START_SCALE) }
+    LaunchedEffect(Unit) {
+        grow.animateTo(1f, tween(PocketMotion.COUNT_RING_MORPH_MILLIS, easing = FastOutSlowInEasing))
+    }
+    var hint by remember { mutableStateOf(false) }
+    LaunchedEffect(count, reduced) {
+        hint = false
+        if (reduced) return@LaunchedEffect
+        while (true) {
+            delay(PocketMotion.CHEVRON_HINT_SHOWN_AT_MILLIS)
+            hint = true
+            delay(PocketMotion.CHEVRON_HINT_SHOWN_FOR_MILLIS)
+            hint = false
+            delay(PocketMotion.CHEVRON_HINT_PERIOD_MILLIS - PocketMotion.CHEVRON_HINT_SHOWN_AT_MILLIS - PocketMotion.CHEVRON_HINT_SHOWN_FOR_MILLIS)
+        }
+    }
+
+    Box(contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.graphicsLayer { scaleX = grow.value; scaleY = grow.value }) {
+            Spinner(size = COUNT_SPINNER_SIZE, tint = tint)
+        }
+        AnimatedContent(
+            targetState = if (hint) null else count,
+            transitionSpec = {
+                val up = (targetState ?: 0) >= (initialState ?: 0)
+                val slide = tween<IntOffset>(PocketMotion.COUNT_SLIDE_MILLIS)
+                val fade = tween<Float>(PocketMotion.COUNT_SLIDE_MILLIS)
+                (slideInVertically(slide) { if (up) it / 3 else -it / 3 } + fadeIn(fade)) togetherWith
+                    (slideOutVertically(slide) { if (up) -it / 3 else it / 3 } + fadeOut(fade))
+            },
+            label = "FundingCount",
+        ) { shown ->
+            if (shown == null) {
+                NovaIcon(
+                    modifier = Modifier
+                        .size(CHEVRON_SIZE)
+                        .graphicsLayer { rotationZ = CHEVRON_UP },
+                    imageVector = NovaIcons.ArrowDropdown,
+                    tint = tint,
+                )
+            } else {
+                NovaText(text = shown.toString(), style = PolkadotTheme.typography.body.mediumEmphasized, color = tint)
+            }
+        }
+    }
+}
+
+/** A row that finished while the page was open: it fades and slides into place, and unblurs where it can. */
+@Composable
+private fun ArrivingRow(arriving: Boolean, onArrived: () -> Unit, content: @Composable () -> Unit) {
+    val reduced = rememberReducedMotion()
+    val progress = remember { Animatable(if (arriving && !reduced) 0f else 1f) }
+    val density = LocalDensity.current
+    LaunchedEffect(Unit) {
+        if (progress.value < 1f) {
+            progress.animateTo(1f, tween(PocketMotion.ROW_ENTER_MILLIS, PocketMotion.ROW_ENTER_DELAY_MILLIS, PocketMotion.Standard))
+        }
+        if (arriving) onArrived()
+    }
+    val blur = PocketMotion.ROW_ENTER_BLUR * (1f - progress.value)
+    Column(
+        modifier = Modifier
+            .graphicsLayer {
+                alpha = progress.value
+                translationY = with(density) { PocketMotion.ROW_ENTER_OFFSET.toPx() } * (1f - progress.value)
+            }
+            .then(if (blur > 0.dp) Modifier.blur(blur) else Modifier),
+    ) { content() }
 }
 
 @Composable

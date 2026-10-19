@@ -1,5 +1,10 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,6 +30,8 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.formatFiatSigned
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.PocketMotion
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.rememberReducedMotion
 import java.math.BigDecimal
 import java.math.MathContext
 import io.paritytech.polkadotapp.common.R as RCommon
@@ -87,10 +94,20 @@ internal fun CoinageSplitBar(
 
 @Composable
 private fun Stripes(modifier: Modifier, stripe: Color, track: Color) {
+    val phase = if (rememberReducedMotion()) {
+        null
+    } else {
+        rememberInfiniteTransition(label = "ClearingStripes").animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(PocketMotion.STRIPE_PERIOD_MILLIS, easing = LinearEasing)),
+            label = "ClearingStripesPhase",
+        )
+    }
     Canvas(modifier = modifier) {
         drawRect(track)
         val step = STRIPE_WIDTH.toPx() * 2
-        var x = -size.height
+        var x = -size.height - step + step * (phase?.value ?: 0f)
         while (x < size.width + size.height) {
             drawLine(
                 color = stripe,

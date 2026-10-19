@@ -4,16 +4,19 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compos
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,16 +24,23 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.layout.boundsInParent
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.zIndex
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -56,8 +66,11 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
-import io.paritytech.polkadotapp.feature_wallet_impl.R
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.DigitalDollarCardDetailsViewModel
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.PocketArrivals
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.PocketCollapse
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.PocketMotion
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.CardSizes
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketCardSharedElement
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketContentSlide
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.BalanceRestoreUiState
@@ -70,6 +83,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
+import kotlin.math.roundToInt
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val BalancedLineBreak = LineBreak(
@@ -132,10 +146,20 @@ private fun DigitalDollarCardDetailsContent(
 ) {
     var inProgressExpanded by remember { mutableStateOf(false) }
     val showInProgressPanel = inProgressExpanded && fundingActivity.inFlight.size > 1
+    val arrivals = rememberFundingArrivals(fundingActivity)
     val listState = rememberLazyListState()
-    // The card is the list's first item: once it has scrolled away, the header shows it small and the sticky bar
-    // takes over the balance.
-    val cardCollapsed by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 } }
+    val density = LocalDensity.current
+    val collapseRangePx = with(density) { PocketMotion.COLLAPSE_RANGE.toPx() }
+    // The card is drawn over the list and docks into the header as the list scrolls under it.
+    val collapse by remember(collapseRangePx) {
+        derivedStateOf {
+            val scrolled = if (listState.firstVisibleItemIndex > 0) Float.MAX_VALUE else listState.firstVisibleItemScrollOffset.toFloat()
+            PocketCollapse.progress(scrolled, collapseRangePx)
+        }
+    }
+    var topBarBounds by remember { mutableStateOf(Rect.Zero) }
+    var cardRest by remember { mutableStateOf(Rect.Zero) }
+    var pageOrigin by remember { mutableStateOf(Offset.Zero) }
     val dayOfItem = remember(fundingActivity.days) { fundingActivity.days.dayOfItemKey() }
     val passedDay by remember(dayOfItem) {
         derivedStateOf { listState.layoutInfo.visibleItemsInfo.firstOrNull()?.key?.let(dayOfItem::get) }
@@ -143,20 +167,24 @@ private fun DigitalDollarCardDetailsContent(
     val navigationInsets = LocalAppNavigationBarInsets.current.asPaddingValues()
     val dockSpace = if (fundingActivity.inFlight.isEmpty()) 0.dp else DOCK_CLEARANCE
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxSize().onGloballyPositioned { pageOrigin = it.positionInRoot() }) {
         Column(modifier = Modifier.fillMaxSize()) {
-            Box(contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier.onGloballyPositioned { topBarBounds = it.boundsInParent() },
+                contentAlignment = Alignment.Center
+            ) {
                 PolkadotTopBar(
-                    title = if (cardCollapsed) "" else stringResource(RCommon.string.pocket_purse_title),
+                    title = "",
                     navigationAction = rememberTopBarAction(onBack),
                     titleAlignment = TopBarTitleAlignment.Center,
                     titleSize = TopBarTitleSize.Medium
                 )
-                if (cardCollapsed) CardThumbnail()
-            }
-
-            if (cardCollapsed) {
-                StickyBalanceBar(day = passedDay?.let(fundingActivity.days::getOrNull), currentBalance = fundingActivity.currentBalance)
+                NovaText(
+                    modifier = Modifier.graphicsLayer { alpha = PocketCollapse.titleAlpha(collapse) },
+                    text = stringResource(RCommon.string.pocket_purse_title),
+                    style = PolkadotTheme.typography.title.medium,
+                    color = PolkadotTheme.colors.fg.primary
+                )
             }
 
             LazyColumn(
@@ -170,10 +198,15 @@ private fun DigitalDollarCardDetailsContent(
                 ),
             ) {
                 item(key = CARD_KEY) {
-                    DigitalDollarCard(
-                        modifier = Modifier.pocketCardSharedElement(cardIndex),
-                        card = card,
-                        isExpanded = true
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(CardSizes.HEIGHT)
+                            .onGloballyPositioned { coordinates ->
+                                if (listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0) {
+                                    cardRest = Rect(coordinates.positionInRoot() - pageOrigin, coordinates.size.toSize())
+                                }
+                            }
                     )
                 }
 
@@ -246,8 +279,49 @@ private fun DigitalDollarCardDetailsContent(
                     }
                 }
 
-                fundingHistory(days = fundingActivity.days, onRowClick = onFundingRowClick)
+                fundingHistory(
+                    days = fundingActivity.days,
+                    arrived = arrivals.ids,
+                    onArrived = arrivals::settle,
+                    onRowClick = onFundingRowClick,
+                )
             }
+        }
+
+        if (collapse >= 1f) {
+            StickyBalanceBar(
+                modifier = Modifier.offset { IntOffset(0, topBarBounds.bottom.toInt()) },
+                day = passedDay?.let(fundingActivity.days::getOrNull),
+                currentBalance = fundingActivity.currentBalance
+            )
+        }
+
+        if (cardRest != Rect.Zero) {
+            CashCardFace(
+                modifier = Modifier
+                    .offset {
+                        val (x, y) = PocketCollapse.offset(
+                            progress = collapse,
+                            restX = cardRest.left,
+                            restY = cardRest.top - minOf(listState.scrolledPx(), collapseRangePx),
+                            dockCenterX = topBarBounds.center.x,
+                            dockCenterY = topBarBounds.center.y,
+                            width = cardRest.width,
+                            height = cardRest.height
+                        )
+                        IntOffset(x.roundToInt(), y.roundToInt())
+                    }
+                    .width(with(density) { cardRest.width.toDp() })
+                    .pocketCardSharedElement(cardIndex)
+                    .graphicsLayer {
+                        transformOrigin = TransformOrigin(0f, 0f)
+                        scaleX = PocketCollapse.scale(collapse)
+                        scaleY = scaleX
+                    },
+                card = card,
+                isExpanded = true,
+                balanceAlpha = { PocketCollapse.balanceAlpha(collapse) }
+            )
         }
 
         if (showInProgressPanel) FundingInProgressScrim(onCollapse = { inProgressExpanded = false })
@@ -264,7 +338,7 @@ private fun DigitalDollarCardDetailsContent(
                 onCollapse = { inProgressExpanded = false },
                 onRowClick = onFundingRowClick,
             )
-        } else if (fundingActivity.inFlight.isNotEmpty()) {
+        } else {
             FundingInProgressDock(
                 modifier = dockModifier,
                 rows = fundingActivity.inFlight,
@@ -275,32 +349,20 @@ private fun DigitalDollarCardDetailsContent(
     }
 }
 
-/** The card, small, in the header once the full card has scrolled away. */
-@Composable
-private fun CardThumbnail() {
-    Image(
-        modifier = Modifier
-            .size(width = THUMBNAIL_WIDTH, height = THUMBNAIL_HEIGHT)
-            .clip(PolkadotTheme.shapes.small),
-        painter = painterResource(R.drawable.img_digital_dollar_card),
-        contentDescription = null,
-        contentScale = ContentScale.Crop,
-    )
-}
-
 /**
  * Under the header once the card has scrolled away: "Current balance" until the list reaches a day before today,
  * then that day and the balance at its end.
  */
 @Composable
-private fun StickyBalanceBar(day: FundingActivityDayUi?, currentBalance: String?) {
+private fun StickyBalanceBar(modifier: Modifier = Modifier, day: FundingActivityDayUi?, currentBalance: String?) {
     val past = day?.takeIf { it.title != FundingDayTitle.Today }
     val label = past?.let { dayTitle(it.title) } ?: stringResource(RCommon.string.pocket_current_balance)
     val value = if (past != null) past.endOfDayBalance else currentBalance
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
+            .background(PolkadotTheme.colors.bg.surface.main)
             .height(STICKY_BAR_HEIGHT)
             .padding(horizontal = PolkadotTheme.spacings.large),
         verticalAlignment = Alignment.CenterVertically,
@@ -339,8 +401,10 @@ private val TOTAL_INSET = 3.dp
 private val DOCK_INSET = 16.dp
 private val DOCK_CLEARANCE = 120.dp
 private val STICKY_BAR_HEIGHT = 49.dp
-private val THUMBNAIL_WIDTH = 60.dp
-private val THUMBNAIL_HEIGHT = 39.dp
+
+/** How far the list has scrolled from its top, saturating once the card has left it. */
+private fun LazyListState.scrolledPx(): Float =
+    if (firstVisibleItemIndex > 0) Float.MAX_VALUE else firstVisibleItemScrollOffset.toFloat()
 
 @Composable
 private fun SendCashActions(
@@ -473,4 +537,32 @@ private fun DigitalDollarCardDetailsPreview() {
             )
         }
     }
+}
+
+/** The history rows that left the dock while the page was open, until their arrival has played. */
+@Stable
+private class FundingArrivals {
+    var ids by mutableStateOf(emptySet<String>())
+        private set
+
+    fun add(arrived: Set<String>) {
+        if (arrived.isNotEmpty()) ids = ids + arrived
+    }
+
+    fun settle(id: String) {
+        ids = ids - id
+    }
+}
+
+@Composable
+private fun rememberFundingArrivals(activity: FundingActivityUiState): FundingArrivals {
+    val arrivals = remember { FundingArrivals() }
+    var inFlight by remember { mutableStateOf(activity.inFlight.mapTo(mutableSetOf()) { it.id }) }
+    LaunchedEffect(activity) {
+        val current = activity.inFlight.mapTo(mutableSetOf()) { it.id }
+        val history = activity.days.flatMapTo(mutableSetOf()) { day -> day.rows.map { it.id } }
+        arrivals.add(PocketArrivals.arrived(inFlight, current, history))
+        inFlight = current
+    }
+    return arrivals
 }

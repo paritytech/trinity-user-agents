@@ -32,6 +32,7 @@ import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmou
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageCoins
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageCoinsMetrics
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageStripLayout
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.rememberCountUp
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.holdings.HoldingGeometry
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageBalanceBreakdownUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageUiState
@@ -122,11 +123,12 @@ private fun Headline(
     total: TokenAmountModel
 ) {
     val formatter = LocalTokenAmountFormatter.current
+    val shown = rememberCountUp(total)
 
     Row(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(HoldingGeometry.headlineSpacing)) {
         NovaText(
             modifier = Modifier.alignByBaseline(),
-            text = formatter.formatFiatSigned(total),
+            text = formatter.formatFiatSigned(shown),
             maxLines = 1,
             style = PolkadotTheme.typography.headline.large,
             color = PolkadotTheme.colors.fg.primary
