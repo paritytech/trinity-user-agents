@@ -229,7 +229,8 @@ The binary has `--help` and `--version`.
 ### 3.4 Self-update
 
 An install laid out by §3.2 keeps itself current. Every command except
-`update` spawns a background check that:
+`update` and `stack`, which runs inside builds and publish jobs, spawns a
+background check that:
 
 1. does nothing unless the running executable resolves inside
    `<root>/versions/`, so a `cargo install` copy or a source build is never

@@ -73,6 +73,7 @@ the version store. A command that finishes first waits for the download, so even
 a one-shot run lands the update; it prints a line while downloading. The running
 process is never replaced underneath itself: the new version takes effect the
 next time you start `truapi-host`, and the CLI says so when one is waiting.
+`stack` skips the check, since it runs inside builds and publish jobs.
 Every archive is checked against its published SHA-256 before it is unpacked.
 
 ```bash
@@ -933,8 +934,10 @@ truapi-host stack publish previewnet.json --generation 2026-10-19 --out site \
 truapi-host stack link https://previewnet.example/.well-known/trinity-stack.json --key 0x…
 ```
 
-`previewnet.json` is a descriptor without `$v`, `sequence` and `generation`.
-Change `--generation` whenever the chains restart. Keep the key and the state
+`previewnet.json` is a descriptor without `$v`, `sequence` and `generation`: the
+[JSON Schema](../trinity-stack/schema/trinity-stack.v1.schema.json) and the
+[RFC](../../../docs/rfcs/trinity-stack-descriptor.md) list its fields. Change
+`--generation` whenever the chains restart. Keep the key and the state
 file outside anything a wipe deletes.
 
 To check a published stack, or ship one in a host build:
