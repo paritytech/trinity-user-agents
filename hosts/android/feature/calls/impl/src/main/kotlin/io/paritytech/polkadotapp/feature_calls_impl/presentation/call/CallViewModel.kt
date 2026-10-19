@@ -148,5 +148,5 @@ private fun CallerDisplay.toUi() = CallerDisplayUiModel(
 
 private fun ContactAvatar.toUi(): AvatarUiModel = when (this) {
     is ContactAvatar.Account -> AvatarUiModel.Name(name, AvatarColorScheme.from(themeSeed))
-    is ContactAvatar.Url -> AvatarUiModel.Image(url, placeholder = null)
+    is ContactAvatar.Url -> AvatarUiModel.Image(url)
 }

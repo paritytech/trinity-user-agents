@@ -28,7 +28,7 @@ sealed class AvatarUiModel {
     companion object;
 
     /** [placeholder] shows until the image at [url] has loaded, and stays if it never does. */
-    data class Image(val url: String, val placeholder: Name?) : AvatarUiModel()
+    data class Image(val url: String, val placeholder: Name? = null) : AvatarUiModel()
 
     data class Name(val name: String, val colorScheme: AvatarColorScheme) : AvatarUiModel()
 }

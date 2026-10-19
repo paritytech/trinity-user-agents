@@ -50,7 +50,7 @@ class BlockedUsersViewModel @Inject constructor(
         val displayName = username ?: accountId.value.toHexShort()
         val avatarUrl = avatarUrl
         val avatarModel = if (avatarUrl != null) {
-            AvatarUiModel.Image(avatarUrl, placeholder = null)
+            AvatarUiModel.Image(avatarUrl)
         } else {
             AvatarUiModel.Name(displayName, AvatarColorScheme.from(accountId.value))
         }

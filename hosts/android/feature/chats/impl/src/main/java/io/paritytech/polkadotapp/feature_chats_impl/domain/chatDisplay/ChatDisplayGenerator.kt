@@ -21,7 +21,7 @@ class ChatDisplayGenerator @Inject constructor(
         val username = username ?: fallbackUsernameGenerator.generateFromAccountId(accountId)
 
         val avatar = if (avatarUrl != null) {
-            ChatAvatar.Url(avatarUrl, placeholder = null)
+            ChatAvatar.Url(avatarUrl)
         } else {
             ChatAvatar.Account(username, themeSeed = accountId.value)
         }

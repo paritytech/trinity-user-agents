@@ -32,7 +32,7 @@ class DataUriFetcher(
     class Factory : Fetcher.Factory<Uri> {
         override fun create(data: Uri, options: Options, imageLoader: ImageLoader): Fetcher? {
             val dataUri = data.toString()
-            if (data.scheme != DATA_SCHEME || BASE64_MARKER !in dataUri) return null
+            if (!dataUri.isInlineImageUri()) return null
 
             return DataUriFetcher(dataUri, options)
         }
