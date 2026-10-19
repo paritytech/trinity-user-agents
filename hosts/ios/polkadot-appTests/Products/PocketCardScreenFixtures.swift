@@ -60,12 +60,12 @@ func showing(_ root: UIViewController) throws -> UIWindow {
     return window
 }
 
-/// Wraps a card's screen as the app presents it: the root of a full-screen
-/// navigation controller whose presentation the screen animates.
+/// Wraps a card's screen as the app presents it: the root of a navigation
+/// controller over the whole screen, whose presentation the screen animates.
 @MainActor
 func cardNavigation(_ screen: PocketCardScreenViewController) -> UINavigationController {
     let navigation = AppNavigationController(rootViewController: screen)
-    navigation.modalPresentationStyle = .fullScreen
+    navigation.modalPresentationStyle = .overFullScreen
     navigation.transitioningDelegate = screen
     return navigation
 }

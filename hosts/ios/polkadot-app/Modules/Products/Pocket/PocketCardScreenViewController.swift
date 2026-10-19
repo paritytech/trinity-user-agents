@@ -28,6 +28,7 @@ final class PocketCardScreenViewController: UIViewController {
     private var faceMovedSinceOpening = false
     private var pageMoveTarget: CGPoint?
     private var isInFlight = false
+    private weak var coveredScreen: UIViewController?
 
     init(card: PocketCardViewModel, product: SPAViewProtocol, origin: PocketCardOrigin? = nil) {
         self.card = card
@@ -72,6 +73,23 @@ final class PocketCardScreenViewController: UIViewController {
         guard (navigationController ?? self).isBeingPresented else { return }
 
         origin?.setOpenCard(card.key)
+        coverScreen(animated: animated)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+
+        guard (navigationController ?? self).isBeingPresented else { return }
+
+        coveredScreen?.endAppearanceTransition()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+
+        guard (navigationController ?? self).isBeingDismissed else { return }
+
+        coveredScreen?.beginAppearanceTransition(true, animated: animated)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -81,6 +99,17 @@ final class PocketCardScreenViewController: UIViewController {
 
         handBackProduct()
         showCardInPocket()
+        coveredScreen?.endAppearanceTransition()
+    }
+
+    /// A screen presented over the Pocket leaves it in the window, so UIKit does
+    /// not tell it that it is covered; this screen does.
+    private func coverScreen(animated: Bool) {
+        let presented = navigationController ?? self
+        guard presented.modalPresentationStyle == .overFullScreen else { return }
+
+        coveredScreen = presented.presentingViewController
+        coveredScreen?.beginAppearanceTransition(false, animated: animated)
     }
 
     /// Gives the product back unattached. It outlives the screen that opened

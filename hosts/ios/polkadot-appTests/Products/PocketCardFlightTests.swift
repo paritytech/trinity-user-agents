@@ -48,6 +48,25 @@ struct PocketCardFlightTests {
         withExtendedLifetime((window, origin)) {}
     }
 
+    /// A card covers the Pocket without taking it out of the window, so that the
+    /// Pocket can draw the card while it flies. UIKit then no longer tells the
+    /// Pocket when it is covered and uncovered, so the screen must, or what
+    /// pauses while the Pocket is hidden, like the tab bar's tips, keeps running
+    /// under the card.
+    @Test
+    func tellsThePocketBehindItWhenItCoversAndUncoversIt() async throws {
+        let origin = FakePocketCardOrigin(slot: pocketSlot)
+        let presenter = AppearanceRecordingController()
+        let window = try showing(presenter)
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), origin: origin)
+
+        await present(cardNavigation(screen), from: presenter)
+        await closeCard(screen)
+
+        #expect(presenter.calls.suffix(4) == ["willDisappear", "didDisappear", "willAppear", "didAppear"])
+        withExtendedLifetime((window, origin)) {}
+    }
+
     /// The flight makes all but the card see-through so the Pocket shows
     /// behind it, whether the card moves or fades. The screen it lands must be
     /// the one an open without a flight gives, and the product, which the next
@@ -65,6 +84,31 @@ struct PocketCardFlightTests {
 }
 
 // MARK: - Fixtures
+
+/// Records the appearance calls UIKit, or a screen covering it, sends it.
+private final class AppearanceRecordingController: UIViewController {
+    private(set) var calls: [String] = []
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        calls.append("willAppear")
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        calls.append("didAppear")
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        calls.append("willDisappear")
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        calls.append("didDisappear")
+    }
+}
 
 /// What a flight turns see-through or moves: read off the opened screen, and
 /// off the product once the screen has closed.
