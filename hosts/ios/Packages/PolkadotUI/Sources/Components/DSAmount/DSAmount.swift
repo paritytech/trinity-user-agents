@@ -40,7 +40,7 @@ private extension DSAmount {
             return Text(amount) + Text(" \(symbol)").font(symbolFont)
         }
 
-        return Text(amount) + Text(" ") + Text(CashLogo.Wordmark.smallCaps.glyph).font(logoFont)
+        return Text(amount) + Text(verbatim: " ") + Text(CashLogo.Wordmark.smallCaps.glyph).font(logoFont)
     }
 
     var accessibilityText: String {
