@@ -30,7 +30,7 @@ struct DebugPocketCardsView: View {
                                 .lineLimit(1)
                         }
                         if card.faceShown == false {
-                            Text("Opens with the face away")
+                            Text(verbatim: "Opens with the face away")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
