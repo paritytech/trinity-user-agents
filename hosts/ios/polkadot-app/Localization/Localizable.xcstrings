@@ -2302,12 +2302,12 @@
         }
       }
     },
-    "polkadot://%@/-/pocket/add?card=%@" : {
+    "polkadot://pocket/add?product=%@&card=%@" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "polkadot://%1$@/-/pocket/add?card=%2$@"
+            "value" : "polkadot://pocket/add?product=%1$@&card=%2$@"
           }
         }
       }

@@ -9,19 +9,19 @@ struct PocketOpenServiceTests {
         let seen = Recorder()
         let service = seen.makeService()
 
-        #expect(service.handle(url: URL(string: "polkadot://game.dot/-/pocket/add?card=loyalty")!))
+        #expect(service.handle(url: URL(string: "polkadot://pocket/add?product=game.dot&card=loyalty")!))
 
         #expect(try await seen.answer() == .presented(cardId: "loyalty"))
     }
 
-    /// A bare `/-/pocket` is the host's to answer: it opens the Pocket, with no
-    /// card to present and nothing to refuse.
+    /// A bare `polkadot://pocket` is the host's to answer: it opens the Pocket,
+    /// with no card to present and nothing to refuse.
     @Test
     func claimsACollectionLinkAndOpensThePocket() async throws {
         let seen = Recorder()
         let service = seen.makeService()
 
-        #expect(service.handle(url: URL(string: "polkadot://game.dot/-/pocket")!))
+        #expect(service.handle(url: URL(string: "polkadot://pocket")!))
 
         #expect(try await seen.answer() == .openedCollection)
     }
@@ -35,38 +35,48 @@ struct PocketOpenServiceTests {
         #expect(!service.handle(url: URL(string: "polkadot://game.dot/some/page")!))
     }
 
-    /// The reserved target belongs to the host, so a card id the core would
-    /// refuse is answered here, with a message, rather than opening the
-    /// product's own page.
+    /// The Pocket handler sits ahead of other app links in the chain, such as a
+    /// cheque, which must still reach their own handlers.
+    @Test
+    func doesNotClaimAnotherAppLink() {
+        let service = PocketOpenService(present: { _ in })
+        let cheque = "\(DeeplinkTestSchemes.active)://pay/cheque?id=abc"
+
+        #expect(!service.handle(url: URL(string: cheque)!))
+    }
+
+    /// A Pocket link belongs to the host, so a card id the core would refuse is
+    /// answered here, with a message, rather than dropped.
     @Test
     func claimsAndRefusesAHiddenCardId() async throws {
         let seen = Recorder()
         let service = seen.makeService()
-        let hidden = "polkadot://game.dot/-/pocket/add?card=loy%E2%80%8Balty"
+        let hidden = "polkadot://pocket/add?product=game.dot&card=loy%E2%80%8Balty"
 
         #expect(service.handle(url: URL(string: hidden)!))
 
         #expect(try await seen.answer() == .refused)
     }
 
-    /// The core sends an action it does not serve to the App on purpose, so a
-    /// link minted for a newer host degrades instead of failing. Claiming it
-    /// here would turn every future Pocket verb into a refusal on this build.
+    /// A Pocket action this build does not serve has nowhere else to go, so the
+    /// user is told rather than left with a link that does nothing.
     @Test
-    func doesNotClaimAPocketActionTheCoreDoesNotServe() {
-        let service = PocketOpenService(present: { _ in })
+    func claimsAndRefusesAPocketActionTheCoreDoesNotServe() async throws {
+        let seen = Recorder()
+        let service = seen.makeService()
 
-        #expect(!service.handle(url: URL(string: "polkadot://game.dot/-/pocket/pin?card=loyalty")!))
+        #expect(service.handle(url: URL(string: "polkadot://pocket/pin?product=game.dot&card=loyalty")!))
+
+        #expect(try await seen.answer() == .refused)
     }
 
-    /// A link under the reserved target that names no card at all is still the
-    /// host's to answer.
+    /// A Pocket link that names no card at all is still the host's to answer.
     @Test
     func claimsALinkThatNamesNoCard() async throws {
         let seen = Recorder()
         let service = seen.makeService()
 
-        #expect(service.handle(url: URL(string: "polkadot://game.dot/-/pocket/add")!))
+        #expect(service.handle(url: URL(string: "polkadot://pocket/add?product=game.dot")!))
 
         #expect(try await seen.answer() == .refused)
     }

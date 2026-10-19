@@ -87,9 +87,10 @@ private func makeBridge(
     productStorageFails: Bool = false,
     hostProvider: ProductHostProviding = StubHostProvider(),
     themeManager: MockThemeManager = MockThemeManager(),
-    cardFace: (any ExpandedCardFaceShowing)? = nil
+    cardFace: (any ExpandedCardFaceShowing)? = nil,
+    router: MockNavigationRouter? = nil
 ) -> RustProductExecutionBridge {
-    let router = MockNavigationRouter()
+    let router = router ?? MockNavigationRouter()
     let pool = makeRegistryPool(chainRegistry: chainRegistry)
     let productStorage: TrUAPILocalStoring = productStorageFails
         ? FailingProductStorage()
@@ -123,6 +124,25 @@ private func makeBridge(
 /// does not run tests on the main thread by default.
 @MainActor
 struct RustRuntimeBridgeTests {
+    // MARK: navigateTo
+
+    /// The core hands over a Pocket link as `polkadot://pocket/...`, which names
+    /// no product. Opened as a product page it would go nowhere, so it has to
+    /// reach the router's app-link path, which takes it to the Pocket.
+    @Test func navigateToHandsAPocketLinkToTheAppLinkPath() async throws {
+        let router = MockNavigationRouter()
+        let bridge = makeBridge(
+            hostProvider: ProductHostFactory(tldProvider: StubDotNsTldProvider(tld: "dot")),
+            router: router
+        )
+        let link = "polkadot://pocket/add?product=game.dot&card=loyalty"
+
+        try await bridge.navigateTo(url: link)
+
+        #expect(router.navigatedPage == nil)
+        #expect(router.openedURL == URL(string: link))
+    }
+
     // MARK: devicePermission
 
     /// `devicePermission(.camera)` routes to
