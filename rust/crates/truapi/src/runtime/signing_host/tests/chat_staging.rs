@@ -141,6 +141,7 @@ fn connection(
 		services.clone(),
 		adapters,
 		authority.clone(),
+		authority.clone(),
 		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
 			.expect("valid product id"),
 	)

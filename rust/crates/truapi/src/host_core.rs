@@ -1644,18 +1644,22 @@ pub struct ProductRuntime {
 /// product connection.
 #[derive(Clone)]
 pub struct ProductRuntimeControl {
-	connection: Arc<ProductConnection>,
+	runtime: Arc<ProductRuntimeHost>,
 	transport: Arc<SinkTransport>,
 	host_subscriptions: Arc<HostInitiatedSubscriptionManager>,
 	disposed: Arc<AtomicBool>,
 }
 
 impl ProductRuntimeControl {
-	fn connection(&self) -> Result<&ProductConnection, ProductRuntimeError> {
+	fn runtime(&self) -> Result<&ProductRuntimeHost, ProductRuntimeError> {
 		if self.disposed.load(Ordering::Acquire) {
 			return Err(ProductRuntimeError::Closed);
 		}
-		Ok(&self.connection)
+		Ok(&self.runtime)
+	}
+
+	fn connection(&self) -> Result<&ProductConnection, ProductRuntimeError> {
+		Ok(self.runtime()?.connection())
 	}
 
 	/// Publish one host-authored Chat action into this connection's action
@@ -1707,7 +1711,7 @@ impl ProductRuntimeControl {
 		ProductRuntimeError,
 	> {
 		self.connection()?.renderer_access()?;
-		let reference = WorkerReference::acquire(self.connection.clone());
+		let reference = WorkerReference::acquire(self.runtime.connection().clone());
 		let request = truapi::versioned::renderer::ProductRendererRenderRequest::V1(request);
 		let transport: Arc<dyn Transport> = self.transport.clone();
 		let stream = crate::generated::dispatcher::renderer_render(
@@ -1985,9 +1989,9 @@ impl ProductRuntimeControl {
 		&self,
 		item: truapi::latest::HostChatRoomEventsSubscribeItem,
 	) -> Result<(), ProductRuntimeError> {
-		let runtime = self.runtime()?;
-		runtime.native_chat_platform()?;
-		runtime.publish_chat_room_event(item)
+		let connection = self.connection()?;
+		connection.native_chat_platform()?;
+		connection.publish_chat_room_event(item)
 	}
 
 	/// Hold the worker of the product for a wake of
@@ -1996,7 +2000,7 @@ impl ProductRuntimeControl {
 		&self,
 		reason: crate::runtime::ChatWakeReason,
 	) -> Result<crate::runtime::ChatWakeOutcome, ProductRuntimeError> {
-		self.runtime()?.wake(reason)
+		self.connection()?.wake(reason)
 	}
 
 	/// Stage a user attachment of `room_id` as a preimage that the Bulletin
@@ -2052,8 +2056,7 @@ impl ProductRuntimeControl {
 		Envelope: truapi::versioned::IntoLatest<Latest = Item> + Send + 'static,
 		EnvelopeError: truapi::versioned::IntoLatest<Latest = Error> + Send + 'static,
 	{
-		let runtime = self.runtime()?;
-		let platform = runtime.native_chat_platform()?;
+		let platform = self.connection()?.native_chat_platform()?;
 		let runtime = self.runtime.clone();
 		let subscriptions = self.host_subscriptions.clone();
 		let transport: Arc<dyn Transport> = self.transport.clone();
@@ -2070,7 +2073,7 @@ impl ProductRuntimeControl {
 			}
 			// Held from the product's `Start` to its answer, and released
 			// when this future ends, whichever way it ends.
-			let _reference = WorkerReference::acquire(runtime.clone());
+			let _reference = WorkerReference::acquire(runtime.connection().clone());
 			let mut stream = match start(&subscriptions, transport) {
 				Ok(stream) => stream,
 				Err(error) => return Some(Err(failed(error.to_string()))),
@@ -2323,7 +2326,7 @@ impl ProductRuntime {
 	/// Return a cloneable native control handle bound to this connection.
 	pub fn control(&self) -> ProductRuntimeControl {
 		ProductRuntimeControl {
-			connection: self.admin.product_runtime.connection().clone(),
+			runtime: self.admin.product_runtime.clone(),
 			transport: self.transport.clone(),
 			host_subscriptions: self.host_subscriptions.clone(),
 			disposed: self.disposed.clone(),
@@ -4634,7 +4637,7 @@ mod tests {
 	#[test]
 	fn an_undeclared_chat_query_never_reaches_the_product() {
 		let (runtime, sink) = chat_query_runtime(Default::default());
-		let services = runtime.admin.product_runtime().services().clone();
+		let services = runtime.admin.product_runtime().connection().services().clone();
 
 		let mut query = runtime
 			.control()
@@ -4678,7 +4681,7 @@ mod tests {
 			product_source: true,
 			..Default::default()
 		});
-		let services = runtime.admin.product_runtime().services().clone();
+		let services = runtime.admin.product_runtime().connection().services().clone();
 		let mut query = runtime
 			.control()
 			.chat_messages_query(messages_request(10))

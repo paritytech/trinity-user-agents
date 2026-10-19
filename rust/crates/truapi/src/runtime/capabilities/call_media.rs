@@ -64,10 +64,11 @@ impl CallMedia for ProductRuntimeHost {
 		let version = request.version();
 		let request = request.into_latest();
 		let result = async {
-			let platform = self.services.call_media_platform().ok_or(CallError::Unsupported)?;
+			let platform =
+				self.connection.services.call_media_platform().ok_or(CallError::Unsupported)?;
 			let (room_id, call_id) = call_of(&request.room_id, &request.call_id)?;
-			let consented = self.services.chat_room_events.call_consented_within(
-				&self.product.product_id,
+			let consented = self.connection.services.chat_room_events.call_consented_within(
+				&self.connection.product.product_id,
 				&room_id,
 				CALL_MEDIA_CONSENT_SECS,
 			);
@@ -77,7 +78,7 @@ impl CallMedia for ProductRuntimeHost {
 			until_cancelled(
 				cx,
 				platform.start_call_media(
-					&self.product,
+					&self.connection.product,
 					&room_id,
 					&call_id,
 					request.video,
@@ -104,7 +105,8 @@ impl CallMedia for ProductRuntimeHost {
 		let version = request.version();
 		let request = request.into_latest();
 		let result = async {
-			let platform = self.services.call_media_platform().ok_or(CallError::Unsupported)?;
+			let platform =
+				self.connection.services.call_media_platform().ok_or(CallError::Unsupported)?;
 			let (room_id, call_id) = call_of(&request.room_id, &request.call_id)?;
 			if request.signal.is_empty() || request.signal.len() > CHAT_CALL_SIGNAL_MAX_BYTES {
 				return Err(invalid(format!(
@@ -113,7 +115,12 @@ impl CallMedia for ProductRuntimeHost {
 			}
 			until_cancelled(
 				cx,
-				platform.call_media_signal(&self.product, &room_id, &call_id, request.signal),
+				platform.call_media_signal(
+					&self.connection.product,
+					&room_id,
+					&call_id,
+					request.signal,
+				),
 			)
 			.await
 			.map_err(|error| unknown(error.to_string()))?
@@ -135,12 +142,16 @@ impl CallMedia for ProductRuntimeHost {
 		let version = request.version();
 		let request = request.into_latest();
 		let result = async {
-			let platform = self.services.call_media_platform().ok_or(CallError::Unsupported)?;
+			let platform =
+				self.connection.services.call_media_platform().ok_or(CallError::Unsupported)?;
 			let (room_id, call_id) = call_of(&request.room_id, &request.call_id)?;
-			until_cancelled(cx, platform.stop_call_media(&self.product, &room_id, &call_id))
-				.await
-				.map_err(|error| unknown(error.to_string()))?
-				.map_err(|error| unknown(error.reason))?;
+			until_cancelled(
+				cx,
+				platform.stop_call_media(&self.connection.product, &room_id, &call_id),
+			)
+			.await
+			.map_err(|error| unknown(error.to_string()))?
+			.map_err(|error| unknown(error.reason))?;
 			Ok(latest::HostCallMediaResponse {})
 		}
 		.await;

@@ -424,8 +424,9 @@ impl Worker for ProductRuntimeHost {
 		let version = request.version();
 		let latest::HostWorkerSetWakeWatchesRequest { watches } = request.into_latest();
 		let delivery = self
+			.connection
 			.services
-			.set_wake_watches(&self.product.product_id, watches)
+			.set_wake_watches(&self.connection.product.product_id, watches)
 			.await
 			.map_err(|error| {
 				CallError::Domain(HostWorkerSetWakeWatchesError::from_latest(error, version))
@@ -527,7 +528,8 @@ impl Notifications for ProductRuntimeHost {
 				version,
 			));
 		}
-		self.connection.platform
+		self.connection
+			.platform
 			.push_notification(inner)
 			.await
 			.map(|value| HostPushNotificationResponse::from_latest(value, version))

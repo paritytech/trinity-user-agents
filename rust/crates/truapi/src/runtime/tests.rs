@@ -7718,11 +7718,14 @@ fn the_input_text_reaches_the_product_bounded_and_is_no_press() {
 		..room_press()
 	};
 
-	host.chat.publish(typed("ali".into()), &host.services.spawner).unwrap();
+	host.connection
+		.chat
+		.publish(typed("ali".into()), &host.connection.services.spawner)
+		.unwrap();
 	assert!(matches!(
-		host.chat.publish(
+		host.connection.chat.publish(
 			typed("a".repeat(crate::platform::CHAT_INPUT_EVENT_MAX_BYTES + 1)),
-			&host.services.spawner
+			&host.connection.services.spawner
 		),
 		Err(crate::host_core::ProductRuntimeError::Rejected { .. })
 	));
@@ -7744,11 +7747,14 @@ fn a_worker_scans_shortly_after_a_press_in_its_room_but_not_after_a_message() {
 		},
 		..room_press()
 	};
-	host.chat.publish(posted, &host.services.spawner).unwrap();
+	host.connection.chat.publish(posted, &host.connection.services.spawner).unwrap();
 	assert_eq!(scan(&host), Err(CallError::Domain(v01::HostScannerScanError::NotVisible)));
 	assert!(scanner.asked().is_empty());
 
-	host.chat.publish(room_press(), &host.services.spawner).unwrap();
+	host.connection
+		.chat
+		.publish(room_press(), &host.connection.services.spawner)
+		.unwrap();
 	assert_eq!(scan(&host), Ok(v01::ScanOutcome::Dismissed));
 }
 
@@ -8553,7 +8559,7 @@ impl crate::platform::SharePlatform for StubSharePlatform {
 /// A runtime of `kind` for `greenmarket.dot` with `sheet` installed.
 fn share_host(kind: ProductExecutionKind, sheet: Arc<StubSharePlatform>) -> ProductRuntimeHost {
 	let host = scanner_host_for(kind, None);
-	host.services.install_share_platform(sheet);
+	host.connection.services.install_share_platform(sheet);
 	host
 }
 
@@ -8610,11 +8616,14 @@ fn a_worker_shares_only_shortly_after_the_user_presses_something_of_its_rooms() 
 		},
 		..room_press()
 	};
-	host.chat.publish(posted, &host.services.spawner).unwrap();
+	host.connection.chat.publish(posted, &host.connection.services.spawner).unwrap();
 	assert_eq!(share(&host, "Add me"), not_visible);
 	assert!(sheet.asked.lock().unwrap().is_empty());
 
-	host.chat.publish(room_press(), &host.services.spawner).unwrap();
+	host.connection
+		.chat
+		.publish(room_press(), &host.connection.services.spawner)
+		.unwrap();
 	assert_eq!(share(&host, "Add me"), Ok(v01::ShareOutcome::Shared));
 	assert_eq!(
 		*sheet.asked.lock().unwrap(),
@@ -8662,7 +8671,7 @@ fn usernames_host(
 	directory: Arc<StubUsernamesPlatform>,
 ) -> ProductRuntimeHost {
 	let host = scanner_host_for(kind, None);
-	host.services.install_usernames_platform(directory);
+	host.connection.services.install_usernames_platform(directory);
 	host
 }
 
@@ -8756,7 +8765,10 @@ fn a_worker_adds_a_contact_only_shortly_after_the_user_presses_an_entry_of_its_m
 		},
 		..room_press()
 	};
-	host.chat.publish(menu_press, &host.services.spawner).unwrap();
+	host.connection
+		.chat
+		.publish(menu_press, &host.connection.services.spawner)
+		.unwrap();
 	assert!(matches!(
 		add_contact(&host, "bob 7"),
 		Err(CallError::Domain(v01::HostUsernamesAddContactError::InvalidRequest { .. }))
@@ -8833,7 +8845,7 @@ impl crate::platform::PushPlatform for StubPushPlatform {
 fn push_host(push: Option<Arc<StubPushPlatform>>) -> ProductRuntimeHost {
 	let host = scanner_host_for(ProductExecutionKind::Worker, None);
 	if let Some(push) = push {
-		host.services.install_push_platform(push);
+		host.connection.services.install_push_platform(push);
 	}
 	host
 }
@@ -9053,13 +9065,13 @@ fn call_media_starts_only_shortly_after_the_user_calls_or_accepts_in_that_room()
 	let media = Arc::new(StubCallMedia::default());
 	let host = scanner_host_for(ProductExecutionKind::Worker, None);
 	assert_eq!(call_media_start(&host, "dm-7"), Err(CallError::Unsupported));
-	host.services.install_call_media_platform(media.clone());
+	host.connection.services.install_call_media_platform(media.clone());
 	assert_eq!(
 		call_media_start(&host, "dm-7"),
 		Err(CallError::Domain(v01::HostCallMediaError::NotAllowed))
 	);
 
-	host.services.chat_room_events.publish(
+	host.connection.services.chat_room_events.publish(
 		"greenmarket.dot",
 		latest::HostChatRoomEventsSubscribeItem {
 			room_id: "dm-7".into(),
@@ -9070,7 +9082,7 @@ fn call_media_starts_only_shortly_after_the_user_calls_or_accepts_in_that_room()
 		call_media_start(&host, "dm-7"),
 		Err(CallError::Domain(v01::HostCallMediaError::NotAllowed))
 	);
-	host.services.chat_room_events.publish(
+	host.connection.services.chat_room_events.publish(
 		"greenmarket.dot",
 		latest::HostChatRoomEventsSubscribeItem {
 			room_id: "dm-7".into(),

@@ -177,7 +177,8 @@ impl ProductRuntimeHost {
 		if !self.room_staging(&room_id).await.preimage {
 			return Err(ChatStageRejection::NotDeclared);
 		}
-		self.require_remote_permission(latest::RemotePermission::PreimageSubmit, ())
+		self.connection
+			.require_remote_permission(latest::RemotePermission::PreimageSubmit, ())
 			.await
 			.map_err(|error| match error {
 				truapi::CallError::HostFailure { reason } => {
@@ -185,17 +186,20 @@ impl ProductRuntimeHost {
 				},
 				_ => ChatStageRejection::PermissionDenied,
 			})?;
-		let Some(session) = self.authority.current_session() else {
+		let Some(session) = self.accounts.current_session() else {
 			return Err(ChatStageRejection::AllowanceUnavailable {
 				reason: "No active session".to_string(),
 			});
 		};
 		let submission_deadline = Instant::now() + PREIMAGE_SUBMIT_TIMEOUT;
 		if !self.submits_preimages_locally() {
-			let bound =
-				self.services.bulletin.max_transaction_size(submission_deadline).await.map_err(
-					|error| ChatStageRejection::SubmitFailed { reason: error.to_string() },
-				)?;
+			let bound = self
+				.connection
+				.services
+				.bulletin
+				.max_transaction_size(submission_deadline)
+				.await
+				.map_err(|error| ChatStageRejection::SubmitFailed { reason: error.to_string() })?;
 			if bytes.len() > bound as usize {
 				return Err(too_large(bound as usize));
 			}
@@ -214,27 +218,40 @@ impl ProductRuntimeHost {
 	/// Keep the attachment flags of features the core accepted for
 	/// `room_id`.
 	pub fn record_chat_staging(&self, room_id: &str, features: &latest::ChatRoomFeatures) {
-		self.services.chat_staging.record(&self.product.product_id, room_id, features);
+		self.connection.services.chat_staging.record(
+			&self.connection.product.product_id,
+			room_id,
+			features,
+		);
 	}
 
 	/// Forget the staging flag of a deleted room.
 	pub fn forget_chat_staging(&self, room_id: &str) {
-		self.services.chat_staging.forget(&self.product.product_id, room_id);
+		self.connection
+			.services
+			.chat_staging
+			.forget(&self.connection.product.product_id, room_id);
 	}
 
 	/// The attachment kinds that `room_id` declares: as the core last saw
 	/// them, or else as the chat adapter of this connection reads them from
 	/// the host.
 	async fn room_staging(&self, room_id: &str) -> StagingFlags {
-		if let Some(declared) =
-			self.services.chat_staging.declared(&self.product.product_id, room_id)
+		if let Some(declared) = self
+			.connection
+			.services
+			.chat_staging
+			.declared(&self.connection.product.product_id, room_id)
 		{
 			return declared;
 		}
-		let Some(platform) = self.chat_platform.as_ref() else {
+		let Some(platform) = self.connection.chat_platform.as_ref() else {
 			return StagingFlags::default();
 		};
-		match platform.read_chat_room_features(&self.product, room_id.to_string()).await {
+		match platform
+			.read_chat_room_features(&self.connection.product, room_id.to_string())
+			.await
+		{
 			Ok(features) => {
 				self.record_chat_staging(room_id, &features);
 				(&features).into()
@@ -271,7 +288,8 @@ impl ProductRuntimeHost {
 		if !self.room_staging(&room_id).await.sealed {
 			return Err(ChatStageRejection::NotDeclared);
 		}
-		self.require_remote_permission(latest::RemotePermission::PreimageSubmit, ())
+		self.connection
+			.require_remote_permission(latest::RemotePermission::PreimageSubmit, ())
 			.await
 			.map_err(|error| match error {
 				truapi::CallError::HostFailure { reason } => {
@@ -279,7 +297,7 @@ impl ProductRuntimeHost {
 				},
 				_ => ChatStageRejection::PermissionDenied,
 			})?;
-		let Some(session) = self.authority.current_session() else {
+		let Some(session) = self.accounts.current_session() else {
 			return Err(ChatStageRejection::AllowanceUnavailable {
 				reason: "No active session".to_string(),
 			});
@@ -289,9 +307,9 @@ impl ProductRuntimeHost {
 				CHAT_SEALED_LOCAL_PART_BYTES
 			} else {
 				let deadline = Instant::now() + PREIMAGE_SUBMIT_TIMEOUT;
-				self.services.bulletin.max_transaction_size(deadline).await.map_err(|error| {
-					ChatStageRejection::SubmitFailed { reason: error.to_string() }
-				})? as usize
+				self.connection.services.bulletin.max_transaction_size(deadline).await.map_err(
+					|error| ChatStageRejection::SubmitFailed { reason: error.to_string() },
+				)? as usize
 			};
 		let sealed = SealedBytes::seal(&bytes, part_bytes)
 			.map_err(|reason| ChatStageRejection::SubmitFailed { reason: reason.to_string() })?;
@@ -355,19 +373,23 @@ impl ProductRuntimeHost {
 	/// One part of a sealed resource: from the cache, else from the host
 	/// content backend. A value that does not hash to `key` is no part.
 	async fn read_sealed_part(&self, key: [u8; 32]) -> Option<Vec<u8>> {
-		if let Some(value) = self.services.cached_preimage(&key) {
+		if let Some(value) = self.connection.services.cached_preimage(&key) {
 			return Some(value);
 		}
-		let lookups = self.platform.lookup_preimage(key.to_vec()).filter_map(|item| async move {
-			item.ok().flatten().filter(|value| preimage_key(value) == key)
-		});
+		let lookups =
+			self.connection
+				.platform
+				.lookup_preimage(key.to_vec())
+				.filter_map(|item| async move {
+					item.ok().flatten().filter(|value| preimage_key(value) == key)
+				});
 		futures::pin_mut!(lookups);
 		let wait = futures_timer::Delay::new(SEALED_PART_WAIT);
 		let value = match futures::future::select(lookups.next(), wait).await {
 			futures::future::Either::Left((Some(value), _)) => value,
 			_ => return None,
 		};
-		self.services.cache_preimage(key, value.clone());
+		self.connection.services.cache_preimage(key, value.clone());
 		Some(value)
 	}
 }

@@ -332,38 +332,35 @@ struct TrUAPIWorkerManagerTests {
     /// app comes back to the foreground, not at once, so a worker that faults at each start does not loop.
     @Test
     func aFaultedWorkerStartsAgainWhenTheAppComesBackToTheForeground() async throws {
-        let builder = StubBuilder()
+        let builder = StubWorkerBuilder()
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
         manager.demandChanged(productId: "game.paseo", transition: .start)
-        try await settle()
+        try await execution(of: "game.paseo", in: manager)
         try await builder.engine?.invokeNative(TrUAPIWorkerRuntime.faultHandlerName, args: "boom")
-        try await settle()
-        #expect(manager.currentExecution(of: "game.paseo") == nil)
+        try await noExecution(of: "game.paseo", in: manager)
 
         manager.appForegroundChanged(false)
-        try await settle()
         #expect(builder.built == ["game.paseo"])
 
         manager.appForegroundChanged(true)
-        try await settle()
+        try await execution(of: "game.paseo", in: manager)
         #expect(builder.built == ["game.paseo", "game.paseo"])
-        #expect(manager.currentExecution(of: "game.paseo") != nil)
     }
 
     /// A worker that runs and has no fault is the core's to start and stop, so a return to the foreground does not
     /// start a second one.
     @Test
     func theForegroundStartsNoWorkerThatHasNoFault() async throws {
-        let builder = StubBuilder()
+        let builder = StubWorkerBuilder()
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
         manager.demandChanged(productId: "game.paseo", transition: .start)
-        try await settle()
+        try await execution(of: "game.paseo", in: manager)
         manager.appForegroundChanged(true)
-        try await settle()
+        try await barrier(manager)
 
-        #expect(builder.built == ["game.paseo"])
+        #expect(builder.built == ["game.paseo", "barrier.paseo"])
     }
 }
 

@@ -360,7 +360,7 @@ fn a_worker_sets_its_watches_through_the_protocol() {
 			}
 		)))
 	);
-	let services = host.services();
+	let services = host.connection.services();
 	assert_eq!(
 		block_on(services.push_wakes.registry.lock())
 			.as_ref()

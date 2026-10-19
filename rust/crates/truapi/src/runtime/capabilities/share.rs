@@ -51,21 +51,26 @@ impl Share for ProductRuntimeHost {
 		let version = request.version();
 		let request = request.into_latest();
 		let result = async {
-			let platform = self.services.share_platform().ok_or(CallError::Unsupported)?;
+			let platform =
+				self.connection.services.share_platform().ok_or(CallError::Unsupported)?;
 			if let Some(reason) = invalid_reason(&request) {
 				return Err(CallError::Domain(latest::HostShareError::InvalidRequest { reason }));
 			}
-			if self.execution_kind() == ProductExecutionKind::Worker && !self.recently_pressed() {
+			if self.connection.execution_kind() == ProductExecutionKind::Worker &&
+				!self.connection.recently_pressed()
+			{
 				return Err(CallError::Domain(latest::HostShareError::NotVisible));
 			}
 			let _claim = self
+				.connection
 				.services
 				.claim_share()
 				.ok_or_else(|| CallError::Domain(latest::HostShareError::Busy))?;
-			let answer = until_cancelled(cx, platform.share_text(&self.product, &request))
-				.await
-				.map_err(unknown)?
-				.map_err(|error| unknown(error.reason))?;
+			let answer =
+				until_cancelled(cx, platform.share_text(&self.connection.product, &request))
+					.await
+					.map_err(unknown)?
+					.map_err(|error| unknown(error.reason))?;
 			let outcome = match answer {
 				HostShare::Shared => latest::ShareOutcome::Shared,
 				HostShare::Dismissed => latest::ShareOutcome::Dismissed,

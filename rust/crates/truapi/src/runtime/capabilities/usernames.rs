@@ -56,7 +56,8 @@ impl Usernames for ProductRuntimeHost {
 		let version = request.version();
 		let request = request.into_latest();
 		let result = async {
-			let platform = self.services.usernames_platform().ok_or(CallError::Unsupported)?;
+			let platform =
+				self.connection.services.usernames_platform().ok_or(CallError::Unsupported)?;
 			let prefix = request.prefix.trim().trim_start_matches('@').to_ascii_lowercase();
 			if let Some(reason) = invalid_name(&prefix, PREFIX_MIN_CHARS) {
 				return Err(CallError::Domain(latest::HostUsernamesSearchError::InvalidRequest {
@@ -67,7 +68,7 @@ impl Usernames for ProductRuntimeHost {
 				CallError::Domain(latest::HostUsernamesSearchError::Unknown { reason })
 			};
 			let mut usernames =
-				until_cancelled(cx, platform.search_usernames(&self.product, &prefix))
+				until_cancelled(cx, platform.search_usernames(&self.connection.product, &prefix))
 					.await
 					.map_err(|error| unknown(error.to_string()))?
 					.map_err(|error| unknown(error.reason))?;
@@ -95,17 +96,20 @@ impl Usernames for ProductRuntimeHost {
 		let version = request.version();
 		let request = request.into_latest();
 		let result = async {
-			let platform = self.services.usernames_platform().ok_or(CallError::Unsupported)?;
+			let platform =
+				self.connection.services.usernames_platform().ok_or(CallError::Unsupported)?;
 			let username = request.username.trim().trim_start_matches('@').to_ascii_lowercase();
 			if let Some(reason) = invalid_name(&username, 1) {
 				return Err(CallError::Domain(
 					latest::HostUsernamesAddContactError::InvalidRequest { reason },
 				));
 			}
-			if self.execution_kind() == ProductExecutionKind::Worker && !self.recently_pressed() {
+			if self.connection.execution_kind() == ProductExecutionKind::Worker &&
+				!self.connection.recently_pressed()
+			{
 				return Err(CallError::Domain(latest::HostUsernamesAddContactError::NotVisible));
 			}
-			let _claim = self.services.claim_share().ok_or_else(|| {
+			let _claim = self.connection.services.claim_share().ok_or_else(|| {
 				CallError::Domain(latest::HostUsernamesAddContactError::Unknown {
 					reason: "another sheet of the host is open".into(),
 				})
@@ -113,10 +117,11 @@ impl Usernames for ProductRuntimeHost {
 			let unknown = |reason: String| {
 				CallError::Domain(latest::HostUsernamesAddContactError::Unknown { reason })
 			};
-			let answer = until_cancelled(cx, platform.add_contact(&self.product, &username))
-				.await
-				.map_err(|error| unknown(error.to_string()))?
-				.map_err(|error| unknown(error.reason))?;
+			let answer =
+				until_cancelled(cx, platform.add_contact(&self.connection.product, &username))
+					.await
+					.map_err(|error| unknown(error.to_string()))?
+					.map_err(|error| unknown(error.reason))?;
 			let outcome = match answer {
 				HostContactAdd::Added => latest::AddContactOutcome::Added,
 				HostContactAdd::AlreadyContact => latest::AddContactOutcome::AlreadyContact,

@@ -81,10 +81,16 @@ class ProductChatExtensionTest {
         ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, declarations, feedListeners, roomEventSink, calls)
 
     private fun placedByHost(refCounter: ProductWorkerRefCounter) =
-        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, declarations, feedListeners, roomEventSink, ProductChatExtensionOrigin.PlacedByHost)
-
-    private fun placedByHost(refCounter: ProductWorkerRefCounter) =
-        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, declarations, feedListeners, roomEventSink, ProductChatExtensionOrigin.PlacedByHost)
+        ProductChatExtension(
+            mockk<Context>(relaxed = true),
+            product,
+            refCounter,
+            declarations,
+            feedListeners,
+            roomEventSink,
+            calls,
+            ProductChatExtensionOrigin.PlacedByHost,
+        )
 
     private class FakeRefCounter(
         private val booted: ProductWorker? = null,
@@ -427,31 +433,6 @@ class ProductChatExtensionTest {
 
         assertEquals(listOf("open" to ProductChatIdParameter(ROOM), "close" to ProductChatIdParameter(ROOM)), worker.roomCalls)
         assertEquals(null, extension.roomLifecycle(ChatId.forExtension(extensionId)))
-
-    private suspend fun ProductChatExtension.pinnedAndRemovable(chatId: ChatId): Pair<ChatPreview?, Boolean> = coroutineScope {
-        val computationalScope = object : ComputationalScope, CoroutineScope by this {}
-        val preview = with(computationalScope) { customChatPreviewDelegate(chatId).provider.provide().first() }
-        preview to (customMenuRenderer(chatId) as ProductChatMenuRenderer).removable
-    }
-
-    // The host put it there, so it holds the top of the list rather than competing on recency,
-    // and nobody can remove it: a removal would only hide the row until the next launch while
-    // its worker kept running.
-    @Test
-    fun `a host-placed chat is pinned above the rest and offers no removal`() = runTest {
-        val extension = placedByHost(FakeRefCounter(RecordingWorker()))
-
-        assertEquals(
-            ChatPreview.Custom(Order.PinToTop, CustomPreviewData.FromMessage, ChatPreview.Custom.BadgeStyle.UNREAD) to false,
-            extension.pinnedAndRemovable(ChatId.forExtensionRoom(extensionId, "jollity")),
-        )
-    }
-
-    @Test
-    fun `an ordinary product's chat competes on recency and can be removed`() = runTest {
-        val extension = extension(FakeRefCounter(RecordingWorker()))
-
-        assertEquals(null to true, extension.pinnedAndRemovable(ChatId.forExtensionRoom(extensionId, ROOM)))
     }
 
     @Test
@@ -486,5 +467,31 @@ class ProductChatExtensionTest {
 
         assertEquals(RecordingWorker.MENU, menu.getOrNull())
         assertEquals(listOf(message.copy(messageId = "m1", replyTo = "m0")), worker.menuQuestions)
+    }
+
+    private suspend fun ProductChatExtension.pinnedAndRemovable(chatId: ChatId): Pair<ChatPreview?, Boolean> = coroutineScope {
+        val computationalScope = object : ComputationalScope, CoroutineScope by this {}
+        val preview = with(computationalScope) { customChatPreviewDelegate(chatId).provider.provide().first() }
+        preview to (customMenuRenderer(chatId) as ProductChatMenuRenderer).removable
+    }
+
+    // The host put it there, so it holds the top of the list rather than competing on recency,
+    // and nobody can remove it: a removal would only hide the row until the next launch while
+    // its worker kept running.
+    @Test
+    fun `a host-placed chat is pinned above the rest and offers no removal`() = runTest {
+        val extension = placedByHost(FakeRefCounter(RecordingWorker()))
+
+        assertEquals(
+            ChatPreview.Custom(Order.PinToTop, CustomPreviewData.FromMessage, ChatPreview.Custom.BadgeStyle.UNREAD) to false,
+            extension.pinnedAndRemovable(ChatId.forExtensionRoom(extensionId, "jollity")),
+        )
+    }
+
+    @Test
+    fun `an ordinary product's chat competes on recency and can be removed`() = runTest {
+        val extension = extension(FakeRefCounter(RecordingWorker()))
+
+        assertEquals(null to true, extension.pinnedAndRemovable(ChatId.forExtensionRoom(extensionId, ROOM)))
     }
 }

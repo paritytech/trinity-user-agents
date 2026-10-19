@@ -111,7 +111,8 @@ impl Push for ProductRuntimeHost {
 		let version = request.version();
 		let request = request.into_latest();
 		let result = async {
-			let platform = self.services.push_platform().ok_or(CallError::Unsupported)?;
+			let platform =
+				self.connection.services.push_platform().ok_or(CallError::Unsupported)?;
 			let room_id =
 				normalize_chat_identifier("roomId", &request.room_id).map_err(|error| {
 					CallError::Domain(latest::HostPushAddressError::InvalidRequest {
@@ -121,15 +122,16 @@ impl Push for ProductRuntimeHost {
 			let unknown = |reason: String| {
 				CallError::Domain(latest::HostPushAddressError::Unknown { reason })
 			};
-			let route = until_cancelled(cx, platform.push_route(&self.product, &room_id))
-				.await
-				.map_err(|error| unknown(error.to_string()))?
-				.map_err(|error| unknown(error.reason))?
-				.ok_or_else(|| {
-					CallError::Domain(latest::HostPushAddressError::NotAvailable {
-						reason: "the device has no push token".into(),
-					})
-				})?;
+			let route =
+				until_cancelled(cx, platform.push_route(&self.connection.product, &room_id))
+					.await
+					.map_err(|error| unknown(error.to_string()))?
+					.map_err(|error| unknown(error.reason))?
+					.ok_or_else(|| {
+						CallError::Domain(latest::HostPushAddressError::NotAvailable {
+							reason: "the device has no push token".into(),
+						})
+					})?;
 			let key: [u8; 32] = route
 				.key
 				.try_into()
@@ -167,7 +169,8 @@ impl Push for ProductRuntimeHost {
 		let version = request.version();
 		let request = request.into_latest();
 		let result = async {
-			let platform = self.services.push_platform().ok_or(CallError::Unsupported)?;
+			let platform =
+				self.connection.services.push_platform().ok_or(CallError::Unsupported)?;
 			let address = PushAddress::decode_address(&request.address)
 				.ok_or(CallError::Domain(latest::HostPushNotifyError::InvalidAddress))?;
 			let invalid = |reason: String| {
@@ -183,8 +186,8 @@ impl Push for ProductRuntimeHost {
 					"the text is longer than {PUSH_BODY_MAX_CHARS} characters"
 				)));
 			}
-			let admitted = self.services.admit_push(
-				&self.product.product_id,
+			let admitted = self.connection.services.admit_push(
+				&self.connection.product.product_id,
 				current_unix_secs(),
 				PUSH_WINDOW_SECS,
 				PUSH_MAX_PER_WINDOW,
@@ -202,7 +205,7 @@ impl Push for ProductRuntimeHost {
 				push_id: address.push_id,
 				message,
 			};
-			let taken = until_cancelled(cx, platform.send_push(&self.product, delivery))
+			let taken = until_cancelled(cx, platform.send_push(&self.connection.product, delivery))
 				.await
 				.map_err(|error| unknown(error.to_string()))?
 				.map_err(|error| unknown(error.reason))?;
