@@ -19,8 +19,9 @@ use super::{
 			wait_for_sso_remote_response,
 		},
 		statement_store_rpc::{self, StatementStoreRpc},
+		until_cancelled,
 	},
-	PairingHost,
+	PairingHost, ProductSubtreeFetch,
 };
 use crate::{
 	host_internal::{
@@ -42,7 +43,7 @@ use crate::{
 
 use futures::{
 	FutureExt,
-	future::{AbortHandle, Abortable},
+	future::{AbortHandle, Abortable, Shared, WeakShared},
 };
 use tracing::{debug, instrument, warn};
 use truapi::{CallContext, CancellationReason, latest};
@@ -320,6 +321,12 @@ impl PairingHost {
 
 	/// Resolve a product's hard-subtree public key, asking the Account Holder
 	/// only when neither the memory cache nor storage already holds it.
+	///
+	/// Concurrent callers for one SSO session and product share one
+	/// `ProductSubtreeRequest` and each takes its answer. A cancelled caller
+	/// stops waiting without ending the request for the others, and a request
+	/// every caller has left is dropped. A settled request is never joined, so
+	/// a failure is not remembered.
 	pub async fn remote_product_subtree_public_key(
 		&self,
 		cx: &CallContext,
@@ -328,22 +335,63 @@ impl PairingHost {
 	) -> Result<[u8; 32], AuthorityError> {
 		let sso = session.sso.as_ref().ok_or(AuthorityError::Disconnected)?;
 		let lifecycle_epoch = self.current_session_lifecycle_epoch();
-		let cache_key = (SsoSessionKey::from_session(sso), product_id.clone());
+		let cache_key = (SsoSessionKey::from_session(sso), product_id);
 		if let Some(public_key) = self.known_product_subtree(session, cache_key.clone()).await {
 			return Ok(public_key);
 		}
-		let public_key = self
-			.call(cx, session, ProductSubtreeRequest { product_id })
-			.await
-			.map_err(remote_authority_error)?
-			.map_err(remote_authority_error)?;
-		if !self
-			.persist_product_subtree_if_current(session, lifecycle_epoch, cache_key, public_key)
-			.await
+		let request = self.product_subtree_request(cx, session, lifecycle_epoch, cache_key)?;
+		until_cancelled(cx, request).await?
+	}
+
+	/// The `ProductSubtreeRequest` in flight for `cache_key`, or a new one.
+	fn product_subtree_request(
+		&self,
+		cx: &CallContext,
+		session: &SessionInfo,
+		lifecycle_epoch: u64,
+		cache_key: (SsoSessionKey, String),
+	) -> Result<Shared<ProductSubtreeFetch>, AuthorityError> {
+		let mut requests = self
+			.product_subtree_requests
+			.lock()
+			.expect("product subtree request mutex poisoned");
+		if let Some(request) = requests
+			.get(&cache_key)
+			.and_then(WeakShared::upgrade)
+			.filter(|request| request.peek().is_none())
 		{
-			return Err(AuthorityError::Disconnected);
+			return Ok(request);
 		}
-		Ok(public_key)
+		let host = self.weak_self.upgrade().ok_or(AuthorityError::Disconnected)?;
+		let session = session.clone();
+		// Others may join, so this caller's cancel must not reach the request.
+		let request_cx = CallContext::with_request_id(cx.request_id().to_string());
+		let product_id = cache_key.1.clone();
+		let persist_key = cache_key.clone();
+		let request = async move {
+			let public_key = host
+				.call(&request_cx, &session, ProductSubtreeRequest { product_id })
+				.await
+				.map_err(remote_authority_error)?
+				.map_err(remote_authority_error)?;
+			if !host
+				.persist_product_subtree_if_current(
+					&session,
+					lifecycle_epoch,
+					persist_key,
+					public_key,
+				)
+				.await
+			{
+				return Err(AuthorityError::Disconnected);
+			}
+			Ok(public_key)
+		}
+		.boxed()
+		.shared();
+		requests.retain(|_, request| request.upgrade().is_some());
+		requests.insert(cache_key, request.downgrade().expect("an unpolled request is pending"));
+		Ok(request)
 	}
 
 	/// Forward RFC-0023 VRF signing to the paired Account Holder.

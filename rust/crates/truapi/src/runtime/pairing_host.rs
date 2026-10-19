@@ -13,7 +13,10 @@ use truapi::latest::{
 	HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
 };
 
-use futures::channel::oneshot;
+use futures::{
+	channel::oneshot,
+	future::{BoxFuture, WeakShared},
+};
 use parity_scale_codec::{Decode, Encode};
 use schnorrkel::SecretKey;
 use sso_channel::SsoDisconnectMonitor;
@@ -140,6 +143,8 @@ struct PersistedAutoSigningKey {
 
 type AutoSigningCacheKey = (AutoSigningOwner, String);
 
+type ProductSubtreeFetch = BoxFuture<'static, Result<[u8; 32], AuthorityError>>;
+
 fn decode_auto_signing_keys(blob: &[u8]) -> Result<Vec<PersistedAutoSigningKey>, AuthorityError> {
 	let mut input = blob;
 	let keys = Vec::<PersistedAutoSigningKey>::decode(&mut input).map_err(|_| {
@@ -257,6 +262,9 @@ pub struct PairingHost {
 	statement_store_allowances: Mutex<HashMap<AllowanceCacheKey, StatementStoreAllowanceKey>>,
 	bulletin_allowances: Mutex<HashMap<AllowanceCacheKey, BulletinAllowanceKey>>,
 	product_subtrees: Mutex<HashMap<(SsoSessionKey, String), [u8; 32]>>,
+	/// `ProductSubtreeRequest`s in flight, which concurrent callers join.
+	product_subtree_requests:
+		Mutex<HashMap<(SsoSessionKey, String), WeakShared<ProductSubtreeFetch>>>,
 	auto_signing_keys: Mutex<HashMap<AutoSigningCacheKey, AutoSigningKey>>,
 	ring_resolver: Arc<dyn RingResolver>,
 	ring_vrf_registry: Arc<RingVrfRegistryStore>,
@@ -324,6 +332,7 @@ impl PairingHost {
 			statement_store_allowances: Mutex::new(HashMap::new()),
 			bulletin_allowances: Mutex::new(HashMap::new()),
 			product_subtrees: Mutex::new(HashMap::new()),
+			product_subtree_requests: Mutex::new(HashMap::new()),
 			auto_signing_keys: Mutex::new(HashMap::new()),
 			ring_resolver: ChainRingResolver::new(services.chain.clone()),
 			ring_vrf_registry: RingVrfRegistryStore::new(services.platform.clone()),

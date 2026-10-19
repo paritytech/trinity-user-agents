@@ -7,7 +7,7 @@ use std::sync::{
 
 use crate::platform::{
 	AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey, HostScan,
-	PermissionAuthorizationRequest, ProductExecutionKind, ProductSubtreeReview,
+	PermissionAuthorizationRequest, ProductExecutionKind,
 };
 use parity_scale_codec::Encode;
 use truapi::{
@@ -3882,8 +3882,8 @@ fn get_account_own_product_skips_the_prompt_when_the_subtree_is_cached() {
 }
 
 #[test]
-fn concurrent_get_account_calls_share_one_prompt_and_one_subtree_request() {
-	// A product asking on every keystroke must not stack prompts or phone requests.
+fn concurrent_get_account_calls_share_one_subtree_request() {
+	// A product asking on every keystroke must not stack requests on the phone.
 	let session = sso_session_info();
 	let platform = Arc::new(StubPlatform {
 		sso_response_script: Some(sso_success_response_script(
@@ -3914,7 +3914,7 @@ fn concurrent_get_account_calls_share_one_prompt_and_one_subtree_request() {
 	let public_keys: Vec<_> = futures::executor::block_on(futures::future::join_all(calls))
 		.into_iter()
 		.map(|response| {
-			let HostAccountGetResponse::V1(inner) = response.expect("the shared resolution serves");
+			let HostAccountGetResponse::V1(inner) = response.expect("the shared request serves");
 			inner.account.public_key
 		})
 		.collect();
@@ -3929,41 +3929,13 @@ fn concurrent_get_account_calls_share_one_prompt_and_one_subtree_request() {
 		.count();
 
 	assert_eq!(
-		(public_keys, platform.product_subtree_reviews.lock().unwrap().clone(), subtree_requests),
+		(public_keys, subtree_requests),
 		(
 			(0..3)
 				.map(|index| test_product_account_public("myapp.dot", index).to_vec())
 				.collect(),
-			vec![ProductSubtreeReview { product_id: "myapp.dot".to_string() }],
 			1,
 		)
-	);
-}
-
-#[test]
-fn get_account_asks_again_after_a_rejected_product_subtree() {
-	let platform = Arc::new(StubPlatform { product_subtree_denied: true, ..Default::default() });
-	let host =
-		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
-	host.test_session_state().set_session(sso_session_info());
-	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
-		product_account_id: account_id("myapp.dot", 0),
-	});
-
-	let rejected: Vec<_> = (0..2)
-		.map(|_| {
-			matches!(
-				futures::executor::block_on(
-					host.get_account(&CallContext::default(), request.clone())
-				),
-				Err(CallError::Domain(HostAccountGetError::V1(v01::HostAccountGetError::Rejected)))
-			)
-		})
-		.collect();
-
-	assert_eq!(
-		(rejected, platform.product_subtree_reviews.lock().unwrap().len()),
-		(vec![true, true], 2)
 	);
 }
 

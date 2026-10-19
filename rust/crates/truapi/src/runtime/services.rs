@@ -68,9 +68,6 @@ pub struct RuntimeServices {
 	/// Contact handles already resolved, shared by every product runtime of
 	/// this host and emptied when the host says its contacts changed.
 	pub contact_handles: crate::runtime::contacts::ContactHandleCache,
-	/// Product-account consents and subtree fetches in flight, shared so
-	/// concurrent calls from any runtime of one product raise one prompt.
-	pub product_account_resolutions: crate::runtime::product_accounts::ProductAccountResolutions,
 	/// Host Game adapter, installed once at startup by a host that can hold
 	/// reminders. Unset leaves every product Game call `Unsupported`.
 	game_platform: OnceLock<Arc<dyn GamePlatform>>,
@@ -162,7 +159,6 @@ impl RuntimeServices {
 			balance_platform: OnceLock::new(),
 			contacts_platform: OnceLock::new(),
 			contact_handles: Default::default(),
-			product_account_resolutions: Default::default(),
 			game_platform: OnceLock::new(),
 			scanner_platform: OnceLock::new(),
 			scan_open: AtomicBool::new(false),

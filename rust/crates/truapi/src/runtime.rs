@@ -903,10 +903,16 @@ impl ProductRuntimeHost {
 		session: &AuthoritySession,
 		product_account_id: &latest::ProductAccountId,
 	) -> Result<[u8; 32], AuthorityError> {
-		let subtree = self
-			.accounts
-			.product_subtree_public_key(session, cx, product_account_id.dot_ns_identifier.clone())
-			.await?;
+		let cx = remote_authority_context(cx);
+		let subtree = remote_authority_call(
+			&cx,
+			self.accounts.product_subtree_public_key(
+				session,
+				&cx,
+				product_account_id.dot_ns_identifier.clone(),
+			),
+		)
+		.await?;
 		derive_product_public_key(
 			subtree,
 			derivation_index_bytes(&product_account_id.derivation_index),
