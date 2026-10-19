@@ -10,12 +10,13 @@ enum PurseScroll {
     static let barHeight: CGFloat = 49
 
     struct Card: Equatable {
-        /// The card's top edge in ``PurseScroll/space``, as laid out before
-        /// it shrinks.
+        /// The card's top edge in ``PurseScroll/space``.
         var top: CGFloat = 0
         /// The card's bottom edge in ``PurseScroll/space``.
         let bottom: CGFloat
         let balance: Decimal?
+        /// The card's frame in the window, where the shrinking card starts from.
+        var frame: CGRect = .zero
     }
 
     struct DayMark: Equatable {

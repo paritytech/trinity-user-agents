@@ -9,8 +9,12 @@ struct AssetDetailsView: View {
     var onCardTapped: () -> Void
     var overscroll: CGFloat = 0
     var onCollapse: (() -> Void)?
-    /// How far the card has shrunk into the header, 0 to 1.
-    var collapse: CGFloat = 0
+    /// How visible the page's own card is: the wallet draws the card itself
+    /// while it shrinks into the header, so this one stands aside.
+    var cardOpacity: Double = 1
+    /// The funding lists the open Purse draws.
+    var fundingCenter: FundingActivityCenter
+    var cash: FundingCash
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -20,14 +24,18 @@ struct AssetDetailsView: View {
         onCardTapped: @escaping () -> Void,
         overscroll: CGFloat = 0,
         onCollapse: (() -> Void)? = nil,
-        collapse: CGFloat = 0
+        cardOpacity: Double = 1,
+        fundingCenter: FundingActivityCenter,
+        cash: FundingCash
     ) {
         _viewModel = State(initialValue: viewModel)
         self.isExpanded = isExpanded
         self.onCardTapped = onCardTapped
         self.overscroll = overscroll
         self.onCollapse = onCollapse
-        self.collapse = collapse
+        self.cardOpacity = cardOpacity
+        self.fundingCenter = fundingCenter
+        self.cash = cash
     }
 
     var body: some View {
@@ -46,14 +54,13 @@ struct AssetDetailsView: View {
             balanceCard(balanceCardModel)
                 .onTapGesture { onCardTapped() }
                 .background { cardMark }
-                .scaleEffect(cardScale, anchor: .top)
-                .opacity(isExpanded ? PurseMotion.Collapse.cardOpacity(collapse) : 1)
+                .opacity(isExpanded ? cardOpacity : 1)
                 .animation(balanceAnimation, value: viewModel.coinageBreakdown?.amounts.total)
         }
     }
 
-    /// Where the card is while the Purse scrolls, for the sticky bar that takes
-    /// its place once it has gone.
+    /// Where the card is while the Purse scrolls, for the card the wallet draws
+    /// shrinking into the header and the sticky bar under it.
     @ViewBuilder
     private var cardMark: some View {
         if isExpanded {
@@ -63,7 +70,8 @@ struct AssetDetailsView: View {
                     value: PurseScroll.Card(
                         top: proxy.frame(in: .named(PurseScroll.space)).minY,
                         bottom: proxy.frame(in: .named(PurseScroll.space)).maxY,
-                        balance: viewModel.coinageBreakdown?.amounts.total
+                        balance: viewModel.coinageBreakdown?.amounts.total,
+                        frame: proxy.frame(in: .global)
                     )
                 )
             }
@@ -91,7 +99,11 @@ struct AssetDetailsView: View {
                     CoinageBalanceBreakdownView(breakdown: breakdown, topInset: Self.panelTuck)
                 }
             }
-            FundingActivityView(cash: .current, currentBalance: viewModel.coinageBreakdown?.amounts.total)
+            FundingActivityView(
+                cash: cash,
+                currentBalance: viewModel.coinageBreakdown?.amounts.total,
+                center: fundingCenter
+            )
 
             #if TESTNET_FEATURE
                 HStack {
@@ -115,21 +127,13 @@ struct AssetDetailsView: View {
             .easeOut(duration: PurseMotion.Balance.countUp)
     }
 
-    /// Shrinking toward the header as the Purse scrolls; held still under
-    /// Reduce Motion, where the card only fades into the header.
-    private var cardScale: CGFloat {
-        guard isExpanded, !reduceMotion else { return 1 }
-        return PurseMotion.Collapse.cardScale(collapse)
-    }
-
     private func balanceCard(
         _ balanceCardModel: AssetDetailsBalanceCard.ViewModel
     ) -> some View {
         AssetDetailsBalanceCard(
             viewModel: balanceCardModel,
             isUpdating: viewModel.isUpdating,
-            isExpanded: isExpanded,
-            balanceOpacity: isExpanded ? PurseMotion.Collapse.balanceOpacity(collapse) : 1
+            isExpanded: isExpanded
         )
     }
 
@@ -147,7 +151,7 @@ struct AssetDetailsView: View {
             if FundingAvailability.isAvailable {
                 actionCard(
                     title: String(localized: .Funding.cardGet),
-                    subtitle: String(localized: .Funding.cardGetSubtitle(symbol: FundingCash.current.symbol)),
+                    subtitle: String(localized: .Funding.cardGetSubtitle(symbol: cash.symbol)),
                     arrowRotation: .zero,
                     isLoading: viewModel.isTopUpInProgress
                 ) {
@@ -158,7 +162,7 @@ struct AssetDetailsView: View {
 
             actionCard(
                 title: String(localized: .Funding.cardSend),
-                subtitle: String(localized: .Funding.cardSendSubtitle(symbol: FundingCash.current.symbol)),
+                subtitle: String(localized: .Funding.cardSendSubtitle(symbol: cash.symbol)),
                 arrowRotation: .degrees(180),
                 isLoading: false
             ) {
