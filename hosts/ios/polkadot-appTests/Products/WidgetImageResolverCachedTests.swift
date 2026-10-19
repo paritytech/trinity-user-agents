@@ -18,6 +18,22 @@ struct WidgetImageResolverCachedTests {
         #expect(image?.size == CGSize(width: 3, height: 2))
     }
 
+    /// A face can show one picture twice, and a load that never returns
+    /// leaves that cell on its spinner.
+    @Test(.timeLimit(.minutes(1)))
+    func overlappingLoadsOfOneAddressBothReturn() async throws {
+        let file = try writeTestPicture(size: CGSize(width: 3, height: 2))
+        defer { try? FileManager.default.removeItem(at: file) }
+        let images = WidgetImageResolver.cached(logger: MockLogger()) { _ in file }
+
+        async let first = images(.archive(path: "art/prize.png"))
+        async let second = images(.archive(path: "art/prize.png"))
+        let (firstImage, secondImage) = await (first, second)
+
+        #expect(firstImage != nil)
+        #expect(secondImage != nil)
+    }
+
     @Test
     func logsASourceWithNoAddress() async throws {
         let logger = MockLogger()
