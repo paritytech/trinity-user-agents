@@ -9,19 +9,25 @@ struct AssetDetailsView: View {
     var onCardTapped: () -> Void
     var overscroll: CGFloat = 0
     var onCollapse: (() -> Void)?
+    /// How far the card has shrunk into the header, 0 to 1.
+    var collapse: CGFloat = 0
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
         viewModel: AssetDetailsViewModelProtocol = AssetDetailsViewModel(),
         isExpanded: Bool = false,
         onCardTapped: @escaping () -> Void,
         overscroll: CGFloat = 0,
-        onCollapse: (() -> Void)? = nil
+        onCollapse: (() -> Void)? = nil,
+        collapse: CGFloat = 0
     ) {
         _viewModel = State(initialValue: viewModel)
         self.isExpanded = isExpanded
         self.onCardTapped = onCardTapped
         self.overscroll = overscroll
         self.onCollapse = onCollapse
+        self.collapse = collapse
     }
 
     var body: some View {
@@ -40,6 +46,9 @@ struct AssetDetailsView: View {
             balanceCard(balanceCardModel)
                 .onTapGesture { onCardTapped() }
                 .background { cardMark }
+                .scaleEffect(cardScale, anchor: .top)
+                .opacity(isExpanded ? PurseMotion.Collapse.cardOpacity(collapse) : 1)
+                .animation(balanceAnimation, value: viewModel.coinageBreakdown?.amounts.total)
         }
     }
 
@@ -52,6 +61,7 @@ struct AssetDetailsView: View {
                 Color.clear.preference(
                     key: PurseScroll.CardKey.self,
                     value: PurseScroll.Card(
+                        top: proxy.frame(in: .named(PurseScroll.space)).minY,
                         bottom: proxy.frame(in: .named(PurseScroll.space)).maxY,
                         balance: viewModel.coinageBreakdown?.amounts.total
                     )
@@ -99,13 +109,27 @@ struct AssetDetailsView: View {
 
     private static let panelTuck: CGFloat = 8
 
+    /// The balance counting to its new figure.
+    private var balanceAnimation: Animation? {
+        reduceMotion ? .easeInOut(duration: PurseMotion.Balance.countUp) :
+            .easeOut(duration: PurseMotion.Balance.countUp)
+    }
+
+    /// Shrinking toward the header as the Purse scrolls; held still under
+    /// Reduce Motion, where the card only fades into the header.
+    private var cardScale: CGFloat {
+        guard isExpanded, !reduceMotion else { return 1 }
+        return PurseMotion.Collapse.cardScale(collapse)
+    }
+
     private func balanceCard(
         _ balanceCardModel: AssetDetailsBalanceCard.ViewModel
     ) -> some View {
         AssetDetailsBalanceCard(
             viewModel: balanceCardModel,
             isUpdating: viewModel.isUpdating,
-            isExpanded: isExpanded
+            isExpanded: isExpanded,
+            balanceOpacity: isExpanded ? PurseMotion.Collapse.balanceOpacity(collapse) : 1
         )
     }
 
@@ -216,6 +240,8 @@ private struct CoinageBalanceBreakdownView: View {
     /// How far the panel sits under the tiles above it.
     var topInset: CGFloat = 0
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     /// How the coins came out, reported by the view as it lays them out.
     @State private var coinMetrics = CoinageCoinsView.Metrics()
 
@@ -255,9 +281,15 @@ private struct CoinageBalanceBreakdownView: View {
             typography: .displaySmall
         )
         .lineLimit(1)
+        .contentTransition(reduceMotion ? .opacity : .numericText(value: totalValue))
+        .animation(.easeOut(duration: PurseMotion.Balance.countUp), value: totalValue)
         .accessibilityId(AccessibilityID.Wallet.coinageTotalBalanceValue)
         .foregroundStyle(Color.fgPrimary)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var totalValue: Double {
+        NSDecimalNumber(decimal: breakdown.amounts.total).doubleValue
     }
 
     /// "Clearing $X" while anything is, and "Ready $Y": on either side when both

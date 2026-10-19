@@ -10,6 +10,12 @@ struct CoinageSplitBar: View {
     static let height: CGFloat = 6
     private static let minimumShare: CGFloat = 0.06
 
+    /// How far through one stripe the scroll is at `date`, from 0 to 1.
+    static func phase(at date: Date) -> CGFloat {
+        let period = PurseMotion.Balance.stripePeriod
+        return CGFloat(date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period)
+    }
+
     /// The clearing share of the bar's width, from 0 to 1.
     static func share(clearing: Decimal, total: Decimal) -> CGFloat {
         guard total > 0, clearing > 0 else { return 0 }
@@ -18,12 +24,17 @@ struct CoinageSplitBar: View {
         return min(max(ratio, minimumShare), 1)
     }
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 Rectangle().fill(Color.fgPrimary)
-                ClearingStripes()
-                    .frame(width: proxy.size.width * Self.share(clearing: clearing, total: total))
+                TimelineView(.animation(paused: reduceMotion)) { context in
+                    ClearingStripes(phase: reduceMotion ? 0 : Self.phase(at: context.date))
+                }
+                .frame(width: proxy.size.width * Self.share(clearing: clearing, total: total))
+                .clipped()
             }
         }
         .frame(height: Self.height)
@@ -32,15 +43,17 @@ struct CoinageSplitBar: View {
     }
 }
 
-/// Red diagonal stripes on the track's colour.
+/// Red diagonal stripes on the track's colour, moved along by `phase`.
 private struct ClearingStripes: View {
+    let phase: CGFloat
+
     private static let period: CGFloat = 8
 
     var body: some View {
         Canvas { context, size in
             context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.fgPrimary))
             var stripes = Path()
-            var offset = -size.height
+            var offset = -size.height - Self.period + phase * Self.period
             while offset < size.width + size.height {
                 stripes.move(to: CGPoint(x: offset, y: size.height))
                 stripes.addLine(to: CGPoint(x: offset + size.height, y: 0))

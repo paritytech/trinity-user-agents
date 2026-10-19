@@ -21,9 +21,14 @@ struct FundingActivityView: View {
                         .padding(.bottom, DSSpacings.small)
                         .background { dayMark(day, balance: closingBalances[safe: index]) }
                     ForEach(day.items) { item in
-                        FundingActivityRow(item: item, cash: cash, showsDivider: item.id != day.items.last?.id)
-                            .contentShape(Rectangle())
-                            .onTapGesture { center.showEnded(intent: item.id) }
+                        FundingActivityRow(
+                            item: item,
+                            cash: cash,
+                            showsDivider: item.id != day.items.last?.id,
+                            arrives: center.isArriving(item.id)
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture { center.showEnded(intent: item.id) }
                     }
                 }
             }
@@ -128,6 +133,8 @@ struct FundingActivityRow: View {
     var showsDivider = true
     /// How many sessions are in flight, drawn in the icon of the one on top.
     var stackCount: Int?
+    /// Just finished: the row arrives and its icon plays the completion.
+    var arrives = false
 
     static let height: CGFloat = 76
     private static let iconSize: CGFloat = 48
@@ -135,7 +142,7 @@ struct FundingActivityRow: View {
     var body: some View {
         let content = FundingActivityRowContent(item: item, cash: cash)
         HStack(spacing: DSSpacings.medium) {
-            FundingActivityIcon(icon: content.icon, stackCount: stackCount)
+            FundingActivityIcon(icon: content.icon, stackCount: stackCount, animatesCompletion: arrives)
                 .frame(width: Self.iconSize, height: Self.iconSize)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: DSSpacings.smallIncreased) {
@@ -162,6 +169,7 @@ struct FundingActivityRow: View {
                     .padding(.leading, Self.iconSize + DSSpacings.medium)
             }
         }
+        .modifier(FundingArrival(isArriving: arrives))
     }
 }
 
@@ -330,6 +338,9 @@ private extension FundingActivityRowContent {
 struct FundingActivityIcon: View {
     let icon: FundingActivityRowContent.Icon
     var stackCount: Int?
+    /// Plays the spinner turning into what happened, for a row that has just
+    /// arrived.
+    var animatesCompletion = false
 
     var body: some View {
         ZStack {
@@ -349,14 +360,13 @@ struct FundingActivityIcon: View {
                     .tint(delayed ? Color.fgWarning : Color.fgPrimary)
             }
         case .received:
-            FundingCardGlyph(direction: .in)
+            FundingCompletionGlyph(kind: .received, animated: animatesCompletion)
                 .foregroundStyle(.fgPrimaryInverted)
         case .sent:
-            FundingCardGlyph(direction: .out)
+            FundingCompletionGlyph(kind: .sent, animated: animatesCompletion)
                 .foregroundStyle(.fgPrimary)
         case .failed:
-            Image(systemName: "xmark")
-                .font(.system(size: 18, weight: .semibold))
+            FundingCompletionGlyph(kind: .failed, animated: animatesCompletion)
                 .foregroundStyle(.fgError)
         }
     }
@@ -367,69 +377,6 @@ struct FundingActivityIcon: View {
         case .received: .bgActionPrimary
         case .sent: .bgSurfaceNested
         case .failed: Color.bgStatusError.opacity(0.24)
-        }
-    }
-}
-
-/// A card outline with an arrow at its corner: into the card for value
-/// coming in, out of it for value going out.
-struct FundingCardGlyph: View {
-    let direction: FundingDirection
-
-    var body: some View {
-        Canvas { context, size in
-            let card = CGRect(x: 1, y: size.height * 0.3, width: size.width * 0.72, height: size.height * 0.52)
-            context.stroke(
-                Path(roundedRect: card, cornerRadius: 2.5),
-                with: .foreground,
-                style: StrokeStyle(lineWidth: 1.6)
-            )
-            let dot = CGRect(x: card.minX + 3, y: card.maxY - 6, width: 3, height: 3)
-            context.fill(Path(ellipseIn: dot), with: .foreground)
-            context.stroke(arrow(in: size), with: .foreground, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
-        }
-        .frame(width: 22, height: 22)
-        .accessibilityHidden(true)
-    }
-
-    private func arrow(in size: CGSize) -> Path {
-        let outer = CGPoint(x: size.width - 1, y: 1)
-        let inner = CGPoint(x: size.width * 0.62, y: size.height * 0.38)
-        let (from, tip) = direction == .in ? (outer, inner) : (inner, outer)
-        let head = size.width * 0.18
-        let horizontal: CGFloat = tip.x > from.x ? -head : head
-        let vertical: CGFloat = tip.y > from.y ? -head : head
-        var path = Path()
-        path.move(to: from)
-        path.addLine(to: tip)
-        path.move(to: CGPoint(x: tip.x + horizontal, y: tip.y))
-        path.addLine(to: tip)
-        path.addLine(to: CGPoint(x: tip.x, y: tip.y + vertical))
-        return path
-    }
-}
-
-/// How many sessions are in flight, inside a turning ring.
-struct FundingCountRing: View {
-    let count: Int
-
-    @State private var isTurning = false
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(Color.fgTertiary, lineWidth: 2)
-            Circle()
-                .trim(from: 0, to: 0.25)
-                .stroke(Color.fgPrimary, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                .rotationEffect(.degrees(isTurning ? 360 : 0))
-            Text(verbatim: "\(count)")
-                .typography(.titleSmall)
-                .foregroundStyle(.fgPrimary)
-        }
-        .padding(DSSpacings.small)
-        .onAppear {
-            withAnimation(.linear(duration: 1).repeatForever(autoreverses: false)) { isTurning = true }
         }
     }
 }

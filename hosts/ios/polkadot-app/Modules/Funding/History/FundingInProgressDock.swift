@@ -10,6 +10,7 @@ struct FundingInProgressDock: View {
     var center: FundingActivityCenter = .shared
 
     @State private var isExpanded = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Room the history leaves at its end so the dock does not cover it.
     static let reservedHeight: CGFloat = rowHeight + 32
@@ -41,9 +42,12 @@ struct FundingInProgressDock: View {
                     .shadow(color: .black.opacity(0.45), radius: 16, y: 12)
                     .padding(.horizontal, DSSpacings.medium)
                     .padding(.bottom, DSSpacings.small)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
         }
+        // A session that finishes leaves the dock, and the dock slides away
+        // with the last one.
+        .animation(.spring(duration: PurseMotion.Dock.spring, bounce: 0.1), value: items.map(\.id))
         .onChange(of: items.count) { _, count in
             if count < 2 { isExpanded = false }
         }
@@ -107,6 +111,9 @@ private extension FundingInProgressDock {
     }
 
     func setExpanded(_ expanded: Bool) {
-        withAnimation(.spring(duration: 0.45, bounce: 0.1)) { isExpanded = expanded }
+        let animation: Animation = reduceMotion
+            ? .easeInOut(duration: PurseMotion.Dock.spring)
+            : .spring(duration: PurseMotion.Dock.spring, bounce: 0.1)
+        withAnimation(animation) { isExpanded = expanded }
     }
 }

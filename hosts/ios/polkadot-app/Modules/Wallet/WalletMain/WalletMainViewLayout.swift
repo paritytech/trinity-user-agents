@@ -58,6 +58,7 @@ struct WalletView: View {
         }
         .coordinateSpace(name: PurseScroll.space)
         .onPreferenceChange(PurseScroll.CardKey.self) { purseCard = $0 }
+        .onChange(of: purseCollapse) { _, progress in viewModel.onPurseCollapse?(progress) }
         .onPreferenceChange(PurseScroll.DaysKey.self) { purseDays = $0 }
         .overlay(alignment: .top) { purseStickyBar }
         .overlay(alignment: .bottom) { purseDock }
@@ -72,6 +73,11 @@ struct WalletView: View {
 
     private var isPurseOpen: Bool {
         viewModel.expandedSection == .assetDetails
+    }
+
+    private var purseCollapse: CGFloat {
+        guard isPurseOpen, let purseCard else { return 0 }
+        return PurseMotion.Collapse.progress(cardTop: purseCard.top)
     }
 
     @ViewBuilder
@@ -149,7 +155,8 @@ struct WalletView: View {
                 viewModel.onBalance?()
             },
             overscroll: overscroll,
-            onCollapse: { viewModel.onCollapse?() }
+            onCollapse: { viewModel.onCollapse?() },
+            collapse: purseCollapse
         )
         .matchedGeometryEffect(id: "asset", in: cardNamespace)
         .scaleEffect(assetScale)

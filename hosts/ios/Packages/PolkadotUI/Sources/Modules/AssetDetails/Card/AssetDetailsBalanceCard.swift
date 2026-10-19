@@ -2,118 +2,92 @@ import SwiftUI
 import DesignSystem
 import ExternalAccessibility
 
+/// The CASH card: a leather wallet with the balance stamped at its foot.
 public struct AssetDetailsBalanceCard: View {
     let viewModel: ViewModel
     let isUpdating: Bool
     let isExpanded: Bool
+    /// How visible the balance is, so it can fade as the card shrinks into
+    /// the header.
+    let balanceOpacity: Double
 
-    public init(viewModel: ViewModel, isUpdating: Bool, isExpanded: Bool = false) {
+    public init(viewModel: ViewModel, isUpdating: Bool, isExpanded: Bool = false, balanceOpacity: Double = 1) {
         self.viewModel = viewModel
         self.isUpdating = isUpdating
         self.isExpanded = isExpanded
+        self.balanceOpacity = balanceOpacity
     }
 
     public var body: some View {
-        content
+        CashCardFace()
+            .overlay(alignment: .topLeading) { updatingLabel }
+            .overlay(alignment: .bottomLeading) { balance.opacity(balanceOpacity) }
             .accessibilityId(AccessibilityID.Wallet.cashCard)
-            .cardAspectRatio()
-            .bordered(
-                width: 0.5,
-                cornerRadius: 24,
-                gradient: LinearGradient(
-                    stops: [
-                        .init(color: .white, location: 0),
-                        .init(color: Color(hex: 0xEFEDED).opacity(0.1), location: 0.37)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
     }
 
-    /// The total, which sits at the foot of the card in both of its states.
-    private func total(_ balance: String) -> some View {
-        DSAmount(amount: balance, symbol: viewModel.symbol, typography: .headlineMedium)
-            .shimmering(active: isUpdating)
-            .accessibilityId(AccessibilityID.Wallet.totalBalance)
-    }
-
-    private var content: some View {
-        ZStack(alignment: .leading) {
-            Image(.cashBg)
-                .resizable()
-                .scaledToFill()
-                .clipped()
-                .overlay(alignment: .trailing) {
-                    Image(.cashBgIcon)
-                        .motionShineReveal(
-                            .balanceCardIcon,
-                            baseOpacity: 0.2,
-                            isActive: isExpanded
-                        )
-                }
-
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 5) {
-                    if let logo = viewModel.logo {
-                        Image(uiImage: logo)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(height: Constants.logoHeight)
-                    } else {
-                        Image(.iconCashLogo)
-                    }
-
-                    Spacer()
-
-                    if !isExpanded, let balance = viewModel.balance {
-                        DSAmount(amount: balance, symbol: viewModel.symbol, typography: .titleLarge)
-                            .foregroundStyle(Color.fgStaticWhite)
-                            .transition(.opacity)
-                            .accessibilityId(AccessibilityID.Wallet.cashCardBalance)
-                    }
-                }
-                .animation(.easeInOut, value: isExpanded)
-                Spacer()
-
-                if isUpdating {
-                    SwiftUI.Label {
-                        Text(.walletCardUpdatingBalance)
-                            .textStyle(.body14Regular())
-                    } icon: {
-                        SpinningUpdateIcon()
-                    }
-                    .foregroundStyle(.white)
-                }
-
-                if isExpanded, let readyBalance = viewModel.readyBalance, let balance = viewModel.balance {
-                    VStack(alignment: .leading, spacing: DSSpacings.small) {
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(.walletCardReady)
-                                .typography(.bodyMedium)
-                                .foregroundStyle(Color.fgStaticWhite)
-                            Text(readyBalance)
-                                .typography(.bodyMedium)
-                        }
-
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(.walletCardTotalBalance)
-                                .typography(.bodyMedium)
-                                .foregroundStyle(Color.fgStaticWhite)
-                            total(balance)
-                        }
-                    }
-                } else if let balance = viewModel.balance {
-                    total(balance)
-                }
+    @ViewBuilder
+    private var updatingLabel: some View {
+        if isUpdating {
+            SwiftUI.Label {
+                Text(.walletCardUpdatingBalance)
+                    .textStyle(.body14Regular())
+            } icon: {
+                SpinningUpdateIcon()
             }
-            .foregroundStyle(Color.white)
-            .padding(.top, 18)
-            .padding(.bottom, DSSpacings.mediumIncreased)
-            .padding(.leading, DSSpacings.large)
-            .padding(.trailing, 22)
+            .foregroundStyle(.white)
+            .shadow(color: .black.opacity(0.25), radius: 1, y: 1)
+            .padding(.top, Constants.balanceInset.bottom)
+            .padding(.leading, Constants.balanceInset.leading)
         }
     }
+
+    @ViewBuilder
+    private var balance: some View {
+        if let amount = viewModel.balance {
+            HStack(alignment: .firstTextBaseline, spacing: Constants.unitSpacing) {
+                Text(verbatim: amount)
+                    .font(.system(size: 30, weight: .semibold))
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                if let symbol = viewModel.symbol {
+                    Text(verbatim: symbol.lowercased())
+                        .font(.system(size: 24, weight: .light).smallCaps())
+                }
+            }
+            .foregroundStyle(.white)
+            .shadow(color: .black.opacity(0.25), radius: 1, y: 1)
+            .shimmering(active: isUpdating)
+            .padding(.leading, Constants.balanceInset.leading)
+            .padding(.bottom, Constants.balanceInset.bottom)
+            .accessibilityElement(children: .combine)
+            .accessibilityId(isExpanded ? AccessibilityID.Wallet.totalBalance : AccessibilityID.Wallet.cashCardBalance)
+        }
+    }
+}
+
+/// The card's face on its own, at the wallet's proportions: the Purse header
+/// draws it as a thumbnail once the card has shrunk away.
+public struct CashCardFace: View {
+    public init() {}
+
+    public var body: some View {
+        RoundedRectangle(cornerRadius: CashCardFace.cornerRadius)
+            .fill(CashCardFace.fallback)
+            .overlay {
+                Image(.cashCardWallet)
+                    .resizable()
+                    .scaledToFill()
+            }
+            .clipShape(RoundedRectangle(cornerRadius: CashCardFace.cornerRadius))
+            .aspectRatio(CashCardFace.aspectRatio, contentMode: .fit)
+    }
+
+    /// The wallet artwork's own proportions, 366 by 239 points.
+    public static let aspectRatio: CGFloat = 366 / 239
+    /// The corner radius at full size, 366 points wide.
+    public static let cornerRadius: CGFloat = 23.26
+    /// Shown while the artwork loads, and behind any of its transparent edge.
+    public static let fallback = Color(red: 0x3A / 255, green: 0x24 / 255, blue: 0x17 / 255)
 }
 
 public extension AssetDetailsBalanceCard {
@@ -134,7 +108,9 @@ public extension AssetDetailsBalanceCard {
 
 private extension AssetDetailsBalanceCard {
     enum Constants {
-        static let logoHeight: CGFloat = 35
+        /// Where the balance sits on the 366 by 239 artwork.
+        static let balanceInset = (leading: CGFloat(23), bottom: CGFloat(22))
+        static let unitSpacing: CGFloat = 6
     }
 }
 
@@ -145,16 +121,18 @@ private extension AssetDetailsBalanceCard {
             viewModel: AssetDetailsBalanceCard.ViewModel(balance: "$123", readyBalance: nil, symbol: "CASH"),
             isUpdating: true
         )
+        .padding()
     }
 }
 
-#Preview("Expanded with Ready balance") {
+#Preview("Expanded") {
     ZStack {
         Color.gray
         AssetDetailsBalanceCard(
-            viewModel: AssetDetailsBalanceCard.ViewModel(balance: "$456", readyBalance: "100", symbol: "CASH"),
+            viewModel: AssetDetailsBalanceCard.ViewModel(balance: "$424.13", readyBalance: "100", symbol: "CASH"),
             isUpdating: false,
             isExpanded: true
         )
+        .padding()
     }
 }
