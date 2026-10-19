@@ -27,6 +27,7 @@ One binary, `truapi-host`:
 | `alloc-check` | Diagnose (or `--submit`) on-chain statement-store allowance: ring membership, chosen slot, and the `set_statement_store_account` extrinsic. On a full period it prints each occupied slot's age and which one would be replaced. |
 | `pgas-check` | Diagnose (or `--submit`) an Asset Hub PGAS allowance claim: ring membership on People, whether Asset Hub has imported that ring revision, the day's first unclaimed slot, and the `Pgas.claim_pgas` extrinsic. |
 | `attest` | Attest a given mnemonic's `uid.<tld>` identity for a lite username, wait for its ring membership, and print `{address, publicKey, liteUsername}` as JSON. For e2e suites that hold their own mnemonics. |
+| `local-network-check` | Validate the `HOST_CLI_LOCAL_NETWORK_CONFIG` file and print the resolved routing as JSON, without contacting a chain. |
 
 The repository's `make e2e-dotli` target builds this binary and runs the
 dotli/playground Diagnosis suite with a non-interactive signing-host responder.
@@ -991,7 +992,9 @@ gets its own signer identity on the same machine.
 `HOST_CLI_IDENTITY_BACKEND_BASE` swaps
 the identity backend (for a local one), and `HOST_CLI_PEOPLE_WS`,
 `HOST_CLI_ASSET_HUB_WS` and `HOST_CLI_BULLETIN_WS` swap a chain's URL for a fork
-of the preset's network, which keeps its genesis hashes. For a local network that
+of the preset's network, which keeps its genesis hashes. Each must be a `ws://` or
+`wss://` URL. `attest` against a fork also needs `HOST_CLI_IDENTITY_BACKEND_BASE`
+pointing at a backend that serves the fork. For a local network that
 is not a fork, `HOST_CLI_LOCAL_NETWORK_CONFIG` names a file with every chain's URL
 and genesis hash and the backend instead (`docs/local-network.md`); it cannot be
 combined with the chain URL overrides. `HOST_CLI_IDENTITY_BACKEND_TOKEN`

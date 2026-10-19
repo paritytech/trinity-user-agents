@@ -6,7 +6,7 @@ and their product namespaces, and replaces all chain endpoints, genesis routing 
 and the identity backend together. It does not change the shipped live presets: with
 the variable unset, behaviour is unchanged.
 
-Set the variable to an absolute JSON file path. Every field is required; misspelled
+Set the variable to the JSON file's path. A blank value is the same as unset. Every field is required; misspelled
 fields, a different network name, non-loopback endpoints, and malformed or duplicate
 genesis hashes are rejected, and an invalid file is an error, never a silent fall back
 to a live chain. Read each genesis from that local node's `chain_getBlockHash(0)`; do
