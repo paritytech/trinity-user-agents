@@ -1,11 +1,6 @@
 use crate::{Error, Pointer, Verified, envelope::open};
 use serde::{Serialize, Serializer};
 
-// Bytes, not a sequence: a `Uint8Array` in JS.
-fn bytes<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
-	serializer.serialize_bytes(bytes)
-}
-
 /// The result of fetching a stack's descriptor.
 #[derive(Clone, Copy, Debug)]
 pub enum Fetched<'a> {
@@ -61,7 +56,7 @@ pub struct Accepted {
 	#[cfg_attr(feature = "js", tsify(type = "Status"))]
 	pub status: Status,
 	/// The bytes to store and pass back as `stored` next time.
-	#[serde(serialize_with = "bytes")]
+	#[serde(serialize_with = "crate::format::serialize_bytes")]
 	#[cfg_attr(feature = "js", tsify(type = "Uint8Array"))]
 	pub document: Vec<u8>,
 	/// The descriptor to use.

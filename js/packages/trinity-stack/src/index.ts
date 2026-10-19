@@ -5,6 +5,7 @@ import type {
   Descriptor,
   ParsedDocument,
   Pointer,
+  PublishState,
   SpecFile,
   Verified,
 } from "../wasm/trinity_stack.js";
@@ -22,6 +23,7 @@ export type {
   ForkSource,
   ParsedDocument,
   Pointer,
+  PublishState,
   Service,
   SpecFile,
   Status,
@@ -109,30 +111,7 @@ export function lightSpecGenesis(bytes: Uint8Array): string {
 /** What an operator describes: a descriptor without the fields `publish` owns. */
 export type Model = Omit<Descriptor, "$v" | "sequence" | "generation">;
 
-/** Renders a model as a given format version. */
-export function render(
-  model: Model,
-  version: 1,
-  fields: { sequence: number; generation: string },
-): Descriptor {
-  // A model read from JSON can still carry the fields `publish` owns; they never win.
-  const {
-    $v: _version,
-    sequence: _sequence,
-    generation: _generation,
-    ...rest
-  } = model as Model & Partial<Descriptor>;
-  return {
-    $v: version,
-    sequence: fields.sequence,
-    generation: fields.generation,
-    ...rest,
-  };
-}
-
-/** What `publish` remembers between runs. Keep it outside anything a wipe deletes. */
-export type PublishState = { sequence: number; contentHash: string };
-
+/** What `publish` returns: the bytes to serve, the descriptor they carry, and the state to keep. */
 export type Published = {
   document: Uint8Array;
   descriptor: Descriptor;
@@ -140,9 +119,9 @@ export type Published = {
 };
 
 /**
- * Renders, checks and optionally signs a model. `sequence` stays the same when nothing changed
- * and otherwise rises to the larger of the last one plus one and the time in seconds, so an
- * operator with no stored state still never goes backwards.
+ * Renders, checks and optionally signs a model, with the crate's `render`. `sequence` stays the
+ * same when nothing changed and otherwise rises to the larger of the last one plus one and the
+ * time in seconds, so an operator with no stored state still never goes backwards.
  */
 export async function publish(
   model: Model,
@@ -153,24 +132,14 @@ export async function publish(
     now?: Date;
   },
 ): Promise<Published> {
-  // The crate hashes and renders the canonical form, unknown members included: equal hashes
-  // mean equal published bytes, whatever key order the model has, and `truapi-host stack
-  // publish` keeps the same state.
-  const contentHash = wasm.contentHash(
-    encode(render(model, 1, { sequence: 0, generation: options.generation })),
+  const { plain, state } = wasm.render(
+    new TextEncoder().encode(JSON.stringify(model)),
+    options.generation,
+    options.state,
+    unixSeconds(options.now ?? new Date()),
   );
-  const seconds = unixSeconds(options.now ?? new Date());
-  const sequence =
-    options.state?.contentHash === contentHash
-      ? options.state.sequence
-      : Math.max(options.state ? options.state.sequence + 1 : 0, seconds);
-  const descriptor = render(model, 1, {
-    sequence,
-    generation: options.generation,
-  });
-  const plain = wasm.canonical(encode(descriptor));
   const document = options.secret ? sign(plain, options.secret) : plain;
-  return { document, descriptor, state: { sequence, contentHash } };
+  return { document, descriptor: parse(plain).descriptor, state };
 }
 
 /** Where a reader keeps the last accepted document of each stack. */
@@ -291,10 +260,6 @@ async function readCapped(response: Response): Promise<Uint8Array | undefined> {
     offset += chunk.length;
   }
   return bytes;
-}
-
-function encode(descriptor: Descriptor): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(descriptor, null, 2) + "\n");
 }
 
 /** Seconds since the epoch; an invalid `Date` would otherwise turn off staleness and expiry. */
