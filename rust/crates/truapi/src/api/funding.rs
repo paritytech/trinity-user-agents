@@ -17,15 +17,18 @@ use crate::{
 #[wire_trait(id = 22)]
 #[crate::async_trait]
 pub trait Funding: Send + Sync {
-	/// Open the funding modality for a direction and, optionally, an amount.
+	/// Open the funding modality for a direction and, optionally, an amount,
+	/// under a caller-chosen `id` the session is then watched by. Returns once
+	/// the user starts the session.
 	///
 	/// ```ts
 	/// const result = await truapi.funding.request({
+	///   id: "0x0000000000000000000000000000000000000000000000000000000000000001",
 	///   direction: "In",
 	///   amount: 1000n,
 	/// });
 	/// assert(result.isOk(), "funding.request failed:", result);
-	/// console.log("funding intent:", result.value.intent);
+	/// console.log("funding session opened");
 	/// ```
 	#[wire(id = 0)]
 	async fn request(
@@ -46,7 +49,9 @@ pub trait Funding: Send + Sync {
 	/// const status = await firstValueFrom(
 	///   from(
 	///     truapi.funding.statusSubscribe({
-	///       request: { intent: "fs_example" },
+	///       request: {
+	///         id: "0x0000000000000000000000000000000000000000000000000000000000000001",
+	///       },
 	///     }),
 	///   ),
 	/// );

@@ -20,6 +20,11 @@ import type { DiagnosisRow } from "./diagnosis.ts";
 
 const WAIT_MS = 15_000;
 
+/** A fresh id for one funding request; the product watches its session by it. */
+function fundingId(): `0x${string}` {
+  return `0x${crypto.getRandomValues(new Uint8Array(32)).toHex()}`;
+}
+
 interface TranscriptLine {
   kind: string;
   intent?: string;
@@ -170,23 +175,30 @@ export async function runFundingE2e(
   ) => {
     const startedAt = performance.now();
     try {
-      const requested = await client.funding.request({ direction, amount });
+      const id = fundingId();
+      const requested = await client.funding.request({ id, direction, amount });
       if (requested.isErr()) {
         rows.push(
           row(methodName, "fail", stringify(requested.error), startedAt),
         );
         return;
       }
-      const { intent } = requested.value;
       const items = await untilComplete(
-        client.funding.statusSubscribe({ request: { intent } }),
-        `session ${intent}`,
+        client.funding.statusSubscribe({ request: { id } }),
+        `session ${id}`,
       );
+      // The host keeps the session under the id hashed with the product, so
+      // its transcript is matched by what the case asked for, which no other
+      // case asks for.
       const presented = await waitForTranscript(
         fundingLogPath,
-        (line) => line.kind === "presented" && line.intent === intent,
-        `the overlay request for ${intent}`,
+        (line) =>
+          line.kind === "presented" &&
+          line.direction === direction &&
+          line.amount === amount.toString(),
+        `the overlay request for ${direction} ${amount}`,
       );
+      const intent = presented.intent;
       await waitForTranscript(
         fundingLogPath,
         (line) =>
@@ -257,6 +269,7 @@ export async function runFundingE2e(
   let startedAt = performance.now();
   try {
     const dismissed = await client.funding.request({
+      id: fundingId(),
       direction: "In",
       amount: 3_000n,
     });
@@ -298,7 +311,7 @@ export async function runFundingE2e(
   try {
     const refused = await interruption(
       client.funding.statusSubscribe({
-        request: { intent: "fs_never_opened" },
+        request: { id: fundingId() },
       }),
       "a watch of an unknown session",
     );

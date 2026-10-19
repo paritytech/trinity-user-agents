@@ -21,11 +21,13 @@ use std::{
 use core::time::Duration;
 
 use futures::{
-	channel::mpsc,
+	channel::{mpsc, oneshot},
 	lock::Mutex as AsyncMutex,
 	stream::{self, BoxStream, StreamExt},
 };
-use truapi::latest::{FundingDirection, GenericError, HostFundingStatusSubscribeItem};
+use truapi::latest::{
+	FundingDirection, FundingFailure, GenericError, HostFundingStatusSubscribeItem,
+};
 
 use super::services::RuntimeServices;
 use crate::{
@@ -113,9 +115,9 @@ impl FundingRegistry {
 		sessions
 	}
 
-	/// Every ended session the host recorded, held in full or compacted into
-	/// the pack, as summaries newest first, each once: what a host rebuilds
-	/// its own history from when that history was lost.
+	/// Every ended session the host recorded or the core compacted into the
+	/// pack, as summaries newest first, each once: what a host rebuilds its
+	/// own history from when that history was lost.
 	pub fn history(&self) -> Vec<FundingSessionSummary> {
 		let mut history: Vec<_> = {
 			let sessions = self.lock_sessions();
@@ -214,18 +216,25 @@ impl FundingRegistry {
 
 	/// Hold `session` in memory while its overlay is up, so the overlay can
 	/// work with it, but keep it out of storage until [`Self::start`].
+	/// Returns `false`, holding nothing new, when a session with its intent
+	/// is already held, in full or in the pack.
 	async fn present(
 		&self,
 		storage: &(impl CoreStorage + ?Sized),
 		now_ms: u64,
 		session: FundingSession,
-	) -> Result<(), FundingSessionError> {
+	) -> Result<bool, FundingSessionError> {
 		let intent = session.intent.clone();
 		let presented = self
 			.commit(storage, now_ms, |sessions| {
+				if sessions.contains_key(&session.intent) ||
+					self.lock_pack().contains_key(&session.intent)
+				{
+					return (false, Vec::new());
+				}
 				self.lock_presenting().insert(session.intent.clone());
 				sessions.insert(session.intent.clone(), session);
-				((), Vec::new())
+				(true, Vec::new())
 			})
 			.await;
 		if presented.is_err() {
@@ -260,11 +269,18 @@ impl FundingRegistry {
 
 	/// Drop presented session `intent`. It was never stored, so this cannot
 	/// fail; holding the write lock keeps any commit from storing it on the
-	/// way out.
+	/// way out. A product that reloaded under the overlay may be watching it
+	/// by its id, so its stream ends as cancelled: the user never started it.
 	async fn discard(&self, intent: &str) {
 		let _writes = self.writes.lock().await;
 		self.lock_presenting().remove(intent);
 		self.lock_sessions().remove(intent);
+		let cancelled =
+			HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Cancelled };
+		for sender in self.lock_subscribers().remove(intent).unwrap_or_default() {
+			// A watcher that already went away has nothing to hear.
+			let _ = sender.unbounded_send(cancelled.clone());
+		}
 	}
 
 	/// Apply `edit` to a copy of the sessions, persist the result, then make it
@@ -525,6 +541,13 @@ pub enum OpenFundingError {
 	/// The amount sought is zero.
 	#[display("funding amount must be positive")]
 	InvalidAmount,
+	/// A session with this intent is already held.
+	#[display("a funding session with this id already exists")]
+	AlreadyExists,
+	/// The task showing the overlay was dropped before it finished, as when
+	/// the runtime shuts down.
+	#[display("funding overlay stopped")]
+	Stopped,
 	/// The session could not be stored.
 	#[display("{_0}")]
 	Session(FundingSessionError),
@@ -557,7 +580,8 @@ impl RuntimeServices {
 		direction: FundingDirection,
 		amount: Option<u128>,
 	) -> Result<Option<String>, GenericError> {
-		match self.open_funding(None, direction, amount).await {
+		let intent = format!("fs_{}", nanoid::nanoid!(10));
+		match self.open_funding(None, intent, direction, amount).await {
 			Ok(session) => Ok(Some(session.intent)),
 			Err(OpenFundingError::Dismissed) => Ok(None),
 			Err(error) => Err(GenericError { reason: error.to_string() }),
@@ -589,6 +613,12 @@ impl RuntimeServices {
 					.await;
 				match loaded {
 					Ok(()) => break registry.keep_expiring(&services),
+					// Left for the newer app that wrote them; retrying cannot
+					// read them.
+					Err(error @ FundingSessionError::NewerFormat { .. }) => {
+						tracing::warn!(%error, "funding stays unavailable");
+						break;
+					},
 					Err(error) => {
 						tracing::warn!(%error, ?retry_in, "loading funding sessions failed");
 						futures_timer::Delay::new(retry_in).await;
@@ -643,10 +673,12 @@ impl RuntimeServices {
 	/// path a product's `request` and the host's own Balance card both take.
 	///
 	/// A session the user never starts, or that the host fails to show, is
-	/// discarded rather than left open.
+	/// discarded rather than left open. `intent` must be new:
+	/// [`OpenFundingError::AlreadyExists`] otherwise.
 	pub async fn open_funding(
 		self: &Arc<Self>,
 		product: Option<&ProductContext>,
+		intent: String,
 		direction: FundingDirection,
 		amount: Option<u128>,
 	) -> Result<FundingSession, OpenFundingError> {
@@ -657,7 +689,7 @@ impl RuntimeServices {
 		}
 		let now_ms = current_unix_millis();
 		let session = FundingSession::new(
-			format!("fs_{}", nanoid::nanoid!(10)),
+			intent,
 			product.map(|product| product.product_id.clone()),
 			direction,
 			amount,
@@ -666,24 +698,52 @@ impl RuntimeServices {
 		// Live while the overlay is up, so the overlay can quote and pick a
 		// provider, but stored only once the user starts it: an overlay the
 		// app is killed under leaves no session behind.
-		let storage = self.platform.as_ref();
-		registry
-			.present(storage, now_ms, session.clone())
+		let presented = registry
+			.present(self.platform.as_ref(), now_ms, session.clone())
 			.await
 			.map_err(OpenFundingError::Session)?;
-		let presented = platform
-			.present_funding(
-				product,
-				FundingPresentation { intent: session.intent.clone(), direction, amount },
-			)
-			.await;
+		if !presented {
+			return Err(OpenFundingError::AlreadyExists);
+		}
+		// The overlay runs on its own task, so a caller that goes away while it
+		// is up, such as a product reloading, cannot leave the session
+		// presenting: the task still starts or discards it, and the product
+		// watches the outcome by its id.
+		let (finished, outcome) = oneshot::channel();
+		let services = self.clone();
+		let product = product.cloned();
+		(self.spawner)(Box::pin(async move {
+			let result = services.finish_presenting(platform, product, session).await;
+			// A caller that went away no longer waits for the result, and
+			// the session is already settled either way.
+			let _ = finished.send(result);
+		}));
+		outcome.await.unwrap_or(Err(OpenFundingError::Stopped))
+	}
+
+	/// Show the overlay for presented `session`, then start or discard it by
+	/// what the user did.
+	async fn finish_presenting(
+		self: Arc<Self>,
+		platform: Arc<dyn FundingPlatform>,
+		product: Option<ProductContext>,
+		session: FundingSession,
+	) -> Result<FundingSession, OpenFundingError> {
+		let registry = self.funding();
+		let storage = self.platform.as_ref();
+		let presentation = FundingPresentation {
+			intent: session.intent.clone(),
+			direction: session.direction,
+			amount: session.amount,
+		};
+		let presented = platform.present_funding(product.as_ref(), presentation).await;
 		match presented {
 			Ok(FundingPresentOutcome::Started) => {
 				registry
 					.start(storage, current_unix_millis(), &session.intent)
 					.await
 					.map_err(OpenFundingError::Session)?;
-				registry.keep_expiring(self);
+				registry.keep_expiring(&self);
 				Ok(registry.get(&session.intent).unwrap_or(session))
 			},
 			outcome => {
@@ -702,10 +762,11 @@ mod tests {
 	use super::*;
 
 	use futures::executor::block_on;
-	use truapi::latest::FundingFailure;
+	use parity_scale_codec::Encode;
 
 	use crate::{
 		host_logic::funding::{FundingStage, RECORDED_PER_OWNER},
+		platform::CoreStorageKey,
 		test_support::stub_platform,
 	};
 
@@ -760,10 +821,7 @@ mod tests {
 			block_on(stream.collect::<Vec<_>>()),
 			vec![
 				HostFundingStatusSubscribeItem::InProgress { expires_at: Some(NOW + DAY_MS) },
-				HostFundingStatusSubscribeItem::Failed {
-					reason: FundingFailure::Expired,
-					moved: 0,
-				},
+				HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Expired },
 			]
 		);
 	}
@@ -938,8 +996,7 @@ mod tests {
 		insert(&before, storage.as_ref(), session("fs_1", NOW - DAY_MS));
 		block_on(before.sweep(storage.as_ref(), NOW)).expect("expired");
 		assert!(block_on(before.acknowledge(storage.as_ref(), NOW, "fs_1")).expect("recorded"));
-		let expired =
-			HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Expired, moved: 0 };
+		let expired = HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Expired };
 
 		let after = FundingRegistry::default();
 		block_on(after.sweep(storage.as_ref(), NOW)).expect("loaded");
@@ -1016,7 +1073,81 @@ mod tests {
 
 		assert_eq!(
 			(presented, block_on(load_sessions(storage.as_ref()))),
-			(Ok(()), Ok(vec![session("fs_1", NOW)]))
+			(Ok(true), Ok(vec![session("fs_1", NOW)]))
+		);
+	}
+
+	// An intent names one session for good, so one held in full, presented or
+	// compacted cannot be presented again.
+	#[test]
+	fn a_held_intent_cannot_be_presented_again() {
+		let storage = stub_platform();
+		let registry = FundingRegistry::default();
+		insert(&registry, storage.as_ref(), session("fs_1", NOW));
+		registry.lock_pack().insert(
+			"fs_packed".to_string(),
+			FundingSessionSummary::from(FundingSession {
+				stage: FundingStage::Delivered { credited: 1, settled_at_ms: NOW },
+				..session("fs_packed", NOW)
+			}),
+		);
+
+		assert_eq!(
+			[
+				block_on(registry.present(storage.as_ref(), NOW, session("fs_1", NOW))),
+				block_on(registry.present(storage.as_ref(), NOW, session("fs_packed", NOW))),
+				block_on(registry.present(storage.as_ref(), NOW, session("fs_new", NOW))),
+				block_on(registry.present(storage.as_ref(), NOW, session("fs_new", NOW))),
+			],
+			[Ok(false), Ok(false), Ok(true), Ok(false)]
+		);
+	}
+
+	// A product watching a session the user then dismissed hears that it
+	// ended, rather than waiting on a session that is gone.
+	#[test]
+	fn a_discarded_session_ends_its_watchers_as_cancelled() {
+		let storage = stub_platform();
+		let registry = FundingRegistry::default();
+		assert_eq!(
+			block_on(registry.present(storage.as_ref(), NOW, session("fs_1", NOW))),
+			Ok(true)
+		);
+		let watch = registry.subscribe("fs_1").expect("presented session watchable");
+
+		block_on(registry.discard("fs_1"));
+
+		assert_eq!(
+			(block_on(watch.collect::<Vec<_>>()), registry.get("fs_1")),
+			(
+				vec![
+					HostFundingStatusSubscribeItem::InProgress { expires_at: Some(NOW + DAY_MS) },
+					HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Cancelled },
+				],
+				None,
+			)
+		);
+	}
+
+	// Sessions a newer app stored are left alone: every commit fails, and none
+	// writes over them.
+	#[test]
+	fn sessions_of_a_newer_format_make_the_registry_read_only() {
+		let storage = stub_platform();
+		let blob = (u16::MAX, vec![session("fs_1", NOW)]).encode();
+		block_on(storage.write_core_storage(CoreStorageKey::FundingSessions, blob.clone()))
+			.expect("written");
+		let registry = FundingRegistry::default();
+
+		let presented = block_on(registry.present(storage.as_ref(), NOW, session("fs_2", NOW)));
+
+		assert_eq!(
+			(
+				presented,
+				registry.get("fs_2"),
+				block_on(storage.read_core_storage(CoreStorageKey::FundingSessions)),
+			),
+			(Err(FundingSessionError::NewerFormat { format: u16::MAX }), None, Ok(Some(blob)),)
 		);
 	}
 

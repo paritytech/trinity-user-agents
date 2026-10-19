@@ -434,10 +434,21 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   newest 64 recorded sessions per product in full and compacts older ones
   into the session pack (intent, owner, direction, amounts, outcome and
   times), which it never trims, so a product watching a compacted session
-  still gets its terminal item. `funding_history` lists every recorded
-  session, full or compacted, as a summary newest first, so a host that lost
-  its history rebuilds it from there. The core keeps at most the 200 newest unrecorded sessions. Products see a
-  session in flight as `InProgress`.
+  still gets its terminal item. It keeps the 200 newest ended sessions the
+  host has not recorded in full too, and compacts older ones the same way.
+  `funding_history` lists every ended session the host recorded or the core
+  compacted, as a summary newest first, so a host that lost its history
+  rebuilds it from there. A product opens a session with
+  `request({ id, direction, amount? })` and watches it with
+  `statusSubscribe({ id })`; the core keeps it under the id hashed with the
+  product, so a product that reloads under the overlay still finds it, and a
+  reused id answers `AlreadyExists`. The overlay runs on a task of its own,
+  so a request that goes away cannot leave the session presenting; one the
+  user dismisses ends its watchers as `Failed { Cancelled }`. Sessions and
+  the pack are versioned blobs: a corrupt one is set aside under
+  `FundingSessionsUnreadable`, and one in a newer format is left untouched
+  while funding answers a host failure. Products see a session in flight as
+  `InProgress`.
 - `BalancePlatform`: stream what a payment request can spend right now, the
   current value first and then each change. Installed with
   `set_balance_platform`; native hosts use `set_balance_callbacks` with
