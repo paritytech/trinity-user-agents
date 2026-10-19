@@ -99,7 +99,7 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
         let unique = notYetGranted.removingDuplicates()
         guard !unique.isEmpty else { return true }
 
-        let decision = await requester.promptBatched(
+        let decision = try await requester.promptBatched(
             productId: productId,
             permissions: unique
         )
@@ -140,7 +140,7 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
             undecided.append(permission)
         }
         guard !undecided.isEmpty else { return .allowAlways }
-        return await requester.promptBatched(productId: productId, permissions: undecided)
+        return try await requester.promptBatched(productId: productId, permissions: undecided)
     }
 
     public func consumePermission(

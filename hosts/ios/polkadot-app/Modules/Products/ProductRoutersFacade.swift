@@ -1,10 +1,12 @@
 import Foundation
+import UIKit
 import Products
 import UIKitExt
 
 /// One access point for the routers a product context needs. A single
-/// `setPresentationView` fans the anchor out to both routers — no router
-/// presents on the topmost view controller on its own.
+/// `setPresentationView` fans the anchor out to both routers. Only a worker's
+/// router falls back to the app's top screen: its anchor is the chat it was
+/// last shown in, and its requests arrive whether or not that chat is open.
 ///
 /// `productsRouter` is exposed concretely because one `ProductsRouter` instance
 /// serves three protocol lenses: app flows call its `ProductsRouting`
@@ -42,7 +44,10 @@ extension ProductRoutersFacade {
     /// Worker context: navigation opens the target product page in the main tab
     /// bar (or an external URL), mirroring the SPA context.
     static func worker() -> ProductRoutersFacade {
-        make(navigationRouter: ProductsNavigationRouter())
+        ProductRoutersFacade(
+            productsRouter: ProductsRouter(fallback: topScreenWhileActive),
+            navigationRouter: ProductsNavigationRouter()
+        )
     }
 
     /// SSO context: prompts anchor to the view the sign-in host receives via
@@ -60,6 +65,13 @@ extension ProductRoutersFacade {
 }
 
 private extension ProductRoutersFacade {
+    @MainActor
+    static func topScreenWhileActive() -> UIViewController? {
+        guard UIApplication.shared.applicationState == .active else { return nil }
+
+        return UIWindow.keyWindow?.topmostViewController
+    }
+
     static func make(navigationRouter: ProductsNavigationRouting) -> ProductRoutersFacade {
         ProductRoutersFacade(
             productsRouter: ProductsRouter(),

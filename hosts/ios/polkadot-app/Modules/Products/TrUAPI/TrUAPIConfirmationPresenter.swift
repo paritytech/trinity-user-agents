@@ -8,7 +8,7 @@ protocol TrUAPIConfirmationPresenting: Sendable {
     func confirmPermission(
         review: UserConfirmationReview,
         from requesterName: String
-    ) async -> TrUAPIPermissionDecision
+    ) async throws -> TrUAPIPermissionDecision
 }
 
 /// Routes core-reviewed actions to the native confirmation surfaces exposed
@@ -44,18 +44,18 @@ final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecke
     func confirmPermission(
         review: UserConfirmationReview,
         from _: String
-    ) async -> TrUAPIPermissionDecision {
+    ) async throws -> TrUAPIPermissionDecision {
         switch review {
         case let .identityDisclosure(identityReview):
-            await presentPermission(
+            try await presentPermission(
                 promptMapper.makePermissionRequest(from: identityReview)
             )
         case let .accountAccess(accessReview):
-            await presentPermission(
+            try await presentPermission(
                 promptMapper.makePermissionRequest(from: accessReview)
             )
         case let .accountAlias(aliasReview):
-            await presentPermission(
+            try await presentPermission(
                 promptMapper.makePermissionRequest(from: aliasReview)
             )
         default:
@@ -80,7 +80,7 @@ private extension TrUAPIConfirmationPresenter {
         case .identityDisclosure,
              .accountAccess,
              .accountAlias:
-            await confirmPermission(review: review, from: requesterName) != .deny
+            try await confirmPermission(review: review, from: requesterName) != .deny
         case let .createProof(proofReview):
             try await confirmCreateProof(
                 promptMapper.makeCreateProofRequest(from: proofReview)
@@ -131,19 +131,24 @@ private extension TrUAPIConfirmationPresenter {
         }
     }
 
-    func presentPermission(_ request: TrUAPIPermissionRequest) async -> TrUAPIPermissionDecision {
-        await awaitDecision(cancelled: .deny) { [routerFacade] in
-            let decision: Products.PermissionDecision = await withCheckedContinuation { continuation in
-                let context = ProductPermissionContext(
-                    productId: request.productId,
-                    permissions: request.permissions
-                )
-                context.setContinuation(continuation)
-                routerFacade.productsRouter.showPrompt(context: context)
+    func presentPermission(_ request: TrUAPIPermissionRequest) async throws -> TrUAPIPermissionDecision {
+        let outcome: Result<TrUAPIPermissionDecision, Error> = await awaitDecision(cancelled: .success(.deny)) {
+            [routerFacade] in
+            do {
+                let decision: Products.PermissionDecision = try await withCheckedThrowingContinuation { continuation in
+                    let context = ProductPermissionContext(
+                        productId: request.productId,
+                        permissions: request.permissions
+                    )
+                    context.setContinuation(continuation)
+                    routerFacade.productsRouter.showPrompt(context: context)
+                }
+                return .success(decision.hostDecision)
+            } catch {
+                return .failure(error)
             }
-
-            return decision.hostDecision
         }
+        return try outcome.get()
     }
 
     func confirmAction(_ request: TrUAPIActionConfirmationRequest) async -> Bool {

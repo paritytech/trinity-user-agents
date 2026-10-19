@@ -82,7 +82,7 @@ public final class DeviceCapabilityPermissionHandler: Sendable {
                 .deny
             case .allowedOnce,
                  .notDetermined:
-                await requester.prompt(productId: productId, permission: permission)
+                try await requester.prompt(productId: productId, permission: permission)
             }
         guard decision != .deny else { return .deny }
         guard try await promptOsPermissionIfNeeded(currentStatus: osPermission, capability: capability) else {
@@ -94,7 +94,7 @@ public final class DeviceCapabilityPermissionHandler: Sendable {
 
 private extension DeviceCapabilityPermissionHandler {
     func promptAppLevelPermission(productId: String, permission: ProductPermission) async throws -> Bool {
-        let decision = await requester.prompt(productId: productId, permission: permission)
+        let decision = try await requester.prompt(productId: productId, permission: permission)
 
         switch decision {
         case .allowAlways:
