@@ -255,6 +255,15 @@ describe("read", () => {
     expect(accepted.status).toBe("unreachable");
   });
 
+  test("a body stream that cannot be iterated, as in Safari before 27, still reads", async () => {
+    const bytes = new TextEncoder().encode("{}");
+    const body = new Blob([bytes]).stream();
+    Object.defineProperty(body, Symbol.asyncIterator, { value: undefined });
+    const fetch = async () =>
+      ({ ok: true, headers: new Headers(), body }) as unknown as Response;
+    expect(await fetchDescriptor(URL_, { fetch })).toEqual(bytes);
+  });
+
   test("a body past the size cap is unreachable", async () => {
     const huge = new Uint8Array(MAX_DESCRIPTOR_BYTES + 1);
     const streaming = async () => new Response(new Blob([huge]).stream());

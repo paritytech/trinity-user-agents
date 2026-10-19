@@ -264,7 +264,9 @@ export async function fetchDescriptor(
       redirect: "error",
       signal: controller.signal,
     });
-    return response.ok ? await readCapped(response, controller) : undefined;
+    const bytes = response.ok ? await readCapped(response) : undefined;
+    if (!bytes) controller.abort();
+    return bytes;
   } catch (error) {
     const aborted =
       error instanceof DOMException &&
@@ -280,22 +282,23 @@ export async function fetchDescriptor(
 /** The largest descriptor `fetchDescriptor` reads. A descriptor is a few kilobytes. */
 export const MAX_DESCRIPTOR_BYTES = 1024 * 1024;
 
-async function readCapped(
-  response: Response,
-  controller: AbortController,
-): Promise<Uint8Array | undefined> {
+// Reads through `getReader`: Safari before 27 cannot iterate a `ReadableStream` with `for await`.
+async function readCapped(response: Response): Promise<Uint8Array | undefined> {
   if (Number(response.headers.get("content-length")) > MAX_DESCRIPTOR_BYTES)
     return undefined;
   if (!response.body) return new Uint8Array(await response.arrayBuffer());
+  const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let length = 0;
-  for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
-    length += chunk.length;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    length += value.length;
     if (length > MAX_DESCRIPTOR_BYTES) {
-      controller.abort();
+      await reader.cancel();
       return undefined;
     }
-    chunks.push(chunk);
+    chunks.push(value);
   }
   const bytes = new Uint8Array(length);
   let offset = 0;
