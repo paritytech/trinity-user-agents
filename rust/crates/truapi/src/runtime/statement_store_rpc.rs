@@ -7,19 +7,11 @@
 //! broker must fan out and ref-count same-upstream-token notifications.
 //!
 //! Submissions and the allowance paths carry no statement subscription, so
-//! they ride the [`ChainRuntime`]'s pooled People-chain connection. A
-//! submission left unanswered for [`SUBMIT_TIMEOUT`] closes that connection,
-//! and a submission whose connection closed is sent once more over a fresh
-//! one. The store answers a statement it already holds with `known`, which
-//! counts as accepted.
+//! they share the [`ChainRuntime`]'s People-chain connection.
 
 use std::sync::Arc;
 
 use core::{future::Future, time::Duration};
-use futures::{
-	future::{Either, select},
-	pin_mut,
-};
 use serde_json::{Value, json};
 
 use crate::platform::{JsonRpcConnection, Platform, ProviderError};
@@ -46,12 +38,6 @@ const SSO_NO_ALLOWANCE_RETRY_ATTEMPTS: usize = 11;
 const SSO_NO_ALLOWANCE_RETRY_DELAY: Duration = Duration::from_secs(2);
 #[cfg(test)]
 const SSO_NO_ALLOWANCE_RETRY_DELAY: Duration = Duration::from_millis(1);
-/// Longest wait for one submission's answer on the pooled connection before
-/// taking that connection as stalled.
-#[cfg(not(test))]
-const SUBMIT_TIMEOUT: Duration = Duration::from_secs(15);
-#[cfg(test)]
-const SUBMIT_TIMEOUT: Duration = Duration::from_millis(50);
 
 /// Error opening a statement-store RPC client over the host platform.
 #[derive(Debug, Error)]
@@ -116,11 +102,8 @@ impl StatementStoreRpc {
 
 	/// Submit a SCALE-encoded statement and wait for the JSON-RPC ack.
 	pub async fn submit(&self, statement: Vec<u8>, label: &'static str) -> Result<(), String> {
-		self.send_with_reconnect(label, |rpc_client| {
-			let statement = statement.clone();
-			async move { submit(&RpcClient::new(rpc_client), statement).await }
-		})
-		.await
+		let rpc_client = self.request_client(label).await.map_err(|err| err.to_string())?;
+		submit(&RpcClient::new(rpc_client), statement).await
 	}
 
 	/// Submit an SSO statement, tolerating the short propagation window after
@@ -136,38 +119,13 @@ impl StatementStoreRpc {
 		statement: Vec<u8>,
 		label: &'static str,
 	) -> Result<(), String> {
-		self.send_with_reconnect(label, |rpc_client| {
-			let result = rpc_client
-				.send_fire_and_forget(
-					SUBMIT_STATEMENT_METHOD,
-					rpc_params![format!("0x{}", hex::encode(&statement))].build(),
-				)
-				.map_err(rpc_error_message);
-			async move { result }
-		})
-		.await
-	}
-
-	/// Run `send` over the pooled connection, and once more over a fresh one
-	/// when it failed because that connection closed or stalled.
-	async fn send_with_reconnect<SendFn, SendFuture>(
-		&self,
-		label: &'static str,
-		send: SendFn,
-	) -> Result<(), String>
-	where
-		SendFn: Fn(HostRpcClient) -> SendFuture,
-		SendFuture: Future<Output = Result<(), String>>,
-	{
 		let rpc_client = self.request_client(label).await.map_err(|err| err.to_string())?;
-		match within_submit_timeout(&rpc_client, send(rpc_client.clone())).await {
-			Err(_) if rpc_client.is_closed() => {
-				warn!(label, "statement-store connection closed; resending");
-				let rpc_client = self.request_client(label).await.map_err(|err| err.to_string())?;
-				within_submit_timeout(&rpc_client, send(rpc_client.clone())).await
-			},
-			result => result,
-		}
+		rpc_client
+			.send_fire_and_forget(
+				SUBMIT_STATEMENT_METHOD,
+				rpc_params![format!("0x{}", hex::encode(&statement))].build(),
+			)
+			.map_err(rpc_error_message)
 	}
 
 	async fn request_client(
@@ -238,23 +196,6 @@ pub async fn submit_sso(
 	label: &'static str,
 ) -> Result<(), String> {
 	retry_until_allowance_visible(label, || submit(rpc_client, statement.clone())).await
-}
-
-/// Await `sent`, closing `rpc_client` when no answer arrives within
-/// [`SUBMIT_TIMEOUT`].
-async fn within_submit_timeout(
-	rpc_client: &HostRpcClient,
-	sent: impl Future<Output = Result<(), String>>,
-) -> Result<(), String> {
-	let timeout = futures_timer::Delay::new(SUBMIT_TIMEOUT);
-	pin_mut!(sent);
-	match select(sent, timeout).await {
-		Either::Left((result, _)) => result,
-		Either::Right(_) => {
-			rpc_client.close();
-			Err(format!("statement_submit unanswered after {SUBMIT_TIMEOUT:?}"))
-		},
-	}
 }
 
 /// Run `submit` until it succeeds, fails with anything but `noAllowance`, or
@@ -339,8 +280,6 @@ mod tests {
 	enum Upstream {
 		/// Closes as soon as a request arrives.
 		Drops,
-		/// Never answers.
-		Stalls,
 		/// Answers every submission with this status.
 		Answers(&'static str),
 	}
@@ -401,7 +340,6 @@ mod tests {
 					sender.take();
 					return;
 				},
-				Upstream::Stalls => return,
 				Upstream::Answers(status) => status,
 			};
 			let request: serde_json::Value = serde_json::from_str(&request).unwrap();
@@ -448,40 +386,21 @@ mod tests {
 		assert_eq!(chain.connects(), 1);
 	}
 
-	/// A kept-open connection can drop between messages. The statement that
-	/// finds it closed must still go out, over a fresh connection.
 	#[test]
-	fn a_submit_whose_connection_drops_is_resent_over_a_fresh_one() {
+	fn a_later_submit_reconnects_after_a_dropped_connection() {
 		let chain = PeopleChain::new(vec![Upstream::Drops, Upstream::Answers("new")]);
 		let statement_store = statement_store(&chain);
 
-		let result = futures::executor::block_on(statement_store.submit(vec![1], "submit"));
+		let (first, second) = futures::executor::block_on(async {
+			let first = statement_store.submit(vec![1], "first").await;
+			let second = statement_store.submit(vec![2], "second").await;
+			(first, second)
+		});
 
-		assert_eq!((result, chain.connects()), (Ok(()), 2));
-	}
-
-	/// A socket that died without closing never ends its stream, so only the
-	/// timeout can tell. The submit must not wait on it forever.
-	#[test]
-	fn a_submit_on_a_stalled_connection_is_resent_over_a_fresh_one() {
-		let chain = PeopleChain::new(vec![Upstream::Stalls, Upstream::Answers("new")]);
-		let statement_store = statement_store(&chain);
-
-		let result = futures::executor::block_on(statement_store.submit(vec![1], "submit"));
-
-		assert_eq!((result, chain.connects()), (Ok(()), 2));
-	}
-
-	/// The resend is bounded: a chain that keeps dropping fails the submit
-	/// after one fresh connection instead of dialling forever.
-	#[test]
-	fn a_submit_is_resent_only_once() {
-		let chain = PeopleChain::new(vec![Upstream::Drops]);
-		let statement_store = statement_store(&chain);
-
-		let result = futures::executor::block_on(statement_store.submit(vec![1], "submit"));
-
-		assert_eq!((result.is_err(), chain.connects()), (true, 2));
+		assert_eq!(
+			(first.is_err(), second, chain.connects(), chain.requests()),
+			(true, Ok(()), 2, 2)
+		);
 	}
 
 	/// A rejection is the store's answer, not a transport failure. Resending
@@ -496,16 +415,14 @@ mod tests {
 		assert_eq!((result.is_err(), chain.requests()), (true, 1));
 	}
 
-	/// SSO statements carry pairing and responses, so a dropped pooled
-	/// connection must not lose one either.
 	#[test]
-	fn an_sso_submit_survives_a_dropped_connection() {
+	fn an_sso_submit_reports_a_dropped_connection() {
 		let chain = PeopleChain::new(vec![Upstream::Drops, Upstream::Answers("new")]);
 		let statement_store = statement_store(&chain);
 
 		let result = futures::executor::block_on(statement_store.submit_sso(vec![1], "sso"));
 
-		assert_eq!((result, chain.connects()), (Ok(()), 2));
+		assert_eq!((result.is_err(), chain.connects(), chain.requests()), (true, 1, 1));
 	}
 
 	#[test]

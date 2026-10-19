@@ -213,6 +213,9 @@ ready connections share an entry within that product's registry. Closing a produ
 removes its registry, rejects delayed setup, and aborts its established follows;
 closed product IDs are not retained.
 
+Statement submissions and allowance operations reuse the core's People-chain RPC
+client. Statement subscriptions each open their own connection.
+
 A host that serves chain traffic itself embeds the `truapi-provider` crate: an
 embedded smoldot light client plus a bundled chain-spec catalog, addressed by
 genesis hash, so the host ships no chain specs and never refreshes them. The light
