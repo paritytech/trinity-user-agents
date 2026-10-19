@@ -28,7 +28,7 @@ and lockfiles, and package build scripts and configuration. Deleting, editing
 or renaming an existing changeset, or adding `.changeset/README.md`, does not
 satisfy the guard.
 
-A change that ships nothing can use the `ci: no changeset` label. After adding the
+A change that ships nothing can use the `ci:no-changeset` label. After adding the
 label or correcting a title to `release:`, select **Re-run failed jobs** on CI;
 the guard reads the current PR metadata, so no new commit or full CI run is
 needed. The label is defined in `.github/labels.yml`, like every other.

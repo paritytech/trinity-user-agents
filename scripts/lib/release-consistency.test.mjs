@@ -204,7 +204,7 @@ test("a rerun reads changed PR metadata and does not use a stale opt-out", (t) =
   );
   for (const [pr, status] of [
     [{ title: "fix: behavior", labels: [] }, 1],
-    [{ title: "fix: behavior", labels: [{ name: "ci: no changeset" }] }, 0],
+    [{ title: "fix: behavior", labels: [{ name: "ci:no-changeset" }] }, 0],
     [{ title: "release: @parity/truapi 1.0.0", labels: [] }, 0],
     [{ title: "fix: behavior", labels: [] }, 1],
   ]) {

@@ -58,8 +58,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       HOST: ${{ matrix.host }}
-      # The area labels are named for the trees, so this needs no mapping.
-      HOST_LABEL: "area: ${{ matrix.host }}"
     steps:
       # Depth 1. The range below is walked over commits fetched from the source
       # repository, which this repository's own history plays no part in, and
@@ -72,8 +70,9 @@ jobs:
         id: open_pr
         run: |
           set -euo pipefail
-          existing="$(gh pr list --state open --label "type: backport" --label "$HOST_LABEL" \
-            --json number --jq '.[0].number // ""')"
+          # The branch names its tree, so it tells this tree's orders apart.
+          existing="$(gh pr list --state open --label backport-host --json number,headRefName \
+            --jq "[.[] | select(.headRefName | startswith(\"hosts/backport-${HOST}-\"))][0].number // \"\"")"
           if [ -n "$existing" ]; then
             echo "already=true" >> "$GITHUB_OUTPUT"
             {
@@ -271,8 +270,7 @@ jobs:
             --base "${GITHUB_REF_NAME}" \
             --head "$BRANCH" \
             --title "chore(hosts): backport ${COUNT} commits into hosts/${HOST}" \
-            --label "type: backport" \
-            --label "$HOST_LABEL" \
+            --label backport-host \
             --body-file "${RUNNER_TEMP}/pr-body.md")"
           echo "::notice::${url}"
           {

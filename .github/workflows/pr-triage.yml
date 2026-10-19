@@ -5,7 +5,7 @@ name: Pull request triage
 #
 # - `size:` from the lines changed, so a large pull request is visible as one
 #   before anyone opens it.
-# - `status: waiting on review` on a pull request that is ready and says nothing
+# - `status:waiting-on-review` on a pull request that is ready and says nothing
 #   else about where it stands. Drafts get no status until they are marked
 #   ready, and a draft loses this one if it goes back.
 #
@@ -48,8 +48,8 @@ jobs:
 
             // A backport is a vendored tree replaced wholesale, so its line
             // count says nothing about how much there is to review.
-            const sizes = ['size: XS', 'size: S', 'size: M', 'size: L', 'size: XL', 'size: XXL'];
-            if (labels.includes('type: backport')) {
+            const sizes = ['size:XS', 'size:S', 'size:M', 'size:L', 'size:XL', 'size:XXL'];
+            if (labels.includes('backport-host')) {
               for (const s of labels.filter(l => sizes.includes(l))) await remove(s);
             } else {
               // Lines a reviewer does not read: whatever .gitattributes marks
@@ -87,22 +87,22 @@ jobs:
               const lines = files
                 .filter(f => !skipped.some(re => re.test(f.filename)))
                 .reduce((n, f) => n + f.additions + f.deletions, 0);
-              const size = lines < 10 ? 'size: XS'
-                : lines < 30 ? 'size: S'
-                : lines < 100 ? 'size: M'
-                : lines < 500 ? 'size: L'
-                : lines < 1000 ? 'size: XL'
-                : 'size: XXL';
+              const size = lines < 10 ? 'size:XS'
+                : lines < 30 ? 'size:S'
+                : lines < 100 ? 'size:M'
+                : lines < 500 ? 'size:L'
+                : lines < 1000 ? 'size:XL'
+                : 'size:XXL';
               core.info(`${lines} reviewable lines: ${size}`);
               for (const s of labels.filter(l => sizes.includes(l) && l !== size)) await remove(s);
               if (!labels.includes(size)) await add([size]);
             }
 
-            const waiting = 'status: waiting on review';
+            const waiting = 'status:waiting-on-review';
             if (action === 'converted_to_draft') {
               await remove(waiting);
             } else if (['opened', 'reopened', 'ready_for_review'].includes(action)
                 && !pr.draft
-                && !labels.some(l => l.startsWith('status: '))) {
+                && !labels.some(l => l.startsWith('status:'))) {
               await add([waiting]);
             }

@@ -21,7 +21,7 @@ For larger changes that need cross-team discussion, use the RFC process:
 
 1. Create a branch and add a new file to `docs/rfcs/<slug>.md` (e.g., `docs/rfcs/my-proposal.md`) — do **not** assign a number
 2. Use `docs/rfcs/0001-template.md` as a reference for the expected structure and frontmatter
-3. Open a PR using the **rfc** template (`?template=rfc.md`); it is labelled `area: rfc` automatically
+3. Open a PR using the **rfc** template (`?template=rfc.md`)
 4. The PR will be auto-added to the project board for tracking and review
 5. When the PR is approved and merged, CI automatically assigns the next sequential number, renames the file, and appends it to `docs/rfcs/_index.md`
 
@@ -46,7 +46,7 @@ Canonical design documentation lives in `docs/design/`. To propose updates or ad
 
 ## Labels
 
-Areas and sizes are labelled for you. Set a `status:` when a pull request stops waiting on review, and a `ci:` label to ask for an app build. [docs/labels.md](docs/labels.md) has the whole system.
+Pull requests get a size and a first status for you. Change the `status:` when it stops waiting on review, add a `needs:` label when something blocks it, and a `ci:` label to ask for an app build. Issues take an `area:` and a `spa:`, and the area is filled in from the pull request that closes them. [docs/labels.md](docs/labels.md) has the whole system.
 
 ## Development
 

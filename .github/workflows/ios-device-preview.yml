@@ -47,13 +47,13 @@ jobs:
     name: Signed device build
     # Narrow on purpose. `labeled` fires for every label, so matching only on
     # the label being present lets anything else being added, by a person or by
-    # labeler.yml, start a second run for the same commit that cancels the one
+    # automation, start a second run for the same commit that cancels the one
     # already building.
     if: >-
       (github.event.action == 'labeled'
-       && github.event.label.name == 'ci: ios device')
+       && github.event.label.name == 'ci:ios-device')
       || (github.event.action == 'synchronize'
-          && contains(github.event.pull_request.labels.*.name, 'ci: ios device'))
+          && contains(github.event.pull_request.labels.*.name, 'ci:ios-device'))
     runs-on: parity-macos
     timeout-minutes: 45
     steps:

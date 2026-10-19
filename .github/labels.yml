@@ -5,245 +5,221 @@
 # created, renamed, recoloured, merged and deleted. The push to main applies it.
 #
 # Fields:
-#   name         The label as it appears on GitHub.
+#   name         The label as it appears on GitHub, as family:value.
 #   color        Six hex digits, no leading #.
 #   description  Shown in the label picker. Say when to use it, not what it is.
 #   target       prs, issues or both: where the label belongs.
 #   addedBy      humans, or the workflow that applies it.
-#   previously   Labels this one replaces. The first that exists is renamed in
-#                place, so everything carrying it keeps it. Any others are
-#                merged: their issues and pull requests get this label, then the
-#                old one is deleted.
+#   previously   Labels this one replaces. When this label does not exist yet,
+#                the first that does is renamed in place, so everything carrying
+#                it keeps it. Any other is merged: its issues and pull requests
+#                get this label, then the old one is deleted.
 #
 # A label that exists on GitHub and appears nowhere here is reported, not
 # deleted. Only the names under `retired` are deleted.
 
 labels:
-  # area: what a pull request touches. Applied by .github/labeler.yml from the
-  # paths it changes, so nobody sets these by hand.
-  - name: "area: core"
+  # area: what an issue touches. issue-areas.yml adds them to the issues a pull
+  # request closes, from the paths in .github/areas.yml; they can also be set by
+  # hand when the issue is filed. Pull requests do not carry them.
+  - name: "area:core"
     color: "1d76db"
     description: "Touches the Rust core under rust/crates"
-    target: both
-    addedBy: labeler
-    previously: [rust, "Host Rust Core"]
-  - name: "area: ios"
+    target: issues
+    addedBy: issue-areas, humans
+    previously: [rust]
+  - name: "area:ios"
     color: "1d76db"
     description: "Touches the iOS host app or the iOS packages"
-    target: both
-    addedBy: labeler
+    target: issues
+    addedBy: issue-areas, humans
     previously: [host-ios]
-  - name: "area: android"
+  - name: "area:android"
     color: "1d76db"
     description: "Touches the Android host app or the Android packages"
-    target: both
-    addedBy: labeler
-    previously: [host-android]
-  - name: "area: hosts"
-    color: "1d76db"
-    description: "Needs work in both host apps, or not yet narrowed to one"
     target: issues
-    addedBy: humans
-    previously: [host-work]
-  - name: "area: js"
+    addedBy: issue-areas, humans
+    previously: [host-android]
+  - name: "area:js"
     color: "1d76db"
     description: "Touches the TypeScript packages, the playground or the explorer"
-    target: both
-    addedBy: labeler
+    target: issues
+    addedBy: issue-areas, humans
     previously: [javascript]
-  - name: "area: ci"
+  - name: "area:ci"
     color: "1d76db"
     description: "Touches workflows or actions under .github"
-    target: both
-    addedBy: labeler
+    target: issues
+    addedBy: issue-areas, humans
     previously: [github_actions]
-  - name: "area: docs"
+  - name: "area:docs"
     color: "1d76db"
     description: "Touches documentation"
-    target: both
-    addedBy: labeler
+    target: issues
+    addedBy: issue-areas, humans
     previously: [documentation]
-  - name: "area: rfc"
+  - name: "area:rfc"
     color: "1d76db"
-    description: "Touches an RFC under docs/rfcs"
-    target: both
-    addedBy: labeler
+    description: "An RFC, or work tracked by one under docs/rfcs"
+    target: issues
+    addedBy: issue-areas, humans
     previously: [rfc]
 
-  # status: where a pull request or issue stands, named for who acts next. One
-  # at a time. pr-triage.yml sets the first one on a pull request that has none.
-  - name: "status: waiting on review"
+  # needs: what is blocking the work. On issues and pull requests alike; on a
+  # pull request, label-gate.yml holds the merge while one is on.
+  - name: "needs:decision"
+    color: "b60205"
+    description: "Blocked on a human decision, not on work"
+    target: both
+    addedBy: humans
+  - name: "needs:spec"
+    color: "d93f0b"
+    description: "Accepted but has no written design or RFC body yet"
+    target: both
+    addedBy: humans
+  - name: "needs:UI"
+    color: "f9d0c4"
+    description: "Cannot be implemented without UI design, and it's pending"
+    target: both
+    addedBy: humans
+
+  # spa: which product needs it. Set by whoever files the issue.
+  - name: "spa:humanity"
+    color: "cbf5b0"
+    description: "Humanity SPA"
+    target: issues
+    addedBy: humans
+  - name: "spa:jollity"
+    color: "db4ac3"
+    description: "Jollity SPA"
+    target: issues
+    addedBy: humans
+  - name: "spa:scarcity"
+    color: "9e315b"
+    description: "Scarcity SPA"
+    target: issues
+    addedBy: humans
+  - name: "spa:seity"
+    color: "8d3a8f"
+    description: "Seity SPA work (user ID)"
+    target: issues
+    addedBy: humans
+
+  # status: who acts next on a pull request. One at a time. pr-triage.yml sets
+  # the first one on a pull request that has none.
+  - name: "status:waiting-on-review"
     color: "fbca04"
     description: "Ready for a reviewer"
     target: prs
     addedBy: pr-triage
-  - name: "status: waiting on author"
+  - name: "status:waiting-on-author"
     color: "fef2c0"
     description: "The author has changes to make before the next review"
     target: prs
     addedBy: humans
-  - name: "status: ready to merge"
+  - name: "status:ready-to-merge"
     color: "0e8a16"
     description: "Approved and waiting only to be queued"
     target: prs
     addedBy: humans
-  - name: "status: needs spec"
-    color: "d93f0b"
-    description: "Do not review or merge until a spec or design doc is agreed"
-    target: both
-    addedBy: humans
-    previously: [needs-spec]
-  - name: "status: needs decision"
-    color: "b60205"
-    description: "Waiting on a decision, not on work"
-    target: both
-    addedBy: humans
-    previously: [needs-decision]
-  - name: "status: needs design"
-    color: "f9d0c4"
-    description: "Cannot be built until the UI design exists"
-    target: issues
-    addedBy: humans
-    previously: [needs-UI]
-  - name: "status: blocked"
+  - name: "status:blocked"
     color: "b60205"
     description: "Cannot move until something else lands; say what in a comment"
-    target: both
-    addedBy: humans
-
-  # priority: how soon. Most work carries none.
-  - name: "priority: release blocker"
-    color: "b60205"
-    description: "The current release cannot ship without it"
-    target: both
-    addedBy: humans
-    previously: ["R2 blocker"]
-  - name: "priority: high"
-    color: "d93f0b"
-    description: "Next in line once release blockers are clear"
-    target: both
+    target: prs
     addedBy: humans
 
   # size: how much a reviewer has to read. pr-triage.yml sets it from the lines
   # changed, leaving out generated files, lockfiles and database schemas.
-  - name: "size: XS"
+  - name: "size:XS"
     color: "ededed"
     description: "Fewer than 10 lines changed"
     target: prs
     addedBy: pr-triage
-  - name: "size: S"
+  - name: "size:S"
     color: "d4d4d4"
     description: "10 to 29 lines changed"
     target: prs
     addedBy: pr-triage
-  - name: "size: M"
+  - name: "size:M"
     color: "bdbdbd"
     description: "30 to 99 lines changed"
     target: prs
     addedBy: pr-triage
-  - name: "size: L"
+  - name: "size:L"
     color: "9e9e9e"
     description: "100 to 499 lines changed"
     target: prs
     addedBy: pr-triage
-  - name: "size: XL"
+  - name: "size:XL"
     color: "757575"
     description: "500 to 999 lines changed; consider splitting"
     target: prs
     addedBy: pr-triage
-  - name: "size: XXL"
+  - name: "size:XXL"
     color: "424242"
     description: "1000 lines or more; split it, or say in the description why it cannot be"
     target: prs
     addedBy: pr-triage
 
-  # type: what kind of work. Issues carry one; a pull request's title already
-  # says its type, so these are on pull requests only where automation sets them.
-  - name: "type: bug"
-    color: "5319e7"
-    description: "Something does not work as intended"
-    target: issues
-    addedBy: humans
-  - name: "type: feature"
-    color: "5319e7"
-    description: "New behaviour or a proposal for it"
-    target: issues
-    addedBy: humans
-    previously: [enhancement, "feature request", proposal]
-  - name: "type: tech debt"
-    color: "5319e7"
-    description: "Cleanup, refactoring or documentation the code needs but no feature asks for"
-    target: issues
-    addedBy: humans
-  - name: "type: epic"
-    color: "5319e7"
-    description: "Tracks a body of work through its sub-issues"
-    target: issues
-    addedBy: humans
-    previously: [Epic]
-  - name: "type: backport"
-    color: "5319e7"
-    description: "Brings a vendored host tree up to its source"
-    target: prs
-    addedBy: backport-host
-    previously: [backport-host]
-  - name: "type: dependencies"
-    color: "5319e7"
-    description: "Updates a dependency"
-    target: prs
-    addedBy: dependabot, update-chain-specs
-    previously: [dependencies]
-
   # ci: asks for a build or changes what a check expects. Each starts as soon as
   # it is added and follows the branch from then on.
-  - name: "ci: ios simulator"
+  - name: "ci:ios-simulator"
     color: "c5def5"
     description: "Build the iOS app, run its tests and attach a simulator build"
     target: prs
     addedBy: humans
     previously: [ios-simulator-build]
-  - name: "ci: ios device"
+  - name: "ci:ios-device"
     color: "c5def5"
     description: "Attach a signed iOS build that installs on a registered device"
     target: prs
     addedBy: humans
     previously: [ios-device-build]
-  - name: "ci: android device"
+  - name: "ci:android-device"
     color: "c5def5"
     description: "Attach an Android APK that installs on any phone"
     target: prs
     addedBy: humans
     previously: [android-device-build]
-  - name: "ci: android emulator tests"
+  - name: "ci:android-emulator-tests"
     color: "c5def5"
     description: "Run the Android instrumented tests on an emulator"
     target: prs
     addedBy: humans
     previously: [android-instrumented-tests]
-  - name: "ci: host playground e2e"
+  - name: "ci:host-playground-e2e"
     color: "c5def5"
     description: "Run the host-playground e2e inside the iOS and Android apps"
     target: prs
     addedBy: humans
     previously: [host-playground-e2e]
-  - name: "ci: no changeset"
+  - name: "ci:no-changeset"
     color: "c5def5"
     description: "Changes no published artifact, so the changeset check passes without one"
     target: prs
     addedBy: humans
     previously: [no-changeset]
 
-  # Named by something outside this file. The playground opens diagnosis issues
-  # with this label in a pre-filled URL, so renaming it breaks every deployed
-  # copy of the playground.
+  # Applied by automation that names them, so they stay outside the families.
+  - name: "backport-host"
+    color: "0e8a16"
+    description: "A vendored host tree is behind its source; the work order says what to bring in"
+    target: prs
+    addedBy: backport-host
+  - name: "dependencies"
+    color: "0366d6"
+    description: "Pull requests that update a dependency file"
+    target: prs
+    addedBy: dependabot, update-chain-specs
+  # The playground opens diagnosis issues with this label in a pre-filled URL,
+  # so renaming it breaks every deployed copy of the playground.
   - name: "diagnosis-report"
     color: "1d76db"
     description: "Playground diagnosis report to ingest into explorer/diagnosis-reports"
     target: issues
     addedBy: playground
 
-# Deleted when this file is applied. Each either duplicates a label above or
-# describes something GitHub records natively.
+# Deleted when this file is applied.
 retired:
   - name: invalid
     reason: "Close the issue as not planned instead"
@@ -251,19 +227,20 @@ retired:
     reason: "Release-specific, and that release has passed"
   - name: post-w3s
     reason: "Release-specific, and that release has passed"
-  - name: python
-    reason: "Applied by nothing; area labels cover the paths that matter"
 
-# Left in place until their replacement exists. Release-specific labels move to
-# milestones, which have to be created first.
+# Left exactly as they are until their replacement is decided.
 pending:
+  - name: Epic
+    reason: "An issue type, or a feature with sub-issues"
+  - name: enhancement
+    reason: "Becomes the Feature issue type"
+  - name: "feature request"
+    reason: "Becomes the Feature issue type"
+  - name: proposal
+    reason: "Becomes the Feature issue type"
+  - name: "R2 blocker"
+    reason: "A target date, a field or a label, still to decide"
   - name: "R3+"
-    reason: "Becomes an R3 milestone"
-  - name: Humanity
-    reason: "Becomes a feature label once the product tracks are agreed"
-  - name: Jollity
-    reason: "Becomes a feature label once the product tracks are agreed"
-  - name: Scarcity
-    reason: "Becomes a feature label once the product tracks are agreed"
-  - name: Seity
-    reason: "Becomes a feature label once the product tracks are agreed"
+    reason: "A target date, a field or a label, still to decide"
+  - name: host-work
+    reason: "An area for both hosts, or retired"

@@ -189,7 +189,7 @@ nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc 
   `ci-status`, which is the check worth requiring: a job skipped by its filter
   counts as a pass, so a gate cannot stall a PR it does not apply to.
   `Changeset guard` reads live PR titles and labels, so re-running failed jobs
-  picks up a `ci: no changeset` opt-out. `Release guard` rejects npm version changes
+  picks up a `ci:no-changeset` opt-out. `Release guard` rejects npm version changes
   with unconsumed changesets on the merge result, including in the merge queue.
   `registry-drift.yml` checks default-branch manifests against npm daily and
   maintains one issue; explicit package-version exceptions live in

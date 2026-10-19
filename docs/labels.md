@@ -1,63 +1,82 @@
 # Labels
 
-Labels answer the questions a reviewer asks before opening a pull request: what does it touch, can I review it yet, how big is it, and how urgent is it. Each family of labels answers one of those questions, and its prefix says which.
+Labels answer what a reviewer or a planner asks before opening something: what does it touch, which product needs it, is anything blocking it, who acts next, and how big is it. Each family answers one of those questions, and its prefix says which. Names are `family:value`.
 
-Most labels are applied for you. Authors set a `status:` when a pull request stops waiting on review, and a `ci:` label when they want an app built.
+Most labels are applied for you. On a pull request, authors set a `status:` when it stops waiting on review, a `needs:` label when something blocks it, and a `ci:` label when they want an app built. On an issue, whoever files it sets the product, and the area is filled in from the pull request that closes it.
 
 Every label is defined in [`.github/labels.yml`](../.github/labels.yml). Change that file to add, rename or retire one; a pull request that does so lists exactly what it will change, and the merge applies it.
 
-## The families
+## On issues
 
-| Family | Answers | On | Set by |
-| --- | --- | --- | --- |
-| `area:` | What does it touch? | pull requests and issues | the labeler, from the paths changed |
-| `status:` | Who acts next? | pull requests and issues | the author or reviewer; the first one automatically |
-| `size:` | How much is there to read? | pull requests | automatically, from the lines changed |
-| `priority:` | How soon? | both | whoever triages |
-| `type:` | What kind of work? | issues | whoever files it |
-| `ci:` | Which builds and checks run? | pull requests | the author |
+| Family | Answers | Set by |
+| --- | --- | --- |
+| `area:` (core, ios, android, js, ci, docs, rfc) | What does it touch? | Automatically from the pull request that closes it, or by hand |
+| `needs:` (decision, spec, UI) | What is blocking it? | Whoever works on it |
+| `spa:` (humanity, jollity, scarcity, seity) | Which product needs it? | Whoever files it |
 
-A pull request usually carries an area, a size and a status, and nothing else.
+An issue's type (Bug, Feature, Task), its status (Triage, Backlog, In progress) and its target date are issue fields, not labels.
+
+## On pull requests
+
+| Family | Answers | Set by |
+| --- | --- | --- |
+| `status:` (waiting-on-review, waiting-on-author, ready-to-merge, blocked) | Who acts next? | `waiting-on-review` automatically, the rest by the author or reviewer |
+| `needs:` (decision, spec, UI) | What is blocking it? | The author or reviewer |
+| `size:` (XS to XXL) | How much is there to read? | Automatically, from the lines changed |
+| `ci:` (ios-simulator, ios-device, android-device, android-emulator-tests, host-playground-e2e, no-changeset) | Which builds and checks run? | The author |
+
+A pull request usually carries a size and a status, and nothing else.
 
 ## area
 
-Applied by [`.github/labeler.yml`](../.github/labeler.yml) from the paths a pull request changes, so a pull request touching several places carries several. The same paths decide who is asked to review in `.github/CODEOWNERS`, and `scripts/check-path-routing.py` keeps the two files in step.
+[`.github/areas.yml`](../.github/areas.yml) maps paths to areas. When a pull request closes an issue, `issue-areas.yml` adds the areas of the paths it changes to that issue. Only closing references count: `Closes #12`, `Fixes #12`, or an issue linked under Development. A mention like "part of #12" does not, so an epic does not collect every area its pull requests touch. Areas are only added, so one set by hand when the issue is filed stays.
 
 | Label | Paths |
 | --- | --- |
-| `area: core` | `rust/crates/` |
-| `area: ios` | `hosts/ios/`, `ios/` |
-| `area: android` | `hosts/android/`, `android/` |
-| `area: js` | `js/`, `playground/`, `explorer/` |
-| `area: ci` | `.github/workflows/`, `.github/actions/` |
-| `area: docs` | `docs/`, any `*.md` |
-| `area: rfc` | `docs/rfcs/` |
+| `area:core` | `rust/crates/` |
+| `area:ios` | `hosts/ios/`, `ios/` |
+| `area:android` | `hosts/android/`, `android/` |
+| `area:js` | `js/`, `playground/`, `explorer/` |
+| `area:ci` | `.github/workflows/`, `.github/actions/` |
+| `area:docs` | `docs/`, any `*.md` at the root |
+| `area:rfc` | `docs/rfcs/` |
 
-`area: hosts` is for issues that need work in both apps, or have not been narrowed to one yet.
+The same paths decide who is asked to review in `.github/CODEOWNERS`, and `scripts/check-path-routing.py` keeps the two files in step.
 
-Every area routes to the same team today, so the labels are for filtering the list. When areas get owners of their own, CODEOWNERS can route by the same paths without the labels changing.
+Pull requests carry no area. That keeps their labels to what a reviewer acts on; adding areas back to pull requests is a change to `issue-areas.yml`, not to the labels.
 
-## status
+## needs
 
-One at a time, named for who has to act next.
+What is blocking the work, on an issue or a pull request.
 
 | Label | Means |
 | --- | --- |
-| `status: waiting on review` | Ready for a reviewer. Set automatically when a pull request opens ready, or leaves draft, with no status. |
-| `status: waiting on author` | The author has changes to make. A reviewer sets it when they request changes. |
-| `status: ready to merge` | Approved, and waiting only to be queued. |
-| `status: needs spec` | Do not review or merge until a spec or design doc is agreed. |
-| `status: needs decision` | Waiting on a decision, not on work. |
-| `status: needs design` | An issue that cannot be built until the UI design exists. |
-| `status: blocked` | Cannot move until something else lands. Say what in a comment. |
+| `needs:spec` | Accepted, but nothing is built or reviewed until a spec or design doc is agreed |
+| `needs:decision` | Waiting on a decision, not on work |
+| `needs:UI` | Cannot be built until the UI design exists |
 
-`status: needs spec`, `status: needs decision` and `status: blocked` fail the `Label gate` check, so a pull request carrying one cannot merge while it does. Removing the label clears the check.
-
-A draft carries no status. Converting a pull request back to draft removes `status: waiting on review`.
+On a pull request, any `needs:` label fails the `Label gate` check, so it cannot merge while one is on. Removing the label clears the check.
 
 ### When a pull request needs a spec
 
-Anyone reviewing a pull request can add `status: needs spec` when the change makes a design decision that nobody has agreed yet. Once it is on, nobody reviews the code: the conversation moves to the spec or design doc, and the label comes off when that merges. Which changes need a spec is decided with the design documentation work, and this section will link to it.
+Anyone reviewing a pull request can add `needs:spec` when the change makes a design decision nobody has agreed yet. Once it is on, nobody reviews the code: the conversation moves to the spec or design doc, and the label comes off when that merges. Which changes need a spec is decided with the design documentation work, and this section will link to it.
+
+## spa
+
+Which product an issue is for: `spa:humanity`, `spa:jollity`, `spa:scarcity` or `spa:seity`. Set by whoever files it.
+
+## status
+
+One at a time on a pull request, named for who has to act next.
+
+| Label | Means |
+| --- | --- |
+| `status:waiting-on-review` | Ready for a reviewer. Set automatically when a pull request opens ready, or leaves draft, with no status. |
+| `status:waiting-on-author` | The author has changes to make. A reviewer sets it when they request changes. |
+| `status:ready-to-merge` | Approved, and waiting only to be queued. |
+| `status:blocked` | Cannot move until something else lands. Say what in a comment. |
+
+`status:blocked` fails the `Label gate` check, like a `needs:` label. A draft carries no status, and converting a pull request back to draft removes `status:waiting-on-review`.
 
 ## size
 
@@ -65,38 +84,16 @@ Set on every pull request from the lines it adds and removes, and kept current a
 
 | Label | Lines |
 | --- | --- |
-| `size: XS` | under 10 |
-| `size: S` | 10 to 29 |
-| `size: M` | 30 to 99 |
-| `size: L` | 100 to 499 |
-| `size: XL` | 500 to 999 |
-| `size: XXL` | 1000 or more |
+| `size:XS` | under 10 |
+| `size:S` | 10 to 29 |
+| `size:M` | 30 to 99 |
+| `size:L` | 100 to 499 |
+| `size:XL` | 500 to 999 |
+| `size:XXL` | 1000 or more |
 
 Lines a reviewer does not read are left out: anything `.gitattributes` marks `linguist-generated`, which GitHub also collapses in the diff, plus lockfiles and the database schemas the build writes. Marking a new generated file there keeps it out of the count. A backport of a vendored host tree carries no size, because its line count says nothing about how much there is to review.
 
-`size: XL` and `size: XXL` are a prompt to split. A change too large to review in one sitting can usually land as a series of smaller pull requests into a feature branch, each reviewed by whoever knows that part, before the branch merges into main. When it genuinely cannot be split, say why in the description.
-
-## priority
-
-Most work carries none.
-
-| Label | Means |
-| --- | --- |
-| `priority: release blocker` | The current release cannot ship without it |
-| `priority: high` | Next in line once release blockers are clear |
-
-## type
-
-Issues carry one. A pull request's conventional commit title already says its type, so pull requests carry a `type:` only where a workflow sets it.
-
-| Label | Means |
-| --- | --- |
-| `type: bug` | Something does not work as intended |
-| `type: feature` | New behaviour, or a proposal for it |
-| `type: tech debt` | Cleanup or refactoring the code needs but no feature asks for |
-| `type: epic` | Tracks a body of work through its sub-issues |
-| `type: backport` | A pull request bringing a vendored host tree up to its source, opened by `backport-host.yml` |
-| `type: dependencies` | A pull request updating a dependency, opened by Dependabot or `update-chain-specs.yml` |
+`size:XL` and `size:XXL` are a prompt to split. A change too large to review in one sitting can usually land as a series of smaller pull requests into a feature branch, each reviewed by whoever knows that part, before the branch merges into main. When it genuinely cannot be split, say why in the description.
 
 ## ci
 
@@ -104,31 +101,36 @@ Each starts as soon as it is added and follows the branch from then on. The [REA
 
 | Label | Runs |
 | --- | --- |
-| `ci: ios simulator` | Builds the iOS app, runs its tests and attaches a simulator build |
-| `ci: ios device` | Attaches a signed iOS build for registered devices |
-| `ci: android device` | Attaches an Android APK for any phone |
-| `ci: android emulator tests` | Runs the Android instrumented tests on an emulator |
-| `ci: host playground e2e` | Runs the host-playground e2e inside both apps |
-| `ci: no changeset` | Lets the changeset check pass for a change that ships nothing |
+| `ci:ios-simulator` | Builds the iOS app, runs its tests and attaches a simulator build |
+| `ci:ios-device` | Attaches a signed iOS build for registered devices |
+| `ci:android-device` | Attaches an Android APK for any phone |
+| `ci:android-emulator-tests` | Runs the Android instrumented tests on an emulator |
+| `ci:host-playground-e2e` | Runs the host-playground e2e inside both apps |
+| `ci:no-changeset` | Lets the changeset check pass for a change that ships nothing |
 
 The first time a pull request touches an app, a comment lists the `ci:` labels that build it.
 
+## Outside the families
+
+A few labels are applied by automation that names them, so they keep plain names: `backport-host` on the pull requests `backport-host.yml` opens, `dependencies` on Dependabot's and `update-chain-specs.yml`'s, and `diagnosis-report`, which the playground puts on the issues it opens.
+
 ## What is not a label
 
-- **A release.** Work for a release goes on that release's milestone. A label with a release in its name has to be replaced every release.
+- **An issue's type, status and target date.** Those are issue fields.
 - **A breaking change.** A `!` in the pull request title marks it, and the nightly announcement lists those first.
 - **Why an issue was closed.** GitHub records duplicates and issues not planned when the issue is closed.
 - **Who reviews.** CODEOWNERS requests reviewers from the paths changed.
 
 ## Changing a label
 
-Edit `.github/labels.yml`. Give every label a color, a description that says when to use it, a `target` and an `addedBy`. To rename one, put its old name under `previously`; the rename keeps it on everything that carries it. Listing a second old name merges that label into this one. A label that is no longer needed goes under `retired` with a reason, and is deleted when the change merges.
+Edit `.github/labels.yml`. Give every label a color, a description that says when to use it, a `target` and an `addedBy`. To rename one, put its old name under `previously`; the rename keeps it on everything that carries it. When the new name already exists, the old label is merged into it instead. A label that is no longer needed goes under `retired` with a reason, and is deleted when the change merges. One whose replacement is not decided yet goes under `pending`, and is left as it is.
 
 A workflow that keys on a label name changes in the same pull request as the label, so both land together.
 
-## Not yet in place
+## Not yet decided
 
-- **Product tracks.** A `feature:` family for product tracks, once the tracks are agreed. The labels for them are held under `pending` in `labels.yml` until then.
-- **Milestones.** One per release, replacing the release-specific labels still under `pending`.
-- **Stale pull requests.** A scheduled job that marks pull requests with no activity for 30 days, so the open list stays current.
-- **A required gate.** `Label gate` reports on every pull request, and holds the merge once it is a required check on main.
+- `Epic`: an issue type, or a feature with sub-issues.
+- `enhancement`, `feature request` and `proposal`: replaced by the Feature issue type once issues move to types.
+- `R2 blocker` and `R3+`: a target date, a field, or labels.
+- `host-work`: an area for both hosts, or retired.
+- Making `Label gate` a required check on main, so it holds a merge rather than only reporting.
