@@ -268,8 +268,7 @@ impl AccountStore {
 			.find(|record| {
 				record.network == network_id &&
 					record.origin == AccountOrigin::Auto &&
-					record.attested &&
-					!record.exhausted_statement_periods.contains(&period)
+					record.attested && !record.exhausted_statement_periods.contains(&period)
 			})
 			.cloned()
 	}
