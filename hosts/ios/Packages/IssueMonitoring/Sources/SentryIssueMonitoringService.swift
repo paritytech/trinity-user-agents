@@ -24,6 +24,10 @@
                 // We recommend adjusting this value in production.
                 options.tracesSampleRate = 0
             }
+
+            Task { @MainActor in
+                SentryDeviceReadingsReporter().start()
+            }
         }
     }
 #endif

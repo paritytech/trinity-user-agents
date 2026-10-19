@@ -10,6 +10,8 @@ import javax.inject.Singleton
 
 interface BatteryService {
     fun currentBatteryLevel(): Fraction
+
+    fun isCharging(): Boolean
 }
 
 @Singleton
@@ -21,4 +23,6 @@ internal class RealBatteryService @Inject constructor(
     override fun currentBatteryLevel(): Fraction {
         return batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY).percents
     }
+
+    override fun isCharging(): Boolean = batteryManager.isCharging
 }
