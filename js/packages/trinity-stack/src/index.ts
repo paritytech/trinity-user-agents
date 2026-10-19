@@ -26,9 +26,6 @@ export type {
   Verified,
 } from "../wasm/trinity_stack.js";
 
-/** The link base the Polkadot app opens. */
-export const DEFAULT_LINK_BASE = "polkadotapp://stack";
-
 /** An error from a rule of the RFC. `code` names the rule, as the conformance vectors do. */
 export type TrinityStackError = Error & { code: string };
 
@@ -52,7 +49,7 @@ export function parse(bytes: Uint8Array): {
 
 /** Parses a document and applies the pointer's rules. */
 export function open(bytes: Uint8Array, pointer: Pointer): Verified {
-  return wasm.open(bytes, pointer.url, pointer.key);
+  return wasm.open(bytes, pointer);
 }
 
 /**
@@ -65,13 +62,7 @@ export function accept(
   fetched: Uint8Array | undefined,
   now: Date = new Date(),
 ): Accepted {
-  return wasm.accept(
-    pointer.url,
-    pointer.key,
-    stored,
-    fetched,
-    unixSeconds(now),
-  );
+  return wasm.accept(pointer, stored, fetched, unixSeconds(now));
 }
 
 /** The pointer a link carries, whatever its scheme or domain. */
@@ -79,22 +70,19 @@ export function decodeLink(link: string): Pointer {
   return wasm.decodeLink(link);
 }
 
-/** The link that carries a pointer. */
-export function encodeLink(
-  pointer: Pointer,
-  base: string = DEFAULT_LINK_BASE,
-): string {
-  return wasm.encodeLink(pointer.url, pointer.key, base);
+/** The link that carries a pointer, under `base`, which defaults to `polkadotapp://stack`. */
+export function encodeLink(pointer: Pointer, base?: string): string {
+  return wasm.encodeLink(pointer, base);
 }
 
 /** Whether two pointers name the same stack: the same key, or the same URL when unsigned. */
 export function sameStack(a: Pointer, b: Pointer): boolean {
-  return wasm.sameStack(a.url, a.key, b.url, b.key);
+  return wasm.sameStack(a, b);
 }
 
 /** What identifies a pointer's stack: its key, or its normalised URL when it has none. */
 export function stackId(pointer: Pointer): string {
-  return wasm.stackId(pointer.url, pointer.key);
+  return wasm.stackId(pointer);
 }
 
 /** Wraps a plain descriptor's bytes in a signed envelope. */
@@ -252,7 +240,7 @@ export async function fetchDescriptor(
   url: string,
   options: { fetch?: Fetch; timeoutMs?: number } = {},
 ): Promise<Uint8Array | undefined> {
-  wasm.stackId(url, undefined);
+  wasm.stackId({ url });
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(),

@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import {
   type Model,
+  type SpecFile,
   accept,
+  checkSpec,
   decodeLink,
   encodeLink,
   generateSecret,
@@ -364,6 +366,17 @@ describe("links", () => {
     ).toBe(true);
     expect(sameStack(pointer, { url: URL_ })).toBe(false);
     expect(decodeLink(encodeLink({ url: URL_ }))).toStrictEqual({ url: URL_ });
+  });
+
+  test("a pointer breaking a rule keeps its code, and a key of the wrong type is never dropped", () => {
+    expect(codeOf(() => stackId({ url: "http://stack.example/s.json" }))).toBe(
+      "invalid-url",
+    );
+    const key = 1 as unknown as string;
+    expect(() => stackId({ url: URL_, key })).toThrow(TypeError);
+    expect(() =>
+      checkSpec({ url: URL_ } as SpecFile, new Uint8Array()),
+    ).toThrow(TypeError);
   });
 
   test("an unsigned stack is stored under its normalised URL", async () => {
