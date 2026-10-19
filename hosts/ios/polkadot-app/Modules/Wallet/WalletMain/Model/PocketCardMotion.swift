@@ -10,6 +10,7 @@ struct PocketCardMotion: Equatable {
     let opacity: Double
 
     static let resting = PocketCardMotion(offset: .zero, scale: 1, opacity: 1)
+    static let shrunkAway = PocketCardMotion(offset: .zero, scale: 0.9, opacity: 0)
 
     static func of(cardAt index: Int, openAt openIndex: Int?, openOffset: CGSize, cleared: Bool) -> PocketCardMotion {
         guard let openIndex else { return .resting }
@@ -22,6 +23,6 @@ struct PocketCardMotion: Equatable {
 
         return index > openIndex
             ? PocketCardMotion(offset: CGSize(width: 0, height: PocketCardSize.height * 4), scale: 1, opacity: 0)
-            : PocketCardMotion(offset: .zero, scale: 0.9, opacity: 0)
+            : .shrunkAway
     }
 }

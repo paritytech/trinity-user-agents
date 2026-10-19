@@ -135,6 +135,21 @@ extension WalletMainViewController: WalletMainViewProtocol {
             viewModel.openPocketCardOffset = offset
             viewModel.isPocketCleared = clearingPocket
         }
+
+        // The navigation bar itself must stay opaque: at no alpha it leaves the safe area and the Pocket jumps up.
+        let chromeAlpha: CGFloat = clearingPocket ? 0 : 1
+        let fadeChrome = { [weak self] in
+            self?.titleView?.alpha = chromeAlpha
+            UIApplication.shared.mainTabBarController?.setChromeAlpha(chromeAlpha)
+        }
+        guard animated else { return fadeChrome() }
+
+        let animator = UIViewPropertyAnimator(
+            duration: PocketCardFlightTiming.duration,
+            timingParameters: PocketCardFlightTiming.timing
+        )
+        animator.addAnimations(fadeChrome)
+        animator.startAnimation()
     }
 
     @objc

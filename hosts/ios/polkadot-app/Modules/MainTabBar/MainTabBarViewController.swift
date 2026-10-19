@@ -366,6 +366,13 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
         #endif
     }
 
+    /// Fades the chrome the tab bar draws over every tab: the status icons
+    /// strip and the bottom bar.
+    func setChromeAlpha(_ alpha: CGFloat) {
+        statusBarHost.view.alpha = alpha
+        chromeController.view.alpha = alpha
+    }
+
     func showChainStatus(_ models: [ChainConnectionStatusViewModel]) {
         statusBarHost.rootView = ChainConnectionStatusBarView(models: models)
         let width = max(1, ChainConnectionStatusBarView.ringsWidth(count: models.count))
