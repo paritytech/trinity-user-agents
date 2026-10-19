@@ -47,6 +47,7 @@ final class RustPaymentsBridge: TopUpHostBridge, PaymentHostBridge, BalanceHostB
                 target.runtime?.notifyTopUpStatus(productId: key.productId, id: key.id, status: status)
             },
             pending: .detecting,
+            abandoned: .notClaimed,
             logger: logger
         )
         paymentStatuses = EngineStatusFollowers(
@@ -60,6 +61,7 @@ final class RustPaymentsBridge: TopUpHostBridge, PaymentHostBridge, BalanceHostB
                 target.runtime?.notifyPaymentStatus(productId: key.productId, id: key.id, status: status)
             },
             pending: .processing,
+            abandoned: .failed(reason: Self.paymentDidNotComplete),
             logger: logger
         )
     }
@@ -237,9 +239,9 @@ struct EngineStatusKey: Hashable, Sendable {
 /// Limits of ``EngineStatusFollowers``, which as a generic type cannot hold them.
 enum EngineStatusFollowing {
     /// How long a status read waits for the engine's first answer on an id nobody follows yet. The
-    /// read is synchronous on the core's thread, so it waits briefly and then answers the pending
-    /// status, pushing the real one when the engine sends it.
-    static let firstStatusTimeout: TimeInterval = 1
+    /// read is synchronous on one of the core's worker threads, so it waits briefly and then answers
+    /// the pending status, pushing the real one when the engine sends it.
+    static let firstStatusTimeout: TimeInterval = 0.25
     /// How many ids' final statuses are kept.
     static let finalCapacity = 512
 }
@@ -248,8 +250,12 @@ enum EngineStatusFollowing {
 /// the core's synchronous "current status" read can be answered. A final status is kept, for the
 /// most recent ``EngineStatusFollowing/finalCapacity`` ids, so reading it again answers at once.
 /// A read that finds no status yet waits at most the timeout, then answers `pending`; the engine's
-/// statuses are pushed as they arrive. When the engine then reports the id unknown, the entry is
-/// dropped, so the core's next read answers `nil`.
+/// statuses are pushed as they arrive.
+///
+/// Following ends at a final status, or when the engine's stream ends or fails. Once the core has
+/// been told a status that is not final, by a push or a `pending` read, it waits for a final one,
+/// so a stream ending without one pushes `abandoned`. That status is not kept: the entry is
+/// dropped, and the core's next read follows the engine afresh, answering its record or `nil`.
 final class EngineStatusFollowers<Status>: @unchecked Sendable {
     /// A stream of statuses, each with whether it is final.
     typealias Statuses = (EngineStatusKey) async throws -> AnyAsyncSequence<(Status, Bool)>
@@ -260,12 +266,15 @@ final class EngineStatusFollowers<Status>: @unchecked Sendable {
         var settled = false
         var failed = false
         var isFinal = false
+        /// Set once the core was told a status, pushed or read.
+        var reported = false
     }
 
     private let statuses: Statuses
     private let isNotFound: (Error) -> Bool
     private let notify: (EngineStatusKey, Status) -> Void
     private let pending: Status
+    private let abandoned: Status
     private let logger: LoggerProtocol
     private let timeout: TimeInterval
     private let finalCapacity: Int
@@ -279,6 +288,7 @@ final class EngineStatusFollowers<Status>: @unchecked Sendable {
         isNotFound: @escaping (Error) -> Bool,
         notify: @escaping (EngineStatusKey, Status) -> Void,
         pending: Status,
+        abandoned: Status,
         logger: LoggerProtocol,
         timeout: TimeInterval = EngineStatusFollowing.firstStatusTimeout,
         finalCapacity: Int = EngineStatusFollowing.finalCapacity
@@ -287,6 +297,7 @@ final class EngineStatusFollowers<Status>: @unchecked Sendable {
         self.isNotFound = isNotFound
         self.notify = notify
         self.pending = pending
+        self.abandoned = abandoned
         self.logger = logger
         self.timeout = timeout
         self.finalCapacity = finalCapacity
@@ -309,7 +320,10 @@ final class EngineStatusFollowers<Status>: @unchecked Sendable {
 
         let deadline = Date(timeIntervalSinceNow: timeout)
         while !entry.settled {
-            guard condition.wait(until: deadline) else { return pending }
+            guard condition.wait(until: deadline) else {
+                entry.reported = true
+                return pending
+            }
         }
 
         if let latest = entry.latest { return latest }
@@ -346,6 +360,7 @@ private extension EngineStatusFollowers {
                     settle(entry) {
                         $0.latest = status
                         $0.isFinal = isFinal
+                        $0.reported = true
                     }
                     notify(key, status)
                     if isFinal { break }
@@ -372,12 +387,22 @@ private extension EngineStatusFollowers {
     }
 
     func finish(_ key: EngineStatusKey, _ entry: Entry, failed: Bool) {
+        var abandon = false
         settle(entry) { entry in
             if entry.latest == nil {
                 entry.failed = failed
             }
+            abandon = entry.reported && !entry.isFinal
         }
 
+        // Pushed before the entry is dropped, so a later follow's statuses cannot reach the core first.
+        if abandon {
+            notify(key, abandoned)
+        }
+        forget(key, entry)
+    }
+
+    func forget(_ key: EngineStatusKey, _ entry: Entry) {
         condition.lock()
         defer { condition.unlock() }
         guard entries[key] === entry else { return }

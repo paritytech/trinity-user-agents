@@ -64,7 +64,7 @@ struct EngineStatusFollowersTests {
     }
 
     @Test
-    func aFailureAfterAStatusPushesNothingMoreAndIsFollowedAgain() async throws {
+    func aFailureAfterAStatusPushesAbandonedAndIsFollowedAgain() async throws {
         let engine = FakeEngine()
         let followers = engine.followers()
 
@@ -75,7 +75,7 @@ struct EngineStatusFollowersTests {
         engine.fail(FakeEngine.StoreBroken())
         try await eventually { !followers.isFollowing(key) }
 
-        #expect(engine.pushed == [1])
+        #expect(engine.pushed == [1, FakeEngine.abandoned])
     }
 
     @Test
@@ -100,9 +100,24 @@ struct EngineStatusFollowersTests {
         try await engine.waitForStreams(1)
         engine.fail(FakeEngine.NotFound())
         try await eventually { !followers.isFollowing(key) }
+        #expect(engine.pushed == [FakeEngine.abandoned])
 
         engine.forgetsIds = true
         #expect(try await read(followers, key) == nil)
+        #expect(engine.pushed == [FakeEngine.abandoned])
+    }
+
+    @Test
+    func anIdTheEngineDoesNotHoldBeforeAnythingWasReportedPushesNothing() async throws {
+        let engine = FakeEngine()
+        let followers = engine.followers()
+
+        followers.follow(key)
+        try await engine.waitForStreams(1)
+        engine.fail(FakeEngine.NotFound())
+        try await eventually { !followers.isFollowing(key) }
+
+        #expect(engine.pushed.isEmpty)
     }
 
     @Test
@@ -162,6 +177,7 @@ struct EngineStatusFollowersTests {
         #expect(try await first == 1)
         engine.end()
         try await eventually { !followers.isFollowing(key) }
+        #expect(engine.pushed == [1, FakeEngine.abandoned])
 
         async let second = read(followers, key)
         try await engine.waitForStreams(2)
@@ -220,6 +236,7 @@ private final class FakeEngine: @unchecked Sendable {
     struct StoreBroken: Error {}
 
     static let pending = -1
+    static let abandoned = -2
 
     private let lock = NSLock()
     private var continuations: [AsyncThrowingStream<(Int, Bool), Error>.Continuation] = []
@@ -254,6 +271,7 @@ private final class FakeEngine: @unchecked Sendable {
             isNotFound: { $0 is NotFound },
             notify: { [self] _, status in lock.withLock { pushes.append(status) } },
             pending: Self.pending,
+            abandoned: Self.abandoned,
             logger: MockLogger(),
             timeout: timeout,
             finalCapacity: finalCapacity
