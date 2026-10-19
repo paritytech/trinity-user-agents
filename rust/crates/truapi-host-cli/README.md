@@ -918,6 +918,35 @@ Frames are forwarded whole and the debugger decodes all of them, so a tapped
 signing host puts its payloads on that socket. Point it at a debugger you are
 running yourself.
 
+## Trinity stacks
+
+`truapi-host stack` publishes and checks the descriptor that tells hosts and
+tools which chains and services make up a stack. An operator publishing
+previewnet:
+
+```sh
+truapi-host stack keygen --out ~/.previewnet/stack.key   # prints the public key
+truapi-host stack publish previewnet.json --generation 2026-10-19 --out site \
+  --signing-key-file ~/.previewnet/stack.key --state ~/.previewnet/stack-state.json \
+  --url https://previewnet.example/.well-known/trinity-stack.json
+# deploy site/, then share the printed link or:
+truapi-host stack link https://previewnet.example/.well-known/trinity-stack.json --key 0x…
+```
+
+`previewnet.json` is a descriptor without `$v`, `sequence` and `generation`.
+Change `--generation` whenever the chains restart. Keep the key and the state
+file outside anything a wipe deletes.
+
+To check a published stack, or ship one in a host build:
+
+```sh
+truapi-host stack verify 'polkadotapp://stack?key=0x…&url=…'   # exits non-zero on a broken rule or expiry
+truapi-host stack bundle 'polkadotapp://stack?key=0x…&url=…' --out stack.json
+```
+
+`bundle` refuses a lower `sequence` than the copy already at `--out`, and an
+expired stack. [SPEC.md](SPEC.md#67-top-level-stack) has every option.
+
 ## Statement-store allowance
 
 The real statement store enforces per-account allowance. Before pairing, the
