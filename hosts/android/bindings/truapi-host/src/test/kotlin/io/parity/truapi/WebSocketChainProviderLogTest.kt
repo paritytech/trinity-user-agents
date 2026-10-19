@@ -55,6 +55,7 @@ class WebSocketChainProviderLogTest {
                 opened,
             )
             assertEquals("closing 1 chain connections", nextLine())
+            assertEquals("chain connection 1 closed on $url: 1000 ", nextLine())
         }
     }
 
@@ -67,5 +68,25 @@ class WebSocketChainProviderLogTest {
         assertEquals("chain connection 1 dialling $url", nextLine())
         val failure = nextLine().orEmpty()
         assertTrue(failure, failure.startsWith("chain connection 1 failed on $url: ConnectException"))
+    }
+
+    @Test
+    fun `a refused endpoint falls back and names each url`() {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse.Builder().webSocketUpgrade(object : WebSocketListener() {}).build())
+            server.start()
+            val refused = "ws://127.0.0.1:1/"
+            val answering = server.url("/").toString().replaceFirst("http", "ws")
+
+            provider(listOf(refused, answering)).connect(ByteArray(32))
+
+            assertEquals("chain connection 1 dialling $refused", nextLine())
+            val failure = nextLine().orEmpty()
+            assertTrue(failure, failure.startsWith("chain connection 1 failed on $refused: ConnectException"))
+            assertEquals(
+                listOf("chain connection 1 dialling $answering", "chain connection 1 open on $answering"),
+                listOf(nextLine(), nextLine()),
+            )
+        }
     }
 }

@@ -82,9 +82,9 @@ pub fn init() {
 /// (`truapi.tracing.warn` or `truapi.tracing.error`) and a detail line.
 ///
 /// One sink per process: the latest replaces any earlier one, and dropping the
-/// returned registration removes the sink unless a later one replaced it. A
-/// registration dropped before a later one replaces it leaves no sink, so build
-/// one runtime per process.
+/// returned registration removes the sink unless a later one replaced it.
+/// Between a registration dropping and the next one installing, no sink is
+/// set, so build one runtime per process.
 pub fn set_host_sink(sink: HostSink) -> HostSinkRegistration {
 	HostSinkRegistration::install(&HOST_SINK, sink)
 }
