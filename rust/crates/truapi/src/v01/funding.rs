@@ -76,18 +76,15 @@ pub enum FundingFailure {
 /// Request to open the funding modality.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostFundingRequest {
+	/// Caller-chosen id the session is watched by, so a product that reloads
+	/// while the overlay is up can still watch it. Reusing one is refused
+	/// with `AlreadyExists`.
+	pub id: [u8; 32],
 	/// Which way value moves; the host opens on the matching screen.
 	pub direction: FundingDirection,
 	/// Amount sought, in the user's payment balance units. `None` lets the
 	/// user choose.
 	pub amount: Option<u128>,
-}
-
-/// Accepted intent.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub struct HostFundingResponse {
-	/// Session id, durable across host restarts, used to watch the session.
-	pub intent: String,
 }
 
 /// Error from [`crate::api::Funding::request`].
@@ -100,21 +97,24 @@ pub enum HostFundingError {
 	#[codec(index = 1)]
 	Rejected,
 	/// The amount sought is zero.
-	#[codec(index = 3)]
+	#[codec(index = 2)]
 	InvalidAmount,
 	/// Catch-all.
-	#[codec(index = 2)]
+	#[codec(index = 3)]
 	Unknown {
 		/// Human-readable failure reason.
 		reason: String,
 	},
+	/// This product already has a session with this id.
+	#[codec(index = 4)]
+	AlreadyExists,
 }
 
 /// Request to watch a funding session.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostFundingStatusSubscribeRequest {
-	/// Session to watch.
-	pub intent: String,
+	/// The id the session was requested with.
+	pub id: [u8; 32],
 }
 
 /// Progress of a funding session, ending in exactly one terminal item.
@@ -150,18 +150,15 @@ pub enum HostFundingStatusSubscribeItem {
 	Failed {
 		/// Why it ended.
 		reason: FundingFailure,
-		/// Amount moved before the failure. May be non-zero.
-		moved: u128,
 	},
 }
 
 /// Error from [`crate::api::Funding::status_subscribe`].
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostFundingStatusSubscribeError {
-	/// No such session, it does not belong to the caller, or it ended so long
-	/// ago that the core no longer keeps it. A session the host recorded is
-	/// kept until 64 newer recorded sessions of the same product replace it,
-	/// and watching it yields its terminal item.
+	/// The caller has no session with this id. An ended session stays
+	/// watchable for good, compacted once newer ones push it out, and
+	/// watching it yields its terminal item.
 	#[codec(index = 0)]
 	NotFound,
 	/// Catch-all.
