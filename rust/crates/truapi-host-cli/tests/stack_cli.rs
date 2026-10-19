@@ -73,18 +73,20 @@ fn serve_once(document: Vec<u8>) -> String {
 
 /// Answers one request with `status`, extra `headers` and `body`, and returns the URL.
 fn respond_once(status: &'static str, headers: &'static str, body: Vec<u8>) -> String {
+	let length = format!("Content-Length: {}\r\n", body.len());
+	respond_with_head(format!("HTTP/1.1 {status}\r\n{headers}{length}"), body)
+}
+
+/// Answers one request with `head` and `body`, closing the connection to end the body.
+fn respond_with_head(head: String, body: Vec<u8>) -> String {
 	let listener = TcpListener::bind("127.0.0.1:0").unwrap();
 	let url = format!("http://{}/stack.json", listener.local_addr().unwrap());
 	thread::spawn(move || {
 		let (mut socket, _) = listener.accept().unwrap();
 		let mut request = [0; 4096];
 		let _ = socket.read(&mut request);
-		let head = format!(
-			"HTTP/1.1 {status}\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n",
-			body.len()
-		);
-		socket.write_all(head.as_bytes()).unwrap();
-		socket.write_all(&body).unwrap();
+		socket.write_all(format!("{head}Connection: close\r\n\r\n").as_bytes()).unwrap();
+		let _ = socket.write_all(&body);
 	});
 	url
 }
@@ -164,10 +166,36 @@ fn a_published_stack_opens_under_the_printed_key_only() {
 
 #[test]
 fn a_descriptor_past_the_size_cap_is_unreachable() {
-	let url = respond_once("200 OK", "", vec![b' '; 1024 * 1024 + 1]);
-	let output = stack(&["verify", &url]);
-	assert!(!output.status.success());
-	assert!(stderr(&output).contains("larger than"), "{}", stderr(&output));
+	let too_large = vec![b' '; 1024 * 1024 + 1];
+	let declared = respond_once("200 OK", "", too_large.clone());
+	let streamed = respond_with_head("HTTP/1.1 200 OK\r\n".into(), too_large);
+	for url in [declared, streamed] {
+		let output = stack(&["verify", &url]);
+		assert!(!output.status.success());
+		assert!(stderr(&output).contains("larger than"), "{}", stderr(&output));
+	}
+}
+
+#[cfg(unix)]
+#[test]
+fn a_published_descriptor_is_readable_by_the_web_server() {
+	use std::os::unix::fs::PermissionsExt;
+	let dir = tempfile::tempdir().unwrap();
+	let model = write_model(dir.path(), "Local", None);
+	let site = dir.path().join("site");
+	let output = stack(&["publish", &model, "--generation", "g1", "--out", site.to_str().unwrap()]);
+	assert!(output.status.success(), "{}", stderr(&output));
+	let served = fs::metadata(site.join(".well-known/trinity-stack.json")).unwrap();
+	assert_ne!(served.permissions().mode() & 0o004, 0, "a web server as another user reads it");
+}
+
+#[test]
+fn keygen_creates_the_directory_it_writes_into() {
+	let dir = tempfile::tempdir().unwrap();
+	let key = dir.path().join("fresh/stack.key");
+	let output = stack(&["keygen", "--out", key.to_str().unwrap()]);
+	assert!(output.status.success(), "{}", stderr(&output));
+	assert!(key.exists());
 }
 
 #[test]

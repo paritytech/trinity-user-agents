@@ -3,17 +3,20 @@
 
 use std::{
 	fs,
-	io::Write,
+	io::{IsTerminal, Write},
 	path::{Path, PathBuf},
 	time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Subcommand;
-use qrcode::{QrCode, render::unicode::Dense1x2};
+use crossterm::style::Stylize;
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use trinity_stack::{DEFAULT_LINK_BASE, Document, Fetched, Pointer, Status, accept};
 use zeroize::Zeroizing;
+
+use crate::{platform, terminal_ui::qr_rows};
 
 /// Where `publish` writes the descriptor under its output directory.
 const WELL_KNOWN: &str = ".well-known/trinity-stack.json";
@@ -102,8 +105,14 @@ pub async fn run(command: StackCommand) -> Result<()> {
 		StackCommand::Link { url, key } => {
 			let link =
 				Pointer::new(&url, key.as_deref()).map_err(refused)?.to_link(DEFAULT_LINK_BASE);
-			let qr = QrCode::new(link.as_bytes()).context("link does not fit in a QR code")?;
-			println!("{link}\n{}", qr.render::<Dense1x2>().quiet_zone(true).build());
+			println!("{link}");
+			let terminal = std::io::stdout().is_terminal();
+			for row in qr_rows(&link).context("link does not fit in a QR code")? {
+				match terminal {
+					true => println!("{}", row.black().on_white()),
+					false => println!("{row}"),
+				}
+			}
 			Ok(())
 		},
 	}
@@ -116,6 +125,9 @@ fn refused(error: trinity_stack::Error) -> anyhow::Error {
 fn keygen(out: &Path) -> Result<()> {
 	let mut secret = Zeroizing::new([0u8; 32]);
 	getrandom::getrandom(secret.as_mut()).map_err(|error| anyhow!("no randomness: {error}"))?;
+	if let Some(parent) = out.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+		fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+	}
 	let mut options = fs::OpenOptions::new();
 	options.write(true).create_new(true);
 	#[cfg(unix)]
@@ -181,7 +193,6 @@ fn publish(
 		None => descriptor,
 	};
 	let path = out.join(WELL_KNOWN);
-	fs::create_dir_all(path.parent().expect("WELL_KNOWN has a parent"))?;
 	// The state goes first: if the descriptor write then fails, a retry repeats the same
 	// `sequence` rather than skipping one the readers never saw.
 	if let Some(state_file) = state_file {
@@ -195,14 +206,10 @@ fn publish(
 	Ok(())
 }
 
-/// Replaces `path` in one step, so a web root or a build never sees half a file.
+/// Replaces `path` in one step, so a web root or a build never sees half a file. The file gets the
+/// umask's permissions, so a web server running as another user can serve it.
 fn write_atomically(path: &Path, contents: &[u8]) -> Result<()> {
-	let directory = path.parent().filter(|parent| !parent.as_os_str().is_empty());
-	let mut file = tempfile::NamedTempFile::new_in(directory.unwrap_or(Path::new(".")))
-		.with_context(|| format!("write {}", path.display()))?;
-	file.write_all(contents)?;
-	file.persist(path).with_context(|| format!("write {}", path.display()))?;
-	Ok(())
+	platform::atomic_write(path, contents).map_err(anyhow::Error::msg)
 }
 
 /// Renders a model as a `$v: 1` descriptor and checks it. `sequence` stays the same while nothing
@@ -234,20 +241,20 @@ fn render(
 	Ok((descriptor, PublishState { sequence, content_hash }))
 }
 
-/// A link or URL as a pointer, with `key` filling in a link that has none. `None` for a path.
+/// A link (any URL with a `url` parameter) or a descriptor URL as a pointer, with `key` filling in
+/// a link that has none. `None` for a path, which never parses as an absolute URL.
 fn pointer_of(stack: &str, key: Option<&str>) -> Result<Option<Pointer>> {
-	if let Ok(linked) = Pointer::from_link(stack) {
-		let Some(given) = key else { return Ok(Some(linked)) };
-		let keyed = Pointer::new(linked.url().as_str(), Some(given)).map_err(refused)?;
-		if linked.key().is_some_and(|own| Some(own) != keyed.key()) {
-			bail!("--key contradicts the key the link carries");
-		}
-		return Ok(Some(keyed));
-	}
-	if stack.starts_with("https://") || stack.starts_with("http://") {
+	let Ok(parsed) = Url::parse(stack) else { return Ok(None) };
+	if !parsed.query_pairs().any(|(name, _)| name == "url") {
 		return Ok(Some(Pointer::new(stack, key).map_err(refused)?));
 	}
-	Ok(None)
+	let linked = Pointer::from_link(stack).map_err(refused)?;
+	let Some(given) = key else { return Ok(Some(linked)) };
+	let keyed = Pointer::new(linked.url().as_str(), Some(given)).map_err(refused)?;
+	if linked.key().is_some_and(|own| Some(own) != keyed.key()) {
+		bail!("--key contradicts the key the link carries");
+	}
+	Ok(Some(keyed))
 }
 
 async fn verify(stack: &str, key: Option<&str>) -> Result<()> {
@@ -292,13 +299,12 @@ async fn bundle(stack: &str, key: Option<&str>, out: &Path) -> Result<()> {
 		Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
 		Err(error) => return Err(error).with_context(|| format!("read {}", out.display())),
 	};
-	let fetched = fetch(pointer.url().as_str()).await;
-	if let Err(cause) = &fetched {
-		bail!("not bundled: {} is unreachable: {cause}", pointer.url());
-	}
-	let fetched = fetched.as_deref().map_or(Fetched::Unreachable, Fetched::Document);
+	let fetched = fetch(pointer.url().as_str())
+		.await
+		.map_err(|cause| anyhow!("not bundled: {} is unreachable: {cause}", pointer.url()))?;
 	let accepted =
-		accept(&pointer, previous.as_deref(), fetched, unix_now() as i64).map_err(refused)?;
+		accept(&pointer, previous.as_deref(), Fetched::Document(&fetched), unix_now() as i64)
+			.map_err(refused)?;
 	match &accepted.status {
 		Status::Updated | Status::Unchanged => {},
 		Status::Refused(error) => {
@@ -445,5 +451,20 @@ mod tests {
 		let filled = pointer_of(&unkeyed, Some(&key)).unwrap().unwrap();
 		assert_eq!(filled.key().map(hex::encode), Some(key[2..].to_owned()));
 		assert!(pointer_of("./stack.json", None).unwrap().is_none());
+	}
+
+	#[test]
+	fn a_link_or_url_breaking_a_rule_says_which_instead_of_reading_a_file() {
+		let code = |stack: &str| pointer_of(stack, None).unwrap_err().to_string();
+		let plain_http = "polkadotapp://stack?url=http%3A%2F%2Fstack.example%2Fs.json";
+		assert!(code(plain_http).contains("invalid-url"), "{}", code(plain_http));
+		let short_key = "polkadotapp://stack?key=0x12&url=https%3A%2F%2Fstack.example%2Fs.json";
+		assert!(code(short_key).contains("invalid-hex"), "{}", code(short_key));
+		assert!(code("http://stack.example/s.json").contains("invalid-url"));
+		let app_link = "https://app.example/open?url=https%3A%2F%2Fstack.example%2Fs.json";
+		assert_eq!(
+			pointer_of(app_link, None).unwrap().unwrap().url().as_str(),
+			"https://stack.example/s.json"
+		);
 	}
 }

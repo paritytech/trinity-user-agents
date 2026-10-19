@@ -163,10 +163,16 @@ struct PairingQr {
 	rows: Vec<String>,
 }
 
+/// `text` as a QR code drawn two modules per cell with Unicode half blocks, quiet zone included.
+/// Dark modules are drawn, so the rows need dark-on-light colours to scan.
+pub fn qr_rows(text: &str) -> qrcode::types::QrResult<Vec<String>> {
+	let drawn = QrCode::new(text.as_bytes())?.render::<Dense1x2>().quiet_zone(true).build();
+	Ok(drawn.lines().map(str::to_owned).collect())
+}
+
 impl PairingQr {
 	fn encode(url: &str) -> qrcode::types::QrResult<Self> {
-		let drawn = QrCode::new(url.as_bytes())?.render::<Dense1x2>().quiet_zone(true).build();
-		Ok(Self { rows: drawn.lines().map(str::to_owned).collect() })
+		Ok(Self { rows: qr_rows(url)? })
 	}
 
 	fn rendered_width(&self) -> usize {
