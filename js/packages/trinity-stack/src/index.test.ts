@@ -13,6 +13,7 @@ import {
   MAX_DESCRIPTOR_BYTES,
   fetchDescriptor,
   open,
+  parse,
   publicKey,
   publish,
   read,
@@ -235,6 +236,19 @@ describe("read", () => {
     expect(accepted.descriptor.contracts).toEqual(contracts);
     expect(accepted.descriptor.fork).toBeUndefined();
     expect("fork" in accepted.descriptor).toBe(false);
+  });
+
+  test("parse says whether a document is an envelope without checking any key", async () => {
+    const plain = await publish(MODEL, { generation: "g1" });
+    const signed = await publish(MODEL, {
+      generation: "g1",
+      secret: generateSecret(),
+    });
+    expect(parse(plain.document)).toEqual({
+      descriptor: plain.descriptor,
+      envelope: false,
+    });
+    expect(parse(signed.document).envelope).toBe(true);
   });
 
   test("a server that never answers is unreachable after the timeout", async () => {
