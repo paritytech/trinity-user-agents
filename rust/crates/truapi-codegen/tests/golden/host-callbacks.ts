@@ -468,6 +468,65 @@ export type HostContactPick =
   | { tag: "Unsupported"; value?: undefined };
 
 /**
+ * One push that the host gives to its push relay.
+ */
+export interface HostPushDelivery {
+  /**
+   * The push service of the receiving device.
+   */
+  service: HostPushService;
+
+  /**
+   * The push token of the receiving device.
+   */
+  token: string;
+
+  /**
+   * The id of the room on the receiving device.
+   */
+  pushId: string;
+
+  /**
+   * The hex of the encrypted notification: a 24-byte nonce, then the
+   * XChaCha20-Poly1305 ciphertext.
+   */
+  message: string;
+}
+
+/**
+ * What the host keeps for the push address of one room of a product: the
+ * push token of the device, and the id and the key of the room. The host
+ * keeps the id and the key where its notification receiver reads them, and
+ * gives the same id and key for the same room until it forgets the room.
+ */
+export interface HostPushRoute {
+  /**
+   * The push service of the token.
+   */
+  service: HostPushService;
+
+  /**
+   * The push token of this device.
+   */
+  token: string;
+
+  /**
+   * 32 lowercase hex characters that name the room in a push.
+   */
+  pushId: string;
+
+  /**
+   * The 32-byte key that encrypts the notifications of the room.
+   */
+  key: Uint8Array;
+}
+
+/**
+ * The push service that a device token belongs to.
+ */
+export type HostPushService = "Apns" | "Fcm";
+
+/**
  * How the host's scanner ended.
  */
 export type HostScan =
@@ -1076,6 +1135,42 @@ export const HostContactPick: S.Codec<HostContactPick> = S.lazy(
 );
 
 /**
+ * One push that the host gives to its push relay.
+ */
+export const HostPushDelivery: S.Codec<HostPushDelivery> = S.lazy(
+  (): S.Codec<HostPushDelivery> =>
+    S.Struct({
+      service: HostPushService,
+      token: S.str,
+      pushId: S.str,
+      message: S.str,
+    }) as S.Codec<HostPushDelivery>,
+);
+
+/**
+ * What the host keeps for the push address of one room of a product: the
+ * push token of the device, and the id and the key of the room. The host
+ * keeps the id and the key where its notification receiver reads them, and
+ * gives the same id and key for the same room until it forgets the room.
+ */
+export const HostPushRoute: S.Codec<HostPushRoute> = S.lazy(
+  (): S.Codec<HostPushRoute> =>
+    S.Struct({
+      service: HostPushService,
+      token: S.str,
+      pushId: S.str,
+      key: S.Bytes(),
+    }) as S.Codec<HostPushRoute>,
+);
+
+/**
+ * The push service that a device token belongs to.
+ */
+export const HostPushService: S.Codec<HostPushService> = S.lazy(
+  (): S.Codec<HostPushService> => S.Status("Apns", "Fcm"),
+);
+
+/**
  * How the host's scanner ended.
  */
 export const HostScan: S.Codec<HostScan> = S.lazy(
@@ -1350,6 +1445,48 @@ export interface BalancePlatform {
   ): AsyncIterable<
     Result<HostPaymentBalanceSubscribeItem, HostPaymentBalanceSubscribeError>
   >;
+}
+
+/**
+ * Host-run media of the calls of chat rooms (WebRTC with the relays of the
+ * host). Optional; a host without it leaves every product `callMedia` call
+ * `Unsupported`.
+ *
+ * - Start only for a call that the room shows as `Active`, and show the call screen of the host.
+ * - Give each media signal of the host to the product as `ChatRoomEvent::CallSignal`.
+ * - Keep a signal that comes before its call starts, and give it to the call when it starts.
+ * - Send `ChatRoomEvent::CallEnded` when the user ends the call on the call screen.
+ */
+export interface CallMediaPlatform {
+  /**
+   * Start the media of `call_id` of `room_id`.
+   */
+  startCallMedia(
+    product: ProductContext,
+    roomId: string,
+    callId: string,
+    video: boolean,
+    offerer: boolean,
+  ): Promise<void>;
+
+  /**
+   * A media signal of the other side of `call_id`.
+   */
+  callMediaSignal(
+    product: ProductContext,
+    roomId: string,
+    callId: string,
+    signal: Uint8Array,
+  ): Promise<void>;
+
+  /**
+   * Stop the media of `call_id`.
+   */
+  stopCallMedia(
+    product: ProductContext,
+    roomId: string,
+    callId: string,
+  ): Promise<void>;
 }
 
 /**
@@ -2129,6 +2266,34 @@ export interface ProductStorage {
   subscribeStorage(
     key: string,
   ): AsyncIterable<Result<HostLocalStorageChangeItem, GenericError>>;
+}
+
+/**
+ * Host-owned push service: the push token of the device, the push routes of
+ * the rooms, and a relay that sends a push to another device. Optional; a
+ * host without one leaves every product `push` call `Unsupported`.
+ *
+ * - Keep the id and the key of each route where the notification receiver of the host reads them.
+ * - Send each delivery to the push relay with the credentials of the host.
+ */
+export interface PushPlatform {
+  /**
+   * The push route of `room_id` of `product`, made the first time and the
+   * same after. `Ok(`undefined`)` when the device has no push token now.
+   */
+  pushRoute(
+    product: ProductContext,
+    roomId: string,
+  ): Promise<HostPushRoute | undefined>;
+
+  /**
+   * Give `delivery` to the push relay. Answers whether the push service took
+   * it.
+   */
+  sendPush(
+    product: ProductContext,
+    delivery: HostPushDelivery,
+  ): Promise<boolean>;
 }
 
 /**

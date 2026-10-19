@@ -37,6 +37,8 @@ const SKIPPED_SERVICES = new Map<string, string>([
   ["Scanner", "dot.li has no camera viewfinder; it answers Unsupported"],
   ["Share", "dot.li has no share sheet; it answers Unsupported"],
   ["Usernames", "dot.li has no username directory; it answers Unsupported"],
+  ["Push", "dot.li has no push relay; it answers Unsupported"],
+  ["Call Media", "dot.li runs no call media; it answers Unsupported"],
 ]);
 // Methods that trigger a host permission/signing prompt, so they need the
 // longer signing-class timeout to allow for the user to respond.

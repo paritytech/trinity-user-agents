@@ -8797,3 +8797,303 @@ fn a_share_without_a_sheet_or_with_a_bad_text_never_reaches_the_host() {
 	assert!(sheet.asked.lock().unwrap().is_empty());
 	assert_eq!(share(&host, "Add me"), Ok(v01::ShareOutcome::Dismissed));
 }
+
+/// A push service that gives one route per room and records each delivery.
+struct StubPushPlatform {
+	token: Option<String>,
+	taken: bool,
+	delivered: Mutex<Vec<crate::platform::HostPushDelivery>>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::PushPlatform for StubPushPlatform {
+	async fn push_route(
+		&self,
+		_product: &crate::platform::ProductContext,
+		room_id: &str,
+	) -> Result<Option<crate::platform::HostPushRoute>, truapi::latest::GenericError> {
+		Ok(self.token.clone().map(|token| crate::platform::HostPushRoute {
+			service: crate::platform::HostPushService::Apns,
+			token,
+			push_id: format!("{:0>32}", hex::encode(room_id.as_bytes())).chars().take(32).collect(),
+			key: vec![5; 32],
+		}))
+	}
+
+	async fn send_push(
+		&self,
+		_product: &crate::platform::ProductContext,
+		delivery: crate::platform::HostPushDelivery,
+	) -> Result<bool, truapi::latest::GenericError> {
+		self.delivered.lock().unwrap().push(delivery);
+		Ok(self.taken)
+	}
+}
+
+fn push_host(push: Option<Arc<StubPushPlatform>>) -> ProductRuntimeHost {
+	let host = scanner_host_for(ProductExecutionKind::Worker, None);
+	if let Some(push) = push {
+		host.services.install_push_platform(push);
+	}
+	host
+}
+
+fn push_address(
+	host: &ProductRuntimeHost,
+	room_id: &str,
+) -> Result<Vec<u8>, CallError<v01::HostPushAddressError>> {
+	use truapi::versioned::push as wire;
+	let result = futures::executor::block_on(truapi::api::Push::address(
+		host,
+		&CallContext::default(),
+		wire::HostPushAddressRequest::V1(v01::HostPushAddressRequest { room_id: room_id.into() }),
+	));
+	match result {
+		Ok(wire::HostPushAddressResponse::V1(response)) => Ok(response.address),
+		Err(error) => Err(error.map_domain(|wire::HostPushAddressError::V1(error)| error)),
+	}
+}
+
+fn push_notify(
+	host: &ProductRuntimeHost,
+	address: Vec<u8>,
+	body: &str,
+) -> Result<(), CallError<v01::HostPushNotifyError>> {
+	use truapi::versioned::push as wire;
+	let result = futures::executor::block_on(truapi::api::Push::notify(
+		host,
+		&CallContext::default(),
+		wire::HostPushNotifyRequest::V1(v01::HostPushNotifyRequest {
+			address,
+			title: "alice.42".into(),
+			body: body.into(),
+		}),
+	));
+	match result {
+		Ok(_) => Ok(()),
+		Err(error) => Err(error.map_domain(|wire::HostPushNotifyError::V1(error)| error)),
+	}
+}
+
+#[test]
+fn a_push_address_names_the_room_and_a_notification_goes_to_its_device_encrypted() {
+	// The relay sees the token and the push id, never the title or the text.
+	let push = Arc::new(StubPushPlatform {
+		token: Some("ab".repeat(32)),
+		taken: true,
+		delivered: Mutex::default(),
+	});
+	let host = push_host(Some(push.clone()));
+
+	let address = push_address(&host, "dm-7").unwrap();
+	assert_eq!(
+		push_address(&host, "dm-7").unwrap(),
+		address,
+		"the same room gives the same address"
+	);
+	push_notify(&host, address, "hello").unwrap();
+
+	let delivered = push.delivered.lock().unwrap().clone();
+	let [delivery] = &delivered[..] else { panic!("one push, got {delivered:?}") };
+	assert_eq!(delivery.token, "ab".repeat(32));
+	assert_eq!(delivery.service, crate::platform::HostPushService::Apns);
+	assert!(!delivery.message.contains(&hex::encode("hello")));
+	assert_eq!(
+		hex::decode(&delivery.message).unwrap().len(),
+		24 + 16 + r#"{"body":"hello","title":"alice.42","v":1}"#.len()
+	);
+}
+
+#[test]
+fn each_push_failure_reaches_the_product_as_its_own_error() {
+	use v01::{HostPushAddressError, HostPushNotifyError};
+	assert_eq!(push_address(&push_host(None), "dm-7"), Err(CallError::Unsupported));
+	let no_token =
+		Arc::new(StubPushPlatform { token: None, taken: true, delivered: Mutex::default() });
+	assert!(matches!(
+		push_address(&push_host(Some(no_token)), "dm-7"),
+		Err(CallError::Domain(HostPushAddressError::NotAvailable { .. }))
+	));
+
+	let refused = Arc::new(StubPushPlatform {
+		token: Some("ab".repeat(32)),
+		taken: false,
+		delivered: Mutex::default(),
+	});
+	let host = push_host(Some(refused.clone()));
+	let address = push_address(&host, "dm-7").unwrap();
+	assert_eq!(
+		push_notify(&host, vec![9, 9], "hi"),
+		Err(CallError::Domain(HostPushNotifyError::InvalidAddress))
+	);
+	assert!(matches!(
+		push_notify(&host, address.clone(), &"x".repeat(257)),
+		Err(CallError::Domain(HostPushNotifyError::InvalidRequest { .. }))
+	));
+	assert!(
+		refused.delivered.lock().unwrap().is_empty(),
+		"nothing reaches the relay before the checks pass"
+	);
+	assert!(matches!(
+		push_notify(&host, address, "hi"),
+		Err(CallError::Domain(HostPushNotifyError::Rejected { .. }))
+	));
+}
+
+#[test]
+fn a_product_sends_a_bounded_number_of_notifications_a_minute() {
+	let push = Arc::new(StubPushPlatform {
+		token: Some("ab".repeat(32)),
+		taken: true,
+		delivered: Mutex::default(),
+	});
+	let host = push_host(Some(push.clone()));
+	let address = push_address(&host, "dm-7").unwrap();
+	// `PUSH_MAX_PER_WINDOW`: 30 a minute.
+	for _ in 0..30 {
+		push_notify(&host, address.clone(), "hi").unwrap();
+	}
+
+	assert_eq!(
+		push_notify(&host, address, "hi"),
+		Err(CallError::Domain(v01::HostPushNotifyError::RateLimited))
+	);
+	assert_eq!(push.delivered.lock().unwrap().len(), 30);
+}
+
+/// Call media that records what the core asked.
+#[derive(Default)]
+struct StubCallMedia {
+	asked: Mutex<Vec<String>>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::CallMediaPlatform for StubCallMedia {
+	async fn start_call_media(
+		&self,
+		_product: &crate::platform::ProductContext,
+		room_id: &str,
+		call_id: &str,
+		video: bool,
+		offerer: bool,
+	) -> Result<(), truapi::latest::GenericError> {
+		self.asked
+			.lock()
+			.unwrap()
+			.push(format!("start {room_id} {call_id} video={video} offerer={offerer}"));
+		Ok(())
+	}
+
+	async fn call_media_signal(
+		&self,
+		_product: &crate::platform::ProductContext,
+		room_id: &str,
+		call_id: &str,
+		signal: Vec<u8>,
+	) -> Result<(), truapi::latest::GenericError> {
+		self.asked
+			.lock()
+			.unwrap()
+			.push(format!("signal {room_id} {call_id} {}", signal.len()));
+		Ok(())
+	}
+
+	async fn stop_call_media(
+		&self,
+		_product: &crate::platform::ProductContext,
+		room_id: &str,
+		call_id: &str,
+	) -> Result<(), truapi::latest::GenericError> {
+		self.asked.lock().unwrap().push(format!("stop {room_id} {call_id}"));
+		Ok(())
+	}
+}
+
+fn call_media_start(
+	host: &ProductRuntimeHost,
+	room_id: &str,
+) -> Result<(), CallError<v01::HostCallMediaError>> {
+	use truapi::versioned::call_media as wire;
+	futures::executor::block_on(truapi::api::CallMedia::start(
+		host,
+		&CallContext::default(),
+		wire::HostCallMediaStartRequest::V1(v01::HostCallMediaStartRequest {
+			room_id: room_id.into(),
+			call_id: "c1".into(),
+			video: true,
+			offerer: true,
+		}),
+	))
+	.map(drop)
+	.map_err(|error| error.map_domain(|wire::HostCallMediaError::V1(error)| error))
+}
+
+fn call_media_signal(
+	host: &ProductRuntimeHost,
+	signal: Vec<u8>,
+) -> Result<(), CallError<v01::HostCallMediaError>> {
+	use truapi::versioned::call_media as wire;
+	futures::executor::block_on(truapi::api::CallMedia::signal(
+		host,
+		&CallContext::default(),
+		wire::HostCallMediaSignalRequest::V1(v01::HostCallMediaSignalRequest {
+			room_id: "dm-7".into(),
+			call_id: "c1".into(),
+			signal,
+		}),
+	))
+	.map(drop)
+	.map_err(|error| error.map_domain(|wire::HostCallMediaError::V1(error)| error))
+}
+
+#[test]
+fn call_media_starts_only_shortly_after_the_user_calls_or_accepts_in_that_room() {
+	// The media opens the microphone and the camera: a Worker cannot start
+	// it unasked, and a press in one room does not start a call in another.
+	let media = Arc::new(StubCallMedia::default());
+	let host = scanner_host_for(ProductExecutionKind::Worker, None);
+	assert_eq!(call_media_start(&host, "dm-7"), Err(CallError::Unsupported));
+	host.services.install_call_media_platform(media.clone());
+	assert_eq!(
+		call_media_start(&host, "dm-7"),
+		Err(CallError::Domain(v01::HostCallMediaError::NotAllowed))
+	);
+
+	host.services.chat_room_events.publish(
+		"greenmarket.dot",
+		latest::HostChatRoomEventsSubscribeItem {
+			room_id: "dm-7".into(),
+			event: latest::ChatRoomEvent::CallAnswered { call_id: "c1".into(), accept: false },
+		},
+	);
+	assert_eq!(
+		call_media_start(&host, "dm-7"),
+		Err(CallError::Domain(v01::HostCallMediaError::NotAllowed))
+	);
+	host.services.chat_room_events.publish(
+		"greenmarket.dot",
+		latest::HostChatRoomEventsSubscribeItem {
+			room_id: "dm-7".into(),
+			event: latest::ChatRoomEvent::CallRequested { video: true },
+		},
+	);
+
+	assert_eq!(
+		call_media_start(&host, "dm-8"),
+		Err(CallError::Domain(v01::HostCallMediaError::NotAllowed))
+	);
+	call_media_start(&host, "dm-7").unwrap();
+	call_media_signal(&host, vec![1; 10]).unwrap();
+	assert!(matches!(
+		call_media_signal(&host, Vec::new()),
+		Err(CallError::Domain(v01::HostCallMediaError::InvalidRequest { .. }))
+	));
+	assert!(matches!(
+		call_media_signal(&host, vec![1; 64 * 1024 + 1]),
+		Err(CallError::Domain(v01::HostCallMediaError::InvalidRequest { .. }))
+	));
+	assert_eq!(
+		*media.asked.lock().unwrap(),
+		["start dm-7 c1 video=true offerer=true", "signal dm-7 c1 10"]
+	);
+}

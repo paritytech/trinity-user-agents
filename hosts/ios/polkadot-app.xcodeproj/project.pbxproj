@@ -262,7 +262,10 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Handler/PushNotificationChatMessageEntityMapper.swift,
+				ProductPush.swift,
+				ProductPushContent.swift,
 				SharedPushNotificationKeys.swift,
+				XChaCha20Poly1305.swift,
 			);
 			target = A5EDAAD42E93ECAF005DDA62 /* polkadot-app */;
 		};

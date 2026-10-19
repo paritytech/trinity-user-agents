@@ -79,6 +79,8 @@ extension Chat.RoomEvent {
             .callOpened(callId: callId)
         case let .callEnded(callId):
             .callEnded(callId: callId)
+        case let .callSignal(callId, signal):
+            .callSignal(callId: callId, signal: signal)
         case let .branchSelected(messageId, index):
             .branchSelected(messageId: messageId, index: index)
         }

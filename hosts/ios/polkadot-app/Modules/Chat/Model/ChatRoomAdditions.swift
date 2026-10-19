@@ -185,6 +185,8 @@ extension Chat {
         case callAnswered(callId: String, accept: Bool)
         case callOpened(callId: String)
         case callEnded(callId: String)
+        /// A media signal of the call of this host for the other side (`callMedia`).
+        case callSignal(callId: String, signal: Data)
         case branchSelected(messageId: String, index: UInt16)
     }
 }

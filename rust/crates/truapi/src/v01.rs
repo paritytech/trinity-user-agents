@@ -1,6 +1,7 @@
 //! TrUAPI Protocol v0.1 type definitions.
 
 mod account;
+mod call_media;
 mod chain;
 mod chat;
 mod coin_payment;
@@ -16,6 +17,7 @@ mod payment;
 mod permissions;
 mod pocket;
 mod preimage;
+mod push;
 mod renderer;
 mod resource_allocation;
 mod scanner;
@@ -29,6 +31,7 @@ mod usernames;
 mod worker;
 
 pub use account::*;
+pub use call_media::*;
 pub use chain::*;
 pub use chat::*;
 pub use coin_payment::*;
@@ -44,6 +47,7 @@ pub use payment::*;
 pub use permissions::*;
 pub use pocket::*;
 pub use preimage::*;
+pub use push::*;
 pub use renderer::*;
 pub use resource_allocation::*;
 pub use scanner::*;

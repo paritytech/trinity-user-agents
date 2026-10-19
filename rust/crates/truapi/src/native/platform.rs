@@ -20,10 +20,11 @@ use crate::{DevicePairingObserver, PairedSsoPeer, host_logic::worker::WorkerTran
 
 use super::{
 	callbacks::{
-		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-		NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks, NativePocketRemoval,
-		NativeScannerCallbacks, NativeShareCallbacks, NativeTopUpCallbacks,
-		NativeUsernamesCallbacks, NativeWakeRelayCallbacks,
+		HostCallbacks, NativeBalanceCallbacks, NativeCallMediaCallbacks, NativeChatCallbacks,
+		NativeContactsCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
+		NativePocketCallbacks, NativePocketRemoval, NativePushCallbacks, NativeScannerCallbacks,
+		NativeShareCallbacks, NativeTopUpCallbacks, NativeUsernamesCallbacks,
+		NativeWakeRelayCallbacks,
 	},
 	errors::HostRejection,
 	events::NativeEventBus,
@@ -107,6 +108,93 @@ impl crate::platform::UsernamesPlatform for UsernamesCallbackPlatform {
 	) -> Result<crate::platform::HostContactAdd, v01::GenericError> {
 		self.usernames
 			.add_contact(product.product_id.clone(), product.execution_kind, username.to_string())
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+}
+
+/// [`crate::platform::CallMediaPlatform`] served by host-provided
+/// [`NativeCallMediaCallbacks`]; constructed only when the host passed one.
+pub struct CallMediaCallbackPlatform {
+	/// Host call media.
+	pub media: Arc<dyn NativeCallMediaCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::CallMediaPlatform for CallMediaCallbackPlatform {
+	async fn start_call_media(
+		&self,
+		product: &ProductContext,
+		room_id: &str,
+		call_id: &str,
+		video: bool,
+		offerer: bool,
+	) -> Result<(), v01::GenericError> {
+		self.media
+			.start_call_media(
+				product.product_id.clone(),
+				room_id.into(),
+				call_id.into(),
+				video,
+				offerer,
+			)
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+
+	async fn call_media_signal(
+		&self,
+		product: &ProductContext,
+		room_id: &str,
+		call_id: &str,
+		signal: Vec<u8>,
+	) -> Result<(), v01::GenericError> {
+		self.media
+			.call_media_signal(product.product_id.clone(), room_id.into(), call_id.into(), signal)
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+
+	async fn stop_call_media(
+		&self,
+		product: &ProductContext,
+		room_id: &str,
+		call_id: &str,
+	) -> Result<(), v01::GenericError> {
+		self.media
+			.stop_call_media(product.product_id.clone(), room_id.into(), call_id.into())
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+}
+
+/// [`crate::platform::PushPlatform`] served by host-provided
+/// [`NativePushCallbacks`]; constructed only when the host passed one.
+pub struct PushCallbackPlatform {
+	/// Host push service.
+	pub push: Arc<dyn NativePushCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::PushPlatform for PushCallbackPlatform {
+	async fn push_route(
+		&self,
+		product: &ProductContext,
+		room_id: &str,
+	) -> Result<Option<crate::platform::HostPushRoute>, v01::GenericError> {
+		self.push
+			.push_route(product.product_id.clone(), room_id.to_string())
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+
+	async fn send_push(
+		&self,
+		product: &ProductContext,
+		delivery: crate::platform::HostPushDelivery,
+	) -> Result<bool, v01::GenericError> {
+		self.push
+			.send_push(product.product_id.clone(), delivery)
 			.await
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}

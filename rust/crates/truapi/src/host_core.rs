@@ -19,11 +19,11 @@ use std::{
 };
 
 use crate::platform::{
-	BalancePlatform, ChatPlatform, ContactsPlatform, CoreAdmin, ExpandedCardHost, GamePlatform,
-	PairingHostAdmin, PairingHostConfig, PaymentPlatform, PermissionAuthorizationRequest,
-	PermissionAuthorizationStatus, PermissionStatusHost, Platform, PocketPlatform, ProductContext,
-	ScannerPlatform, SharePlatform, SigningHostConfig, TopUpPlatform, UsernamesPlatform,
-	normalize_product_identifier,
+	BalancePlatform, CallMediaPlatform, ChatPlatform, ContactsPlatform, CoreAdmin,
+	ExpandedCardHost, GamePlatform, PairingHostAdmin, PairingHostConfig, PaymentPlatform,
+	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionStatusHost, Platform,
+	PocketPlatform, ProductContext, PushPlatform, ScannerPlatform, SharePlatform,
+	SigningHostConfig, TopUpPlatform, UsernamesPlatform, normalize_product_identifier,
 };
 use futures::{
 	FutureExt, StreamExt,
@@ -337,6 +337,20 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_usernames_platform"))]
 	pub fn set_usernames_platform(&self, platform: Arc<dyn UsernamesPlatform>) -> bool {
 		self.services.install_usernames_platform(platform)
+	}
+
+	/// Install the host's [`PushPlatform`] before serving any product
+	/// runtime. Set-once: returns whether this call installed it.
+	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_push_platform"))]
+	pub fn set_push_platform(&self, platform: Arc<dyn PushPlatform>) -> bool {
+		self.services.install_push_platform(platform)
+	}
+
+	/// Install the host's [`CallMediaPlatform`] before serving any product
+	/// runtime. Set-once: returns whether this call installed it.
+	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_call_media_platform"))]
+	pub fn set_call_media_platform(&self, platform: Arc<dyn CallMediaPlatform>) -> bool {
+		self.services.install_call_media_platform(platform)
 	}
 
 	/// Install the host's [`ContactsPlatform`], which owns the contact list and
@@ -809,6 +823,20 @@ impl SigningHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_usernames_platform"))]
 	pub fn set_usernames_platform(&self, platform: Arc<dyn UsernamesPlatform>) -> bool {
 		self.services.install_usernames_platform(platform)
+	}
+
+	/// Install the host's [`PushPlatform`] before serving any product
+	/// runtime. Set-once: returns whether this call installed it.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_push_platform"))]
+	pub fn set_push_platform(&self, platform: Arc<dyn PushPlatform>) -> bool {
+		self.services.install_push_platform(platform)
+	}
+
+	/// Install the host's [`CallMediaPlatform`] before serving any product
+	/// runtime. Set-once: returns whether this call installed it.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_call_media_platform"))]
+	pub fn set_call_media_platform(&self, platform: Arc<dyn CallMediaPlatform>) -> bool {
+		self.services.install_call_media_platform(platform)
 	}
 
 	/// Install the host's [`ContactsPlatform`], which owns the contact list and

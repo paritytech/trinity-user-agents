@@ -347,6 +347,29 @@ pub mod latest {
 	pub type HostShareResponse = LatestOf<versioned::share::HostShareResponse>;
 	/// Share sheet failure.
 	pub type HostShareError = LatestOf<versioned::share::HostShareError>;
+	/// Request to start the media of a call.
+	pub type HostCallMediaStartRequest = LatestOf<versioned::call_media::HostCallMediaStartRequest>;
+	/// Media signal of the other side of a call.
+	pub type HostCallMediaSignalRequest =
+		LatestOf<versioned::call_media::HostCallMediaSignalRequest>;
+	/// Request to stop the media of a call.
+	pub type HostCallMediaStopRequest = LatestOf<versioned::call_media::HostCallMediaStopRequest>;
+	/// The host took a call media request.
+	pub type HostCallMediaResponse = LatestOf<versioned::call_media::HostCallMediaResponse>;
+	/// Call media failure.
+	pub type HostCallMediaError = LatestOf<versioned::call_media::HostCallMediaError>;
+	/// Push address request.
+	pub type HostPushAddressRequest = LatestOf<versioned::push::HostPushAddressRequest>;
+	/// Push address of a room.
+	pub type HostPushAddressResponse = LatestOf<versioned::push::HostPushAddressResponse>;
+	/// Push address failure.
+	pub type HostPushAddressError = LatestOf<versioned::push::HostPushAddressError>;
+	/// Request to notify a push address.
+	pub type HostPushNotifyRequest = LatestOf<versioned::push::HostPushNotifyRequest>;
+	/// The push relay took the notification.
+	pub type HostPushNotifyResponse = LatestOf<versioned::push::HostPushNotifyResponse>;
+	/// Notification failure.
+	pub type HostPushNotifyError = LatestOf<versioned::push::HostPushNotifyError>;
 	/// Username search request.
 	pub type HostUsernamesSearchRequest =
 		LatestOf<versioned::usernames::HostUsernamesSearchRequest>;

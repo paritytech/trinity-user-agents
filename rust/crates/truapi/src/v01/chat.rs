@@ -1543,6 +1543,14 @@ pub enum ChatRoomEvent {
 		/// The call.
 		call_id: String,
 	},
+	/// The host has a media signal of the call for the other side: the
+	/// product sends it there, where the product gives it to `callMedia.signal`.
+	CallSignal {
+		/// The call.
+		call_id: String,
+		/// Opaque bytes of the host.
+		signal: Vec<u8>,
+	},
 	/// The user selected another alternative of a message.
 	BranchSelected {
 		/// The message.

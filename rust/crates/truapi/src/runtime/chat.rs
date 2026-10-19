@@ -218,6 +218,9 @@ fn is_press(event: &latest::ChatEvent) -> bool {
 #[derive(Default)]
 pub struct ChatRoomEventHub {
 	products: Mutex<HashMap<String, RoomEventQueue>>,
+	/// When the user last pressed a call button or accepted a call, by
+	/// product and room, in Unix seconds.
+	call_consents: Mutex<HashMap<(String, String), u64>>,
 }
 
 /// The subscriber and the queued events of one product.
@@ -231,6 +234,16 @@ impl ChatRoomEventHub {
 	/// Send one event to the subscriber of `product_id`, or keep it until the
 	/// product subscribes.
 	pub fn publish(&self, product_id: &str, mut item: latest::HostChatRoomEventsSubscribeItem) {
+		if matches!(
+			item.event,
+			latest::ChatRoomEvent::CallRequested { .. } |
+				latest::ChatRoomEvent::CallAnswered { accept: true, .. }
+		) {
+			self.call_consents.lock().expect("chat call consent mutex poisoned").insert(
+				(product_id.to_string(), item.room_id.clone()),
+				crate::unix_time::current_unix_secs(),
+			);
+		}
 		let mut products = self.products.lock().expect("chat room event mutex poisoned");
 		let queue = products.entry(product_id.to_string()).or_default();
 		if let Some(subscriber) = queue.subscriber.as_ref() {
@@ -244,6 +257,18 @@ impl ChatRoomEventHub {
 			queue.queued.pop_front();
 		}
 		queue.queued.push_back(item);
+	}
+
+	/// Whether the user pressed a call button or accepted a call in `room_id`
+	/// of `product_id` within the last `window_secs`.
+	pub fn call_consented_within(&self, product_id: &str, room_id: &str, window_secs: u64) -> bool {
+		self.call_consents
+			.lock()
+			.expect("chat call consent mutex poisoned")
+			.get(&(product_id.to_string(), room_id.to_string()))
+			.is_some_and(|at| {
+				crate::unix_time::current_unix_secs().saturating_sub(*at) <= window_secs
+			})
 	}
 
 	/// Open the subscription of `product_id`: first `snapshot`, then the

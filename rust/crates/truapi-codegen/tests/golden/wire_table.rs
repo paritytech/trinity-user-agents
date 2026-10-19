@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "fa14ec2747fbe19a";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "4b4c9c54bc9e9371";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -734,6 +734,36 @@ pub const USERNAMES_ADD_CONTACT: MethodIds = MethodIds {
     method_id: 1,
 };
 
+/// Wire discriminants for `push_address`.
+pub const PUSH_ADDRESS: MethodIds = MethodIds {
+    trait_id: 28,
+    method_id: 0,
+};
+
+/// Wire discriminants for `push_notify`.
+pub const PUSH_NOTIFY: MethodIds = MethodIds {
+    trait_id: 28,
+    method_id: 1,
+};
+
+/// Wire discriminants for `call_media_start`.
+pub const CALL_MEDIA_START: MethodIds = MethodIds {
+    trait_id: 29,
+    method_id: 0,
+};
+
+/// Wire discriminants for `call_media_signal`.
+pub const CALL_MEDIA_SIGNAL: MethodIds = MethodIds {
+    trait_id: 29,
+    method_id: 1,
+};
+
+/// Wire discriminants for `call_media_stop`.
+pub const CALL_MEDIA_STOP: MethodIds = MethodIds {
+    trait_id: 29,
+    method_id: 2,
+};
+
 /// The full wire table. Trait ids and per-trait method ordering are
 /// part of the wire protocol; only ever append within a trait.
 /// Removed methods leave their slot empty.
@@ -1197,5 +1227,25 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "usernames_add_contact",
         kind: WireKind::Request(USERNAMES_ADD_CONTACT),
+    },
+    WireEntry {
+        method: "push_address",
+        kind: WireKind::Request(PUSH_ADDRESS),
+    },
+    WireEntry {
+        method: "push_notify",
+        kind: WireKind::Request(PUSH_NOTIFY),
+    },
+    WireEntry {
+        method: "call_media_start",
+        kind: WireKind::Request(CALL_MEDIA_START),
+    },
+    WireEntry {
+        method: "call_media_signal",
+        kind: WireKind::Request(CALL_MEDIA_SIGNAL),
+    },
+    WireEntry {
+        method: "call_media_stop",
+        kind: WireKind::Request(CALL_MEDIA_STOP),
     },
 ];

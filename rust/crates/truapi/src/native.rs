@@ -39,10 +39,10 @@ pub use crate::{
 	},
 };
 pub use callbacks::{
-	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-	NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks, NativePocketRemoval,
-	NativeScannerCallbacks, NativeShareCallbacks, NativeTopUpCallbacks, NativeUsernamesCallbacks,
-	NativeWakeRelayCallbacks,
+	HostCallbacks, NativeBalanceCallbacks, NativeCallMediaCallbacks, NativeChatCallbacks,
+	NativeContactsCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
+	NativePocketRemoval, NativePushCallbacks, NativeScannerCallbacks, NativeShareCallbacks,
+	NativeTopUpCallbacks, NativeUsernamesCallbacks, NativeWakeRelayCallbacks,
 };
 pub use chat_query::{
 	NativeChatQuery, NativeChatQueryAnswer, NativeChatQueryObserver, NativeChatQueryRefusal,

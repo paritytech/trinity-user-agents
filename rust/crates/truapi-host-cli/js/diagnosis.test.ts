@@ -51,8 +51,10 @@ describe("generated-example battery", () => {
 
   test("classifies only the committed unsupported CLI services as expected", () => {
     const unsupported = new Map([
+      ["Call Media", "Call Media service not yet wired up by hosts"],
       ["Coin Payment", "Coin Payment service not yet wired up by hosts"],
       ["Payment", "Payment service not yet wired up by hosts"],
+      ["Push", "Push service not yet wired up by hosts"],
       ["Scanner", "Scanner service not yet wired up by hosts"],
       ["Share", "Share service not yet wired up by hosts"],
       ["Usernames", "Usernames service not yet wired up by hosts"],

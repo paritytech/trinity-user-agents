@@ -39,6 +39,7 @@ pub trait FromLatest: Versioned {
 }
 
 pub mod account;
+pub mod call_media;
 pub mod chain;
 pub mod chat;
 pub mod coin_payment;
@@ -53,6 +54,7 @@ pub mod payment;
 pub mod permissions;
 pub mod pocket;
 pub mod preimage;
+pub mod push;
 pub mod renderer;
 pub mod resource_allocation;
 pub mod scanner;

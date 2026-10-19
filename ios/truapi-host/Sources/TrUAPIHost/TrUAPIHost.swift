@@ -549,6 +549,33 @@ public protocol UsernamesHostBridge: AnyObject, Sendable {
     ) async throws -> HostContactAdd
 }
 
+/// The push service of the host for `push.address` and `push.notify`. The
+/// host keeps the push id and the key of each route where its notification
+/// service extension reads them, and sends each delivery to its push relay
+/// with its own credentials. Only the core calls it.
+public protocol PushHostBridge: AnyObject, Sendable {
+    /// The route of `roomId` of `productId`, made the first time and the same
+    /// after; nil when the device has no push token now.
+    func pushRoute(productId: String, roomId: String) async throws -> HostPushRoute?
+
+    /// Give `delivery` to the push relay. Answers whether the push service
+    /// took it.
+    func sendPush(productId: String, delivery: HostPushDelivery) async throws -> Bool
+}
+
+/// The call media of the host for `callMedia.start`, `callMedia.signal` and
+/// `callMedia.stop`: the host runs the audio and the video of the call of a
+/// room, gives each of its media signals to the product as the room event
+/// `CallSignal`, and sends `CallEnded` when the user ends the call on its call
+/// screen. Only the core calls it.
+public protocol CallMediaHostBridge: AnyObject, Sendable {
+    func startCallMedia(productId: String, roomId: String, callId: String, video: Bool, offerer: Bool) async throws
+
+    func callMediaSignal(productId: String, roomId: String, callId: String, signal: Data) async throws
+
+    func stopCallMedia(productId: String, roomId: String, callId: String) async throws
+}
+
 /// The push relay client of the host. The core gives it the wake topics of
 /// every product and the key of the device; the host adds what identifies the
 /// device to its relay (the push token and the app id) and sends the
@@ -900,6 +927,62 @@ private final class UsernamesCallbackAdapter: NativeUsernamesCallbacks, @uncheck
     }
 }
 
+/// Adapter that bridges the public `CallMediaHostBridge` to the generated
+/// UniFFI `NativeCallMediaCallbacks` protocol.
+private final class CallMediaCallbackAdapter: NativeCallMediaCallbacks, @unchecked Sendable {
+    private let bridge: CallMediaHostBridge
+
+    init(bridge: CallMediaHostBridge) {
+        self.bridge = bridge
+    }
+
+    func startCallMedia(productId: String, roomId: String, callId: String, video: Bool, offerer: Bool) async throws {
+        try await withHostRejection {
+            try await bridge.startCallMedia(
+                productId: productId,
+                roomId: roomId,
+                callId: callId,
+                video: video,
+                offerer: offerer
+            )
+        }
+    }
+
+    func callMediaSignal(productId: String, roomId: String, callId: String, signal: Data) async throws {
+        try await withHostRejection {
+            try await bridge.callMediaSignal(productId: productId, roomId: roomId, callId: callId, signal: signal)
+        }
+    }
+
+    func stopCallMedia(productId: String, roomId: String, callId: String) async throws {
+        try await withHostRejection {
+            try await bridge.stopCallMedia(productId: productId, roomId: roomId, callId: callId)
+        }
+    }
+}
+
+/// Adapter that bridges the public `PushHostBridge` to the generated UniFFI
+/// `NativePushCallbacks` protocol.
+private final class PushCallbackAdapter: NativePushCallbacks, @unchecked Sendable {
+    private let bridge: PushHostBridge
+
+    init(bridge: PushHostBridge) {
+        self.bridge = bridge
+    }
+
+    func pushRoute(productId: String, roomId: String) async throws -> HostPushRoute? {
+        try await withHostRejection {
+            try await bridge.pushRoute(productId: productId, roomId: roomId)
+        }
+    }
+
+    func sendPush(productId: String, delivery: HostPushDelivery) async throws -> Bool {
+        try await withHostRejection {
+            try await bridge.sendPush(productId: productId, delivery: delivery)
+        }
+    }
+}
+
 /// Adapter that bridges the public `HostBridge` to the generated UniFFI
 /// `HostCallbacks` protocol. Kept private so the generated names never
 /// leak into consumers.
@@ -1136,6 +1219,8 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     private var scannerRetainer: NativeScannerCallbacks?
     private var shareRetainer: NativeShareCallbacks?
     private var usernamesRetainer: NativeUsernamesCallbacks?
+    private var pushRetainer: NativePushCallbacks?
+    private var callMediaRetainer: NativeCallMediaCallbacks?
     private let wakeRelayLock = NSLock()
     private var wakeRelayAdapter: NativeWakeRelayCallbacks?
 
@@ -1211,6 +1296,24 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         let adapter = UsernamesCallbackAdapter(bridge: usernames)
         usernamesRetainer = adapter
         return inner.setUsernamesCallbacks(callbacks: adapter)
+    }
+
+    /// Install the host's push service before opening any product execution.
+    /// Set-once: answers whether this call installed it.
+    @discardableResult
+    public func setPush(_ push: PushHostBridge) -> Bool {
+        let adapter = PushCallbackAdapter(bridge: push)
+        pushRetainer = adapter
+        return inner.setPushCallbacks(callbacks: adapter)
+    }
+
+    /// Install the host's call media before opening any product execution.
+    /// Set-once: answers whether this call installed it.
+    @discardableResult
+    public func setCallMedia(_ callMedia: CallMediaHostBridge) -> Bool {
+        let adapter = CallMediaCallbackAdapter(bridge: callMedia)
+        callMediaRetainer = adapter
+        return inner.setCallMediaCallbacks(callbacks: adapter)
     }
 
     /// Install the host's push relay client, or remove it with `nil`. The core

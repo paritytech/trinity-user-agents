@@ -404,6 +404,22 @@ Worker may ask only within 5 seconds of a press, as for `Share`. The CLI host
 roles and dot.li have no directory and answer `Unsupported`, so the battery and
 the playground's Diagnosis skip it.
 
+`Push` (`address`, `notify`) lets a product notify the device of a contact
+(RFC "Product push notifications"). A room gets an opaque push address that the
+product gives to the contact; the core of the sender encrypts the title and
+the text for that device, and the host sends them through the push relay of
+the backend with its own JWT. The iOS app keeps a route for each room in the
+shared keychain, and its notification service extension opens the push and
+links to the room. The other hosts answer `Unsupported`.
+
+`CallMedia` (`start`, `signal`, `stop`) runs the audio and the video of a call
+of a chat room with the call engine of the host (RFC "Call media of chat
+rooms"). A start needs a press on a call button or on Accept in that room in
+the last 180 seconds. The host gives its media signals to the product as
+`ChatRoomEvent::CallSignal`, and the product carries them to the contact. The
+iOS app runs the WebRTC engine and the call screen of its native chat with the
+TURN relays of the backend. The other hosts answer `Unsupported`.
+
 `chat.onOpenLink` gives a chat product the text after `#` of a room link the
 user opened, `polkadot://<product>/-/chat/<room>#<payload>` or its web form
 `https://<name>.<root>.li/-/chat/<room>#<payload>` (RFC "Chat Extension v2

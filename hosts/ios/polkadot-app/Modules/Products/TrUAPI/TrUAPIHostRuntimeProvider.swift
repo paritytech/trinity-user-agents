@@ -181,6 +181,11 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         runtime.setContacts(contactsBridge)
         runtime.setShare(AppShareHostBridge(routerFacade: confirmationRouterFacade))
         runtime.setScanner(AppScannerHostBridge(routerFacade: confirmationRouterFacade))
+        runtime.setPush(AppPushHostBridge(
+            deviceToken: { APNSTokenProviderFacade.sharedManager.currentToken },
+            relay: BackendProductPushRelay(tokenProvider: JWTTokenManager.shared)
+        ))
+        runtime.setCallMedia(AppCallMediaHostBridge.app(publisher: TrUAPIChatRoomEventPublisher(runtimeProvider: self)))
         runtime.setUsernames(AppUsernamesHostBridge(
             routerFacade: confirmationRouterFacade,
             repositoryFactory: ChatContactRepositoryFactory()

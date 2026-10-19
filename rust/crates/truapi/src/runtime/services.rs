@@ -6,7 +6,7 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::{
-	collections::VecDeque,
+	collections::{HashMap, VecDeque},
 	sync::{Arc, Mutex, OnceLock},
 };
 
@@ -18,9 +18,9 @@ use crate::{
 	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
 	host_logic::worker::WorkerLedger,
 	platform::{
-		BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, JsonRpcConnection,
-		PaymentPlatform, PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform,
-		SharePlatform, TopUpPlatform, UsernamesPlatform,
+		BalancePlatform, CallMediaPlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo,
+		JsonRpcConnection, PaymentPlatform, PermissionStatusHost, Platform, PocketPlatform,
+		PushPlatform, ScannerPlatform, SharePlatform, TopUpPlatform, UsernamesPlatform,
 	},
 	runtime::{
 		bulletin_rpc::BulletinRpc, signing_host::DevicePairingObserver,
@@ -86,6 +86,15 @@ pub struct RuntimeServices {
 	/// Host username directory, installed once at startup by a host that has
 	/// one. Unset leaves every product search and add `Unsupported`.
 	usernames_platform: OnceLock<Arc<dyn UsernamesPlatform>>,
+	/// Host push service, installed once at startup by a host that has one.
+	/// Unset leaves every product push call `Unsupported`.
+	push_platform: OnceLock<Arc<dyn PushPlatform>>,
+	/// Host call media, installed once at startup by a host that has it.
+	/// Unset leaves every product `callMedia` call `Unsupported`.
+	call_media_platform: OnceLock<Arc<dyn CallMediaPlatform>>,
+	/// The times of the recent notifications of each product, for the rate
+	/// limit of `push.notify`.
+	push_sent: Mutex<HashMap<String, VecDeque<u64>>>,
 	/// Host observer told when a device finishes pairing with this signing
 	/// host. Unset leaves a paired device unannounced.
 	device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
@@ -193,6 +202,9 @@ impl RuntimeServices {
 			share_platform: OnceLock::new(),
 			share_open: AtomicBool::new(false),
 			usernames_platform: OnceLock::new(),
+			push_platform: OnceLock::new(),
+			call_media_platform: OnceLock::new(),
+			push_sent: Mutex::default(),
 			device_pairing_observer: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			core_db: OnceLock::new(),
@@ -387,6 +399,50 @@ impl RuntimeServices {
 	/// The host's username directory, when one is installed.
 	pub fn usernames_platform(&self) -> Option<Arc<dyn UsernamesPlatform>> {
 		self.usernames_platform.get().cloned()
+	}
+
+	/// Install the host's push service. Answers whether this call was the one
+	/// that installed it.
+	pub fn install_push_platform(&self, platform: Arc<dyn PushPlatform>) -> bool {
+		self.push_platform.set(platform).is_ok()
+	}
+
+	/// The host's push service, when one is installed.
+	pub fn push_platform(&self) -> Option<Arc<dyn PushPlatform>> {
+		self.push_platform.get().cloned()
+	}
+
+	/// Install the host's call media. Answers whether this call was the one
+	/// that installed it.
+	pub fn install_call_media_platform(&self, platform: Arc<dyn CallMediaPlatform>) -> bool {
+		self.call_media_platform.set(platform).is_ok()
+	}
+
+	/// The host's call media, when it is installed.
+	pub fn call_media_platform(&self) -> Option<Arc<dyn CallMediaPlatform>> {
+		self.call_media_platform.get().cloned()
+	}
+
+	/// Count one notification of `product_id` at `now_secs`, unless the
+	/// product sent `max` in the `window_secs` before. Answers whether it was
+	/// counted.
+	pub fn admit_push(
+		&self,
+		product_id: &str,
+		now_secs: u64,
+		window_secs: u64,
+		max: usize,
+	) -> bool {
+		let mut sent = self.push_sent.lock().expect("push rate mutex poisoned");
+		let times = sent.entry(product_id.to_string()).or_default();
+		while times.front().is_some_and(|at| now_secs.saturating_sub(*at) >= window_secs) {
+			times.pop_front();
+		}
+		if times.len() >= max {
+			return false;
+		}
+		times.push_back(now_secs);
+		true
 	}
 
 	/// Claim the one open share sheet, or `None` while another holds it.

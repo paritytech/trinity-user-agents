@@ -40,10 +40,10 @@ use crate::{
 use super::parse_pairing_deeplink;
 use super::{
 	callbacks::{
-		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-		NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks, NativeScannerCallbacks,
-		NativeShareCallbacks, NativeTopUpCallbacks, NativeUsernamesCallbacks,
-		NativeWakeRelayCallbacks,
+		HostCallbacks, NativeBalanceCallbacks, NativeCallMediaCallbacks, NativeChatCallbacks,
+		NativeContactsCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
+		NativePocketCallbacks, NativePushCallbacks, NativeScannerCallbacks, NativeShareCallbacks,
+		NativeTopUpCallbacks, NativeUsernamesCallbacks, NativeWakeRelayCallbacks,
 	},
 	config::{
 		HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -53,10 +53,11 @@ use super::{
 	events::NativeEventBus,
 	executor::shared_native_executor,
 	platform::{
-		BalanceCallbackPlatform, CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform,
-		GameCallbackPlatform, PaymentCallbackPlatform, PocketCallbackPlatform,
-		ScannerCallbackPlatform, ShareCallbackPlatform, TopUpCallbackPlatform,
-		UsernamesCallbackPlatform, WakeRelayCallbackPlatform,
+		BalanceCallbackPlatform, CallMediaCallbackPlatform, CallbackPlatform, ChatCallbackPlatform,
+		ContactsCallbackPlatform, GameCallbackPlatform, PaymentCallbackPlatform,
+		PocketCallbackPlatform, PushCallbackPlatform, ScannerCallbackPlatform,
+		ShareCallbackPlatform, TopUpCallbackPlatform, UsernamesCallbackPlatform,
+		WakeRelayCallbackPlatform,
 	},
 };
 #[cfg(doc)]
@@ -395,6 +396,20 @@ impl NativeTrUApiHostRuntime {
 	pub fn set_usernames_callbacks(&self, callbacks: Arc<dyn NativeUsernamesCallbacks>) -> bool {
 		self.runtime
 			.set_usernames_platform(Arc::new(UsernamesCallbackPlatform { usernames: callbacks }))
+	}
+
+	/// Install the host's push service before opening any product
+	/// execution. Set-once: answers whether this call installed it.
+	pub fn set_push_callbacks(&self, callbacks: Arc<dyn NativePushCallbacks>) -> bool {
+		self.runtime
+			.set_push_platform(Arc::new(PushCallbackPlatform { push: callbacks }))
+	}
+
+	/// Install the host's call media before opening any product execution.
+	/// Set-once: answers whether this call installed it.
+	pub fn set_call_media_callbacks(&self, callbacks: Arc<dyn NativeCallMediaCallbacks>) -> bool {
+		self.runtime
+			.set_call_media_platform(Arc::new(CallMediaCallbackPlatform { media: callbacks }))
 	}
 
 	/// Tell the core the host's contacts changed. Call it whenever a contact

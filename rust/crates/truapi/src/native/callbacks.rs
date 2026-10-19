@@ -603,6 +603,66 @@ pub trait NativeUsernamesCallbacks: Send + Sync {
 	) -> Result<crate::platform::HostContactAdd, HostRejection>;
 }
 
+/// Native form of [`crate::platform::PushPlatform`], whose rules it follows.
+/// Installed with [`NativeTrUApiHostRuntime::set_push_callbacks`].
+///
+/// [`NativeTrUApiHostRuntime::set_push_callbacks`]: super::NativeTrUApiHostRuntime::set_push_callbacks
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativePushCallbacks: Send + Sync {
+	/// The push route of `room_id` of `product_id`, made the first time and
+	/// the same after; `None` when the device has no push token now.
+	async fn push_route(
+		&self,
+		product_id: String,
+		room_id: String,
+	) -> Result<Option<crate::platform::HostPushRoute>, HostRejection>;
+
+	/// Give `delivery` to the push relay, on behalf of `product_id`. Answers
+	/// whether the push service took it.
+	async fn send_push(
+		&self,
+		product_id: String,
+		delivery: crate::platform::HostPushDelivery,
+	) -> Result<bool, HostRejection>;
+}
+
+/// Native form of [`crate::platform::CallMediaPlatform`], whose rules it
+/// follows. Installed with
+/// [`NativeTrUApiHostRuntime::set_call_media_callbacks`].
+///
+/// [`NativeTrUApiHostRuntime::set_call_media_callbacks`]: super::NativeTrUApiHostRuntime::set_call_media_callbacks
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeCallMediaCallbacks: Send + Sync {
+	/// Start the media of `call_id` of `room_id` of `product_id`.
+	async fn start_call_media(
+		&self,
+		product_id: String,
+		room_id: String,
+		call_id: String,
+		video: bool,
+		offerer: bool,
+	) -> Result<(), HostRejection>;
+
+	/// A media signal of the other side of `call_id`.
+	async fn call_media_signal(
+		&self,
+		product_id: String,
+		room_id: String,
+		call_id: String,
+		signal: Vec<u8>,
+	) -> Result<(), HostRejection>;
+
+	/// Stop the media of `call_id`.
+	async fn stop_call_media(
+		&self,
+		product_id: String,
+		room_id: String,
+		call_id: String,
+	) -> Result<(), HostRejection>;
+}
+
 /// Native form of [`crate::platform::SharePlatform`], whose rules it follows.
 /// Installed with [`NativeTrUApiHostRuntime::set_share_callbacks`].
 #[uniffi::export(rust, foreign)]

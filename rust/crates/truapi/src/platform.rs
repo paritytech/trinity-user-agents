@@ -854,6 +854,9 @@ pub const CHAT_SEALED_ATTACHMENT_MAX_BYTES: usize = 32 * 1024 * 1024;
 /// Largest accepted number of parts of one sealed resource.
 pub const CHAT_SEALED_PARTS_MAX: usize = 64;
 
+/// The longest media signal of a `ChatRoomEvent::CallSignal`.
+pub const CHAT_CALL_SIGNAL_MAX_BYTES: usize = 64 * 1024;
+
 /// The longest text of a `ChatEvent::InputChanged`, in bytes of UTF-8.
 pub const CHAT_INPUT_EVENT_MAX_BYTES: usize = 256;
 
@@ -1039,6 +1042,18 @@ pub fn validate_chat_room_event(event: ChatRoomEvent) -> Result<ChatRoomEvent, C
 		},
 		ChatRoomEvent::CallEnded { call_id: id } => {
 			ChatRoomEvent::CallEnded { call_id: call_id(&id)? }
+		},
+		ChatRoomEvent::CallSignal { call_id: id, signal } => {
+			if signal.is_empty() {
+				return Err(ChatFieldError::Empty { field: "signal" });
+			}
+			if signal.len() > CHAT_CALL_SIGNAL_MAX_BYTES {
+				return Err(ChatFieldError::TooLong {
+					field: "signal",
+					limit: CHAT_CALL_SIGNAL_MAX_BYTES,
+				});
+			}
+			ChatRoomEvent::CallSignal { call_id: call_id(&id)?, signal }
 		},
 		ChatRoomEvent::BranchSelected { message_id, index } => {
 			if !(1..=CHAT_BRANCHES_MAX).contains(&index) {
@@ -5357,6 +5372,112 @@ pub trait UsernamesPlatform: Send + Sync {
 		product: &ProductContext,
 		username: &str,
 	) -> Result<HostContactAdd, GenericError>;
+}
+
+/// Host-run media of the calls of chat rooms (WebRTC with the relays of the
+/// host). Optional; a host without it leaves every product `callMedia` call
+/// `Unsupported`.
+///
+/// - Start only for a call that the room shows as `Active`, and show the call screen of the host.
+/// - Give each media signal of the host to the product as `ChatRoomEvent::CallSignal`.
+/// - Keep a signal that comes before its call starts, and give it to the call when it starts.
+/// - Send `ChatRoomEvent::CallEnded` when the user ends the call on the call screen.
+#[async_trait]
+pub trait CallMediaPlatform: Send + Sync {
+	/// Start the media of `call_id` of `room_id`.
+	async fn start_call_media(
+		&self,
+		product: &ProductContext,
+		room_id: &str,
+		call_id: &str,
+		video: bool,
+		offerer: bool,
+	) -> Result<(), GenericError>;
+
+	/// A media signal of the other side of `call_id`.
+	async fn call_media_signal(
+		&self,
+		product: &ProductContext,
+		room_id: &str,
+		call_id: &str,
+		signal: Vec<u8>,
+	) -> Result<(), GenericError>;
+
+	/// Stop the media of `call_id`.
+	async fn stop_call_media(
+		&self,
+		product: &ProductContext,
+		room_id: &str,
+		call_id: &str,
+	) -> Result<(), GenericError>;
+}
+
+/// The push service that a device token belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum HostPushService {
+	/// Apple Push Notification service: the token is the hex of the APNs
+	/// device token.
+	Apns,
+	/// Firebase Cloud Messaging: the token is the FCM registration token.
+	Fcm,
+}
+
+/// What the host keeps for the push address of one room of a product: the
+/// push token of the device, and the id and the key of the room. The host
+/// keeps the id and the key where its notification receiver reads them, and
+/// gives the same id and key for the same room until it forgets the room.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct HostPushRoute {
+	/// The push service of the token.
+	pub service: HostPushService,
+	/// The push token of this device.
+	pub token: String,
+	/// 32 lowercase hex characters that name the room in a push.
+	pub push_id: String,
+	/// The 32-byte key that encrypts the notifications of the room.
+	pub key: Vec<u8>,
+}
+
+/// One push that the host gives to its push relay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct HostPushDelivery {
+	/// The push service of the receiving device.
+	pub service: HostPushService,
+	/// The push token of the receiving device.
+	pub token: String,
+	/// The id of the room on the receiving device.
+	pub push_id: String,
+	/// The hex of the encrypted notification: a 24-byte nonce, then the
+	/// XChaCha20-Poly1305 ciphertext.
+	pub message: String,
+}
+
+/// Host-owned push service: the push token of the device, the push routes of
+/// the rooms, and a relay that sends a push to another device. Optional; a
+/// host without one leaves every product `push` call `Unsupported`.
+///
+/// - Keep the id and the key of each route where the notification receiver of the host reads them.
+/// - Send each delivery to the push relay with the credentials of the host.
+#[async_trait]
+pub trait PushPlatform: Send + Sync {
+	/// The push route of `room_id` of `product`, made the first time and the
+	/// same after. `Ok(None)` when the device has no push token now.
+	async fn push_route(
+		&self,
+		product: &ProductContext,
+		room_id: &str,
+	) -> Result<Option<HostPushRoute>, GenericError>;
+
+	/// Give `delivery` to the push relay. Answers whether the push service took
+	/// it.
+	async fn send_push(
+		&self,
+		product: &ProductContext,
+		delivery: HostPushDelivery,
+	) -> Result<bool, GenericError>;
 }
 
 /// Combined platform interface. A host must provide every capability trait
