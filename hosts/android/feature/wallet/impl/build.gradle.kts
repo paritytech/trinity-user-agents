@@ -35,6 +35,7 @@ dependencies {
     implementation(project(":feature:fund:api"))
     implementation(project(":feature:dotns:api"))
     implementation(project(":feature:products:api"))
+    implementation(project(":tools:remoteconfig:api"))
 
     testImplementation(project(":test-shared"))
     testImplementation(libs.mockk)
