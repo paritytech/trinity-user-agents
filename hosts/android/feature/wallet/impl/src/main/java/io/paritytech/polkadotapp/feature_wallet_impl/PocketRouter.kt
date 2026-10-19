@@ -16,4 +16,6 @@ interface PocketRouter : ReturnableRouter {
     fun openFailure()
 
     fun openScanAddressQr()
+
+    fun openSpaSheet(url: String)
 }
