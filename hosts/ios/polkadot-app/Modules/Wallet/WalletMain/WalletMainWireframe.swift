@@ -14,6 +14,10 @@ final class WalletMainWireframe: WalletMainWireframeProtocol, AlertPresentable {
         self.moduleNavigator = moduleNavigator
     }
 
+    func showProduct(page: ProductPage) {
+        moduleNavigator.openProduct(page: page)
+    }
+
     func showPocketCard(_ card: PocketCardViewModel, from view: WalletMainViewProtocol?) {
         guard let pocket = ProductPocketService.current else { return }
 
