@@ -322,11 +322,9 @@ impl PairingHost {
 	/// Resolve a product's hard-subtree public key, asking the Account Holder
 	/// only when neither the memory cache nor storage already holds it.
 	///
-	/// Concurrent callers for one SSO session and product share one
-	/// `ProductSubtreeRequest` and each takes its answer. A cancelled caller
-	/// stops waiting without ending the request for the others, and a request
-	/// every caller has left is dropped. A settled request is never joined, so
-	/// a failure is not remembered.
+	/// Concurrent callers for one SSO session and product share one resolution
+	/// and each takes its answer. A settled resolution is never joined, so a
+	/// failure is not remembered.
 	pub async fn remote_product_subtree_public_key(
 		&self,
 		cx: &CallContext,
@@ -336,14 +334,11 @@ impl PairingHost {
 		let sso = session.sso.as_ref().ok_or(AuthorityError::Disconnected)?;
 		let lifecycle_epoch = self.current_session_lifecycle_epoch();
 		let cache_key = (SsoSessionKey::from_session(sso), product_id);
-		if let Some(public_key) = self.known_product_subtree(session, cache_key.clone()).await {
-			return Ok(public_key);
-		}
 		let request = self.product_subtree_request(cx, session, lifecycle_epoch, cache_key)?;
 		until_cancelled(cx, request).await?
 	}
 
-	/// The `ProductSubtreeRequest` in flight for `cache_key`, or a new one.
+	/// The subtree resolution in flight for `cache_key`, or a new one.
 	fn product_subtree_request(
 		&self,
 		cx: &CallContext,
@@ -366,21 +361,18 @@ impl PairingHost {
 		let session = session.clone();
 		// Others may join, so this caller's cancel must not reach the request.
 		let request_cx = CallContext::with_request_id(cx.request_id().to_string());
-		let product_id = cache_key.1.clone();
-		let persist_key = cache_key.clone();
+		let key = cache_key.clone();
 		let request = async move {
+			if let Some(public_key) = host.known_product_subtree(&session, key.clone()).await {
+				return Ok(public_key);
+			}
 			let public_key = host
-				.call(&request_cx, &session, ProductSubtreeRequest { product_id })
+				.call(&request_cx, &session, ProductSubtreeRequest { product_id: key.1.clone() })
 				.await
 				.map_err(remote_authority_error)?
 				.map_err(remote_authority_error)?;
 			if !host
-				.persist_product_subtree_if_current(
-					&session,
-					lifecycle_epoch,
-					persist_key,
-					public_key,
-				)
+				.persist_product_subtree_if_current(&session, lifecycle_epoch, key, public_key)
 				.await
 			{
 				return Err(AuthorityError::Disconnected);
@@ -389,7 +381,6 @@ impl PairingHost {
 		}
 		.boxed()
 		.shared();
-		requests.retain(|_, request| request.upgrade().is_some());
 		requests.insert(cache_key, request.downgrade().expect("an unpolled request is pending"));
 		Ok(request)
 	}

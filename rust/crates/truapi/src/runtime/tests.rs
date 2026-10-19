@@ -3901,10 +3901,10 @@ fn concurrent_get_account_calls_share_one_subtree_request() {
 	let host =
 		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
 	host.test_session_state().set_session(session.clone());
-	let contexts: Vec<_> = (0..3).map(|_| CallContext::default()).collect();
-	let calls = contexts.iter().zip(0..).map(|(cx, index)| {
+	let cx = CallContext::default();
+	let calls = (0..3).map(|index| {
 		host.get_account(
-			cx,
+			&cx,
 			HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 				product_account_id: account_id("myapp.dot", index),
 			}),
