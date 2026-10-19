@@ -61,9 +61,9 @@ impl ResourceAllocation for ProductRuntimeHost {
 				reason: format!("resource allocation confirmation failed: {err:?}"),
 			})?;
 			if !confirmed {
-				return Err(CallError::Domain(latest::ResourceAllocationError::Unknown {
-					reason: "User rejected resource allocation".to_string(),
-				}));
+				return Ok(latest::HostRequestResourceAllocationResponse {
+					outcomes: vec![latest::AllocationOutcome::Rejected; inner.resources.len()],
+				});
 			}
 			let cx = remote_authority_context_with_default(
 				cx,

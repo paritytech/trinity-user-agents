@@ -207,6 +207,38 @@ fn a_blessed_vrf_signature_skips_the_prompt_only_locally_for_its_own_account() {
 	);
 }
 
+/// A relayed request names its calling product without proof, so it must not
+/// ride on that product's local AutoSigning grant.
+#[test]
+fn a_relayed_vrf_signature_cannot_reuse_a_local_auto_signing_grant() {
+	let platform = granting_platform();
+	let (services, activation) = signing_runtime_with_platform(platform.clone());
+	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		.expect("activation succeeds");
+	grant_auto_signing(&product_runtime(services, activation.clone()));
+
+	let Dispatch::Response(answer) = futures::executor::block_on(
+		SigningHostSsoService::new(activation).answer(RemoteMessage::request(
+			"relayed-vrf".to_string(),
+			ProductRequest {
+				calling_product_id: "myapp.dot".to_string(),
+				payload: vrf_request("myapp.dot"),
+			},
+		)),
+	) else {
+		panic!("expected a VRF response")
+	};
+	let RemoteMessageData::V1(v1::RemoteMessage::SignVrfResponse(response)) = answer.message.data
+	else {
+		panic!("expected a VRF signing response")
+	};
+
+	assert_eq!(
+		(response.payload.map(|_| ()), platform.sign_vrf_reviews.lock().unwrap().len()),
+		(Err(v01::HostAccountSignVrfError::Rejected), 1),
+	);
+}
+
 /// Legacy accounts sign with the user's own keys, not a product's.
 #[test]
 fn a_blessed_product_still_confirms_legacy_account_signing() {
