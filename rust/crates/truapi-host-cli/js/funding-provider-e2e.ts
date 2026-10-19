@@ -21,7 +21,9 @@ import type {
 import type { DiagnosisRow } from "./diagnosis.ts";
 import {
   WAIT_MS,
+  fundingId,
   stringify,
+  transcript,
   untilComplete,
   waitForTranscript,
 } from "./funding-e2e.ts";
@@ -29,6 +31,8 @@ import {
 /** What the first run leaves for the run after the restart. */
 export interface ProviderState {
   intent: string;
+  /** The id the product requested the session with, which it watches by. */
+  id: `0x${string}`;
   topUpId: string;
   amount: string;
 }
@@ -161,25 +165,59 @@ async function report(
   }
 }
 
+/** The id each session was requested with, by the intent the core keeps it
+ *  under. */
+const requestedIds = new Map<string, `0x${string}`>();
+
+/** Request a session under a fresh id and return the intent the core keeps
+ *  it under, which the provider sees. The core hashes the id with the
+ *  product, so the intent is read from the host's record of the request:
+ *  the one session it showed for this ask that it had not shown before. */
 async function requestFunding(
   client: TrUApiClient,
+  fundingLogPath: string,
   direction: "In" | "Out",
   amount: bigint,
 ): Promise<string> {
-  const requested = await client.funding.request({ direction, amount });
+  const shownBefore = new Set(
+    transcript(fundingLogPath)
+      .filter((line) => line.kind === "presented")
+      .map((line) => line.intent),
+  );
+  const id = fundingId();
+  const requested = await client.funding.request({ id, direction, amount });
   if (requested.isErr()) {
     throw new Error(`funding.request failed: ${stringify(requested.error)}`);
   }
-  return requested.value.intent;
+  const presented = await waitForTranscript(
+    fundingLogPath,
+    (line) =>
+      line.kind === "presented" &&
+      line.direction === direction &&
+      line.amount === amount.toString() &&
+      line.intent !== undefined &&
+      !shownBefore.has(line.intent),
+    `the overlay request for ${direction} ${amount}`,
+  );
+  const intent = presented.intent as string;
+  requestedIds.set(intent, id);
+  return intent;
+}
+
+/** The id session `intent` was requested with. */
+function idOf(intent: string): `0x${string}` {
+  const id = requestedIds.get(intent);
+  if (id === undefined) throw new Error(`no request made ${intent}`);
+  return id;
 }
 
 async function lastStatus(
   client: TrUApiClient,
-  intent: string,
+  id: `0x${string}`,
 ): Promise<HostFundingStatusSubscribeItem | undefined> {
   const items = await untilComplete(
-    client.funding.statusSubscribe({ request: { intent } }),
-    `session ${intent}`,
+    client.funding.statusSubscribe({ request: { id } }),
+    `session ${id}`,
   );
   return items.at(-1);
 }
@@ -198,7 +236,7 @@ export async function runProviderStart(
   let state: ProviderState | undefined;
 
   await check("provider_assigned", async () => {
-    inbound = await requestFunding(client, "In", IN_AMOUNT);
+    inbound = await requestFunding(client, fundingLogPath, "In", IN_AMOUNT);
     const item = await served.next(
       assignedTo(inbound),
       `the session ${inbound}`,
@@ -328,7 +366,12 @@ export async function runProviderStart(
       tag: "Crediting",
       value: { topUpId, amount: IN_AMOUNT },
     });
-    state = { intent: inbound, topUpId, amount: IN_AMOUNT.toString() };
+    state = {
+      intent: inbound,
+      id: idOf(inbound),
+      topUpId,
+      amount: IN_AMOUNT.toString(),
+    };
     return "the top-up was started and named in a Crediting report";
   });
 
@@ -349,7 +392,7 @@ export async function runProviderStart(
   });
 
   await check("provider_out_released", async () => {
-    outbound = await requestFunding(client, "Out", OUT_AMOUNT);
+    outbound = await requestFunding(client, fundingLogPath, "Out", OUT_AMOUNT);
     await served.next(assignedTo(outbound), `the session ${outbound}`);
     const paymentId = randomId();
     const paid = await client.payment.request({
@@ -364,7 +407,7 @@ export async function runProviderStart(
       tag: "Collecting",
       value: { paymentId, amount: OUT_AMOUNT },
     });
-    const last = await lastStatus(client, outbound);
+    const last = await lastStatus(client, idOf(outbound));
     if (last?.tag !== "Released" || last.value.debited !== OUT_AMOUNT) {
       throw new Error(`ended as ${stringify(last)}`);
     }
@@ -393,7 +436,7 @@ export async function runProviderStart(
   });
 
   await check("provider_cancel", async () => {
-    const cancelled = await requestFunding(client, "In", CANCEL_AMOUNT);
+    const cancelled = await requestFunding(client, fundingLogPath, "In", CANCEL_AMOUNT);
     await served.next(assignedTo(cancelled), `the session ${cancelled}`);
     await served.next(
       (item) => item.tag === "Cancel" && item.value.intent === cancelled,
@@ -403,7 +446,7 @@ export async function runProviderStart(
       tag: "Failed",
       value: { reason: { tag: "Cancelled" } },
     });
-    const last = await lastStatus(client, cancelled);
+    const last = await lastStatus(client, idOf(cancelled));
     if (last?.tag !== "Failed" || last.value.reason.tag !== "Cancelled") {
       throw new Error(`ended as ${stringify(last)}`);
     }
@@ -411,7 +454,7 @@ export async function runProviderStart(
   });
 
   await check("provider_cancel_offer_accepted", async () => {
-    const intent = await requestFunding(client, "In", OFFER_AMOUNT);
+    const intent = await requestFunding(client, fundingLogPath, "In", OFFER_AMOUNT);
     await served.next(assignedTo(intent), `the session ${intent}`);
     await report(client, intent, {
       tag: "PaymentReceived",
@@ -433,7 +476,7 @@ export async function runProviderStart(
       tag: "Failed",
       value: { reason: { tag: "Cancelled" } },
     });
-    const last = await lastStatus(client, intent);
+    const last = await lastStatus(client, idOf(intent));
     if (last?.tag !== "Failed" || last.value.reason.tag !== "Cancelled") {
       throw new Error(`ended as ${stringify(last)}`);
     }
@@ -457,7 +500,7 @@ export async function runProviderStart(
   });
 
   await check("provider_cancel_too_late", async () => {
-    const intent = await requestFunding(client, "In", LATE_AMOUNT);
+    const intent = await requestFunding(client, fundingLogPath, "In", LATE_AMOUNT);
     await served.next(assignedTo(intent), `the session ${intent}`);
     const topUpId = randomId();
     const toppedUp = await client.payment.topUp({
@@ -484,7 +527,7 @@ export async function runProviderStart(
       value: { topUpId, amount: LATE_AMOUNT },
     });
     await report(client, intent, { tag: "Delivered" });
-    const last = await lastStatus(client, intent);
+    const last = await lastStatus(client, idOf(intent));
     if (last?.tag !== "Delivered" || last.value.credited !== LATE_AMOUNT) {
       throw new Error(`ended as ${stringify(last)}`);
     }
@@ -492,7 +535,7 @@ export async function runProviderStart(
   });
 
   await check("provider_cancel_refund_after_release", async () => {
-    const intent = await requestFunding(client, "Out", RELEASED_CANCEL_AMOUNT);
+    const intent = await requestFunding(client, fundingLogPath, "Out", RELEASED_CANCEL_AMOUNT);
     await served.next(assignedTo(intent), `the session ${intent}`);
     const paymentId = randomId();
     const paid = await client.payment.request({
@@ -511,7 +554,7 @@ export async function runProviderStart(
       tag: "Collecting",
       value: { paymentId, amount: RELEASED_CANCEL_AMOUNT },
     });
-    const released = await lastStatus(client, intent);
+    const released = await lastStatus(client, idOf(intent));
     if (
       released?.tag !== "Released" ||
       released.value.debited !== RELEASED_CANCEL_AMOUNT
@@ -597,7 +640,7 @@ export async function runProviderResume(
 
   await check("provider_in_delivered", async () => {
     await report(client, state.intent, { tag: "Delivered" });
-    const last = await lastStatus(client, state.intent);
+    const last = await lastStatus(client, state.id);
     if (
       last?.tag !== "Delivered" ||
       last.value.credited !== BigInt(state.amount)
