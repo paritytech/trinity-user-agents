@@ -1,4 +1,5 @@
 import Foundation
+import StructuredConcurrency
 import Testing
 @testable import polkadot_app
 
@@ -6,12 +7,11 @@ struct PocketOpenServiceTests {
     @Test
     func claimsAPocketLinkAndPassesItOn() async throws {
         let seen = Recorder()
-        let service = PocketOpenService(present: { seen.record($0) })
+        let service = seen.makeService()
 
         #expect(service.handle(url: URL(string: "polkadot://game.dot/-/pocket/add?card=loyalty")!))
 
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(seen.links.map(\.cardId.value) == ["loyalty"])
+        #expect(try await seen.answer() == .presented(cardId: "loyalty"))
     }
 
     /// A bare `/-/pocket` is the host's to answer: it opens the Pocket, with no
@@ -19,18 +19,11 @@ struct PocketOpenServiceTests {
     @Test
     func claimsACollectionLinkAndOpensThePocket() async throws {
         let seen = Recorder()
-        let service = PocketOpenService(
-            present: { seen.record($0) },
-            openCollection: { seen.collectionsOpened += 1 },
-            refuse: { seen.refusals.append($0) }
-        )
+        let service = seen.makeService()
 
         #expect(service.handle(url: URL(string: "polkadot://game.dot/-/pocket")!))
 
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(seen.collectionsOpened == 1)
-        #expect(seen.links.isEmpty)
-        #expect(seen.refusals.isEmpty)
+        #expect(try await seen.answer() == .openedCollection)
     }
 
     /// An ordinary product link is not ours and must fall through to the App
@@ -48,29 +41,22 @@ struct PocketOpenServiceTests {
     @Test
     func claimsAndRefusesAHiddenCardId() async throws {
         let seen = Recorder()
-        let service = PocketOpenService(present: { seen.record($0) }, refuse: { seen.refusals.append($0) })
+        let service = seen.makeService()
         let hidden = "polkadot://game.dot/-/pocket/add?card=loy%E2%80%8Balty"
 
         #expect(service.handle(url: URL(string: hidden)!))
 
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(seen.links.isEmpty)
-        #expect(seen.refusals.count == 1)
+        #expect(try await seen.answer() == .refused)
     }
 
     /// The core sends an action it does not serve to the App on purpose, so a
     /// link minted for a newer host degrades instead of failing. Claiming it
     /// here would turn every future Pocket verb into a refusal on this build.
     @Test
-    func doesNotClaimAPocketActionTheCoreDoesNotServe() async throws {
-        let seen = Recorder()
-        let service = PocketOpenService(present: { seen.record($0) }, refuse: { seen.refusals.append($0) })
+    func doesNotClaimAPocketActionTheCoreDoesNotServe() {
+        let service = PocketOpenService(present: { _ in })
 
         #expect(!service.handle(url: URL(string: "polkadot://game.dot/-/pocket/pin?card=loyalty")!))
-
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(seen.links.isEmpty)
-        #expect(seen.refusals.isEmpty)
     }
 
     /// A link under the reserved target that names no card at all is still the
@@ -78,22 +64,43 @@ struct PocketOpenServiceTests {
     @Test
     func claimsALinkThatNamesNoCard() async throws {
         let seen = Recorder()
-        let service = PocketOpenService(present: { seen.record($0) }, refuse: { seen.refusals.append($0) })
+        let service = seen.makeService()
 
         #expect(service.handle(url: URL(string: "polkadot://game.dot/-/pocket/add")!))
 
-        try await Task.sleep(for: .milliseconds(50))
-        #expect(seen.links.isEmpty)
-        #expect(seen.refusals.count == 1)
+        #expect(try await seen.answer() == .refused)
     }
 }
 
 private final class Recorder: @unchecked Sendable {
-    private(set) var links: [PocketDeeplink] = []
-    var refusals: [String] = []
-    var collectionsOpened = 0
+    enum Event: Equatable, Sendable { case presented(cardId: String), openedCollection, refused }
+    private let events: AsyncStream<Event>
+    private let continuation: AsyncStream<Event>.Continuation
 
-    func record(_ link: PocketDeeplink) {
-        links.append(link)
+    init() {
+        (events, continuation) = AsyncStream.makeStream()
+    }
+
+    /// Every callback is wired, so a wrong answer fails naming it rather than timing out.
+    func makeService() -> PocketOpenService {
+        PocketOpenService(
+            present: { self.record(.presented(cardId: $0.cardId.value)) },
+            openCollection: { self.record(.openedCollection) },
+            refuse: { _ in self.record(.refused) }
+        )
+    }
+
+    private func record(_ event: Event) {
+        continuation.yield(event)
+    }
+
+    /// The one answer `handle` dispatched; fails rather than hangs if none arrives.
+    func answer() async throws -> Event {
+        try await withTimeout(.seconds(5)) { [events] in
+            for await event in events {
+                return event
+            }
+            throw CancellationError()
+        }
     }
 }

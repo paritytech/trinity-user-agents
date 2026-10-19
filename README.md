@@ -110,6 +110,8 @@ rust/crates/
   truapi-macros/         TrUAPI wire annotations and inter-host SSO proc macros
   truapi-provider/       Network provider backends (WebSocket RPC or smoldot light-client) and chain-access traits
   truapi-verifiable/     Ring-VRF operations over `verifiable`; a lazily loaded WASM module in the browser
+  trinity-stack/         Trinity stack descriptors: parse, verify, sign, links, reader state;
+                         conformance vectors and JSON Schema
 js/packages/
   truapi/                  @parity/truapi TypeScript client
   truapi-host/            @parity/truapi-host: WASM-backed host runtime; entries `.`
@@ -256,6 +258,14 @@ live by a previous process is decided by recovery rather than sent again.
 The host keeps recovery alive. `durableWorkChanged(pending: true)` asks it to
 run a background task that awaits `runDurableRecovery()`, which returns once
 nothing is live: a WorkManager worker on Android, a `BGProcessingTask` on iOS.
+
+### Trinity stack descriptors
+
+A stack descriptor describes one deployment of chains and services, as
+[RFC: Trinity stack descriptor](docs/rfcs/trinity-stack-descriptor.md) defines it. The
+[`trinity-stack`](rust/crates/trinity-stack) crate holds every rule a reader applies and the
+conformance vectors. The plan for it and the tools on top of it is in
+[docs/design/trinity-stack-library.md](docs/design/trinity-stack-library.md).
 
 ### Wire debugger
 
@@ -485,14 +495,14 @@ the device slice, which is enough for Simulator but not for an archive.
 
 Because the app builds against the core in this tree, a core change that breaks
 it fails here rather than at the next version bump. Every push to main runs the
-jobs below, and so does a pull request touching the app, or the crates its
-bindings come from, once it is labelled `ios-simulator-build`. They are macOS
-jobs, so a pull request without the label runs none of them. CI's
-`iOS package (Swift + WebKit)` job still compiles the TrUAPIHost package against
-the core on a pull request touching `ios/` or the core crates, but the app itself
-is compiled before merge only with the label. The first time a pull request
-touches the iOS or Android app, `build-label-hint.yml` comments with the labels
-that build it: `ios-simulator-build`, `ios-device-build` and `android-device-build`.
+jobs below. A pull request touching the app, or the crates its bindings come
+from, always runs `test`; `build` and `preview` are macOS time no test needs, so
+they run once it is labelled `ios-simulator-build`. CI's
+`iOS package (Swift + WebKit)` job also compiles the TrUAPIHost package against
+the core on a pull request touching `ios/` or the core crates. The first time a
+pull request touches the iOS or Android app, `build-label-hint.yml` comments with
+the labels that build it: `ios-simulator-build`, `ios-device-build` and
+`android-device-build`.
 
 - `build`, a DevCI compile, failing on any build warning the committed baseline
   does not already have
