@@ -80,6 +80,7 @@ impl System for ProductRuntimeHost {
 				platform: info.platform.clone(),
 				name: info.name.clone(),
 				version: info.version.clone().unwrap_or_default(),
+				truapi_version: env!("CARGO_PKG_VERSION").to_string(),
 			},
 			version,
 		))
