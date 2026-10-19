@@ -30,7 +30,8 @@ extension WidgetImageResolver {
 }
 
 /// Kingfisher's async retrieve never returns for the second of two overlapping
-/// loads of one address, so overlapping loads share the first one.
+/// loads of one address, so overlapping loads share the first one. Kingfisher
+/// 8.6.1 fixes this (onevcat/Kingfisher#2444); the app pins 8.2.0.
 actor InFlightImages {
     static let shared = InFlightImages()
 

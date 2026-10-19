@@ -71,11 +71,11 @@ struct PocketPreviewLoader {
 enum PocketPreviewFetch {
     @Sendable
     static func bounded(_ url: URL, maxBytes: Int) async throws -> Data {
-        // Faces read here are edited between fetches, so the app's HTTP cache must not answer for the server.
-        let (bytes, _) = try await URLSession.shared.bytes(for: URLRequest(
-            url: url,
-            cachePolicy: .reloadIgnoringLocalCacheData
-        ))
+        try await read(URLRequest(url: url), maxBytes: maxBytes)
+    }
+
+    static func read(_ request: URLRequest, maxBytes: Int) async throws -> Data {
+        let (bytes, _) = try await URLSession.shared.bytes(for: request)
 
         var data = Data()
         for try await byte in bytes {

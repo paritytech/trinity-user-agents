@@ -31,7 +31,13 @@ final class DebugPocketFacePreviewViewModel {
     private let resolver: any WidgetDesignTokenResolving
 
     init(
-        fetch: @escaping @Sendable (URL, Int) async throws -> Data = PocketPreviewFetch.bounded,
+        // The face is edited between draws, so the app's HTTP cache must not answer for the server.
+        fetch: @escaping @Sendable (URL, Int) async throws -> Data = { url, maxBytes in
+            try await PocketPreviewFetch.read(
+                URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData),
+                maxBytes: maxBytes
+            )
+        },
         resolver: any WidgetDesignTokenResolving = WidgetDesignTokenResolver()
     ) {
         self.fetch = fetch
