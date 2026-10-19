@@ -1,10 +1,17 @@
 // Trinity stack descriptors, as docs/rfcs/trinity-stack-descriptor.md defines them. Every rule a
 // reader applies runs in the trinity-stack crate; this module adds the operator side and I/O.
-import type { Descriptor, SpecFile } from "../wasm/trinity_stack.js";
+import type {
+  Accepted,
+  Descriptor,
+  Pointer,
+  SpecFile,
+  Verified,
+} from "../wasm/trinity_stack.js";
 import { wasm } from "./wasm.js";
 
 // Generated from the crate's types by the wasm build.
 export type {
+  Accepted,
   Asset,
   Block,
   Chain,
@@ -12,12 +19,12 @@ export type {
   Descriptor,
   Fork,
   ForkSource,
+  Pointer,
   Service,
   SpecFile,
+  Status,
+  Verified,
 } from "../wasm/trinity_stack.js";
-
-/** Where a descriptor lives, and the key that signs it when it is signed. */
-export type Pointer = { url: string; key?: string };
 
 /** The link base the Polkadot app opens. */
 export const DEFAULT_LINK_BASE = "polkadotapp://stack";
@@ -32,41 +39,21 @@ export function isTrinityStackError(
   return error instanceof Error && error.name === "TrinityStackError";
 }
 
-/** A descriptor that passed a pointer's rules, or was parsed without one. */
-export type Opened = { descriptor: Descriptor; signed: boolean };
-
-/** Parses a document as served, without checking any key. `signed` says it is an envelope. */
-export function parse(bytes: Uint8Array): Opened {
+/**
+ * Parses a document as served, without checking any key. Here `signed` says only that the
+ * document is an envelope.
+ */
+export function parse(bytes: Uint8Array): {
+  descriptor: Descriptor;
+  signed: boolean;
+} {
   return JSON.parse(wasm.parse(bytes));
 }
 
 /** Parses a document and applies the pointer's rules. */
-export function open(bytes: Uint8Array, pointer: Pointer): Opened {
-  return JSON.parse(wasm.open(bytes, pointer.url, pointer.key));
+export function open(bytes: Uint8Array, pointer: Pointer): Verified {
+  return wasm.open(bytes, pointer.url, pointer.key);
 }
-
-export type Status =
-  | "updated"
-  | "unchanged"
-  | "conflict"
-  | "rollback"
-  | "unreachable"
-  | "refused";
-
-/** The descriptor a reader uses next, and what changed. */
-export type Accepted = Opened & {
-  status: Status;
-  /** The rule the fetched bytes broke, when `status` is `refused`. */
-  refused?: string;
-  /** The bytes to store and pass back as `stored` next time. */
-  document: Uint8Array;
-  /** The chains restarted: drop cached chain data. */
-  newGeneration: boolean;
-  /** Past `validUntil`: usable, but show it as stale. */
-  stale: boolean;
-  /** Past `expiresAt`: the stack is gone. */
-  expired: boolean;
-};
 
 /**
  * Decides what a reader does with a fetched descriptor, given the copy it stored last.
@@ -78,32 +65,18 @@ export function accept(
   fetched: Uint8Array | undefined,
   now: Date = new Date(),
 ): Accepted {
-  const result = wasm.accept(
+  return wasm.accept(
     pointer.url,
     pointer.key,
     stored,
     fetched,
     unixSeconds(now),
   );
-  try {
-    return {
-      status: result.status as Status,
-      refused: result.refused ?? undefined,
-      document: result.document,
-      descriptor: JSON.parse(result.descriptor),
-      signed: result.signed,
-      newGeneration: result.newGeneration,
-      stale: result.stale,
-      expired: result.expired,
-    };
-  } finally {
-    result.free();
-  }
 }
 
 /** The pointer a link carries, whatever its scheme or domain. */
 export function decodeLink(link: string): Pointer {
-  return JSON.parse(wasm.decodeLink(link));
+  return wasm.decodeLink(link);
 }
 
 /** The link that carries a pointer. */
@@ -141,22 +114,12 @@ export function generateSecret(): Uint8Array {
 
 /** Checks a spec's bytes, as served, against its `sha256`. */
 export function checkSpec(spec: SpecFile, bytes: Uint8Array): void {
-  wasm.checkSpec(spec.url, spec.sha256, bytes);
+  wasm.checkSpec(spec, bytes);
 }
 
 /** The genesis hash a light spec implies, to compare with its chain's `genesisHash`. */
 export function lightSpecGenesis(bytes: Uint8Array): string {
   return wasm.lightSpecGenesis(bytes);
-}
-
-/** A QR code as an SVG document. */
-export function qrSvg(text: string): string {
-  return wasm.qrSvg(text);
-}
-
-/** A QR code drawn with Unicode blocks, for a terminal. */
-export function qrTerminal(text: string): string {
-  return wasm.qrTerminal(text);
 }
 
 /** What an operator describes: a descriptor without the fields `publish` owns. */
