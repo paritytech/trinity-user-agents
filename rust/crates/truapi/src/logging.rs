@@ -70,12 +70,18 @@ pub fn init() {
 		return;
 	}
 	let (filter, handle) = reload::Layer::<LevelFilter, Registry>::new(DEFAULT_LEVEL);
-	let subscriber = Registry::default()
-		.with(ConsoleLayer.with_filter(filter))
-		.with(HostSinkLayer { sink: &HOST_SINK }.with_filter(HOST_SINK_LEVEL));
-	if tracing::subscriber::set_global_default(subscriber).is_ok() {
+	if tracing::subscriber::set_global_default(subscriber(filter, &HOST_SINK)).is_ok() {
 		let _ = RELOAD_HANDLE.set(handle);
 	}
+}
+
+fn subscriber(
+	filter: reload::Layer<LevelFilter, Registry>,
+	slot: &'static RwLock<Option<HostSink>>,
+) -> impl Subscriber {
+	Registry::default()
+		.with(ConsoleLayer.with_filter(filter))
+		.with(HostSinkLayer { sink: slot }.with_filter(HOST_SINK_LEVEL))
 }
 
 /// Send each event at [`HOST_SINK_LEVEL`] or above to `sink` as a marker
@@ -215,7 +221,7 @@ struct HostSinkLayer {
 impl<S: Subscriber> Layer<S> for HostSinkLayer {
 	fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
 		// Cloned out so a sink that logs again cannot deadlock on the lock.
-		let sink = self.sink.read().ok().and_then(|sink| sink.clone());
+		let sink = self.sink.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
 		let Some(sink) = sink else {
 			return;
 		};
@@ -329,9 +335,10 @@ pub mod testing {
 		});
 		// Leaked so each call gets its own slot and parallel tests cannot share a sink.
 		let slot: &'static RwLock<Option<HostSink>> = Box::leak(Box::new(RwLock::new(Some(sink))));
-		let subscriber =
-			Registry::default().with(HostSinkLayer { sink: slot }.with_filter(HOST_SINK_LEVEL));
-		tracing::subscriber::with_default(subscriber, emit);
+		tracing::subscriber::with_default(
+			subscriber(reload::Layer::new(LevelFilter::OFF).0, slot),
+			emit,
+		);
 		core::mem::take(&mut *lines.lock().unwrap())
 	}
 
