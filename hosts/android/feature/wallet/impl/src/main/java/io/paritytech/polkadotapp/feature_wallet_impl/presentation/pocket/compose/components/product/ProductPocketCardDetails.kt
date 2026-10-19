@@ -205,7 +205,7 @@ private fun ExpandedProductContent(
     val loadProgress by (session?.loadProgress ?: noProgressYet).collectAsStateWithLifecycle()
     val webView by (session?.webView ?: noWebViewYet).collectAsStateWithLifecycle()
 
-    // Once the product has painted once it owns the space; its own navigations or closing must not blank it.
+    // Once the product has painted it owns the space, so its own navigations and closing never bring the spinner back.
     var productShowing by remember { mutableStateOf(session?.loadProgress?.value == DotNsLoadProgress.Completed) }
     LaunchedEffect(loadProgress) {
         if (loadProgress == DotNsLoadProgress.Completed) productShowing = true
