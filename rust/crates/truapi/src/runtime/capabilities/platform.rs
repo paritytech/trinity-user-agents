@@ -271,9 +271,7 @@ impl LocalStorage for ProductRuntimeHost {
 		};
 		let owner = match product {
 			Some(target) => {
-				let Ok(target) = target.parse::<ProductId>() else {
-					return Err(access_not_granted());
-				};
+				let target = target.parse::<ProductId>().map_err(|_| access_not_granted())?;
 				if !self.connection.holds_cross_product_scope(&target, Granted::Storage).await {
 					return Err(access_not_granted());
 				}
