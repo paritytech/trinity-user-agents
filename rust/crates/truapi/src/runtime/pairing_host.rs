@@ -1081,15 +1081,11 @@ impl PairingHost {
 		cache_key: (SsoSessionKey, ProductId),
 	) -> Option<[u8; 32]> {
 		let public_key =
-			match product_subtree::read_product_subtree(&*self.platform, session, &cache_key.1)
+			product_subtree::read_product_subtree(&*self.platform, session, &cache_key.1)
 				.await
-			{
-				Ok(public_key) => public_key?,
-				Err(error) => {
-					warn!(reason = %error, "stored product subtree read failed");
-					return None;
-				},
-			};
+				.inspect_err(|error| warn!(reason = %error, "stored product subtree read failed"))
+				.ok()
+				.flatten()?;
 		// A stored key still has to belong to the live pairing before it is
 		// served, exactly as a freshly fetched one does.
 		self.cache_product_subtree_if_current(session, lifecycle_epoch, cache_key, public_key)
