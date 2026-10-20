@@ -813,13 +813,12 @@ impl crate::platform::TopUpPlatform for TopUpCallbackPlatform {
 	> {
 		let product_id = product.product_id.clone();
 		self.statuses.follow(product.product_id.clone(), id, || {
-			match self.top_up.top_up_status(product_id, id) {
-				Ok(Some(status)) => Ok(status),
-				Ok(None) => Err(v01::HostPaymentTopUpStatusSubscribeError::TopUpNotFound),
-				Err(error) => Err(v01::HostPaymentTopUpStatusSubscribeError::Unknown {
+			self.top_up
+				.top_up_status(product_id, id)
+				.map_err(|error| v01::HostPaymentTopUpStatusSubscribeError::Unknown {
 					reason: error.to_string(),
-				}),
-			}
+				})?
+				.ok_or(v01::HostPaymentTopUpStatusSubscribeError::TopUpNotFound)
 		})
 	}
 }
@@ -880,13 +879,12 @@ impl crate::platform::PaymentPlatform for PaymentCallbackPlatform {
 	> {
 		let product_id = product.product_id.clone();
 		self.statuses.follow(product.product_id.clone(), id, || {
-			match self.payments.payment_status(product_id, id) {
-				Ok(Some(status)) => Ok(status),
-				Ok(None) => Err(v01::HostPaymentStatusSubscribeError::PaymentNotFound),
-				Err(error) => {
-					Err(v01::HostPaymentStatusSubscribeError::Unknown { reason: error.to_string() })
-				},
-			}
+			self.payments
+				.payment_status(product_id, id)
+				.map_err(|error| v01::HostPaymentStatusSubscribeError::Unknown {
+					reason: error.to_string(),
+				})?
+				.ok_or(v01::HostPaymentStatusSubscribeError::PaymentNotFound)
 		})
 	}
 }
