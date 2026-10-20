@@ -339,7 +339,6 @@ private fun PocketScreenPreview() {
                             PocketCardUiModel.DigitalDollar.Amounts(TokenAmountModel.mock, TokenAmountModel.mock)
                         ),
                         syncInProgress = false,
-                        accountBackupPending = false,
                     ),
                     PocketCardUiModel.ProductCard(
                         key = PocketCardKey(ProductId.fromStoredValue("peopl.dot"), PocketCardId("humanity")),
