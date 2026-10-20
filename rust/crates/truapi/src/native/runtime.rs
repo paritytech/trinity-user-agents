@@ -365,7 +365,9 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Report the new balance of `purse` (`None` for the main purse), a
-	/// decimal string of CASH units, to the products following it.
+	/// decimal string of CASH units, to the products following it. The
+	/// balance is the user's, so one call reaches every such product; the
+	/// core passes it on only to those that still hold balance access.
 	pub fn notify_balance(&self, purse: Option<u32>, available: u128) {
 		if let Some(platform) = self.balance.get() {
 			platform.notify_balance(purse, available);
