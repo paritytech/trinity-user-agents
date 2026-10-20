@@ -8962,6 +8962,102 @@ fn the_balance_needs_the_users_permission_before_the_host_is_asked() {
 	);
 }
 
+/// A balance view whose pushes the test drives.
+struct PushedBalancePlatform(
+	Mutex<
+		Option<
+			futures::channel::mpsc::UnboundedReceiver<
+				Result<v01::HostPaymentBalanceSubscribeItem, v01::HostPaymentBalanceSubscribeError>,
+			>,
+		>,
+	>,
+);
+
+impl crate::platform::BalancePlatform for PushedBalancePlatform {
+	fn subscribe_balance(
+		&self,
+		_product: &crate::platform::ProductContext,
+		_purse: Option<u32>,
+	) -> futures::stream::BoxStream<
+		'static,
+		Result<v01::HostPaymentBalanceSubscribeItem, v01::HostPaymentBalanceSubscribeError>,
+	> {
+		self.0
+			.lock()
+			.expect("pushes mutex poisoned")
+			.take()
+			.expect("one subscription")
+			.boxed()
+	}
+}
+
+// A host pushes a purse's balance to every product following it, so the core
+// checks the product's balance access again before each push: once the user
+// revokes it, the stream ends with PermissionDenied and later balances never
+// reach the product.
+#[test]
+fn a_revoked_balance_access_ends_the_balance_stream() {
+	let services = payment_services();
+	let (push, pushes) = futures::channel::mpsc::unbounded();
+	assert!(
+		services
+			.install_balance_platform(Arc::new(PushedBalancePlatform(Mutex::new(Some(pushes)))))
+	);
+	let host = payment_host(&services, "wallet.dot", true);
+	let balance_access = || {
+		PermissionAuthorizationRequest::Remote(v01::RemotePermissionRequest {
+			permission: v01::RemotePermission::BalanceAccess,
+		})
+	};
+	futures::executor::block_on(host.connection.set_permission_authorization_status(
+		balance_access(),
+		PermissionAuthorizationStatus::Authorized,
+	))
+	.expect("grant stored");
+	let mut balances = futures::executor::block_on(truapi::api::Payment::balance_subscribe(
+		&host,
+		&CallContext::default(),
+		truapi::versioned::payment::HostPaymentBalanceSubscribeRequest::V1(
+			v01::HostPaymentBalanceSubscribeRequest { purse: None },
+		),
+	));
+	let mut next = || {
+		futures::executor::block_on(balances.next()).map(|item| {
+			item.map(|truapi::versioned::payment::HostPaymentBalanceSubscribeItem::V1(item)| {
+				item.available
+			})
+		})
+	};
+
+	push.unbounded_send(Ok(v01::HostPaymentBalanceSubscribeItem { available: 7 }))
+		.expect("pushed");
+	let while_granted = next();
+	futures::executor::block_on(host.connection.set_permission_authorization_status(
+		balance_access(),
+		PermissionAuthorizationStatus::Denied,
+	))
+	.expect("revocation stored");
+	push.unbounded_send(Ok(v01::HostPaymentBalanceSubscribeItem { available: 8 }))
+		.expect("pushed");
+	push.unbounded_send(Ok(v01::HostPaymentBalanceSubscribeItem { available: 9 }))
+		.expect("pushed");
+	let after_revoking = next();
+	let after_the_end = next();
+
+	assert_eq!(
+		(while_granted, after_revoking, after_the_end),
+		(
+			Some(Ok(7)),
+			Some(Err(CallError::Domain(
+				truapi::versioned::payment::HostPaymentBalanceSubscribeError::V1(
+					v01::HostPaymentBalanceSubscribeError::PermissionDenied,
+				),
+			))),
+			None,
+		)
+	);
+}
+
 /// A payment engine whose user never has enough.
 struct ShortPaymentPlatform;
 

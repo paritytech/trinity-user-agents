@@ -464,25 +464,27 @@ AutoSigning without approval. Legacy-account signing still asks the user.
   `set_balance_platform`; native hosts use `set_balance_callbacks` with
   `notify_balance`. The core requires a session and the product's
   `BalanceAccess` remote permission, asking for it on the first subscription
-  and answering `PermissionDenied` when the user refuses. A host
-  `InsufficientBalance` reaches a product without that permission as
-  `Rejected`. Without a balance view, `balanceSubscribe` answers
-  `Unsupported`.
+  and answering `PermissionDenied` when the user refuses. The balance is the
+  user's, per purse: one `notify_balance` reaches every product following the
+  purse, and the core checks each product's permission again before passing a
+  balance on, so a revoked grant ends that product's stream with
+  `PermissionDenied`. A host `InsufficientBalance` reaches a product without
+  that permission as `Rejected`. Without a balance view, `balanceSubscribe`
+  answers `Unsupported`.
 - `PaymentPlatform`: pay from the user's balance to an account once the user
   approves, and stream each payment's status by its caller-chosen id.
   Installed with `set_payment_platform`; native hosts use
   `set_payment_callbacks` with `notify_payment_status`. The core requires a
   session and hands the host each id hashed with the product. Without it,
-  `request` and
-  `statusSubscribe` answer `Unsupported`.
+  `request` and `statusSubscribe` answer `Unsupported`.
 - `TopUpPlatform`: claim a top-up source's funds into the user's balance and
   stream each top-up's status. Installed with `set_top_up_platform`; native
   hosts use `set_top_up_callbacks` with `notify_top_up_status`. The core
-  requires a session and checks the source keys; a `ProductAccount` source is
-  passed through for the host to derive, and hands the host each id hashed
+  requires a session, checks the source keys, passes a `ProductAccount`
+  source through for the host to derive, and hands the host each id hashed
   with the product. The host owns claiming, retries, partial claims and
-  persistence. Without it,
-  `topUp` and `topUpStatusSubscribe` answer `Unsupported`.
+  persistence. Without it, `topUp` and `topUpStatusSubscribe` answer
+  `Unsupported`.
 - `ExpandedCardHost`: show or hide the card face drawn above an opened card's
   Widget. It is carried per product connection on `ConnectionAdapters`, so only
   the Widget under a card reaches that card.
@@ -511,10 +513,15 @@ AutoSigning without approval. Legacy-account signing still asks the user.
 `Platform` is a blanket-implemented supertrait that combines the capability
 traits above except `ChatPlatform`, `ContactsPlatform`, `PermissionStatusHost`,
 `PocketPlatform`, `GamePlatform` and `ScannerPlatform`, which `OptionalPlatform`
-lists instead: a host supplies each only when it can serve it. `ExpandedCardHost`
-is in neither, because it travels per connection rather than with the platform.
-Codegen reads `OptionalPlatform` to emit each listed capability as an optional
-group on the host-callback surface.
+lists instead: a host supplies each only when it can serve it. Four traits are in
+neither. `ExpandedCardHost` travels per connection rather than with the
+platform. `BalancePlatform`, `PaymentPlatform` and `TopUpPlatform` are installed
+on their own, with `set_balance_platform`, `set_payment_platform` and
+`set_top_up_platform` or their native `set_*_callbacks`, so only a Rust or
+native host can serve them: the host-callback bridge cannot yet carry their
+typed errors or their two-argument status streams, so a browser host, and the
+CLI today, answer them `Unsupported`. Codegen reads `OptionalPlatform` to emit each listed capability
+as an optional group on the host-callback surface.
 
 Omitting `ChatPlatform` makes the core answer Chat calls `Unsupported`, and
 omitting `ContactsPlatform`, `PocketPlatform`, `GamePlatform` or
