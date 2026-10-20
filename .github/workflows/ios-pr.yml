@@ -88,6 +88,8 @@ on:
 
 permissions:
   contents: read
+  # Reading another run's artifact, the core main built from the same inputs.
+  actions: read
   checks: write
   pull-requests: write
 
@@ -161,6 +163,62 @@ jobs:
             core.setOutput('app', app.toString());
             core.setOutput('tests', 'true');
 
+  # Whether main already built the core from exactly this commit's core inputs.
+  # Most iOS pull requests change only the app, so the Rust core they build is
+  # byte for byte the one main built, and rebuilding it costs a large macOS
+  # runner for minutes. The inputs are hashed from the tree, and only an
+  # artifact from a push to this repository's main is trusted, so a pull
+  # request run cannot plant a core for others to use.
+  core-lookup:
+    name: Find a core built from the same inputs
+    needs: check-skip-label
+    if: needs.check-skip-label.outputs.skip == 'false' && (needs.check-skip-label.outputs.app == 'true' || needs.check-skip-label.outputs.tests == 'true') && !startsWith(github.head_ref, 'release/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+      run-id: ${{ steps.find.outputs.run-id }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # Everything the bootstrap reads: the crates and their lockfile, the
+      # toolchain pins, codegen and its npm manifests, the TypeScript client and
+      # container bundled into the host, the scripts that stage the bindings,
+      # the Xcode pin, and the packaging below.
+      - name: Hash the core inputs
+        id: key
+        run: |
+          set -euo pipefail
+          inputs=(
+            rust ios js/packages/truapi js/container scripts
+            Makefile Cargo.toml Cargo.lock nightly-toolchain
+            package.json package-lock.json
+            .github/actions/bootstrap-ios-core .github/actions/rust-nightly
+            hosts/ios/.github/actions/install .github/workflows/ios-pr.yml
+          )
+          hash="$(git ls-tree -r HEAD -- "${inputs[@]}" | sha256sum | cut -c1-32)"
+          echo "key=ios-core-inputs-$hash" >> "$GITHUB_OUTPUT"
+
+      - name: Find a core main built from them
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.key.outputs.key }}
+        run: |
+          set -euo pipefail
+          run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$KEY&per_page=20" --jq '
+            [.artifacts[]
+              | select(.expired | not)
+              | select(.workflow_run.head_branch == "main")
+              | select(.workflow_run.head_repository_id == .workflow_run.repository_id)]
+            | first | .workflow_run.id // empty')"
+          if [ -n "$run_id" ]; then
+            echo "Reusing the core from run $run_id"
+          else
+            echo "No core built from these inputs yet; building one"
+          fi
+          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+
   # The app and test jobs all need the core generated from this commit, and it
   # is the same output for each of them, so it is built once here and carried
   # across.
@@ -172,18 +230,34 @@ jobs:
   # and lifecycle workflows use.
   core:
     name: Build the in-tree core
-    needs: check-skip-label
+    needs: [check-skip-label, core-lookup]
     if: needs.check-skip-label.outputs.skip == 'false' && (needs.check-skip-label.outputs.app == 'true' || needs.check-skip-label.outputs.tests == 'true') && !startsWith(github.head_ref, 'release/')
-    runs-on: parity-macos-large
+    # Fetching a core main already built needs no Mac, so it does not wait for
+    # one in the large runner pool.
+    runs-on: ${{ needs.core-lookup.outputs.run-id != '' && 'ubuntu-latest' || 'parity-macos-large' }}
     timeout-minutes: 45
+    env:
+      REUSE: ${{ needs.core-lookup.outputs.run-id != '' }}
     steps:
+      - name: Fetch the core main built from the same inputs
+        if: env.REUSE == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.core-lookup.outputs.key }}
+          run-id: ${{ needs.core-lookup.outputs.run-id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}
+
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        if: env.REUSE != 'true'
 
       # The xcframework targets iOS, so this needs the SDK.
       - name: Setup iOS Environment
+        if: env.REUSE != 'true'
         uses: ./hosts/ios/.github/actions/install
 
       - name: Bootstrap the in-tree core
+        if: env.REUSE != 'true'
         uses: ./.github/actions/bootstrap-ios-core
         with:
           save: "true"
@@ -198,6 +272,7 @@ jobs:
       # bootstrap that quietly stops producing one fails here rather than in
       # three app jobs.
       - name: Package the generated core
+        if: env.REUSE != 'true'
         run: |
           set -euo pipefail
           paths=(
@@ -223,6 +298,17 @@ jobs:
           name: ios-core-${{ github.run_id }}
           path: ${{ runner.temp }}/ios-core.tgz
           retention-days: 1
+          if-no-files-found: error
+          overwrite: true
+
+      # Kept for a week under its inputs, for pull requests that do not change them.
+      - name: Publish the core for reuse
+        if: env.REUSE != 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: ${{ needs.core-lookup.outputs.key }}
+          path: ${{ runner.temp }}/ios-core.tgz
+          retention-days: 7
           if-no-files-found: error
           overwrite: true
 
