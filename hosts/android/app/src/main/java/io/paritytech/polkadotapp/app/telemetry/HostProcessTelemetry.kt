@@ -26,6 +26,26 @@ internal data class HostProcessStartEvent(
     val metadata: HostProcessMetadata,
 )
 
+internal data class HostProcessSentryFields(
+    val tags: Map<String, String>,
+    val extras: Map<String, Any>,
+)
+
+internal fun HostProcessStartEvent.sentryFields() = HostProcessSentryFields(
+    tags = mapOf(
+        "app.launch_id" to appLaunchId,
+        "host.native_app_version" to metadata.appVersion,
+        "host.app_variant" to metadata.appVariant,
+        "host.platform" to metadata.platform,
+        "host.os_version" to metadata.osVersion,
+        "host.truapi_host_version" to metadata.truapiHostVersion,
+    ),
+    extras = mapOf(
+        "host.app_build" to metadata.appBuild,
+        "event.monotonic_ms" to monotonicMs,
+    ),
+)
+
 internal class HostProcessTelemetry(
     private val appLaunchId: String,
     private val monotonicMillis: () -> Long,
@@ -82,15 +102,9 @@ internal object AndroidHostProcessTelemetry {
             message = Message().apply { formatted = event.name }
             level = SentryLevel.INFO
             logger = "host.telemetry"
-            setTag("event.name", event.name)
-            setTag("app.launch_id", event.appLaunchId)
-            setTag("app.version", event.metadata.appVersion)
-            setTag("app.variant", event.metadata.appVariant)
-            setTag("platform", event.metadata.platform)
-            setTag("os.version", event.metadata.osVersion)
-            setTag("truapi.host_version", event.metadata.truapiHostVersion)
-            setExtra("app.build", event.metadata.appBuild)
-            setExtra("monotonic_ms", event.monotonicMs)
+            val fields = event.sentryFields()
+            for ((key, value) in fields.tags) setTag(key, value)
+            for ((key, value) in fields.extras) setExtra(key, value)
         }
         Sentry.captureEvent(sentryEvent)
     }

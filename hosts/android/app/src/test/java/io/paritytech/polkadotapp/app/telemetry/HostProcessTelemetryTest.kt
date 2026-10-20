@@ -39,6 +39,35 @@ class HostProcessTelemetryTest {
     }
 
     @Test
+    fun `uses canonical cross-platform Sentry field names and native numeric values`() {
+        val fields = HostProcessStartEvent(
+            name = "host.process.started",
+            appLaunchId = "608ad8ee-51f5-49ab-af80-e25fd72c434f",
+            monotonicMs = 1_234L,
+            metadata = metadata,
+        ).sentryFields()
+
+        assertEquals(
+            mapOf(
+                "app.launch_id" to "608ad8ee-51f5-49ab-af80-e25fd72c434f",
+                "host.native_app_version" to "1.2.3",
+                "host.app_variant" to "nightly",
+                "host.platform" to "android",
+                "host.os_version" to "15",
+                "host.truapi_host_version" to "0.24.0",
+            ),
+            fields.tags,
+        )
+        assertEquals(
+            mapOf(
+                "host.app_build" to 42L,
+                "event.monotonic_ms" to 1_234L,
+            ),
+            fields.extras,
+        )
+    }
+
+    @Test
     fun `does nothing when telemetry is disabled`() {
         var metadataCalls = 0
         val captured = mutableListOf<HostProcessStartEvent>()
