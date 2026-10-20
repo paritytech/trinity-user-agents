@@ -265,7 +265,7 @@ impl Payment for ProductRuntimeHost {
 
 impl ProductRuntimeHost {
 	/// `Denied` unless a pairing session is connected.
-	fn require_session<E>(&self) -> Result<(), CallError<E>> {
+	pub(crate) fn require_session<E>(&self) -> Result<(), CallError<E>> {
 		match self.accounts.current_session() {
 			Some(_) => Ok(()),
 			None => Err(CallError::Denied),

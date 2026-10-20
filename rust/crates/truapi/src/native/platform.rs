@@ -21,8 +21,8 @@ use crate::{DevicePairingObserver, PairedSsoPeer, host_logic::worker::WorkerTran
 use super::{
 	callbacks::{
 		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-		NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks, NativePocketRemoval,
-		NativeScannerCallbacks, NativeTopUpCallbacks,
+		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
+		NativePocketRemoval, NativeScannerCallbacks, NativeTopUpCallbacks,
 	},
 	errors::HostRejection,
 	events::NativeEventBus,
@@ -678,6 +678,36 @@ impl crate::platform::GamePlatform for GameCallbackPlatform {
 		_product: &ProductContext,
 	) -> Result<(), v01::GenericError> {
 		self.game.cancel_reminder().await.map_err(v01::GenericError::from)
+	}
+}
+
+/// [`crate::platform::FundingPlatform`] served by host-provided
+/// [`NativeFundingCallbacks`].
+pub struct FundingCallbackPlatform {
+	/// Host funding overlay.
+	pub funding: Arc<dyn NativeFundingCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::FundingPlatform for FundingCallbackPlatform {
+	async fn present_funding(
+		&self,
+		product: Option<&ProductContext>,
+		session: crate::platform::FundingPresentation,
+	) -> Result<crate::platform::FundingPresentOutcome, v01::GenericError> {
+		self.funding
+			.present_funding(
+				product.map(|product| product.product_id.clone()),
+				session.intent,
+				session.direction,
+				session.amount,
+			)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem) {
+		self.funding.funding_session_changed(intent, status);
 	}
 }
 
