@@ -4,7 +4,9 @@
 //! needs; the capability handler asks for it, because the prompt belongs to the
 //! product connection.
 
-use truapi::latest::{NFT_PURSE_MAX_NAME_BYTES, NftPurseOwner, NftPursePurse, RemotePermission};
+use truapi::latest::{
+	NFT_PURSE_MAX_NAME_BYTES, NftPurseId, NftPurseOwner, NftPursePurse, RemotePermission,
+};
 
 use crate::{
 	nft::{CreatePurseError, NftLedger, PurseId, PurseRecord, PurseTag},
@@ -77,7 +79,7 @@ fn owner_tag(owner: &NftPurseOwner) -> PurseTag {
 }
 
 fn listed_purse(record: PurseRecord) -> NftPursePurse {
-	NftPursePurse { id: record.id.0, name: record.name }
+	NftPursePurse { id: NftPurseId(record.id.0), name: record.name }
 }
 
 #[cfg(test)]
@@ -108,7 +110,7 @@ mod tests {
 	}
 
 	fn purse(id: u32, name: &str) -> NftPursePurse {
-		NftPursePurse { id, name: name.to_owned() }
+		NftPursePurse { id: NftPurseId(id), name: name.to_owned() }
 	}
 
 	/// Item keys derive from the purse id and recovery walks ids from 0, so a
@@ -126,7 +128,7 @@ mod tests {
 	#[test]
 	fn a_fresh_database_gives_root_the_main_purse() {
 		let purses = purses();
-		assert_eq!(listed(&purses, &NftPurseOwner::Root), vec![purse(u32::MAX, "Main")]);
+		assert_eq!(listed(&purses, &NftPurseOwner::Root), vec![purse(PurseId::MAIN.0, "Main")]);
 	}
 
 	#[test]
@@ -157,7 +159,7 @@ mod tests {
 	fn creating_past_the_last_id_is_refused() {
 		let db = database();
 		let purses = NftPurses::new(NftLedger::new(db.clone()));
-		let last = u32::MAX - 1;
+		let last = PurseId::MAIN.0 - 1;
 		block_on(db.write(move |tx| {
 			tx.execute("INSERT INTO nft_purse (id, name, tag) VALUES (?1, 'last', x'')", [last])?;
 			Ok(())
@@ -174,15 +176,14 @@ mod tests {
 	/// anyone else's.
 	#[test]
 	fn only_another_owners_purses_need_a_read_grant() {
-		let grants = [NftPurseOwner::Root, product(PRODUCT), product("other.dot")]
-			.map(|owner| read_grant(PRODUCT, &owner));
+		assert_eq!(read_grant(PRODUCT, &product(PRODUCT)), None);
 		assert_eq!(
-			grants,
-			[
-				Some(RemotePermission::NftPurseRead { owner: NftPurseOwner::Root }),
-				None,
-				Some(RemotePermission::NftPurseRead { owner: product("other.dot") }),
-			]
+			read_grant(PRODUCT, &NftPurseOwner::Root),
+			Some(RemotePermission::NftPurseRead { owner: NftPurseOwner::Root })
+		);
+		assert_eq!(
+			read_grant(PRODUCT, &product("other.dot")),
+			Some(RemotePermission::NftPurseRead { owner: product("other.dot") })
 		);
 	}
 }

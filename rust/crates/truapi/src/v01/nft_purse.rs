@@ -1,16 +1,27 @@
 use derive_more::Display;
 use parity_scale_codec::{Decode, Encode};
 
-use super::GenericError;
-
-/// Id of the purse every user has. Root owns it.
-pub const NFT_PURSE_MAIN_PURSE: u32 = u32::MAX;
+use super::{GenericError, StatementTopic, X25519PublicKey};
 
 /// Longest purse name `create_purse` accepts, in bytes of UTF-8.
 pub const NFT_PURSE_MAX_NAME_BYTES: usize = 64;
 
-/// Largest `page_size` `query_purse` accepts.
-pub const NFT_PURSE_MAX_PAGE_SIZE: u32 = 100;
+/// Id of an NFT purse. Ids are allocated in order from 0. The main purse,
+/// which every user has and Root owns, is `u32::MAX`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
+pub struct NftPurseId(pub u32);
+
+/// Public key of one item in a purse. The host holds its secret.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
+pub struct NftPurseItemKey(pub [u8; 32]);
+
+/// Id of a cheque, and the idempotency key of its deposit and refund.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
+pub struct NftPurseChequeId(pub [u8; 32]);
+
+/// One-time key a receiver hands to the sender to start a payment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
+pub struct NftPurseReceiveKey(pub [u8; 32]);
 
 /// Who owns an NFT purse.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
@@ -29,7 +40,7 @@ pub enum NftPurseOwner {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct NftPursePurse {
 	/// Purse id.
-	pub id: u32,
+	pub id: NftPurseId,
 	/// Name given at creation, or chosen by the host after a recovery that
 	/// lost it.
 	pub name: String,
@@ -41,7 +52,7 @@ pub struct NftPurseInfoPage {
 	/// Whether a later page holds more items.
 	pub has_next: bool,
 	/// Keys of items present on chain and not in use.
-	pub items: Vec<[u8; 32]>,
+	pub items: Vec<NftPurseItemKey>,
 }
 
 /// Progress of an operation that moves items.
@@ -66,7 +77,7 @@ pub enum NftPurseStatus {
 		/// Items that cleared.
 		cleared: Vec<NftPurseClearedItem>,
 		/// Source keys of the items that failed.
-		failed: Vec<[u8; 32]>,
+		failed: Vec<NftPurseItemKey>,
 		/// Reference for the cleared part.
 		reference: NftPurseClearingReference,
 	},
@@ -76,9 +87,9 @@ pub enum NftPurseStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct NftPurseClearedItem {
 	/// Source key, from the origin purse or from the cheque.
-	pub consumed: [u8; 32],
+	pub consumed: NftPurseItemKey,
 	/// Destination key, in the destination purse.
-	pub minted: [u8; 32],
+	pub minted: NftPurseItemKey,
 	/// Whether the moving transaction is finalized.
 	pub finalized: bool,
 }
@@ -89,7 +100,7 @@ pub struct NftPurseClearingReference {
 	/// Trie root of `leaves`.
 	pub root: [u8; 32],
 	/// Source item key and the hash of the transaction that moved it.
-	pub leaves: Vec<([u8; 32], [u8; 32])>,
+	pub leaves: Vec<(NftPurseItemKey, [u8; 32])>,
 }
 
 /// Where a cheque's items go.
@@ -97,13 +108,13 @@ pub struct NftPurseClearingReference {
 pub enum NftPurseChequeDestination {
 	/// A one-time receive key from `create_receive_key`. It identifies the
 	/// transfer, and the host derives the cheque id from it.
-	Ephemeral([u8; 32]),
+	Ephemeral(NftPurseReceiveKey),
 	/// A long-lived receiver that expects cheques encrypted to `encryption_key`.
 	Static {
 		/// X25519 public key of the recipient.
-		encryption_key: [u8; 32],
+		encryption_key: X25519PublicKey,
 		/// Identity and idempotency key of the cheque.
-		cheque_id: [u8; 32],
+		cheque_id: NftPurseChequeId,
 	},
 }
 
@@ -111,7 +122,7 @@ pub enum NftPurseChequeDestination {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum NftPurseChequeRecipient {
 	/// The receive key the cheque was made for.
-	Ephemeral([u8; 32]),
+	Ephemeral(NftPurseReceiveKey),
 	/// The recipient's long-lived key.
 	Static,
 }
@@ -122,11 +133,11 @@ pub struct NftPurseCheque {
 	/// Cheque format version, `0`.
 	pub version: u8,
 	/// Cheque id.
-	pub id: [u8; 32],
+	pub id: NftPurseChequeId,
 	/// Who can decrypt it.
 	pub recipient: NftPurseChequeRecipient,
 	/// Keys of the handed-off items.
-	pub items: Vec<[u8; 32]>,
+	pub items: Vec<NftPurseItemKey>,
 	/// Item secrets, encrypted to the recipient.
 	pub encrypted_secrets: Vec<u8>,
 }
@@ -137,7 +148,7 @@ pub enum NftPursePaymentTransmissionChannel {
 	/// The statement-store topic the cheque is published under.
 	Standard {
 		/// Topic to watch.
-		sss_topic: [u8; 32],
+		sss_topic: StatementTopic,
 	},
 }
 
@@ -152,14 +163,14 @@ pub struct HostNftPurseCreatePurseRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseCreatePurseResponse {
 	/// Id of the new purse.
-	pub purse: u32,
+	pub purse: NftPurseId,
 }
 
 /// Request to create new item keys in a purse.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseCreateItemsRequest {
 	/// Purse that receives the keys.
-	pub purse: u32,
+	pub purse: NftPurseId,
 	/// Number of keys, in `1..=1000`.
 	pub count: u32,
 }
@@ -168,7 +179,7 @@ pub struct HostNftPurseCreateItemsRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseCreateItemsResponse {
 	/// Exactly `count` new keys.
-	pub items: Vec<[u8; 32]>,
+	pub items: Vec<NftPurseItemKey>,
 }
 
 /// Why item keys were not created.
@@ -186,10 +197,10 @@ pub enum NftPurseCreateItemsError {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseQueryPurseRequest {
 	/// Purse to read.
-	pub purse: u32,
+	pub purse: NftPurseId,
 	/// Zero-based page index.
 	pub page: u32,
-	/// Items per page, in `1..=NFT_PURSE_MAX_PAGE_SIZE`.
+	/// Items per page, in `1..=100`.
 	pub page_size: u32,
 }
 
@@ -205,7 +216,7 @@ pub struct HostNftPurseQueryPurseResponse {
 pub enum NftPurseQueryPurseError {
 	/// The user did not grant access to the purse's owner.
 	Denied,
-	/// `page_size` is outside `1..=NFT_PURSE_MAX_PAGE_SIZE`.
+	/// `page_size` is outside `1..=100`.
 	PageSizeOutOfBounds,
 	/// Any other failure.
 	Other(GenericError),
@@ -238,11 +249,11 @@ pub enum NftPurseListPursesError {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseRebalancePurseRequest {
 	/// Source purse.
-	pub from: u32,
+	pub from: NftPurseId,
 	/// Destination purse.
-	pub to: u32,
+	pub to: NftPurseId,
 	/// Items to move. With `to`, the unordered set is the idempotency key.
-	pub keys: Vec<[u8; 32]>,
+	pub keys: Vec<NftPurseItemKey>,
 }
 
 /// Why items could not be moved between purses.
@@ -264,14 +275,14 @@ pub enum NftPurseRebalancePurseError {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseCreateReceiveKeyRequest {
 	/// Purse the received items go into.
-	pub into: u32,
+	pub into: NftPurseId,
 }
 
 /// Created receive key.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseCreateReceiveKeyResponse {
 	/// The receive key.
-	pub key: [u8; 32],
+	pub key: NftPurseReceiveKey,
 }
 
 /// Why a receive key was not created.
@@ -287,7 +298,7 @@ pub enum NftPurseCreateReceiveKeyError {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseListenForPaymentRequest {
 	/// Receive key from `create_receive_key`.
-	pub key: [u8; 32],
+	pub key: NftPurseReceiveKey,
 }
 
 /// Stream item of `listen_for_payment`.
@@ -312,11 +323,11 @@ pub enum NftPurseListenForPaymentError {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseCreateChequeRequest {
 	/// Source purse.
-	pub from: u32,
+	pub from: NftPurseId,
 	/// Recipient.
 	pub to: NftPurseChequeDestination,
 	/// Items to hand off.
-	pub items: Vec<[u8; 32]>,
+	pub items: Vec<NftPurseItemKey>,
 }
 
 /// Created cheque.
@@ -345,7 +356,7 @@ pub enum NftPurseCreateChequeError {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseRevokeChequeRequest {
 	/// Cheque to revoke.
-	pub cheque_id: [u8; 32],
+	pub cheque_id: NftPurseChequeId,
 }
 
 /// Why a cheque was not revoked.
@@ -365,7 +376,7 @@ pub struct HostNftPurseDepositRequest {
 	/// The received cheque. Its id is the idempotency key.
 	pub cheque: NftPurseCheque,
 	/// Purse the items go into.
-	pub to: u32,
+	pub to: NftPurseId,
 }
 
 /// Why a cheque could not be deposited.
@@ -385,7 +396,7 @@ pub enum NftPurseDepositError {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseRefundRequest {
 	/// The deposited cheque. It is the idempotency key.
-	pub cheque_id: [u8; 32],
+	pub cheque_id: NftPurseChequeId,
 }
 
 /// Why a cheque could not be refunded.
@@ -403,9 +414,9 @@ pub enum NftPurseRefundError {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseTransferItemRequest {
 	/// Item to move. With `destination`, the idempotency key.
-	pub item: [u8; 32],
+	pub item: NftPurseItemKey,
 	/// Key that receives it.
-	pub destination: [u8; 32],
+	pub destination: NftPurseItemKey,
 }
 
 /// Why an item could not be transferred.

@@ -105,7 +105,7 @@ pub mod latest {
 		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
 		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
 		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
-		ImageSource, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseOwner, NftPursePurse,
+		ImageSource, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseId, NftPurseOwner, NftPursePurse,
 		OperationStartedResult, PaymentTopUpSource, PocketCard, ProductAccount, ProductAccountId,
 		ProductProofContext, RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest,
 		RemotePermission, RemoteStatementStoreCreateProofError,

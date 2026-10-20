@@ -9,7 +9,7 @@ use truapi::{
 
 use super::*;
 use crate::{
-	nft::NftLedger,
+	nft::{NftLedger, PurseId},
 	nft_purse::NftPurses,
 	store::{Db, DbConfig, DbLocation, core_migrations},
 };
@@ -49,7 +49,7 @@ fn listed(purses: Vec<v01::NftPursePurse>) -> HostNftPurseListPursesResponse {
 }
 
 fn purse(id: u32, name: &str) -> v01::NftPursePurse {
-	v01::NftPursePurse { id, name: name.to_owned() }
+	v01::NftPursePurse { id: v01::NftPurseId(id), name: name.to_owned() }
 }
 
 fn requested_permissions(platform: &StubPlatform) -> Vec<v01::RemotePermissionRequest> {
@@ -69,16 +69,10 @@ fn a_product_lists_the_purse_it_created_without_a_prompt() {
 	let created = create(&host, "Tickets");
 	let own = list(&host, v01::NftPurseOwner::Product(PRODUCT.to_owned()));
 
-	assert_eq!(
-		(created, own, requested_permissions(&platform)),
-		(
-			Ok(HostNftPurseCreatePurseResponse::V1(v01::HostNftPurseCreatePurseResponse {
-				purse: 0
-			})),
-			Ok(listed(vec![purse(0, "Tickets")])),
-			vec![],
-		)
-	);
+	let response = v01::HostNftPurseCreatePurseResponse { purse: v01::NftPurseId(0) };
+	assert_eq!(created, Ok(HostNftPurseCreatePurseResponse::V1(response)));
+	assert_eq!(own, Ok(listed(vec![purse(0, "Tickets")])));
+	assert_eq!(requested_permissions(&platform), vec![]);
 }
 
 // Root's purses hold the user's main purse, so a product sees them only with
@@ -90,16 +84,12 @@ fn listing_roots_purses_without_the_users_grant_is_denied() {
 
 	let refused = list(&host, v01::NftPurseOwner::Root);
 
+	let denied = HostNftPurseListPursesError::V1(v01::NftPurseListPursesError::Denied);
+	assert_eq!(refused, Err(CallError::Domain(denied)));
+	let read_root = v01::RemotePermission::NftPurseRead { owner: v01::NftPurseOwner::Root };
 	assert_eq!(
-		(refused, requested_permissions(&platform)),
-		(
-			Err(CallError::Domain(HostNftPurseListPursesError::V1(
-				v01::NftPurseListPursesError::Denied
-			))),
-			vec![v01::RemotePermissionRequest {
-				permission: v01::RemotePermission::NftPurseRead { owner: v01::NftPurseOwner::Root },
-			}],
-		)
+		requested_permissions(&platform),
+		vec![v01::RemotePermissionRequest { permission: read_root }]
 	);
 }
 
@@ -107,7 +97,10 @@ fn listing_roots_purses_without_the_users_grant_is_denied() {
 fn listing_roots_purses_with_the_users_grant_returns_the_main_purse() {
 	let host = payment_host(&nft_services(Arc::new(StubPlatform::default())), PRODUCT, true);
 
-	assert_eq!(list(&host, v01::NftPurseOwner::Root), Ok(listed(vec![purse(u32::MAX, "Main")])));
+	assert_eq!(
+		list(&host, v01::NftPurseOwner::Root),
+		Ok(listed(vec![purse(PurseId::MAIN.0, "Main")]))
+	);
 }
 
 // The RFC requires an empty list, not an error, for a product without purses.
@@ -154,7 +147,7 @@ fn a_host_without_a_core_database_does_not_serve_purses() {
 #[test]
 fn methods_of_later_stages_are_unavailable() {
 	let host = payment_host(&nft_services(Arc::new(StubPlatform::default())), PRODUCT, true);
-	let request = v01::HostNftPurseCreateItemsRequest { purse: 0, count: 1 };
+	let request = v01::HostNftPurseCreateItemsRequest { purse: v01::NftPurseId(0), count: 1 };
 
 	let created = futures::executor::block_on(
 		host.create_items(&CallContext::default(), HostNftPurseCreateItemsRequest::V1(request)),

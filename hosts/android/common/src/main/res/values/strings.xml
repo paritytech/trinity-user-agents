@@ -448,7 +448,7 @@
     <string name="product_permission_account_subtitle">Account access is required to read account data. %1$s</string>
     <string name="product_permission_balance_title">%1$s would Like to Access Your Balance</string>
     <string name="product_permission_balance_subtitle">Balance access lets the product see funds available for spending. %1$s</string>
-    <string name="product_permission_nft_purse_read_title">%1$s would Like to See the NFT Purses of %2$s</string>
+    <string name="product_permission_nft_purse_read_title">%1$s would Like to See the NFTs of %2$s</string>
     <string name="product_permission_nft_purse_read_subtitle">NFT purse access lets the product see these purses and the items in them. %1$s</string>
     <string name="product_permission_nft_purse_read_owner_account">your account</string>
     <string name="product_permission_user_identity_title">%1$s Would like to know your identity</string>

@@ -69,7 +69,7 @@ impl ProductRuntimeHost {
 		let latest::HostNftPurseCreatePurseRequest { name } = request;
 		let created = purses.create_purse(&self.connection.product_id(), name).await;
 		let purse = created.map_err(create_purse_failure)?;
-		Ok(latest::HostNftPurseCreatePurseResponse { purse: purse.0 })
+		Ok(latest::HostNftPurseCreatePurseResponse { purse: latest::NftPurseId(purse.0) })
 	}
 
 	async fn list_nft_purses(
