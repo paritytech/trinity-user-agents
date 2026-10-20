@@ -2,11 +2,9 @@
 //!
 //! Local and paired hosts use the same request and session types.
 
-use crate::platform::ProductContext;
 use async_trait::async_trait;
-use std::sync::Arc;
 use truapi::{
-	CallContext, CallError, CancellationReason,
+	CallContext, CancellationReason,
 	latest::{
 		HostAccountCreateProofRequest, HostAccountCreateProofResponse, HostAccountGetAliasRequest,
 		HostAccountGetAliasResponse, HostAccountListRingVrfKeysRequest,
@@ -19,7 +17,6 @@ use truapi::{
 		HostSignRawWithLegacyAccountRequest, LegacyAccountTxPayload, ProductAccountId,
 		ProductAccountTxPayload, VrfSignature,
 	},
-	versioned::account::{HostRequestLoginError, HostRequestLoginResponse},
 };
 
 use crate::{
@@ -314,9 +311,6 @@ pub trait ProductAuthority: Send + Sync {
 	/// Current account-authority session, if connected.
 	fn current_session(&self) -> Option<AuthoritySession>;
 
-	/// Session state shared with this authority.
-	fn session_state(&self) -> Arc<SessionState>;
-
 	/// Seed a product subtree for authority tests.
 	#[cfg(test)]
 	fn cache_product_subtree_for_test(
@@ -325,20 +319,6 @@ pub trait ProductAuthority: Send + Sync {
 		_product_id: &str,
 		_public_key: [u8; 32],
 	) {
-	}
-
-	/// Request account connection for the calling product.
-	async fn request_login(
-		&self,
-		product: &ProductContext,
-	) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>>;
-
-	/// Disconnect the current account-authority session.
-	async fn disconnect(&self);
-
-	/// Refresh session identity without user interaction.
-	async fn refresh_session_identity(&self) -> Option<AuthoritySession> {
-		self.current_session()
 	}
 
 	/// Resolve the public key for a product's hard subtree.

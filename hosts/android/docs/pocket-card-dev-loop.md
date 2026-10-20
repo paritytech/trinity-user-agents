@@ -4,16 +4,17 @@ Two loops for working on a Pocket card against a debug build of the app. Neither
 and neither needs a published manifest.
 
 Both need a **debug build** (`assembleGpDebug` or `assembleVanillaDebug`, or the Firebase debug
-distribution). They are off entirely on release builds.
+distribution). They are off entirely on release builds. The face preview used in Loop A is also in the
+nightly build.
 
 ## Where this works
 
 Anywhere `adb` can reach the app: an emulator, or a physical device over USB or Wi-Fi debugging.
 Nothing below is emulator-specific.
 
-What it does **not** cover is a phone that only has the app from Firebase App Distribution, with no
-`adb` connection. The tunnel below is what makes your dev server reachable, and there is no way to
-set it up without `adb`. Until a browser-based preview exists, the fast loop needs a cable.
+A phone with no `adb` connection, such as one that only has the app from Firebase App Distribution,
+cannot reach `127.0.0.1` on your machine. Loop A still works there through an HTTPS tunnel, described
+in [Loop A without a cable](#loop-a-without-a-cable). Loop B has only been used over `adb`.
 
 > **On the emulator, do not use `10.0.2.2`.** It is the usual alias for the host machine, but the
 > app permits cleartext to loopback only, so a face served over `http://10.0.2.2:5173` is refused
@@ -76,12 +77,39 @@ What it proves: the face decodes, the tokens resolve, the text fits, and the lay
 card frame in both themes. It draws through the same decoder and the same renderer the Pocket tab
 uses, so it cannot agree with a face the app would not draw.
 
-Two things it does not show. The frame is the one the **approval sheet** gives a card — the Pocket
-tab additionally lays the card on its own ground with a grain texture. And images do not resolve
-here: an `Image` node names a Bulletin CID or a path inside a worker archive, and a loose file on a
-dev server has neither, so it draws as empty space.
+The frame is the one the **approval sheet** gives a card. The Pocket tab also lays the card on its
+own ground with a grain texture, which the preview does not show.
+
+Images draw as they will on a published card:
+
+- A `Bulletin` CID loads from the same IPFS gateway the Pocket tab uses.
+- An `Archive` path loads from the server the face came from, at that path. Serve the folder that
+  becomes your worker archive, so `images/stamp.png` is at `http://127.0.0.1:5173/images/stamp.png`
+  here and at the same path inside the archive once published.
+- An archive path is always read as a file on that server, as the archive reads it. A path that climbs
+  above the root with `..` draws as empty space.
+
+Pressing **Draw** again also fetches the images again, so an edited image shows without restarting
+the app.
 
 If the face is rejected, the message under the frame is the decoder's own, naming what it refused.
+
+### Loop A without a cable
+
+Give your dev server a public HTTPS address instead of using `adb reverse`, for example with a
+Cloudflare quick tunnel:
+
+```sh
+npx serve -l 5173 dist
+cloudflared tunnel --url http://localhost:5173
+```
+
+It prints an address like `https://<random>.trycloudflare.com`. Draw
+`https://<random>.trycloudflare.com/pocket/loyalty.json` in the face preview. Images resolve against
+that address in the same way.
+
+While the tunnel runs, anyone with the address can read what the server serves. Serve only the built
+folder and stop the tunnel when you are done.
 
 ## Loop B — the whole card, live
 
