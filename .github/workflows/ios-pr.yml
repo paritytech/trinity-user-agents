@@ -167,7 +167,7 @@ jobs:
   # Most iOS pull requests change only the app, so the Rust core they build is
   # byte for byte the one main built, and rebuilding it costs a large macOS
   # runner for minutes. The inputs are hashed from the tree, and only an
-  # artifact from a push to this repository's main is trusted, so a pull
+  # artifact a push of this workflow to main published is trusted, so a pull
   # request run cannot plant a core for others to use.
   core-lookup:
     name: Find a core built from the same inputs
@@ -201,23 +201,10 @@ jobs:
 
       - name: Find a core main built from them
         id: find
-        env:
-          GH_TOKEN: ${{ github.token }}
-          KEY: ${{ steps.key.outputs.key }}
-        run: |
-          set -euo pipefail
-          run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$KEY&per_page=20" --jq '
-            [.artifacts[]
-              | select(.expired | not)
-              | select(.workflow_run.head_branch == "main")
-              | select(.workflow_run.head_repository_id == .workflow_run.repository_id)]
-            | first | .workflow_run.id // empty')"
-          if [ -n "$run_id" ]; then
-            echo "Reusing the core from run $run_id"
-          else
-            echo "No core built from these inputs yet; building one"
-          fi
-          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/find-main-artifact
+        with:
+          name: ${{ steps.key.outputs.key }}
+          workflow: .github/workflows/ios-pr.yml
 
   # The app and test jobs all need the core generated from this commit, and it
   # is the same output for each of them, so it is built once here and carried
@@ -301,9 +288,10 @@ jobs:
           if-no-files-found: error
           overwrite: true
 
-      # Kept for a week under its inputs, for pull requests that do not change them.
+      # Kept for a week under its inputs, for pull requests that do not change
+      # them. Published again when main reuses it, so a core in use never expires.
       - name: Publish the core for reuse
-        if: env.REUSE != 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
         with:
           name: ${{ needs.core-lookup.outputs.key }}
