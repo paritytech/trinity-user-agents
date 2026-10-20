@@ -2,7 +2,7 @@
 
 Labels answer what a reviewer or a planner asks before opening something: what does it touch, which product needs it, is anything blocking it, who acts next, and how big is it. Each family answers one of those questions, and its prefix says which. Names are `family:value`.
 
-Most labels are applied for you. On a pull request, authors set a `status:` when it stops waiting on review, a `needs:` label when something blocks it, and a `ci:` label when they want an app built. On an issue, whoever files it sets the product, and the area is filled in from the pull request that closes it.
+Most labels are applied for you. On a pull request, the author or reviewer changes the `status:` when it stops waiting on review and adds a `needs:` label when something blocks it, and the author adds a `ci:` label to get an app built. On an issue, whoever files it sets the product, and the area is filled in when a pull request that closes it merges.
 
 Every label is defined in [`.github/labels.yml`](../.github/labels.yml). Change that file to add, rename or retire one; a pull request that does so lists exactly what it will change, and the merge applies it.
 
@@ -10,11 +10,11 @@ Every label is defined in [`.github/labels.yml`](../.github/labels.yml). Change 
 
 | Family | Answers | Set by |
 | --- | --- | --- |
-| `area:` (core, ios, android, js, ci, docs, rfc) | What does it touch? | Automatically from the pull request that closes it, or by hand |
+| `area:` (core, ios, android, js, ci, docs, rfc) | What does it touch? | Automatically when a pull request that closes it merges, or by hand |
 | `needs:` (decision, spec, UI) | What is blocking it? | Whoever works on it |
 | `spa:` (humanity, jollity, scarcity, seity) | Which product needs it? | Whoever files it |
 
-An issue's type (Bug, Feature, Task), its status (Triage, Backlog, In progress) and its target date are issue fields, not labels.
+An issue's type (Bug, Feature, Task), its status (Triage, Backlog, In progress), its priority and its target date are issue fields, not labels.
 
 ## On pull requests
 
@@ -29,7 +29,7 @@ A pull request usually carries a size and a status, and nothing else.
 
 ## area
 
-[`.github/areas.yml`](../.github/areas.yml) maps paths to areas. When a pull request closes an issue, `issue-areas.yml` adds the areas of the paths it changes to that issue. Only closing references count: `Closes #12`, `Fixes #12`, or an issue linked under Development. A mention like "part of #12" does not, so an epic does not collect every area its pull requests touch. Areas are only added, so one set by hand when the issue is filed stays.
+[`.github/areas.yml`](../.github/areas.yml) maps paths to areas. When a pull request merges, `issue-areas.yml` adds the areas of the paths it changed to every issue it closes. Only closing references count: `Closes #12`, `Fixes #12`, or an issue linked under Development. A mention like "part of #12" does not, so an epic does not collect every area its pull requests touch, and a pull request that never merges labels nothing. Areas are only added, so one set by hand when the issue is filed stays.
 
 | Label | Paths |
 | --- | --- |
@@ -41,9 +41,11 @@ A pull request usually carries a size and a status, and nothing else.
 | `area:docs` | `docs/`, any `*.md` at the root |
 | `area:rfc` | `docs/rfcs/` |
 
+An RFC is also under `docs/`, so a pull request changing one gives its issue both `area:rfc` and `area:docs`.
+
 The same paths decide who is asked to review in `.github/CODEOWNERS`, and `scripts/check-path-routing.py` keeps the two files in step.
 
-Pull requests carry no area. That keeps their labels to what a reviewer acts on; adding areas back to pull requests is a change to `issue-areas.yml`, not to the labels.
+New pull requests carry no area, which keeps their labels to what a reviewer acts on. Older pull requests keep the areas they had. Giving pull requests areas is a change to `issue-areas.yml`, not to the labels.
 
 ## needs
 
@@ -91,13 +93,13 @@ Set on every pull request from the lines it adds and removes, and kept current a
 | `size:XL` | 500 to 999 |
 | `size:XXL` | 1000 or more |
 
-Lines a reviewer does not read are left out: anything `.gitattributes` marks `linguist-generated`, which GitHub also collapses in the diff, plus lockfiles and the database schemas the build writes. Marking a new generated file there keeps it out of the count. A backport of a vendored host tree carries no size, because its line count says nothing about how much there is to review.
+Lines a reviewer does not read are left out: anything `.gitattributes` marks `linguist-generated`, which GitHub also collapses in the diff, plus lockfiles, Room database schemas and Core Data models. Marking a new generated file there keeps it out of the count. A backport of a vendored host tree carries no size, because its line count says nothing about how much there is to review.
 
 `size:XL` and `size:XXL` are a prompt to split. A change too large to review in one sitting can usually land as a series of smaller pull requests into a feature branch, each reviewed by whoever knows that part, before the branch merges into main. When it genuinely cannot be split, say why in the description.
 
 ## ci
 
-Each starts as soon as it is added and follows the branch from then on. The [README](../README.md#working-on-the-ios-host) covers the builds in detail.
+Each starts as soon as it is added and follows the branch from then on. The [README](../README.md#working-on-the-ios-host) covers the app builds in detail, and [docs/RELEASE_PROCESS.md](RELEASE_PROCESS.md) covers changesets.
 
 | Label | Runs |
 | --- | --- |
@@ -108,7 +110,7 @@ Each starts as soon as it is added and follows the branch from then on. The [REA
 | `ci:host-playground-e2e` | Runs the host-playground e2e inside both apps |
 | `ci:no-changeset` | Lets the changeset check pass for a change that ships nothing |
 
-The first time a pull request touches an app, a comment lists the `ci:` labels that build it.
+The first time a pull request touches an app, a comment lists `ci:ios-simulator`, `ci:ios-device` and `ci:android-device`, whichever build what it touches.
 
 ## Outside the families
 

@@ -9,9 +9,13 @@ CLI, so GH_TOKEN or a logged-in `gh` decides what it may do.
 
 A label is renamed rather than recreated whenever one of its `previously` names
 exists, because a rename keeps the label on every issue and pull request that
-carries it. A second previous name is merged instead: its items get the new
-label, then the old one is deleted. Labels the file does not mention are
-reported and left alone; only `retired` ones are deleted.
+carries it. When the new name and an old one both exist, the one on fewer items
+is merged into the other, and the survivor ends up with the new name: a merge
+writes once per item, a rename once in total. Labels the file does not mention
+are reported and left alone; only `retired` ones are deleted.
+
+Writes pause briefly and back off on GitHub's rate limits, and a merge skips
+items that already carry the label, so a run cut short can be repeated.
 """
 
 import argparse
@@ -21,6 +25,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import time
 import urllib.parse
 
 import yaml
@@ -28,6 +33,9 @@ import yaml
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONFIG = ROOT / ".github" / "labels.yml"
 TARGETS = {"prs", "issues", "both"}
+# GitHub's secondary rate limit allows about 80 writes a minute.
+WRITE_PAUSE_SECS = 1.0
+RATE_LIMIT_RETRIES = 5
 
 
 def gh(*args: str, method: str = "GET", fields: dict | None = None) -> object:
@@ -38,8 +46,20 @@ def gh(*args: str, method: str = "GET", fields: dict | None = None) -> object:
                 cmd += ["-f", f"{key}[]={item}"]
         else:
             cmd += ["-f", f"{key}={value}"]
-    out = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
-    return json.loads(out) if out.strip() else None
+    for attempt in range(RATE_LIMIT_RETRIES + 1):
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            if method != "GET":
+                time.sleep(WRITE_PAUSE_SECS)
+            return json.loads(result.stdout) if result.stdout.strip() else None
+        limited = "rate limit" in result.stderr.lower() or "HTTP 429" in result.stderr
+        if not limited or attempt == RATE_LIMIT_RETRIES:
+            sys.stderr.write(result.stderr)
+            raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
+        wait = 60 * (attempt + 1)
+        print(f"rate limited; retrying in {wait}s", file=sys.stderr)
+        time.sleep(wait)
+    raise AssertionError("unreachable")
 
 
 def gh_paginate(path: str) -> list:
@@ -93,8 +113,17 @@ def load() -> dict:
     return data
 
 
-def plan(data: dict, existing: dict) -> list[tuple]:
-    """Steps in the order they must run. Each is (kind, detail...)."""
+def labelled(repo: str, name: str) -> list:
+    """Every issue and pull request carrying `name`, open or closed."""
+    return gh_paginate(f"repos/{repo}/issues?state=all&per_page=100&labels={quoted(name)}")
+
+
+def plan(data: dict, existing: dict, count) -> list[tuple]:
+    """Steps in the order they must run. Each is (kind, detail...).
+
+    `count(name)` is how many items carry a label; it is asked only when a new
+    name and an old one both exist, to merge the smaller into the larger.
+    """
     steps = []
     remaining = dict(existing)  # casefolded name -> label, as it will be
 
@@ -102,6 +131,26 @@ def plan(data: dict, existing: dict) -> list[tuple]:
         name, color, description = label["name"], label["color"].lower(), label["description"]
         current = remaining.get(name.casefold())
         olds = [remaining[o.casefold()] for o in label.get("previously", []) if o.casefold() in remaining]
+
+        if current is not None and olds:
+            sizes = {l["name"]: count(l["name"]) for l in [current, *olds]}
+            survivor = max([current, *olds], key=lambda l: sizes[l["name"]])
+            if survivor is not current:
+                steps.append(("merge", current["name"], survivor["name"], sizes[current["name"]]))
+                remaining.pop(current["name"].casefold())
+                olds.remove(survivor)
+                current = None
+                olds.insert(0, survivor)
+            for old in olds[1:] if current is None else []:
+                steps.append(("merge", old["name"], survivor["name"], sizes[old["name"]]))
+                remaining.pop(old["name"].casefold())
+            if current is None:
+                olds = olds[:1]
+            else:
+                for old in olds:
+                    steps.append(("merge", old["name"], name, sizes[old["name"]]))
+                    remaining.pop(old["name"].casefold())
+                olds = []
 
         if current is None and olds:
             first = olds.pop(0)
@@ -118,7 +167,7 @@ def plan(data: dict, existing: dict) -> list[tuple]:
             steps.append(("update", current["name"], name, color, description))
 
         for old in olds:
-            steps.append(("merge", old["name"], name))
+            steps.append(("merge", old["name"], name, None))
             remaining.pop(old["name"].casefold())
 
     for entry in data.get("retired", []):
@@ -142,7 +191,8 @@ def describe(step: tuple) -> str:
     if kind == "update":
         return f"update `{step[2]}`'s color or description"
     if kind == "merge":
-        return f"move everything labelled `{step[1]}` to `{step[2]}`, then delete `{step[1]}`"
+        items = "" if step[3] is None else f" ({step[3]} item{'s' if step[3] != 1 else ''})"
+        return f"move everything labelled `{step[1]}`{items} to `{step[2]}`, then delete `{step[1]}`"
     if kind == "delete":
         return f"delete `{step[1]}`: {step[2]}"
     return f"leave `{step[1]}`: not in labels.yml"
@@ -158,8 +208,9 @@ def apply(repo: str, step: tuple) -> None:
            fields={"new_name": step[2], "color": step[3], "description": step[4]})
     elif kind == "merge":
         old, new = step[1], step[2]
-        items = gh_paginate(f"repos/{repo}/issues?state=all&per_page=100&labels={quoted(old)}")
-        for item in items:
+        for item in labelled(repo, old):
+            if any(l["name"].casefold() == new.casefold() for l in item["labels"]):
+                continue
             gh(f"repos/{repo}/issues/{item['number']}/labels", method="POST", fields={"labels": [new]})
         gh(f"repos/{repo}/labels/{quoted(old)}", method="DELETE")
     elif kind == "delete":
@@ -174,7 +225,7 @@ def main() -> int:
 
     data = load()
     existing = {l["name"].casefold(): l for l in gh_paginate(f"repos/{args.repo}/labels?per_page=100")}
-    steps = plan(data, existing)
+    steps = plan(data, existing, lambda name: len(labelled(args.repo, name)))
     changes = [s for s in steps if s[0] != "unmanaged"]
 
     lines = [f"### Labels: {len(changes)} change{'s' if len(changes) != 1 else ''}", ""]

@@ -46,7 +46,7 @@ Canonical design documentation lives in `docs/design/`. To propose updates or ad
 
 ## Labels
 
-Pull requests get a size and a first status for you. Change the `status:` when it stops waiting on review, add a `needs:` label when something blocks it, and a `ci:` label to ask for an app build. Issues take an `area:` and a `spa:`, and the area is filled in from the pull request that closes them. [docs/labels.md](docs/labels.md) has the whole system.
+Pull requests get a size and a first status for you. The author or reviewer changes the `status:` when it stops waiting on review, add a `needs:` label when something blocks it, and a `ci:` label to ask for an app build. Issues take an `area:` and a `spa:`, and the area is filled in from the pull request that closes them. [docs/labels.md](docs/labels.md) has the whole system.
 
 ## Development
 

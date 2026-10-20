@@ -20,8 +20,9 @@
 
 labels:
   # area: what an issue touches. issue-areas.yml adds them to the issues a pull
-  # request closes, from the paths in .github/areas.yml; they can also be set by
-  # hand when the issue is filed. Pull requests do not carry them.
+  # request closes when it merges, from the paths in .github/areas.yml; they can
+  # also be set by hand when the issue is filed. New pull requests do not carry
+  # them; older ones keep the ones they had.
   - name: "area:core"
     color: "1d76db"
     description: "Touches the Rust core under rust/crates"

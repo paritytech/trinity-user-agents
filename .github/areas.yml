@@ -1,5 +1,5 @@
 # Which paths belong to which area. issue-areas.yml reads this to label the
-# issues a pull request closes; pull requests themselves carry no area. Every
+# issues a pull request closes; new pull requests carry no area themselves. Every
 # label here is defined in .github/labels.yml.
 #
 # The same paths decide who is asked to review in .github/CODEOWNERS. The two

@@ -17,6 +17,8 @@ on:
     types: [opened, reopened, synchronize, ready_for_review, converted_to_draft]
 
 permissions:
+  # contents to read .gitattributes from the base branch.
+  contents: read
   pull-requests: write
   issues: write
 
@@ -56,11 +58,20 @@ jobs:
               // linguist-generated, which GitHub collapses in the diff too, read
               // from the base branch so a pull request cannot shrink itself;
               // plus lockfiles and the database schemas the build writes.
-              const glob = g => new RegExp('^' + g
-                .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-                .replace(/\*\*/g, '\0')
-                .replace(/\*/g, '[^/]*')
-                .replace(/\0/g, '.*') + '$');
+              // As git reads a .gitattributes pattern: one with no slash matches
+              // at any depth, a leading slash anchors it to the root.
+              const glob = g => {
+                const anchored = g.includes('/');
+                const body = g.replace(/^\//, '')
+                  .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+                  .replace(/\*\*\//g, '\u0001')
+                  .replace(/\*\*/g, '\0')
+                  .replace(/\*/g, '[^/]*')
+                  .replace(/\?/g, '[^/]')
+                  .replace(/\u0001/g, '(.*/)?')
+                  .replace(/\0/g, '.*');
+                return new RegExp((anchored ? '^' : '(^|/)') + body + '$');
+              };
               let generated = [];
               try {
                 const { data } = await github.rest.repos.getContent({

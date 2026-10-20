@@ -103,8 +103,8 @@ an RFC amending `product-manifest.md` gets its own issue, but a second PR agains
 same amendment does not.
 
 ```bash
-gh issue list --label rfc --state all --limit 100
-gh issue create --title "RFC: <Title>" --body-file <path> --label rfc
+gh issue list --label area:rfc --state all --limit 100
+gh issue create --title "RFC: <Title>" --body-file <path> --label area:rfc
 ```
 
 ## Related
