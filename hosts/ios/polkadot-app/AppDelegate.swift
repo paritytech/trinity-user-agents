@@ -2,9 +2,11 @@ import UIKit
 import TipKit
 import IssueMonitoring
 import Keystore_iOS
+import TrUAPIHost
 
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
+    private let appLaunchID = UUID()
     let logger: LoggerProtocol = Logger.shared
     let issueMonitoringService: IssueMonitoringServiceProtocol = IssueMonitoringFactory.createService(
         dsn: GeneratedSecrets.sentryDSN
@@ -28,6 +30,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         configureTips()
 
         issueMonitoringService.setup()
+        recordProcessStarted()
 
         CoreDurableRecoveryTask.shared.register()
 
@@ -65,6 +68,33 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 }
 
 private extension AppDelegate {
+    func recordProcessStarted() {
+        #if NIGHTLY || SAFETYNET || UNSTABLE || DEBUG
+            issueMonitoringService.recordProcessStarted(
+                HostProcessStartedContext(
+                    appLaunchID: appLaunchID,
+                    monotonicMilliseconds: ProcessInfo.processInfo.systemUptime * 1_000,
+                    appVersion: Bundle.main.appVersion,
+                    appBuild: Bundle.main.appBuild,
+                    appVariant: issueMonitoringAppVariant,
+                    platform: "ios",
+                    osVersion: UIDevice.current.systemVersion,
+                    truapiHostVersion: truapiHostVersion()
+                )
+            )
+        #endif
+    }
+
+    var issueMonitoringAppVariant: String {
+        #if NIGHTLY
+            "nightly"
+        #elseif SAFETYNET
+            "safetynet"
+        #else
+            "debug"
+        #endif
+    }
+
     func configureTips() {
         #if TESTNET_FEATURE
             resetTipsDatastoreIfRequested()

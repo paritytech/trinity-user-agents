@@ -4,4 +4,5 @@ import Foundation
 /// resolves this to a no-op and links no reporting SDK at all.
 public protocol IssueMonitoringServiceProtocol {
     func setup()
+    func recordProcessStarted(_ context: HostProcessStartedContext)
 }
