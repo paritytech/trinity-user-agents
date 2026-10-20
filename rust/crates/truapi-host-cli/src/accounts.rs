@@ -622,6 +622,7 @@ async fn attest_record(
 	let lite_username = attestation::attest(&attestation::AttestConfig {
 		backend_base: network.identity_backend_base.to_string(),
 		asset_hub_ws: network.asset_hub_ws.to_string(),
+		people_ws: network.people_ws.to_string(),
 		network_suffix: network.network_suffix.to_string(),
 		entropy,
 		username_base: record.lite_username.clone(),

@@ -150,6 +150,11 @@ impl AssetHubReader {
 		view_output(&bytes)
 	}
 
+	/// The `specName` and `specVersion` the Asset Hub runtime runs.
+	pub async fn runtime_version(&self) -> Result<(String, u32)> {
+		runtime_version(&self.rpc).await
+	}
+
 	/// One `state_getStorage` read at the best block.
 	async fn raw_storage(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
 		let value: Value = self
@@ -189,4 +194,18 @@ impl DotnsTransport for AssetHubReader {
 	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
 		self.raw_view(dest, input).await
 	}
+}
+
+/// The `specName` and `specVersion` of the runtime the chain behind `rpc` runs.
+pub async fn runtime_version(rpc: &RpcClient) -> Result<(String, u32)> {
+	let version: Value = rpc
+		.request("state_getRuntimeVersion", rpc_params![])
+		.await
+		.context("rpc state_getRuntimeVersion")?;
+	let spec_name = version["specName"].as_str().context("runtime version has no specName")?;
+	let spec_version = version["specVersion"]
+		.as_u64()
+		.and_then(|value| u32::try_from(value).ok())
+		.context("runtime version has no u32 specVersion")?;
+	Ok((spec_name.to_string(), spec_version))
 }
