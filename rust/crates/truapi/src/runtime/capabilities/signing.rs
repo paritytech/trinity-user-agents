@@ -200,7 +200,7 @@ impl Signing for ProductRuntimeHost {
 				};
 				let confirmed = until_cancelled(cx, async {
 					if names_contacts {
-						self.connection.confirm_product_action(review()).await
+						self.connection.confirm_user_action_if_needed(review()).await
 					} else {
 						self.connection
 							.confirm_signature(
@@ -471,7 +471,7 @@ impl ProductRuntimeHost {
 						.confirm_signature(CrossProductSignatureKind::Raw, &inner.account, review)
 						.await
 				} else {
-					self.connection.confirm_product_action(review()).await
+					self.connection.confirm_user_action_if_needed(review()).await
 				}
 			})
 			.await
@@ -514,17 +514,25 @@ impl ProductRuntimeHost {
 		self.connection
 			.require_chain_submit(latest::HostSignPayloadError::PermissionDenied)
 			.await?;
-		let confirmed = until_cancelled(
-			cx,
-			self.connection.platform.confirm_user_action(UserConfirmationReview::SignRaw(
-				SignRawReview::LegacyAccount { request: inner.clone(), watermarked },
-			)),
-		)
-		.await
-		.map_err(signing_call_error)?
-		.map_err(|err| CallError::HostFailure {
-			reason: format!("sign raw confirmation failed: {err:?}"),
-		})?;
+		let review = UserConfirmationReview::SignRaw(SignRawReview::LegacyAccount {
+			request: inner.clone(),
+			watermarked,
+		});
+		// Watermarked bytes cannot pass for a transaction's signing payload, so
+		// a trusted product signs them the way it signs with its own accounts.
+		let confirmation = async {
+			if watermarked {
+				self.connection.confirm_user_action_if_needed(review).await
+			} else {
+				self.connection.platform.confirm_user_action(review).await
+			}
+		};
+		let confirmed = until_cancelled(cx, confirmation)
+			.await
+			.map_err(signing_call_error)?
+			.map_err(|err| CallError::HostFailure {
+				reason: format!("sign raw confirmation failed: {err:?}"),
+			})?;
 		if !confirmed {
 			return Err(CallError::Domain(latest::HostSignPayloadError::Rejected));
 		}

@@ -7,7 +7,8 @@ use crate::{
 	runtime::{signing_host::SigningHostSsoService, sso_service::Dispatch},
 };
 use truapi::versioned::{
-	account::HostAccountSignVrfRequest, signing::HostSignRawWithLegacyAccountRequest,
+	account::HostAccountSignVrfRequest,
+	signing::{HostSignRawWithLegacyAccountRequest, HostSignRawWithLegacyAccountResponse},
 };
 
 /// Allocate an AutoSigning grant for the runtime's own product.
@@ -239,25 +240,72 @@ fn a_relayed_vrf_signature_cannot_reuse_a_local_auto_signing_grant() {
 	);
 }
 
-/// Legacy accounts sign with the user's own keys, not a product's.
+/// The user's own account, `identity`, asked to sign `hello world`.
+fn identity_raw_request(identity: &schnorrkel::Keypair) -> HostSignRawWithLegacyAccountRequest {
+	HostSignRawWithLegacyAccountRequest::V1(v01::HostSignRawWithLegacyAccountRequest {
+		signer: subxt::utils::AccountId32(identity.public.to_bytes()).to_string(),
+		payload: v01::RawPayload::Bytes { bytes: b"hello world".to_vec() },
+	})
+}
+
+/// Bytes the user's account signs inside the `<Bytes>` watermark cannot pass
+/// for a transaction's signing payload, so a trusted product gets that
+/// signature the way it gets one from its own accounts.
 #[test]
-fn a_blessed_product_still_confirms_legacy_account_signing() {
+fn a_trusted_product_signs_watermarked_bytes_with_the_users_account_without_a_prompt() {
 	let platform = granting_platform();
 	let (services, activation) = signing_runtime_with_platform(platform.clone());
 	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 	let runtime = product_runtime_for(services, activation, "dim2.paseo");
 	let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
-	let request =
-		HostSignRawWithLegacyAccountRequest::V1(v01::HostSignRawWithLegacyAccountRequest {
-			signer: subxt::utils::AccountId32(identity.public.to_bytes()).to_string(),
-			payload: v01::RawPayload::Bytes { bytes: b"hello world".to_vec() },
+
+	let HostSignRawWithLegacyAccountResponse::V1(response) = futures::executor::block_on(
+		runtime
+			.sign_raw_with_legacy_account(&CallContext::default(), identity_raw_request(&identity)),
+	)
+	.expect("a trusted product signs without confirmation");
+
+	let signature =
+		schnorrkel::Signature::from_bytes(&response.signature).expect("64-byte signature");
+	let watermarked = identity
+		.public
+		.verify_simple(b"substrate", b"<Bytes>hello world</Bytes>", &signature)
+		.is_ok();
+	assert_eq!((platform.sign_raw_reviews.lock().unwrap().len(), watermarked), (0, true));
+}
+
+/// Every other raw signature with the user's account is shown to the user:
+/// unwatermarked bytes can be a transaction's signing payload, and a product
+/// that is not trusted never skips the prompt.
+#[test]
+fn other_raw_signatures_with_the_users_account_still_ask() {
+	for (product_id, watermarked) in [("dim2.paseo", false), ("myapp.dot", true)] {
+		let platform = granting_platform();
+		let (services, activation) = signing_runtime_with_platform(platform.clone());
+		futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+			.expect("activation succeeds");
+		let runtime = product_runtime_for(services, activation, product_id);
+		let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
+		let request = identity_raw_request(&identity);
+		let cx = CallContext::default();
+
+		#[allow(deprecated)]
+		let signed = futures::executor::block_on(async {
+			if watermarked {
+				runtime.sign_raw_with_legacy_account(&cx, request).await.is_ok()
+			} else {
+				runtime
+					.sign_raw_unwatermarked_deprecated_with_legacy_account(&cx, request)
+					.await
+					.is_ok()
+			}
 		});
 
-	let signed = futures::executor::block_on(
-		runtime.sign_raw_with_legacy_account(&CallContext::default(), request),
-	)
-	.is_ok();
-
-	assert_eq!((signed, platform.sign_raw_reviews.lock().unwrap().len()), (false, 1),);
+		assert_eq!(
+			(signed, platform.sign_raw_reviews.lock().unwrap().len()),
+			(false, 1),
+			"{product_id}, watermarked: {watermarked}",
+		);
+	}
 }
