@@ -71,9 +71,9 @@ final class ChatExtensionStore: ChatExtensionStoring {
     func startObserving() {
         observationTask = Task { [weak self, productBotProvider] in
             do {
-                for try await bots in productBotProvider.observeBots() {
+                for try await event in productBotProvider.observeBots() {
                     guard !Task.isCancelled else { return }
-                    self?.apply(bots)
+                    self?.apply(event)
                 }
             } catch {
                 // Stream completed with error — observation stops
@@ -83,32 +83,30 @@ final class ChatExtensionStore: ChatExtensionStoring {
 
     // MARK: - Private
 
-    /// A product keeps the bot it already has: swapping one would drop the worker it drives, and a
-    /// later build that yields none leaves it in place; only a product that left the list loses
-    /// its bot. A product is enabled when it is listed and again when its bot is built, so the
-    /// list redraws its rows with the bot's metadata.
-    private func apply(_ incoming: ProductBots) {
+    private func apply(_ event: ProductBotEvent) {
+        switch event {
+        case let .listed(products):
+            apply(listed: products)
+        case let .botBuilt(bot):
+            apply(built: bot)
+        }
+    }
+
+    /// A product is enabled when it is listed, so the list draws its rows at once, and loses its
+    /// rows and its bot when it leaves.
+    private func apply(listed incoming: [Product]) {
         let incomingProducts = Dictionary(
-            incoming.products.map { ($0.extensionId, $0) },
-            uniquingKeysWith: { _, last in last }
-        )
-        let incomingBots = Dictionary(
-            incoming.built.map { ($0.identifier, $0) },
+            incoming.map { ($0.extensionId, $0) },
             uniquingKeysWith: { _, last in last }
         )
 
         lock.lock()
 
         let removedIds = Set(products.keys).subtracting(incomingProducts.keys)
-        let addedProductIds = Set(incomingProducts.keys).subtracting(products.keys)
+        let addedIds = Set(incomingProducts.keys).subtracting(products.keys)
         products = incomingProducts
 
         let removedBots = removedIds.compactMap { productBots.removeValue(forKey: $0) }
-        let addedBotIds = Set(incomingBots.keys).subtracting(productBots.keys)
-
-        for id in addedBotIds {
-            productBots[id] = incomingBots[id]
-        }
 
         lock.unlock()
 
@@ -116,14 +114,35 @@ final class ChatExtensionStore: ChatExtensionStoring {
             Task { await bot.dispose() }
         }
 
-        let enabledIds = addedProductIds.union(addedBotIds)
-
-        if !enabledIds.isEmpty {
-            delegate?.didEnableExtensions(enabledIds)
+        if !addedIds.isEmpty {
+            delegate?.didEnableExtensions(addedIds)
         }
 
         if !removedIds.isEmpty {
             delegate?.didDisableExtensions(removedIds)
         }
+    }
+
+    /// The bot takes its product's rows over, so the product is enabled again and the list
+    /// redraws them with the bot's metadata. A product keeps the bot it already has, since
+    /// swapping one would drop the worker it drives, and a bot built for a product that left
+    /// the list is dropped.
+    private func apply(built bot: ProductBot) {
+        lock.lock()
+
+        let takesOver = products[bot.identifier] != nil && productBots[bot.identifier] == nil
+
+        if takesOver {
+            productBots[bot.identifier] = bot
+        }
+
+        lock.unlock()
+
+        guard takesOver else {
+            Task { await bot.dispose() }
+            return
+        }
+
+        delegate?.didEnableExtensions([bot.identifier])
     }
 }

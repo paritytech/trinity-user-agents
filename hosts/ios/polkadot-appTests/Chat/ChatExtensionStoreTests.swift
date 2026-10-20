@@ -9,7 +9,7 @@ import Testing
 
 /// A product's rooms are listed while the product is installed or host-placed. Its bot arrives
 /// only after the manifest resolves and the worker archive downloads, so until then the list
-/// draws the row from the product itself.
+/// draws the row from the product itself, and each bot takes its row over as soon as it is built.
 @Suite("Product chat rows before the bot is built")
 struct ChatExtensionStoreTests {
     private let product = Product(id: "dim2.paseo", name: "Jollity")
@@ -22,16 +22,14 @@ struct ChatExtensionStoreTests {
         let registry = makeRegistry()
         let changes = ChangeFeed(registry)
 
-        provider.emit(ProductBots(products: [product], built: []))
+        provider.emit(.listed([product]))
 
         #expect(try await changes.next() == .enabled([product.extensionId]))
         #expect(registry.hasChatExtension(for: product.extensionId))
         #expect(registry.getChatExtensionBot(for: product.extensionId) == nil)
-        #expect(registry.peerMetadata(for: product.extensionId) == Chat.PeerMetadata(
+        #expect(registry.peerListMetadata(for: product.extensionId) == Chat.PeerListMetadata(
             name: "Jollity",
-            icon: .product(domain: "dim2.paseo"),
-            input: .empty,
-            moreActions: []
+            icon: .product(domain: "dim2.paseo")
         ))
     }
 
@@ -42,13 +40,13 @@ struct ChatExtensionStoreTests {
         let changes = ChangeFeed(registry)
         let bot = makeBot()
 
-        provider.emit(ProductBots(products: [product], built: []))
+        provider.emit(.listed([product]))
         _ = try await changes.next()
-        provider.emit(ProductBots(products: [product], built: [bot]))
+        provider.emit(.botBuilt(bot))
 
         #expect(try await changes.next() == .enabled([product.extensionId]))
         #expect(registry.getChatExtensionBot(for: product.extensionId) === bot)
-        #expect(registry.peerMetadata(for: product.extensionId) == bot.peerMetadata)
+        #expect(registry.peerListMetadata(for: product.extensionId) == bot.peerMetadata.list)
     }
 
     @Test
@@ -57,13 +55,73 @@ struct ChatExtensionStoreTests {
         let registry = makeRegistry()
         let changes = ChangeFeed(registry)
 
-        provider.emit(ProductBots(products: [product], built: [makeBot()]))
+        provider.emit(.listed([product]))
         _ = try await changes.next()
-        provider.emit(ProductBots(products: [], built: []))
+        provider.emit(.botBuilt(makeBot()))
+        _ = try await changes.next()
+        provider.emit(.listed([]))
 
         #expect(try await changes.next() == .disabled([product.extensionId]))
         #expect(!registry.hasChatExtension(for: product.extensionId))
-        #expect(registry.peerMetadata(for: product.extensionId) == nil)
+        #expect(registry.peerListMetadata(for: product.extensionId) == nil)
+    }
+
+    /// A build that finishes after its product left the list must not resurrect the row.
+    @Test
+    @MainActor
+    func aBotBuiltForAProductNoLongerListedIsDropped() async throws {
+        let registry = makeRegistry()
+        let changes = ChangeFeed(registry)
+
+        provider.emit(.listed([product]))
+        _ = try await changes.next()
+        provider.emit(.listed([]))
+        _ = try await changes.next()
+        provider.emit(.botBuilt(makeBot()))
+        provider.emit(.listed([Product(id: "other.paseo", name: "Other")]))
+
+        #expect(try await changes.next() == .enabled(["other.paseo"]))
+        #expect(registry.getChatExtensionBot(for: product.extensionId) == nil)
+        #expect(!registry.hasChatExtension(for: product.extensionId))
+    }
+
+    /// A row is on the list before its bot exists, so a tap must wait for the bot rather than
+    /// open a chat with nothing behind it.
+    @Test
+    @MainActor
+    func aTapOnAListedProductWaitsForItsBot() async throws {
+        let registry = makeRegistry()
+        let changes = ChangeFeed(registry)
+        let model = ChatOpenModel.existingChat(.chatExtension(product.extensionId, roomId: "jollity"))
+
+        provider.emit(.listed([product]))
+        _ = try await changes.next()
+
+        let opening = Task { try await registry.entryRoute(for: model) }
+        provider.emit(.botBuilt(makeBot()))
+
+        guard case let .chat(.existingChat(routedId)) = try await opening.value else {
+            Issue.record("the tap must route into the chat once the bot is built")
+            return
+        }
+        #expect(routedId == .chatExtension(product.extensionId, roomId: "jollity"))
+    }
+
+    /// A broken archive, or any other reason the bot never comes, must end in an error the user
+    /// can read, not in a chat that waits forever.
+    @Test
+    @MainActor
+    func aTapGivesUpWhenTheBotDoesNotComeInTime() async throws {
+        let registry = makeRegistry()
+        let changes = ChangeFeed(registry)
+        let model = ChatOpenModel.existingChat(.chatExtension(product.extensionId, roomId: "jollity"))
+
+        provider.emit(.listed([product]))
+        _ = try await changes.next()
+
+        await #expect(throws: ChatExtensionBotError.self) {
+            try await registry.entryRoute(for: model, botTimeout: .milliseconds(50))
+        }
     }
 }
 

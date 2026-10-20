@@ -108,7 +108,7 @@ private extension ProductBotChatListTests {
         let viewModel = factory.createViewModel(
             assetDisplayInfo: asset.displayInfo,
             model: ChatListModel(
-                establishedChats: [ChatWithPeerMetadata(chat: chat, peerMetadata: bot.peerMetadata)],
+                establishedChats: [ChatWithPeerMetadata(chat: chat, peerMetadata: bot.peerMetadata.list)],
                 pendingIncomingRequestCount: 0,
                 newIncomingRequestCount: 0
             )

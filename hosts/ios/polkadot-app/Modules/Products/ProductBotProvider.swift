@@ -6,16 +6,16 @@ import Operation_iOS
 import Products
 import StructuredConcurrency
 
-/// The products the provider serves bots for, and the bots built so far. A product is listed as
-/// soon as it is known; its bot follows once the manifest resolves and the worker archive
-/// downloads, or never when neither can be read.
-struct ProductBots {
-    let products: [Product]
-    let built: [ProductBot]
+/// What the provider reports: the products it serves bots for, as soon as they are known, and
+/// each bot on its own once its manifest resolved and its worker archive downloaded. A product
+/// whose manifest cannot be read never gets a `botBuilt`.
+enum ProductBotEvent {
+    case listed([Product])
+    case botBuilt(ProductBot)
 }
 
 protocol ProductBotProviding {
-    func observeBots() -> AnyAsyncSequence<ProductBots>
+    func observeBots() -> AnyAsyncSequence<ProductBotEvent>
 }
 
 final class ProductBotProvider: ProductBotProviding {
@@ -48,31 +48,48 @@ final class ProductBotProvider: ProductBotProviding {
         self.logger = logger
     }
 
-    /// Lists every product before building a single bot, so a chat row never waits on the manifest
-    /// or the worker archive.
-    func observeBots() -> AnyAsyncSequence<ProductBots> {
-        var productDicts = productProvider.asyncStream()
-            .scan([String: Product]()) { dict, changes in
-                changes.mergeToDict(dict)
+    /// Reports every product change at once and never waits on a build: each product without a
+    /// bot gets its own build task, which reports the bot when it is ready. A product that leaves
+    /// the list has its build cancelled; one whose build failed is tried again on the next change.
+    func observeBots() -> AnyAsyncSequence<ProductBotEvent> {
+        let (stream, continuation) = AsyncThrowingStream<ProductBotEvent, Error>.makeStream()
+        let builds = ProductBotBuilds()
+
+        let observation = Task { [self] in
+            let productDicts = productProvider.asyncStream()
+                .scan([String: Product]()) { dict, changes in
+                    changes.mergeToDict(dict)
+                }
+
+            do {
+                for try await productDict in productDicts {
+                    let products = await listProducts(from: productDict)
+                    continuation.yield(.listed(products))
+
+                    await builds.keep(only: Set(products.map(\.identifier)))
+
+                    for product in products {
+                        guard await builds.needsBuild(product.identifier) else { continue }
+
+                        await builds.register(product.identifier) {
+                            let bot = await makeBot(for: product)
+                            bot.map { continuation.yield(.botBuilt($0)) }
+                            await builds.finished(product.identifier, built: bot != nil)
+                        }
+                    }
+                }
+
+                continuation.finish()
+            } catch {
+                continuation.finish(throwing: error)
             }
-            .makeAsyncIterator()
-        var listed: [Product]?
 
-        // Pulled by the store, so a new product dict is read only after the previous one's bots
-        // were built, and the consumer's cancellation reaches the resolve in flight.
-        return AsyncThrowingStream(unfolding: { [self] in
-            if let products = listed {
-                listed = nil
-                return await ProductBots(products: products, built: makeBots(for: products))
-            }
+            await builds.cancelAll()
+        }
 
-            guard let productDict = try await productDicts.next() else { return nil }
+        continuation.onTermination = { _ in observation.cancel() }
 
-            let products = await listProducts(from: productDict)
-            listed = products
-
-            return ProductBots(products: products, built: [])
-        }).eraseToAnyAsyncSequence()
+        return stream.eraseToAnyAsyncSequence()
     }
 
     #if targetEnvironment(simulator)
@@ -140,20 +157,10 @@ private extension ProductBotProvider {
 
     /// The last async seam before a bot is built: the file provider that serves the worker runs
     /// synchronously, so the worker's archive and entry module have to be known by now.
-    ///
-    /// Resolved concurrently — serially, one unreachable product delays every other bot.
-    func makeBots(for products: [Product]) async -> [ProductBot] {
-        let resolved = await withTaskGroup(of: ResolvedProduct?.self) { group in
-            for product in products {
-                group.addTask { await self.resolveForBot(product) }
-            }
+    func makeBot(for product: Product) async -> ProductBot? {
+        guard let resolved = await resolveForBot(product), !Task.isCancelled else { return nil }
 
-            return await group.reduce(into: [ResolvedProduct]()) { result, resolved in
-                resolved.map { result.append($0) }
-            }
-        }
-
-        return resolved.compactMap { botFactory.create(resolved: $0) }
+        return botFactory.create(resolved: resolved)
     }
 
     /// Nil for a product whose published manifest is broken. That is the product's bug, and
@@ -191,5 +198,47 @@ private extension ProductBotProvider {
         } catch {
             logger.error("Failed to warm the chat worker archive \(worker.identifier): \(error)")
         }
+    }
+}
+
+/// The build task of every product that has no bot yet, keyed by product id. A product counts as
+/// having a bot from the moment its build starts, so a second list change never builds it twice.
+private actor ProductBotBuilds {
+    private var tasks: [String: Task<Void, Never>] = [:]
+    private var built: Set<String> = []
+
+    func needsBuild(_ productId: String) -> Bool {
+        tasks[productId] == nil && !built.contains(productId)
+    }
+
+    func register(_ productId: String, _ build: @escaping @Sendable () async -> Void) {
+        tasks[productId] = Task(operation: build)
+    }
+
+    /// A build cancelled by `keep(only:)` still reaches here; it must not record a bot for a
+    /// product that left, nor forget a build registered since for the same product.
+    func finished(_ productId: String, built isBuilt: Bool) {
+        guard !Task.isCancelled else { return }
+
+        tasks[productId] = nil
+
+        if isBuilt {
+            built.insert(productId)
+        }
+    }
+
+    /// Cancels the builds and forgets the bots of the products not in `productIds`.
+    func keep(only productIds: Set<String>) {
+        for (productId, task) in tasks where !productIds.contains(productId) {
+            task.cancel()
+            tasks[productId] = nil
+        }
+
+        built = built.intersection(productIds)
+    }
+
+    func cancelAll() {
+        tasks.values.forEach { $0.cancel() }
+        tasks = [:]
     }
 }

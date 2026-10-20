@@ -158,14 +158,9 @@ extension ProductBot: ChatExtensionBotProtocol {
 }
 
 extension Product {
-    /// How the chat list draws this product's rooms before its bot is built: the bot's own name
-    /// and icon, with no input until the bot is there to answer.
-    var peerMetadataWithoutBot: Chat.PeerMetadata {
-        Chat.PeerMetadata(
-            name: name,
-            icon: .product(domain: id),
-            input: .empty,
-            moreActions: []
-        )
+    /// How the chat list draws this product's rooms before its bot is built: the name and icon
+    /// the bot itself will show.
+    var peerListMetadata: Chat.PeerListMetadata {
+        Chat.PeerListMetadata(name: name, icon: .product(domain: id))
     }
 }

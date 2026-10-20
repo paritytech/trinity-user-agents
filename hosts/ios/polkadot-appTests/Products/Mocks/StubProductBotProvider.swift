@@ -2,22 +2,22 @@ import AsyncExtensions
 import Foundation
 @testable import polkadot_app
 
-/// Serves the product snapshots a test emits, in order.
+/// Serves the events a test emits, in order.
 final class StubProductBotProvider: ProductBotProviding {
-    private let stream: AsyncStream<ProductBots>
-    private let continuation: AsyncStream<ProductBots>.Continuation
+    private let stream: AsyncStream<ProductBotEvent>
+    private let continuation: AsyncStream<ProductBotEvent>.Continuation
 
     init() {
-        let (stream, continuation) = AsyncStream<ProductBots>.makeStream()
+        let (stream, continuation) = AsyncStream<ProductBotEvent>.makeStream()
         self.stream = stream
         self.continuation = continuation
     }
 
-    func observeBots() -> AnyAsyncSequence<ProductBots> {
+    func observeBots() -> AnyAsyncSequence<ProductBotEvent> {
         stream.eraseToAnyAsyncSequence()
     }
 
-    func emit(_ bots: ProductBots) {
-        continuation.yield(bots)
+    func emit(_ event: ProductBotEvent) {
+        continuation.yield(event)
     }
 }
