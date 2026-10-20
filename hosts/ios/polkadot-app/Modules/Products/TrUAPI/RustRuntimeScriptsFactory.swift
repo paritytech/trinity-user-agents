@@ -14,7 +14,7 @@ struct NativeHostTelemetry: Encodable {
 
     static func current(hostSessionId: UUID) -> NativeHostTelemetry? {
         #if NIGHTLY || SAFETYNET || UNSTABLE || DEBUG
-            let hostVersion = truapiHostVersion()
+            let hostVersion = TrUAPIHost.truapiHostVersion()
 
             return NativeHostTelemetry(
                 hostSessionId: hostSessionId.uuidString.lowercased(),
