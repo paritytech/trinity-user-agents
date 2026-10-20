@@ -10,13 +10,13 @@
 
         <!-- enable automatic breadcrumbs for user interactions (clicks, swipes, scrolls) -->
         <meta-data android:name="io.sentry.traces.user-interaction.enable" android:value="true" />
-        <!-- enable screenshot for crashes (could contain sensitive/PII data) -->
+        <!-- Crash screenshots remain off; view hierarchy below retains structural evidence. -->
         <meta-data android:name="io.sentry.attach-screenshot" android:value="false" />
         <!-- enable view hierarchy for crashes -->
         <meta-data android:name="io.sentry.attach-view-hierarchy" android:value="true" />
 
-        <!-- enable the performance API by setting a sample-rate, adjust in production env -->
-        <meta-data android:name="io.sentry.traces.sample-rate" android:value="0.1" />
+        <!-- Internal Nightly sessions are few and every trace is useful during investigation. -->
+        <meta-data android:name="io.sentry.traces.sample-rate" android:value="1.0" />
 
     </application>
 </manifest>
