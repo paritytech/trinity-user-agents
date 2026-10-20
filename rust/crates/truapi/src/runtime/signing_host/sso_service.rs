@@ -398,13 +398,13 @@ impl SigningHostSsoService {
 				calling_product_id: request.calling_product_id.clone(),
 				resources: request.resources.clone(),
 			});
-			match self.prompt(cx, review).await {
-				Some(Ok(true)) => {},
-				Some(Ok(false)) => {
-					return Ok(vec![SsoAllocationOutcome::Rejected; request.resources.len()]);
-				},
-				Some(Err(err)) => return Err(format!("confirmation failed: {}", err.reason)),
-				None => return Err(WITHDRAWN.to_string()),
+			let confirmed = self
+				.prompt(cx, review)
+				.await
+				.ok_or_else(|| WITHDRAWN.to_string())?
+				.map_err(|err| format!("confirmation failed: {}", err.reason))?;
+			if !confirmed {
+				return Ok(vec![SsoAllocationOutcome::Rejected; request.resources.len()]);
 			}
 
 			self.signing_host

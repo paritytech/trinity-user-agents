@@ -1092,15 +1092,11 @@ impl ProductAuthority for SigningHost {
 					&owner,
 				)
 				.await
+				.map_err(|err| RingVrfError::Unknown { reason: err.to_string() })?
 				{
-					Ok(PermissionAuthorizationStatus::Authorized) => {},
-					Ok(
-						PermissionAuthorizationStatus::Denied |
-						PermissionAuthorizationStatus::NotDetermined,
-					) => return Err(RingVrfError::Rejected),
-					Err(err) => {
-						return Err(RingVrfError::Unknown { reason: err.to_string() });
-					},
+					PermissionAuthorizationStatus::Authorized => {},
+					PermissionAuthorizationStatus::Denied |
+					PermissionAuthorizationStatus::NotDetermined => return Err(RingVrfError::Rejected),
 				}
 				v01::ProductAccountId {
 					dot_ns_identifier: owner.into(),
@@ -1208,15 +1204,11 @@ impl ProductAuthority for SigningHost {
 				&owner,
 			)
 			.await
+			.map_err(|err| RingVrfError::Unknown { reason: err.to_string() })?
 			{
-				Ok(PermissionAuthorizationStatus::Authorized) => {},
-				Ok(
-					PermissionAuthorizationStatus::Denied |
-					PermissionAuthorizationStatus::NotDetermined,
-				) => return Err(RingVrfError::Rejected),
-				Err(err) => {
-					return Err(RingVrfError::Unknown { reason: err.to_string() });
-				},
+				PermissionAuthorizationStatus::Authorized => {},
+				PermissionAuthorizationStatus::Denied |
+				PermissionAuthorizationStatus::NotDetermined => return Err(RingVrfError::Rejected),
 			}
 		}
 

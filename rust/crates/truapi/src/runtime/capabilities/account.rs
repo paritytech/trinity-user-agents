@@ -64,16 +64,12 @@ impl Account for ProductRuntimeHost {
 					&owner,
 				)
 				.await
+				.map_err(|err| CallError::HostFailure { reason: err.to_string() })?
 				{
-					Ok(PermissionAuthorizationStatus::Authorized) => {},
-					Ok(
-						PermissionAuthorizationStatus::Denied |
-						PermissionAuthorizationStatus::NotDetermined,
-					) => {
+					PermissionAuthorizationStatus::Authorized => {},
+					PermissionAuthorizationStatus::Denied |
+					PermissionAuthorizationStatus::NotDetermined => {
 						return Err(CallError::Domain(latest::HostAccountGetError::Rejected));
-					},
-					Err(err) => {
-						return Err(CallError::HostFailure { reason: err.to_string() });
 					},
 				}
 			} else if self
