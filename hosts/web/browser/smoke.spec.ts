@@ -22,7 +22,6 @@ import {
   type BrowserContext,
   type Frame,
   type Page,
-  chromium,
 } from "playwright-core";
 import {
   type CountingTarget,
@@ -39,6 +38,7 @@ import {
   startCountingTarget,
   startHost,
   startUrlProduct,
+  testBrowser,
 } from "./fixtures.js";
 import { PASEO_DOTNS } from "../src/dotns.js";
 
@@ -67,13 +67,10 @@ beforeAll(async () => {
     "root.js": "document.body.dataset.rootRelative = 'loaded';",
   });
   urlProduct = await startUrlProduct(target.origin);
-  browser = await chromium.launch({
-    executablePath: process.env.CHROMIUM_PATH || undefined,
-  });
+  browser = await testBrowser();
 }, STEP_MS);
 
 afterAll(async () => {
-  await browser?.close();
   urlProduct?.close();
   target?.close();
   await host?.close();

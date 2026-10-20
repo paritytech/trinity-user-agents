@@ -8,7 +8,7 @@ import {
 } from "node:http";
 import { createServer as createTcpServer } from "node:net";
 import { fileURLToPath } from "node:url";
-import type { BrowserContext } from "playwright-core";
+import { chromium, type Browser, type BrowserContext } from "playwright-core";
 import { createServer as createViteServer, type ViteDevServer } from "vite";
 import { PASEO_DOTNS, bytesToHex, namehash } from "../src/dotns.js";
 import { Blocks, car } from "../src/archive/fixtures.js";
@@ -43,6 +43,23 @@ function listen(
         server.listen(port, "127.0.0.1", () => resolve({ server, port }));
       }),
   );
+}
+
+let sharedBrowser: Promise<Browser> | undefined;
+
+/**
+ * The one Chromium for every browser test in this process. `bun test` runs
+ * all files in one process, and under Bun a second Playwright browser's pipe
+ * connection breaks once a closed first browser is garbage collected, so the
+ * browser is launched once and never closed here: tests close their own
+ * contexts, and Playwright ends the browser when the process exits. Set
+ * CHROMIUM_PATH to use a Chromium other than the one playwright-core installs.
+ */
+export function testBrowser(): Promise<Browser> {
+  sharedBrowser ??= chromium.launch({
+    executablePath: process.env.CHROMIUM_PATH || undefined,
+  });
+  return sharedBrowser;
 }
 
 /** The host page from this tree, served by Vite on loopback with its default settings. */

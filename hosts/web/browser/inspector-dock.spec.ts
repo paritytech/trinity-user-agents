@@ -9,8 +9,8 @@
  * still has the inspector docked under it.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { type Browser, type Page, chromium } from "playwright-core";
-import { type RunningHost, startHost } from "./fixtures.js";
+import { type Browser, type Page } from "playwright-core";
+import { type RunningHost, startHost, testBrowser } from "./fixtures.js";
 
 const STEP_MS = 60_000;
 const TEST_MS = 120_000;
@@ -21,13 +21,10 @@ let host: RunningHost;
 
 beforeAll(async () => {
   host = await startHost();
-  browser = await chromium.launch({
-    executablePath: process.env.CHROMIUM_PATH || undefined,
-  });
+  browser = await testBrowser();
 }, STEP_MS);
 
 afterAll(async () => {
-  await browser?.close();
   await host?.close();
 });
 
@@ -61,6 +58,19 @@ const box = (page: Page, selector: string): Promise<Box> =>
     return { left, right, top, bottom, width, height };
   });
 
+/**
+ * Wait until the stage's resize observer has refit the product after a
+ * layout change. The observer runs after layout, so for one frame the
+ * product can still have the scale it had before.
+ */
+const productFitted = (page: Page) =>
+  page.waitForFunction(() => {
+    const frame = document.getElementById("product-frame")!;
+    const stage = document.getElementById("stage")!.getBoundingClientRect();
+    const box = frame.getBoundingClientRect();
+    return box.top >= stage.top && box.bottom <= stage.bottom;
+  });
+
 async function setOpen(
   page: Page,
   panel: "menu" | "inspector",
@@ -83,6 +93,7 @@ describe("the inspector dock", () => {
 
         for (const menuOpen of [true, false]) {
           await setOpen(page, "menu", menuOpen);
+          await productFitted(page);
           const inspector = await box(page, "#inspector");
           const stage = await box(page, "#stage");
           const frame = await box(page, "#product-frame");

@@ -6,13 +6,8 @@
  * installs, or set CHROMIUM_PATH.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import {
-  type Browser,
-  type BrowserContext,
-  type Page,
-  chromium,
-} from "playwright-core";
-import { type RunningHost, startHost } from "./fixtures.js";
+import { type Browser, type BrowserContext, type Page } from "playwright-core";
+import { type RunningHost, startHost, testBrowser } from "./fixtures.js";
 import type { ChatEventBody } from "../src/chat/diagnostics.js";
 import type { ScenarioValues } from "./chat-transport-scenario.js";
 
@@ -188,13 +183,10 @@ let host: RunningHost;
 
 beforeAll(async () => {
   host = await startHost();
-  browser = await chromium.launch({
-    executablePath: process.env.CHROMIUM_PATH || undefined,
-  });
+  browser = await testBrowser();
 }, STEP_MS);
 
 afterAll(async () => {
-  await browser?.close();
   await host?.close();
 });
 
