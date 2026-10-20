@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Runs host-playground inside the Android host on a device or emulator. See ../README.md.
 //
-//   node e2e/host-playground/android/run.mjs --apk <path> --mnemonic-file <path> --out <dir> [--serial <adb serial>]
+//   node e2e/host-playground/android/run.mjs --apk <path> --mnemonic-file <path> --out <dir>
+//     [--serial <adb serial>] [--telemetry-product <DotNS name>]
 
 import { execFile, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -9,15 +10,15 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
 import { classify } from "../report.mjs";
+import { hasMarkerEvent, hasPreviousSessionEnd, validateTelemetryCapture } from "../telemetry-acceptance.mjs";
 
 const SUITE_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 const suite = JSON.parse(readFileSync(join(SUITE_DIR, "tests.json"), "utf8"));
 const pageRunner = readFileSync(join(SUITE_DIR, "page-runner.js"), "utf8");
+const telemetryTap = readFileSync(join(SUITE_DIR, "telemetry-tap.js"), "utf8");
 
 const PACKAGE = `${process.env.APPLICATION_ID || "io.parity.polkadotapp"}.nightly`;
 const ROOT_ACTIVITY = "io.paritytech.polkadotapp.app.root.presentation.root.RootActivity";
-const PRODUCT_DEEP_LINK = `polkadotapp://${suite.product}`;
-const PRODUCT_URL_FRAGMENT = suite.product.split(".")[0];
 const MARKER_TAG = "HostPlaygroundE2E";
 
 const RUNTIME_PERMISSIONS = [
@@ -211,7 +212,7 @@ async function listTargets(port) {
   }
 }
 
-const isProductUrl = (url) => url.includes(PRODUCT_URL_FRAGMENT);
+const isProductUrl = (url) => url.includes(suite.product.split(".")[0]);
 
 // WebView DevTools rejects Playwright's browser-level attach, so this drives the page target directly.
 class PageTarget {
@@ -249,15 +250,21 @@ class PageTarget {
   }
 
   async evaluate(expression) {
+    const { result, exceptionDetails } = await this.command("Runtime.evaluate", {
+      expression,
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    if (exceptionDetails) throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text);
+    return result.value;
+  }
+
+  async command(method, params = {}) {
     if (this.closed) throw new Error("the page target closed");
     const id = this.#nextId++;
     const reply = new Promise((resolve, reject) => this.#pending.set(id, { resolve, reject }));
-    this.#socket.send(
-      JSON.stringify({ id, method: "Runtime.evaluate", params: { expression, awaitPromise: true, returnByValue: true } }),
-    );
-    const { result, exceptionDetails } = await reply;
-    if (exceptionDetails) throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text);
-    return result.value;
+    this.#socket.send(JSON.stringify({ id, method, params }));
+    return reply;
   }
 
   close() {
@@ -266,19 +273,21 @@ class PageTarget {
 }
 
 /** Opens the product's deep link, at most once every DEEP_LINK_RETRY_MS. */
-function deepLinkOpener(adb, { immediately }) {
+function deepLinkOpener(adb, product, { immediately }) {
+  const deepLink = `polkadotapp://${product}`;
   let next = immediately ? 0 : Date.now() + DEEP_LINK_RETRY_MS;
   return async () => {
     if (Date.now() < next) return;
-    log(`opening ${PRODUCT_DEEP_LINK}`);
-    await adb.shell(`am start -a android.intent.action.VIEW -d ${PRODUCT_DEEP_LINK} ${PACKAGE}`, { allowFailure: true });
+    log(`opening ${deepLink}`);
+    await adb.shell(`am start -a android.intent.action.VIEW -d ${deepLink} ${PACKAGE}`, { allowFailure: true });
     next = Date.now() + DEEP_LINK_RETRY_MS;
   };
 }
 
-async function openProduct(adb, forwards) {
+async function openProduct(adb, forwards, product = suite.product) {
+  const productFragment = product.split(".")[0];
   const deadline = Date.now() + PRODUCT_OPEN_TIMEOUT_MS;
-  const openDeepLink = deepLinkOpener(adb, { immediately: true });
+  const openDeepLink = deepLinkOpener(adb, product, { immediately: true });
   while (Date.now() < deadline) {
     await openDeepLink();
     await sleep(POLL_MS);
@@ -294,13 +303,15 @@ async function openProduct(adb, forwards) {
       forwards.set(socket, port);
     }
     const port = forwards.get(socket);
-    const target = (await listTargets(port)).find((candidate) => candidate.type === "page" && isProductUrl(candidate.url));
+    const target = (await listTargets(port)).find(
+      (candidate) => candidate.type === "page" && candidate.url.includes(productFragment),
+    );
     if (!target) continue;
 
-    log(`attaching to ${target.url}`);
+    log(`attaching to ${new URL(target.url).origin}`);
     return PageTarget.connect(port, target);
   }
-  throw new Error(`no WebView showing ${suite.product} within ${PRODUCT_OPEN_TIMEOUT_MS / 1000} s`);
+  throw new Error(`no WebView showing ${product} within ${PRODUCT_OPEN_TIMEOUT_MS / 1000} s`);
 }
 
 async function readyPage(adb, forwards, page) {
@@ -312,7 +323,7 @@ async function readyPage(adb, forwards, page) {
   // A reload drops the injected runner, so injection and the ready check retry together.
   const deadline = Date.now() + READY_TIMEOUT_MS;
   // A paused page never becomes ready, so keep bringing the product to the front.
-  const openDeepLink = deepLinkOpener(adb, { immediately: false });
+  const openDeepLink = deepLinkOpener(adb, suite.product, { immediately: false });
   for (;;) {
     await openDeepLink();
     let ready = false;
@@ -325,6 +336,43 @@ async function readyPage(adb, forwards, page) {
     if (Date.now() >= deadline) throw new Error(`host-playground rendered no tests within ${READY_TIMEOUT_MS / 1000} s`);
     await sleep(READY_POLL_MS);
   }
+}
+
+async function waitForTelemetryCapture(page, accept, failure) {
+  const deadline = Date.now() + READY_TIMEOUT_MS;
+  for (;;) {
+    const capture = await page.evaluate("globalThis.__nativeTelemetryAcceptance?.snapshot() ?? null").catch(() => null);
+    if (capture && accept(capture)) return capture;
+    if (Date.now() >= deadline) throw new Error(failure);
+    await sleep(READY_POLL_MS);
+  }
+}
+
+async function runTelemetryAcceptance(adb, forwards, product, out) {
+  // The first navigation is needed to discover the WebView target, so it emits
+  // ordinary startup telemetry. The uniquely marked probe runs only after the
+  // synthetic Sentry tap is installed for the reload below.
+  const page = await openProduct(adb, forwards, product);
+  const marker = `native-telemetry-e2e-${Date.now().toString(16)}`;
+  const source = telemetryTap.replace('"__NATIVE_TELEMETRY_MARKER__"', JSON.stringify(marker));
+  await page.command("Page.addScriptToEvaluateOnNewDocument", { source });
+  await page.command("Page.reload", { ignoreCache: true });
+
+  const capture = await waitForTelemetryCapture(
+    page,
+    (candidate) => candidate.bootstrap && hasPreviousSessionEnd(candidate) && hasMarkerEvent(candidate, marker),
+    "Jollity emitted no joined previous-session and marked-event envelopes",
+  );
+  const result = validateTelemetryCapture(capture, {
+    platform: "android",
+    marker,
+    candidateRef: process.env.E2E_CANDIDATE_REF ?? "",
+    harnessSha: process.env.E2E_HARNESS_SHA ?? "",
+    product,
+  });
+  writeFileSync(join(out, "telemetry.json"), `${JSON.stringify(result, null, 2)}\n`);
+  page.close();
+  return result;
 }
 
 async function pageShowing(forwards, host) {
@@ -382,6 +430,7 @@ async function main() {
       "mnemonic-file": { type: "string" },
       out: { type: "string" },
       serial: { type: "string" },
+      "telemetry-product": { type: "string" },
     },
   });
   if (!values.apk || !values["mnemonic-file"] || !values.out) {
@@ -395,7 +444,7 @@ async function main() {
   const run = {
     platform: "android",
     app: PACKAGE,
-    product: suite.product,
+    product: values["telemetry-product"] || suite.product,
     hostPlaygroundCommit: suite.hostPlaygroundCommit,
     startedAt: new Date().toISOString(),
     results: [],
@@ -411,7 +460,16 @@ async function main() {
     await seedAccount(adb, resolve(values["mnemonic-file"]));
     stopApprover = startApprover(adb);
 
-    for (const id of suite.tests) {
+    if (values["telemetry-product"]) {
+      const started = Date.now();
+      const result = await runTelemetryAcceptance(adb, forwards, values["telemetry-product"], out);
+      run.results.push({
+        id: "native-telemetry",
+        status: "success",
+        message: `${result.platform} ${result.bootstrap.hostSessionId} reached Jollity`,
+        durationMs: Date.now() - started,
+      });
+    } else for (const id of suite.tests) {
       page = await readyPage(adb, forwards, page);
       log(`running ${id}`);
       let result = await runTest(page, id);
@@ -429,11 +487,12 @@ async function main() {
     run.fatal = error.message;
     // Listed as not run, so the total stays the whole suite.
     const ran = new Set(run.results.map((result) => result.id));
-    for (const id of suite.tests.filter((test) => !ran.has(test))) {
+    const expected = values["telemetry-product"] ? ["native-telemetry"] : suite.tests;
+    for (const id of expected.filter((test) => !ran.has(test))) {
       run.results.push({ id, status: "error", message: `not run: ${error.message}`, durationMs: 0 });
     }
     console.error(`[android e2e] ${error.stack ?? error.message}`);
-    await screenshot(adb, join(out, "fatal.png"));
+    if (!values["telemetry-product"]) await screenshot(adb, join(out, "fatal.png"));
   } finally {
     await stopApprover?.();
     page?.close();
@@ -441,7 +500,7 @@ async function main() {
   }
 
   const failed = fatal !== null || run.results.some((result) => classify(result) === "failed");
-  if (failed) await saveAppLogcat(adb, join(out, "logcat.txt"));
+  if (failed && !values["telemetry-product"]) await saveAppLogcat(adb, join(out, "logcat.txt"));
 
   const resultsPath = join(out, "results.json");
   writeFileSync(resultsPath, `${JSON.stringify(run, null, 2)}\n`);

@@ -10,6 +10,8 @@ Runs the public `host-playground` product inside the iOS and Android host apps a
 
 `.github/workflows/host-playground-e2e.yml` runs in three ways: from each nightly, on the commit it built, adding the results to that nightly's prerelease without ever failing the night; on a pull request labelled `host-playground-e2e`; and by dispatch. Each runner writes `results.json`, `report.md` and diagnostics for failures to `--out`, and exits non-zero when a test failed or the run stopped early.
 
+A manual dispatch defaults to Android. Its Android-only `native-telemetry` mode builds an exact Host commit, opens the requested DotNS product, and writes a sanitized correlation result without raw Sentry envelopes, screenshots, or logcat. The first navigation needed to discover the WebView still emits the product's ordinary startup telemetry; the uniquely marked acceptance event is intercepted after the document-start tap is installed.
+
 The test account must already hold an on-chain username on Paseo. Its mnemonic is read from a file and never printed.
 
 ## Android

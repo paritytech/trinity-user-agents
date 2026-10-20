@@ -6,6 +6,29 @@ on:
   pull_request:
     types: [labeled, synchronize]
   workflow_dispatch:
+    # A bare manual dispatch now runs Android; choose iOS explicitly when needed.
+    inputs:
+      platform:
+        description: "Platform to run"
+        required: true
+        default: android
+        type: choice
+        options: [android, ios]
+      ref:
+        description: "Exact in-repository Host commit to build"
+        required: false
+        type: string
+      mode:
+        description: "Run host-playground or Android Jollity native-telemetry acceptance"
+        required: true
+        default: host-playground
+        type: choice
+        options: [host-playground, native-telemetry]
+      product:
+        description: "DotNS product route for native-telemetry mode"
+        required: true
+        default: dim2next.paseo
+        type: string
   # Each nightly calls this for its own platform and commit.
   workflow_call:
     inputs:
@@ -62,7 +85,7 @@ jobs:
     name: Android emulator
     # Only this label starts a pull request run, and never from a fork.
     if: >-
-      (inputs.platform == '' || inputs.platform == 'android')
+      (inputs.mode == 'native-telemetry' || inputs.platform == '' || inputs.platform == 'android')
       && (github.event_name != 'pull_request'
       || (github.event.pull_request.head.repo.full_name == github.repository
           && ((github.event.action == 'labeled' && github.event.label.name == 'host-playground-e2e')
@@ -78,15 +101,67 @@ jobs:
     timeout-minutes: 120
     env:
       OUT: ${{ github.workspace }}/target/e2e-host-playground/android
+      E2E_CANDIDATE_REF: ${{ inputs.ref || github.sha }}
+      E2E_HARNESS_SHA: ${{ github.sha }}
     steps:
+      - name: Validate telemetry dispatch inputs
+        if: inputs.mode == 'native-telemetry'
+        env:
+          CANDIDATE_REF: ${{ inputs.ref }}
+          PRODUCT: ${{ inputs.product }}
+        run: |
+          set -euo pipefail
+          [[ "${CANDIDATE_REF}" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::native-telemetry requires an exact 40-character commit SHA"
+            exit 1
+          }
+          [[ "${{ inputs.platform }}" == "android" ]] || {
+            echo "::error::native-telemetry currently supports Android only"
+            exit 1
+          }
+          [[ "${PRODUCT}" =~ ^[a-z0-9-]+(\.[a-z0-9-]+)+$ ]] || {
+            echo "::error::native-telemetry product is not a DotNS name"
+            exit 1
+          }
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
 
+      - name: Verify the telemetry candidate checkout
+        if: inputs.mode == 'native-telemetry'
+        env:
+          CANDIDATE_REF: ${{ inputs.ref }}
+        run: test "$(git rev-parse HEAD)" = "${CANDIDATE_REF}"
+
+      # Build the exact candidate while retaining this branch's reviewed,
+      # test-only acceptance driver. Product sources always come from ref.
+      - name: Check out the telemetry acceptance harness
+        if: inputs.mode == 'native-telemetry'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .acceptance-harness
+          persist-credentials: false
+
+      - name: Overlay the telemetry acceptance harness
+        if: inputs.mode == 'native-telemetry'
+        run: |
+          set -euo pipefail
+          cp .acceptance-harness/e2e/host-playground/android/run.mjs e2e/host-playground/android/run.mjs
+          cp .acceptance-harness/e2e/host-playground/telemetry-acceptance.mjs e2e/host-playground/telemetry-acceptance.mjs
+          cp .acceptance-harness/e2e/host-playground/telemetry-acceptance.test.mjs e2e/host-playground/telemetry-acceptance.test.mjs
+          cp .acceptance-harness/e2e/host-playground/telemetry-tap.js e2e/host-playground/telemetry-tap.js
+          rm -rf .acceptance-harness
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
+
+      - name: Test the telemetry acceptance parser
+        if: inputs.mode == 'native-telemetry'
+        run: node --test e2e/host-playground/telemetry-acceptance.test.mjs
 
       - name: Set up the Android build
         uses: ./.github/actions/setup-android-build
@@ -152,6 +227,7 @@ jobs:
       - name: Run host-playground on the emulator
         env:
           APPLICATION_ID: ${{ vars.APPLICATION_ID }}
+          TELEMETRY_ARGUMENT: ${{ inputs.mode == 'native-telemetry' && format('--telemetry-product={0}', inputs.product) || '' }}
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 34
@@ -161,7 +237,9 @@ jobs:
           disable-animations: true
           emulator-boot-timeout: 900
           emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: node e2e/host-playground/android/run.mjs --apk "${RUNNER_TEMP}/app-e2e.apk" --mnemonic-file "${RUNNER_TEMP}/android.mnemonic" --out "${OUT}"
+          # The action executes each script line independently, so keep this one command.
+          # PRODUCT is regex-validated before it can enter the unquoted optional argument.
+          script: node e2e/host-playground/android/run.mjs --apk "${RUNNER_TEMP}/app-e2e.apk" --mnemonic-file "${RUNNER_TEMP}/android.mnemonic" --out "${OUT}" $TELEMETRY_ARGUMENT
 
       - name: Summary
         if: always()
@@ -187,6 +265,8 @@ jobs:
     name: iOS simulator
     # Only this label starts a pull request run, and never from a fork.
     if: >-
+      inputs.mode != 'native-telemetry'
+      &&
       (inputs.platform == '' || inputs.platform == 'ios')
       && (github.event_name != 'pull_request'
       || (github.event.pull_request.head.repo.full_name == github.repository
