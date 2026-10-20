@@ -425,14 +425,14 @@ pub fn engine_with(
 	chain: &Arc<FakeChain>,
 	registry: DurableRegistry,
 ) -> (TempDir, Arc<DurableTxEngine>, Arc<ManualTimer>) {
-	engine_with_spawner(chain, registry, crate::test_support::test_spawner())
+	engine_with_spawner(chain, registry, crate::Spawner::for_test())
 }
 
 /// [`engine_with`], running its background tasks on `spawner`.
 pub fn engine_with_spawner(
 	chain: &Arc<FakeChain>,
 	registry: DurableRegistry,
-	spawner: crate::subscription::Spawner,
+	spawner: crate::Spawner,
 ) -> (TempDir, Arc<DurableTxEngine>, Arc<ManualTimer>) {
 	let (dir, db) = open_db();
 	let timer = Arc::new(ManualTimer::default());
@@ -457,19 +457,4 @@ pub fn insert(db: &Db, domain: &DomainId, extrinsic: MortalExtrinsic) -> Durable
 		db.write(move |tx| super::dao::insert(tx, &domain, None, &extrinsic)),
 	)
 	.unwrap()
-}
-
-/// A spawner running each task on its own thread, counting the tasks that
-/// finished.
-pub fn counting_spawner() -> (crate::subscription::Spawner, Arc<AtomicUsize>) {
-	let finished = Arc::new(AtomicUsize::new(0));
-	let counter = finished.clone();
-	let spawner: crate::subscription::Spawner = Arc::new(move |task| {
-		let counter = counter.clone();
-		std::thread::spawn(move || {
-			futures::executor::block_on(task);
-			counter.fetch_add(1, Ordering::SeqCst);
-		});
-	});
-	(spawner, finished)
 }

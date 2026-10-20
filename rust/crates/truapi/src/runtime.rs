@@ -125,7 +125,7 @@ use truapi::{
 use web_time::Instant;
 
 #[cfg(test)]
-use crate::subscription::Spawner;
+use crate::Spawner;
 use crate::{
 	chain_runtime::RuntimeFailure,
 	host_internal::{
@@ -600,12 +600,12 @@ impl ProductConnection {
 		let (tx, rx) = futures::channel::oneshot::channel();
 		let platform = self.platform.clone();
 		let product = self.product.clone();
-		(self.services.spawner)(Box::pin(async move {
+		self.services.spawner.spawn(async move {
 			let begun = platform.begin_operation(&product, label).await;
 			if let Err(Ok(response)) = tx.send(begun) {
 				let _ = platform.end_operation(&product, response.id).await;
 			}
-		}));
+		});
 		rx.await.unwrap_or_else(|_| {
 			Err(latest::HostWorkerOperationError::Unknown {
 				reason: "the host did not answer".to_string(),
@@ -634,11 +634,11 @@ impl ProductConnection {
 		}
 		let platform = self.platform.clone();
 		let product = self.product.clone();
-		(self.services.spawner)(Box::pin(async move {
+		self.services.spawner.spawn(async move {
 			for id in open {
 				let _ = platform.end_operation(&product, id).await;
 			}
-		}));
+		});
 	}
 
 	/// Release one open operation's demand; unknown ids leave demand unchanged.

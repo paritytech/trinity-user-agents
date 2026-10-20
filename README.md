@@ -298,6 +298,8 @@ so `make dev` leaves the board empty with no error.
 
 Wire ids are append-only per trait: a trait id is never reassigned and a method id is never renumbered or reused within its trait, so deployed products stay compatible across protocol revisions. New methods take the next free method ids in their own trait and leave every other trait untouched. Trait 255 is permanently reserved for a correlated protocol error, allowing either peer to reject API messages introduced after it was released instead of leaving the caller pending.
 
+Rust embedders use `truapi::Spawner::new(handle)` with a Tokio runtime handle on native targets and `truapi::Spawner::default()` on WASM. Shared core code schedules background work with `spawner.spawn(async move { ... })`, which dispatches directly to the platform executor without an adapter callback or explicit task boxing. The native runtime must remain alive to run its tasks.
+
 ## Develop
 
 Common tasks are wrapped in the top-level `Makefile`. Run `make help` for the full list.
@@ -317,7 +319,7 @@ CI and `make check` enforce Rust formatting, including the runtime module tree, 
 
 Rust linting treats correctness and complexity diagnostics as errors, and public Rust items must have documentation.
 
-Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
+Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Unit spawner test helpers live beside `Spawner` in [`spawner.rs`](rust/crates/truapi/src/spawner.rs). Unit helpers use `#[cfg(test)]`: `Spawner::for_test()` provides the default test scheduler, and `Spawner::with_test_scheduler(...)` accepts a custom scheduler. Integration and CLI fixtures own their executor setup and construct `Spawner` through its normal API, without an extra feature flag. Integration tests in `rust/crates/truapi/tests/` share platform helpers and a small `test_spawner()` helper, while frame recording stays with the wire-shape tests that use it.
 
 The native `truapi-host` utility runs pairing and signing hosts against the real
 SSO transport for local end-to-end work. See [Install the CLI](#install-the-cli)

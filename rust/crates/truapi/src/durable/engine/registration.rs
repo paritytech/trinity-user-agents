@@ -96,9 +96,9 @@ impl DurableTxEngine {
 		// bytes that must then be broadcast.
 		let (done, outcome) = oneshot::channel();
 		let engine = self.clone();
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			let _ = done.send(engine.register(genesis, request, on_register).await);
-		}));
+		});
 		outcome.await.unwrap_or(Err(RegistrationError::Db(DbError::Closed)))
 	}
 

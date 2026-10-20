@@ -20,12 +20,12 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::{
+	Spawner,
 	host_logic::statement_store::{
 		SUBMIT_STATEMENT_METHOD, SUBSCRIBE_STATEMENT_METHOD, TopicFilterKind,
 		UNSUBSCRIBE_STATEMENT_METHOD, hex_topic,
 	},
 	host_rpc_client::HostRpcClient,
-	subscription::Spawner,
 };
 
 /// One attempt plus ten retries, 2 s apart, matching the native iOS and Android hosts.

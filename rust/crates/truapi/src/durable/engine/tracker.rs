@@ -45,11 +45,11 @@ impl Attempt {
 /// Watches `extrinsic`, an attempt `engine` already owns, until it settles or
 /// the watch ends, then hands it back.
 pub fn spawn_watch(engine: &Arc<DurableTxEngine>, attempt: Attempt, extrinsic: EncodedExtrinsic) {
-	let engine = engine.clone();
-	(engine.spawner.clone())(Box::pin(async move {
-		engine.watch(attempt, &extrinsic).await;
-		engine.finish_watch(attempt).await;
-	}));
+	let watch_engine = engine.clone();
+	engine.spawner.spawn(async move {
+		watch_engine.watch(attempt, &extrinsic).await;
+		watch_engine.finish_watch(attempt).await;
+	});
 }
 
 impl DurableTxEngine {
@@ -240,11 +240,11 @@ mod tests {
 	use std::sync::atomic::{AtomicUsize, Ordering};
 
 	use crate::{
+		Spawner,
 		durable::{
 			oracle::{DurableRegistry, Unobservable},
 			testing::{
-				FakeChain, GENESIS, ManualTimer, block, block_hash, counting_spawner,
-				engine_with_spawner, extrinsic,
+				FakeChain, GENESIS, ManualTimer, block, block_hash, engine_with_spawner, extrinsic,
 			},
 		},
 		test_support::wait_until,
@@ -296,7 +296,7 @@ mod tests {
 	) -> (Fixture, Option<mpsc::UnboundedSender<WatchEvent>>) {
 		let chain = FakeChain::new(130, 140);
 		let events = prepare(&chain);
-		let (spawner, finished) = counting_spawner();
+		let (spawner, finished) = Spawner::counting();
 		let (dir, engine, timer) = engine_with_spawner(
 			&chain,
 			DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS))),

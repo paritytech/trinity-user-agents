@@ -308,7 +308,7 @@ pub fn start_renewal_loop(services: &Arc<RuntimeServices>, signing_host: &Arc<Si
 	let weak_services = Arc::downgrade(services);
 	let weak_host = Arc::downgrade(signing_host);
 	let spawner = services.spawner.clone();
-	spawner(Box::pin(async move {
+	spawner.spawn(async move {
 		loop {
 			{
 				let (Some(services), Some(signing_host)) =
@@ -324,7 +324,7 @@ pub fn start_renewal_loop(services: &Arc<RuntimeServices>, signing_host: &Arc<Si
 			};
 			futures_timer::Delay::new(delay).await;
 		}
-	}));
+	});
 }
 
 async fn run_tick(services: &Arc<RuntimeServices>, signing_host: &SigningHost) {

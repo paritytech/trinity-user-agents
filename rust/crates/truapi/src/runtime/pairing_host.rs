@@ -38,6 +38,7 @@ use super::{
 	statement_store_rpc::StatementStoreRpc,
 };
 use crate::{
+	Spawner,
 	chain_runtime::ChainRuntime,
 	host_internal::{
 		extrinsic::build_local_transaction,
@@ -56,7 +57,6 @@ use crate::{
 	},
 	runtime::vrf,
 	session_usernames::SessionUsernames,
-	subscription::Spawner,
 };
 
 use crate::platform::{
@@ -579,7 +579,7 @@ impl PairingHost {
 	pub fn start_session_store_sync(self: Arc<Self>, spawner: Spawner) {
 		let pairing_host = Arc::downgrade(&self);
 		drop(self);
-		spawner(Box::pin(async move {
+		spawner.spawn(async move {
 			let Some(booting) = pairing_host.upgrade() else {
 				return;
 			};
@@ -596,7 +596,7 @@ impl PairingHost {
 				#[cfg(test)]
 				pairing_host.session_store_change_ticks.fetch_add(1, Ordering::SeqCst);
 			}
-		}));
+		});
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "account.request_login", product = %product.product_id))]
@@ -680,11 +680,11 @@ impl PairingHost {
 		self.clear_disconnected_session(true).await;
 		if let Some(session) = session {
 			let weak_self = self.weak_self.clone();
-			(self.spawner)(Box::pin(async move {
+			self.spawner.spawn(async move {
 				if let Some(host) = weak_self.upgrade() {
 					let _ = host.submit_disconnected_message(&session).await;
 				}
-			}));
+			});
 		}
 	}
 
@@ -1921,7 +1921,7 @@ impl PairingHost {
 		request: ProductRequest<HostAccountRegisterRingVrfKeyRequest>,
 	) {
 		let weak_self = self.weak_self.clone();
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			let Some(host) = weak_self.upgrade() else {
 				return;
 			};
@@ -1932,7 +1932,7 @@ impl PairingHost {
 			if let Err(error) = host.remote_register_ring_vrf_key(&cx, &session, request).await {
 				warn!(?error, "ring-VRF registration mirror failed");
 			}
-		}));
+		});
 	}
 
 	async fn product_subtree_public_key(
