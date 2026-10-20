@@ -285,9 +285,9 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, String> {
 					return Ok(ShellCommand::Session(SessionCommand::List));
 				},
 				"--clear" => {
-					let Some(name) = arguments.get(1) else {
-						return Err("usage: /session --clear <name>".to_string());
-					};
+					let name = arguments
+						.get(1)
+						.ok_or_else(|| "usage: /session --clear <name>".to_string())?;
 					if arguments.len() != 2 {
 						return Err("usage: /session --clear <name>".to_string());
 					}
