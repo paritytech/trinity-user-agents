@@ -246,20 +246,6 @@ sequenceDiagram
   W->>W: continue from saved checkpoint
 ```
 
-## Code
+## Test
 
-| PR | Layer |
-|---|---|
-| #1314 (merged) | payments by id |
-| #1315 | sessions, `Funding`, overlay, bridge, pack |
-| #1317 | `FundingProvider`, reports, settlement, cancel |
-| #1318 | discovery, quotes, progress, deposit |
-| #1332 | Meld / fund module removal |
-| #1344 | R2 core: limits, payout, refunds, status, resume |
-| #1379 | `AuthTokens` |
-| #1345 / #1355 | iOS / Android: overlay, Purse, detail sheet |
-| #1485 / #1484 | iOS / Android: history rebuild |
-| #1402 | fundtest dev provider |
-| #1275 | manifest `includes.funding` |
-
-Test: `make e2e-funding-cli` (19 cases on #1344).
+`make e2e-funding-cli`: the product and provider battery against a scripted CLI host.
