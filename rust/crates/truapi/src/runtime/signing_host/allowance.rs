@@ -173,9 +173,8 @@ pub async fn allocate_statement_store_allowance(
 			period,
 			network_suffix: &network_suffix,
 			reuse_existing,
-			// Only renewal may reclaim slots belonging to its own ledger.
+			// A slot held by another account is that account's allowance.
 			allow_eviction: false,
-			protected: &[],
 		},
 	)
 	.await?;

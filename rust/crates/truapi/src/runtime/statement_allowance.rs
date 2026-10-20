@@ -416,8 +416,9 @@ struct RegistrationParams<'a> {
 	reuse_existing: bool,
 	// Reuse the caller's first scan; duplicate submissions still need a fresh scan.
 	preselected: Option<Preselected>,
-	// A batch must not revoke allowances it just registered for earlier targets.
-	protected: &'a [u32],
+	// Without it, a retry that finds the period full reports exhaustion rather
+	// than replacing a live slot.
+	allow_eviction: bool,
 }
 
 /// Result of a long-term storage claim attempt.
@@ -628,7 +629,7 @@ async fn register_statement_account(
 					);
 				},
 				SlotSelection::Full { max, occupied } => {
-					if took_over_a_slot {
+					if took_over_a_slot || !params.allow_eviction {
 						return Err(SlotError::NoFreeStatementStoreSlot {
 							period: params.period,
 							max,
@@ -639,13 +640,7 @@ async fn register_statement_account(
 					// let us take, and only then give up.
 					let cooldown = slot::replacement_cooldown(rpc, metadata).await?;
 					let chain_now = slot::read_chain_now_seconds(rpc).await?;
-					match slot::replaceable_slot(
-						&occupied,
-						params.target,
-						chain_now,
-						cooldown,
-						params.protected,
-					) {
+					match slot::replaceable_slot(&occupied, params.target, chain_now, cooldown) {
 						Some(seq) => {
 							took_over_a_slot = true;
 							seq
@@ -815,15 +810,12 @@ pub struct PooledRegistrationParams<'a> {
 	pub reuse_existing: bool,
 	/// Whether a live slot may be replaced once every collection is full.
 	///
-	/// Off for on-demand allocation: connecting a product must not revoke another
-	/// product's allowance, and with a replacement cooldown of a minute nearly
-	/// every occupied slot would qualify. On for the renewal pass, whose job is
-	/// to keep the ledger's own targets alive across period boundaries.
+	/// Off for on-demand allocation and for the renewal pass: neither may revoke
+	/// another account's allowance, and with the runtime's short replacement
+	/// cooldown nearly every occupied slot would qualify. A full period is
+	/// reported as exhaustion instead. Holds for the duplicate-submit retry as
+	/// well.
 	pub allow_eviction: bool,
-	/// Slots the caller has already claimed in this batch and must not lose.
-	/// Scoped per collection, because the same `seq` in two collections is two
-	/// unrelated slots and protecting one must not protect the other.
-	pub protected: &'a [(PersonhoodCollection, u32)],
 }
 
 /// Register statement-store allowance for `target`, pooling slots across every
@@ -854,15 +846,6 @@ pub async fn register_statement_account_pooled(
 	if let Some((collection, seq)) = allocated_in(scans) {
 		return Ok(RegistrationOutcome::AlreadyAllocated { seq, collection });
 	}
-
-	let protected_in = |collection: PersonhoodCollection| -> Vec<u32> {
-		params
-			.protected
-			.iter()
-			.filter(|(candidate, _)| *candidate == collection)
-			.map(|(_, seq)| *seq)
-			.collect()
-	};
 
 	// Only collections we can both prove and have read a table for are usable.
 	let mut free = None;
@@ -911,14 +894,9 @@ pub async fn register_statement_account_pooled(
 			let chain_now = slot::read_chain_now_seconds(rpc).await?;
 			let mut oldest: Option<(usize, u32, u64)> = None;
 			for (index, occupied) in &full {
-				let protected = protected_in(memberships[*index].collection);
-				let Some(seq) = slot::replaceable_slot(
-					occupied,
-					params.target,
-					chain_now,
-					cooldown,
-					&protected,
-				) else {
+				let Some(seq) =
+					slot::replaceable_slot(occupied, params.target, chain_now, cooldown)
+				else {
 					continue;
 				};
 				let since = occupied
@@ -942,7 +920,6 @@ pub async fn register_statement_account_pooled(
 	};
 
 	let membership = &memberships[index];
-	let protected = protected_in(membership.collection);
 	register_statement_account(
 		rpc,
 		metadata,
@@ -952,13 +929,13 @@ pub async fn register_statement_account_pooled(
 			target: params.target,
 			period: params.period,
 			network_suffix: params.network_suffix,
-			ring: membership,
-			reuse_existing: params.reuse_existing,
-			preselected: Some(choice),
 			// A duplicate-submit retry rescans within this collection only. It
 			// is a rare race on a slot we just saw free, and staying put keeps
 			// the retry from quietly moving collections mid-call.
-			protected: &protected,
+			ring: membership,
+			reuse_existing: params.reuse_existing,
+			preselected: Some(choice),
+			allow_eviction: params.allow_eviction,
 		},
 	)
 	.await
@@ -1592,7 +1569,7 @@ mod tests {
 				ring: &ring,
 				reuse_existing: true,
 				preselected,
-				protected: &[],
+				allow_eviction: true,
 			},
 		));
 		(outcome, scripted)
@@ -1635,7 +1612,6 @@ mod tests {
 	fn scripted_pooled(
 		responses: Vec<String>,
 		target: [u8; 32],
-		protected: &[(PersonhoodCollection, u32)],
 		allow_eviction: bool,
 	) -> (Result<RegistrationOutcome, StatementAllowanceError>, ScriptedRpc) {
 		let metadata = test_fixtures::people();
@@ -1675,7 +1651,6 @@ mod tests {
 					network_suffix: b"paseo",
 					reuse_existing: true,
 					allow_eviction,
-					protected,
 				},
 			)
 			.await
@@ -1688,6 +1663,7 @@ mod tests {
 		responses: Vec<String>,
 		target: [u8; 32],
 		submit_error: &str,
+		allow_eviction: bool,
 	) -> Result<RegistrationOutcome, StatementAllowanceError> {
 		let metadata = test_fixtures::people();
 		let extrinsics = test_fixtures::people_extrinsics();
@@ -1725,8 +1701,7 @@ mod tests {
 					period: 7,
 					network_suffix: b"paseo",
 					reuse_existing: true,
-					allow_eviction: true,
-					protected: &[],
+					allow_eviction,
 				},
 			)
 			.await
@@ -1758,7 +1733,7 @@ mod tests {
 		responses.push("null".to_string());
 		responses.push(occupied(target, 5_000));
 
-		let (outcome, _) = scripted_pooled(responses, target, &[], true);
+		let (outcome, _) = scripted_pooled(responses, target, true);
 
 		let RegistrationOutcome::Registered { seq, collection, .. } =
 			outcome.expect("a free LitePeople slot is registrable")
@@ -1779,7 +1754,7 @@ mod tests {
 		responses.push("null".to_string());
 		responses.push(occupied(target, 5_000));
 
-		let (outcome, _) = scripted_pooled(responses, target, &[], true);
+		let (outcome, _) = scripted_pooled(responses, target, true);
 
 		let RegistrationOutcome::Registered { collection, .. } =
 			outcome.expect("a free People slot is registrable")
@@ -1799,7 +1774,7 @@ mod tests {
 			(0..10).map(|seq| (seq == 3).then(|| occupied(target, 4_000))).collect(),
 		);
 
-		let (outcome, scripted) = scripted_pooled(responses, target, &[], true);
+		let (outcome, scripted) = scripted_pooled(responses, target, true);
 
 		assert!(
 			matches!(
@@ -1834,7 +1809,7 @@ mod tests {
 		responses.push("null".to_string());
 		responses.push(occupied(target, 10_000_000));
 
-		let (outcome, _) = scripted_pooled(responses, target, &[], true);
+		let (outcome, _) = scripted_pooled(responses, target, true);
 
 		let RegistrationOutcome::Registered { seq, collection, .. } =
 			outcome.expect("an old LitePeople slot is replaceable")
@@ -1843,33 +1818,6 @@ mod tests {
 		};
 		assert_eq!(collection, PersonhoodCollection::LitePeople);
 		assert_eq!(seq, 0, "seq 0 is the oldest LitePeople slot");
-	}
-
-	/// `protected` is per collection: the same `seq` in two collections is two
-	/// unrelated slots, so protecting one must leave the other evictable.
-	#[test]
-	fn protection_does_not_leak_across_collections() {
-		let target = [0x22; 32];
-		// People holds the oldest slots, so the victim should be People seq 0.
-		// LitePeople seq 0 is protected, and that must not shield People seq 0.
-		let mut responses = tables(
-			(0..20).map(|seq| Some(occupied([0x99; 32], 1_000 + seq))).collect(),
-			(0..10).map(|seq| Some(occupied([0x98; 32], 9_000 + seq))).collect(),
-		);
-		responses.push(chain_clock(10_000_000));
-		responses.push("null".to_string());
-		responses.push(occupied(target, 10_000_000));
-
-		let (outcome, _) =
-			scripted_pooled(responses, target, &[(PersonhoodCollection::LitePeople, 0)], true);
-
-		let RegistrationOutcome::Registered { seq, collection, .. } =
-			outcome.expect("People seq 0 is still replaceable")
-		else {
-			panic!("expected a registration");
-		};
-		assert_eq!(collection, PersonhoodCollection::People);
-		assert_eq!(seq, 0, "protecting LitePeople seq 0 must not protect People seq 0");
 	}
 
 	/// Exhaustion has to name the pooled budget. Reporting one collection's share
@@ -1885,7 +1833,7 @@ mod tests {
 		);
 		responses.push(chain_clock(10_000_000));
 
-		let (outcome, _) = scripted_pooled(responses, target, &[], true);
+		let (outcome, _) = scripted_pooled(responses, target, true);
 
 		let err = outcome.expect_err("a full pool cannot register");
 		assert!(
@@ -1919,6 +1867,7 @@ mod tests {
 			responses,
 			target,
 			"User error: Invalid Transaction (1010)",
+			true,
 		)
 		.unwrap_err();
 
@@ -1944,7 +1893,7 @@ mod tests {
 		responses.extend((0..20).map(|seq| occupied([0x99; 32], 1_000 + seq)));
 
 		// A duplicate-submit rejection drives the retry.
-		let err = scripted_pooled_with_submit_error(responses, target, "Priority is too low")
+		let err = scripted_pooled_with_submit_error(responses, target, "Priority is too low", true)
 			.unwrap_err();
 
 		// Exhaustion, not a second eviction, and it names the pooled budget.
@@ -2050,7 +1999,7 @@ mod tests {
 		responses.extend((0..20).map(|_| occupied([0x99; 32], 9_999_999)));
 		responses.push(chain_clock(10_000_000));
 
-		let err = scripted_pooled_with_submit_error(responses, target, "Priority is too low")
+		let err = scripted_pooled_with_submit_error(responses, target, "Priority is too low", true)
 			.unwrap_err();
 
 		assert!(
@@ -2065,18 +2014,53 @@ mod tests {
 		);
 	}
 
+	/// Without eviction, a duplicate-submit retry that finds the period full
+	/// reports exhaustion. Replacing a slot there would revoke another account's
+	/// allowance the caller never agreed to touch.
+	#[test]
+	fn a_retry_without_eviction_does_not_replace_a_slot() {
+		let target = [0x22; 32];
+		let mut responses =
+			tables((0..20).map(|_| None).collect(), (0..10).map(|_| None).collect());
+		// Ring revision, then the rescan: People is now full, and every slot is
+		// past its replacement cooldown.
+		responses.push("null".to_string());
+		responses.extend((0..20).map(|seq| occupied([0x99; 32], 1_000 + seq)));
+		responses.push(chain_clock(10_000_000));
+
+		let err =
+			scripted_pooled_with_submit_error(responses, target, "Priority is too low", false)
+				.unwrap_err();
+
+		assert!(
+			matches!(
+				err,
+				StatementAllowanceError::Slot(SlotError::NoFreeStatementStoreSlot {
+					period: 7,
+					max: 30
+				})
+			),
+			"a retry without eviction must report exhaustion: {err:?}"
+		);
+	}
+
 	/// Connecting a product must not revoke another product's allowance. A full
-	/// period is exhaustion, and reclaiming space is the renewal pass's job.
+	/// period is exhaustion.
 	#[test]
 	fn on_demand_allocation_reports_exhaustion_rather_than_evicting() {
 		let target = [0x22; 32];
 		// Everything full and old enough that eviction would succeed if allowed.
-		let responses = tables(
+		let mut responses = tables(
 			(0..20).map(|seq| Some(occupied([0x99; 32], 1_000 + seq))).collect(),
 			(0..10).map(|seq| Some(occupied([0x98; 32], 1_000 + seq))).collect(),
 		);
+		// What a replacement would read next, so an eviction completes and fails
+		// the assertion below rather than running out of script.
+		responses.push(chain_clock(10_000_000));
+		responses.push("null".to_string());
+		responses.push(occupied(target, 10_000_000));
 
-		let (outcome, scripted) = scripted_pooled(responses, target, &[], false);
+		let (outcome, scripted) = scripted_pooled(responses, target, false);
 
 		let err = outcome.expect_err("a full pool cannot allocate without evicting");
 		assert!(
@@ -2195,7 +2179,7 @@ mod tests {
 				ring: &ring,
 				reuse_existing: true,
 				preselected: None,
-				protected: &[],
+				allow_eviction: true,
 			},
 		));
 
@@ -2249,7 +2233,7 @@ mod tests {
 				ring: &ring,
 				reuse_existing: true,
 				preselected: None,
-				protected: &[],
+				allow_eviction: true,
 			},
 		))
 		.unwrap_err();
@@ -2298,7 +2282,7 @@ mod tests {
 				ring: &ring,
 				reuse_existing: true,
 				preselected: None,
-				protected: &[],
+				allow_eviction: true,
 			},
 		))
 		.unwrap_err();
@@ -2342,7 +2326,7 @@ mod tests {
 				ring: &ring,
 				reuse_existing: true,
 				preselected: None,
-				protected: &[],
+				allow_eviction: true,
 			},
 		))
 		.unwrap_err();
