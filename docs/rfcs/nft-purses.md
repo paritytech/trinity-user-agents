@@ -114,6 +114,7 @@ enum ItemStatus {
 #### Create purse
 
 ```rust
+// `name` is at most 64 bytes of UTF-8. A longer name fails with GenericError.
 fn create_purse(name: String) -> Result<PurseId, GenericError>;
 ```
 
