@@ -57,9 +57,12 @@ struct PocketCardFlightTests {
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), origin: origin)
         let window = try await presentCard(screen)
 
+        var wholeWhileShowing = false
+        origin.onMove = { placement in
+            wholeWhileShowing = wholeWhileShowing || !placement.cleared && screen.view.window != nil
+        }
         origin.slot = nil
         screen.dismiss(animated: true)
-        let wholeWhileShowing = await eventually { !origin.placement.cleared && screen.view.window != nil }
         let closed = await eventually { screen.view.window == nil }
 
         #expect([wholeWhileShowing, closed] == [true, true])

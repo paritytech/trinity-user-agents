@@ -27,6 +27,8 @@ final class FakePocketCardOrigin: PocketCardOrigin {
     private(set) var placement = PocketPlacement()
     /// Every placement the screen has asked for, in order.
     private(set) var moves: [PocketPlacement] = []
+    /// Runs on every placement the screen asks for, as it asks.
+    var onMove: ((PocketPlacement) -> Void)?
 
     init(slot: CGRect?) {
         self.slot = slot
@@ -44,6 +46,7 @@ final class FakePocketCardOrigin: PocketCardOrigin {
         placement.offset = offset
         placement.cleared = clearingPocket
         moves.append(placement)
+        onMove?(placement)
     }
 }
 
