@@ -23,6 +23,7 @@ correctness = "warn"
 
 [dependencies]
 truapi = { path = "../truapi" }
+trinity-stack = { path = "../trinity-stack" }
 anyhow = { workspace = true }
 arboard = { workspace = true, features = ["image-data"] }
 async-trait = { workspace = true }
@@ -35,6 +36,7 @@ flate2 = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }
 fs2 = { workspace = true }
+getrandom = { workspace = true }
 hex = { workspace = true }
 image = { workspace = true, features = ["jpeg", "png", "webp"] }
 parity-scale-codec = { workspace = true, features = ["derive"] }
