@@ -1,6 +1,7 @@
 //! The chain capabilities implemented directly on `ChainRuntime`, over its
-//! per-chain subxt clients: the legacy client for reads and validation, the
-//! shared chainHead client for submission. One file per capability.
+//! per-chain subxt clients: the legacy client for reads, storage snapshots
+//! and validation, the shared chainHead client for submission. One file per
+//! capability.
 
 use core::error::Error;
 
@@ -12,6 +13,7 @@ use crate::chain_runtime::{ChainRuntime, LegacyConnection, RuntimeFailure};
 
 mod block_backend;
 mod heads;
+mod storage_snapshots;
 mod tx_submitter;
 mod tx_validator;
 

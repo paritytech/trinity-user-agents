@@ -23,6 +23,8 @@ use crate::{
 	test_support::{ScriptedProvider, notification_sender, test_spawner, wait_for_sent},
 };
 
+mod storage_snapshots;
+
 const GENESIS: H256 = H256([0xab; 32]);
 const FOLLOW_ID: &str = "follow-1";
 const FINALIZED_SUBSCRIPTION: &str = "finalized-heads";
@@ -36,6 +38,10 @@ struct Node {
 	best: u64,
 	bodies: HashMap<H256, Vec<Vec<u8>>>,
 	events: HashMap<H256, Vec<u8>>,
+	/// Storage values `state_queryStorageAt` answers, by block and key.
+	storage: HashMap<H256, HashMap<Vec<u8>, Vec<u8>>>,
+	/// Keys `state_queryStorageAt` leaves out of its answer.
+	unanswered_keys: HashSet<Vec<u8>>,
 	/// Heights `chain_getBlockHash` answers `null` for although they exist,
 	/// as a light client does for every height it cannot verify.
 	unservable_heights: HashSet<u64>,
@@ -64,6 +70,8 @@ impl Node {
 			best,
 			bodies: HashMap::new(),
 			events: HashMap::new(),
+			storage: HashMap::new(),
+			unanswered_keys: HashSet::new(),
 			unservable_heights: HashSet::new(),
 			unservable_bodies: HashSet::new(),
 			validation: Validation::Valid,
@@ -92,6 +100,26 @@ impl Node {
 			Validation::ValidOnlyAtBest => parse_hash(at) == Some(self.block(self.best).hash),
 		};
 		validation_output(valid)
+	}
+
+	/// One change set holding every requested key the node answers for, with
+	/// `null` for the absent ones.
+	fn query_storage_at(&self, params: &Value) -> Value {
+		let at = parse_hash(&params[1]).unwrap();
+		let stored = self.storage.get(&at);
+		let changes: Vec<Value> = params[0]
+			.as_array()
+			.unwrap()
+			.iter()
+			.map(|key| hex::decode(key.as_str().unwrap().trim_start_matches("0x")).unwrap())
+			.filter(|key| !self.unanswered_keys.contains(key))
+			.map(|key| {
+				let value = stored.and_then(|stored| stored.get(&key));
+				let value = value.map(|value| format!("0x{}", hex::encode(value)));
+				json!([format!("0x{}", hex::encode(&key)), value])
+			})
+			.collect();
+		json!([{"block": at, "changes": changes}])
 	}
 
 	fn respond(&mut self, request: &str) -> Vec<String> {
@@ -151,6 +179,7 @@ impl Node {
 					.map(|events| json!(format!("0x{}", hex::encode(events))));
 				vec![response(events.unwrap_or(Value::Null))]
 			},
+			"state_queryStorageAt" => vec![response(self.query_storage_at(params))],
 			"chain_subscribeFinalizedHeads" => vec![response(json!(FINALIZED_SUBSCRIPTION))],
 			"chain_subscribeNewHeads" => vec![response(json!(BEST_SUBSCRIPTION))],
 			"chainHead_v1_follow" => {
