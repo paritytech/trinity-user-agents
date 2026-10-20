@@ -2,6 +2,10 @@ import Foundation
 import Products
 import TrUAPIHost
 
+private func currentTrUAPIHostVersion() -> String {
+    truapiHostVersion()
+}
+
 struct NativeHostTelemetry: Encodable {
     let hostSessionId: String
     let appVersion: String?
@@ -14,7 +18,7 @@ struct NativeHostTelemetry: Encodable {
 
     static func current(hostSessionId: UUID) -> NativeHostTelemetry? {
         #if NIGHTLY || SAFETYNET || UNSTABLE || DEBUG
-            let hostVersion = TrUAPIHost.truapiHostVersion()
+            let hostVersion = currentTrUAPIHostVersion()
 
             return NativeHostTelemetry(
                 hostSessionId: hostSessionId.uuidString.lowercased(),
