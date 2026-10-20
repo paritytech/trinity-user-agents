@@ -24,7 +24,8 @@ and Scarcity, are always present and removable by neither.
 A face is drawn through the [Unified Renderer](https://github.com/paritytech/trinity-user-agents/pull/633)'s
 `PocketCard` context, and a card's back on `PocketCardBack`. The collection itself is one `Pocket` trait with two
 methods, a Pocket section in the Worker manifest, and a deeplink grammar that names a target modality. An opened card
-adds one `ExpandedCard` trait, through which the Widget moves the face out of the way and back.
+adds one `ExpandedCard` trait, through which the Widget moves the face out of the way and back, and turns a card with a
+back over.
 
 Tracking issue: [#563](https://github.com/paritytech/trinity-user-agents/issues/563).
 
@@ -102,6 +103,12 @@ always settles flat on one side, and never shows a side mirrored. A card without
 collection never turns. Closing the card returns it to its front. The host loads the back no later than when the card
 opens, so turning never waits on it. On an opened card both sides count as on screen, an exception to the renderer's
 Live rule, since the back is one turn away.
+
+The Widget can turn the card too, with `ExpandedCard::set_back_shown`, for example from a button for a user who does not
+know the card turns. The call sets which side is up rather than turning by half a turn, so repeating it changes nothing.
+A call that arrives while the user is dragging the card, to turn it or to move the face, has no effect and is answered
+`UserMoving`. A card without a back answers `NoBack`. Turning while the face is moved away changes the side the face
+shows when it comes back.
 
 ### Lifecycle
 
@@ -264,10 +271,11 @@ another product's cards. A host with no Pocket surface answers `remove_card` wit
 `list_subscribe` with the same error, which a product reads as an unsupported host rather than as an empty collection.
 
 The expanded card's call comes from the Widget, and `Pocket` is reachable only from the worker. An execution restriction
-applies to a whole trait, so the call is a trait of its own, `23`, with `set_face_shown` as method `0`.
+applies to a whole trait, so the calls are a trait of their own, `23`, with `set_face_shown` as method `0` and
+`set_back_shown` as method `1`.
 
 ```rust
-/// The face drawn above the calling Widget when the Widget is an expanded card.
+/// The card above the calling Widget when the Widget is an expanded card.
 #[wire_trait(id = 23)]
 #[crate::service(required_execution = Widget)]
 #[crate::async_trait]
@@ -279,6 +287,14 @@ pub trait ExpandedCard: Send + Sync {
         cx: &CallContext,
         request: HostExpandedCardSetFaceShownRequest,
     ) -> Result<HostExpandedCardSetFaceShownResponse, CallError<HostExpandedCardSetFaceShownError>>;
+
+    /// Turn the card so its back (`true`) or its front (`false`) is up. Succeeds when that side is already up.
+    #[wire(id = 1)]
+    async fn set_back_shown(
+        &self,
+        cx: &CallContext,
+        request: HostExpandedCardSetBackShownRequest,
+    ) -> Result<HostExpandedCardSetBackShownResponse, CallError<HostExpandedCardSetBackShownError>>;
 }
 ```
 
@@ -299,11 +315,31 @@ pub enum HostExpandedCardSetFaceShownError {
         reason: String,
     },
 }
+
+pub struct HostExpandedCardSetBackShownRequest {
+    /// `true` turns the back up, `false` turns the front up.
+    pub shown: bool,
+}
+
+pub enum HostExpandedCardSetBackShownError {
+    /// The Widget is not shown under its card right now.
+    NotPresented,
+    /// The user is dragging the card; the request had no effect.
+    UserMoving,
+    /// The card has no back to turn to.
+    NoBack,
+    /// Catch-all.
+    Unknown {
+        /// Human-readable reason.
+        reason: String,
+    },
+}
 ```
 
-`HostExpandedCardSetFaceShownResponse` is a bare `V1`, as `remove_card`'s is. The call moves the face above the Widget
-that made it, so no request names a card. An App or Worker caller is `Denied`, a host without expanded cards answers
-`Unsupported`, and a call made while the user is moving the face answers `UserMoving`.
+`HostExpandedCardSetFaceShownResponse` and `HostExpandedCardSetBackShownResponse` are bare `V1`s, as `remove_card`'s is.
+Each call acts on the card above the Widget that made it, so no request names a card. An App or Worker caller is
+`Denied`, a host without expanded cards answers `Unsupported`, and a call made while the user is moving the card answers
+`UserMoving`.
 
 ## Trade-offs
 
@@ -324,6 +360,8 @@ that made it, so no request names a card. An App or Worker caller is `Denied`, a
 - **Pocket declares no rendering method of its own.** A `card_render` and `action_subscribe` pair keyed by `card_id` was
   considered and dropped: a face is a body like any other, and a pair per surface costs four wire ids each and gives a
   product one handler per surface to register.
+- **`set_back_shown` sets a side, it does not toggle.** A toggle undoes itself when called twice or when it races the
+  user's own turn. Naming the side makes every call safe to repeat, as `set_face_shown` is.
 - **The side is a context variant, not a render payload.** The render request has to name the side to draw, and a
   variant names it for presses too, so a product needs no action-id convention to tell the sides apart. A product on an
   SDK without the variant refuses back renders and keeps its front.
@@ -340,5 +378,5 @@ that made it, so no request names a card. An App or Worker caller is `Denied`, a
 - **Material effects on a face.** Predefined surface effects a card picks, animated by device orientation. Not specified
   here: a privileged card is host-placed, so a host can attach one by card identity, and anything a third-party card
   picks belongs in the renderer's `Effect` vocabulary.
-- **Turns other than the user's drag.** A tap target that turns the card, and a call that lets the product turn it, are
-  left for later and can reuse the same turn.
+- **A tap target that turns the card.** Left for later. It can reuse the same turn, and until then a product can turn
+  the card from its Widget.
