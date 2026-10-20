@@ -8,7 +8,9 @@
 use super::*;
 
 use crate::{
-	platform::CoreStorage, runtime::product_manifest::CachedManifest, test_support::account_id,
+	platform::{CoreStorage, CoreStorageKey},
+	runtime::product_manifest::CachedManifest,
+	test_support::account_id,
 	unix_time::current_unix_secs,
 };
 use futures::FutureExt as _;
@@ -24,10 +26,10 @@ fn cache_grant(platform: &StubPlatform, owner: &str, trusted: &str) {
 		fetched_at_secs: current_unix_secs(),
 		json: Some(format!(r#"{{"$v":1,"trustedProducts":{trusted}}}"#)),
 	};
-	futures::executor::block_on(
-		platform
-			.write_core_storage(ProductId::for_test(owner).manifest_cache_key(), entry.encode()),
-	)
+	futures::executor::block_on(platform.write_core_storage(
+		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+		entry.encode(),
+	))
 	.expect("stub core storage accepts the entry");
 }
 

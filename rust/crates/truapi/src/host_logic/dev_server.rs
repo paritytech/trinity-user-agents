@@ -11,7 +11,7 @@ use core::{net::Ipv4Addr, str::FromStr};
 
 use url::{Host, Url};
 
-use crate::platform::{ProductId, RuntimeConfigValidationError};
+use crate::platform::{ProductId, ProductIdError};
 
 const HTTP_PREFIX: &str = "http://";
 const HTTPS_PREFIX: &str = "https://";
@@ -47,7 +47,7 @@ pub enum DevServerError {
 	/// The `product_id` query is not an identifier the core runs a product
 	/// under.
 	#[error(transparent)]
-	InvalidProductId(RuntimeConfigValidationError),
+	InvalidProductId(ProductIdError),
 }
 
 /// Accepts `localhost` and loopback or private IPv4 hosts over `http`, with or

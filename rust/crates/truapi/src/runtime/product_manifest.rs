@@ -10,7 +10,7 @@
 
 use core::{future::Future, time::Duration};
 
-use crate::platform::{PermissionAuthorizationStatus, Platform, ProductId};
+use crate::platform::{CoreStorageKey, PermissionAuthorizationStatus, Platform, ProductId};
 use parity_scale_codec::{Decode, Encode};
 use tracing::{info, instrument, warn};
 use truapi::v01;
@@ -200,7 +200,7 @@ pub struct CachedManifest {
 /// Encode a root manifest the way the core caches it, for a host that seeds a
 /// grant instead of resolving one.
 ///
-/// Write the bytes under [`ProductId::manifest_cache_key`] for the product the
+/// Write the bytes under [`CoreStorageKey::product_manifest`] for the product the
 /// manifest belongs to. The core reads that entry before it consults the Asset
 /// Hub, so a seeded manifest answers a grant on a host with no dotNS access at
 /// all — which is what makes a cross-product flow reachable locally, before
@@ -522,7 +522,7 @@ async fn root_manifest(
 	platform: &dyn Platform,
 	target: &ProductId,
 ) -> Option<String> {
-	let key = target.manifest_cache_key();
+	let key = CoreStorageKey::product_manifest(target);
 	let now = current_unix_secs();
 	// `fetched_at_secs <= now` is part of the freshness test, not an assumption.
 	// Without it a `saturating_sub` on a future stamp yields 0, which is below

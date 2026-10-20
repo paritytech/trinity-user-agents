@@ -4,7 +4,7 @@
 
 use truapi::platform::{
 	HostIdentity, HostInfo, PairingHostConfig, Platform, PlatformInfo, ProductContext, ProductId,
-	ProductStorageKey, RuntimeConfigValidationError,
+	ProductIdError, ProductStorageKey, RuntimeConfigValidationError,
 };
 
 fn _assert_platform_bounds<T: Platform + Send + Sync + 'static>() {}
@@ -133,13 +133,15 @@ fn product_context_validation_cases() {
 	for domain in ["example.com", "example.org", "dotli.dotty"] {
 		assert_eq!(
 			ProductContext::new(domain.to_string()).map(|_| ()),
-			Err(RuntimeConfigValidationError::InvalidProductId { product_id: domain.to_string() }),
+			Err(RuntimeConfigValidationError::InvalidProductId(ProductIdError::Invalid {
+				product_id: domain.to_string(),
+			})),
 			"{domain} must not be accepted as a product identifier"
 		);
 	}
 	assert_eq!(
 		ProductContext::new(" ".to_string()).map(|_| ()),
-		Err(RuntimeConfigValidationError::EmptyField { field: "product_id" })
+		Err(RuntimeConfigValidationError::InvalidProductId(ProductIdError::Empty))
 	);
 }
 

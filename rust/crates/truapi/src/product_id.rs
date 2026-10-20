@@ -4,22 +4,21 @@ use core::str::FromStr;
 
 use parity_scale_codec::{Decode, Encode};
 
-use super::{
-	CoreStorageKey, RuntimeConfigValidationError, has_dotns_tld, is_dns_label, require_non_empty,
+use crate::{
+	CallError,
+	dotns_name::{has_dotns_tld, is_dns_label},
 };
 
-/// Largest accepted product identifier, in bytes.
-///
-/// Bounds the size of one identifier, not how many exist: a manifest miss
-/// caches its answer keyed by the target and nothing evicts those entries.
-/// Matches the cap on product-supplied chat identifiers.
+/// Largest accepted product identifier, in bytes. Manifest lookups are cached
+/// per id and never evicted, so this keeps each cache entry small. Matches the
+/// cap on chat identifiers.
 pub const PRODUCT_ID_MAX_BYTES: usize = 256;
 
 /// Blessed product labels across every network in [`DOTNS_TLDS`].
 ///
 /// These products bypass recorded permissions and prompt only for device access.
 ///
-/// [`DOTNS_TLDS`]: super::DOTNS_TLDS
+/// [`DOTNS_TLDS`]: crate::dotns_name::DOTNS_TLDS
 pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", GAME_PRODUCT_LABEL, "stash"];
 
 /// The bare label of the game product, Jollity, on every network.
@@ -34,51 +33,78 @@ const LOCALHOST_PORT_PREFIX: &str = "localhost:";
 /// A product identifier in normalized form: trimmed, lowercased, and either a
 /// name dotNS can register or a localhost development identifier.
 ///
-/// Only its [`FromStr`] implementation builds one, so holding a `ProductId` means the
-/// normalization already happened, and two values compare equal exactly when
-/// they name the same product executable. Encodes as the identifier string.
+/// Only [`FromStr`] builds one, so two values are equal exactly when they name
+/// the same product executable. Encodes as the identifier string.
 ///
-/// Host-spec C.7 defines accepted product id forms:
+/// Accepted forms are defined in host-spec C.7:
 /// <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/C-account-derivation.md?plain=1#L109-L128>
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, derive_more::Display)]
 pub struct ProductId(String);
 
+/// Why a string is not a product identifier.
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+pub enum ProductIdError {
+	/// The identifier was empty or whitespace-only.
+	#[display("product_id must not be empty")]
+	Empty,
+	/// The identifier was not a dotNS or localhost product identifier.
+	#[display("product_id must be a dotNS or localhost product identifier, got {product_id:?}")]
+	Invalid {
+		/// The identifier as received.
+		product_id: String,
+	},
+	/// The identifier was longer than [`PRODUCT_ID_MAX_BYTES`] after normalization.
+	///
+	/// Holds the lengths rather than the id, since the id can be huge.
+	#[display("product_id must be at most {limit} bytes, got {actual}")]
+	TooLong {
+		/// Accepted maximum, in bytes.
+		limit: usize,
+		/// Normalized length, in bytes.
+		actual: usize,
+	},
+}
+
+/// A product-supplied id that does not parse is a malformed request, not a
+/// host failure.
+impl<D> From<ProductIdError> for CallError<D> {
+	fn from(error: ProductIdError) -> Self {
+		CallError::MalformedFrame { reason: error.to_string() }
+	}
+}
+
 /// Normalizes a product identifier received in any accepted spelling.
 impl FromStr for ProductId {
-	type Err = RuntimeConfigValidationError;
+	type Err = ProductIdError;
 
 	fn from_str(product_id: &str) -> Result<Self, Self::Err> {
 		let trimmed = product_id.trim();
-		require_non_empty("product_id", trimmed)?;
+		if trimmed.is_empty() {
+			return Err(ProductIdError::Empty);
+		}
 		let normalized = trimmed.to_ascii_lowercase();
-		// Reported by length rather than by value: an id that trips this can be
-		// arbitrarily large.
+		// Don't echo the id back: it can be any size.
 		if normalized.len() > PRODUCT_ID_MAX_BYTES {
-			return Err(RuntimeConfigValidationError::ProductIdTooLong {
+			return Err(ProductIdError::TooLong {
 				limit: PRODUCT_ID_MAX_BYTES,
 				actual: normalized.len(),
 			});
 		}
 		if !has_well_formed_labels(&normalized) {
-			return Err(RuntimeConfigValidationError::InvalidProductId {
-				product_id: product_id.to_string(),
-			});
+			return Err(ProductIdError::Invalid { product_id: product_id.to_string() });
 		}
 		if is_localhost_form(&normalized) {
 			return Ok(Self(normalized));
 		}
-		// `localhost` is reserved as a label, not only as a bare identifier. A
-		// product published as `localhost.<tld>` would otherwise be one string
-		// comparison away from whatever a host grants the development wildcard.
+		// `localhost` is reserved as a label too, so a published
+		// `localhost.<tld>` cannot pass for a development id.
 		let reserves_localhost = normalized
 			.rsplit_once('.')
 			.is_some_and(|(label, _tld)| label == LOCALHOST_PRODUCT_LABEL);
 		if has_dotns_tld(&normalized) && !reserves_localhost {
 			Ok(Self(normalized))
 		} else {
-			Err(RuntimeConfigValidationError::InvalidProductId {
-				product_id: product_id.to_string(),
-			})
+			Err(ProductIdError::Invalid { product_id: product_id.to_string() })
 		}
 	}
 }
@@ -95,29 +121,21 @@ impl ProductId {
 		&self.0
 	}
 
-	/// The segment above the TLD, which is the bare label a `trustedProducts`
-	/// key is written with.
+	/// The label just above the TLD, which is how `trustedProducts` names a
+	/// product.
 	///
-	/// A product's executables are published beneath its own name, so
-	/// `app.dim2.dot` and `worker.dim2.dot` both yield `dim2` and carry the grants
-	/// published for it. They are that product, not neighbours of it. Reading the
-	/// first segment instead would look for a key named after the executable, and
-	/// reading everything below the TLD would make each executable its own product.
-	///
-	/// A subname under a different domain resolves to that domain: `dim2.attacker.dot`
-	/// yields `attacker`, so it collects nothing published for `dim2`.
-	///
-	/// A localhost development identifier has no TLD and is returned unchanged.
+	/// Executables are published under their product's name, so `app.dim2.dot`
+	/// and `worker.dim2.dot` both yield `dim2` and get its grants. A subname of
+	/// another domain yields that domain: `dim2.attacker.dot` yields `attacker`.
+	/// A localhost identifier has no TLD and is returned unchanged.
 	pub fn bare_label(&self) -> &str {
 		self.0.rsplit_once('.').map_or(&self.0, |(above_tld, _tld)| {
 			above_tld.rsplit_once('.').map_or(above_tld, |(_prefix, label)| label)
 		})
 	}
 
-	/// Whether `other` is the same product on the same network.
-	///
-	/// `app.dim2.dot` and `dim2.dot` are the same product, so this differs from
-	/// `==`. `dim2.paseo` and `dim2.dot` are not: they are on different networks.
+	/// Whether `other` is the same product on the same network. Unlike `==`,
+	/// `app.dim2.dot` matches `dim2.dot`. `dim2.paseo` does not.
 	pub fn same_product_on_one_network(&self, other: &Self) -> bool {
 		self.bare_label() == other.bare_label() && self.on_one_network(other)
 	}
@@ -132,9 +150,8 @@ impl ProductId {
 		self.0.rsplit_once('.').map(|(_, tld)| tld)
 	}
 
-	/// Everything before the TLD: `dim2` for `dim2.dot`, `app.dim2` for
-	/// `app.dim2.dot`. `None` for a localhost identifier, which never yields
-	/// a label.
+	/// Everything before the TLD: `app.dim2` for `app.dim2.dot`. `None` for a
+	/// localhost identifier.
 	fn dotns_label(&self) -> Option<&str> {
 		if !has_dotns_tld(&self.0) {
 			return None;
@@ -148,15 +165,12 @@ impl ProductId {
 		is_localhost_form(&self.0)
 	}
 
-	/// Whether this product holds every [`RemotePermission`] without prompting.
+	/// Whether this product gets every [`RemotePermission`] without a prompt.
+	/// Stored decisions don't change this.
 	///
-	/// Matches the whole label and nothing else: `peopl.dot` and `peopl.paseo`
-	/// are trusted, while `app.peopl.dot` and any `localhost` identifier are
-	/// separate products and are not. The label is only read out of an id that
-	/// [`has_dotns_tld`] accepts, so a widened product-id policy cannot promote
-	/// an arbitrary single-label host.
-	///
-	/// Recorded permission decisions do not affect this policy.
+	/// Matches the whole label: `peopl.dot` and `peopl.paseo` are trusted,
+	/// `app.peopl.dot` and localhost ids are not. The id also needs a dotNS TLD,
+	/// so a bare `peopl` never qualifies.
 	///
 	/// [`RemotePermission`]: truapi::latest::RemotePermission
 	pub fn has_trusted_remote_permissions(&self) -> bool {
@@ -165,33 +179,15 @@ impl ProductId {
 	}
 
 	/// [`has_trusted_remote_permissions`](Self::has_trusted_remote_permissions)
-	/// for an id in whatever spelling a host holds. An id that does not parse
-	/// is not trusted.
+	/// for an id in any spelling. An id that does not parse is not trusted.
 	pub fn normalizes_to_trusted_remote_permissions(product_id: &str) -> bool {
 		product_id.parse::<Self>().is_ok_and(|id| id.has_trusted_remote_permissions())
 	}
 
-	/// Whether this is the game product, Jollity, on any dotNS network. A
-	/// subname such as `app.dim2.dot` is a different product.
+	/// Whether this is the game product, Jollity, on any network. `app.dim2.dot`
+	/// is not.
 	pub fn is_game_product(&self) -> bool {
 		self.dotns_label() == Some(GAME_PRODUCT_LABEL)
-	}
-
-	/// Cache key for this product's root manifest.
-	///
-	/// Keyed by the bare label, which is what the document is actually resolved
-	/// by: the manifest lookup walks [`bare_label`](Self::bare_label) under the
-	/// host's TLD, so `peopl.dot`, `app.peopl.dot` and `worker.peopl.dot` are one
-	/// dotNS node holding one document. Keying by the full id would give each
-	/// spelling its own entry, so a caller naming subnames could force a fresh
-	/// chain resolution and a fresh durable write per spelling for a document
-	/// already held, without bound. The host resolves only against its own
-	/// network, so the label alone identifies the node.
-	///
-	/// Anything seeding this cache must key it the same way or the entry is
-	/// written where nothing reads it.
-	pub fn manifest_cache_key(&self) -> CoreStorageKey {
-		CoreStorageKey::ProductManifest { product_id: self.bare_label().to_string() }
 	}
 }
 
@@ -201,18 +197,16 @@ impl From<ProductId> for String {
 	}
 }
 
-/// Compares the string with the normalized id, so another spelling of the same
-/// id is not equal.
+/// Compares against the normalized id, so another spelling is not equal.
 impl PartialEq<&str> for ProductId {
 	fn eq(&self, other: &&str) -> bool {
 		self.0 == *other
 	}
 }
 
-/// Decoding parses, so a frame off the wire cannot produce an id
-/// [`FromStr`] rejects. Derivation and storage scopes are keyed by
-/// the product id, so an unnormalized one would split one logical product
-/// across two scopes.
+/// Decoding goes through [`FromStr`], so ids from the wire are always
+/// normalized. Otherwise `DIM2.dot` and `dim2.dot` would get separate keys and
+/// storage.
 impl Decode for ProductId {
 	fn decode<I: parity_scale_codec::Input>(
 		input: &mut I,
@@ -223,30 +217,27 @@ impl Decode for ProductId {
 	}
 }
 
-/// Deserializing parses, for the reason decoding does: a derived
-/// implementation would admit an id [`FromStr`] rejects.
+/// Deserializing also goes through [`FromStr`].
+#[cfg(feature = "runtime")]
 impl<'de> serde::Deserialize<'de> for ProductId {
 	fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
 		String::deserialize(deserializer)?.parse().map_err(serde::de::Error::custom)
 	}
 }
 
-// A `ProductId` from the app is parsed while UniFFI converts the call's
-// arguments. Take one only in a call that returns a `Result`: a failed parse is
-// an internal error, and a crash in a non-throwing Swift call.
-#[cfg(not(target_arch = "wasm32"))]
+// UniFFI parses a `ProductId` argument before the call runs. If that fails in
+// a Swift call that can't throw, the app crashes, so only take one in calls
+// that return a `Result`.
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
 uniffi::custom_type!(ProductId, String, {
 	lower: |product_id| product_id.0,
 	try_lift: |product_id| Ok(product_id.parse::<ProductId>()?),
 });
 
-/// Whether `normalized` is a development localhost identifier.
+/// Whether `normalized` is exactly `localhost` or `localhost:<port>`.
 ///
-/// Exactly `localhost`, or `localhost:` followed by a port and nothing else.
-/// Hosts grant these a development wildcard, so the match is the whole
-/// identifier: a prefix test would also admit `localhost:8080.evil`, and a
-/// label test would admit a published `localhost.<tld>`, which
-/// parsing rejects for the same reason.
+/// Hosts give these a development wildcard, so the whole id must match: a
+/// prefix test would admit `localhost:8080.evil`.
 fn is_localhost_form(normalized: &str) -> bool {
 	if normalized == LOCALHOST_PRODUCT_LABEL {
 		return true;
@@ -256,17 +247,13 @@ fn is_localhost_form(normalized: &str) -> bool {
 		.is_some_and(|port| !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()))
 }
 
-/// Whether every dot-separated label of a normalized id is one dotNS can
-/// register, or the id is the development localhost form.
+/// Whether every label of `normalized` is one dotNS can register, or the id is
+/// the localhost form.
 ///
-/// dotNS accepts only lowercase ASCII letters, digits and hyphens in a label,
-/// not starting or ending with a hyphen, and 1 to 63 bytes long (`isSingleLabel`
-/// in the dotNS contracts' `StringUtils`). An id outside that can never resolve,
-/// and the characters it excludes are the ones a lookalike id needs: other
-/// scripts, invisible and control characters, whitespace and path separators.
+/// Anything else can never resolve, and what it excludes is what a lookalike
+/// id needs: other scripts, invisible characters, whitespace, path separators.
 fn has_well_formed_labels(normalized: &str) -> bool {
-	// An id starting with `localhost:` must be exactly the development form,
-	// so `localhost:3000.dot` cannot pass as a dotNS name.
+	// Without this, `localhost:3000.dot` would pass as a dotNS name.
 	if normalized == LOCALHOST_PRODUCT_LABEL || normalized.starts_with(LOCALHOST_PORT_PREFIX) {
 		return is_localhost_form(normalized);
 	}
@@ -276,7 +263,7 @@ fn has_well_formed_labels(normalized: &str) -> bool {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::platform::{DOTNS_TLDS, MAX_DNS_LABEL_LEN};
+	use crate::dotns_name::{DOTNS_TLDS, MAX_DNS_LABEL_LEN};
 
 	#[test]
 	fn trusted_remote_permission_labels_match_the_bare_product_label() {

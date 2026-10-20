@@ -463,7 +463,7 @@ mod tests {
 			SR25519_SIGNING_CONTEXT, derive_product_keypair, derive_root_keypair_from_entropy,
 			index_bytes,
 		},
-		platform::ProductContext,
+		platform::{CoreStorageKey, ProductContext},
 		test_support::{
 			StubPlatform, account_id, new_statements_frame, runtime_config, signed_statement,
 			sso_session_info, sso_success_response_script, statement, stub_platform,
@@ -502,7 +502,7 @@ mod tests {
 		};
 		futures::executor::block_on(crate::platform::CoreStorage::write_core_storage(
 			platform,
-			ProductId::for_test(owner).manifest_cache_key(),
+			CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
 			entry.encode(),
 		))
 		.expect("stub core storage accepts the entry");

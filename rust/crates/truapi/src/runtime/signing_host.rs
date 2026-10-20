@@ -1496,7 +1496,8 @@ mod tests {
 			derive_ring_vrf_entropy, derive_root_keypair_from_entropy, index_bytes,
 		},
 		platform::{
-			HostInfo, Platform, PlatformInfo, ProductContext, ProductId, SigningHostConfig,
+			CoreStorageKey, HostInfo, Platform, PlatformInfo, ProductContext, ProductId,
+			SigningHostConfig,
 		},
 		runtime::statement_allowance::collection::PersonhoodCollection,
 		test_support::{StubPlatform, test_spawner},
@@ -1722,7 +1723,7 @@ mod tests {
 		futures::executor::block_on(
 			<StubPlatform as crate::platform::CoreStorage>::write_core_storage(
 				platform,
-				ProductId::for_test(owner).manifest_cache_key(),
+				CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
 				parity_scale_codec::Encode::encode(&entry),
 			),
 		)
@@ -2009,7 +2010,7 @@ mod tests {
 			None => futures::executor::block_on(
 				<StubPlatform as crate::platform::CoreStorage>::write_core_storage(
 					&platform,
-					ProductId::for_test("dim2.dot").manifest_cache_key(),
+					CoreStorageKey::product_manifest(&ProductId::for_test("dim2.dot")),
 					crate::runtime::product_manifest::encode_cached_root_manifest(
 						None,
 						crate::unix_time::current_unix_secs(),

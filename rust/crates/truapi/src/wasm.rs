@@ -27,7 +27,8 @@ use crate::platform::SigningHostConfig;
 use crate::platform::{
 	ChainProvider, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, JsonRpcConnection,
 	PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform, ProductContext,
-	ProductExecutionKind, ProductId, ProviderError, RuntimeConfigValidationError, ScannerPlatform,
+	ProductExecutionKind, ProductId, ProductIdError, ProviderError, RuntimeConfigValidationError,
+	ScannerPlatform,
 };
 use futures::{
 	channel::mpsc,
@@ -617,7 +618,6 @@ fn product_context_from_js(value: &JsValue) -> Result<ProductContext, JsValue> {
 
 fn runtime_config_field_to_js(field: &str) -> &str {
 	match field {
-		"product_id" => "productId",
 		"host_info.name" => "host.name",
 		"pairing_deeplink_scheme" => "pairing.deeplinkScheme",
 		"people_chain_genesis_hash" => "people.genesisHash",
@@ -643,21 +643,27 @@ fn runtime_config_validation_to_js(err: RuntimeConfigValidationError) -> JsValue
 		RuntimeConfigValidationError::InvalidDeeplinkScheme { scheme } => JsValue::from_str(
 			&format!("runtimeConfig.pairing.deeplinkScheme must not include ://, got {scheme:?}"),
 		),
-		RuntimeConfigValidationError::InvalidProductId { product_id } => {
+		RuntimeConfigValidationError::InvalidProductId(ProductIdError::Empty) => {
+			JsValue::from_str("runtimeConfig.productId must not be empty")
+		},
+		RuntimeConfigValidationError::InvalidProductId(ProductIdError::Invalid { product_id }) => {
 			JsValue::from_str(&format!(
 				"runtimeConfig.productId must be a dotNS or localhost product identifier, got {product_id:?}"
 			))
 		},
+		// By length, never by value: an id that trips this is unbounded in
+		// size, and this string reaches the product's console.
+		RuntimeConfigValidationError::InvalidProductId(ProductIdError::TooLong {
+			limit,
+			actual,
+		}) => JsValue::from_str(&format!(
+			"runtimeConfig.productId must be at most {limit} bytes, got {actual}"
+		)),
 		RuntimeConfigValidationError::InvalidNetworkSuffix { network_suffix } => {
 			JsValue::from_str(&format!(
 				"runtimeConfig.networkSuffix must be a supported dotNS TLD, got {network_suffix:?}"
 			))
 		},
-		// By length, never by value: an id that trips this is unbounded in
-		// size, and this string reaches the product's console.
-		RuntimeConfigValidationError::ProductIdTooLong { limit, actual } => JsValue::from_str(
-			&format!("runtimeConfig.productId must be at most {limit} bytes, got {actual}"),
-		),
 	}
 }
 

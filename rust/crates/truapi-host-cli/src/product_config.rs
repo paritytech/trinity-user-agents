@@ -30,7 +30,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use truapi::{
 	encode_cached_root_manifest,
-	platform::{CoreStorage, ProductId},
+	platform::{CoreStorage, CoreStorageKey, ProductId},
 };
 
 /// The developer-authored config for one product.
@@ -126,7 +126,7 @@ pub async fn apply(
 	for config in configs {
 		platform
 			.write_core_storage(
-				config.product_name.manifest_cache_key(),
+				CoreStorageKey::product_manifest(&config.product_name),
 				encode_cached_root_manifest(Some(&config.root_manifest_json()), now_secs),
 			)
 			.await

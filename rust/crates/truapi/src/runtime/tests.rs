@@ -195,7 +195,7 @@ fn get_product_context_returns_the_runtime_canonical_product_id() {
 
 		assert_eq!(
 			context,
-			v01::HostGetProductContextResponse { product_id: expected.to_string() },
+			v01::HostGetProductContextResponse { product_id: ProductId::for_test(expected) },
 			"configured product id {configured:?}",
 		);
 	}
@@ -396,10 +396,10 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
                 "icon":{{"cid":"c","format":"png"}},"trustedProducts":{trusted}}}"#
 	);
 	let entry = CachedManifest { fetched_at_secs, json: Some(json) };
-	futures::executor::block_on(
-		platform
-			.write_core_storage(ProductId::for_test(owner).manifest_cache_key(), entry.encode()),
-	)
+	futures::executor::block_on(platform.write_core_storage(
+		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+		entry.encode(),
+	))
 	.expect("stub core storage accepts the entry");
 }
 
@@ -407,10 +407,10 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
 fn cache_manifest_entry(platform: &StubPlatform, owner: &str, json: Option<String>, age_secs: u64) {
 	let entry =
 		CachedManifest { fetched_at_secs: current_unix_secs().saturating_sub(age_secs), json };
-	futures::executor::block_on(
-		platform
-			.write_core_storage(ProductId::for_test(owner).manifest_cache_key(), entry.encode()),
-	)
+	futures::executor::block_on(platform.write_core_storage(
+		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+		entry.encode(),
+	))
 	.expect("stub core storage accepts the entry");
 }
 

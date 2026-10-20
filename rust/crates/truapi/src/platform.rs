@@ -26,9 +26,13 @@ use truapi::Bytes32;
 /// In-memory mock platform for tests and host simulators (enable the `mock` feature).
 #[cfg(feature = "mock")]
 pub mod mock;
-mod product_id;
 
-pub use product_id::{PRODUCT_ID_MAX_BYTES, ProductId, REMOTE_PERMISSION_TRUSTED_LABELS};
+pub use crate::{
+	dotns_name::{DOTNS_TLDS, MAX_DNS_LABEL_LEN, has_dotns_tld, is_dns_label},
+	product_id::{
+		PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError, REMOTE_PERMISSION_TRUSTED_LABELS,
+	},
+};
 
 use truapi::{
 	latest::{
@@ -280,31 +284,6 @@ impl ProductContext {
 	pub fn from_parts(product_id: ProductId, execution_kind: ProductExecutionKind) -> Self {
 		Self { product_id, execution_kind }
 	}
-}
-
-/// Top-level domains that dotNS deployments register product names under.
-/// Each network declares its own, so the set spans every network a host can
-/// be pointed at rather than just the production one.
-pub const DOTNS_TLDS: &[&str] = &["dot", "paseo", "testnet"];
-
-/// Whether `normalized` ends in one of [`DOTNS_TLDS`]. Expects an
-/// already-lowercased host with no trailing root dot.
-pub fn has_dotns_tld(normalized: &str) -> bool {
-	normalized.rsplit_once('.').is_some_and(|(_, tld)| DOTNS_TLDS.contains(&tld))
-}
-
-/// RFC 1035 label bound the contracts enforce (`StringUtils.MAX_DNS_LABEL_OCTETS`).
-pub const MAX_DNS_LABEL_LEN: usize = 63;
-
-/// A canonical DNS label: lowercase ASCII letters, digits and hyphens, neither
-/// starting nor ending with a hyphen, at most 63 octets
-/// (`StringUtils._isDnsLabel`).
-pub fn is_dns_label(value: &str) -> bool {
-	!value.is_empty() &&
-		value.len() <= MAX_DNS_LABEL_LEN &&
-		!value.starts_with('-') &&
-		!value.ends_with('-') &&
-		value.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 /// Hosts available to every product unless a stored permission decision blocks them.
@@ -765,7 +744,9 @@ fn require_non_empty(field: &'static str, value: &str) -> Result<(), RuntimeConf
 }
 
 /// Runtime config validation error.
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[derive(
+	Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error, derive_more::From,
+)]
 pub enum RuntimeConfigValidationError {
 	/// Required string field was empty or whitespace-only.
 	#[display("{field} must not be empty")]
@@ -791,36 +772,16 @@ pub enum RuntimeConfigValidationError {
 		/// Actual deeplink scheme value.
 		scheme: String,
 	},
-	/// Product id was not a dotNS or localhost product identifier.
-	#[display("product_id must be a dotNS or localhost product identifier, got {product_id:?}")]
-	InvalidProductId {
-		/// Actual product id value.
-		product_id: String,
-	},
+	/// Product id did not parse.
+	#[display("{_0}")]
+	#[from]
+	InvalidProductId(#[error(not(source))] ProductIdError),
 	/// Network suffix was not a supported dotNS TLD.
 	#[display("network_suffix must be a supported dotNS TLD, got {network_suffix:?}")]
 	InvalidNetworkSuffix {
 		/// Actual network suffix value.
 		network_suffix: String,
 	},
-	/// Product id was longer than [`PRODUCT_ID_MAX_BYTES`] after normalization.
-	///
-	/// Carries lengths rather than the id, which may be enormous.
-	#[display("product_id must be at most {limit} bytes, got {actual}")]
-	ProductIdTooLong {
-		/// Accepted maximum, in bytes.
-		limit: usize,
-		/// Normalized length, in bytes.
-		actual: usize,
-	},
-}
-
-/// A product-supplied value that fails validation is a malformed request, not
-/// a host failure.
-impl<D> From<RuntimeConfigValidationError> for truapi::CallError<D> {
-	fn from(error: RuntimeConfigValidationError) -> Self {
-		Self::MalformedFrame { reason: error.to_string() }
-	}
 }
 
 const PRODUCT_STORAGE_KEY_PREFIX: &str = "truapi:product-storage:v1:";
@@ -1368,6 +1329,17 @@ pub fn describe_core_storage_key(
 }
 
 impl CoreStorageKey {
+	/// Cache key for `product_id`'s root manifest.
+	///
+	/// Keyed by [`ProductId::bare_label`], which is what the lookup resolves on
+	/// the host's network, so `peopl.dot` and `app.peopl.dot` share one entry.
+	/// Keying by the full id would let a caller force a chain lookup and a
+	/// storage write for every subname it makes up. Code that seeds this cache
+	/// must use this key.
+	pub fn product_manifest(product_id: &ProductId) -> Self {
+		Self::ProductManifest { product_id: product_id.bare_label().to_string() }
+	}
+
 	/// Persisted authorization key for one product-scoped device permission.
 	pub fn device_permission_authorization(
 		product_id: &str,

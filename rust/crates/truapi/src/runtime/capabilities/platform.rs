@@ -150,7 +150,7 @@ impl System for ProductRuntimeHost {
 		let () = request.into_latest();
 		Ok(HostGetProductContextResponse::from_latest(
 			latest::HostGetProductContextResponse {
-				product_id: self.connection.product.product_id.to_string(),
+				product_id: self.connection.product.product_id.clone(),
 			},
 			version,
 		))
