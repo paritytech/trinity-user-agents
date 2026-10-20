@@ -67,7 +67,7 @@ struct DebugPocketCardsView: View {
 
             Section("Open") {
                 ForEach(viewModel.cards) { card in
-                    Text(verbatim: "polkadot://pocket/add?product=\(card.productId)&card=\(card.cardId)")
+                    Text(verbatim: "polkadotapp://pocket/add?product=\(card.productId)&card=\(card.cardId)")
                         .font(.caption)
                         .textSelection(.enabled)
                 }

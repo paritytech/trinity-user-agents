@@ -5,13 +5,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PocketLinkTest {
-    /**
-     * A product's `navigateTo` hands the link over under the core's scheme, while a QR code or another app opens it
-     * under the app's own. Both have to reach the Pocket.
-     */
+    /** A product's `navigateTo`, a QR code and another app all hand over the same link, under the app's scheme. */
     @Test
-    fun `a Pocket link is read under the core's scheme and the app's own`() {
-        assertTrue(isPocketLink(scheme = "polkadot", host = "pocket"))
+    fun `a Pocket link is read under the app's scheme`() {
         assertTrue(isPocketLink(scheme = "polkadotapp", host = "pocket"))
     }
 
@@ -24,9 +20,11 @@ class PocketLinkTest {
         assertFalse(isPocketLink(scheme = "polkadotapp", host = "Pocket"))
     }
 
+    /** Under a web scheme `pocket` is an ordinary host, and the products' own scheme names products, not the Pocket. */
     @Test
-    fun `pocket under a web scheme is an ordinary host`() {
+    fun `pocket under another scheme is not the Pocket`() {
         assertFalse(isPocketLink(scheme = "https", host = "pocket"))
+        assertFalse(isPocketLink(scheme = "polkadot", host = "pocket"))
     }
 
     /** A product's paths are its own App routes, whatever they spell, so the host claims none of them. */

@@ -9,19 +9,19 @@ struct PocketOpenServiceTests {
         let seen = Recorder()
         let service = seen.makeService()
 
-        #expect(service.handle(url: URL(string: "polkadot://pocket/add?product=game.dot&card=loyalty")!))
+        #expect(service.handle(url: URL(string: "polkadotapp://pocket/add?product=game.dot&card=loyalty")!))
 
         #expect(try await seen.answer() == .presented(cardId: "loyalty"))
     }
 
-    /// A bare `polkadot://pocket` is the host's to answer: it opens the Pocket,
+    /// A bare `polkadotapp://pocket` is the host's to answer: it opens the Pocket,
     /// with no card to present and nothing to refuse.
     @Test
     func claimsACollectionLinkAndOpensThePocket() async throws {
         let seen = Recorder()
         let service = seen.makeService()
 
-        #expect(service.handle(url: URL(string: "polkadot://pocket")!))
+        #expect(service.handle(url: URL(string: "polkadotapp://pocket")!))
 
         #expect(try await seen.answer() == .openedCollection)
     }
@@ -51,7 +51,7 @@ struct PocketOpenServiceTests {
     func claimsAndRefusesAHiddenCardId() async throws {
         let seen = Recorder()
         let service = seen.makeService()
-        let hidden = "polkadot://pocket/add?product=game.dot&card=loy%E2%80%8Balty"
+        let hidden = "polkadotapp://pocket/add?product=game.dot&card=loy%E2%80%8Balty"
 
         #expect(service.handle(url: URL(string: hidden)!))
 
@@ -65,7 +65,7 @@ struct PocketOpenServiceTests {
         let seen = Recorder()
         let service = seen.makeService()
 
-        #expect(service.handle(url: URL(string: "polkadot://pocket/pin?product=game.dot&card=loyalty")!))
+        #expect(service.handle(url: URL(string: "polkadotapp://pocket/pin?product=game.dot&card=loyalty")!))
 
         #expect(try await seen.answer() == .refused)
     }
@@ -76,7 +76,7 @@ struct PocketOpenServiceTests {
         let seen = Recorder()
         let service = seen.makeService()
 
-        #expect(service.handle(url: URL(string: "polkadot://pocket/add?product=game.dot")!))
+        #expect(service.handle(url: URL(string: "polkadotapp://pocket/add?product=game.dot")!))
 
         #expect(try await seen.answer() == .refused)
     }

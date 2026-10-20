@@ -8,11 +8,15 @@ use crate::platform::{has_dotns_tld, normalize_chat_identifier, normalize_produc
 use unicode_normalization::UnicodeNormalization;
 use url::{Url, form_urlencoded};
 
+/// The app's own URL scheme, which its host routes such as `pair` and
+/// `pocket` live under.
+const APP_SCHEME: &str = "polkadotapp";
+
 /// The host a Pocket deeplink names. Every dotNS product name ends in a TLD,
 /// so no product can take it.
 const POCKET_HOST: &str = "pocket";
 
-/// What a `polkadot://pocket/<action>` deeplink asks the host to do.
+/// What a `polkadotapp://pocket/<action>` deeplink asks the host to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum PocketDeeplinkAction {
@@ -52,7 +56,7 @@ pub enum NavigateDecision {
 		canonical_url: String,
 	},
 	/// A Pocket action on one card of a dotNS product:
-	/// `polkadot://pocket/<action>?product=<id>&card=<id>`. The deeplink is the
+	/// `polkadotapp://pocket/<action>?product=<id>&card=<id>`. The deeplink is the
 	/// host's own, so no path of any product is read as one.
 	Pocket {
 		/// Normalized dotNS name of the product that backs the card, from the
@@ -62,15 +66,15 @@ pub enum NavigateDecision {
 		action: PocketDeeplinkAction,
 		/// Card named by the `card` query parameter.
 		card_id: String,
-		/// Normalized `polkadot://` form of the deeplink, which is what
+		/// Normalized `polkadotapp://` form of the deeplink, which is what
 		/// `navigate_to` hands the host. The product and card are
 		/// percent-encoded, so re-parsing this names the same card.
 		canonical_url: String,
 	},
-	/// The Pocket itself: `polkadot://pocket` with no action. It names no card,
+	/// The Pocket itself: `polkadotapp://pocket` with no action. It names no card,
 	/// so the host opens the collection rather than a card.
 	PocketCollection {
-		/// Normalized `polkadot://` form of the deeplink, which is what
+		/// Normalized `polkadotapp://` form of the deeplink, which is what
 		/// `navigate_to` hands the host.
 		canonical_url: String,
 	},
@@ -142,12 +146,14 @@ fn parse_with_explicit_https(input: &str) -> Option<Url> {
 	Url::parse(&format!("https://{input}")).ok()
 }
 
-/// Recognize the host's own Pocket deeplink, `polkadot://pocket` with an
-/// optional action. Only the `polkadot` scheme names it: under a web scheme
-/// `pocket` is an ordinary host name, so a host maps its own app scheme to
-/// `polkadot` before asking. `None` sends the input on to the other branches.
+/// Recognize the host's own Pocket deeplink, `polkadotapp://pocket` with an
+/// optional action. Only the app's scheme names it: under a web scheme `pocket`
+/// is an ordinary host name, so a host whose build answers to another flavor
+/// of the scheme maps it to [`APP_SCHEME`] before asking. Recognized ahead of
+/// the other `polkadotapp:` links, which need an `OpenUrl` grant: the Pocket is
+/// the host's own surface. `None` sends the input on to the other branches.
 fn classify_pocket(input: &str) -> Option<NavigateDecision> {
-	let url = Url::parse(input).ok().filter(|url| url.scheme() == "polkadot")?;
+	let url = Url::parse(input).ok().filter(|url| url.scheme() == APP_SCHEME)?;
 	if normalize_host(url.host_str()?) != POCKET_HOST {
 		return None;
 	}
@@ -160,12 +166,12 @@ fn classify_pocket(input: &str) -> Option<NavigateDecision> {
 	let (action, verb) = match target.as_slice() {
 		[] => {
 			return Some(NavigateDecision::PocketCollection {
-				canonical_url: format!("polkadot://{POCKET_HOST}"),
+				canonical_url: format!("{APP_SCHEME}://{POCKET_HOST}"),
 			});
 		},
 		["add"] => (PocketDeeplinkAction::Add, "add"),
 		["open"] => (PocketDeeplinkAction::Open, "open"),
-		// Every `polkadot://pocket` link is the host's, so an action this core
+		// Every `polkadotapp://pocket` link is the host's, so an action this core
 		// does not serve is refused rather than opened as something else.
 		_ => {
 			return Some(NavigateDecision::Reject {
@@ -208,7 +214,7 @@ fn classify_pocket(input: &str) -> Option<NavigateDecision> {
 		.append_pair("card", &card_id)
 		.finish();
 	Some(NavigateDecision::Pocket {
-		canonical_url: format!("polkadot://{POCKET_HOST}/{verb}?{query}"),
+		canonical_url: format!("{APP_SCHEME}://{POCKET_HOST}/{verb}?{query}"),
 		identifier,
 		action,
 		card_id,
@@ -336,13 +342,15 @@ mod tests {
 			identifier: identifier.to_string(),
 			action,
 			card_id: card_id.to_string(),
-			canonical_url: format!("polkadot://pocket/{verb}?product={identifier}&card={card_id}"),
+			canonical_url: format!(
+				"polkadotapp://pocket/{verb}?product={identifier}&card={card_id}"
+			),
 		})
 	}
 
 	fn pocket_collection() -> Expected {
 		Expected::Decision(NavigateDecision::PocketCollection {
-			canonical_url: "polkadot://pocket".to_string(),
+			canonical_url: "polkadotapp://pocket".to_string(),
 		})
 	}
 
@@ -448,53 +456,58 @@ mod tests {
 			},
 			TestCase {
 				name: "pocket add deeplink",
-				input: "polkadot://pocket/add?product=game.dot&card=loyalty",
+				input: "polkadotapp://pocket/add?product=game.dot&card=loyalty",
 				expected: pocket("game.dot", PocketDeeplinkAction::Add, "loyalty"),
 			},
 			TestCase {
 				name: "pocket open deeplink with mixed case and arguments in either order",
-				input: "polkadot://Pocket/open?card=loyalty&product=Game.DOT",
+				input: "polkadotapp://Pocket/open?card=loyalty&product=Game.DOT",
 				expected: pocket("game.dot", PocketDeeplinkAction::Open, "loyalty"),
 			},
 			TestCase {
 				name: "pocket deeplink without a card is rejected",
-				input: "polkadot://pocket/add?product=game.dot",
+				input: "polkadotapp://pocket/add?product=game.dot",
 				expected: Expected::Reject,
 			},
 			TestCase {
 				name: "pocket deeplink without a product is rejected",
-				input: "polkadot://pocket/add?card=loyalty",
+				input: "polkadotapp://pocket/add?card=loyalty",
 				expected: Expected::Reject,
 			},
 			TestCase {
 				name: "pocket deeplink naming a product outside dotNS is rejected",
-				input: "polkadot://pocket/add?product=example.com&card=loyalty",
+				input: "polkadotapp://pocket/add?product=example.com&card=loyalty",
 				expected: Expected::Reject,
 			},
 			TestCase {
 				name: "pocket deeplink naming a localhost product is rejected",
-				input: "polkadot://pocket/add?product=localhost:3000&card=loyalty",
+				input: "polkadotapp://pocket/add?product=localhost:3000&card=loyalty",
 				expected: Expected::Reject,
 			},
 			TestCase {
 				name: "pocket deeplink without an action opens the collection",
-				input: "polkadot://pocket",
+				input: "polkadotapp://pocket",
 				expected: pocket_collection(),
 			},
 			TestCase {
 				name: "pocket collection deeplink takes no arguments",
-				input: "polkadot://pocket/?product=game.dot&card=loyalty",
+				input: "polkadotapp://pocket/?product=game.dot&card=loyalty",
 				expected: pocket_collection(),
 			},
 			TestCase {
 				name: "a pocket action this core does not serve is rejected",
-				input: "polkadot://pocket/frobnicate?product=game.dot&card=loyalty",
+				input: "polkadotapp://pocket/frobnicate?product=game.dot&card=loyalty",
 				expected: Expected::Reject,
 			},
 			TestCase {
 				name: "pocket under a web scheme is an ordinary host",
 				input: "https://pocket/add?product=game.dot&card=loyalty",
 				expected: external("https://pocket/add?product=game.dot&card=loyalty"),
+			},
+			TestCase {
+				name: "pocket under the product scheme is not the pocket",
+				input: "polkadot://pocket/add?product=game.dot&card=loyalty",
+				expected: Expected::Reject,
 			},
 			TestCase {
 				name: "a product's own pocket path is an app route",
@@ -725,11 +738,11 @@ mod tests {
 		// A deeplink and `remove_card` name the same card, so they have to
 		// agree on what the name is. Removal normalizes, so navigation does
 		// too, or `?card=%20loyalty%20` adds a card that cannot be removed.
-		match parse_navigate("polkadot://pocket/add?product=game.dot&card=%20loyalty%20") {
+		match parse_navigate("polkadotapp://pocket/add?product=game.dot&card=%20loyalty%20") {
 			NavigateDecision::Pocket { card_id, canonical_url, .. } => {
 				assert_eq!(card_id, "loyalty");
 				assert_eq!(
-					canonical_url, "polkadot://pocket/add?product=game.dot&card=loyalty",
+					canonical_url, "polkadotapp://pocket/add?product=game.dot&card=loyalty",
 					"the canonical form carries the normalized id"
 				);
 			},
@@ -737,8 +750,8 @@ mod tests {
 		}
 
 		// NFD and NFC spellings of one name must not be two cards.
-		let nfc = parse_navigate("polkadot://pocket/open?product=game.dot&card=caf%C3%A9");
-		let nfd = parse_navigate("polkadot://pocket/open?product=game.dot&card=cafe%CC%81");
+		let nfc = parse_navigate("polkadotapp://pocket/open?product=game.dot&card=caf%C3%A9");
+		let nfd = parse_navigate("polkadotapp://pocket/open?product=game.dot&card=cafe%CC%81");
 		match (&nfc, &nfd) {
 			(
 				NavigateDecision::Pocket { card_id: a, .. },
@@ -750,10 +763,10 @@ mod tests {
 		// The bounds chat applies to its own identifiers apply here too.
 		let too_long = "a".repeat(257);
 		for input in [
-			format!("polkadot://pocket/add?product=game.dot&card={too_long}"),
+			format!("polkadotapp://pocket/add?product=game.dot&card={too_long}"),
 			// A zero-width joiner lets two distinct ids render identically.
-			"polkadot://pocket/add?product=game.dot&card=loy%E2%80%8Dalty".to_string(),
-			"polkadot://pocket/add?product=game.dot&card=%20%20".to_string(),
+			"polkadotapp://pocket/add?product=game.dot&card=loy%E2%80%8Dalty".to_string(),
+			"polkadotapp://pocket/add?product=game.dot&card=%20%20".to_string(),
 		] {
 			assert!(
 				matches!(parse_navigate(&input), NavigateDecision::Reject { .. }),
@@ -769,12 +782,12 @@ mod tests {
 		// fragment and `&` starts a second parameter.
 		for (input, expected) in [
 			(
-				"polkadot://pocket/add?product=game.dot&card=a%23b",
-				"polkadot://pocket/add?product=game.dot&card=a%23b",
+				"polkadotapp://pocket/add?product=game.dot&card=a%23b",
+				"polkadotapp://pocket/add?product=game.dot&card=a%23b",
 			),
 			(
-				"polkadot://pocket/open?product=game.dot&card=a%26open%3Dx",
-				"polkadot://pocket/open?product=game.dot&card=a%26open%3Dx",
+				"polkadotapp://pocket/open?product=game.dot&card=a%26open%3Dx",
+				"polkadotapp://pocket/open?product=game.dot&card=a%26open%3Dx",
 			),
 		] {
 			match parse_navigate(input) {

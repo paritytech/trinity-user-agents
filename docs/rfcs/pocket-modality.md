@@ -118,30 +118,30 @@ The preview is a static file in the CID-pinned archive, so the host can show a c
 same property the [funding modality](https://github.com/paritytech/trinity-user-agents/pull/339) relies on for its rail list.
 It is the face the user approves; the live face may differ once the worker streams.
 
-**Deeplinks name the Pocket.** A Pocket link is the host's own URL, with the product as a parameter. Its host, `pocket`,
-has no TLD, so no dotNS product can take it, and a product URL `polkadot://<product_id>.<tld>/<path>` always opens the
-App, whatever its path:
+**Deeplinks name the Pocket.** A Pocket link is one of the app's own routes, beside `pair` and `pay`, with the product
+as a parameter. Its host, `pocket`, has no TLD, so no dotNS product can take it, and a product URL
+`polkadot://<product_id>.<tld>/<path>` always opens the App, whatever its path:
 
 ```text
-polkadot://pocket                                                Open the Pocket
-polkadot://pocket/add?product=<product_id>.<tld>&card=<id>       Offer to add a published card
-polkadot://pocket/open?product=<product_id>.<tld>&card=<id>      Expand a card that is present
+polkadotapp://pocket                                                Open the Pocket
+polkadotapp://pocket/add?product=<product_id>.<tld>&card=<id>       Offer to add a published card
+polkadotapp://pocket/open?product=<product_id>.<tld>&card=<id>      Expand a card that is present
 ```
 
-`polkadot://pocket` with no action opens the Pocket itself, for a product that sends the user to the collection without
-naming a card. Arguments are ignored. Expanding a card opens the Pocket on that card, the same view a tap on it gives
-(see [Expanded card](#expanded-card)).
+`polkadotapp://pocket` with no action opens the Pocket itself, for a product that sends the user to the collection
+without naming a card. Arguments are ignored. Expanding a card opens the Pocket on that card, the same view a tap on it
+gives (see [Expanded card](#expanded-card)).
 
-A link from outside the app, such as a QR code or a web page, carries the app's own scheme in place of `polkadot` and
-means the same. A link that names an action the host does not serve, or names no product or no card, is refused with a
-message. Products reach a Pocket link from their own web UI through `system.navigate_to`, which lets it through without
-a grant, so an "Add to Pocket" button is one call. The `product` need not be the caller: the dialog shows the card, and
-approving it is the user's consent.
+The same link works from a product, a QR code or a web page. A link that names an action the host does not serve, or
+names no product or no card, is refused with a message. Products reach a Pocket link from their own web UI through
+`system.navigate_to`, which lets it through without the `OpenUrl` grant other `polkadotapp://` links need, so an "Add to
+Pocket" button is one call. The `product` need not be the caller: the dialog shows the card, and approving it is the
+user's consent.
 
 ```text
 User                Host                             Product worker
  |                   |                                     |
- |  polkadot://pocket/add?product=game.dot&card=loyalty
+ |  polkadotapp://pocket/add?product=game.dot&card=loyalty
  |------------------>|
  |                   | resolve worker manifest, find card
  |                   | `loyalty`, fetch its preview from the archive

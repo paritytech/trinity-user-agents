@@ -8,8 +8,8 @@ import uniffi.truapi.PocketDeeplinkAction as NativePocketDeeplinkAction
 enum class PocketDeeplinkAction { ADD, OPEN }
 
 /**
- * A `polkadot://pocket/<action>?product=<id>&card=<id>` ([Card]) or bare `polkadot://pocket` ([Collection]) deeplink
- * as the core classifies it; [Card.productHost] is the product's lower-cased dotNS name.
+ * A `polkadotapp://pocket/<action>?product=<id>&card=<id>` ([Card]) or bare `polkadotapp://pocket` ([Collection])
+ * deeplink as the core classifies it; [Card.productHost] is the product's lower-cased dotNS name.
  */
 sealed interface PocketDeeplink {
     data class Card(

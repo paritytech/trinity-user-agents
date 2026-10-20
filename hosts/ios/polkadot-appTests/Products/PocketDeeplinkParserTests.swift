@@ -14,16 +14,16 @@ struct PocketDeeplinkParserTests {
 
     @Test
     func readsAnAddLink() {
-        #expect(classify("polkadot://pocket/add?product=game.dot&card=loyalty") == .pocket(PocketDeeplink(
+        #expect(classify("polkadotapp://pocket/add?product=game.dot&card=loyalty") == .pocket(PocketDeeplink(
             productHost: "game.dot",
             action: .add,
             cardId: PocketCardId(value: "loyalty"),
-            canonicalUrl: "polkadot://pocket/add?product=game.dot&card=loyalty"
+            canonicalUrl: "polkadotapp://pocket/add?product=game.dot&card=loyalty"
         )))
     }
 
-    /// A link from a QR code or another app arrives under this app's own
-    /// scheme, and has to read as the same link the core mints.
+    /// A build answers to its own flavor of the scheme, `polkadotappdev` in a
+    /// debug build, and has to read a link under it as the one the core mints.
     @Test
     func readsALinkUnderTheAppsOwnScheme() throws {
         let link = "\(DeeplinkTestSchemes.active)://pocket/open?product=game.dot&card=loyalty"
@@ -33,13 +33,13 @@ struct PocketDeeplinkParserTests {
         }
 
         #expect(deeplink.action == .open)
-        #expect(deeplink.canonicalUrl == "polkadot://pocket/open?product=game.dot&card=loyalty")
+        #expect(deeplink.canonicalUrl == "polkadotapp://pocket/open?product=game.dot&card=loyalty")
     }
 
     /// The card id arrives screened, so nothing downstream screens it again.
     @Test
     func carriesTheCardIdTheCoreScreened() throws {
-        guard case let .pocket(link) = classify("polkadot://pocket/add?product=game.dot&card=cafe%CC%81") else {
+        guard case let .pocket(link) = classify("polkadotapp://pocket/add?product=game.dot&card=cafe%CC%81") else {
             Issue.record("expected a pocket link")
             return
         }
@@ -47,11 +47,11 @@ struct PocketDeeplinkParserTests {
         #expect(link.cardId.value == "caf\u{e9}")
     }
 
-    /// A bare `polkadot://pocket` names the collection itself, so a product can
+    /// A bare `polkadotapp://pocket` names the collection itself, so a product can
     /// send the user to the Pocket without naming a card.
     @Test
     func readsACollectionLink() {
-        #expect(classify("polkadot://pocket") == .collection)
+        #expect(classify("polkadotapp://pocket") == .collection)
     }
 
     /// A product's paths are its own App routes, whatever they spell. The host
@@ -65,12 +65,12 @@ struct PocketDeeplinkParserTests {
     /// serve is answered here rather than left with nobody to answer it.
     @Test
     func readsAnActionTheCoreDoesNotServeAsMalformed() {
-        #expect(classify("polkadot://pocket/pin?product=game.dot&card=loyalty") == .malformed)
+        #expect(classify("polkadotapp://pocket/pin?product=game.dot&card=loyalty") == .malformed)
     }
 
     @Test
     func readsAMissingCardAsMalformed() {
-        #expect(classify("polkadot://pocket/add?product=game.dot") == .malformed)
+        #expect(classify("polkadotapp://pocket/add?product=game.dot") == .malformed)
     }
 
     /// A deeplink's host is lowercase, and the app matches it exactly, as it does

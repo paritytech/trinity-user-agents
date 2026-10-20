@@ -10,7 +10,7 @@ enum PocketLinkAction: Equatable {
     case open
 }
 
-/// A `polkadot://pocket/<action>?product=<id>&card=<id>` link as the core
+/// A `polkadotapp://pocket/<action>?product=<id>&card=<id>` link as the core
 /// classifies it. `productHost` is the product's lower-cased dotNS name.
 struct PocketDeeplink: Equatable {
     let productHost: String
@@ -18,7 +18,7 @@ struct PocketDeeplink: Equatable {
     /// Already screened, by the core, as part of classifying the link. Nothing
     /// downstream screens it again.
     let cardId: PocketCardId
-    /// The normalized `polkadot://` form, with the product and card
+    /// The normalized `polkadotapp://` form, with the product and card
     /// percent-encoded, so re-parsing it names the same card.
     let canonicalUrl: String
 }
@@ -27,7 +27,7 @@ struct PocketDeeplink: Equatable {
 enum PocketLinkClassification: Equatable {
     /// A Pocket action this core serves, with its card id already screened.
     case pocket(PocketDeeplink)
-    /// A bare `polkadot://pocket`: the collection itself, with no card named.
+    /// A bare `polkadotapp://pocket`: the collection itself, with no card named.
     case collection
     /// A Pocket link the core refused. Every link to the Pocket is the host's,
     /// so this is answered here rather than dropped.
@@ -42,9 +42,10 @@ enum PocketLinkClassification: Equatable {
 struct PocketDeeplinkParser {
     /// The host every Pocket link names.
     static let host = "pocket"
-    /// The scheme the core reads a Pocket link under. A link from outside the
-    /// app carries the app's own scheme instead.
-    static let coreScheme = "polkadot"
+    /// The scheme the core reads a Pocket link under: the app's own, without a
+    /// build flavor's suffix. A link under any of this app's schemes is read
+    /// under this one.
+    static let coreScheme = "polkadotapp"
 
     private let deeplinkMatcher: AppDeeplinkMatching
 

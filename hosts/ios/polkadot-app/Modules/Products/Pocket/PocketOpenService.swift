@@ -2,9 +2,9 @@ import Foundation
 import Products
 import UIKit
 
-/// Routes `polkadot://pocket/{add,open}?product=<id>&card=<id>`, and
-/// `polkadot://pocket` alone for the collection, under the core's scheme or
-/// this app's own.
+/// Routes `polkadotapp://pocket/{add,open}?product=<id>&card=<id>`, and
+/// `polkadotapp://pocket` alone for the collection, under any of this app's
+/// schemes.
 ///
 /// What the link means is entirely the core's to say. `parse_navigate` answers
 /// `pocket` for an action it serves, having screened the card id exactly as

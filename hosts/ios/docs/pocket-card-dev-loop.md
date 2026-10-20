@@ -68,7 +68,7 @@ A product with **no published worker**, driven by hand.
 3. Open the add deeplink. The screen shows it, ready to copy:
 
    ```
-   polkadot://pocket/add?product=<product>&card=<id>
+   polkadotapp://pocket/add?product=<product>&card=<id>
    ```
 
    In a Debug build the scheme is the brand scheme plus the flavor suffix, so on

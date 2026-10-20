@@ -31,8 +31,8 @@ import javax.inject.Inject
 import io.paritytech.polkadotapp.common.R as RCommon
 
 /**
- * `polkadot://pocket/{add,open}?product=<id>&card=<id>`, and `polkadot://pocket` alone for the collection: under the
- * core's scheme when a product navigates to it, under the app's own when it arrives from outside.
+ * `polkadotapp://pocket/{add,open}?product=<id>&card=<id>`, and `polkadotapp://pocket` alone for the collection, from a
+ * product's `navigateTo` or from outside the app alike.
  */
 internal class PocketDeepLinkHandler @Inject constructor(
     private val dispatchers: CoroutineDispatchers,
@@ -48,7 +48,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
 ) : DeepLinkHandler {
     override suspend fun canHandle(data: Uri): Boolean {
         if (!isPocketLink(data.scheme, data.host)) return false
-        val card = parser.parse(data.asCorePocketLink().toString()) as? PocketDeeplink.Card ?: return true
+        val card = parser.parse(data.toString()) as? PocketDeeplink.Card ?: return true
         val tld = dotNsTldProvider.currentTldOrNull() ?: return false
 
         // Adding a card runs the product's worker and hosts its pages, so the same products are
@@ -68,7 +68,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
 
     context(scope: ComputationalScope)
     override suspend fun handle(data: Uri): Result<DeeplinkProcessingOutcome> = withContext(dispatchers.io) {
-        when (val deeplink = parser.parse(data.asCorePocketLink().toString())) {
+        when (val deeplink = parser.parse(data.toString())) {
             null -> Result.success(malformed(data))
             PocketDeeplink.Collection -> openCollection()
             is PocketDeeplink.Card -> dotNsTldProvider.getTld()

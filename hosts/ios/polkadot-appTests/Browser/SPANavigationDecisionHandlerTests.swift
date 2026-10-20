@@ -24,14 +24,6 @@ struct SPANavigationDecisionHandlerTests {
         #expect(handler.decide(url: url) == .openDeeplink(url))
     }
 
-    @Test("dotNS mode hands the core's Pocket link to the native handler")
-    func dotNsOpensPocketLink() throws {
-        let handler = try makeDotNsHandler()
-        let url = try #require(URL(string: "polkadot://pocket/add?product=shop.dot&card=loyalty"))
-
-        #expect(handler.decide(url: url) == .openDeeplink(url))
-    }
-
     @Test("dotNS mode keeps same-product navigation in the WebView")
     func dotNsAllowsSameProduct() throws {
         let handler = try makeDotNsHandler()

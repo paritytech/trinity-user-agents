@@ -126,7 +126,7 @@ private func makeBridge(
 struct RustRuntimeBridgeTests {
     // MARK: navigateTo
 
-    /// The core hands over a Pocket link as `polkadot://pocket/...`, which names
+    /// The core hands over a Pocket link as `polkadotapp://pocket/...`, which names
     /// no product. Opened as a product page it would go nowhere, so it has to
     /// reach the router's app-link path, which takes it to the Pocket.
     @Test func navigateToHandsAPocketLinkToTheAppLinkPath() async throws {
@@ -135,7 +135,7 @@ struct RustRuntimeBridgeTests {
             hostProvider: ProductHostFactory(tldProvider: StubDotNsTldProvider(tld: "dot")),
             router: router
         )
-        let link = "polkadot://pocket/add?product=game.dot&card=loyalty"
+        let link = "polkadotapp://pocket/add?product=game.dot&card=loyalty"
 
         try await bridge.navigateTo(url: link)
 

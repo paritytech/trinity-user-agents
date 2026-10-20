@@ -23,19 +23,6 @@ struct ProductsNavigationRouterTests {
         #expect(linkHandler.handledURLs == [url])
     }
 
-    @Test("Opens the core's Pocket link in-app, where the Pocket handles it")
-    func opensCorePocketLinkInApp() async throws {
-        let linkHandler = MockDeferredLinkHandler()
-        let router = ProductsNavigationRouter(deepLinkHandler: linkHandler)
-        let anchor = StubView()
-        router.setPresentationView(anchor)
-        let url = try #require(URL(string: "polkadot://pocket/add?product=game.dot&card=loyalty"))
-
-        try await router.openExternalURL(url)
-
-        #expect(linkHandler.handledURLs == [url])
-    }
-
     @Test("Rejects the deep link while no presentation view is attached")
     func rejectsDeeplinkWhenNotReady() async throws {
         let linkHandler = MockDeferredLinkHandler()
