@@ -4480,6 +4480,64 @@ fn get_account_own_product_skips_the_prompt_when_the_subtree_is_cached() {
 }
 
 #[test]
+fn concurrent_get_account_calls_share_one_subtree_request() {
+	// A product asking on every keystroke must not stack requests on the phone.
+	let session = sso_session_info();
+	let platform = Arc::new(StubPlatform {
+		sso_response_script: Some(sso_success_response_script(
+			&session,
+			RemoteMessage {
+				message_id: "wallet-subtree-1".to_string(),
+				data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(Response {
+					responding_to: String::new(),
+					payload: Ok(test_product_subtree("myapp.dot")),
+				})),
+			},
+		)),
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+	host.test_session_state().set_session(session.clone());
+	let cx = CallContext::default();
+	let calls = (0..3).map(|index| {
+		host.get_account(
+			&cx,
+			HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+				product_account_id: account_id("myapp.dot", index),
+			}),
+		)
+	});
+
+	let public_keys: Vec<_> = futures::executor::block_on(futures::future::join_all(calls))
+		.into_iter()
+		.map(|response| {
+			let HostAccountGetResponse::V1(inner) = response.expect("the shared request serves");
+			inner.account.public_key
+		})
+		.collect();
+	let subtree_requests = submitted_remote_messages(&platform, &session)
+		.into_iter()
+		.filter(|message| {
+			matches!(
+				message.data,
+				RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeRequest(_))
+			)
+		})
+		.count();
+
+	assert_eq!(
+		(public_keys, subtree_requests),
+		(
+			(0..3)
+				.map(|index| test_product_account_public("myapp.dot", index).to_vec())
+				.collect(),
+			1,
+		)
+	);
+}
+
+#[test]
 fn remote_authority_call_bounds_a_call_that_never_unwinds() {
 	let mut cx = CallContext::default();
 	cx.set_timeout(Duration::from_millis(1));
