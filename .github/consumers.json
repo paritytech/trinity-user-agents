@@ -3,5 +3,6 @@
   "@parity/truapi-host": ["paritytech/dotli-community"],
   "@parity/truapi-provider": ["paritytech/dotli-community"],
   "@parity/ios-host": ["paritytech/polkadot-ios-community"],
-  "@parity/android-host": []
+  "@parity/android-host": [],
+  "@parity/trinity-stack": []
 }
