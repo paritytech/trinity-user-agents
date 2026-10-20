@@ -43,13 +43,12 @@ impl ResourceAllocation for ProductRuntimeHost {
 
 			let confirmed = until_cancelled(
 				cx,
-				self.connection
-					.confirm_product_action(UserConfirmationReview::ResourceAllocation(
-						ResourceAllocationReview {
-							calling_product_id: self.connection.product_id().clone(),
-							resources: inner.resources.clone(),
-						},
-					)),
+				self.connection.confirm_user_action_if_needed(
+					UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
+						calling_product_id: self.connection.product_id().clone(),
+						resources: inner.resources.clone(),
+					}),
+				),
 			)
 			.await
 			.map_err(|err| {

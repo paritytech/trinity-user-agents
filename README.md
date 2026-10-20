@@ -96,8 +96,9 @@ Android permission prompts belong to one request and close when it finishes or i
 including cancellation while the app is backgrounded.
 
 The shared Rust core asks blessed products (`peopl`, `dim2` and `stash`,
-on every supported network) only for device permissions and legacy-account signing.
-All other operations it handles bypass permission prompts and recorded decisions.
+on every supported network) only for device permissions and for legacy-account signing
+other than watermarked raw bytes. All other operations it handles bypass permission
+prompts and recorded decisions.
 
 ## Repository layout
 
