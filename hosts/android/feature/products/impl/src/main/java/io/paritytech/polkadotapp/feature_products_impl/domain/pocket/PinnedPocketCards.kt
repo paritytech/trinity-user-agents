@@ -30,7 +30,7 @@ interface PinnedPocketCards {
      */
     fun pinned(key: PocketCardKey): CachedPocketCard?
 
-    /** Whether the app ships the image a pinned card's face names at [path], so it needs no archive. */
+    /** Whether the app ships the image at [path] for the product behind a pinned card, so it needs no archive. */
     fun bundlesImage(productId: ProductId, path: String): Boolean
 }
 
@@ -72,7 +72,7 @@ class AssetPinnedPocketCards @Inject constructor(
     }
 
     override fun bundlesImage(productId: ProductId, path: String): Boolean =
-        path in bundledImages && definitions.any { it.backs(productId) }
+        definitions.any { it.backs(productId) } && path in bundledImages
 
     private fun Definition.backs(productId: ProductId): Boolean {
         val tld = DotNsTld.parse(productId.value.substringAfter('.', missingDelimiterValue = "")) ?: return false

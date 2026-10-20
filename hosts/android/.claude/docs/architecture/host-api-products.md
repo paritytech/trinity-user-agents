@@ -338,8 +338,8 @@ Seams, all in `feature/products/api/.../domain/pocket/`:
 - `PocketCardOpenRequests` — the card a deeplink asked the Pocket tab to expand. A link can arrive before the tab has
   been shown, so the request is held until the Pocket screen finds the card in its collection, and cleared there.
 - `PocketFaceSource.observeFace(key)` — the cached face first, then every tree the product streams; `sendAction`
-  carries a press back; `resolveImage` fetches `Image` sources from the archive or the Bulletin gateway, except that a
-  pinned card's `Archive` image the app ships under `assets/pocket/` loads from the app.
+  carries a press back; `resolveImage` fetches `Image` sources from the archive or the Bulletin gateway, except that an
+  `Archive` image of a pinned card's product that the app ships under `assets/pocket/` loads from the app.
 - The face vocabulary is the renderer's: the core's `parseRendererNodeJson` reads a `{ tag, value }` preview into its
   `RendererNode`, with the same 64-level bound the render stream carries, `RendererNodeMapping` turns that (or a
   streamed tree) into `JsWidget`, `JsWidgetRenderer` (`api/presentation/widget`) draws it.

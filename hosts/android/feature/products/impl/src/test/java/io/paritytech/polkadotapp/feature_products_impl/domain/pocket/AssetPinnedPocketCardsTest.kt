@@ -17,6 +17,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.ArgumentMatchers.anyInt
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.never
+import org.mockito.Mockito.verify
 import uniffi.truapi.RendererNode
 import java.io.File
 
@@ -91,6 +93,14 @@ class AssetPinnedPocketCardsTest {
         listOf("pocket/wordmark-light.png", "pocket/../pocket/card-mark.webp", "card-mark.webp").forEach {
             assertFalse(it, cards.bundlesImage(personhood, it))
         }
+    }
+
+    // Listing the app's assets reads the APK, on whichever thread resolves the first image.
+    @Test
+    fun `another product's image does not list the app's assets`() {
+        bundledImages().bundlesImage(ProductId.fromStoredValue("someone.testnet"), "pocket/card-mark.webp")
+
+        verify(assets, never()).list("pocket")
     }
 
     // The key already says which network its product is on, so naming a pinned card needs no chain
