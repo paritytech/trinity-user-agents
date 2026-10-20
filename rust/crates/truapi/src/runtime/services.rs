@@ -168,8 +168,12 @@ impl RuntimeServices {
 	) -> Arc<Self> {
 		let chain_provider = Arc::new(HostChainProvider { platform: platform.clone() });
 		let chain = ChainRuntime::new(chain_provider, spawner.clone());
-		let statement_store =
-			StatementStoreRpc::new(platform.clone(), people_chain_genesis_hash, spawner.clone());
+		let statement_store = StatementStoreRpc::new(
+			platform.clone(),
+			chain.clone(),
+			people_chain_genesis_hash,
+			spawner.clone(),
+		);
 		let bulletin = BulletinRpc::new(chain.clone(), bulletin_chain_genesis_hash);
 		// The funding registry follows sessions through the services it
 		// belongs to, so it is built holding them.

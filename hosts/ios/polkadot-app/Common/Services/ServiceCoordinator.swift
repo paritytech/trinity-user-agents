@@ -563,7 +563,7 @@ private extension ServiceCoordinator {
             serviceFactory: ChatRequestServiceFactory(
                 remoteContactResolver: CompoundRemoteContactResolver(
                     resolvers: [
-                        remoteAccountOperation(chatChainId: AppConfig.Chains.usernameChain)
+                        remoteAccountOperation(chatChainId: AppConfig.Chains.assethubChain)
                     ],
                     logger: Logger.shared
                 ),
