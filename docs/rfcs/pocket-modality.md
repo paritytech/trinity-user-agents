@@ -47,7 +47,8 @@ host-placed card on their own and the add flow layers on top without changing th
 - The **face** is the collapsed presentation, rendered natively from a `RendererNode` tree.
 - The **back** is an optional second face a card declares, drawn the same way and shown only by turning the opened card
   over. The face shown otherwise is the card's front. The fixed theme, `faceShown` and `ExpandedCard::set_face_shown`
-  apply to the card whichever side is up, and turning it is not moving the face.
+  apply to the card whichever side is up. A turn is not a move of the face, and hiding and showing the face keeps the
+  side that was up.
 - The **expanded card** is the product's `widget` executable in a WebView.
 - The **worker** is the product's one Worker executable. It draws the faces, handles their actions, and is the only
   execution the `Pocket` trait is available to.
@@ -68,16 +69,18 @@ declares one.
 
 Pocket adds two rules on top. First, the host caches the newest tree per card and side durably, so a face is shown
 offline and at cold start before the worker answers, and a privileged card has something to show on first run. Until the
-worker draws the back, the host shows the cached back, else the archive file the definition names. A definition that
-stops declaring `back` discards the cached back, and an opened card showing its back returns to the front.
+worker draws the back, the host shows the cached back, else the archive file the definition names, and a back render the
+worker refuses leaves that back in place rather than blanking it. A definition that stops declaring `back` discards the
+cached back, and an opened card showing its back returns to the front.
 
 Second, the host draws every face in one fixed theme, whatever theme the user picked, so a card looks the same in every
 theme. In the Polkadot Android and iOS apps that theme is Berlin Night: `FgPrimary` is `#F4F4F5` and `BgSurfaceMain` is
 `#0B0C0F`. `theme.subscribe` still reports the user's theme, for the product's own screens.
 
-The host sends presses inside the back only once the running worker has drawn the back live. A product on an SDK without
-`PocketCardBack` cannot decode such a press and would lose its whole action stream, front and chat included. Its back
-still shows, but its presses go nowhere, so a product declares `back` only once its SDK has `PocketCardBack`.
+Presses inside a cached or archive back go nowhere, by the renderer's rule that only the current tree of an open
+`render` stream is a source of actions. This also protects a product on an SDK without `PocketCardBack`: it refuses the
+back render, so it never receives a back press it cannot decode, which would end its whole action stream. Its back shows
+but does not respond, so a product declares `back` only once its SDK has `PocketCardBack`.
 
 ### Expanded card
 
@@ -97,8 +100,8 @@ not part of the contract.
 A card with a back is turned over on the opened card by dragging sideways or flicking. The turn follows the finger,
 always settles flat on one side, and never shows a side mirrored. A card without a back does not turn, and a card in the
 collection never turns. Closing the card returns it to its front. The host loads the back no later than when the card
-opens, so turning never waits on it. On an opened card both sides count as on screen, since the back is one turn
-away.
+opens, so turning never waits on it. On an opened card both sides count as on screen, an exception to the renderer's
+Live rule, since the back is one turn away.
 
 ### Lifecycle
 
@@ -130,8 +133,9 @@ type PocketCardDefinition = {
 
 A `faceShown` that is not a boolean, or a `back` that is not a string or is empty, makes the definition invalid, as a
 missing `title` does, and an invalid definition drops all of the product's cards. A `back` file that is missing or does
-not decode leaves the card without a back until the worker draws one. A host that does not read `faceShown` or `back`
-shows nothing wrong, so a product checks both before publishing rather than relying on what today's hosts display.
+not decode counts as no file: the card shows its cached back, or has no back until the worker draws one. A host that
+does not read `faceShown` or `back` shows nothing wrong, so a product checks both before publishing rather than relying
+on what today's hosts display.
 
 The preview is a static file in the CID-pinned archive, so the host can show a card before any product code runs, the
 same property the [funding modality](https://github.com/paritytech/trinity-user-agents/pull/339) relies on for its rail list.
@@ -190,9 +194,9 @@ card, or a product whose manifest lacks `includes.pocket`, produces a host error
 ### Removing a card
 
 The user removes a card in host UI. The product removes one of its own with `remove_card`. Either way the card is gone:
-its cached front and back are discarded, its `Renderer::render` streams end, its references are dropped, and getting
-it back means the deeplink flow again. Removing a card that is not present succeeds. Removing a privileged card fails
-with `Privileged`, for the product, and is not offered to the user.
+its cached front and back are discarded, its `Renderer::render` streams end, its references are dropped, and getting it
+back means the deeplink flow again. Removing a card that is not present succeeds. Removing a privileged card fails with
+`Privileged`, for the product, and is not offered to the user.
 
 ### Wire surface
 
@@ -320,8 +324,9 @@ that made it, so no request names a card. An App or Worker caller is `Denied`, a
 - **Pocket declares no rendering method of its own.** A `card_render` and `action_subscribe` pair keyed by `card_id` was
   considered and dropped: a face is a body like any other, and a pair per surface costs four wire ids each and gives a
   product one handler per surface to register.
-- **The side is a context variant, not a render payload.** A press carries only the context, so a payload could not tell
-  the product which side was pressed. A product on an SDK without the variant refuses back renders and keeps its front.
+- **The side is a context variant, not a render payload.** The render request has to name the side to draw, and a
+  variant names it for presses too, so a product needs no action-id convention to tell the sides apart. A product on an
+  SDK without the variant refuses back renders and keeps its front.
 - **`-` as the reserved segment** is borrowed from GitLab's `/-/` namespace. Any App route starting with `/-/` is
   unreachable once a host implements this. A query parameter was rejected because Apps tend to ignore unknown
   parameters, so an unsupported target would silently open the App with no signal that anything was asked for.
