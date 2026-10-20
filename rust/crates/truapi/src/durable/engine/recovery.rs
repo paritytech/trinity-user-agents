@@ -12,6 +12,7 @@ use futures::{
 	future::ready,
 	stream::{self, BoxStream, StreamExt},
 };
+use rusqlite::Connection;
 use subxt::utils::H256;
 use tracing::warn;
 
@@ -137,11 +138,11 @@ impl DurableTxEngine {
 	}
 
 	/// Whether recovery goes on after a pass. It goes on while a transaction
-	/// waits to be built, or while one some registered domain can decide is
-	/// live on a chain whose heads it still receives. Rows of a domain
-	/// without an oracle do not count: no pass could decide them. Once it
-	/// stops, it fails if a chain whose heads were lost still has live
-	/// transactions.
+	/// some registered domain can decide is live on a chain whose heads it
+	/// still receives. Rows of a domain without an oracle do not count: no
+	/// pass could decide them. Once no such chain is left, it fails if a
+	/// chain whose heads were lost still has live transactions, and
+	/// otherwise goes on only while a transaction waits to be built.
 	async fn after_pass(&self, lost: &LostChains) -> ControlFlow<Result<(), RecoveryError>> {
 		let Some(live_chains) = self.readable_live_chains().await else {
 			return ControlFlow::Continue(());
@@ -149,33 +150,43 @@ impl DurableTxEngine {
 		if !lost.contains_all(&live_chains) {
 			return ControlFlow::Continue(());
 		}
-		match lost.heads_lost_error(&live_chains) {
-			Some(error) => ControlFlow::Break(Err(error)),
-			None => ControlFlow::Break(Ok(())),
+		if let Some(error) = lost.heads_lost_error(&live_chains) {
+			return ControlFlow::Break(Err(error));
+		}
+		match self.waits_to_be_built().await {
+			true => ControlFlow::Continue(()),
+			false => ControlFlow::Break(Ok(())),
 		}
 	}
 
-	/// The chains with live transactions, or `None` while recovery has to go
-	/// on whatever their heads do. An unreadable ledger keeps recovery
-	/// running: abandoning transactions is far worse than one more pass.
+	/// The chains with live transactions, or `None` when the ledger cannot
+	/// be read.
 	async fn readable_live_chains(&self) -> Option<BTreeSet<H256>> {
-		match self.read_live_chains().await {
-			Ok(chains) => chains,
-			Err(error) => {
-				warn!(%error, "durable recovery could not read the ledger");
-				None
-			},
-		}
+		let domains = self.read_or_warn(dao::live_domains).await?;
+		Some(self.chains_of(&domains))
 	}
 
-	/// The chains live transactions are on, or `None` while one waits to be
-	/// built: building follows no chain's heads, so no lost chain ends it.
-	async fn read_live_chains(&self) -> Result<Option<BTreeSet<H256>>, DbError> {
-		if self.db.read(dao::has_pending_submissions).await? {
-			return Ok(None);
-		}
-		let domains = self.db.read(dao::live_domains).await?;
-		Ok(Some(self.chains_of(&domains)))
+	/// Whether a transaction waits to be built. An unreadable ledger counts
+	/// as one waiting.
+	async fn waits_to_be_built(&self) -> bool {
+		let waiting = self.read_or_warn(dao::has_pending_submissions).await;
+		waiting.unwrap_or(true)
+	}
+
+	/// The result of `query`, or `None` when the ledger cannot be read.
+	/// An unreadable ledger keeps recovery running: abandoning transactions
+	/// is far worse than one more pass.
+	async fn read_or_warn<T: Send + 'static>(
+		&self,
+		query: fn(&Connection) -> Result<T, DbError>,
+	) -> Option<T> {
+		self.db
+			.read(query)
+			.await
+			.inspect_err(|error| {
+				warn!(%error, "durable recovery could not read the ledger");
+			})
+			.ok()
 	}
 
 	/// The chains `domains` live on, skipping domains without an oracle.
@@ -580,5 +591,25 @@ mod tests {
 		harness.finalize(132);
 
 		assert_eq!(running.join().unwrap(), Ok(()));
+	}
+
+	/// A transaction a previous run broadcast is decided only by passes its
+	/// chain's heads drive. Once those heads are lost, the host must hear of
+	/// it to resubscribe, however long another row waits to be built.
+	#[test]
+	fn a_lost_chain_fails_recovery_while_a_row_waits_to_be_built() {
+		let mut harness = ScheduledTxHarness::with_policy(ScriptedPolicy::answering_nothing());
+		harness.insert_unwatched(extrinsic(1, 100, 64), None);
+		harness.leave_waiting_from_previous_process();
+		let running = run_in_background(harness.engine());
+		wait_until(|| harness.policy().batches().len() == 1, "the row is asked about");
+
+		harness.end_heads();
+
+		wait_until(|| running.is_finished(), "recovery returns");
+		assert!(matches!(
+			running.join().unwrap(),
+			Err(RecoveryError::HeadsLost { genesis, .. }) if genesis == GENESIS
+		));
 	}
 }
