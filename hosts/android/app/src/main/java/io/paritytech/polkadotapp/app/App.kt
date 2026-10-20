@@ -12,6 +12,7 @@ import dagger.hilt.android.HiltAndroidApp
 import io.paritytech.polkadotapp.app.logging.AppFileDebugTree
 import io.paritytech.polkadotapp.app.logging.CoinageFileTree
 import io.paritytech.polkadotapp.app.root.presentation.debug.DebugShakeObserver
+import io.paritytech.polkadotapp.app.telemetry.AndroidHostProcessTelemetry
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.AppInitializerPipeline
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
@@ -55,6 +56,7 @@ class App : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        AndroidHostProcessTelemetry.captureProcessStarted()
 
         // Planted before the initializers: the pipeline resumes unfinished top-ups, and Timber drops
         // anything logged before a tree exists.
