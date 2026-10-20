@@ -472,7 +472,7 @@ impl ProductConnection {
 		}
 	}
 
-	async fn confirm_product_action(
+	async fn confirm_user_action_if_needed(
 		&self,
 		review: UserConfirmationReview,
 	) -> Result<bool, v01::GenericError> {
@@ -493,7 +493,7 @@ impl ProductConnection {
 		review: impl FnOnce() -> UserConfirmationReview,
 	) -> Result<bool, v01::GenericError> {
 		if account.dot_ns_identifier == self.product_id() {
-			return self.confirm_product_action(review()).await;
+			return self.confirm_user_action_if_needed(review()).await;
 		}
 		let approval =
 			cross_product_signature_key(&self.product_id(), &account.dot_ns_identifier, kind);
@@ -505,7 +505,7 @@ impl ProductConnection {
 		if permissions.authorize(&approval, false) {
 			return Ok(true);
 		}
-		let approved = self.confirm_product_action(review()).await?;
+		let approved = self.confirm_user_action_if_needed(review()).await?;
 		if approved {
 			permissions.grant(approval);
 		}

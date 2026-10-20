@@ -200,7 +200,7 @@ impl Signing for ProductRuntimeHost {
 				};
 				let confirmed = until_cancelled(cx, async {
 					if names_contacts {
-						self.connection.confirm_product_action(review()).await
+						self.connection.confirm_user_action_if_needed(review()).await
 					} else {
 						self.connection
 							.confirm_signature(
@@ -471,7 +471,7 @@ impl ProductRuntimeHost {
 						.confirm_signature(CrossProductSignatureKind::Raw, &inner.account, review)
 						.await
 				} else {
-					self.connection.confirm_product_action(review()).await
+					self.connection.confirm_user_action_if_needed(review()).await
 				}
 			})
 			.await
@@ -522,7 +522,7 @@ impl ProductRuntimeHost {
 		// a trusted product signs them the way it signs with its own accounts.
 		let confirmation = async {
 			if watermarked {
-				self.connection.confirm_product_action(review).await
+				self.connection.confirm_user_action_if_needed(review).await
 			} else {
 				self.connection.platform.confirm_user_action(review).await
 			}
