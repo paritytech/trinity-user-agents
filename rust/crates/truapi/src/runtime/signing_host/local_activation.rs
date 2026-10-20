@@ -8,7 +8,6 @@ use crate::{
 	runtime::{
 		authority::AuthorityError, connected_session_ui_info, identity::lookup_session_identity,
 	},
-	session_usernames::SessionUsernames,
 };
 
 use zeroize::Zeroizing;
@@ -76,14 +75,9 @@ impl LocalActivation for SigningHost {
 			else {
 				return;
 			};
-			let named = SessionInfo {
-				lite_username: identity.lite_username,
-				full_username: identity.full_username,
-				..session.clone()
-			};
-			if named.has_username() &&
-				session_state.replace_session_if_current(&session, named.clone())
-			{
+			let (lite_username, full_username) = identity.into_usernames();
+			let named = SessionInfo { lite_username, full_username, ..session.clone() };
+			if session_state.replace_session_if_current(&session, named.clone()) {
 				auth_state.connected(&connected_session_ui_info(&named));
 			}
 		}));
