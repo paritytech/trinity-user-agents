@@ -47,10 +47,8 @@ pub async fn resolve_session_identity_with_chain(
 	if let Some(identity) =
 		lookup_session_identity(chain, asset_hub_chain_genesis_hash, &session).await
 	{
-		session.apply_usernames(
-			identity.lite_username().map(str::to_owned),
-			identity.full_username().map(str::to_owned),
-		);
+		let (lite_username, full_username) = identity.into_usernames();
+		session.apply_usernames(lite_username, full_username);
 	}
 	session
 }
@@ -207,7 +205,7 @@ mod tests {
 	use crate::{
 		chain_runtime::{RuntimeChainProvider, RuntimeFailure},
 		host_logic::dotns_gateway::{
-			VIEW_CALL_ORIGIN, account_to_h160, dispatcher_address_key, selector,
+			VIEW_CALL_ORIGIN, account_to_h160, decode_string, dispatcher_address_key, selector,
 		},
 		platform::JsonRpcConnection,
 		subscription::thread_per_subscription_spawner,
@@ -348,9 +346,7 @@ mod tests {
 				}
 			},
 			(CONTROLLER, s) if s == selector("isPopIssued(string)") => {
-				let length = u64::from_be_bytes(input[60..68].try_into().unwrap()) as usize;
-				let label = &input[68..68 + length];
-				abi_word(u64::from(label != b"squatter")).to_vec()
+				abi_word(u64::from(decode_string(&input[4..]).unwrap() != "squatter")).to_vec()
 			},
 			(CONTROLLER, s) if s == selector("protocolRegistry()") => abi_address(&REGISTRY),
 			(REGISTRY, s) if s == selector("get(bytes32)") => abi_address(&FACTORY),
@@ -529,13 +525,10 @@ mod tests {
 	) -> SessionInfo {
 		SessionInfo {
 			public_key,
-			sso: None,
-			root_entropy_source: None,
 			identity_account_id: Some(identity_account_id),
-			identity_chat_private_key: None,
-			device_enc_public_key: None,
 			lite_username: None,
 			full_username: None,
+			..crate::test_support::session_info()
 		}
 	}
 

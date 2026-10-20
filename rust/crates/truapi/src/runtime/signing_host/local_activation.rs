@@ -75,11 +75,8 @@ impl LocalActivation for SigningHost {
 			else {
 				return;
 			};
-			let named = SessionInfo {
-				lite_username: identity.lite_username().map(str::to_owned),
-				full_username: identity.full_username().map(str::to_owned),
-				..session.clone()
-			};
+			let (lite_username, full_username) = identity.into_usernames();
+			let named = SessionInfo { lite_username, full_username, ..session.clone() };
 			if session_state.replace_session_if_current(&session, named.clone()) {
 				auth_state.connected(&connected_session_ui_info(&named));
 			}

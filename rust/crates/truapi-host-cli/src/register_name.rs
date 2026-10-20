@@ -251,14 +251,14 @@ async fn resolve_link(
 		return Ok(Link::LiteUsername(lite.as_bytes().to_vec()));
 	}
 	let identity = reader.dotns_identity(who).await?;
-	match identity.as_ref().and_then(|identity| identity.lite_username()) {
+	match identity.and_then(|identity| identity.into_usernames().0) {
 		// The resolved name goes into the signed ring-VRF message, so it has
 		// to pass the same shape check as an explicit --link-lite: a store can
 		// hold a two-digit-suffixed label whose dotted form exceeds the
 		// gateway's BaseLabel bound.
-		Some(lite) if is_dotted_lite_username(lite) => {
+		Some(lite) if is_dotted_lite_username(&lite) => {
 			debug!(%lite, "linking the account's own lite username");
-			Ok(Link::LiteUsername(lite.as_bytes().to_vec()))
+			Ok(Link::LiteUsername(lite.into_bytes()))
 		},
 		Some(lite) => {
 			bail!(

@@ -422,6 +422,11 @@ impl DotnsIdentity {
 	pub fn full_username(&self) -> Option<&str> {
 		self.full_username.as_deref()
 	}
+
+	/// The `(lite, full)` usernames, at least one of them `Some`.
+	pub fn into_usernames(self) -> (Option<String>, Option<String>) {
+		(self.lite_username, self.full_username)
+	}
 }
 
 /// Classifies bare contract labels into lite and full usernames.
@@ -447,7 +452,7 @@ where
 	I: IntoIterator,
 	I::Item: AsRef<str>,
 {
-	let mut identity = DotnsIdentity { lite_username: None, full_username: None };
+	let (mut lite_username, mut full_username) = (None, None);
 	for label in labels {
 		let label = label.as_ref();
 		let shape_ok = is_dotted_lite_username(label) || is_dns_label(label);
@@ -458,13 +463,13 @@ where
 			continue;
 		}
 		if is_dotted_lite_username(label) {
-			identity.lite_username.get_or_insert_with(|| label.to_string());
+			lite_username.get_or_insert_with(|| label.to_string());
 		} else {
-			identity.full_username.get_or_insert_with(|| label.to_string());
+			full_username.get_or_insert_with(|| label.to_string());
 		}
 	}
-	let has_username = identity.lite_username.is_some() || identity.full_username.is_some();
-	Ok(has_username.then_some(identity))
+	let has_username = lite_username.is_some() || full_username.is_some();
+	Ok(has_username.then_some(DotnsIdentity { lite_username, full_username }))
 }
 
 /// Whether the PoP controller issued `label`, per
@@ -1290,7 +1295,6 @@ mod tests {
 
 			// Provenance gates every slot: a perfectly shaped label the
 			// controller did not issue is skipped.
-			// An account whose labels are all unissued has no identity.
 			let mut denying = IssuedAll { denied: vec!["app.42", "squatter"] };
 			assert_eq!(
 				classify_labels(
@@ -1302,6 +1306,7 @@ mod tests {
 				.unwrap(),
 				identity(Some("alice.01"), Some("myproject"))
 			);
+			// An account whose labels are all unissued has no identity.
 			assert_eq!(
 				classify_labels(&mut denying, &controller, ["app.42", "squatter"])
 					.await
