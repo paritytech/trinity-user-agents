@@ -2437,6 +2437,17 @@ fn set_face_shown(
 	))
 }
 
+fn set_back_shown(
+	host: &ProductRuntimeHost,
+	shown: bool,
+) -> Result<HostExpandedCardSetBackShownResponse, CallError<HostExpandedCardSetBackShownError>> {
+	futures::executor::block_on(ExpandedCard::set_back_shown(
+		host,
+		&CallContext::default(),
+		HostExpandedCardSetBackShownRequest::V1(v01::HostExpandedCardSetBackShownRequest { shown }),
+	))
+}
+
 /// The host must see exactly what the Widget asked for, in order, so a hide
 /// followed by a show never collapses into one state change.
 #[test]
@@ -2454,17 +2465,6 @@ fn expanded_card_widget_requests_reach_the_host_in_order() {
 	}
 
 	assert_eq!(card.requested(), [false, true, false]);
-}
-
-fn set_back_shown(
-	host: &ProductRuntimeHost,
-	shown: bool,
-) -> Result<HostExpandedCardSetBackShownResponse, CallError<HostExpandedCardSetBackShownError>> {
-	futures::executor::block_on(ExpandedCard::set_back_shown(
-		host,
-		&CallContext::default(),
-		HostExpandedCardSetBackShownRequest::V1(v01::HostExpandedCardSetBackShownRequest { shown }),
-	))
 }
 
 /// Admin connections call the trait without the dispatcher's execution-kind

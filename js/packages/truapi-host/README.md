@@ -155,9 +155,9 @@ capability set on both sides of the boundary.
 ### Product-rendered bodies
 
 A host can ask a product to draw one body — a chat message, an input-widget
-candidate, a Pocket card or its back — and send back what the user does with it. Both entry
-points live on the product provider and are present only on runtimes holding a
-live channel to the core:
+candidate, a Pocket card or its back — and send back what the user does with it.
+Both entry points live on the product provider and are present only on runtimes
+holding a live channel to the core:
 
 ```ts
 import type { RenderContext } from "@parity/truapi";
@@ -204,9 +204,10 @@ the product's worker stays up for as long as something is being drawn.
 policy: the renderer refuses a connection that is not a `Worker` execution, and
 chat additionally requires a live session.
 
-Two rules the core cannot check are the host's to keep: send a render context
-only for a surface the product's manifest `includes`, and publish a renderer
-action only from the current tree of an open render stream.
+Three rules the core cannot check are the host's to keep: send a render context
+only for a surface the product's manifest `includes`, send `PocketCardBack` only
+for a card whose definition declares `back`, and publish a renderer action only
+from the current tree of an open render stream.
 
 ## Product account addresses
 

@@ -530,7 +530,8 @@ Omitting `ChatPlatform` makes the core answer Chat calls `Unsupported`, and
 omitting `ContactsPlatform`, `PocketPlatform`, `GamePlatform` or
 `ScannerPlatform` does the same for Contacts, Pocket, Game or Scanner calls. A
 connection without an `ExpandedCardHost` answers a Widget's `ExpandedCard` calls
-`Unsupported`.
+`Unsupported`, and `set_back_shown` answers `Unsupported` to every Widget, since
+no host seam turns a card.
 Omitting `PermissionStatusHost` leaves device grants resolving from stored
 state alone, which is what a host with no OS permission model does anyway.
 Serving it gates both halves of the surface: a device permission request and a
