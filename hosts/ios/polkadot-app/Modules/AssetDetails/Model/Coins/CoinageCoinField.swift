@@ -80,8 +80,9 @@ final class CoinageCoinField {
     }
 
     /// Re-aims every coin. A coin already in the field keeps where it has got to and simply gets a
-    /// new destination, so a tap mid-flight re-aims rather than restarting. A coin new to the field
-    /// arrives from off the right edge at a fraction of its size and fully worn, and settles in.
+    /// new destination, so a tap mid-flight re-aims rather than restarting. When the field is first
+    /// filled, a coin arrives from off the right edge at a fraction of its size and fully worn; one
+    /// added to a field that already holds coins, as a credit lands, drops into its place from above.
     func retarget(
         _ targets: [(coin: CoinageScene.Coin, target: Target)],
         spawningFrom edge: CGFloat,
@@ -90,6 +91,7 @@ final class CoinageCoinField {
         var updated: [Member] = []
         var lookup: [String: Int] = [:]
         let count = max(targets.count, 1)
+        let drops = !members.isEmpty
 
         for (order, entry) in targets.enumerated() {
             let hold = CGFloat(stagger.position(of: order, of: count))
@@ -105,7 +107,7 @@ final class CoinageCoinField {
                     Member(
                         coin: entry.coin,
                         seed: Self.seed(for: entry.coin.id),
-                        channels: seeded(for: entry.target, edge: edge),
+                        channels: drops ? dropping(onto: entry.target) : seeded(for: entry.target, edge: edge),
                         target: entry.target,
                         hold: hold
                     )
@@ -159,6 +161,8 @@ private extension CoinageCoinField {
     /// can be, so arriving money visibly settles into the strip and then clears.
     static let spawnOffset: CGFloat = 30
     static let spawnScale: CGFloat = 0.4
+    /// How far above its place a credited coin starts its drop.
+    static let dropHeight: CGFloat = 34
 
     func seeded(for target: Target, edge: CGFloat) -> Channels {
         var channels = Channels()
@@ -171,6 +175,16 @@ private extension CoinageCoinField {
         channels.wear = CoinageSpring(value: CoinageWear.unknown)
         channels.calm = CoinageSpring(value: target.calm)
 
+        return channels
+    }
+
+    /// A coin dropping into its place in the stack, full size, from just above it.
+    func dropping(onto target: Target) -> Channels {
+        var channels = seeded(for: target, edge: 0)
+        channels.centreX = CoinageSpring(value: target.centre.x)
+        channels.centreY = CoinageSpring(value: target.centre.y - Self.dropHeight)
+        channels.height = CoinageSpring(value: target.height)
+        channels.wear = CoinageSpring(value: target.wear)
         return channels
     }
 

@@ -3,6 +3,9 @@ import PolkadotUI
 
 struct WalletView: View {
     @State var viewModel: WalletViewModelProtocol = WalletViewModel()
+    /// The funding lists the open Purse draws.
+    var fundingCenter: FundingActivityCenter = .shared
+    var cash: FundingCash = .current
     @State private var viewHeight: CGFloat = 0
     private let collectiblesPeekHeight: CGFloat = 90
     @State private var scrollAtTop: Bool = true
@@ -13,6 +16,11 @@ struct WalletView: View {
     private var cardOverlap: CGFloat { PocketCardSize.height - peekHeight }
     private let scrollTopAnchor = "walletScrollTop"
     @State private var overscroll: CGFloat = 0
+    @State private var purseCard: PurseScroll.Card?
+    @State private var purseDays: [PurseScroll.DayMark] = []
+    @State private var scrollOffset: CGFloat?
+    @State private var navigationBar: CGRect?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -46,6 +54,7 @@ struct WalletView: View {
                     .id(scrollTopAnchor)
                 }
                 .modifier(OverscrollReader(overscroll: $overscroll))
+                .modifier(ScrollOffsetReader(offset: $scrollOffset))
                 .onChange(of: viewModel.expandedSection) { _, newValue in
                     guard newValue == .none else { return }
                     withAnimation(.spring(duration: 0.45, bounce: 0.15)) {
@@ -54,6 +63,14 @@ struct WalletView: View {
                 }
             }
         }
+        .coordinateSpace(name: PurseScroll.space)
+        .background { NavigationBarFrameReader { navigationBar = $0 } }
+        .onPreferenceChange(PurseScroll.CardKey.self) { purseCard = $0 }
+        .onChange(of: purseCollapse) { _, progress in viewModel.onPurseCollapse?(progress) }
+        .onPreferenceChange(PurseScroll.DaysKey.self) { purseDays = $0 }
+        .overlay(alignment: .top) { purseStickyBar }
+        .overlay { purseHeaderCard }
+        .overlay(alignment: .bottom) { purseDock }
         .modifier(
             ConditionalOverlayModifier(
                 available: viewModel.isCollectiblesAvailable,
@@ -124,7 +141,10 @@ struct WalletView: View {
                 viewModel.onBalance?()
             },
             overscroll: overscroll,
-            onCollapse: { viewModel.onCollapse?() }
+            onCollapse: { viewModel.onCollapse?() },
+            cardOpacity: purseCardOpacity,
+            fundingCenter: fundingCenter,
+            cash: cash
         )
         .matchedGeometryEffect(id: "asset", in: cardNamespace)
         .scaleEffect(assetScale)
@@ -241,6 +261,75 @@ struct WalletView: View {
         case .identityDetails,
              .collectiblesDetails:
             false
+        }
+    }
+}
+
+private extension WalletView {
+    var isPurseOpen: Bool {
+        viewModel.expandedSection == .assetDetails
+    }
+
+    /// How far the open Purse has scrolled from its top.
+    var purseScrollOffset: CGFloat {
+        guard isPurseOpen else { return 0 }
+        if let scrollOffset { return max(0, scrollOffset) }
+        return purseCard.map { PurseMotion.Collapse.scrollOffset(cardTop: $0.top) } ?? 0
+    }
+
+    var purseCollapse: CGFloat {
+        PurseMotion.Collapse.progress(scrollOffset: purseScrollOffset)
+    }
+
+    /// The page's card before any scroll, in the window.
+    var purseRestFrame: CGRect? {
+        guard let frame = purseCard?.frame, frame.width > 0 else { return nil }
+        return frame.offsetBy(dx: 0, dy: purseScrollOffset)
+    }
+
+    var purseDockCentre: CGPoint? {
+        navigationBar.map { CGPoint(x: $0.midX, y: $0.midY) }
+    }
+
+    /// Whether the wallet draws the card itself, shrinking into the header.
+    var purseCardFloats: Bool {
+        isPurseOpen && !reduceMotion && purseCollapse > 0 && purseRestFrame != nil && purseDockCentre != nil
+    }
+
+    var purseCardOpacity: Double {
+        if purseCardFloats { return 0 }
+        return reduceMotion ? PurseMotion.Collapse.cardOpacity(purseCollapse) : 1
+    }
+
+    @ViewBuilder
+    var purseHeaderCard: some View {
+        if isPurseOpen, let dock = purseDockCentre {
+            if reduceMotion {
+                PurseDockedThumbnail(dock: dock, opacity: PurseMotion.Collapse.thumbnailOpacity(purseCollapse))
+            } else if purseCardFloats, let rest = purseRestFrame,
+                      let card = viewModel.assetDetailsViewModel.balanceCardModel {
+                PurseFloatingCard(
+                    card: card,
+                    isUpdating: viewModel.assetDetailsViewModel.isUpdating,
+                    rest: rest,
+                    scrollOffset: purseScrollOffset,
+                    dock: dock
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    var purseStickyBar: some View {
+        if isPurseOpen, let bar = PurseScroll.bar(card: purseCard, days: purseDays) {
+            PurseStickyBar(bar: bar, cash: cash)
+        }
+    }
+
+    @ViewBuilder
+    var purseDock: some View {
+        if isPurseOpen {
+            FundingInProgressDock(cash: cash, center: fundingCenter)
         }
     }
 }

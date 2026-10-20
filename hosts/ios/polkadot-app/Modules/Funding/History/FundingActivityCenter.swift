@@ -17,6 +17,9 @@ final class FundingActivityCenter {
 
     private(set) var inFlight: [FundingActivityItem] = []
     private(set) var history: [FundingActivityItem] = []
+    /// Sessions that left In progress while the lists were showing, with when
+    /// they did, so their rows arrive in the history with their completion.
+    private(set) var justFinished: [String: Date] = [:]
 
     private var records: [String: FundingRecord] = [:]
     private let store: FundingHistoryStoring
@@ -93,6 +96,12 @@ private extension FundingActivityCenter {
         }
 
         let moving = sessions.filter { Self.isInFlight($0.session, progress: $0.progress) }
+        justFinished = Self.finished(
+            before: inFlight.map(\.id),
+            after: moving.map(\.session.intent),
+            known: justFinished,
+            now: Date()
+        )
         inFlight = moving
             .map { FundingActivityItem(session: $0.session, progress: $0.progress) }
             .sorted { $0.date > $1.date }
@@ -157,5 +166,27 @@ private extension FundingActivityCenter {
             .filter { !inFlightIds.contains($0.intent) }
             .sorted { $0.settledAt > $1.settledAt }
             .map(FundingActivityItem.init(record:))
+    }
+}
+
+extension FundingActivityCenter {
+    /// The sessions that just left In progress, added to those still within
+    /// their arrival window.
+    nonisolated static func finished(
+        before: [String],
+        after: [String],
+        known: [String: Date],
+        now: Date
+    ) -> [String: Date] {
+        var result = known.filter { now.timeIntervalSince($0.value) < PurseMotion.Arrival.window }
+        for id in Set(before).subtracting(after) {
+            result[id] = now
+        }
+        return result
+    }
+
+    /// Whether the row for `id` arrives with its completion now.
+    func isArriving(_ id: String, now: Date = Date()) -> Bool {
+        justFinished[id].map { now.timeIntervalSince($0) < PurseMotion.Arrival.window } ?? false
     }
 }

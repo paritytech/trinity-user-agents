@@ -9,19 +9,33 @@ struct AssetDetailsView: View {
     var onCardTapped: () -> Void
     var overscroll: CGFloat = 0
     var onCollapse: (() -> Void)?
+    /// How visible the page's own card is: the wallet draws the card itself
+    /// while it shrinks into the header, so this one stands aside.
+    var cardOpacity: Double = 1
+    /// The funding lists the open Purse draws.
+    var fundingCenter: FundingActivityCenter
+    var cash: FundingCash
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
         viewModel: AssetDetailsViewModelProtocol = AssetDetailsViewModel(),
         isExpanded: Bool = false,
         onCardTapped: @escaping () -> Void,
         overscroll: CGFloat = 0,
-        onCollapse: (() -> Void)? = nil
+        onCollapse: (() -> Void)? = nil,
+        cardOpacity: Double = 1,
+        fundingCenter: FundingActivityCenter,
+        cash: FundingCash
     ) {
         _viewModel = State(initialValue: viewModel)
         self.isExpanded = isExpanded
         self.onCardTapped = onCardTapped
         self.overscroll = overscroll
         self.onCollapse = onCollapse
+        self.cardOpacity = cardOpacity
+        self.fundingCenter = fundingCenter
+        self.cash = cash
     }
 
     var body: some View {
@@ -39,6 +53,28 @@ struct AssetDetailsView: View {
         if let balanceCardModel = viewModel.balanceCardModel {
             balanceCard(balanceCardModel)
                 .onTapGesture { onCardTapped() }
+                .background { cardMark }
+                .opacity(isExpanded ? cardOpacity : 1)
+                .animation(balanceAnimation, value: viewModel.coinageBreakdown?.amounts.total)
+        }
+    }
+
+    /// Where the card is while the Purse scrolls, for the card the wallet draws
+    /// shrinking into the header and the sticky bar under it.
+    @ViewBuilder
+    private var cardMark: some View {
+        if isExpanded {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: PurseScroll.CardKey.self,
+                    value: PurseScroll.Card(
+                        top: proxy.frame(in: .named(PurseScroll.space)).minY,
+                        bottom: proxy.frame(in: .named(PurseScroll.space)).maxY,
+                        balance: viewModel.coinageBreakdown?.amounts.total,
+                        frame: proxy.frame(in: .global)
+                    )
+                )
+            }
         }
     }
 
@@ -48,16 +84,26 @@ struct AssetDetailsView: View {
             if viewModel.showsAccountBackupPending {
                 AccountBackupPendingView()
             }
-            if viewModel.showsBackupNotification {
-                backupCard()
-            } else {
-                actions()
+            // The Total panel tucks under the tiles.
+            VStack(spacing: -Self.panelTuck) {
+                Group {
+                    if viewModel.showsBackupNotification {
+                        backupCard()
+                    } else {
+                        actions()
+                    }
+                }
+                .zIndex(1)
+                if let breakdown = viewModel.coinageBreakdown,
+                   viewModel.balanceCardModel != nil {
+                    CoinageBalanceBreakdownView(breakdown: breakdown, topInset: Self.panelTuck)
+                }
             }
-            FundingActivityView(cash: .current)
-            if let breakdown = viewModel.coinageBreakdown,
-               viewModel.balanceCardModel != nil {
-                CoinageBalanceBreakdownView(breakdown: breakdown)
-            }
+            FundingActivityView(
+                cash: cash,
+                currentBalance: viewModel.coinageBreakdown?.amounts.total,
+                center: fundingCenter
+            )
 
             #if TESTNET_FEATURE
                 HStack {
@@ -71,6 +117,14 @@ struct AssetDetailsView: View {
                 testnetTopUpButton()
             #endif
         }
+    }
+
+    private static let panelTuck: CGFloat = 8
+
+    /// The balance counting to its new figure.
+    private var balanceAnimation: Animation? {
+        reduceMotion ? .easeInOut(duration: PurseMotion.Balance.countUp) :
+            .easeOut(duration: PurseMotion.Balance.countUp)
     }
 
     private func balanceCard(
@@ -97,7 +151,7 @@ struct AssetDetailsView: View {
             if FundingAvailability.isAvailable {
                 actionCard(
                     title: String(localized: .Funding.cardGet),
-                    subtitle: String(localized: .Funding.cardGetSubtitle(symbol: FundingCash.current.symbol)),
+                    subtitle: String(localized: .Funding.cardGetSubtitle(symbol: cash.symbol)),
                     arrowRotation: .zero,
                     isLoading: viewModel.isTopUpInProgress
                 ) {
@@ -108,7 +162,7 @@ struct AssetDetailsView: View {
 
             actionCard(
                 title: String(localized: .Funding.cardSend),
-                subtitle: String(localized: .Funding.cardSendSubtitle(symbol: FundingCash.current.symbol)),
+                subtitle: String(localized: .Funding.cardSendSubtitle(symbol: cash.symbol)),
                 arrowRotation: .degrees(180),
                 isLoading: false
             ) {
@@ -184,34 +238,19 @@ struct AssetDetailsView: View {
     #endif
 }
 
+/// Total, the coins it is made of, and how much of it is still clearing.
 private struct CoinageBalanceBreakdownView: View {
     let breakdown: CoinageBalanceBreakdownViewModel
+    /// How far the panel sits under the tiles above it.
+    var topInset: CGFloat = 0
 
-    @State private var showDetails = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     /// How the coins came out, reported by the view as it lays them out.
     @State private var coinMetrics = CoinageCoinsView.Metrics()
-    /// How tall the coins are actually drawn, as opposed to how much room the card gives them.
-    @State private var drawHeight = CoinageStripLayout.Options().height
-    /// Cancelled if the coins are asked to expand again before the last collapse has finished.
-    @State private var shrink: Task<Void, Never>?
-
-    /// Anchors the card for the scroll that follows it down as it collapses.
-    private static let anchor = "coinageCard"
-    /// How long the card takes to close. The coins' own springs are still settling for a moment
-    /// after it, which is why giving the drawable back waits a little longer than this.
-    private static let collapse: TimeInterval = 0.35
 
     var body: some View {
-        // Vends a proxy for the wallet's own scroll view rather than making one: collapsing the
-        // details shortens the page under the reader, and a scroll view already past the new bottom
-        // has to be walked down to it rather than dropped there.
-        ScrollViewReader { scroll in
-            card(scroll: scroll)
-        }
-    }
-
-    private func card(scroll: ScrollViewProxy) -> some View {
-        VStack(spacing: DSSpacings.extraMedium) {
+        VStack(spacing: DSSpacings.medium) {
             VStack(spacing: 0) {
                 Text(.coinageSummaryTitle)
                     .typography(.bodyMedium)
@@ -222,114 +261,21 @@ private struct CoinageBalanceBreakdownView: View {
                 totalHeadline
             }
 
-            // Nothing held, nothing to draw: no strip to reserve height for, no runs to rule, and
-            // nothing for the toggle to expand.
+            // Nothing held, nothing to draw: no strip to reserve height for and no split to show.
             if !breakdown.strip.isEmpty {
-                // Above the coins rather than below them, so it stays on the same side whether they
-                // are stacked into the strip or spread out one by one.
-                Button {
-                    toggleDetails(scroll: scroll)
-                } label: {
-                    HStack(spacing: DSSpacings.extraSmall) {
-                        Image(.iconArrowUp16)
-                            .renderingMode(.template)
-                            .rotationEffect(.degrees(showDetails ? 0 : 180))
-                        Text(String(localized: showDetails ? .coinageHideDetails : .coinageShowDetails))
-                            .typography(.bodyMediumEmphasized)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .foregroundStyle(.fgPrimary)
-                }
+                CoinageCoinsView(coins: breakdown.strip, isExpanded: false, metrics: $coinMetrics)
+                    .frame(height: CoinageStripLayout.Options().height, alignment: .top)
+                    .clipped()
 
-                CoinageCoinsView(
-                    coins: breakdown.strip,
-                    isExpanded: showDetails,
-                    metrics: $coinMetrics
-                )
-                // Tall enough for the roomiest arrangement it has been asked for, and never
-                // resized while anything is animating. A Metal layer whose bounds change under an
-                // animation keeps showing its last frame mapped into the new bounds, and a frame
-                // of coins mapped anywhere is a frame of coins in the wrong place; collapsing made
-                // the top row dart upwards and come back. Held at one size there is no mapping to
-                // get wrong, and the card closes over the coins by clipping them.
-                .frame(height: drawHeight, alignment: .top)
-                .overlay(alignment: .topLeading) { blockHeaders }
-                // What the card gives the coins, which is what animates. Expanding is deliberately
-                // not animated: it takes its full height at once, so the coins fly out into a box
-                // that is already the right size, and animating it made the scroll view chase a
-                // growing content size and bounce against its own edge. Collapsing is animated,
-                // from inside the toggle, where the scroll can be moved in the same breath.
-                .frame(height: max(coinMetrics.height, CoinageStripLayout.Options().height), alignment: .top)
-                .clipped()
-                .onChange(of: coinMetrics.height) { _, height in
-                    grow(to: height)
-                }
+                CoinageSplitBar(clearing: breakdown.amounts.gainingPrivacy, total: breakdown.amounts.total)
 
-                if !showDetails {
-                    runMarkers
-                        .transition(.opacity)
-                }
+                splitLabels
             }
         }
-        .padding(DSSpacings.mediumIncreased)
+        .padding(.horizontal, DSSpacings.mediumIncreased)
+        .padding(.top, DSSpacings.mediumIncreased + topInset)
+        .padding(.bottom, DSSpacings.mediumIncreased)
         .background(.bgSurfaceContainer, in: RoundedRectangle(cornerRadius: DSRadii.large))
-        .id(Self.anchor)
-    }
-
-    /// Grows the drawing surface to fit an arrangement, and gives the room back once the coins
-    /// have settled into a smaller one.
-    ///
-    /// It cannot simply follow the card, because resizing a Metal layer while anything is
-    /// animating shows the last frame mapped into the new bounds. Waiting until the movement is
-    /// over leaves one resize with nothing animating over it, which is the case that has always
-    /// been fine, and the surface stops holding a grid's worth of drawable for a strip.
-    private func grow(to height: CGFloat) {
-        shrink?.cancel()
-        shrink = nil
-
-        guard height < drawHeight else {
-            drawHeight = max(drawHeight, height)
-            return
-        }
-
-        shrink = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(Self.collapse + 0.1))
-
-            guard !Task.isCancelled else { return }
-
-            drawHeight = height
-        }
-    }
-
-    /// Collapsing has to shorten the card and move the scroll view in one animation.
-    ///
-    /// The coins report their height only after laying out, which lands outside any transaction, so
-    /// the card took the strip's height in a step of its own and the scroll view clamped to the new
-    /// bottom in one jump. Taking the strip's height here, and asking the scroll view for the card
-    /// in the same breath, makes the page shorten and the scroll follow it as one movement.
-    private func toggleDetails(scroll: ScrollViewProxy) {
-        let isCollapsing = showDetails
-
-        withAnimation(.easeInOut(duration: Self.collapse)) {
-            showDetails.toggle()
-
-            guard isCollapsing else { return }
-
-            coinMetrics.height = CoinageStripLayout.Options().height
-            scroll.scrollTo(Self.anchor, anchor: .bottom)
-        }
-    }
-
-    /// The Clearing and Ready headers over the grid. The layout leaves room for them above each
-    /// block, so they sit in space the coins already made rather than pushing them about.
-    @ViewBuilder
-    private var blockHeaders: some View {
-        ForEach(coinMetrics.blocks) { block in
-            Text(String(localized: block.partition == .ready ? .coinageSpendable : .coinageLoading))
-                .typography(.bodySmall)
-                .foregroundStyle(Color.fgSecondary)
-                .offset(y: block.top)
-        }
     }
 
     private var totalHeadline: some View {
@@ -339,33 +285,40 @@ private struct CoinageBalanceBreakdownView: View {
             typography: .displaySmall
         )
         .lineLimit(1)
+        .contentTransition(reduceMotion ? .opacity : .numericText(value: totalValue))
+        .animation(.easeOut(duration: PurseMotion.Balance.countUp), value: totalValue)
         .accessibilityId(AccessibilityID.Wallet.coinageTotalBalanceValue)
         .foregroundStyle(Color.fgPrimary)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Which coins are Clearing and which are Ready, ruled under the runs themselves.
-    ///
-    /// Only while the coins are in the strip: spread into the grid they have headers of their own,
-    /// and the runs these rule no longer exist.
-    @ViewBuilder
-    private var runMarkers: some View {
-        GeometryReader { proxy in
-            CoinageRunMarkers(
-                runs: coinMetrics.runs.compactMap { run in
-                    CoinageRunMarkers.Run(
-                        partition: run.partition,
-                        start: run.start,
-                        end: run.end,
-                        title: String(localized: run.partition == .ready ? .coinageSpendable : .coinageLoading),
-                        amount: run.partition == .ready
-                            ? breakdown.availableNowBalance
-                            : breakdown.gainingPrivacyBalance
-                    )
-                },
-                width: proxy.size.width
-            )
+    private var totalValue: Double {
+        NSDecimalNumber(decimal: breakdown.amounts.total).doubleValue
+    }
+
+    /// "Clearing $X" while anything is, and "Ready $Y": on either side when both
+    /// show, centred when only Ready does.
+    private var splitLabels: some View {
+        HStack {
+            if breakdown.amounts.gainingPrivacy > 0 {
+                splitLabel(.coinageLoading, value: breakdown.gainingPrivacyBalance)
+                Spacer(minLength: DSSpacings.small)
+                splitLabel(.coinageSpendable, value: breakdown.availableNowBalance)
+            } else {
+                splitLabel(.coinageSpendable, value: breakdown.availableNowBalance)
+                    .frame(maxWidth: .infinity)
+            }
         }
-        .frame(height: CoinageRunMarkers.height)
+    }
+
+    private func splitLabel(_ key: LocalizedStringResource, value: String) -> some View {
+        HStack(spacing: DSSpacings.extraSmall) {
+            Text(key)
+                .foregroundStyle(.fgSecondary)
+            Text(verbatim: value)
+                .foregroundStyle(.fgPrimary)
+                .monospacedDigit()
+        }
+        .typography(.bodyMedium)
     }
 }

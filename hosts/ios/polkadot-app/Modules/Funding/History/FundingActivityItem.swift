@@ -69,6 +69,12 @@ extension FundingActivityItem {
         if case .inProgress = status { return true }
         return false
     }
+
+    /// In flight but slower than it should be, which the row draws in amber.
+    var isDelayed: Bool {
+        guard case let .inProgress(status) = status else { return false }
+        return status.isDelayed
+    }
 }
 
 extension FundingStatus {
