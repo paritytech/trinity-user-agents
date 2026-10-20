@@ -223,6 +223,14 @@ impl Decode for ProductId {
 	}
 }
 
+/// Deserializing parses, for the reason decoding does: a derived
+/// implementation would admit an id [`FromStr`] rejects.
+impl<'de> serde::Deserialize<'de> for ProductId {
+	fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+		String::deserialize(deserializer)?.parse().map_err(serde::de::Error::custom)
+	}
+}
+
 // A `ProductId` from the app is parsed while UniFFI converts the call's
 // arguments. Take one only in a call that returns a `Result`: a failed parse is
 // an internal error, and a crash in a non-throwing Swift call.

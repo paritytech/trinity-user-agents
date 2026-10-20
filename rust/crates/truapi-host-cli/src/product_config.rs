@@ -27,7 +27,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Deserializer, de::Error as _};
+use serde::Deserialize;
 use truapi::{
 	encode_cached_root_manifest,
 	platform::{CoreStorage, ProductId},
@@ -44,7 +44,7 @@ pub struct LocalProductConfig {
 	/// The product's dotNS base name, e.g. `peopl.paseo`. The id its grants and
 	/// its storage are resolved under. A name that is not a product id fails
 	/// the read.
-	#[serde(rename = "productName", deserialize_with = "product_id_from_name")]
+	#[serde(rename = "productName")]
 	pub product_name: ProductId,
 	/// Human-readable name, carried into the seeded manifest so what the host
 	/// resolves looks like what the publisher will write.
@@ -93,12 +93,6 @@ impl LocalProductConfig {
 			.join(", ");
 		format!("{}: {grants}", self.product_name)
 	}
-}
-
-fn product_id_from_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<ProductId, D::Error> {
-	let name = String::deserialize(deserializer)?;
-	name.parse::<ProductId>()
-		.map_err(|_| D::Error::custom(format!("productName {name:?} is not a product id")))
 }
 
 /// What [`apply`] seeded, so a caller can report it before serving anything.
@@ -161,6 +155,19 @@ mod tests {
 		let parsed = config(r#"{"productName":"dim2.paseo"}"#);
 		assert_eq!(parsed.product_name, "dim2.paseo");
 		assert!(parsed.trusted_products.is_empty());
+	}
+
+	#[test]
+	fn the_product_name_is_normalized_like_any_product_id() {
+		let parsed = config(r#"{"productName":" DIM2.Paseo "}"#);
+		assert_eq!(parsed.product_name, "dim2.paseo");
+	}
+
+	#[test]
+	fn a_product_name_that_is_not_a_product_id_fails_the_read_and_names_the_value() {
+		let error = serde_json::from_str::<LocalProductConfig>(r#"{"productName":"example.com"}"#)
+			.expect_err("example.com is not a product id");
+		assert!(error.to_string().contains(r#""example.com""#), "{error}");
 	}
 
 	#[test]
