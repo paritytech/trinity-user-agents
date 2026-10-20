@@ -13,12 +13,6 @@ on:
     # the label already on it.
     types: [labeled, synchronize, opened, reopened]
   workflow_dispatch:
-    inputs:
-      ref:
-        description: "Commit to test. Defaults to the selected workflow ref."
-        required: false
-        type: string
-        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -45,7 +39,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       # The tests run against the app, which applies the Google Services
@@ -63,11 +56,29 @@ jobs:
           keystore_alias: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
           keystore_key_pass: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
 
-      # The same values the distribution builds use, because the tests run
-      # against the real configuration rather than a placeholder one: the
-      # application id has to match the Google configuration decoded above,
-      # and the signing config reads the keystore's credentials.
-      #
+      - name: Build the app and test APKs
+        working-directory: hosts/android
+        env:
+          APPLICATION_ID: ${{ vars.APPLICATION_ID }}
+          IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID || 'io.parity.polkadotapp' }}
+          APPLICATION_NAME: ${{ vars.APPLICATION_NAME }}
+          CONTACT_EMAIL: ${{ vars.CONTACT_EMAIL }}
+          CURRENCY_SYMBOL: ${{ vars.CURRENCY_SYMBOL }}
+          FIAT_SYMBOL: ${{ vars.FIAT_SYMBOL || '$' }}
+          LOG_COLLECTION_EMAIL: ${{ vars.LOG_COLLECTION_EMAIL }}
+          PRIVACY_POLICY_URL: ${{ vars.PRIVACY_POLICY_URL }}
+          TERMS_OF_USE_URL: ${{ vars.TERMS_OF_USE_URL }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
+          GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
+          GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
+          NIGHTLY_FUNDING_MNEMONIC: ${{ secrets.NIGHTLY_FUNDING_MNEMONIC }}
+          CI_KEYSTORE_PASS: ${{ secrets.CI_KEYSTORE_PASS }}
+          CI_KEYSTORE_KEY_ALIAS: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
+          CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
+        run: ./gradlew :app:assembleGpDebug :app:assembleGpDebugAndroidTest --no-daemon
+
       - name: Enable KVM
         run: |
           set -euo pipefail
@@ -76,6 +87,10 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      # The same values the distribution builds use, because the tests run
+      # against the real configuration rather than a placeholder one: the
+      # application id has to match the Google configuration decoded above,
+      # and the signing config reads the keystore's credentials.
       - name: Run instrumented tests
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         env:
