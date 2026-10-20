@@ -73,17 +73,23 @@ struct SPARustRuntimeTests {
         #expect(execution.permissionRequests.isEmpty)
         #expect(engine.mediaHandlerWasInstalledAtInitialization)
 
-        // Bootstrap → container → zoom disable, doc-start ordering intact.
-        #expect(engine.initializedScripts.count == 3)
-        #expect(engine.initializedScripts[0]
-            .content == #"window.__truapi_localhost = { url: "ws://127.0.0.1:0/?t=test" };"#)
+        // Host telemetry → bootstrap → container → zoom disable, doc-start ordering intact.
+        #expect(engine.initializedScripts.count == 4)
+        #expect(engine.initializedScripts[0].content.contains("__trinityHostTelemetry"))
+        #expect(engine.initializedScripts[0].content.contains("Object.freeze"))
+        #expect(engine.initializedScripts[0].content.contains("writable: false"))
+        #expect(engine.initializedScripts[0].content.contains("configurable: false"))
         #expect(engine.initializedScripts[0].insertionPoint == .atDocStart)
-        #expect(!engine.initializedScripts[0].content.contains("__truapi_policy__"))
-        #expect(engine.initializedScripts[1].content.contains("freezeAndDelete"))
+        #expect(engine.initializedScripts[0].frameScope == .mainFrameOnly)
+        #expect(engine.initializedScripts[1]
+            .content == #"window.__truapi_localhost = { url: "ws://127.0.0.1:0/?t=test" };"#)
         #expect(engine.initializedScripts[1].insertionPoint == .atDocStart)
-        #expect(engine.initializedScripts[2].content.contains("viewport"))
-        #expect(engine.initializedScripts[2].insertionPoint == .atDocEnd)
-        #expect(engine.initializedScripts[2].frameScope == .mainFrameOnly)
+        #expect(!engine.initializedScripts[1].content.contains("__truapi_policy__"))
+        #expect(engine.initializedScripts[2].content.contains("freezeAndDelete"))
+        #expect(engine.initializedScripts[2].insertionPoint == .atDocStart)
+        #expect(engine.initializedScripts[3].content.contains("viewport"))
+        #expect(engine.initializedScripts[3].insertionPoint == .atDocEnd)
+        #expect(engine.initializedScripts[3].frameScope == .mainFrameOnly)
 
         await runtime.dispose()
     }
@@ -130,7 +136,7 @@ struct SPARustRuntimeTests {
         #expect(url.scheme == ProductScriptSchemeHandler.scheme)
         #expect(url.host == "test.dot")
         #expect(url.path == "/")
-        #expect(engine.initializedScripts[0]
+        #expect(engine.initializedScripts[1]
             .content == #"window.__truapi_localhost = { url: "ws://127.0.0.1:0/?t=test" };"#)
 
         await runtime.dispose()
@@ -192,17 +198,42 @@ struct SPARustRuntimeTests {
     }
 
     @Test func rustScriptsFactoryOrdersBootstrapBeforeContainer() throws {
-        let factory = RustRuntimeScriptsFactory(bootstrapScript: "/*bootstrap*/")
+        let telemetry = NativeHostTelemetry(
+            hostSessionId: "d93fe846-8f3c-4cfa-a440-402b6f7b43d3",
+            appVersion: "1.2.3",
+            appBuild: "456",
+            appVariant: "nightly",
+            platform: "ios",
+            osVersion: "18.1",
+            truapiHostVersion: "0.9.0",
+            schemaVersion: "1"
+        )
+        let factory = RustRuntimeScriptsFactory(
+            bootstrapScript: "/*bootstrap*/",
+            hostTelemetry: telemetry
+        )
 
         let scripts = try factory.makeScripts()
 
-        #expect(scripts.count == 2)
-        #expect(scripts[0].content == "/*bootstrap*/")
+        #expect(scripts.count == 3)
+        #expect(scripts[0].content.contains("Object.defineProperty(globalThis, \"__trinityHostTelemetry\""))
+        #expect(scripts[0].content.contains("\"hostSessionId\":\"d93fe846-8f3c-4cfa-a440-402b6f7b43d3\""))
+        #expect(scripts[0].content.contains("\"appVersion\":\"1.2.3\""))
+        #expect(scripts[0].content.contains("\"appBuild\":\"456\""))
+        #expect(scripts[0].content.contains("\"appVariant\":\"nightly\""))
+        #expect(scripts[0].content.contains("\"platform\":\"ios\""))
+        #expect(scripts[0].content.contains("\"osVersion\":\"18.1\""))
+        #expect(scripts[0].content.contains("\"truapiHostVersion\":\"0.9.0\""))
+        #expect(scripts[0].content.contains("\"schemaVersion\":\"1\""))
         #expect(scripts[0].insertionPoint == .atDocStart)
         #expect(scripts[0].frameScope == .mainFrameOnly)
-        #expect(scripts[1].content.contains("__truapi_localhost"))
+        #expect(try factory.makeScripts()[0].content == scripts[0].content)
+        #expect(scripts[1].content == "/*bootstrap*/")
         #expect(scripts[1].insertionPoint == .atDocStart)
-        #expect(scripts[1].frameScope == .allFrames)
+        #expect(scripts[1].frameScope == .mainFrameOnly)
+        #expect(scripts[2].content.contains("__truapi_localhost"))
+        #expect(scripts[2].insertionPoint == .atDocStart)
+        #expect(scripts[2].frameScope == .allFrames)
     }
 
     @Test func directURLHandlerAllowsSameHostInterceptsOthers() throws {
