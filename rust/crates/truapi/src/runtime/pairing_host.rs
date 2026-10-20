@@ -2384,15 +2384,14 @@ impl PairingHost {
 		// payload, so the capability's own key is the only way this role signs
 		// one. Statement proofs raise no confirmation on either role, so this
 		// unlocks the operation rather than waiving a prompt.
-		let Some(keypair) =
-			self.local_product_signing_key(&session, calling_product_id, &account).await?
-		else {
-			return Err(AuthorityError::Unavailable {
+		let keypair = self
+			.local_product_signing_key(&session, calling_product_id, &account)
+			.await?
+			.ok_or_else(|| AuthorityError::Unavailable {
 				reason: "pairing host: exact statement proof signing needs an AutoSigning \
                          capability; the current SSO raw-signing protocol cannot carry it"
 					.to_string(),
-			});
-		};
+			})?;
 		Ok(keypair
 			.secret
 			.sign_simple(SR25519_SIGNING_CONTEXT, &payload, &keypair.public)
