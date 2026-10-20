@@ -1,0 +1,56 @@
+name: "Find an artifact main published"
+description: >-
+  The run that published the newest unexpired artifact named `name` from a push
+  of `workflow` to this repository's main, whose commit main still contains.
+  Empty when there is none, or when the API cannot answer, so the caller does
+  the work itself rather than trusting anything less.
+
+inputs:
+  name:
+    description: "Artifact name to look for"
+    required: true
+  workflow:
+    description: "The workflow file that publishes it, as a run reports its path"
+    required: true
+
+outputs:
+  run-id:
+    description: "The publishing run's id, or empty"
+    value: ${{ steps.find.outputs.run-id }}
+
+runs:
+  using: "composite"
+  steps:
+    # An artifact's own record gives only a branch name, which a tag or another
+    # workflow could share, so each candidate run is checked: a push of this
+    # workflow, from this repository, at a commit on main.
+    - id: find
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        NAME: ${{ inputs.name }}
+        WORKFLOW: ${{ inputs.workflow }}
+      run: |
+        set -uo pipefail
+        run_id=""
+        candidates="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$NAME&per_page=20" --jq '
+          .artifacts[]
+          | select(.expired | not)
+          | select(.workflow_run.head_branch == "main")
+          | select(.workflow_run.head_repository_id == .workflow_run.repository_id)
+          | .workflow_run.id')" || candidates=""
+        for id in $candidates; do
+          sha="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" \
+            --jq 'select(.event == "push" and .path == $ENV.WORKFLOW) | .head_sha')" || continue
+          [ -n "$sha" ] || continue
+          status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$sha...main" --jq .status)" || continue
+          case "$status" in
+            identical|ahead) run_id="$id"; break ;;
+          esac
+        done
+        if [ -n "$run_id" ]; then
+          echo "Found $NAME from run $run_id"
+        else
+          echo "No $NAME published from main"
+        fi
+        echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
