@@ -38,7 +38,7 @@ internal fun HostProcessStartEvent.sentryFields() = HostProcessSentryFields(
         "host.app_variant" to metadata.appVariant,
         "host.platform" to metadata.platform,
         "host.os_version" to metadata.osVersion,
-        "host.truapi_host_version" to metadata.truapiHostVersion,
+        "truapi.host_version" to metadata.truapiHostVersion,
     ),
     extras = mapOf(
         "host.app_build" to metadata.appBuild,

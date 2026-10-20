@@ -54,7 +54,7 @@ class HostProcessTelemetryTest {
                 "host.app_variant" to "nightly",
                 "host.platform" to "android",
                 "host.os_version" to "15",
-                "host.truapi_host_version" to "0.24.0",
+                "truapi.host_version" to "0.24.0",
             ),
             fields.tags,
         )
