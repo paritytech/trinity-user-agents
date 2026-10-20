@@ -52,9 +52,10 @@ impl Signing for ProductRuntimeHost {
 			self.connection
 				.require_chain_submit(latest::HostSignPayloadError::PermissionDenied)
 				.await?;
-			let Some(session) = self.accounts.current_session() else {
-				return Err(CallError::Domain(latest::HostSignPayloadError::Rejected));
-			};
+			let session = self
+				.accounts
+				.current_session()
+				.ok_or(CallError::Domain(latest::HostSignPayloadError::Rejected))?;
 			if !self.may_use_product_account(&owner, cx).await {
 				return Err(CallError::Domain(latest::HostSignPayloadError::PermissionDenied));
 			}
@@ -150,9 +151,10 @@ impl Signing for ProductRuntimeHost {
 			self.connection
 				.require_chain_submit(latest::HostCreateTransactionError::PermissionDenied)
 				.await?;
-			let Some(session) = self.accounts.current_session() else {
-				return Err(CallError::Domain(latest::HostCreateTransactionError::Rejected));
-			};
+			let session = self
+				.accounts
+				.current_session()
+				.ok_or(CallError::Domain(latest::HostCreateTransactionError::Rejected))?;
 			if !self.may_use_product_account(&owner, cx).await {
 				return Err(CallError::Domain(
 					latest::HostCreateTransactionError::PermissionDenied,
@@ -244,9 +246,10 @@ impl Signing for ProductRuntimeHost {
 		let version = request.version();
 		let inner = request.into_latest();
 		let result = async {
-			let Some(session) = self.accounts.current_session() else {
-				return Err(CallError::Domain(latest::HostSignPayloadError::Rejected));
-			};
+			let session = self
+				.accounts
+				.current_session()
+				.ok_or(CallError::Domain(latest::HostSignPayloadError::Rejected))?;
 			let signer = self
 				.classify_legacy_address_signer(cx, &session, &inner.signer)
 				.await
@@ -350,9 +353,10 @@ impl Signing for ProductRuntimeHost {
 		let version = request.version();
 		let inner = request.into_latest();
 		let result = async {
-			let Some(session) = self.accounts.current_session() else {
-				return Err(CallError::Domain(latest::HostCreateTransactionError::Rejected));
-			};
+			let session = self
+				.accounts
+				.current_session()
+				.ok_or(CallError::Domain(latest::HostCreateTransactionError::Rejected))?;
 			let signer =
 				self.classify_legacy_signer(cx, &session, inner.signer).await.map_err(|err| {
 					CallError::Domain(latest::HostCreateTransactionError::Unknown {
@@ -435,9 +439,10 @@ impl ProductRuntimeHost {
 		self.connection
 			.require_chain_submit(latest::HostSignPayloadError::PermissionDenied)
 			.await?;
-		let Some(session) = self.accounts.current_session() else {
-			return Err(CallError::Domain(latest::HostSignPayloadError::Rejected));
-		};
+		let session = self
+			.accounts
+			.current_session()
+			.ok_or(CallError::Domain(latest::HostSignPayloadError::Rejected))?;
 		if !self.may_use_product_account(&owner, cx).await {
 			return Err(CallError::Domain(latest::HostSignPayloadError::PermissionDenied));
 		}
@@ -495,9 +500,10 @@ impl ProductRuntimeHost {
 		watermarked: bool,
 	) -> Result<latest::HostSignPayloadResponse, CallError<latest::HostSignPayloadError>> {
 		let inner = request;
-		let Some(session) = self.accounts.current_session() else {
-			return Err(CallError::Domain(latest::HostSignPayloadError::Rejected));
-		};
+		let session = self
+			.accounts
+			.current_session()
+			.ok_or(CallError::Domain(latest::HostSignPayloadError::Rejected))?;
 		let signer =
 			self.classify_legacy_address_signer(cx, &session, &inner.signer).await.map_err(
 				|err| CallError::Domain(err.into_host_error(LEGACY_ACCOUNT_UNAVAILABLE_REASON)),
