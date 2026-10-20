@@ -13,6 +13,7 @@ import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.eq
 import io.paritytech.polkadotapp.test_shared.whenever
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -76,7 +77,7 @@ class TrUAPIBootstrapInstallerTest {
                             null
                         }
 
-                    val telemetry = "telemetry();"
+                    val telemetry = "try { telemetry(); } catch {}"
                     val installer = TrUAPIBootstrapInstaller(context)
                         .installerForScript(productOrigins, telemetry)("endpoint();")
                     installer(webView)
@@ -106,6 +107,8 @@ class TrUAPIBootstrapInstallerTest {
             osVersion = "16",
         )
 
+        assertTrue(script.contains("try {"))
+        assertTrue(script.contains("if (!Object.prototype.hasOwnProperty.call(globalThis, \"__trinityHostTelemetry\"))"))
         assertTrue(script.contains("Object.defineProperty(globalThis, \"__trinityHostTelemetry\""))
         assertTrue(script.contains("value: Object.freeze({\"hostSessionId\":\"123e4567-e89b-12d3-a456-426614174000\""))
         assertTrue(script.contains("\"appVersion\":\"1.2.3\""))
@@ -117,6 +120,39 @@ class TrUAPIBootstrapInstallerTest {
         assertTrue(script.contains("\"schemaVersion\":\"1\""))
         assertTrue(script.contains("writable: false"))
         assertTrue(script.contains("configurable: false"))
+        assertTrue(script.endsWith("} catch {}"))
+    }
+
+    @Test
+    fun `host telemetry is limited to internal app variants`() {
+        assertTrue(shouldInstallHostTelemetry("io.paritytech.polkadotapp.nightly"))
+        assertTrue(shouldInstallHostTelemetry("io.paritytech.polkadotapp.safetynet"))
+        assertTrue(shouldInstallHostTelemetry("io.paritytech.polkadotapp.debug"))
+        assertFalse(shouldInstallHostTelemetry("io.paritytech.polkadotapp"))
+    }
+
+    @Test
+    fun `telemetry construction failure cannot prevent endpoint installation`() {
+        withContainerAsset()
+        whenever(context.packageName).thenReturn("io.paritytech.polkadotapp.nightly")
+        mockStatic(WebViewFeature::class.java).use { features ->
+            features.`when`<Boolean> { WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) }.thenReturn(true)
+            mockStatic(Uri::class.java).use {
+                mockStatic(WebViewCompat::class.java).use { compat ->
+                    val registered = mutableListOf<Registration>()
+                    compat.`when`<Any> { WebViewCompat.addDocumentStartJavaScript(eq(webView), any(), any()) }
+                        .thenAnswer { call ->
+                            registered += Registration(call.getArgument(1), call.getArgument(2))
+                            null
+                        }
+
+                    TrUAPIBootstrapInstaller(context)
+                        .installerFor(productOrigins, "123e4567-e89b-12d3-a456-426614174000")("endpoint();")(webView)
+
+                    assertEquals("if (window === window.top) {\nendpoint();\n}", registered.first().script)
+                }
+            }
+        }
     }
 
     @Test

@@ -10,6 +10,7 @@ import io.parity.truapi.ContainerScriptBundle
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductWebChromeClient
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import timber.log.Timber
 import uniffi.truapi.truapiHostVersion
 import javax.inject.Inject
 
@@ -24,8 +25,16 @@ import javax.inject.Inject
 class TrUAPIBootstrapInstaller @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) {
-    fun installerFor(origins: Set<String>, hostSessionId: String? = null): (bootstrap: String) -> (WebView) -> Unit =
-        installerForScript(origins, hostSessionId?.let { hostTelemetryScript(context, it) })
+    fun installerFor(origins: Set<String>, hostSessionId: String? = null): (bootstrap: String) -> (WebView) -> Unit {
+        val telemetryScript = if (hostSessionId != null && shouldInstallHostTelemetry(context.packageName)) {
+            runCatching { hostTelemetryScript(context, hostSessionId) }
+                .onFailure { error -> Timber.w(error, "Native host telemetry unavailable") }
+                .getOrNull()
+        } else {
+            null
+        }
+        return installerForScript(origins, telemetryScript)
+    }
 
     internal fun installerForScript(
         origins: Set<String>,
@@ -75,10 +84,17 @@ internal fun hostTelemetryScript(
     }
 
     return """
-        Object.defineProperty(globalThis, "__trinityHostTelemetry", {
-          value: Object.freeze($telemetry),
-          writable: false,
-          configurable: false
-        });
+        try {
+          if (!Object.prototype.hasOwnProperty.call(globalThis, "__trinityHostTelemetry")) {
+            Object.defineProperty(globalThis, "__trinityHostTelemetry", {
+              value: Object.freeze($telemetry),
+              writable: false,
+              configurable: false
+            });
+          }
+        } catch {}
     """.trimIndent()
 }
+
+internal fun shouldInstallHostTelemetry(packageName: String): Boolean =
+    listOf(".nightly", ".safetynet", ".debug").any(packageName::endsWith)
