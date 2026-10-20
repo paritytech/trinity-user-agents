@@ -1,6 +1,6 @@
 # Release process
 
-The `@parity/truapi` and `@parity/truapi-host` npm packages are published by
+The `@parity/truapi`, `@parity/truapi-host` and `@parity/trinity-stack` npm packages are published by
 [`paritytech/npm_publish_automation`](https://github.com/paritytech/npm_publish_automation).
 We never run `npm publish` locally or from a personal account; the
 `Release` workflow in `.github/workflows/release.yml` packs the packages
@@ -49,6 +49,10 @@ therefore include the `@parity/truapi` package, its changelog, the Cargo
 version, the host dependency, and both lockfiles. A host-runtime-only release can bump
 `@parity/truapi-host` without changing the Rust crate version.
 
+`@parity/trinity-stack` ships the `rust/crates/trinity-stack` crate built to
+WebAssembly, so a change to that crate needs a changeset for the package. Its
+version is independent of the protocol, and a release of it alone skips step 2.
+
 ### 2. Cut the protocol version
 
 Run `scripts/cut-version.sh` after the package bump to crystallize wire types,
@@ -82,6 +86,7 @@ release: @parity/truapi 0.1.1
 release: @parity/truapi-host 0.1.1
 release: @parity/truapi 0.5.0, @parity/truapi-host 0.2.0
 release: @parity/android-host 0.1.0
+release: @parity/trinity-stack 0.1.0
 release: @parity/truapi 0.5.0, @parity/ios-host 0.5.0, @parity/android-host 0.1.0
 ```
 

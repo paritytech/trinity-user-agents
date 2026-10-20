@@ -6,6 +6,7 @@ enum WalletExpandedSection: Equatable {
     case none
     case identityDetails
     case assetDetails
+    case collectiblesDetails
 
     var isIdentityShown: Bool {
         showsSection(.identityDetails)
@@ -24,6 +25,7 @@ protocol WalletViewModelProtocol: AnyObject, Observation.Observable {
     var identityDetailsViewModel: IdentityDetailsViewModel { get set }
     var assetDetailsViewModel: AssetDetailsViewModel { get set }
     var expandedSection: WalletExpandedSection { get set }
+    var isCollectiblesAvailable: Bool { get set }
     var pocketCards: [PocketCardViewModel] { get set }
     var pocketCardFrames: [PocketCardKey: CGRect] { get set }
     var openPocketCard: PocketCardKey? { get set }
@@ -31,6 +33,8 @@ protocol WalletViewModelProtocol: AnyObject, Observation.Observable {
     var onUsername: (() -> Void)? { get set }
     var onBalance: (() -> Void)? { get set }
     var onCollapse: (() -> Void)? { get set }
+    var onCollectibles: (() -> Void)? { get set }
+    var onViewCollectibles: (() -> Void)? { get set }
     var onOpenPocketCard: ((PocketCardViewModel) -> Void)? { get set }
     var onRemovePocketCard: ((PocketCardViewModel) -> Void)? { get set }
 }
@@ -40,6 +44,7 @@ class WalletViewModel: WalletViewModelProtocol {
     var identityDetailsViewModel: IdentityDetailsViewModel = .init()
     var assetDetailsViewModel: AssetDetailsViewModel = .init()
     var expandedSection: WalletExpandedSection = .none
+    var isCollectiblesAvailable: Bool = false
     var pocketCards: [PocketCardViewModel] = []
     /// Where each card is in the window, for its screen to fly from. Read on
     /// demand, so moving a card never redraws the Pocket.
@@ -49,6 +54,8 @@ class WalletViewModel: WalletViewModelProtocol {
     var onUsername: (() -> Void)?
     var onBalance: (() -> Void)?
     var onCollapse: (() -> Void)?
+    var onCollectibles: (() -> Void)?
+    var onViewCollectibles: (() -> Void)?
     var onOpenPocketCard: ((PocketCardViewModel) -> Void)?
     var onRemovePocketCard: ((PocketCardViewModel) -> Void)?
 }
