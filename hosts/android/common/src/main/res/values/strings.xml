@@ -520,6 +520,9 @@
     <string name="chat_message_compaction_unavailable">Some messages could not be retrieved and are permanently unavailable.</string>
     <string name="chat_message_edited">Edited</string>
     <string name="chat_message_edited_time">Edited %s</string>
+    <string name="chat_echo_title">🔊 Echo</string>
+    <string name="chat_echo_watch_time">You watched this message for total of %s</string>
+    <string name="chat_echo_decode_failed">Failed to decode echo message</string>
     <string name="chat_edit_history">Edit history</string>
     <string name="chat_reply_to">Reply to %1$s</string>
 
@@ -912,6 +915,8 @@
 
     <string name="pocket_digital_dollar_title">%1$s</string>
     <string name="pocket_digital_dollar_faucet_top_up">Faucet Top Up</string>
+    <string name="pocket_collectibles_open_button">View collectibles</string>
+    <string name="pocket_collectibles_title">Collectibles</string>
     <string name="pocket_action_get">Get</string>
     <string name="pocket_action_get_description">Add %1$s via bank, crypto or credit card</string>
     <string name="pocket_action_send_description">Move %1$s to your bank, crypto wallet or contacts</string>
@@ -920,6 +925,7 @@
     <string name="pocket_error_auto_fund_failed">Couldn\'t add test funds to this account. Try again.</string>
     <string name="pocket_error_share_coinage_logs_failed">Couldn\'t share the coinage logs. Try again.</string>
     <string name="pocket_pinned_card_humanity">Humanity</string>
+    <string name="host_placed_chat_jollity">Jollity</string>
     <string name="pocket_add_card_title">Add to Pocket</string>
     <string name="pocket_add_card_subtitle">%1$s wants to add a card to your Pocket. This is how it will look.</string>
     <string name="pocket_add_card_action">Add</string>

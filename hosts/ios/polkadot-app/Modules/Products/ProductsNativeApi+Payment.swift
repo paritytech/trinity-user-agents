@@ -19,9 +19,7 @@ extension ProductsNativeApi {
             throw ProductNativeApiError.permissionDenied
         }
 
-        let coinageService = try requirePaymentsSupport().coinageService
-        let balanceService = try await coinageService.coinageBalanceService()
-        return balanceService.balanceStream
+        return try await requirePayments().balanceStream()
             .map { balance in
                 PaymentBalance(available: balance.total)
             }
@@ -29,30 +27,22 @@ extension ProductsNativeApi {
     }
 
     func requestPayment(amount: Balance, destination: AccountId, id: PaymentRequestId) async throws {
-        let coinageService = try requirePaymentsSupport().coinageService
+        let payments = try requirePayments()
 
-        try await checkSufficientBalance(amount: amount)
-        try await awaitUserApproval(amount: amount, destination: destination)
-        try await awaitPrivacyConsentIfNeeded(amount: amount)
+        try await checkSufficientBalance(amount: amount, payments: payments)
+        guard try await payments.awaitUserConsent(productId: productId, amount: amount, destination: destination) else {
+            throw HostPaymentRequestError.rejected
+        }
 
         do {
-            try await coinageService.initiateExternalPayment(
-                productId: productId,
-                paymentId: id.toHex(includePrefix: true),
-                amountInPlanks: amount,
-                destination: destination
-            )
+            try await payments.initiatePayment(productId: productId, id: id, amount: amount, destination: destination)
         } catch ExternalPaymentError.alreadyExists {
             throw HostPaymentRequestError.alreadyExists
         }
     }
 
     func subscribePaymentStatus(id: PaymentRequestId) async throws -> AnyAsyncSequence<HostPaymentStatus> {
-        let coinageService = try requirePaymentsSupport().coinageService
-        let statuses = coinageService.subscribeExternalPaymentStatus(
-            productId: productId,
-            paymentId: id.toHex(includePrefix: true)
-        )
+        let statuses = try requirePayments().paymentStatuses(productId: productId, id: id)
 
         return AsyncThrowingStream<HostPaymentStatus, Error> { continuation in
             let task = Task {
@@ -76,23 +66,13 @@ extension ProductsNativeApi {
     /// concluded. The claim is driven by `IncomingPaymentService`; the product observes progress via
     /// ``subscribePaymentTopUpStatus(id:)``.
     func paymentTopUp(amount: Balance, source: PaymentTopUpSource, id: PaymentTopUpId) async throws {
-        let incomingPaymentService = try requirePaymentsSupport().incomingPaymentService
+        let payments = try requirePayments()
 
-        let descriptor: IncomingPaymentSourceDescriptor
         do {
-            descriptor = try Self.incomingPaymentDescriptor(from: source, productId: productId)
-        } catch {
-            logger.error("Top-up source could not be described: \(error)")
+            try await payments.acceptTopUp(productId: productId, id: id, amount: amount, source: source)
+        } catch let error as ProductTopUpSourceError {
+            logger.error("Top-up source could not be described: \(error.underlying)")
             throw HostPaymentTopUpError.invalidSource
-        }
-
-        do {
-            try await incomingPaymentService.accept(
-                amount: amount,
-                descriptor: descriptor,
-                paymentId: id.toHex(),
-                productId: productId
-            )
         } catch {
             logger.error("Top-up could not be registered: \(error)")
             throw HostPaymentTopUpError(error, unknownReason: Self.topUpRegistrationFailed)
@@ -103,14 +83,9 @@ extension ProductsNativeApi {
         id: PaymentTopUpId
     ) async throws -> AnyAsyncSequence<HostPaymentTopUpStatus> {
         do {
-            let incomingPaymentService = try requirePaymentsSupport().incomingPaymentService
-
-            return try await incomingPaymentService.subscribeStatus(
-                for: id.toHex(),
-                productId: productId
-            )
-            .map { HostPaymentTopUpStatus(status: $0) }
-            .eraseToAnyAsyncSequence()
+            return try await requirePayments().topUpStatuses(productId: productId, id: id)
+                .map { HostPaymentTopUpStatus(status: $0) }
+                .eraseToAnyAsyncSequence()
         } catch {
             logger.error("Top-up status could not be observed: \(error)")
             throw HostPaymentTopUpError(error, unknownReason: Self.topUpStatusUnavailable)
@@ -139,75 +114,24 @@ private extension ProductsNativeApi {
         return paymentsSupport
     }
 
+    func requirePayments() throws -> ProductPayments {
+        try ProductPayments(
+            support: requirePaymentsSupport(),
+            approvalRequester: paymentApprovalRequester,
+            privacyConfirmer: paymentPrivacyConfirmer,
+            recyclingStrategy: recyclingStrategy
+        )
+    }
+
     /// Checks the amount against what is spendable on-chain right now (private plus gaining-privacy
     /// funds; minting funds cannot be waited for). The permission is only read, never prompted: with
     /// `balanceAccess` the product already knows balances and gets `insufficientBalance`; without it
     /// the shortfall is reported as `rejected` so nothing leaks.
-    func checkSufficientBalance(amount: Balance) async throws {
-        let coinageService = try requirePaymentsSupport().coinageService
-        let balanceService = try await coinageService.coinageBalanceService()
-
-        var balance = CoinageBalance.empty
-        for try await value in balanceService.balanceStream.prefix(1) {
-            balance = value
-        }
-
-        guard balance.availablePrivate + balance.gainingPrivacy.amount < amount else { return }
+    func checkSufficientBalance(amount: Balance, payments: ProductPayments) async throws {
+        guard try await !payments.canSpend(amount) else { return }
 
         let knowsBalance = try await permissionGuard.check(productId: productId, permission: .balanceAccess)
         throw knowsBalance ? HostPaymentRequestError.insufficientBalance : HostPaymentRequestError.rejected
-    }
-
-    /// Warns whenever private vouchers alone cannot pay — a voucher still gaining privacy or a coin
-    /// loaded just to be unloaded gives up privacy — unless the preset is `minPrivacy`. Not allowlisted.
-    func awaitPrivacyConsentIfNeeded(amount: Balance) async throws {
-        guard recyclingStrategy.strategy != .minPrivacy else { return }
-
-        let coinageService = try requirePaymentsSupport().coinageService
-        guard try await !coinageService.canExecuteExternalPaymentPrivately(amount: amount) else { return }
-
-        guard await paymentPrivacyConfirmer.confirmGainingPrivacySpend(amount: amount) else {
-            throw HostPaymentRequestError.rejected
-        }
-    }
-
-    /// Auto-approved for allowlisted products; everyone else sees the payment request sheet.
-    func awaitUserApproval(amount: Balance, destination: AccountId) async throws {
-        let decision = await paymentApprovalRequester.requestApproval(
-            productId: productId,
-            amount: amount,
-            destination: destination
-        )
-
-        guard decision == .approved else {
-            throw HostPaymentRequestError.rejected
-        }
-    }
-}
-
-// MARK: - Top-Up Source Description
-
-private extension ProductsNativeApi {
-    /// Describes the product-facing source as the persisted bytes the claim is later resolved from —
-    /// the full derivation **path** for a product account (never a derived key), the raw key otherwise.
-    /// Resolution + validation happen later, in `IncomingPaymentSourceResolver`.
-    static func incomingPaymentDescriptor(
-        from source: PaymentTopUpSource,
-        productId: String
-    ) throws -> IncomingPaymentSourceDescriptor {
-        switch source {
-        case let .productAccount(derivationIndex):
-            let derivationPath = try ProductAccountId(
-                productId: productId,
-                derivationIndex: derivationIndex
-            ).derivationPath()
-
-            return .productAccount(derivationPath: derivationPath)
-        case let .privateKey(secretKey):
-            return .privateKey(secretKey: secretKey)
-        case let .coins(secretKeys):
-            return .coins(secretKeys: secretKeys)
-        }
     }
 }
 

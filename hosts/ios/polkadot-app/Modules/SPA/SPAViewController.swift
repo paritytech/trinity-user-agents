@@ -138,6 +138,10 @@ private extension SPAViewController {
             self?.presenter.didInterceptNavigation(to: url)
         }
 
+        engine.onDeeplinkRequested = { [weak self] url in
+            self?.presenter.didRequestDeeplink(url)
+        }
+
         presenter.setup(engine: engine)
     }
 

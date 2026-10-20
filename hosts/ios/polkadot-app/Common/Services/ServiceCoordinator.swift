@@ -381,6 +381,7 @@ extension ServiceCoordinator {
         let audioSessionManager = AudioSessionManager()
 
         let paymentsSupport = PaymentsSupport(coinageService: coinageServices.coinageService)
+        truapiRuntimeProvider.attach(paymentsSupport: paymentsSupport, hostProvider: spaFlowState.hostProvider)
 
         let truApiDependencies = TruApiDependenciesLocator()
         truApiDependencies.setDependency(allowanceSupport)
@@ -563,7 +564,7 @@ private extension ServiceCoordinator {
             serviceFactory: ChatRequestServiceFactory(
                 remoteContactResolver: CompoundRemoteContactResolver(
                     resolvers: [
-                        remoteAccountOperation(chatChainId: AppConfig.Chains.usernameChain)
+                        remoteAccountOperation(chatChainId: AppConfig.Chains.assethubChain)
                     ],
                     logger: Logger.shared
                 ),

@@ -8,8 +8,8 @@
 //!
 //! Plus the diagnostics and one-shot commands: `identity-check` for the dotNS
 //! usernames of a mnemonic's accounts, `register-name` for a full-person
-//! username, `alloc-check` for statement-store allowance, and `pgas-check` for
-//! an Asset Hub PGAS allowance claim.
+//! username, `alloc-check` for statement-store allowance, `pgas-check` for
+//! an Asset Hub PGAS allowance claim, and `stack` for Trinity stack descriptors.
 
 mod accounts;
 mod attestation;
@@ -20,7 +20,10 @@ mod chat;
 mod contacts;
 mod dotns_read;
 mod frame_server;
+#[cfg(feature = "test-host")]
+mod funding_host;
 mod game;
+mod local_network;
 mod network;
 mod platform;
 mod pocket;
@@ -32,7 +35,9 @@ mod script_project;
 mod script_runner;
 mod sessions;
 mod signing_shell;
+mod stack;
 mod terminal_ui;
+mod transcript;
 mod update;
 
 use std::{
@@ -63,6 +68,7 @@ use truapi::{
 	},
 	platform::{ChatPlatform, HostInfo, PermissionStatusHost, PlatformInfo, ProductExecutionKind},
 	statement_allowance as alloc,
+	statement_allowance::{PersonhoodSigner, collection::PersonhoodCollection},
 	subscription::Spawner,
 };
 
@@ -213,6 +219,11 @@ impl LogController {
 
 #[derive(Subcommand)]
 enum Command {
+	/// Validate and print opt-in local routing without contacting any chain.
+	LocalNetworkCheck {
+		#[arg(long, value_enum, default_value = "paseo-next-v2")]
+		network: Network,
+	},
 	/// Run a seedless pairing host for product scripts or interactive pairing.
 	///
 	/// With `--script`, exits with the script's status. Without it, stays in an
@@ -263,6 +274,21 @@ enum Command {
 		#[arg(long)]
 		chat_key: Option<String>,
 	},
+	/// Attest a mnemonic's `uid.<tld>` identity for a lite username, wait until
+	/// it is a personhood ring member, and print `{address, publicKey,
+	/// liteUsername}` as one JSON line. For e2e suites that hold their own
+	/// test mnemonics; the account store is not touched.
+	Attest {
+		/// BIP-39 mnemonic of the identity to attest.
+		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
+		mnemonic: String,
+		/// Network preset to attest on.
+		#[arg(long, value_enum, default_value = "paseo-next-v2")]
+		network: Network,
+		/// Lite username base (6+ lowercase ASCII letters).
+		#[arg(long)]
+		username: String,
+	},
 	/// Check (and optionally submit) a statement-store allowance registration
 	/// against the real People chain: ring membership, the chosen slot, and
 	/// (with `--submit`) the `set_statement_store_account` extrinsic.
@@ -309,6 +335,11 @@ enum Command {
 	/// Only works for a binary the installer put in place; a `cargo install`
 	/// copy or a source build is reported and left alone.
 	Update,
+	/// Publish, check and bundle Trinity stack descriptors.
+	Stack {
+		#[command(subcommand)]
+		command: stack::StackCommand,
+	},
 }
 
 /// Execution kind the CLI serves a product as.
@@ -555,7 +586,8 @@ async fn main() -> Result<()> {
 	// reports through `tracing`, which the terminal UI renders in its transcript
 	// so it cannot corrupt the full-screen display. The command then waits for
 	// it at exit, so even a short one completes the download it started.
-	let check = (!matches!(cli.command, Command::Update)).then(|| {
+	// `stack` runs inside builds and publish jobs, which must not stall on or swap the binary.
+	let check = (!matches!(cli.command, Command::Update | Command::Stack { .. })).then(|| {
 		update::report_install();
 		tokio::spawn(update::run_background_check())
 	});
@@ -586,6 +618,27 @@ async fn dispatch(
 	// carries the switch.
 	match command {
 		Command::Update => update::run_update_command().await,
+		Command::LocalNetworkCheck { network } => {
+			anyhow::ensure!(
+				local_network::config_path().is_some(),
+				"{} must be set",
+				local_network::CONFIG_ENV
+			);
+			let config = network.cli_config()?;
+			println!(
+				"{}",
+				serde_json::json!({
+					"schema_version": 1,
+					"network": config.id,
+					"namespace": config.network_suffix,
+					"identity_backend_base": config.identity_backend_base,
+					"people": { "ws": config.people_ws, "genesis": format!("0x{}", hex::encode(config.people_genesis)) },
+					"asset_hub": { "ws": config.asset_hub_ws, "genesis": format!("0x{}", hex::encode(config.asset_hub_genesis)) },
+					"bulletin": { "ws": config.bulletin_ws, "genesis": format!("0x{}", hex::encode(config.bulletin_genesis)) },
+				})
+			);
+			Ok(())
+		},
 		Command::PairingHost(args) => {
 			run_pairing_host(args, log_filter, log_controller, debugger).await
 		},
@@ -597,7 +650,7 @@ async fn dispatch(
 			let entropy = bip39::Mnemonic::parse(mnemonic.trim())
 				.context("invalid BIP-39 mnemonic")?
 				.to_entropy();
-			attestation::check_identity(network.config(), &entropy).await
+			attestation::check_identity(network.cli_config()?, &entropy).await
 		},
 		Command::RegisterName { mnemonic, network, label, link_lite, chat_key } => {
 			let entropy = bip39::Mnemonic::parse(mnemonic.trim())
@@ -613,7 +666,7 @@ async fn dispatch(
 				})
 				.transpose()?;
 			register_name::register_name(&register_name::RegisterNameConfig {
-				network: network.config(),
+				network: network.cli_config()?,
 				entropy,
 				label,
 				link_lite,
@@ -622,11 +675,25 @@ async fn dispatch(
 			.await
 		},
 		Command::AllocCheck { mnemonic, network, target, lookback, submit } => {
-			run_alloc_check(mnemonic, network.config(), target, lookback, submit).await
+			run_alloc_check(mnemonic, network.cli_config()?, target, lookback, submit).await
 		},
 		Command::PgasCheck { mnemonic, network, target, lookback, submit } => {
-			run_pgas_check(mnemonic, network.config(), target, lookback, submit).await
+			run_pgas_check(mnemonic, network.cli_config()?, target, lookback, submit).await
 		},
+		Command::Attest { mnemonic, network, username } => {
+			let attested =
+				accounts::attest_mnemonic(network.cli_config()?, &mnemonic, &username).await?;
+			println!(
+				"{}",
+				serde_json::json!({
+					"address": attested.address,
+					"publicKey": format!("0x{}", hex::encode(attested.public_key)),
+					"liteUsername": attested.lite_username,
+				})
+			);
+			Ok(())
+		},
+		Command::Stack { command } => stack::run(command).await,
 	}
 }
 
@@ -651,6 +718,7 @@ async fn run_pgas_check(
 		.context("invalid BIP-39 mnemonic")?
 		.to_entropy();
 	let candidates = accounts::collection_candidates(&entropy, network.network_suffix);
+	let signer = alloc::FixedPersonhoodSigner::new(&candidates).await?;
 
 	if submit && target.is_none() {
 		bail!("--target is required with --submit; a claim has to credit an account");
@@ -691,27 +759,31 @@ async fn run_pgas_check(
 		println!(
 			"{} member=0x{}",
 			candidate.collection,
-			hex::encode(alloc::proof::member_key(candidate.entropy).await?)
+			hex::encode(signer.member(candidate.collection)?)
 		);
 	}
-	let memberships =
-		alloc::find_including_rings(&people_rpc, &people_metadata, &candidates, lookback)
-			.await
-			.map_err(anyhow::Error::msg)?;
+	let memberships = alloc::find_including_rings(
+		&people_rpc,
+		&people_metadata,
+		&signer,
+		&PersonhoodCollection::ALL,
+		lookback,
+	)
+	.await
+	.map_err(anyhow::Error::msg)?;
 	for membership in &memberships {
 		println!(
 			"member INCLUDED in {} ring_index={} exponent={} members={}",
-			membership.collection(),
-			membership.ring.ring_index,
-			membership.ring.exponent,
-			membership.ring.members.len()
+			membership.collection,
+			membership.ring_index,
+			membership.exponent,
+			membership.members.len()
 		);
 	}
 	// The widest membership the signer actually holds; a claim needs exactly one.
-	let Some(membership) = memberships.first() else {
+	let Some(ring) = memberships.first() else {
 		bail!("member is not in the last {lookback} rings of any collection (onboarding pending)");
 	};
-	let ring = &membership.ring;
 
 	let revision = alloc::ring::read_ring_revision(
 		&people_rpc,
@@ -748,7 +820,7 @@ async fn run_pgas_check(
 		&asset_hub_rpc,
 		&asset_hub_metadata,
 		ring.collection,
-		membership.entropy,
+		&signer,
 		&network_suffix,
 		day,
 		&[],
@@ -770,10 +842,10 @@ async fn run_pgas_check(
 		asset_hub: &asset_hub,
 		people_rpc: &people_rpc,
 		people_metadata: &people_metadata,
-		entropy: membership.entropy,
+		signer: &signer,
 		network_suffix: &network_suffix,
 		target: &target,
-		ring: &membership.ring,
+		ring,
 	})
 	.await
 	.map_err(|err| anyhow::anyhow!("claim failed: {err}"))?;
@@ -805,6 +877,7 @@ async fn run_alloc_check(
 		.context("invalid BIP-39 mnemonic")?
 		.to_entropy();
 	let candidates = accounts::collection_candidates(&entropy, network.network_suffix);
+	let signer = alloc::FixedPersonhoodSigner::new(&candidates).await?;
 
 	if submit && target.is_none() {
 		bail!("--target is required with --submit; the all-zero default is read-only");
@@ -838,25 +911,26 @@ async fn run_alloc_check(
 		println!(
 			"{} member=0x{} current_ring_index={}",
 			candidate.collection,
-			hex::encode(alloc::proof::member_key(candidate.entropy).await?),
+			hex::encode(signer.member(candidate.collection)?),
 			alloc::ring::read_current_ring_index(&rpc, candidate.collection)
 				.await
 				.map_err(anyhow::Error::msg)?,
 		);
 	}
-	let memberships = alloc::find_including_rings(&rpc, &metadata, &candidates, lookback)
-		.await
-		.map_err(anyhow::Error::msg)?;
+	let memberships =
+		alloc::find_including_rings(&rpc, &metadata, &signer, &PersonhoodCollection::ALL, lookback)
+			.await
+			.map_err(anyhow::Error::msg)?;
 	if memberships.is_empty() {
 		println!("member NOT in the last {lookback} rings of any collection (onboarding pending)");
 	}
 	for membership in &memberships {
 		println!(
 			"member INCLUDED in {} ring_index={} exponent={} included_members={}",
-			membership.collection(),
-			membership.ring.ring_index,
-			membership.ring.exponent,
-			membership.ring.members.len(),
+			membership.collection,
+			membership.ring_index,
+			membership.exponent,
+			membership.members.len(),
 		);
 	}
 
@@ -873,8 +947,21 @@ async fn run_alloc_check(
 			continue;
 		}
 		print!("{}: ", candidate.collection);
-		report_slot_scan(&rpc, &metadata, *candidate, &network_suffix, period, &target, now)
-			.await?;
+		report_slot_scan(
+			&rpc,
+			&metadata,
+			alloc::slot::SlotScan {
+				collection: candidate.collection,
+				signer: &signer,
+				network_suffix: &network_suffix,
+				period,
+				target: &target,
+				excluded: &[],
+				reuse_existing: true,
+			},
+			now,
+		)
+		.await?;
 	}
 
 	if submit {
@@ -884,11 +971,14 @@ async fn run_alloc_check(
 		let scans = alloc::scan_collections(
 			&rpc,
 			&metadata,
-			&candidates,
-			&network_suffix,
-			period,
-			&target,
-			true,
+			&signer,
+			&PersonhoodCollection::ALL,
+			alloc::CollectionScanParams {
+				network_suffix: &network_suffix,
+				period,
+				target: &target,
+				reuse_existing: true,
+			},
 		)
 		.await
 		.map_err(anyhow::Error::msg)?;
@@ -896,6 +986,7 @@ async fn run_alloc_check(
 			&rpc,
 			&metadata,
 			&chain_state,
+			&signer,
 			&scans,
 			&memberships,
 			alloc::PooledRegistrationParams {
@@ -936,27 +1027,11 @@ async fn run_alloc_check(
 async fn report_slot_scan(
 	rpc: &alloc::rpc::RpcClient,
 	metadata: &alloc::extension::Metadata,
-	candidate: alloc::CollectionCandidate,
-	network_suffix: &[u8],
-	period: u32,
-	target: &[u8; 32],
+	scan: alloc::slot::SlotScan<'_>,
 	now: u64,
 ) -> Result<()> {
-	match alloc::slot::scan_slot_excluding(
-		rpc,
-		metadata,
-		alloc::slot::SlotScan {
-			collection: candidate.collection,
-			entropy: candidate.entropy,
-			network_suffix,
-			period,
-			target,
-			excluded: &[],
-			reuse_existing: true,
-		},
-	)
-	.await
-	{
+	let target = scan.target;
+	match alloc::slot::scan_slot_excluding(rpc, metadata, scan).await {
 		Ok(alloc::slot::SlotSelection::Free(seq)) => println!("slot scan: free seq={seq}"),
 		Ok(alloc::slot::SlotSelection::FreeSlotsExcluded) => {
 			println!("slot scan: free slots exist but are awaiting earlier submissions");
@@ -1158,7 +1233,7 @@ async fn run_pairing_host(
 			"interactive pairing-host requires a TTY; use pairing-host --script <path>",
 		);
 	}
-	let network = args.network.config();
+	let network = args.network.cli_config()?;
 	let base_path = state_base_path(args.base_path);
 	let product =
 		frame_server::ProductSelection::new(args.product_id, args.execution_kind.context())?;
@@ -1278,7 +1353,7 @@ async fn run_signing_host(
 		args.execution_kind.context(),
 	)?;
 	let product_id = product.current();
-	let network = args.network.config();
+	let network = args.network.cli_config()?;
 	let base_path = state_base_path(args.base_path.clone());
 	let session_catalog = SessionCatalog::new(base_path.clone(), network.id)?;
 	let initial_session_name = initial_session_name(&args, &session_catalog)?;
@@ -1727,6 +1802,8 @@ fn build_signing_runtime(
 	if let Some(pocket) = pocket {
 		runtime.set_pocket_platform(pocket);
 	}
+	#[cfg(feature = "test-host")]
+	funding_host::CliFundingHost::install_from_env(&runtime);
 	runtime.set_game_platform(Arc::new(game::CliGameHost));
 	runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
 	runtime.set_core_db(core_db);
