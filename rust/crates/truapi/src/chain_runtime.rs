@@ -1980,17 +1980,6 @@ mod tests {
 	use parking_lot::{Condvar, Mutex as ParkingMutex};
 	use std::sync::atomic::{AtomicUsize, Ordering};
 
-	fn spawner_for_tests() -> Spawner {
-		#[cfg(not(target_arch = "wasm32"))]
-		{
-			crate::subscription::thread_per_subscription_spawner()
-		}
-		#[cfg(target_arch = "wasm32")]
-		{
-			Arc::new(futures::executor::block_on)
-		}
-	}
-
 	#[test]
 	fn chain_head_best_hash_prefers_best_block_after_initialization() {
 		let mut follow = stream::iter(vec![

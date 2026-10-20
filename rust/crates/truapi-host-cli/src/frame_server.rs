@@ -723,6 +723,7 @@ mod tests {
 	use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 	use tokio::{sync::Notify, task::JoinHandle};
 	use tokio_tungstenite::{client_async, tungstenite::client::IntoClientRequest};
+	use truapi::subscription::Spawner;
 
 	struct UnusedRuntimeFactory;
 
@@ -806,7 +807,9 @@ mod tests {
 			network.asset_hub_genesis,
 			network.network_suffix.to_string(),
 		)?;
-		let spawner: truapi::subscription::Spawner = Arc::new(|_| {});
+		let executor = tokio::runtime::Builder::new_current_thread().build()?;
+		let spawner = Spawner::new(executor.handle().clone());
+		executor.shutdown_background();
 		Ok(Arc::new(SigningHostRuntime::new(platform, config, spawner)))
 	}
 
@@ -1227,7 +1230,9 @@ mod tests {
 				"ws://127.0.0.1:1",
 				"the Asset Hub genesis must route to the closed port, not to live Paseo"
 			);
-			let spawner: truapi::subscription::Spawner = Arc::new(|_| {});
+			let executor = tokio::runtime::Builder::new_current_thread().build()?;
+			let spawner = Spawner::new(executor.handle().clone());
+			executor.shutdown_background();
 			Ok((platform.clone(), SigningHostRuntime::new(platform, config, spawner)))
 		}
 

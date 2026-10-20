@@ -462,17 +462,6 @@ mod tests {
 	use crate::frame::{MESSAGE_TYPE_RECEIVE, MESSAGE_TYPE_REQUEST};
 	use std::sync::Mutex;
 
-	fn test_spawner() -> Spawner {
-		#[cfg(not(target_arch = "wasm32"))]
-		{
-			crate::subscription::thread_per_subscription_spawner()
-		}
-		#[cfg(target_arch = "wasm32")]
-		{
-			Arc::new(futures::executor::block_on)
-		}
-	}
-
 	#[derive(Default)]
 	struct RecordingTransport {
 		sent: Mutex<Vec<ProtocolMessage>>,

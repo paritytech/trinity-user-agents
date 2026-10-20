@@ -458,18 +458,3 @@ pub fn insert(db: &Db, domain: &DomainId, extrinsic: MortalExtrinsic) -> Durable
 	)
 	.unwrap()
 }
-
-/// A spawner running each task on its own thread, counting the tasks that
-/// finished.
-pub fn counting_spawner() -> (crate::subscription::Spawner, Arc<AtomicUsize>) {
-	let finished = Arc::new(AtomicUsize::new(0));
-	let counter = finished.clone();
-	let spawner: crate::subscription::Spawner = Arc::new(move |task| {
-		let counter = counter.clone();
-		std::thread::spawn(move || {
-			futures::executor::block_on(task);
-			counter.fetch_add(1, Ordering::SeqCst);
-		});
-	});
-	(spawner, finished)
-}

@@ -714,6 +714,8 @@ mod runtime;
 #[cfg(feature = "runtime")]
 mod session_usernames;
 #[cfg(feature = "runtime")]
+mod spawner;
+#[cfg(feature = "runtime")]
 pub mod subscription;
 #[cfg(feature = "runtime")]
 pub mod transport;
@@ -751,6 +753,8 @@ pub mod store;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod durable;
 
+#[cfg(feature = "runtime")]
+pub use spawner::Spawner;
 #[cfg(feature = "runtime")]
 pub use truapi_core::TrUApiCore;
 

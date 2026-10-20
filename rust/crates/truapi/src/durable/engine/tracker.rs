@@ -45,10 +45,10 @@ impl Attempt {
 /// Watches `extrinsic`, an attempt `engine` already owns, until it settles or
 /// the watch ends, then hands it back.
 pub fn spawn_watch(engine: &Arc<DurableTxEngine>, attempt: Attempt, extrinsic: EncodedExtrinsic) {
-	let engine = engine.clone();
-	(engine.spawner.clone())(Box::pin(async move {
-		engine.watch(attempt, &extrinsic).await;
-		engine.finish_watch(attempt).await;
+	let watch_engine = engine.clone();
+	(engine.spawner)(Box::pin(async move {
+		watch_engine.watch(attempt, &extrinsic).await;
+		watch_engine.finish_watch(attempt).await;
 	}));
 }
 
