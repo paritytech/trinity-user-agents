@@ -22,10 +22,12 @@
 //! A caller reading [`StatementRenewalReport`] to answer an OS scheduler should
 //! treat every `Registered` or `AlreadyAllocated` as success, a `Failed` as worth
 //! retrying on the next opportunistic wake, and exhaustion as success: retrying
-//! cannot free a slot, only time or a replacement can. A host driving the loop
-//! instead reads the same report from `last_statement_renewal_report`, since the
-//! loop has no caller to return one to. The host READMEs under `ios/truapi-host`
-//! and `android/truapi-host` carry the platform-specific form of this.
+//! cannot free a slot, only time can. Exhaustion wins over `Failed`, since the
+//! target that found the period full is reported `Failed` too. A host driving
+//! the loop instead reads the same report from `last_statement_renewal_report`,
+//! since the loop has no caller to return one to. The host READMEs under
+//! `ios/truapi-host` and `android/truapi-host` carry the platform-specific form
+//! of this.
 
 use std::time::Duration;
 
@@ -107,7 +109,8 @@ pub enum TargetRenewalStatus {
 		/// Failure detail.
 		reason: String,
 	},
-	/// Not attempted: the host ran out of slots earlier in the pass.
+	/// Not registered: the period filled earlier in the pass and the target
+	/// holds no slot in it.
 	SkippedExhausted,
 }
 
@@ -164,126 +167,101 @@ pub struct RenewalChainContext<'a> {
 	pub memberships: &'a [super::ring::RingParams],
 }
 
-/// Register every target for `period`, continuing past per-target failures
-/// and stopping early once the host's slots for the period are exhausted
-/// (remaining targets are reported as skipped).
+/// Register every target for `period`, continuing past per-target failures.
 ///
-/// Slots already held by any target, plus slots claimed earlier in the pass,
-/// are protected from replacement. Without that, a new target early in the
-/// ledger can evict a paired device that appears later, or targets can take
-/// slots back from each other within one pass. Protecting them turns that into
-/// an exhaustion report, which is the honest answer when the ledger wants more
-/// slots than exist.
+/// A target is only ever registered into a free slot. A slot held by any other
+/// account is never replaced, so a full period is reported as exhaustion for
+/// the target that found it full. Slot tables are per period, so a target never
+/// needs to displace its own older registration either.
+///
+/// Once the period is full, later targets are only scanned: one that already
+/// holds a slot reports `AlreadyAllocated`, the rest `SkippedExhausted`. A
+/// caller deciding whether a target is still allowed must not read exhaustion
+/// earlier in the ledger as that target losing its slot.
 ///
 /// `registration_lock` is held for one target operation at a time, not for the
-/// whole pass. A target without an existing slot is rescanned and registered
-/// under one guard so no other allocation can claim its cached free slot.
+/// whole pass. Each target is scanned and registered under one guard so no
+/// other allocation can claim the free slot it found.
 pub async fn renew_targets(
 	context: &RenewalChainContext<'_>,
 	period: u32,
 	targets: &[ResolvedRenewalTarget],
 	registration_lock: &Mutex<()>,
 ) -> StatementRenewalReport {
-	let mut target_scans = Vec::with_capacity(targets.len());
-	for target in targets {
-		let scans = {
-			let _guard = registration_lock.lock().await;
-			scan_collections(
-				context.rpc,
-				context.metadata,
-				context.signer,
-				context.collections,
-				CollectionScanParams {
-					network_suffix: context.network_suffix,
-					period,
-					target: &target.account_id,
-					reuse_existing: true,
-				},
-			)
-			.await
-			.map_err(RenewalFailure::from)
-		};
-		target_scans.push(scans);
-	}
-
-	let mut claimed: Vec<(PersonhoodCollection, u32)> = target_scans
-		.iter()
-		.filter_map(|scans| scans.as_ref().ok().and_then(|scans| allocated_in(scans)))
-		.collect();
 	let mut results = Vec::with_capacity(targets.len());
-	for (target, scans) in targets.iter().zip(target_scans) {
-		let scans = match scans {
-			Ok(scans) => scans,
-			Err(failure) => {
-				results.push(Err(failure));
-				continue;
-			},
-		};
-		let result = {
+	let mut exhausted = false;
+	for target in targets {
+		let result = if exhausted {
+			held_slot(context, period, target).await
+		} else {
 			let _guard = registration_lock.lock().await;
-			let scans = if allocated_in(&scans).is_some() {
-				Ok(scans)
-			} else {
-				scan_collections(
-					context.rpc,
-					context.metadata,
-					context.signer,
-					context.collections,
-					CollectionScanParams {
-						network_suffix: context.network_suffix,
-						period,
-						target: &target.account_id,
-						reuse_existing: true,
-					},
-				)
-				.await
-				.map_err(RenewalFailure::from)
-			};
-			match scans {
-				Ok(scans) => {
-					register_statement_account_pooled(
-						context.rpc,
-						context.metadata,
-						context.chain_state,
-						context.signer,
-						&scans,
-						context.memberships,
-						PooledRegistrationParams {
-							target: &target.account_id,
-							period,
-							network_suffix: context.network_suffix,
-							reuse_existing: true,
-							// Renewal exists to keep the ledger's targets alive across a
-							// period boundary, so it may reclaim space when full.
-							allow_eviction: true,
-							protected: &claimed,
-						},
-					)
-					.await
-					.map_err(RenewalFailure::from)
-				},
-				Err(failure) => Err(failure),
-			}
-		};
+			renew_target(context, period, target).await.map(Some)
+		}
+		.map_err(RenewalFailure::from);
 		log_target_result(period, &target.label, &result);
-		if let Ok(outcome) = &result {
-			match outcome {
-				RegistrationOutcome::Registered { seq, collection, .. } |
-				RegistrationOutcome::AlreadyAllocated { seq, collection } => {
-					let claimed_slot = (*collection, *seq);
-					if !claimed.contains(&claimed_slot) {
-						claimed.push(claimed_slot);
-					}
-				},
-			}
-		}
-		let exhausted = matches!(&result, Err(failure) if failure.slots_exhausted);
+		exhausted |= matches!(&result, Err(failure) if failure.slots_exhausted);
 		results.push(result);
-		if exhausted {
-			break;
-		}
 	}
 	fold_outcomes(period, targets, results)
+}
+
+/// The slot `target` already holds this period, if any, without registering.
+async fn held_slot(
+	context: &RenewalChainContext<'_>,
+	period: u32,
+	target: &ResolvedRenewalTarget,
+) -> Result<Option<RegistrationOutcome>, StatementAllowanceError> {
+	let scans = scan_collections(
+		context.rpc,
+		context.metadata,
+		context.signer,
+		context.collections,
+		CollectionScanParams {
+			network_suffix: context.network_suffix,
+			period,
+			target: &target.account_id,
+			reuse_existing: true,
+		},
+	)
+	.await?;
+	Ok(allocated_in(&scans)
+		.map(|(collection, seq)| RegistrationOutcome::AlreadyAllocated { seq, collection }))
+}
+
+async fn renew_target(
+	context: &RenewalChainContext<'_>,
+	period: u32,
+	target: &ResolvedRenewalTarget,
+) -> Result<RegistrationOutcome, StatementAllowanceError> {
+	let scans = scan_collections(
+		context.rpc,
+		context.metadata,
+		context.signer,
+		context.collections,
+		CollectionScanParams {
+			network_suffix: context.network_suffix,
+			period,
+			target: &target.account_id,
+			reuse_existing: true,
+		},
+	)
+	.await?;
+	register_statement_account_pooled(
+		context.rpc,
+		context.metadata,
+		context.chain_state,
+		context.signer,
+		&scans,
+		context.memberships,
+		PooledRegistrationParams {
+			target: &target.account_id,
+			period,
+			network_suffix: context.network_suffix,
+			reuse_existing: true,
+			allow_eviction: false,
+		},
+	)
+	.await
 }
 
 /// Delay until the next renewal tick: hourly, but always shortly after each
@@ -308,14 +286,17 @@ pub fn next_tick_delay(now_seconds: u64) -> Duration {
 fn log_target_result(
 	period: u32,
 	label: &str,
-	result: &Result<RegistrationOutcome, RenewalFailure>,
+	result: &Result<Option<RegistrationOutcome>, RenewalFailure>,
 ) {
 	match result {
-		Ok(RegistrationOutcome::Registered { block_hash, seq, .. }) => {
+		Ok(Some(RegistrationOutcome::Registered { block_hash, seq, .. })) => {
 			info!(period, label, seq, %block_hash, "renewed statement-store allowance")
 		},
-		Ok(RegistrationOutcome::AlreadyAllocated { seq, .. }) => {
+		Ok(Some(RegistrationOutcome::AlreadyAllocated { seq, .. })) => {
 			debug!(period, label, seq, "statement-store allowance already fresh");
+		},
+		Ok(None) => {
+			warn!(period, label, "statement-store renewal skipped: no free slot this period");
 		},
 		Err(failure) => {
 			warn!(period, label, reason = %failure.reason, "statement-store renewal failed");
@@ -323,30 +304,30 @@ fn log_target_result(
 	}
 }
 
-/// Pair each target with its registration result; targets past the end of
-/// `results` were never attempted (the pass stopped on slot exhaustion).
+/// Pair each target with its result, in ledger order. `Ok(None)` is a target
+/// that holds no slot and was not registered because the period was full.
 fn fold_outcomes(
 	period: u32,
 	targets: &[ResolvedRenewalTarget],
-	results: Vec<Result<RegistrationOutcome, RenewalFailure>>,
+	results: Vec<Result<Option<RegistrationOutcome>, RenewalFailure>>,
 ) -> StatementRenewalReport {
 	let mut slots_exhausted = false;
-	let mut results = results.into_iter();
 	let outcomes = targets
 		.iter()
-		.map(|target| {
-			let status = match results.next() {
-				Some(Ok(RegistrationOutcome::Registered { block_hash, seq, .. })) => {
+		.zip(results)
+		.map(|(target, result)| {
+			let status = match result {
+				Ok(Some(RegistrationOutcome::Registered { block_hash, seq, .. })) => {
 					TargetRenewalStatus::Registered { seq, block_hash }
 				},
-				Some(Ok(RegistrationOutcome::AlreadyAllocated { seq, .. })) => {
+				Ok(Some(RegistrationOutcome::AlreadyAllocated { seq, .. })) => {
 					TargetRenewalStatus::AlreadyAllocated { seq }
 				},
-				Some(Err(failure)) => {
+				Ok(None) => TargetRenewalStatus::SkippedExhausted,
+				Err(failure) => {
 					slots_exhausted |= failure.slots_exhausted;
 					TargetRenewalStatus::Failed { reason: failure.reason }
 				},
-				None => TargetRenewalStatus::SkippedExhausted,
 			};
 			StatementRenewalOutcome { label: target.label.clone(), status }
 		})
@@ -371,12 +352,11 @@ mod tests {
 			.into()
 	}
 
-	/// A two-target pass against a full period must place the second target in a
-	/// different slot from the first. If claimed slots were not protected, the
-	/// second target would take the slot the first just got, and a pass with more
-	/// targets than slots would never settle.
+	/// A full period holds allowances of accounts outside this host's ledger.
+	/// Renewal must leave them in place and report the period as exhausted,
+	/// even when one of them is past its replacement cooldown.
 	#[test]
-	fn a_pass_does_not_take_back_the_slot_it_just_claimed() {
+	fn renewal_never_replaces_another_accounts_slot() {
 		use parity_scale_codec::Encode;
 		use subxt_rpcs::RpcClient as HostRpcClient;
 
@@ -392,12 +372,8 @@ mod tests {
 
 		const NOW: u64 = 10_000_000;
 
-		/// One occupied slot entry, oldest first by `seq`.
 		fn entry(account: [u8; 32], since: u64) -> String {
 			format!(r#""0x{}""#, hex::encode((account, 0u32, since).encode()))
-		}
-		fn clock() -> String {
-			format!(r#""0x{}""#, hex::encode((NOW * 1_000).encode()))
 		}
 
 		let metadata = test_fixtures::people();
@@ -409,8 +385,6 @@ mod tests {
 			restrict_origins: false,
 		};
 		let entropy = [0x11; 32];
-		// One collection, so this stays a test of cross-target protection rather
-		// than of pooling; pooling has its own tests.
 		let memberships = [RingParams {
 			collection: PersonhoodCollection::LitePeople,
 			members: vec![proof::member_key_now(entropy)],
@@ -418,28 +392,21 @@ mod tests {
 			ring_index: 0,
 			block_hash: "0xfinal".to_string(),
 		}];
-		let targets = [target_with("first", [0xa1; 32]), target_with("second", [0xa2; 32])];
+		let targets = [target_with("device", [0xa1; 32])];
 
-		// Every target's slot table is scanned before registration begins. Each
-		// missing target is then rescanned under the registration lock.
-		let mut owned = Vec::new();
-		for _ in &targets {
-			owned.extend((0..10u64).map(|seq| entry([0x99; 32], 1_000 + seq)));
-		}
-		owned.extend((0..10u64).map(|seq| entry([0x99; 32], 1_000 + seq)));
-		owned.push(clock());
+		// Every slot is taken by an account outside the ledger. Seq 0 is past its
+		// replacement cooldown, so it is the slot an eviction would pick.
+		let mut owned = vec![entry([0x99; 32], 1_000)];
+		owned.extend((1..10u64).map(|seq| entry([0x90 + seq as u8; 32], NOW - 10)));
+		// What a replacement of seq 0 would read next: the chain clock, the ring
+		// revision, then the verification of the new holder. None of it is read
+		// unless renewal evicts.
+		owned.push(format!(r#""0x{}""#, hex::encode((NOW * 1_000).encode())));
 		owned.push("null".to_string());
 		owned.push(entry(targets[0].account_id, NOW));
-		owned.push(entry(targets[0].account_id, NOW));
-		owned.extend((1..10u64).map(|seq| entry([0x99; 32], 1_000 + seq)));
-		owned.push(clock());
-		owned.push("null".to_string());
-		owned.push(entry(targets[1].account_id, NOW));
-		let responses: Vec<&str> = owned.iter().map(String::as_str).collect();
-		let scripted = ScriptedRpc::new(responses);
+		let scripted = ScriptedRpc::new(owned.iter().map(String::as_str).collect::<Vec<_>>());
 		scripted.script_subscription([r#"{"inBlock":"0xb10c"}"#]);
-		scripted.script_subscription([r#"{"inBlock":"0xb10d"}"#]);
-		let rpc = RpcClient::new(HostRpcClient::new(scripted));
+		let rpc = RpcClient::new(HostRpcClient::new(scripted.clone()));
 
 		let candidates = lite_people(entropy);
 		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
@@ -452,28 +419,143 @@ mod tests {
 			collections: &[PersonhoodCollection::LitePeople],
 			memberships: &memberships,
 		};
-		let lock = Mutex::new(());
-		let report = futures::executor::block_on(renew_targets(&context, 7, &targets, &lock));
+		let report =
+			futures::executor::block_on(renew_targets(&context, 7, &targets, &Mutex::new(())));
 
-		let seqs: Vec<u32> = report
-			.outcomes
-			.iter()
-			.filter_map(|outcome| match outcome.status {
-				TargetRenewalStatus::Registered { seq, .. } |
-				TargetRenewalStatus::AlreadyAllocated { seq } => Some(seq),
-				_ => None,
+		let exhausted: RenewalFailure =
+			StatementAllowanceError::Slot(SlotError::NoFreeStatementStoreSlot {
+				period: 7,
+				max: 10,
 			})
-			.collect();
+			.into();
 		assert_eq!(
-			seqs,
-			vec![0, 1],
-			"the second target must not reclaim the first target's slot: {:?}",
-			report.outcomes
+			report,
+			StatementRenewalReport {
+				period: 7,
+				outcomes: vec![outcome(
+					"device",
+					TargetRenewalStatus::Failed { reason: exhausted.reason }
+				)],
+				pruned: Vec::new(),
+				slots_exhausted: true,
+			}
+		);
+		assert!(
+			scripted
+				.calls()
+				.iter()
+				.all(|(method, _)| method != "author_submitAndWatchExtrinsic"),
+			"nothing should have been submitted"
 		);
 	}
 
+	/// Exhaustion earlier in the ledger says nothing about a later target that
+	/// already holds its slot. A host that reads `SkippedExhausted` for it would
+	/// fail a pairing or warn the person about an allowance that is fine.
 	#[test]
-	fn a_pass_rescans_before_claiming_fresh_slots() {
+	fn a_full_period_still_reports_slots_later_targets_hold() {
+		use parity_scale_codec::Encode;
+		use subxt_rpcs::RpcClient as HostRpcClient;
+
+		use crate::runtime::statement_allowance::{
+			FixedPersonhoodSigner,
+			extension::ChainState,
+			proof,
+			ring::RingParams,
+			rpc::{RpcClient, testing::ScriptedRpc},
+			slot::testing::lite_people,
+			test_fixtures,
+		};
+
+		const NOW: u64 = 10_000_000;
+
+		fn entry(account: [u8; 32]) -> String {
+			format!(r#""0x{}""#, hex::encode((account, 0u32, NOW - 10).encode()))
+		}
+
+		let metadata = test_fixtures::people();
+		let chain_state = ChainState {
+			spec_version: 1_000_000,
+			transaction_version: 1,
+			genesis_hash: [0xab; 32],
+			nonce: 0,
+			restrict_origins: false,
+		};
+		let entropy = [0x11; 32];
+		let memberships = [RingParams {
+			collection: PersonhoodCollection::LitePeople,
+			members: vec![proof::member_key_now(entropy)],
+			exponent: 9,
+			ring_index: 0,
+			block_hash: "0xfinal".to_string(),
+		}];
+		let targets = [
+			target_with("product", [0xa1; 32]),
+			target_with("device", [0xa2; 32]),
+			target_with("later", [0xa3; 32]),
+		];
+
+		// The device holds seq 3; every other slot belongs to an account outside
+		// the ledger. Each target scans the same full table.
+		let table: Vec<String> = (0..10u8)
+			.map(
+				|seq| {
+					if seq == 3 { entry(targets[1].account_id) } else { entry([0x90 + seq; 32]) }
+				},
+			)
+			.collect();
+		let responses: Vec<&str> =
+			(0..targets.len()).flat_map(|_| table.iter().map(String::as_str)).collect();
+		let scripted = ScriptedRpc::new(responses);
+		let rpc = RpcClient::new(HostRpcClient::new(scripted.clone()));
+
+		let candidates = lite_people(entropy);
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
+		let context = RenewalChainContext {
+			rpc: &rpc,
+			metadata,
+			chain_state: &chain_state,
+			network_suffix: b"paseo",
+			signer: &signer,
+			collections: &[PersonhoodCollection::LitePeople],
+			memberships: &memberships,
+		};
+		let report =
+			futures::executor::block_on(renew_targets(&context, 7, &targets, &Mutex::new(())));
+
+		let exhausted: RenewalFailure =
+			StatementAllowanceError::Slot(SlotError::NoFreeStatementStoreSlot {
+				period: 7,
+				max: 10,
+			})
+			.into();
+		assert_eq!(
+			report,
+			StatementRenewalReport {
+				period: 7,
+				outcomes: vec![
+					outcome("product", TargetRenewalStatus::Failed { reason: exhausted.reason }),
+					outcome("device", TargetRenewalStatus::AlreadyAllocated { seq: 3 }),
+					outcome("later", TargetRenewalStatus::SkippedExhausted),
+				],
+				pruned: Vec::new(),
+				slots_exhausted: true,
+			}
+		);
+		assert!(
+			scripted
+				.calls()
+				.iter()
+				.all(|(method, _)| method != "author_submitAndWatchExtrinsic"),
+			"nothing should have been submitted"
+		);
+	}
+
+	/// Each target scans after the previous one's registration landed, so the
+	/// second sees the first's slot taken and claims the next free one instead
+	/// of submitting for a slot that is no longer free.
+	#[test]
+	fn consecutive_targets_claim_consecutive_free_slots() {
 		use parity_scale_codec::Encode;
 		use subxt_rpcs::RpcClient as HostRpcClient;
 
@@ -511,8 +593,7 @@ mod tests {
 		}];
 		let targets = [target_with("first", [0xa1; 32]), target_with("second", [0xa2; 32])];
 
-		let mut responses = vec!["null".to_string(); 20];
-		responses.extend(vec!["null".to_string(); 10]);
+		let mut responses = vec!["null".to_string(); 10];
 		responses.push("null".to_string());
 		responses.push(entry(targets[0].account_id));
 		responses.push(entry(targets[0].account_id));
@@ -561,93 +642,6 @@ mod tests {
 				pruned: Vec::new(),
 				slots_exhausted: false,
 			}
-		);
-	}
-
-	#[test]
-	fn a_new_target_cannot_replace_an_existing_later_target() {
-		use parity_scale_codec::Encode;
-		use subxt_rpcs::RpcClient as HostRpcClient;
-
-		use crate::runtime::statement_allowance::{
-			FixedPersonhoodSigner,
-			extension::ChainState,
-			proof,
-			ring::RingParams,
-			rpc::{RpcClient, testing::ScriptedRpc},
-			slot::testing::lite_people,
-			test_fixtures,
-		};
-
-		const NOW: u64 = 10_000_000;
-
-		fn entry(account: [u8; 32], since: u64) -> String {
-			format!(r#""0x{}""#, hex::encode((account, 0u32, since).encode()))
-		}
-		fn clock() -> String {
-			format!(r#""0x{}""#, hex::encode((NOW * 1_000).encode()))
-		}
-
-		let metadata = test_fixtures::people();
-		let chain_state = ChainState {
-			spec_version: 1_000_000,
-			transaction_version: 1,
-			genesis_hash: [0xab; 32],
-			nonce: 0,
-			restrict_origins: false,
-		};
-		let entropy = [0x11; 32];
-		let memberships = [RingParams {
-			collection: PersonhoodCollection::LitePeople,
-			members: vec![proof::member_key_now(entropy)],
-			exponent: 9,
-			ring_index: 0,
-			block_hash: "0xfinal".to_string(),
-		}];
-		let new_target = target_with("new", [0xa1; 32]);
-		let existing_target = target_with("existing", [0xa2; 32]);
-		let targets = [new_target.clone(), existing_target.clone()];
-
-		// The full table, read by each target's pre-scan and by the rescan.
-		let mut table = vec![entry(existing_target.account_id, 1_000)];
-		table.extend((1..10u64).map(|seq| entry([0x99; 32], 1_000 + seq)));
-		let mut owned = [table.clone(), table.clone(), table].concat();
-		owned.push(clock());
-		owned.push("null".to_string());
-		owned.push(entry(new_target.account_id, NOW));
-		let responses: Vec<&str> = owned.iter().map(String::as_str).collect();
-		let scripted = ScriptedRpc::new(responses);
-		scripted.script_subscription([r#"{"inBlock":"0xb10c"}"#]);
-		let rpc = RpcClient::new(HostRpcClient::new(scripted));
-
-		let candidates = lite_people(entropy);
-		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
-		let context = RenewalChainContext {
-			rpc: &rpc,
-			metadata,
-			chain_state: &chain_state,
-			network_suffix: b"paseo",
-			signer: &signer,
-			collections: &[PersonhoodCollection::LitePeople],
-			memberships: &memberships,
-		};
-		let lock = Mutex::new(());
-		let report = futures::executor::block_on(renew_targets(&context, 7, &targets, &lock));
-
-		let seqs: Vec<u32> = report
-			.outcomes
-			.iter()
-			.filter_map(|outcome| match outcome.status {
-				TargetRenewalStatus::Registered { seq, .. } |
-				TargetRenewalStatus::AlreadyAllocated { seq } => Some(seq),
-				_ => None,
-			})
-			.collect();
-		assert_eq!(
-			seqs,
-			vec![1, 0],
-			"the new target must not replace the later target's existing slot: {:?}",
-			report.outcomes
 		);
 	}
 
@@ -719,17 +713,17 @@ mod tests {
 			7,
 			&targets,
 			vec![
-				Ok(RegistrationOutcome::AlreadyAllocated {
+				Ok(Some(RegistrationOutcome::AlreadyAllocated {
 					seq: 1,
 					collection: PersonhoodCollection::LitePeople,
-				}),
+				})),
 				Err(RenewalFailure { reason: "rpc timeout".to_string(), slots_exhausted: false }),
-				Ok(RegistrationOutcome::Registered {
+				Ok(Some(RegistrationOutcome::Registered {
 					block_hash: "0xabc".to_string(),
 					seq: 2,
 					ring_index: 0,
 					collection: PersonhoodCollection::LitePeople,
-				}),
+				})),
 			],
 		);
 		assert_eq!(
@@ -757,11 +751,12 @@ mod tests {
 			7,
 			&targets,
 			vec![
-				Ok(RegistrationOutcome::AlreadyAllocated {
+				Ok(Some(RegistrationOutcome::AlreadyAllocated {
 					seq: 0,
 					collection: PersonhoodCollection::LitePeople,
-				}),
+				})),
 				Err(exhausted_failure()),
+				Ok(None),
 			],
 		);
 		assert_eq!(

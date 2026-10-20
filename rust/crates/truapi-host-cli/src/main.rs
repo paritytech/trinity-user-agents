@@ -1000,7 +1000,6 @@ async fn run_alloc_check(
 				// A diagnostic that submits behaves as it did before pooling,
 				// where a full table was replaced rather than reported.
 				allow_eviction: true,
-				protected: &[],
 			},
 		)
 		.await
@@ -1058,7 +1057,7 @@ async fn report_slot_scan(
 					hex::encode(slot.account_id)
 				);
 			}
-			match alloc::slot::replaceable_slot(&occupied, target, chain_now, cooldown, &[]) {
+			match alloc::slot::replaceable_slot(&occupied, target, chain_now, cooldown) {
 				Some(seq) => println!("would replace seq={seq} (oldest replaceable)"),
 				None => println!("nothing replaceable: cooldown={cooldown}s"),
 			}

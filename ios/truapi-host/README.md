@@ -443,7 +443,7 @@ The ledger persists across launches, and an entry is dropped when the identity t
 
 `statementRenewalTargets()` lists what the ledger holds, in the order it was tracked. It needs no active session, so a `BGTaskScheduler` wake can read it on a cold start before deciding whether the pass is worth running. Each entry carries an `owner`: a recipe has none and resolves under whichever identity is active, while a fixed account records the root key that promised it. `statementRenewalOwnerKey()` returns that key for the active identity, and needs a session. An entry whose owner is that key, or which has no owner, is one the next pass will renew; any other is one it will prune.
 
-`untrackStatementRenewalAccount(accountId:)` drops one fixed account and reports whether the ledger held it. It is scoped to the active identity and so needs a session, and it never removes an entry another identity promised. A stale entry does not deny you a slot forever, since registration replaces the oldest slot past its cooldown once a period is full, but it does cost an allocation attempt every period and keeps churning the slot table, which is what untracking it saves.
+`untrackStatementRenewalAccount(accountId:)` drops one fixed account and reports whether the ledger held it. It is scoped to the active identity and so needs a session, and it never removes an entry another identity promised. A stale entry is renewed every period and keeps holding a slot, and renewal never replaces a slot another account holds, so a full period reports the remaining targets as exhausted. Untracking it frees that slot, from the next period on, for the targets you still need.
 
 Only `.account` can be untracked. `.walletSso` and `.productStatementAllowance` are recipes with no removal path, so a product you no longer run keeps being resolved and renewed until the promising identity changes.
 
@@ -459,7 +459,7 @@ for label in report.pruned {
     log("dropped: \(label)")
 }
 if report.slotsExhausted {
-    // Every slot for this period is taken and none was replaceable.
+    // Every slot for this period is taken.
 }
 ```
 
@@ -470,8 +470,8 @@ One scheduled pass per period is enough, with room to spare: an allowance stays 
 A pass reports per target and only throws when it could not run at all, so decide from the report rather than from the absence of an error:
 
 - every status `Registered` or `AlreadyAllocated`: completed successfully.
-- any status `Failed`: complete unsuccessfully and submit a fresh request, since iOS does not reschedule one for you. The grace window means that request can wait for the next opportunistic wake rather than a tight loop.
-- any status `SkippedExhausted`, or `report.slotsExhausted`: completed successfully. Retrying cannot free a slot, only time or a replacement can, so a retry here only burns background budget. It does mean an allowance went unrenewed, so tell the person rather than only logging it.
+- any status `Failed`, unless `report.slotsExhausted` is set: complete unsuccessfully and submit a fresh request, since iOS does not reschedule one for you. The grace window means that request can wait for the next opportunistic wake rather than a tight loop.
+- any status `SkippedExhausted`, or `report.slotsExhausted`: completed successfully. This takes precedence over `Failed`, because the target that found the period full is itself reported `Failed`. Retrying cannot free a slot, only time can, so a retry here only burns background budget. It does mean an allowance went unrenewed, so tell the person rather than only logging it.
 - a throw carrying `Disconnected` before a session is restored: not ready rather than failed. Restore a session and let the next wake run the pass.
 
 Scheduling is one of three layers, and only the first needs the OS:

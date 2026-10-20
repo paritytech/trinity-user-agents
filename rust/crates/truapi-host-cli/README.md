@@ -220,8 +220,8 @@ Otherwise it auto-selects or creates a stored account under `<base-path>/v2`
 (default `$XDG_STATE_HOME/truapi-host/v2` or `~/.local/state/truapi-host/v2`),
 attests it through the identity backend, waits for ring readiness, and rotates
 when the current account exhausts Statement Store slots and no saved pairing
-depends on its identity. A full period replaces the oldest slot past the runtime's
-replacement cooldown, so rotation only happens when no slot is replaceable.
+depends on its identity. A full period is exhaustion: the signing host never
+replaces a slot another account holds.
 
 ### Interactive terminal UI
 
@@ -847,9 +847,8 @@ long-term storage before returning the product-scoped Bulletin allowance key.
 It needs the playground's deps (`cd playground && yarn install --frozen-lockfile`;
 bun does not resolve the `link:` dependency on `@parity/truapi`). Repeated live
 runs can exhaust the signer's per-period Statement Store or Bulletin allocation
-slots. Statement Store registration replaces the oldest slot whose replacement
-cooldown has elapsed, so exhaustion needs every slot to be within that
-cooldown; the signing host rotates auto-managed signer accounts if that
+slots. Statement Store registration takes only free slots, so a full period is
+exhaustion; the signing host rotates auto-managed signer accounts if that
 happens.
 
 ## Confirmations
@@ -990,13 +989,12 @@ than pooling across both, so it is bounded by that collection's budget alone.
 
 Registration pools across every collection the signer can prove, and a free slot
 anywhere is taken before any live slot is replaced. Whether a live slot may be
-replaced at all depends on the caller. The renewal pass, the pairing-time grant,
-and `alloc-check --submit` may replace, and then take the globally oldest
-replaceable slot across all collections. Allocation on behalf of a connecting
-product may not: it reports the period as exhausted, because every entry in the
-table is one of this wallet's own products and reclaiming space belongs to the
-renewal pass. `alloc-check` prints both collections' member keys, ring indices and
-slot tables. Auto-managed accounts are stored in
+replaced at all depends on the caller. Only `alloc-check --submit` may replace,
+and then takes the globally oldest replaceable slot across all collections.
+Allocation on behalf of a connecting product and the renewal pass may not: they
+report the period as exhausted, because a slot held by another account is that
+account's allowance. `alloc-check` prints both collections' member keys, ring
+indices and slot tables. Auto-managed accounts are stored in
 `accounts.json` under `<base-path>/v2`; mnemonics are plaintext local test secrets
 and the file is written with `0600` permissions on Unix. `alloc-check` verifies
 membership and can submit a test registration.
