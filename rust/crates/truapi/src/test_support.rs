@@ -354,7 +354,7 @@ pub fn runtime_config(product_id: &str) -> (PairingHostConfig, ProductContext) {
 			"polkadotapp".to_string(),
 		)
 		.expect("test host runtime config is valid"),
-		ProductContext::new(product_id.to_string()).expect("test product context is valid"),
+		ProductContext::new(ProductId::for_test(product_id)),
 	)
 }
 

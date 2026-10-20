@@ -762,8 +762,7 @@ impl ProductRuntimeHost {
 		Self::new_pairing_for_tests(
 			platform,
 			Self::compat_host_config(),
-			ProductContext::new("unknown.dot".to_string())
-				.expect("compat product context is valid"),
+			ProductContext::new(ProductId::for_test("unknown.dot")),
 			spawner,
 		)
 		.0
@@ -778,8 +777,7 @@ impl ProductRuntimeHost {
 		Self::new_pairing_for_tests(
 			platform,
 			host_config,
-			ProductContext::new("unknown.dot".to_string())
-				.expect("compat product context is valid"),
+			ProductContext::new(ProductId::for_test("unknown.dot")),
 			spawner,
 		)
 	}

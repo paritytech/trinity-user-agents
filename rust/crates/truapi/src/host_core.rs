@@ -177,7 +177,7 @@ pub enum ProductRuntimeError {
 }
 
 fn product_context(product_id: &ProductId) -> ProductContext {
-	ProductContext::from_parts(product_id.clone(), ProductExecutionKind::App)
+	ProductContext::new_with_execution(product_id.clone(), ProductExecutionKind::App)
 }
 
 /// A seedless pairing host: the user's keys live in an external wallet reached
@@ -2930,10 +2930,9 @@ mod tests {
 		// still reaches the product.
 		let (host_config, _) = runtime_config("worker.dot");
 		let product = ProductContext::new_with_execution(
-			"worker.dot".to_string(),
+			ProductId::for_test("worker.dot"),
 			crate::platform::ProductExecutionKind::Worker,
-		)
-		.expect("worker product context is valid");
+		);
 		let runtime = ProductRuntime::from_platform_with_config(
 			Arc::new(StubPlatform::default()),
 			host_config,
@@ -3002,10 +3001,9 @@ mod tests {
 
 		let (host_config, _) = runtime_config("worker.dot");
 		let product = ProductContext::new_with_execution(
-			"worker.dot".to_string(),
+			ProductId::for_test("worker.dot"),
 			crate::platform::ProductExecutionKind::Worker,
-		)
-		.expect("worker product context is valid");
+		);
 		let runtime = ProductRuntime::from_platform_with_config(
 			Arc::new(StubPlatform::default()),
 			host_config,
@@ -3046,10 +3044,9 @@ mod tests {
 	fn render_runtime() -> (ProductRuntime, Arc<RecordingSink>) {
 		let (host_config, _) = runtime_config("worker.dot");
 		let product = ProductContext::new_with_execution(
-			"worker.dot".to_string(),
+			ProductId::for_test("worker.dot"),
 			crate::platform::ProductExecutionKind::Worker,
-		)
-		.expect("worker product context is valid");
+		);
 		let sink = Arc::new(RecordingSink::default());
 		let runtime = ProductRuntime::from_platform_with_config(
 			Arc::new(StubPlatform::default()),
@@ -4003,7 +4000,7 @@ mod tests {
 			ConnectionAdapters::from_services(&runtime.services),
 			runtime.signing_host.clone(),
 			runtime.signing_host.clone(),
-			ProductContext::new("unknown.dot".to_string()).expect("valid product id"),
+			ProductContext::new(ProductId::for_test("unknown.dot")),
 		);
 		// Nothing is cached for `wallet.dot`, so resolution reaches dotNS,
 		// the path the missing hash short-circuited.

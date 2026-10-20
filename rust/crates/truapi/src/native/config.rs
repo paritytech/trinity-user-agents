@@ -169,6 +169,6 @@ impl From<&ProductContext> for ProductExecutionConfig {
 
 impl From<ProductExecutionConfig> for ProductContext {
 	fn from(config: ProductExecutionConfig) -> Self {
-		ProductContext::from_parts(config.product_id, config.execution_kind)
+		ProductContext::new_with_execution(config.product_id, config.execution_kind)
 	}
 }

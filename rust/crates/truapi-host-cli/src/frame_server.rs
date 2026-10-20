@@ -76,8 +76,10 @@ pub struct ProductSelection {
 impl ProductSelection {
 	/// Validate and normalize the initial product id.
 	pub fn new(product_id: String, execution_kind: ProductExecutionKind) -> Result<Arc<Self>> {
-		let product = ProductContext::new_with_execution(product_id, execution_kind)
+		let product_id = product_id
+			.parse::<ProductId>()
 			.map_err(|error| anyhow::anyhow!("invalid product id: {error}"))?;
+		let product = ProductContext::new_with_execution(product_id, execution_kind);
 		let (current, _) = watch::channel(product);
 		Ok(Arc::new(Self { current, execution_kind }))
 	}
@@ -89,7 +91,7 @@ impl ProductSelection {
 
 	/// Select a product, returning whether the selection changed.
 	pub fn select(&self, product_id: ProductId) -> bool {
-		let product = ProductContext::from_parts(product_id, self.execution_kind);
+		let product = ProductContext::new_with_execution(product_id, self.execution_kind);
 		self.current.send_if_modified(|current| {
 			if current == &product {
 				false
@@ -1259,10 +1261,8 @@ mod tests {
 		) -> Vec<u8> {
 			let ids = request_ids(method).expect("the method is in the wire table");
 			let frames = Arc::new(CapturedFrames::default());
-			let connection = runtime.product_runtime(
-				ProductContext::new(product.to_string()).expect("the product id is valid"),
-				frames.clone(),
-			);
+			let connection = runtime
+				.product_runtime(ProductContext::new(ProductId::for_test(product)), frames.clone());
 			let frame = ProtocolMessage {
 				request_id: "1".to_string(),
 				payload: Payload {
@@ -1454,7 +1454,7 @@ mod tests {
 		product_id: &str,
 	) -> Result<ProductRuntime> {
 		let product =
-			ProductContext::new_with_execution(product_id.into(), ProductExecutionKind::App)?;
+			ProductContext::new_with_execution(product_id.parse()?, ProductExecutionKind::App);
 		Ok(tapped.product_runtime(product, Arc::new(DiscardingFrameSink)))
 	}
 

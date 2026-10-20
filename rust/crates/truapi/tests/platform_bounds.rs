@@ -3,8 +3,8 @@
 //! `async_trait`.
 
 use truapi::platform::{
-	HostIdentity, HostInfo, PairingHostConfig, Platform, PlatformInfo, ProductContext, ProductId,
-	ProductIdError, ProductStorageKey, RuntimeConfigValidationError,
+	HostIdentity, HostInfo, PairingHostConfig, Platform, PlatformInfo, ProductId, ProductIdError,
+	ProductStorageKey, RuntimeConfigValidationError,
 };
 
 fn _assert_platform_bounds<T: Platform + Send + Sync + 'static>() {}
@@ -106,43 +106,29 @@ fn pairing_config_validation_cases() {
 }
 
 #[test]
-fn product_context_validation_cases() {
-	let dotli = ProductContext::new("Dotli.DOT".to_string()).expect("dot product id is valid");
-	assert_eq!(dotli.product_id.as_str(), "dotli.dot");
-
-	let localhost =
-		ProductContext::new(" localhost:3000 ".to_string()).expect("localhost product id is valid");
-	assert_eq!(localhost.product_id.as_str(), "localhost:3000");
-
-	assert_eq!(
-		ProductContext::new("localhost".to_string())
-			.map(|context| String::from(context.product_id)),
-		Ok("localhost".to_string())
-	);
-	assert_eq!(ProductContext::new("dotli.dot".to_string()).map(|_| ()), Ok(()));
-	assert_eq!(
-		ProductContext::new("Host-Playground44.PASEO".to_string())
-			.map(|context| String::from(context.product_id)),
-		Ok("host-playground44.paseo".to_string())
-	);
-	assert_eq!(
-		ProductContext::new("Browse.TESTNET".to_string())
-			.map(|context| String::from(context.product_id)),
-		Ok("browse.testnet".to_string())
-	);
+fn product_id_validation_cases() {
+	for (raw, normalized) in [
+		("Dotli.DOT", "dotli.dot"),
+		(" localhost:3000 ", "localhost:3000"),
+		("localhost", "localhost"),
+		("dotli.dot", "dotli.dot"),
+		("Host-Playground44.PASEO", "host-playground44.paseo"),
+		("Browse.TESTNET", "browse.testnet"),
+	] {
+		assert_eq!(
+			raw.parse::<ProductId>().map(String::from),
+			Ok(normalized.to_string()),
+			"{raw:?}"
+		);
+	}
 	for domain in ["example.com", "example.org", "dotli.dotty"] {
 		assert_eq!(
-			ProductContext::new(domain.to_string()).map(|_| ()),
-			Err(RuntimeConfigValidationError::InvalidProductId(ProductIdError::Invalid {
-				product_id: domain.to_string(),
-			})),
+			domain.parse::<ProductId>(),
+			Err(ProductIdError::Invalid { product_id: domain.to_string() }),
 			"{domain} must not be accepted as a product identifier"
 		);
 	}
-	assert_eq!(
-		ProductContext::new(" ".to_string()).map(|_| ()),
-		Err(RuntimeConfigValidationError::InvalidProductId(ProductIdError::Empty))
-	);
+	assert_eq!(" ".parse::<ProductId>(), Err(ProductIdError::Empty));
 }
 
 #[test]

@@ -1634,7 +1634,7 @@ mod tests {
 			crate::host_core::ConnectionAdapters::from_services(&services),
 			authority.clone(),
 			authority,
-			ProductContext::new("myapp.dot".to_string()).expect("valid product id"),
+			ProductContext::new(ProductId::for_test("myapp.dot")),
 		)
 	}
 
@@ -1648,7 +1648,7 @@ mod tests {
 			crate::host_core::ConnectionAdapters::from_services(&services),
 			authority.clone(),
 			authority,
-			ProductContext::new(product_id.to_string()).expect("valid product id"),
+			ProductContext::new(ProductId::for_test(product_id)),
 		)
 	}
 

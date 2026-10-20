@@ -266,22 +266,13 @@ fn validate_network_suffix(network_suffix: &str) -> Result<(), RuntimeConfigVali
 }
 
 impl ProductContext {
-	/// Build a product context, validating fields whose representation cannot
-	/// be made invalid by Rust types alone.
-	pub fn new(product_id: String) -> Result<Self, RuntimeConfigValidationError> {
+	/// A product context for an app.
+	pub fn new(product_id: ProductId) -> Self {
 		Self::new_with_execution(product_id, ProductExecutionKind::App)
 	}
 
-	/// Build a product context for a host-selected executable kind.
-	pub fn new_with_execution(
-		product_id: String,
-		execution_kind: ProductExecutionKind,
-	) -> Result<Self, RuntimeConfigValidationError> {
-		Ok(Self::from_parts(product_id.parse::<ProductId>()?, execution_kind))
-	}
-
-	/// Build a product context from an id that is already parsed.
-	pub fn from_parts(product_id: ProductId, execution_kind: ProductExecutionKind) -> Self {
+	/// A product context for a host-selected executable kind.
+	pub fn new_with_execution(product_id: ProductId, execution_kind: ProductExecutionKind) -> Self {
 		Self { product_id, execution_kind }
 	}
 }
@@ -1230,7 +1221,7 @@ pub enum CoreStorageKey {
 		/// Stable host-derived SSO session id.
 		session_id: String,
 		/// Product whose hard subtree this key roots.
-		product_id: String,
+		product_id: ProductId,
 	},
 	/// Signing-host request replay state for one wallet and pairing peer.
 	///
@@ -1314,7 +1305,9 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::AllowanceKeys { .. } => ("AllowanceKeys", None),
 		CoreStorageKey::LastProcessedPairingStatement => ("LastProcessedPairingStatement", None),
 		CoreStorageKey::AutoSigningKey { product_id } => ("AutoSigningKey", Some(product_id)),
-		CoreStorageKey::ProductSubtree { product_id, .. } => ("ProductSubtree", Some(product_id)),
+		CoreStorageKey::ProductSubtree { product_id, .. } => {
+			("ProductSubtree", Some(product_id.into()))
+		},
 		CoreStorageKey::AutoSigningKeys => ("AutoSigningKeys", None),
 		CoreStorageKey::RingVrfRegistry { .. } => ("RingVrfRegistry", None),
 		CoreStorageKey::StatementRenewalTargets => ("StatementRenewalTargets", None),
@@ -2051,9 +2044,10 @@ mod tests {
 		assert_eq!(ProductExecutionKind::Widget.encode(), [1]);
 		assert_eq!(ProductExecutionKind::Worker.encode(), [2]);
 
-		let context =
-			ProductContext::new_with_execution("app.dot".to_string(), ProductExecutionKind::Worker)
-				.expect("product id is valid");
+		let context = ProductContext::new_with_execution(
+			ProductId::for_test("app.dot"),
+			ProductExecutionKind::Worker,
+		);
 		assert_eq!(context.encode(), [28, b'a', b'p', b'p', b'.', b'd', b'o', b't', 2]);
 		assert_eq!(ProductContext::decode(&mut context.encode().as_slice()), Ok(context));
 	}
@@ -2080,10 +2074,7 @@ mod tests {
 		let frame = ("App.DOT".to_string(), ProductExecutionKind::App).encode();
 		let decoded = ProductContext::decode(&mut frame.as_slice()).expect("product id normalizes");
 		assert_eq!(decoded.product_id.as_str(), "app.dot");
-		assert_eq!(
-			decoded,
-			ProductContext::new("app.dot".to_string()).expect("product id is valid")
-		);
+		assert_eq!(decoded, ProductContext::new(ProductId::for_test("app.dot")));
 	}
 
 	#[test]

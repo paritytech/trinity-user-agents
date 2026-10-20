@@ -61,7 +61,7 @@ fn product_subtree_key(
 ) -> Result<CoreStorageKey, AuthorityError> {
 	Ok(CoreStorageKey::ProductSubtree {
 		session_id: session_storage_id(session.sso.as_ref().ok_or(AuthorityError::Disconnected)?),
-		product_id: product_id.to_string(),
+		product_id: product_id.clone(),
 	})
 }
 

@@ -21,7 +21,7 @@ struct SelectedProvider {
 struct RegistrySnapshot {
 	entries: Vec<RegisteredRingVrfKey>,
 	/// Owners for which `entries` is a complete Account Holder snapshot.
-	complete_owners: Vec<String>,
+	complete_owners: Vec<ProductId>,
 	/// First registration wins until the user selects another provider.
 	selected_providers: Vec<SelectedProvider>,
 }
@@ -120,12 +120,10 @@ impl RegistryUpdate<'_> {
 				owner_entries.push(entry);
 			}
 		}
-		snapshot
-			.entries
-			.retain(|entry| entry.handle.dot_ns_identifier != owner.as_str());
+		snapshot.entries.retain(|entry| entry.handle.dot_ns_identifier != *owner);
 		snapshot.entries.extend(owner_entries.iter().cloned());
-		if !snapshot.complete_owners.iter().any(|item| item == owner.as_str()) {
-			snapshot.complete_owners.push(owner.to_string());
+		if !snapshot.complete_owners.contains(owner) {
+			snapshot.complete_owners.push(owner.clone());
 		}
 		snapshot.selected_providers.retain(|provider| {
 			snapshot.entries.iter().any(|entry| {
@@ -179,7 +177,7 @@ impl RingVrfRegistryStore {
 		owner: &ProductId,
 	) -> Result<Option<Vec<RegisteredRingVrfKey>>, RingVrfError> {
 		let snapshot = self.snapshot(root_public_key).await?;
-		if !snapshot.complete_owners.iter().any(|item| item == owner.as_str()) {
+		if !snapshot.complete_owners.contains(owner) {
 			return Ok(None);
 		}
 		Ok(Some(
@@ -396,11 +394,8 @@ fn validate_snapshot(snapshot: &RegistrySnapshot) -> Result<(), RingVrfError> {
 	}
 	let mut owners = HashSet::new();
 	for owner in &snapshot.complete_owners {
-		let canonical = owner
-			.parse::<ProductId>()
-			.map_err(|error| invalid_registry(error.to_string()))?;
-		if canonical.as_str() != owner || !owners.insert(owner) {
-			return Err(invalid_registry("invalid complete owner"));
+		if !owners.insert(owner) {
+			return Err(invalid_registry("duplicate complete owner"));
 		}
 	}
 	let mut provider_rings = HashSet::new();

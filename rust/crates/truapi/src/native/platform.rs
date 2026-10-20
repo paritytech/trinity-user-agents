@@ -1010,7 +1010,7 @@ mod status_relay_tests {
 	}
 
 	fn product() -> ProductContext {
-		ProductContext::new("fund.dot".to_string()).expect("test product identifier is valid")
+		ProductContext::new(ProductId::for_test("fund.dot"))
 	}
 
 	// A follower sees the status the host holds now, then every status the

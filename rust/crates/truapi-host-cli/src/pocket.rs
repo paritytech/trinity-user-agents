@@ -176,11 +176,11 @@ mod tests {
 	use std::fs::read_to_string;
 
 	fn product() -> ProductContext {
-		ProductContext::new("pocket.dot".to_string()).expect("valid product id")
+		ProductContext::new(ProductId::for_test("pocket.dot"))
 	}
 
 	fn other_product() -> ProductContext {
-		ProductContext::new("other.dot".to_string()).expect("valid product id")
+		ProductContext::new(ProductId::for_test("other.dot"))
 	}
 
 	/// A card id is product-local, so one product must not see or remove

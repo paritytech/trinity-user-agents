@@ -1545,7 +1545,7 @@ mod tests {
 	fn an_operation_is_open_until_its_own_product_ends_it() {
 		let p = MockPlatform::new();
 		let mine = mock_product();
-		let theirs = ProductContext::new("other.dot".to_string()).expect("product id is valid");
+		let theirs = ProductContext::new(ProductId::for_test("other.dot"));
 
 		let id = block_on(p.begin_operation(&mine, "sync".into())).expect("begin succeeds").id;
 		assert_eq!(
@@ -1853,7 +1853,7 @@ mod tests {
 	}
 
 	fn mock_product() -> ProductContext {
-		ProductContext::new("mock.dot".to_string()).expect("product context is valid")
+		ProductContext::new(ProductId::for_test("mock.dot"))
 	}
 
 	fn create_room(p: &MockPlatform, room_id: &str) -> latest::ChatRoomRegistrationStatus {

@@ -612,8 +612,10 @@ fn product_context_from_js(value: &JsValue) -> Result<ProductContext, JsValue> {
 				)));
 			},
 		};
-	ProductContext::new_with_execution(product_id, execution_kind)
-		.map_err(runtime_config_validation_to_js)
+	let product_id = product_id
+		.parse::<ProductId>()
+		.map_err(|error| runtime_config_validation_to_js(error.into()))?;
+	Ok(ProductContext::new_with_execution(product_id, execution_kind))
 }
 
 fn runtime_config_field_to_js(field: &str) -> &str {

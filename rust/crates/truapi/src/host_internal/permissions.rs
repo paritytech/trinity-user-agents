@@ -764,21 +764,17 @@ mod tests {
 	};
 	use truapi::{latest::RemotePermission, v01, v01::GenericError};
 
-	static PRODUCT: LazyLock<ProductContext> = LazyLock::new(|| {
-		ProductContext::new("product.dot".to_string()).expect("product id is valid")
-	});
+	static PRODUCT: LazyLock<ProductContext> =
+		LazyLock::new(|| ProductContext::new(ProductId::for_test("product.dot")));
 
-	static OTHER_PRODUCT: LazyLock<ProductContext> = LazyLock::new(|| {
-		ProductContext::new("other.dot".to_string()).expect("product id is valid")
-	});
+	static OTHER_PRODUCT: LazyLock<ProductContext> =
+		LazyLock::new(|| ProductContext::new(ProductId::for_test("other.dot")));
 
-	static PEOPL_APP: LazyLock<ProductContext> = LazyLock::new(|| {
-		ProductContext::new("app.peopl.dot".to_string()).expect("product id is valid")
-	});
+	static PEOPL_APP: LazyLock<ProductContext> =
+		LazyLock::new(|| ProductContext::new(ProductId::for_test("app.peopl.dot")));
 
-	static PEOPL: LazyLock<ProductContext> = LazyLock::new(|| {
-		ProductContext::new("peopl.dot".to_string()).expect("product id is valid")
-	});
+	static PEOPL: LazyLock<ProductContext> =
+		LazyLock::new(|| ProductContext::new(ProductId::for_test("peopl.dot")));
 
 	#[derive(Default)]
 	struct MemStorage {
@@ -1869,7 +1865,7 @@ mod tests {
 		let prompt = ScriptedPrompt::new(vec![], vec![]);
 
 		for product_id in ["peopl.dot", "peopl.paseo", "peopl.testnet", "dim2.dot", "stash.dot"] {
-			let product = ProductContext::new(product_id.to_string()).expect("product id is valid");
+			let product = ProductContext::new(ProductId::for_test(product_id));
 			let service = PermissionsService::new(&storage, &prompt, &product);
 			assert_eq!(
 				futures::executor::block_on(
@@ -1906,7 +1902,7 @@ mod tests {
 		let prompt = ScriptedPrompt::new(vec![], vec![true, true]);
 
 		for product_id in ["localhost", "localhost:3000"] {
-			let product = ProductContext::new(product_id.to_string()).expect("product id is valid");
+			let product = ProductContext::new(ProductId::for_test(product_id));
 			let service = PermissionsService::new(&storage, &prompt, &product);
 			let request = remote(RemotePermission::ChainSubmit);
 			assert_eq!(

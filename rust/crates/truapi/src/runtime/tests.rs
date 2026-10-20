@@ -1440,7 +1440,7 @@ fn a_withdrawn_request_already_published_is_cancelled_on_the_phone() {
 		..Default::default()
 	});
 	let (host_config, _) = runtime_config("myapp.dot");
-	let product = ProductContext::new("myapp.dot".to_string()).expect("product context is valid");
+	let product = ProductContext::new(ProductId::for_test("myapp.dot"));
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
@@ -1528,7 +1528,7 @@ fn a_request_that_times_out_is_not_withdrawn_from_the_phone() {
 		..Default::default()
 	});
 	let (host_config, _) = runtime_config("myapp.dot");
-	let product = ProductContext::new("myapp.dot".to_string()).expect("product context is valid");
+	let product = ProductContext::new(ProductId::for_test("myapp.dot"));
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
@@ -1591,7 +1591,7 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
 		..Default::default()
 	});
 	let (host_config, _) = runtime_config("myapp.dot");
-	let product = ProductContext::new("myapp.dot".to_string()).expect("product context is valid");
+	let product = ProductContext::new(ProductId::for_test("myapp.dot"));
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
@@ -1658,10 +1658,9 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
 fn chat_post_message_screens_content_before_it_reaches_a_host() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
-		"chat.dot".to_string(),
+		ProductId::for_test("chat.dot"),
 		crate::platform::ProductExecutionKind::Worker,
-	)
-	.expect("test chat product context is valid");
+	);
 	let spawner = test_spawner();
 	let platform: Arc<dyn Platform> = stub_platform();
 	let services = RuntimeServices::new(
@@ -1806,10 +1805,9 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
 fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
-		"chat.dot".to_string(),
+		ProductId::for_test("chat.dot"),
 		crate::platform::ProductExecutionKind::Worker,
-	)
-	.expect("test chat product context is valid");
+	);
 	let spawner = test_spawner();
 	let platform: Arc<dyn Platform> = stub_platform();
 	let services = RuntimeServices::new(
@@ -1916,10 +1914,9 @@ fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
 fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
-		"chat.dot".to_string(),
+		ProductId::for_test("chat.dot"),
 		crate::platform::ProductExecutionKind::Worker,
-	)
-	.expect("test chat product context is valid");
+	);
 	let spawner = test_spawner();
 	let platform: Arc<dyn Platform> = stub_platform();
 	let services = RuntimeServices::new(
@@ -1999,10 +1996,9 @@ fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
 fn chat_room_ids_agree_across_create_and_post() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
-		"chat.dot".to_string(),
+		ProductId::for_test("chat.dot"),
 		crate::platform::ProductExecutionKind::Worker,
-	)
-	.expect("test chat product context is valid");
+	);
 	let spawner = test_spawner();
 	let platform: Arc<dyn Platform> = stub_platform();
 	let services = RuntimeServices::new(
@@ -2084,10 +2080,9 @@ fn chat_room_ids_agree_across_create_and_post() {
 fn chat_register_bot_rejects_unsafe_product_fields() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
-		"chat.dot".to_string(),
+		ProductId::for_test("chat.dot"),
 		crate::platform::ProductExecutionKind::Worker,
-	)
-	.expect("test chat product context is valid");
+	);
 	let spawner = test_spawner();
 	let platform: Arc<dyn Platform> = stub_platform();
 	let services = RuntimeServices::new(
@@ -2174,10 +2169,9 @@ fn chat_register_bot_rejects_unsafe_product_fields() {
 fn chat_register_bot_reaches_the_installed_adapter() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
-		"chat.dot".to_string(),
+		ProductId::for_test("chat.dot"),
 		crate::platform::ProductExecutionKind::Worker,
-	)
-	.expect("test chat product context is valid");
+	);
 	let spawner = test_spawner();
 	let platform: Arc<dyn Platform> = stub_platform();
 	let services = RuntimeServices::new(
@@ -2280,8 +2274,7 @@ fn pocket_dot_host(
 	configure: impl FnOnce(&mut crate::host_core::ConnectionAdapters),
 ) -> ProductRuntimeHost {
 	let (host_config, _) = runtime_config("pocket.dot");
-	let product = ProductContext::new_with_execution("pocket.dot".to_string(), kind)
-		.expect("test pocket product context is valid");
+	let product = ProductContext::new_with_execution(ProductId::for_test("pocket.dot"), kind);
 	let platform: Arc<dyn Platform> = stub_platform();
 	let services = RuntimeServices::new(
 		platform,
@@ -2630,8 +2623,7 @@ fn game_host_for(
 	game: Option<Arc<RecordingGamePlatform>>,
 ) -> ProductRuntimeHost {
 	let (host_config, _) = runtime_config(product_id);
-	let product = ProductContext::new_with_execution(product_id.to_string(), kind)
-		.expect("test game product context is valid");
+	let product = ProductContext::new_with_execution(ProductId::for_test(product_id), kind);
 	let platform: Arc<dyn Platform> = platform;
 	let services = RuntimeServices::new(
 		platform,
@@ -3553,10 +3545,9 @@ fn navigate_to_hands_a_web_address_over_unchanged() {
 fn permission_prompts_name_the_requesting_product_and_execution_kind() {
 	let (host_config, _) = runtime_config("camera.dot");
 	let product = ProductContext::new_with_execution(
-		"camera.dot".to_string(),
+		ProductId::for_test("camera.dot"),
 		crate::platform::ProductExecutionKind::Worker,
-	)
-	.expect("test product context is valid");
+	);
 	let spawner = test_spawner();
 	let platform = stub_platform();
 	let services = RuntimeServices::new(
@@ -6723,7 +6714,7 @@ fn auto_signing_ring_vrf_requires_registration_and_signs_locally() {
 	let (host, pairing_host) = ProductRuntimeHost::new_pairing_for_tests(
 		platform.clone(),
 		ProductRuntimeHost::compat_host_config(),
-		ProductContext::new("myapp.dot".to_string()).unwrap(),
+		ProductContext::new(ProductId::for_test("myapp.dot")),
 		test_spawner(),
 	);
 	install_pairing_session(&host, session.clone());

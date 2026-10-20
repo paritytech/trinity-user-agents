@@ -1040,9 +1040,7 @@ pub async fn allocate_statement_store_allowance(
 	signing_host.require_current_session(session)?;
 	if let Err(reason) = allowance_renewal::track(
 		signing_host,
-		vec![StatementRenewalTarget::ProductStatementAllowance {
-			product_id: product_id.to_string(),
-		}],
+		vec![StatementRenewalTarget::ProductStatementAllowance { product_id: product_id.clone() }],
 	)
 	.await
 	{

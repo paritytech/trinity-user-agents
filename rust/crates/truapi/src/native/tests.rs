@@ -865,7 +865,7 @@ fn native_pocket_removal_waits_for_the_host_without_holding_the_core_thread() {
 		pocket: Arc::new(DeferredRemoval { outcome: Mutex::new(Some(outcome)) }),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product = ProductContext::new("pocket.dot".to_string()).expect("valid product id");
+	let product = ProductContext::new(ProductId::for_test("pocket.dot"));
 	let mut removal = crate::platform::PocketPlatform::remove_pocket_card(
 		&platform,
 		&product,
@@ -890,7 +890,7 @@ fn native_pocket_removal_outcomes_are_decided_by_the_host() {
 		vec![pocket_card("loyalty", false), pocket_card("humanity", true)];
 	let events = Arc::new(NativeEventBus::default());
 	let platform = PocketCallbackPlatform { pocket: pocket_host.clone(), events };
-	let product = ProductContext::new("pocket.dot".to_string()).expect("valid product id");
+	let product = ProductContext::new(ProductId::for_test("pocket.dot"));
 	let remove = |card_id: &str| {
 		futures::executor::block_on(crate::platform::PocketPlatform::remove_pocket_card(
 			&platform,
@@ -949,7 +949,7 @@ impl NativeGameCallbacks for RecordingGameCallbacks {
 fn game_callbacks_receive_the_start_time_and_the_cancel() {
 	let callbacks = Arc::new(RecordingGameCallbacks::default());
 	let platform = GameCallbackPlatform { game: callbacks.clone() };
-	let product = ProductContext::new("dim2.dot".to_string()).expect("valid product id");
+	let product = ProductContext::new(ProductId::for_test("dim2.dot"));
 
 	futures::executor::block_on(async {
 		crate::platform::GamePlatform::schedule_game_reminder(&platform, &product, 42)
@@ -1144,9 +1144,10 @@ fn native_preimage_subscription_emits_current_then_notified_value() {
 fn native_chat_room_subscription_emits_current_then_notified_replacement() {
 	let (callbacks, events, _platform) = event_platform();
 	let platform = ChatCallbackPlatform { chat: callbacks, events: events.clone() };
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	let mut stream = crate::platform::ChatPlatform::subscribe_chat_rooms(&platform, &product);
 
 	let first = ready_rooms(stream.as_mut(), "initial room list");
@@ -1192,9 +1193,10 @@ fn native_chat_adapter_forwards_every_message_variant() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	let reaction =
 		v01::ChatReaction { message_id: "message-1".to_string(), emoji: "\u{1f3b2}".to_string() };
 	// Every variant the protocol advertises reaches the host, so a product
@@ -1256,9 +1258,10 @@ fn native_chat_adapter_forwards_the_alt_of_a_message() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	let card = v01::ChatMessageContent::Custom(v01::ChatCustomMessage {
 		message_type: "results".to_string(),
 		payload: vec![1],
@@ -1296,9 +1299,10 @@ fn a_posted_action_set_round_trips_to_the_product_that_posted_it() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	let connection = crate::runtime::ActionChannel::chat();
 
 	let posted = futures::executor::block_on(crate::platform::ChatPlatform::post_chat_message(
@@ -1360,9 +1364,10 @@ fn native_chat_adapter_surfaces_a_message_rejection() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	*callbacks.chat_post_rejection.lock().expect("post rejection mutex poisoned") =
 		Some("cannot render a file card".to_string());
 
@@ -1400,9 +1405,10 @@ fn native_chat_adapter_surfaces_a_bot_registration_rejection() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	*callbacks.chat_bot_rejection.lock().expect("bot rejection mutex poisoned") =
 		Some("keychain locked".to_string());
 
@@ -1437,9 +1443,10 @@ fn native_chat_adapter_preserves_bot_status_and_leaves_rooms_alone() {
 	let callbacks = Arc::new(EventCallbacks::new());
 	let events = Arc::new(NativeEventBus::default());
 	let platform = ChatCallbackPlatform { chat: callbacks.clone(), events: events.clone() };
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	let request = v01::HostChatRegisterBotRequest {
 		bot_id: "flipper".to_string(),
 		name: "Flipper".to_string(),
@@ -1497,9 +1504,10 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 	let request = v01::HostChatCreateRoomRequest {
 		room_id: "support".to_string(),
 		name: "Support".to_string(),
@@ -1565,9 +1573,10 @@ fn native_chat_adapter_hands_the_room_footer_to_the_host() {
 		chat: callbacks.clone(),
 		events: Arc::new(NativeEventBus::default()),
 	};
-	let product =
-		ProductContext::new_with_execution("chat.dot".to_string(), ProductExecutionKind::Worker)
-			.unwrap();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		ProductExecutionKind::Worker,
+	);
 
 	futures::executor::block_on(crate::platform::ChatPlatform::set_chat_room_footer(
 		&platform,
