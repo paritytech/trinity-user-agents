@@ -381,6 +381,34 @@ public protocol BalanceHostBridge: AnyObject, Sendable {
     func balance(productId: String, purse: UInt32?) async throws -> U128
 }
 
+/// Host-implemented auth token keeper: holds the tokens products obtain from
+/// their own services, following the rules on the core's `AuthTokenPlatform`.
+///
+/// Each token is kept under the opaque `key` the core hands over, 64
+/// lowercase hex characters that already separate accounts, products and
+/// services, tagged with `productId` and the opaque `account` so one
+/// account's tokens for a product can be counted and one product's cleared.
+/// The core makes one store call at a time. Installed once on the runtime with
+/// ``TrUAPIHostRuntime/setAuthTokens(_:)``. A runtime without one answers
+/// every `authTokens` call with `Unsupported`.
+public protocol AuthTokenHostBridge: AnyObject, Sendable {
+    /// Keep `token` under `key` for `productId` and `account`, replacing any
+    /// kept under it.
+    func storeAuthToken(productId: String, account: String, key: String, token: AuthToken) async throws
+
+    /// The token kept under `key`, or `nil`.
+    func authToken(productId: String, key: String) async throws -> AuthToken?
+
+    /// Drop the token kept under `key`. Dropping none succeeds.
+    func removeAuthToken(productId: String, key: String) async throws
+
+    /// How many tokens are kept for `productId` under `account`.
+    func authTokenCount(productId: String, account: String) async throws -> UInt32
+
+    /// Drop every token kept for `productId`, or every token when it is `nil`.
+    func clearAuthTokens(productId: String?) async throws
+}
+
 /// Draws the viewfinder for `scanner.scan`, following the rules on the core's
 /// `ScannerPlatform`. Closes it when the task is cancelled.
 public protocol ScannerHostBridge: AnyObject, Sendable {
@@ -532,6 +560,48 @@ private final class GameCallbackAdapter: NativeGameCallbacks, @unchecked Sendabl
 
     func cancelReminder() async throws {
         try await withHostRejection { try await bridge.cancelReminder() }
+    }
+}
+
+/// Adapter that bridges the public `AuthTokenHostBridge` to the generated
+/// UniFFI `NativeAuthTokenCallbacks` protocol.
+private final class AuthTokenCallbackAdapter: NativeAuthTokenCallbacks, @unchecked Sendable {
+    private let bridge: AuthTokenHostBridge
+
+    init(bridge: AuthTokenHostBridge) {
+        self.bridge = bridge
+    }
+
+    func storeAuthToken(productId: String, account: String, key: String, token: AuthToken) async throws {
+        try await withHostRejection {
+            try await bridge.storeAuthToken(productId: productId, account: account, key: key, token: token)
+        }
+    }
+
+    func authToken(productId: String, key: String) async throws -> AuthToken? {
+        try await withHostRejection { try await bridge.authToken(productId: productId, key: key) }
+    }
+
+    func removeAuthToken(productId: String, key: String) async throws {
+        try await withHostRejection { try await bridge.removeAuthToken(productId: productId, key: key) }
+    }
+
+    func authTokenCount(productId: String, account: String) async throws -> UInt32 {
+        try await withHostRejection { try await bridge.authTokenCount(productId: productId, account: account) }
+    }
+
+    func clearAuthTokens(productId: String?) async throws {
+        try await withHostRejection { try await bridge.clearAuthTokens(productId: productId) }
+    }
+
+    private func withHostRejection<T>(_ operation: () async throws -> T) async throws -> T {
+        do {
+            return try await operation()
+        } catch let error as HostRejection {
+            throw error
+        } catch {
+            throw HostRejection.Rejected(reason: hostRejectionReason(error))
+        }
     }
 }
 
@@ -889,6 +959,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     private var topUpRetainer: NativeTopUpCallbacks?
     private var paymentsRetainer: NativePaymentCallbacks?
     private var balanceRetainer: NativeBalanceCallbacks?
+    private var authTokensRetainer: NativeAuthTokenCallbacks?
     private var scannerRetainer: NativeScannerCallbacks?
 
     public convenience init(bridge: HostBridge, runtimeConfig: HostRuntimeConfig) throws {
@@ -936,6 +1007,15 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         let adapter = ContactsCallbackAdapter(bridge: contacts)
         contactsRetainer = adapter
         return inner.setContactsCallbacks(callbacks: adapter)
+    }
+
+    /// Install the host's auth token keeper before opening any product
+    /// execution. Set-once: answers whether this call installed it.
+    @discardableResult
+    public func setAuthTokens(_ authTokens: AuthTokenHostBridge) -> Bool {
+        let adapter = AuthTokenCallbackAdapter(bridge: authTokens)
+        authTokensRetainer = adapter
+        return inner.setAuthTokenCallbacks(callbacks: adapter)
     }
 
     /// Install the host's scanner before opening any product execution.

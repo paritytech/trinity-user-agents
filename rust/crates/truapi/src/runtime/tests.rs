@@ -9077,3 +9077,414 @@ fn a_payment_of_nothing_is_refused_before_the_host_sees_it() {
 		)
 	);
 }
+/// A token keeper holding tokens by the key the core hands it, as a host's
+/// secure storage does, and counting every call it gets. Its count yields
+/// once before answering, as a real keeper's storage read would, so two
+/// stores can interleave between a count and a write.
+#[derive(Default)]
+struct MemoryAuthTokens {
+	tokens: Mutex<std::collections::HashMap<String, KeptAuthToken>>,
+	calls: Mutex<usize>,
+}
+
+/// One token the test keeper holds, with the product and account it is for.
+struct KeptAuthToken {
+	product_id: String,
+	account: String,
+	token: v01::AuthToken,
+}
+
+impl MemoryAuthTokens {
+	fn call_count(&self) -> usize {
+		*self.calls.lock().expect("calls mutex poisoned")
+	}
+
+	fn record_call(&self) {
+		*self.calls.lock().expect("calls mutex poisoned") += 1;
+	}
+
+	fn tokens(
+		&self,
+	) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, KeptAuthToken>> {
+		self.tokens.lock().expect("tokens mutex poisoned")
+	}
+}
+
+/// Pending once, then ready, so whatever else is being polled gets a turn.
+async fn yield_once() {
+	let mut yielded = false;
+	futures::future::poll_fn(|cx| {
+		if yielded {
+			core::task::Poll::Ready(())
+		} else {
+			yielded = true;
+			cx.waker().wake_by_ref();
+			core::task::Poll::Pending
+		}
+	})
+	.await;
+}
+
+#[truapi::async_trait]
+impl crate::platform::AuthTokenPlatform for MemoryAuthTokens {
+	async fn store_auth_token(
+		&self,
+		product_id: &str,
+		account: &str,
+		key: &str,
+		token: v01::AuthToken,
+	) -> Result<(), v01::GenericError> {
+		self.record_call();
+		let kept = KeptAuthToken {
+			product_id: product_id.to_string(),
+			account: account.to_string(),
+			token,
+		};
+		self.tokens().insert(key.to_string(), kept);
+		Ok(())
+	}
+
+	async fn auth_token(
+		&self,
+		_product_id: &str,
+		key: &str,
+	) -> Result<Option<v01::AuthToken>, v01::GenericError> {
+		self.record_call();
+		Ok(self.tokens().get(key).map(|kept| kept.token.clone()))
+	}
+
+	async fn remove_auth_token(
+		&self,
+		_product_id: &str,
+		key: &str,
+	) -> Result<(), v01::GenericError> {
+		self.record_call();
+		self.tokens().remove(key);
+		Ok(())
+	}
+
+	async fn auth_token_count(
+		&self,
+		product_id: &str,
+		account: &str,
+	) -> Result<u32, v01::GenericError> {
+		self.record_call();
+		let count = self
+			.tokens()
+			.values()
+			.filter(|kept| kept.product_id == product_id && kept.account == account)
+			.count();
+		yield_once().await;
+		Ok(count as u32)
+	}
+
+	async fn clear_auth_tokens(&self, product_id: Option<&str>) -> Result<(), v01::GenericError> {
+		self.record_call();
+		match product_id {
+			Some(product_id) => self.tokens().retain(|_, kept| kept.product_id != product_id),
+			None => self.tokens().clear(),
+		}
+		Ok(())
+	}
+}
+
+fn onramp_token() -> v01::AuthToken {
+	v01::AuthToken {
+		token: "eyJhbGciOiJIUzI1NiJ9.e30.sig".to_string(),
+		refresh_token: Some("refresh".to_string()),
+		expires_at: Some(1_900_000_000_000),
+	}
+}
+
+fn store_auth_token(
+	host: &ProductRuntimeHost,
+	service: &str,
+	token: v01::AuthToken,
+) -> Result<
+	truapi::versioned::auth_tokens::HostAuthTokensStoreResponse,
+	CallError<truapi::versioned::auth_tokens::HostAuthTokensStoreError>,
+> {
+	futures::executor::block_on(truapi::api::AuthTokens::store(
+		host,
+		&CallContext::default(),
+		truapi::versioned::auth_tokens::HostAuthTokensStoreRequest::V1(
+			v01::HostAuthTokensStoreRequest { service: service.to_string(), token },
+		),
+	))
+}
+
+fn get_auth_token(
+	host: &ProductRuntimeHost,
+	service: &str,
+) -> Result<Option<v01::AuthToken>, CallError<truapi::versioned::auth_tokens::HostAuthTokensGetError>>
+{
+	futures::executor::block_on(truapi::api::AuthTokens::get(
+		host,
+		&CallContext::default(),
+		truapi::versioned::auth_tokens::HostAuthTokensGetRequest::V1(
+			v01::HostAuthTokensGetRequest { service: service.to_string() },
+		),
+	))
+	.map(|truapi::versioned::auth_tokens::HostAuthTokensGetResponse::V1(response)| response.token)
+}
+
+fn remove_auth_token(
+	host: &ProductRuntimeHost,
+	service: &str,
+) -> Result<
+	truapi::versioned::auth_tokens::HostAuthTokensRemoveResponse,
+	CallError<truapi::versioned::auth_tokens::HostAuthTokensRemoveError>,
+> {
+	futures::executor::block_on(truapi::api::AuthTokens::remove(
+		host,
+		&CallContext::default(),
+		truapi::versioned::auth_tokens::HostAuthTokensRemoveRequest::V1(
+			v01::HostAuthTokensRemoveRequest { service: service.to_string() },
+		),
+	))
+}
+
+// A token is a credential for one product's own service, so another product
+// asking for the same service name must never receive it.
+#[test]
+fn a_kept_token_is_returned_only_to_the_product_that_stored_it() {
+	let services = payment_services();
+	assert!(services.install_auth_token_platform(Arc::new(MemoryAuthTokens::default())));
+	let wallet = payment_host(&services, "wallet.dot", true);
+	let shop = payment_host(&services, "shop.dot", true);
+
+	let stored = store_auth_token(&wallet, "onramp", onramp_token());
+
+	assert_eq!(
+		(stored, get_auth_token(&wallet, "onramp"), get_auth_token(&shop, "onramp")),
+		(
+			Ok(truapi::versioned::auth_tokens::HostAuthTokensStoreResponse::V1),
+			Ok(Some(onramp_token())),
+			Ok(None),
+		)
+	);
+}
+
+// Tokens belong to the account that signed in, so a different account using
+// the same product on the same device never reads them.
+#[test]
+fn a_kept_token_is_returned_only_to_the_account_that_stored_it() {
+	let services = payment_services();
+	assert!(services.install_auth_token_platform(Arc::new(MemoryAuthTokens::default())));
+	let alice = payment_host(&services, "wallet.dot", true);
+	let (host_config, product) = runtime_config("wallet.dot");
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let bob = ProductRuntimeHost::from_services(
+		services.clone(),
+		crate::host_core::ConnectionAdapters::from_services(&services),
+		pairing_host.clone(),
+		pairing_host,
+		product,
+	);
+	install_pairing_session(&bob, SessionInfo { public_key: [0xb0; 32], ..session_info() });
+
+	store_auth_token(&alice, "onramp", onramp_token()).expect("token stored");
+
+	assert_eq!(
+		(get_auth_token(&alice, "onramp"), get_auth_token(&bob, "onramp")),
+		(Ok(Some(onramp_token())), Ok(None))
+	);
+}
+
+// Secure storage is meant for a handful of credentials, so a product keeps
+// tokens for a bounded number of services. Replacing one it already keeps
+// stays allowed at the limit.
+#[test]
+fn a_product_keeps_tokens_for_a_bounded_number_of_services() {
+	let services = payment_services();
+	assert!(services.install_auth_token_platform(Arc::new(MemoryAuthTokens::default())));
+	let wallet = payment_host(&services, "wallet.dot", true);
+	let max = crate::host_logic::auth_tokens::MAX_SERVICES_PER_PRODUCT;
+	for index in 0..max {
+		store_auth_token(&wallet, &format!("service-{index}"), onramp_token())
+			.expect("a token within the limit is kept");
+	}
+
+	assert_eq!(
+		(
+			store_auth_token(&wallet, "one-too-many", onramp_token()),
+			store_auth_token(&wallet, "service-0", onramp_token()),
+		),
+		(
+			Err(CallError::Domain(truapi::versioned::auth_tokens::HostAuthTokensStoreError::V1(
+				v01::HostAuthTokensStoreError::TooManyServices { max }
+			))),
+			Ok(truapi::versioned::auth_tokens::HostAuthTokensStoreResponse::V1),
+		)
+	);
+}
+
+// The cap is per account: tokens another account left for the same product,
+// such as one whose clear failed on sign-out, must not use up the next
+// account's services.
+#[test]
+fn the_service_cap_counts_only_the_signed_in_account() {
+	let services = payment_services();
+	assert!(services.install_auth_token_platform(Arc::new(MemoryAuthTokens::default())));
+	let alice = payment_host(&services, "wallet.dot", true);
+	let (host_config, product) = runtime_config("wallet.dot");
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let bob = ProductRuntimeHost::from_services(
+		services.clone(),
+		crate::host_core::ConnectionAdapters::from_services(&services),
+		pairing_host.clone(),
+		pairing_host,
+		product,
+	);
+	install_pairing_session(&bob, SessionInfo { public_key: [0xb0; 32], ..session_info() });
+	let max = crate::host_logic::auth_tokens::MAX_SERVICES_PER_PRODUCT;
+	for index in 0..max {
+		store_auth_token(&alice, &format!("service-{index}"), onramp_token())
+			.expect("a token within the limit is kept");
+	}
+
+	assert_eq!(
+		store_auth_token(&bob, "onramp", onramp_token()),
+		Ok(truapi::versioned::auth_tokens::HostAuthTokensStoreResponse::V1)
+	);
+}
+
+// Two stores for new services racing at the last free slot must not both get
+// in: the count check and the write happen under one lock, so the second
+// sees the first's token.
+#[test]
+fn concurrent_stores_cannot_pass_the_service_cap() {
+	let services = payment_services();
+	let keeper = Arc::new(MemoryAuthTokens::default());
+	assert!(services.install_auth_token_platform(keeper.clone()));
+	let wallet = payment_host(&services, "wallet.dot", true);
+	let max = crate::host_logic::auth_tokens::MAX_SERVICES_PER_PRODUCT;
+	for index in 0..max - 1 {
+		store_auth_token(&wallet, &format!("service-{index}"), onramp_token())
+			.expect("a token within the limit is kept");
+	}
+
+	let cx = CallContext::default();
+	let store = |service: &'static str| {
+		truapi::api::AuthTokens::store(
+			&wallet,
+			&cx,
+			truapi::versioned::auth_tokens::HostAuthTokensStoreRequest::V1(
+				v01::HostAuthTokensStoreRequest {
+					service: service.to_string(),
+					token: onramp_token(),
+				},
+			),
+		)
+	};
+	let (first, second) =
+		futures::executor::block_on(futures::future::join(store("racer-one"), store("racer-two")));
+
+	assert_eq!(
+		(first.is_ok(), second, keeper.tokens().len() as u32),
+		(
+			true,
+			Err(CallError::Domain(truapi::versioned::auth_tokens::HostAuthTokensStoreError::V1(
+				v01::HostAuthTokensStoreError::TooManyServices { max }
+			))),
+			max,
+		)
+	);
+}
+
+// The worker signs in again when it finds no token, so a removed token has to
+// read as absent, and removing it twice is not an error.
+#[test]
+fn a_removed_token_reads_as_absent() {
+	let services = payment_services();
+	assert!(services.install_auth_token_platform(Arc::new(MemoryAuthTokens::default())));
+	let wallet = payment_host(&services, "wallet.dot", true);
+	store_auth_token(&wallet, "onramp", onramp_token()).expect("token stored");
+
+	let removed = remove_auth_token(&wallet, "onramp");
+	let removed_again = remove_auth_token(&wallet, "onramp");
+
+	let removed_ok = Ok(truapi::versioned::auth_tokens::HostAuthTokensRemoveResponse::V1);
+	assert_eq!(
+		(removed, removed_again, get_auth_token(&wallet, "onramp")),
+		(removed_ok.clone(), removed_ok, Ok(None))
+	);
+}
+
+// The service id goes into the storage key the core derives, and the host
+// keeps tokens in secure storage meant for small secrets, so the core
+// refuses a bad id or an oversized token before the host sees either.
+#[test]
+fn a_bad_service_or_oversized_token_is_refused_before_the_host_sees_it() {
+	let services = payment_services();
+	let keeper = Arc::new(MemoryAuthTokens::default());
+	assert!(services.install_auth_token_platform(keeper.clone()));
+	let wallet = payment_host(&services, "wallet.dot", true);
+	let limit = crate::host_logic::auth_tokens::MAX_TOKEN_BYTES;
+	let oversized = v01::AuthToken {
+		token: "t".repeat(limit as usize),
+		refresh_token: Some("r".to_string()),
+		expires_at: None,
+	};
+
+	let refusals = (
+		store_auth_token(&wallet, "On/Ramp", onramp_token()),
+		store_auth_token(&wallet, "onramp", oversized),
+		get_auth_token(&wallet, ""),
+		remove_auth_token(&wallet, "../onramp"),
+		keeper.call_count(),
+	);
+
+	assert_eq!(
+		refusals,
+		(
+			Err(CallError::Domain(truapi::versioned::auth_tokens::HostAuthTokensStoreError::V1(
+				v01::HostAuthTokensStoreError::InvalidService
+			))),
+			Err(CallError::Domain(truapi::versioned::auth_tokens::HostAuthTokensStoreError::V1(
+				v01::HostAuthTokensStoreError::TooLarge { max: limit }
+			))),
+			Err(CallError::Domain(truapi::versioned::auth_tokens::HostAuthTokensGetError::V1(
+				v01::HostAuthTokensLookupError::InvalidService
+			))),
+			Err(CallError::Domain(truapi::versioned::auth_tokens::HostAuthTokensRemoveError::V1(
+				v01::HostAuthTokensLookupError::InvalidService
+			))),
+			0,
+		)
+	);
+}
+
+// Tokens belong to the signed-in user and are dropped on sign-out, so a
+// product without a session reaches no keeper; a host without one says so.
+#[test]
+fn auth_tokens_need_a_session_and_a_keeper() {
+	let services = payment_services();
+	let unsupported = payment_host(&services, "wallet.dot", true);
+	let unsupported_answers = (
+		store_auth_token(&unsupported, "onramp", onramp_token()),
+		get_auth_token(&unsupported, "onramp"),
+		remove_auth_token(&unsupported, "onramp"),
+	);
+	let keeper = Arc::new(MemoryAuthTokens::default());
+	assert!(services.install_auth_token_platform(keeper.clone()));
+	let signed_out = payment_host(&services, "wallet.dot", false);
+
+	assert_eq!(
+		(
+			unsupported_answers,
+			(
+				store_auth_token(&signed_out, "onramp", onramp_token()),
+				get_auth_token(&signed_out, "onramp"),
+				remove_auth_token(&signed_out, "onramp"),
+			),
+			keeper.call_count(),
+		),
+		(
+			(Err(CallError::Unsupported), Err(CallError::Unsupported), Err(CallError::Unsupported)),
+			(Err(CallError::Denied), Err(CallError::Denied), Err(CallError::Denied)),
+			0,
+		)
+	);
+}
+

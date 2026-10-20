@@ -35,6 +35,7 @@ pub trait FromLatest: Versioned {
 }
 
 pub mod account;
+pub mod auth_tokens;
 pub mod chain;
 pub mod chat;
 pub mod coin_payment;

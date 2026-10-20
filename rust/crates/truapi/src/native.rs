@@ -36,9 +36,9 @@ pub use crate::{
 	},
 };
 pub use callbacks::{
-	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-	NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
-	NativePocketRemoval, NativeScannerCallbacks, NativeTopUpCallbacks,
+	HostCallbacks, NativeAuthTokenCallbacks, NativeBalanceCallbacks, NativeChatCallbacks,
+	NativeContactsCallbacks, NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
+	NativePocketCallbacks, NativePocketRemoval, NativeScannerCallbacks, NativeTopUpCallbacks,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
 pub use errors::{

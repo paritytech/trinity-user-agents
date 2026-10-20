@@ -93,10 +93,10 @@ pub mod latest {
 	use crate::versioned::{self, Versioned};
 
 	pub use crate::v01::{
-		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
-		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
-		ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
-		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
+		AllocatableResource, AllocationOutcome, Arrangement, AuthToken, Background, BlendingMode,
+		BorderStyle, BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction,
+		ChatActionLayout, ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile,
+		ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
 		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
 		Dimensions, Effect, EffectProps, FundingDirection, FundingFailure, GenericError,
@@ -238,6 +238,21 @@ pub mod latest {
 	pub type HostScannerScanResponse = LatestOf<versioned::scanner::HostScannerScanResponse>;
 	/// Scanner failure.
 	pub type HostScannerScanError = LatestOf<versioned::scanner::HostScannerScanError>;
+	/// Request to keep a product's auth token.
+	pub type HostAuthTokensStoreRequest =
+		LatestOf<versioned::auth_tokens::HostAuthTokensStoreRequest>;
+	/// Failure keeping a product's auth token.
+	pub type HostAuthTokensStoreError = LatestOf<versioned::auth_tokens::HostAuthTokensStoreError>;
+	/// Request to read a product's auth token.
+	pub type HostAuthTokensGetRequest = LatestOf<versioned::auth_tokens::HostAuthTokensGetRequest>;
+	/// A product's kept auth token.
+	pub type HostAuthTokensGetResponse =
+		LatestOf<versioned::auth_tokens::HostAuthTokensGetResponse>;
+	/// Failure reading or dropping a product's auth token.
+	pub type HostAuthTokensLookupError = LatestOf<versioned::auth_tokens::HostAuthTokensGetError>;
+	/// Request to drop a product's auth token.
+	pub type HostAuthTokensRemoveRequest =
+		LatestOf<versioned::auth_tokens::HostAuthTokensRemoveRequest>;
 	/// Contextual alias derivation result.
 	pub type HostAccountGetAliasResponse =
 		LatestOf<versioned::account::HostAccountGetAliasResponse>;

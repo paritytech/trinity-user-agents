@@ -311,7 +311,8 @@ clipboard contents. The raw link remains in the transcript, and a terminal
 that cannot fit the whole QR falls back to that link instead of wrapping or
 clipping it. A clipboard or QR-rendering failure is reported without cancelling
 pairing.
-Logout does not clear product storage, scripts, or the selected product.
+Logout drops every product's auth tokens, as a host does on sign-out, but does
+not clear product storage, scripts, or the selected product.
 
 Both `pairing-host` and `signing-host` use the same interactive UI and command
 bar. It uses a quiet, command-centered transcript: submitted
@@ -779,6 +780,11 @@ Scripts under `js/scripts/` include:
   alone, so the battery skips it. To try a game product locally, run
   `truapi-host dev --product-id dim2.dot -- <dev command>`; without the flag
   the product runs as `localhost:<port>` and Game answers `Unsupported`.
+
+  Both host roles keep product auth tokens in memory, under the key the core
+  hands over, for as long as the process runs, so `authTokens` calls succeed
+  once a session exists and nothing is kept across runs. The core drops them
+  when the session ends, including on `/logout`.
 
   Contacts are served on every phase, from `TRUAPI_CONTACTS`
   (`alice=0x<32-byte account>;bob=0x…`) or, unset, from a two-name development
