@@ -332,7 +332,10 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 
 	let identity = wait_for_dotns_username(&mut reader, &registration.candidate_public_key).await?;
 	debug!("lite username registered and confirmed on-chain");
-	identity.lite_username.context("registered dotNS identity has no lite username")
+	identity
+		.lite_username()
+		.map(str::to_owned)
+		.context("registered dotNS identity has no lite username")
 }
 
 /// Resolves the on-chain lite username for an already-attested signer: the
@@ -345,7 +348,9 @@ pub async fn registered_lite_username(network: NetworkConfig, entropy: &[u8]) ->
 	reader
 		.dotns_identity(&identity.public.to_bytes())
 		.await?
-		.lite_username
+		.as_ref()
+		.and_then(|identity| identity.lite_username())
+		.map(str::to_owned)
 		.context("attested signer has no dotNS lite username")
 }
 
@@ -359,7 +364,9 @@ pub async fn lookup_registered_username(
 		.map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
 	let mut reader = AssetHubReader::connect(network.asset_hub_ws).await?;
 	let identity = reader.dotns_identity(&identity.public.to_bytes()).await?;
-	Ok(identity.full_username.or(identity.lite_username))
+	Ok(identity.and_then(|identity| {
+		identity.full_username().or(identity.lite_username()).map(str::to_owned)
+	}))
 }
 
 #[derive(Deserialize)]
@@ -511,7 +518,10 @@ pub async fn check_identity(network: NetworkConfig, entropy: &[u8]) -> Result<()
 	{
 		let address = product_public_key_to_address(public);
 		match reader.dotns_identity(&public).await {
-			Ok(identity) => match identity.full_username.or(identity.lite_username) {
+			Ok(identity) => match identity
+				.as_ref()
+				.and_then(|identity| identity.full_username().or(identity.lite_username()))
+			{
 				Some(username) => {
 					println!("IDENTITY_FOUND path={label} account={address} username={username}")
 				},
@@ -610,7 +620,7 @@ async fn wait_for_dotns_username(
 	const MAX_ATTEMPTS: usize = 30;
 	for attempt in 1..=MAX_ATTEMPTS {
 		match reader.dotns_identity(candidate).await {
-			Ok(identity) if identity.lite_username.is_some() => {
+			Ok(Some(identity)) if identity.lite_username().is_some() => {
 				crate::terminal_ui::update_activity(
 					"signer",
 					"Setting up signer",

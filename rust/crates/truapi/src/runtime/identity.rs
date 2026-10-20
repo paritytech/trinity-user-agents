@@ -47,15 +47,19 @@ pub async fn resolve_session_identity_with_chain(
 	if let Some(identity) =
 		lookup_session_identity(chain, asset_hub_chain_genesis_hash, &session).await
 	{
-		session.apply_usernames(identity.lite_username, identity.full_username);
+		session.apply_usernames(
+			identity.lite_username().map(str::to_owned),
+			identity.full_username().map(str::to_owned),
+		);
 	}
 	session
 }
 
 /// Reads `session`'s usernames from the dotNS contracts on Asset Hub, whatever
 /// usernames it already carries. The identity account is tried first, then the
-/// root key when the identity account holds no record. Returns `None` when no
-/// Asset Hub is configured, neither account holds a record, or the lookup fails.
+/// root key when the identity account holds no username. Returns `None` when no
+/// Asset Hub is configured, neither account holds a username, or the lookup
+/// fails.
 #[instrument(skip_all, fields(runtime.method = "session.identity.lookup_session"))]
 pub async fn lookup_session_identity(
 	chain: &ChainRuntime,
@@ -117,7 +121,7 @@ const IDENTITY_LOOKUP_MAX_ATTEMPTS: usize = 3;
 enum LookupOutcome {
 	/// A username record was found.
 	Found(DotnsIdentity),
-	/// The account has no dotNS labels. Definitive, not worth a retry.
+	/// The account has no dotNS username. Definitive, not worth a retry.
 	NoRecord,
 	/// The lookup failed transiently after exhausting retries.
 	Failed,
@@ -136,8 +140,8 @@ async fn lookup_with_retries(
 			Ok(Some(identity)) => {
 				debug!(
 					account = %hex::encode(account),
-					lite_username = identity.lite_username.as_deref().unwrap_or(""),
-					full_username = identity.full_username.as_deref().unwrap_or(""),
+					lite_username = identity.lite_username().unwrap_or(""),
+					full_username = identity.full_username().unwrap_or(""),
 					"dotNS {label} lookup found username"
 				);
 				return LookupOutcome::Found(identity);
@@ -145,7 +149,7 @@ async fn lookup_with_retries(
 			Ok(None) => {
 				debug!(
 					account = %hex::encode(account),
-					"dotNS {label} lookup found no labels"
+					"dotNS {label} lookup found no username"
 				);
 				return LookupOutcome::NoRecord;
 			},
@@ -165,8 +169,8 @@ async fn lookup_with_retries(
 /// Resolves `account_id`'s usernames from the dotNS contracts at a fresh Asset
 /// Hub head. Each step carries the lookup transport's own step timeout; the caller's
 /// [`LOOKUP_BUDGET`] bounds the whole resolution. Returns `None` when the
-/// gateway is not deployed. Also returns `None` when the account holds no
-/// labels.
+/// gateway is not deployed. Also returns `None` when none of the account's
+/// labels is a username.
 #[instrument(skip_all, fields(runtime.method = "session.identity.lookup"))]
 async fn lookup_dotns_identity(
 	chain: &ChainRuntime,
@@ -184,10 +188,7 @@ async fn lookup_dotns_identity(
 			return Ok(None);
 		};
 		let labels = resolve_labels(&mut lookup, &controller, &account_id).await?;
-		if labels.is_empty() {
-			return Ok(None);
-		}
-		Ok(Some(classify_labels(&mut lookup, &controller, labels).await?))
+		classify_labels(&mut lookup, &controller, labels).await
 	}
 	.fuse();
 	pin_mut!(lookup);
@@ -225,6 +226,9 @@ mod tests {
 	const FACTORY: [u8; 20] = [0xfa; 20];
 	const STORE: [u8; 20] = [0x57; 20];
 	const ACCOUNT: [u8; 32] = [0xaa; 32];
+	/// Holds only a publicly registered label the controller never issued.
+	const SQUATTER: [u8; 32] = [0x5a; 32];
+	const SQUATTER_STORE: [u8; 20] = [0x5b; 20];
 
 	fn abi_word(value: u64) -> [u8; 32] {
 		let mut word = [0u8; 32];
@@ -315,6 +319,14 @@ mod tests {
 		out
 	}
 
+	/// The scripted account whose H160 the view's first argument carries.
+	fn queried_account(input: &[u8]) -> [u8; 32] {
+		[ACCOUNT, SQUATTER]
+			.into_iter()
+			.find(|account| input[4..36] == abi_address(&account_to_h160(account)))
+			.expect("view for an unscripted account")
+	}
+
 	/// The scripted contract side: `(dest, selector)` → return data.
 	fn view_output(dest: &[u8; 20], input: &[u8]) -> Vec<u8> {
 		let sel: [u8; 4] = input[..4].try_into().unwrap();
@@ -326,26 +338,35 @@ mod tests {
 		let data = match (*dest, sel) {
 			(DISPATCHER, s) if s == selector("TARGET()") => abi_address(&CONTROLLER),
 			(CONTROLLER, s) if s == selector("pendingClaims(address,uint256,uint256)") => {
-				// First page for the mapped identity account.
-				assert_eq!(&input[4..36], abi_address(&account_to_h160(&ACCOUNT)).as_slice());
 				assert_eq!(&input[36..68], &abi_word(0));
 				assert_eq!(&input[68..100], &abi_word(16));
 				// Minted at the epoch: a pending claim never lapses.
-				abi_pending_claims(&[("alice.01", 1)])
+				if queried_account(input) == ACCOUNT {
+					abi_pending_claims(&[("alice.01", 1)])
+				} else {
+					abi_pending_claims(&[])
+				}
 			},
 			(CONTROLLER, s) if s == selector("isPopIssued(string)") => {
-				// Both labels were issued through the gateway.
-				abi_word(1).to_vec()
+				let length = u64::from_be_bytes(input[60..68].try_into().unwrap()) as usize;
+				let label = &input[68..68 + length];
+				abi_word(u64::from(label != b"squatter")).to_vec()
 			},
 			(CONTROLLER, s) if s == selector("protocolRegistry()") => abi_address(&REGISTRY),
 			(REGISTRY, s) if s == selector("get(bytes32)") => abi_address(&FACTORY),
 			(REGISTRY, s) if s == selector("tld()") => abi_string(".paseo"),
 			(FACTORY, s) if s == selector("getLabelStore(address)") => {
-				assert_eq!(&input[16..36], account_to_h160(&ACCOUNT));
-				abi_address(&STORE)
+				if queried_account(input) == ACCOUNT {
+					abi_address(&STORE)
+				} else {
+					abi_address(&SQUATTER_STORE)
+				}
 			},
 			(STORE, s) if s == selector("getLabels(uint256,uint256)") => {
 				abi_string_array(&["myproject.paseo", "app.myproject.paseo"])
+			},
+			(SQUATTER_STORE, s) if s == selector("getLabels(uint256,uint256)") => {
+				abi_string_array(&["squatter.paseo"])
 			},
 			(dest, sel) => {
 				panic!("unscripted view {} on 0x{}", hex::encode(sel), hex::encode(dest))
@@ -502,20 +523,27 @@ mod tests {
 		}
 	}
 
-	#[test]
-	fn in_core_lookup_resolves_usernames_over_one_runtime_follow() {
-		let provider = Arc::new(ScriptedAssetHub::new());
-		let chain = ChainRuntime::new(provider.clone(), thread_per_subscription_spawner());
-		let session = SessionInfo {
-			public_key: [0x11; 32],
+	fn session_without_usernames(
+		public_key: [u8; 32],
+		identity_account_id: [u8; 32],
+	) -> SessionInfo {
+		SessionInfo {
+			public_key,
 			sso: None,
 			root_entropy_source: None,
-			identity_account_id: Some(ACCOUNT),
+			identity_account_id: Some(identity_account_id),
 			identity_chat_private_key: None,
 			device_enc_public_key: None,
 			lite_username: None,
 			full_username: None,
-		};
+		}
+	}
+
+	#[test]
+	fn in_core_lookup_resolves_usernames_over_one_runtime_follow() {
+		let provider = Arc::new(ScriptedAssetHub::new());
+		let chain = ChainRuntime::new(provider.clone(), thread_per_subscription_spawner());
+		let session = session_without_usernames([0x11; 32], ACCOUNT);
 
 		let resolved = futures::executor::block_on(resolve_session_identity_with_chain(
 			&chain, [0xcc; 32], session,
@@ -545,6 +573,24 @@ mod tests {
 		assert_eq!(
 			calls, 10,
 			"the discovery, label and provenance chain is exactly ten views on a dispatcher chain"
+		);
+	}
+
+	/// Labels the controller did not issue are no username, so an identity
+	/// account holding only those must not stop the root-key fallback.
+	#[test]
+	fn root_key_resolves_when_identity_account_labels_are_unissued() {
+		let provider = Arc::new(ScriptedAssetHub::new());
+		let chain = ChainRuntime::new(provider, thread_per_subscription_spawner());
+		let session = session_without_usernames(ACCOUNT, SQUATTER);
+
+		let resolved = futures::executor::block_on(resolve_session_identity_with_chain(
+			&chain, [0xcc; 32], session,
+		));
+
+		assert_eq!(
+			(resolved.lite_username.as_deref(), resolved.full_username.as_deref()),
+			(Some("alice.01"), Some("myproject"))
 		);
 	}
 }

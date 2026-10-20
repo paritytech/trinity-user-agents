@@ -229,7 +229,10 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 	println!(
 		"REGISTER_CONFIRMED label={} full_username={}",
 		config.label,
-		identity.full_username.as_deref().unwrap_or("<pending>")
+		identity
+			.as_ref()
+			.and_then(|identity| identity.full_username())
+			.unwrap_or("<pending>")
 	);
 	Ok(())
 }
@@ -248,14 +251,14 @@ async fn resolve_link(
 		return Ok(Link::LiteUsername(lite.as_bytes().to_vec()));
 	}
 	let identity = reader.dotns_identity(who).await?;
-	match identity.lite_username {
+	match identity.as_ref().and_then(|identity| identity.lite_username()) {
 		// The resolved name goes into the signed ring-VRF message, so it has
 		// to pass the same shape check as an explicit --link-lite: a store can
 		// hold a two-digit-suffixed label whose dotted form exceeds the
 		// gateway's BaseLabel bound.
-		Some(lite) if is_dotted_lite_username(&lite) => {
+		Some(lite) if is_dotted_lite_username(lite) => {
 			debug!(%lite, "linking the account's own lite username");
-			Ok(Link::LiteUsername(lite.into_bytes()))
+			Ok(Link::LiteUsername(lite.as_bytes().to_vec()))
 		},
 		Some(lite) => {
 			bail!(
