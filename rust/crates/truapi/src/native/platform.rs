@@ -935,7 +935,8 @@ impl BalanceCallbackPlatform {
 		Self { balance, followers: Default::default() }
 	}
 
-	/// Deliver the new balance of `purse` to every product following it.
+	/// Deliver the new balance of `purse` to every product following it. The
+	/// core drops it for a product whose balance access was revoked.
 	pub fn notify_balance(&self, purse: Option<u32>, available: u128) {
 		self.lock_followers().send(&purse, &available);
 	}

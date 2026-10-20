@@ -2,6 +2,8 @@
 //!
 //! Payment returns typed domain errors; CoinPayment returns Unsupported.
 
+use std::sync::Arc;
+
 use futures::{StreamExt, stream::BoxStream};
 use tracing::instrument;
 use truapi::{
@@ -38,7 +40,11 @@ use truapi::{
 
 use super::from_latest_error;
 use crate::{
-	host_internal::extrinsic::sr25519_secret_from_bytes,
+	host_internal::{
+		extrinsic::sr25519_secret_from_bytes,
+		permissions::{PermissionsService, TemporaryPermissions},
+	},
+	platform::{PermissionAuthorizationStatus, PermissionStatusHost, Platform, ProductContext},
 	runtime::{ProductRuntimeHost, payment_id::host_payment_id},
 };
 
@@ -177,7 +183,8 @@ impl Payment for ProductRuntimeHost {
 		{
 			return Subscription::interrupted(from_latest_error(error, version));
 		}
-		versioned_subscription(platform.subscribe_balance(&self.connection.product, purse), version)
+		let balances = platform.subscribe_balance(&self.connection.product, purse);
+		versioned_subscription(self.while_balance_access_holds(balances), version)
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "payment.request"))]
@@ -265,17 +272,61 @@ impl ProductRuntimeHost {
 		}
 	}
 
+	/// Pass `balances` through while the product still holds balance access,
+	/// checked again before each one. A host pushes a purse's balance to every
+	/// product following it, so a grant revoked mid-stream ends the stream
+	/// with `PermissionDenied` instead of letting later balances through.
+	fn while_balance_access_holds(
+		&self,
+		balances: BoxStream<
+			'static,
+			Result<
+				latest::HostPaymentBalanceSubscribeItem,
+				latest::HostPaymentBalanceSubscribeError,
+			>,
+		>,
+	) -> BoxStream<
+		'static,
+		Result<latest::HostPaymentBalanceSubscribeItem, latest::HostPaymentBalanceSubscribeError>,
+	> {
+		let check = Arc::new(self.balance_access_check());
+		balances
+			.then(move |balance| {
+				let check = check.clone();
+				async move {
+					if check.holds().await {
+						balance
+					} else {
+						Err(latest::HostPaymentBalanceSubscribeError::PermissionDenied)
+					}
+				}
+			})
+			// The runtime stops polling at the first `Err`; ending here keeps
+			// the subscription's "at most one `Err`" for anything else polling
+			// it, since every later push would be denied again.
+			.scan(false, |denied, balance| {
+				let next = (!*denied).then_some(balance);
+				*denied = matches!(
+					next,
+					Some(Err(latest::HostPaymentBalanceSubscribeError::PermissionDenied))
+				);
+				futures::future::ready(next)
+			})
+			.boxed()
+	}
+
 	/// Whether the product already holds balance access, without asking.
 	async fn holds_balance_access(&self) -> bool {
-		matches!(
-			self.connection
-				.permissions_service()
-				.peek_remote(&latest::RemotePermissionRequest {
-					permission: latest::RemotePermission::BalanceAccess,
-				})
-				.await,
-			Ok(crate::platform::PermissionAuthorizationStatus::Authorized)
-		)
+		self.balance_access_check().holds().await
+	}
+
+	fn balance_access_check(&self) -> BalanceAccessCheck {
+		BalanceAccessCheck {
+			platform: self.connection.platform.clone(),
+			status: self.connection.permission_status.clone(),
+			temporary: self.connection.temporary_permissions.clone(),
+			product: self.connection.product.clone(),
+		}
 	}
 
 	/// Ask the host to collect `request` from the user, under the id the core
@@ -322,6 +373,31 @@ impl ProductRuntimeHost {
 			.top_up(&self.connection.product, request)
 			.await
 			.map_err(CallError::Domain)
+	}
+}
+
+/// What a balance access lookup reads, owned so a stream can repeat it for
+/// each balance a host pushes.
+struct BalanceAccessCheck {
+	platform: Arc<dyn Platform>,
+	status: Option<Arc<dyn PermissionStatusHost>>,
+	temporary: Arc<TemporaryPermissions>,
+	product: ProductContext,
+}
+
+impl BalanceAccessCheck {
+	/// Whether the product holds balance access, without asking.
+	async fn holds(&self) -> bool {
+		matches!(
+			PermissionsService::new(self.platform.as_ref(), self.platform.as_ref(), &self.product)
+				.with_status_host(self.status.as_deref())
+				.with_temporary_permissions(self.temporary.clone())
+				.peek_remote(&latest::RemotePermissionRequest {
+					permission: latest::RemotePermission::BalanceAccess,
+				})
+				.await,
+			Ok(PermissionAuthorizationStatus::Authorized)
+		)
 	}
 }
 
