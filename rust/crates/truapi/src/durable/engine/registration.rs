@@ -17,7 +17,7 @@ use crate::{
 	durable::{
 		dao,
 		model::{DomainId, DurableTxId, GroupId, PolicyId, SubmissionPlan},
-		ownership::Ownership,
+		ownership::{Ownership, OwnershipClaim},
 	},
 	store::DbError,
 };
@@ -233,26 +233,22 @@ impl DurableTxEngine {
 		T: Send + 'static,
 	{
 		let submissions = request.transactions.presigned().to_vec();
-		let (ids, value) = self.record(request, on_register).await?;
-		// A watch only runs for an attempt this engine owns, so it never
-		// races a recovery pass deciding the same row.
-		for (id, DurableSubmission { extrinsic, .. }) in ids.iter().zip(submissions) {
-			if self.ownership.is_owned(*id) {
-				spawn_watch(&self, Attempt::new(*id, genesis, &extrinsic), extrinsic.extrinsic);
-			}
+		let (ids, value, claims) = self.record(request, on_register).await?;
+		for (claim, DurableSubmission { extrinsic, .. }) in claims.into_iter().zip(submissions) {
+			spawn_watch(&self, Attempt::new(claim, genesis, &extrinsic), extrinsic.extrinsic);
 		}
 		Ok((ids, value))
 	}
 
 	/// Writes the rows and the hook's rows in one transaction, taking
 	/// ownership of each attempt inside it so a recovery pass never reaches
-	/// a committed row before its watch. A rolled-back write gives the
-	/// ownership up again.
+	/// a committed row before its watch. Returns the claims, one per
+	/// presigned row in order. A rolled-back write gives them up again.
 	async fn record<T, F>(
 		&self,
 		request: DurableRequest,
 		on_register: F,
-	) -> Result<(Vec<DurableTxId>, T), DbError>
+	) -> Result<(Vec<DurableTxId>, T, Vec<OwnershipClaim>), DbError>
 	where
 		F: FnOnce(&rusqlite::Transaction<'_>, &[DurableTxId]) -> Result<T, DbError>
 			+ Send
@@ -265,30 +261,26 @@ impl DurableTxEngine {
 			.db
 			.write(move |tx| {
 				let ids = request.insert_all(tx)?;
-				let owned = own(&ownership, &ids, request.transactions.presigned());
-				claims.lock().extend(owned);
+				claims.lock().extend(claim_presigned(&ownership, &ids, &request));
 				Ok((ids.clone(), on_register(tx, &ids)?))
 			})
 			.await;
+		let claims = core::mem::take(&mut *taken.lock());
 		if written.is_err() {
-			self.ownership.abandon_all(&taken.lock());
+			claims.iter().for_each(|claim| self.ownership.release(*claim));
 		}
-		written
+		written.map(|(ids, value)| (ids, value, claims))
 	}
 }
 
-/// Takes ownership of each new presigned row's attempt. Returns what was
-/// taken.
-fn own(
+/// Claims each new presigned row of `request`, in order.
+fn claim_presigned(
 	ownership: &Ownership,
 	ids: &[DurableTxId],
-	submissions: &[DurableSubmission],
-) -> Vec<(DurableTxId, H256)> {
-	ids.iter()
-		.zip(submissions)
-		.map(|(id, submission)| (*id, submission.extrinsic.extrinsic.hash()))
-		.filter(|(id, hash)| ownership.acquire(*id, *hash))
-		.collect()
+	request: &DurableRequest,
+) -> Vec<OwnershipClaim> {
+	let presigned = request.transactions.presigned().len();
+	ids.iter().take(presigned).map(|id| ownership.acquire(*id)).collect()
 }
 
 #[cfg(test)]

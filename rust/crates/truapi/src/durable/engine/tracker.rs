@@ -19,6 +19,7 @@ use crate::{
 	durable::{
 		dao,
 		model::{DurableTxId, Verdict, VerdictFailureKind, VerdictStatus},
+		ownership::OwnershipClaim,
 	},
 };
 
@@ -29,16 +30,20 @@ const SILENCE_TIMEOUT: Duration = Duration::from_secs(30);
 /// One attempt of a transaction, as a watch follows it.
 #[derive(Clone, Copy, Debug)]
 pub struct Attempt {
-	id: DurableTxId,
+	claim: OwnershipClaim,
 	genesis: H256,
 	tx_hash: H256,
 }
 
 impl Attempt {
-	/// The attempt `extrinsic` makes at transaction `id` on the chain with
-	/// `genesis`.
-	pub fn new(id: DurableTxId, genesis: H256, extrinsic: &MortalExtrinsic) -> Self {
-		Self { id, genesis, tx_hash: extrinsic.extrinsic.hash() }
+	/// The attempt `extrinsic` makes at the transaction `claim` owns, on the
+	/// chain with `genesis`.
+	pub fn new(claim: OwnershipClaim, genesis: H256, extrinsic: &MortalExtrinsic) -> Self {
+		Self { claim, genesis, tx_hash: extrinsic.extrinsic.hash() }
+	}
+
+	fn id(&self) -> DurableTxId {
+		self.claim.id()
 	}
 }
 
@@ -60,7 +65,7 @@ impl DurableTxEngine {
 		match self.submitter.submit_and_watch(attempt.genesis, extrinsic).await {
 			Ok(events) => self.follow(attempt, events).await,
 			Err(error) => {
-				warn!(id = attempt.id.0, %error, "durable transaction could not be submitted")
+				warn!(id = attempt.id().0, %error, "durable transaction could not be submitted")
 			},
 		}
 	}
@@ -68,8 +73,8 @@ impl DurableTxEngine {
 	/// Releases the attempt and, unless the watch decided it, hands the
 	/// transaction to recovery: a running loop, or else the host.
 	async fn finish_watch(&self, attempt: Attempt) {
-		self.ownership.release(attempt.id, attempt.tx_hash);
-		if self.needs_recovery(attempt.id).await && !self.recovery_wakes.wake() {
+		self.ownership.release(attempt.claim);
+		if self.needs_recovery(attempt.id()).await && !self.recovery_wakes.wake() {
 			self.host_wakes.wake();
 		}
 	}
@@ -83,7 +88,7 @@ impl DurableTxEngine {
 		let Ok(ValidationResult::Invalid(reason)) = validation else {
 			return true;
 		};
-		debug!(id = attempt.id.0, ?reason, "durable transaction refused before submission");
+		debug!(id = attempt.id().0, ?reason, "durable transaction refused before submission");
 		self.propose(attempt, VerdictStatus::Failure(VerdictFailureKind::Rejected).into())
 			.await;
 		false
@@ -109,7 +114,7 @@ impl DurableTxEngine {
 		match select(events.next(), self.timer.sleep(SILENCE_TIMEOUT)).await {
 			Either::Left((event, _)) => event,
 			Either::Right(_) => {
-				warn!(id = attempt.id.0, "durable submission watch fell silent");
+				warn!(id = attempt.id().0, "durable submission watch fell silent");
 				None
 			},
 		}
@@ -123,7 +128,7 @@ impl DurableTxEngine {
 		best: &mut Option<H256>,
 		event: WatchEvent,
 	) -> ControlFlow<()> {
-		debug!(id = attempt.id.0, ?event, "durable submission status");
+		debug!(id = attempt.id().0, ?event, "durable submission status");
 		match event {
 			WatchEvent::InBestBlock(hash) => self.on_best_block(attempt, best.insert(hash)).await,
 			WatchEvent::NoLongerInBestBlock => self.on_retraction(attempt, best.take()).await,
@@ -185,7 +190,7 @@ impl DurableTxEngine {
 		let Some(retracted) = retracted else {
 			return;
 		};
-		let id = attempt.id;
+		let id = attempt.id();
 		let Ok(Some(entry)) = self.db.read(move |conn| dao::entry(conn, id)).await else {
 			return;
 		};
@@ -198,7 +203,7 @@ impl DurableTxEngine {
 	/// Writes `verdict` while the row still awaits one for the watched
 	/// attempt.
 	async fn propose(&self, attempt: Attempt, verdict: Verdict) {
-		let id = attempt.id;
+		let id = attempt.id();
 		let observed = match self.db.read(move |conn| dao::entry(conn, id)).await {
 			Ok(Some(observed)) => observed,
 			Ok(None) => return,
