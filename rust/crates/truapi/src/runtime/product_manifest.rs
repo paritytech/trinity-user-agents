@@ -277,16 +277,11 @@ async fn scope_grant(
 	scope: Granted,
 ) -> Result<(), RefusedBecause> {
 	// Incoming SSO has no caller deadline, so manifest resolution has its own ceiling.
-	let Some(json) =
-		with_ceiling(MANIFEST_RESOLUTION_CEILING, root_manifest(services, platform, target))
-			.await
-			.flatten()
-	else {
-		return Err(RefusedBecause::ManifestUnavailable);
-	};
-	let Ok(manifest) = RootManifest::parse(&json) else {
-		return Err(RefusedBecause::ManifestMalformed);
-	};
+	let json = with_ceiling(MANIFEST_RESOLUTION_CEILING, root_manifest(services, platform, target))
+		.await
+		.flatten()
+		.ok_or(RefusedBecause::ManifestUnavailable)?;
+	let manifest = RootManifest::parse(&json).map_err(|_| RefusedBecause::ManifestMalformed)?;
 	if !manifest.grants(caller_id, scope) {
 		return Err(RefusedBecause::NotGranted);
 	}
