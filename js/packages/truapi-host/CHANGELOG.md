@@ -1,5 +1,130 @@
 # @parity/truapi-host
 
+## 0.26.0
+
+### Major Changes
+
+- 8462d88: `parse_navigate` reads a Pocket deeplink as the host's own URL.
+  `polkadotapp://pocket/add?product=<id>&card=<id>` and `polkadotapp://pocket/open?product=<id>&card=<id>` classify as
+  `NavigateDecision::Pocket`, naming the product from the `product` parameter, and `polkadotapp://pocket` classifies as
+  `NavigateDecision::PocketCollection`, which carries no `identifier`. A Pocket link with an action the core does not
+  serve, or with no product or no card, is rejected. A product's own paths are App routes:
+  `polkadot://<product>.<tld>/-/pocket/...` classifies as `DotName` and opens the product, so a product that links to
+  the Pocket uses the new form. `navigate_to` passes a Pocket link without the `OpenUrl` grant other `polkadotapp://`
+  links need.
+- 8c6f4c9: `preimage.submit` raises no per-upload confirmation. The `PreimageSubmit` permission authorizes it:
+  `AllowAlways` covers every upload, and `AllowOnce` covers a single upload. Allocating or renewing the Bulletin
+  allowance may still ask the paired wallet. `UserConfirmationReview` has no `PreimageSubmit` variant and
+  `PreimageSubmitReview` is not exported, so hosts that match on either remove that case; the remaining review variants
+  keep their wire discriminants.
+- 1a2efef: When the user refuses a resource allocation on the product's own host, the product receives a response whose
+  outcomes are all `Rejected`, as RFC 0010 defines, instead of an error. A refusal on the phone for a paired host
+  already answered this way.
+- 7472b77: `development_createAccountProof` is not exported, and signing and pairing hosts derive every ring-VRF proof
+  context from its product id. A `raw:` product id has no special meaning: its context is derived like any other
+  product's, so a proof can no longer be bound to 32 caller-chosen bytes.
+
+### Minor Changes
+
+- 073b4f2: When a product signs with another product's account, the user is asked once for each kind of signature and
+  each owning product, rather than for every signature. The approval lasts until the calling product is closed. This
+  applies to payload, watermarked raw, transaction and statement proof signatures. If the user declines, the next
+  signature asks again. Transactions that name contacts and unwatermarked raw bytes still ask every time. Only one of
+  these prompts is open at a time, and a signature the user already approved does not wait for it.
+- 28fa81c: A wallet-local session reads its usernames from the dotNS contracts on Asset Hub, the same lookup a paired
+  session uses. Activation does not wait for it: the session starts under the lite username the host passes, if any, and
+  when the dotNS record holds a name, the record's lite and full usernames replace it and the core reports them through
+  `authStateChanged`. Hosts no longer need to read usernames from the People chain.
+- 743f0ba: Add the `Motion` device permission. Products request it through `requestDevicePermission("Motion")` or the
+  standard `DeviceMotionEvent.requestPermission()`, and the iOS host answers WebKit's motion request from the product's
+  saved, one-use, or prompted decision. A host built before this release cannot decode `Motion` and rejects the request
+  with a malformed-frame error, so products should treat that error as motion being unsupported.
+
+### Patch Changes
+
+- f1cfc42: Build and dry-run a Bulletin preimage transaction at a best block no older than the finalized block its
+  mortality is anchored to, so the first submission of a session no longer fails with `BadProof` or `AncientBirthBlock`,
+  or reads a stale nonce.
+- 1a2efef: Before signing a Bulletin preimage submission, check that the product's Bulletin authorization can hold the
+  whole payload, and ask for more first when it cannot, instead of waiting for the chain to reject the transaction.
+- 10a36af: Anchor Bulletin preimage transaction mortality to finalized blocks so discarded forks do not invalidate
+  signatures. Keep nonce lookup and dry-run validation at the best block.
+- 19f5b48: Keep capability logic on latest protocol payloads and return responses, subscription items, and domain errors
+  in the requested version. Local storage reads preserve V1 and V2 at the handler boundary.
+- 9064140: Each product runtime holds its own chain connection, so a node's four-follow budget per connection is spent
+  per product rather than shared across all of them. A product runtime's connections are torn down when it ends.
+- 11c6ceb: Keep each product's chain follows and transaction operations to itself: a product resolves only its own
+  follow ids, cannot stop another product's transaction by its operation id, and releasing a product drops both.
+- abfc1dd: Native hosts recognise a development server through the core. `parse_dev_server` reads an address a developer
+  typed, such as `localhost:3000`, `10.0.2.2:3000` or `192.168.1.59:3000?product_id=humanity.dot`, and returns a
+  `DevServerProduct`: the identifier the product runs under, the `http` origin it is served from, and the address to
+  load. The identifier is the normalized `product_id` the address names, otherwise `localhost[:port]`. Only `localhost`
+  and loopback or private IPv4 hosts over `http` qualify, and an address that does not raises `DevServerError`. Rust
+  callers parse the address with `str::parse::<DevServerProduct>()`. A `localhost` identifier holds the core's
+  development wildcard and a named one gets that product's accounts and storage, so hosts call it only in development
+  builds. Native builds only.
+- 8b58680: A paired session resolves its dotNS username again for accounts onboarded more than a week ago. Pending
+  gateway claims count however old they are, because the PoP controller no longer expires them.
+- 28fa81c: A session whose identity account holds only dotNS labels the PoP controller did not issue, such as a publicly
+  registered name, resolves its username from the root key. Those labels are not usernames, so they no longer end the
+  lookup with an empty result.
+- 94628e3: Compile the automatic allowance renewal driver only on native targets while retaining allowance tracking in
+  browser hosts.
+- def1bb9: `payment.balanceSubscribe` checks the product's `BalanceAccess` again before passing on each balance, so
+  revoking the grant ends the stream with `PermissionDenied`. The new `AlreadyExists` and `InvalidAmount` errors follow
+  the existing variants, so `HostPaymentError` keeps the indexes it had before. The test host says why it cannot serve
+  payments: the payment platforms are served only by native and Rust hosts.
+- 81008a4: Statement Store, Bulletin and PGAS allowance allocation sign personhood operations through a
+  `PersonhoodSigner`, so callers pass a signer instead of raw entropy.
+- 6864e42: Allow `polkadotapp://` links through `system.navigateTo`, preserving payment parameters and requiring
+  `OpenUrl` permission. Reject external `polkadot:` and `dot:` links.
+- 33963a5: Keep each product connection's adapters, permissions and action channels in a `ProductConnection`, reach
+  account operations through a `ProductAccounts` bound to that connection's product, and route login, logout and
+  connection state through a `HostSession` trait split out of `ProductAuthority`.
+- 1a2efef: A VRF request relayed from a paired host is always confirmed on the phone, even when the product it names
+  holds a local AutoSigning grant.
+- 33963a5: Apply every ring-VRF registry change through one prepared update under the registry's storage lock, and skip
+  the storage write when the registry did not change. Test-host allocation controls live in one `TestResourceControls`.
+- a8623e2: Statement submissions and the Statement Store allowance paths run over the People-chain connection the chain
+  runtime keeps open, so publishing a statement costs no WebSocket handshake. Statement subscriptions open their own
+  connection.
+- d24cf65: A product granted another product's ring-VRF key may now prove in, and read its alias in, the context of a
+  third product whose manifest grants it `context` (or `all`). The third product must be on the key owner's network, and
+  a refusal the user stored for that pair still applies. A third product that grants nothing stays refused:
+  `NotAllowlisted` on the proof, `Rejected` on the alias read.
+- c843529: A blessed product signs raw bytes with the user's legacy account without a prompt when the bytes are signed
+  inside the `<Bytes>` watermark, which cannot pass for a transaction's signing payload. The deprecated unwatermarked
+  raw signing, payload signing and transaction creation with a legacy account still ask the user, as does every
+  legacy-account signature for a product that is not blessed.
+- Updated dependencies [10a36af]
+- Updated dependencies [19f5b48]
+- Updated dependencies [9a172e1]
+- Updated dependencies [9064140]
+- Updated dependencies [a8623e2]
+- Updated dependencies [5ee4351]
+- Updated dependencies [5ee4351]
+- Updated dependencies [ddb729f]
+- Updated dependencies [82db857]
+- Updated dependencies [073b4f2]
+- Updated dependencies [8b58680]
+- Updated dependencies [28fa81c]
+- Updated dependencies [eb035fe]
+- Updated dependencies [eb035fe]
+- Updated dependencies [eb035fe]
+- Updated dependencies [eb035fe]
+- Updated dependencies [eb035fe]
+- Updated dependencies [28fa81c]
+- Updated dependencies [743f0ba]
+- Updated dependencies [98e4550]
+- Updated dependencies [98e4550]
+- Updated dependencies [98e4550]
+- Updated dependencies [98e4550]
+- Updated dependencies [def1bb9]
+- Updated dependencies [6864e42]
+- Updated dependencies [8c6f4c9]
+- Updated dependencies [7472b77]
+  - @parity/truapi@0.26.0
+
 ## 0.25.0
 
 ### Major Changes
