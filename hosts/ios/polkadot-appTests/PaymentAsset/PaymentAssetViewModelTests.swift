@@ -1,9 +1,10 @@
 import AsyncExtensions
 import Foundation
+import os
 import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 import Testing
 import UIKit
-import os
 
 @testable import polkadot_app
 
@@ -104,7 +105,7 @@ private extension PaymentAssetViewModelTests {
 
         /// Returns once a subscriber's stream has ended, failing rather than hanging if none does.
         func waitForSubscriptionToEnd() async throws {
-            try await withTimeout(.seconds(5)) { [ended] in
+            try await withTimeout(.hangGuard) { [ended] in
                 for await _ in ended.stream {
                     return
                 }
