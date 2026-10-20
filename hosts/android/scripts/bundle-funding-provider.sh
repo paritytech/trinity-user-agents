@@ -3,9 +3,10 @@
 # the app as a bundled product, so testnet builds run it with no dotNS or
 # Bulletin lookup.
 #
-# The provider is built from what is committed on FUNDTEST_REF (default
-# funding/reference-provider), in a detached worktree of this repository kept
-# between runs so later builds reuse its node_modules and cargo target.
+# The provider is built from products/fundtest in this checkout, so a build
+# bundles only code that is in the branch being built. Without it (fundtest is
+# not merged yet), nothing is bundled and any bundle left by an earlier run is
+# removed.
 #
 # Output, ignored by git and packaged only into the debug, nightly and
 # safetynet builds:
@@ -26,47 +27,37 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ANDROID_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 
-REF="${FUNDTEST_REF:-funding/reference-provider}"
 PRODUCT_ID="fundtest-provider.dot"
-WORK_DIR="${FUNDTEST_WORK_DIR:-${TMPDIR:-/tmp}/polkadot-app-bundled-products/source}"
 DEST_ROOT="$ANDROID_DIR/feature/products/impl/bundled-assets/bundled-products"
 DEST="$DEST_ROOT/$PRODUCT_ID"
+SOURCE="$REPO_ROOT/products/fundtest"
 
-if git -C "$REPO_ROOT" rev-parse --verify -q "$REF^{commit}" >/dev/null; then
-  SHA="$(git -C "$REPO_ROOT" rev-parse "$REF^{commit}")"
-elif git -C "$REPO_ROOT" rev-parse --verify -q "origin/$REF^{commit}" >/dev/null; then
-  SHA="$(git -C "$REPO_ROOT" rev-parse "origin/$REF^{commit}")"
-else
-  echo "bundle-funding-provider: $REF is neither a local nor an origin branch" >&2
-  exit 1
+if [ ! -d "$SOURCE" ]; then
+  rm -rf "$DEST"
+  echo "bundle-funding-provider: products/fundtest is not in this checkout; nothing bundled"
+  exit 0
 fi
 
-echo "bundle-funding-provider: building $PRODUCT_ID from $REF ($SHA)"
-
-if [ -e "$WORK_DIR/.git" ]; then
-  # Ignored files (node_modules, target, vendor) survive, which is the point.
-  git -C "$WORK_DIR" checkout -q --force --detach "$SHA"
-else
-  git -C "$REPO_ROOT" worktree prune
-  mkdir -p "$(dirname "$WORK_DIR")"
-  git -C "$REPO_ROOT" worktree add -q --detach "$WORK_DIR" "$SHA"
+SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+if [ -n "$(git -C "$REPO_ROOT" status --porcelain -- products/fundtest)" ]; then
+  SHA="$SHA-dirty"
 fi
+echo "bundle-funding-provider: building $PRODUCT_ID from this checkout ($SHA)"
 
 # The provider builds against this repository's @parity/truapi, which has to
 # be generated and built first.
 (
-  cd "$WORK_DIR"
+  cd "$REPO_ROOT"
   npm ci --no-audit --no-fund
   npm run build --prefix js/packages/truapi
 )
 
 (
-  cd "$WORK_DIR/products/fundtest"
+  cd "$SOURCE"
   npm ci --no-audit --no-fund
   npm run build
 )
 
-SOURCE="$WORK_DIR/products/fundtest"
 for required in "$SOURCE/dist/worker/index.js" "$SOURCE/dist/app/index.html" "$SOURCE/worker-manifest.json"; do
   if [ ! -f "$required" ]; then
     echo "bundle-funding-provider: the build left no $required" >&2
