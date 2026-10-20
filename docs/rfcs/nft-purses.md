@@ -71,25 +71,31 @@ const MAIN_PURSE: PurseId = u32::MAX;
 enum PurseOwner {
     // Purse is owned by the product
     Product(ProductId),
-    // Purse is owned by the root: no product can access it without permission.
+    // Purse is owned by the root: no product can read it without a grant or drain it without a confirmation.
     // The main purse is root-owned, and so are purses recovered without metadata
     // (see "Backup recovery").
     Root,
 }
 ```
 
-A purse created with `create_purse` is owned by the calling product. Calls marked "subject to permission check" are
-allowed without a check when the caller owns the purse. Otherwise they require the `NftPurse` user-agent permission,
-granted per product, purse and action in the same way as RFC 0017's `CoinPayment`:
+A purse created with `create_purse` is owned by the calling product, which uses its own purses without any check. A
+purse owned by `Root` or by another product is checked in one of two ways:
+
+- Reading: `list_purses`, `query_purse` and `create_items` require the `NftPurseRead` user-agent permission, granted
+  per owner. One grant covers every purse of that owner.
+- Draining: calls that move items out of the purse (`rebalance_purse`, `create_cheque`, `transfer_item` and `refund`)
+  ask the user for a confirmation on every call, like `createTransaction`. Nothing is stored, so a confirmation never
+  covers a later call.
 
 ```rust
 enum UserAgentPermission {
     // existing variants...
-    NftPurse,
+    NftPurseRead { owner: PurseOwner },
 }
 ```
 
-A `CoinPayment` grant does not cover NFT purses, and an `NftPurse` grant does not cover coin purses.
+A `CoinPayment` grant does not cover NFT purses, and an `NftPurseRead` grant does not cover coin purses. A grant for
+`Root` does not cover any product, and a grant for one product does not cover another.
 
 ### Purse items
 
@@ -124,7 +130,7 @@ fn create_purse(name: String) -> Result<PurseId, GenericError>;
 // Create `count` new keys in `purse`.
 // The returned vec has exactly `count` entries.
 // `count` must be in [1, 1000].
-// Subject to permission check if owner(purse) != PurseOwner::Product(self).
+// Requires NftPurseRead { owner: owner(purse) } if owner(purse) != PurseOwner::Product(self).
 fn create_items(purse: PurseId, count: u32) -> Result<Vec<ItemKey>, CreateItemsError>;
 
 enum CreateItemsError {
@@ -139,7 +145,7 @@ enum CreateItemsError {
 ```rust
 // Return the items that are present on chain AND are Idle, i.e. the spendable items.
 // A page past the end returns { has_next: false, items: [] }.
-// Subject to permission check if owner(purse) != PurseOwner::Product(self).
+// Requires NftPurseRead { owner: owner(purse) } if owner(purse) != PurseOwner::Product(self).
 fn query_purse(
     purse: PurseId,
     page: u32,
@@ -166,7 +172,7 @@ enum QueryPurseError {
 ```rust
 // List all purses owned by `owner`.
 // A product without purses gets an empty vec.
-// Subject to permission check if owner != PurseOwner::Product(self).
+// Requires NftPurseRead { owner } if owner != PurseOwner::Product(self).
 fn list_purses(owner: PurseOwner) -> Result<Vec<Purse>, ListPursesError>;
 
 struct Purse {
@@ -191,7 +197,7 @@ enum ListPursesError {
 // A call whose `keys` overlap an active operation's keys with a different set or a
 // different `to` fails with ItemUnavailable.
 // The items are InUse while the operation is active.
-// Subject to permission check if owner(from) != PurseOwner::Product(self).
+// Asks for a confirmation if owner(from) != PurseOwner::Product(self).
 fn rebalance_purse(
     from: PurseId,
     to: PurseId,
@@ -311,7 +317,7 @@ ownership, decide who may call `revoke_cheque` and `refund`.
 
 ```rust
 // Receiver side: start a ChequeDestination::Ephemeral handoff into `into`.
-// Not subject to a permission check: receiving only adds items to a purse.
+// Needs no grant or confirmation: receiving only adds items to a purse.
 fn create_receive_key(into: PurseId) -> Result<ReceiveKey, CreateReceiveKeyError>;
 
 enum CreateReceiveKeyError {
@@ -356,7 +362,7 @@ enum ListenForPaymentError {
 // cleartext (item keys, recipient), so the transmission channel must add its own
 // encryption layer.
 // The items become InUse and stay InUse until the cheque is revoked with `revoke_cheque`.
-// Subject to permission check if owner(from) != PurseOwner::Product(self).
+// Asks for a confirmation if owner(from) != PurseOwner::Product(self).
 fn create_cheque(
     from: PurseId,
     to: ChequeDestination,
@@ -399,7 +405,7 @@ enum RevokeChequeError {
 // Cheque.id is the idempotency key: depositing the same cheque again is a no-op
 // and returns the status of the existing deposit.
 // Depositing a cheque with the same id but different content is undefined behavior.
-// Not subject to a permission check: receiving only adds items to a purse.
+// Needs no grant or confirmation: receiving only adds items to a purse.
 fn deposit(what: Cheque, to: PurseId) -> Result<Subscription<Status>, DepositError>;
 
 enum DepositError {
@@ -420,6 +426,7 @@ enum DepositError {
 // and returns the status of the existing refund.
 // Minted items that are no longer Idle are reported in Status::Incomplete.failed.
 // Denied if `what` was not deposited by this product.
+// Asks for a confirmation if the purse it was deposited into is not owned by PurseOwner::Product(self).
 fn refund(what: ChequeId) -> Result<Subscription<Status>, RefundError>;
 
 enum RefundError {
@@ -437,7 +444,7 @@ enum RefundError {
 // (item, destination) is the idempotency key: a repeated call with the same pair
 // returns the status of the existing operation. A call with the same item and a
 // different destination fails with ItemUnavailable.
-// Subject to permission check if owner(purse(item)) != PurseOwner::Product(self).
+// Asks for a confirmation if owner(purse(item)) != PurseOwner::Product(self).
 fn transfer_item(
     item: ItemKey,
     destination: ItemKey,
