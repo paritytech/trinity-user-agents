@@ -33,7 +33,7 @@ struct NativeHostTelemetry: Encodable {
         #elseif SAFETYNET
             "safetynet"
         #elseif UNSTABLE
-            "unstable"
+            "debug"
         #elseif DEBUG
             "debug"
         #else
