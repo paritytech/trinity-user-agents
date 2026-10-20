@@ -35,18 +35,25 @@
 //   sign-again      dim2.paseo signs once more, so a refusal above cannot be
 //                   the registration having gone.
 
-import { PASEO_NEXT_V2_INDIVIDUALITY } from "../../../../js/packages/truapi/src/index.ts";
+import type { HostContext, TrUApiClient } from "./script-types.d.ts";
+
+declare const truapi: TrUApiClient;
+declare const host: HostContext;
 
 const OWNER = "peopl.paseo";
 const GRANTED = "dim2.paseo";
 const UNTRUSTED = "stash.paseo";
 
 /// "pop:polkadot.network/people-lite", hex.
-const PEOPLE_LITE_COLLECTION_ID =
+const PEOPLE_LITE_COLLECTION_ID: `0x${string}` =
   "0x706f703a706f6c6b61646f742e6e6574776f726b2f70656f706c652d6c697465";
 
+const people = await truapi.chain.getChainInfo({ chain: "People" });
+if (!people.isOk()) {
+  throw new Error(`get_chain_info failed: ${stringify(people.error)}`);
+}
 const RING = {
-  chainId: PASEO_NEXT_V2_INDIVIDUALITY.genesis,
+  chainId: people.value.genesisHash,
   junctions: [
     { tag: "CollectionId" as const, value: PEOPLE_LITE_COLLECTION_ID },
   ],
@@ -91,7 +98,7 @@ function expectProduct(expected: string): void {
 
 async function signOwnerKey(): Promise<{
   ok: boolean;
-  value?: string;
+  value?: `0x${string}`;
   error?: unknown;
 }> {
   const signed = await truapi.account.ringVrfSign({
@@ -99,7 +106,7 @@ async function signOwnerKey(): Promise<{
     message: MESSAGE,
   });
   return signed.isOk()
-    ? { ok: true, value: signed.value as unknown as string }
+    ? { ok: true, value: signed.value as unknown as `0x${string}` }
     : { ok: false, error: signed.error };
 }
 
@@ -181,7 +188,7 @@ switch (phase) {
     }
     const written = await truapi.localStorage.write({
       key: SIGNATURE_KEY,
-      value: signed.value as string,
+      value: signed.value as `0x${string}`,
     });
     if (!written.isOk()) {
       throw new Error(
