@@ -79,6 +79,8 @@ struct SPARustRuntimeTests {
         #expect(engine.initializedScripts[0].content.contains("Object.freeze"))
         #expect(engine.initializedScripts[0].content.contains("writable: false"))
         #expect(engine.initializedScripts[0].content.contains("configurable: false"))
+        #expect(engine.initializedScripts[0].content.contains("try {"))
+        #expect(engine.initializedScripts[0].content.contains("} catch {}"))
         #expect(engine.initializedScripts[0].insertionPoint == .atDocStart)
         #expect(engine.initializedScripts[0].frameScope == .mainFrameOnly)
         #expect(engine.initializedScripts[1]
@@ -217,6 +219,8 @@ struct SPARustRuntimeTests {
 
         #expect(scripts.count == 3)
         #expect(scripts[0].content.contains("Object.defineProperty(globalThis, \"__trinityHostTelemetry\""))
+        #expect(scripts[0].content.contains("try {"))
+        #expect(scripts[0].content.contains("} catch {}"))
         #expect(scripts[0].content.contains("\"hostSessionId\":\"d93fe846-8f3c-4cfa-a440-402b6f7b43d3\""))
         #expect(scripts[0].content.contains("\"appVersion\":\"1.2.3\""))
         #expect(scripts[0].content.contains("\"appBuild\":\"456\""))

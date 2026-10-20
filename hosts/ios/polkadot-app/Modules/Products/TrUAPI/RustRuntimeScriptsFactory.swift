@@ -12,19 +12,23 @@ struct NativeHostTelemetry: Encodable {
     let truapiHostVersion: String
     let schemaVersion: String
 
-    static func current(hostSessionId: UUID) -> NativeHostTelemetry {
-        let hostVersion = truapiHostVersion()
+    static func current(hostSessionId: UUID) -> NativeHostTelemetry? {
+        #if NIGHTLY || SAFETYNET || UNSTABLE || DEBUG
+            let hostVersion = truapiHostVersion()
 
-        return NativeHostTelemetry(
-            hostSessionId: hostSessionId.uuidString.lowercased(),
-            appVersion: Bundle.main.appVersion,
-            appBuild: Bundle.main.appBuild,
-            appVariant: currentAppVariant,
-            platform: "ios",
-            osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
-            truapiHostVersion: hostVersion,
-            schemaVersion: "1"
-        )
+            return NativeHostTelemetry(
+                hostSessionId: hostSessionId.uuidString.lowercased(),
+                appVersion: Bundle.main.appVersion,
+                appBuild: Bundle.main.appBuild,
+                appVariant: currentAppVariant,
+                platform: "ios",
+                osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+                truapiHostVersion: hostVersion,
+                schemaVersion: "1"
+            )
+        #else
+            return nil
+        #endif
     }
 
     private static var currentAppVariant: String {
@@ -55,8 +59,8 @@ final class RustRuntimeScriptsFactory {
     func makeScripts() throws -> [JSEngineScript] {
         var scripts: [JSEngineScript] = []
 
-        if let hostTelemetry {
-            scripts.append(try makeHostTelemetryScript(hostTelemetry))
+        if let hostTelemetry, let telemetryScript = try? makeHostTelemetryScript(hostTelemetry) {
+            scripts.append(telemetryScript)
         }
 
         scripts.append(contentsOf: try [
@@ -75,11 +79,13 @@ final class RustRuntimeScriptsFactory {
         let data = try JSONEncoder().encode(telemetry)
         let json = String(decoding: data, as: UTF8.self)
         let script = """
-        Object.defineProperty(globalThis, "__trinityHostTelemetry", {
-            value: Object.freeze(\(json)),
-            writable: false,
-            configurable: false
-        });
+        try {
+            Object.defineProperty(globalThis, "__trinityHostTelemetry", {
+                value: Object.freeze(\(json)),
+                writable: false,
+                configurable: false
+            });
+        } catch {}
         """
 
         return JSEngineScript(content: script, insertionPoint: .atDocStart)
