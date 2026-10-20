@@ -52,4 +52,18 @@ mod tests {
 		assert_eq!(hex::encode(&bytes), "00021c6c6f79616c747910766f746500");
 		assert_eq!(HostRendererActionSubscribeItem::decode(&mut bytes.as_slice()).unwrap(), item);
 	}
+
+	// Hosts and products built at different times must agree on this byte, so the
+	// back is appended after PocketCard and never renumbers it.
+	#[test]
+	fn pocket_card_back_is_the_variant_after_pocket_card() {
+		let item = HostRendererActionSubscribeItem::V1(v01::HostRendererActionSubscribeItem {
+			context: v01::RenderContext::PocketCardBack { card_id: "loyalty".into() },
+			action_id: "vote".into(),
+			payload: Vec::new(),
+		});
+		let bytes = item.encode();
+		assert_eq!(hex::encode(&bytes), "00031c6c6f79616c747910766f746500");
+		assert_eq!(HostRendererActionSubscribeItem::decode(&mut bytes.as_slice()).unwrap(), item);
+	}
 }

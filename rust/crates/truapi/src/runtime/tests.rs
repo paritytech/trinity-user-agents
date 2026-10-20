@@ -2453,6 +2453,22 @@ fn expanded_card_widget_requests_reach_the_host_in_order() {
 	assert_eq!(card.requested(), [false, true, false]);
 }
 
+fn set_back_shown(
+	host: &ProductRuntimeHost,
+	shown: bool,
+) -> Result<
+	truapi::versioned::expanded_card::HostExpandedCardSetBackShownResponse,
+	CallError<truapi::versioned::expanded_card::HostExpandedCardSetBackShownError>,
+> {
+	futures::executor::block_on(ExpandedCard::set_back_shown(
+		host,
+		&CallContext::default(),
+		truapi::versioned::expanded_card::HostExpandedCardSetBackShownRequest::V1(
+			v01::HostExpandedCardSetBackShownRequest { shown },
+		),
+	))
+}
+
 /// Admin connections call the trait without the dispatcher's execution-kind
 /// filter, so only a Widget may move a face, and nothing else reaches the host.
 #[test]
@@ -2466,6 +2482,7 @@ fn expanded_card_is_denied_to_non_widgets_without_reaching_the_host() {
 		let host = expanded_card_host(kind, Some(card.clone()));
 
 		assert!(matches!(set_face_shown(&host, false), Err(CallError::Denied)));
+		assert!(matches!(set_back_shown(&host, true), Err(CallError::Denied)));
 		assert!(card.requested().is_empty());
 	}
 }
@@ -2478,6 +2495,19 @@ fn expanded_card_without_an_adapter_is_unsupported() {
 	let host = expanded_card_host(crate::platform::ProductExecutionKind::Widget, None);
 
 	assert!(matches!(set_face_shown(&host, false), Err(CallError::Unsupported)));
+}
+
+/// No host can turn a card yet, so a Widget must read "not supported" rather
+/// than a failure, even under a card whose host moves its face.
+#[test]
+fn expanded_card_back_is_unsupported_until_hosts_turn_cards() {
+	let card =
+		RecordingExpandedCardHost::answering(Ok(crate::platform::ExpandedCardFaceOutcome::Applied));
+	let host =
+		expanded_card_host(crate::platform::ProductExecutionKind::Widget, Some(card.clone()));
+
+	assert!(matches!(set_back_shown(&host, true), Err(CallError::Unsupported)));
+	assert!(card.requested().is_empty());
 }
 
 /// Each host outcome must reach the product as the answer it branches on;
