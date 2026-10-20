@@ -3,10 +3,15 @@
 # the app as a bundled product, so testnet builds run it with no dotNS or
 # Bulletin lookup.
 #
-# The provider is built from products/fundtest in this checkout, so a build
-# bundles only code that is in the branch being built. Without it (fundtest is
-# not merged yet), nothing is bundled and any bundle left by an earlier run is
-# removed.
+# A local opt-in: no build runs this, and every build completes and runs
+# without it, shipping no bundled provider. The source is chosen explicitly:
+#   FUNDTEST_DIR=<path>   a fundtest checkout on disk
+#   FUNDTEST_REF=<ref>    a branch or commit of this repository, built in a
+#                         detached worktree kept between runs (e.g.
+#                         funding/reference-provider for the draft)
+#   otherwise             products/fundtest in this checkout, once merged
+# With none of these, it says so and changes nothing. `--clean` removes the
+# bundle.
 #
 # Output, ignored by git and packaged only into the debug, nightly and
 # safetynet builds:
@@ -19,7 +24,7 @@
 # FUNDTEST_* variables (FUNDTEST_CARD_ARRIVAL_MS, ...) are passed through to the
 # provider's build.
 #
-# Usage: hosts/android/scripts/bundle-funding-provider.sh
+# Usage: [FUNDTEST_DIR=… | FUNDTEST_REF=…] hosts/android/scripts/bundle-funding-provider.sh
 
 set -euo pipefail
 
@@ -30,24 +35,57 @@ REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 PRODUCT_ID="fundtest-provider.dot"
 DEST_ROOT="$ANDROID_DIR/feature/products/impl/bundled-assets/bundled-products"
 DEST="$DEST_ROOT/$PRODUCT_ID"
-SOURCE="$REPO_ROOT/products/fundtest"
+WORK_DIR="${FUNDTEST_WORK_DIR:-${TMPDIR:-/tmp}/polkadot-app-bundled-products/source}"
 
-if [ ! -d "$SOURCE" ]; then
+if [ "${1:-}" = "--clean" ]; then
   rm -rf "$DEST"
-  echo "bundle-funding-provider: products/fundtest is not in this checkout; nothing bundled"
+  echo "bundle-funding-provider: removed $DEST"
   exit 0
 fi
 
-SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
-if [ -n "$(git -C "$REPO_ROOT" status --porcelain -- products/fundtest)" ]; then
-  SHA="$SHA-dirty"
+if [ -n "${FUNDTEST_DIR:-}" ]; then
+  SOURCE="$(cd "$FUNDTEST_DIR" && pwd)"
+  BUILD_ROOT="$(git -C "$SOURCE" rev-parse --show-toplevel)"
+  SHA="$(git -C "$SOURCE" rev-parse HEAD)"
+elif [ -n "${FUNDTEST_REF:-}" ]; then
+  if git -C "$REPO_ROOT" rev-parse --verify -q "$FUNDTEST_REF^{commit}" >/dev/null; then
+    SHA="$(git -C "$REPO_ROOT" rev-parse "$FUNDTEST_REF^{commit}")"
+  elif git -C "$REPO_ROOT" rev-parse --verify -q "origin/$FUNDTEST_REF^{commit}" >/dev/null; then
+    SHA="$(git -C "$REPO_ROOT" rev-parse "origin/$FUNDTEST_REF^{commit}")"
+  else
+    echo "bundle-funding-provider: $FUNDTEST_REF is neither a local nor an origin ref" >&2
+    exit 1
+  fi
+  if [ -e "$WORK_DIR/.git" ]; then
+    # Ignored files (node_modules, target, vendor) survive, which is the point.
+    git -C "$WORK_DIR" checkout -q --force --detach "$SHA"
+  else
+    git -C "$REPO_ROOT" worktree prune
+    mkdir -p "$(dirname "$WORK_DIR")"
+    git -C "$REPO_ROOT" worktree add -q --detach "$WORK_DIR" "$SHA"
+  fi
+  BUILD_ROOT="$WORK_DIR"
+  SOURCE="$WORK_DIR/products/fundtest"
+elif [ -d "$REPO_ROOT/products/fundtest" ]; then
+  BUILD_ROOT="$REPO_ROOT"
+  SOURCE="$REPO_ROOT/products/fundtest"
+  SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+else
+  echo "bundle-funding-provider: no fundtest source. Set FUNDTEST_DIR=<path> or FUNDTEST_REF=<ref>" \
+    "(e.g. funding/reference-provider); products/fundtest is not in this checkout. Nothing changed."
+  exit 0
 fi
-echo "bundle-funding-provider: building $PRODUCT_ID from this checkout ($SHA)"
 
-# The provider builds against this repository's @parity/truapi, which has to
-# be generated and built first.
+if [ ! -d "$SOURCE" ]; then
+  echo "bundle-funding-provider: $SOURCE does not exist" >&2
+  exit 1
+fi
+echo "bundle-funding-provider: building $PRODUCT_ID from $SOURCE ($SHA)"
+
+# The provider builds against that tree's @parity/truapi, which has to be
+# generated and built first.
 (
-  cd "$REPO_ROOT"
+  cd "$BUILD_ROOT"
   npm ci --no-audit --no-fund
   npm run build --prefix js/packages/truapi
 )
