@@ -26,6 +26,6 @@ struct AppDeeplinkMatcher: AppDeeplinkMatching {
 private extension AppDeeplinkMatcher {
     func isCorePocketLink(_ url: URL) -> Bool {
         url.scheme?.lowercased() == PocketDeeplinkParser.coreScheme
-            && url.host()?.lowercased() == PocketDeeplinkParser.host
+            && url.host() == PocketDeeplinkParser.host
     }
 }

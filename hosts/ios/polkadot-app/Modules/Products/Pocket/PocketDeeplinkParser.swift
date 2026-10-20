@@ -54,7 +54,7 @@ struct PocketDeeplinkParser {
 
     func classify(_ url: URL) -> PocketLinkClassification {
         guard
-            url.host()?.lowercased() == Self.host,
+            url.host() == Self.host,
             deeplinkMatcher.isAppDeeplink(url),
             var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         else {

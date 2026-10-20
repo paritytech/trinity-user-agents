@@ -73,6 +73,13 @@ struct PocketDeeplinkParserTests {
         #expect(classify("polkadot://pocket/add?product=game.dot") == .malformed)
     }
 
+    /// A deeplink's host is lowercase, and the app matches it exactly, as it does
+    /// chat, pay and pair, so it reads a Pocket link the way Android does.
+    @Test
+    func doesNotClaimAMixedCaseHost() {
+        #expect(classify("polkadotapp://Pocket/add?product=game.dot&card=loyalty") == .notOurs)
+    }
+
     /// Under a web scheme `pocket` is an ordinary host name, not the Pocket.
     @Test
     func doesNotClaimAWebUrl() {

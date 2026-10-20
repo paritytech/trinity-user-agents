@@ -15,6 +15,15 @@ class PocketLinkTest {
         assertTrue(isPocketLink(scheme = "polkadotapp", host = "pocket"))
     }
 
+    /**
+     * A deeplink's host is lowercase, and the app matches it exactly, as it does chat, pay and pair, so it reads a
+     * Pocket link the way iOS does.
+     */
+    @Test
+    fun `a mixed-case host is not the Pocket`() {
+        assertFalse(isPocketLink(scheme = "polkadotapp", host = "Pocket"))
+    }
+
     @Test
     fun `pocket under a web scheme is an ordinary host`() {
         assertFalse(isPocketLink(scheme = "https", host = "pocket"))
