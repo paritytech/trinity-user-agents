@@ -222,6 +222,11 @@ when the current account exhausts Statement Store slots and no saved pairing
 depends on its identity. A full period replaces the oldest slot past the runtime's
 replacement cooldown, so rotation only happens when no slot is replaceable.
 
+With an explicit mnemonic, the signing host resolves the identity's DotNS
+username first. When none exists, it uses the identity backend's assigned
+username for that same network identity, as session imports do. This lookup
+does not register an account; an identity without a username remains usable.
+
 ### Interactive terminal UI
 
 In a TTY, both hosts open the same scrollable transcript above a single command

@@ -45,6 +45,8 @@ that base; `workbench.42` selects that exact session. Creating an account from a
 session name requires at least six lowercase ASCII letters after digits and
 separators are omitted. A new `/session foo` fails immediately as too short;
 existing saved accounts and aliases still restore normally.
+Explicit mnemonic sessions use the same read-only username lookup as session
+imports, without provisioning a new identity.
 
 The signing host registers its built-in full and lite personhood keys when an
 authorized product first lists `peopl.<network suffix>` (for example,
