@@ -24,12 +24,18 @@ enum PocketCardFlightTiming {
     static let duration: TimeInterval = 0.5
 
     /// Android's curve, which carries the card slightly past its place.
-    static var timing: UICubicTimingParameters {
-        UICubicTimingParameters(controlPoint1: CGPoint(x: 0.34, y: 1.2), controlPoint2: CGPoint(x: 0.64, y: 1))
-    }
+    private static let curveStart = CGPoint(x: 0.34, y: 1.2)
+    private static let curveEnd = CGPoint(x: 0.64, y: 1)
 
     static var animation: Animation {
-        .timingCurve(0.34, 1.2, 0.64, 1, duration: duration)
+        .timingCurve(curveStart.x, curveStart.y, curveEnd.x, curveEnd.y, duration: duration)
+    }
+
+    static func makeAnimator() -> UIViewPropertyAnimator {
+        UIViewPropertyAnimator(
+            duration: duration,
+            timingParameters: UICubicTimingParameters(controlPoint1: curveStart, controlPoint2: curveEnd)
+        )
     }
 }
 
@@ -63,7 +69,11 @@ final class PocketCardFlight: NSObject, UIViewControllerAnimatedTransitioning {
 
     func animateTransition(using context: UIViewControllerContextTransitioning) {
         let container = context.containerView
-        addViews(for: context)
+        // The Pocket stays in the window under the card, so a close adds nothing.
+        if opening {
+            presented.view.frame = context.finalFrame(for: presented)
+            container.addSubview(presented.view)
+        }
 
         screen.beginFlight()
         container.layoutIfNeeded()
@@ -87,18 +97,6 @@ private extension PocketCardFlight {
         screen.navigationController ?? screen
     }
 
-    func addViews(for context: UIViewControllerContextTransitioning) {
-        let container = context.containerView
-
-        if opening {
-            presented.view.frame = context.finalFrame(for: presented)
-            container.addSubview(presented.view)
-        } else if let pocket = context.view(forKey: .to) {
-            pocket.frame = container.bounds
-            container.insertSubview(pocket, at: 0)
-        }
-    }
-
     func fly(_ context: UIViewControllerContextTransitioning, toSlot: CGPoint) {
         let lifted = CGSize(width: -toSlot.x, height: -toSlot.y)
 
@@ -110,7 +108,7 @@ private extension PocketCardFlight {
             origin.moveOpenCard(by: lifted, clearingPocket: true, animated: false)
         }
 
-        let animator = makeAnimator()
+        let animator = PocketCardFlightTiming.makeAnimator()
         animator.addAnimations { [self] in
             screen.moveCard(by: opening ? .zero : toSlot)
             screen.setBarAlpha(opening ? 1 : 0)
@@ -143,9 +141,11 @@ private extension PocketCardFlight {
         if opening {
             screen.setSurroundingsAlpha(0)
             fading.forEach { $0.alpha = 0 }
+        } else {
+            origin.moveOpenCard(by: .zero, clearingPocket: false, animated: false)
         }
 
-        let animator = makeAnimator()
+        let animator = PocketCardFlightTiming.makeAnimator()
         animator.addAnimations { [self] in
             screen.setSurroundingsAlpha(alpha)
             fading.forEach { $0.alpha = alpha }
@@ -155,13 +155,6 @@ private extension PocketCardFlight {
             finish(context)
         }
         animator.startAnimation()
-    }
-
-    func makeAnimator() -> UIViewPropertyAnimator {
-        UIViewPropertyAnimator(
-            duration: PocketCardFlightTiming.duration,
-            timingParameters: PocketCardFlightTiming.timing
-        )
     }
 
     func finish(_ context: UIViewControllerContextTransitioning) {

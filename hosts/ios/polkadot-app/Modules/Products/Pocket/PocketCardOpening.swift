@@ -29,7 +29,8 @@ enum PocketCardOpening {
         else { return }
 
         let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
-        navigator.presentFullScreen(screen, transitioningDelegate: screen)
+        // Only a card opened from the Pocket flies, which keeps the Pocket in the window under it.
+        navigator.presentFullScreen(screen, transitioningDelegate: origin == nil ? nil : screen)
         product.surface.claim(screen)
 
         Task { [weak screen] in

@@ -36,6 +36,7 @@ extension ModuleNavigator: ModuleNavigating {
         let navigationController = AppNavigationController(rootViewController: viewController)
         // A screen that animates its own presentation draws over the screen it opens from, which stays in the window.
         navigationController.modalPresentationStyle = transitioningDelegate == nil ? .fullScreen : .overFullScreen
+        navigationController.modalPresentationCapturesStatusBarAppearance = true
         navigationController.view.accessibilityViewIsModal = true
         navigationController.transitioningDelegate = transitioningDelegate
 

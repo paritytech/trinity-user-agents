@@ -48,6 +48,24 @@ struct PocketCardFlightTests {
         withExtendedLifetime((window, origin)) {}
     }
 
+    /// A Pocket that can no longer place the card when it closes shows through
+    /// a fading screen instead, so it must be whole again while it shows,
+    /// not only once the screen has gone.
+    @Test
+    func putsThePocketBackBeforeAFadingCloseShowsIt() async throws {
+        let origin = FakePocketCardOrigin(slot: pocketSlot)
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), origin: origin)
+        let window = try await presentCard(screen)
+
+        origin.slot = nil
+        screen.dismiss(animated: true)
+        let wholeWhileShowing = await eventually { !origin.placement.cleared && screen.view.window != nil }
+        let closed = await eventually { screen.view.window == nil }
+
+        #expect([wholeWhileShowing, closed] == [true, true])
+        withExtendedLifetime((window, origin)) {}
+    }
+
     /// A card covers the Pocket without taking it out of the window, so that the
     /// Pocket can draw the card while it flies. UIKit then no longer tells the
     /// Pocket when it is covered and uncovered, so the screen must, or what
@@ -84,6 +102,17 @@ struct PocketCardFlightTests {
 }
 
 // MARK: - Fixtures
+
+/// Waits for `condition` for up to five seconds, letting the main actor run so
+/// that UIKit can carry a transition on meanwhile.
+@MainActor
+private func eventually(_ condition: () -> Bool) async -> Bool {
+    for _ in 0 ..< 250 {
+        if condition() { return true }
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+    return false
+}
 
 /// Records the appearance calls UIKit, or a screen covering it, sends it.
 private final class AppearanceRecordingController: UIViewController {

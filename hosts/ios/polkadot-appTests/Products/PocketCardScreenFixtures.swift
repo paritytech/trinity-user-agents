@@ -23,7 +23,7 @@ struct PocketPlacement: Equatable {
 
 @MainActor
 final class FakePocketCardOrigin: PocketCardOrigin {
-    private let slot: CGRect?
+    var slot: CGRect?
     private(set) var placement = PocketPlacement()
 
     var openCard: PocketCardKey? {

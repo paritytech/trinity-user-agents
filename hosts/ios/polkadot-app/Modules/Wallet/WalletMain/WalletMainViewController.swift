@@ -144,10 +144,7 @@ extension WalletMainViewController: WalletMainViewProtocol {
         }
         guard animated else { return fadeChrome() }
 
-        let animator = UIViewPropertyAnimator(
-            duration: PocketCardFlightTiming.duration,
-            timingParameters: PocketCardFlightTiming.timing
-        )
+        let animator = PocketCardFlightTiming.makeAnimator()
         animator.addAnimations(fadeChrome)
         animator.startAnimation()
     }

@@ -46,8 +46,8 @@ struct WalletView: View {
                     }
                     .id(scrollTopAnchor)
                 }
-                .scrollClipDisabled(isPocketCardLifted)
-                .modifier(TopScrollEdgeEffectHidden(hidden: isPocketCardLifted))
+                .scrollClipDisabled(viewModel.openPocketCard != nil)
+                .modifier(TopScrollEdgeEffectHidden(hidden: viewModel.openPocketCard != nil))
                 .safeAreaInset(edge: .bottom) {
                     if viewModel.expandedSection == .assetDetails {
                         AssetDetailsFundingBar(viewModel: viewModel.assetDetailsViewModel)
@@ -78,13 +78,14 @@ struct WalletView: View {
     private var pocketCards: some View {
         #if FEATURE_PRODUCTS
             if viewModel.expandedSection == .none {
+                let openIndex = viewModel.pocketCards.firstIndex { $0.key == viewModel.openPocketCard }
                 ForEach(Array(viewModel.pocketCards.enumerated()), id: \.element.id) { index, card in
                     // A press takes the user into the product the card belongs
                     // to, at the page the card names. The shape is named so the
                     // peek a card shows is all of it that takes a press, the
                     // rest is under the card above.
                     PocketCollectionCardView(card: card)
-                        .pocketMotion(motion(ofCardAt: index))
+                        .pocketMotion(motion(ofCardAt: index, openAt: openIndex))
                         .onGeometryChange(for: CGRect.self) { proxy in
                             proxy.frame(in: .global)
                         } action: {
@@ -105,14 +106,10 @@ struct WalletView: View {
         #endif
     }
 
-    private var isPocketCardLifted: Bool {
-        viewModel.openPocketCardOffset != .zero
-    }
-
-    private func motion(ofCardAt index: Int) -> PocketCardMotion {
+    private func motion(ofCardAt index: Int, openAt openIndex: Int?) -> PocketCardMotion {
         PocketCardMotion.of(
             cardAt: index,
-            openAt: viewModel.pocketCards.firstIndex { $0.key == viewModel.openPocketCard },
+            openAt: openIndex,
             openOffset: viewModel.openPocketCardOffset,
             cleared: viewModel.isPocketCleared
         )

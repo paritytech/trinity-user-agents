@@ -102,16 +102,6 @@ final class PocketCardScreenViewController: UIViewController {
         coveredScreen?.endAppearanceTransition()
     }
 
-    /// A screen presented over the Pocket leaves it in the window, so UIKit does
-    /// not tell it that it is covered; this screen does.
-    private func coverScreen(animated: Bool) {
-        let presented = navigationController ?? self
-        guard presented.modalPresentationStyle == .overFullScreen else { return }
-
-        coveredScreen = presented.presentingViewController
-        coveredScreen?.beginAppearanceTransition(false, animated: animated)
-    }
-
     /// Gives the product back unattached. It outlives the screen that opened
     /// it, so a card opened again must find it free to show.
     func handBackProduct() {
@@ -277,6 +267,16 @@ extension PocketCardScreenViewController: UIScrollViewDelegate {
 // MARK: - Private
 
 private extension PocketCardScreenViewController {
+    /// A screen presented over the Pocket leaves it in the window, so UIKit does
+    /// not tell it that it is covered. This screen does.
+    func coverScreen(animated: Bool) {
+        let presented = navigationController ?? self
+        guard presented.modalPresentationStyle == .overFullScreen else { return }
+
+        coveredScreen = presented.presentingViewController
+        coveredScreen?.beginAppearanceTransition(false, animated: animated)
+    }
+
     func setupScrollView() {
         view.addSubview(scrollView)
         scrollView.snp.makeConstraints { make in
