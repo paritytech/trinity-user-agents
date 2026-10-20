@@ -63,7 +63,7 @@ class TrUAPIBootstrapInstallerTest {
     }
 
     @Test
-    fun `host telemetry is immutable and registered before the endpoint for every webview`() {
+    fun `host telemetry and endpoint share the main frame guard for every webview`() {
         withContainerAsset()
         mockStatic(WebViewFeature::class.java).use { features ->
             features.`when`<Boolean> { WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) }.thenReturn(true)
@@ -83,7 +83,7 @@ class TrUAPIBootstrapInstallerTest {
                     installer(webView)
 
                     assertEquals(4, registered.size)
-                    assertEquals("$telemetry\nif (window === window.top) {\nendpoint();\n}", registered.first().script)
+                    assertEquals("if (window === window.top) {\n$telemetry\nendpoint();\n}", registered.first().script)
                     assertEquals(registered.take(2), registered.drop(2))
                 }
             }

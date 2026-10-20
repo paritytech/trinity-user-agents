@@ -39,10 +39,8 @@ class TrUAPIBootstrapInstaller @Inject constructor(
             ContainerScriptBundle.load(context)
         return { bootstrap ->
             { webView ->
-                val pageBootstrap = listOfNotNull(
-                    telemetryScript,
-                    "if (window === window.top) {\n$bootstrap\n}",
-                ).joinToString("\n")
+                val mainFrameBootstrap = listOfNotNull(telemetryScript, bootstrap).joinToString("\n")
+                val pageBootstrap = "if (window === window.top) {\n$mainFrameBootstrap\n}"
                 WebViewCompat.addDocumentStartJavaScript(webView, pageBootstrap, origins)
                 WebViewCompat.addDocumentStartJavaScript(webView, container, setOf("*"))
                 (webView.webChromeClient as? ProductWebChromeClient)?.useContainerPermissions()
