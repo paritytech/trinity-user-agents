@@ -1560,7 +1560,8 @@ mod tests {
 	/// than being visible in a refusal.
 	#[test]
 	fn the_signing_role_adjudicates_grants_against_the_asset_hub_it_installed() {
-		let (services, _authority) = signing_runtime();
+		let (services, _authority) =
+			signing_runtime_on_asset_hub(Arc::new(StubPlatform::default()), [0xcc; 32]);
 		assert_eq!(
 			services.asset_hub_chain_genesis_hash(),
 			Some([0xcc; 32]),
@@ -1596,8 +1597,16 @@ mod tests {
 		signing_runtime_with_platform(platform)
 	}
 
+	/// No dotNS Asset Hub, so activation looks up no username on the scripted chain.
 	fn signing_runtime_with_platform(
 		platform: Arc<dyn Platform>,
+	) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
+		signing_runtime_on_asset_hub(platform, [0; 32])
+	}
+
+	fn signing_runtime_on_asset_hub(
+		platform: Arc<dyn Platform>,
+		asset_hub_chain_genesis_hash: [u8; 32],
 	) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
 		let config = SigningHostConfig::new(
 			HostInfo {
@@ -1609,7 +1618,7 @@ mod tests {
 			PlatformInfo::default(),
 			[0; 32],
 			[0xbb; 32],
-			[0xcc; 32],
+			asset_hub_chain_genesis_hash,
 			TEST_NETWORK_SUFFIX.to_string(),
 		)
 		.expect("signing host config is valid");

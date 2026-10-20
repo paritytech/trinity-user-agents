@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "6a267e1b8d40de6c";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "836f10ac5b02af40";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -566,6 +566,18 @@ pub const GAME_CANCEL_NEXT_GAME: MethodIds = MethodIds {
     method_id: 1,
 };
 
+/// Wire discriminants for `funding_request`.
+pub const FUNDING_REQUEST: MethodIds = MethodIds {
+    trait_id: 22,
+    method_id: 0,
+};
+
+/// Wire discriminants for `funding_status_subscribe`.
+pub const FUNDING_STATUS_SUBSCRIBE: MethodIds = MethodIds {
+    trait_id: 22,
+    method_id: 1,
+};
+
 /// Wire discriminants for `expanded_card_set_face_shown`.
 pub const EXPANDED_CARD_SET_FACE_SHOWN: MethodIds = MethodIds {
     trait_id: 23,
@@ -929,6 +941,14 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "game_cancel_next_game",
         kind: WireKind::Request(GAME_CANCEL_NEXT_GAME),
+    },
+    WireEntry {
+        method: "funding_request",
+        kind: WireKind::Request(FUNDING_REQUEST),
+    },
+    WireEntry {
+        method: "funding_status_subscribe",
+        kind: WireKind::Subscription(FUNDING_STATUS_SUBSCRIBE),
     },
     WireEntry {
         method: "expanded_card_set_face_shown",
