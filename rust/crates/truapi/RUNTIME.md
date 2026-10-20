@@ -206,6 +206,9 @@ touching the session or other products, and `notify_contacts_changed` to drop
 the contact handles the core cached once a contact is removed or blocked. Calling the wrong operation is
 a compile error, not a runtime `Unavailable`.
 
+A local session's usernames come from the dotNS contracts on Asset Hub, read
+after activation. A name the host passes is shown until a record answers.
+
 `SigningHostConfig.network_suffix` is the network's bare dotNS TLD (`dot`,
 `paseo`, or `testnet`). The shell supplies it alongside the chain genesis hashes
 from the same network configuration used by wallet onboarding. It must match

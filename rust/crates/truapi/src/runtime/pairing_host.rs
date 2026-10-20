@@ -1182,7 +1182,7 @@ impl PairingHost {
 			current.clone(),
 		)
 		.await;
-		if !resolved.has_username() || resolved == current {
+		if resolved == current {
 			return self.current_session();
 		}
 
