@@ -37,7 +37,7 @@ pub struct HostExpandedCardSetBackShownRequest {
 pub enum HostExpandedCardSetBackShownError {
 	/// The Widget is not shown under its card right now.
 	NotPresented,
-	/// The user is dragging the card; the request had no effect.
+	/// The user is turning the card or moving its face; the request had no effect.
 	UserMoving,
 	/// The card has no back to show right now.
 	NoBack,

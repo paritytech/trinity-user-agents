@@ -155,7 +155,7 @@ capability set on both sides of the boundary.
 ### Product-rendered bodies
 
 A host can ask a product to draw one body — a chat message, an input-widget
-candidate, a Pocket card — and send back what the user does with it. Both entry
+candidate, a Pocket card or its back — and send back what the user does with it. Both entry
 points live on the product provider and are present only on runtimes holding a
 live channel to the core:
 

@@ -33,10 +33,7 @@ impl ExpandedCard for ProductRuntimeHost {
 		let version = request.version();
 		let request = request.into_latest();
 		let result = async {
-			// Admin connections call the trait without the dispatcher's kind filter.
-			if self.connection.product.execution_kind != ProductExecutionKind::Widget {
-				return Err(CallError::Denied);
-			}
+			self.require_widget()?;
 			let Some(card) = &self.connection.expanded_card else {
 				return Err(CallError::Unsupported);
 			};
@@ -60,7 +57,8 @@ impl ExpandedCard for ProductRuntimeHost {
 			.map_err(|error| from_latest_error(error, version))
 	}
 
-	// No host turns cards yet, so a Widget reads "not supported" rather than a failure.
+	// This runtime has no way to turn a card, so a Widget reads "not supported" rather than a
+	// failure.
 	#[instrument(skip_all, fields(runtime.method = "expanded_card.set_back_shown"))]
 	async fn set_back_shown(
 		&self,
@@ -68,9 +66,17 @@ impl ExpandedCard for ProductRuntimeHost {
 		_request: HostExpandedCardSetBackShownRequest,
 	) -> Result<HostExpandedCardSetBackShownResponse, CallError<HostExpandedCardSetBackShownError>>
 	{
+		self.require_widget()?;
+		Err(CallError::Unsupported)
+	}
+}
+
+impl ProductRuntimeHost {
+	// Admin connections call the trait without the dispatcher's kind filter.
+	fn require_widget<E>(&self) -> Result<(), CallError<E>> {
 		if self.connection.product.execution_kind != ProductExecutionKind::Widget {
 			return Err(CallError::Denied);
 		}
-		Err(CallError::Unsupported)
+		Ok(())
 	}
 }
