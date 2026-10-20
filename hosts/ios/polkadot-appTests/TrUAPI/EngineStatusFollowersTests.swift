@@ -216,7 +216,7 @@ private struct ConditionNotMet: Error {}
 
 /// Waits for `condition`, failing the test after `timeout` instead of hanging it.
 private func eventually(
-    timeout: Duration = hangGuard,
+    timeout: Duration = .hangGuard,
     _ condition: () -> Bool
 ) async throws {
     let clock = ContinuousClock()

@@ -650,7 +650,7 @@ struct RustRuntimeBridgeTests {
         let execution = MockProductExecution()
         bridge.attach(execution)
 
-        try await withTimeout(hangGuard) { await execution.awaitThemeChange() }
+        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
 
         let expected = HostThemeSubscribeItem(
             name: ThemeName.custom(themeManager.theme.id),
@@ -666,10 +666,10 @@ struct RustRuntimeBridgeTests {
         let bridge = makeBridge(themeManager: themeManager)
         let execution = MockProductExecution()
         bridge.attach(execution)
-        try await withTimeout(hangGuard) { await execution.awaitThemeChange() }
+        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
 
         themeManager.select(.app(.berlinDay))
-        try await withTimeout(hangGuard) { await execution.awaitThemeChange() }
+        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
 
         let current = try bridge.currentTheme()
         #expect(execution.themeChanges.map(\.variant) == [ThemeVariant.dark, ThemeVariant.light])

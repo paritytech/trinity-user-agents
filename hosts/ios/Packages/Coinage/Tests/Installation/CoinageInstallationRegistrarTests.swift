@@ -277,27 +277,27 @@ private extension CoinageInstallationRegistrarTests {
 
     func attempts(_ count: Int) async throws {
         let submitter = submitter
-        try await withTimeout(hangGuard) { await submitter.waitForAttempts(count) }
+        try await withTimeout(.hangGuard) { await submitter.waitForAttempts(count) }
     }
 
     func subscriptions(_ count: Int) async throws {
         let engine = engine
-        try await withTimeout(hangGuard) { await engine.waitForSubscriptions(count) }
+        try await withTimeout(.hangGuard) { await engine.waitForSubscriptions(count) }
     }
 
     func sleeping(_ duration: Duration) async throws {
         let clock = clock
-        try await withTimeout(hangGuard) { await clock.waitForSleep(for: duration) }
+        try await withTimeout(.hangGuard) { await clock.waitForSleep(for: duration) }
     }
 
     func resume(_ duration: Duration) async throws {
         let clock = clock
-        try await withTimeout(hangGuard) { await clock.resumeSleep(for: duration) }
+        try await withTimeout(.hangGuard) { await clock.resumeSleep(for: duration) }
     }
 
     func reaches(_ expected: CoinageAccountBackupStatus) async throws {
         let registrar = registrar
-        try await withTimeout(hangGuard) {
+        try await withTimeout(.hangGuard) {
             for try await value in registrar.subscribeStatus() where value == expected {
                 return
             }

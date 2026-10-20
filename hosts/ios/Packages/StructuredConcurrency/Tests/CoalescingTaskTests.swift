@@ -12,7 +12,7 @@ private struct Signal: Sendable {
 
     /// Returns once `fire()` has been called, failing rather than hanging if it never is.
     func wait() async throws {
-        try await withTimeout(hangGuard) { [stream] in
+        try await withTimeout(.hangGuard) { [stream] in
             for await _ in stream {
                 return
             }

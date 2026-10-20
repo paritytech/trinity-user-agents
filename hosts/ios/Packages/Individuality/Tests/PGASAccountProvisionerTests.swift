@@ -96,7 +96,7 @@ struct PGASAccountProvisionerTests {
             try await provisioner.ensureCovers(account: Self.account, required: Self.required)
         }
         defer { attempt.cancel() }
-        try await withTimeout(hangGuard) { [clock] in await clock.resumeSleep(for: Self.claimTimeout) }
+        try await withTimeout(.hangGuard) { [clock] in await clock.resumeSleep(for: Self.claimTimeout) }
 
         await #expect(throws: PGASClaimTimeoutError.self) { try await attempt.value }
     }

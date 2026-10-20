@@ -169,7 +169,7 @@ final class DurabilityHarness: @unchecked Sendable {
 
         let recorder = subsystem.recorder
         do {
-            try await withTimeout(hangGuard) { await recorder.waitForCount(recordedBefore + expected) }
+            try await withTimeout(.hangGuard) { await recorder.waitForCount(recordedBefore + expected) }
         } catch {
             Issue.record("\(expected) recovery request(s) expected after release never arrived")
         }

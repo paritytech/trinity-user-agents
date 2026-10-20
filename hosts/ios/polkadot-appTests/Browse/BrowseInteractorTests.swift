@@ -146,7 +146,7 @@ private final class StubPresenter: BrowseInteractorOutputProtocol {
 
     /// Returns once the interactor has reported an outcome, failing rather than hanging if it never does.
     func waitForOutcome() async throws {
-        try await withTimeout(hangGuard) { [outcomes] in
+        try await withTimeout(.hangGuard) { [outcomes] in
             for await _ in outcomes {
                 return
             }

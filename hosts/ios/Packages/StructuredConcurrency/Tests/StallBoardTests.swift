@@ -423,7 +423,7 @@ struct StallBoardTests {
         fakeTime.value = 5.0
         await MainActor.run { board.refresh() }
 
-        let result = try await withTimeout(hangGuard) {
+        let result = try await withTimeout(.hangGuard) {
             try await withTaskCancellationHandler {
                 try await snapshotTask.value
             } onCancel: {
@@ -780,7 +780,7 @@ final class TestActivitySource: StallActivitySource {
     }
 
     func waitForDismissal(of id: UUID) async throws {
-        try await withTimeout(hangGuard) { [dismissCallsSubject] in
+        try await withTimeout(.hangGuard) { [dismissCallsSubject] in
             for await calls in dismissCallsSubject where calls.contains(id) {
                 return
             }

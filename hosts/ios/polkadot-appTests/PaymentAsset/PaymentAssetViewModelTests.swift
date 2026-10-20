@@ -105,7 +105,7 @@ private extension PaymentAssetViewModelTests {
 
         /// Returns once a subscriber's stream has ended, failing rather than hanging if none does.
         func waitForSubscriptionToEnd() async throws {
-            try await withTimeout(hangGuard) { [ended] in
+            try await withTimeout(.hangGuard) { [ended] in
                 for await _ in ended.stream {
                     return
                 }

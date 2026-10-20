@@ -151,7 +151,7 @@ struct ExternalPaymentServiceTests {
             productId: payment.productId,
             paymentId: payment.paymentId
         )
-        let received = try await withTimeout(hangGuard) {
+        let received = try await withTimeout(.hangGuard) {
             var received: [ExternalPaymentStatus] = []
             for try await status in statuses {
                 received.append(status)
