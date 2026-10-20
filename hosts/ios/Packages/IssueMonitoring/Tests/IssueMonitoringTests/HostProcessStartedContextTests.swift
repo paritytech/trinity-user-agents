@@ -25,7 +25,7 @@ struct HostProcessStartedContextTests {
         #expect(context.attributes["host.app_variant"] as? String == "nightly")
         #expect(context.attributes["host.platform"] as? String == "ios")
         #expect(context.attributes["host.os_version"] as? String == "18.1")
-        #expect(context.attributes["host.truapi_host_version"] as? String == "0.7.0")
+        #expect(context.attributes["truapi.host_version"] as? String == "0.7.0")
     }
 
     @Test("Optional metadata is omitted instead of inventing placeholder values")
@@ -44,6 +44,6 @@ struct HostProcessStartedContextTests {
         #expect(context.attributes["host.native_app_version"] == nil)
         #expect(context.attributes["host.app_build"] == nil)
         #expect(context.attributes["host.os_version"] == nil)
-        #expect(context.attributes["host.truapi_host_version"] == nil)
+        #expect(context.attributes["truapi.host_version"] == nil)
     }
 }

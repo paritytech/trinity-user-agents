@@ -43,7 +43,7 @@ public struct HostProcessStartedContext: Sendable {
         values["host.native_app_version"] = appVersion
         values["host.app_build"] = appBuild
         values["host.os_version"] = osVersion
-        values["host.truapi_host_version"] = truapiHostVersion
+        values["truapi.host_version"] = truapiHostVersion
 
         return values
     }

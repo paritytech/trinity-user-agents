@@ -34,7 +34,7 @@
                 scope.setTag(value: context.appVariant, key: "host.app_variant")
                 scope.setTag(value: context.platform, key: "host.platform")
                 context.osVersion.map { scope.setTag(value: $0, key: "host.os_version") }
-                context.truapiHostVersion.map { scope.setTag(value: $0, key: "host.truapi_host_version") }
+                context.truapiHostVersion.map { scope.setTag(value: $0, key: "truapi.host_version") }
                 context.appBuild.map { scope.setExtra(value: $0, key: "host.app_build") }
                 scope.setExtra(value: context.monotonicMilliseconds, key: "event.monotonic_ms")
             }
