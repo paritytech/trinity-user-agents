@@ -1,7 +1,7 @@
 package io.paritytech.polkadotapp.app.root.navigation.products
 
-import androidx.navigation.NavGraph
 import androidx.core.os.bundleOf
+import androidx.navigation.NavGraph
 import io.paritytech.polkadotapp.app.R
 import io.paritytech.polkadotapp.app.root.navigation.BaseNavigator
 import io.paritytech.polkadotapp.app.root.navigation.NavigationHolder
@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.PocketAddCard
 import io.paritytech.polkadotapp.feature_products_api.presentation.ProductSettingsPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingBottomSheet
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.ended.FundingEndedBottomSheet
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.frame.FundingProviderFrameBottomSheet
 import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.PermissionPromptBottomSheet
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
@@ -116,6 +117,17 @@ class ProductsNavigator @Inject constructor(
 
     override suspend fun closeFundingOverlay(intent: String) = withContext(dispatchers.main) {
         popSession(R.id.fundingBottomSheet, FundingBottomSheet.INTENT, intent)
+    }
+
+    override suspend fun openFundingEnded(intent: String) = withContext(dispatchers.main) {
+        performNavigation(
+            R.id.action_global_to_fundingEndedBottomSheet,
+            bundleOf(FundingEndedBottomSheet.INTENT to intent),
+        )
+    }
+
+    override suspend fun closeFundingEnded(intent: String) = withContext(dispatchers.main) {
+        popIfOnTop(R.id.fundingEndedBottomSheet, FundingEndedBottomSheet.INTENT, intent)
     }
 
     override suspend fun openFundingProviderFrame(intent: String) = withContext(dispatchers.main) {

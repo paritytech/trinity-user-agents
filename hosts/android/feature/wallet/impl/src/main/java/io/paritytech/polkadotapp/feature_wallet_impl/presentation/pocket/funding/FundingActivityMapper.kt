@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding
 
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
+import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.util.amountFromPlanks
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivity
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityItem
@@ -18,6 +19,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowSubtitle
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowTitle
 import kotlinx.collections.immutable.toImmutableList
+import java.math.BigInteger
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -26,7 +28,12 @@ import java.util.Locale
 import kotlin.time.Instant
 import kotlin.time.toJavaInstant
 
-/** Builds the card's funding lists, dated against [now] in [zone], amounts in [asset] under its [symbol]. */
+/**
+ * Builds the card's funding lists, dated against [now] in [zone], amounts in [asset] under its [symbol].
+ *
+ * The session in flight drawn in front is a delayed one, then the newest. Each day of history carries the balance at
+ * its end: the current balance less what every later day moved.
+ */
 class FundingActivityMapper(
     private val asset: Chain.Asset,
     private val symbol: String,
@@ -41,23 +48,47 @@ class FundingActivityMapper(
     private val dateTitleFormat = DateTimeFormatter.ofPattern("EEEE d MMMM yyyy", locale)
     private val today = localDate(now)
 
-    fun map(activity: FundingActivity): FundingActivityUiState = FundingActivityUiState(
-        inFlight = activity.inFlight.sortedByDescending { it.date }.map(::row).toImmutableList(),
-        days = activity.history
+    fun map(activity: FundingActivity, currentBalance: Balance?): FundingActivityUiState {
+        var later = BigInteger.ZERO
+        val days = activity.history
             .groupBy { dayTitle(it.date) }
-            .map { (title, items) -> FundingActivityDayUi(title, items.map(::row).toImmutableList()) }
-            .toImmutableList(),
-    )
+            .map { (title, items) ->
+                val endOfDay = currentBalance?.let { Balance(it.value - later) }
+                later += items.sumOf(::delta)
+                FundingActivityDayUi(title, items.map(::row).toImmutableList(), endOfDay?.let(::label))
+            }
+
+        return FundingActivityUiState(
+            inFlight = activity.inFlight
+                .sortedWith(compareByDescending<FundingActivityItem> { it.isDelayed }.thenByDescending { it.date })
+                .map(::row)
+                .toImmutableList(),
+            days = days.toImmutableList(),
+            currentBalance = currentBalance?.let(::label),
+        )
+    }
+
+    /** What an ended session changed the balance by: credited in, debited out less what came back. */
+    private fun delta(item: FundingActivityItem): BigInteger {
+        val amount = item.amount?.value ?: return BigInteger.ZERO
+        return when (val status = item.status) {
+            FundingActivityStatus.ToppedUp -> amount
+            FundingActivityStatus.Sent -> -amount
+            is FundingActivityStatus.PayoutFailed -> (status.refunded?.value ?: BigInteger.ZERO) - amount
+            is FundingActivityStatus.Cancelled -> (status.refunded?.value ?: BigInteger.ZERO) - amount
+            else -> BigInteger.ZERO
+        }
+    }
+
+    private fun label(balance: Balance): String = FundingMoney.label(asset.amountFromPlanks(balance.atLeastZero()), symbol)
+
+    private val FundingActivityItem.isDelayed: Boolean
+        get() = (status as? FundingActivityStatus.InProgress)?.step?.isSlow == true
 
     private fun row(item: FundingActivityItem): FundingActivityRowUi {
         val status = item.status
         val inbound = item.direction == FundingDirection.IN
         val moved = status is FundingActivityStatus.InProgress || status == FundingActivityStatus.ToppedUp || status == FundingActivityStatus.Sent
-        val refunded = when (status) {
-            is FundingActivityStatus.PayoutFailed -> status.refunded
-            is FundingActivityStatus.Cancelled -> status.refunded
-            else -> null
-        }
 
         return FundingActivityRowUi(
             id = item.id,
@@ -65,8 +96,6 @@ class FundingActivityMapper(
             subtitle = when {
                 status is FundingActivityStatus.InProgress -> FundingRowSubtitle.Step(status.step)
                 status is FundingActivityStatus.Failed -> FundingRowSubtitle.Failed(status.reason)
-                refunded != null -> FundingRowSubtitle.Refunded(FundingMoney.label(asset.amountFromPlanks(refunded), symbol))
-
                 else -> FundingRowSubtitle.Ended(item.rail, moment(item.date))
             },
             icon = when (status) {

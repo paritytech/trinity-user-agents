@@ -308,7 +308,6 @@ class CoinageRenderThread(
 
         field.retarget(
             targets = result.targets,
-            spawnEdge = width,
             // Spreading out, the last coins have furthest to travel; gathering back in, the first ones do.
             // Either way the long haul sets off first.
             stagger = if (expanded) CoinageCoinField.Stagger.FROM_BACK else CoinageCoinField.Stagger.FROM_FRONT

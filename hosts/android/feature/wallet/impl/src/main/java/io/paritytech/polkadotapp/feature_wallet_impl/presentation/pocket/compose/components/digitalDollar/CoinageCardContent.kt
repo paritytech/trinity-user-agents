@@ -28,6 +28,7 @@ import io.paritytech.polkadotapp.common.R as RCommon
 @Composable
 fun CoinageCardContent(
     state: CoinageUiState,
+    modifier: Modifier = Modifier,
     onAutoFundClick: () -> Unit,
     onCoinTapped: (String?) -> Unit,
     onCoinsFlickedDown: () -> Unit,
@@ -38,7 +39,7 @@ fun CoinageCardContent(
     // Debug override only. Production always draws the live holdings.
     var testData by rememberSaveable { mutableStateOf(CoinageTestDataMode.LIVE) }
 
-    Column(verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.mediumIncreased)) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.mediumIncreased)) {
         CoinageStateCard(
             modifier = Modifier.fillMaxWidth(),
             state = if (debug) testData.applied(state.tokensState) else state.tokensState,

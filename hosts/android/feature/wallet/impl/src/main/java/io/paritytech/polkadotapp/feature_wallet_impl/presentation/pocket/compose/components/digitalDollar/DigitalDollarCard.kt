@@ -2,30 +2,38 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compos
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import io.paritytech.polkadotapp.common.presentation.compose.TickerWordmark
 import io.paritytech.polkadotapp.common.presentation.compose.withCurrencyTickerStyle
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
-import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetLogoVariant
-import io.paritytech.polkadotapp.common.presentation.paymentAsset.compose.PaymentAssetLogoImage
-import io.paritytech.polkadotapp.common.presentation.paymentAsset.compose.aspectRatio
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.Refreshing
@@ -41,9 +49,7 @@ import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.Token
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.formatFiatSigned
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
 import io.paritytech.polkadotapp.feature_wallet_impl.R
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.LocalCardTilt
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.MotionShineParameters
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.maskedMotionShine
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.rememberCountUp
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.CardSizes
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.PocketCardColors
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketBalanceSharedElement
@@ -56,110 +62,67 @@ fun DigitalDollarCard(
     modifier: Modifier = Modifier,
     card: PocketCardUiModel.DigitalDollar,
     onSelected: ((PocketCardUiModel.DigitalDollar) -> Unit)? = null,
-    isExpanded: Boolean
+    isExpanded: Boolean,
 ) {
-    val tiltState = LocalCardTilt.current
-
-    val highlightBrush = remember { digitalDollarHighlightBrush() }
-
-    val litBorderColor = PolkadotTheme.colors.fg.staticWhite
-    val borderBrush = remember(litBorderColor) { digitalDollarBorderBrush(litBorderColor) }
-
     PolkadotSurface(
         modifier = modifier,
-        shape = PolkadotTheme.shapes.large,
-        color = PocketCardColors.DigitalDollarCardBackground,
-        border = BorderStroke(BORDER_WIDTH, borderBrush),
+        shape = CardShape,
+        color = WalletFallback,
         onClick = { onSelected?.invoke(card) },
         enabled = onSelected != null
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(CardSizes.HEIGHT)
-                .background(highlightBrush)
-        )
+        CashCardFace(card = card, isExpanded = isExpanded)
+    }
+}
 
+/**
+ * The CASH card's face without any touch handling, so a page can lay it over a list and still let the list
+ * scroll from it. [balanceAlpha] fades the balance as the card collapses into a header.
+ */
+@Composable
+fun CashCardFace(
+    modifier: Modifier = Modifier,
+    card: PocketCardUiModel.DigitalDollar,
+    isExpanded: Boolean,
+    balanceAlpha: () -> Float = { 1f },
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(CardSizes.HEIGHT)
+            .clip(CardShape)
+            .background(WalletFallback)
+    ) {
         Image(
             modifier = Modifier.matchParentSize(),
-            painter = painterResource(R.drawable.img_texture_grain_dark),
+            painter = painterResource(R.drawable.img_cash_card_wallet),
             contentDescription = null,
-            contentScale = ContentScale.Crop,
-            alpha = TEXTURE_ALPHA
+            contentScale = ContentScale.Crop
         )
 
-        Box(modifier = Modifier.matchParentSize()) {
-            Image(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .align(Alignment.CenterEnd)
-                    .maskedMotionShine(
-                        tiltState = tiltState,
-                        parameters = MotionShineParameters.DigitalDollarCard,
-                        contentAlpha = ILLUSTRATION_ALPHA
-                    ),
-                painter = painterResource(R.drawable.img_digital_dollar_card),
-                contentDescription = null,
-                contentScale = ContentScale.FillHeight
-            )
-        }
-
-        Box(
+        Column(
             modifier = Modifier
-                .matchParentSize()
-                .padding(
-                    horizontal = PolkadotTheme.spacings.large,
-                    vertical = PolkadotTheme.spacings.mediumIncreased
-                )
+                .align(Alignment.BottomStart)
+                .padding(start = BalanceStart, bottom = BalanceBottom)
+                .graphicsLayer { alpha = balanceAlpha() }
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    PaymentAssetLogoImage(
-                        modifier = Modifier
-                            .height(LogoHeight)
-                            .aspectRatio(PaymentAssetLogoVariant.Square.aspectRatio),
-                        variant = PaymentAssetLogoVariant.Square
-                    )
-                }
-
-                BalanceAmount(
-                    amounts = card.amounts,
-                    cardId = card.id,
-                    isHidden = isExpanded
-                )
-            }
-
             if (isExpanded) {
-                Column(
-                    modifier = Modifier.align(Alignment.BottomStart)
-                ) {
-                    AnimatedContent(
-                        targetState = card.balanceStatus,
-                        contentKey = { it::class },
-                        label = "DigitalDollarBalanceStatus"
-                    ) { status ->
-                        when (status) {
-                            DigitalDollarBalanceStatus.Syncing -> SyncProgress()
-                            DigitalDollarBalanceStatus.AccountBackupPending -> AccountBackupPending()
-                            is DigitalDollarBalanceStatus.PartlyReady -> PartlyReadyBalance(amount = status.amount)
+                AnimatedContent(
+                    targetState = card.balanceStatus,
+                    contentKey = { it::class },
+                    label = "DigitalDollarBalanceStatus"
+                ) { status ->
+                    when (status) {
+                        DigitalDollarBalanceStatus.Syncing -> SyncProgress()
+                        DigitalDollarBalanceStatus.AccountBackupPending -> AccountBackupPending()
+                        is DigitalDollarBalanceStatus.PartlyReady -> PartlyReadyBalance(amount = status.amount)
 
-                            DigitalDollarBalanceStatus.TotalOnly -> Unit
-                        }
+                        DigitalDollarBalanceStatus.TotalOnly -> Unit
                     }
-
-                    BalanceAmount(
-                        amounts = card.amounts,
-                        cardId = card.id,
-                        isHidden = false
-                    )
                 }
             }
+
+            BalanceAmount(amounts = card.amounts, cardId = card.id)
         }
     }
 }
@@ -168,19 +131,32 @@ fun DigitalDollarCard(
 private fun BalanceAmount(
     amounts: LoadingState<PocketCardUiModel.DigitalDollar.Amounts>,
     cardId: String,
-    isHidden: Boolean
 ) {
-    val sharedElement = if (isHidden) Modifier.alpha(0f) else Modifier.pocketBalanceSharedElement(cardId)
+    val sharedElement = Modifier.pocketBalanceSharedElement(cardId)
 
     when (amounts) {
-        is LoadingState.Loaded -> NovaText(
-            modifier = sharedElement,
-            text = LocalTokenAmountFormatter.current.formatFiatSigned(amounts.data.balance, withSymbol = true)
-                .withCurrencyTickerStyle(PolkadotTheme.typography.headline.medium),
-            maxLines = 1,
-            style = PolkadotTheme.typography.headline.medium,
-            color = PolkadotTheme.colors.fg.staticWhite
-        )
+        is LoadingState.Loaded -> {
+            val balance = rememberCountUp(amounts.data.balance)
+            val density = LocalDensity.current
+            val shadow = remember(density) {
+                with(density) { Shadow(color = BalanceShadow, offset = Offset(0f, 1.dp.toPx()), blurRadius = 2.dp.toPx()) }
+            }
+            NovaText(
+                modifier = sharedElement,
+                text = buildAnnotatedString {
+                    withStyle(BalanceNumber.toSpanStyle().copy(shadow = shadow)) {
+                        append(LocalTokenAmountFormatter.current.formatFiatSigned(balance))
+                    }
+                    append(" ")
+                    withStyle(BalanceUnit.toSpanStyle().copy(shadow = shadow)) {
+                        append(LocalPaymentAssetBrand.current.symbol.withCurrencyTickerStyle(BalanceUnit, TickerWordmark.SmallCaps))
+                    }
+                },
+                maxLines = 1,
+                style = BalanceNumber,
+                color = PolkadotTheme.colors.fg.staticWhite
+            )
+        }
 
         else -> Shimmer(
             modifier = sharedElement.size(width = AmountShimmerSizes.WIDTH, height = AmountShimmerSizes.HEIGHT),
@@ -266,18 +242,18 @@ private fun AccountBackupPending() {
     }
 }
 
-private val BORDER_WIDTH = 0.5.dp
-
-private const val ILLUSTRATION_ALPHA = 0.2f
-
-private const val TEXTURE_ALPHA = 0.3f
+private val CardShape = RoundedCornerShape(23.26.dp)
+private val WalletFallback = Color(0xFF3A2417)
+private val BalanceShadow = Color.Black.copy(alpha = 0.25f)
+private val BalanceStart = 23.dp
+private val BalanceBottom = 22.dp
+private val BalanceNumber = TextStyle(fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight(650), letterSpacing = (-0.3).sp)
+private val BalanceUnit = TextStyle(fontSize = 24.sp, lineHeight = 28.sp, fontWeight = FontWeight.Light)
 
 private object AmountShimmerSizes {
     val WIDTH = 100.dp
     val HEIGHT = 28.dp
 }
-
-private val LogoHeight = 36.dp
 
 @Preview
 @Composable

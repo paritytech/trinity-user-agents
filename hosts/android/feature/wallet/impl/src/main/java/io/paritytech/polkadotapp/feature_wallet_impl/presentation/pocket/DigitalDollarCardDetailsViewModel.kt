@@ -110,12 +110,16 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
 
     val fundingActivity: StateFlow<FundingActivityUiState> = combine(
         interactor.observeFundingActivity(),
-        paymentAssetBrandProvider.brand
-    ) { activity, brand -> FundingActivityMapper(interactor.asset(), brand.symbol, Clock.System.now()).map(activity) }
+        paymentAssetBrandProvider.brand,
+        holdingsFlow
+    ) { activity, brand, holdings ->
+        FundingActivityMapper(interactor.asset(), brand.symbol, Clock.System.now())
+            .map(activity, currentBalance = holdings.getOrNull()?.balance?.total)
+    }
         .stateIn(
             scope = this,
             started = SharingStarted.WhileSubscribed(FUNDING_ACTIVITY_STOP_TIMEOUT),
-            initialValue = FundingActivityUiState(inFlight = persistentListOf(), days = persistentListOf())
+            initialValue = FundingActivityUiState(inFlight = persistentListOf(), days = persistentListOf(), currentBalance = null)
         )
 
     fun onGetCashClick() = openFunding(FundingDirection.IN, ::GetCashUnavailablePresentationError)

@@ -5,15 +5,17 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFail
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
 import kotlinx.collections.immutable.ImmutableList
 
-/** The CASH card's funding lists: what is in progress, then the history by day. */
+/** The CASH card's funding lists: what is in progress, front item first, then the history by day. */
 data class FundingActivityUiState(
     val inFlight: ImmutableList<FundingActivityRowUi>,
     val days: ImmutableList<FundingActivityDayUi>,
+    val currentBalance: String?,
 )
 
 data class FundingActivityDayUi(
     val title: FundingDayTitle,
     val rows: ImmutableList<FundingActivityRowUi>,
+    val endOfDayBalance: String?,
 )
 
 sealed interface FundingDayTitle {
@@ -53,9 +55,6 @@ sealed interface FundingRowSubtitle {
 
     /** Why the session failed. */
     data class Failed(val reason: FundingFailureReason) : FundingRowSubtitle
-
-    /** What the provider's refund of a failed payout returned, as "$50 CASH". */
-    data class Refunded(val amount: String) : FundingRowSubtitle
 }
 
 /** "Today at 08:25", "Yesterday at 18:40", "4 Oct at 16:20", "4 Oct 2025". */
