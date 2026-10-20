@@ -1240,6 +1240,11 @@ impl PlatformFeatures for StubPlatform {
 
 struct RecordingConnection {
 	sent: Arc<Mutex<Vec<String>>>,
+	/// Requests sent on this connection alone. Scripted `responses` wait on
+	/// these: connections share `sent`, and two of them can each issue
+	/// `truapi:1`, so matching against `sent` can answer a request that has not
+	/// been sent here yet and the client drops the reply.
+	sent_here: Arc<Mutex<Vec<String>>>,
 	responses: Vec<String>,
 	method_responses: Vec<(&'static str, String)>,
 	method_responses_gate: Arc<Mutex<Option<futures::channel::oneshot::Receiver<()>>>>,
@@ -1386,6 +1391,7 @@ fn sso_scripted_responses(
 
 impl JsonRpcConnection for RecordingConnection {
 	fn send(&self, request: String) {
+		self.sent_here.lock().expect("rpc list mutex poisoned").push(request.clone());
 		self.sent.lock().expect("rpc list mutex poisoned").push(request);
 	}
 	fn responses(&self) -> BoxStream<'static, String> {
@@ -1578,7 +1584,7 @@ impl JsonRpcConnection for RecordingConnection {
 			Box::pin(futures::stream::pending())
 		} else {
 			let responses = self.responses.clone();
-			let sent = self.sent.clone();
+			let sent = self.sent_here.clone();
 			Box::pin(stream::unfold(0, move |index| {
 				let responses = responses.clone();
 				let sent = sent.clone();
@@ -1752,6 +1758,7 @@ impl ChainProvider for StubPlatform {
 		}
 		Ok(Box::new(RecordingConnection {
 			sent: self.sent_rpc.clone(),
+			sent_here: Arc::default(),
 			responses: self.rpc_responses.clone(),
 			method_responses: self.rpc_method_responses.clone(),
 			method_responses_gate: self.rpc_method_responses_gate.clone(),
