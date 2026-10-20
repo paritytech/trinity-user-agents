@@ -4,6 +4,7 @@ import Keystore_iOS
 import PolkadotUI
 import Products
 import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 import Testing
 @testable import polkadot_app
 
@@ -108,19 +109,25 @@ struct ChatExtensionStoreTests {
     }
 
     /// A broken archive, or any other reason the bot never comes, must end in an error the user
-    /// can read, not in a chat that waits forever.
+    /// can read, not in a chat that waits forever. The ten seconds pass on a manual clock, so the
+    /// test neither waits for them nor depends on how loaded the machine is.
     @Test
     @MainActor
     func aTapGivesUpWhenTheBotDoesNotComeInTime() async throws {
         let registry = makeRegistry()
         let changes = ChangeFeed(registry)
         let model = ChatOpenModel.existingChat(.chatExtension(product.extensionId, roomId: "jollity"))
+        let clock = ManualClock()
 
         provider.emit(.listed([product]))
         _ = try await changes.next()
 
+        let opening = Task { try await registry.entryRoute(for: model, clock: clock) }
+        // Bounded, so a tap that stopped waiting fails the test instead of hanging the suite.
+        try await withTimeout(.seconds(5)) { await clock.resumeSleep(for: .seconds(10)) }
+
         await #expect(throws: ChatExtensionBotError.self) {
-            try await registry.entryRoute(for: model, botTimeout: .milliseconds(50))
+            try await opening.value
         }
     }
 }

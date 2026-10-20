@@ -35,11 +35,12 @@ extension ChatExtensionsRegistering {
     }
 
     /// A listed product's row can be tapped before its bot is built, so the tap waits for the bot
-    /// up to `botTimeout` rather than open a chat with nothing behind it, and gives up with
-    /// ``ChatExtensionBotError/notReady(_:)`` when the bot does not come, as with a broken archive.
+    /// up to ten seconds on `clock` rather than open a chat with nothing behind it, and gives up
+    /// with ``ChatExtensionBotError/notReady(_:)`` when the bot does not come, as with a broken
+    /// archive.
     func entryRoute(
         for model: ChatOpenModel,
-        botTimeout: Duration = .seconds(10)
+        clock: any Clock<Duration> = ContinuousClock()
     ) async throws -> ChatExtensionEntryRoute {
         if let chatExtension = getOwningExtension(for: model) {
             return await chatExtension.entryRoute(for: model)
@@ -53,17 +54,17 @@ extension ChatExtensionsRegistering {
             return .chat(model)
         }
 
-        let bot = try await awaitChatExtensionBot(for: extensionId, timeout: botTimeout)
+        let bot = try await awaitChatExtensionBot(for: extensionId, clock: clock)
 
         return await bot.entryRoute(for: model)
     }
 
     private func awaitChatExtensionBot(
         for extensionId: ChatExtension.Id,
-        timeout: Duration
+        clock: any Clock<Duration>
     ) async throws -> ChatExtensionBotProtocol {
         do {
-            return try await withTimeout(timeout) {
+            return try await withTimeout(.seconds(10), clock: clock) {
                 // Subscribed before the lookup, so a bot built in between is not missed.
                 var changes = onChangeStream.makeAsyncIterator()
 
