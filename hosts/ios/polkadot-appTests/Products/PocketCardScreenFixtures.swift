@@ -25,10 +25,8 @@ struct PocketPlacement: Equatable {
 final class FakePocketCardOrigin: PocketCardOrigin {
     var slot: CGRect?
     private(set) var placement = PocketPlacement()
-
-    var openCard: PocketCardKey? {
-        placement.openCard
-    }
+    /// Every placement the screen has asked for, in order.
+    private(set) var moves: [PocketPlacement] = []
 
     init(slot: CGRect?) {
         self.slot = slot
@@ -45,6 +43,7 @@ final class FakePocketCardOrigin: PocketCardOrigin {
     func moveOpenCard(by offset: CGSize, clearingPocket: Bool, animated _: Bool) {
         placement.offset = offset
         placement.cleared = clearingPocket
+        moves.append(placement)
     }
 }
 

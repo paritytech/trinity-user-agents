@@ -366,13 +366,6 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
         #endif
     }
 
-    /// Fades the chrome the tab bar draws over every tab: the status icons
-    /// strip and the bottom bar.
-    func setChromeAlpha(_ alpha: CGFloat) {
-        statusBarHost.view.alpha = alpha
-        chromeController.view.alpha = alpha
-    }
-
     func showChainStatus(_ models: [ChainConnectionStatusViewModel]) {
         statusBarHost.rootView = ChainConnectionStatusBarView(models: models)
         let width = max(1, ChainConnectionStatusBarView.ringsWidth(count: models.count))
@@ -436,5 +429,14 @@ extension MainTabBarViewController {
 
     func detachWidget(for id: AppWidgetID) {
         chromeController.detachWidget(for: id)
+    }
+}
+
+extension MainTabBarViewController {
+    /// The chrome sits over every tab, so a Pocket card flying out of the
+    /// Wallet fades it along with the Pocket's own content.
+    func setChromeAlpha(_ alpha: CGFloat) {
+        statusBarHost.view.alpha = alpha
+        chromeController.view.alpha = alpha
     }
 }

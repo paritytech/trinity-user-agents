@@ -66,6 +66,69 @@ struct PocketCardFlightTests {
         withExtendedLifetime((window, origin)) {}
     }
 
+    /// Opening a product from a card closes the card and switches tab in the
+    /// same turn. The Pocket the card would fly into is then gone, so the
+    /// close must fade instead: a Pocket off screen cannot draw the card.
+    @Test
+    func fadesWhenThePocketGoesAwayInTheTurnTheCloseStarts() async throws {
+        let origin = FakePocketCardOrigin(slot: pocketSlot)
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), origin: origin)
+        let window = try await presentCard(screen)
+        let movesWhileOpen = origin.moves.count
+
+        screen.dismiss(animated: true)
+        origin.slot = nil
+        let closed = await eventually { screen.view.window == nil }
+
+        let clearedWhileClosing = origin.moves.dropFirst(movesWhileOpen).contains { $0.cleared }
+        #expect([closed, clearedWhileClosing] == [true, false])
+        withExtendedLifetime((window, origin)) {}
+    }
+
+    /// Whatever closes the card, even a dismissal from under a sheet the card's
+    /// product put over it, the Pocket gets its cards and its chrome back and
+    /// is told it is uncovered.
+    @Test
+    func restoresThePocketWhenClosedFromUnderASheet() async throws {
+        let origin = FakePocketCardOrigin(slot: pocketSlot)
+        let presenter = AppearanceRecordingController()
+        let window = try showing(presenter)
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), origin: origin)
+        await present(cardNavigation(screen), from: presenter)
+        await present(UIViewController(), from: screen)
+
+        await withCheckedContinuation { closed in
+            presenter.dismiss(animated: false) { closed.resume() }
+        }
+
+        #expect(origin.placement == PocketPlacement())
+        #expect(presenter.calls.suffix(4) == ["willDisappear", "didDisappear", "willAppear", "didAppear"])
+        withExtendedLifetime((window, origin)) {}
+    }
+
+    /// A screen opened full screen over the card hides the Pocket too, but the
+    /// Pocket was already told it is covered, and must not be told twice.
+    @Test
+    func tellsThePocketOnceWhenAnotherScreenOpensOverTheCard() async throws {
+        let origin = FakePocketCardOrigin(slot: pocketSlot)
+        let presenter = AppearanceRecordingController()
+        let window = try showing(presenter)
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), origin: origin)
+        await present(cardNavigation(screen), from: presenter)
+        let callsBefore = presenter.calls.count
+
+        let cover = UIViewController()
+        cover.modalPresentationStyle = .fullScreen
+        await present(cover, from: screen)
+        await closeCard(cover)
+        await closeCard(screen)
+
+        #expect(Array(presenter.calls.dropFirst(callsBefore - 2)) == [
+            "willDisappear", "didDisappear", "willAppear", "didAppear"
+        ])
+        withExtendedLifetime((window, origin)) {}
+    }
+
     /// A card covers the Pocket without taking it out of the window, so that the
     /// Pocket can draw the card while it flies. UIKit then no longer tells the
     /// Pocket when it is covered and uncovered, so the screen must, or what

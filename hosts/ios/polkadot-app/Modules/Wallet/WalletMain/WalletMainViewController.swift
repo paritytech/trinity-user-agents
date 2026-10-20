@@ -142,11 +142,13 @@ extension WalletMainViewController: WalletMainViewProtocol {
             self?.titleView?.alpha = chromeAlpha
             UIApplication.shared.mainTabBarController?.setChromeAlpha(chromeAlpha)
         }
-        guard animated else { return fadeChrome() }
-
-        let animator = PocketCardFlightTiming.makeAnimator()
-        animator.addAnimations(fadeChrome)
-        animator.startAnimation()
+        if animated {
+            let animator = PocketCardFlightTiming.makeAnimator()
+            animator.addAnimations(fadeChrome)
+            animator.startAnimation()
+        } else {
+            fadeChrome()
+        }
     }
 
     @objc
