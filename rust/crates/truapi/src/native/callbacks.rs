@@ -425,10 +425,11 @@ pub trait NativeTopUpCallbacks: Send + Sync {
 #[uniffi::export(rust, foreign)]
 #[async_trait::async_trait]
 pub trait NativeBalanceCallbacks: Send + Sync {
-	/// The current balance of `purse` (`None` for the main purse) for
-	/// `product_id`, as a decimal string of CASH units: what a payment
-	/// request can spend right now. The core has already checked the
-	/// product's balance access.
+	/// The current balance of `purse` (`None` for the main purse), as a
+	/// decimal string of CASH units: what a payment request can spend right
+	/// now. The balance is the user's, the same for every product;
+	/// `product_id` names the asking product only for the host's own records.
+	/// The core has already checked the product's balance access.
 	async fn balance(
 		&self,
 		product_id: ProductId,
@@ -449,4 +450,28 @@ pub trait NativeScannerCallbacks: Send + Sync {
 		execution_kind: crate::platform::ProductExecutionKind,
 		request: truapi::latest::HostScannerScanRequest,
 	) -> Result<crate::platform::HostScan, HostRejection>;
+}
+
+/// Native funding overlay. A host with a funding modality passes an
+/// implementation to [`NativeTrUApiHostRuntime::set_funding_callbacks`];
+/// without one, funding requests answer `Unsupported`.
+///
+/// [`NativeTrUApiHostRuntime::set_funding_callbacks`]: super::NativeTrUApiHostRuntime::set_funding_callbacks
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeFundingCallbacks: Send + Sync {
+	/// Show the funding overlay for session `intent`, which `product_id`
+	/// opened, or the host itself when `None`, on the screen `direction`
+	/// names, and report whether the user started or dismissed it. `amount`
+	/// is a decimal string of CASH units.
+	async fn present_funding(
+		&self,
+		product_id: Option<ProductId>,
+		intent: String,
+		direction: v01::FundingDirection,
+		amount: Option<u128>,
+	) -> Result<crate::platform::FundingPresentOutcome, HostRejection>;
+
+	/// A session's status changed, for host UI such as the in-flight pill.
+	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem);
 }

@@ -33,20 +33,20 @@ pub use product_id::{PRODUCT_ID_MAX_BYTES, ProductId, REMOTE_PERMISSION_TRUSTED_
 use truapi::{
 	latest::{
 		AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage, ChatFile,
-		ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, CodeFormat, GenericError,
-		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
-		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
-		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-		HostChatRegisterBotResponse, HostChatSetRoomFooterRequest, HostDevicePermissionRequest,
-		HostFeatureSupportedRequest, HostFeatureSupportedResponse, HostLocalStorageChangeItem,
-		HostLocaleSubscribeItem, HostNavigateToError, HostPaymentBalanceSubscribeError,
-		HostPaymentBalanceSubscribeItem, HostPaymentError, HostPaymentRequest,
-		HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem, HostPaymentTopUpError,
-		HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
-		HostPaymentTopUpStatusSubscribeItem, HostPlatform, HostPocketListSubscribeItem,
-		HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPushNotificationRequest,
-		HostPushNotificationResponse, HostScannerScanRequest, HostSignPayloadRequest,
-		HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
+		ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, CodeFormat, FundingDirection,
+		GenericError, HostChatCreateRoomError, HostChatCreateRoomRequest,
+		HostChatCreateRoomResponse, HostChatListSubscribeItem, HostChatPostMessageError,
+		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
+		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
+		HostDevicePermissionRequest, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
+		HostFundingStatusSubscribeItem, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
+		HostNavigateToError, HostPaymentBalanceSubscribeError, HostPaymentBalanceSubscribeItem,
+		HostPaymentError, HostPaymentRequest, HostPaymentStatusSubscribeError,
+		HostPaymentStatusSubscribeItem, HostPaymentTopUpError, HostPaymentTopUpRequest,
+		HostPaymentTopUpStatusSubscribeError, HostPaymentTopUpStatusSubscribeItem, HostPlatform,
+		HostPocketListSubscribeItem, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
+		HostPushNotificationRequest, HostPushNotificationResponse, HostScannerScanRequest,
+		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
 		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
 		ProductAccountId, ProductAccountTxPayload, ProductProofContext, RemotePermission,
@@ -1293,6 +1293,20 @@ pub enum CoreStorageKey {
 		/// Product whose manifest was cached, normalized.
 		product_id: String,
 	},
+	/// Funding sessions: every live one plus a bounded tail of settled ones,
+	/// as one versioned SCALE blob.
+	#[codec(index = 13)]
+	FundingSessions,
+	/// Funding sessions or session pack blobs the core could not read, as a SCALE list of the
+	/// raw blobs, newest last, so a stored session is never overwritten
+	/// unread and a later bad blob does not replace an earlier one. Kept for
+	/// diagnosis only: the core never reads them back.
+	#[codec(index = 17)]
+	FundingSessionsUnreadable,
+	/// Recorded funding sessions compacted out of the funding sessions blob,
+	/// as one versioned SCALE blob. Never trimmed.
+	#[codec(index = 18)]
+	FundingSessionPack,
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -1346,6 +1360,9 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::DeviceEncryptionKey => ("DeviceEncryptionKey", None),
 		CoreStorageKey::SsoResponderRequestLedger { .. } => ("SsoResponderRequestLedger", None),
 		CoreStorageKey::ProductManifest { product_id } => ("ProductManifest", Some(product_id)),
+		CoreStorageKey::FundingSessions => ("FundingSessions", None),
+		CoreStorageKey::FundingSessionsUnreadable => ("FundingSessionsUnreadable", None),
+		CoreStorageKey::FundingSessionPack => ("FundingSessionPack", None),
 	};
 	Ok(CoreStorageKeyDescription { kind, product_id })
 }
@@ -2142,6 +2159,9 @@ mod tests {
 				"SsoResponderRequestLedger",
 				None,
 			),
+			(CoreStorageKey::FundingSessions, "FundingSessions", None),
+			(CoreStorageKey::FundingSessionsUnreadable, "FundingSessionsUnreadable", None),
+			(CoreStorageKey::FundingSessionPack, "FundingSessionPack", None),
 		] {
 			let description = describe_core_storage_key(&key.encode()).expect("valid key");
 			assert_eq!(description.kind, kind);
@@ -2816,11 +2836,57 @@ pub trait ChatPlatform: Send + Sync {
 	) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>>;
 }
 
+/// A funding session as the host overlay needs it to open on the right screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FundingPresentation {
+	/// Session id.
+	pub intent: String,
+	/// Which way value moves, which decides the screen the overlay opens on.
+	pub direction: FundingDirection,
+	/// Amount the caller asked for, or `None` to let the user choose.
+	pub amount: Option<u128>,
+}
+
+/// How the user left the funding overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum FundingPresentOutcome {
+	/// The user went ahead; the session runs on without the overlay.
+	Started,
+	/// The user closed the overlay before starting; the core discards the
+	/// session.
+	Dismissed,
+}
+
+/// Host-implemented funding surface: the native overlay a funding session
+/// runs in. Optional: a host that omits it leaves funding requests answered
+/// `Unsupported`.
+#[async_trait]
+pub trait FundingPlatform: Send + Sync {
+	/// Show the funding overlay for a session that `product` opened, or the
+	/// host itself when `product` is `None`.
+	async fn present_funding(
+		&self,
+		product: Option<&ProductContext>,
+		session: FundingPresentation,
+	) -> Result<FundingPresentOutcome, GenericError>;
+
+	/// Observe a session's status change, for host UI such as the in-flight
+	/// pill.
+	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
+		let _ = (intent, status);
+	}
+}
+
 /// Host-implemented balance view: what a payment request can spend right now,
 /// the figure the host checks a payment against. Optional: a host that omits
 /// it leaves balance subscriptions answered `Unsupported`.
 ///
-/// The core asks for the product's balance access before calling here.
+/// The balance is the user's, per purse, not the product's: every product
+/// following a purse sees the same figure. The core asks for the product's
+/// balance access before calling here, and checks it again before passing on
+/// each balance the stream emits, so a revoked grant ends the stream with
+/// `PermissionDenied`.
 pub trait BalancePlatform: Send + Sync {
 	/// Emit the balance of `purse` (`None` for the main purse) now and on
 	/// every change.

@@ -71,7 +71,11 @@ protocol AssetDetailsInteractorOutputProtocol: AnyObject {
     /// One call, because the presenter rebuilds the whole breakdown on receipt: delivering the
     /// figures and the holdings separately would render the new totals beside the previous
     /// holdings, which is the mismatch `CoinageSummary` exists to prevent.
-    func didReceive(coinageAmounts: CoinageAmounts, holdings: CoinageHoldings)
+    func didReceive(
+        coinageAmounts: CoinageAmounts,
+        holdings: CoinageHoldings,
+        denominations: DenominationBreakdownContext
+    )
     #if TESTNET_FEATURE
         func didCompleteTopUp(_ result: Result<Void, Error>)
     #endif

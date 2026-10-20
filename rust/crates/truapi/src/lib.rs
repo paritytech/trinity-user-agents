@@ -99,15 +99,15 @@ pub mod latest {
 		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
 		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
-		Dimensions, Effect, EffectProps, GenericError, HorizontalAlignment,
-		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
-		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
-		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
-		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
-		HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
-		OperationStartedResult, PaymentTopUpSource, PocketCard, ProductAccount, ProductAccountId,
-		ProductProofContext, RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest,
-		RemotePermission, RemoteStatementStoreCreateProofError,
+		Dimensions, Effect, EffectProps, FundingDirection, FundingFailure, GenericError,
+		HorizontalAlignment, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
+		HostAccountGetError, HostAccountListRingVrfKeysRequest,
+		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
+		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
+		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
+		ImageSource, Modifier, OperationStartedResult, PaymentTopUpSource, PocketCard,
+		ProductAccount, ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey,
+		RemoteChainTransactionStopRequest, RemotePermission, RemoteStatementStoreCreateProofError,
 		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
 		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
 		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
@@ -286,6 +286,21 @@ pub mod latest {
 	pub type HostLocaleSubscribeItem = LatestOf<versioned::locale::HostLocaleSubscribeItem>;
 	/// Navigation request error.
 	pub type HostNavigateToError = LatestOf<versioned::system::HostNavigateToError>;
+	/// Funding request.
+	pub type HostFundingRequest = LatestOf<versioned::funding::HostFundingRequest>;
+	/// Accepted funding intent.
+	pub type HostFundingResponse = LatestOf<versioned::funding::HostFundingResponse>;
+	/// Funding request failure.
+	pub type HostFundingError = LatestOf<versioned::funding::HostFundingError>;
+	/// Request to watch a funding session.
+	pub type HostFundingStatusSubscribeRequest =
+		LatestOf<versioned::funding::HostFundingStatusSubscribeRequest>;
+	/// Progress of a funding session.
+	pub type HostFundingStatusSubscribeItem =
+		LatestOf<versioned::funding::HostFundingStatusSubscribeItem>;
+	/// Failure watching a funding session.
+	pub type HostFundingStatusSubscribeError =
+		LatestOf<versioned::funding::HostFundingStatusSubscribeError>;
 	/// Payment balance subscription request.
 	pub type HostPaymentBalanceSubscribeRequest =
 		LatestOf<versioned::payment::HostPaymentBalanceSubscribeRequest>;
@@ -796,6 +811,8 @@ pub use runtime::{
 	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
 	PairingProposal, PairingProposalMetadata, ResponderExit,
 };
+#[cfg(feature = "runtime")]
+pub use unix_time::current_unix_millis;
 
 #[cfg(feature = "runtime")]
 #[cfg(all(target_arch = "wasm32", feature = "wasm-signing-host"))]
