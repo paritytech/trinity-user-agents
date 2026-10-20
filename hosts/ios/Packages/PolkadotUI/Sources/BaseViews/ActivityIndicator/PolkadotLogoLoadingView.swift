@@ -1,7 +1,7 @@
 import UIKit
 import DesignSystem
 
-/// Loading indicator drawn as the six-petal Polkadot mark with a highlight walking around it.
+/// Loading indicator drawn as the six-petal Polkadot mark, fading between full and reduced opacity.
 /// Animations are re-installed whenever the view lands in a window or the app returns to the
 /// foreground, so `startAnimating()` is safe to call before the view is in the hierarchy.
 public final class PolkadotLogoLoadingView: UIView, LoadIndicatorRepresentable {
@@ -18,10 +18,9 @@ public final class PolkadotLogoLoadingView: UIView, LoadIndicatorRepresentable {
     }
 
     private let markLayer = CALayer()
-    private var petalLayers: [CALayer] = []
     private var foregroundObserver: NSObjectProtocol?
 
-    public init(size: CGFloat = Constants.defaultSize, color: UIColor = .fgPrimary) {
+    public init(size: CGFloat = Constants.defaultSize, color: UIColor = .fgTertiary) {
         self.size = size
         super.init(frame: .zero)
         setupLayers(color: color)
@@ -86,27 +85,20 @@ public extension PolkadotLogoLoadingView {
 
 private extension PolkadotLogoLoadingView {
     enum AnimationKey {
-        static let opacity = "petal.opacity"
-        static let scale = "petal.scale"
+        static let pulse = "mark.pulse"
     }
 
     func setupLayers(color: UIColor) {
         markLayer.bounds = CGRect(origin: .zero, size: PolkadotLogoMark.viewBox)
         layer.addSublayer(markLayer)
 
-        petalLayers = PolkadotLogoMark.petals.map { petal in
-            let container = CALayer()
-            container.bounds = markLayer.bounds
-            container.position = CGPoint(x: markLayer.bounds.midX, y: markLayer.bounds.midY)
-            container.opacity = Float(PolkadotLogoLoadingAnimation.restingOpacity)
-            container.addSublayer(makeShape(path: petal.fill, fill: color, stroke: nil))
-            container.addSublayer(makeShape(
+        for petal in PolkadotLogoMark.petals {
+            markLayer.addSublayer(makeShape(path: petal.fill, fill: color, stroke: nil))
+            markLayer.addSublayer(makeShape(
                 path: petal.stroke,
                 fill: nil,
                 stroke: color.withAlphaComponent(Constants.strokeAlpha)
             ))
-            markLayer.addSublayer(container)
-            return container
         }
     }
 
@@ -149,38 +141,25 @@ private extension PolkadotLogoLoadingView {
 
         guard !UIAccessibility.isReduceMotionEnabled else { return }
 
-        for (index, petal) in petalLayers.enumerated() {
-            let keyframes = PolkadotLogoLoadingAnimation.keyframes(index: index)
-            petal.add(
-                makeKeyframeAnimation(keyPath: "opacity", values: keyframes.opacity),
-                forKey: AnimationKey.opacity
-            )
-            petal.add(
-                makeKeyframeAnimation(keyPath: "transform.scale", values: keyframes.scale),
-                forKey: AnimationKey.scale
-            )
-        }
+        let pulse = CABasicAnimation(keyPath: "opacity")
+        pulse.fromValue = 1
+        pulse.toValue = Constants.pulseMinOpacity
+        pulse.duration = Constants.pulseHalfCycle
+        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        pulse.autoreverses = true
+        pulse.repeatCount = .infinity
+        markLayer.add(pulse, forKey: AnimationKey.pulse)
     }
 
     func removeAnimations() {
-        for petal in petalLayers {
-            petal.removeAnimation(forKey: AnimationKey.opacity)
-            petal.removeAnimation(forKey: AnimationKey.scale)
-        }
-    }
-
-    func makeKeyframeAnimation(keyPath: String, values: [Double]) -> CAKeyframeAnimation {
-        let animation = CAKeyframeAnimation(keyPath: keyPath)
-        animation.values = values
-        animation.calculationMode = .linear
-        animation.duration = PolkadotLogoLoadingAnimation.cycle
-        animation.repeatCount = .infinity
-        return animation
+        markLayer.removeAnimation(forKey: AnimationKey.pulse)
     }
 }
 
 private extension PolkadotLogoLoadingView.Constants {
     static let fadeDuration: TimeInterval = 0.25
+    static let pulseHalfCycle: TimeInterval = 0.7
+    static let pulseMinOpacity: Float = 0.3
     static let strokeAlpha: CGFloat = 0.12
     static let strokeWidth: CGFloat = 1
 }

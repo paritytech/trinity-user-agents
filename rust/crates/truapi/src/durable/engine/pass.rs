@@ -331,7 +331,7 @@ mod tests {
 			DurableRegistry::new().with_domain(test_domain(), says(completed_at_finalized()));
 		let (_dir, engine, _timer) = engine_with(&chain, registry);
 		let id = insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
-		engine.ownership.acquire(id, extrinsic(1, 100, 64).extrinsic.hash());
+		engine.ownership.acquire(id);
 
 		block_on(engine.run_pass());
 

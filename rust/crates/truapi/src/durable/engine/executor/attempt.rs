@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use subxt::utils::H256;
-use tracing::{debug, warn};
+use tracing::warn;
 
 use crate::{
 	chain::MortalExtrinsic,
@@ -45,17 +45,13 @@ pub async fn start_built_attempt(
 	genesis: H256,
 	extrinsic: MortalExtrinsic,
 ) -> LedgerChange {
-	let tx_hash = extrinsic.extrinsic.hash();
-	if !engine.ownership.acquire(id, tx_hash) {
-		debug!(id = id.0, ?tx_hash, "durable rebuild repeats a released attempt");
-		return LedgerChange::Unchanged;
-	}
+	let claim = engine.ownership.acquire(id);
 	let recorded = record_attempt(engine, id, &extrinsic).await;
 	if recorded == LedgerChange::Unchanged {
-		engine.ownership.abandon_all(&[(id, tx_hash)]);
+		engine.ownership.release(claim);
 		return recorded;
 	}
-	let attempt = Attempt::new(id, genesis, &extrinsic);
+	let attempt = Attempt::new(claim, genesis, &extrinsic);
 	spawn_watch(engine, attempt, extrinsic.extrinsic);
 	recorded
 }

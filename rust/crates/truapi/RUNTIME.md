@@ -24,8 +24,9 @@ dispatcher → role-neutral product runtime) is minted once per host↔product
 connection by the role handle and lives for that product's whole session; a
 **shared per-host** band owns role-neutral infrastructure (`RuntimeServices`)
 and the role object (`PairingHost` or `SigningHost`), which is itself the
-`ProductAuthority`. Pure `host_logic` is a no-I/O library both bands call, not a
-stage in the frame path; the host's `Platform` impl is the syscall floor.
+`ProductAuthority` and the `HostSession`. Pure `host_logic` is a no-I/O library
+both bands call, not a stage in the frame path; the host's `Platform` impl is
+the syscall floor.
 
 ```text
    ┌───────────────────────────────────────────────────────┐
@@ -52,14 +53,16 @@ stage in the frame path; the host's `Platform` impl is the syscall floor.
    └───────────────────────────────────────────────────────┘
                               │  wallet-authority tail :
                               │  sign · alias · entropy · alloc
-                              │  via  Arc<dyn ProductAuthority>
+                              │  via  ProductAccounts, the role
+                              │  bound to this product
                               ▼
 
  ══ shared per host app ( one per host, all connections ) ══════
      the PairingHostRuntime | SigningHostRuntime handle owns both:
    ┌─────────────────────────────┐   ┌────────────────────────┐
    │ role  =  ProductAuthority   │   │ RuntimeServices        │
-   │ PairingHost | SigningHost   │   │ platform · chain · RPC │
+   │          + HostSession      │   │ platform · chain · RPC │
+   │ PairingHost | SigningHost   │   │                        │
    └─────────────────────────────┘   └────────────────────────┘
               │
               │  PairingHost only : encrypted SSO channel
@@ -84,9 +87,12 @@ stage in the frame path; the host's `Platform` impl is the syscall floor.
 `ProductRuntimeHost` handles everything role-neutral (id normalization,
 permission gating, confirmation, soft product-key derivation), then delegates
 the wallet-authority tail (`sign_*`, `create_transaction`, `account_alias`,
-`create_proof`, `allocate_resources`, `derive_entropy`) through an
-`Arc<dyn ProductAuthority>` handle with an `AuthoritySession` snapshot the
-role revalidates before touching key material.
+`create_proof`, `allocate_resources`, `derive_entropy`) through a
+`ProductAccounts` handle bound to its product, with an `AuthoritySession`
+snapshot the role revalidates before touching key material. Its
+per-connection state (adapters, permissions, action channels, open operations
+and its own chain connection) lives in a `ProductConnection`, and login, logout
+and connection state go through the role's `HostSession`.
 
 `runtime.rs` owns the product runtime and shared helpers. The trait adapters
 are grouped by surface under `runtime/capabilities/`; cross-capability fixtures
@@ -200,6 +206,9 @@ touching the session or other products, and `notify_contacts_changed` to drop
 the contact handles the core cached once a contact is removed or blocked. Calling the wrong operation is
 a compile error, not a runtime `Unavailable`.
 
+A local session's usernames come from the dotNS contracts on Asset Hub, read
+after activation. A name the host passes is shown until a record answers.
+
 `SigningHostConfig.network_suffix` is the network's bare dotNS TLD (`dot`,
 `paseo`, or `testnet`). The shell supplies it alongside the chain genesis hashes
 from the same network configuration used by wallet onboarding. It must match
@@ -254,8 +263,9 @@ is live.
 
 ### The two roles
 
-Both implement the role-neutral **`ProductAuthority`** trait; each owns its
-role-specific lifecycle, so no method exists on a role that can't mean it:
+Both implement the role-neutral **`ProductAuthority`** and **`HostSession`**
+traits; each owns its role-specific lifecycle, so no method exists on a role
+that can't mean it:
 
 - **`PairingHost`** (seedless): the user's keys live in an external wallet, so
   signing/aliases/entropy relay over an encrypted SSO channel (statement store
@@ -432,30 +442,66 @@ AutoSigning without approval. Legacy-account signing still asks the user.
 - `PocketPlatform`: stream the product's Pocket card collection and remove a
   card from it. The host owns the collection and decides which cards are
   privileged.
+- `FundingPlatform`: show the native funding overlay for a session, with its
+  direction and amount and the product that opened it, and report whether the
+  user started or dismissed it. Installed with `set_funding_platform`; the
+  Balance card opens sessions with `open_funding`. The core owns the sessions,
+  persists them, expires them, and answers Funding calls `Unsupported` while no
+  overlay is installed.
+  Native hosts reach this through `NativeTrUApiHostRuntime`:
+  `set_funding_callbacks` (the overlay), `open_funding`,
+  `funding_session`, `funding_sessions`, `funding_history`,
+  `cancel_funding` and `acknowledge_funding_session`. Amounts cross the FFI as decimal strings.
+  The host owns the funding history. A session is stored only once the user
+  starts it in the overlay. `funding_sessions` lists sessions in flight first,
+  then ended ones the host has not recorded, each newest first. An ended
+  session is handed to the host through `funding_session_changed` each time
+  funding resumes until the host calls `acknowledge_funding_session`, so the
+  host's history writes every outcome once. After that the core keeps the
+  newest 64 recorded sessions per product in full and compacts older ones
+  into the session pack (intent, owner, direction, amounts, outcome and
+  times), which it never trims, so a product watching a compacted session
+  still gets its terminal item. It keeps the 200 newest ended sessions the
+  host has not recorded in full too, and compacts older ones the same way.
+  `funding_history` lists every ended session the host recorded or the core
+  compacted, as a summary newest first, so a host that lost its history
+  rebuilds it from there. A product opens a session with
+  `request({ id, direction, amount? })` and watches it with
+  `statusSubscribe({ id })`; the core keeps it under the id hashed with the
+  product, so a product that reloads under the overlay still finds it, and a
+  reused id answers `AlreadyExists`. The overlay runs on a task of its own,
+  so a request that goes away cannot leave the session presenting; one the
+  user dismisses ends its watchers as `Failed { Cancelled }`. Sessions and
+  the pack are versioned blobs: a corrupt one is set aside under
+  `FundingSessionsUnreadable`, and one in a newer format is left untouched
+  while funding answers a host failure. Products see a session in flight as
+  `InProgress`.
 - `BalancePlatform`: stream what a payment request can spend right now, the
   current value first and then each change. Installed with
   `set_balance_platform`; native hosts use `set_balance_callbacks` with
   `notify_balance`. The core requires a session and the product's
   `BalanceAccess` remote permission, asking for it on the first subscription
-  and answering `PermissionDenied` when the user refuses. A host
-  `InsufficientBalance` reaches a product without that permission as
-  `Rejected`. Without a balance view, `balanceSubscribe` answers
-  `Unsupported`.
+  and answering `PermissionDenied` when the user refuses. The balance is the
+  user's, per purse: one `notify_balance` reaches every product following the
+  purse, and the core checks each product's permission again before passing a
+  balance on, so a revoked grant ends that product's stream with
+  `PermissionDenied`. A host `InsufficientBalance` reaches a product without
+  that permission as `Rejected`. Without a balance view, `balanceSubscribe`
+  answers `Unsupported`.
 - `PaymentPlatform`: pay from the user's balance to an account once the user
   approves, and stream each payment's status by its caller-chosen id.
   Installed with `set_payment_platform`; native hosts use
   `set_payment_callbacks` with `notify_payment_status`. The core requires a
   session and hands the host each id hashed with the product. Without it,
-  `request` and
-  `statusSubscribe` answer `Unsupported`.
+  `request` and `statusSubscribe` answer `Unsupported`.
 - `TopUpPlatform`: claim a top-up source's funds into the user's balance and
   stream each top-up's status. Installed with `set_top_up_platform`; native
   hosts use `set_top_up_callbacks` with `notify_top_up_status`. The core
-  requires a session and checks the source keys; a `ProductAccount` source is
-  passed through for the host to derive, and hands the host each id hashed
+  requires a session, checks the source keys, passes a `ProductAccount`
+  source through for the host to derive, and hands the host each id hashed
   with the product. The host owns claiming, retries, partial claims and
-  persistence. Without it,
-  `topUp` and `topUpStatusSubscribe` answer `Unsupported`.
+  persistence. Without it, `topUp` and `topUpStatusSubscribe` answer
+  `Unsupported`.
 - `ExpandedCardHost`: show or hide the card face drawn above an opened card's
   Widget. It is carried per product connection on `ConnectionAdapters`, so only
   the Widget under a card reaches that card.
@@ -484,10 +530,15 @@ AutoSigning without approval. Legacy-account signing still asks the user.
 `Platform` is a blanket-implemented supertrait that combines the capability
 traits above except `ChatPlatform`, `ContactsPlatform`, `PermissionStatusHost`,
 `PocketPlatform`, `GamePlatform` and `ScannerPlatform`, which `OptionalPlatform`
-lists instead: a host supplies each only when it can serve it. `ExpandedCardHost`
-is in neither, because it travels per connection rather than with the platform.
-Codegen reads `OptionalPlatform` to emit each listed capability as an optional
-group on the host-callback surface.
+lists instead: a host supplies each only when it can serve it. Four traits are in
+neither. `ExpandedCardHost` travels per connection rather than with the
+platform. `BalancePlatform`, `PaymentPlatform` and `TopUpPlatform` are installed
+on their own, with `set_balance_platform`, `set_payment_platform` and
+`set_top_up_platform` or their native `set_*_callbacks`, so only a Rust or
+native host can serve them: the host-callback bridge cannot yet carry their
+typed errors or their two-argument status streams, so a browser host, and the
+CLI today, answer them `Unsupported`. Codegen reads `OptionalPlatform` to emit each listed capability
+as an optional group on the host-callback surface.
 
 Omitting `ChatPlatform` makes the core answer Chat calls `Unsupported`, and
 omitting `ContactsPlatform`, `PocketPlatform`, `GamePlatform` or

@@ -2,6 +2,8 @@
 //!
 //! Payment returns typed domain errors; CoinPayment returns Unsupported.
 
+use std::sync::Arc;
+
 use futures::{StreamExt, stream::BoxStream};
 use tracing::instrument;
 use truapi::{
@@ -38,7 +40,11 @@ use truapi::{
 
 use super::from_latest_error;
 use crate::{
-	host_internal::extrinsic::sr25519_secret_from_bytes,
+	host_internal::{
+		extrinsic::sr25519_secret_from_bytes,
+		permissions::{PermissionsService, TemporaryPermissions},
+	},
+	platform::{PermissionAuthorizationStatus, PermissionStatusHost, Platform, ProductContext},
 	runtime::{ProductRuntimeHost, payment_id::host_payment_id},
 };
 
@@ -161,13 +167,14 @@ impl Payment for ProductRuntimeHost {
 	{
 		let version = request.version();
 		let latest::HostPaymentBalanceSubscribeRequest { purse } = request.into_latest();
-		let Some(platform) = self.services.balance_platform() else {
+		let Some(platform) = self.connection.services.balance_platform() else {
 			return Subscription::interrupted(CallError::Unsupported);
 		};
 		if let Err(error) = self.require_session() {
 			return Subscription::interrupted(error);
 		}
 		if let Err(error) = self
+			.connection
 			.require_remote_permission(
 				latest::RemotePermission::BalanceAccess,
 				latest::HostPaymentBalanceSubscribeError::PermissionDenied,
@@ -176,7 +183,8 @@ impl Payment for ProductRuntimeHost {
 		{
 			return Subscription::interrupted(from_latest_error(error, version));
 		}
-		versioned_subscription(platform.subscribe_balance(&self.product, purse), version)
+		let balances = platform.subscribe_balance(&self.connection.product, purse);
+		versioned_subscription(self.while_balance_access_holds(balances), version)
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "payment.request"))]
@@ -200,14 +208,17 @@ impl Payment for ProductRuntimeHost {
 	) -> Subscription<HostPaymentStatusSubscribeItem, CallError<HostPaymentStatusSubscribeError>> {
 		let version = request.version();
 		let latest::HostPaymentStatusSubscribeRequest { id } = request.into_latest();
-		let Some(platform) = self.services.payment_platform() else {
+		let Some(platform) = self.connection.services.payment_platform() else {
 			return Subscription::interrupted(CallError::Unsupported);
 		};
 		if let Err(error) = self.require_session() {
 			return Subscription::interrupted(error);
 		}
 		versioned_subscription(
-			platform.subscribe_payment_status(&self.product, host_payment_id(&self.product, id)),
+			platform.subscribe_payment_status(
+				&self.connection.product,
+				host_payment_id(&self.connection.product, id),
+			),
 			version,
 		)
 	}
@@ -236,14 +247,17 @@ impl Payment for ProductRuntimeHost {
 	> {
 		let version = request.version();
 		let latest::HostPaymentTopUpStatusSubscribeRequest { id } = request.into_latest();
-		let Some(platform) = self.services.top_up_platform() else {
+		let Some(platform) = self.connection.services.top_up_platform() else {
 			return Subscription::interrupted(CallError::Unsupported);
 		};
 		if let Err(error) = self.require_session() {
 			return Subscription::interrupted(error);
 		}
 		versioned_subscription(
-			platform.subscribe_top_up_status(&self.product, host_payment_id(&self.product, id)),
+			platform.subscribe_top_up_status(
+				&self.connection.product,
+				host_payment_id(&self.connection.product, id),
+			),
 			version,
 		)
 	}
@@ -251,23 +265,68 @@ impl Payment for ProductRuntimeHost {
 
 impl ProductRuntimeHost {
 	/// `Denied` unless a pairing session is connected.
-	fn require_session<E>(&self) -> Result<(), CallError<E>> {
-		match self.authority.current_session() {
+	pub(crate) fn require_session<E>(&self) -> Result<(), CallError<E>> {
+		match self.accounts.current_session() {
 			Some(_) => Ok(()),
 			None => Err(CallError::Denied),
 		}
 	}
 
+	/// Pass `balances` through while the product still holds balance access,
+	/// checked again before each one. A host pushes a purse's balance to every
+	/// product following it, so a grant revoked mid-stream ends the stream
+	/// with `PermissionDenied` instead of letting later balances through.
+	fn while_balance_access_holds(
+		&self,
+		balances: BoxStream<
+			'static,
+			Result<
+				latest::HostPaymentBalanceSubscribeItem,
+				latest::HostPaymentBalanceSubscribeError,
+			>,
+		>,
+	) -> BoxStream<
+		'static,
+		Result<latest::HostPaymentBalanceSubscribeItem, latest::HostPaymentBalanceSubscribeError>,
+	> {
+		let check = Arc::new(self.balance_access_check());
+		balances
+			.then(move |balance| {
+				let check = check.clone();
+				async move {
+					if check.holds().await {
+						balance
+					} else {
+						Err(latest::HostPaymentBalanceSubscribeError::PermissionDenied)
+					}
+				}
+			})
+			// The runtime stops polling at the first `Err`; ending here keeps
+			// the subscription's "at most one `Err`" for anything else polling
+			// it, since every later push would be denied again.
+			.scan(false, |denied, balance| {
+				let next = (!*denied).then_some(balance);
+				*denied = matches!(
+					next,
+					Some(Err(latest::HostPaymentBalanceSubscribeError::PermissionDenied))
+				);
+				futures::future::ready(next)
+			})
+			.boxed()
+	}
+
 	/// Whether the product already holds balance access, without asking.
 	async fn holds_balance_access(&self) -> bool {
-		matches!(
-			self.permissions_service()
-				.peek_remote(&latest::RemotePermissionRequest {
-					permission: latest::RemotePermission::BalanceAccess,
-				})
-				.await,
-			Ok(crate::platform::PermissionAuthorizationStatus::Authorized)
-		)
+		self.balance_access_check().holds().await
+	}
+
+	fn balance_access_check(&self) -> BalanceAccessCheck {
+		BalanceAccessCheck {
+			platform: self.connection.platform.clone(),
+			status: self.connection.permission_status.clone(),
+			temporary: self.connection.temporary_permissions.clone(),
+			product: self.connection.product.clone(),
+		}
 	}
 
 	/// Ask the host to collect `request` from the user, under the id the core
@@ -276,13 +335,13 @@ impl ProductRuntimeHost {
 		&self,
 		mut request: latest::HostPaymentRequest,
 	) -> Result<(), CallError<latest::HostPaymentError>> {
-		let platform = self.services.payment_platform().ok_or(CallError::Unsupported)?;
+		let platform = self.connection.services.payment_platform().ok_or(CallError::Unsupported)?;
 		self.require_session()?;
 		if request.amount == 0 {
 			return Err(CallError::Domain(latest::HostPaymentError::InvalidAmount));
 		}
-		request.id = host_payment_id(&self.product, request.id);
-		match platform.request_payment(&self.product, request).await {
+		request.id = host_payment_id(&self.connection.product, request.id);
+		match platform.request_payment(&self.connection.product, request).await {
 			Ok(()) => Ok(()),
 			// Only a product the user lets see the balance may learn that the
 			// balance was short; to any other it reads as a refusal.
@@ -301,7 +360,7 @@ impl ProductRuntimeHost {
 		&self,
 		mut request: latest::HostPaymentTopUpRequest,
 	) -> Result<(), CallError<latest::HostPaymentTopUpError>> {
-		let platform = self.services.top_up_platform().ok_or(CallError::Unsupported)?;
+		let platform = self.connection.services.top_up_platform().ok_or(CallError::Unsupported)?;
 		self.require_session()?;
 		if request.amount == 0 {
 			return Err(CallError::Domain(latest::HostPaymentTopUpError::InvalidAmount));
@@ -309,8 +368,36 @@ impl ProductRuntimeHost {
 		if !source_keys_are_valid(&request.source) {
 			return Err(CallError::Domain(latest::HostPaymentTopUpError::InvalidSource));
 		}
-		request.id = host_payment_id(&self.product, request.id);
-		platform.top_up(&self.product, request).await.map_err(CallError::Domain)
+		request.id = host_payment_id(&self.connection.product, request.id);
+		platform
+			.top_up(&self.connection.product, request)
+			.await
+			.map_err(CallError::Domain)
+	}
+}
+
+/// What a balance access lookup reads, owned so a stream can repeat it for
+/// each balance a host pushes.
+struct BalanceAccessCheck {
+	platform: Arc<dyn Platform>,
+	status: Option<Arc<dyn PermissionStatusHost>>,
+	temporary: Arc<TemporaryPermissions>,
+	product: ProductContext,
+}
+
+impl BalanceAccessCheck {
+	/// Whether the product holds balance access, without asking.
+	async fn holds(&self) -> bool {
+		matches!(
+			PermissionsService::new(self.platform.as_ref(), self.platform.as_ref(), &self.product)
+				.with_status_host(self.status.as_deref())
+				.with_temporary_permissions(self.temporary.clone())
+				.peek_remote(&latest::RemotePermissionRequest {
+					permission: latest::RemotePermission::BalanceAccess,
+				})
+				.await,
+			Ok(PermissionAuthorizationStatus::Authorized)
+		)
 	}
 }
 

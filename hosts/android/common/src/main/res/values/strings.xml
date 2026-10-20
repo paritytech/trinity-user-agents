@@ -520,6 +520,9 @@
     <string name="chat_message_compaction_unavailable">Some messages could not be retrieved and are permanently unavailable.</string>
     <string name="chat_message_edited">Edited</string>
     <string name="chat_message_edited_time">Edited %s</string>
+    <string name="chat_echo_title">🔊 Echo</string>
+    <string name="chat_echo_watch_time">You watched this message for total of %s</string>
+    <string name="chat_echo_decode_failed">Failed to decode echo message</string>
     <string name="chat_edit_history">Edit history</string>
     <string name="chat_reply_to">Reply to %1$s</string>
 

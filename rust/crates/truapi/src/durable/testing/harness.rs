@@ -168,6 +168,12 @@ impl ScheduledTxHarness {
 		self.heads.unbounded_send(Ok(HeadEvent::Finalized(block(number)))).unwrap();
 	}
 
+	/// Ends the chain's head stream, as a closed node connection does.
+	pub fn end_heads(&mut self) {
+		let (disconnected, _) = mpsc::unbounded();
+		self.heads = disconnected;
+	}
+
 	/// Lets queued work run, so a test can check that something did not
 	/// happen.
 	pub fn settle(&self) {

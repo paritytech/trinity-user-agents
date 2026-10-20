@@ -334,3 +334,133 @@ fn another_rejection_keeps_the_key() {
 		"a rejection that says nothing about the allowance must not evict the key"
 	);
 }
+
+fn sent_methods(platform: &StubPlatform) -> Vec<String> {
+	platform
+		.sent_rpc
+		.lock()
+		.expect("rpc list mutex poisoned")
+		.iter()
+		.map(|request| {
+			let request: serde_json::Value = serde_json::from_str(request).unwrap();
+			request["method"].as_str().unwrap().to_string()
+		})
+		.collect()
+}
+
+/// A Bulletin `Authorizations` entry for one transaction with `remaining` bytes left.
+fn bulletin_authorization(remaining: u64) -> String {
+	let entry = (0u32, 1u32, 0u64, 0u64, remaining, 100u32).encode();
+	format!(r#""0x{}""#, hex::encode(entry))
+}
+
+/// A payload the authorization cannot hold is extended before it is signed,
+/// rather than signed, rejected by the chain and signed again.
+#[test]
+fn a_preimage_larger_than_the_bulletin_authorization_extends_it_before_submitting() {
+	let header = r#"{"number":"0x1"}"#.to_string();
+	let platform = Arc::new(StubPlatform {
+		remote_permission_decisions: std::sync::Mutex::new(
+			[crate::platform::PermissionDecision::AllowAlways].into(),
+		),
+		rpc_method_responses: vec![
+			("state_getStorage", bulletin_authorization(4)),
+			("state_getStorage", bulletin_authorization(4)),
+			("state_getStorage", bulletin_authorization(4)),
+			("chain_getHeader", header.clone()),
+			("chain_getHeader", header.clone()),
+			("chain_getHeader", header),
+		],
+		// The People chain is unreachable, so the extension itself fails.
+		unreachable_genesis: Some([0; 32]),
+		..Default::default()
+	});
+	let (services, signing_host) = signing_runtime_with_platform(platform.clone());
+	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+		.expect("activation succeeds");
+	let runtime = product_runtime(services, signing_host);
+
+	let cx = CallContext::default();
+	let submitted = futures::executor::block_on(async {
+		futures::select! {
+			result = truapi::api::Preimage::submit(
+				&runtime,
+				&cx,
+				truapi::versioned::preimage::RemotePreimageSubmitRequest::V1(
+					b"longer than four bytes".to_vec(),
+				),
+			).fuse() => result.is_ok(),
+			() = futures_timer::Delay::new(std::time::Duration::from_secs(5)).fuse() => {
+				panic!("the submission waited on an unscripted chain read")
+			},
+		}
+	});
+	assert_eq!(
+		(submitted, sent_methods(&platform)),
+		(
+			false,
+			["state_getStorage", "chain_getHeader"]
+				.repeat(3)
+				.iter()
+				.map(|method| method.to_string())
+				.collect()
+		),
+	);
+}
+
+/// A payload the authorization already holds goes straight to the submit,
+/// without asking for more.
+#[test]
+fn a_preimage_the_bulletin_authorization_holds_is_submitted_without_extending_it() {
+	let header = r#"{"number":"0x1"}"#.to_string();
+	let platform = Arc::new(StubPlatform {
+		remote_permission_decisions: std::sync::Mutex::new(
+			[crate::platform::PermissionDecision::AllowAlways].into(),
+		),
+		rpc_method_responses: vec![
+			("state_getStorage", bulletin_authorization(64)),
+			("state_getStorage", bulletin_authorization(64)),
+			("chain_getHeader", header.clone()),
+			("chain_getHeader", header),
+			("chainHead_v1_follow", "null".to_string()),
+		],
+		unreachable_genesis: Some([0; 32]),
+		..Default::default()
+	});
+	let (services, signing_host) = signing_runtime_with_platform(platform.clone());
+	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+		.expect("activation succeeds");
+	let runtime = product_runtime(services, signing_host);
+
+	let cx = CallContext::default();
+	let submitted = futures::executor::block_on(async {
+		futures::select! {
+			result = truapi::api::Preimage::submit(
+				&runtime,
+				&cx,
+				truapi::versioned::preimage::RemotePreimageSubmitRequest::V1(b"fits".to_vec()),
+			).fuse() => result.is_ok(),
+			() = futures_timer::Delay::new(std::time::Duration::from_secs(5)).fuse() => {
+				panic!("the submission waited on an unscripted chain read")
+			},
+		}
+	});
+
+	// The scripted Bulletin node drops the follow subscription, so the submit
+	// itself fails; the two authorization reads before it are what matter.
+	assert_eq!(
+		(submitted, sent_methods(&platform)),
+		(
+			false,
+			[
+				"state_getStorage",
+				"chain_getHeader",
+				"state_getStorage",
+				"chain_getHeader",
+				"chainHead_v1_follow",
+			]
+			.map(String::from)
+			.to_vec()
+		),
+	);
+}

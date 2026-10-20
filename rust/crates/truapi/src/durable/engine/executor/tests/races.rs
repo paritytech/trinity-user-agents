@@ -122,3 +122,24 @@ fn a_watched_failure_without_a_policy_is_never_rebuilt() {
 	assert_eq!(harness.policy().batches(), Vec::<Vec<DurableTxId>>::new());
 	assert_eq!(harness.broadcast(), vec![presigned.extrinsic]);
 }
+
+/// A policy may rebuild a transaction into the bytes of the attempt that
+/// just failed, for example when nothing it signs over has changed. That is
+/// a new attempt like any other: it is broadcast and watched, so its own
+/// verdict reaches the policy, rather than being refused forever.
+#[test]
+fn a_rebuild_into_the_failed_attempts_bytes_is_broadcast_again() {
+	let presigned = extrinsic(1, 100, 64);
+	let same_bytes = Preparation::Ready(presigned.clone());
+	let rebuilding_the_same =
+		ScriptedPolicy::answering_with(move |ids| answer_all_with(ids, same_bytes.clone()));
+	let harness = ScheduledTxHarness::with_policy(rebuilding_the_same);
+	let (id, events) = register_watched(&harness, presigned.clone(), Some(test_plan(vec![])));
+
+	fail_on_chain(&harness, &events, &presigned);
+
+	let twice = vec![presigned.extrinsic.clone(), presigned.extrinsic];
+	wait_until(|| harness.broadcast() == twice, "the rebuilt bytes are broadcast");
+	assert_eq!(harness.status(id), DurableTxStatus::Pending);
+	assert!(harness.engine().ownership.is_owned(id));
+}

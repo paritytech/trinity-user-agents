@@ -110,6 +110,8 @@ rust/crates/
   truapi-macros/         TrUAPI wire annotations and inter-host SSO proc macros
   truapi-provider/       Network provider backends (WebSocket RPC or smoldot light-client) and chain-access traits
   truapi-verifiable/     Ring-VRF operations over `verifiable`; a lazily loaded WASM module in the browser
+  trinity-stack/         Trinity stack descriptors: parse, verify, sign, links, reader state;
+                         conformance vectors and JSON Schema
 js/packages/
   truapi/                  @parity/truapi TypeScript client
   truapi-host/            @parity/truapi-host: WASM-backed host runtime; entries `.`
@@ -120,6 +122,8 @@ js/packages/
                           `/testing/dev-accounts`, `/testing/host-page`
   truapi-provider/         @parity/truapi-provider: WASM ChainProvider backends
                           (embedded smoldot light client + remote WebSocket RPC)
+  trinity-stack/           @parity/trinity-stack: the trinity-stack crate as WASM, plus
+                          reading with a store and publishing
 js/container/              TS lockdown container for the iOS host web view; bundles into
                            ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js
 android/truapi-host/       Kotlin host adapter package over the truapi UniFFI core;
@@ -211,6 +215,9 @@ ready connections share an entry within that product's registry. Closing a produ
 removes its registry, rejects delayed setup, and aborts its established follows;
 closed product IDs are not retained.
 
+Statement submissions and allowance operations reuse the core's People-chain RPC
+client. Statement subscriptions each open their own connection.
+
 A host that serves chain traffic itself embeds the `truapi-provider` crate: an
 embedded smoldot light client plus a bundled chain-spec catalog, addressed by
 genesis hash, so the host ships no chain specs and never refreshes them. The light
@@ -261,6 +268,14 @@ policy too.
 The host keeps recovery alive. `durableWorkChanged(pending: true)` asks it to
 run a background task that awaits `runDurableRecovery()`, which returns once
 nothing is live: a WorkManager worker on Android, a `BGProcessingTask` on iOS.
+
+### Trinity stack descriptors
+
+A stack descriptor describes one deployment of chains and services, as
+[RFC: Trinity stack descriptor](docs/rfcs/trinity-stack-descriptor.md) defines it. The
+[`trinity-stack`](rust/crates/trinity-stack) crate holds every rule a reader applies and the
+conformance vectors. The plan for it and the tools on top of it is in
+[docs/design/trinity-stack-library.md](docs/design/trinity-stack-library.md).
 
 ### Wire debugger
 
@@ -337,6 +352,7 @@ make e2e-signing-cli                # same direct signing-host phase
 make e2e-pairing-cli                # same paired pairing-host phase
 make e2e-chat-cli                   # chat content screening against a chat signing-host
 make e2e-pocket-cli                 # Pocket protocol check against a Pocket signing-host
+make e2e-funding-cli                # funding requests and statuses against a scripted funding host
 ```
 
 The Pocket phase runs its product as a Worker execution, the only execution
@@ -596,7 +612,7 @@ keystore this repository does not hold.
 Secrets: `GOOGLE_SERVICES_JSON_BASE64`, `CI_GITHUB_KEYSTORE_KEY_FILE`,
 `CI_KEYSTORE_PASS`, `CI_KEYSTORE_KEY_ALIAS`, `CI_KEYSTORE_KEY_PASS`,
 `FIRESTORE_DATABASE_ID`, `GOOGLE_OAUTH_ID`, `GOOGLE_PROJECT_ID`,
-`NIGHTLY_FUNDING_MNEMONIC`, `SENTRY_DSN`, `ANDROID_FIREBASE_NIGHTLY_APP_ID`,
+`NIGHTLY_FUNDING_MNEMONIC`, `SENTRY_DSN_ANDROID`, `ANDROID_FIREBASE_NIGHTLY_APP_ID`,
 `ANDROID_FIREBASE_APP_ID`, `GCP_WORKLOAD_IDENTITY_PROVIDER`,
 `GCP_SERVICE_ACCOUNT`.
 

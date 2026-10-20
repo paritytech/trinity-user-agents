@@ -1136,6 +1136,7 @@ pub async fn allocate_bulletin_allowance(
 		&bulletin_rpc,
 		&target,
 		current_allowance,
+		1,
 		BULLETIN_AUTHORIZATION_WAIT,
 	)
 	.await?;
@@ -1310,7 +1311,7 @@ mod tests {
 	use crate::{
 		host_logic::statement_store::decode_verified_statement_data,
 		platform::{HostInfo, Platform, PlatformInfo, SigningHostConfig},
-		runtime::{authority::ProductAuthority, services::RuntimeServices},
+		runtime::{HostSession, authority::ProductAuthority, services::RuntimeServices},
 		test_support::{StubPlatform, test_spawner},
 	};
 	use std::sync::Arc;
@@ -1333,7 +1334,8 @@ mod tests {
 			PlatformInfo::default(),
 			[0; 32],
 			[0xbb; 32],
-			[0xcc; 32],
+			// No dotNS Asset Hub, so activation looks up no username.
+			[0; 32],
 			NETWORK_SUFFIX.to_string(),
 		)
 		.expect("signing host config is valid");
