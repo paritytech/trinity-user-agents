@@ -9487,4 +9487,3 @@ fn auth_tokens_need_a_session_and_a_keeper() {
 		)
 	);
 }
-
