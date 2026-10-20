@@ -104,11 +104,13 @@ collection never turns. Closing the card returns it to its front. The host loads
 opens, so turning never waits on it. On an opened card both sides count as on screen, an exception to the renderer's
 Live rule, since the back is one turn away.
 
-The Widget can turn the card too, with `ExpandedCard::set_back_shown`, for example from a button for a user who does not
-know the card turns. The call sets which side is up rather than turning by half a turn, so repeating it changes nothing.
-A call that arrives while the user is dragging the card, to turn it or to move the face, has no effect and is answered
-`UserMoving`. A card without a back answers `NoBack`. Turning while the face is moved away changes the side the face
-shows when it comes back.
+The Widget can turn the card too, with `ExpandedCard::set_back_shown`, for example from a "Show my code" button on its
+page for a user who does not know the card turns. The call names the side to show rather than turning by half a turn, so
+repeating it changes nothing, and it answers once the turn starts. A call while the user is dragging the card, to turn
+it or to move the face, has no effect and is answered `UserMoving`. Asking for the back of a card with no back to show
+right now answers `NoBack`, which may change once the worker draws one. Asking for the front of a card with no back
+succeeds, since the front is up. A product should not undo a turn the user made. Turning while the face is moved away
+changes the side the face shows when it comes back.
 
 ### Lifecycle
 
@@ -322,11 +324,11 @@ pub struct HostExpandedCardSetBackShownRequest {
 }
 
 pub enum HostExpandedCardSetBackShownError {
-    /// The Widget is not shown under its card right now.
+    /// The Widget is not shown under its card right now, such as one the host keeps loaded after the card closed.
     NotPresented,
     /// The user is dragging the card; the request had no effect.
     UserMoving,
-    /// The card has no back to turn to.
+    /// The card has no back to show right now.
     NoBack,
     /// Catch-all.
     Unknown {
@@ -338,8 +340,9 @@ pub enum HostExpandedCardSetBackShownError {
 
 `HostExpandedCardSetFaceShownResponse` and `HostExpandedCardSetBackShownResponse` are bare `V1`s, as `remove_card`'s is.
 Each call acts on the card above the Widget that made it, so no request names a card. An App or Worker caller is
-`Denied`, a host without expanded cards answers `Unsupported`, and a call made while the user is moving the card answers
-`UserMoving`.
+`Denied`, and a host without expanded cards, or one that cannot turn them, answers `Unsupported`. `set_face_shown`
+answers `UserMoving` while the user is moving the face, and `set_back_shown` while the user is turning the card or
+moving the face.
 
 ## Trade-offs
 
@@ -378,5 +381,5 @@ Each call acts on the card above the Widget that made it, so no request names a 
 - **Material effects on a face.** Predefined surface effects a card picks, animated by device orientation. Not specified
   here: a privileged card is host-placed, so a host can attach one by card identity, and anything a third-party card
   picks belongs in the renderer's `Effect` vocabulary.
-- **A tap target that turns the card.** Left for later. It can reuse the same turn, and until then a product can turn
-  the card from its Widget.
+- **A tap target that turns the card.** Left for later. It can reuse the same turn. Until then a product can put a
+  button on its Widget page instead, since a press on the card itself goes to the worker.
