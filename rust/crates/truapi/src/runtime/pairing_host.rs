@@ -20,6 +20,7 @@ use sso_channel::SsoDisconnectMonitor;
 use zeroize::Zeroize;
 
 use super::{
+	HostSession,
 	allowances::{self, AllowanceCacheKey, AllowanceResource},
 	auth_state::AuthStateMachine,
 	authority::{
@@ -66,14 +67,17 @@ use futures::StreamExt;
 use tracing::{instrument, warn};
 use truapi::{
 	CallContext, CallError, latest,
-	versioned::account::{HostRequestLoginError, HostRequestLoginResponse},
+	versioned::{
+		IntoLatest,
+		account::{HostRequestLoginError, HostRequestLoginResponse},
+	},
 };
 use zeroize::Zeroizing;
 
 use super::{
-	ring_vrf_registry::{RingVrfRegistryStore, validate_owner_listing},
+	ring_vrf_registry::{RingVrfRegistryStore, apply_ring_vrf_disclosure, validate_owner_listing},
 	signing_host::ring_vrf::{
-		ChainRingResolver, MemberCandidate, RingResolver, create_proof, development_context_bytes,
+		ChainRingResolver, MemberCandidate, RingResolver, context_bytes, create_proof,
 	},
 };
 
@@ -2155,7 +2159,7 @@ impl PairingHost {
 			self.ring_resolver.validate(&request.payload.ring_location).await?;
 			let vrf = vrf::load().await?;
 			self.current_private_session(session)?;
-			let context = development_context_bytes(&request.payload.context);
+			let context = context_bytes(&request.payload.context);
 			let alias = vrf.alias(&entropy, &context)?;
 			return Ok(latest::ContextualAlias { context, alias: alias.to_vec() });
 		}
@@ -2171,8 +2175,14 @@ impl PairingHost {
 		let (key_handle, access) = self
 			.require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
 			.await?;
-		// A publisher's grant cannot expose its alias in an unrelated product's context.
-		crate::runtime::product_manifest::require_own_context(&access, &request.payload.context)?;
+		// A grant cannot expose the owner's alias in a third product's context unless
+		// that product's manifest grants the caller `context`.
+		crate::runtime::product_manifest::require_context_access(
+			&self.services,
+			&access,
+			&request.payload.context,
+		)
+		.await?;
 		let private_session = self.current_private_session(session)?;
 		if let Some(entropy) = self
 			.local_ring_vrf_entropy_for_ring(
@@ -2189,7 +2199,7 @@ impl PairingHost {
 				.resolve(&request.payload.ring_location, &[MemberCandidate { member }])
 				.await?;
 			self.current_private_session(session)?;
-			let context = development_context_bytes(&request.payload.context);
+			let context = context_bytes(&request.payload.context);
 			let (proof, alias) =
 				create_proof(&vrf, &entropy, &resolved, &context, &request.payload.message)?;
 			return Ok(latest::HostAccountCreateProofResponse {
@@ -2404,17 +2414,6 @@ impl PairingHost {
 	}
 }
 
-fn apply_ring_vrf_disclosure(
-	entries: &mut [latest::RegisteredRingVrfKey],
-	disclosure: latest::RingVrfKeyDisclosure,
-) {
-	if disclosure == latest::RingVrfKeyDisclosure::Anonymized {
-		for entry in entries {
-			entry.public_key = None;
-		}
-	}
-}
-
 fn login_error_reason(err: &CallError<HostRequestLoginError>) -> String {
 	match err {
 		CallError::Domain(HostRequestLoginError::V1(latest::HostRequestLoginError::Unknown {
@@ -2429,6 +2428,34 @@ fn login_error_reason(err: &CallError<HostRequestLoginError>) -> String {
 }
 
 #[async_trait::async_trait]
+impl HostSession for PairingHost {
+	fn session_state(&self) -> Arc<SessionState> {
+		PairingHost::session_state(self)
+	}
+
+	async fn request_login(
+		&self,
+		product: &ProductContext,
+	) -> Result<latest::HostRequestLoginResponse, CallError<latest::HostRequestLoginError>> {
+		PairingHost::request_login(self, product)
+			.await
+			.map(IntoLatest::into_latest)
+			.map_err(|error| error.map_domain(IntoLatest::into_latest))
+	}
+
+	async fn disconnect(&self) {
+		PairingHost::disconnect(self).await;
+	}
+
+	async fn primary_username(&self) -> Option<String> {
+		self.refresh_current_session_identity()
+			.await?
+			.primary_username()
+			.map(str::to_string)
+	}
+}
+
+#[async_trait::async_trait]
 impl ProductAuthority for PairingHost {
 	fn current_session(&self) -> Option<AuthoritySession> {
 		PairingHost::current_session(self)
@@ -2437,10 +2464,6 @@ impl ProductAuthority for PairingHost {
 	#[cfg(feature = "test-host")]
 	fn submits_preimages_locally(&self) -> bool {
 		self.submit_preimages_locally.load(core::sync::atomic::Ordering::Relaxed)
-	}
-
-	fn session_state(&self) -> Arc<SessionState> {
-		PairingHost::session_state(self)
 	}
 
 	#[cfg(test)]
@@ -2455,21 +2478,6 @@ impl ProductAuthority for PairingHost {
 			.lock()
 			.expect("product subtree cache mutex poisoned")
 			.insert((SsoSessionKey::from_session(sso), product_id.to_string()), public_key);
-	}
-
-	async fn request_login(
-		&self,
-		product: &ProductContext,
-	) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
-		PairingHost::request_login(self, product).await
-	}
-
-	async fn disconnect(&self) {
-		PairingHost::disconnect(self).await;
-	}
-
-	async fn refresh_session_identity(&self) -> Option<AuthoritySession> {
-		self.refresh_current_session_identity().await
 	}
 
 	async fn product_subtree_public_key(

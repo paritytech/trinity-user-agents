@@ -20,19 +20,14 @@ import kotlin.math.sqrt
  * still the highlight sits in the same place however the phone is held. Feeding the device's own tilt back
  * in turns the studio the other way, and a coin catches the light as you tilt it, the way a real one does.
  *
- * A sideways movement rolls the studio about the axis you are looking down; leaning the phone back pitches
- * it. That first part is a deliberate choice, not physics, and it is the fix for a light that responded to
- * one direction of tilt and not the other.
+ * The studio is turned by the inverse of the phone's own rotation — pitch for leaning it, yaw for dipping an
+ * edge — so the room stays put while the phone moves under it: tilt the screen to face upward and a face-on
+ * coin mirrors the ceiling; dip the right edge and it mirrors the right wall. The coins themselves never move
+ * with the phone.
  *
- * Turning the studio the way the phone really turned puts a sideways movement about the screen's long axis,
- * which slides the reflection horizontally. This studio is a room: bright above, dark below, and nearly even
- * from side to side. Measured across the whole face of a coin, forty degrees of that turn changes what it
- * reflects by 0.31 one way and by 0.10 the other — a dead side, and correcting the sense of the turn only
- * moved the dead side to the other hand. Rolling the room about the view axis changes it by 0.18 either way,
- * symmetric by construction: a roll about the axis the coin faces cannot care which way it went.
- *
- * It is also what the eye expects. The head does not roll with the phone, so relative to the screen the room
- * is what rolls, and a coin's highlight sweeping around its face is the thing that reads as catching light.
+ * An earlier version rolled the room about the view axis for a sideways tilt, to hide a dead side that came
+ * from the key light sitting off axis against a near-black wall. The room is lifted now (see
+ * [CoinageTuning.ROOM_LIFT]) and the wall is no longer black, so the physical turn is back.
  *
  * `TYPE_GRAVITY` needs no permission and no prompt. It is a fused reading and not present on every device,
  * so the plain accelerometer stands in; at rest the two agree, which is when the studio is allowed to move.
@@ -82,7 +77,7 @@ class CoinageTilt(context: Context) : SensorEventListener {
 
         /** Where the studio sits with the phone here, against this reading as square. */
         fun turnTo(other: Pose): Turn =
-            composed(pitch = scaled(other.lean - lean), roll = scaled(other.sideways - sideways))
+            studioTurn(lean = scaled(other.lean - lean), sideways = scaled(other.sideways - sideways))
 
         /**
          * Eases toward another reading, staying a direction rather than shrinking toward the middle: neutral
@@ -236,16 +231,17 @@ class CoinageTilt(context: Context) : SensorEventListener {
 
     companion object {
         /**
-         * How far the studio turns at the ends of the travel. A whole rotation would swing the highlight
-         * right around the coin, which reads as a spinning lamp rather than a coin in a hand.
-         */
-        const val TRAVEL = 0.9
-
-        /**
          * The tilt that reaches the ends of the travel. Deliberately short of a right angle: nobody turns a
          * phone ninety degrees to look at it, and the whole range should be within a wrist's movement.
          */
         const val RANGE = PI / 4
+
+        /**
+         * How far the studio turns at the ends of the travel: as far as the phone itself, so the room stays
+         * exactly where it is. It was half that while the room's own contrast was untamed; the lifted room
+         * made the natural angle acceptable.
+         */
+        const val TRAVEL = RANGE
 
         /**
          * How quickly a phone that is being held still becomes the new neutral.
@@ -301,27 +297,33 @@ class CoinageTilt(context: Context) : SensorEventListener {
         fun scaled(angle: Double): Double = angle.coerceIn(-RANGE, RANGE) / RANGE * TRAVEL
 
         /**
-         * The two turns as one, in the order they are felt: the room rolls about the view axis, and the
-         * whole of it is then pitched by however far the phone is leaned back.
-         *
-         * Composed as rotations rather than added as a vector. Turns about different axes do not add, and
-         * these two are large enough at the ends of the travel for the difference to show.
+         * Where the studio sits for a phone leaned back by [lean] and with its right edge dipped by
+         * [sideways], both already scaled into the travel: the inverse of the phone's own rotation.
          */
-        fun composed(pitch: Double, roll: Double): Turn {
-            // Quaternion about x, then about z, as a product; then read back as axis times angle.
+        fun studioTurn(lean: Double, sideways: Double): Turn {
+            val turn = leaned(pitch = lean, yaw = -sideways)
+
+            return Turn(-turn.x, -turn.y, -turn.z)
+        }
+
+        /**
+         * A pitch and then a yaw as one turn: the two turns that show a disc's wall. Composed as rotations
+         * rather than added as a vector, because turns about different axes do not add.
+         */
+        fun leaned(pitch: Double, yaw: Double): Turn {
+            // Quaternion about x, then about y, as a product; then read back as axis times angle.
             val halfPitch = pitch / 2
-            val halfRoll = roll / 2
+            val halfYaw = yaw / 2
             val cosPitch = cos(halfPitch)
             val sinPitch = sin(halfPitch)
-            val cosRoll = cos(halfRoll)
-            val sinRoll = sin(halfRoll)
+            val cosYaw = cos(halfYaw)
+            val sinYaw = sin(halfYaw)
 
-            val w = cosPitch * cosRoll
-            val x = sinPitch * cosRoll
-            // The cross term of the two axes, which is exactly what makes a product of rotations differ
-            // from a sum of them.
-            val y = -sinPitch * sinRoll
-            val z = cosPitch * sinRoll
+            val w = cosPitch * cosYaw
+            val x = sinPitch * cosYaw
+            val y = cosPitch * sinYaw
+            // The cross term of the two axes, which is what makes a product of rotations differ from a sum.
+            val z = sinPitch * sinYaw
 
             val sine = sqrt(x * x + y * y + z * z)
 

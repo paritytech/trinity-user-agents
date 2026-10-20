@@ -2,8 +2,10 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models
 
 import androidx.compose.runtime.Immutable
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageCoinTrace
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageScene
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.ImmutableMap
 
 @Immutable
 data class CoinageUiState(
@@ -16,7 +18,9 @@ data class CoinageUiState(
      * is testnet support tooling, and a build that shows the debug card need not offer it.
      */
     val shareLogsEnabled: Boolean,
-    val detailsVisible: Boolean
+    val detailsVisible: Boolean,
+    /** The coin picked out of the spread grid, if any. Always null while the coins are collapsed. */
+    val focusedCoin: String?
 ) {
     /**
      * The two figures partition [totalBalance] exactly, and [coins] is a picture of the same two — one coin
@@ -32,6 +36,8 @@ data class CoinageUiState(
         val clearingBalance: TokenAmountModel,
         /** Already in display order: Clearing first, then largest denomination, then least fungible. */
         val coins: ImmutableList<CoinageScene.Coin>,
+        /** What a picked coin says about itself, keyed by coin id. */
+        val traces: ImmutableMap<String, CoinageCoinTrace>,
         val breakdown: CoinageBalanceBreakdownUiModel
     )
 }

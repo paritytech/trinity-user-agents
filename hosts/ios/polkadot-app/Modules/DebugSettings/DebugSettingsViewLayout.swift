@@ -73,6 +73,11 @@ final class DebugSettingsViewLayout: UIView {
     }
 
     #if DEBUG
+        let openDevServerButton: RoundedButton = .create { button in
+            button.applyMainStyle()
+            button.imageWithTitleView?.title = "Open dev server"
+        }
+
         let openTrUAPIPlaygroundButton: RoundedButton = .create { button in
             button.applyMainStyle()
             button.imageWithTitleView?.title = "Open TrUAPI Playground"
@@ -121,7 +126,7 @@ final class DebugSettingsViewLayout: UIView {
         view.typography = .bodyMedium
         view.textColor = .fgSecondary
         view.lineBreakMode = .byTruncatingMiddle
-        view.text = "Chain ID: \(AppConfig.Chains.usernameChain)"
+        view.text = "Chain ID: \(AppConfig.Chains.peopleChain)"
     }
 
     private let scrollView: UIScrollView = .create { scrollView in
@@ -180,7 +185,12 @@ final class DebugSettingsViewLayout: UIView {
         ]
 
         #if DEBUG
-            rows.append(contentsOf: [openTrUAPIPlaygroundButton, pocketFacePreviewButton, pocketCardsButton])
+            rows.append(contentsOf: [
+                openDevServerButton,
+                openTrUAPIPlaygroundButton,
+                pocketFacePreviewButton,
+                pocketCardsButton
+            ])
         #endif
 
         rows.append(contentsOf: [strategyDebugRow, truApiRuntimeRow, hostPlacedRow])

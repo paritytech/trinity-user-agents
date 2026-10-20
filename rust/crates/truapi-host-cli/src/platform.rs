@@ -114,6 +114,9 @@ pub struct CliPlatform {
 	/// Consulted-approval transcript (`TRUAPI_APPROVALS_LOG`): one
 	/// `<approved|denied> <action>` line per decided confirmation.
 	approvals_log: Option<PathBuf>,
+	/// Navigation transcript (`TRUAPI_NAVIGATIONS_LOG`): one JSON line
+	/// `{"url":…,"at":<unix ms>}` per destination the core accepted.
+	navigations_log: Option<PathBuf>,
 	ui: Option<UiHandle>,
 	/// Serializes interactive CLI prompts so concurrent confirmations don't
 	/// interleave on stdin.
@@ -191,6 +194,7 @@ impl CliPlatform {
 			scheduled_notifications: Arc::new(Mutex::new(HashMap::new())),
 			approval: Mutex::new(approval),
 			approvals_log: std::env::var_os("TRUAPI_APPROVALS_LOG").map(PathBuf::from),
+			navigations_log: std::env::var_os("TRUAPI_NAVIGATIONS_LOG").map(PathBuf::from),
 			ui,
 			prompt_lock: AsyncMutex::new(()),
 		})
@@ -545,10 +549,36 @@ impl ChainProvider for CliPlatform {
 
 #[async_trait]
 impl Navigation for CliPlatform {
+	/// The core has already validated the URL, applied the open-URL
+	/// permission and normalized product destinations to `polkadot://`, so
+	/// this host only reports the request: it has no browser to open.
 	async fn navigate_to(&self, url: String) -> Result<(), api::HostNavigateToError> {
 		tracing::debug!(%url, "navigate_to");
+		if let Some(path) = &self.navigations_log {
+			let at =
+				SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+			record_navigation(path, &url, at)
+				.map_err(|reason| api::HostNavigateToError::Unknown { reason })?;
+		}
+		emit_notification_event(self.ui.as_ref(), SystemEvent::NavigationRequested { url });
 		Ok(())
 	}
+}
+
+/// Append one `{"url":…,"at":…}` JSON line to the navigation transcript.
+///
+/// Written before `navigate_to` resolves, so by the time the product's call
+/// returns the request is on disk. A write failure fails the call rather than
+/// silently dropping the record a test would assert on.
+fn record_navigation(path: &Path, url: &str, at: u64) -> Result<(), String> {
+	let line = serde_json::to_string(&serde_json::json!({ "url": url, "at": at }))
+		.map_err(|err| err.to_string())?;
+	fs::OpenOptions::new()
+		.create(true)
+		.append(true)
+		.open(path)
+		.and_then(|mut file| writeln!(file, "{line}"))
+		.map_err(|err| format!("could not record navigation in {}: {err}", path.display()))
 }
 
 #[async_trait]
@@ -877,13 +907,6 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "allocate resources",
             "A product requested host-managed resources.".to_string(),
         ),
-        UserConfirmationReview::PreimageSubmit(review) => (
-            "submit preimage",
-            format!(
-                "A product requested submission of a {}-byte preimage.",
-                review.size
-            ),
-        ),
         UserConfirmationReview::AccountAccess(review) => (
             "access another product account",
             format!(
@@ -1141,9 +1164,11 @@ fn save_string_map(path: &Path, values: &HashMap<String, Vec<u8>>) -> Result<(),
 }
 
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
-	let parent = path
-		.parent()
-		.ok_or_else(|| format!("storage path has no parent: {}", path.display()))?;
+	let parent = match path.parent() {
+		Some(parent) if parent.as_os_str().is_empty() => Path::new("."),
+		Some(parent) => parent,
+		None => return Err(format!("storage path has no parent: {}", path.display())),
+	};
 	fs::create_dir_all(parent).map_err(|error| format!("create storage dir: {error}"))?;
 	let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("storage.json");
 	let temporary_id = NEXT_STORAGE_TEMP_ID.fetch_add(1, Ordering::Relaxed);
@@ -1323,6 +1348,59 @@ mod tests {
 			std::fs::read_to_string(&path).expect("approvals transcript"),
 			"approved allocate resources\ndenied sign VRF transcript\napproved sign VRF transcript\n",
 		);
+	}
+
+	#[test]
+	fn record_navigation_appends_one_json_line_per_request() {
+		let dir = tempdir().expect("tempdir");
+		let path = dir.path().join("navigations.log");
+		record_navigation(&path, "polkadot://dim2.dot/recover", 1).expect("first");
+		record_navigation(&path, "https://example.com/a?b=\"c\"", 2).expect("second");
+		let text = std::fs::read_to_string(&path).expect("navigation transcript");
+		let lines: Vec<serde_json::Value> = text
+			.lines()
+			.map(|line| serde_json::from_str(line).expect("json line"))
+			.collect();
+		assert_eq!(
+			lines,
+			vec![
+				serde_json::json!({ "url": "polkadot://dim2.dot/recover", "at": 1 }),
+				serde_json::json!({ "url": "https://example.com/a?b=\"c\"", "at": 2 }),
+			]
+		);
+	}
+
+	#[test]
+	fn record_navigation_reports_an_unwritable_transcript() {
+		let dir = tempdir().expect("tempdir");
+		let path = dir.path().join("missing").join("navigations.log");
+		let error = record_navigation(&path, "polkadot://dim2.dot", 1).unwrap_err();
+		assert!(error.contains("could not record navigation"), "{error}");
+	}
+
+	#[tokio::test]
+	async fn navigate_to_records_the_url_it_was_handed() {
+		let dir = tempdir().expect("tempdir");
+		let path = dir.path().join("navigations.log");
+		let mut platform = CliPlatform::new(test_network(), None, ApprovalPolicy::Prompt, None);
+		Arc::get_mut(&mut platform).expect("sole owner").navigations_log = Some(path.clone());
+		platform
+			.navigate_to("polkadot://dim2.dot/recover".to_string())
+			.await
+			.expect("navigate_to");
+		let text = std::fs::read_to_string(&path).expect("navigation transcript");
+		let line: serde_json::Value = serde_json::from_str(text.trim_end()).expect("one json line");
+		assert_eq!(line["url"], "polkadot://dim2.dot/recover");
+		assert!(line["at"].as_u64().expect("unix ms") > 1_700_000_000_000);
+	}
+
+	#[tokio::test]
+	async fn navigate_to_without_a_transcript_still_succeeds() {
+		let platform = CliPlatform::new(test_network(), None, ApprovalPolicy::Prompt, None);
+		platform
+			.navigate_to("polkadot://dim2.dot".to_string())
+			.await
+			.expect("navigate_to");
 	}
 
 	#[tokio::test]
@@ -1720,20 +1798,6 @@ mod tests {
 				HashMap::from([("theme".to_string(), b"dark".to_vec())]),
 			)])
 		);
-	}
-
-	#[test]
-	fn approval_summaries_are_concise_and_do_not_dump_payloads() {
-		let review =
-			UserConfirmationReview::PreimageSubmit(truapi::platform::PreimageSubmitReview {
-				size: 4_096,
-			});
-
-		let (action, detail) = approval_summary(&review);
-
-		assert_eq!(action, "submit preimage");
-		assert_eq!(detail, "A product requested submission of a 4096-byte preimage.");
-		assert!(!detail.contains("["));
 	}
 
 	/// Both products by name, because a signature made with an account the

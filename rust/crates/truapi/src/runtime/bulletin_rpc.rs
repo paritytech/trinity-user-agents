@@ -1,8 +1,8 @@
 //! In-core Bulletin preimage submission over the shared Subxt client.
 //!
 //! One submission at a time: build + sign the `TransactionStorage.store`
-//! extrinsic against the current best block (Subxt resolves metadata, nonce,
-//! and the mortality anchor), dry-run it via Subxt's typed transaction
+//! extrinsic at a best block no older than the finalized block its mortality is
+//! anchored to, dry-run it at that best block via Subxt's typed transaction
 //! validation, then submit through Subxt's transaction watch and classify the
 //! dispatch outcome from the inclusion block's events.
 
@@ -25,7 +25,7 @@ use crate::{
 use futures::{FutureExt, pin_mut};
 use subxt::{
 	OnlineClient,
-	client::{Block, Blocks, OnlineClientAtBlockImpl},
+	client::{Block, Blocks, OnlineClientAtBlock, OnlineClientAtBlockImpl},
 	config::{HashFor, substrate::SubstrateConfig},
 	error::{
 		DispatchError, TransactionEventsError, TransactionProgressError, TransactionStatusError,
@@ -68,11 +68,13 @@ const INCLUSION_RECHECK_BLOCKS: usize = 3;
 const INCLUSION_RECHECK_BLOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(20);
 #[cfg(test)]
 const INCLUSION_RECHECK_BLOCK_WAIT_TIMEOUT: Duration = Duration::from_millis(25);
-/// Budget for the best-block stream to replay the current chain head.
+/// Bound on each wait for the next block while picking the head: the first
+/// replayed block, and each block read on until the head reaches finality.
 const INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(10);
 /// Quiet window after which the newest replayed block is taken as the head.
-/// The replay delivers the initialized finalized block first and any known
-/// best block right after; active chains never need the full window.
+/// The replay delivers the initialized finalized blocks first, oldest first,
+/// and any known best block right after; active chains never need the full
+/// window.
 #[cfg(not(test))]
 const BEST_BLOCK_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(test)]
@@ -340,16 +342,22 @@ impl BulletinRpc {
 			.online_client(&self.genesis_hash)
 			.await
 			.map_err(BulletinSubmitError::Host)?;
+		let finalized = client
+			.at_current_block()
+			.await
+			.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
 		let mut best_blocks = client
 			.stream_best_blocks()
 			.await
 			.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
-		let head = initial_best_block(&mut best_blocks).await?;
+		let head = initial_best_block(&mut best_blocks, finalized.block_number()).await?;
 
 		self.enter_phase(SubmissionPhase::Build);
 		let signer =
 			allowance_signer(allowance).map_err(BulletinSubmitError::InvalidAllowanceKey)?;
-		let signed = self.build_signed_and_dry_run(&mut best_blocks, head, &signer, value).await?;
+		let signed = self
+			.build_signed_and_dry_run(&mut best_blocks, head, &finalized, &signer, value)
+			.await?;
 		drop(best_blocks);
 
 		self.enter_phase(SubmissionPhase::Watch);
@@ -408,6 +416,7 @@ impl BulletinRpc {
 		&self,
 		best_blocks: &mut Blocks<SubstrateConfig>,
 		head: Block<SubstrateConfig>,
+		finalized: &OnlineClientAtBlock<SubstrateConfig>,
 		signer: &Sr25519Signer,
 		value: &[u8],
 	) -> Result<SignedStore, BulletinSubmitError> {
@@ -420,7 +429,7 @@ impl BulletinRpc {
 				.at()
 				.await
 				.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
-			let signed = build_signed_store_transaction(&at_block, signer, value)
+			let signed = build_signed_store_transaction(&at_block, finalized, signer, value)
 				.await
 				.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
 
@@ -510,13 +519,16 @@ impl BulletinRpc {
 }
 
 /// Take the stream's replayed view of the current chain head: the initialized
-/// finalized block arrives first, followed by the newest known best block.
-/// Returns the newest block seen during one bounded [`BEST_BLOCK_TIMEOUT`]
-/// replay window; falling back to the finalized block is safe for cold starts.
-/// The deadline is absolute so a continuously advancing best-block stream
-/// cannot keep initialization alive forever.
+/// finalized blocks arrive first, oldest first, followed by the newest known
+/// best block. Returns the newest block seen during one bounded
+/// [`BEST_BLOCK_TIMEOUT`] replay window, read on until it reaches
+/// `finalized_number`. The transaction is anchored at that finalized block, and
+/// a head behind it would validate against an earlier birth block and read a
+/// stale nonce. The window's deadline is absolute so a continuously advancing
+/// best-block stream cannot keep initialization alive forever.
 async fn initial_best_block(
 	blocks: &mut Blocks<SubstrateConfig>,
+	finalized_number: u64,
 ) -> Result<Block<SubstrateConfig>, BulletinSubmitError> {
 	let mut block =
 		next_best_block(blocks, INITIALIZATION_TIMEOUT, SubmissionPhase::Connect).await?;
@@ -533,9 +545,13 @@ async fn initial_best_block(
 				}
 				None => return Err(BulletinSubmitError::BestBlockStreamEnded),
 			},
-			() = replay_deadline => return Ok(block),
+			() = replay_deadline => break,
 		}
 	}
+	while block.number() < finalized_number {
+		block = next_best_block(blocks, INITIALIZATION_TIMEOUT, SubmissionPhase::Connect).await?;
+	}
+	Ok(block)
 }
 
 async fn next_best_block(
@@ -895,17 +911,26 @@ mod tests {
 		use super::*;
 		use crate::{
 			chain_runtime::{RuntimeChainProvider, RuntimeFailure},
-			host_internal::extrinsic::tests::{bulletin_runtime_call, system_events},
+			host_internal::extrinsic::tests::{
+				OfflineChainState, bulletin_chain_state, bulletin_runtime_call, split_v4,
+				system_events,
+			},
+			host_logic::product_account::SR25519_SIGNING_CONTEXT,
 			platform::JsonRpcConnection,
 			subscription::thread_per_subscription_spawner,
 		};
 		use async_trait::async_trait;
 		use futures::{StreamExt, channel::mpsc, stream::BoxStream};
-		use parity_scale_codec::{Compact, Encode};
+		use parity_scale_codec::{Compact, Decode, Encode};
+		use schnorrkel::{PublicKey, Signature};
 		use serde_json::{Value as JsonValue, json};
 		use std::{
 			collections::VecDeque,
 			sync::{Arc, Mutex},
+		};
+		use subxt::{
+			config::DefaultExtrinsicParamsBuilder,
+			utils::{Era, H256},
 		};
 
 		const FOLLOW_ID: &str = "bulletin-follow";
@@ -940,6 +965,8 @@ mod tests {
 			current_best_hash: String,
 			advance_best_block_after_rejection: bool,
 			stall_headers: bool,
+			replayed_finalized_blocks: usize,
+			replay_header_delay: Option<Duration>,
 			last_transaction: Option<String>,
 			omit_transaction_from_next_body: bool,
 		}
@@ -972,6 +999,8 @@ mod tests {
 						current_best_hash: BLOCK_HASH.to_string(),
 						advance_best_block_after_rejection: false,
 						stall_headers,
+						replayed_finalized_blocks: 0,
+						replay_header_delay: None,
 						last_transaction: None,
 						omit_transaction_from_next_body: false,
 					})),
@@ -980,6 +1009,28 @@ mod tests {
 					receiver: Mutex::new(Some(receiver)),
 					events: format!("0x{}", hex::encode(success_events())),
 				}
+			}
+
+			fn with_best_blocks(self, count: usize) -> Self {
+				{
+					let mut state = self.state.lock().unwrap();
+					state.next_best_block = count;
+					state.current_best_hash = scripted_block_hash(count);
+				}
+				self
+			}
+
+			/// The follow subscription initializes with `count` finalized blocks after
+			/// the first, whose headers answer only after `delay`, so the best-block
+			/// replay can close on an older finalized block than the latest one.
+			fn with_lagging_finalized_replay(self, count: usize, delay: Duration) -> Self {
+				{
+					let mut state = self.state.lock().unwrap();
+					state.replayed_finalized_blocks = count;
+					state.replay_header_delay = Some(delay);
+					state.current_best_hash = scripted_block_hash(count);
+				}
+				self
 			}
 
 			fn with_failed_events(mut self) -> Self {
@@ -1034,6 +1085,20 @@ mod tests {
 					.collect()
 			}
 
+			fn runtime_call_blocks(&self, runtime_method: &str) -> Vec<H256> {
+				self.sent
+					.lock()
+					.unwrap()
+					.iter()
+					.filter_map(|request| {
+						let request: JsonValue = serde_json::from_str(request).unwrap();
+						(request["method"] == "chainHead_v1_call" &&
+							request["params"][2] == runtime_method)
+							.then(|| request["params"][1].as_str().unwrap().parse().unwrap())
+					})
+					.collect()
+			}
+
 			fn runtime_call_count(&self, runtime_method: &str) -> usize {
 				self.sent
 					.lock()
@@ -1071,12 +1136,28 @@ mod tests {
 		impl JsonRpcConnection for BulletinScriptedConnection {
 			fn send(&self, request: String) {
 				self.sent.lock().unwrap().push(request.clone());
-				let frames =
-					scripted_frames(&request, &self.events, &mut self.state.lock().unwrap());
-				if let Some(sender) = self.sender.lock().unwrap().as_ref() {
+				let mut state = self.state.lock().unwrap();
+				let delay = state.replay_header_delay.filter(|_| {
+					let request: JsonValue = serde_json::from_str(&request).unwrap();
+					request["method"] == "chainHead_v1_header" && request["params"][1] != BLOCK_HASH
+				});
+				let frames = scripted_frames(&request, &self.events, &mut state);
+				drop(state);
+				let Some(sender) = self.sender.lock().unwrap().clone() else { return };
+				let deliver = move || {
+					// A delayed frame can outlive the test that requested it.
 					for frame in frames {
-						sender.unbounded_send(frame).unwrap();
+						let _ = sender.unbounded_send(frame);
 					}
+				};
+				match delay {
+					Some(delay) => {
+						std::thread::spawn(move || {
+							std::thread::sleep(delay);
+							deliver();
+						});
+					},
+					None => deliver(),
 				}
 			}
 
@@ -1123,17 +1204,40 @@ mod tests {
 
 			match method {
 				"chainHead_v1_follow" => {
-					vec![
+					let mut frames = vec![
 						response(json!(FOLLOW_ID)),
 						follow_event(json!({
 							"event": "initialized",
-							"finalizedBlockHashes": [BLOCK_HASH],
+							"finalizedBlockHashes": std::iter::once(BLOCK_HASH.to_string())
+								.chain((1..=state.replayed_finalized_blocks).map(scripted_block_hash))
+								.collect::<Vec<_>>(),
 							"finalizedBlockRuntime": null
 						})),
-					]
+					];
+					let mut parent_hash = BLOCK_HASH.to_string();
+					for index in 1..=state.next_best_block {
+						let block_hash = scripted_block_hash(index);
+						frames.push(follow_event(json!({
+							"event": "newBlock", "blockHash": block_hash,
+							"parentBlockHash": parent_hash, "newRuntime": null
+						})));
+						parent_hash = block_hash;
+					}
+					frames.push(follow_event(json!({
+						"event": "bestBlockChanged", "bestBlockHash": state.current_best_hash
+					})));
+					frames
 				},
 				"chainHead_v1_header" if state.stall_headers => Vec::new(),
-				"chainHead_v1_header" => vec![response(json!(encoded_header()))],
+				"chainHead_v1_header" => {
+					let hash = request["params"][1].as_str().unwrap();
+					let number = if hash == BLOCK_HASH || hash == INCLUDED_HASH {
+						1
+					} else {
+						u32::from_str_radix(hash.trim_start_matches("0x"), 16).unwrap() + 1
+					};
+					vec![response(json!(encoded_header(number)))]
+				},
 				"chainHead_v1_call" => {
 					state.next_operation += 1;
 					let operation_id = format!("call-{}", state.next_operation);
@@ -1145,7 +1249,13 @@ mod tests {
 					} else {
 						ValidationOutcome::Valid
 					};
-					let output = runtime_call_output(runtime_method, validation_outcome);
+					let output = if runtime_method == "AccountNonceApi_account_nonce" &&
+						request["params"][1] != BLOCK_HASH
+					{
+						7u32.encode()
+					} else {
+						runtime_call_output(runtime_method, validation_outcome)
+					};
 					let mut frames = vec![
 						response(json!({"result": "started", "operationId": operation_id})),
 						follow_event(json!({
@@ -1282,10 +1392,15 @@ mod tests {
 			}
 		}
 
-		fn encoded_header() -> String {
+		fn encoded_header(number: u32) -> String {
+			let parent: H256 = match number {
+				1 => H256::zero(),
+				2 => BLOCK_HASH.parse().unwrap(),
+				_ => scripted_block_hash((number - 2) as usize).parse().unwrap(),
+			};
 			let mut bytes = Vec::new();
-			[0u8; 32].encode_to(&mut bytes);
-			Compact(1u32).encode_to(&mut bytes);
+			parent.encode_to(&mut bytes);
+			Compact(number).encode_to(&mut bytes);
 			[0u8; 32].encode_to(&mut bytes);
 			[0u8; 32].encode_to(&mut bytes);
 			Vec::<u8>::new().encode_to(&mut bytes);
@@ -1347,6 +1462,112 @@ mod tests {
 				[0x42; 32],
 			)
 			.with_allowance_block_wait_timeout(Duration::from_millis(25))
+		}
+
+		fn store_signature_verifies_at(transaction: &[u8], value: &[u8], block_hash: H256) -> bool {
+			let (account, signature, tail) = split_v4(transaction);
+			let mut extra = &tail[..];
+			let Era::Mortal { period, phase } = Era::decode(&mut extra).unwrap() else {
+				panic!("store transaction must expire")
+			};
+			let nonce = Compact::<u64>::decode(&mut extra).unwrap().0;
+			let state = OfflineChainState {
+				genesis_hash: [0x42; 32],
+				spec_version: 1,
+				..bulletin_chain_state()
+			};
+			let client = state.client_at(phase).unwrap();
+			let payload = subxt::dynamic::tx(
+				"TransactionStorage",
+				"store",
+				vec![subxt::dynamic::Value::from_bytes(value)],
+			);
+			let params = DefaultExtrinsicParamsBuilder::<SubstrateConfig>::new()
+				.nonce(nonce)
+				.mortal_from_unchecked(period, phase, block_hash)
+				.build();
+			let signer_payload = client
+				.tx()
+				.create_v4_signable_offline(&payload, params)
+				.unwrap()
+				.signer_payload()
+				.unwrap();
+			PublicKey::from_bytes(&account)
+				.unwrap()
+				.verify_simple(
+					SR25519_SIGNING_CONTEXT,
+					&signer_payload,
+					&Signature::from_bytes(&signature).unwrap(),
+				)
+				.is_ok()
+		}
+
+		#[test]
+		fn submit_preimage_anchors_mortality_at_finalized_but_uses_best_state() {
+			let provider = Arc::new(
+				BulletinScriptedProvider::new([TransactionOutcome::Included]).with_best_blocks(5),
+			);
+			let finalized_hash = BLOCK_HASH.parse().unwrap();
+			let best_hash = scripted_block_hash(5).parse().unwrap();
+			let value = b"fork mortality reproduction";
+
+			futures::executor::block_on(rpc(provider.clone()).submit_preimage(
+				&CallContext::default(),
+				Instant::now() + Duration::from_secs(2),
+				&allowance_fixture(),
+				value,
+			))
+			.unwrap();
+
+			let transactions = provider.submitted_transactions();
+			let transaction = hex::decode(transactions[0].trim_start_matches("0x")).unwrap();
+			let (_, _, tail) = split_v4(&transaction);
+			let mut extra = &tail[..];
+			let era = Era::decode(&mut extra).unwrap();
+			let nonce = Compact::<u64>::decode(&mut extra).unwrap().0;
+
+			assert_eq!(era, Era::mortal(64, 1));
+			assert_eq!(nonce, 7);
+			assert!(store_signature_verifies_at(&transaction, value, finalized_hash));
+			assert!(!store_signature_verifies_at(&transaction, value, best_hash));
+			assert_eq!(
+				provider.runtime_call_blocks("AccountNonceApi_account_nonce"),
+				vec![best_hash]
+			);
+			assert_eq!(
+				provider.runtime_call_blocks("TaggedTransactionQueue_validate_transaction"),
+				vec![best_hash]
+			);
+		}
+
+		#[test]
+		fn submit_preimage_builds_at_the_finalized_anchor_when_the_replay_lags_it() {
+			let provider = Arc::new(
+				BulletinScriptedProvider::new([TransactionOutcome::Included])
+					.with_lagging_finalized_replay(3, Duration::from_millis(50)),
+			);
+			let finalized_hash: H256 = scripted_block_hash(3).parse().unwrap();
+			let value = b"lagging replay";
+
+			futures::executor::block_on(rpc(provider.clone()).submit_preimage(
+				&CallContext::default(),
+				Instant::now() + Duration::from_secs(5),
+				&allowance_fixture(),
+				value,
+			))
+			.unwrap();
+
+			let transactions = provider.submitted_transactions();
+			let transaction = hex::decode(transactions[0].trim_start_matches("0x")).unwrap();
+			assert!(store_signature_verifies_at(&transaction, value, finalized_hash));
+			assert_eq!(
+				provider.runtime_call_blocks("AccountNonceApi_account_nonce"),
+				vec![finalized_hash]
+			);
+			assert_eq!(
+				provider.runtime_call_blocks("TaggedTransactionQueue_validate_transaction"),
+				vec![finalized_hash]
+			);
 		}
 
 		#[test]

@@ -1,8 +1,5 @@
 //! Wallet-local signing authority and incoming SSO handling.
 
-// Allocation uses `track`; the renewal loop around it is driven by native
-// entry points only, so on wasm the rest of the module is not reached yet.
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 mod allowance_renewal;
 mod local_activation;
 pub mod ring_vrf;
@@ -33,14 +30,14 @@ pub use sso_responder::{
 pub use sso_service::SigningHostSsoService;
 
 use super::{
-	RuntimeServices,
+	HostSession, RuntimeServices,
 	authority::{
 		AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
 		CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
 		SignRawAuthorityRequest, StatementStoreAllowanceKey, authority_session_validation_id,
 	},
 	connected_session_ui_info,
-	ring_vrf_registry::RingVrfRegistryStore,
+	ring_vrf_registry::{RingVrfRegistryStore, apply_ring_vrf_disclosure},
 	validate_vrf_transcript,
 };
 use crate::{
@@ -69,9 +66,7 @@ use crate::{
 		vrf::{self, Vrf},
 	},
 };
-use ring_vrf::{
-	ChainRingResolver, MemberCandidate, RingResolver, create_proof, development_context_bytes,
-};
+use ring_vrf::{ChainRingResolver, MemberCandidate, RingResolver, context_bytes, create_proof};
 use sso_replay::SsoReplayLocks;
 
 /// The network suffix the unit tests configure their signing host for. `dot`
@@ -84,10 +79,7 @@ use crate::platform::{
 	PermissionAuthorizationStatus, Platform, ProductContext, SignVrfReview, UserConfirmationReview,
 	normalize_product_identifier,
 };
-use truapi::{
-	CallContext, CallError, v01,
-	versioned::account::{HostRequestLoginError, HostRequestLoginResponse},
-};
+use truapi::{CallContext, CallError, latest, v01};
 use zeroize::Zeroizing;
 
 #[derive(Default)]
@@ -172,26 +164,16 @@ pub struct SigningHost {
 	session_state: Arc<SessionState>,
 	auth_state: AuthStateMachine,
 	ring_resolver: Arc<dyn RingResolver>,
-	/// Answer resource allocation as granted without performing it.
-	///
-	/// For test hosts whose suites exercise a product's allowance-dependent
-	/// paths without an on-chain personhood identity. Compiled only into a
-	/// build carrying `test-host`, which is off by default and which neither
-	/// the production browser bundle nor a released native host enables, so a
-	/// shipping host has no way to set it.
+	/// Unchecked grants and withheld resources for test-host suites. Compiled
+	/// only into a build carrying `test-host`, which is off by default and which
+	/// neither the production browser bundle nor a released native host
+	/// enables, so a shipping host has no way to set it.
 	#[cfg(feature = "test-host")]
-	grant_allowances_unchecked: std::sync::atomic::AtomicBool,
+	resource_controls: Arc<crate::runtime::test_resource_controls::TestResourceControls>,
 	/// Keep preimage submissions in the core instead of the Bulletin chain,
-	/// also implied by `grant_allowances_unchecked`.
+	/// also implied by unchecked allowance grants.
 	#[cfg(feature = "test-host")]
 	submit_preimages_locally: core::sync::atomic::AtomicBool,
-	/// Resource tags answered as refused, whatever the rest of the host would
-	/// say. A suite proving that its product handles a refusal needs one
-	/// resource withheld while the others stay granted, which neither the
-	/// unchecked-grant flag nor a real chain can arrange on its own. Compiled
-	/// only into a build carrying `test-host`.
-	#[cfg(feature = "test-host")]
-	withheld_resources: Mutex<HashSet<String>>,
 	/// Root BIP-39 entropy held only while a session is active.
 	root_entropy: Mutex<Option<Zeroizing<Vec<u8>>>>,
 	/// In-memory grants and the activation generation that owns them. The
@@ -217,11 +199,9 @@ impl SigningHost {
 			platform: platform.clone(),
 			network_suffix,
 			#[cfg(feature = "test-host")]
-			grant_allowances_unchecked: std::sync::atomic::AtomicBool::new(false),
+			resource_controls: Arc::default(),
 			#[cfg(feature = "test-host")]
 			submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
-			#[cfg(feature = "test-host")]
-			withheld_resources: Mutex::new(HashSet::new()),
 			session_state: SessionState::new(),
 			auth_state: AuthStateMachine::new(platform.clone()),
 			ring_resolver,
@@ -237,7 +217,7 @@ impl SigningHost {
 	/// Whether allocation is answered as granted without performing it.
 	#[cfg(feature = "test-host")]
 	pub fn grants_allowances_unchecked(&self) -> bool {
-		self.grant_allowances_unchecked.load(std::sync::atomic::Ordering::Relaxed)
+		self.resource_controls.grants_allowances_unchecked()
 	}
 
 	/// Keep preimage submissions in the core instead of the Bulletin chain.
@@ -252,43 +232,13 @@ impl SigningHost {
 	/// Answer resource allocation as granted without performing it in test hosts.
 	#[cfg(feature = "test-host")]
 	pub fn set_grant_allowances_unchecked(&self, granted: bool) {
-		self.grant_allowances_unchecked
-			.store(granted, std::sync::atomic::Ordering::Relaxed);
+		self.resource_controls.set_grant_allowances_unchecked(granted);
 	}
 
 	/// Replace refused resource tags; SmartContractAllowance covers every index.
 	#[cfg(feature = "test-host")]
 	pub(crate) fn set_withheld_resources(&self, tags: Vec<String>) {
-		*self.withheld_resources.lock().expect("withheld resource mutex poisoned") =
-			tags.into_iter().collect();
-	}
-
-	/// Whether `resource` is answered as refused.
-	#[cfg(feature = "test-host")]
-	fn withholds(&self, resource: &v01::AllocatableResource) -> bool {
-		let tag = match resource {
-			v01::AllocatableResource::StatementStoreAllowance => "StatementStoreAllowance",
-			v01::AllocatableResource::BulletinAllowance => "BulletinAllowance",
-			v01::AllocatableResource::SmartContractAllowance(_) => "SmartContractAllowance",
-			v01::AllocatableResource::AutoSigning => "AutoSigning",
-		};
-		self.withheld_resources
-			.lock()
-			.expect("withheld resource mutex poisoned")
-			.contains(tag)
-	}
-
-	/// Refuse a withheld resource before any allowance for it is derived.
-	///
-	/// The allowance-key calls allocate on their own, without a product ever
-	/// asking for an allocation, so a check that lived only in the allocation
-	/// answer would hand the key to the very path the product takes.
-	#[cfg(feature = "test-host")]
-	fn refuse_withheld(&self, resource: &v01::AllocatableResource) -> Result<(), AuthorityError> {
-		if self.withholds(resource) {
-			return Err(AuthorityError::Rejected);
-		}
-		Ok(())
+		self.resource_controls.set_withheld_resources(tags);
 	}
 
 	/// The shared services this role was built over, for tests that also need
@@ -330,11 +280,9 @@ impl SigningHost {
 			platform: platform.clone(),
 			network_suffix: network_suffix.to_string(),
 			#[cfg(feature = "test-host")]
-			grant_allowances_unchecked: std::sync::atomic::AtomicBool::new(false),
+			resource_controls: Arc::default(),
 			#[cfg(feature = "test-host")]
 			submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
-			#[cfg(feature = "test-host")]
-			withheld_resources: Mutex::new(HashSet::new()),
 			session_state: SessionState::new(),
 			auth_state: AuthStateMachine::new(platform.clone()),
 			ring_resolver,
@@ -799,15 +747,15 @@ impl SigningHost {
 		let keypair = self.product_keypair(&request.account)?;
 		let (current, activation_generation) = self.require_current_session(session)?;
 		let granted = authenticated_caller &&
-			super::authority::is_blessed_owner(
+			(super::authority::is_blessed_owner(
 				&calling_product_id,
 				&request.account.dot_ns_identifier,
 			) || self.has_auto_signing_grant(
-			activation_generation,
-			current.public_key,
-			&calling_product_id,
-			&request.account.dot_ns_identifier,
-		);
+				activation_generation,
+				current.public_key,
+				&calling_product_id,
+				&request.account.dot_ns_identifier,
+			));
 		if !granted {
 			let confirmed =
 				super::until_cancelled(
@@ -887,11 +835,8 @@ impl SigningHost {
 }
 
 #[async_trait::async_trait]
-impl ProductAuthority for SigningHost {
-	fn current_session(&self) -> Option<AuthoritySession> {
-		self.current_local_session()
-	}
-
+impl HostSession for SigningHost {
+	/// Shared session holder for connection-status subscriptions.
 	fn session_state(&self) -> Arc<SessionState> {
 		SigningHost::session_state(self)
 	}
@@ -899,19 +844,30 @@ impl ProductAuthority for SigningHost {
 	async fn request_login(
 		&self,
 		_product: &ProductContext,
-	) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
+	) -> Result<latest::HostRequestLoginResponse, CallError<latest::HostRequestLoginError>> {
 		if let Some(session) = self.session_state.current() {
 			self.auth_state.connected(&connected_session_ui_info(&session));
-			Ok(HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::AlreadyConnected))
+			Ok(latest::HostRequestLoginResponse::AlreadyConnected)
 		} else {
 			// Wallet unlock and session activation are platform-owned.
-			Ok(HostRequestLoginResponse::V1(v01::HostRequestLoginResponse::Rejected))
+			Ok(latest::HostRequestLoginResponse::Rejected)
 		}
 	}
 
 	async fn disconnect(&self) {
 		self.clear_local_session();
 		self.auth_state.store_disconnected();
+	}
+
+	async fn primary_username(&self) -> Option<String> {
+		self.current_local_session()?.primary_username().map(str::to_string)
+	}
+}
+
+#[async_trait::async_trait]
+impl ProductAuthority for SigningHost {
+	fn current_session(&self) -> Option<AuthoritySession> {
+		self.current_local_session()
 	}
 
 	async fn product_subtree_public_key(
@@ -1114,16 +1070,16 @@ impl ProductAuthority for SigningHost {
 			Err(RingVrfError::NotAllowlisted) => None,
 			Err(err) => return Err(err),
 		};
-		// The grant admits the caller's own context and the granting product's,
-		// and no one else's, exactly as on `create_proof`. The alias this returns
-		// and the alias a proof attests are one VRF evaluation, so guarding only
-		// the proof would leave the same bytes reachable through this read.
+		// The context is held to the same rule as on `create_proof`: the alias and
+		// the proof come from one VRF evaluation.
 		let key_handle = match granted {
 			Some((key_handle, access)) => {
-				crate::runtime::product_manifest::require_own_context(
+				crate::runtime::product_manifest::require_context_access(
+					&self.services,
 					&access,
 					&request.payload.context,
-				)?;
+				)
+				.await?;
 				key_handle
 			},
 			None => {
@@ -1165,7 +1121,7 @@ impl ProductAuthority for SigningHost {
 			)
 			.await?;
 		self.ring_resolver.validate(&request.payload.ring_location).await?;
-		let context = development_context_bytes(&request.payload.context);
+		let context = context_bytes(&request.payload.context);
 		let alias = vrf.alias(&entropy, &context)?;
 		Ok(v01::ContextualAlias { context, alias: alias.to_vec() })
 	}
@@ -1180,8 +1136,14 @@ impl ProductAuthority for SigningHost {
 		let (key_handle, access) = self
 			.require_ring_vrf_key_access(&request.calling_product_id, &request.payload.key_handle)
 			.await?;
-		// A grant must not expose the owner's alias in an unrelated product's context.
-		crate::runtime::product_manifest::require_own_context(&access, &request.payload.context)?;
+		// A grant cannot expose the owner's alias in a third product's context unless
+		// that product's manifest grants the caller `context`.
+		crate::runtime::product_manifest::require_context_access(
+			&self.services,
+			&access,
+			&request.payload.context,
+		)
+		.await?;
 		let vrf = vrf::load().await?;
 		let entropy = self
 			.resolve_ring_vrf_key_for_ring(
@@ -1197,7 +1159,7 @@ impl ProductAuthority for SigningHost {
 		// Reject a stale request if the local session disconnected or changed
 		// while its chain snapshot was being resolved.
 		self.require_current_session(session)?;
-		let context = development_context_bytes(&request.payload.context);
+		let context = context_bytes(&request.payload.context);
 		let (proof, alias) =
 			create_proof(&vrf, &entropy, &resolved, &context, &request.payload.message)?;
 		Ok(v01::HostAccountCreateProofResponse {
@@ -1264,11 +1226,7 @@ impl ProductAuthority for SigningHost {
 		self.register_builtin_personhood_keys_if_needed(session, &owner).await?;
 		let mut entries = self.ring_vrf_registry.owner_entries(session.public_key, &owner).await?;
 		self.require_current_session(session)?;
-		if request.payload.disclosure == v01::RingVrfKeyDisclosure::Anonymized {
-			for entry in &mut entries {
-				entry.public_key = None;
-			}
-		}
+		apply_ring_vrf_disclosure(&mut entries, request.payload.disclosure);
 		Ok(entries)
 	}
 
@@ -1296,7 +1254,7 @@ impl ProductAuthority for SigningHost {
 	) -> Result<v01::HostRequestResourceAllocationResponse, AuthorityError> {
 		self.require_current_session(session)?;
 		#[cfg(feature = "test-host")]
-		if self.grant_allowances_unchecked.load(std::sync::atomic::Ordering::Relaxed) {
+		if self.resource_controls.grants_allowances_unchecked() {
 			// Nothing is allocated and no proof is built: a suite in this mode
 			// learns that its product handles a grant, not that a host would
 			// have given one. A withheld tag is still refused here, so the one
@@ -1307,7 +1265,7 @@ impl ProductAuthority for SigningHost {
 					.resources
 					.iter()
 					.map(|resource| {
-						if self.withholds(resource) {
+						if self.resource_controls.withholds(resource) {
 							v01::AllocationOutcome::Rejected
 						} else {
 							v01::AllocationOutcome::Allocated
@@ -1325,7 +1283,7 @@ impl ProductAuthority for SigningHost {
 			// saying this resource is refused, so performing the allocation and
 			// then reporting a refusal would leave the two disagreeing.
 			#[cfg(feature = "test-host")]
-			if self.withholds(&resource) {
+			if self.resource_controls.withholds(&resource) {
 				outcomes.push(v01::AllocationOutcome::Rejected);
 				continue;
 			}
@@ -1385,7 +1343,8 @@ impl ProductAuthority for SigningHost {
 	) -> Result<StatementStoreAllowanceKey, AuthorityError> {
 		let (_, activation_generation) = self.require_current_session(session)?;
 		#[cfg(feature = "test-host")]
-		self.refuse_withheld(&v01::AllocatableResource::StatementStoreAllowance)?;
+		self.resource_controls
+			.refuse_withheld(&v01::AllocatableResource::StatementStoreAllowance)?;
 		let period = statement_allowance::slot::current_period(
 			sso_responder::current_unix_secs()
 				.map_err(sso_responder::AllowanceAllocationError::into_authority_error)?,
@@ -1409,7 +1368,7 @@ impl ProductAuthority for SigningHost {
 
 	#[cfg(feature = "test-host")]
 	fn submits_preimages_locally(&self) -> bool {
-		self.grant_allowances_unchecked.load(std::sync::atomic::Ordering::Relaxed) ||
+		self.resource_controls.grants_allowances_unchecked() ||
 			self.submit_preimages_locally.load(core::sync::atomic::Ordering::Relaxed)
 	}
 
@@ -1428,7 +1387,8 @@ impl ProductAuthority for SigningHost {
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
 		self.require_current_session(session)?;
 		#[cfg(feature = "test-host")]
-		self.refuse_withheld(&v01::AllocatableResource::BulletinAllowance)?;
+		self.resource_controls
+			.refuse_withheld(&v01::AllocatableResource::BulletinAllowance)?;
 		let secret = sso_responder::allocate_bulletin_allowance(
 			&self.services,
 			self,
@@ -1449,7 +1409,8 @@ impl ProductAuthority for SigningHost {
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
 		self.require_current_session(session)?;
 		#[cfg(feature = "test-host")]
-		self.refuse_withheld(&v01::AllocatableResource::BulletinAllowance)?;
+		self.resource_controls
+			.refuse_withheld(&v01::AllocatableResource::BulletinAllowance)?;
 		let secret = sso_responder::allocate_bulletin_allowance(
 			&self.services,
 			self,
@@ -1526,7 +1487,7 @@ mod tests {
 
 	use super::{
 		super::{
-			ProductAuthority, ProductRuntimeHost, RuntimeServices, SigningHostRole,
+			HostSession, ProductAuthority, ProductRuntimeHost, RuntimeServices, SigningHostRole,
 			authority::{
 				AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest,
 				SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
@@ -1681,11 +1642,12 @@ mod tests {
 
 	fn product_runtime(
 		services: Arc<RuntimeServices>,
-		authority: Arc<dyn ProductAuthority>,
+		authority: Arc<SigningHostRole>,
 	) -> ProductRuntimeHost {
 		ProductRuntimeHost::from_services(
 			services.clone(),
 			crate::host_core::ConnectionAdapters::from_services(&services),
+			authority.clone(),
 			authority,
 			ProductContext::new("myapp.dot".to_string()).expect("valid product id"),
 		)
@@ -1693,12 +1655,13 @@ mod tests {
 
 	fn product_runtime_for(
 		services: Arc<RuntimeServices>,
-		authority: Arc<dyn ProductAuthority>,
+		authority: Arc<SigningHostRole>,
 		product_id: &str,
 	) -> ProductRuntimeHost {
 		ProductRuntimeHost::from_services(
 			services.clone(),
 			crate::host_core::ConnectionAdapters::from_services(&services),
+			authority.clone(),
 			authority,
 			ProductContext::new(product_id.to_string()).expect("valid product id"),
 		)
@@ -1947,10 +1910,11 @@ mod tests {
 	/// The contextual alias is a function of (owner key, context), so with the
 	/// context unconstrained a `context` grant from `peopl.dot` let `dim2.dot`
 	/// produce the alias `peopl.dot` presents to `bank.dot`, a third product
-	/// that granted nothing, is not a party to the grant, and cannot consent
-	/// here. The grant is to act in the grantee's own context or the granting
-	/// product's, not in anyone else's: a context naming the owner is the grant
-	/// read literally, and is the one a chain-wide proof context resolves to.
+	/// that granted nothing and is not a party to the grant. The grant is to act
+	/// in the grantee's own context or the granting product's: a context naming
+	/// the owner is the grant read literally, and is the one a chain-wide proof
+	/// context resolves to. Any other product's context needs that product's own
+	/// grant, covered by `a_product_may_grant_a_grantee_its_context`.
 	///
 	/// The owner's own calls are untouched: minting your own aliases in any
 	/// context is what the context parameter is for.
@@ -1965,28 +1929,6 @@ mod tests {
 		let session = authority.current_session().expect("active session");
 		let ring = full_person_ring_location();
 		register_full_person_key(&authority, &session, &ring);
-
-		// `raw:` reaches `development_context_bytes`, which uses the caller's own
-		// 32 bytes verbatim, so admitting it would let a grantee name any
-		// context at all, including a third product's.
-		let mint_raw = |caller: &str| {
-			futures::executor::block_on(authority.create_proof(
-				&CallContext::default(),
-				&session,
-				ProductRequest {
-					calling_product_id: caller.to_string(),
-					payload: v01::HostAccountCreateProofRequest {
-						key_handle: full_person_key_handle(),
-						context: v01::ProductProofContext {
-							product_id: "raw:".to_string(),
-							suffix: v01::DerivationIndex::Raw([0x11; 32]),
-						},
-						ring_location: ring.clone(),
-						message: b"m".to_vec(),
-					},
-				},
-			))
-		};
 
 		let mint = |caller: &str, context: &str| {
 			futures::executor::block_on(authority.create_proof(
@@ -2029,12 +1971,6 @@ mod tests {
 			"the granting product is all its executables, so its context is too"
 		);
 		assert_eq!(
-			mint_raw("dim2.dot").err(),
-			Some(RingVrfError::NotAllowlisted),
-			"a grant must not reach the development context, which names no \
-             product and so binds the grantee to nothing"
-		);
-		assert_eq!(
 			mint("dim2.dot", "dim2.paseo").err(),
 			Some(RingVrfError::NotAllowlisted),
 			"the grantee's own namesake on another network is a different \
@@ -2046,6 +1982,199 @@ mod tests {
 			"a grant published on one network must not reach the pseudonym a \
              namesake presents on another"
 		);
+	}
+
+	/// `dim2next.dot`'s proof and alias read with `peopl.dot`'s key in
+	/// `context`, after seeding `peopl.dot`'s manifest with `owner_grants` and
+	/// `dim2`'s with `context_grants`.
+	///
+	/// `context_grants` of `None` caches the chain's answer that `dim2`
+	/// publishes no manifest, so no case reaches for a chain the stub lacks.
+	fn third_product_context(
+		owner_grants: &str,
+		context_grants: Option<&str>,
+		context: v01::ProductProofContext,
+		seed: impl FnOnce(&StubPlatform),
+	) -> (
+		Result<v01::HostAccountCreateProofResponse, RingVrfError>,
+		Result<v01::ContextualAlias, RingVrfError>,
+	) {
+		let platform = Arc::new(StubPlatform::default());
+		cache_grant(&platform, "peopl.dot", owner_grants);
+		match context_grants {
+			Some(grants) => cache_grant(&platform, "dim2.dot", grants),
+			None => futures::executor::block_on(
+				<StubPlatform as crate::platform::CoreStorage>::write_core_storage(
+					&platform,
+					crate::runtime::product_manifest::manifest_cache_key("dim2.dot"),
+					crate::runtime::product_manifest::encode_cached_root_manifest(
+						None,
+						crate::unix_time::current_unix_secs(),
+					),
+				),
+			)
+			.expect("stub core storage accepts the entry"),
+		}
+		seed(&platform);
+		let (_services, authority) =
+			signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+			.expect("activation succeeds");
+		let session = authority.current_session().expect("active session");
+		let ring = full_person_ring_location();
+		register_full_person_key(&authority, &session, &ring);
+
+		let proof = futures::executor::block_on(authority.create_proof(
+			&CallContext::default(),
+			&session,
+			ProductRequest {
+				calling_product_id: "dim2next.dot".to_string(),
+				payload: v01::HostAccountCreateProofRequest {
+					key_handle: full_person_key_handle(),
+					context: context.clone(),
+					ring_location: ring.clone(),
+					message: b"m".to_vec(),
+				},
+			},
+		));
+		let alias = futures::executor::block_on(authority.account_alias(
+			&CallContext::default(),
+			&session,
+			ProductRequest {
+				calling_product_id: "dim2next.dot".to_string(),
+				payload: v01::HostAccountGetAliasRequest {
+					key_handle: full_person_key_handle(),
+					context,
+					ring_location: ring,
+				},
+			},
+		));
+		(proof, alias)
+	}
+
+	fn context_of(product_id: &str) -> v01::ProductProofContext {
+		v01::ProductProofContext {
+			product_id: product_id.to_string(),
+			suffix: v01::DerivationIndex::Index(0),
+		}
+	}
+
+	const OWNER_GRANTS_DIM2NEXT: &str = r#"{"dim2next":["context"]}"#;
+
+	/// The product a context names consents to its use through its own manifest.
+	///
+	/// paritytech/platform-bugs#99: `dim2next` proves with `peopl`'s key in
+	/// `dim2`'s context, which the TURN issuer requires. `peopl` grants the key
+	/// and `dim2` grants the context, so both parties to the pseudonym have
+	/// consented. The read is held to the same rule, since the alias and the
+	/// proof are one VRF evaluation.
+	#[test]
+	fn a_product_may_grant_a_grantee_its_context() {
+		for (grants, context) in [
+			(r#"{"dim2next":["context"]}"#, "dim2.dot"),
+			(r#"{"dim2next":["all"]}"#, "dim2.dot"),
+			(r#"{"dim2next":["context"]}"#, "app.dim2.dot"),
+			(r#"{"dim2next":["context"]}"#, "DIM2.DOT"),
+		] {
+			let (proof, alias) = third_product_context(
+				OWNER_GRANTS_DIM2NEXT,
+				Some(grants),
+				context_of(context),
+				|_| {},
+			);
+			assert!(proof.is_ok(), "{grants} admits a proof in {context}: {proof:?}");
+			assert!(alias.is_ok(), "{grants} admits the read in {context}: {alias:?}");
+		}
+	}
+
+	/// Everything a context grant does not cover stays refused, on both calls.
+	#[test]
+	fn a_context_the_naming_product_did_not_grant_is_refused() {
+		let cases: [(&str, Option<&str>, &str, &str); 5] = [
+			(
+				OWNER_GRANTS_DIM2NEXT,
+				None,
+				"dim2.dot",
+				"a product publishing no manifest granted nothing",
+			),
+			(
+				OWNER_GRANTS_DIM2NEXT,
+				Some(r#"{}"#),
+				"dim2.dot",
+				"a manifest naming no one granted nothing",
+			),
+			(
+				OWNER_GRANTS_DIM2NEXT,
+				Some(r#"{"other":["context"]}"#),
+				"dim2.dot",
+				"a grant to another product is not a grant to the caller",
+			),
+			(
+				OWNER_GRANTS_DIM2NEXT,
+				Some(r#"{"dim2next":["storage"]}"#),
+				"dim2.dot",
+				"a narrower scope does not imply context",
+			),
+			(
+				// `dim2.dot`'s manifest is cached by bare label, so it is the
+				// document a `.paseo` context would read: a namesake's grant.
+				OWNER_GRANTS_DIM2NEXT,
+				Some(r#"{"dim2next":["context"]}"#),
+				"dim2.paseo",
+				"a grant must not reach the pseudonym on another network",
+			),
+		];
+		for (owner, grants, context, why) in cases {
+			let (proof, alias) = third_product_context(owner, grants, context_of(context), |_| {});
+			assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted), "proof: {why}");
+			assert_eq!(alias.err(), Some(RingVrfError::NotAllowlisted), "read: {why}");
+		}
+	}
+
+	/// A context grant does not open the owner's key.
+	///
+	/// The two grants answer different questions: `dim2` consents to its
+	/// pseudonym, `peopl` to its key. Without the owner's grant the gate refuses
+	/// before the context is looked at, and the read falls back to the prompt.
+	#[test]
+	fn a_context_grant_without_the_owners_key_grant_is_refused() {
+		let (proof, alias) = third_product_context(
+			r#"{"someone-else":["context"]}"#,
+			Some(r#"{"dim2next":["context"]}"#),
+			context_of("dim2.dot"),
+			|_| {},
+		);
+		assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted));
+		assert_eq!(
+			alias.err(),
+			Some(RingVrfError::Rejected),
+			"the ungranted read takes the prompt path, which the stub declines"
+		);
+	}
+
+	/// A refusal the user stored for the pair overrides the context product's
+	/// grant, as it overrides the owner's.
+	#[test]
+	fn a_stored_refusal_overrides_a_context_grant() {
+		let (proof, alias) = third_product_context(
+			OWNER_GRANTS_DIM2NEXT,
+			Some(r#"{"dim2next":["context"]}"#),
+			context_of("dim2.dot"),
+			|platform| deny_account_access(platform, "dim2next.dot", "dim2.dot"),
+		);
+		assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted));
+		assert_eq!(alias.err(), Some(RingVrfError::NotAllowlisted));
+	}
+
+	/// The caller's own context and the owner's need no third manifest.
+	#[test]
+	fn own_and_owner_contexts_need_no_context_grant() {
+		for context in ["dim2next.dot", "peopl.dot"] {
+			let (proof, alias) =
+				third_product_context(OWNER_GRANTS_DIM2NEXT, None, context_of(context), |_| {});
+			assert!(proof.is_ok(), "proof in {context}: {proof:?}");
+			assert!(alias.is_ok(), "read in {context}: {alias:?}");
+		}
 	}
 
 	/// An owner listing its own keys is not asked to consent to its own account.
@@ -2266,13 +2395,14 @@ mod tests {
 		}
 	}
 
-	/// The identity read is held to the caller's own context, like the proof.
+	/// The identity read is held to the same contexts as the proof.
 	///
 	/// The alias and the proof come out of one VRF evaluation, so a guard on
 	/// `create_proof` alone leaves the same bytes reachable through
 	/// `account_alias`: a grantee could read the alias the owner presents to a
 	/// third product that granted nothing. Both calls refuse it, and both admit
-	/// the granting product's own context.
+	/// the granting product's own context. A third product's own grant is
+	/// covered by `a_product_may_grant_a_grantee_its_context`.
 	#[test]
 	fn a_grantee_cannot_read_the_owners_alias_in_a_third_partys_context() {
 		let platform = Arc::new(StubPlatform::default());
