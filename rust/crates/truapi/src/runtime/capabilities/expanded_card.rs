@@ -8,8 +8,9 @@ use truapi::{
 	versioned::{
 		FromLatest, IntoLatest, Versioned,
 		expanded_card::{
-			HostExpandedCardSetFaceShownError, HostExpandedCardSetFaceShownRequest,
-			HostExpandedCardSetFaceShownResponse,
+			HostExpandedCardSetBackShownError, HostExpandedCardSetBackShownRequest,
+			HostExpandedCardSetBackShownResponse, HostExpandedCardSetFaceShownError,
+			HostExpandedCardSetFaceShownRequest, HostExpandedCardSetFaceShownResponse,
 		},
 	},
 };
@@ -57,5 +58,19 @@ impl ExpandedCard for ProductRuntimeHost {
 		result
 			.map(|response| HostExpandedCardSetFaceShownResponse::from_latest(response, version))
 			.map_err(|error| from_latest_error(error, version))
+	}
+
+	// No host turns cards yet, so a Widget reads "not supported" rather than a failure.
+	#[instrument(skip_all, fields(runtime.method = "expanded_card.set_back_shown"))]
+	async fn set_back_shown(
+		&self,
+		_cx: &CallContext,
+		_request: HostExpandedCardSetBackShownRequest,
+	) -> Result<HostExpandedCardSetBackShownResponse, CallError<HostExpandedCardSetBackShownError>>
+	{
+		if self.connection.product.execution_kind != ProductExecutionKind::Widget {
+			return Err(CallError::Denied);
+		}
+		Err(CallError::Unsupported)
 	}
 }
