@@ -815,6 +815,14 @@ pub enum RuntimeConfigValidationError {
 	},
 }
 
+/// A product-supplied value that fails validation is a malformed request, not
+/// a host failure.
+impl<D> From<RuntimeConfigValidationError> for truapi::CallError<D> {
+	fn from(error: RuntimeConfigValidationError) -> Self {
+		Self::MalformedFrame { reason: error.to_string() }
+	}
+}
+
 const PRODUCT_STORAGE_KEY_PREFIX: &str = "truapi:product-storage:v1:";
 
 /// Decoded product scope and product-owned key used by [`ProductStorage`].

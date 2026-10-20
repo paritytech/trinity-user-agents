@@ -223,15 +223,7 @@ impl Account for ProductRuntimeHost {
 					latest::HostAccountListRingVrfKeysError::NotConnected,
 				));
 			};
-			request.owner = request
-				.owner
-				.parse::<ProductId>()
-				.map_err(|err| {
-					CallError::Domain(latest::HostAccountListRingVrfKeysError::Unknown {
-						reason: err.to_string(),
-					})
-				})?
-				.into();
+			request.owner = request.owner.parse::<ProductId>()?.into();
 			let cx = remote_authority_context(cx);
 			remote_authority_call(&cx, self.accounts.list_ring_vrf_keys(&session, &cx, request))
 				.await

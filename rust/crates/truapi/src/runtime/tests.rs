@@ -21,9 +21,9 @@ use truapi::{
 			HostAccountConnectionStatusSubscribeItem, HostAccountCreateProofError,
 			HostAccountCreateProofResponse, HostAccountGetAliasError, HostAccountGetAliasResponse,
 			HostAccountGetError, HostAccountGetRequest, HostAccountGetResponse,
-			HostAccountRingVrfSignError, HostAccountRingVrfSignRequest,
-			HostAccountRingVrfSignResponse, HostAccountSignVrfError, HostAccountSignVrfRequest,
-			HostAccountSignVrfResponse, HostGetLegacyAccountsRequest,
+			HostAccountListRingVrfKeysRequest, HostAccountRingVrfSignError,
+			HostAccountRingVrfSignRequest, HostAccountRingVrfSignResponse, HostAccountSignVrfError,
+			HostAccountSignVrfRequest, HostAccountSignVrfResponse, HostGetLegacyAccountsRequest,
 			HostGetLegacyAccountsResponse, HostGetUserIdError, HostGetUserIdRequest,
 			HostGetUserIdResponse,
 		},
@@ -3692,6 +3692,25 @@ fn get_account_rejects_invalid_product_identifier() {
 		err,
 		CallError::Domain(HostAccountGetError::V1(v01::HostAccountGetError::DomainNotValid))
 	));
+}
+
+/// An owner that names no product is the product's malformed request, not a
+/// failure of the host.
+#[test]
+fn list_ring_vrf_keys_reports_an_invalid_owner_as_a_malformed_request() {
+	let host =
+		ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), test_spawner());
+	install_pairing_session(&host, session_info());
+	let request = HostAccountListRingVrfKeysRequest::V1(v01::HostAccountListRingVrfKeysRequest {
+		owner: "example.com".to_string(),
+		disclosure: v01::RingVrfKeyDisclosure::Anonymized,
+	});
+
+	let err =
+		futures::executor::block_on(host.list_ring_vrf_keys(&CallContext::default(), request))
+			.unwrap_err();
+
+	assert!(matches!(err, CallError::MalformedFrame { .. }), "{err:?}");
 }
 
 #[test]
