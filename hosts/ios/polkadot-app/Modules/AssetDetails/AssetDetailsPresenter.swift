@@ -29,6 +29,8 @@ final class AssetDetailsPresenter {
     private var holdings: CoinageHoldings = .empty
     /// Ready and Clearing for the real holdings, totalled by the balance service.
     private var coinageAmounts: CoinageAmounts?
+    /// What each denomination is worth, which a tapped coin states in full.
+    private var denominations: DenominationBreakdownContext?
     /// Loaded from chain state; the balance is shown against it.
     private var price: PriceData?
     let logger: LoggerProtocol
@@ -153,9 +155,14 @@ extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
         }
     }
 
-    func didReceive(coinageAmounts: CoinageAmounts, holdings: CoinageHoldings) {
+    func didReceive(
+        coinageAmounts: CoinageAmounts,
+        holdings: CoinageHoldings,
+        denominations: DenominationBreakdownContext
+    ) {
         self.coinageAmounts = coinageAmounts
         self.holdings = holdings
+        self.denominations = denominations
         provideAssetBalance()
         provideCoinageBreakdown()
     }
@@ -302,13 +309,17 @@ private extension AssetDetailsPresenter {
         // a label on one small line, where the headline above has already said what is counted.
         let figureInfo = chainAsset.asset.digitalDollarFigureDisplayInfo
         let strip = CoinageBreakdownFactory.stripCoins(CoinageBreakdownFactory.rows(from: holdings))
+        let traces = CoinageBreakdownFactory.traces(from: holdings) { exponent in
+            formatted(from: denominations?.amount(forExponent: exponent) ?? 0, as: figureInfo)
+        }
 
         let breakdown = CoinageBalanceBreakdownViewModel(
             totalBalance: formatted(from: amounts.total, as: figureInfo),
             availableNowBalance: formatted(from: amounts.availableNow, as: figureInfo),
             gainingPrivacyBalance: formatted(from: amounts.gainingPrivacy, as: figureInfo),
             symbol: chainAsset.asset.digitalDollarDisplayInfo.symbol,
-            strip: strip
+            strip: strip,
+            traces: traces
         )
         view?.didReceive(coinageBreakdown: breakdown)
     }
