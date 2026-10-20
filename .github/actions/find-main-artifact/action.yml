@@ -42,7 +42,9 @@ runs:
         for id in $candidates; do
           run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" --jq '[.event, .path, .head_sha] | @tsv')" || continue
           IFS=$'\t' read -r event path sha <<<"$run"
-          [ "$event" = push ] && [ "$path" = "$WORKFLOW" ] || continue
+          if [ "$event" != push ] || [ "$path" != "$WORKFLOW" ]; then
+            continue
+          fi
           status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$sha...main" --jq .status)" || continue
           case "$status" in
             identical|ahead) run_id="$id"; break ;;
