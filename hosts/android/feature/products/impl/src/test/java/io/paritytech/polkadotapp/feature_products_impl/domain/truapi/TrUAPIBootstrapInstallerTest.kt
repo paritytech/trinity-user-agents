@@ -1,6 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import android.content.Context
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
 import android.content.res.AssetManager
 import android.net.Uri
 import android.webkit.WebView
@@ -12,6 +14,7 @@ import io.paritytech.polkadotapp.test_shared.eq
 import io.paritytech.polkadotapp.test_shared.whenever
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.mockStatic
@@ -57,6 +60,63 @@ class TrUAPIBootstrapInstallerTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun `host telemetry is immutable and registered before the endpoint for every webview`() {
+        withContainerAsset()
+        mockStatic(WebViewFeature::class.java).use { features ->
+            features.`when`<Boolean> { WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) }.thenReturn(true)
+            mockStatic(Uri::class.java).use {
+                mockStatic(WebViewCompat::class.java).use { compat ->
+                    val registered = mutableListOf<Registration>()
+                    compat.`when`<Any> { WebViewCompat.addDocumentStartJavaScript(eq(webView), any(), any()) }
+                        .thenAnswer { call ->
+                            registered += Registration(call.getArgument(1), call.getArgument(2))
+                            null
+                        }
+
+                    val telemetry = "telemetry();"
+                    val installer = TrUAPIBootstrapInstaller(context)
+                        .installerForScript(productOrigins, telemetry)("endpoint();")
+                    installer(webView)
+                    installer(webView)
+
+                    assertEquals(4, registered.size)
+                    assertEquals("$telemetry\nif (window === window.top) {\nendpoint();\n}", registered.first().script)
+                    assertEquals(registered.take(2), registered.drop(2))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `host telemetry script exposes build identity as a frozen non replaceable global`() {
+        val packageInfo = mock(PackageInfo::class.java).apply { versionName = "1.2.3" }
+        val packageManager = mock(PackageManager::class.java)
+        whenever(packageInfo.longVersionCode).thenReturn(456L)
+        whenever(context.packageName).thenReturn("io.paritytech.polkadotapp.nightly")
+        whenever(context.packageManager).thenReturn(packageManager)
+        whenever(packageManager.getPackageInfo("io.paritytech.polkadotapp.nightly", 0)).thenReturn(packageInfo)
+
+        val script = hostTelemetryScript(
+            context = context,
+            hostSessionId = "123e4567-e89b-12d3-a456-426614174000",
+            hostVersion = "0.24.0",
+            osVersion = "16",
+        )
+
+        assertTrue(script.contains("Object.defineProperty(globalThis, \"__trinityHostTelemetry\""))
+        assertTrue(script.contains("value: Object.freeze({\"hostSessionId\":\"123e4567-e89b-12d3-a456-426614174000\""))
+        assertTrue(script.contains("\"appVersion\":\"1.2.3\""))
+        assertTrue(script.contains("\"appBuild\":\"456\""))
+        assertTrue(script.contains("\"appVariant\":\"nightly\""))
+        assertTrue(script.contains("\"platform\":\"android\""))
+        assertTrue(script.contains("\"osVersion\":\"16\""))
+        assertTrue(script.contains("\"truapiHostVersion\":\"0.24.0\""))
+        assertTrue(script.contains("\"schemaVersion\":\"1\""))
+        assertTrue(script.contains("writable: false"))
+        assertTrue(script.contains("configurable: false"))
     }
 
     @Test

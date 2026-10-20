@@ -1,12 +1,16 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import android.content.Context
+import android.os.Build
 import android.webkit.WebView
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.ContainerScriptBundle
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductWebChromeClient
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import uniffi.truapi.truapiHostVersion
 import javax.inject.Inject
 
 /**
@@ -20,7 +24,13 @@ import javax.inject.Inject
 class TrUAPIBootstrapInstaller @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) {
-    fun installerFor(origins: Set<String>): (bootstrap: String) -> (WebView) -> Unit {
+    fun installerFor(origins: Set<String>, hostSessionId: String? = null): (bootstrap: String) -> (WebView) -> Unit =
+        installerForScript(origins, hostSessionId?.let { hostTelemetryScript(context, it) })
+
+    internal fun installerForScript(
+        origins: Set<String>,
+        telemetryScript: String?,
+    ): (bootstrap: String) -> (WebView) -> Unit {
         check(WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             "WebView lacks DOCUMENT_START_SCRIPT; cannot run a TrUAPI product"
         }
@@ -29,10 +39,48 @@ class TrUAPIBootstrapInstaller @Inject constructor(
             ContainerScriptBundle.load(context)
         return { bootstrap ->
             { webView ->
-                WebViewCompat.addDocumentStartJavaScript(webView, "if (window === window.top) {\n$bootstrap\n}", origins)
+                val pageBootstrap = listOfNotNull(
+                    telemetryScript,
+                    "if (window === window.top) {\n$bootstrap\n}",
+                ).joinToString("\n")
+                WebViewCompat.addDocumentStartJavaScript(webView, pageBootstrap, origins)
                 WebViewCompat.addDocumentStartJavaScript(webView, container, setOf("*"))
                 (webView.webChromeClient as? ProductWebChromeClient)?.useContainerPermissions()
             }
         }
     }
+}
+
+internal fun hostTelemetryScript(
+    context: Context,
+    hostSessionId: String,
+    hostVersion: String = truapiHostVersion(),
+    osVersion: String = Build.VERSION.RELEASE,
+): String {
+    val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+    val packageName = context.packageName
+    val appVariant = when {
+        packageName.endsWith(".nightly") -> "nightly"
+        packageName.endsWith(".safetynet") -> "safetynet"
+        packageName.endsWith(".debug") -> "debug"
+        else -> "release"
+    }
+    val telemetry = buildJsonObject {
+        put("hostSessionId", hostSessionId)
+        packageInfo.versionName?.takeIf(String::isNotBlank)?.let { put("appVersion", it) }
+        put("appBuild", packageInfo.longVersionCode.toString())
+        put("appVariant", appVariant)
+        put("platform", "android")
+        osVersion.takeIf(String::isNotBlank)?.let { put("osVersion", it) }
+        hostVersion.takeIf(String::isNotBlank)?.let { put("truapiHostVersion", it) }
+        put("schemaVersion", "1")
+    }
+
+    return """
+        Object.defineProperty(globalThis, "__trinityHostTelemetry", {
+          value: Object.freeze($telemetry),
+          writable: false,
+          configurable: false
+        });
+    """.trimIndent()
 }
