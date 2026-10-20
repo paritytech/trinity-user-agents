@@ -1853,7 +1853,7 @@ impl PairingHost {
 		.await?;
 		Ok((
 			latest::ProductAccountId {
-				dot_ns_identifier: access.owner.to_string(),
+				dot_ns_identifier: access.owner.clone(),
 				derivation_index: handle.derivation_index.clone(),
 			},
 			access,
@@ -1865,19 +1865,10 @@ impl PairingHost {
 		session: &SessionInfo,
 		handle: &latest::ProductAccountId,
 	) -> Result<Option<Zeroizing<[u8; 32]>>, RingVrfError> {
-		// The registry entry below is keyed by the handle as written, so only a
-		// handle already in canonical form is served here. Any other spelling
-		// is left to the remote signing host.
-		let Some(owner) = handle
-			.dot_ns_identifier
-			.parse::<ProductId>()
-			.ok()
-			.filter(|owner| owner.as_str() == handle.dot_ns_identifier)
-		else {
-			return Ok(None);
-		};
-		let Some(auto_signing) =
-			self.auto_signing_key(session, &owner).await.map_err(RingVrfError::from)?
+		let Some(auto_signing) = self
+			.auto_signing_key(session, &handle.dot_ns_identifier)
+			.await
+			.map_err(RingVrfError::from)?
 		else {
 			return Ok(None);
 		};
@@ -1974,7 +1965,7 @@ impl PairingHost {
 		let Some(calling_product_id) = calling_product_id else {
 			return Ok(None);
 		};
-		if calling_product_id.as_str() != account.dot_ns_identifier {
+		if *calling_product_id != account.dot_ns_identifier {
 			return Ok(None);
 		}
 		let Some(key) = self.auto_signing_key(session, calling_product_id).await? else {
@@ -2020,7 +2011,7 @@ impl PairingHost {
 		request: latest::HostAccountSignVrfRequest,
 	) -> Result<latest::VrfSignature, AuthorityError> {
 		let session = self.current_private_session(session)?;
-		if calling_product_id.as_str() == request.account.dot_ns_identifier &&
+		if *calling_product_id == request.account.dot_ns_identifier &&
 			let Some(auto_signing_key) =
 				self.auto_signing_key(&session, calling_product_id).await?
 		{
@@ -2155,7 +2146,7 @@ impl PairingHost {
 		request: ProductRequest<HostAccountGetAliasRequest>,
 	) -> Result<latest::ContextualAlias, RingVrfError> {
 		let private_session = self.current_private_session(session)?;
-		if request.calling_product_id.as_str() == request.payload.key_handle.dot_ns_identifier &&
+		if request.calling_product_id == request.payload.key_handle.dot_ns_identifier &&
 			let Some(entropy) = self
 				.local_ring_vrf_entropy_for_ring(
 					&private_session,
@@ -2231,7 +2222,7 @@ impl PairingHost {
 	) -> Result<[u8; 32], RingVrfError> {
 		let private_session = self.current_private_session(session)?;
 		let handle = latest::ProductAccountId {
-			dot_ns_identifier: request.calling_product_id.to_string(),
+			dot_ns_identifier: request.calling_product_id.clone(),
 			derivation_index: request.payload.index.clone(),
 		};
 		if let Some(auto_signing) = self

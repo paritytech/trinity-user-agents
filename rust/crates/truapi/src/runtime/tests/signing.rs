@@ -793,7 +793,7 @@ fn legacy_sign_raw_accepts_derived_ss58_then_returns_sso_response() {
 	assert_eq!(
 		request.account,
 		v01::ProductAccountId {
-			dot_ns_identifier: "myapp.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("myapp.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		}
 	);
@@ -843,7 +843,7 @@ fn legacy_sign_raw_accepts_derived_hex_then_returns_sso_response() {
 	assert_eq!(
 		request.account,
 		v01::ProductAccountId {
-			dot_ns_identifier: "myapp.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("myapp.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		}
 	);

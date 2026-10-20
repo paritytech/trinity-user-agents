@@ -1800,7 +1800,7 @@ mod tests {
 			truapi::platform::StatementStoreProductSignReview {
 				calling_product_id: Some(ProductId::for_test("dim2next.paseo")),
 				account: api::ProductAccountId {
-					dot_ns_identifier: "dim2.paseo".to_string(),
+					dot_ns_identifier: ProductId::for_test("dim2.paseo"),
 					derivation_index: api::DerivationIndex::Index(0),
 				},
 				payload: vec![0x42; 128],
@@ -1824,7 +1824,7 @@ mod tests {
 			calling_product_id: ProductId::for_test("caller.dot"),
 			request: truapi::v01::HostAccountSignVrfRequest {
 				account: truapi::v01::ProductAccountId {
-					dot_ns_identifier: "target.dot".to_string(),
+					dot_ns_identifier: ProductId::for_test("target.dot"),
 					derivation_index: truapi::v01::DerivationIndex::Raw([7; 32]),
 				},
 				transcript_label: b"lottery".to_vec(),

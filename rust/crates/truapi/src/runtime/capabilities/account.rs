@@ -48,10 +48,9 @@ impl Account for ProductRuntimeHost {
 		request: HostAccountGetRequest,
 	) -> Result<HostAccountGetResponse, CallError<HostAccountGetError>> {
 		let version = request.version();
-		let latest::HostAccountGetRequest { mut product_account_id } = request.into_latest();
+		let latest::HostAccountGetRequest { product_account_id } = request.into_latest();
 		let result = async {
-			let owner = Self::normalize_product_account_id(&mut product_account_id)
-				.map_err(|()| CallError::Domain(latest::HostAccountGetError::DomainNotValid))?;
+			let owner = product_account_id.dot_ns_identifier.clone();
 			let session = self
 				.accounts
 				.current_session()
@@ -118,13 +117,8 @@ impl Account for ProductRuntimeHost {
 		request: HostAccountGetAliasRequest,
 	) -> Result<HostAccountGetAliasResponse, CallError<HostAccountGetAliasError>> {
 		let version = request.version();
-		let mut request = request.into_latest();
+		let request = request.into_latest();
 		let result = async {
-			Self::normalize_product_account_id(&mut request.key_handle).map_err(|()| {
-				CallError::Domain(latest::HostAccountGetAliasError::Unknown {
-					reason: "Invalid key handle".to_string(),
-				})
-			})?;
 			let session = self
 				.accounts
 				.current_session()
@@ -148,14 +142,9 @@ impl Account for ProductRuntimeHost {
 		request: HostAccountCreateProofRequest,
 	) -> Result<HostAccountCreateProofResponse, CallError<HostAccountCreateProofError>> {
 		let version = request.version();
-		let mut request = request.into_latest();
+		let request = request.into_latest();
 		let result = async {
-			let owner =
-				Self::normalize_product_account_id(&mut request.key_handle).map_err(|()| {
-					CallError::Domain(latest::HostAccountCreateProofError::Unknown {
-						reason: "Invalid key handle".to_string(),
-					})
-				})?;
+			let owner = request.key_handle.dot_ns_identifier.clone();
 			let session = self
 				.accounts
 				.current_session()
@@ -238,14 +227,9 @@ impl Account for ProductRuntimeHost {
 		request: HostAccountRingVrfSignRequest,
 	) -> Result<HostAccountRingVrfSignResponse, CallError<HostAccountRingVrfSignError>> {
 		let version = request.version();
-		let mut request = request.into_latest();
+		let request = request.into_latest();
 		let result = async {
-			let owner =
-				Self::normalize_product_account_id(&mut request.key_handle).map_err(|()| {
-					CallError::Domain(latest::HostAccountRingVrfSignError::Unknown {
-						reason: "Invalid key handle".to_string(),
-					})
-				})?;
+			let owner = request.key_handle.dot_ns_identifier.clone();
 			let session = self
 				.accounts
 				.current_session()
@@ -276,13 +260,8 @@ impl Account for ProductRuntimeHost {
 		request: HostAccountSignVrfRequest,
 	) -> Result<HostAccountSignVrfResponse, CallError<HostAccountSignVrfError>> {
 		let version = request.version();
-		let mut request = request.into_latest();
+		let request = request.into_latest();
 		let result = async {
-			Self::normalize_product_account_id(&mut request.account).map_err(|()| {
-				CallError::Domain(latest::HostAccountSignVrfError::Unknown {
-					reason: "Invalid product account".to_string(),
-				})
-			})?;
 			validate_vrf_transcript(&request).map_err(|reason| {
 				CallError::Domain(latest::HostAccountSignVrfError::Unknown { reason })
 			})?;

@@ -888,15 +888,6 @@ impl ProductRuntimeHost {
 		}
 	}
 
-	/// Normalize `account`'s product id in place and return it.
-	fn normalize_product_account_id(
-		account: &mut latest::ProductAccountId,
-	) -> Result<ProductId, ()> {
-		let owner = account.dot_ns_identifier.parse::<ProductId>().map_err(|_| ())?;
-		account.dot_ns_identifier = owner.to_string();
-		Ok(owner)
-	}
-
 	async fn product_account_public_key(
 		&self,
 		cx: &CallContext,

@@ -263,9 +263,8 @@ pub enum CreateTransactionAuthorityRequest {
 }
 
 /// Whether blessed `calling_product_id` is using its own account, `owner`.
-pub fn is_blessed_owner(calling_product_id: &ProductId, owner: &str) -> bool {
-	calling_product_id.has_trusted_remote_permissions() &&
-		owner.parse::<ProductId>().is_ok_and(|owner| &owner == calling_product_id)
+pub fn is_blessed_owner(calling_product_id: &ProductId, owner: &ProductId) -> bool {
+	calling_product_id.has_trusted_remote_permissions() && owner == calling_product_id
 }
 
 /// Whether this product account can sign without confirmation.

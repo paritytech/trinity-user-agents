@@ -387,12 +387,9 @@ impl SigningHost {
 		activation_generation: u64,
 		owner: [u8; 32],
 		calling_product_id: &ProductId,
-		account_product_id: &str,
+		account_product_id: &ProductId,
 	) -> bool {
-		if !account_product_id
-			.parse::<ProductId>()
-			.is_ok_and(|account| &account == calling_product_id)
-		{
+		if account_product_id != calling_product_id {
 			return false;
 		}
 
@@ -437,13 +434,9 @@ impl SigningHost {
 		let entropy = self.root_entropy()?;
 		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
 		let owner = root.public.to_bytes();
-		let product_id = account
-			.dot_ns_identifier
-			.parse::<ProductId>()
-			.map_err(|err| AuthorityError::Unavailable { reason: err.to_string() })?;
 		derive_product_keypair(
 			&root,
-			&product_id,
+			&account.dot_ns_identifier,
 			derivation_index_bytes(&account.derivation_index),
 		)
 		.map(|keypair| (owner, keypair))
@@ -505,12 +498,8 @@ impl SigningHost {
 		handle: &v01::ProductAccountId,
 	) -> Result<Zeroizing<[u8; 32]>, RingVrfError> {
 		self.require_current_session(session)?;
-		let owner = handle
-			.dot_ns_identifier
-			.parse::<ProductId>()
-			.map_err(|err| RingVrfError::Unknown { reason: err.to_string() })?;
 		let root = self.root_entropy()?;
-		derive_ring_vrf_entropy(&root, &owner, &handle.derivation_index)
+		derive_ring_vrf_entropy(&root, &handle.dot_ns_identifier, &handle.derivation_index)
 			.map(Zeroizing::new)
 			.map_err(|err| RingVrfError::Unknown { reason: err.to_string() })
 	}
@@ -584,7 +573,7 @@ impl SigningHost {
 		let vrf = vrf::load().await?;
 		for (collection, index) in missing {
 			let handle = ProductAccountId {
-				dot_ns_identifier: owner.to_string(),
+				dot_ns_identifier: owner.clone(),
 				derivation_index: DerivationIndex::Index(index),
 			};
 			let entropy = self.ring_vrf_entropy(session, &handle)?;
@@ -690,7 +679,7 @@ impl SigningHost {
 		.await?;
 		Ok((
 			v01::ProductAccountId {
-				dot_ns_identifier: access.owner.to_string(),
+				dot_ns_identifier: access.owner.clone(),
 				derivation_index: handle.derivation_index.clone(),
 			},
 			access,
@@ -1080,12 +1069,7 @@ impl ProductAuthority for SigningHost {
 			None => {
 				// Permission lookups and prompts must use the same canonical identifiers.
 				let requester = &request.calling_product_id;
-				let owner = request
-					.payload
-					.key_handle
-					.dot_ns_identifier
-					.parse::<ProductId>()
-					.map_err(|_| RingVrfError::NotAllowlisted)?;
+				let owner = request.payload.key_handle.dot_ns_identifier.clone();
 				match super::account_access_authorization(
 					self.services.platform.as_ref(),
 					requester,
@@ -1099,7 +1083,7 @@ impl ProductAuthority for SigningHost {
 					PermissionAuthorizationStatus::NotDetermined => return Err(RingVrfError::Rejected),
 				}
 				v01::ProductAccountId {
-					dot_ns_identifier: owner.into(),
+					dot_ns_identifier: owner,
 					derivation_index: request.payload.key_handle.derivation_index.clone(),
 				}
 			},
@@ -1173,7 +1157,7 @@ impl ProductAuthority for SigningHost {
 		self.ring_resolver.validate(&request.payload.ring).await?;
 
 		let handle = v01::ProductAccountId {
-			dot_ns_identifier: request.calling_product_id.into(),
+			dot_ns_identifier: request.calling_product_id,
 			derivation_index: request.payload.index,
 		};
 		let entropy = self.ring_vrf_entropy(session, &handle)?;
@@ -1671,7 +1655,7 @@ mod tests {
 	fn vrf_request(product_id: &str) -> v01::HostAccountSignVrfRequest {
 		v01::HostAccountSignVrfRequest {
 			account: v01::ProductAccountId {
-				dot_ns_identifier: product_id.to_string(),
+				dot_ns_identifier: ProductId::for_test(product_id),
 				derivation_index: v01::DerivationIndex::Index(0),
 			},
 			transcript_label: b"pop:autosigning".to_vec(),
@@ -1681,7 +1665,7 @@ mod tests {
 
 	fn full_person_key_handle() -> v01::ProductAccountId {
 		v01::ProductAccountId {
-			dot_ns_identifier: "peopl.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("peopl.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		}
 	}
@@ -2704,71 +2688,6 @@ mod tests {
 		);
 	}
 
-	/// The gate and the key derivation act on one identity, by construction.
-	///
-	/// Previously the gate normalized the handle to decide, then handed the
-	/// caller's own spelling on to derivation, and the only thing between an
-	/// authorization about `peopl.dot` and a key derived from `PEOPL.DOT` was a
-	/// registry lookup that happened to miss. A later "make the registry
-	/// case-insensitive" change would have turned that into key confusion with
-	/// nothing to catch it. The gate now returns the owner it decided about and
-	/// the authority derives from that, so the two cannot diverge.
-	#[test]
-	fn the_gate_and_the_derivation_act_on_the_same_identity() {
-		let signed = ring_vrf_sign_at_the_authority("peopl.dot", "PEOPL.DOT");
-		assert!(
-			signed.is_ok(),
-			"an owner's own key must sign however it is spelled, because the gate \
-             hands the normalized owner to the derivation; got {signed:?}"
-		);
-		assert_eq!(
-			signed.ok(),
-			ring_vrf_sign_at_the_authority("peopl.dot", "peopl.dot").ok(),
-			"the two spellings must produce the same signature, not merely both succeed"
-		);
-	}
-
-	/// A handle that does not normalize names no product, so it takes the same
-	/// refusal as a product that granted nothing rather than a distinguishable
-	/// error the caller could probe with.
-	#[test]
-	fn a_handle_that_does_not_normalize_takes_the_uniform_refusal() {
-		assert_eq!(
-			ring_vrf_sign_at_the_authority("peopl.dot", "not a product").err(),
-			Some(RingVrfError::NotAllowlisted)
-		);
-	}
-
-	/// Drive `ring_vrf_sign` at the authority with an arbitrary caller/handle
-	/// spelling, bypassing the frontend as `sso_responder` does.
-	fn ring_vrf_sign_at_the_authority(
-		caller: &str,
-		handle_owner: &str,
-	) -> Result<Vec<u8>, RingVrfError> {
-		let platform = Arc::new(StubPlatform::default());
-		let (_services, authority) =
-			signing_runtime_with_ring_resolver(platform, full_person_ring_resolver());
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		let session = authority.current_session().expect("active session");
-		register_full_person_key(&authority, &session, &full_person_ring_location());
-
-		futures::executor::block_on(authority.ring_vrf_sign(
-			&CallContext::default(),
-			&session,
-			ProductRequest {
-				calling_product_id: ProductId::for_test(caller),
-				payload: v01::HostAccountRingVrfSignRequest {
-					key_handle: v01::ProductAccountId {
-						dot_ns_identifier: handle_owner.to_string(),
-						derivation_index: v01::DerivationIndex::Index(0),
-					},
-					message: b"sign me".to_vec(),
-				},
-			},
-		))
-	}
-
 	fn foreign_ring_vrf_sign_through_the_authority(
 		trusted_products: Option<&str>,
 	) -> Result<Vec<u8>, RingVrfError> {
@@ -3070,7 +2989,7 @@ mod tests {
 			.expect("activation succeeds");
 		let session = authority.current_session().expect("active session");
 		let handle = v01::ProductAccountId {
-			dot_ns_identifier: "myapp.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("myapp.dot"),
 			derivation_index: v01::DerivationIndex::Index(8),
 		};
 		futures::executor::block_on(authority.ring_vrf_registry.register(
@@ -3216,7 +3135,7 @@ mod tests {
 
 		let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
 			account: v01::ProductAccountId {
-				dot_ns_identifier: "myapp.dot".to_string(),
+				dot_ns_identifier: ProductId::for_test("myapp.dot"),
 				derivation_index: v01::DerivationIndex::Index(0),
 			},
 			payload: v01::RawPayload::Bytes { bytes: b"hello world".to_vec() },
@@ -3368,13 +3287,13 @@ mod tests {
 			current_generation,
 			current_session.public_key,
 			&ProductId::for_test("myapp.dot"),
-			"myapp.dot",
+			&ProductId::for_test("myapp.dot"),
 		));
 		assert!(authority.has_auto_signing_grant(
 			current_generation,
 			current_session.public_key,
 			&ProductId::for_test("other.dot"),
-			"other.dot",
+			&ProductId::for_test("other.dot"),
 		));
 		assert!(matches!(
 			authority.grant_auto_signing(&stale_session, &ProductId::for_test("myapp.dot")),
@@ -3683,7 +3602,7 @@ mod tests {
 		let cx = CallContext::default();
 		let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
 			account: v01::ProductAccountId {
-				dot_ns_identifier: "myapp.dot".to_string(),
+				dot_ns_identifier: ProductId::for_test("myapp.dot"),
 				derivation_index: v01::DerivationIndex::Index(0),
 			},
 			payload: v01::RawPayload::Bytes { bytes: vec![1, 2, 3] },
@@ -3695,7 +3614,7 @@ mod tests {
 
 	fn product_account(index: u32) -> v01::ProductAccountId {
 		v01::ProductAccountId {
-			dot_ns_identifier: "myapp.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("myapp.dot"),
 			derivation_index: v01::DerivationIndex::Index(index),
 		}
 	}
@@ -3815,7 +3734,7 @@ mod tests {
 		let cx = CallContext::default();
 		let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 			product_account_id: v01::ProductAccountId {
-				dot_ns_identifier: "myapp.dot".to_string(),
+				dot_ns_identifier: ProductId::for_test("myapp.dot"),
 				derivation_index: v01::DerivationIndex::Index(0),
 			},
 		});
@@ -3836,7 +3755,7 @@ mod tests {
 		let cx = CallContext::default();
 		let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
 			account: v01::ProductAccountId {
-				dot_ns_identifier: "myapp.dot".to_string(),
+				dot_ns_identifier: ProductId::for_test("myapp.dot"),
 				derivation_index: v01::DerivationIndex::Index(0),
 			},
 			payload: v01::RawPayload::Bytes { bytes: b"<Bytes>hi</Bytes>".to_vec() },
@@ -3881,7 +3800,7 @@ mod tests {
 		let cx = CallContext::default();
 		let request = v01::HostSignRawRequest {
 			account: v01::ProductAccountId {
-				dot_ns_identifier: "myapp.dot".to_string(),
+				dot_ns_identifier: ProductId::for_test("myapp.dot"),
 				derivation_index: v01::DerivationIndex::Index(0),
 			},
 			payload: v01::RawPayload::Bytes { bytes: vec![1, 2, 3] },
@@ -3910,7 +3829,7 @@ mod tests {
 		let cx = CallContext::default();
 		let request = v01::HostSignRawRequest {
 			account: v01::ProductAccountId {
-				dot_ns_identifier: "myapp.dot".to_string(),
+				dot_ns_identifier: ProductId::for_test("myapp.dot"),
 				derivation_index: v01::DerivationIndex::Index(0),
 			},
 			payload: v01::RawPayload::Bytes { bytes: vec![1] },

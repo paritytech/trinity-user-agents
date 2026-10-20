@@ -67,13 +67,8 @@ impl StatementStore for ProductRuntimeHost {
 		RemoteStatementStoreCreateProofResponse,
 		CallError<RemoteStatementStoreCreateProofError>,
 	> {
-		let RemoteStatementStoreCreateProofRequest::V1(mut inner) = request;
-		let owner =
-			Self::normalize_product_account_id(&mut inner.product_account_id).map_err(|()| {
-				CallError::Domain(RemoteStatementStoreCreateProofError::V1(
-					latest::RemoteStatementStoreCreateProofError::UnknownAccount,
-				))
-			})?;
+		let RemoteStatementStoreCreateProofRequest::V1(inner) = request;
+		let owner = inner.product_account_id.dot_ns_identifier.clone();
 		if !self.may_use_product_account(&owner, cx).await {
 			return Err(CallError::Domain(RemoteStatementStoreCreateProofError::V1(
 				latest::RemoteStatementStoreCreateProofError::UnknownAccount,
@@ -328,7 +323,7 @@ impl ProductRuntimeHost {
 		statement: latest::Statement,
 	) -> Result<latest::StatementProof, StatementProofFailure> {
 		let product_account_id =
-			latest::ProductAccountId { dot_ns_identifier: owner.to_string(), derivation_index };
+			latest::ProductAccountId { dot_ns_identifier: owner.clone(), derivation_index };
 		let session = self.accounts.current_session().ok_or(StatementProofFailure::NoSession)?;
 		let signer = self
 			.product_account_public_key(cx, &session, &owner, &product_account_id.derivation_index)

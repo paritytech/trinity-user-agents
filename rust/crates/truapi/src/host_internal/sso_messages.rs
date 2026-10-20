@@ -650,7 +650,7 @@ mod tests {
 
 	fn account() -> ProductAccountId {
 		ProductAccountId {
-			dot_ns_identifier: "myapp.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("myapp.dot"),
 			derivation_index: DerivationIndex::Index(7),
 		}
 	}
@@ -714,7 +714,7 @@ mod tests {
 	fn late_remote_message_variants_match_host_papp_order() {
 		let ring_location = RingLocation { chain_id: [0; 32], junctions: vec![] };
 		let key_handle = ProductAccountId {
-			dot_ns_identifier: "peopl.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("peopl.dot"),
 			derivation_index: DerivationIndex::Index(0),
 		};
 		let legacy_tx = RemoteMessage::request(
@@ -823,7 +823,7 @@ mod tests {
 			],
 		};
 		let handle = ProductAccountId {
-			dot_ns_identifier: "peopl.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("peopl.dot"),
 			derivation_index: DerivationIndex::Index(0),
 		};
 		let messages = [
@@ -877,7 +877,7 @@ mod tests {
 			],
 		};
 		let key_handle = ProductAccountId {
-			dot_ns_identifier: "peopl.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("peopl.dot"),
 			derivation_index: DerivationIndex::Index(0),
 		};
 
@@ -1019,7 +1019,7 @@ mod tests {
 			CreateTransactionRequest {
 				payload: CreateTransactionPayload::V1(SsoProductTxPayload {
 					signer: ProductAccountId {
-						dot_ns_identifier: "truapi-playground.dot".to_string(),
+						dot_ns_identifier: ProductId::for_test("truapi-playground.dot"),
 						derivation_index: DerivationIndex::Index(0),
 					},
 					genesis_hash: sequential_bytes(32),
@@ -1047,7 +1047,7 @@ mod tests {
 			CreateTransactionRequest {
 				payload: CreateTransactionPayload::V1(SsoProductTxPayload {
 					signer: ProductAccountId {
-						dot_ns_identifier: "truapi-playground.dot".to_string(),
+						dot_ns_identifier: ProductId::for_test("truapi-playground.dot"),
 						derivation_index: DerivationIndex::Index(0),
 					},
 					genesis_hash: [
@@ -1147,7 +1147,7 @@ mod tests {
 	fn sign_vrf_messages_match_mobile_wire_contract() {
 		let payload = HostAccountSignVrfRequest {
 			account: ProductAccountId {
-				dot_ns_identifier: "browse.dot".to_string(),
+				dot_ns_identifier: ProductId::for_test("browse.dot"),
 				derivation_index: DerivationIndex::Index(7),
 			},
 			transcript_label: b"ctx".to_vec(),

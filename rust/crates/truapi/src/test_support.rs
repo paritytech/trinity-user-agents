@@ -809,7 +809,7 @@ pub fn sign_raw_legacy_response_message(
 /// canonical decimal form of `index`.
 pub fn account_id(identifier: &str, index: u32) -> v01::ProductAccountId {
 	v01::ProductAccountId {
-		dot_ns_identifier: identifier.to_string(),
+		dot_ns_identifier: ProductId::for_test(identifier),
 		derivation_index: v01::DerivationIndex::Index(index),
 	}
 }
@@ -839,7 +839,7 @@ pub fn ring_location_fixture() -> v01::RingLocation {
 pub fn account_alias_request(product_id: &str) -> HostAccountGetAliasRequest {
 	HostAccountGetAliasRequest::V1(v01::HostAccountGetAliasRequest {
 		key_handle: v01::ProductAccountId {
-			dot_ns_identifier: product_id.to_string(),
+			dot_ns_identifier: ProductId::for_test(product_id),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 		context: product_proof_context(product_id),
@@ -851,7 +851,7 @@ pub fn account_alias_request(product_id: &str) -> HostAccountGetAliasRequest {
 pub fn create_proof_request(product_id: &str) -> HostAccountCreateProofRequest {
 	HostAccountCreateProofRequest::V1(v01::HostAccountCreateProofRequest {
 		key_handle: v01::ProductAccountId {
-			dot_ns_identifier: product_id.to_string(),
+			dot_ns_identifier: ProductId::for_test(product_id),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 		context: product_proof_context(product_id),

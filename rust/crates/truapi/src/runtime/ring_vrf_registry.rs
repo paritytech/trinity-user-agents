@@ -380,14 +380,6 @@ fn decode_snapshot(blob: &[u8]) -> Result<RegistrySnapshot, RingVrfError> {
 fn validate_snapshot(snapshot: &RegistrySnapshot) -> Result<(), RingVrfError> {
 	let mut handles = HashSet::new();
 	for entry in &snapshot.entries {
-		let owner = entry
-			.handle
-			.dot_ns_identifier
-			.parse::<ProductId>()
-			.map_err(|error| invalid_registry(error.to_string()))?;
-		if owner.as_str() != entry.handle.dot_ns_identifier {
-			return Err(invalid_registry("non-canonical key owner"));
-		}
 		if entry.public_key.is_none() {
 			return Err(invalid_registry("stored entry is missing its public key"));
 		}
@@ -500,7 +492,7 @@ mod tests {
 
 	fn handle(owner: &str, index: u32) -> ProductAccountId {
 		ProductAccountId {
-			dot_ns_identifier: owner.to_string(),
+			dot_ns_identifier: ProductId::for_test(owner),
 			derivation_index: truapi::v01::DerivationIndex::Index(index),
 		}
 	}

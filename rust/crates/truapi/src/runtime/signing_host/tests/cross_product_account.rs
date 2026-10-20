@@ -35,7 +35,7 @@ fn cache_grant(platform: &StubPlatform, owner: &str, trusted: &str) {
 
 fn dim2_account() -> v01::ProductAccountId {
 	v01::ProductAccountId {
-		dot_ns_identifier: "dim2.paseo".to_string(),
+		dot_ns_identifier: ProductId::for_test("dim2.paseo"),
 		derivation_index: v01::DerivationIndex::Index(0),
 	}
 }

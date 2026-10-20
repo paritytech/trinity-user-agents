@@ -9,7 +9,7 @@ use crate::platform::{
 	AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey, HostScan,
 	PermissionAuthorizationRequest, ProductExecutionKind,
 };
-use parity_scale_codec::Encode;
+use parity_scale_codec::{Decode, Encode};
 use truapi::{
 	api::{
 		Account, Chain, Entropy, ExpandedCard, Game, LocalStorage, Notifications, Permissions,
@@ -665,24 +665,6 @@ fn a_proof_naming_the_caller_in_another_spelling_is_still_its_own() {
 		proof_refusal(&host, &shouted),
 		Some(CallError::Domain(HostAccountCreateProofError::V1(
 			v01::HostAccountCreateProofError::Rejected
-		)))
-	);
-}
-
-#[test]
-fn an_unresolvable_product_cannot_reach_a_foreign_key() {
-	// A key handle that does not normalize names no product, so it cannot be
-	// reached. Note what this asserts: the frontend answers `Unknown { reason }`
-	// here, naming the malformed handle, where the authority answers the uniform
-	// `NotAllowlisted` for the same input. That asymmetry is real and deliberate
-	// at this layer: the id came from this Host's own caller, not off the wire,
-	// so telling it that its handle is malformed discloses nothing it did not
-	// already send. The authority cannot say the same and does not.
-	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
-	assert_eq!(
-		proof_refusal(&host, "not a product"),
-		Some(CallError::Domain(HostAccountCreateProofError::V1(
-			v01::HostAccountCreateProofError::Unknown { reason: "Invalid key handle".to_string() }
 		)))
 	);
 }
@@ -4240,7 +4222,7 @@ fn get_account_requires_session() {
 	let cx = CallContext::default();
 	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 		product_account_id: v01::ProductAccountId {
-			dot_ns_identifier: "myapp.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("myapp.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 	});
@@ -4273,23 +4255,15 @@ fn get_account_maps_subtree_disconnect_race_to_not_connected() {
 	));
 }
 
+/// An account that names no product is rejected when the request is decoded,
+/// so no handler ever sees it.
 #[test]
-fn get_account_rejects_invalid_product_identifier() {
-	let host =
-		ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), test_spawner());
-	install_pairing_session(&host, session_info());
-	let cx = CallContext::default();
-	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
-		product_account_id: v01::ProductAccountId {
-			dot_ns_identifier: "example.com".to_string(),
-			derivation_index: v01::DerivationIndex::Index(0),
-		},
-	});
-	let err = futures::executor::block_on(host.get_account(&cx, request)).unwrap_err();
-	assert!(matches!(
-		err,
-		CallError::Domain(HostAccountGetError::V1(v01::HostAccountGetError::DomainNotValid))
-	));
+fn a_request_for_an_account_of_no_product_does_not_decode() {
+	let request_naming =
+		|product: &str| (0u8, product.to_string(), v01::DerivationIndex::Index(0)).encode();
+
+	assert!(HostAccountGetRequest::decode(&mut &request_naming("myapp.dot")[..]).is_ok());
+	assert!(HostAccountGetRequest::decode(&mut &request_naming("example.com")[..]).is_err());
 }
 
 /// An owner that names no product is the product's malformed request, not a
@@ -4320,7 +4294,7 @@ fn get_account_other_product_rejects_when_user_declines() {
 	let cx = CallContext::default();
 	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 		product_account_id: v01::ProductAccountId {
-			dot_ns_identifier: "other.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("other.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 	});
@@ -4353,7 +4327,7 @@ fn get_account_other_product_maps_confirmation_failure_to_host_failure() {
 	let cx = CallContext::default();
 	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 		product_account_id: v01::ProductAccountId {
-			dot_ns_identifier: "other.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("other.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 	});
@@ -4374,7 +4348,7 @@ fn get_account_other_product_accepts_confirmation_then_derives_key() {
 	let cx = CallContext::default();
 	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 		product_account_id: v01::ProductAccountId {
-			dot_ns_identifier: "other.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("other.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 	});
@@ -4456,7 +4430,7 @@ fn get_account_derives_rfc0022_product_key() {
 	let cx = CallContext::default();
 	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 		product_account_id: v01::ProductAccountId {
-			dot_ns_identifier: "myapp.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("myapp.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 	});
@@ -4532,7 +4506,7 @@ fn get_account_normalizes_product_identifier_before_deriving() {
 	let cx = CallContext::default();
 	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 		product_account_id: v01::ProductAccountId {
-			dot_ns_identifier: "MyApp.DOT".to_string(),
+			dot_ns_identifier: ProductId::for_test("MyApp.DOT"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 	});
@@ -4557,7 +4531,7 @@ fn get_account_localhost_product_prompts_for_other_product_identifier() {
 	let cx = CallContext::default();
 	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 		product_account_id: v01::ProductAccountId {
-			dot_ns_identifier: "myapp.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("myapp.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 	});
@@ -5941,7 +5915,7 @@ fn legacy_create_transaction_accepts_derived_key_then_returns_sso_response() {
 	assert_eq!(
 		payload.signer,
 		v01::ProductAccountId {
-			dot_ns_identifier: "myapp.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("myapp.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		}
 	);
@@ -7963,7 +7937,7 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
 			calling_product_id: ProductId::for_test("dim2.dot"),
 			payload: v01::HostAccountCreateProofRequest {
 				key_handle: v01::ProductAccountId {
-					dot_ns_identifier: "peopl.dot".to_string(),
+					dot_ns_identifier: ProductId::for_test("peopl.dot"),
 					derivation_index: v01::DerivationIndex::Index(0),
 				},
 				context: v01::ProductProofContext {
@@ -7989,7 +7963,7 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
 			calling_product_id: ProductId::for_test("dim2.dot"),
 			payload: v01::HostAccountRingVrfSignRequest {
 				key_handle: v01::ProductAccountId {
-					dot_ns_identifier: "peopl.dot".to_string(),
+					dot_ns_identifier: ProductId::for_test("peopl.dot"),
 					derivation_index: v01::DerivationIndex::Index(0),
 				},
 				message: b"sign me".to_vec(),
@@ -8049,7 +8023,7 @@ fn the_pairing_authority_admits_a_context_only_its_product_granted() {
 				calling_product_id: ProductId::for_test("dim2next.dot"),
 				payload: v01::HostAccountCreateProofRequest {
 					key_handle: v01::ProductAccountId {
-						dot_ns_identifier: "peopl.dot".to_string(),
+						dot_ns_identifier: ProductId::for_test("peopl.dot"),
 						derivation_index: v01::DerivationIndex::Index(0),
 					},
 					context: v01::ProductProofContext {

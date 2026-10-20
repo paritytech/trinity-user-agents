@@ -1183,7 +1183,7 @@ pub async fn allocate_smart_contract_allowance(
 	// PGAS credits the product account the caller named.
 	let target = signing_host
 		.product_keypair(&api::ProductAccountId {
-			dot_ns_identifier: product_id.to_string(),
+			dot_ns_identifier: product_id.clone(),
 			derivation_index,
 		})?
 		.public
@@ -1912,7 +1912,7 @@ mod tests {
 				calling_product_id: ProductId::for_test("myapp.dot"),
 				payload: api::HostAccountGetAliasRequest {
 					key_handle: api::ProductAccountId {
-						dot_ns_identifier: "peopl.dot".to_string(),
+						dot_ns_identifier: ProductId::for_test("peopl.dot"),
 						derivation_index: api::DerivationIndex::Index(0),
 					},
 					context: api::ProductProofContext {

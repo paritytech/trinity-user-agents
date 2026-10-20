@@ -44,11 +44,10 @@ impl Signing for ProductRuntimeHost {
 		request: HostSignPayloadRequest,
 	) -> Result<HostSignPayloadResponse, CallError<HostSignPayloadError>> {
 		let version = request.version();
-		let mut inner = request.into_latest();
+		let inner = request.into_latest();
 		let result = async {
 			debug!("sign_payload: requesting signing-host signature");
-			let owner = Self::normalize_product_account_id(&mut inner.account)
-				.map_err(|()| CallError::Domain(latest::HostSignPayloadError::PermissionDenied))?;
+			let owner = inner.account.dot_ns_identifier.clone();
 			self.connection
 				.require_chain_submit(latest::HostSignPayloadError::PermissionDenied)
 				.await?;
@@ -145,9 +144,7 @@ impl Signing for ProductRuntimeHost {
 		let mut inner = request.into_latest();
 		let result = async {
 			debug!("create_transaction: requesting signing-host signature");
-			let owner = Self::normalize_product_account_id(&mut inner.signer).map_err(|()| {
-				CallError::Domain(latest::HostCreateTransactionError::PermissionDenied)
-			})?;
+			let owner = inner.signer.dot_ns_identifier.clone();
 			self.connection
 				.require_chain_submit(latest::HostCreateTransactionError::PermissionDenied)
 				.await?;
@@ -288,7 +285,7 @@ impl Signing for ProductRuntimeHost {
 					&cx,
 					SignPayloadAuthorityRequest::LegacyAccount {
 						product_account: latest::ProductAccountId {
-							dot_ns_identifier: self.connection.product_id().to_string(),
+							dot_ns_identifier: self.connection.product_id().clone(),
 							derivation_index: latest::DerivationIndex::Index(0),
 						},
 						request: inner,
@@ -386,7 +383,7 @@ impl Signing for ProductRuntimeHost {
 			let authority_request = match signer {
 				LegacySigner::Product => CreateTransactionAuthorityRequest::LegacyAccount {
 					product_account: latest::ProductAccountId {
-						dot_ns_identifier: self.connection.product_id().to_string(),
+						dot_ns_identifier: self.connection.product_id().clone(),
 						derivation_index: latest::DerivationIndex::Index(0),
 					},
 					request: inner,
@@ -433,9 +430,8 @@ impl ProductRuntimeHost {
 		watermarked: bool,
 	) -> Result<latest::HostSignPayloadResponse, CallError<latest::HostSignPayloadError>> {
 		debug!("sign_raw: requesting signing-host signature");
-		let mut inner = request;
-		let owner = Self::normalize_product_account_id(&mut inner.account)
-			.map_err(|()| CallError::Domain(latest::HostSignPayloadError::PermissionDenied))?;
+		let inner = request;
+		let owner = inner.account.dot_ns_identifier.clone();
 		self.connection
 			.require_chain_submit(latest::HostSignPayloadError::PermissionDenied)
 			.await?;
@@ -529,7 +525,7 @@ impl ProductRuntimeHost {
 		let authority_request = match signer {
 			LegacySigner::Product => SignRawAuthorityRequest::Product(latest::HostSignRawRequest {
 				account: latest::ProductAccountId {
-					dot_ns_identifier: self.connection.product_id().to_string(),
+					dot_ns_identifier: self.connection.product_id().clone(),
 					derivation_index: latest::DerivationIndex::Index(0),
 				},
 				payload: inner.payload,

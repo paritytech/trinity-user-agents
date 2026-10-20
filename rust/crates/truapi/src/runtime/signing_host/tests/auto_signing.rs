@@ -39,7 +39,7 @@ fn granting_platform() -> Arc<StubPlatform> {
 fn raw_request(product_id: &str) -> HostSignRawRequest {
 	HostSignRawRequest::V1(v01::HostSignRawRequest {
 		account: v01::ProductAccountId {
-			dot_ns_identifier: product_id.to_string(),
+			dot_ns_identifier: ProductId::for_test(product_id),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 		payload: v01::RawPayload::Bytes { bytes: b"hello world".to_vec() },

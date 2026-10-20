@@ -109,7 +109,7 @@ fn signing_config() -> SigningHostConfig {
 /// The account selector the product signs with.
 fn account() -> v01::ProductAccountId {
 	v01::ProductAccountId {
-		dot_ns_identifier: PRODUCT_ID.to_string(),
+		dot_ns_identifier: ProductId::for_test(PRODUCT_ID),
 		derivation_index: v01::DerivationIndex::Index(0),
 	}
 }
