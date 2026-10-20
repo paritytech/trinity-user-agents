@@ -6,6 +6,7 @@ import os
 import StructuredConcurrency
 import SubstrateSdk
 import Testing
+import StructuredConcurrencyTestSupport
 @testable import Coinage
 
 /// Blocks a coinage extrinsic stays valid for by default in the harness.
@@ -168,7 +169,7 @@ final class DurabilityHarness: @unchecked Sendable {
 
         let recorder = subsystem.recorder
         do {
-            try await withTimeout(.seconds(5)) { await recorder.waitForCount(recordedBefore + expected) }
+            try await withTimeout(hangGuard) { await recorder.waitForCount(recordedBefore + expected) }
         } catch {
             Issue.record("\(expected) recovery request(s) expected after release never arrived")
         }

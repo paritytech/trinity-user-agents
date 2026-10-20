@@ -1,5 +1,6 @@
 import AsyncExtensions
 import Foundation
+import StructuredConcurrencyTestSupport
 import Testing
 import TrUAPIHost
 @testable import polkadot_app
@@ -215,7 +216,7 @@ private struct ConditionNotMet: Error {}
 
 /// Waits for `condition`, failing the test after `timeout` instead of hanging it.
 private func eventually(
-    timeout: Duration = .seconds(5),
+    timeout: Duration = hangGuard,
     _ condition: () -> Bool
 ) async throws {
     let clock = ContinuousClock()

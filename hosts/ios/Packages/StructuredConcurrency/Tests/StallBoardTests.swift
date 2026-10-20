@@ -1,5 +1,6 @@
 import AsyncExtensions
 import Foundation
+import StructuredConcurrencyTestSupport
 import Testing
 
 @testable import StructuredConcurrency
@@ -422,7 +423,7 @@ struct StallBoardTests {
         fakeTime.value = 5.0
         await MainActor.run { board.refresh() }
 
-        let result = try await withTimeout(.seconds(5)) {
+        let result = try await withTimeout(hangGuard) {
             try await withTaskCancellationHandler {
                 try await snapshotTask.value
             } onCancel: {
@@ -779,7 +780,7 @@ final class TestActivitySource: StallActivitySource {
     }
 
     func waitForDismissal(of id: UUID) async throws {
-        try await withTimeout(.seconds(5)) { [dismissCallsSubject] in
+        try await withTimeout(hangGuard) { [dismissCallsSubject] in
             for await calls in dismissCallsSubject where calls.contains(id) {
                 return
             }

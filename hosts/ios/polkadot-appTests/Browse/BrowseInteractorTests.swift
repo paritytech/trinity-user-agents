@@ -1,7 +1,8 @@
-import Testing
 import Foundation
-import UIKit
 import StructuredConcurrency
+import StructuredConcurrencyTestSupport
+import Testing
+import UIKit
 @testable import polkadot_app
 @testable import Products
 
@@ -145,7 +146,7 @@ private final class StubPresenter: BrowseInteractorOutputProtocol {
 
     /// Returns once the interactor has reported an outcome, failing rather than hanging if it never does.
     func waitForOutcome() async throws {
-        try await withTimeout(.seconds(5)) { [outcomes] in
+        try await withTimeout(hangGuard) { [outcomes] in
             for await _ in outcomes {
                 return
             }
