@@ -425,14 +425,14 @@ pub fn engine_with(
 	chain: &Arc<FakeChain>,
 	registry: DurableRegistry,
 ) -> (TempDir, Arc<DurableTxEngine>, Arc<ManualTimer>) {
-	engine_with_spawner(chain, registry, crate::test_support::test_spawner())
+	engine_with_spawner(chain, registry, crate::Spawner::for_test())
 }
 
 /// [`engine_with`], running its background tasks on `spawner`.
 pub fn engine_with_spawner(
 	chain: &Arc<FakeChain>,
 	registry: DurableRegistry,
-	spawner: crate::subscription::Spawner,
+	spawner: crate::Spawner,
 ) -> (TempDir, Arc<DurableTxEngine>, Arc<ManualTimer>) {
 	let (dir, db) = open_db();
 	let timer = Arc::new(ManualTimer::default());

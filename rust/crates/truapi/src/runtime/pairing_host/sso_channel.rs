@@ -113,7 +113,7 @@ impl PairingHost {
 				},
 			}
 		};
-		spawner(Box::pin(Abortable::new(future, registration).map(|_| ())));
+		spawner.spawn(Abortable::new(future, registration).map(|_| ()));
 	}
 
 	/// Stop channel work for a cleared session: wake its in-flight waiters
@@ -199,7 +199,7 @@ impl PairingHost {
 		};
 		let statement_store = self.statement_store.clone();
 		let message_id = message_id.to_string();
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			let submitted = match withdrawal {
 				Ok(statement) => statement_store
 					.submit_fire_and_forget(statement, "SSO statement-store")
@@ -210,7 +210,7 @@ impl PairingHost {
 			if let Err(reason) = submitted {
 				warn!(%message_id, %reason, "could not withdraw the SSO request");
 			}
-		}));
+		});
 	}
 
 	/// Send `request` to the paired signing host and await its typed answer.

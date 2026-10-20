@@ -18,6 +18,7 @@ use tracing::{error, instrument};
 use truapi::CancellationToken;
 
 use crate::{
+	Spawner,
 	frame::{
 		MESSAGE_TYPE_CANCEL, MESSAGE_TYPE_INTERRUPT, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE,
 		MESSAGE_TYPE_START, MESSAGE_TYPE_STOP, PROTOCOL_ERROR_KEY, PROTOCOL_ERROR_METHOD_ID,
@@ -25,7 +26,7 @@ use crate::{
 		encode_cancelled_response,
 	},
 	generated::wire_table::MethodIds,
-	subscription::{Spawner, SubscriptionManager, SubscriptionStream},
+	subscription::{SubscriptionManager, SubscriptionStream},
 	transport::Transport,
 };
 
@@ -530,7 +531,7 @@ mod tests {
 
 	#[test]
 	fn dispatch_unknown_id_sends_correlated_protocol_error() {
-		let dispatcher = Dispatcher::new(test_spawner());
+		let dispatcher = Dispatcher::new(Spawner::for_test());
 		let transport = Arc::new(RecordingTransport::default());
 		let transport_dyn: Arc<dyn Transport> = transport.clone();
 		let frame = make_frame(250, 251, MESSAGE_TYPE_REQUEST, Vec::new());
@@ -557,7 +558,7 @@ mod tests {
 
 	#[test]
 	fn dispatch_protocol_error_does_not_send_another_error() {
-		let dispatcher = Dispatcher::new(test_spawner());
+		let dispatcher = Dispatcher::new(Spawner::for_test());
 		let transport = Arc::new(RecordingTransport::default());
 		let frame = make_frame(
 			PROTOCOL_ERROR_TRAIT_ID,
@@ -578,7 +579,7 @@ mod tests {
 	/// arrived on — request and response now share one id.
 	#[test]
 	fn dispatch_request_handler_error_emits_response_payload() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
+		let mut dispatcher = Dispatcher::new(Spawner::for_test());
 		let ids = MethodIds { trait_id: 7, method_id: 200 };
 		dispatcher.on_request(ids, |_request_id, _bytes, _cancel| {
 			// A method's failure is a `Result` inside the response payload, so
@@ -600,7 +601,7 @@ mod tests {
 	/// returns the previous handler, so callers can detect collisions.
 	#[test]
 	fn register_request_twice_returns_previous_handler() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
+		let mut dispatcher = Dispatcher::new(Spawner::for_test());
 		let ids = MethodIds { trait_id: 7, method_id: 200 };
 		let prev = dispatcher
 			.on_request(ids, |_request_id, _bytes, _cancel| Box::pin(async move { Vec::new() }));
@@ -617,7 +618,7 @@ mod tests {
 	/// subscription instead of cancelling the first.
 	#[test]
 	fn stop_frame_never_invokes_the_subscription_handler() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
+		let mut dispatcher = Dispatcher::new(Spawner::for_test());
 		let ids = MethodIds { trait_id: 7, method_id: 50 };
 		let invoked = Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let invoked_in_handler = invoked.clone();
@@ -644,7 +645,7 @@ mod tests {
 	#[test]
 	fn a_request_method_ignores_every_leg_but_request_and_cancel() {
 		for message_type in [MESSAGE_TYPE_RESPONSE, MESSAGE_TYPE_INTERRUPT, MESSAGE_TYPE_STOP, 99] {
-			let mut dispatcher = Dispatcher::new(test_spawner());
+			let mut dispatcher = Dispatcher::new(Spawner::for_test());
 			let ids = MethodIds { trait_id: 7, method_id: 50 };
 			let invoked = Arc::new(std::sync::atomic::AtomicBool::new(false));
 			let invoked_in_handler = invoked.clone();
@@ -672,7 +673,7 @@ mod tests {
 	/// with exactly one `Response`.
 	#[test]
 	fn cancel_fires_the_in_flight_token_and_the_call_still_answers_once() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
+		let mut dispatcher = Dispatcher::new(Spawner::for_test());
 		let ids = MethodIds { trait_id: 7, method_id: 60 };
 		// The handler parks on its token, so the response it produces is
 		// proof the cancel arrived rather than a race the test won by luck.
@@ -733,7 +734,7 @@ mod tests {
 	/// that reports a hang says less than one that names what broke.
 	#[test]
 	fn a_request_whose_id_is_already_in_flight_is_refused() {
-		let dispatcher = Dispatcher::new(test_spawner());
+		let dispatcher = Dispatcher::new(Spawner::for_test());
 
 		let Reservation::Start(first) = dispatcher.reserve_request("p:1") else {
 			panic!("the first call registers");
@@ -752,7 +753,7 @@ mod tests {
 	/// for the life of the connection.
 	#[test]
 	fn a_settled_call_leaves_no_entry_behind() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
+		let mut dispatcher = Dispatcher::new(Spawner::for_test());
 		let ids = MethodIds { trait_id: 7, method_id: 62 };
 		dispatcher.on_request(ids, move |_request_id, _bytes, _cancel| {
 			Box::pin(async move { vec![9, 9] })
@@ -780,7 +781,7 @@ mod tests {
 	/// `Cancelled` variant stays off the wire for a peer that never asked.
 	#[test]
 	fn a_call_no_one_withdrew_keeps_its_own_result() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
+		let mut dispatcher = Dispatcher::new(Spawner::for_test());
 		let ids = MethodIds { trait_id: 7, method_id: 63 };
 		// The handler fires its own token, standing in for an attached
 		// timeout, and answers normally.
@@ -808,7 +809,7 @@ mod tests {
 	/// its full deadline while the host keeps working.
 	#[test]
 	fn a_cancel_that_overtakes_its_request_still_withdraws_it() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
+		let mut dispatcher = Dispatcher::new(Spawner::for_test());
 		let ids = MethodIds { trait_id: 7, method_id: 64 };
 		let invocations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 		let handler_invocations = invocations.clone();
@@ -847,7 +848,7 @@ mod tests {
 	/// withdrawal the peer did not ask for.
 	#[test]
 	fn an_early_withdrawal_is_spent_by_the_call_it_withdraws() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
+		let mut dispatcher = Dispatcher::new(Spawner::for_test());
 		let ids = MethodIds { trait_id: 7, method_id: 65 };
 		let invocations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 		let handler_invocations = invocations.clone();
@@ -889,7 +890,7 @@ mod tests {
 	/// duplicate twice or swallow a withdrawal.
 	#[test]
 	fn a_duplicate_request_frame_is_never_answered() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
+		let mut dispatcher = Dispatcher::new(Spawner::for_test());
 		let ids = MethodIds { trait_id: 7, method_id: 66 };
 		let invocations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 		let handler_invocations = invocations.clone();
@@ -930,7 +931,7 @@ mod tests {
 	/// race this mechanism exists to close.
 	#[test]
 	fn the_oldest_early_withdrawal_is_evicted_once_the_queue_is_full() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
+		let mut dispatcher = Dispatcher::new(Spawner::for_test());
 		let ids = MethodIds { trait_id: 7, method_id: 65 };
 		dispatcher
 			.on_request(ids, move |_request_id, _bytes, _cancel| Box::pin(async move { vec![7] }));
@@ -974,7 +975,7 @@ mod tests {
 	/// handler must not run and nothing may be sent back.
 	#[test]
 	fn cancel_for_an_unknown_request_id_is_a_no_op() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
+		let mut dispatcher = Dispatcher::new(Spawner::for_test());
 		let ids = MethodIds { trait_id: 7, method_id: 61 };
 		let invoked = Arc::new(std::sync::atomic::AtomicBool::new(false));
 		let invoked_in_handler = invoked.clone();
@@ -1000,7 +1001,7 @@ mod tests {
 	/// request, and the call settles on the handler's own result.
 	#[test]
 	fn cancel_does_not_change_the_result_of_a_handler_that_ignores_it() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
+		let mut dispatcher = Dispatcher::new(Spawner::for_test());
 		let ids = MethodIds { trait_id: 7, method_id: 62 };
 		dispatcher.on_request(ids, move |_request_id, _bytes, _cancel| {
 			Box::pin(async move { vec![4, 5] })
@@ -1026,7 +1027,7 @@ mod tests {
 	#[test]
 	fn a_subscription_starts_only_on_a_start_leg() {
 		for message_type in [MESSAGE_TYPE_RECEIVE, MESSAGE_TYPE_INTERRUPT, 99] {
-			let mut dispatcher = Dispatcher::new(test_spawner());
+			let mut dispatcher = Dispatcher::new(Spawner::for_test());
 			let ids = MethodIds { trait_id: 7, method_id: 50 };
 			let invoked = Arc::new(std::sync::atomic::AtomicBool::new(false));
 			let invoked_in_handler = invoked.clone();
@@ -1056,7 +1057,7 @@ mod tests {
 	/// waiting, but reported once so it cannot flood the log.
 	#[test]
 	fn an_unroutable_pair_is_answered_every_time_but_reported_once() {
-		let dispatcher = Dispatcher::new(test_spawner());
+		let dispatcher = Dispatcher::new(Spawner::for_test());
 		let transport = Arc::new(RecordingTransport::default());
 		let transport_dyn: Arc<dyn Transport> = transport.clone();
 		for _ in 0..3 {
@@ -1077,14 +1078,16 @@ mod tests {
 
 	#[test]
 	fn execution_filter_is_bound_to_the_connection() {
-		let app =
-			Dispatcher::for_execution(test_spawner(), crate::platform::ProductExecutionKind::App);
+		let app = Dispatcher::for_execution(
+			Spawner::for_test(),
+			crate::platform::ProductExecutionKind::App,
+		);
 		let widget = Dispatcher::for_execution(
-			test_spawner(),
+			Spawner::for_test(),
 			crate::platform::ProductExecutionKind::Widget,
 		);
 		let worker = Dispatcher::for_execution(
-			test_spawner(),
+			Spawner::for_test(),
 			crate::platform::ProductExecutionKind::Worker,
 		);
 

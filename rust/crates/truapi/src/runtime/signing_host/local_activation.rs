@@ -65,7 +65,7 @@ impl LocalActivation for SigningHost {
 		let services = self.services.clone();
 		let session_state = self.session_state.clone();
 		let auth_state = self.auth_state.clone();
-		(self.services.spawner)(Box::pin(async move {
+		self.services.spawner.spawn(async move {
 			let Some(identity) = lookup_session_identity(
 				&services.chain,
 				services.asset_hub_chain_genesis_hash().unwrap_or_default(),
@@ -80,7 +80,7 @@ impl LocalActivation for SigningHost {
 			if session_state.replace_session_if_current(&session, named.clone()) {
 				auth_state.connected(&connected_session_ui_info(&named));
 			}
-		}));
+		});
 		Ok(())
 	}
 }

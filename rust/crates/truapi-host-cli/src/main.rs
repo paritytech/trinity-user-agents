@@ -55,15 +55,14 @@ use clap::{
 use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 use truapi::{
 	AnnouncedPairing, DebugSink, PairedSsoPeer, PairingHostConfig, PairingHostRuntime,
-	PairingProposal, ResponderExit, SigningHostConfig, SigningHostRuntime, StatementRenewalTarget,
-	WsDebugSink,
+	PairingProposal, ResponderExit, SigningHostConfig, SigningHostRuntime, Spawner,
+	StatementRenewalTarget, WsDebugSink,
 	host_logic::dotns_gateway::{
 		MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_lite_label, is_registrable_full_label,
 	},
 	platform::{ChatPlatform, HostInfo, PermissionStatusHost, PlatformInfo, ProductExecutionKind},
 	statement_allowance as alloc,
 	statement_allowance::{PersonhoodSigner, collection::PersonhoodCollection},
-	subscription::Spawner,
 };
 
 use crate::{

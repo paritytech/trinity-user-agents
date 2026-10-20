@@ -723,7 +723,7 @@ mod tests {
 	use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 	use tokio::{sync::Notify, task::JoinHandle};
 	use tokio_tungstenite::{client_async, tungstenite::client::IntoClientRequest};
-	use truapi::subscription::Spawner;
+	use truapi::Spawner;
 
 	struct UnusedRuntimeFactory;
 

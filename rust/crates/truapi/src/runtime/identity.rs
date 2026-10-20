@@ -203,12 +203,12 @@ mod tests {
 
 	use super::*;
 	use crate::{
+		Spawner,
 		chain_runtime::{RuntimeChainProvider, RuntimeFailure},
 		host_logic::dotns_gateway::{
 			VIEW_CALL_ORIGIN, account_to_h160, decode_string, dispatcher_address_key, selector,
 		},
 		platform::JsonRpcConnection,
-		subscription::thread_per_subscription_spawner,
 	};
 	use async_trait::async_trait;
 	use futures::{StreamExt, channel::mpsc, stream::BoxStream};
@@ -535,7 +535,7 @@ mod tests {
 	#[test]
 	fn in_core_lookup_resolves_usernames_over_one_runtime_follow() {
 		let provider = Arc::new(ScriptedAssetHub::new());
-		let chain = ChainRuntime::new(provider.clone(), thread_per_subscription_spawner());
+		let chain = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let session = session_without_usernames([0x11; 32], ACCOUNT);
 
 		let resolved = futures::executor::block_on(resolve_session_identity_with_chain(
@@ -574,7 +574,7 @@ mod tests {
 	#[test]
 	fn root_key_resolves_when_identity_account_labels_are_unissued() {
 		let provider = Arc::new(ScriptedAssetHub::new());
-		let chain = ChainRuntime::new(provider, thread_per_subscription_spawner());
+		let chain = ChainRuntime::new(provider, Spawner::for_test());
 		let session = session_without_usernames(ACCOUNT, SQUATTER);
 
 		let resolved = futures::executor::block_on(resolve_session_identity_with_chain(

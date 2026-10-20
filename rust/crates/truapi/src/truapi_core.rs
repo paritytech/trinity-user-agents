@@ -11,6 +11,7 @@ use tracing::instrument;
 use truapi::api::TrUApi;
 
 use crate::{
+	Spawner,
 	dispatcher::Dispatcher,
 	frame::ProtocolMessage,
 	generated::dispatcher,
@@ -18,7 +19,6 @@ use crate::{
 	runtime::{
 		HostSession, PairingHostRole, ProductAuthority, ProductRuntimeHost, RuntimeServices,
 	},
-	subscription::Spawner,
 	transport::Transport,
 };
 
@@ -185,7 +185,7 @@ mod tests {
 
 	use crate::{
 		frame::{Payload, request_ids, subscription_ids},
-		test_support::{StubPlatform, runtime_config, test_spawner},
+		test_support::{StubPlatform, runtime_config},
 	};
 
 	/// A request payload must consume exactly its own bytes. Trailing bytes
@@ -198,7 +198,7 @@ mod tests {
 			Arc::new(StubPlatform::default()),
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 		);
 		let request = v01::HostFeatureSupportedRequest::Chain { genesis_hash: vec![0u8; 32] };
 		let ids = request_ids("system_feature_supported").expect("known request method");
@@ -236,7 +236,7 @@ mod tests {
 			Arc::new(StubPlatform::default()),
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 		);
 		let request = v01::HostFeatureSupportedRequest::Chain { genesis_hash: vec![0u8; 32] };
 		let ids = request_ids("system_feature_supported").expect("known request method");
@@ -301,7 +301,7 @@ mod tests {
 			Arc::new(StubPlatform::default()),
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 		)
 	}
 
@@ -323,7 +323,7 @@ mod tests {
 			platform.clone(),
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 		);
 		// Nothing is cached for `wallet.dot`, so the read has to resolve a
 		// manifest, which is the only thing that reaches a chain with this hash.

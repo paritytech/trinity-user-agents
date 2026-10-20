@@ -15,6 +15,7 @@ use crate::durable::{DurableTxEngine, DurableWorkObserver};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::store::{Db, DbError};
 use crate::{
+	Spawner,
 	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
 	host_logic::worker::WorkerLedger,
 	platform::{
@@ -26,7 +27,6 @@ use crate::{
 		bulletin_rpc::BulletinRpc, signing_host::DevicePairingObserver,
 		statement_store_rpc::StatementStoreRpc,
 	},
-	subscription::Spawner,
 };
 use async_trait::async_trait;
 use truapi::latest;

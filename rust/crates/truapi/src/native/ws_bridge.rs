@@ -842,9 +842,9 @@ mod tests {
 	use truapi::v01;
 
 	use crate::{
-		SigningHostRuntime,
+		SigningHostRuntime, Spawner,
 		frame::{Payload, ProtocolMessage, request_ids},
-		test_support::{StubPlatform, test_spawner},
+		test_support::StubPlatform,
 	};
 
 	fn start_test_bridge() -> WsBridge {
@@ -870,7 +870,7 @@ mod tests {
 			"paseo".to_string(),
 		)
 		.expect("test signing host config is valid");
-		let runtime = Arc::new(SigningHostRuntime::new(platform, config, test_spawner()));
+		let runtime = Arc::new(SigningHostRuntime::new(platform, config, Spawner::for_test()));
 		let product =
 			ProductContext::new("dotli.dot".to_string()).expect("test product context is valid");
 		Arc::new(move |sink| runtime.product_runtime(product.clone(), sink))

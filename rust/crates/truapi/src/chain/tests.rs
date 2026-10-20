@@ -18,9 +18,10 @@ use super::{
 	TxSubmitter, TxValidator, WatchEvent,
 };
 use crate::{
+	Spawner,
 	chain_runtime::{ChainRuntime, RuntimeFailureKind},
 	host_internal::extrinsic::tests::{bulletin_chain_state, bulletin_runtime_call, system_events},
-	test_support::{ScriptedProvider, notification_sender, test_spawner, wait_for_sent},
+	test_support::{ScriptedProvider, notification_sender, wait_for_sent},
 };
 
 const GENESIS: H256 = H256([0xab; 32]);
@@ -284,7 +285,7 @@ fn serve(node: Node) -> (Arc<Mutex<Node>>, Arc<ScriptedProvider>, ChainRuntime) 
 	let provider = Arc::new(ScriptedProvider::with_frames(move |request| {
 		scripted.lock().unwrap().respond(request)
 	}));
-	let chain = ChainRuntime::new(provider.clone(), test_spawner());
+	let chain = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	(node, provider, chain)
 }
 

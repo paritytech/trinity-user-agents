@@ -32,7 +32,7 @@ use subxt_rpcs::{
 };
 use tracing::instrument;
 
-use crate::subscription::Spawner;
+use crate::Spawner;
 
 const MAX_BUFFERED_SUBSCRIPTIONS: usize = 64;
 const MAX_BUFFERED_ITEMS_PER_SUBSCRIPTION: usize = 256;
@@ -281,7 +281,7 @@ impl HostRpcClient {
 				}
 			}
 		};
-		(spawner)(fut.boxed());
+		spawner.spawn(fut);
 	}
 }
 
@@ -615,8 +615,6 @@ mod tests {
 	use serde_json::{Value, json};
 	use subxt_rpcs::{RpcClient, client::rpc_params};
 
-	use crate::subscription::thread_per_subscription_spawner;
-
 	struct TrackingConnection {
 		sender: Mutex<Option<mpsc::UnboundedSender<String>>>,
 		receiver: Mutex<Option<mpsc::UnboundedReceiver<String>>>,
@@ -678,7 +676,7 @@ mod tests {
 	#[test]
 	fn dropping_one_shot_client_closes_connection_lease() {
 		let connection = TrackingConnection::new();
-		let spawner: Spawner = Arc::new(|_| {});
+		let spawner = Spawner::with_test_scheduler(|_| {});
 
 		{
 			let client = HostRpcClient::new(connection.clone(), spawner);
@@ -691,7 +689,7 @@ mod tests {
 	#[test]
 	fn requests_without_arguments_serialize_empty_params() {
 		let connection = TrackingConnection::new();
-		let spawner: Spawner = Arc::new(|_| {});
+		let spawner = Spawner::with_test_scheduler(|_| {});
 		let client = HostRpcClient::new(connection.clone(), spawner);
 
 		client.send_fire_and_forget("chainSpec_v1_chainName", None).unwrap();
@@ -702,7 +700,7 @@ mod tests {
 	#[test]
 	fn subxt_single_hash_unpin_is_normalized_for_host_providers() {
 		let connection = TrackingConnection::new();
-		let spawner: Spawner = Arc::new(|_| {});
+		let spawner = Spawner::with_test_scheduler(|_| {});
 		let client = HostRpcClient::new(connection.clone(), spawner);
 		let params = RawValue::from_string(r#"["follow-id","0x1234"]"#.to_string()).unwrap();
 
@@ -714,7 +712,7 @@ mod tests {
 	#[test]
 	fn subscription_stream_holds_connection_lease_until_dropped() {
 		let connection = TrackingConnection::new();
-		let client = HostRpcClient::new(connection.clone(), thread_per_subscription_spawner());
+		let client = HostRpcClient::new(connection.clone(), Spawner::for_test());
 		let rpc_client = RpcClient::new(client.clone());
 
 		let subscription = block_on(rpc_client.subscribe::<Value>("sub", rpc_params![], "unsub"))
@@ -805,7 +803,7 @@ mod tests {
 	#[test]
 	fn subscribe_replays_what_arrived_before_the_ack_and_keeps_it_first() {
 		let connection = RacingConnection::new();
-		let client = HostRpcClient::new(connection.clone(), thread_per_subscription_spawner());
+		let client = HostRpcClient::new(connection.clone(), Spawner::for_test());
 		let rpc_client = RpcClient::new(client.clone());
 
 		let mut subscription =
@@ -839,7 +837,8 @@ mod tests {
 	/// the deterministic version is what actually guards it.
 	#[test]
 	fn buffered_events_replay_in_arrival_order() {
-		let client = HostRpcClient::new(TrackingConnection::new(), Arc::new(|_| {}));
+		let client =
+			HostRpcClient::new(TrackingConnection::new(), Spawner::with_test_scheduler(|_| {}));
 		let (tx, mut rx) = mpsc::unbounded();
 
 		client
@@ -871,7 +870,8 @@ mod tests {
 	/// process rather than reporting anything.
 	#[test]
 	fn a_poisoned_subscription_lock_still_closes_cleanly() {
-		let client = HostRpcClient::new(TrackingConnection::new(), Arc::new(|_| {}));
+		let client =
+			HostRpcClient::new(TrackingConnection::new(), Spawner::with_test_scheduler(|_| {}));
 		let inner = Arc::clone(&client.inner);
 
 		let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -893,7 +893,8 @@ mod tests {
 	/// same lock the replay runs under, so it lands behind it.
 	#[test]
 	fn a_live_notification_cannot_overtake_replay_in_progress() {
-		let client = HostRpcClient::new(TrackingConnection::new(), Arc::new(|_| {}));
+		let client =
+			HostRpcClient::new(TrackingConnection::new(), Spawner::with_test_scheduler(|_| {}));
 		let (tx, mut rx) = mpsc::unbounded();
 
 		client.inner.deliver_or_buffer_subscription_item(
@@ -936,7 +937,8 @@ mod tests {
 	/// events already queued for them.
 	#[test]
 	fn a_close_error_lands_behind_older_events() {
-		let client = HostRpcClient::new(TrackingConnection::new(), Arc::new(|_| {}));
+		let client =
+			HostRpcClient::new(TrackingConnection::new(), Spawner::with_test_scheduler(|_| {}));
 		let (tx, mut rx) = mpsc::unbounded();
 
 		client
@@ -963,7 +965,8 @@ mod tests {
 
 	#[test]
 	fn closing_drops_buffers_that_have_no_reader() {
-		let client = HostRpcClient::new(TrackingConnection::new(), Arc::new(|_| {}));
+		let client =
+			HostRpcClient::new(TrackingConnection::new(), Spawner::with_test_scheduler(|_| {}));
 		client
 			.inner
 			.deliver_or_buffer_subscription_item("orphan".to_string(), raw(r#"{"event":"x"}"#));
@@ -978,7 +981,8 @@ mod tests {
 	/// dropped notification surfaces as a hung suite rather than a failure.
 	#[test]
 	fn a_notification_frame_is_routed_to_its_subscription() {
-		let client = HostRpcClient::new(TrackingConnection::new(), Arc::new(|_| {}));
+		let client =
+			HostRpcClient::new(TrackingConnection::new(), Spawner::with_test_scheduler(|_| {}));
 		let (tx, mut rx) = mpsc::unbounded();
 		client.inner.subscriptions.lock().unwrap().activate("sub-1".to_string(), tx);
 
@@ -1001,7 +1005,7 @@ mod tests {
 	#[test]
 	fn unsubscribe_forgets_the_subscription_and_tells_the_host() {
 		let connection = TrackingConnection::new();
-		let client = HostRpcClient::new(connection.clone(), Arc::new(|_| {}));
+		let client = HostRpcClient::new(connection.clone(), Spawner::with_test_scheduler(|_| {}));
 		let (tx, _rx) = mpsc::unbounded();
 		client.inner.subscriptions.lock().unwrap().activate("sub-1".to_string(), tx);
 
@@ -1018,7 +1022,7 @@ mod tests {
 	#[test]
 	fn dropping_the_subscription_stream_unsubscribes() {
 		let connection = TrackingConnection::new();
-		let client = HostRpcClient::new(connection.clone(), thread_per_subscription_spawner());
+		let client = HostRpcClient::new(connection.clone(), Spawner::for_test());
 		let rpc_client = RpcClient::new(client.clone());
 
 		let subscription = block_on(rpc_client.subscribe::<Value>("sub", rpc_params![], "unsub"))
@@ -1037,7 +1041,8 @@ mod tests {
 	/// attached, so the newest subscriber is the one that receives.
 	#[test]
 	fn re_activating_an_id_replaces_the_sink() {
-		let client = HostRpcClient::new(TrackingConnection::new(), Arc::new(|_| {}));
+		let client =
+			HostRpcClient::new(TrackingConnection::new(), Spawner::with_test_scheduler(|_| {}));
 		let (first_tx, mut first_rx) = mpsc::unbounded();
 		let (second_tx, mut second_rx) = mpsc::unbounded();
 		{
@@ -1057,8 +1062,7 @@ mod tests {
 	/// A closed client refuses new work instead of hanging on a dead peer.
 	#[test]
 	fn a_closed_client_refuses_requests_and_subscriptions() {
-		let client =
-			HostRpcClient::new(TrackingConnection::new(), thread_per_subscription_spawner());
+		let client = HostRpcClient::new(TrackingConnection::new(), Spawner::for_test());
 		let rpc_client = RpcClient::new(client.clone());
 		client.inner.close_with_error(client_error("peer went away"));
 
@@ -1084,7 +1088,8 @@ mod tests {
 	/// oracle.
 	#[test]
 	fn the_buffer_cap_counts_only_subscriptions_holding_items() {
-		let client = HostRpcClient::new(TrackingConnection::new(), Arc::new(|_| {}));
+		let client =
+			HostRpcClient::new(TrackingConnection::new(), Spawner::with_test_scheduler(|_| {}));
 		let (tx, _rx) = mpsc::unbounded();
 		client.inner.subscriptions.lock().unwrap().activate("active".to_string(), tx);
 
@@ -1118,7 +1123,8 @@ mod tests {
 
 	#[test]
 	fn a_buffer_stops_growing_at_its_item_cap() {
-		let client = HostRpcClient::new(TrackingConnection::new(), Arc::new(|_| {}));
+		let client =
+			HostRpcClient::new(TrackingConnection::new(), Spawner::with_test_scheduler(|_| {}));
 		for _ in 0..MAX_BUFFERED_ITEMS_PER_SUBSCRIPTION + 8 {
 			client.inner.deliver_or_buffer_subscription_item("sub-1".to_string(), raw("1"));
 		}

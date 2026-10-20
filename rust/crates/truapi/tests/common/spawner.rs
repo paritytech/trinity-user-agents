@@ -1,4 +1,4 @@
-use truapi::subscription::Spawner;
+use truapi::Spawner;
 
 /// Test spawner that matches the current target.
 pub fn test_spawner() -> Spawner {

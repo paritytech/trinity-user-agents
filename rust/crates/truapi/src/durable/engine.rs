@@ -24,9 +24,9 @@ use super::{
 	time::Timer,
 };
 use crate::{
+	Spawner,
 	chain::{BlockBackend, ChainHeads, TxSubmitter, TxValidator},
 	store::{Db, DbError},
-	subscription::Spawner,
 };
 use wake::WakeSignal;
 

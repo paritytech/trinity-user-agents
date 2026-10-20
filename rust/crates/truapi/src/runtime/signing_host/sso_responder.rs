@@ -1308,10 +1308,11 @@ mod tests {
 		);
 	}
 	use crate::{
+		Spawner,
 		host_logic::statement_store::decode_verified_statement_data,
 		platform::{HostInfo, Platform, PlatformInfo, SigningHostConfig},
 		runtime::{HostSession, authority::ProductAuthority, services::RuntimeServices},
-		test_support::{StubPlatform, test_spawner},
+		test_support::StubPlatform,
 	};
 	use std::sync::Arc;
 	use truapi::latest as api;
@@ -1344,7 +1345,7 @@ mod tests {
 			config.people_chain_genesis_hash,
 			config.bulletin_chain_genesis_hash,
 			config.asset_hub_chain_genesis_hash,
-			test_spawner(),
+			Spawner::for_test(),
 		);
 		let signing_host = SigningHost::new(services.clone(), config.network_suffix);
 		futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))

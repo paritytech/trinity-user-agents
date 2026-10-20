@@ -910,6 +910,7 @@ mod tests {
 	mod orchestration {
 		use super::*;
 		use crate::{
+			Spawner,
 			chain_runtime::{RuntimeChainProvider, RuntimeFailure},
 			host_internal::extrinsic::tests::{
 				OfflineChainState, bulletin_chain_state, bulletin_runtime_call, split_v4,
@@ -917,7 +918,6 @@ mod tests {
 			},
 			host_logic::product_account::SR25519_SIGNING_CONTEXT,
 			platform::JsonRpcConnection,
-			subscription::thread_per_subscription_spawner,
 		};
 		use async_trait::async_trait;
 		use futures::{StreamExt, channel::mpsc, stream::BoxStream};
@@ -1457,11 +1457,8 @@ mod tests {
 		}
 
 		fn rpc(provider: Arc<BulletinScriptedProvider>) -> BulletinRpc {
-			BulletinRpc::new(
-				ChainRuntime::new(provider, thread_per_subscription_spawner()),
-				[0x42; 32],
-			)
-			.with_allowance_block_wait_timeout(Duration::from_millis(25))
+			BulletinRpc::new(ChainRuntime::new(provider, Spawner::for_test()), [0x42; 32])
+				.with_allowance_block_wait_timeout(Duration::from_millis(25))
 		}
 
 		fn store_signature_verifies_at(transaction: &[u8], value: &[u8], block_hash: H256) -> bool {
