@@ -112,7 +112,9 @@ env:
 jobs:
   # Which jobs this run needs. The unit tests, and the core they build
   # against, run on every pull request this workflow's paths match, so a
-  # change that breaks or hangs them is caught before it merges. The app
+  # change that breaks or hangs them is caught before it merges, unless the
+  # bindings job finds the pull request changes only core crates and leaves
+  # what the app compiles against as main tested it. The app
   # builds are macOS time no test needs, so they run only when the
   # ios-simulator-build label asks for them, the same way ios-device-build
   # and android-device-build ask for their builds.
@@ -180,31 +182,33 @@ jobs:
     timeout-minutes: 20
     outputs:
       key: ${{ steps.hash.outputs.key }}
-      unchanged: ${{ steps.find.outputs.unchanged }}
+      unchanged: ${{ steps.record.outputs.run-id != '' }}
     steps:
+      # A pull request's checkout is its merge commit, so its first parent is
+      # the base and the diff to it is exactly what the pull request changes.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 2
+
       # The paths this workflow runs on, less the core crates and their
-      # manifests. Keep it in step with on.paths.
+      # manifests, plus the TypeScript packages the host's container bundles.
+      # Keep it in step with on.paths.
       - name: Decide whether only core crates changed
         id: scope
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
             echo "check=$([ "$GITHUB_REF" = refs/heads/main ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          ios_side='^(hosts/ios/|ios/|Package\.swift$|Makefile$|nightly-toolchain$|js/container/|scripts/|package\.json$|package-lock\.json$|\.github/workflows/ios-pr\.yml$|\.github/actions/(rust-nightly|bootstrap-ios-core|upsert-pr-comment|setup-swiftlint)/)'
-          if gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename' | grep -qE "$ios_side"; then
+          ios_side='^(hosts/ios/|ios/|Package\.swift$|Makefile$|nightly-toolchain$|js/container/|js/packages/|scripts/|package\.json$|package-lock\.json$|\.github/workflows/ios-pr\.yml$|\.github/actions/(rust-nightly|bootstrap-ios-core|find-main-artifact|upsert-pr-comment|setup-swiftlint)/)'
+          changed="$(git diff --name-only HEAD^1 HEAD)"
+          if grep -qE "$ios_side" <<<"$changed"; then
             echo "The iOS side changed; running everything"
             echo "check=false" >> "$GITHUB_OUTPUT"
           else
             echo "check=true" >> "$GITHUB_OUTPUT"
           fi
-
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        if: steps.scope.outputs.check == 'true'
 
       - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
         if: steps.scope.outputs.check == 'true'
@@ -252,25 +256,12 @@ jobs:
           echo "key=ios-bindings-$hash" >> "$GITHUB_OUTPUT"
 
       - name: Find main's tests against the same bindings
-        id: find
+        id: record
         if: steps.scope.outputs.check == 'true' && github.event_name == 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          KEY: ${{ steps.hash.outputs.key }}
-        run: |
-          set -euo pipefail
-          run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$KEY&per_page=20" --jq '
-            [.artifacts[]
-              | select(.expired | not)
-              | select(.workflow_run.head_branch == "main")
-              | select(.workflow_run.head_repository_id == .workflow_run.repository_id)]
-            | first | .workflow_run.id // empty')"
-          if [ -n "$run_id" ]; then
-            echo "Main's run $run_id passed the iOS tests against these bindings; skipping the core and the tests"
-            echo "unchanged=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "unchanged=false" >> "$GITHUB_OUTPUT"
-          fi
+        uses: ./.github/actions/find-main-artifact
+        with:
+          name: ${{ steps.hash.outputs.key }}
+          workflow: .github/workflows/ios-pr.yml
 
   # Whether main already built the core from exactly this commit's core inputs.
   # Most iOS pull requests change only the app, so the Rust core they build is
@@ -281,7 +272,7 @@ jobs:
   core-lookup:
     name: Find a core built from the same inputs
     needs: [check-skip-label, bindings]
-    if: needs.check-skip-label.outputs.skip == 'false' && (needs.check-skip-label.outputs.app == 'true' || (needs.check-skip-label.outputs.tests == 'true' && needs.bindings.outputs.unchanged != 'true')) && !startsWith(github.head_ref, 'release/')
+    if: ${{ !cancelled() && needs.check-skip-label.result == 'success' && needs.check-skip-label.outputs.skip == 'false' && (needs.check-skip-label.outputs.app == 'true' || (needs.check-skip-label.outputs.tests == 'true' && needs.bindings.outputs.unchanged != 'true')) && !startsWith(github.head_ref, 'release/') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -327,7 +318,7 @@ jobs:
   core:
     name: Build the in-tree core
     needs: [check-skip-label, bindings, core-lookup]
-    if: needs.check-skip-label.outputs.skip == 'false' && (needs.check-skip-label.outputs.app == 'true' || (needs.check-skip-label.outputs.tests == 'true' && needs.bindings.outputs.unchanged != 'true')) && !startsWith(github.head_ref, 'release/')
+    if: ${{ !cancelled() && needs.check-skip-label.result == 'success' && needs.check-skip-label.outputs.skip == 'false' && (needs.check-skip-label.outputs.app == 'true' || (needs.check-skip-label.outputs.tests == 'true' && needs.bindings.outputs.unchanged != 'true')) && !startsWith(github.head_ref, 'release/') }}
     # Fetching a core main already built needs no Mac, so it does not wait for
     # one in the large runner pool.
     runs-on: ${{ needs.core-lookup.outputs.run-id != '' && 'ubuntu-latest' || 'parity-macos-large' }}
@@ -685,7 +676,7 @@ jobs:
 
   test:
     needs: [check-skip-label, bindings, core]
-    if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.tests == 'true' && needs.bindings.outputs.unchanged != 'true' && !startsWith(github.head_ref, 'release/')
+    if: ${{ !cancelled() && needs.core.result == 'success' && needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.tests == 'true' && needs.bindings.outputs.unchanged != 'true' && !startsWith(github.head_ref, 'release/') }}
     timeout-minutes: 30
     runs-on: parity-macos-large
     steps:
