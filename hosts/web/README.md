@@ -224,7 +224,10 @@ an ordinary product opened the way the address bar opens it. Chat and Pocket are
     yet, so the amount slot reads "Unavailable" and says why on hover. No amount is shown, and nothing stands in for
     one. It takes no press.
   - **Not here:** tilt shine, the collectibles strip, adding a card, and removing one.
-  - The artwork and texture are the native drawables, and the fonts are bundled, so nothing is fetched.
+  - The artwork and texture are the native drawables, and the fonts are bundled, so nothing is fetched. The two
+    drawables come from the GPL-3.0 Polkadot Android app and keep that licence, not this repository's MIT licence; the
+    Inter and Manrope subsets are under the SIL Open Font License 1.1. The notices sit beside the files in `src/assets/`
+    and are served with the build under `licenses/`.
   - `payment.balanceSubscribe` still answers `Unsupported`, so a product sees no balance either. See
     [Not supported](#not-supported).
 - **The Chat screen.** See [Chat](#chat).

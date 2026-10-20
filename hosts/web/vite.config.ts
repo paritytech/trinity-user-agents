@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
@@ -91,6 +91,28 @@ function readBuildInfo(): BuildInfo {
 // worker loads the `testing` core instead, the only bundle built with
 // `wasm-signing-host`. The testing server in `@parity/truapi-host` redirects
 // the same specifier for the same reason.
+/** The licences of the bundled fonts and artwork, under `src/assets`. */
+const ASSET_LICENSES = [
+  "fonts/OFL-Inter.txt",
+  "fonts/OFL-Manrope.txt",
+  "pocket/NOTICE.txt",
+  "pocket/LICENSE-GPL-3.0.txt",
+];
+
+/** Ship the asset licences with the build, under `licenses/`. */
+const assetLicenses: Plugin = {
+  name: "truapi-asset-licenses",
+  apply: "build",
+  generateBundle() {
+    for (const path of ASSET_LICENSES)
+      this.emitFile({
+        type: "asset",
+        fileName: `licenses/${path}`,
+        source: readFileSync(join(hostRoot, "src/assets", path)),
+      });
+  },
+};
+
 const signingCore = {
   find: /^\.\/wasm\/web\/truapi_server\.js$/,
   replacement: "@parity/truapi-host/wasm/testing",
@@ -110,7 +132,7 @@ export default defineConfig({
   define: {
     __BUILD_INFO__: JSON.stringify(readBuildInfo()),
   },
-  plugins: [sandboxAssets()],
+  plugins: [sandboxAssets(), assetLicenses],
   resolve: { alias: [signingCore] },
   worker: { format: "es" },
   server: {
