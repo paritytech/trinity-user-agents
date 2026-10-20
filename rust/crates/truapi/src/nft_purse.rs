@@ -10,8 +10,45 @@ use truapi::latest::{
 
 use crate::{
 	nft::{CreatePurseError, NftLedger, PurseId, PurseRecord, PurseTag},
-	store::DbError,
+	platform::{ProductId, RuntimeConfigValidationError},
+	store::{Db, DbError},
 };
+
+/// Who owns a purse, with a product's id validated and normalized.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PurseOwner {
+	/// The user's own account: the main purse, and purses recovered without
+	/// metadata.
+	Root,
+	/// The product that created the purse.
+	Product(ProductId),
+}
+
+impl PurseOwner {
+	/// The owner a product named, refusing a product id that is not one.
+	pub fn parse(owner: &NftPurseOwner) -> Result<Self, RuntimeConfigValidationError> {
+		match owner {
+			NftPurseOwner::Root => Ok(Self::Root),
+			NftPurseOwner::Product(id) => ProductId::parse(id).map(Self::Product),
+		}
+	}
+
+	/// Root is the empty tag. A product is the UTF-8 of its id, which
+	/// [`ProductId`] guarantees is never empty.
+	fn tag(&self) -> PurseTag {
+		match self {
+			Self::Root => PurseTag::default(),
+			Self::Product(id) => PurseTag(id.as_str().as_bytes().to_vec()),
+		}
+	}
+
+	fn to_wire(&self) -> NftPurseOwner {
+		match self {
+			Self::Root => NftPurseOwner::Root,
+			Self::Product(id) => NftPurseOwner::Product(id.as_str().to_owned()),
+		}
+	}
+}
 
 /// Why a product's purse was not created.
 #[derive(Debug, thiserror::Error)]
@@ -34,48 +71,39 @@ pub struct NftPurses {
 }
 
 impl NftPurses {
-	/// The RFC calls over `ledger`.
-	pub fn new(ledger: NftLedger) -> Self {
-		Self { ledger }
+	/// The RFC calls over the core database.
+	pub fn new(db: Db) -> Self {
+		Self { ledger: NftLedger::new(db) }
 	}
 
 	/// Creates a purse owned by the product `caller`.
 	pub async fn create_purse(
 		&self,
-		caller: &str,
+		caller: &ProductId,
 		name: String,
 	) -> Result<PurseId, CreateProductPurseError> {
 		if name.len() > NFT_PURSE_MAX_NAME_BYTES {
 			return Err(CreateProductPurseError::NameTooLong { len: name.len() });
 		}
-		let owner = NftPurseOwner::Product(caller.to_owned());
-		let created = self.ledger.create_purse(name, owner_tag(&owner)).await?;
+		let owner = PurseOwner::Product(caller.clone());
+		let created = self.ledger.create_purse(name, owner.tag()).await?;
 		Ok(created)
 	}
 
 	/// The purses `owner` holds, by id. The caller checks [`read_grant`] first.
-	pub async fn list_purses(&self, owner: &NftPurseOwner) -> Result<Vec<NftPursePurse>, DbError> {
-		let records = self.ledger.purses_tagged(owner_tag(owner)).await?;
+	pub async fn list_purses(&self, owner: &PurseOwner) -> Result<Vec<NftPursePurse>, DbError> {
+		let records = self.ledger.purses_tagged(owner.tag()).await?;
 		Ok(records.into_iter().map(listed_purse).collect())
 	}
 }
 
 /// The grant `caller` needs to read `owner`'s purses, or `None` when they are
 /// its own.
-pub fn read_grant(caller: &str, owner: &NftPurseOwner) -> Option<RemotePermission> {
-	if matches!(owner, NftPurseOwner::Product(id) if id == caller) {
+pub fn read_grant(caller: &ProductId, owner: &PurseOwner) -> Option<RemotePermission> {
+	if matches!(owner, PurseOwner::Product(id) if id == caller) {
 		return None;
 	}
-	Some(RemotePermission::NftPurseRead { owner: owner.clone() })
-}
-
-/// Root is the empty tag. A product is the UTF-8 of its id, which is never
-/// empty.
-fn owner_tag(owner: &NftPurseOwner) -> PurseTag {
-	match owner {
-		NftPurseOwner::Root => PurseTag::default(),
-		NftPurseOwner::Product(id) => PurseTag(id.as_bytes().to_vec()),
-	}
+	Some(RemotePermission::NftPurseRead { owner: owner.to_wire() })
 }
 
 fn listed_purse(record: PurseRecord) -> NftPursePurse {
@@ -85,27 +113,32 @@ fn listed_purse(record: PurseRecord) -> NftPursePurse {
 #[cfg(test)]
 mod tests {
 	use futures::executor::block_on;
+	use tempfile::TempDir;
 
 	use super::*;
-	use crate::store::{Db, DbConfig, DbLocation, core_migrations};
+	use crate::store::open_temporary_core_db;
 
 	const PRODUCT: &str = "tickets.dot";
 
-	fn database() -> Db {
-		let config =
-			DbConfig { location: DbLocation::Memory, migrations: core_migrations, readers: 1 };
-		block_on(Db::open(config)).expect("in-memory core database opens")
+	/// The purse calls, with the directory that keeps their database alive.
+	fn purses() -> (TempDir, NftPurses) {
+		let (dir, db) = open_temporary_core_db();
+		(dir, NftPurses::new(db))
 	}
 
-	fn purses() -> NftPurses {
-		NftPurses::new(NftLedger::new(database()))
+	fn product_id(id: &str) -> ProductId {
+		ProductId::parse(id).expect("valid product id")
 	}
 
-	fn product(id: &str) -> NftPurseOwner {
-		NftPurseOwner::Product(id.to_owned())
+	fn product(id: &str) -> PurseOwner {
+		PurseOwner::Product(product_id(id))
 	}
 
-	fn listed(purses: &NftPurses, owner: &NftPurseOwner) -> Vec<NftPursePurse> {
+	fn create(purses: &NftPurses, caller: &str, name: &str) -> PurseId {
+		block_on(purses.create_purse(&product_id(caller), name.to_owned())).expect("purse created")
+	}
+
+	fn listed(purses: &NftPurses, owner: &PurseOwner) -> Vec<NftPursePurse> {
 		block_on(purses.list_purses(owner)).expect("purses list")
 	}
 
@@ -117,55 +150,72 @@ mod tests {
 	/// gap or a reused id would lose items.
 	#[test]
 	fn purses_get_sequential_ids_from_zero() {
-		let purses = purses();
-		let ids: Vec<PurseId> = ["a", "b", "c"]
-			.into_iter()
-			.map(|name| block_on(purses.create_purse(PRODUCT, name.to_owned())).unwrap())
-			.collect();
+		let (_dir, purses) = purses();
+		let ids: Vec<PurseId> =
+			["a", "b", "c"].into_iter().map(|name| create(&purses, PRODUCT, name)).collect();
 		assert_eq!(ids, vec![PurseId(0), PurseId(1), PurseId(2)]);
 	}
 
 	#[test]
 	fn a_fresh_database_gives_root_the_main_purse() {
-		let purses = purses();
-		assert_eq!(listed(&purses, &NftPurseOwner::Root), vec![purse(PurseId::MAIN.0, "Main")]);
+		let (_dir, purses) = purses();
+		assert_eq!(listed(&purses, &PurseOwner::Root), vec![purse(PurseId::MAIN.0, "Main")]);
 	}
 
 	#[test]
 	fn a_product_lists_only_its_own_purses() {
-		let purses = purses();
-		block_on(purses.create_purse(PRODUCT, "mine".to_owned())).unwrap();
-		block_on(purses.create_purse("other.dot", "theirs".to_owned())).unwrap();
+		let (_dir, purses) = purses();
+		create(&purses, PRODUCT, "mine");
+		create(&purses, "other.dot", "theirs");
 		assert_eq!(listed(&purses, &product(PRODUCT)), vec![purse(0, "mine")]);
 	}
 
 	#[test]
 	fn a_product_without_purses_lists_none() {
-		assert_eq!(listed(&purses(), &product(PRODUCT)), vec![]);
+		let (_dir, purses) = purses();
+		assert_eq!(listed(&purses, &product(PRODUCT)), vec![]);
+	}
+
+	/// The empty product id would share Root's empty tag, so naming it as an
+	/// owner must fail rather than reach Root's purses.
+	#[test]
+	fn an_empty_product_owner_is_refused() {
+		let refused = PurseOwner::parse(&NftPurseOwner::Product(String::new()));
+		assert_eq!(refused, Err(RuntimeConfigValidationError::EmptyField { field: "product_id" }));
+	}
+
+	/// Lookups match tags byte for byte, so an owner a product spells
+	/// differently must still find the purses its owner created.
+	#[test]
+	fn an_owner_is_found_however_the_product_spells_its_id() {
+		let (_dir, purses) = purses();
+		create(&purses, PRODUCT, "mine");
+		let spelled = PurseOwner::parse(&NftPurseOwner::Product("Tickets.DOT".to_owned()))
+			.expect("valid product id");
+		assert_eq!(listed(&purses, &spelled), vec![purse(0, "mine")]);
 	}
 
 	/// The RFC caps names at 64 bytes, and a refused name must not use up an id.
 	#[test]
 	fn names_are_capped_at_64_bytes_without_using_an_id() {
-		let purses = purses();
-		let refused = block_on(purses.create_purse(PRODUCT, "x".repeat(65)));
+		let (_dir, purses) = purses();
+		let refused = block_on(purses.create_purse(&product_id(PRODUCT), "x".repeat(65)));
 		assert!(matches!(refused, Err(CreateProductPurseError::NameTooLong { len: 65 })));
-		let created = block_on(purses.create_purse(PRODUCT, "x".repeat(64))).unwrap();
-		assert_eq!(created, PurseId(0));
+		assert_eq!(create(&purses, PRODUCT, &"x".repeat(64)), PurseId(0));
 	}
 
 	/// The id after `u32::MAX - 1` would collide with the main purse.
 	#[test]
 	fn creating_past_the_last_id_is_refused() {
-		let db = database();
-		let purses = NftPurses::new(NftLedger::new(db.clone()));
+		let (_dir, db) = open_temporary_core_db();
+		let purses = NftPurses::new(db.clone());
 		let last = PurseId::MAIN.0 - 1;
 		block_on(db.write(move |tx| {
 			tx.execute("INSERT INTO nft_purse (id, name, tag) VALUES (?1, 'last', x'')", [last])?;
 			Ok(())
 		}))
 		.unwrap();
-		let refused = block_on(purses.create_purse(PRODUCT, "one more".to_owned()));
+		let refused = block_on(purses.create_purse(&product_id(PRODUCT), "one more".to_owned()));
 		assert!(matches!(
 			refused,
 			Err(CreateProductPurseError::Ledger(CreatePurseError::IdsExhausted))
@@ -176,14 +226,17 @@ mod tests {
 	/// anyone else's.
 	#[test]
 	fn only_another_owners_purses_need_a_read_grant() {
-		assert_eq!(read_grant(PRODUCT, &product(PRODUCT)), None);
+		let caller = product_id(PRODUCT);
+		assert_eq!(read_grant(&caller, &product(PRODUCT)), None);
 		assert_eq!(
-			read_grant(PRODUCT, &NftPurseOwner::Root),
+			read_grant(&caller, &PurseOwner::Root),
 			Some(RemotePermission::NftPurseRead { owner: NftPurseOwner::Root })
 		);
 		assert_eq!(
-			read_grant(PRODUCT, &product("other.dot")),
-			Some(RemotePermission::NftPurseRead { owner: product("other.dot") })
+			read_grant(&caller, &product("other.dot")),
+			Some(RemotePermission::NftPurseRead {
+				owner: NftPurseOwner::Product("other.dot".to_owned())
+			})
 		);
 	}
 }

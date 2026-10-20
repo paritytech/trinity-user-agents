@@ -92,9 +92,6 @@ pub struct RuntimeServices {
 	/// Durable transaction engine over the core database, installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
 	durable_engine: OnceLock<Arc<DurableTxEngine>>,
-	/// NFT purses over the core database, installed with it.
-	#[cfg(not(target_arch = "wasm32"))]
-	nft_purses: OnceLock<NftPurses>,
 	/// Host observer told whether durable work is pending. Unset leaves
 	/// recovery to whoever calls it.
 	#[cfg(not(target_arch = "wasm32"))]
@@ -179,8 +176,6 @@ impl RuntimeServices {
 			core_db: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			durable_engine: OnceLock::new(),
-			#[cfg(not(target_arch = "wasm32"))]
-			nft_purses: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			durable_work_observer: OnceLock::new(),
 			asset_hub_chain_genesis_hash,
@@ -396,17 +391,10 @@ impl RuntimeServices {
 		self.durable_engine.get().cloned()
 	}
 
-	/// Install NFT purses. Set-once, like the database they live in. Returns
-	/// whether this call installed them.
-	#[cfg(not(target_arch = "wasm32"))]
-	pub fn install_nft_purses(&self, purses: NftPurses) -> bool {
-		self.nft_purses.set(purses).is_ok()
-	}
-
-	/// NFT purses, once the core database is installed.
+	/// NFT purses over the core database, once it is installed.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn nft_purses(&self) -> Option<NftPurses> {
-		self.nft_purses.get().cloned()
+		self.core_db.get().cloned().map(NftPurses::new)
 	}
 
 	/// Install the host's durable work observer. Returns whether this call

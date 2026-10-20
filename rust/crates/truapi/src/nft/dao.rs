@@ -5,7 +5,7 @@ use rusqlite::{Connection, Row, Transaction, named_params};
 use super::purse::{PurseId, PurseRecord, PurseTag};
 use crate::store::DbError;
 
-const NEXT_PURSE_ID: &str = "SELECT COALESCE(MAX(id) + 1, 0) FROM nft_purse WHERE id < 4294967295";
+const NEXT_PURSE_ID: &str = "SELECT COALESCE(MAX(id) + 1, 0) FROM nft_purse WHERE id < :main";
 
 const INSERT_PURSE: &str = "INSERT INTO nft_purse (id, name, tag) VALUES (:id, :name, :tag)";
 
@@ -17,7 +17,9 @@ pub fn insert_purse(
 	name: &str,
 	tag: &PurseTag,
 ) -> Result<Option<PurseId>, DbError> {
-	let next: u32 = tx.prepare_cached(NEXT_PURSE_ID)?.query_row([], |row| row.get(0))?;
+	let next: u32 = tx
+		.prepare_cached(NEXT_PURSE_ID)?
+		.query_row(named_params! { ":main": PurseId::MAIN.0 }, |row| row.get(0))?;
 	if next == PurseId::MAIN.0 {
 		return Ok(None);
 	}

@@ -920,8 +920,6 @@ impl SigningHostRuntime {
 		if !self.services.install_core_db(db.clone()) {
 			return false;
 		}
-		let purses = crate::nft_purse::NftPurses::new(crate::nft::NftLedger::new(db.clone()));
-		self.services.install_nft_purses(purses);
 		let engine = durable_engine(&self.services, db);
 		self.services.install_durable_engine(engine.clone());
 		forward_durable_work(&self.services, &engine);

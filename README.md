@@ -277,8 +277,9 @@ Native signing hosts serve the `NftPurse` API from the
 the core database. A product creates purses it owns and lists any owner's
 purses: its own freely, Root's or another product's with the user's
 `NftPurseRead` grant for that owner. Every user has the Root-owned main purse.
-Calls that need items on chain answer unavailable for now, and the browser
-core, which has no core database, answers unavailable for all of them.
+Calls that need items on chain answer unavailable for now. A host without a
+core database, such as the browser core, answers `Unsupported` to the two
+served calls.
 
 ### Trinity stack descriptors
 

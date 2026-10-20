@@ -8,20 +8,20 @@ use truapi::{
 };
 
 use super::*;
-use crate::{
-	nft::{NftLedger, PurseId},
-	nft_purse::NftPurses,
-	store::{Db, DbConfig, DbLocation, core_migrations},
-};
+use crate::{nft::PurseId, store::open_temporary_core_db};
 
 const PRODUCT: &str = "tickets.dot";
 
-fn nft_services(platform: Arc<StubPlatform>) -> Arc<RuntimeServices> {
+/// A product host over a fresh core database, with the directory that keeps
+/// the database alive.
+fn nft_host(
+	platform: Arc<StubPlatform>,
+	with_session: bool,
+) -> (tempfile::TempDir, ProductRuntimeHost) {
 	let services = payment_services_over(platform);
-	let config = DbConfig { location: DbLocation::Memory, migrations: core_migrations, readers: 1 };
-	let db = futures::executor::block_on(Db::open(config)).expect("in-memory core database opens");
-	assert!(services.install_nft_purses(NftPurses::new(NftLedger::new(db))));
-	services
+	let (dir, db) = open_temporary_core_db();
+	assert!(services.install_core_db(db));
+	(dir, payment_host(&services, PRODUCT, with_session))
 }
 
 fn create(
@@ -64,7 +64,7 @@ fn requested_permissions(platform: &StubPlatform) -> Vec<v01::RemotePermissionRe
 #[test]
 fn a_product_lists_the_purse_it_created_without_a_prompt() {
 	let platform = Arc::new(StubPlatform::default());
-	let host = payment_host(&nft_services(platform.clone()), PRODUCT, true);
+	let (_dir, host) = nft_host(platform.clone(), true);
 
 	let created = create(&host, "Tickets");
 	let own = list(&host, v01::NftPurseOwner::Product(PRODUCT.to_owned()));
@@ -80,7 +80,7 @@ fn a_product_lists_the_purse_it_created_without_a_prompt() {
 #[test]
 fn listing_roots_purses_without_the_users_grant_is_denied() {
 	let platform = Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() });
-	let host = payment_host(&nft_services(platform.clone()), PRODUCT, true);
+	let (_dir, host) = nft_host(platform.clone(), true);
 
 	let refused = list(&host, v01::NftPurseOwner::Root);
 
@@ -95,7 +95,7 @@ fn listing_roots_purses_without_the_users_grant_is_denied() {
 
 #[test]
 fn listing_roots_purses_with_the_users_grant_returns_the_main_purse() {
-	let host = payment_host(&nft_services(Arc::new(StubPlatform::default())), PRODUCT, true);
+	let (_dir, host) = nft_host(Arc::new(StubPlatform::default()), true);
 
 	assert_eq!(
 		list(&host, v01::NftPurseOwner::Root),
@@ -106,7 +106,7 @@ fn listing_roots_purses_with_the_users_grant_returns_the_main_purse() {
 // The RFC requires an empty list, not an error, for a product without purses.
 #[test]
 fn another_product_without_purses_lists_none() {
-	let host = payment_host(&nft_services(Arc::new(StubPlatform::default())), PRODUCT, true);
+	let (_dir, host) = nft_host(Arc::new(StubPlatform::default()), true);
 
 	assert_eq!(
 		list(&host, v01::NftPurseOwner::Product("other.dot".to_owned())),
@@ -118,7 +118,7 @@ fn another_product_without_purses_lists_none() {
 // not a host failure.
 #[test]
 fn a_name_over_64_bytes_is_a_domain_error() {
-	let host = payment_host(&nft_services(Arc::new(StubPlatform::default())), PRODUCT, true);
+	let (_dir, host) = nft_host(Arc::new(StubPlatform::default()), true);
 
 	assert_eq!(
 		create(&host, &"x".repeat(65)),
@@ -128,11 +128,35 @@ fn a_name_over_64_bytes_is_a_domain_error() {
 	);
 }
 
+// Purses belong to the signed-in user, so neither call runs without a paired
+// session.
 #[test]
 fn purses_need_a_paired_session() {
-	let host = payment_host(&nft_services(Arc::new(StubPlatform::default())), PRODUCT, false);
+	let (_dir, host) = nft_host(Arc::new(StubPlatform::default()), false);
 
 	assert_eq!(create(&host, "Tickets"), Err(CallError::Denied));
+	assert_eq!(
+		list(&host, v01::NftPurseOwner::Product(PRODUCT.to_owned())),
+		Err(CallError::Denied)
+	);
+}
+
+// The empty product id shares Root's empty tag, so naming it must fail before
+// any prompt rather than show Root's purses under a blank owner.
+#[test]
+fn an_empty_product_owner_is_refused_without_a_prompt() {
+	let platform = Arc::new(StubPlatform::default());
+	let (_dir, host) = nft_host(platform.clone(), true);
+
+	let refused = list(&host, v01::NftPurseOwner::Product(String::new()));
+
+	let reason = "invalid purse owner: product_id must not be empty".to_owned();
+	let invalid =
+		HostNftPurseListPursesError::V1(v01::NftPurseListPursesError::Other(v01::GenericError {
+			reason,
+		}));
+	assert_eq!(refused, Err(CallError::Domain(invalid)));
+	assert_eq!(requested_permissions(&platform), vec![]);
 }
 
 // A host that configured no core database has nowhere to keep purses.
@@ -146,7 +170,7 @@ fn a_host_without_a_core_database_does_not_serve_purses() {
 // Methods of later stages stay unavailable, so products can feature-detect them.
 #[test]
 fn methods_of_later_stages_are_unavailable() {
-	let host = payment_host(&nft_services(Arc::new(StubPlatform::default())), PRODUCT, true);
+	let (_dir, host) = nft_host(Arc::new(StubPlatform::default()), true);
 	let request = v01::HostNftPurseCreateItemsRequest { purse: v01::NftPurseId(0), count: 1 };
 
 	let created = futures::executor::block_on(
