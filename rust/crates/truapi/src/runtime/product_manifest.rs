@@ -403,9 +403,10 @@ pub async fn require_context_access(
 	// refuse a grantee for spelling its own context `DIM2.paseo`, the hazard
 	// the gate exists to remove, one layer down. A context that names no
 	// product has no manifest to consent with, so it fails closed.
-	let Ok(context_id) = context.product_id.parse::<ProductId>() else {
-		return Err(RingVrfError::NotAllowlisted);
-	};
+	let context_id = context
+		.product_id
+		.parse::<ProductId>()
+		.map_err(|_| RingVrfError::NotAllowlisted)?;
 	// A product is all its executables, so `app.dim2.dot` is `dim2.dot`'s context
 	// and `app.peopl.dot` is the owner's. The network is not part of that: a
 	// grant published on `.dot` must not reach the pseudonym a namesake presents
@@ -475,9 +476,10 @@ pub async fn ring_vrf_key_access_granted(
 	// A handle that does not normalize names no product, so it owns no key and
 	// no manifest can grant it: it takes the same refusal as a product that
 	// granted nothing, rather than a distinguishable error.
-	let Ok(owner) = handle.dot_ns_identifier.parse::<ProductId>() else {
-		return Err(RingVrfError::NotAllowlisted);
-	};
+	let owner = handle
+		.dot_ns_identifier
+		.parse::<ProductId>()
+		.map_err(|_| RingVrfError::NotAllowlisted)?;
 	if caller == owner {
 		return Ok(AuthorizedAccess { caller, owner });
 	}
