@@ -40,9 +40,9 @@ runs:
           | select(.workflow_run.head_repository_id == .workflow_run.repository_id)
           | .workflow_run.id')" || candidates=""
         for id in $candidates; do
-          sha="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" \
-            --jq 'select(.event == "push" and .path == $ENV.WORKFLOW) | .head_sha')" || continue
-          [ -n "$sha" ] || continue
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" --jq '[.event, .path, .head_sha] | @tsv')" || continue
+          IFS=$'\t' read -r event path sha <<<"$run"
+          [ "$event" = push ] && [ "$path" = "$WORKFLOW" ] || continue
           status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$sha...main" --jq .status)" || continue
           case "$status" in
             identical|ahead) run_id="$id"; break ;;
