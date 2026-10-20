@@ -143,6 +143,12 @@ pub fn has_pending_submissions(conn: &Connection) -> Result<bool, DbError> {
 	Ok(waiting)
 }
 
+/// Whether any row is waiting to be built, re-read after every commit that
+/// changes it.
+pub fn observe_has_pending_submissions(db: &Db) -> BoxStream<'static, Result<bool, DbError>> {
+	db.observe(HAS_PENDING_SUBMISSIONS, |stmt| stmt.query_row([], |row| row.get("waiting")))
+}
+
 const BUCKET_SUBMISSIONS: &str = "SELECT id, domain, group_id, policy_id, policy_params, attempts
     FROM durable_tx WHERE status = 'PENDING_SUBMISSION' AND domain = :domain
     AND policy_id = :policy_id AND group_id IS :group_id ORDER BY id";

@@ -85,8 +85,9 @@ impl DurableTxEngine {
 	/// else does.
 	///
 	/// The first pass runs as soon as this is called. After that, a pass runs on
-	/// each new block of a registered chain, and whenever a sending task stops
-	/// following a transaction. Anything that arrives while a pass runs is
+	/// each new block of a registered chain, whenever a sending task stops
+	/// following a transaction, and whenever the last transaction waiting
+	/// to be built stops waiting. Anything that arrives while a pass runs is
 	/// handled by the next pass.
 	///
 	/// If the ledger cannot be read, recovery keeps running. When it can no
@@ -97,12 +98,13 @@ impl DurableTxEngine {
 	pub async fn run_until_settled(self: &Arc<Self>) -> Result<(), RecoveryError> {
 		self.ensure_submissions_started();
 		let wakes = self.recovery_wakes.subscribe();
+		let built = self.built_triggers().await;
 		let mut lost = LostChains::default();
 		self.run_pass().await;
 		if let ControlFlow::Break(ended) = self.after_pass(&lost).await {
 			return ended;
 		}
-		let mut triggers = self.triggers(wakes).await;
+		let mut triggers = self.triggers(wakes, built).await;
 		loop {
 			next_trigger(&mut triggers, &mut lost).await;
 			self.run_pass().await;
@@ -112,15 +114,25 @@ impl DurableTxEngine {
 		}
 	}
 
-	/// Every head of every registered chain, and every wake. Subscribed only
-	/// after the first pass, so a ledger that is already settled needs no
-	/// head at all.
-	async fn triggers(&self, wakes: mpsc::Receiver<()>) -> Triggers {
-		let mut sources = vec![wakes.map(|()| Trigger::Pass).boxed()];
+	/// Every head of every registered chain, every wake, and `built`.
+	/// Heads are subscribed only after the first pass, so a ledger that is
+	/// already settled needs no head at all.
+	async fn triggers(&self, wakes: mpsc::Receiver<()>, built: Triggers) -> Triggers {
+		let mut sources = vec![wakes.map(|()| Trigger::Pass).boxed(), built];
 		for genesis in self.registry.chains() {
 			sources.push(self.head_triggers(genesis).await);
 		}
 		stream::select_all(sources).boxed()
+	}
+
+	/// One trigger each time the last row waiting to be built stops
+	/// waiting, from now on. Building follows no chain's heads, so a row
+	/// given up after they were lost would otherwise end recovery's work
+	/// with no pass left to notice.
+	async fn built_triggers(&self) -> Triggers {
+		let mut waiting = dao::observe_has_pending_submissions(&self.db);
+		waiting.next().await;
+		waiting.filter_map(|waiting| ready(as_built_trigger(waiting))).boxed()
 	}
 
 	/// One trigger per head of the chain with `genesis`, ending in
@@ -208,6 +220,15 @@ fn as_trigger(genesis: H256, head: Result<HeadEvent, RuntimeFailure>) -> Option<
 			warn!(?genesis, %error, "durable recovery missed a head");
 			None
 		},
+	}
+}
+
+/// A pass once nothing waits to be built. A failed read is skipped: the
+/// ledger is observed again on the next commit.
+fn as_built_trigger(waiting: Result<bool, DbError>) -> Option<Trigger> {
+	match waiting {
+		Ok(false) => Some(Trigger::Pass),
+		Ok(true) | Err(_) => None,
 	}
 }
 
@@ -571,16 +592,18 @@ mod tests {
 
 	/// Nothing on chain can decide a transaction that was never submitted,
 	/// but it is still work: the host must keep recovery running until it is
-	/// built or given up.
+	/// built or given up. Once it is, recovery ends without waiting for a
+	/// head, which may never come once the node connection dropped.
 	#[test]
 	fn recovery_runs_until_waiting_transactions_are_decided() {
 		let give_up = Arc::new(AtomicBool::new(false));
-		let harness = ScheduledTxHarness::with_policy(giving_up_once_set(give_up.clone()));
+		let mut harness = ScheduledTxHarness::with_policy(giving_up_once_set(give_up.clone()));
 		let id = harness.leave_waiting_from_previous_process();
 		let running = run_in_background(harness.engine());
 		wait_until(|| harness.policy().batches().len() == 1, "the row is asked about");
 
 		harness.finalize(131);
+		harness.end_heads();
 		harness.settle();
 		assert!(!running.is_finished());
 		give_up.store(true, Ordering::SeqCst);
@@ -588,8 +611,8 @@ mod tests {
 		harness.timer().advance(Duration::from_secs(2));
 		let abandoned = DurableTxStatus::Failure(DurableTxFailureKind::Abandoned);
 		harness.wait_for(id, abandoned);
-		harness.finalize(132);
 
+		wait_until(|| running.is_finished(), "recovery returns");
 		assert_eq!(running.join().unwrap(), Ok(()));
 	}
 
