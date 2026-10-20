@@ -39,18 +39,18 @@ const LOOKUP_BUDGET: Duration = Duration::from_secs(45);
 pub async fn resolve_session_identity_with_chain(
 	chain: &ChainRuntime,
 	asset_hub_chain_genesis_hash: [u8; 32],
-	mut session: SessionInfo,
+	session: SessionInfo,
 ) -> SessionInfo {
 	if session.has_username() {
 		return session;
 	}
-	if let Some(identity) =
-		lookup_session_identity(chain, asset_hub_chain_genesis_hash, &session).await
-	{
-		let (lite_username, full_username) = identity.into_usernames();
-		session.apply_usernames(lite_username, full_username);
+	match lookup_session_identity(chain, asset_hub_chain_genesis_hash, &session).await {
+		Some(identity) => {
+			let (lite_username, full_username) = identity.into_usernames();
+			SessionInfo { lite_username, full_username, ..session }
+		},
+		None => session,
 	}
-	session
 }
 
 /// Reads `session`'s usernames from the dotNS contracts on Asset Hub, whatever
@@ -138,8 +138,8 @@ async fn lookup_with_retries(
 			Ok(Some(identity)) => {
 				debug!(
 					account = %hex::encode(account),
-					lite_username = identity.lite_username().unwrap_or(""),
-					full_username = identity.full_username().unwrap_or(""),
+					lite_username = ?identity.lite_username(),
+					full_username = ?identity.full_username(),
 					"dotNS {label} lookup found username"
 				);
 				return LookupOutcome::Found(identity);

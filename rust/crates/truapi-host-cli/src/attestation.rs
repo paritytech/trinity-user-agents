@@ -346,7 +346,7 @@ pub async fn registered_lite_username(network: NetworkConfig, entropy: &[u8]) ->
 	reader
 		.dotns_identity(&identity.public.to_bytes())
 		.await?
-		.and_then(|identity| identity.into_usernames().0)
+		.and_then(|identity| identity.into_lite_username())
 		.context("attested signer has no dotNS lite username")
 }
 
@@ -360,10 +360,7 @@ pub async fn lookup_registered_username(
 		.map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
 	let mut reader = AssetHubReader::connect(network.asset_hub_ws).await?;
 	let identity = reader.dotns_identity(&identity.public.to_bytes()).await?;
-	Ok(identity.and_then(|identity| {
-		let (lite_username, full_username) = identity.into_usernames();
-		full_username.or(lite_username)
-	}))
+	Ok(identity.map(|identity| identity.primary_username().to_owned()))
 }
 
 #[derive(Deserialize)]
@@ -515,15 +512,11 @@ pub async fn check_identity(network: NetworkConfig, entropy: &[u8]) -> Result<()
 	{
 		let address = product_public_key_to_address(public);
 		match reader.dotns_identity(&public).await {
-			Ok(identity) => match identity
-				.as_ref()
-				.and_then(|identity| identity.full_username().or(identity.lite_username()))
-			{
-				Some(username) => {
-					println!("IDENTITY_FOUND path={label} account={address} username={username}")
-				},
-				None => println!("IDENTITY_NONE path={label} account={address}"),
+			Ok(Some(identity)) => {
+				let username = identity.primary_username();
+				println!("IDENTITY_FOUND path={label} account={address} username={username}")
 			},
+			Ok(None) => println!("IDENTITY_NONE path={label} account={address}"),
 			Err(err) => println!("IDENTITY_ERROR path={label} account={address} error={err:#}"),
 		}
 	}
@@ -619,7 +612,7 @@ async fn wait_for_lite_username(
 		let lite_username = reader
 			.dotns_identity(candidate)
 			.await
-			.map(|identity| identity.and_then(|identity| identity.into_usernames().0));
+			.map(|identity| identity.and_then(|identity| identity.into_lite_username()));
 		match lite_username {
 			Ok(Some(lite_username)) => {
 				crate::terminal_ui::update_activity(

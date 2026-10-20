@@ -423,6 +423,19 @@ impl DotnsIdentity {
 		self.full_username.as_deref()
 	}
 
+	/// Preferred display username: full over lite.
+	pub fn primary_username(&self) -> &str {
+		self.full_username
+			.as_deref()
+			.or(self.lite_username.as_deref())
+			.expect("classify_labels only builds an identity with a username; qed")
+	}
+
+	/// The dotted lite username, if any.
+	pub fn into_lite_username(self) -> Option<String> {
+		self.lite_username
+	}
+
 	/// The `(lite, full)` usernames, at least one of them `Some`.
 	pub fn into_usernames(self) -> (Option<String>, Option<String>) {
 		(self.lite_username, self.full_username)
