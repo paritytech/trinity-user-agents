@@ -96,8 +96,9 @@ Android permission prompts belong to one request and close when it finishes or i
 including cancellation while the app is backgrounded.
 
 The shared Rust core asks blessed products (`peopl`, `dim2` and `stash`,
-on every supported network) only for device permissions and legacy-account signing.
-All other operations it handles bypass permission prompts and recorded decisions.
+on every supported network) only for device permissions and for legacy-account signing
+other than watermarked raw bytes. All other operations it handles bypass permission
+prompts and recorded decisions.
 
 ## Repository layout
 
@@ -122,6 +123,8 @@ js/packages/
                           `/testing/dev-accounts`, `/testing/host-page`
   truapi-provider/         @parity/truapi-provider: WASM ChainProvider backends
                           (embedded smoldot light client + remote WebSocket RPC)
+  trinity-stack/           @parity/trinity-stack: the trinity-stack crate as WASM, plus
+                          reading with a store and publishing
 js/container/              TS lockdown container for the iOS host web view; bundles into
                            ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js
 android/truapi-host/       Kotlin host adapter package over the truapi UniFFI core;
@@ -212,6 +215,9 @@ The runtime registers each live product before it starts chain work. Pending and
 ready connections share an entry within that product's registry. Closing a product
 removes its registry, rejects delayed setup, and aborts its established follows;
 closed product IDs are not retained.
+
+Statement submissions and allowance operations reuse the core's People-chain RPC
+client. Statement subscriptions each open their own connection.
 
 A host that serves chain traffic itself embeds the `truapi-provider` crate: an
 embedded smoldot light client plus a bundled chain-spec catalog, addressed by
@@ -342,6 +348,7 @@ make e2e-signing-cli                # same direct signing-host phase
 make e2e-pairing-cli                # same paired pairing-host phase
 make e2e-chat-cli                   # chat content screening against a chat signing-host
 make e2e-pocket-cli                 # Pocket protocol check against a Pocket signing-host
+make e2e-funding-cli                # funding requests and statuses against a scripted funding host
 ```
 
 The Pocket phase runs its product as a Worker execution, the only execution
@@ -601,7 +608,7 @@ keystore this repository does not hold.
 Secrets: `GOOGLE_SERVICES_JSON_BASE64`, `CI_GITHUB_KEYSTORE_KEY_FILE`,
 `CI_KEYSTORE_PASS`, `CI_KEYSTORE_KEY_ALIAS`, `CI_KEYSTORE_KEY_PASS`,
 `FIRESTORE_DATABASE_ID`, `GOOGLE_OAUTH_ID`, `GOOGLE_PROJECT_ID`,
-`NIGHTLY_FUNDING_MNEMONIC`, `SENTRY_DSN`, `ANDROID_FIREBASE_NIGHTLY_APP_ID`,
+`NIGHTLY_FUNDING_MNEMONIC`, `SENTRY_DSN_ANDROID`, `ANDROID_FIREBASE_NIGHTLY_APP_ID`,
 `ANDROID_FIREBASE_APP_ID`, `GCP_WORKLOAD_IDENTITY_PROVIDER`,
 `GCP_SERVICE_ACCOUNT`.
 

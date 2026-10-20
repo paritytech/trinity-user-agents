@@ -43,13 +43,12 @@ impl ResourceAllocation for ProductRuntimeHost {
 
 			let confirmed = until_cancelled(
 				cx,
-				self.connection
-					.confirm_product_action(UserConfirmationReview::ResourceAllocation(
-						ResourceAllocationReview {
-							calling_product_id: self.connection.product_id(),
-							resources: inner.resources.clone(),
-						},
-					)),
+				self.connection.confirm_user_action_if_needed(
+					UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
+						calling_product_id: self.connection.product_id(),
+						resources: inner.resources.clone(),
+					}),
+				),
 			)
 			.await
 			.map_err(|err| {
@@ -61,9 +60,9 @@ impl ResourceAllocation for ProductRuntimeHost {
 				reason: format!("resource allocation confirmation failed: {err:?}"),
 			})?;
 			if !confirmed {
-				return Err(CallError::Domain(latest::ResourceAllocationError::Unknown {
-					reason: "User rejected resource allocation".to_string(),
-				}));
+				return Ok(latest::HostRequestResourceAllocationResponse {
+					outcomes: vec![latest::AllocationOutcome::Rejected; inner.resources.len()],
+				});
 			}
 			let cx = remote_authority_context_with_default(
 				cx,
