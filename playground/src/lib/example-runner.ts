@@ -92,7 +92,13 @@ export async function runExample(opts: {
   const { client, onLog } = opts;
   let js: string;
   try {
-    js = transform(opts.source, { transforms: ["typescript"] }).code;
+    // Keep `?.` and `??` native. Lowering them makes sucrase prepend its
+    // helpers to the first line, which hides an import there from the
+    // line-anchored rewrites below.
+    js = transform(opts.source, {
+      transforms: ["typescript"],
+      disableESTransforms: true,
+    }).code;
   } catch (err) {
     throw new ExampleSyntaxError(
       err instanceof Error ? err.message : String(err),

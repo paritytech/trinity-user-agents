@@ -21,6 +21,14 @@ pub fn to_hex(bytes: &[u8]) -> String {
 	format!("0x{}", hex::encode(bytes))
 }
 
+/// Serialises bytes as bytes, not a sequence of numbers: a `Uint8Array` in JS.
+pub fn serialize_bytes<S: serde::Serializer>(
+	bytes: &[u8],
+	serializer: S,
+) -> Result<S::Ok, S::Error> {
+	serializer.serialize_bytes(bytes)
+}
+
 /// Which schemes a URL may use where it appears.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Schemes {

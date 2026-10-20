@@ -1138,6 +1138,7 @@ pub async fn allocate_bulletin_allowance(
 		&bulletin_rpc,
 		&target,
 		current_allowance,
+		1,
 		BULLETIN_AUTHORIZATION_WAIT,
 	)
 	.await?;

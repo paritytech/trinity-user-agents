@@ -742,13 +742,13 @@ impl SigningHost {
 		let (current, activation_generation) = self.require_current_session(session)?;
 		let owner = &request.account.dot_ns_identifier;
 		let granted = authenticated_caller &&
-			super::authority::is_blessed_owner(calling_product_id, owner) ||
-			self.has_auto_signing_grant(
-				activation_generation,
-				current.public_key,
-				calling_product_id,
-				owner,
-			);
+			(super::authority::is_blessed_owner(calling_product_id, owner) ||
+				self.has_auto_signing_grant(
+					activation_generation,
+					current.public_key,
+					calling_product_id,
+					owner,
+				));
 		if !granted {
 			let confirmed = super::until_cancelled(
 				cx,
