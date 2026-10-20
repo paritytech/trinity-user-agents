@@ -270,6 +270,16 @@ The host keeps recovery alive. `durableWorkChanged(pending: true)` asks it to
 run a background task that awaits `runDurableRecovery()`, which returns once
 nothing is live: a WorkManager worker on Android, a `BGProcessingTask` on iOS.
 
+### NFT purses
+
+Native signing hosts serve the `NftPurse` API from the
+[NFT purses RFC](https://github.com/paritytech/trinity-user-agents/pull/1495) over
+the core database. A product creates purses it owns and lists any owner's
+purses: its own freely, Root's or another product's with the user's
+`NftPurseRead` grant for that owner. Every user has the Root-owned main purse.
+Calls that need items on chain answer unavailable for now, and the browser
+core, which has no core database, answers unavailable for all of them.
+
 ### Trinity stack descriptors
 
 A stack descriptor describes one deployment of chains and services, as

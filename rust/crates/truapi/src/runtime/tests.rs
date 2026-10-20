@@ -7861,6 +7861,7 @@ fn feature_supported_encodes_response_to_known_bytes() {
 	assert_eq!(response.encode(), vec![0x00, 0x01]);
 }
 
+mod nft_purse;
 mod signing;
 
 #[test]
