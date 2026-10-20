@@ -53,6 +53,13 @@ async function drain<T>(
 }
 
 describe("createMockHost callbacks", () => {
+  // Auth tokens need secure storage, which only native hosts have, so the
+  // test host must not grow a keeper that products could come to rely on.
+  it("serves no auth token keeper, so auth tokens answer Unsupported", () => {
+    const { callbacks } = createMockHost();
+    expect(Object.keys(callbacks)).not.toContain("authTokens");
+  });
+
   it("product storage round-trips and is namespaced from core", async () => {
     const { callbacks } = createMockHost();
     await callbacks.productStorage.write("k", new Uint8Array([1, 2, 3]));

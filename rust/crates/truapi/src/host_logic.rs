@@ -7,6 +7,7 @@
 // Links `verifiable` directly, which the browser core loads on demand instead.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod attestation;
+pub mod auth_tokens;
 pub mod contact_substitution;
 // Only native hosts open a page from a development server.
 #[cfg(not(target_arch = "wasm32"))]

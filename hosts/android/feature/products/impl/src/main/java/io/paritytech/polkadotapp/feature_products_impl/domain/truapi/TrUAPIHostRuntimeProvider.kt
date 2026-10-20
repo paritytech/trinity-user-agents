@@ -75,6 +75,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val appLifecycleObserver: AppLifecycleObserver,
     private val contactsBridge: AppContactsHostBridge,
     private val scannerBridge: TrUAPIProductScans,
+    private val authTokenStore: EncryptedAuthTokenStore,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     dispatchers: CoroutineDispatchers,
@@ -124,6 +125,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         // window where the host lists no contacts.
         runtime.setContacts(contactsBridge)
         runtime.setScanner(scannerBridge)
+        runtime.setAuthTokens(authTokenStore)
         observeContactRemovals(runtime)
         chainProvider.attach(
             onResponse = runtime::notifyChainResponse,

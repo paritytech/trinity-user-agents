@@ -14,6 +14,7 @@ use parity_scale_codec::{DecodeAll, Encode};
 use truapi::CallContext;
 use truapi::api::{
     Account,
+    AuthTokens,
     Chain,
     Chat,
     CoinPayment,
@@ -55,6 +56,7 @@ where
     P: truapi::api::TrUApi + 'static,
 {
     register_account(dispatcher, host.clone());
+    register_auth_tokens(dispatcher, host.clone());
     register_chain(dispatcher, host.clone());
     register_chat(dispatcher, host.clone());
     register_coin_payment(dispatcher, host.clone());
@@ -400,6 +402,96 @@ where
                 let result: Result<versioned::account::HostRequestLoginResponse, truapi::CallError<versioned::account::HostRequestLoginError>> =
                     match host.request_login(&cx, request).await {
                         Ok(response) => Ok(<versioned::account::HostRequestLoginResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+}
+
+fn register_auth_tokens<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
+where
+    P: AuthTokens + Send + Sync + 'static,
+{
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::AUTH_TOKENS_STORE, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::auth_tokens::HostAuthTokensStoreRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::auth_tokens::HostAuthTokensStoreError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::auth_tokens::HostAuthTokensStoreResponse, truapi::CallError<versioned::auth_tokens::HostAuthTokensStoreError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::auth_tokens::HostAuthTokensStoreResponse, truapi::CallError<versioned::auth_tokens::HostAuthTokensStoreError>> =
+                    match host.store(&cx, request).await {
+                        Ok(response) => Ok(<versioned::auth_tokens::HostAuthTokensStoreResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::AUTH_TOKENS_GET, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::auth_tokens::HostAuthTokensGetRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::auth_tokens::HostAuthTokensGetError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::auth_tokens::HostAuthTokensGetResponse, truapi::CallError<versioned::auth_tokens::HostAuthTokensGetError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::auth_tokens::HostAuthTokensGetResponse, truapi::CallError<versioned::auth_tokens::HostAuthTokensGetError>> =
+                    match host.get(&cx, request).await {
+                        Ok(response) => Ok(<versioned::auth_tokens::HostAuthTokensGetResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_request(wire_table::AUTH_TOKENS_REMOVE, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::auth_tokens::HostAuthTokensRemoveRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::auth_tokens::HostAuthTokensRemoveError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::auth_tokens::HostAuthTokensRemoveResponse, truapi::CallError<versioned::auth_tokens::HostAuthTokensRemoveError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::auth_tokens::HostAuthTokensRemoveResponse, truapi::CallError<versioned::auth_tokens::HostAuthTokensRemoveError>> =
+                    match host.remove(&cx, request).await {
+                        Ok(response) => Ok(<versioned::auth_tokens::HostAuthTokensRemoveResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),

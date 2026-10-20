@@ -856,6 +856,7 @@ impl HostSession for SigningHost {
 
 	async fn disconnect(&self) {
 		self.clear_local_session();
+		self.services.drop_auth_tokens_after_session().await;
 		self.auth_state.store_disconnected();
 	}
 
@@ -1475,6 +1476,7 @@ fn product_authority_error(err: ProductAccountError) -> AuthorityError {
 #[cfg(test)]
 mod tests {
 	mod allowance_keys;
+	mod auth_tokens;
 	mod auto_signing;
 	mod cross_product_account;
 	#[cfg(feature = "test-host")]

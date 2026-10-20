@@ -830,6 +830,7 @@ impl PairingHost {
 		self.stop_session_channel(previous.as_ref());
 		if clear_auth_session {
 			let _ = self.platform.clear_core_storage(CoreStorageKey::AuthSession).await;
+			self.services.drop_auth_tokens_after_session().await;
 		}
 		let _storage_guard = self.session_secret_storage.lock().await;
 		if let Some(session) = previous.as_ref() {
@@ -986,6 +987,14 @@ impl PairingHost {
 	/// waiters for `key`, then clears the session when `key` is still current,
 	/// so stale notifications for replaced sessions only wake their own
 	/// waiters.
+	/// Act as if the wallet ended the current SSO session.
+	#[cfg(test)]
+	pub async fn peer_disconnected_for_test(&self) {
+		let session = self.session_state.current().expect("test session must be installed");
+		let sso = session.sso.as_ref().expect("test session must contain SSO");
+		self.handle_signing_host_disconnected(SsoSessionKey::from_session(sso)).await;
+	}
+
 	async fn handle_signing_host_disconnected(&self, key: SsoSessionKey) {
 		self.session_disconnects.notify_key(key, SSO_PEER_DISCONNECT_REASON);
 		if !self.current_sso_session_matches(key) {
