@@ -117,9 +117,11 @@ pub trait Renderer: Send + Sync {
 }
 ```
 
-`RenderContext` has one variant per surface, holding the ids that surface uses to name a body. The host scopes an id to
+`RenderContext` has one variant per surface, or per body a surface draws apart, such as a Pocket card's back, holding
+the ids that surface uses to name a body. The host scopes an id to
 the product that minted it, and for `InputWidget` also to the query the candidate answered. A render request and the
-actions inside it carry the same context verbatim, so a product correlates by equality. A new surface is a new variant.
+actions inside it carry the same context verbatim, so a product correlates by equality. A new surface, or a new kind
+of body on one, is a new variant.
 
 A product registers one `render` handler, and the host calls it for every context of a surface the product's manifest
 `includes`. A product that draws on more than one surface matches on `context`. Contexts for surfaces the product does

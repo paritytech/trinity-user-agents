@@ -46,7 +46,8 @@ host-placed card on their own and the add flow layers on top without changing th
   same rules as a chat identifier (see Wire surface).
 - The **face** is the collapsed presentation, rendered natively from a `RendererNode` tree.
 - The **back** is an optional second face a card declares, drawn the same way and shown only by turning the opened card
-  over. The face shown otherwise is the card's front.
+  over. The face shown otherwise is the card's front. The fixed theme, `faceShown` and `ExpandedCard::set_face_shown`
+  apply to the card whichever side is up, and turning it is not moving the face.
 - The **expanded card** is the product's `widget` executable in a WebView.
 - The **worker** is the product's one Worker executable. It draws the faces, handles their actions, and is the only
   execution the `Pocket` trait is available to.
@@ -75,7 +76,8 @@ theme. In the Polkadot Android and iOS apps that theme is Berlin Night: `FgPrima
 `#0B0C0F`. `theme.subscribe` still reports the user's theme, for the product's own screens.
 
 The host sends presses inside the back only once the running worker has drawn the back live. A product on an SDK without
-`PocketCardBack` cannot decode such a press and would lose its whole action stream, front and chat included.
+`PocketCardBack` cannot decode such a press and would lose its whole action stream, front and chat included. Its back
+still shows, but its presses go nowhere, so a product declares `back` only once its SDK has `PocketCardBack`.
 
 ### Expanded card
 
@@ -95,12 +97,13 @@ not part of the contract.
 A card with a back is turned over on the opened card by dragging sideways or flicking. The turn follows the finger,
 always settles flat on one side, and never shows a side mirrored. A card without a back does not turn, and a card in the
 collection never turns. Closing the card returns it to its front. The host loads the back no later than when the card
-opens, so turning never waits on it.
+opens, so turning never waits on it. On an opened card both sides count as on screen, since the back is one turn
+away.
 
 ### Lifecycle
 
-Pocket holds a worker reference for each face or back it is drawing. A product cannot add a reference, only drop one
-by removing a card.
+Pocket holds a worker reference for each side on screen. A product cannot add a reference, only drop one by removing a
+card.
 
 ### Adding a card (full iteration)
 
@@ -125,9 +128,10 @@ type PocketCardDefinition = {
 };
 ```
 
-A `faceShown` that is not a boolean, or a `back` that is blank or not a string, makes the definition invalid, as a
-missing `title` does, and an invalid definition drops all of the product's cards. A host that does not read `faceShown`
-shows nothing wrong, so a product checks the field before publishing rather than relying on what today's hosts display.
+A `faceShown` that is not a boolean, or a `back` that is not a string or is empty, makes the definition invalid, as a
+missing `title` does, and an invalid definition drops all of the product's cards. A `back` file that is missing or does
+not decode leaves the card without a back until the worker draws one. A host that does not read `faceShown` or `back`
+shows nothing wrong, so a product checks both before publishing rather than relying on what today's hosts display.
 
 The preview is a static file in the CID-pinned archive, so the host can show a card before any product code runs, the
 same property the [funding modality](https://github.com/paritytech/trinity-user-agents/pull/339) relies on for its rail list.
@@ -304,7 +308,8 @@ that made it, so no request names a card. An App or Worker caller is `Denied`, a
 - **The node vocabulary is the renderer's.** A face cannot ask for a node the renderer does not carry, so gaps such as a
   barcode node or aspect-ratio control are argued there and close for every surface at once.
 - **The preview can lie.** The approved static face and the live face are both product-authored and nothing ties them
-  together. The host can bound the drift by rendering both from the same node vocabulary, not by checking content.
+  together. The back is never shown at approval at all. The host can bound the drift by rendering both from the same
+  node vocabulary, not by checking content.
 - **Card definitions cost manifest budget.** Text records are small; a product with many cards pushes the Worker
   manifest toward the dotNS limit. Only ids, titles, and paths go in the manifest; the trees live in the archive.
 - **Expanded cards need a Widget.** A product with cards but no `widget` executable has faces that do not open. Products
