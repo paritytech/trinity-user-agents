@@ -43,7 +43,7 @@ final class PocketCardFlight: NSObject, UIViewControllerAnimatedTransitioning {
     /// The page is shown only once the Pocket's cards have left it, and is gone
     /// before they come back over it.
     private static let pageDelay: CGFloat = 0.35
-    private static let pageFadeOut = PocketCardFlightTiming.duration * 0.3
+    private static let pageFadeOut = PocketCardFlightTiming.duration * 0.2
 
     private let screen: PocketCardScreenViewController
     private let origin: PocketCardOrigin
