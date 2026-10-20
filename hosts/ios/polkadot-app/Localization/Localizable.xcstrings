@@ -2302,16 +2302,6 @@
         }
       }
     },
-    "polkadot://pocket/add?product=%@&card=%@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "polkadot://pocket/add?product=%1$@&card=%2$@"
-          }
-        }
-      }
-    },
     "polkadot.host.message.too.big.error" : {
       "extractionState" : "manual",
       "localizations" : {
