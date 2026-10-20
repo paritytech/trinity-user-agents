@@ -104,7 +104,8 @@ Permission grants are scoped by product id and typed request, so a grant for
 one product never authorizes another product or another permission class.
 
 Blessed products in `truapi::platform::REMOTE_PERMISSION_TRUSTED_LABELS` bypass
-recorded permissions. Only device permissions require consent.
+recorded permissions and permission prompts. Device permissions still need the OS
+grant.
 Account access, username disclosure, signing with their own product accounts and
 AutoSigning proceed without approval. Legacy-account signing still asks the user.
 
@@ -124,7 +125,8 @@ ProductRuntime
         v
 PermissionsService(storage, platform, product_id)
         |
-        +-- blessed product, non-device --> allow without storage or prompt
+        +-- blessed product --> allow without storage or prompt,
+        |                       unless the OS refuses a device capability
         |
         | builds storage key:
         |
@@ -393,7 +395,7 @@ own product surface, so it bypasses the outbound domain grant.
 
 `REMOTE_PERMISSION_TRUSTED_LABELS` lists the blessed product labels across
 all networks in `DOTNS_TLDS`. These products bypass recorded permissions and
-prompt only for device permissions. The runtime grants
+permission prompts. Device permissions still need the OS grant. The runtime grants
 account access, username disclosure, signing with their own product accounts and
 AutoSigning without approval. Legacy-account signing still asks the user.
 

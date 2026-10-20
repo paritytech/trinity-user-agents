@@ -318,7 +318,8 @@ pub fn has_dotns_tld(normalized: &str) -> bool {
 
 /// Blessed product labels across every network in [`DOTNS_TLDS`].
 ///
-/// These products bypass recorded permissions and prompt only for device access.
+/// These products bypass recorded permissions and permission prompts. Device
+/// permissions still need the OS grant.
 pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", GAME_PRODUCT_LABEL, "stash"];
 
 /// The bare label of the game product, Jollity, on every network.

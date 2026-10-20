@@ -1450,7 +1450,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("stash.dot", ProductExecutionKind::App),
+				native_execution_config("motion.dot", ProductExecutionKind::App),
 			)
 			.unwrap();
 		let motion = truapi::latest::HostDevicePermissionRequest::Motion;
