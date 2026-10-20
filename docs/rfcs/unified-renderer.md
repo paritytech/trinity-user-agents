@@ -67,6 +67,11 @@ pub enum RenderContext {
         /// Card id, as declared in the product's worker manifest.
         card_id: String,
     },
+    /// The back of a card in the host's Pocket collection.
+    PocketCardBack {
+        /// Card id, as declared in the product's worker manifest.
+        card_id: String,
+    },
 }
 
 /// A body the host needs drawn.
