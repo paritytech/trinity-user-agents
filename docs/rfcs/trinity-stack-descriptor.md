@@ -469,7 +469,9 @@ Designs that were considered and not chosen, each with the reason:
 - **Firebase Remote Config for every stack.** The mobile and desktop apps already read it. Its permissions cover a whole
   project, so an operator who can publish a stack can also edit production configuration, and tools and CI would need
   Google credentials to read it. Firebase can still serve a signed descriptor, because readers check the signature, not
-  where the bytes came from.
+  where the bytes came from. It can also carry a stack's URL, so hosting moves without a release, but never its key: a
+  key from Firebase makes Firebase the trust anchor again. It serves the signed document whole, because values copied
+  out of it are unsigned and drift.
 - **Extending `/api/network`.** It describes how to run a stack, lists nodes rather than roles, and exists only for the
   stacks PPN runs.
 - **One unsigned file per network in git, next to the chain specs.** It works for long-lived networks and is kept as an
