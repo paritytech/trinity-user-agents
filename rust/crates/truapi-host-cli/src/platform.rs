@@ -1011,55 +1011,48 @@ fn load_product_storage(directory: &Path) -> HashMap<ProductId, HashMap<String, 
 }
 
 fn load_product_storage_file(path: &Path) -> Option<(ProductId, HashMap<String, Vec<u8>>)> {
-	let text = match fs::read_to_string(path) {
-		Ok(text) => text,
-		Err(error) => {
+	let text = fs::read_to_string(path)
+		.inspect_err(|error| {
 			tracing::warn!(path = %path.display(), %error, "could not read product storage");
-			return None;
-		},
-	};
-	let document = match serde_json::from_str::<ProductStorageDocument>(&text) {
-		Ok(document) if document.version == 1 => document,
-		Ok(document) => {
-			tracing::warn!(
-				path = %path.display(),
-				version = document.version,
-				"unsupported product storage version"
-			);
-			return None;
-		},
-		Err(error) => {
+		})
+		.ok()?;
+	let document = serde_json::from_str::<ProductStorageDocument>(&text)
+		.inspect_err(|error| {
 			tracing::warn!(path = %path.display(), %error, "could not decode product storage");
-			return None;
-		},
-	};
-	let normalized = match document.product_id.parse::<ProductId>() {
-		Ok(product_id) => product_id,
-		Err(error) => {
+		})
+		.ok()?;
+	if document.version != 1 {
+		tracing::warn!(
+			path = %path.display(),
+			version = document.version,
+			"unsupported product storage version"
+		);
+		return None;
+	}
+	let normalized = document
+		.product_id
+		.parse::<ProductId>()
+		.inspect_err(|error| {
 			tracing::warn!(
 				path = %path.display(),
 				%error,
 				"product storage contains an invalid product id"
 			);
-			return None;
-		},
-	};
+		})
+		.ok()?;
 	let values = document
 		.values
 		.into_iter()
 		.map(|(key, value)| hex::decode(value).map(|bytes| (key, bytes)))
-		.collect::<Result<HashMap<_, _>, _>>();
-	let values = match values {
-		Ok(values) => values,
-		Err(error) => {
+		.collect::<Result<HashMap<_, _>, _>>()
+		.inspect_err(|error| {
 			tracing::warn!(
 				path = %path.display(),
 				%error,
 				"product storage contains an invalid value"
 			);
-			return None;
-		},
-	};
+		})
+		.ok()?;
 	Some((normalized, values))
 }
 
