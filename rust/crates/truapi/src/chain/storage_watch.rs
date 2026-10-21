@@ -25,7 +25,7 @@ mod snapshots;
 mod tests;
 
 pub use codec::EntryName;
-pub use snapshots::{StorageSnapshot, StorageSnapshots};
+pub use snapshots::{DecodableAtBlock, StorageSnapshots};
 
 /// Which heads a watch reads at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,8 +53,7 @@ pub enum StorageWatchError {
 	/// The chain could not be reached or read.
 	#[error(transparent)]
 	Chain(#[from] RuntimeFailure),
-	/// The runtime metadata has no such entry, or its shape differs from the
-	/// one the address was generated for.
+	/// The runtime metadata has no such entry.
 	#[error("{entry} does not match the runtime metadata: {reason}")]
 	Incompatible {
 		/// The watched entry.
@@ -127,10 +126,9 @@ where
 {
 	fn decode(
 		&self,
-		raw: diff::RawChanges,
+		raw: DecodableAtBlock<Vec<(usize, Option<Vec<u8>>)>>,
 	) -> Result<EntryChanges<A::KeyParts, A::Value>, StorageWatchError> {
-		let diff::RawChanges { at, metadata, changed } = raw;
-		codec::check_address(&self.address, &metadata)?;
+		let DecodableAtBlock { at, metadata, value: changed } = raw;
 		let changed = changed
 			.into_iter()
 			.map(|(index, bytes)| self.decode_change(index, bytes, &metadata, at))

@@ -64,24 +64,6 @@ pub fn decode_value<A: Address>(
 	Ok(Some(decoded))
 }
 
-/// Whether `metadata` has the entry shape a generated `address` was built
-/// for. A dynamic address carries no expectation and always matches.
-pub fn check_address(address: &impl Address, metadata: &Metadata) -> Result<(), StorageWatchError> {
-	let Some(expected) = address.validation_hash() else { return Ok(()) };
-	let pallet = metadata.pallet_by_name(address.pallet_name());
-	let actual = pallet.and_then(|pallet| pallet.storage_hash(address.entry_name()));
-	if actual == Some(expected) {
-		return Ok(());
-	}
-	let reason = format!(
-		"expected storage hash 0x{}, metadata has {}",
-		hex::encode(expected),
-		actual
-			.map_or_else(|| "no such entry".to_owned(), |hash| format!("0x{}", hex::encode(hash))),
-	);
-	Err(StorageWatchError::Incompatible { entry: EntryName::of(address), reason })
-}
-
 fn entry_info<'metadata>(
 	address: &impl Address,
 	metadata: &'metadata Metadata,

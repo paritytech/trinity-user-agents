@@ -8,16 +8,12 @@ use futures::{
 };
 use parity_scale_codec::Encode;
 use sp_crypto_hashing::{blake2_128, twox_64, twox_128};
-use subxt::{
-	ArcMetadata,
-	storage::{StaticAddress, dynamic},
-	utils::{H256, Maybe},
-};
+use subxt::{ArcMetadata, storage::dynamic, utils::H256};
 
 use super::{
-	EntryChanges, EntryName, StorageSnapshot, StorageSnapshots, StorageWatchError, WatchedHead,
-	codec::{check_address, decode_value, encode_keys},
-	diff::{RawChanges, snapshot_changes},
+	DecodableAtBlock, EntryChanges, StorageSnapshots, StorageWatchError, WatchedHead,
+	codec::{decode_value, encode_keys},
+	diff::snapshot_changes,
 };
 use crate::{
 	chain::HashAndNumber, chain_runtime::RuntimeFailure,
@@ -25,6 +21,12 @@ use crate::{
 };
 
 const GENESIS: H256 = H256([0xab; 32]);
+
+/// Every watched key's value at one block, as `StorageSnapshots` reads it.
+type Snapshot = DecodableAtBlock<Vec<Option<Vec<u8>>>>;
+
+/// Changed positions and their values at one block, as the diff reports them.
+type RawChanges = DecodableAtBlock<Vec<(usize, Option<Vec<u8>>)>>;
 
 fn metadata() -> ArcMetadata {
 	ArcMetadata::from(bulletin_metadata())
@@ -34,12 +36,12 @@ fn block(number: u64) -> HashAndNumber {
 	HashAndNumber { hash: H256::repeat_byte(u8::try_from(number).unwrap()), number }
 }
 
-fn snapshot(number: u64, values: &[Option<&[u8]>]) -> Result<StorageSnapshot, RuntimeFailure> {
+fn snapshot(number: u64, values: &[Option<&[u8]>]) -> Result<Snapshot, RuntimeFailure> {
 	let values = values.iter().map(|value| value.map(<[u8]>::to_vec)).collect();
-	Ok(StorageSnapshot { at: block(number), metadata: metadata(), values })
+	Ok(DecodableAtBlock { at: block(number), metadata: metadata(), value: values })
 }
 
-fn read_failure() -> Result<StorageSnapshot, RuntimeFailure> {
+fn read_failure() -> Result<Snapshot, RuntimeFailure> {
 	Err(RuntimeFailure::host_failure("storage_snapshot", "scripted failure"))
 }
 
@@ -56,13 +58,13 @@ fn reported_at(number: u64, changed: Vec<(usize, Option<Vec<u8>>)>) -> Reported 
 }
 
 fn reported(
-	snapshots: Vec<Result<StorageSnapshot, RuntimeFailure>>,
+	snapshots: Vec<Result<Snapshot, RuntimeFailure>>,
 ) -> Vec<Result<Reported, RuntimeFailure>> {
 	let changes = snapshot_changes(stream::iter(snapshots).boxed());
 	let collected: Vec<Result<RawChanges, RuntimeFailure>> = block_on(changes.collect());
 	collected
 		.into_iter()
-		.map(|raw| raw.map(|raw| reported_at(raw.at.number, raw.changed)))
+		.map(|raw| raw.map(|raw| reported_at(raw.at.number, raw.value)))
 		.collect()
 }
 
@@ -184,28 +186,14 @@ fn bytes_left_over_after_the_value_are_an_error() {
 	assert!(error.to_string().ends_with("did not decode: 1 of 5 bytes left over"), "{error}");
 }
 
-#[test]
-fn a_generated_address_for_another_entry_shape_is_incompatible() {
-	let address = StaticAddress::<(), u32, Maybe>::new_static("System", "Number", [0; 32]);
-
-	let error = check_address(&address, &metadata()).unwrap_err();
-
-	let StorageWatchError::Incompatible { entry, reason } = error else { panic!("{error}") };
-	assert_eq!(entry, EntryName { pallet: "System".into(), entry: "Number".into() });
-	assert!(
-		reason.starts_with(&format!("expected storage hash 0x{}", hex::encode([0; 32]))),
-		"{reason}"
-	);
-}
-
 /// Snapshots a test scripts by hand, and the keys the watch asked for.
 struct FakeSnapshots {
-	snapshots: Mutex<Option<UnboundedReceiver<Result<StorageSnapshot, RuntimeFailure>>>>,
+	snapshots: Mutex<Option<UnboundedReceiver<Result<Snapshot, RuntimeFailure>>>>,
 	requested: Mutex<Option<(WatchedHead, Vec<Vec<u8>>)>>,
 }
 
 impl FakeSnapshots {
-	fn new() -> (Arc<Self>, UnboundedSender<Result<StorageSnapshot, RuntimeFailure>>) {
+	fn new() -> (Arc<Self>, UnboundedSender<Result<Snapshot, RuntimeFailure>>) {
 		let (sender, receiver) = unbounded();
 		let fake =
 			Arc::new(Self { snapshots: Mutex::new(Some(receiver)), requested: Mutex::new(None) });
@@ -224,7 +212,7 @@ impl StorageSnapshots for FakeSnapshots {
 		_genesis: H256,
 		head: WatchedHead,
 		keys: Vec<Vec<u8>>,
-	) -> Result<BoxStream<'static, Result<StorageSnapshot, RuntimeFailure>>, RuntimeFailure> {
+	) -> Result<BoxStream<'static, Result<Snapshot, RuntimeFailure>>, RuntimeFailure> {
 		*self.requested.lock().unwrap() = Some((head, keys));
 		let receiver = self.snapshots.lock().unwrap().take().expect("one watch per fake");
 		Ok(receiver.boxed())

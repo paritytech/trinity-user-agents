@@ -13,7 +13,7 @@ use super::{
 	method_count, serve, wait_for_subscriptions,
 };
 use crate::{
-	chain::{StorageSnapshot, StorageSnapshots, WatchedHead},
+	chain::{DecodableAtBlock, StorageSnapshots, WatchedHead},
 	chain_runtime::{ChainRuntime, RuntimeFailure},
 	test_support::{ScriptedProvider, notification_sender},
 };
@@ -21,7 +21,9 @@ use crate::{
 const WATCHED: &[u8] = b"watched";
 const OTHER: &[u8] = b"other";
 
-type Snapshots = Receiver<Result<StorageSnapshot, RuntimeFailure>>;
+type Snapshot = DecodableAtBlock<Vec<Option<Vec<u8>>>>;
+
+type Snapshots = Receiver<Result<Snapshot, RuntimeFailure>>;
 
 fn last_runtime_upgrade_key() -> Vec<u8> {
 	[twox_128(b"System"), twox_128(b"LastRuntimeUpgrade")].concat()
@@ -30,7 +32,7 @@ fn last_runtime_upgrade_key() -> Vec<u8> {
 /// Polls `snapshots` on a thread, since the node only announces heads after
 /// the subscriptions are open, and hands each one over as it arrives.
 fn forward_in_background(
-	mut snapshots: BoxStream<'static, Result<StorageSnapshot, RuntimeFailure>>,
+	mut snapshots: BoxStream<'static, Result<Snapshot, RuntimeFailure>>,
 ) -> Snapshots {
 	let (sender, receiver) = channel();
 	std::thread::spawn(move || {
@@ -84,7 +86,7 @@ fn each_finalized_head_reads_every_watched_key_in_one_call() {
 	announce(&node, &provider, FINALIZED_SUBSCRIPTION, 4);
 	let snapshot = received.recv_timeout(TIMEOUT).expect("a snapshot").unwrap();
 
-	assert_eq!((snapshot.at, snapshot.values), (at, vec![Some(b"one".to_vec()), None]));
+	assert_eq!((snapshot.at, snapshot.value), (at, vec![Some(b"one".to_vec()), None]));
 	assert_eq!(method_count(&provider, "state_queryStorageAt"), 1);
 }
 
@@ -101,7 +103,7 @@ fn a_best_watch_reads_at_best_heads_only() {
 	announce(&node, &provider, BEST_SUBSCRIPTION, 5);
 	let snapshot = received.recv_timeout(TIMEOUT).expect("a snapshot").unwrap();
 
-	assert_eq!((snapshot.at, snapshot.values), (at, vec![Some(b"best".to_vec())]));
+	assert_eq!((snapshot.at, snapshot.value), (at, vec![Some(b"best".to_vec())]));
 }
 
 #[test]
@@ -120,7 +122,7 @@ fn a_finalized_watch_does_not_read_at_best_heads() {
 	announce(&node, &provider, FINALIZED_SUBSCRIPTION, 4);
 	let snapshot = received.recv_timeout(TIMEOUT).expect("a snapshot").unwrap();
 
-	assert_eq!((snapshot.at, snapshot.values), (at, vec![Some(b"finalized".to_vec())]));
+	assert_eq!((snapshot.at, snapshot.value), (at, vec![Some(b"finalized".to_vec())]));
 }
 
 #[test]

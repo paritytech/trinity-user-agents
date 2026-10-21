@@ -9,13 +9,15 @@
 use core::{future::ready, time::Duration};
 use std::{collections::HashMap, sync::Arc};
 
-use futures::stream::{self, BoxStream, StreamExt};
+use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
 use parking_lot::Mutex;
 use subxt::{ArcMetadata, ext::frame_decode::storage::encode_storage_key_prefix, utils::H256};
 
 use super::{failure, finalized_block};
 use crate::{
-	chain::{ChainHeads, HashAndNumber, HeadEvent, StorageSnapshot, StorageSnapshots, WatchedHead},
+	chain::{
+		ChainHeads, DecodableAtBlock, HashAndNumber, HeadEvent, StorageSnapshots, WatchedHead,
+	},
 	chain_runtime::{ChainRuntime, LegacyConnection, RuntimeFailure},
 };
 
@@ -31,6 +33,9 @@ const MAX_SKIPPED_HEADS: usize = 64;
 
 type Blocks = BoxStream<'static, Result<HashAndNumber, RuntimeFailure>>;
 
+/// Every watched key's value at one block, `None` when absent.
+type Snapshot = DecodableAtBlock<Vec<Option<Vec<u8>>>>;
+
 #[async_trait::async_trait]
 impl StorageSnapshots for ChainRuntime {
 	async fn current_metadata(&self, genesis: H256) -> Result<ArcMetadata, RuntimeFailure> {
@@ -44,12 +49,12 @@ impl StorageSnapshots for ChainRuntime {
 		genesis: H256,
 		head: WatchedHead,
 		keys: Vec<Vec<u8>>,
-	) -> Result<BoxStream<'static, Result<StorageSnapshot, RuntimeFailure>>, RuntimeFailure> {
+	) -> Result<BoxStream<'static, Result<Snapshot, RuntimeFailure>>, RuntimeFailure> {
 		let legacy = self.legacy(genesis).await?;
 		let blocks = self.watched_blocks(genesis, head).await?;
 		let reader = Arc::new(SnapshotReader::new(legacy, keys));
 		let newest = newest_only(blocks);
-		Ok(newest.then(move |block| reader.clone().read(block)).boxed())
+		Ok(newest.and_then(move |at| reader.clone().read(at)).boxed())
 	}
 }
 
@@ -69,7 +74,8 @@ impl ChainRuntime {
 			Some((events, chain))
 		});
 		let events = first.chain(reopened.flatten());
-		Ok(events.filter_map(move |event| ready(watched_block(head, event))).boxed())
+		let blocks = events.try_filter_map(move |event| ready(Ok(watched_block(head, event))));
+		Ok(blocks.boxed())
 	}
 
 	/// The head events, or after waiting [`RESUBSCRIBE_DELAY`] the failure to
@@ -88,16 +94,11 @@ impl ChainRuntime {
 	}
 }
 
-/// The block `event` announces when it is of the `head` kind. Failures pass
-/// through.
-fn watched_block(
-	head: WatchedHead,
-	event: Result<HeadEvent, RuntimeFailure>,
-) -> Option<Result<HashAndNumber, RuntimeFailure>> {
+/// The block `event` announces when it is of the `head` kind.
+fn watched_block(head: WatchedHead, event: HeadEvent) -> Option<HashAndNumber> {
 	match (head, event) {
-		(_, Err(error)) => Some(Err(error)),
-		(WatchedHead::Best, Ok(HeadEvent::Best(block))) |
-		(WatchedHead::Finalized, Ok(HeadEvent::Finalized(block))) => Some(Ok(block)),
+		(WatchedHead::Best, HeadEvent::Best(block)) |
+		(WatchedHead::Finalized, HeadEvent::Finalized(block)) => Some(block),
 		_ => None,
 	}
 }
@@ -133,15 +134,11 @@ impl SnapshotReader {
 		Self { legacy, keys, runtime: Mutex::new(None) }
 	}
 
-	async fn read(
-		self: Arc<Self>,
-		block: Result<HashAndNumber, RuntimeFailure>,
-	) -> Result<StorageSnapshot, RuntimeFailure> {
-		let at = block?;
+	async fn read(self: Arc<Self>, at: HashAndNumber) -> Result<Snapshot, RuntimeFailure> {
 		let mut values = query_storage_at(&self.legacy, &self.keys, at.hash).await?;
 		let last_upgrade = values.remove(0);
 		let metadata = self.metadata_for(last_upgrade, at).await?;
-		Ok(StorageSnapshot { at, metadata, values })
+		Ok(DecodableAtBlock { at, metadata, value: values })
 	}
 
 	/// The metadata of the runtime whose `System.LastRuntimeUpgrade` is
