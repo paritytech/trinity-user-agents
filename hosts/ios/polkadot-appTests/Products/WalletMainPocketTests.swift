@@ -1,10 +1,11 @@
-import Foundation
 import AsyncExtensions
-import os
 import ChainRegistry
+import Foundation
+import os
 import PolkadotUI
 import Products
 import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 import Testing
 import UIKit
 @testable import polkadot_app
@@ -93,7 +94,7 @@ struct WalletMainPocketTests {
         let screen = CollectiblesScreen(tld: LateTld())
 
         screen.presenter.setup()
-        try await screen.view.waitForCollectibles(within: .seconds(10))
+        try await screen.view.waitForCollectibles()
 
         #expect(screen.view.showsCollectibles)
     }
@@ -154,7 +155,7 @@ private final class RecordingPresenter: WalletMainInteractorOutputProtocol {
     /// Returns once the presenter has shown a card list matching `predicate`,
     /// failing rather than hanging if it never does.
     func waitForCards(where predicate: @escaping @Sendable (Set<PocketCardKey>) -> Bool) async throws {
-        try await withTimeout(.seconds(5)) { [shown] in
+        try await withTimeout(.hangGuard) { [shown] in
             for await keys in shown where predicate(keys) {
                 return
             }
@@ -204,7 +205,7 @@ private final class RecordingWalletView: UIViewController, WalletMainViewProtoco
     }
 
     /// Returns once the collectibles card has been offered, failing rather than hanging if it never is.
-    func waitForCollectibles(within limit: Duration = .seconds(5)) async throws {
+    func waitForCollectibles(within limit: Duration = .hangGuard) async throws {
         try await withTimeout(limit) { [availability] in
             for await isAvailable in availability where isAvailable {
                 return
