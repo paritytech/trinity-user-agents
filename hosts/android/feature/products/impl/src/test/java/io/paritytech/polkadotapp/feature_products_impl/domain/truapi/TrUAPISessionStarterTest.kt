@@ -9,7 +9,6 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
 import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.eq
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.runBlocking
@@ -19,18 +18,37 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
+import org.mockito.Answers
 import org.mockito.MockedStatic
 import org.mockito.Mockito.doAnswer
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.mockStatic
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
-import uniffi.truapi.ProductExecutionKind
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TrUAPISessionStarterTest {
-    private val bridge = mock<ProductTrUAPIHostBridge>()
     private val runtime = mock<TrUAPIHostRuntime>()
+    private val execution = mock<TrUAPIProductExecution>()
+
+    // Kotlin mangles suspend functions that return the inline Result, and an unstubbed Mockito
+    // call unboxes null, so these mocks answer the underlying value directly.
+    private val bridge = mock(ProductTrUAPIHostBridge::class.java) { invocation ->
+        when {
+            invocation.method.name.startsWith("attach") -> {
+                runBlocking { invocation.getArgument<suspend (String) -> Unit>(7)("endpoint-bootstrap") }
+                execution
+            }
+
+            else -> Answers.RETURNS_DEFAULTS.answer(invocation)
+        }
+    }
+    private val runtimeProvider = mock(TrUAPIHostRuntimeProvider::class.java) { invocation ->
+        when {
+            invocation.method.name.startsWith("runtime") -> runtime
+            else -> Answers.RETURNS_DEFAULTS.answer(invocation)
+        }
+    }
     private val chains = mock<TrUAPIChains>()
     private val navigation = NavigationPolicy.DeeplinkNavigation { }
     private val provider = mock<BrowserWebViewProvider>()
@@ -38,7 +56,6 @@ class TrUAPISessionStarterTest {
     private val telemetry = mock<HostWebViewCreatedTelemetry>()
     private val visibleProducts = mock<VisibleProducts>()
     private val hostBridgeFactory = mock<ProductTrUAPIHostBridge.Factory>()
-    private val runtimeProvider = mock<TrUAPIHostRuntimeProvider>()
     private val chainDirectory = mock<TrUAPIChainDirectory>()
     private val dotNsTldProvider = mock<DotNsTldProvider>()
     private val webViewSetups = mutableListOf<(WebView) -> Unit>()
@@ -93,7 +110,6 @@ class TrUAPISessionStarterTest {
 
     private fun stubSuccessfulSession() = runBlocking {
         whenever(hostBridgeFactory.create(any())).thenReturn(bridge)
-        whenever(runtimeProvider.runtime()).thenReturn(Result.success(runtime))
         whenever(chainDirectory.resolve()).thenReturn(chains)
         whenever(bootstrapInstaller.installerFor(any(), any())).thenAnswer { invocation ->
             installerSessionId = invocation.getArgument(1)
@@ -105,21 +121,6 @@ class TrUAPISessionStarterTest {
             Unit
         }.`when`(provider).addWebViewSetup(any())
         doAnswer { Unit }.`when`(provider).loadInitialContent()
-        whenever(
-            bridge.attach(
-                runtime = eq(runtime),
-                productId = eq(PRODUCT_ID),
-                chains = eq(chains),
-                navigationPolicy = eq(navigation),
-                kind = eq(ProductExecutionKind.APP),
-                chat = eq(null),
-                card = eq(null),
-                onReadyToInject = any(),
-            ),
-        ).thenAnswer { invocation ->
-            runBlocking { invocation.getArgument<suspend (String) -> Unit>(7)("endpoint-bootstrap") }
-            Result.success(mock<TrUAPIProductExecution>())
-        }
         whenever(telemetry.report(any())).thenAnswer { invocation ->
             reportedSessionId = invocation.getArgument(0)
             Unit
