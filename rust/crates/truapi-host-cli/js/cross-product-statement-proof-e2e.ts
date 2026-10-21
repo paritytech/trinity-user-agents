@@ -9,7 +9,7 @@
 //
 // The CLI appends one line per consulted confirmation to
 // `TRUAPI_APPROVALS_LOG`, and this counts the `sign statement proof` lines.
-// `scripts/cross-product-statement-proof-e2e.sh` runs it as `dim2next.paseo`,
+// `e2e/cli/cross-product-statement-proof.sh` runs it as `dim2next.paseo`,
 // which `dim2.paseo`'s local product config grants `context`. Neither label
 // is one the host trusts outright, which would skip the confirmation.
 

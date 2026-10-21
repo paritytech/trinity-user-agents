@@ -4,7 +4,7 @@
 #
 # One product signs with another product's account; only the manifest grant in
 # `peopl.paseo`'s local product config permits that. The sibling of
-# `cross-product-ringvrf-e2e.sh`, for the same `context` scope on the signing
+# `cross-product-ringvrf.sh`, for the same `context` scope on the signing
 # methods rather than on a ring-VRF key.
 #
 # Chain-free. Every manifest a phase resolves is seeded by `--product-config`,
@@ -17,7 +17,7 @@
 # parked by a process that has already exited.
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 fixtures="rust/crates/truapi-host-cli/js/fixtures"

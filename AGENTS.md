@@ -75,8 +75,11 @@ hosts/imports.json         source repository and imported revision per host,
 hosts/dotli/               dotli submodule
 docs/                      design docs, RFCs, feature proposals
 scripts/codegen.sh         regenerate the TS client from the Rust crate
-scripts/battery.sh         run the generated battery against both headless CLI host roles,
-                           plus the Pocket phase a Worker execution serves
+e2e/cli/                   end to end scenarios against the headless CLI host, one script
+                           each (battery.sh runs the generated battery); `make e2e-cli`
+                           lists and runs them. Add a scenario as a file here, not as a
+                           new Makefile target
+e2e/host-playground/       host-playground suite run inside the native host apps
 scripts/bundle-size.mjs    measure the JS/WASM of the asset groups given (raw, gzip, brotli);
                            .github/actions/bundle-size takes them as `assets`, stores
                            main's snapshot and comments the comparison on PRs
