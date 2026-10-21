@@ -24,7 +24,7 @@ struct WalletView: View {
                         assetCard
                         pocketCards
                     }
-                    .padding(.horizontal, 24)
+                    .padding(.horizontal, PocketCardSize.sideMargin)
                     .padding(.top, 16)
                     .onGeometryChange(for: CGFloat.self) { proxy in
                         proxy.size.height + proxy.safeAreaInsets.bottom
@@ -175,7 +175,7 @@ private extension WalletView {
             isExpanded: viewModel.expandedSection == .collectiblesDetails,
             onViewCollectibles: { viewModel.onViewCollectibles?() }
         )
-        .padding(.horizontal, 24)
+        .padding(.horizontal, PocketCardSize.sideMargin)
         .frame(maxHeight: viewModel.expandedSection == .collectiblesDetails ? .infinity : nil)
         .alignmentGuide(.bottom) { dimensions in
             switch viewModel.expandedSection {
