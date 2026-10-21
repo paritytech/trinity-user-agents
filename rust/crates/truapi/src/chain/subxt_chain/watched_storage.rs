@@ -97,11 +97,7 @@ impl ChainRuntime {
 /// here, so a chain that cannot be reached fails the call.
 async fn subscribed_changes(reader: Arc<StorageReader>) -> Result<Changes, RuntimeFailure> {
 	let first = reader.clone().subscribe().await?;
-	let reopened_reader = reader.clone();
-	let change_sets = reopening(first, move || reopened_reader.clone().subscribe());
-	Ok(change_sets
-		.and_then(move |change_set| reader.clone().changes_in(change_set))
-		.boxed())
+	Ok(reopening(first, move || reader.clone().subscribe()))
 }
 
 /// The block `event` announces when it is finalized.

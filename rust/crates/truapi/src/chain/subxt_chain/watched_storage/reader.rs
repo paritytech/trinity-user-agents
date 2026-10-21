@@ -21,12 +21,12 @@ use crate::{
 
 /// The keys one subscription notification changed, by position among the
 /// reader's keys, and the block it is for.
-pub struct ChangeSetAt {
+struct ChangeSetAt {
 	block: H256,
 	changed: Vec<(usize, Option<Vec<u8>>)>,
 }
 
-type ChangeSets = BoxStream<'static, Result<ChangeSetAt, RuntimeFailure>>;
+type Changes = BoxStream<'static, Result<RawStorageChanges, RuntimeFailure>>;
 
 /// Reads the watched keys, keeping the metadata of the runtime it last saw.
 pub struct StorageReader {
@@ -75,7 +75,7 @@ impl StorageReader {
 	/// notification must answer every key. A node also names keys a block
 	/// wrote with the value they already had; those are dropped here, and so
 	/// is a notification left with nothing.
-	pub async fn subscribe(self: Arc<Self>) -> Result<ChangeSets, RuntimeFailure> {
+	pub async fn subscribe(self: Arc<Self>) -> Result<Changes, RuntimeFailure> {
 		let keys: Vec<String> =
 			self.keys.iter().map(|key| format!("0x{}", hex::encode(key))).collect();
 		let subscription = self
@@ -88,16 +88,18 @@ impl StorageReader {
 			)
 			.await
 			.map_err(|error| failure(STORAGE_WATCH, error))?;
+		let placing = self.clone();
 		let placed = subscription.scan(None, move |held, change_set| {
 			let change_set = change_set.map_err(|error| failure(STORAGE_WATCH, error));
-			ready(Some(change_set.and_then(|change_set| self.placed(held, change_set))))
+			ready(Some(change_set.and_then(|change_set| placing.placed(held, change_set))))
 		});
-		Ok(placed.try_filter_map(|change_set| ready(Ok(change_set))).boxed())
+		let changed = placed.try_filter_map(|change_set| ready(Ok(change_set)));
+		Ok(changed.and_then(move |change_set| self.clone().changes_in(change_set)).boxed())
 	}
 
 	/// `change_set` as changes to the watched keys, with the block number and
 	/// the metadata to decode them with.
-	pub async fn changes_in(
+	async fn changes_in(
 		self: Arc<Self>,
 		change_set: ChangeSetAt,
 	) -> Result<RawStorageChanges, RuntimeFailure> {
