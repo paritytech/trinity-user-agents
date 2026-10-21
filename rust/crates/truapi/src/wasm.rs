@@ -27,7 +27,8 @@ use crate::platform::SigningHostConfig;
 use crate::platform::{
 	ChainProvider, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, JsonRpcConnection,
 	PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform, ProductContext,
-	ProductExecutionKind, ProviderError, RuntimeConfigValidationError, ScannerPlatform,
+	ProductExecutionKind, ProductId, ProductIdError, ProviderError, RuntimeConfigValidationError,
+	ScannerPlatform,
 };
 use futures::{
 	channel::mpsc,
@@ -611,13 +612,14 @@ fn product_context_from_js(value: &JsValue) -> Result<ProductContext, JsValue> {
 				)));
 			},
 		};
-	ProductContext::new_with_execution(product_id, execution_kind)
-		.map_err(runtime_config_validation_to_js)
+	let product_id = product_id
+		.parse::<ProductId>()
+		.map_err(|error| runtime_config_validation_to_js(error.into()))?;
+	Ok(ProductContext::new_with_execution(product_id, execution_kind))
 }
 
 fn runtime_config_field_to_js(field: &str) -> &str {
 	match field {
-		"product_id" => "productId",
 		"host_info.name" => "host.name",
 		"pairing_deeplink_scheme" => "pairing.deeplinkScheme",
 		"people_chain_genesis_hash" => "people.genesisHash",
@@ -643,21 +645,27 @@ fn runtime_config_validation_to_js(err: RuntimeConfigValidationError) -> JsValue
 		RuntimeConfigValidationError::InvalidDeeplinkScheme { scheme } => JsValue::from_str(
 			&format!("runtimeConfig.pairing.deeplinkScheme must not include ://, got {scheme:?}"),
 		),
-		RuntimeConfigValidationError::InvalidProductId { product_id } => {
+		RuntimeConfigValidationError::InvalidProductId(ProductIdError::Empty) => {
+			JsValue::from_str("runtimeConfig.productId must not be empty")
+		},
+		RuntimeConfigValidationError::InvalidProductId(ProductIdError::Invalid { product_id }) => {
 			JsValue::from_str(&format!(
 				"runtimeConfig.productId must be a dotNS or localhost product identifier, got {product_id:?}"
 			))
 		},
+		// By length, never by value: an id that trips this is unbounded in
+		// size, and this string reaches the product's console.
+		RuntimeConfigValidationError::InvalidProductId(ProductIdError::TooLong {
+			limit,
+			actual,
+		}) => JsValue::from_str(&format!(
+			"runtimeConfig.productId must be at most {limit} bytes, got {actual}"
+		)),
 		RuntimeConfigValidationError::InvalidNetworkSuffix { network_suffix } => {
 			JsValue::from_str(&format!(
 				"runtimeConfig.networkSuffix must be a supported dotNS TLD, got {network_suffix:?}"
 			))
 		},
-		// By length, never by value: an id that trips this is unbounded in
-		// size, and this string reaches the product's console.
-		RuntimeConfigValidationError::ProductIdTooLong { limit, actual } => JsValue::from_str(
-			&format!("runtimeConfig.productId must be at most {limit} bytes, got {actual}"),
-		),
 	}
 }
 
@@ -792,6 +800,14 @@ fn generic_error_to_js(err: v01::GenericError) -> JsValue {
 	JsValue::from_str(&err.reason)
 }
 
+/// Parse a product id the host passed, rejecting with the reason the way the
+/// runtime's own errors do.
+fn product_id_from_js(product_id: &str) -> Result<ProductId, JsValue> {
+	product_id
+		.parse::<ProductId>()
+		.map_err(|error| JsValue::from_str(&error.to_string()))
+}
+
 struct WasmCoreInner {
 	core: ProductRuntime,
 	dispose_fn: SendWrapper<Function>,
@@ -842,14 +858,14 @@ struct WasmWorkerDemand {
 }
 
 impl crate::host_logic::worker::WorkerDemandObserver for WasmWorkerDemand {
-	fn worker_demand_changed(&self, product_id: &str, transition: WorkerTransition) {
+	fn worker_demand_changed(&self, product_id: &ProductId, transition: WorkerTransition) {
 		let name = match transition {
 			WorkerTransition::Start => "Start",
 			WorkerTransition::Stop => "Stop",
 		};
 		let _ = self.changed.call2(
 			&JsValue::NULL,
-			&JsValue::from_str(product_id),
+			&JsValue::from_str(product_id.as_str()),
 			&JsValue::from_str(name),
 		);
 	}
@@ -948,7 +964,7 @@ impl WasmPairingHostRuntime {
 		let product = product_context_from_js(&product)?;
 		let channel = CoreChannel::from_js(&core_callbacks)?;
 		let debug_emit = get_optional_function(&core_callbacks, "debugEmit")?;
-		let channel_id = product.product_id.clone();
+		let channel_id = product.product_id.to_string();
 		let sink = Arc::new(WasmFrameSink { emit_frame: SendWrapper::new(channel.emit_frame) });
 		let runtime = self.runtime.product_runtime(product, sink);
 		if let Some(debug_emit) = debug_emit {
@@ -1007,7 +1023,7 @@ impl WasmPairingHostRuntime {
 		timeout_ms: Option<u32>,
 	) -> Result<Option<Vec<u8>>, JsValue> {
 		self.runtime
-			.product_subtree_public_key(&product_id, timeout_ms)
+			.product_subtree_public_key(&product_id_from_js(&product_id)?, timeout_ms)
 			.await
 			.map(|key| key.map(|key| key.to_vec()))
 			.map_err(generic_error_to_js)
@@ -1053,7 +1069,7 @@ impl WasmPairingHostRuntime {
 		let request = decode_permission_authorization_request(&payload)?;
 		let status = self
 			.runtime
-			.permission_authorization_status(&product_id, request)
+			.permission_authorization_status(&product_id_from_js(&product_id)?, request)
 			.await
 			.map_err(generic_error_to_js)?;
 		Ok(permission_authorization_status_to_js(status))
@@ -1073,7 +1089,7 @@ impl WasmPairingHostRuntime {
 		let requests = decode_permission_authorization_requests(&payloads)?;
 		let statuses = self
 			.runtime
-			.permission_authorization_statuses(&product_id, requests)
+			.permission_authorization_statuses(&product_id_from_js(&product_id)?, requests)
 			.await
 			.map_err(generic_error_to_js)?;
 		let values = Array::new();
@@ -1094,7 +1110,7 @@ impl WasmPairingHostRuntime {
 		let request = decode_permission_authorization_request(&payload)?;
 		let status = permission_authorization_status_from_js(&status)?;
 		self.runtime
-			.set_permission_authorization_status(&product_id, request, status)
+			.set_permission_authorization_status(&product_id_from_js(&product_id)?, request, status)
 			.await
 			.map_err(generic_error_to_js)
 	}
@@ -1102,7 +1118,10 @@ impl WasmPairingHostRuntime {
 	/// Clear one product's durable and in-memory capability state.
 	#[wasm_bindgen(js_name = clearProductState)]
 	pub async fn clear_product_state(&self, product_id: String) -> Result<(), JsValue> {
-		self.runtime.clear_product_state(&product_id).await.map_err(generic_error_to_js)
+		self.runtime
+			.clear_product_state(&product_id_from_js(&product_id)?)
+			.await
+			.map_err(generic_error_to_js)
 	}
 
 	/// Clear canonical paired-session state without notifying the peer.
@@ -1113,17 +1132,29 @@ impl WasmPairingHostRuntime {
 
 	/// Take one reference on the product's worker for a modality holder. The
 	/// first one reports `"Start"` to the host's `workerDemandChanged`
-	/// callback. Pair every call with one `releaseWorker`.
+	/// callback. Pair every call with one `releaseWorker`. An id that is not a
+	/// product id is logged and dropped.
 	#[wasm_bindgen(js_name = acquireWorker)]
 	pub fn acquire_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().acquire(&product_id);
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
+			Err(error) => {
+				tracing::warn!(%error, "worker reference for an id that is not a product id")
+			},
+		}
 	}
 
 	/// Release one reference. The last one reports `"Stop"`, after which the
-	/// host may stop the worker; releasing with none held is a no-op.
+	/// host may stop the worker; releasing with none held is a no-op, and so
+	/// is an id that is not a product id.
 	#[wasm_bindgen(js_name = releaseWorker)]
 	pub fn release_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().release(&product_id);
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().release(&product_id),
+			Err(error) => {
+				tracing::warn!(%error, "worker reference for an id that is not a product id")
+			},
+		}
 	}
 }
 
@@ -1138,7 +1169,7 @@ impl WasmPairingHostRuntime {
 /// normalize, so an unknown spelling is never read as trusted.
 #[wasm_bindgen(js_name = hasTrustedRemotePermissions)]
 pub fn has_trusted_remote_permissions_for_wasm(product_id: String) -> bool {
-	crate::platform::normalizes_to_trusted_remote_permissions(&product_id)
+	crate::platform::ProductId::normalizes_to_trusted_remote_permissions(&product_id)
 }
 
 /// Strictly decode a SCALE-encoded core-storage key for host storage policy.
@@ -1192,7 +1223,7 @@ impl WasmSigningHostRuntime {
 		product_id: String,
 	) -> Result<Option<Vec<u8>>, JsValue> {
 		self.runtime
-			.product_subtree_public_key(&product_id)
+			.product_subtree_public_key(&product_id_from_js(&product_id)?)
 			.map(|key| key.map(|key| key.to_vec()))
 			.map_err(generic_error_to_js)
 	}
@@ -1316,7 +1347,8 @@ impl WasmSigningHostRuntime {
 	/// Revoke one product's grants from the current local activation.
 	#[wasm_bindgen(js_name = clearProductState)]
 	pub async fn clear_product_state(&self, product_id: String) -> Result<(), JsValue> {
-		self.runtime.clear_product_state(&product_id).await.map_err(generic_error_to_js)
+		self.runtime.clear_product_state(&product_id_from_js(&product_id)?).await;
+		Ok(())
 	}
 
 	/// Read a permission authorization status for a product.
@@ -1333,7 +1365,7 @@ impl WasmSigningHostRuntime {
 		let request = decode_permission_authorization_request(&payload)?;
 		let status = self
 			.runtime
-			.permission_authorization_status(&product_id, request)
+			.permission_authorization_status(&product_id_from_js(&product_id)?, request)
 			.await
 			.map_err(generic_error_to_js)?;
 		Ok(permission_authorization_status_to_js(status))
@@ -1353,7 +1385,7 @@ impl WasmSigningHostRuntime {
 		let requests = decode_permission_authorization_requests(&payloads)?;
 		let statuses = self
 			.runtime
-			.permission_authorization_statuses(&product_id, requests)
+			.permission_authorization_statuses(&product_id_from_js(&product_id)?, requests)
 			.await
 			.map_err(generic_error_to_js)?;
 		let values = Array::new();
@@ -1374,24 +1406,36 @@ impl WasmSigningHostRuntime {
 		let request = decode_permission_authorization_request(&payload)?;
 		let status = permission_authorization_status_from_js(&status)?;
 		self.runtime
-			.set_permission_authorization_status(&product_id, request, status)
+			.set_permission_authorization_status(&product_id_from_js(&product_id)?, request, status)
 			.await
 			.map_err(generic_error_to_js)
 	}
 
 	/// Take one reference on the product's worker for a modality holder. The
 	/// first one reports `"Start"` to the host's `workerDemandChanged`
-	/// callback. Pair every call with one `releaseWorker`.
+	/// callback. Pair every call with one `releaseWorker`. An id that is not a
+	/// product id is logged and dropped.
 	#[wasm_bindgen(js_name = acquireWorker)]
 	pub fn acquire_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().acquire(&product_id);
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
+			Err(error) => {
+				tracing::warn!(%error, "worker reference for an id that is not a product id")
+			},
+		}
 	}
 
 	/// Release one reference. The last one reports `"Stop"`, after which the
-	/// host may stop the worker; releasing with none held is a no-op.
+	/// host may stop the worker; releasing with none held is a no-op, and so
+	/// is an id that is not a product id.
 	#[wasm_bindgen(js_name = releaseWorker)]
 	pub fn release_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().release(&product_id);
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().release(&product_id),
+			Err(error) => {
+				tracing::warn!(%error, "worker reference for an id that is not a product id")
+			},
+		}
 	}
 }
 
@@ -1407,7 +1451,8 @@ pub fn derive_product_subtree_public_key(
 ) -> Result<Vec<u8>, JsValue> {
 	let root = crate::host_logic::product_account::derive_root_keypair_from_entropy(&root_entropy)
 		.map_err(|err| JsValue::from_str(&err.to_string()))?;
-	let product_id = crate::platform::normalize_product_identifier(&product_id)
+	let product_id = product_id
+		.parse::<crate::platform::ProductId>()
 		.map_err(|err| JsValue::from_str(&err.to_string()))?;
 	crate::host_logic::product_account::derive_product_subtree_keypair(&root, &product_id)
 		.map(|keypair| keypair.public.to_bytes().to_vec())
