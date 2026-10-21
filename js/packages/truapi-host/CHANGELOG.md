@@ -85,6 +85,8 @@
   holds a local AutoSigning grant.
 - 33963a5: Apply every ring-VRF registry change through one prepared update under the registry's storage lock, and skip
   the storage write when the registry did not change. Test-host allocation controls live in one `TestResourceControls`.
+- 0e195c9: Run the pairing host's session selection, login and request channel in an `SsoRequestService`, and the
+  signing host's pairing answers and served sessions in an `SsoResponderService`.
 - a8623e2: Statement submissions and the Statement Store allowance paths run over the People-chain connection the chain
   runtime keeps open, so publishing a statement costs no WebSocket handshake. Statement subscriptions open their own
   connection.

@@ -5,7 +5,7 @@ All notable changes to the TrUAPI protocol are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
-## [0.26.0] - 2026-10-20
+## [0.26.0] - 2026-10-21
 
 ### Added
 
@@ -28,6 +28,7 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- SSO session and responder services (#1515)
 - give Pocket deeplinks a host-owned polkadotapp://pocket URL (#1542)
 - recheck balance access on each pushed balance and keep payment errors append-only (#1464)
 - account fixes  (#1488)
@@ -43,6 +44,7 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- list a product's chat rooms before its bot is built (#1420)
 - open a Pocket card without the host spinner (#1443)
 - scope chain follow intents and transaction operations per product (#1482)
 - chat requests resolution (#1539)
