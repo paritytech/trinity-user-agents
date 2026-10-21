@@ -7,23 +7,18 @@ final class MainTabBarPresenter {
     let wireframe: MainTabBarWireframeProtocol
     let interactor: MainTabBarInteractorInputProtocol
 
-    /// `.spaTabs` is dropped by the chrome while no apps are open; it is declared here so its
-    /// position next to `.scan` is owned by the slot list rather than by insertion order.
+    /// The four visible slots, left to right. The centre control is not a slot.
     #if FEATURE_PRODUCTS
-        let slots: [TabBarSlot] = [
-            .tab(.chat), .tab(.wallet), .action(.scan), .action(.spaTabs),
-            .tab(.browse), .tab(.settings)
-        ]
+        let slots: [TabBarSlot] = [.tab(.chat), .tab(.wallet), .tab(.browse), .action(.spaTabs)]
     #else
-        let slots: [TabBarSlot] = [
-            .tab(.chat), .tab(.wallet), .action(.scan), .action(.spaTabs), .tab(.settings),
-            .action(.connectionStatus)
-        ]
+        let slots: [TabBarSlot] = [.tab(.chat), .tab(.wallet), .tab(.settings), .action(.connectionStatus)]
     #endif
 
     private let chipViewModelFactory: SPATabChipViewModelFactory
-    private var settingsBadge: TabBarBadge?
-    private var chainStatusRows: [ChainConnectionStatusViewModel] = []
+    private let connectionStatusViewModel = ConnectionStatusSheetViewModel()
+    #if !FEATURE_PRODUCTS
+        private var isSettingsAttentionVisible = false
+    #endif
 
     init(
         interactor: MainTabBarInteractorInputProtocol,
@@ -43,18 +38,17 @@ extension MainTabBarPresenter: MainTabBarPresenterProtocol {
 
     func configureViews() {
         view?.show(slots: slots, selecting: .chat)
-        view?.setBadge(settingsBadge, for: .settings)
+        #if !FEATURE_PRODUCTS
+            view?.setAttention(isSettingsAttentionVisible, for: .settings)
+        #endif
     }
 
-    func didRequestContentPanel(for action: TabBarAction) {
-        switch action {
-        case .scan:
-            view?.showScanPanel()
-        case .spaTabs:
-            break
-        case .connectionStatus:
-            showConnectionStatusPanel()
-        }
+    func didRequestConnectionStatus() {
+        wireframe.showConnectionStatus(connectionStatusViewModel, from: view)
+    }
+
+    func didRequestSettings() {
+        wireframe.showSettings(from: view)
     }
 
     #if FEATURE_INPUT
@@ -69,14 +63,15 @@ extension MainTabBarPresenter: MainTabBarPresenterProtocol {
 }
 
 extension MainTabBarPresenter: MainTabBarInteractorOutputProtocol {
-    func didUpdateSettingsAttention(isVisible: Bool) {
-        let nextBadge = isVisible ? TabBarBadge.attention : nil
-        guard settingsBadge != nextBadge else {
-            return
+    #if !FEATURE_PRODUCTS
+        func didUpdateSettingsAttention(isVisible: Bool) {
+            guard isSettingsAttentionVisible != isVisible else {
+                return
+            }
+            isSettingsAttentionVisible = isVisible
+            view?.setAttention(isVisible, for: .settings)
         }
-        settingsBadge = nextBadge
-        view?.setBadge(settingsBadge, for: .settings)
-    }
+    #endif
 
     func didReceiveWidget(
         configuration: any HashableContentConfiguration,
@@ -102,9 +97,7 @@ extension MainTabBarPresenter: MainTabBarInteractorOutputProtocol {
 
     func didReceiveChainStatus(_ rows: [ChainConnectionStatusViewModel]) {
         view?.showChainStatus(rows)
-
-        chainStatusRows = rows
-        showConnectionStatusPanel()
+        connectionStatusViewModel.rows = rows
     }
 
     func didReceiveTabBarLabelsEnabled(_ isEnabled: Bool) {
@@ -121,15 +114,5 @@ extension MainTabBarPresenter: MainTabBarInteractorOutputProtocol {
             )
         }
         view?.showProductGamePill(viewModel)
-    }
-}
-
-private extension MainTabBarPresenter {
-    /// `setContentPanel` ignores pushes unless its panel is open, so this is a no-op while closed.
-    func showConnectionStatusPanel() {
-        view?.showTabBarPanelContent(
-            SwiftUIContentConfiguration(view: ConnectionStatusPanelView(rows: chainStatusRows)),
-            for: .connectionStatus
-        )
     }
 }

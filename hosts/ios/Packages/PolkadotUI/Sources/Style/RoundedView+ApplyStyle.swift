@@ -1,5 +1,6 @@
 import UIKit
 public import UIKit_iOS
+import DesignSystem
 
 extension RoundedView {
     public func applyBackgroundStyle(with cornerRadius: CGFloat) {
@@ -49,12 +50,12 @@ extension RoundedView {
     }
 
     func applyRoundedLight() {
-        applyBackgroundStyle(UIColor(resource: .white100), cornerRadius: 24)
+        applyBackgroundStyle(UIColor.fgStaticWhite, cornerRadius: 24)
     }
 
     /// White 100 / 32pt
     func applyRoundedLargeLight() {
-        applyBackgroundStyle(UIColor(resource: .white100), cornerRadius: 32)
+        applyBackgroundStyle(UIColor.fgStaticWhite, cornerRadius: 32)
     }
 
     /// Background Tertiary / 6pt

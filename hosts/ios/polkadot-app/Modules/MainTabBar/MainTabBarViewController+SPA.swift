@@ -42,13 +42,13 @@ extension MainTabBarViewController {
             return
         }
         container.mountSPA(controller, for: tab.id)
-        chromeController.apply(.spa(controller))
+        applyChrome(.spa(controller))
         applyChips()
     }
 
     func applyChips() {
         let chips = spaChipViewModels.map {
-            DSTabBarChip(id: $0.id, name: $0.name, icon: $0.icon)
+            TabBarShelfChip(id: $0.id, name: $0.name, icon: $0.icon)
         }
         chromeController.setSPATabs(chips, selected: mountedSPATabId)
         applyProductGamePill()
@@ -71,7 +71,7 @@ extension MainTabBarViewController {
         guard let tab = browserCoordinator.tabs.first(where: predicate) else {
             return false
         }
-        chromeController.setPanel(nil, animated: true)
+        chromeController.setPanel(nil)
         mountSPA(for: tab)
         return true
     }

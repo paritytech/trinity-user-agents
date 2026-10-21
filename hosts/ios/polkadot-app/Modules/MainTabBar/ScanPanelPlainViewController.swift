@@ -5,13 +5,11 @@ import FoundationExt
 final class ScanPanelPlainViewController: UIViewController, ViewHolder {
     typealias RootViewType = ScanPanelPlainViewLayout
 
-    private let scannerController: UIViewController
+    private let scannerController: UIViewController & ScanPanelScannerControlling
 
     var onSearchTap: (() -> Void)?
-    var onPanelDragChanged: ((CGFloat) -> Void)?
-    var onPanelDragEnded: ((CGFloat) -> Void)?
 
-    init(scannerController: UIViewController) {
+    init(scannerController: UIViewController & ScanPanelScannerControlling) {
         self.scannerController = scannerController
         super.init(nibName: nil, bundle: nil)
     }
@@ -35,13 +33,11 @@ final class ScanPanelPlainViewController: UIViewController, ViewHolder {
         rootView.searchButton.onTap = { [weak self] in
             self?.onSearchTap?()
         }
+    }
+}
 
-        rootView.grabber.onDragChanged = { [weak self] translation in
-            self?.onPanelDragChanged?(translation)
-        }
-
-        rootView.grabber.onDragEnded = { [weak self] translation in
-            self?.onPanelDragEnded?(translation)
-        }
+extension ScanPanelPlainViewController: ScanPanelScannerControlling {
+    func setCaptureActive(_ active: Bool) {
+        scannerController.setCaptureActive(active)
     }
 }

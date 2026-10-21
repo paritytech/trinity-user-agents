@@ -4,20 +4,29 @@ internal import SnapKit
 internal import UIKit_iOS
 
 public final class SearchContactFieldButton: UIControl {
+    private let materialView = DSTabBarFieldMaterialView(cornerRadius: 24)
+
     private let iconImageView: UIImageView = create {
         $0.image = UIImage(resource: .search18).withRenderingMode(.alwaysTemplate)
-        $0.tintColor = .fgSecondary
+        $0.tintColor = .fgPrimary
         $0.isUserInteractionEnabled = false
         $0.snp.makeConstraints {
-            $0.width.height.equalTo(18)
+            $0.width.height.equalTo(20)
         }
     }
 
     private let label: Label = create {
-        $0.style = .body14Regular()
-        $0.textColor = .fgDisabled
+        $0.typography = .bodyMedium
+        $0.textColor = .fgSecondary
         $0.isUserInteractionEnabled = false
         $0.text = String(localized: .searchContactFieldPlaceholder)
+    }
+
+    private let contentStack: UIStackView = create {
+        $0.axis = .horizontal
+        $0.spacing = 8
+        $0.alignment = .center
+        $0.isUserInteractionEnabled = false
     }
 
     public var onTap: (() -> Void)?
@@ -25,7 +34,6 @@ public final class SearchContactFieldButton: UIControl {
     public init() {
         super.init(frame: .zero)
 
-        setupStyle()
         setupLayout()
         setupAccessibility()
 
@@ -39,35 +47,22 @@ public final class SearchContactFieldButton: UIControl {
 }
 
 private extension SearchContactFieldButton {
-    func setupStyle() {
-        layer.cornerRadius = 24
-        layer.cornerCurve = .continuous
-        layer.borderWidth = 0.8
-        backgroundColor = .bgSurfaceNested
-        applyLayerColors()
-
-        registerForTraitChanges([DSThemeTrait.self]) { (view: SearchContactFieldButton, _) in
-            view.applyLayerColors()
-        }
-    }
-
     func setupLayout() {
-        addSubview(iconImageView)
-        addSubview(label)
+        addSubview(materialView)
+        addSubview(contentStack)
+        contentStack.addArrangedSubview(iconImageView)
+        contentStack.addArrangedSubview(label)
 
         snp.makeConstraints {
             $0.height.equalTo(48)
         }
 
-        iconImageView.snp.makeConstraints {
-            $0.leading.equalToSuperview().inset(12)
-            $0.centerY.equalToSuperview()
+        materialView.snp.makeConstraints {
+            $0.edges.equalToSuperview()
         }
 
-        label.snp.makeConstraints {
-            $0.leading.equalTo(iconImageView.snp.trailing).offset(8)
-            $0.trailing.equalToSuperview().inset(16)
-            $0.centerY.equalToSuperview()
+        contentStack.snp.makeConstraints {
+            $0.center.equalToSuperview()
         }
     }
 
@@ -75,10 +70,6 @@ private extension SearchContactFieldButton {
         isAccessibilityElement = true
         accessibilityTraits = .button
         accessibilityLabel = String(localized: .searchContactFieldPlaceholder)
-    }
-
-    func applyLayerColors() {
-        layer.borderColor = UIColor.strokePrimary.resolvedColor(with: traitCollection).cgColor
     }
 
     @objc func didTap() {

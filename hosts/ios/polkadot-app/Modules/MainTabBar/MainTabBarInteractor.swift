@@ -2,20 +2,19 @@ import UIKit
 import Combine
 import Foundation
 import PushKit
-import EventCenter
 import PolkadotUI
 
 final class MainTabBarInteractor {
     weak var presenter: MainTabBarInteractorOutputProtocol?
+    #if !FEATURE_PRODUCTS
+        var settingsAttentionObserver: SettingsBackupAttentionObserving?
+    #endif
 
     private let serviceCoordinator: ServiceCoordinatorProtocol
     private let chainStatusProvider: ChainStatusProviding
 
     private let userNotificationService: UserNotificationServicing
-    private let mnemonicBackupHelper: MnemonicBackupHelperProtocol
-    private let notificationCenter: NotificationCenter
     private let logger: LoggerProtocol
-    private let eventCenter: EventCenterProtocol
     private let urlHandlingService: URLHandlingServiceProtocol
     private let deferredLinkHandler: DeferredLinkHandling
     private let extensionWidgetStreamProvider: ChatExtensionWidgetStreaming
@@ -23,7 +22,6 @@ final class MainTabBarInteractor {
     private let browserCoordinator: SPABrowserCoordinating
     private let tabBarLabelsStore: any TabBarLabelsProviding
 
-    private var availabilityObserver: NSObjectProtocol?
     private var extensionWidgetSubscription: Task<Void, Never>?
     private var productGamePillSubscription: Task<Void, Never>?
     private var chainStatusSubscription: Task<Void, Never>?
@@ -35,22 +33,16 @@ final class MainTabBarInteractor {
         userNotificationService: UserNotificationServicing,
         urlHandlingService: URLHandlingServiceProtocol,
         deferredLinkHandler: DeferredLinkHandling,
-        mnemonicBackupHelper: MnemonicBackupHelperProtocol,
         browserCoordinator: SPABrowserCoordinating,
         productGamePills: ProductGamePillProviding?,
-        notificationCenter: NotificationCenter = .default,
         logger: LoggerProtocol = Logger.shared,
-        eventCenter: EventCenterProtocol = EventCenter.shared,
         extensionWidgetStreamProvider: ChatExtensionWidgetStreaming? = nil,
         tabBarLabelsStore: any TabBarLabelsProviding = TabBarLabelsStore.shared
     ) {
         self.serviceCoordinator = serviceCoordinator
         self.chainStatusProvider = chainStatusProvider
         self.userNotificationService = userNotificationService
-        self.mnemonicBackupHelper = mnemonicBackupHelper
-        self.notificationCenter = notificationCenter
         self.logger = logger
-        self.eventCenter = eventCenter
         self.urlHandlingService = urlHandlingService
         self.deferredLinkHandler = deferredLinkHandler
         self.browserCoordinator = browserCoordinator
@@ -66,7 +58,6 @@ final class MainTabBarInteractor {
         unsubscribeFromExtensionWidgets()
         productGamePillSubscription?.cancel()
         serviceCoordinator.throttle()
-        removeBackupObservers()
         chainStatusSubscription?.cancel()
         tabBarLabelsSubscription?.cancel()
     }
@@ -76,11 +67,13 @@ extension MainTabBarInteractor: MainTabBarInteractorInputProtocol {
     func setup() {
         serviceCoordinator.setup()
         requestNotificationsAuthorization()
-        subscribeToBackupAvailability()
-        subscribeToBackupStatusChanges()
         subscribeToExtensionWidgets()
+        #if !FEATURE_PRODUCTS
+            settingsAttentionObserver?.start { [weak self] isVisible in
+                self?.presenter?.didUpdateSettingsAttention(isVisible: isVisible)
+            }
+        #endif
         subscribeToProductGamePill()
-        evaluateBackupRequirement()
         deferredLinkHandler.register(urlHandlingService)
         subscribeToSPATabs()
         subscribeToChainStatus()
@@ -105,49 +98,6 @@ private extension MainTabBarInteractor {
 
     func requestNotificationsAuthorization() {
         userNotificationService.requestNotificationsAuthorization(completion: nil)
-    }
-
-    func subscribeToBackupAvailability() {
-        guard availabilityObserver == nil else {
-            return
-        }
-        availabilityObserver = notificationCenter.addObserver(
-            forName: mnemonicBackupHelper.didChangeAvailabilityNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.evaluateBackupRequirement()
-        }
-    }
-
-    func removeBackupObservers() {
-        if let availabilityObserver {
-            notificationCenter.removeObserver(availabilityObserver)
-        }
-        availabilityObserver = nil
-    }
-
-    func evaluateBackupRequirement() {
-        Task { [self] in
-            let needsAttention: Bool
-
-            if !mnemonicBackupHelper.isAvailable {
-                needsAttention = true
-            } else {
-                do {
-                    needsAttention = try !mnemonicBackupHelper.checkForBackup()
-                } catch {
-                    logger.warning("Failed to check backup status: \(error.localizedDescription)")
-                    needsAttention = true
-                }
-            }
-
-            await presenter?.didUpdateSettingsAttention(isVisible: needsAttention)
-        }
-    }
-
-    func subscribeToBackupStatusChanges() {
-        eventCenter.add(observer: self, dispatchIn: .main)
     }
 
     func subscribeToExtensionWidgets() {
@@ -237,12 +187,6 @@ private extension MainTabBarInteractor {
 
     func handleChainStatusUpdate(_ rows: [ChainConnectionStatusViewModel]) {
         presenter?.didReceiveChainStatus(rows)
-    }
-}
-
-extension MainTabBarInteractor: AppEventVisiting {
-    func processBackupStatusChanged(event _: BackupStatusChanged) {
-        evaluateBackupRequirement()
     }
 }
 
