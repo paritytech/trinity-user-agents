@@ -283,6 +283,7 @@ jobs:
       sdk_kotlin: ${{ steps.filter.outputs.sdk_kotlin }}
       sdk_provider_kotlin: ${{ steps.filter.outputs.sdk_provider_kotlin }}
       host_android: ${{ steps.filter.outputs.host_android }}
+      host_android_tree: ${{ steps.filter.outputs.host_android_tree }}
       cli_package: ${{ steps.filter.outputs.cli_package }}
       workflows: ${{ steps.filter.outputs.workflows }}
       needs_changeset: ${{ steps.filter.outputs.needs_changeset }}
@@ -334,6 +335,7 @@ jobs:
               echo "sdk_kotlin=true"
               echo "sdk_provider_kotlin=true"
               echo "host_android=true"
+              echo "host_android_tree=true"
               echo "cli_package=true"
               echo "workflows=true"
             } >> "$GITHUB_OUTPUT"
@@ -362,6 +364,10 @@ jobs:
           # generated from. Nothing gated on this tree before, so a core change
           # that broke it reached a release with no gate in between.
           gate host_android '^(hosts/android/|android/truapi-host/|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/uniffi-bindgen-cli/|scripts/(codegen\.sh|regen-explorer-versions\.mjs)$|Cargo\.toml$|nightly-toolchain$|Cargo\.lock$|package\.json$|package-lock\.json$|\.github/actions/setup-android-build/|\.github/workflows/ci\.yml$)'
+          # The app tree itself, as opposed to the core it consumes. Only a
+          # change here can break the app's own unit tests, so a core-only change
+          # runs the bindings check without them.
+          gate host_android_tree '^(hosts/android/|android/truapi-host/|\.github/actions/setup-android-build/|\.github/workflows/ci\.yml$)'
 
           # The packaging path has its own inputs: the archive layout in the
           # Makefile, the runner bundle, the generated sources cli-dist refuses
@@ -583,9 +589,9 @@ jobs:
   # Kotlin bindings, and compiles the app code that pattern matches over the
   # generated types, which is where a removed or renamed variant surfaces.
   #
-  # It also runs every unit test in the tree, the app module's and each library
-  # module's, since nothing else here does: the workflows under
-  # hosts/android/.github are never read.
+  # A change to the app tree also runs every unit test in it, the app module's
+  # and each library module's, since nothing else here does: the workflows
+  # under hosts/android/.github are never read.
   host-android-bindings:
     name: Android host app (compile and unit tests)
     needs: changes
@@ -639,15 +645,16 @@ jobs:
       # code that pattern matches over core types, and these test tasks compile
       # all of it, building :bindings:truapi-host on the way.
       #
-      # testGpDebugUnitTest is the app module, the only one with flavours, and
-      # testDebugUnitTest is every library module. The products module also runs
-      # its release variant, whose build configuration differs.
+      # The products module's release tests and the instrumentation compile run
+      # for every change. A change to the app tree adds testGpDebugUnitTest, the
+      # app module and the only one with flavours, and testDebugUnitTest, every
+      # library module. Without those the build configures only what it runs.
       #
       # These values are configuration rather than credentials, and the app tree
       # reads each of them from the environment when it is absent from
       # local.properties. Placeholders are enough to configure every module, and
       # keep the gate independent of secrets this repository does not hold.
-      - name: Compile the app and instrumentation, run every unit test
+      - name: Compile the Android consumers and instrumentation, run unit tests
         working-directory: hosts/android
         env:
           # The real id, because it is the one the Google configuration is
@@ -668,12 +675,16 @@ jobs:
           SENTRY_ORG: ci
           SENTRY_PROJECT: ci
           TERMS_OF_USE_URL: https://example.invalid/terms
-        run: >-
-          ./gradlew --continue
-          testGpDebugUnitTest
-          testDebugUnitTest
-          :feature:products:impl:testReleaseUnitTest
-          :bindings:truapi-host:compileDebugAndroidTestKotlin
+          ALL_UNIT_TESTS: ${{ needs.changes.outputs.host_android_tree }}
+        run: |
+          set -euo pipefail
+          tasks=(:feature:products:impl:testReleaseUnitTest :bindings:truapi-host:compileDebugAndroidTestKotlin)
+          if [ "$ALL_UNIT_TESTS" = true ]; then
+            tasks+=(testGpDebugUnitTest testDebugUnitTest)
+          else
+            tasks+=(--configure-on-demand)
+          fi
+          ./gradlew --continue "${tasks[@]}"
 
   host-android-detekt:
     name: Android host (detekt)
