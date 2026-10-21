@@ -60,7 +60,7 @@ struct TrUAPIWorkerManagerTests {
         try await execution(of: "game.paseo", in: manager)
         let running = try #require(builder.executions["game.paseo"])
         manager.demandChanged(productId: "game.paseo", transition: .stop)
-        try await withTimeout(.seconds(5)) { await running.awaitClose() }
+        try await withTimeout(.hangGuard) { await running.awaitClose() }
 
         #expect(running.closeCallCount == 1)
         #expect(running.stopWsBridgeCallCount == 1)
@@ -183,7 +183,7 @@ struct TrUAPIWorkerManagerTests {
         manager.demandChanged(productId: "game.paseo", transition: .stop)
         try await barrier(manager)
         await builder.clock.resumeSleep(for: .milliseconds(80))
-        try await withTimeout(.seconds(5)) { await booting.awaitClose() }
+        try await withTimeout(.hangGuard) { await booting.awaitClose() }
 
         #expect(manager.currentExecution(of: "game.paseo") == nil)
         #expect(booting.closeCallCount == 1)
@@ -269,7 +269,7 @@ struct TrUAPIWorkerManagerTests {
         try await collection.add(streak, face: .nil)
         // The add can land before the bridge starts republishing, in which case
         // the opening list already holds it and no second list is sent.
-        let told = try await withTimeout(.seconds(5)) { () async -> [String] in
+        let told = try await withTimeout(.hangGuard) { () async -> [String] in
             while let cards = await running.awaitPocketCardNotification() {
                 let ids = cards.map(\.cardId)
                 if ids.contains("streak") { return ids.sorted() }
@@ -302,7 +302,7 @@ private func execution(
     of productId: ProductId,
     in manager: TrUAPIWorkerManager
 ) async throws -> TrUAPIProductExecutionProtocol {
-    try await withTimeout(.seconds(5)) {
+    try await withTimeout(.hangGuard) {
         for try await execution in manager.executions(of: productId) {
             if let execution { return execution }
         }
@@ -313,7 +313,7 @@ private func execution(
 /// Waits for the product's worker to be cleared, failing rather than hanging if it never is.
 private func noExecution(of productId: ProductId, in manager: TrUAPIWorkerManager) async throws {
     struct StreamEnded: Error {}
-    try await withTimeout(.seconds(5)) {
+    try await withTimeout(.hangGuard) {
         for try await execution in manager.executions(of: productId) where execution == nil {
             return
         }

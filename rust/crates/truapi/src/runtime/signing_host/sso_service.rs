@@ -12,7 +12,7 @@ use truapi::latest as api;
 
 use super::{
 	SigningHost,
-	sso_responder::{
+	allowance::{
 		AllowanceAllocationError, allocate_bulletin_allowance, allocate_smart_contract_allowance,
 		allocate_statement_store_allowance,
 	},

@@ -33,10 +33,10 @@ mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
 pub mod services;
 mod signing_host;
-/// Pairing flow for wallet login.
-pub mod sso_pairing;
 /// SSO remote request/response messaging over the statement store.
 pub mod sso_remote;
+mod sso_request_service;
+mod sso_responder_service;
 pub mod sso_service;
 /// Statement Store and Bulletin allowance allocation.
 pub mod statement_allowance;
@@ -74,12 +74,10 @@ use payment_id::host_funding_intent;
 use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
-pub use signing_host::{
-	AnnouncedPairing, DevicePairingObserver, LocalActivation, MAX_PAIRING_METADATA_CHARS,
-	PairedSsoPeer, PairingProposal, PairingProposalMetadata, ResponderExit,
-	SigningHost as SigningHostRole, SigningHostSsoService, disconnect_paired_host,
-	establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
-	respond_to_pairing, resume_pairing,
+pub use signing_host::{LocalActivation, SigningHost as SigningHostRole, SigningHostSsoService};
+pub use sso_responder_service::{
+	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
+	PairingProposal, PairingProposalMetadata, ResponderExit, SsoResponderService,
 };
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
 pub use vrf::ring_vrf_member;
@@ -808,7 +806,7 @@ impl ProductRuntimeHost {
 			chat_platform: None,
 			permission_status: None,
 			temporary_permissions: Arc::default(),
-			session_state: pairing_host.session_state(),
+			session_state: pairing_host.session().session_state(),
 			product,
 			core_instance,
 			chain,
@@ -822,7 +820,7 @@ impl ProductRuntimeHost {
 		let host = Self {
 			accounts: ProductAccounts::new(pairing_host.clone(), connection.product.clone()),
 			connection,
-			host_session: pairing_host.clone(),
+			host_session: pairing_host.session().clone(),
 		};
 		(host, pairing_host)
 	}
