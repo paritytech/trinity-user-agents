@@ -47,6 +47,8 @@ use parity_scale_codec::{Decode, Encode};
 pub use async_trait::async_trait;
 
 pub mod api;
+mod dotns_name;
+mod product_id;
 pub mod v01;
 pub mod v02;
 pub mod versioned;
@@ -91,6 +93,8 @@ uniffi::custom_type!(u128, String, {
 /// envelopes. Runtime code should use these instead of per-version modules.
 pub mod latest {
 	use crate::versioned::{self, Versioned};
+
+	pub use crate::product_id::{PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
 
 	pub use crate::v01::{
 		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
@@ -803,7 +807,7 @@ pub use runtime::contacts::contact_handle;
 #[cfg(feature = "runtime")]
 pub use runtime::login_failure::reports_exhausted_period;
 #[cfg(feature = "runtime")]
-pub use runtime::product_manifest::{encode_cached_root_manifest, manifest_cache_key};
+pub use runtime::product_manifest::encode_cached_root_manifest;
 #[cfg(feature = "runtime")]
 pub use runtime::statement_allowance;
 #[cfg(feature = "runtime")]
