@@ -1,5 +1,7 @@
 import AsyncExtensions
 import Foundation
+import FoundationExt
+import StructuredConcurrencyTestSupport
 import Testing
 import TrUAPIHost
 @testable import polkadot_app
@@ -81,7 +83,7 @@ struct EngineStatusFollowersTests {
     @Test
     func anEngineThatDoesNotAnswerInTimeReadsAsPendingThenPushesTheRealStatus() async throws {
         let engine = FakeEngine()
-        let followers = engine.followers(timeout: 0.1)
+        let followers = engine.followers(timeout: pendingWindow.timeInterval)
 
         #expect(try await read(followers, key) == FakeEngine.pending)
 
@@ -94,7 +96,7 @@ struct EngineStatusFollowersTests {
     @Test
     func anIdTheEngineDoesNotHoldAfterAPendingAnswerReadsAsNoneNextTime() async throws {
         let engine = FakeEngine()
-        let followers = engine.followers(timeout: 0.1)
+        let followers = engine.followers(timeout: pendingWindow.timeInterval)
 
         #expect(try await read(followers, key) == FakeEngine.pending)
         try await engine.waitForStreams(1)
@@ -201,6 +203,11 @@ struct EngineStatusFollowersTests {
     }
 }
 
+/// The read window for tests that expect `pending`. Their engine never answers before the first
+/// read returns, so that read is deterministic; the window only has to let a later read see a
+/// stream that fails or ends at once.
+private let pendingWindow: Duration = .seconds(1)
+
 /// `current` blocks its thread, as the core's read does, so it runs off the
 /// cooperative pool.
 private func read(_ followers: EngineStatusFollowers<Int>, _ key: EngineStatusKey) async throws -> Int? {
@@ -215,7 +222,7 @@ private struct ConditionNotMet: Error {}
 
 /// Waits for `condition`, failing the test after `timeout` instead of hanging it.
 private func eventually(
-    timeout: Duration = .seconds(5),
+    timeout: Duration = .hangGuard,
     _ condition: () -> Bool
 ) async throws {
     let clock = ContinuousClock()
@@ -257,8 +264,10 @@ private final class FakeEngine: @unchecked Sendable {
         lock.withLock { pushes }
     }
 
+    /// Reads wait for the engine's first answer as long as the hang guard, so a status the test
+    /// sends a moment after the read is never mistaken for an engine that did not answer.
     func followers(
-        timeout: TimeInterval = EngineStatusFollowing.firstStatusTimeout,
+        timeout: TimeInterval = Duration.hangGuard.timeInterval,
         finalCapacity: Int = EngineStatusFollowing.finalCapacity
     ) -> EngineStatusFollowers<Int> {
         EngineStatusFollowers(

@@ -19,7 +19,10 @@ use sp_crypto_hashing::{blake2_128, blake2_256, keccak_256, twox_128};
 use thiserror::Error;
 use tracing::warn;
 
-use crate::dotns_views::{call_string, network_tld, tld_node};
+use crate::{
+	dotns_views::{call_string, network_tld, tld_node},
+	platform::{MAX_DNS_LABEL_LEN, is_dns_label},
+};
 
 /// Ring-VRF context for `register_name` proofs.
 ///
@@ -497,20 +500,6 @@ pub async fn is_pop_issued<T: DotnsTransport + ?Sized>(
 		.await
 		.map_err(|err| format!("DotnsPopController.isPopIssued({label}): {err}"))?;
 	decode_bool(&output).map_err(|err| format!("DotnsPopController.isPopIssued({label}): {err}"))
-}
-
-/// RFC 1035 label bound the contracts enforce (`StringUtils.MAX_DNS_LABEL_OCTETS`).
-const MAX_DNS_LABEL_LEN: usize = 63;
-
-/// A canonical DNS label: lowercase ASCII letters, digits and hyphens, neither
-/// starting nor ending with a hyphen, at most 63 octets
-/// (`StringUtils._isDnsLabel`).
-pub fn is_dns_label(value: &str) -> bool {
-	!value.is_empty() &&
-		value.len() <= MAX_DNS_LABEL_LEN &&
-		!value.starts_with('-') &&
-		!value.ends_with('-') &&
-		value.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 /// The dotted lite shape: a letters-only stem, one dot, exactly two digits

@@ -321,10 +321,10 @@ Native runtime: `StorageHostCalls` provides a per-product key-value store namesp
 Spec: trinity-user-agents RFC "Pocket modality" (#609), core implementation #706, on top of Unified Renderer (#633) and
 Worker Lifecycle (#632). The host owns the collection and is its only writer; a product observes its own cards over
 the wire (`Pocket::list_subscribe`) and may remove one (`Pocket::remove_card`). There is no add call: a card enters
-when the user follows a `polkadotapp://<product>.<tld>/-/pocket/add?card=<id>` deeplink and approves the sheet.
-`/-/pocket/open?card=<id>` lands on the Pocket tab with that card expanded when the user holds it, `/-/pocket` alone on
-the tab, and `polkadotapp://pocket` reaches the tab from a link that names no product. The first path segment `-` is
-reserved for host-handled targets; `ProductSpaDeepLinkHandler` declines it.
+when the user follows a `polkadotapp://pocket/add?product=<product>.<tld>&card=<id>` deeplink and approves the sheet.
+`polkadotapp://pocket/open?product=<product>.<tld>&card=<id>` lands on the Pocket tab with that card expanded when the
+user holds it, and `polkadotapp://pocket` alone on the tab. A product's `navigateTo` uses the same links, which
+`PocketDeepLinkHandler` reads like any other app link. A product's own paths are App routes.
 
 Seams, all in `feature/products/api/.../domain/pocket/`:
 - `PocketCollection` — `observeCards()` and user removal. One pinned card, Humanity on the personhood product
