@@ -804,7 +804,7 @@ fn contacts_host(
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	if connected {
@@ -874,7 +874,7 @@ fn a_host_that_only_resolves_contacts_reports_unsupported() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -1196,7 +1196,7 @@ fn host_with_contacts(contacts: Arc<dyn crate::platform::ContactsPlatform>) -> P
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -1459,7 +1459,7 @@ fn a_withdrawn_request_already_published_is_cancelled_on_the_phone() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host.clone(),
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session.clone());
@@ -1474,7 +1474,7 @@ fn a_withdrawn_request_already_published_is_cancelled_on_the_phone() {
 	});
 	let published = submitted_remote_message(&platform, &session).message_id;
 	wait_until(
-		|| pairing_host.newest_request_for_tests().as_deref() == Some(&published),
+		|| pairing_host.session().newest_request_for_tests().as_deref() == Some(&published),
 		"the request was not published",
 	);
 
@@ -1547,7 +1547,7 @@ fn a_request_that_times_out_is_not_withdrawn_from_the_phone() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host.clone(),
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session.clone());
@@ -1561,7 +1561,7 @@ fn a_request_that_times_out_is_not_withdrawn_from_the_phone() {
 	futures::executor::block_on(host.sign_raw(&cx, request)).unwrap_err();
 
 	let published = submitted_remote_message(&platform, &session).message_id;
-	assert_eq!(pairing_host.newest_request_for_tests(), Some(published));
+	assert_eq!(pairing_host.session().newest_request_for_tests(), Some(published));
 }
 
 /// `message_id`s every `Cancel` this host has published names, oldest first.
@@ -1610,7 +1610,7 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host.clone(),
+		pairing_host.session().clone(),
 		product,
 	));
 	install_pairing_session(&host, session.clone());
@@ -1632,7 +1632,7 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
 			|| {
 				let published = submitted_remote_messages(&platform, &session);
 				published.len() == count &&
-					pairing_host.newest_request_for_tests().as_deref() ==
+					pairing_host.session().newest_request_for_tests().as_deref() ==
 						published.last().map(|message| message.message_id.as_str())
 			},
 			"the request was not published",
@@ -1684,7 +1684,7 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -1835,7 +1835,7 @@ fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -1942,7 +1942,7 @@ fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -2025,7 +2025,7 @@ fn chat_room_ids_agree_across_create_and_post() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -2110,7 +2110,7 @@ fn chat_register_bot_rejects_unsafe_product_fields() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product.clone(),
 	);
 	install_pairing_session(&host, session_info());
@@ -2200,7 +2200,7 @@ fn chat_register_bot_reaches_the_installed_adapter() {
 		services.clone(),
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product.clone(),
 	);
 	install_pairing_session(&host, session_info());
@@ -2302,7 +2302,7 @@ fn pocket_dot_host(
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	)
 }
@@ -2652,7 +2652,7 @@ fn game_host_for(
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	)
 }
@@ -3116,7 +3116,7 @@ fn funding_host(
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(services),
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	if with_session {
@@ -3465,14 +3465,14 @@ fn chain_follow_ids_are_scoped_per_product_core() {
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(&services),
 		pairing_host.clone(),
-		pairing_host.clone(),
+		pairing_host.session().clone(),
 		product.clone(),
 	);
 	let second = ProductRuntimeHost::from_services(
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(&services),
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 
@@ -3581,7 +3581,7 @@ fn permission_prompts_name_the_requesting_product_and_execution_kind() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product.clone(),
 	);
 	let cx = CallContext::default();
@@ -3725,8 +3725,8 @@ fn navigate_to_internal_targets_do_not_consume_open_url_permission() {
 	for url in [
 		"mytestapp.dot",
 		"localhost:3000",
-		"polkadot://mytestapp.dot/-/pocket/open?card=loyalty",
-		"polkadot://mytestapp.dot/-/pocket",
+		"polkadotapp://pocket/open?product=mytestapp.dot&card=loyalty",
+		"polkadotapp://pocket",
 	] {
 		let request =
 			HostNavigateToRequest::V1(v01::HostNavigateToRequest { url: url.to_string() });
@@ -5747,7 +5747,7 @@ fn idle_peer_disconnect_monitor_clears_session_store_and_broadcasts() {
 		)
 	);
 
-	pairing_host.start_session_supervision_for_current_session();
+	pairing_host.session().start_session_supervision_for_current_session();
 
 	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
 	let disconnected = loop {
@@ -6717,7 +6717,7 @@ fn auto_signing_ring_vrf_requires_registration_and_signs_locally() {
 	.unwrap();
 	futures::executor::block_on(pairing_host.remember_auto_signing_key_for_tests(
 		&session,
-		pairing_host.current_session_lifecycle_epoch(),
+		pairing_host.session().current_session_lifecycle_epoch(),
 		"myapp.dot",
 		subtree.public.to_bytes(),
 		subtree.secret.to_bytes(),
@@ -6892,7 +6892,7 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
 		test_spawner(),
 	);
 	install_pairing_session(&host, session.clone());
-	let stale_epoch = pairing_host.current_session_lifecycle_epoch();
+	let stale_epoch = pairing_host.session().current_session_lifecycle_epoch();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let subtree =
@@ -6900,7 +6900,9 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
 			.unwrap();
 
 	futures::executor::block_on(pairing_host.logout_and_reset_pairing()).unwrap();
-	futures::executor::block_on(pairing_host.set_connected_session_for_tests(session.clone()));
+	futures::executor::block_on(
+		pairing_host.session().set_connected_session_for_tests(session.clone()),
+	);
 	let auto_signing_error =
 		futures::executor::block_on(pairing_host.remember_auto_signing_key_for_tests(
 			&session,
@@ -6968,7 +6970,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 	);
 	install_pairing_session(&host, session.clone());
 	cache_test_product_subtree(&host, &session, "other.dot");
-	let stale_epoch = pairing_host.current_session_lifecycle_epoch();
+	let stale_epoch = pairing_host.session().current_session_lifecycle_epoch();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let first =
@@ -7005,7 +7007,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 	}
 
 	futures::executor::block_on(pairing_host.clear_product_state("myapp.dot")).unwrap();
-	let current_epoch = pairing_host.current_session_lifecycle_epoch();
+	let current_epoch = pairing_host.session().current_session_lifecycle_epoch();
 	assert_ne!(current_epoch, stale_epoch);
 	assert_eq!(pairing_host.capability_cache_sizes_for_tests(), (1, 1, 1, 1));
 	assert!(
@@ -7097,7 +7099,7 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
 		test_spawner(),
 	);
 	install_pairing_session(&host, session.clone());
-	let lifecycle_epoch = pairing_host.current_session_lifecycle_epoch();
+	let lifecycle_epoch = pairing_host.session().current_session_lifecycle_epoch();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let subtree =
@@ -7128,9 +7130,9 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
 	.unwrap();
 	assert_eq!(pairing_host.capability_cache_sizes_for_tests(), (1, 1, 1, 1));
 
-	futures::executor::block_on(pairing_host.reset_session_state());
+	futures::executor::block_on(pairing_host.session().reset_session_state());
 
-	assert!(pairing_host.session_state().current().is_none());
+	assert!(pairing_host.session().session_state().current().is_none());
 	assert_eq!(pairing_host.capability_cache_sizes_for_tests(), (0, 0, 0, 0));
 	assert!(platform.local_storage.lock().expect("local storage mutex poisoned").is_empty());
 	assert!(
@@ -7152,7 +7154,7 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
 	);
 	install_pairing_session(&host, session.clone());
 	request_auto_signing(&host, "auto-replace");
-	let lifecycle_epoch = pairing_host.current_session_lifecycle_epoch();
+	let lifecycle_epoch = pairing_host.session().current_session_lifecycle_epoch();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let subtree =
@@ -7176,7 +7178,9 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
 	let mut replacement = session;
 	replacement.public_key = [0x44; 32];
 	replacement.sso.as_mut().expect("fixture has SSO identity").identity_account_id = [0x55; 32];
-	futures::executor::block_on(pairing_host.set_connected_session_for_tests(replacement.clone()));
+	futures::executor::block_on(
+		pairing_host.session().set_connected_session_for_tests(replacement.clone()),
+	);
 
 	assert_eq!(host.test_session_state().current(), Some(replacement.clone()));
 	assert!(
@@ -7283,7 +7287,7 @@ fn external_session_activation_is_memory_only_and_rejects_trailing_bytes() {
 	let session = sso_session_info();
 	let blob = crate::host_logic::session::encode_persisted_session(&session);
 
-	futures::executor::block_on(pairing_host.activate_external_session(&blob))
+	futures::executor::block_on(pairing_host.session().activate_external_session(&blob))
 		.expect("valid external session activates");
 
 	assert_eq!(host.test_session_state().current(), Some(session.clone()));
@@ -7296,14 +7300,16 @@ fn external_session_activation_is_memory_only_and_rejects_trailing_bytes() {
 		"external activation must not copy the blob into core storage"
 	);
 
-	let invalid = futures::executor::block_on(pairing_host.activate_external_session(&[0xff]))
-		.expect_err("invalid bytes are rejected");
+	let invalid =
+		futures::executor::block_on(pairing_host.session().activate_external_session(&[0xff]))
+			.expect_err("invalid bytes are rejected");
 	assert!(invalid.starts_with("invalid session blob:"));
 
 	let mut trailing = blob;
 	trailing.push(0);
-	let error = futures::executor::block_on(pairing_host.activate_external_session(&trailing))
-		.expect_err("trailing bytes are rejected");
+	let error =
+		futures::executor::block_on(pairing_host.session().activate_external_session(&trailing))
+			.expect_err("trailing bytes are rejected");
 	assert_eq!(error, "invalid session blob: trailing bytes");
 	assert_eq!(
 		host.test_session_state().current(),
@@ -7318,7 +7324,7 @@ fn external_session_activation_reports_its_outcome_when_the_blob_is_corrupt() {
 	let (_host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	futures::executor::block_on(pairing_host.activate_external_session(&[0xff]))
+	futures::executor::block_on(pairing_host.session().activate_external_session(&[0xff]))
 		.expect_err("invalid bytes are rejected");
 
 	// The decode fails before any transition can run, so without an
@@ -7337,7 +7343,7 @@ fn resetting_session_state_reports_its_outcome_when_nothing_was_active() {
 	let (_host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	futures::executor::block_on(pairing_host.reset_session_state());
+	futures::executor::block_on(pairing_host.session().reset_session_state());
 
 	// Clearing an already-signed-out state changes nothing, so without an
 	// explicit announcement this is the silent case a host cannot tell
@@ -7362,12 +7368,12 @@ fn external_session_activation_replaces_and_fences_the_previous_session() {
 	replacement.sso.as_mut().expect("fixture has SSO").identity_account_id = [0x55; 32];
 
 	futures::executor::block_on(
-		pairing_host.activate_external_session(
+		pairing_host.session().activate_external_session(
 			&crate::host_logic::session::encode_persisted_session(&first),
 		),
 	)
 	.expect("first external session activates");
-	futures::executor::block_on(pairing_host.activate_external_session(
+	futures::executor::block_on(pairing_host.session().activate_external_session(
 		&crate::host_logic::session::encode_persisted_session(&replacement),
 	))
 	.expect("replacement external session activates");
@@ -7384,7 +7390,10 @@ fn store_notification_during_external_activation_restores_persisted_session() {
 	});
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 	wait_until(
 		|| host.test_session_state().current() == Some(persisted.clone()),
 		"initial persisted session was not restored",
@@ -7394,15 +7403,19 @@ fn store_notification_during_external_activation_restores_persisted_session() {
 	stale_external.public_key = [0x44; 32];
 	let stale_blob = crate::host_logic::session::encode_persisted_session(&stale_external);
 	let (activation_entered, resume_activation) =
-		pairing_host.pause_external_session_activation_for_tests();
+		pairing_host.session().pause_external_session_activation_for_tests();
 	let activation = std::thread::spawn({
 		let pairing_host = pairing_host.clone();
-		move || futures::executor::block_on(pairing_host.activate_external_session(&stale_blob))
+		move || {
+			futures::executor::block_on(
+				pairing_host.session().activate_external_session(&stale_blob),
+			)
+		}
 	});
 	futures::executor::block_on(activation_entered)
 		.expect("external activation reached the installation fence");
 
-	pairing_host.notify_session_store_changed();
+	pairing_host.session().notify_session_store_changed();
 	resume_activation.send(()).expect("external activation remains in flight");
 	activation
 		.join()
@@ -7424,10 +7437,14 @@ fn disconnect_during_external_activation_prevents_stale_reinstallation() {
 	);
 	let stale_blob = crate::host_logic::session::encode_persisted_session(&sso_session_info());
 	let (activation_entered, resume_activation) =
-		pairing_host.pause_external_session_activation_for_tests();
+		pairing_host.session().pause_external_session_activation_for_tests();
 	let activation = std::thread::spawn({
 		let pairing_host = pairing_host.clone();
-		move || futures::executor::block_on(pairing_host.activate_external_session(&stale_blob))
+		move || {
+			futures::executor::block_on(
+				pairing_host.session().activate_external_session(&stale_blob),
+			)
+		}
 	});
 	futures::executor::block_on(activation_entered)
 		.expect("external activation reached the installation fence");
@@ -7455,7 +7472,7 @@ fn stored_session_activation_resolves_after_connected_installation() {
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	futures::executor::block_on(pairing_host.activate_stored_session())
+	futures::executor::block_on(pairing_host.session().activate_stored_session())
 		.expect("valid stored session activates");
 
 	assert_eq!(host.test_session_state().current(), Some(stored.clone()));
@@ -7477,7 +7494,7 @@ fn stored_session_activation_rejects_invalid_blob_and_disconnects() {
 		ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
 	install_pairing_session(&host, sso_session_info());
 
-	let error = futures::executor::block_on(pairing_host.activate_stored_session())
+	let error = futures::executor::block_on(pairing_host.session().activate_stored_session())
 		.expect_err("invalid stored session is rejected");
 
 	assert!(error.starts_with("invalid stored auth session:"));
@@ -7498,7 +7515,7 @@ fn activating_an_untagged_stored_session_restores_it_and_rewrites_the_slot() {
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	futures::executor::block_on(pairing_host.activate_stored_session())
+	futures::executor::block_on(pairing_host.session().activate_stored_session())
 		.expect("an untagged stored session activates");
 
 	assert_eq!(host.test_session_state().current(), Some(stored.clone()));
@@ -7528,7 +7545,10 @@ fn session_store_sync_restores_valid_blob_from_tick() {
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 	wait_until(
 		|| host.test_session_state().current() == Some(stored.clone()),
 		"session store sync did not restore valid blob",
@@ -7555,7 +7575,10 @@ fn session_store_sync_announces_a_signed_out_boot() {
 	let (_host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 
 	wait_until(
 		|| !platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty(),
@@ -7577,13 +7600,16 @@ fn session_store_sync_announces_a_restored_boot_once() {
 	let (_host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 
 	wait_until(
 		|| !platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty(),
 		"boot reconcile did not report the restored session",
 	);
-	futures::executor::block_on(pairing_host.activate_stored_session())
+	futures::executor::block_on(pairing_host.session().activate_stored_session())
 		.expect("valid stored session activates");
 	assert_eq!(
 		*platform.auth_states.lock().expect("auth state list mutex poisoned"),
@@ -7601,15 +7627,18 @@ fn session_store_sync_stays_silent_on_an_unchanged_tick() {
 	let (_host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 	wait_until(
 		|| !platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty(),
 		"boot reconcile did not report the restored session",
 	);
 
-	pairing_host.notify_session_store_changed();
+	pairing_host.session().notify_session_store_changed();
 	wait_until(
-		|| pairing_host.session_store_change_ticks_for_tests() == 1,
+		|| pairing_host.session().session_store_change_ticks_for_tests() == 1,
 		"session store sync did not process the change tick",
 	);
 
@@ -7636,7 +7665,10 @@ fn session_store_sync_replaces_valid_blob_and_broadcasts_connected() {
 	let mut statuses = host.test_session_state().subscribe();
 	let _ = futures::executor::block_on(statuses.next());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 
 	assert_eq!(
 		futures::executor::block_on(statuses.next()).unwrap(),
@@ -7654,7 +7686,10 @@ fn session_store_sync_clears_invalid_blob() {
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 	install_pairing_session(&host, sso_session_info());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 	wait_until(
 		|| host.test_session_state().current().is_none(),
 		"session store sync did not clear invalid blob",
@@ -7686,7 +7721,10 @@ fn session_store_sync_clears_unreadable_blob() {
 	);
 	install_pairing_session(&host, sso_session_info());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 	wait_until(
 		|| *session_clears.lock().unwrap() == 1,
 		"session store sync did not clear unreadable blob",
@@ -7711,7 +7749,10 @@ fn session_store_sync_clears_once_on_initial_persistent_read_error() {
 	);
 	install_pairing_session(&host, sso_session_info());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 
 	wait_until(|| *session_clears.lock().unwrap() == 1, "clear_stored_session was never called");
 	assert_eq!(*session_clears.lock().unwrap(), 1);
@@ -7811,7 +7852,10 @@ fn disconnect_emits_disconnected_auth_state_after_store_sync_connected() {
 	});
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 	wait_until(
 		|| platform.auth_states.lock().expect("auth state list mutex poisoned").len() == 1,
 		"session store sync did not emit connected auth state",
@@ -7882,7 +7926,7 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host.clone(),
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -7966,7 +8010,7 @@ fn the_pairing_authority_admits_a_context_only_its_product_granted() {
 			services,
 			adapters,
 			pairing_host.clone(),
-			pairing_host.clone(),
+			pairing_host.session().clone(),
 			product,
 		);
 		install_pairing_session(&host, session_info());
@@ -8035,7 +8079,7 @@ fn a_grant_lookup_obeys_the_callers_deadline() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -8231,7 +8275,7 @@ fn scanner_host_for(
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	)
 }
@@ -8449,7 +8493,7 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_pairing_for_tests(platform, host_config, product, test_spawner());
 	install_pairing_session(&host, session.clone());
-	let lifecycle_epoch = pairing_host.current_session_lifecycle_epoch();
+	let lifecycle_epoch = pairing_host.session().current_session_lifecycle_epoch();
 	futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
 		&session,
 		lifecycle_epoch,
@@ -8511,7 +8555,7 @@ fn payment_host(
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(services),
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	if with_session {
