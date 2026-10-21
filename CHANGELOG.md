@@ -29,6 +29,8 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- centralize runtime version conversion (#1421)
+- use a ProductId newtype for product identifiers (#1448)
 - SSO session and responder services (#1515)
 - give Pocket deeplinks a host-owned polkadotapp://pocket URL (#1542)
 - recheck balance access on each pushed balance and keep payment errors append-only (#1464)
@@ -45,6 +47,11 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- keep a Pocket card under the cards below it while it opens and closes (#1554)
+- leave the same 16 pt card margin as Android in the Pocket (#1483)
+- let trusted products use device permissions without a prompt (#1556)
+- report why a chain-head call or follow failed (#1590)
+- draw renderer images in chat cards (#1496)
 - list a product's chat rooms before its bot is built (#1420)
 - open a Pocket card without the host spinner (#1443)
 - scope chain follow intents and transaction operations per product (#1482)

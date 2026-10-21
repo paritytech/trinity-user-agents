@@ -82,6 +82,9 @@
   raced a connect.
 - 9064140: Each product runtime holds its own chain connection, so a node's four-follow budget per connection is spent
   per product rather than shared across all of them. A product runtime's connections are torn down when it ends.
+- eb57f87: A chain-head call or follow that fails because the chain connection closed, the follow was closed, or the
+  product's connections were released reports that cause in its `HostFailure` reason, after the method name, instead of
+  the method name alone.
 - a8623e2: The CLI host ends a chain connection's response stream when its WebSocket closes, so the runtime opens a
   fresh connection for the next request rather than queueing it on the closed socket.
 - 8b58680: A paired session resolves its dotNS username again for accounts onboarded more than a week ago. Pending
@@ -103,6 +106,22 @@
   payments: the payment platforms are served only by native and Rust hosts.
 - 6864e42: Allow `polkadotapp://` links through `system.navigateTo`, preserving payment parameters and requiring
   `OpenUrl` permission. Reject external `polkadot:` and `dot:` links.
+- 93fee0a: `truapi-host` trims and lowercases the `productName` of a local product config before storing its grants, so
+  `Peopl.Paseo` grants the same as `peopl.paseo`. The name must be a full product id: a bare label such as `peopl`, or a
+  name such as `example.com`, stops the CLI at startup with an error, before any config is stored.
+
+  Reading the cross-product signature permission for a target that is not a valid product id returns "not determined",
+  and setting it returns an error.
+
+- 93fee0a: A product id must be a name dotNS can register, or `localhost[:port]`. Each label is lowercase ASCII letters,
+  digits and hyphens, does not start or end with a hyphen, and is at most 63 bytes, as the dotNS registrar requires. Any
+  case is accepted and lowercased. An id such as `tést.dot`, `my_app.dot`, or one carrying an invisible character is
+  refused wherever the runtime parses a product id.
+- 822e310: Preserve the requested protocol version for all runtime responses, subscription items, and domain errors,
+  including chat message failures and subscription interruptions, through one shared conversion boundary.
+- 6ce480f: Trusted products (`peopl`, `dim2` and `stash`) get device permissions, such as notifications, without a
+  prompt: the core does not call `device_permission` for them. They still need the OS grant. Stored device decisions do
+  not apply to them, so per-product device toggles in the host have no effect.
 
 ## 0.25.0
 

@@ -59,6 +59,9 @@
   in the requested version. Local storage reads preserve V1 and V2 at the handler boundary.
 - 9064140: Each product runtime holds its own chain connection, so a node's four-follow budget per connection is spent
   per product rather than shared across all of them. A product runtime's connections are torn down when it ends.
+- eb57f87: A chain-head call or follow that fails because the chain connection closed, the follow was closed, or the
+  product's connections were released reports that cause in its `HostFailure` reason, after the method name, instead of
+  the method name alone.
 - 11c6ceb: Keep each product's chain follows and transaction operations to itself: a product resolves only its own
   follow ids, cannot stop another product's transaction by its operation id, and releasing a product drops both.
 - abfc1dd: Native hosts recognise a development server through the core. `parse_dev_server` reads an address a developer
@@ -87,10 +90,23 @@
 - 33963a5: Keep each product connection's adapters, permissions and action channels in a `ProductConnection`, reach
   account operations through a `ProductAccounts` bound to that connection's product, and route login, logout and
   connection state through a `HostSession` trait split out of `ProductAuthority`.
+- 93fee0a: `truapi-host` trims and lowercases the `productName` of a local product config before storing its grants, so
+  `Peopl.Paseo` grants the same as `peopl.paseo`. The name must be a full product id: a bare label such as `peopl`, or a
+  name such as `example.com`, stops the CLI at startup with an error, before any config is stored.
+
+  Reading the cross-product signature permission for a target that is not a valid product id returns "not determined",
+  and setting it returns an error.
+
+- 93fee0a: A product id must be a name dotNS can register, or `localhost[:port]`. Each label is lowercase ASCII letters,
+  digits and hyphens, does not start or end with a hyphen, and is at most 63 bytes, as the dotNS registrar requires. Any
+  case is accepted and lowercased. An id such as `tést.dot`, `my_app.dot`, or one carrying an invisible character is
+  refused wherever the runtime parses a product id.
 - 1a2efef: A VRF request relayed from a paired host is always confirmed on the phone, even when the product it names
   holds a local AutoSigning grant.
 - 33963a5: Apply every ring-VRF registry change through one prepared update under the registry's storage lock, and skip
   the storage write when the registry did not change. Test-host allocation controls live in one `TestResourceControls`.
+- 822e310: Preserve the requested protocol version for all runtime responses, subscription items, and domain errors,
+  including chat message failures and subscription interruptions, through one shared conversion boundary.
 - 0e195c9: Run the pairing host's session selection, login and request channel in an `SsoRequestService`, and the
   signing host's pairing answers and served sessions in an `SsoResponderService`.
 - a8623e2: Statement submissions and the Statement Store allowance paths run over the People-chain connection the chain
@@ -100,6 +116,9 @@
   third product whose manifest grants it `context` (or `all`). The third product must be on the key owner's network, and
   a refusal the user stored for that pair still applies. A third product that grants nothing stays refused:
   `NotAllowlisted` on the proof, `Rejected` on the alias read.
+- 6ce480f: Trusted products (`peopl`, `dim2` and `stash`) get device permissions, such as notifications, without a
+  prompt: the core does not call `device_permission` for them. They still need the OS grant. Stored device decisions do
+  not apply to them, so per-product device toggles in the host have no effect.
 - c843529: A blessed product signs raw bytes with the user's legacy account without a prompt when the bytes are signed
   inside the `<Bytes>` watermark, which cannot pass for a transaction's signing payload. The deprecated unwatermarked
   raw signing, payload signing and transaction creation with a legacy account still ask the user, as does every
@@ -108,6 +127,7 @@
 - Updated dependencies [19f5b48]
 - Updated dependencies [9a172e1]
 - Updated dependencies [9064140]
+- Updated dependencies [eb57f87]
 - Updated dependencies [a8623e2]
 - Updated dependencies [5ee4351]
 - Updated dependencies [5ee4351]
@@ -131,7 +151,11 @@
 - Updated dependencies [def1bb9]
 - Updated dependencies [6864e42]
 - Updated dependencies [8c6f4c9]
+- Updated dependencies [93fee0a]
+- Updated dependencies [93fee0a]
 - Updated dependencies [7472b77]
+- Updated dependencies [822e310]
+- Updated dependencies [6ce480f]
   - @parity/truapi@0.26.0
 
 ## 0.25.0
