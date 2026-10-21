@@ -372,7 +372,11 @@ jobs:
     name: iOS package (Swift + WebKit)
     needs: [changes, codegen]
     if: needs.changes.outputs.sdk_swift == 'true'
-    runs-on: macos-15
+    # The Parity pool, where the core builds already run, rather than the hosted
+    # macOS queue that can hold a merge past the queue's timeout. A pull request
+    # from a fork stays on a hosted runner, because the Parity machines are
+    # persistent and shared.
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'macos-15' || 'parity-macos-large' }}
     timeout-minutes: 30
     env:
       # Resolving the package resolves both binary targets, whichever scheme builds.
@@ -382,6 +386,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # The Xcode the app builds with, so the package is checked with the same
+      # compiler on any machine; hosts/ios/.github/actions/install pins it.
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        if: ${{ !github.event.pull_request.head.repo.fork }}
+        with:
+          xcode-version: "26.4.1"
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:

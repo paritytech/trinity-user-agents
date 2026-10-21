@@ -31,7 +31,9 @@ env:
 jobs:
   build:
     name: Build and distribute (${{ matrix.variant.name }})
-    runs-on: macos-26
+    # The Parity pool, where the pull request app builds and signed previews
+    # already run, rather than the hosted macOS queue.
+    runs-on: parity-macos
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
     strategy:
       fail-fast: false
