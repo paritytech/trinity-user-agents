@@ -39,9 +39,7 @@ which SwiftPM cannot see:
 ```
 
 `release-ios.yml` runs all three in order and clones and compiles the tag
-before pushing it. The publish step keeps `TrUAPIHost.version` aligned with the
-XCFramework release version so embedding apps can report it without calling into
-the Rust runtime during startup. Run the scripts by hand only as a fallback.
+before pushing it. Run them by hand only as a fallback.
 
 When only the bindings need refreshing — a Rust surface change with no container
 or xcframework impact — skip the full rebuild, which needs Xcode and the iOS

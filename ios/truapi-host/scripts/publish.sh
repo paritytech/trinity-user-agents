@@ -53,9 +53,8 @@ if find "$XCFRAMEWORK" -path '*/Headers/module.modulemap' | grep -q .; then
     exit 66
 fi
 
-HOST_SOURCE="ios/truapi-host/Sources/TrUAPIHost/TrUAPIHost.swift"
-if ! git -C "$TRUAPI_ROOT" diff --quiet -- Package.swift "$HOST_SOURCE"; then
-    echo "error: Package.swift has uncommitted changes, or TrUAPIHost.swift does — commit or revert them first" >&2
+if ! git -C "$TRUAPI_ROOT" diff --quiet -- Package.swift; then
+    echo "error: Package.swift has uncommitted changes — commit or revert them first" >&2
     exit 65
 fi
 
@@ -81,10 +80,8 @@ fi
 ENCODED_TAG="$(printf %s "$TAG" | sed 's/@/%40/g; s,/,%2F,g')"
 URL="https://github.com/paritytech/trinity-user-agents/releases/download/${ENCODED_TAG}/truapi_server.xcframework.zip"
 MANIFEST="$TRUAPI_ROOT/Package.swift"
-HOST_SOURCE="$TRUAPI_ROOT/$HOST_SOURCE"
 sed -i '' -E "s|^let publishedBinaryURL = .*|let publishedBinaryURL = \"$URL\"|" "$MANIFEST"
 sed -i '' -E "s|^let publishedBinaryChecksum = .*|let publishedBinaryChecksum = \"$CHECKSUM\"|" "$MANIFEST"
-sed -i '' -E "s|^    public static let version = .*|    public static let version = \"$VERSION\"|" "$HOST_SOURCE"
 
 echo "Published $TAG ($CHECKSUM)"
-echo "Package.swift and TrUAPIHost.version updated — review and commit them."
+echo "Package.swift updated — review and commit it."
