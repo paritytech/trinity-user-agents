@@ -58,6 +58,8 @@ biometrics = "1.4.0-alpha02"
 firebase-crashlytics = "3.0.6"
 google-services = "4.4.4"
 sentry-android-gradle = "6.7.1"
+# Matches the SDK auto-installed by sentry-android-gradle 6.7.1 (8.41.0).
+sentry-sdk = "8.41.0"
 protobuf = "3.25.5"
 mockito="5.12.0"
 mockk="1.14.2"
@@ -222,6 +224,7 @@ dagger-hilt = { id = "com.google.dagger.hilt.android", version.ref = "dagger-hil
 firebase-crashlytics = { id = "com.google.firebase.crashlytics", version.ref = "firebase-crashlytics" }
 google-services = { id = "com.google.gms.google-services", version.ref = "google-services" }
 sentry-android-gradle = { id = "io.sentry.android.gradle", version.ref = "sentry-android-gradle" }
+sentry-android = { group = "io.sentry", name = "sentry-android", version.ref = "sentry-sdk" }
 detekt = { id = "dev.detekt", version.ref = "detekt" }
 google-protobuf = { id = "com.google.protobuf", version = "0.9.4" }
 

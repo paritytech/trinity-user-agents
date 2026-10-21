@@ -12,7 +12,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import uniffi.truapi.ProductExecutionKind
-import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 
 /**
@@ -28,6 +28,7 @@ class TrUAPISessionStarter @Inject constructor(
     private val dotNsTldProvider: DotNsTldProvider,
     private val bootstrapInstaller: TrUAPIBootstrapInstaller,
     private val visibleProducts: VisibleProducts,
+    private val hostWebViewCreatedTelemetry: HostWebViewCreatedTelemetry,
 ) {
     fun start(
         provider: BrowserWebViewProvider,
@@ -69,17 +70,25 @@ class TrUAPISessionStarter @Inject constructor(
         // The bootstrap publishes the loopback port and its bearer token, so it goes to the
         // product's own origin only. A wildcard would hand the bridge endpoint to any page the
         // WebView is ever pointed at.
+        val hostSessionId = HostWebViewCreatedTelemetry.newSessionId()
         val installBootstrap = runCatching {
             bootstrapInstaller.installerFor(
                 origins = setOf(productUrl.toUri().origin()),
-                hostSessionId = UUID.randomUUID().toString(),
+                hostSessionId = hostSessionId,
             )
         }.getOrElse { return Result.failure(it) }
 
         val kind = if (card != null) ProductExecutionKind.WIDGET else ProductExecutionKind.APP
+        val webViewEventReported = AtomicBoolean(false)
         return bridge
             .attach(runtime, productId, chainDirectory.resolve(), navigation, kind, card = card) { bootstrap ->
-                provider.addWebViewSetup(installBootstrap(bootstrap))
+                val setup = installBootstrap(bootstrap)
+                provider.addWebViewSetup { webView ->
+                    setup(webView)
+                    if (webViewEventReported.compareAndSet(false, true)) {
+                        hostWebViewCreatedTelemetry.report(hostSessionId)
+                    }
+                }
             }
             .mapCatching { execution ->
                 provider.useTrUAPIPermissions(productId, execution)
