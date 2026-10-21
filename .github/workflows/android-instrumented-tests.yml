@@ -124,7 +124,7 @@ jobs:
           # Flavours are declared only in the app module, so this resolves
           # there and runs that module's tests. The instrumented tests in the
           # library modules are not covered, as upstream did not cover them.
-          script: ./gradlew connectedGpDebugAndroidTest --no-daemon
+          script: ./gradlew :app:connectedGpDebugAndroidTest --no-daemon
 
       # The report says which test failed; the job status only says one did.
       - name: Upload the test report
