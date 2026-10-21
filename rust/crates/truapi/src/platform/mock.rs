@@ -957,6 +957,7 @@ fn remote_permission_key(permission: &latest::RemotePermission) -> &'static str 
 		Permission::PreimageSubmit => "PreimageSubmit",
 		Permission::StatementSubmit => "StatementSubmit",
 		Permission::BalanceAccess => "BalanceAccess",
+		Permission::NftPurseRead { .. } => "NftPurseRead",
 	}
 }
 

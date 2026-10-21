@@ -1,6 +1,8 @@
 use derive_more::Display;
 use parity_scale_codec::{Decode, Encode};
 
+use super::NftPurseOwner;
+
 /// Device-capability permission requested from the host (RFC 0002).
 ///
 /// Lasting grants and denials survive app restarts. A host may also offer a
@@ -91,6 +93,14 @@ pub enum RemotePermission {
 	/// than by the user.
 	#[display("see your balance")]
 	BalanceAccess,
+	/// Reading the NFT purses of an owner other than the caller: listing them,
+	/// querying their items and creating item keys in them. A grant covers
+	/// that owner only.
+	#[display("see the NFT purses of {owner}")]
+	NftPurseRead {
+		/// Whose purses.
+		owner: NftPurseOwner,
+	},
 }
 
 /// remote-permission request (RFC 0002).

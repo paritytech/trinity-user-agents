@@ -1735,6 +1735,7 @@ mod tests {
 			RemotePermission::PreimageSubmit,
 			RemotePermission::StatementSubmit,
 			RemotePermission::BalanceAccess,
+			RemotePermission::NftPurseRead { owner: v01::NftPurseOwner::Root },
 		]
 	}
 

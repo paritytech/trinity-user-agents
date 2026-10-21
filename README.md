@@ -261,9 +261,25 @@ them once the rows commit, watches each one, and decides whatever it no longer
 watches from the chain. Signed bytes are never stored, so a transaction left
 live by a previous process is decided by recovery rather than sent again.
 
+A domain can also schedule a transaction before it can be signed. A submission
+policy the domain registers builds it later, and builds it again when a proven
+failure is one it accepts to retry; a presigned transaction may name such a
+policy too.
+
 The host keeps recovery alive. `durableWorkChanged(pending: true)` asks it to
 run a background task that awaits `runDurableRecovery()`, which returns once
 nothing is live: a WorkManager worker on Android, a `BGProcessingTask` on iOS.
+
+### NFT purses
+
+Native signing hosts serve the `NftPurse` API from the
+[NFT purses RFC](https://github.com/paritytech/trinity-user-agents/pull/1495) over
+the core database. A product creates purses it owns and lists any owner's
+purses: its own freely, Root's or another product's with the user's
+`NftPurseRead` grant for that owner. Every user has the Root-owned main purse.
+Calls that need items on chain answer unavailable for now. A host without a
+core database, such as the browser core, answers `Unsupported` to the two
+served calls.
 
 ### Trinity stack descriptors
 

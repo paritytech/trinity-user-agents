@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -26,7 +27,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import io.paritytech.polkadotapp.design.components.icon.NovaIcon
+import io.paritytech.polkadotapp.design.components.icon.NovaIcons
+import io.paritytech.polkadotapp.design.components.icon.vectors.FileNotFound
 import io.paritytech.polkadotapp.design.components.image.NovaAsyncImage
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.components.text.NovaTextField
@@ -41,6 +46,8 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsTypographyStyle
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsVerticalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
+import timber.log.Timber
+import io.paritytech.polkadotapp.common.R as RCommon
 
 /**
  * CompositionLocal for event dispatcher, allowing nested widgets to dispatch events.
@@ -80,6 +87,14 @@ private fun JsWidgetContent(
     }
 }
 
+private sealed interface JsImagePicture {
+    data object Loading : JsImagePicture
+
+    data class Located(val model: Any) : JsImagePicture
+
+    data object Unavailable : JsImagePicture
+}
+
 @Composable
 private fun JsImageRenderer(
     widget: JsWidget.Image,
@@ -87,23 +102,63 @@ private fun JsImageRenderer(
 ) {
     val resolver = LocalJsImageResolver.current
     // Kept across a re-resolve, so a face that redraws does not blink its images away.
-    var model by remember(widget.source) { mutableStateOf(resolver.resolved(widget.source)) }
+    var picture by remember(widget.source) {
+        mutableStateOf(resolver.resolved(widget.source)?.let(JsImagePicture::Located) ?: JsImagePicture.Loading)
+    }
     LaunchedEffect(widget.source, resolver) {
-        resolver.resolve(widget.source)?.let { model = it }
+        val model = resolver.resolve(widget.source)
+        picture = when {
+            model != null -> JsImagePicture.Located(model)
+            picture is JsImagePicture.Located -> picture
+            else -> JsImagePicture.Unavailable
+        }
     }
-    val imageModifier = modifier.then(widget.modifiers.toComposeModifier())
 
-    // An image the host cannot fetch draws as empty space.
-    if (model == null) {
-        Spacer(modifier = imageModifier)
-    } else {
-        NovaAsyncImage(
-            modifier = imageModifier,
-            model = model,
-            contentDescription = null,
-            contentScale = widget.fit.toContentScale(),
-        )
+    // Loading and failure both fill the space the node reserves, so a missing file costs the card
+    // one node rather than its layout.
+    Box(
+        modifier = modifier.then(widget.modifiers.toComposeModifier()),
+        contentAlignment = Alignment.Center,
+        propagateMinConstraints = true,
+    ) {
+        when (val current = picture) {
+            JsImagePicture.Loading -> JsImageLoading()
+            JsImagePicture.Unavailable -> JsImageUnavailable()
+            is JsImagePicture.Located -> {
+                var drawn by remember(current.model) { mutableStateOf(false) }
+                NovaAsyncImage(
+                    model = current.model,
+                    contentDescription = null,
+                    contentScale = widget.fit.toContentScale(),
+                    onSuccess = { drawn = true },
+                    onError = { error ->
+                        Timber.w(error.result.throwable, "Widget image %s failed to load from %s", widget.source, current.model)
+                        picture = JsImagePicture.Unavailable
+                    },
+                )
+                if (!drawn) JsImageLoading()
+            }
+        }
     }
+}
+
+@Composable
+private fun JsImageLoading() {
+    CircularProgressIndicator(
+        modifier = Modifier.wrapContentSize().size(24.dp),
+        color = PolkadotTheme.colors.fg.secondary,
+        strokeWidth = 2.dp,
+    )
+}
+
+@Composable
+private fun JsImageUnavailable() {
+    NovaIcon(
+        modifier = Modifier.wrapContentSize().size(44.dp),
+        imageVector = NovaIcons.FileNotFound,
+        contentDescription = stringResource(RCommon.string.products_widget_image_unavailable),
+        tint = PolkadotTheme.colors.fg.tertiary,
+    )
 }
 
 @Composable

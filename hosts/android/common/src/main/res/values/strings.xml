@@ -448,6 +448,9 @@
     <string name="product_permission_account_subtitle">Account access is required to read account data. %1$s</string>
     <string name="product_permission_balance_title">%1$s would Like to Access Your Balance</string>
     <string name="product_permission_balance_subtitle">Balance access lets the product see funds available for spending. %1$s</string>
+    <string name="product_permission_nft_purse_read_title">%1$s would Like to See the NFTs of %2$s</string>
+    <string name="product_permission_nft_purse_read_subtitle">NFT purse access lets the product see these purses and the items in them. %1$s</string>
+    <string name="product_permission_nft_purse_read_owner_account">your account</string>
     <string name="product_permission_user_identity_title">%1$s Would like to know your identity</string>
     <string name="product_permission_user_identity_subtitle">This reveals your primary username to the product. %1$s</string>
     <string name="product_payment_request_title">Product %1$s requests payment of %2$s</string>
@@ -832,6 +835,7 @@
     <string name="products_message_custom_preview">Custom message</string>
     <string name="products_message_load_failed">Couldn\'t load this message.</string>
     <string name="products_message_render_failed">Couldn\'t display this message.</string>
+    <string name="products_widget_image_unavailable">This image is not available</string>
     <string name="product_settings_version">version %1$s</string>
     <string name="product_settings_created_by">created by %1$s</string>
     <string name="product_settings_section_privacy">Privacy &amp; Security</string>
@@ -842,6 +846,7 @@
     <string name="product_permission_type_account_access">Account access</string>
     <string name="product_permission_type_balance_access">Balance</string>
     <string name="product_permission_type_balance_access_description">Balance access</string>
+    <string name="product_permission_type_nft_purse_read_description">NFT purse access</string>
     <string name="product_permission_type_user_identity_access">Identity</string>
     <string name="product_permission_type_user_identity_access_description">Primary username disclosure</string>
     <string name="product_permission_capability_notifications">Notifications</string>

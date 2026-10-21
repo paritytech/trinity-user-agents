@@ -242,9 +242,26 @@ a submission watch. Whatever no watch owns, including everything a previous
 process left live, is decided by recovery passes: the completion ladder over
 the shared chain capabilities and the domain's `CompletionOracle`. Every
 verdict is a compare-and-set against the status and attempt it was derived
-from, and rows are never deleted. The engine reports whether work is pending
-to `HostCallbacks::durable_work_changed`; the host then runs a background task
-awaiting `run_durable_recovery()`, which returns once nothing is live.
+from, and rows are never deleted.
+
+A domain can also schedule transactions it cannot sign yet
+(`DurableRequest::scheduled`), each with a `SubmissionPlan`: the
+`SubmissionPolicy` registered in the `DurableRegistry` that builds it, and that
+policy's `PolicyParams` for it. They wait as `PENDING_SUBMISSION` rows until the
+submission executor builds them: one task per domain, policy and group asks the
+policy to `prepare` its waiting rows, starts an attempt for each `Ready` answer
+and fails each `GiveUp`, backing off after rounds that decide nothing. A
+presigned submission may carry a plan as well. When a verdict proves a
+transaction with a policy failed, the verdict writer asks the policy's
+`can_retry`, and a yes sends the row back to be built instead of failing it.
+It is built again after a cooldown that grows with the attempts the row
+records, so the wait survives a restart. The executor starts with the engine in `set_core_db` and again in every
+recovery run.
+
+The engine reports whether work is pending, including rows waiting to be
+built, to `HostCallbacks::durable_work_changed`; the host then runs a
+background task awaiting `run_durable_recovery()`, which returns once nothing
+is live.
 
 ### The two roles
 
@@ -254,10 +271,12 @@ that can't mean it:
 
 - **`PairingHost`** (seedless): the user's keys live in an external wallet, so
   signing/aliases/entropy relay over an encrypted SSO channel (statement store
-  on the People chain; the channel lives in `pairing_host/sso_channel.rs`). The
-  v2 wire protocol uses raw X25519 keys, HKDF-SHA256, and
-  ChaCha20-Poly1305. It owns pairing/login state, persisted auth-session reload,
-  and remote signing-host liveness monitoring.
+  on the People chain). The v2 wire protocol uses raw X25519 keys, HKDF-SHA256,
+  and ChaCha20-Poly1305. `PairingHost` keeps the paired session's account
+  material; [`SsoRequestService`](src/runtime/sso_request_service.rs) owns
+  pairing and login state, persisted auth-session reload, remote signing-host
+  liveness monitoring and the request channel, and reports session changes to
+  `PairingHost` through `PairedSessionOwner`.
 - **`SigningHost`** (wallet-local): signs on device from local BIP-39 entropy,
   no pairing flow. `signing_host/local_activation.rs` establishes a session
   from host-held secret material. Its public identity is the RFC-0022
@@ -290,10 +309,11 @@ the page.
 
 ### Inter-host SSO
 
-`PairingHost::call(request)` sends typed requests to
+`SsoRequestService::call(request)` sends typed requests to
 [`SigningHostSsoService`](src/runtime/signing_host/sso_service.rs). Handlers own
-consent and business logic; `sso_responder.rs` owns the transport loop and shared
-allowance helpers. Resource consent is bound to the request's signing session:
+consent and business logic; [`SsoResponderService`](src/runtime/sso_responder_service.rs)
+owns the transport loop: it answers pairing, serves the session and drops
+duplicate requests. Resource consent is bound to the request's signing session:
 account changes, disconnects, and reactivation invalidate pending approval before
 allocation or key return. Allocation failure details stay in local transcripts.
 Allocation requests use the canonical `truapi::latest::AllocatableResource` type.
@@ -309,7 +329,7 @@ a withdrawn request posts no response. See the
 [SSO request cancellation RFC](../../../docs/rfcs/sso-request-cancellation.md).
 
 When a device finishes pairing, the signing host reports it to the embedder's
-[`DevicePairingObserver`](src/runtime/signing_host/sso_responder.rs), installed
+[`DevicePairingObserver`](src/runtime/sso_responder_service.rs), installed
 once through `SigningHostRuntime::set_device_pairing_observer`, and on a native
 host to `HostCallbacks::device_paired`. It carries the `PairedSsoPeer` that
 pairing produced, which is also what `resume_pairing` and

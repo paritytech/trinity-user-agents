@@ -232,6 +232,17 @@
         }
       }
     },
+    "app.permission.nftPurses.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "NFT purses"
+          }
+        }
+      }
+    },
     "app.permission.preimageSubmit.title": {
       "extractionState": "manual",
       "localizations": {
@@ -503,6 +514,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Network access is required to connect to %1$(domain)@."
+          }
+        }
+      }
+    },
+    "permission.body.nftPurseReadProduct": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "See the NFT purses of %1$(ownerProductId)@."
+          }
+        }
+      }
+    },
+    "permission.body.nftPurseReadRoot": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "See the NFT purses of your account."
           }
         }
       }
