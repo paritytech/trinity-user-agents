@@ -30,7 +30,7 @@ fn last_runtime_upgrade_key() -> Vec<u8> {
 
 /// Polls `changes` on a thread, since the node only announces heads after the
 /// subscriptions are open, and hands each item over as it arrives.
-fn forward_raw_changes_on_a_thread(
+fn forward_on_thread(
 	mut changes: BoxStream<'static, Result<RawStorageChanges, RuntimeFailure>>,
 ) -> ReceivedRawChanges {
 	let (sender, receiver) = channel();
@@ -50,12 +50,12 @@ fn forward_raw_changes_on_a_thread(
 fn start_watch(chain: &ChainRuntime, head: WatchedHead, keys: &[&[u8]]) -> ReceivedRawChanges {
 	let keys = keys.iter().map(|key| key.to_vec()).collect();
 	let changes = block_on(chain.watch_raw_key_changes(GENESIS, head, keys)).unwrap();
-	forward_raw_changes_on_a_thread(changes)
+	forward_on_thread(changes)
 }
 
 /// Starts a finalized watch of `keys` and waits until its head subscriptions
 /// are open.
-fn start_finalized_watch_once_heads_subscribed(
+fn start_finalized_watch(
 	provider: &ScriptedProvider,
 	chain: &ChainRuntime,
 	keys: &[&[u8]],
@@ -122,8 +122,7 @@ fn each_finalized_head_reads_every_watched_key_in_one_call() {
 	store_values_at_block(&mut node, 4, &[(WATCHED, b"one")]);
 	let at = node.block(4);
 	let (node, provider, chain) = serve(node);
-	let received =
-		start_finalized_watch_once_heads_subscribed(&provider, &chain, &[WATCHED, OTHER]);
+	let received = start_finalized_watch(&provider, &chain, &[WATCHED, OTHER]);
 
 	announce_head(&node, &provider, FINALIZED_SUBSCRIPTION, 4);
 	let changes = next_item_within_timeout(&received).unwrap();
@@ -139,7 +138,7 @@ fn a_finalized_watch_does_not_read_at_best_heads() {
 	store_values_at_block(&mut node, 5, &[(WATCHED, b"best")]);
 	let at = node.block(4);
 	let (node, provider, chain) = serve(node);
-	let received = start_finalized_watch_once_heads_subscribed(&provider, &chain, &[WATCHED]);
+	let received = start_finalized_watch(&provider, &chain, &[WATCHED]);
 
 	announce_head(&node, &provider, BEST_SUBSCRIPTION, 5);
 	// Long enough for a wrongly accepted best head to be read before the
@@ -161,7 +160,7 @@ fn a_finalized_watch_fetches_metadata_again_only_after_a_runtime_upgrade() {
 	store_values_at_block(&mut node, 5, &[(&upgrade, b"spec 1"), (WATCHED, b"b")]);
 	store_values_at_block(&mut node, 6, &[(&upgrade, b"spec 2"), (WATCHED, b"c")]);
 	let (node, provider, chain) = serve(node);
-	let received = start_finalized_watch_once_heads_subscribed(&provider, &chain, &[WATCHED]);
+	let received = start_finalized_watch(&provider, &chain, &[WATCHED]);
 	let fetches_after = |number: u64| {
 		announce_head(&node, &provider, FINALIZED_SUBSCRIPTION, number);
 		next_item_within_timeout(&received).unwrap();
@@ -179,8 +178,7 @@ fn a_key_the_node_leaves_out_is_an_error_rather_than_an_absent_value() {
 	let mut node = Node::new(3, 5);
 	node.unanswered_keys.insert(OTHER.to_vec());
 	let (node, provider, chain) = serve(node);
-	let received =
-		start_finalized_watch_once_heads_subscribed(&provider, &chain, &[WATCHED, OTHER]);
+	let received = start_finalized_watch(&provider, &chain, &[WATCHED, OTHER]);
 
 	announce_head(&node, &provider, FINALIZED_SUBSCRIPTION, 4);
 	let error = next_item_within_timeout(&received).unwrap_err();

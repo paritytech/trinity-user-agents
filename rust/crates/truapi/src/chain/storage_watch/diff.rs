@@ -14,22 +14,25 @@ use crate::chain_runtime::RuntimeFailure;
 /// when absent.
 pub type StorageSnapshot = DecodableAtBlock<Vec<Option<Vec<u8>>>>;
 
-/// The Blake2-256 hash of a storage value, `None` for an absent entry, which
+/// The Blake2-256 hash of a storage value, `None` for an absent entry. It
 /// stands in for the value when comparing it with a later one.
-pub fn hash_of_storage_value(value: &Option<Vec<u8>>) -> Option<[u8; 32]> {
+pub fn value_hash(value: &Option<Vec<u8>>) -> Option<[u8; 32]> {
 	value.as_deref().map(blake2_256)
 }
 
 /// The changes between consecutive `snapshots`. The first snapshot reports
 /// every key, and a snapshot equal to the one before reports nothing. An
 /// error passes through and leaves the earlier snapshot as the baseline.
-pub fn changes_between_consecutive_snapshots(
+pub fn diffed(
 	snapshots: BoxStream<'static, Result<StorageSnapshot, RuntimeFailure>>,
 ) -> BoxStream<'static, Result<RawStorageChanges, RuntimeFailure>> {
 	snapshots
-		.scan(None, |reported_hashes, snapshot| {
+		.scan(None, |previous_hashes: &mut Option<Vec<Option<[u8; 32]>>>, snapshot| {
 			let changes = snapshot.map(|snapshot| {
-				changes_since_reported_hashes_updating_them(reported_hashes, snapshot)
+				let current_hashes = snapshot.value.iter().map(value_hash).collect();
+				let changes = find_changes(previous_hashes.as_deref(), snapshot);
+				*previous_hashes = Some(current_hashes);
+				changes
 			});
 			ready(Some(changes))
 		})
@@ -37,25 +40,23 @@ pub fn changes_between_consecutive_snapshots(
 		.boxed()
 }
 
-/// The values of `snapshot` whose hash differs from `reported_hashes`, which
-/// then become the snapshot's hashes. Every value when nothing was reported
-/// yet, `None` when nothing changed.
-fn changes_since_reported_hashes_updating_them(
-	reported_hashes: &mut Option<Vec<Option<[u8; 32]>>>,
+/// The values of `snapshot` that changed since the snapshot with
+/// `previous_hashes`: every value when there is none, `None` when nothing
+/// changed.
+fn find_changes(
+	previous_hashes: Option<&[Option<[u8; 32]>]>,
 	snapshot: StorageSnapshot,
 ) -> Option<RawStorageChanges> {
-	let snapshot_hashes = snapshot.value.iter().map(hash_of_storage_value).collect();
-	let Some(previous_hashes) = reported_hashes.replace(snapshot_hashes) else {
+	let Some(previous_hashes) = previous_hashes else {
 		return Some(snapshot.map_value(|values| values.into_iter().enumerate().collect()));
 	};
-	let changes =
-		snapshot.map_value(|current| values_whose_hash_differs(&previous_hashes, current));
+	let changes = snapshot.map_value(|current| find_changed_values(previous_hashes, current));
 	(!changes.value.is_empty()).then_some(changes)
 }
 
 /// Each value of `current`, with its position, whose hash differs from the
-/// hash at the same position in `previous_hashes`.
-fn values_whose_hash_differs(
+/// one at the same position in `previous_hashes`.
+fn find_changed_values(
 	previous_hashes: &[Option<[u8; 32]>],
 	current: Vec<Option<Vec<u8>>>,
 ) -> Vec<(usize, Option<Vec<u8>>)> {
@@ -63,7 +64,7 @@ fn values_whose_hash_differs(
 		.into_iter()
 		.enumerate()
 		.filter(|(index, value)| {
-			let current_hash = hash_of_storage_value(value);
+			let current_hash = value_hash(value);
 			previous_hashes.get(*index) != Some(&current_hash)
 		})
 		.collect()

@@ -34,7 +34,7 @@ impl StorageEntryName {
 }
 
 /// The full storage key of each of `keys`, under `address`.
-pub fn encode_full_storage_keys<A>(
+pub fn encode_storage_keys<A>(
 	address: &A,
 	keys: &[A::KeyParts],
 	metadata: &Metadata,
@@ -43,12 +43,10 @@ where
 	A: Address,
 	A::KeyParts: Clone,
 {
-	let info = storage_entry_type_info(address, metadata)?;
+	let info = entry_type_info(address, metadata)?;
 	keys.iter()
 		.enumerate()
-		.map(|(index, parts)| {
-			encode_full_storage_key(address, index, parts.clone(), &info, metadata)
-		})
+		.map(|(index, parts)| encode_storage_key(address, index, parts.clone(), &info, metadata))
 		.collect()
 }
 
@@ -60,13 +58,13 @@ pub fn decode_value_or_default<A: Address>(
 	metadata: &Metadata,
 	at: HashAndNumber,
 ) -> Result<Option<A::Value>, StorageWatchError> {
-	let info = storage_entry_type_info(address, metadata)?;
+	let info = entry_type_info(address, metadata)?;
 	let Some(bytes) = bytes.or(info.default_value.as_deref()) else { return Ok(None) };
-	let decoded = decode_value_rejecting_leftover_bytes(address, bytes, &info, metadata, at)?;
+	let decoded = decode_value_strict(address, bytes, &info, metadata, at)?;
 	Ok(Some(decoded))
 }
 
-fn storage_entry_type_info<'metadata>(
+fn entry_type_info<'metadata>(
 	address: &impl Address,
 	metadata: &'metadata Metadata,
 ) -> Result<StorageInfo<'metadata, u32>, StorageWatchError> {
@@ -78,7 +76,7 @@ fn storage_entry_type_info<'metadata>(
 		})
 }
 
-fn encode_full_storage_key<A: Address>(
+fn encode_storage_key<A: Address>(
 	address: &A,
 	index: usize,
 	parts: A::KeyParts,
@@ -99,7 +97,7 @@ fn encode_full_storage_key<A: Address>(
 		.map_err(|error| key_error(error.to_string()))
 }
 
-fn decode_value_rejecting_leftover_bytes<A: Address>(
+fn decode_value_strict<A: Address>(
 	address: &A,
 	bytes: &[u8],
 	info: &StorageInfo<'_, u32>,

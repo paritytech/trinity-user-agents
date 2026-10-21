@@ -13,7 +13,7 @@ use super::{RawChangeStream, STORAGE_WATCH, all_keys_answered_or_err, group_valu
 use crate::{
 	chain::{
 		DecodableAtBlock, HashAndNumber, RawStorageChanges,
-		storage_watch::{StorageSnapshot, hash_of_storage_value},
+		storage_watch::{StorageSnapshot, value_hash},
 		subxt_chain::{failure, numbered},
 	},
 	chain_runtime::{LegacyConnection, RuntimeFailure},
@@ -66,7 +66,7 @@ impl WatchedKeysReader {
 		let values_by_key = group_values_by_key(queried_snapshot);
 		let mut values = all_keys_answered_or_err(&self.keys, &values_by_key, at.hash)?;
 		let last_upgrade = values.remove(0);
-		let metadata = self.metadata_for_runtime_upgrade(last_upgrade, at).await?;
+		let metadata = self.metadata_for_upgrade(last_upgrade, at).await?;
 		Ok(DecodableAtBlock { at, metadata, value: values })
 	}
 
@@ -76,12 +76,15 @@ impl WatchedKeysReader {
 	/// is a notification left with nothing.
 	pub async fn subscribe_to_changes(self: Arc<Self>) -> Result<RawChangeStream, RuntimeFailure> {
 		let subscription = self.open_storage_subscription().await?;
-		let computing = self.clone();
-		let changed_keys = subscription.scan(None, move |held_value_hashes, change_set| {
+		let finder = self.clone();
+		let changed_keys = subscription.scan(None, move |held_hashes, change_set| {
 			let change_set = change_set.map_err(|error| failure(STORAGE_WATCH, error));
 			let changed = change_set.and_then(|change_set| {
-				computing.compute_changeset_updating_held(held_value_hashes, change_set)
+				finder.find_changed_keys(held_hashes.as_deref(), change_set)
 			});
+			if let Ok(Some(changed)) = &changed {
+				record_hashes(held_hashes, finder.keys.len(), &changed.changed);
+			}
 			ready(Some(changed))
 		});
 		let nonempty_changed_keys = changed_keys.try_filter_map(|changed| ready(Ok(changed)));
@@ -110,77 +113,76 @@ impl WatchedKeysReader {
 		change_set: ChangedKeysAtBlock,
 	) -> Result<RawStorageChanges, RuntimeFailure> {
 		let at = numbered(&self.legacy, change_set.block, STORAGE_WATCH).await?;
-		let RuntimeUpgradeAndWatchedChanges { last_upgrade, watched } =
+		let UpgradeAndWatched { last_upgrade, watched } =
 			separate_runtime_upgrade_and_watched(change_set.changed);
 		let metadata = match last_upgrade {
-			Some(last_upgrade) => self.metadata_for_runtime_upgrade(last_upgrade, at).await?,
-			None => self.last_seen_metadata_or_fetch_at(at).await?,
+			Some(last_upgrade) => self.metadata_for_upgrade(last_upgrade, at).await?,
+			None => self.cached_or_fetched_metadata(at).await?,
 		};
 		Ok(DecodableAtBlock { at, metadata, value: watched })
 	}
 
-	/// The keys in `change_set` whose value hash differs from the one in
-	/// `held_value_hashes`, by position, which then hold the new hashes.
-	/// `None` when no value changed. With nothing held yet, `change_set` must
-	/// name every key, and all of them are reported.
-	fn compute_changeset_updating_held(
+	/// The keys in `change_set` whose value changed since the values with
+	/// `held_hashes`, by position, `None` when none did. With nothing held
+	/// yet, `change_set` must name every key, and all of them changed.
+	fn find_changed_keys(
 		&self,
-		held_value_hashes: &mut Option<Vec<Option<[u8; 32]>>>,
+		held_hashes: Option<&[Option<[u8; 32]>]>,
 		change_set: StorageChangeSet<H256>,
 	) -> Result<Option<ChangedKeysAtBlock>, RuntimeFailure> {
 		let block = change_set.block;
 		let values_by_key = group_values_by_key([change_set]);
-		let Some(hashes) = held_value_hashes.as_mut() else {
+		let Some(held_hashes) = held_hashes else {
 			let values = all_keys_answered_or_err(&self.keys, &values_by_key, block)?;
-			*held_value_hashes = Some(values.iter().map(hash_of_storage_value).collect());
 			let changed = values.into_iter().enumerate().collect();
 			return Ok(Some(ChangedKeysAtBlock { block, changed }));
 		};
-		let changed = self.values_whose_hash_changed_updating_hashes(hashes, values_by_key);
+		let changed = self.find_changed_values(held_hashes, values_by_key);
 		Ok((!changed.is_empty()).then_some(ChangedKeysAtBlock { block, changed }))
 	}
 
 	/// Each of `values_by_key`, with its position, whose hash differs from
-	/// the one in `held_value_hashes`, which takes the new hash.
-	fn values_whose_hash_changed_updating_hashes(
+	/// the one in `held_hashes`.
+	fn find_changed_values(
 		&self,
-		held_value_hashes: &mut [Option<[u8; 32]>],
+		held_hashes: &[Option<[u8; 32]>],
 		values_by_key: HashMap<Vec<u8>, Option<Vec<u8>>>,
 	) -> Vec<(usize, Option<Vec<u8>>)> {
 		values_by_key
 			.into_iter()
 			.filter_map(|(key, value)| {
 				let position = *self.position_by_key.get(&key)?;
-				let hash = hash_of_storage_value(&value);
-				let previous = core::mem::replace(&mut held_value_hashes[position], hash);
-				(previous != hash).then_some((position, value))
+				(held_hashes[position] != value_hash(&value)).then_some((position, value))
 			})
 			.collect()
 	}
 
 	/// The metadata of the runtime whose `System.LastRuntimeUpgrade` is
 	/// `last_upgrade`, fetched at `at` unless the reader already has it.
-	async fn metadata_for_runtime_upgrade(
+	async fn metadata_for_upgrade(
 		&self,
 		last_upgrade: Option<Vec<u8>>,
 		at: HashAndNumber,
 	) -> Result<ArcMetadata, RuntimeFailure> {
-		if let Some(metadata) =
-			self.last_seen_metadata_if_runtime_unchanged(last_upgrade.as_deref())
-		{
+		if let Some(metadata) = self.cached_metadata_for(last_upgrade.as_deref()) {
 			return Ok(metadata);
 		}
 		let metadata = fetch_metadata_at_block(&self.legacy, at, STORAGE_WATCH).await?;
 		if let Some(last_upgrade) = last_upgrade {
-			let known = LastSeenRuntime { last_upgrade, metadata: metadata.clone() };
-			*self.last_seen_runtime.lock() = Some(known);
+			self.cache_runtime(last_upgrade, metadata.clone());
 		}
 		Ok(metadata)
 	}
 
+	/// Remembers `metadata` as the runtime whose `System.LastRuntimeUpgrade`
+	/// is `last_upgrade`.
+	fn cache_runtime(&self, last_upgrade: Vec<u8>, metadata: ArcMetadata) {
+		*self.last_seen_runtime.lock() = Some(LastSeenRuntime { last_upgrade, metadata });
+	}
+
 	/// The metadata seen last, when `System.LastRuntimeUpgrade` did not change.
 	/// Fetched at `at` on a chain without it.
-	async fn last_seen_metadata_or_fetch_at(
+	async fn cached_or_fetched_metadata(
 		&self,
 		at: HashAndNumber,
 	) -> Result<ArcMetadata, RuntimeFailure> {
@@ -193,18 +195,28 @@ impl WatchedKeysReader {
 
 	/// The metadata seen last, if `last_upgrade` still identifies its runtime.
 	/// A chain without `System.LastRuntimeUpgrade` never matches.
-	fn last_seen_metadata_if_runtime_unchanged(
-		&self,
-		last_upgrade: Option<&[u8]>,
-	) -> Option<ArcMetadata> {
+	fn cached_metadata_for(&self, last_upgrade: Option<&[u8]>) -> Option<ArcMetadata> {
 		let runtime = self.last_seen_runtime.lock();
 		let known = runtime.as_ref()?;
 		(Some(known.last_upgrade.as_slice()) == last_upgrade).then(|| known.metadata.clone())
 	}
 }
 
+/// Puts the hash of each `changed` value into `held_hashes`, which start as
+/// `key_count` absent entries.
+fn record_hashes(
+	held_hashes: &mut Option<Vec<Option<[u8; 32]>>>,
+	key_count: usize,
+	changed: &[(usize, Option<Vec<u8>>)],
+) {
+	let hashes = held_hashes.get_or_insert_with(|| vec![None; key_count]);
+	for (position, value) in changed {
+		hashes[*position] = value_hash(value);
+	}
+}
+
 /// One notification's changes, with `System.LastRuntimeUpgrade` taken out.
-struct RuntimeUpgradeAndWatchedChanges {
+struct UpgradeAndWatched {
 	/// Its new value, if the notification changed it.
 	last_upgrade: Option<Option<Vec<u8>>>,
 	/// The other changes, by position among the watched keys alone.
@@ -214,7 +226,7 @@ struct RuntimeUpgradeAndWatchedChanges {
 /// `changed` split into the runtime upgrade and the watched keys, in order.
 fn separate_runtime_upgrade_and_watched(
 	changed: Vec<(usize, Option<Vec<u8>>)>,
-) -> RuntimeUpgradeAndWatchedChanges {
+) -> UpgradeAndWatched {
 	let mut last_upgrade = None;
 	let mut watched = Vec::with_capacity(changed.len());
 	for (index, value) in changed {
@@ -224,7 +236,7 @@ fn separate_runtime_upgrade_and_watched(
 		}
 	}
 	watched.sort_by_key(|(position, _)| *position);
-	RuntimeUpgradeAndWatchedChanges { last_upgrade, watched }
+	UpgradeAndWatched { last_upgrade, watched }
 }
 
 /// Metadata of the runtime that produced `at`.

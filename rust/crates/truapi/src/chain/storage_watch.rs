@@ -5,7 +5,7 @@
 //! `watch_entry_changes` encodes the keys of a subxt storage address and decodes the
 //! changed values, with the metadata of the runtime they were read under. A
 //! source that reads every key at each head turns its snapshots into changes
-//! with [`changes_between_consecutive_snapshots`]. Such a source may skip heads that arrive during
+//! with [`diffed`]. Such a source may skip heads that arrive during
 //! a read, because the next read includes their effect, so a value that
 //! changes and changes back meanwhile is never reported. A consumer that needs
 //! every transition reads events instead.
@@ -26,7 +26,7 @@ mod watched_storage;
 mod tests;
 
 pub use codec::StorageEntryName;
-pub use diff::{StorageSnapshot, changes_between_consecutive_snapshots, hash_of_storage_value};
+pub use diff::{StorageSnapshot, diffed, value_hash};
 pub use watched_storage::{DecodableAtBlock, RawStorageChanges, WatchedStorage};
 
 /// Which heads a watch reads at.
@@ -108,7 +108,7 @@ impl dyn WatchedStorage {
 		A::Value: Send + 'static,
 	{
 		let metadata = self.metadata_at_finalized_head(genesis).await?;
-		let encoded = codec::encode_full_storage_keys(&address, &keys, &metadata)?;
+		let encoded = codec::encode_storage_keys(&address, &keys, &metadata)?;
 		let changes = self.watch_raw_key_changes(genesis, head, encoded).await?;
 		let decoder = EntryChangesDecoder { address, keys };
 		Ok(changes.map(move |raw| decoder.decode_raw_changes(raw?)).boxed())
@@ -133,14 +133,12 @@ where
 		let DecodableAtBlock { at, metadata, value: changed } = raw;
 		let changed = changed
 			.into_iter()
-			.map(|(index, bytes)| {
-				self.decode_changed_value_with_its_key(index, bytes, &metadata, at)
-			})
+			.map(|(index, bytes)| self.decode_keyed_value(index, bytes, &metadata, at))
 			.collect::<Result<_, _>>()?;
 		Ok(DecodedEntryChanges { at, changed })
 	}
 
-	fn decode_changed_value_with_its_key(
+	fn decode_keyed_value(
 		&self,
 		index: usize,
 		bytes: Option<Vec<u8>>,

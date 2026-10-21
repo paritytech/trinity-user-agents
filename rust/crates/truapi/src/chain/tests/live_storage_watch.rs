@@ -52,7 +52,7 @@ fn live_asset_hub_genesis() -> H256 {
 }
 
 /// The chain runtime over the live node, its tasks on the test's runtime.
-fn chain_runtime_over_live_asset_hub(genesis: H256) -> Arc<dyn WatchedStorage> {
+fn live_chain_runtime(genesis: H256) -> Arc<dyn WatchedStorage> {
 	let url = std::env::var("LIVE_ASSET_HUB_WS").unwrap_or_else(|_| ASSET_HUB_WS.into());
 	let source = ChainSource::rpc_node(url.parse().expect("LIVE_ASSET_HUB_WS is a URL"));
 	let provider = EmbeddedChainProvider::builder().chain(genesis.0, source).build();
@@ -75,12 +75,7 @@ async fn next_report_within_timeout<K, V>(
 async fn first_three_timestamps_at(head: WatchedHead) -> Vec<(u64, u64)> {
 	let genesis = live_asset_hub_genesis();
 	let address = dynamic::<(), u64>("Timestamp", "Now");
-	let watch = chain_runtime_over_live_asset_hub(genesis).watch_entry_changes(
-		genesis,
-		head,
-		address,
-		vec![()],
-	);
+	let watch = live_chain_runtime(genesis).watch_entry_changes(genesis, head, address, vec![()]);
 	let mut changes = watch.await.expect("the watch starts");
 	let mut timestamps = Vec::new();
 	for _ in 0..3 {
@@ -93,7 +88,7 @@ async fn first_three_timestamps_at(head: WatchedHead) -> Vec<(u64, u64)> {
 
 /// Each report is a later block with a later timestamp, so the watch follows
 /// the chain and reports each new value.
-fn assert_blocks_and_timestamps_increase(timestamps: &[(u64, u64)]) {
+fn assert_increasing(timestamps: &[(u64, u64)]) {
 	for pair in timestamps.windows(2) {
 		assert!(pair[1].0 > pair[0].0 && pair[1].1 > pair[0].1, "{timestamps:?}");
 	}
@@ -105,7 +100,7 @@ async fn a_best_watch_reports_each_new_timestamp() {
 	let timestamps = first_three_timestamps_at(WatchedHead::Best).await;
 	println!("best (block, timestamp): {timestamps:?}");
 
-	assert_blocks_and_timestamps_increase(&timestamps);
+	assert_increasing(&timestamps);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -114,7 +109,7 @@ async fn a_finalized_watch_reports_each_new_timestamp() {
 	let timestamps = first_three_timestamps_at(WatchedHead::Finalized).await;
 	println!("finalized (block, timestamp): {timestamps:?}");
 
-	assert_blocks_and_timestamps_increase(&timestamps);
+	assert_increasing(&timestamps);
 }
 
 /// A distinct account nobody holds the key to: `index` followed by `0xee`.
@@ -133,7 +128,7 @@ async fn a_thousand_keys_are_answered_in_one_read() {
 	let genesis = live_asset_hub_genesis();
 	let accounts: Vec<([u8; 32],)> = (0..BATCH_SIZE).map(distinct_unused_account).collect();
 	let address = dynamic::<([u8; 32],), Value>("System", "Account");
-	let watch = chain_runtime_over_live_asset_hub(genesis).watch_entry_changes(
+	let watch = live_chain_runtime(genesis).watch_entry_changes(
 		genesis,
 		WatchedHead::Finalized,
 		address,

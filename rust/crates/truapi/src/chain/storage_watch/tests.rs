@@ -12,8 +12,9 @@ use subxt::{ArcMetadata, storage::dynamic, utils::H256};
 
 use super::{
 	DecodableAtBlock, DecodedEntryChanges, RawStorageChanges, StorageSnapshot, StorageWatchError,
-	WatchedHead, WatchedStorage, changes_between_consecutive_snapshots,
-	codec::{decode_value_or_default, encode_full_storage_keys},
+	WatchedHead, WatchedStorage,
+	codec::{decode_value_or_default, encode_storage_keys},
+	diffed,
 };
 use crate::{
 	chain::HashAndNumber, chain_runtime::RuntimeFailure,
@@ -64,7 +65,7 @@ fn reported_raw_changes_at(
 fn raw_changes_reported_for(
 	snapshots: Vec<Result<StorageSnapshot, RuntimeFailure>>,
 ) -> Vec<Result<ReportedRawChanges, RuntimeFailure>> {
-	let changes = changes_between_consecutive_snapshots(stream::iter(snapshots).boxed());
+	let changes = diffed(stream::iter(snapshots).boxed());
 	let collected: Vec<Result<RawStorageChanges, RuntimeFailure>> = block_on(changes.collect());
 	collected
 		.into_iter()
@@ -139,7 +140,7 @@ fn keys_encode_as_the_chain_stores_them() {
 	let address = dynamic::<([u8; 32],), ()>("System", "Account");
 
 	let encoded =
-		encode_full_storage_keys(&address, &[(account,)], &bulletin_fixture_metadata()).unwrap();
+		encode_storage_keys(&address, &[(account,)], &bulletin_fixture_metadata()).unwrap();
 
 	let expected =
 		[&twox_128(b"System")[..], &twox_128(b"Account"), &blake2_128(&account), &account].concat();
@@ -150,8 +151,7 @@ fn keys_encode_as_the_chain_stores_them() {
 fn a_key_with_the_wrong_number_of_parts_names_its_position() {
 	let address = dynamic::<(u32, u32), ()>("System", "BlockHash");
 
-	let error =
-		encode_full_storage_keys(&address, &[(1, 2)], &bulletin_fixture_metadata()).unwrap_err();
+	let error = encode_storage_keys(&address, &[(1, 2)], &bulletin_fixture_metadata()).unwrap_err();
 
 	assert_eq!(
 		error.to_string(),
@@ -163,8 +163,7 @@ fn a_key_with_the_wrong_number_of_parts_names_its_position() {
 fn an_entry_missing_from_the_metadata_is_incompatible() {
 	let address = dynamic::<(u32,), ()>("System", "NoSuchEntry");
 
-	let error =
-		encode_full_storage_keys(&address, &[(1,)], &bulletin_fixture_metadata()).unwrap_err();
+	let error = encode_storage_keys(&address, &[(1,)], &bulletin_fixture_metadata()).unwrap_err();
 
 	assert!(matches!(error, StorageWatchError::Incompatible { .. }), "{error}");
 }
