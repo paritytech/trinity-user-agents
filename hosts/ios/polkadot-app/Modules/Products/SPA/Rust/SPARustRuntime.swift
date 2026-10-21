@@ -148,6 +148,16 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
         logger.debug("SPA(rust): '\(contentId)' now serves build \(content.contentHash)")
     }
+
+    func hasNewBuild() async throws -> Bool {
+        try checkNotDisposed()
+
+        guard case .dotNs = configuration.contentSource, let servedContent else { return false }
+
+        let contentId = try await dotNsContentId()
+        let latestHash = try await dotNsResolver.resolveContentHash(dotNsName: contentId)
+        return latestHash != servedContent.contentHash && latestHash != unavailableContentHash
+    }
 }
 
 private extension SPARustRuntime {

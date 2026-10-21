@@ -16,6 +16,7 @@ final class StubSPAView: SPAViewProtocol {
     let controller = UIViewController()
     let pageScrollView = UIScrollView()
     var isSetup: Bool { true }
+    var isOnScreen = true
 
     func navigate(to _: URL) {}
     func navigate(to page: ProductPage) { navigatedPages.append(page) }

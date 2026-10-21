@@ -10,6 +10,8 @@ final class SPAPresenter {
     let configuration: SPAConfiguration
     let hostProvider: ProductHostProviding
 
+    private var isShowingNewBuildPrompt = false
+
     init(
         interactor: SPAInteractorInputProtocol,
         wireframe: SPAWireframeProtocol,
@@ -113,6 +115,10 @@ extension SPAPresenter: SPAPresenterProtocol {
     func didUpdateWebViewTitle(_ title: String) {
         view?.updateTitle(title)
     }
+
+    func didBecomeVisible() {
+        interactor.checkForNewBuild()
+    }
 }
 
 extension SPAPresenter: SPAInteractorOutputProtocol {
@@ -123,6 +129,13 @@ extension SPAPresenter: SPAInteractorOutputProtocol {
 
     func didRequestReload() {
         view?.reload()
+    }
+
+    func didFindNewBuild(productName: String) {
+        guard !isShowingNewBuildPrompt, view?.isOnScreen == true else { return }
+
+        isShowingNewBuildPrompt = true
+        wireframe.present(viewModel: makeNewBuildAlert(productName: productName), style: .alert, from: view)
     }
 
     func didPrepareChat(chatId: Chat.Id) {
@@ -140,5 +153,31 @@ extension SPAPresenter: SPAInteractorOutputProtocol {
         )
 
         view?.showLoadFailure(content)
+    }
+}
+
+private extension SPAPresenter {
+    @MainActor
+    func makeNewBuildAlert(productName: String) -> AlertPresentableViewModel {
+        AlertPresentableViewModel(
+            title: String(localized: .spaNewBuildTitle(productName)),
+            message: String(localized: .spaNewBuildMessage(productName)),
+            actions: [
+                AlertPresentableAction(
+                    title: String(localized: .spaNewBuildReload),
+                    handler: { [weak self] in
+                        self?.isShowingNewBuildPrompt = false
+                        self?.didTapRefresh()
+                    }
+                ),
+                AlertPresentableAction(
+                    title: String(localized: .spaNewBuildLater),
+                    style: .cancel,
+                    handler: { [weak self] in
+                        self?.isShowingNewBuildPrompt = false
+                    }
+                )
+            ]
+        )
     }
 }

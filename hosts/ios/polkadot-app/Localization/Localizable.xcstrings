@@ -3347,6 +3347,50 @@
         }
       }
     },
+    "spa.newBuild.later" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Later"
+          }
+        }
+      }
+    },
+    "spa.newBuild.message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reload to use the new version. Anything you haven't saved in “%@” will be lost."
+          }
+        }
+      }
+    },
+    "spa.newBuild.reload" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Reload"
+          }
+        }
+      }
+    },
+    "spa.newBuild.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New version of “%@” is available"
+          }
+        }
+      }
+    },
     "tab.apps" : {
       "extractionState" : "manual",
       "localizations" : {

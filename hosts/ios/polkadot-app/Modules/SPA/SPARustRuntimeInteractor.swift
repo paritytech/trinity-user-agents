@@ -1,4 +1,5 @@
 import Foundation
+import FoundationExt
 import Operation_iOS
 import Products
 
@@ -15,6 +16,7 @@ final class SPARustRuntimeInteractor {
     private let logger: LoggerProtocol
     private let productRepository: AnyDataProviderRepository<Product>
     private let chatProviderFactory: ChatContactDataProviderMaking
+    private let applicationStateStreams: ApplicationStateStreamFactory
 
     private var runtime: SPARuntimeProtocol?
     private var jsEngine: JSEngineProtocol?
@@ -24,6 +26,8 @@ final class SPARustRuntimeInteractor {
     private var setupTask: Task<Void, Never>?
     private var openChatTask: Task<Void, Never>?
     private var reloadTask: Task<Void, Never>?
+    private var newBuildCheckTask: Task<Void, Never>?
+    private var foregroundTask: Task<Void, Never>?
 
     init(
         runtimeFactory: SPARuntimeFactoryProtocol,
@@ -31,7 +35,8 @@ final class SPARustRuntimeInteractor {
         configuration: SPAConfiguration,
         logger: LoggerProtocol,
         productRepository: AnyDataProviderRepository<Product>,
-        chatProviderFactory: ChatContactDataProviderMaking
+        chatProviderFactory: ChatContactDataProviderMaking,
+        applicationStateStreams: ApplicationStateStreamFactory
     ) {
         self.runtimeFactory = runtimeFactory
         self.productResolver = productResolver
@@ -39,12 +44,15 @@ final class SPARustRuntimeInteractor {
         self.logger = logger
         self.productRepository = productRepository
         self.chatProviderFactory = chatProviderFactory
+        self.applicationStateStreams = applicationStateStreams
     }
 
     deinit {
         setupTask?.cancel()
         openChatTask?.cancel()
         reloadTask?.cancel()
+        newBuildCheckTask?.cancel()
+        foregroundTask?.cancel()
         // Runtime ownership contract: the holder disposes before release.
         Task { [runtime] in await runtime?.dispose() }
     }
@@ -54,6 +62,7 @@ extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
     func setup(engine: JSEngineProtocol) {
         jsEngine = engine
 
+        observeForeground()
         startRuntime(engine: engine)
     }
 
@@ -81,6 +90,23 @@ extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
             }
 
             self?.presenter?.didRequestReload()
+        }
+    }
+
+    func checkForNewBuild() {
+        guard newBuildCheckTask == nil else { return }
+
+        newBuildCheckTask = Task { [weak self] in
+            defer { self?.newBuildCheckTask = nil }
+
+            do {
+                let hasNewBuild = try await self?.runtime?.hasNewBuild() ?? false
+                guard hasNewBuild, let self, !Task.isCancelled else { return }
+
+                presenter?.didFindNewBuild(productName: resolvedProduct?.displayName ?? configuration.page.host.name)
+            } catch {
+                self?.logger.error("SPA(rust): Failed to check for a new build: \(error)")
+            }
         }
     }
 
@@ -138,6 +164,18 @@ private extension SPARustRuntimeInteractor {
             case .devServer:
                 return nil
         #endif
+        }
+    }
+
+    func observeForeground() {
+        guard foregroundTask == nil else { return }
+
+        let events = applicationStateStreams.stream(for: .willEnterForeground)
+        foregroundTask = Task { [weak self] in
+            for await _ in events {
+                guard let self else { return }
+                checkForNewBuild()
+            }
         }
     }
 

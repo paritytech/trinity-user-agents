@@ -4,9 +4,12 @@ import UIKit
 import UIKitExt
 @testable import polkadot_app
 
-/// Discards every navigation, since the Refresh path never leaves the page.
+/// Discards every navigation, since the Refresh path never leaves the page. Alerts are kept so a test can read
+/// them and fire their actions.
 @MainActor
 final class StubSPAWireframe: SPAWireframeProtocol {
+    private(set) var presentedAlerts: [AlertPresentableViewModel] = []
+
     func present(
         message _: String?,
         title _: String?,
@@ -15,10 +18,12 @@ final class StubSPAWireframe: SPAWireframeProtocol {
     ) {}
 
     func present(
-        viewModel _: AlertPresentableViewModel,
+        viewModel: AlertPresentableViewModel,
         style _: UIAlertController.Style,
         from _: ControllerBackedProtocol?
-    ) {}
+    ) {
+        presentedAlerts.append(viewModel)
+    }
 
     func present(error _: ErrorContent, from _: ControllerBackedProtocol?) -> Bool {
         false

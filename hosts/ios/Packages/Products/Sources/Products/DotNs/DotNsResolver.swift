@@ -63,8 +63,6 @@ public final class DotNsResolver: DotNsResolverProtocol {
         progressRegistry = DotNsLoadProgressRegistry()
     }
 
-    // TODO: Current implementation always fetch content hash from contract.
-    // Target solution should warn a user if hash changed monitoring the cache
     public func resolveToLocalURL(dotNsName: String) async throws -> URL {
         try await resolveContent(dotNsName: dotNsName).localURL
     }

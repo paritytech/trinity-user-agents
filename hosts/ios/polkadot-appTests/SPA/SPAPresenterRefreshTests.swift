@@ -1,4 +1,5 @@
 import Foundation
+import FoundationExt
 import Operation_iOS
 import Products
 import Testing
@@ -13,7 +14,7 @@ struct SPAPresenterRefreshTests {
         let screen = try makeScreen(runtime: runtime)
 
         screen.presenter.didTapRefresh()
-        await waitForReload(screen)
+        await waitUntil { screen.view.reloadCount > 0 }
 
         #expect(runtime.latestBuildRequestCount == 1)
         #expect(screen.view.reloadCount == 1)
@@ -27,7 +28,7 @@ struct SPAPresenterRefreshTests {
         let screen = try makeScreen(runtime: runtime)
 
         screen.presenter.didTapRefresh()
-        await waitForReload(screen)
+        await waitUntil { screen.view.reloadCount > 0 }
 
         #expect(runtime.latestBuildRequestCount == 1)
         #expect(screen.view.reloadCount == 1)
@@ -55,7 +56,8 @@ private func makeScreen(runtime: MockSPARuntime) throws -> Screen {
         configuration: configuration,
         logger: Logger.shared,
         productRepository: AnyDataProviderRepository(InMemoryDataProviderRepository<Product>()),
-        chatProviderFactory: MockChatContactDataProviderFactory()
+        chatProviderFactory: MockChatContactDataProviderFactory(),
+        applicationStateStreams: ApplicationStateStreamFactory()
     )
     let presenter = SPAPresenter(
         interactor: interactor,
@@ -69,12 +71,4 @@ private func makeScreen(runtime: MockSPARuntime) throws -> Screen {
     presenter.setup(engine: MockJSEngine())
 
     return Screen(presenter: presenter, view: view)
-}
-
-/// Yields until the view reloads. Bounded, so a missing reload fails the expectation instead of hanging.
-@MainActor
-private func waitForReload(_ screen: Screen) async {
-    for _ in 0 ..< 1_000 where screen.view.reloadCount == 0 {
-        await Task.yield()
-    }
 }

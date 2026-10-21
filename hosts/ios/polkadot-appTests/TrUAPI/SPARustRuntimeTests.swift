@@ -337,6 +337,101 @@ struct SPARustRuntimeTests {
         #expect(resolver.resolvedNames == ["test.dot"])
         #expect(servedData(through: proxy, at: url) == Data("<html>a</html>".utf8))
     }
+
+    @Test func hasNewBuildIsFalseWhileTheServedBuildIsLatest() async throws {
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .dotNs),
+            dotNsResolver: StubDotNsResolver()
+        )
+        _ = try await runtime.start(with: MockJSEngine())
+
+        let hasNewBuild = try await runtime.hasNewBuild()
+
+        #expect(hasNewBuild == false)
+        await runtime.dispose()
+    }
+
+    @Test func hasNewBuildIsTrueWhenThePublishedHashDiffersFromTheServedBuild() async throws {
+        let resolver = StubDotNsResolver()
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .dotNs),
+            dotNsResolver: resolver
+        )
+        _ = try await runtime.start(with: MockJSEngine())
+
+        resolver.contentHashes["test.dot"] = "0xbb"
+        let hasNewBuild = try await runtime.hasNewBuild()
+
+        #expect(hasNewBuild == true)
+        await runtime.dispose()
+    }
+
+    @Test func hasNewBuildIsFalseForAVersionWhoseDownloadFailed() async throws {
+        let resolver = StubDotNsResolver()
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .dotNs),
+            dotNsResolver: resolver
+        )
+        _ = try await runtime.start(with: MockJSEngine())
+
+        resolver.contentHashes["test.dot"] = "0xbb"
+        resolver.failingContentNames = ["test.dot"]
+        await #expect(throws: URLError.self) {
+            try await runtime.useLatestBuild()
+        }
+
+        let hasNewBuild = try await runtime.hasNewBuild()
+
+        #expect(hasNewBuild == false)
+        await runtime.dispose()
+    }
+
+    @Test func hasNewBuildIsFalseOnceTheLatestBuildIsServed() async throws {
+        let resolver = StubDotNsResolver()
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .dotNs),
+            dotNsResolver: resolver
+        )
+        _ = try await runtime.start(with: MockJSEngine())
+
+        resolver.contentHashes["test.dot"] = "0xbb"
+        try await runtime.useLatestBuild()
+        let hasNewBuild = try await runtime.hasNewBuild()
+
+        #expect(hasNewBuild == false)
+        await runtime.dispose()
+    }
+
+    @Test func hasNewBuildIsFalseForADirectURLPage() async throws {
+        let resolver = StubDotNsResolver()
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(
+                contentSource: .directURL(#require(URL(string: "http://localhost:3000")))
+            ),
+            dotNsResolver: resolver
+        )
+        _ = try await runtime.start(with: MockJSEngine())
+
+        resolver.contentHashes["test.dot"] = "0xbb"
+        let hasNewBuild = try await runtime.hasNewBuild()
+
+        #expect(hasNewBuild == false)
+        #expect(resolver.resolvedNames.isEmpty)
+        await runtime.dispose()
+    }
+
+    @Test func hasNewBuildIsFalseBeforeTheRuntimeStarts() async throws {
+        let resolver = StubDotNsResolver()
+        resolver.contentHashes["test.dot"] = "0xbb"
+        let runtime = try makeRuntime(
+            configuration: makeConfiguration(contentSource: .dotNs),
+            dotNsResolver: resolver
+        )
+
+        let hasNewBuild = try await runtime.hasNewBuild()
+
+        #expect(hasNewBuild == false)
+    }
 }
 
 private func makeBuildDirectory(indexHTML: String) throws -> URL {
