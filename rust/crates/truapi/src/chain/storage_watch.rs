@@ -2,10 +2,10 @@
 //! and reported only when they change.
 //!
 //! [`WatchedStorage`] reports changes to raw keys. On top of it,
-//! `watch_entry` encodes the keys of a subxt storage address and decodes the
+//! `watch_entry_changes` encodes the keys of a subxt storage address and decodes the
 //! changed values, with the metadata of the runtime they were read under. A
 //! source that reads every key at each head turns its snapshots into changes
-//! with [`snapshot_changes`]. Such a source may skip heads that arrive during
+//! with [`changes_between_consecutive_snapshots`]. Such a source may skip heads that arrive during
 //! a read, because the next read includes their effect, so a value that
 //! changes and changes back meanwhile is never reported. A consumer that needs
 //! every transition reads events instead.
@@ -25,8 +25,8 @@ mod watched_storage;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 
-pub use codec::EntryName;
-pub use diff::{StorageSnapshot, snapshot_changes};
+pub use codec::StorageEntryName;
+pub use diff::{StorageSnapshot, changes_between_consecutive_snapshots, hash_of_storage_value};
 pub use watched_storage::{DecodableAtBlock, RawStorageChanges, WatchedStorage};
 
 /// Which heads a watch reads at.
@@ -41,7 +41,7 @@ pub enum WatchedHead {
 
 /// Values of watched entries that changed, as of one block.
 #[derive(Debug, PartialEq, Eq)]
-pub struct EntryChanges<K, V> {
+pub struct DecodedEntryChanges<K, V> {
 	/// Block the values were read at.
 	pub at: HashAndNumber,
 	/// Each watched key whose value changed, with its new value. `None` means
@@ -59,7 +59,7 @@ pub enum StorageWatchError {
 	#[error("{entry} does not match the runtime metadata: {reason}")]
 	Incompatible {
 		/// The watched entry.
-		entry: EntryName,
+		entry: StorageEntryName,
 		/// What differs.
 		reason: String,
 	},
@@ -67,7 +67,7 @@ pub enum StorageWatchError {
 	#[error("key {index} of {entry} did not encode: {reason}")]
 	KeyEncoding {
 		/// The watched entry.
-		entry: EntryName,
+		entry: StorageEntryName,
 		/// Position of the key among the watched keys.
 		index: usize,
 		/// Why encoding failed.
@@ -77,7 +77,7 @@ pub enum StorageWatchError {
 	#[error("{entry} at block {} ({:?}) did not decode: {reason}", at.number, at.hash)]
 	Decode {
 		/// The watched entry.
-		entry: EntryName,
+		entry: StorageEntryName,
 		/// Block the value was read at.
 		at: HashAndNumber,
 		/// Why decoding failed.
@@ -86,7 +86,8 @@ pub enum StorageWatchError {
 }
 
 /// Changes to a watched entry, item by item.
-type EntryChangeStream<K, V> = BoxStream<'static, Result<EntryChanges<K, V>, StorageWatchError>>;
+type DecodedEntryChangeStream<K, V> =
+	BoxStream<'static, Result<DecodedEntryChanges<K, V>, StorageWatchError>>;
 
 impl dyn WatchedStorage {
 	/// Watches `keys` of the entry `address` names on `genesis`, at `head`.
@@ -94,57 +95,59 @@ impl dyn WatchedStorage {
 	/// value changed. A failed read is an `Err` item, and later heads are
 	/// still read. Keys are encoded once, with the metadata current when the
 	/// watch starts.
-	pub async fn watch_entry<A>(
+	pub async fn watch_entry_changes<A>(
 		self: Arc<Self>,
 		genesis: H256,
 		head: WatchedHead,
 		address: A,
 		keys: Vec<A::KeyParts>,
-	) -> Result<EntryChangeStream<A::KeyParts, A::Value>, StorageWatchError>
+	) -> Result<DecodedEntryChangeStream<A::KeyParts, A::Value>, StorageWatchError>
 	where
 		A: Address + Send + 'static,
 		A::KeyParts: Clone + Send + 'static,
 		A::Value: Send + 'static,
 	{
-		let metadata = self.current_metadata(genesis).await?;
-		let encoded = codec::encode_keys(&address, &keys, &metadata)?;
-		let changes = self.changes(genesis, head, encoded).await?;
-		let decoder = EntryDecoder { address, keys };
-		Ok(changes.map(move |raw| decoder.decode(raw?)).boxed())
+		let metadata = self.metadata_at_finalized_head(genesis).await?;
+		let encoded = codec::encode_full_storage_keys(&address, &keys, &metadata)?;
+		let changes = self.watch_raw_key_changes(genesis, head, encoded).await?;
+		let decoder = EntryChangesDecoder { address, keys };
+		Ok(changes.map(move |raw| decoder.decode_raw_changes(raw?)).boxed())
 	}
 }
 
 /// Turns raw changes of one entry back into the caller's keys and values.
-struct EntryDecoder<A: Address> {
+struct EntryChangesDecoder<A: Address> {
 	address: A,
 	keys: Vec<A::KeyParts>,
 }
 
-impl<A> EntryDecoder<A>
+impl<A> EntryChangesDecoder<A>
 where
 	A: Address,
 	A::KeyParts: Clone,
 {
-	fn decode(
+	fn decode_raw_changes(
 		&self,
 		raw: RawStorageChanges,
-	) -> Result<EntryChanges<A::KeyParts, A::Value>, StorageWatchError> {
+	) -> Result<DecodedEntryChanges<A::KeyParts, A::Value>, StorageWatchError> {
 		let DecodableAtBlock { at, metadata, value: changed } = raw;
 		let changed = changed
 			.into_iter()
-			.map(|(index, bytes)| self.decode_change(index, bytes, &metadata, at))
+			.map(|(index, bytes)| {
+				self.decode_changed_value_with_its_key(index, bytes, &metadata, at)
+			})
 			.collect::<Result<_, _>>()?;
-		Ok(EntryChanges { at, changed })
+		Ok(DecodedEntryChanges { at, changed })
 	}
 
-	fn decode_change(
+	fn decode_changed_value_with_its_key(
 		&self,
 		index: usize,
 		bytes: Option<Vec<u8>>,
 		metadata: &Metadata,
 		at: HashAndNumber,
 	) -> Result<(A::KeyParts, Option<A::Value>), StorageWatchError> {
-		let value = codec::decode_value(&self.address, bytes.as_deref(), metadata, at)?;
+		let value = codec::decode_value_or_default(&self.address, bytes.as_deref(), metadata, at)?;
 		Ok((self.keys[index].clone(), value))
 	}
 }

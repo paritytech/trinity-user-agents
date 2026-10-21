@@ -27,16 +27,16 @@ use super::finalized_block;
 use crate::{
 	chain::{
 		ChainHeads, HashAndNumber, HeadEvent, RawStorageChanges, WatchedHead, WatchedStorage,
-		storage_watch::snapshot_changes,
+		storage_watch::changes_between_consecutive_snapshots,
 	},
 	chain_runtime::{ChainRuntime, RuntimeFailure},
 };
 
 mod reader;
 
-use reader::StorageReader;
+use reader::WatchedKeysReader;
 
-const CURRENT_METADATA: &str = "storage_current_metadata";
+const METADATA_AT_FINALIZED_HEAD: &str = "storage_metadata_at_finalized_head";
 const STORAGE_WATCH: &str = "storage_watch";
 
 /// How long to wait before opening a subscription again after opening it
@@ -46,27 +46,32 @@ const RESUBSCRIBE_DELAY: Duration = Duration::from_secs(1);
 /// Most heads collected while one read runs. Only the newest is read.
 const MAX_SKIPPED_HEADS: usize = 64;
 
-type Changes = BoxStream<'static, Result<RawStorageChanges, RuntimeFailure>>;
+type RawChangeStream = BoxStream<'static, Result<RawStorageChanges, RuntimeFailure>>;
 
 #[async_trait::async_trait]
 impl WatchedStorage for ChainRuntime {
-	async fn current_metadata(&self, genesis: H256) -> Result<ArcMetadata, RuntimeFailure> {
+	async fn metadata_at_finalized_head(
+		&self,
+		genesis: H256,
+	) -> Result<ArcMetadata, RuntimeFailure> {
 		let legacy = self.legacy(genesis).await?;
-		let finalized = finalized_block(&legacy, CURRENT_METADATA).await?;
-		reader::metadata_at(&legacy, finalized, CURRENT_METADATA).await
+		let finalized = finalized_block(&legacy, METADATA_AT_FINALIZED_HEAD).await?;
+		reader::fetch_metadata_at_block(&legacy, finalized, METADATA_AT_FINALIZED_HEAD).await
 	}
 
-	async fn changes(
+	async fn watch_raw_key_changes(
 		&self,
 		genesis: H256,
 		head: WatchedHead,
 		keys: Vec<Vec<u8>>,
-	) -> Result<Changes, RuntimeFailure> {
+	) -> Result<RawChangeStream, RuntimeFailure> {
 		let legacy = self.legacy(genesis).await?;
-		let reader = Arc::new(StorageReader::new(legacy, keys));
+		let reader = Arc::new(WatchedKeysReader::new(legacy, keys));
 		match head {
-			WatchedHead::Best => subscribed_changes(reader).await,
-			WatchedHead::Finalized => self.queried_changes(genesis, reader).await,
+			WatchedHead::Best => best_changes_from_storage_subscription(reader).await,
+			WatchedHead::Finalized => {
+				self.finalized_changes_by_querying_each_head(genesis, reader).await
+			},
 		}
 	}
 }
@@ -75,33 +80,35 @@ impl ChainRuntime {
 	/// Changes between the snapshots read at each finalized head. The head
 	/// subscription is opened here, so a chain that cannot be reached fails
 	/// the call.
-	async fn queried_changes(
+	async fn finalized_changes_by_querying_each_head(
 		&self,
 		genesis: H256,
-		reader: Arc<StorageReader>,
-	) -> Result<Changes, RuntimeFailure> {
+		reader: Arc<WatchedKeysReader>,
+	) -> Result<RawChangeStream, RuntimeFailure> {
 		let chain = self.clone();
 		let open_head_events = move || {
 			let chain = chain.clone();
 			async move { chain.head_events(genesis).await }
 		};
-		let events = reopening(open_head_events).await?;
-		let blocks = events.try_filter_map(|event| ready(Ok(finalized(event))));
-		let newest = newest_only(blocks.boxed());
-		let snapshots = newest.and_then(move |at| reader.clone().read_at(at));
-		Ok(snapshot_changes(snapshots.boxed()))
+		let events = open_and_reopen_when_ended(open_head_events).await?;
+		let blocks = events.try_filter_map(|event| ready(Ok(block_if_finalized(event))));
+		let newest = keep_newest_of_waiting_items(blocks.boxed());
+		let snapshots = newest.and_then(move |at| reader.clone().read_snapshot_at(at));
+		Ok(changes_between_consecutive_snapshots(snapshots.boxed()))
 	}
 }
 
 /// The notifications of the storage subscription, as changes. It is opened
 /// here, so a chain that cannot be reached fails the call.
-async fn subscribed_changes(reader: Arc<StorageReader>) -> Result<Changes, RuntimeFailure> {
-	let open_subscription = move || reader.clone().subscribe();
-	reopening(open_subscription).await
+async fn best_changes_from_storage_subscription(
+	reader: Arc<WatchedKeysReader>,
+) -> Result<RawChangeStream, RuntimeFailure> {
+	let open_subscription = move || reader.clone().subscribe_to_changes();
+	open_and_reopen_when_ended(open_subscription).await
 }
 
 /// The block `event` announces when it is finalized.
-fn finalized(event: HeadEvent) -> Option<HashAndNumber> {
+fn block_if_finalized(event: HeadEvent) -> Option<HashAndNumber> {
 	match event {
 		HeadEvent::Finalized(block) => Some(block),
 		HeadEvent::Best(_) => None,
@@ -111,7 +118,7 @@ fn finalized(event: HeadEvent) -> Option<HashAndNumber> {
 /// The stream `open` gives, then the one it gives again each time the one
 /// before ends. A failure to open the first one fails the call; a later one
 /// is reported as an item after [`RESUBSCRIBE_DELAY`].
-async fn reopening<T, Open, Opening>(
+async fn open_and_reopen_when_ended<T, Open, Opening>(
 	open: Open,
 ) -> Result<BoxStream<'static, Result<T, RuntimeFailure>>, RuntimeFailure>
 where
@@ -123,7 +130,7 @@ where
 {
 	let first = open().await?;
 	let reopened = stream::unfold(open, |open| async move {
-		let items = reopened_items(open()).await;
+		let items = reopened_stream_or_delayed_failure(open()).await;
 		Some((items, open))
 	});
 	Ok(first.chain(reopened.flatten()).boxed())
@@ -131,7 +138,7 @@ where
 
 /// What `opening` opens, or after waiting [`RESUBSCRIBE_DELAY`] the failure
 /// to open it.
-async fn reopened_items<T: Send + 'static>(
+async fn reopened_stream_or_delayed_failure<T: Send + 'static>(
 	opening: impl Future<Output = Result<BoxStream<'static, Result<T, RuntimeFailure>>, RuntimeFailure>>,
 ) -> BoxStream<'static, Result<T, RuntimeFailure>> {
 	match opening.await {
@@ -145,7 +152,9 @@ async fn reopened_items<T: Send + 'static>(
 
 /// `items`, except that items already waiting when the next one is asked for
 /// collapse into the newest of them.
-fn newest_only<T: Send + 'static>(items: BoxStream<'static, T>) -> BoxStream<'static, T> {
+fn keep_newest_of_waiting_items<T: Send + 'static>(
+	items: BoxStream<'static, T>,
+) -> BoxStream<'static, T> {
 	items
 		.ready_chunks(MAX_SKIPPED_HEADS)
 		.filter_map(|waiting| ready(waiting.into_iter().last()))
@@ -153,7 +162,7 @@ fn newest_only<T: Send + 'static>(items: BoxStream<'static, T>) -> BoxStream<'st
 }
 
 /// The value the node gave for each key it answered, `None` when absent.
-fn answered_by_key(
+fn group_values_by_key(
 	change_sets: impl IntoIterator<Item = StorageChangeSet<H256>>,
 ) -> HashMap<Vec<u8>, Option<Vec<u8>>> {
 	change_sets
@@ -165,15 +174,15 @@ fn answered_by_key(
 
 /// The answer for each of `keys`. A key the node left out is an error, so
 /// that it is never mistaken for an absent entry.
-fn answered_values(
+fn all_keys_answered_or_err(
 	keys: &[Vec<u8>],
 	answered: &HashMap<Vec<u8>, Option<Vec<u8>>>,
 	at: H256,
 ) -> Result<Vec<Option<Vec<u8>>>, RuntimeFailure> {
-	keys.iter().map(|key| answered_value(answered, key, at)).collect()
+	keys.iter().map(|key| key_answered_or_err(answered, key, at)).collect()
 }
 
-fn answered_value(
+fn key_answered_or_err(
 	answered: &HashMap<Vec<u8>, Option<Vec<u8>>>,
 	key: &[u8],
 	at: H256,
@@ -191,7 +200,7 @@ fn answered_value(
 mod tests {
 	use futures::{StreamExt, executor::block_on, stream};
 
-	use super::newest_only;
+	use super::keep_newest_of_waiting_items;
 
 	#[test]
 	fn heads_waiting_together_collapse_into_the_newest() {
@@ -199,7 +208,7 @@ mod tests {
 		// another: whatever queued up meanwhile is read once, at its newest.
 		let waiting = stream::iter([1, 2, 3]).boxed();
 
-		let read: Vec<u32> = block_on(newest_only(waiting).collect());
+		let read: Vec<u32> = block_on(keep_newest_of_waiting_items(waiting).collect());
 
 		assert_eq!(read, vec![3]);
 	}

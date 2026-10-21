@@ -158,7 +158,7 @@ pub struct LegacyConnection {
 	pub methods: LegacyRpcMethods<RpcConfigFor<SubstrateConfig>>,
 	/// Raw JSON-RPC client, for legacy subscriptions neither of the above
 	/// offers, such as `state_subscribeStorage`.
-	pub rpc: RpcClient,
+	pub raw_rpc_client: RpcClient,
 }
 
 /// Classification of framework-level chain failures separate from JSON-RPC
@@ -1282,7 +1282,7 @@ impl ChainConnection {
 			.await
 			.map_err(|error| RuntimeFailure::host_failure(LEGACY_CONNECTION, error.to_string()))?;
 		let methods = LegacyRpcMethods::new(rpc.clone());
-		let built = LegacyConnection { client, backend, methods, rpc };
+		let built = LegacyConnection { client, backend, methods, raw_rpc_client: rpc };
 		Ok(self.legacy_connection.lock().unwrap().get_or_insert(built).clone())
 	}
 

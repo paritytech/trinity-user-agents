@@ -107,18 +107,18 @@ impl Node {
 	/// `state_queryStorageAt`: one change set at the requested block.
 	fn query_storage_at(&self, params: &Value) -> Value {
 		let at = parse_hash(&params[1]).unwrap();
-		json!([self.change_set(&params[0], at)])
+		json!([self.change_set_of_keys_at(&params[0], at)])
 	}
 
 	/// The first `state_subscribeStorage` notification, at the best block.
 	fn initial_storage_notification(&self, params: &Value) -> String {
 		let best = self.block(self.best).hash;
-		storage_notification(self.change_set(&params[0], best))
+		storage_notification(self.change_set_of_keys_at(&params[0], best))
 	}
 
 	/// A change set holding every one of `keys` the node answers for at `at`,
 	/// with `null` for the absent ones.
-	fn change_set(&self, keys: &Value, at: H256) -> Value {
+	fn change_set_of_keys_at(&self, keys: &Value, at: H256) -> Value {
 		let stored = self.storage.get(&at);
 		let changes: Vec<Value> = keys
 			.as_array()

@@ -20,21 +20,21 @@ use crate::chain::HashAndNumber;
 /// A storage entry by pallet and entry name, shown as `Pallet.Entry`.
 #[derive(Clone, Debug, PartialEq, Eq, Display)]
 #[display("{pallet}.{entry}")]
-pub struct EntryName {
+pub struct StorageEntryName {
 	/// Pallet that declares the entry.
 	pub pallet: String,
 	/// Name of the entry within the pallet.
 	pub entry: String,
 }
 
-impl EntryName {
-	fn of(address: &impl Address) -> Self {
+impl StorageEntryName {
+	fn of_address(address: &impl Address) -> Self {
 		Self { pallet: address.pallet_name().to_owned(), entry: address.entry_name().to_owned() }
 	}
 }
 
 /// The full storage key of each of `keys`, under `address`.
-pub fn encode_keys<A>(
+pub fn encode_full_storage_keys<A>(
 	address: &A,
 	keys: &[A::KeyParts],
 	metadata: &Metadata,
@@ -43,40 +43,42 @@ where
 	A: Address,
 	A::KeyParts: Clone,
 {
-	let info = entry_info(address, metadata)?;
+	let info = storage_entry_type_info(address, metadata)?;
 	keys.iter()
 		.enumerate()
-		.map(|(index, parts)| encode_key(address, index, parts.clone(), &info, metadata))
+		.map(|(index, parts)| {
+			encode_full_storage_key(address, index, parts.clone(), &info, metadata)
+		})
 		.collect()
 }
 
 /// `bytes` decoded as the value of `address`, or its default when absent.
 /// `None` when the entry is absent and has no default.
-pub fn decode_value<A: Address>(
+pub fn decode_value_or_default<A: Address>(
 	address: &A,
 	bytes: Option<&[u8]>,
 	metadata: &Metadata,
 	at: HashAndNumber,
 ) -> Result<Option<A::Value>, StorageWatchError> {
-	let info = entry_info(address, metadata)?;
+	let info = storage_entry_type_info(address, metadata)?;
 	let Some(bytes) = bytes.or(info.default_value.as_deref()) else { return Ok(None) };
-	let decoded = decode_bytes(address, bytes, &info, metadata, at)?;
+	let decoded = decode_value_rejecting_leftover_bytes(address, bytes, &info, metadata, at)?;
 	Ok(Some(decoded))
 }
 
-fn entry_info<'metadata>(
+fn storage_entry_type_info<'metadata>(
 	address: &impl Address,
 	metadata: &'metadata Metadata,
 ) -> Result<StorageInfo<'metadata, u32>, StorageWatchError> {
 	metadata
 		.storage_info(address.pallet_name(), address.entry_name())
 		.map_err(|error| StorageWatchError::Incompatible {
-			entry: EntryName::of(address),
+			entry: StorageEntryName::of_address(address),
 			reason: error.to_string(),
 		})
 }
 
-fn encode_key<A: Address>(
+fn encode_full_storage_key<A: Address>(
 	address: &A,
 	index: usize,
 	parts: A::KeyParts,
@@ -84,7 +86,7 @@ fn encode_key<A: Address>(
 	metadata: &Metadata,
 ) -> Result<Vec<u8>, StorageWatchError> {
 	let key_error = |reason: String| StorageWatchError::KeyEncoding {
-		entry: EntryName::of(address),
+		entry: StorageEntryName::of_address(address),
 		index,
 		reason,
 	};
@@ -97,15 +99,18 @@ fn encode_key<A: Address>(
 		.map_err(|error| key_error(error.to_string()))
 }
 
-fn decode_bytes<A: Address>(
+fn decode_value_rejecting_leftover_bytes<A: Address>(
 	address: &A,
 	bytes: &[u8],
 	info: &StorageInfo<'_, u32>,
 	metadata: &Metadata,
 	at: HashAndNumber,
 ) -> Result<A::Value, StorageWatchError> {
-	let decode_error =
-		|reason: String| StorageWatchError::Decode { entry: EntryName::of(address), at, reason };
+	let decode_error = |reason: String| StorageWatchError::Decode {
+		entry: StorageEntryName::of_address(address),
+		at,
+		reason,
+	};
 	let cursor = &mut &*bytes;
 	let visitor = A::Value::into_visitor();
 	let value = decode_storage_value_with_info(cursor, info, metadata.types(), visitor)

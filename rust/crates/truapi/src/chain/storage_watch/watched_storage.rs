@@ -21,7 +21,7 @@ pub struct DecodableAtBlock<T> {
 
 impl<T> DecodableAtBlock<T> {
 	/// `f` of the value, at the same block and under the same metadata.
-	pub fn map<U>(self, f: impl FnOnce(T) -> U) -> DecodableAtBlock<U> {
+	pub fn map_value<U>(self, f: impl FnOnce(T) -> U) -> DecodableAtBlock<U> {
 		DecodableAtBlock { at: self.at, metadata: self.metadata, value: f(self.value) }
 	}
 }
@@ -35,12 +35,15 @@ pub type RawStorageChanges = DecodableAtBlock<Vec<(usize, Option<Vec<u8>>)>>;
 pub trait WatchedStorage: Send + Sync {
 	/// Metadata of the runtime at the current finalized head, for encoding
 	/// keys before a watch starts.
-	async fn current_metadata(&self, genesis: H256) -> Result<ArcMetadata, RuntimeFailure>;
+	async fn metadata_at_finalized_head(
+		&self,
+		genesis: H256,
+	) -> Result<ArcMetadata, RuntimeFailure>;
 
 	/// Changes to `keys` at `head`. The first item holds every key; each later
 	/// one holds the keys whose value changed since the item before. A failed
 	/// read is an `Err` item, never an absent value, and the watch goes on.
-	async fn changes(
+	async fn watch_raw_key_changes(
 		&self,
 		genesis: H256,
 		head: WatchedHead,

@@ -31,8 +31,8 @@ pub use block_backend::{BlockBackend, DispatchOutcome};
 pub use heads::{ChainHeads, HeadEvent, Heads};
 pub use mortality::{MortalExtrinsic, Mortality, MortalityError};
 pub use storage_watch::{
-	DecodableAtBlock, EntryChanges, EntryName, RawStorageChanges, StorageWatchError, WatchedHead,
-	WatchedStorage,
+	DecodableAtBlock, DecodedEntryChanges, RawStorageChanges, StorageEntryName, StorageWatchError,
+	WatchedHead, WatchedStorage,
 };
 pub use tx_submitter::{TxSubmitter, WatchEvent};
 pub use tx_validator::TxValidator;
