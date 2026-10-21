@@ -13,7 +13,6 @@ import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.eq
 import io.paritytech.polkadotapp.test_shared.whenever
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -105,6 +104,8 @@ class TrUAPIBootstrapInstallerTest {
             hostSessionId = "123e4567-e89b-12d3-a456-426614174000",
             hostVersion = "0.24.0",
             osVersion = "16",
+            flavor = "gp",
+            buildType = "nightly",
         )
 
         assertTrue(script.contains("try {"))
@@ -113,7 +114,7 @@ class TrUAPIBootstrapInstallerTest {
         assertTrue(script.contains("value: Object.freeze({\"hostSessionId\":\"123e4567-e89b-12d3-a456-426614174000\""))
         assertTrue(script.contains("\"appVersion\":\"1.2.3\""))
         assertTrue(script.contains("\"appBuild\":\"456\""))
-        assertTrue(script.contains("\"appVariant\":\"nightly\""))
+        assertTrue(script.contains("\"appVariant\":\"gpNightly\""))
         assertTrue(script.contains("\"platform\":\"android\""))
         assertTrue(script.contains("\"osVersion\":\"16\""))
         assertTrue(script.contains("\"truapiHostVersion\":\"0.24.0\""))
@@ -121,14 +122,6 @@ class TrUAPIBootstrapInstallerTest {
         assertTrue(script.contains("writable: false"))
         assertTrue(script.contains("configurable: false"))
         assertTrue(script.endsWith("} catch {}"))
-    }
-
-    @Test
-    fun `host telemetry is limited to internal app variants`() {
-        assertTrue(shouldInstallHostTelemetry("io.paritytech.polkadotapp.nightly"))
-        assertTrue(shouldInstallHostTelemetry("io.paritytech.polkadotapp.safetynet"))
-        assertTrue(shouldInstallHostTelemetry("io.paritytech.polkadotapp.debug"))
-        assertFalse(shouldInstallHostTelemetry("io.paritytech.polkadotapp"))
     }
 
     @Test

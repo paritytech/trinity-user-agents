@@ -20,14 +20,14 @@ class HostWebViewCreatedTelemetryTest {
     fun reportsTheBootstrapSessionId() {
         var captured: SentryEvent? = null
         val reporter = HostWebViewCreatedTelemetry.createForTest(
-            packageName = "com.example.nightly",
+            enabled = { true },
             metadata = { metadata },
             capture = { captured = it },
         )
 
         reporter.report("bootstrap-session-42")
 
-        assertEquals("bootstrap-session-42", captured?.getTag("host.session_id"))
+        assertEquals("bootstrap-session-42", captured?.getExtra("host.session_id"))
     }
 
     @Test
@@ -35,7 +35,7 @@ class HostWebViewCreatedTelemetryTest {
         var metadataRead = false
         var captured = false
         val reporter = HostWebViewCreatedTelemetry.createForTest(
-            packageName = "com.example",
+            enabled = { false },
             metadata = { metadataRead = true; metadata },
             capture = { captured = true },
         )
@@ -50,7 +50,7 @@ class HostWebViewCreatedTelemetryTest {
     fun eventBuildAndMonotonicTimeRemainNumeric() {
         var captured: SentryEvent? = null
         val reporter = HostWebViewCreatedTelemetry.createForTest(
-            packageName = "com.example.debug",
+            enabled = { true },
             metadata = { metadata },
             capture = { captured = it },
         )
@@ -67,7 +67,7 @@ class HostWebViewCreatedTelemetryTest {
     @Test
     fun captureFailureDoesNotEscape() {
         val reporter = HostWebViewCreatedTelemetry.createForTest(
-            packageName = "com.example.safetynet",
+            enabled = { true },
             metadata = { metadata },
             capture = { error("Sentry unavailable") },
         )
@@ -81,5 +81,11 @@ class HostWebViewCreatedTelemetryTest {
             HostWebViewCreatedTelemetry.newSessionId(),
             HostWebViewCreatedTelemetry.newSessionId(),
         )
+    }
+
+    @Test
+    fun `app variant identifies the distribution flavor and build type`() {
+        assertEquals("gpNightly", HostWebViewCreatedTelemetry.appVariant(flavor = "gp", buildType = "nightly"))
+        assertEquals("vanillaNightly", HostWebViewCreatedTelemetry.appVariant(flavor = "vanilla", buildType = "nightly"))
     }
 }

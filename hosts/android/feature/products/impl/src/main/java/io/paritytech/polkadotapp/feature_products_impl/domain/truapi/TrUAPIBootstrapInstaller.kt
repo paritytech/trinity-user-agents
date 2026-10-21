@@ -6,12 +6,16 @@ import android.webkit.WebView
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.parity.truapi.BuildConfig as TrUAPIBuildConfig
 import io.parity.truapi.ContainerScriptBundle
+import io.paritytech.polkadotapp.feature_products_impl.BuildConfig
+import io.paritytech.polkadotapp.common.utils.FeatureOption
+import io.paritytech.polkadotapp.common.utils.isEnabled
+import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductWebChromeClient
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
-import timber.log.Timber
-import uniffi.truapi.truapiHostVersion
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import javax.inject.Inject
 
 /**
@@ -26,9 +30,9 @@ class TrUAPIBootstrapInstaller @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) {
     fun installerFor(origins: Set<String>, hostSessionId: String? = null): (bootstrap: String) -> (WebView) -> Unit {
-        val telemetryScript = if (hostSessionId != null && shouldInstallHostTelemetry(context.packageName)) {
+        val telemetryScript = if (hostSessionId != null && FeatureOption.HOST_TELEMETRY.isEnabled) {
             runCatching { hostTelemetryScript(context, hostSessionId) }
-                .onFailure { error -> Timber.w(error, "Native host telemetry unavailable") }
+                .logFailure("Native host telemetry unavailable")
                 .getOrNull()
         } else {
             null
@@ -61,27 +65,25 @@ class TrUAPIBootstrapInstaller @Inject constructor(
 internal fun hostTelemetryScript(
     context: Context,
     hostSessionId: String,
-    hostVersion: String = truapiHostVersion(),
+    hostVersion: String = TrUAPIBuildConfig.TRUAPI_HOST_VERSION,
     osVersion: String = Build.VERSION.RELEASE,
+    flavor: String = BuildConfig.FLAVOR,
+    buildType: String = BuildConfig.BUILD_TYPE,
 ): String {
     val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-    val packageName = context.packageName
-    val appVariant = when {
-        packageName.endsWith(".nightly") -> "nightly"
-        packageName.endsWith(".safetynet") -> "safetynet"
-        packageName.endsWith(".debug") -> "debug"
-        else -> "release"
-    }
-    val telemetry = buildJsonObject {
-        put("hostSessionId", hostSessionId)
-        packageInfo.versionName?.takeIf(String::isNotBlank)?.let { put("appVersion", it) }
-        put("appBuild", packageInfo.longVersionCode.toString())
-        put("appVariant", appVariant)
-        put("platform", "android")
-        osVersion.takeIf(String::isNotBlank)?.let { put("osVersion", it) }
-        hostVersion.takeIf(String::isNotBlank)?.let { put("truapiHostVersion", it) }
-        put("schemaVersion", "1")
-    }
+    val appVariant = HostWebViewCreatedTelemetry.appVariant(flavor, buildType)
+    val telemetry = hostTelemetryJson.encodeToString(
+        HostTelemetryBootstrap(
+            hostSessionId = hostSessionId,
+            appVersion = packageInfo.versionName?.takeIf(String::isNotBlank),
+            appBuild = packageInfo.longVersionCode.toString(),
+            appVariant = appVariant,
+            platform = "android",
+            osVersion = osVersion.takeIf(String::isNotBlank),
+            truapiHostVersion = hostVersion.takeIf(String::isNotBlank),
+            schemaVersion = "1",
+        ),
+    )
 
     return """
         try {
@@ -96,5 +98,16 @@ internal fun hostTelemetryScript(
     """.trimIndent()
 }
 
-internal fun shouldInstallHostTelemetry(packageName: String): Boolean =
-    listOf(".nightly", ".safetynet", ".debug").any(packageName::endsWith)
+private val hostTelemetryJson = Json { explicitNulls = false }
+
+@Serializable
+private data class HostTelemetryBootstrap(
+    val hostSessionId: String,
+    val appVersion: String?,
+    val appBuild: String,
+    val appVariant: String,
+    val platform: String,
+    val osVersion: String?,
+    val truapiHostVersion: String?,
+    val schemaVersion: String,
+)
