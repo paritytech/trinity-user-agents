@@ -2,6 +2,7 @@ import Foundation
 import FoundationExt
 import Operation_iOS
 import Products
+import StructuredConcurrency
 
 /// Rust-runtime SPA interactor: creates the runtime via the factory, attaches
 /// the presentation view, and forwards the start URL to the presenter. All
@@ -27,6 +28,7 @@ final class SPARustRuntimeInteractor {
     private var openChatTask: Task<Void, Never>?
     private var reloadTask: Task<Void, Never>?
     private var newBuildCheckTask: Task<Void, Never>?
+    private let newBuildCheck = CoalescingTask<Bool>()
     private var foregroundTask: Task<Void, Never>?
 
     init(
@@ -94,16 +96,16 @@ extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
     }
 
     func checkForNewBuild() {
-        guard newBuildCheckTask == nil else { return }
+        newBuildCheckTask?.cancel()
 
-        newBuildCheckTask = Task { [weak self] in
-            defer { self?.newBuildCheckTask = nil }
-
+        newBuildCheckTask = Task { [weak self, newBuildCheck, runtime] in
             do {
-                let hasNewBuild = try await self?.runtime?.hasNewBuild() ?? false
+                let hasNewBuild = try await newBuildCheck.run { try await runtime?.hasNewBuild() ?? false }
                 guard hasNewBuild, let self, !Task.isCancelled else { return }
 
                 presenter?.didFindNewBuild(productName: resolvedProduct?.displayName ?? configuration.page.host.name)
+            } catch is CancellationError {
+                // Superseded by a newer check: the replacement reports.
             } catch {
                 self?.logger.error("SPA(rust): Failed to check for a new build: \(error)")
             }

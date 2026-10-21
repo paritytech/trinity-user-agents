@@ -43,6 +43,7 @@ struct SPAPresenterNewBuildTests {
         screen.presenter.didBecomeVisible()
         await waitUntil { runtime.newBuildRequestCount == 1 }
         screen.presenter.didBecomeVisible()
+        await settle()
         release.finish()
         await waitUntil { screen.wireframe.presentedAlerts.count == 1 }
 
