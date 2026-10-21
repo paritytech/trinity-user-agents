@@ -9,6 +9,7 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Added
 
+- build scheduled durable transactions through submission policies (#1470)
 - fork endpoint overrides and an attest command for e2e suites (#1454)
 - let trusted products sign watermarked bytes with the user's account without a prompt (#1548)
 - serve top-ups, payments and balance to the core (#1337)

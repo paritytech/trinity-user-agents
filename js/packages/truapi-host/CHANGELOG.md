@@ -31,6 +31,12 @@
   applies to payload, watermarked raw, transaction and statement proof signatures. If the user declines, the next
   signature asks again. Transactions that name contacts and unwatermarked raw bytes still ask every time. Only one of
   these prompts is open at a time, and a signature the user already approved does not wait for it.
+- 7bf5a3e: Durable transactions can be scheduled before they are signed. A domain registers a `SubmissionPolicy`; a
+  scheduled transaction waits in the ledger until the core's submission executor asks that policy to build it, then is
+  broadcast and followed like a presigned one. A presigned transaction may name a policy too. When a transaction with a
+  policy is proven failed, the policy decides whether it is built again instead of failing. `durable_work_changed(true)`
+  also covers transactions waiting to be built, so the host keeps recovery running until they are. No domain schedules
+  transactions yet.
 - 28fa81c: A wallet-local session reads its usernames from the dotNS contracts on Asset Hub, the same lookup a paired
   session uses. Activation does not wait for it: the session starts under the lite username the host passes, if any, and
   when the dotNS record holds a name, the record's lite and full usernames replace it and the core reports them through
@@ -110,6 +116,7 @@
 - Updated dependencies [073b4f2]
 - Updated dependencies [8b58680]
 - Updated dependencies [28fa81c]
+- Updated dependencies [7bf5a3e]
 - Updated dependencies [eb035fe]
 - Updated dependencies [eb035fe]
 - Updated dependencies [eb035fe]

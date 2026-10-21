@@ -49,6 +49,12 @@
   applies to payload, watermarked raw, transaction and statement proof signatures. If the user declines, the next
   signature asks again. Transactions that name contacts and unwatermarked raw bytes still ask every time. Only one of
   these prompts is open at a time, and a signature the user already approved does not wait for it.
+- 7bf5a3e: Durable transactions can be scheduled before they are signed. A domain registers a `SubmissionPolicy`; a
+  scheduled transaction waits in the ledger until the core's submission executor asks that policy to build it, then is
+  broadcast and followed like a presigned one. A presigned transaction may name a policy too. When a transaction with a
+  policy is proven failed, the policy decides whether it is built again instead of failing. `durable_work_changed(true)`
+  also covers transactions waiting to be built, so the host keeps recovery running until they are. No domain schedules
+  transactions yet.
 - eb035fe: Add `Funding` (trait 22): `request({ id, direction, amount? })` opens a session under a caller-chosen id and
   shows the host's funding overlay, and `statusSubscribe({ id })` lets the product that opened it watch it to
   completion, also after a reload. Rust embedders install `FundingPlatform` with `set_funding_platform` and open
