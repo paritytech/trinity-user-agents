@@ -20,18 +20,16 @@ struct PocketCardSurfaceTests {
         let surface = PocketCardSurface()
         let neverShown = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
-        let presenter = UIViewController()
-        let window = try showing(presenter)
+        let (navigation, window) = try walletStack()
 
         #expect(surface.setFaceShown(false) == .notPresented)
         surface.claim(neverShown)
         #expect(surface.setFaceShown(false) == .notPresented)
 
-        let (presented, finishPresenting) = AsyncStream<Void>.makeStream()
-        presenter.present(cardNavigation(screen), animated: true) { finishPresenting.finish() }
+        navigation.pushViewController(screen, animated: true)
         surface.claim(screen)
         #expect(surface.setFaceShown(false) == .applied)
-        for await _ in presented {}
+        await transitionFinished(in: navigation)
         #expect(waitUntil(on: screen) { screen.scrollView?.contentOffset.y == PocketOpenedCardView.height })
 
         surface.claim(neverShown)
@@ -41,12 +39,11 @@ struct PocketCardSurfaceTests {
         cover.modalPresentationStyle = .fullScreen
         await present(cover, from: screen)
         #expect(surface.setFaceShown(false) == .applied)
-        await closeCard(cover)
+        await dismiss(cover)
 
-        let (closed, finishClosing) = AsyncStream<Void>.makeStream()
-        screen.dismiss(animated: true) { finishClosing.finish() }
+        navigation.popViewController(animated: true)
         #expect(surface.setFaceShown(false) == .notPresented)
-        for await _ in closed {}
+        await transitionFinished(in: navigation)
         withExtendedLifetime((window, neverShown)) {}
     }
 }

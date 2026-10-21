@@ -2,6 +2,7 @@ import Products
 import SwiftUI
 import Testing
 import UIKit
+import UIKit.UIGestureRecognizerSubclass
 import UIKitExt
 @testable import polkadot_app
 
@@ -44,16 +45,16 @@ struct PocketCardScreenTests {
         let product = StubSPAView()
         let origin = FakePocketCardOrigin(slot: pocketSlot)
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, origin: flying ? origin : nil)
-        let presenter = UIViewController()
-        let window = try showing(presenter)
+        let (navigation, window) = try walletStack()
         var offsetOnArrival: CGFloat?
 
         await withCheckedContinuation { arrived in
-            presenter.present(cardNavigation(screen), animated: true) {
+            navigation.pushViewController(screen, animated: true)
+            screen.applyOpeningFace(shown: false)
+            navigation.transitionCoordinator?.animate(alongsideTransition: nil) { _ in
                 offsetOnArrival = screen.scrollView?.contentOffset.y
                 arrived.resume()
             }
-            screen.applyOpeningFace(shown: false)
         }
 
         #expect(offsetOnArrival == (flying ? 0 : faceHeight))
@@ -69,7 +70,7 @@ struct PocketCardScreenTests {
     @Test
     func foldsTheFaceWhenTheAnswerComesAfterTheCardIsShown() async throws {
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
-        let window = try await presentCard(screen)
+        let window = try await openCard(screen)
         let scrollView = try #require(screen.scrollView)
 
         screen.applyOpeningFace(shown: false)
@@ -88,7 +89,7 @@ struct PocketCardScreenTests {
     func ignoresThePublishedFaceOnceTheFaceHasMoved(by mover: FaceMover) async throws {
         let product = StubSPAView()
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: product)
-        let window = try await presentCard(screen)
+        let window = try await openCard(screen)
         let scrollView = try #require(screen.scrollView)
         switch mover {
         case .page:
@@ -208,18 +209,60 @@ struct PocketCardScreenTests {
     }
 
     /// The product is kept warm for the next tap on the same card, which only
-    /// works if closing the card let go of it. Presented as the app presents
-    /// it, inside a navigation controller.
+    /// works if closing the card let go of it. Pushed as the app pushes it,
+    /// onto the Wallet tab's stack.
     @Test
     func handsTheProductBackWhenTheCardIsClosed() async throws {
         let product = StubSPAView()
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: product)
-        let window = try await presentCard(screen)
+        let window = try await openCard(screen)
 
         await closeCard(screen)
 
         #expect(product.controller.parent == nil)
         #expect(product.controller.view.superview == nil)
+        withExtendedLifetime(window) {}
+    }
+
+    /// The tab bar stays over an open card, as on Android, so the page ends at
+    /// the bar's top edge, or the bar would cover the page's last rows.
+    @Test
+    func endsThePageAtTheTabBar() async throws {
+        let product = StubSPAView()
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product)
+        let (navigation, window) = try walletStack()
+        navigation.additionalSafeAreaInsets.bottom = tabBarClearance
+
+        await openCard(screen, on: navigation)
+        screen.view.layoutIfNeeded()
+
+        let page = product.controller.view.convert(product.controller.view.bounds, to: screen.view)
+        let barTop = screen.view.bounds.height - screen.view.safeAreaInsets.bottom
+        #expect(screen.view.safeAreaInsets.bottom >= tabBarClearance)
+        #expect(page.maxY == barTop)
+        withExtendedLifetime(window) {}
+    }
+
+    /// Android closes a card on its back gesture, playing the whole close once
+    /// the gesture ends. A swipe from the leading edge does the same here, and
+    /// the stack's own swipes stay off while the card is up so that one swipe
+    /// closes it once.
+    @Test
+    func closesOnASwipeFromTheLeadingEdge() async throws {
+        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
+        let (navigation, window) = try walletStack()
+        await openCard(screen, on: navigation)
+        let swipe = try #require(screen.view.gestureRecognizers?.compactMap { $0 as? UIScreenEdgePanGestureRecognizer }
+            .first)
+        let systemSwipeWhileOpen = navigation.interactivePopGestureRecognizer?.isEnabled
+
+        swipe.state = .began
+        swipe.state = .ended
+        let closed = await eventually { navigation.viewControllers.count == 1 }
+
+        #expect(swipe.edges == .left)
+        #expect([systemSwipeWhileOpen, navigation.interactivePopGestureRecognizer?.isEnabled] == [false, true])
+        #expect(closed)
         withExtendedLifetime(window) {}
     }
 
@@ -241,6 +284,8 @@ struct PocketCardScreenTests {
 private let faceHeight = PocketOpenedCardView.height
 
 private let screenSize = CGSize(width: 393, height: 800)
+
+private let tabBarClearance: CGFloat = 80
 
 @MainActor
 private func laidOutScreen(product: SPAViewProtocol) -> PocketCardScreenViewController {

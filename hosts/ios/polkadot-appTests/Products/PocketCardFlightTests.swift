@@ -19,7 +19,7 @@ struct PocketCardFlightTests {
         let origin = FakePocketCardOrigin(slot: pocketSlot)
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), origin: origin)
 
-        let window = try await presentCard(screen)
+        let window = try await openCard(screen)
         let screenCard = screen.cardFrame(in: window)
         let whileOpen = origin.placement
         await closeCard(screen, animated: closingAnimated)
@@ -40,7 +40,7 @@ struct PocketCardFlightTests {
         let origin = FakePocketCardOrigin(slot: nil)
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), origin: origin)
 
-        let window = try await presentCard(screen)
+        let window = try await openCard(screen)
         let whileOpen = origin.placement
         await closeCard(screen)
 
@@ -55,100 +55,54 @@ struct PocketCardFlightTests {
     func putsThePocketBackBeforeAFadingCloseShowsIt() async throws {
         let origin = FakePocketCardOrigin(slot: pocketSlot)
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), origin: origin)
-        let window = try await presentCard(screen)
+        let window = try await openCard(screen)
 
         var wholeWhileShowing = false
         origin.onMove = { placement in
             wholeWhileShowing = wholeWhileShowing || !placement.cleared && screen.view.window != nil
         }
         origin.slot = nil
-        screen.dismiss(animated: true)
+        screen.navigationController?.popViewController(animated: true)
         let closed = await eventually { screen.view.window == nil }
 
         #expect([wholeWhileShowing, closed] == [true, true])
         withExtendedLifetime((window, origin)) {}
     }
 
-    /// Opening a product from a card closes the card and switches tab in the
-    /// same turn. The Pocket the card would fly into is then gone, so the
-    /// close must fade instead: a Pocket off screen cannot draw the card.
-    @Test
-    func fadesWhenThePocketGoesAwayInTheTurnTheCloseStarts() async throws {
-        let origin = FakePocketCardOrigin(slot: pocketSlot)
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), origin: origin)
-        let window = try await presentCard(screen)
-        let movesWhileOpen = origin.moves.count
-
-        screen.dismiss(animated: true)
-        origin.slot = nil
-        let closed = await eventually { screen.view.window == nil }
-
-        let clearedWhileClosing = origin.moves.dropFirst(movesWhileOpen).contains { $0.cleared }
-        #expect([closed, clearedWhileClosing] == [true, false])
-        withExtendedLifetime((window, origin)) {}
-    }
-
-    /// Whatever closes the card, even a dismissal from under a sheet the card's
-    /// product put over it, the Pocket gets its cards and its chrome back and
-    /// is told it is uncovered.
-    @Test
-    func restoresThePocketWhenClosedFromUnderASheet() async throws {
-        let origin = FakePocketCardOrigin(slot: pocketSlot)
-        let presenter = AppearanceRecordingController()
-        let window = try showing(presenter)
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), origin: origin)
-        await present(cardNavigation(screen), from: presenter)
-        await present(UIViewController(), from: screen)
-
-        await withCheckedContinuation { closed in
-            presenter.dismiss(animated: false) { closed.resume() }
-        }
-
-        #expect(origin.placement == PocketPlacement())
-        #expect(presenter.calls.suffix(4) == ["willDisappear", "didDisappear", "willAppear", "didAppear"])
-        withExtendedLifetime((window, origin)) {}
-    }
-
-    /// A screen opened full screen over the card hides the Pocket too, but the
-    /// Pocket was already told it is covered, and must not be told twice.
-    @Test
-    func tellsThePocketOnceWhenAnotherScreenOpensOverTheCard() async throws {
-        let origin = FakePocketCardOrigin(slot: pocketSlot)
-        let presenter = AppearanceRecordingController()
-        let window = try showing(presenter)
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), origin: origin)
-        await present(cardNavigation(screen), from: presenter)
-        let callsBefore = presenter.calls.count
-
-        let cover = UIViewController()
-        cover.modalPresentationStyle = .fullScreen
-        await present(cover, from: screen)
-        await closeCard(cover)
-        await closeCard(screen)
-
-        #expect(Array(presenter.calls.dropFirst(callsBefore - 2)) == [
-            "willDisappear", "didDisappear", "willAppear", "didAppear"
-        ])
-        withExtendedLifetime((window, origin)) {}
-    }
-
-    /// A card covers the Pocket without taking it out of the window, so that the
-    /// Pocket can draw the card while it flies. UIKit then no longer tells the
-    /// Pocket when it is covered and uncovered, so the screen must, or what
-    /// pauses while the Pocket is hidden, like the tab bar's tips, keeps running
-    /// under the card.
+    /// What pauses while the Pocket is hidden, like the tab bar's tips, keeps
+    /// running under the card unless the Pocket is told it is covered and
+    /// uncovered. The stack tells it only if the flight finishes the push and
+    /// the pop as UIKit expects.
     @Test
     func tellsThePocketBehindItWhenItCoversAndUncoversIt() async throws {
         let origin = FakePocketCardOrigin(slot: pocketSlot)
-        let presenter = AppearanceRecordingController()
-        let window = try showing(presenter)
+        let pocket = AppearanceRecordingController()
+        let navigation = AppNavigationController(rootViewController: pocket)
+        let window = try showing(navigation)
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), origin: origin)
 
-        await present(cardNavigation(screen), from: presenter)
+        await openCard(screen, on: navigation)
         await closeCard(screen)
 
-        #expect(presenter.calls.suffix(4) == ["willDisappear", "didDisappear", "willAppear", "didAppear"])
+        #expect(pocket.calls.suffix(4) == ["willDisappear", "didDisappear", "willAppear", "didAppear"])
         withExtendedLifetime((window, origin)) {}
+    }
+
+    /// Only a card's screen flies. Every other screen on a tab keeps the
+    /// system's push, and so does a card with no Pocket to fly from.
+    @Test
+    func fliesOnlyACardThatHasAPocketToFlyFrom() {
+        let navigation = AppNavigationController(rootViewController: UIViewController())
+        let origin = FakePocketCardOrigin(slot: pocketSlot)
+        let flying = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView(), origin: origin)
+        let pocketless = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
+
+        let animators = [flying, pocketless, UIViewController()].map { screen in
+            navigation.navigationController(navigation, animationControllerFor: .push, from: navigation, to: screen)
+        }
+
+        #expect(animators.map { $0 is PocketCardFlight } == [true, false, false])
+        withExtendedLifetime(origin) {}
     }
 
     /// The flight makes all but the card see-through so the Pocket shows
@@ -169,18 +123,7 @@ struct PocketCardFlightTests {
 
 // MARK: - Fixtures
 
-/// Waits for `condition` for up to five seconds, letting the main actor run so
-/// that UIKit can carry a transition on meanwhile.
-@MainActor
-private func eventually(_ condition: () -> Bool) async -> Bool {
-    for _ in 0 ..< 250 {
-        if condition() { return true }
-        try? await Task.sleep(for: .milliseconds(20))
-    }
-    return false
-}
-
-/// Records the appearance calls UIKit, or a screen covering it, sends it.
+/// Records the appearance calls UIKit sends it.
 private final class AppearanceRecordingController: UIViewController {
     private(set) var calls: [String] = []
 
@@ -225,7 +168,7 @@ private struct ScreenLook: Equatable {
 private func lookOfACardOpenedAndClosed(from origin: PocketCardOrigin?) async throws -> ScreenLook {
     let product = StubSPAView()
     let screen = PocketCardScreenViewController(card: loyaltyCard, product: product, origin: origin)
-    let window = try await presentCard(screen)
+    let window = try await openCard(screen)
     let traits = screen.traitCollection
     let face = screen.children.compactMap { $0 as? UIHostingController<PocketOpenedCardView> }.first
 

@@ -38,6 +38,10 @@ final class FakePocketCardOrigin: PocketCardOrigin {
         slot
     }
 
+    var openCard: PocketCardKey? {
+        placement.openCard
+    }
+
     func setOpenCard(_ key: PocketCardKey?) {
         placement.openCard = key
     }
@@ -62,14 +66,12 @@ func showing(_ root: UIViewController) throws -> UIWindow {
     return window
 }
 
-/// Wraps a card's screen as the app presents it: the root of a navigation
-/// controller over the whole screen, whose presentation the screen animates.
+/// The Wallet tab's stack as the app builds it, in a window, with a plain
+/// screen standing in for the Pocket at its root.
 @MainActor
-func cardNavigation(_ screen: PocketCardScreenViewController) -> UINavigationController {
-    let navigation = AppNavigationController(rootViewController: screen)
-    navigation.modalPresentationStyle = .overFullScreen
-    navigation.transitioningDelegate = screen
-    return navigation
+func walletStack() throws -> (navigation: AppNavigationController, window: UIWindow) {
+    let navigation = AppNavigationController(rootViewController: UIViewController())
+    return try (navigation, showing(navigation))
 }
 
 /// Presents and returns once the presentation has finished. Awaited rather
@@ -82,22 +84,62 @@ func present(_ presented: UIViewController, from presenter: UIViewController) as
     }
 }
 
-/// Presents `screen` as the app presents a card and returns the window it is
+/// Dismisses what `presented` is showing over and returns once it has gone.
+@MainActor
+func dismiss(_ presented: UIViewController) async {
+    await withCheckedContinuation { dismissed in
+        presented.dismiss(animated: true) { dismissed.resume() }
+    }
+}
+
+/// Pushes `screen` as the app opens a card and returns once it has landed.
+@MainActor
+func openCard(_ screen: PocketCardScreenViewController, on navigation: UINavigationController) async {
+    navigation.pushViewController(screen, animated: true)
+    await transitionFinished(in: navigation)
+}
+
+/// Opens `screen` on a Wallet stack of its own and returns the window it is
 /// shown in, which the test keeps alive.
 @MainActor
-func presentCard(_ screen: PocketCardScreenViewController) async throws -> UIWindow {
-    let presenter = UIViewController()
-    let window = try showing(presenter)
-    await present(cardNavigation(screen), from: presenter)
+func openCard(_ screen: PocketCardScreenViewController) async throws -> UIWindow {
+    let (navigation, window) = try walletStack()
+    await openCard(screen, on: navigation)
     return window
 }
 
-/// Closes the card `screen` is presented in and returns once it has closed.
+/// Pops the card `screen` off its stack and returns once it has left it.
 @MainActor
 func closeCard(_ screen: UIViewController, animated: Bool = true) async {
-    await withCheckedContinuation { closed in
-        screen.dismiss(animated: animated) { closed.resume() }
+    guard let navigation = screen.navigationController else { return }
+
+    navigation.popViewController(animated: animated)
+    // An unanimated pop finishes on the stack's next layout pass.
+    navigation.view.layoutIfNeeded()
+    await transitionFinished(in: navigation)
+    _ = await eventually { screen.parent == nil }
+}
+
+/// Awaited rather than waited on with the run loop, which cannot deliver
+/// UIKit's completion from inside the main actor's job.
+@MainActor
+func transitionFinished(in navigation: UINavigationController) async {
+    guard let transition = navigation.transitionCoordinator else { return }
+
+    await withCheckedContinuation { finished in
+        transition.animate(alongsideTransition: nil) { _ in finished.resume() }
     }
+}
+
+/// Waits for `condition` for up to five seconds, letting the main actor run so
+/// that UIKit can carry a transition on meanwhile.
+@MainActor
+func eventually(_ condition: () -> Bool) async -> Bool {
+    for _ in 0 ..< 250 {
+        if condition() { return true }
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+    return false
 }
 
 /// Turns the run loop until `condition` holds, for up to five seconds.

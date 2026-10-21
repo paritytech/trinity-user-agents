@@ -12,37 +12,35 @@ import UIKit
 enum PocketCardOpening {
     static func open(
         _ card: PocketCardViewModel,
-        origin: PocketCardOrigin?,
         flowState: SPAFlowState,
         navigator: ModuleNavigating,
         pocket: ProductPocketService
     ) {
-        // A second screen would take the open card's page and leave it blank.
-        guard !pocket.cardHosts.isOnDisplay(card.key) else { return }
+        navigator.openWallet { wallet, wasOnScreen in
+            // A second screen would take the open card's page and leave it blank.
+            guard !pocket.cardHosts.isOnDisplay(card.key) else { return }
 
-        guard
-            let url = card.key.launchUrl,
-            let page = flowState.hostProvider.page(url: url),
-            let product = pocket.cardHosts.product(for: card.key, make: { surface in
-                makeView(for: card, page: page, surface: surface, flowState: flowState)
-            })
-        else { return }
+            guard
+                let url = card.key.launchUrl,
+                let page = flowState.hostProvider.page(url: url),
+                let product = pocket.cardHosts.product(for: card.key, make: { surface in
+                    makeView(for: card, page: page, surface: surface, flowState: flowState)
+                })
+            else { return }
 
-        let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
-        if origin == nil {
-            navigator.presentFullScreen(screen)
-        } else {
-            // The card flies between the Pocket and its screen, so the Pocket stays in the window under it.
-            navigator.presentOverFullScreen(screen, animatedBy: screen)
-        }
-        product.surface.claim(screen)
+            let origin = wallet.viewControllers.first as? PocketCardOrigin
+            let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
+            PocketCardNavigation.show(screen, on: wallet, animated: wasOnScreen) {
+                product.surface.claim(screen)
+            }
 
-        Task { [weak screen] in
-            let shown = await PocketCardFaceOnOpen.faceShown(
-                for: card.key,
-                cards: PublishedPocketCards.makeDefault(products: flowState.productResolver)
-            )
-            screen?.applyOpeningFace(shown: shown)
+            Task { [weak screen] in
+                let shown = await PocketCardFaceOnOpen.faceShown(
+                    for: card.key,
+                    cards: PublishedPocketCards.makeDefault(products: flowState.productResolver)
+                )
+                screen?.applyOpeningFace(shown: shown)
+            }
         }
     }
 
@@ -62,7 +60,7 @@ enum PocketCardOpening {
                 return
             }
 
-            open(card, origin: nil, flowState: flowState, navigator: navigator, pocket: pocket)
+            open(card, flowState: flowState, navigator: navigator, pocket: pocket)
         }
     }
 }

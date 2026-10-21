@@ -52,7 +52,7 @@ struct PocketCardHostsTests {
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: product.view)
         let beforeOpening = hosts.isOnDisplay(loyalty)
 
-        let window = try await presentCard(screen)
+        let window = try await openCard(screen)
         product.surface.claim(screen)
         let whileOpen = [hosts.isOnDisplay(loyalty), hosts.isOnDisplay(trophy)]
         await closeCard(screen)
