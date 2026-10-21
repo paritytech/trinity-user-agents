@@ -148,7 +148,7 @@ jobs:
             }
             // Every job here runs on the Parity machines, which are persistent
             // and shared, so a fork's code never reaches them.
-            if (pr.head.repo.fork) {
+            if (pr.head.repo?.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
               core.info('A pull request from a fork; the iOS jobs are skipped.');
               core.setOutput('skip', 'true');
               core.setOutput('app', 'false');

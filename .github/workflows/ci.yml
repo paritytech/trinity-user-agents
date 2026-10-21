@@ -384,8 +384,9 @@ jobs:
   ios-swift:
     name: iOS package (Swift + WebKit)
     needs: [changes, codegen]
-    # Never from a fork, because the Parity machines are persistent and shared.
-    if: needs.changes.outputs.sdk_swift == 'true' && !github.event.pull_request.head.repo.fork
+    # Never for a pull request from a fork, because the Parity machines are
+    # persistent and shared. The merge queue runs it once the change is approved.
+    if: needs.changes.outputs.sdk_swift == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     # The Parity pool, where the core builds already run, rather than the hosted
     # macOS queue that can hold a merge past the queue's timeout.
     runs-on: parity-macos-large
@@ -461,6 +462,9 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Checkout keeps local tags in a reused workspace, and a tag left by an
+          # earlier run with different contents makes tag-release.sh refuse.
+          git tag -d 0.0.0-ci 2>/dev/null || true
           ./ios/truapi-host/scripts/tag-release.sh 0.0.0-ci
 
       - name: Check the tag carries every generated file
