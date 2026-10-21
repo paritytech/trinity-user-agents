@@ -5678,6 +5678,7 @@ dependencies = [
  "sha2 0.10.9",
  "socket2",
  "sp-crypto-hashing",
+ "strum 0.28.0",
  "substrate-bip39",
  "subxt",
  "subxt-rpcs",

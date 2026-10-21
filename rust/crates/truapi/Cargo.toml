@@ -159,6 +159,7 @@ web-sys = { workspace = true, features = ["console"], optional = true }
 
 [dev-dependencies]
 scale-info = { workspace = true, features = ["std"] }
+strum = { workspace = true }
 
 [[test]]
 name = "device_permission_revalidation"
