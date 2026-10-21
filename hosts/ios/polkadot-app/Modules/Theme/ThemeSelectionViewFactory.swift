@@ -20,15 +20,29 @@ enum ThemeSelectionViewFactory {
             context: .settings,
             onComplete: onComplete
         )
-        return makeController(model: model)
+        let controller = makeController(model: model)
+        controller.onLeaving = { model.back() }
+        return controller
     }
 
     @MainActor
-    private static func makeController(model: ThemeSelectionViewModel) -> UIViewController {
-        let controller = HiddableThemeHostingController(rootView: ThemeSelectionView(model: model))
+    private static func makeController(model: ThemeSelectionViewModel) -> ThemeSelectionHostingController {
+        let controller = ThemeSelectionHostingController(rootView: ThemeSelectionView(model: model))
         controller.view.backgroundColor = .bgSurfaceMain
         return controller
     }
 }
 
-private final class HiddableThemeHostingController: UIHostingController<ThemeSelectionView>, HiddableBarWhenPushed {}
+private final class ThemeSelectionHostingController: UIHostingController<ThemeSelectionView> {
+    /// Runs as the screen starts leaving the stack, by the back button or a swipe, so the screen beneath is current
+    /// before it slides in. A cancelled swipe also runs it.
+    var onLeaving: (() -> Void)?
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        guard isMovingFromParent else {
+            return
+        }
+        onLeaving?()
+    }
+}

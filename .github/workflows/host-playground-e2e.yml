@@ -198,7 +198,8 @@ jobs:
       group: host-playground-e2e-ios-${{ inputs.release_tag || github.event.pull_request.number || github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     continue-on-error: ${{ inputs.release_tag != '' }}
-    runs-on: macos-26
+    # The Parity pool, out of the hosted macOS queue.
+    runs-on: parity-macos
     timeout-minutes: 150
     env:
       IOS_BUNDLE_ID: "io.parity.polkadotapp"
