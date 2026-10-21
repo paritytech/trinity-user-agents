@@ -13,6 +13,10 @@ class QRScannerPresenter: QRScannerPresenterProtocol {
 
     private var isRunning: Bool = false
 
+    /// A host that decides when the camera runs suspends capture, and the view's own appearance no longer
+    /// starts it. `setCaptureActive(true)` lifts the suspension.
+    private var isCaptureSuspended: Bool = false
+
     init(
         wireframe: QRScannerWireframeProtocol,
         qrScanService: QRCaptureServiceProtocol,
@@ -34,7 +38,7 @@ class QRScannerPresenter: QRScannerPresenterProtocol {
     }
 
     private func startServiceIfNeeded() {
-        guard !isRunning else {
+        guard !isRunning, !isCaptureSuspended else {
             return
         }
 
@@ -77,13 +81,13 @@ class QRScannerPresenter: QRScannerPresenterProtocol {
             )
         case .deviceAccessDeniedPreviously:
             wireframe.askOpenSettings(from: view)
+        case .deviceAccessDeniedNow:
+            wireframe.didDenyCameraAccess(from: view)
         case .unsupportedFormat:
             view.present(
                 message: errorDisplayFactory.createStringCapture(error: error),
                 animated: true
             )
-        default:
-            break
         }
     }
 
@@ -109,6 +113,8 @@ class QRScannerPresenter: QRScannerPresenterProtocol {
     }
 
     func setCaptureActive(_ active: Bool) {
+        isCaptureSuspended = !active
+
         if active {
             startServiceIfNeeded()
         } else {
@@ -118,6 +124,10 @@ class QRScannerPresenter: QRScannerPresenterProtocol {
 }
 
 extension QRScannerPresenter: @MainActor QRCaptureServiceDelegate {
+    func qrCapture(service _: QRCaptureServiceProtocol, willStart captureSession: AVCaptureSession) {
+        view?.attachPreview(to: captureSession)
+    }
+
     func qrCapture(service _: QRCaptureServiceProtocol, didSetup captureSession: AVCaptureSession) {
         DispatchQueue.main.async {
             self.view?.didReceive(session: captureSession)

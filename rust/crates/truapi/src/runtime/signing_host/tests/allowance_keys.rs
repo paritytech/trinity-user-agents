@@ -10,6 +10,7 @@ use truapi::{
 };
 
 use crate::{
+	host_internal::sso_messages::OnExistingAllowancePolicy,
 	host_logic::{
 		product_account::{derive_full_person_ring_vrf_entropy, derive_sr25519_hard_path},
 		statement_store::SUBMIT_STATEMENT_METHOD,
@@ -77,9 +78,10 @@ fn allowance_key(signing_host: &SigningHostRole) -> StatementStoreAllowanceKey {
 	futures::executor::block_on(async {
 		let session = signing_host.current_session().expect("a session is active");
 		let cx = CallContext::default();
+		let product_id = ProductId::for_test(PRODUCT_ID);
 		futures::select! {
 			result = signing_host
-				.statement_store_allowance_key(&cx, &session, PRODUCT_ID.to_string())
+				.statement_store_allowance_key(&cx, &session, &product_id)
 				.fuse() => result,
 			_ = futures_timer::Delay::new(std::time::Duration::from_secs(30)).fuse() => {
 				panic!("the proof blocked on a chain read")
@@ -103,7 +105,7 @@ fn remember(signing_host: &SigningHostRole, product_id: &str, period: u32) {
 		.lock()
 		.expect("local AutoSigning grant mutex poisoned")
 		.statement_allowance_keys
-		.insert(product_id.to_string(), (period, secret_key()));
+		.insert(ProductId::for_test(product_id), (period, secret_key()));
 }
 
 fn current_generation(signing_host: &SigningHostRole) -> u64 {
@@ -120,9 +122,72 @@ fn remembered(signing_host: &SigningHostRole, product_id: &str, period: u32) -> 
 		.lock()
 		.expect("local AutoSigning grant mutex poisoned");
 	state
-		.statement_allowance_key(state.activation_generation, product_id, period)
+		.statement_allowance_key(
+			state.activation_generation,
+			&ProductId::for_test(product_id),
+			period,
+		)
 		.expect("the generation is current")
 		.map(|key| key.secret)
+}
+
+/// An existing statement-store allowance must be served without resolving a
+/// ring or submitting anything. The cache and the scan are covered on their
+/// own; this pins the composition, so removing the early return fails here
+/// rather than passing quietly.
+#[test]
+fn an_existing_allowance_is_served_without_touching_the_ring() {
+	let allowance =
+		derive_sr25519_hard_path(&ENTROPY, &["allowance", "statement-store", PRODUCT_ID])
+			.expect("allowance derivation succeeds");
+	let platform = chain_with_allocated_slot();
+	let signing_host = active_signing_host(platform.clone());
+
+	// Bounded, because the failure mode of losing the early return is a
+	// wait on a chain read the stub deliberately does not answer — an
+	// unbounded test would hang instead of reporting. The bound is generous
+	// because it is catching a hang, not asserting latency.
+	let allocation = futures::executor::block_on(async {
+		let session = signing_host.current_session().unwrap();
+		let product_id = ProductId::for_test(PRODUCT_ID);
+		futures::select! {
+			result = super::super::allowance::allocate_statement_store_allowance(
+				&signing_host.services,
+				&signing_host,
+				&session,
+				&product_id,
+				OnExistingAllowancePolicy::Ignore,
+			)
+			.fuse() => result,
+			_ = futures_timer::Delay::new(std::time::Duration::from_secs(30)).fuse() => {
+				panic!("allocation blocked on a chain read it should not have made")
+			}
+		}
+	})
+	.expect("an existing allowance is returned");
+
+	assert_eq!(allocation.secret, allowance.secret.to_bytes().to_vec());
+
+	let sent = platform.sent_rpc.lock().expect("rpc list mutex poisoned");
+	let methods: Vec<String> = sent
+		.iter()
+		.filter_map(|request| {
+			let value: serde_json::Value = serde_json::from_str(request).ok()?;
+			value.get("method")?.as_str().map(ToString::to_string)
+		})
+		.collect();
+
+	// `find_including_rings` opens with `chain_getFinalizedHead`, so none of
+	// these means no ring was resolved.
+	assert_eq!(
+		methods.iter().filter(|method| *method == "chain_getFinalizedHead").count(),
+		0,
+		"a ring was resolved for an allowance already in place: {methods:?}"
+	);
+	assert!(
+		!methods.iter().any(|method| method.starts_with("author_submit")),
+		"an extrinsic was submitted for an allowance already in place: {methods:?}"
+	);
 }
 
 #[test]
@@ -178,7 +243,7 @@ fn clearing_a_product_forgets_only_its_key() {
 	remember(&signing_host, PRODUCT_ID, PERIOD);
 	remember(&signing_host, "other.dot", PERIOD);
 
-	signing_host.clear_product_state(PRODUCT_ID).expect("the product id is valid");
+	signing_host.clear_product_state(&ProductId::for_test(PRODUCT_ID));
 
 	assert_eq!(
 		(
@@ -204,7 +269,11 @@ fn a_replaced_session_is_not_served_the_new_sessions_key() {
 				.local_grants
 				.lock()
 				.expect("local AutoSigning grant mutex poisoned")
-				.statement_allowance_key(stale_generation, PRODUCT_ID, PERIOD),
+				.statement_allowance_key(
+					stale_generation,
+					&ProductId::for_test(PRODUCT_ID),
+					PERIOD
+				),
 			Err(AuthorityError::Disconnected)
 		),
 		"a request validated under the replaced session was served a key"
@@ -224,7 +293,7 @@ fn a_key_allocated_under_a_replaced_session_is_not_remembered() {
 		.expect("local AutoSigning grant mutex poisoned")
 		.remember_statement_allowance_key(
 			stale_generation,
-			PRODUCT_ID.to_string(),
+			ProductId::for_test(PRODUCT_ID),
 			PERIOD,
 			secret_key(),
 		);

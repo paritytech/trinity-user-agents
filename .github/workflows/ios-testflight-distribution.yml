@@ -20,7 +20,9 @@ env:
 
 jobs:
   distribute_testflight:
-    runs-on: macos-26
+    # The Parity pool, out of the hosted macOS queue. The install action pins
+    # the Xcode the app builds with, so the machine's default does not matter.
+    runs-on: parity-macos
     name: Distribute TestFlight Build
     steps:
       - name: Checkout repository
