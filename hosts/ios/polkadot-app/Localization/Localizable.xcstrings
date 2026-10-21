@@ -2401,16 +2401,6 @@
         }
       }
     },
-    "polkadot://%@/-/pocket/add?card=%@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "polkadot://%1$@/-/pocket/add?card=%2$@"
-          }
-        }
-      }
-    },
     "polkadot.host.message.too.big.error" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3430,6 +3420,18 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Settings"
+          }
+        }
+      }
+    },
+    "tab.settings.backupNeeded" : {
+      "comment" : "VoiceOver value of the Settings tab while the recovery phrase has no iCloud backup.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Backup needed"
           }
         }
       }

@@ -270,7 +270,7 @@ fn foreign_account_proof_encodes_a_domain_refusal() {
 	let core = make_core();
 	let request = v01::HostAccountCreateProofRequest {
 		key_handle: v01::ProductAccountId {
-			dot_ns_identifier: "peopl.dot".to_string(),
+			dot_ns_identifier: "peopl.dot".parse().expect("valid product id"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 		context: v01::ProductProofContext {

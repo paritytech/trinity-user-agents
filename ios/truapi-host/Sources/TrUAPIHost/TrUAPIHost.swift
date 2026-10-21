@@ -966,8 +966,8 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
 
     /// Report a later status of `productId`'s top-up `id` to the products
     /// following it. A terminal status ends their streams.
-    public func notifyTopUpStatus(productId: String, id: Data, status: HostPaymentTopUpStatusSubscribeItem) {
-        inner.notifyTopUpStatus(productId: productId, id: id, status: status)
+    public func notifyTopUpStatus(productId: String, id: Data, status: HostPaymentTopUpStatusSubscribeItem) throws {
+        try inner.notifyTopUpStatus(productId: productId, id: id, status: status)
     }
 
     /// Install the host's payment engine. Set-once; answers whether this call
@@ -982,8 +982,8 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
 
     /// Report a later status of `productId`'s payment `id` to the products
     /// following it. A terminal status ends their streams.
-    public func notifyPaymentStatus(productId: String, id: Data, status: HostPaymentStatusSubscribeItem) {
-        inner.notifyPaymentStatus(productId: productId, id: id, status: status)
+    public func notifyPaymentStatus(productId: String, id: Data, status: HostPaymentStatusSubscribeItem) throws {
+        try inner.notifyPaymentStatus(productId: productId, id: id, status: status)
     }
 
     /// Install the host's balance view. Set-once; answers whether this call

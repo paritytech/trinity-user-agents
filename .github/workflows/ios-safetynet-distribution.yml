@@ -57,7 +57,9 @@ jobs:
     # Removing this is part of the cutover, tracked on #764.
     if: false
     name: Build and distribute Safetynet
-    runs-on: macos-26
+    # The Parity pool, out of the hosted macOS queue. The install action pins
+    # the Xcode the app builds with, so the machine's default does not matter.
+    runs-on: parity-macos
     timeout-minutes: 120
     steps:
       - name: Checkout repository
