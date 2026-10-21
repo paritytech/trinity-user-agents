@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -90,6 +91,10 @@ class RealProductWorkerRefCounter @Inject constructor(
     private inner class ProductWorkerHandle(private val productId: ProductId) {
         private val refCount = MutableStateFlow(0)
         private val demand = MutableStateFlow(0L)
+
+        // The last demand ticket that the chain has applied. A reference reads the worker only after the chain
+        // applied its own acquire, so it never gets a worker that an earlier release disposes.
+        private val applied = MutableStateFlow(0L)
         private val workerState = MutableStateFlow<WorkerState>(WorkerState.NotBooted)
         val botApi = BindableProductsBotApi(hostApiInteractor, FixedProductId(productId))
 
@@ -99,18 +104,22 @@ class RealProductWorkerRefCounter @Inject constructor(
             launch {
                 // Ticketed, not edge-triggered: a release and re-acquire in the same tick leave the
                 // count unchanged, and the chain would never reconcile the product again.
-                demand.collect { if (refCount.value > 0) boot() else dispose() }
+                demand.collect { ticket ->
+                    if (refCount.value > 0) boot() else dispose()
+                    applied.value = ticket
+                }
             }
         }
 
         fun acquire(label: String): ProductWorkerReference {
             refCount.update { it + 1 }
-            demand.update { it + 1 }
+            val ticket = demand.updateAndGet { it + 1 }
             Timber.d("Acquired worker for $productId by '$label', refCount=${refCount.value}")
-            return Reference(label)
+            return Reference(label, ticket)
         }
 
-        private suspend fun awaitWorker(): ProductWorker {
+        private suspend fun awaitWorker(ticket: Long): ProductWorker {
+            applied.first { it >= ticket }
             val state = workerState.filter { it !is WorkerState.NotBooted }.first()
             return (state as? WorkerState.Booted)?.worker
                 ?: throw IllegalStateException(
@@ -163,13 +172,13 @@ class RealProductWorkerRefCounter @Inject constructor(
             workerState.value = WorkerState.NotBooted
         }
 
-        private inner class Reference(private val label: String) : ProductWorkerReference {
+        private inner class Reference(private val label: String, private val ticket: Long) : ProductWorkerReference {
             private val released = AtomicBoolean(false)
             private var boundChat: ProductChatMessaging? = null
 
             override suspend fun worker(): ProductWorker {
                 check(!released.get()) { "Worker reference for $productId already released" }
-                return awaitWorker()
+                return awaitWorker(ticket)
             }
 
             override suspend fun enableModalityApi(api: WorkerModalityApi) {

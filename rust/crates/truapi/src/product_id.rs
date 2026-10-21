@@ -20,10 +20,14 @@ pub const PRODUCT_ID_MAX_BYTES: usize = 256;
 /// permissions still need the OS grant.
 ///
 /// [`DOTNS_TLDS`]: crate::dotns_name::DOTNS_TLDS
-pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", GAME_PRODUCT_LABEL, "stash"];
+pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] =
+	&["peopl", GAME_PRODUCT_LABEL, "stash", PERSON_CHAT_PRODUCT_LABEL];
 
 /// The bare label of the game product, Jollity, on every network.
 const GAME_PRODUCT_LABEL: &str = "dim2";
+
+/// The bare label of the person-to-person chat product on every network.
+const PERSON_CHAT_PRODUCT_LABEL: &str = "chat";
 
 /// The label a development product identifier is served under.
 const LOCALHOST_PRODUCT_LABEL: &str = "localhost";
@@ -189,6 +193,12 @@ impl ProductId {
 	/// is not.
 	pub fn is_game_product(&self) -> bool {
 		self.dotns_label() == Some(GAME_PRODUCT_LABEL)
+	}
+
+	/// Whether this is the person-to-person chat product on any network.
+	/// `app.chat.dot` is not.
+	pub fn is_person_chat_product(&self) -> bool {
+		self.dotns_label() == Some(PERSON_CHAT_PRODUCT_LABEL)
 	}
 }
 

@@ -10,6 +10,10 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomC
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatConfig
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatExtensionId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomEventModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomLifecycle
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatAppearance
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -57,4 +61,22 @@ interface ChatExtension {
 
     fun observeUserInputAllowed(chatId: ChatId): Flow<Boolean> = flowOf(true)
     fun observeChatConfig(chatId: ChatId): Flow<ChatConfig> = flowOf(ChatConfig.Default)
+
+    /** Holds the worker of the product while a room screen shows [chatId]. Null when the room needs no worker. */
+    fun roomLifecycle(chatId: ChatId): ChatRoomLifecycle? = null
+
+    /** The queries of a room whose messages the product keeps. Null when the extension cannot answer them. */
+    fun roomQuerying(chatId: ChatId): ProductChatQuerying? = null
+
+    /** The address of the App of the product that serves [chatId], or null when no product serves it. */
+    fun productAppAddress(chatId: ChatId): String? = null
+
+    /** Gives an action of the user in [chatId] that is not a saved message to the extension. */
+    suspend fun onUserEvent(chatId: ChatId, event: ChatRoomUserEvent) = Unit
+
+    /**
+     * Gives an event of the Chat Extension v2 additions in [chatId] to the extension. The extension must not start
+     * its worker for it: a product receives the events that arrive while its worker does not run when it starts.
+     */
+    suspend fun onRoomEvent(chatId: ChatId, event: ChatRoomEventModel) = Unit
 }

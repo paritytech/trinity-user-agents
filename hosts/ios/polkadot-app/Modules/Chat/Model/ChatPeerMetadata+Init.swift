@@ -10,12 +10,13 @@ extension Chat.LocalModel {
             // wait for the bot still shows the product; input and actions need the bot.
             let listMetadata = peerListMetadata(using: registry)
             let botMetadata = registry.getChatExtensionBot(for: extId)?.peerMetadata ?? .unknown
+            let policy = roomPolicy ?? ChatRoomPolicy(footer: roomFooter)
 
             return Chat.PeerMetadata(
                 name: listMetadata.name,
                 icon: listMetadata.icon,
-                input: roomFooter == .empty ? .empty : botMetadata.input,
-                moreActions: botMetadata.moreActions
+                input: policy.footer.showsInput ? botMetadata.input : .empty,
+                moreActions: policy.toolbar + botMetadata.moreActions
             )
         }
     }
@@ -30,7 +31,7 @@ extension Chat.LocalModel {
 
             return Chat.PeerListMetadata(
                 name: roomMetadata?.name ?? extMetadata.name,
-                icon: roomMetadata?.inlineIcon ?? extMetadata.icon
+                icon: roomDeclarations?.avatar.map { .roomImage($0) } ?? roomMetadata?.roomIcon ?? extMetadata.icon
             )
         }
     }
@@ -42,17 +43,28 @@ extension Chat.LocalModel {
     func chatMetadata(using registry: ChatExtensionsRegistering) -> ChatMetadata {
         let peerMetadata = peerMetadata(using: registry)
 
-        return ChatMetadata(chatId: chatId, peerMetadata: peerMetadata, state: .created)
+        return ChatMetadata(
+            chatId: chatId,
+            peerMetadata: peerMetadata,
+            state: .created,
+            subtitle: roomDeclarations?.description,
+            roomPolicy: roomPolicy
+        )
     }
 }
 
 private extension Chat.RoomMetadata {
-    /// Only an inline image can be drawn as it is, so an `https` room icon leaves the bot's in place.
-    var inlineIcon: Chat.PeerMetadata.Icon? {
-        guard let icon, icon.hasPrefix("data:"), let payloadStart = icon.range(of: ";base64,") else {
-            return nil
-        }
+    /// An inline image draws at once. An `https` icon loads through the chat resource resolver.
+    var roomIcon: Chat.PeerMetadata.Icon? {
+        guard let icon else { return nil }
 
-        return Data(base64Encoded: String(icon[payloadStart.upperBound...])).map { .image($0) }
+        switch ChatResource(source: icon) {
+        case let .inline(_, data): return .image(data)
+        case .address: return .resource(icon)
+        case .preimage,
+             .sealed,
+             .hop,
+             nil: return nil
+        }
     }
 }

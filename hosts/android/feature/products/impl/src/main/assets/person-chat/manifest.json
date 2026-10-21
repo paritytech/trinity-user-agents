@@ -1,0 +1,15 @@
+{
+  "$v": 1,
+  "kind": "worker",
+  "appVersion": [
+    0,
+    1,
+    0
+  ],
+  "entrypoint": "index.js",
+  "includes": {
+    "chat": true,
+    "pocket": false
+  },
+  "keepAlive": "foreground"
+}

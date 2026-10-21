@@ -1,6 +1,7 @@
 //! TrUAPI Protocol v0.1 type definitions.
 
 mod account;
+mod call_media;
 mod chain;
 mod chat;
 mod coin_payment;
@@ -16,6 +17,7 @@ mod nft_purse;
 mod notifications;
 mod payment;
 mod permissions;
+mod person_chat;
 mod pocket;
 mod preimage;
 mod renderer;
@@ -26,9 +28,11 @@ mod statement_store;
 mod system;
 mod theme;
 mod transaction;
+mod usernames;
 mod worker;
 
 pub use account::*;
+pub use call_media::*;
 pub use chain::*;
 pub use chat::*;
 pub use coin_payment::*;
@@ -44,6 +48,7 @@ pub use nft_purse::*;
 pub use notifications::*;
 pub use payment::*;
 pub use permissions::*;
+pub use person_chat::*;
 pub use pocket::*;
 pub use preimage::*;
 pub use renderer::*;
@@ -54,4 +59,5 @@ pub use statement_store::*;
 pub use system::*;
 pub use theme::*;
 pub use transaction::*;
+pub use usernames::*;
 pub use worker::*;

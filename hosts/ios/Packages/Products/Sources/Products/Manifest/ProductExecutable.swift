@@ -61,17 +61,21 @@ public enum ProductExecutable: Hashable, Sendable {
         /// Entry module path relative to the executable directory root.
         public let entrypoint: String
         public let modalities: [Modality]
+        /// When the worker runs beside the holders of its modalities: the `keepAlive` field.
+        public let keepAlive: ProductWorkerKeepAlive
 
         public init(
             identifier: ProductId,
             appVersion: SemVer,
             entrypoint: String,
-            modalities: [Modality]
+            modalities: [Modality],
+            keepAlive: ProductWorkerKeepAlive = .onDemand
         ) {
             self.identifier = identifier
             self.appVersion = appVersion
             self.entrypoint = entrypoint
             self.modalities = modalities
+            self.keepAlive = keepAlive
         }
 
         /// The Pocket cards this worker offers, none unless it serves a Pocket.
@@ -82,6 +86,24 @@ public enum ProductExecutable: Hashable, Sendable {
                 }
                 .first ?? []
         }
+    }
+}
+
+/// When the worker of a product runs, beside the holders of its modalities (VERBOSITY-WASM-PRODUCT I5).
+///
+/// The `keepAlive` field of a Worker executable manifest declares it. The core holds a `foreground` worker while
+/// the app is in the foreground. An absent field is `onDemand`.
+public enum ProductWorkerKeepAlive: String, Hashable, Sendable {
+    /// The worker runs only while a modality holds it: a room screen, a card, a wake.
+    case onDemand
+    /// The worker also runs while the app is in the foreground.
+    case foreground
+
+    /// The value of the `keepAlive` field. Nil when the field is absent or has a value that this host does not know.
+    init?(manifestValue: String?) {
+        guard let manifestValue else { return nil }
+
+        self.init(rawValue: manifestValue)
     }
 }
 

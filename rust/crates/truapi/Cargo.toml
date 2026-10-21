@@ -75,7 +75,6 @@ runtime = [
     "dep:web-sys",
     "dep:tokio",
     "dep:tokio-tungstenite",
-    "dep:base64",
     "dep:rand",
     "dep:libc",
     "dep:rusqlite",
@@ -94,6 +93,7 @@ mock = ["runtime", "dep:strum"]
 truapi-macros = { path = "../truapi-macros" }
 strum = { workspace = true, optional = true }
 async-trait = { workspace = true }
+base64 = { workspace = true }
 derive_more = { workspace = true, features = ["debug", "display", "error", "from"] }
 futures = { workspace = true }
 hex = { workspace = true }
@@ -140,7 +140,6 @@ tokio-tungstenite = { version = "0.24", default-features = false, features = ["h
 uniffi = { workspace = true, optional = true }
 subxt = { workspace = true, features = ["native"], optional = true }
 subxt-rpcs = { workspace = true, features = ["jsonrpsee", "native"], optional = true }
-base64 = { workspace = true, optional = true }
 rusqlite = { workspace = true, features = ["bundled", "fallible_uint", "hooks"], optional = true }
 async-sqlite = { workspace = true, features = ["bundled"], optional = true }
 rusqlite_migration = { workspace = true, optional = true }
@@ -181,6 +180,7 @@ required-features = ["runtime"]
 [[test]]
 name = "wire_result_shape"
 required-features = ["runtime"]
+
 
 [[test]]
 name = "signing_host_mock_platform"

@@ -25,6 +25,11 @@ extension Chat {
         let compactionId: MessageId?
         let relatedMessages: [Chat.RelatedLocalMessage]
         let order: UInt64
+        /// The participant of a product room that wrote the message, when it is not the user or the product.
+        var authorParticipantId: String?
+        /// True when the text of the message is Markdown: a `RichText` body with no media in a room that the product
+        /// keeps. The content is a text or a reply, so the bubble keeps its quote and its edits.
+        var hasMarkdownText = false
 
         init?(
             remote: Chat.RemoteMessage,
@@ -177,6 +182,10 @@ extension Chat.LocalMessage {
         case deviceRemoved(Chat.RemoteMessageContentV1.MessageContent.DeviceRemovedContent)
         case multiChatAccepted(Chat.RemoteMessageContentV1.MessageContent.DeviceChatAccepted)
         case call(CallSignalingPayload)
+        case productBody(ProductBody)
+        /// The row of a message that was deleted. The row stays, so replies, the extension history and the
+        /// last message of the chat keep a valid reference.
+        case deleted
 
         enum CallSignalingPayload: Equatable {
             case offer(Chat.RemoteMessageContentV1.MessageContent.DataChannelOfferContent)
@@ -275,6 +284,8 @@ extension Chat.LocalMessage.Content {
         case deviceRemoved = 18
         case compactedMessages = 19
         case multiChatAccepted = 20
+        case deleted = 246
+        case productBody = 247
         case versionedChatRequest = 248
         case call = 249
         case unsupported = 255
@@ -300,7 +311,8 @@ extension Chat.LocalMessage.Content {
             switch self {
             case .text,
                  .reply,
-                 .richText:
+                 .richText,
+                 .productBody:
                 true
             default:
                 false
@@ -328,12 +340,14 @@ extension Chat.LocalMessage.Content {
                  .customRendered,
                  .file,
                  .richText,
+                 .productBody,
                  .call:
                 false
             case .token,
                  .compactedMessages,
                  .deviceAdded,
-                 .deviceRemoved:
+                 .deviceRemoved,
+                 .deleted:
                 true
             }
         }
@@ -361,10 +375,12 @@ extension Chat.LocalMessage.Content {
                  .customRendered,
                  .file,
                  .richText,
+                 .productBody,
                  .compactedMessages,
                  .deviceAdded,
                  .deviceRemoved,
-                 .call:
+                 .call,
+                 .deleted:
                 false
             }
         }
@@ -392,10 +408,12 @@ extension Chat.LocalMessage.Content {
                  .customRendered,
                  .file,
                  .richText,
+                 .productBody,
                  .compactedMessages,
                  .deviceAdded,
                  .deviceRemoved,
-                 .call:
+                 .call,
+                 .deleted:
                 false
             }
         }
@@ -451,6 +469,10 @@ extension Chat.LocalMessage.Content {
             .multiChatAccepted
         case .call:
             .call
+        case .productBody:
+            .productBody
+        case .deleted:
+            .deleted
         }
     }
 
@@ -484,10 +506,12 @@ extension Chat.LocalMessage.Content {
              .versionedChatRequest,
              .file,
              .richText,
+             .productBody,
              .compactedMessages,
              .deviceAdded,
              .deviceRemoved,
-             .call:
+             .call,
+             .deleted:
             nil
         }
     }
@@ -498,6 +522,7 @@ extension Chat.LocalMessage.Content {
         case let .reply(replyContent): replyContent.ownContent.text
         case let .staticTextImageContent(textImage): textImage.text
         case let .richText(richText): richText.text
+        case let .productBody(body): body.text
         default: nil
         }
     }
@@ -596,6 +621,8 @@ extension Chat.LocalMessage {
             case sent
             case delivered
             case failed
+            /// The peer saw the message.
+            case read
         }
 
         enum IncomingStatus: String, Equatable {
@@ -645,6 +672,7 @@ extension Chat.LocalMessage.Status: RawRepresentable {
         case 3: self = .outgoing(.delivered)
         case 4: self = .incoming(.seen)
         case 5: self = .outgoing(.failed)
+        case 6: self = .outgoing(.read)
         default: return nil
         }
     }
@@ -657,6 +685,7 @@ extension Chat.LocalMessage.Status: RawRepresentable {
         case .outgoing(.delivered): 3
         case .incoming(.seen): 4
         case .outgoing(.failed): 5
+        case .outgoing(.read): 6
         }
     }
 }
@@ -684,7 +713,8 @@ extension Chat.LocalMessage.Status.OutgoingStatus: Comparable {
         case .new: 0
         case .sent: 1
         case .delivered: 2
-        case .failed: 3
+        case .read: 3
+        case .failed: 4
         }
     }
 }

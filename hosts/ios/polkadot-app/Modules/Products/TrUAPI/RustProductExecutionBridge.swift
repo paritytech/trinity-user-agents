@@ -70,6 +70,15 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func navigateTo(url: String) async throws {
+        // A product opens its own rooms only (02-DESIGN §13 item 15, P6.9).
+        if let room = ChatRoomLink(url) {
+            guard room.productId == dependencies.productId else {
+                throw HostNavigateToError.PermissionDenied
+            }
+            await MainActor.run { ModuleNavigator().openChat(room.chatId) }
+            return
+        }
+
         if let destination = dependencies.hostProvider.page(navigationDestination: url) {
             try await dependencies.navigationRouter.navigateTo(destination: destination)
         } else if let parsed = URL(string: url) {
@@ -83,32 +92,16 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         product _: ProductExecutionConfig,
         request: HostDevicePermissionRequest
     ) async throws -> TrUAPIPermissionDecision {
-        try await dependencies.permissionGuard.requestDevicePermissionDecision(
+        if request.isGrantedByE2EHarness { return .allowAlways }
+
+        return try await dependencies.permissionGuard.requestDevicePermissionDecision(
             productId: dependencies.productId,
             capability: request.deviceCapabilityType
         ).hostDecision
     }
 
     func devicePermissionStatus(request: HostDevicePermissionRequest) async throws -> DevicePermissionStatus {
-        switch request {
-        case .camera,
-             .microphone,
-             .notifications:
-            switch await dependencies.osPermissionAsker.checkPermission(for: request.deviceCapabilityType) {
-            case .allowed: .granted
-            case .denied: .denied
-            case .notDetermined: .notDetermined
-            }
-        case .location:
-            .notDetermined
-        case .bluetooth,
-             .nfc,
-             .clipboard,
-             .openUrl,
-             .biometrics,
-             .motion:
-            .notApplicable
-        }
+        request.isGrantedByE2EHarness ? .granted : await systemPermissionStatus(request)
     }
 
     func remotePermission(
@@ -146,7 +139,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func confirmPermission(review: UserConfirmationReview) async throws -> TrUAPIPermissionDecision {
-        await dependencies.confirmationPresenter.confirmPermission(review: review, from: dependencies.productId)
+        try await dependencies.confirmationPresenter.confirmPermission(review: review, from: dependencies.productId)
     }
 
     func chainConnect(genesisHash: Data) throws -> UInt32? {
@@ -264,6 +257,30 @@ extension RustProductExecutionBridge: GameHostBridge {
 
     func cancelReminder() async throws {
         await dependencies.gameReminders?.cancel(productId: dependencies.productId)
+    }
+}
+
+private extension RustProductExecutionBridge {
+    func systemPermissionStatus(_ request: HostDevicePermissionRequest) async -> DevicePermissionStatus {
+        switch request {
+        case .camera,
+             .microphone,
+             .notifications:
+            switch await dependencies.osPermissionAsker.checkPermission(for: request.deviceCapabilityType) {
+            case .allowed: .granted
+            case .denied: .denied
+            case .notDetermined: .notDetermined
+            }
+        case .location:
+            .notDetermined
+        case .bluetooth,
+             .nfc,
+             .clipboard,
+             .openUrl,
+             .biometrics,
+             .motion:
+            .notApplicable
+        }
     }
 }
 

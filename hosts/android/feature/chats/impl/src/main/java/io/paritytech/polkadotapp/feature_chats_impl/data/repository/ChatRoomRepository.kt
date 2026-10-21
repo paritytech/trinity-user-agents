@@ -13,6 +13,8 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatExtensionId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toLocal
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 
 interface ChatRoomRepository : ReadOnlyChatRoomRepository {
@@ -24,7 +26,15 @@ interface ChatRoomRepository : ReadOnlyChatRoomRepository {
 
     suspend fun updateRoomMetadata(chatId: ChatId, metadata: RoomMetadata)
 
+    suspend fun roomExists(chatId: ChatId): Boolean
+
+    /** Replaces the name of the room and keeps its icon. */
+    suspend fun renameRoom(chatId: ChatId, name: String)
+
     fun subscribeChatSummaries(): Flow<List<ChatRoomSummaryLocal>>
+
+    /** The name and icon of the room, and a new value each time they change. */
+    fun subscribeRoomMetadata(chatId: ChatId): Flow<RoomMetadata>
 }
 
 class RealChatRoomRepository @Inject constructor(
@@ -64,6 +74,12 @@ class RealChatRoomRepository @Inject constructor(
         chatRoomDao.updateMetadata(chatId.toLocal(), metadata.name, metadata.icon)
     }
 
+    override suspend fun roomExists(chatId: ChatId): Boolean = chatRoomDao.exists(chatId.toLocal())
+
+    override suspend fun renameRoom(chatId: ChatId, name: String) {
+        chatRoomDao.updateName(chatId.toLocal(), name)
+    }
+
     override suspend fun getRoomMetadata(chatId: ChatId): RoomMetadata {
         val room = chatRoomDao.getRoom(chatId.toLocal())
         return RoomMetadata(name = room?.name, icon = room?.icon)
@@ -71,6 +87,13 @@ class RealChatRoomRepository @Inject constructor(
 
     override fun subscribeChatSummaries(): Flow<List<ChatRoomSummaryLocal>> {
         return chatRoomDao.subscribeChatSummaries()
+    }
+
+    override fun subscribeRoomMetadata(chatId: ChatId): Flow<RoomMetadata> {
+        return chatRoomDao.subscribeRoom(chatId.toLocal())
+            .map { room -> room?.name to room?.icon }
+            .distinctUntilChanged()
+            .map { (name, icon) -> RoomMetadata(name = name, icon = icon) }
     }
 
     override fun subscribeRoomsByExtension(extensionId: ChatExtensionId): Flow<List<ChatId>> {

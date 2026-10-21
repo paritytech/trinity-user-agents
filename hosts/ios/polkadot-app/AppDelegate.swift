@@ -25,6 +25,10 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             return true
         }
 
+        #if targetEnvironment(simulator)
+            TrUAPIE2ENativeChat.applyPersonChatModeIfRequested()
+        #endif
+
         configureTips()
 
         issueMonitoringService.setup()
@@ -33,10 +37,16 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
         UserNotificationService.shared.startGatheringNotifications()
 
+        ProductRoomCallAlerts.shared.start()
+
         LegacyGameAlarmCleanup.run()
 
         PushKitService.shared.register(for: [.voIP])
         application.registerForRemoteNotifications()
+
+        #if targetEnvironment(simulator)
+            TrUAPIE2EWakePushFeed.start(delegate: self)
+        #endif
 
         return true
     }
@@ -61,6 +71,19 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         didFailToRegisterForRemoteNotificationsWithError error: any Error
     ) {
         logger.error("DidFailToRegisterForRemoteNotificationsWithError \(error)")
+    }
+
+    /// A background push. A wake push of the push relay goes to the core, which wakes the products that watch its
+    /// topic (VERBOSITY-WASM-PRODUCT A1). The app has no other background push.
+    func application(
+        _: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        guard TrUAPIPushWakeReceiver.shared.receive(userInfo, completion: completionHandler) else {
+            completionHandler(.noData)
+            return
+        }
     }
 }
 

@@ -7,6 +7,7 @@ final class ShareInteractor {
     private let chatContactDataProviderFactory: ChatContactDataProviderMaking
     private let messageSender: LocalMessageCreatingOperationMaking
     private let composer: ShareContentComposing
+    private let productRooms: ShareProductRoomsProviding?
     private let logger: LoggerProtocol
 
     private var subscriptionTask: Task<Void, Never>?
@@ -16,11 +17,13 @@ final class ShareInteractor {
         chatContactDataProviderFactory: ChatContactDataProviderMaking,
         messageSender: LocalMessageCreatingOperationMaking,
         composer: ShareContentComposing,
+        productRooms: ShareProductRoomsProviding? = nil,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.chatContactDataProviderFactory = chatContactDataProviderFactory
         self.messageSender = messageSender
         self.composer = composer
+        self.productRooms = productRooms
         self.logger = logger
     }
 
@@ -32,20 +35,22 @@ final class ShareInteractor {
 
 extension ShareInteractor: ShareInteractorInputProtocol {
     func setup() {
-        subscriptionTask = Task { [weak self, chatContactDataProviderFactory, logger] in
+        subscriptionTask = Task { [weak self, chatContactDataProviderFactory, productRooms, logger] in
             do {
                 let stream = chatContactDataProviderFactory.subscribeChatsWithPredicate(
                     .chatWithNonBlockedContact()
                 )
                 for try await chats in stream {
-                    let personChats = chats.compactMap { chat -> ChatWithPeerMetadata? in
-                        guard
-                            case let .person(contact) = chat.peer,
-                            contact.isReadyForMessaging
-                        else { return nil }
-                        return ChatWithPeerMetadata(chat: chat, peerMetadata: contact.toPeerMetadata().list)
+                    let targets = chats.compactMap { chat -> ChatWithPeerMetadata? in
+                        switch chat.peer {
+                        case let .person(contact):
+                            guard contact.isReadyForMessaging else { return nil }
+                            return ChatWithPeerMetadata(chat: chat, peerMetadata: contact.toPeerMetadata().list)
+                        case .chatExtension:
+                            return productRooms?.target(for: chat)
+                        }
                     }
-                    await self?.presenter?.didReceive(chats: personChats)
+                    await self?.presenter?.didReceive(chats: targets)
                 }
             } catch {
                 logger.error("Share chat subscription error: \(error)")
@@ -58,7 +63,7 @@ extension ShareInteractor: ShareInteractorInputProtocol {
         guard !chatIds.isEmpty else { return }
 
         sendTask?.cancel()
-        sendTask = Task { [weak self, messageSender, composer, logger] in
+        sendTask = Task { [weak self, messageSender, composer, productRooms, logger] in
             await self?.presenter?.didReceive(isLoading: true)
 
             let content = composer.compose(items: items, userMessage: userMessage)
@@ -66,7 +71,11 @@ extension ShareInteractor: ShareInteractorInputProtocol {
                 try await withThrowingTaskGroup(of: Void.self) { group in
                     for chatId in chatIds {
                         group.addTask {
-                            try await messageSender.send(content: content, to: chatId)
+                            if case .chatExtension = chatId, let productRooms, case let .text(text) = content {
+                                try await productRooms.send(text: text, to: chatId)
+                            } else {
+                                try await messageSender.send(content: content, to: chatId)
+                            }
                         }
                     }
                     try await group.waitForAll()

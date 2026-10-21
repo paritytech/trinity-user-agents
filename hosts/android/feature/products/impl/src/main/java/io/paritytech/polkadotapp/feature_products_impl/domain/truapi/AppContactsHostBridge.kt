@@ -6,8 +6,11 @@ import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.common.utils.blake2b256
 import io.paritytech.polkadotapp.feature_chats_api.domain.ContactDirectory
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContact
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContacts
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.runBlocking
@@ -16,9 +19,13 @@ import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
 import javax.inject.Inject
 
+/** A person the picker offers: a contact of the native chat or of the chat product. */
+internal data class PickableContact(val accountId: AccountId, val username: String?)
+
 /**
  * Resolves the contact handles a transaction names back to accounts, and draws
- * the picker. The list never leaves the host: the core asks about handles, and
+ * the picker. Its people are the contacts of the native chat and the unblocked
+ * contacts of the chat product (`publishContacts`), each account once. The list never leaves the host: the core asks about handles, and
  * a product gets 32 bytes for the one person the user picked.
  *
  * The lookup runs inline on the core's dispatcher thread, so it answers from
@@ -27,6 +34,7 @@ import javax.inject.Inject
  */
 class AppContactsHostBridge @Inject constructor(
     private val directory: ContactDirectory,
+    private val personChatContacts: PersonChatContacts,
     private val picks: TrUAPIContactPicks,
 ) : ContactsHostBridge {
     private class HandleIndex(val handleKey: ByteArray, val accountsByHandle: Map<DataByteArray, ByteArray>)
@@ -40,7 +48,7 @@ class AppContactsHostBridge @Inject constructor(
     private var index: HandleIndex? = null
 
     /** Take the latest contacts, dropping the handle index built from the old ones. */
-    internal fun update(contacts: List<Contact>) = synchronized(lock) {
+    internal fun update(contacts: List<PickableContact>) = synchronized(lock) {
         accounts = contacts.map { it.accountId.value }
         index = null
     }
@@ -60,7 +68,7 @@ class AppContactsHostBridge @Inject constructor(
             index?.takeIf { it.handleKey.contentEquals(handleKey) }?.let { return it.accountsByHandle }
             accounts
         }
-        val current = snapshot ?: runBlocking { directory.getContacts().map { it.accountId.value } }
+        val current = snapshot ?: runBlocking { pickable(directory.getContacts(), personChatContacts.getContacts()).map { it.accountId.value } }
         val built = current.associateBy { contactHandle(handleKey, it).toDataByteArray() }
         synchronized(lock) {
             // Kept only if no newer snapshot landed while hashing.
@@ -78,7 +86,7 @@ class AppContactsHostBridge @Inject constructor(
      * resolves, because that goes through [contacts] alone.
      */
     override suspend fun pickContact(productId: String): HostContactPick {
-        val options = directory.getContacts().map { contact ->
+        val options = pickable(directory.getContacts(), personChatContacts.getContacts()).map { contact ->
             ContactPickOption(
                 account = contact.accountId.value,
                 displayName = contact.username,
@@ -99,9 +107,13 @@ class AppContactsHostBridge @Inject constructor(
      * cached so a removed contact stops resolving. Collecting it also keeps
      * this bridge's lookup snapshot current.
      */
-    fun contactRemovals(): Flow<Unit> = directory.observeContacts()
+    fun contactRemovals(): Flow<Unit> = combine(directory.observeContacts(), personChatContacts.observeContacts(), ::pickable)
         .onEach(::update)
         .contactRemovals()
+
+    private fun pickable(native: List<Contact>, product: List<PersonChatContact>): List<PickableContact> =
+        (native.map { PickableContact(it.accountId, it.username) } + product.filterNot { it.blocked }.map { PickableContact(it.accountId, it.username) })
+            .distinctBy { it.accountId }
 }
 
 /** The handle the core knows [account] by under [handleKey]. */
@@ -113,7 +125,7 @@ internal fun contactHandle(handleKey: ByteArray, account: ByteArray): ByteArray 
  * and additions are ignored: a handle the core cached names someone who was a
  * contact when it was cached, so a newcomer cannot make it wrong.
  */
-internal fun Flow<List<Contact>>.contactRemovals(): Flow<Unit> = flow {
+internal fun Flow<List<PickableContact>>.contactRemovals(): Flow<Unit> = flow {
     var known: Set<AccountId>? = null
     collect { contacts ->
         val current = contacts.mapTo(HashSet()) { it.accountId }

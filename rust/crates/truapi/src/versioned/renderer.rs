@@ -40,6 +40,19 @@ mod tests {
 	}
 
 	#[test]
+	fn render_request_carries_the_chat_footer_context() {
+		let request = ProductRendererRenderRequest::V1(v01::ProductRendererRenderRequest {
+			context: v01::RenderContext::ChatFooter { room_id: "room".into() },
+			payload: Vec::new(),
+		});
+		let bytes = request.encode();
+		// V1 envelope, ChatFooter after the three older contexts, the room,
+		// then the empty payload.
+		assert_eq!(hex::encode(&bytes), "000310726f6f6d00");
+		assert_eq!(ProductRendererRenderRequest::decode(&mut bytes.as_slice()).unwrap(), request);
+	}
+
+	#[test]
 	fn action_item_button_payload_is_empty() {
 		let item = HostRendererActionSubscribeItem::V1(v01::HostRendererActionSubscribeItem {
 			context: v01::RenderContext::PocketCard { card_id: "loyalty".into() },

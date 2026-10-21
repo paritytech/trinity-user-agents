@@ -1,3 +1,9 @@
+//! Chat room, message and query types.
+//!
+//! The variant order of each enum here is part of the wire. Add a new variant
+//! after the last one, and never reorder or remove a variant.
+
+use crate::{Bytes32, v01::ContactHandle};
 use parity_scale_codec::{Decode, Encode};
 
 /// Request to create a chat room.
@@ -42,7 +48,6 @@ pub enum HostChatCreateRoomError {
 
 /// What a room shows below its messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ChatRoomFooter {
 	/// The text field the user types messages into.
 	TextInput,
@@ -324,4 +329,1063 @@ pub struct HostChatActionSubscribeItem {
 pub struct HostChatListSubscribeItem {
 	/// Chat rooms the product participates in.
 	pub rooms: Vec<ChatRoom>,
+}
+
+/// Bytes the host shows: an avatar, an icon or a media item.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ChatResource {
+	/// The bytes, with their media type.
+	Inline {
+		/// Media type of `bytes`, for example `image/png`.
+		mime_type: String,
+		/// The resource itself.
+		bytes: Vec<u8>,
+	},
+	/// A preimage the host gets through `Preimage::lookup_subscribe`.
+	Preimage {
+		/// The key `Preimage::lookup_subscribe` takes.
+		key: Vec<u8>,
+	},
+	/// Bytes that a host encrypted and stored on the Bulletin chain in parts
+	/// (`sealed_attachments`). The ciphertext is XChaCha20-Poly1305 of the
+	/// bytes under `key` and `nonce`, with the associated data
+	/// `truapi/chat/sealed/v1`, cut into `parts` in order. Only a holder of
+	/// the key reads the bytes, so a product sends the resource only through
+	/// an encrypted channel.
+	Sealed {
+		/// The preimage key of each part, in order.
+		parts: Vec<Vec<u8>>,
+		/// The 32-byte key of the encryption.
+		key: Vec<u8>,
+		/// The 24-byte nonce of the encryption.
+		nonce: Vec<u8>,
+		/// The length of the ciphertext, in bytes.
+		size: u64,
+		/// SHA-512 of the ciphertext.
+		digest: Vec<u8>,
+	},
+	/// A file in the HOP pool of the person-to-person chat, as its
+	/// `P2PMixnet` attachments name it. The host gets the bytes through the
+	/// core, which claims them only from a node the host lists. Only a holder
+	/// of the ticket reads the bytes, so a product sends the resource only
+	/// through an encrypted channel.
+	Hop {
+		/// The 32-byte identifier of the file's root entry.
+		identifier: Vec<u8>,
+		/// The 32-byte ticket that claims and opens the file.
+		ticket: Vec<u8>,
+		/// The `wss://` URL of the node that holds it.
+		node: String,
+		/// The size of the file the sender states, in bytes.
+		size: u64,
+	},
+}
+
+/// What a timeline needs to draw a media item before its bytes arrive.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ChatMediaMeta {
+	/// Media type of the item, for example `image/jpeg`.
+	pub mime_type: String,
+	/// Size the product states. The host checks it for a preimage it gets.
+	pub size_bytes: Option<u64>,
+	/// Width in pixels.
+	pub width: Option<u32>,
+	/// Height in pixels.
+	pub height: Option<u32>,
+	/// BlurHash string the host draws until the bytes arrive.
+	pub placeholder: Option<String>,
+	/// Accessibility text, and the chat list preview of a message with only
+	/// media.
+	pub alt: Option<String>,
+}
+
+/// One media item of a message.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ChatMediaItem {
+	/// A still image.
+	Image {
+		/// The image bytes.
+		resource: ChatResource,
+		/// What the host draws before the bytes arrive.
+		meta: ChatMediaMeta,
+	},
+	/// A video the host plays in its own player.
+	Video {
+		/// The video bytes.
+		resource: ChatResource,
+		/// What the host draws before the bytes arrive.
+		meta: ChatMediaMeta,
+	},
+	/// A file the user can open or share.
+	File {
+		/// The file bytes.
+		resource: ChatResource,
+		/// What the host draws before the bytes arrive.
+		meta: ChatMediaMeta,
+		/// Name the host shows and saves the file under.
+		file_name: String,
+	},
+}
+
+/// Name, avatar and description of a room.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ChatRoomMetadata {
+	/// Room display name.
+	pub name: String,
+	/// Room avatar. `None` draws the icon of the product.
+	pub avatar: Option<ChatResource>,
+	/// One or more lines the host shows in the room header.
+	pub description: Option<String>,
+}
+
+/// How the chat list orders a room.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ChatRoomOrder {
+	/// By `ChatRoomPreview::timestamp`, among the other rooms.
+	Timestamp,
+	/// Above every room that is not pinned, then by timestamp.
+	PinToTop,
+}
+
+/// The badge the chat list shows on a room.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ChatRoomBadge {
+	/// No badge.
+	Hidden,
+	/// A number. The value `0` removes the badge.
+	UnreadCount {
+		/// The number the host shows.
+		count: u32,
+	},
+	/// An image.
+	Image {
+		/// The image the host shows.
+		resource: ChatResource,
+	},
+}
+
+/// The line the chat list shows under a room name.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ChatRoomPreviewText {
+	/// The line itself.
+	pub text: String,
+	/// `true`: the host draws the line as an activity that continues, for
+	/// example "Alice is typing", and not as the last message.
+	pub ongoing: bool,
+}
+
+/// How a room shows in the chat list. A field at `None` keeps the host
+/// default.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ChatRoomPreview {
+	/// The order group of the room.
+	pub order: ChatRoomOrder,
+	/// Milliseconds since the Unix epoch. The sort key in the order group.
+	/// `None` uses the time of the newest message.
+	pub timestamp: Option<u64>,
+	/// The badge on the room. `None` keeps the unread count of the host.
+	pub badge: Option<ChatRoomBadge>,
+	/// `None` lets the host make the line from the newest message.
+	pub text: Option<ChatRoomPreviewText>,
+}
+
+/// The parts of a room the product serves itself. A field at its default
+/// value keeps the host behaviour for that part.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ChatRoomConfig {
+	/// `true`: the product keeps the messages and answers `messages_query` and
+	/// `user_action`, and the host keeps only a page cache. `false`: the host
+	/// stores the messages.
+	pub product_source: bool,
+	/// `true`: the host shows who reacted, and asks `reactions_query`.
+	pub reaction_details: bool,
+	/// `true`: the host asks `participants_query`. `false`: the room has two
+	/// participants, the user and the product.
+	pub participants: bool,
+	/// `true`: the host asks `message_actions_query` before it opens a message
+	/// menu.
+	pub message_actions: bool,
+	/// Emoji the reaction picker offers. `None` offers all emoji.
+	pub allowed_reactions: Option<Vec<String>>,
+	/// Text the room shows while it has no messages. `None` shows the host
+	/// text.
+	pub placeholder: Option<String>,
+	/// `true`: the host sends a `Seen` event or user action when the user sees
+	/// the newest message.
+	pub report_seen: bool,
+}
+
+/// Request to replace the name, avatar and description of a room.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostChatSetRoomMetadataRequest {
+	/// A room the calling product created.
+	pub room_id: String,
+	/// The new metadata.
+	pub metadata: ChatRoomMetadata,
+}
+
+/// Request to replace how a room shows in the chat list.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostChatSetRoomPreviewRequest {
+	/// A room the calling product created.
+	pub room_id: String,
+	/// The new preview.
+	pub preview: ChatRoomPreview,
+}
+
+/// Request to delete a room and all the host keeps for it.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostChatDeleteRoomRequest {
+	/// A room the calling product created.
+	pub room_id: String,
+}
+
+/// Failure of a request that changes a room.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostChatRoomError {
+	/// The calling product created no room with this id.
+	UnknownRoom,
+	/// The product takes part in the room as a bot, not as its host.
+	NotRoomHost,
+	/// The product sent this request for this room too often.
+	RateLimited,
+	/// Catch-all.
+	Unknown {
+		/// Human-readable reason.
+		reason: String,
+	},
+}
+
+/// Who wrote a message.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ChatMessageOrigin {
+	/// A participant id of the room. The id `"user"` is the user of the host,
+	/// and the id `"product"` is the product.
+	pub participant_id: String,
+}
+
+/// Where a message is on its way to the other participants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ChatMessageStatus {
+	/// Only the sender sees the message, for example while media uploads.
+	Preparing,
+	/// The message left the sender.
+	Sent,
+	/// The message reached the other participants.
+	Delivered,
+	/// Another participant read the message.
+	Read,
+	/// The product could not send the message. The host offers retry and
+	/// delete.
+	Failed,
+}
+
+/// What a message says. A reaction is not content; see `ChatFeedUpdate`.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ChatMessageBody {
+	/// Plain text. The host detects links but applies no Markdown.
+	Text {
+		/// Message text.
+		text: String,
+	},
+	/// Markdown text with media below it.
+	RichText {
+		/// Markdown text, in the subset the host draws.
+		text: Option<String>,
+		/// Media the host draws below the text.
+		media: Vec<ChatMediaItem>,
+	},
+	/// Buttons the host draws below an optional text. A press sends
+	/// `ChatEvent::ActionTriggered`.
+	Actions(ChatActions),
+	/// A body the product draws through `Renderer::render` with a
+	/// `ChatMessage` context.
+	Custom {
+		/// Product-defined type key.
+		message_type: String,
+		/// Product-defined payload, opaque to the host.
+		payload: Vec<u8>,
+		/// One line the host shows where it lists the message without drawing
+		/// it.
+		preview_text: Option<String>,
+	},
+	/// A line about the room rather than a message of a participant, for
+	/// example "You are connected with Bob". The host draws it as a system
+	/// row in the middle of the room, with no bubble, no author and no menu.
+	Notice {
+		/// Text of the line, plain.
+		text: String,
+	},
+}
+
+/// How many participants reacted to a message with one emoji.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ChatReactionSummary {
+	/// The emoji.
+	pub emoji: String,
+	/// Number of participants that reacted with this emoji.
+	pub count: u32,
+	/// `true` when the user is one of them.
+	pub reacted_by_user: bool,
+}
+
+/// One message of a room.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ChatMessage {
+	/// Identifier the product chose, unique in the room.
+	pub message_id: String,
+	/// Who wrote the message.
+	pub origin: ChatMessageOrigin,
+	/// Milliseconds since the Unix epoch.
+	pub timestamp: u64,
+	/// What the message says.
+	pub body: ChatMessageBody,
+	/// Where the message is on its way.
+	pub status: ChatMessageStatus,
+	/// The message this one replies to.
+	pub reply_to: Option<String>,
+	/// Milliseconds since the Unix epoch of the last edit.
+	pub edited_at: Option<u64>,
+	/// Reactions, one entry for each emoji.
+	pub reactions: Vec<ChatReactionSummary>,
+}
+
+/// One change to the messages of a room.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ChatFeedUpdate {
+	/// A new message.
+	New(ChatMessage),
+	/// A new body for a message.
+	Edited {
+		/// The message.
+		message_id: String,
+		/// The body that replaces the previous one.
+		body: ChatMessageBody,
+		/// Milliseconds since the Unix epoch.
+		edited_at: u64,
+	},
+	/// A message is gone.
+	Deleted {
+		/// The message.
+		message_id: String,
+	},
+	/// A participant reacted to a message.
+	ReactionPlaced {
+		/// The message.
+		message_id: String,
+		/// The participant.
+		participant_id: String,
+		/// The emoji.
+		emoji: String,
+	},
+	/// A participant removed a reaction.
+	ReactionRemoved {
+		/// The message.
+		message_id: String,
+		/// The participant.
+		participant_id: String,
+		/// The emoji.
+		emoji: String,
+	},
+	/// A message has a new status.
+	StatusChanged {
+		/// The message.
+		message_id: String,
+		/// The new status.
+		status: ChatMessageStatus,
+	},
+}
+
+/// Request to push one change to the messages of a room.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostChatUpdateFeedRequest {
+	/// A room the calling product created.
+	pub room_id: String,
+	/// The change.
+	pub update: ChatFeedUpdate,
+}
+
+/// Failure to push a change to the messages of a room.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostChatUpdateFeedError {
+	/// The calling product created no room with this id.
+	UnknownRoom,
+	/// The product takes part in the room as a bot, not as its host.
+	NotRoomHost,
+	/// The update names a message the room does not hold.
+	UnknownMessage,
+	/// `New` names a message the room holds already.
+	DuplicateMessage,
+	/// The text or the custom payload is over its limit.
+	MessageTooLarge,
+	/// In a room the host stores: `New` from `"user"`, or `Edited` of a message
+	/// the product did not write.
+	NotOwner,
+	/// The product pushed updates to this room too often.
+	RateLimited,
+	/// Catch-all.
+	Unknown {
+		/// Human-readable reason.
+		reason: String,
+	},
+}
+
+/// Where a page of messages starts.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ChatPageAnchor {
+	/// Messages newer than the cursor. `None` starts at the oldest message.
+	After {
+		/// A cursor the product returned, or `None`.
+		cursor: Option<String>,
+	},
+	/// Messages older than the cursor. `None` starts at the newest message.
+	Before {
+		/// A cursor the product returned, or `None`.
+		cursor: Option<String>,
+	},
+}
+
+/// Host question for one page of messages of a room the product keeps.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ProductChatMessagesQueryRequest {
+	/// The room.
+	pub room_id: String,
+	/// Where the page starts.
+	pub anchor: ChatPageAnchor,
+	/// Largest number of messages the host wants.
+	pub page_size: u32,
+}
+
+/// One page of messages.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ProductChatMessagesQueryItem {
+	/// The messages, oldest first.
+	pub messages: Vec<ChatMessage>,
+	/// Cursor for the next page in the same direction. `None` ends the
+	/// direction.
+	pub next: Option<String>,
+}
+
+/// Failure of a query the host sends to the product.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ProductChatQueryError {
+	/// The product has no room with this id.
+	UnknownRoom,
+	/// The product cannot answer this question. The host uses its default.
+	NotAvailable,
+	/// Catch-all.
+	Unknown {
+		/// Human-readable reason.
+		reason: String,
+	},
+}
+
+/// Something the user did in a room the product keeps.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ChatUserAction {
+	/// The user sent a message.
+	NewMessage {
+		/// What the user wrote.
+		body: ChatMessageBody,
+		/// The message the user replied to.
+		reply_to: Option<String>,
+	},
+	/// The user edited a message.
+	EditMessage {
+		/// The message.
+		message_id: String,
+		/// The new body.
+		body: ChatMessageBody,
+	},
+	/// The user deleted a message.
+	DeleteMessage {
+		/// The message.
+		message_id: String,
+	},
+	/// The user reacted to a message.
+	ReactionPlaced {
+		/// The message.
+		message_id: String,
+		/// The emoji.
+		emoji: String,
+	},
+	/// The user removed a reaction.
+	ReactionRemoved {
+		/// The message.
+		message_id: String,
+		/// The emoji.
+		emoji: String,
+	},
+	/// The user saw this message, the newest one on the screen.
+	Seen {
+		/// The message.
+		message_id: String,
+	},
+	/// The user asked to send a `Failed` message again.
+	Retry {
+		/// The message.
+		message_id: String,
+	},
+}
+
+/// Host request that tells the product what the user did.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ProductChatUserActionRequest {
+	/// The room.
+	pub room_id: String,
+	/// What the user did.
+	pub action: ChatUserAction,
+}
+
+/// The answer of the product to a user action.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ProductChatUserActionItem {
+	/// For `NewMessage`: the message as the product stored it.
+	MessageCreated(ChatMessage),
+	/// The product applied the action.
+	Acknowledged,
+}
+
+/// Failure of a user action.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ProductChatUserActionError {
+	/// The product has no room with this id.
+	UnknownRoom,
+	/// The room has no message with this id.
+	UnknownMessage,
+	/// The product refuses the action. The host shows the reason to the user.
+	Rejected {
+		/// Human-readable reason.
+		reason: String,
+	},
+	/// Catch-all.
+	Unknown {
+		/// Human-readable reason.
+		reason: String,
+	},
+}
+
+/// A participant of a room.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ChatParticipant {
+	/// A verified person of the People chain.
+	Person {
+		/// The person id on the People chain.
+		person_id: u32,
+	},
+	/// A registered account that is not a person yet.
+	LitePerson {
+		/// The account id.
+		account: Bytes32,
+	},
+	/// A contact the user picked through the Contacts API. The host draws its
+	/// name and avatar.
+	Contact {
+		/// The handle the Contacts API gave the product.
+		handle: ContactHandle,
+	},
+	/// Another product. The host draws its manifest name and icon.
+	Product {
+		/// The product id.
+		product_id: String,
+	},
+	/// A participant of another kind. The product supplies the appearance.
+	Custom {
+		/// Display name.
+		nickname: String,
+		/// Avatar. `None` lets the host draw its default.
+		avatar: Option<ChatResource>,
+	},
+}
+
+/// A participant with its id in the room.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ChatParticipantEntry {
+	/// Identifier of the participant in the room.
+	pub participant_id: String,
+	/// Who the participant is.
+	pub participant: ChatParticipant,
+}
+
+/// What the host asks about the participants of a room.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ChatParticipantsQuery {
+	/// The number of participants.
+	Count,
+	/// One page of participants.
+	Page {
+		/// A cursor the product returned, or `None` for the first page.
+		cursor: Option<String>,
+		/// Largest number of participants the host wants.
+		page_size: u32,
+	},
+	/// The participants with these ids.
+	ByIds {
+		/// Participant ids.
+		participant_ids: Vec<String>,
+	},
+}
+
+/// Host question about the participants of a room.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ProductChatParticipantsQueryRequest {
+	/// The room.
+	pub room_id: String,
+	/// The question.
+	pub query: ChatParticipantsQuery,
+}
+
+/// The answer to a participants query, in the kind of the question.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ProductChatParticipantsQueryItem {
+	/// The answer to `Count`.
+	Count {
+		/// The number of participants.
+		count: u32,
+	},
+	/// The answer to `Page`.
+	Page {
+		/// The participants of the page.
+		participants: Vec<ChatParticipantEntry>,
+		/// Cursor for the next page. `None` ends the list.
+		next: Option<String>,
+	},
+	/// The answer to `ByIds`. An id the product does not know is absent.
+	Resolved {
+		/// The participants found.
+		participants: Vec<ChatParticipantEntry>,
+	},
+}
+
+/// Host question about who reacted to one message.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ProductChatReactionsQueryRequest {
+	/// The room.
+	pub room_id: String,
+	/// The message.
+	pub message_id: String,
+}
+
+/// One reaction of one participant.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ChatReactionDetail {
+	/// The participant.
+	pub participant_id: String,
+	/// The emoji.
+	pub emoji: String,
+}
+
+/// Who reacted to one message.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ProductChatReactionsQueryItem {
+	/// One entry for each participant and emoji.
+	pub reactions: Vec<ChatReactionDetail>,
+}
+
+/// What happens when the user selects a product action.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ChatActionHandler {
+	/// The host opens the link. The worker does not take part.
+	Deeplink {
+		/// The link.
+		url: String,
+	},
+	/// The host sends the matching `ChatEvent` to the product.
+	Callback,
+}
+
+/// A menu entry the product defines.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ChatProductAction {
+	/// Identifier of the action, unique in its menu.
+	pub action_id: String,
+	/// Text of the entry.
+	pub label: String,
+	/// Icon of the entry.
+	pub icon: Option<ChatResource>,
+	/// `true`: the host draws the entry as destructive.
+	pub destructive: bool,
+	/// What happens when the user selects the entry.
+	pub handler: ChatActionHandler,
+}
+
+/// A message menu entry the host makes itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ChatBuiltInMessageAction {
+	/// Copy the text of the message.
+	Copy,
+	/// Reply to the message.
+	Reply,
+	/// Edit a message of the user.
+	Edit,
+	/// Delete a message of the user.
+	Delete,
+	/// React to the message.
+	React,
+	/// Send a `Failed` message again, in a room the product keeps.
+	Retry,
+}
+
+/// The menu of one message.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ChatMessageMenu {
+	/// Only the entries of the product.
+	Custom {
+		/// The entries.
+		actions: Vec<ChatProductAction>,
+	},
+	/// The host entries without `hidden`, then the entries of the product in
+	/// their own section.
+	ExtendBuiltIn {
+		/// The entries of the product.
+		actions: Vec<ChatProductAction>,
+		/// Host entries the menu does not show.
+		hidden: Vec<ChatBuiltInMessageAction>,
+	},
+}
+
+/// Host question for the menu of one message.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ProductChatMessageActionsQueryRequest {
+	/// The room.
+	pub room_id: String,
+	/// The message. The host sends a `Custom` body with an empty payload.
+	pub message: ChatMessage,
+}
+
+/// The menu for one message.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ProductChatMessageActionsQueryItem {
+	/// The menu.
+	pub menu: ChatMessageMenu,
+}
+
+/// A payment button in the input of a room.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ChatInputPayment {
+	/// The button pays to this account.
+	Enabled {
+		/// The account that receives the payment.
+		destination: Bytes32,
+	},
+}
+
+/// The input the host shows below the messages.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ChatInputConfig {
+	/// Hint text in the empty input. `None` shows the host text.
+	pub placeholder: Option<String>,
+	/// `true`: the input offers to attach a photo.
+	pub photo: bool,
+	/// `true`: the input offers to attach a video.
+	pub video: bool,
+	/// `true`: the input offers to attach a file.
+	pub file: bool,
+	/// A payment button, or `None`.
+	pub payment: Option<ChatInputPayment>,
+}
+
+impl Default for ChatInputConfig {
+	/// The input of a room that declares nothing: photo and video on, file and
+	/// payment off, and the host hint text.
+	fn default() -> Self {
+		Self { placeholder: None, photo: true, video: true, file: false, payment: None }
+	}
+}
+
+/// What a user did in a room of the product.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ChatEvent {
+	/// The user posted into a room the host stores. The host gave the id.
+	MessagePosted {
+		/// The id the host gave the message.
+		message_id: String,
+		/// What the user wrote.
+		body: ChatMessageBody,
+		/// The message the user replied to.
+		reply_to: Option<String>,
+	},
+	/// A press on a button of an `Actions` message.
+	ActionTriggered(ActionTrigger),
+	/// The user sent a slash command.
+	Command(ChatCommand),
+	/// The user edited a message in a room the host stores.
+	UserEdited {
+		/// The message.
+		message_id: String,
+		/// The new body.
+		body: ChatMessageBody,
+	},
+	/// The user deleted a message in a room the host stores.
+	UserDeleted {
+		/// The message.
+		message_id: String,
+	},
+	/// The user reacted to a message, or removed a reaction, in a room the
+	/// host stores.
+	UserReacted {
+		/// The message.
+		message_id: String,
+		/// The emoji.
+		emoji: String,
+		/// `true` for a new reaction, `false` for a removed one.
+		placed: bool,
+	},
+	/// The user saw this message, the newest one on the screen, in a room the
+	/// host stores.
+	Seen {
+		/// The message.
+		message_id: String,
+	},
+	/// The user selected a product entry of a message menu.
+	MessageActionTriggered {
+		/// The message.
+		message_id: String,
+		/// The entry.
+		action_id: String,
+	},
+}
+
+/// The Chat features a host serves, and its attachment bounds.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostChatCapabilitiesResponse {
+	/// Names of the features the host serves from end to end. A product
+	/// ignores a name it does not know.
+	pub features: Vec<String>,
+	/// Largest media item the host sends inline for the user, in bytes.
+	pub inline_attachment_max_bytes: u32,
+	/// Largest attachment the host stores as a preimage, in bytes. `0` when
+	/// the host does not serve `preimage_attachments`.
+	pub preimage_attachment_max_bytes: u32,
+	/// Largest attachment the host seals, in bytes. `0` when the host does
+	/// not serve `sealed_attachments`.
+	pub sealed_attachment_max_bytes: u32,
+}
+
+/// The call buttons in the header of a room.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ChatRoomCalls {
+	/// The host shows the audio call button.
+	pub audio: bool,
+	/// The host shows the video call button.
+	pub video: bool,
+}
+
+/// The optional features of one room. Each field at its default value keeps
+/// the behaviour of a room that declares no features.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ChatRoomFeatures {
+	/// The host stores a user attachment above the inline bound as a preimage
+	/// that the Bulletin allowance of the product pays for.
+	pub preimage_attachments: bool,
+	/// The product answers `search_query`. The host reads it only for a room
+	/// that keeps its messages in the product.
+	pub search: bool,
+	/// The call buttons in the header. `None` shows no call button.
+	pub calls: Option<ChatRoomCalls>,
+	/// The host offers "Read aloud" on text messages.
+	pub read_aloud: bool,
+	/// The host encrypts a user attachment above the inline bound, stores the
+	/// ciphertext on the Bulletin chain in parts that the allowance of the
+	/// product pays for, and gives the product a `ChatResource::Sealed`.
+	/// The host never stores such an attachment in plain form.
+	pub sealed_attachments: bool,
+	/// The host gives a user photo, video or file to the core, which uploads
+	/// it to a HOP node of the person-to-person chat, and gives the product a
+	/// `ChatResource::Hop`. Only the chat product declares it, so its contacts
+	/// on the native chat receive the file the way the native chat sends it.
+	pub hop_attachments: bool,
+}
+
+/// Request to declare the optional features of a room.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostChatSetRoomFeaturesRequest {
+	/// A room the calling product created.
+	pub room_id: String,
+	/// The features. They replace the previous declaration completely.
+	pub features: ChatRoomFeatures,
+}
+
+/// The call of a room.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ChatRoomCall {
+	/// An incoming call that the product received. The host rings in the
+	/// room.
+	Ringing {
+		/// Identifier the product chose for the call.
+		call_id: String,
+		/// The call has video.
+		video: bool,
+		/// The participant that calls. `None` shows the product.
+		caller: Option<String>,
+	},
+	/// A call that continues. With `media_session` the host shows that
+	/// session of the Media service. Without it the host shows only the call
+	/// bar.
+	Active {
+		/// Identifier the product chose for the call.
+		call_id: String,
+		/// The call has video.
+		video: bool,
+		/// Milliseconds since the Unix epoch when the call started.
+		started_at: u64,
+		/// A session of the Media service that the product owns.
+		media_session: Option<Bytes32>,
+	},
+}
+
+/// Request to show, change or remove the call of a room.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostChatSetRoomCallRequest {
+	/// A room the calling product created.
+	pub room_id: String,
+	/// The call. `None` removes the call.
+	pub call: Option<ChatRoomCall>,
+}
+
+/// What the user did with the optional features of a room.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ChatRoomEvent {
+	/// The user muted, unmuted, archived or unarchived the room. The host also
+	/// sends it for each muted or archived room when the subscription starts.
+	UserStateChanged {
+		/// Milliseconds since the Unix epoch when the mute ends. `u64::MAX`
+		/// mutes the room with no end. `None`: the room is not muted.
+		muted_until: Option<u64>,
+		/// The room is in the archive of the user.
+		archived: bool,
+	},
+	/// The host holds the worker for a notification that it sent to this
+	/// room.
+	Woken {
+		/// The watch that received the notification.
+		watch_id: String,
+	},
+	/// The user pressed a call button in the header.
+	CallRequested {
+		/// The user pressed the video call button.
+		video: bool,
+	},
+	/// The user answered the call that rings.
+	CallAnswered {
+		/// The call.
+		call_id: String,
+		/// The user accepted the call. `false`: the user declined it.
+		accept: bool,
+	},
+	/// The user tapped the call bar of a call without a media session.
+	CallOpened {
+		/// The call.
+		call_id: String,
+	},
+	/// The user pressed "End" on the call bar.
+	CallEnded {
+		/// The call.
+		call_id: String,
+	},
+	/// The host has a media signal of the call for the other side: the
+	/// product sends it there, where the product gives it to `callMedia.signal`.
+	CallSignal {
+		/// The call.
+		call_id: String,
+		/// Opaque bytes of the host.
+		signal: Vec<u8>,
+	},
+}
+
+/// One thing the user did with the optional features of a room.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostChatRoomEventsSubscribeItem {
+	/// The room.
+	pub room_id: String,
+	/// What the user did.
+	pub event: ChatRoomEvent,
+}
+
+/// Host question for the messages of a room that match what the user typed.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ProductChatSearchQueryRequest {
+	/// A room that keeps its messages in the product.
+	pub room_id: String,
+	/// What the user typed.
+	pub text: String,
+	/// A cursor the product returned. `None` asks for the newest matches.
+	pub cursor: Option<String>,
+	/// Largest number of matches the host wants.
+	pub page_size: u32,
+}
+
+/// One page of the messages that match a search.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ProductChatSearchQueryItem {
+	/// The matches, newest first.
+	pub hits: Vec<ChatMessage>,
+	/// Cursor for older matches. `None` ends the matches.
+	pub next: Option<String>,
+}
+
+/// Host question: the user opened a room link of the product that carries a
+/// payload, `polkadot://<product>/-/chat/<room>#<payload>` or its web form.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ProductChatOpenLinkRequest {
+	/// The room the link names.
+	pub room_id: String,
+	/// The text after `#` in the link, percent-decoded. The host does not
+	/// read it.
+	pub payload: String,
+}
+
+/// What the product did with an opened link.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ProductChatOpenLinkItem {
+	/// The room the host shows next. `None` keeps the room of the link.
+	pub room_id: Option<String>,
 }

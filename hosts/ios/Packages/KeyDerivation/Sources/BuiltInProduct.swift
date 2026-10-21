@@ -1,7 +1,7 @@
 import Foundation
 
 /// Governance-reserved product identities for built-in app features.
-/// Only `dim2` and `personhood` are wired today; the rest are declared for
+/// Only `dim2`, `chat` and `personhood` are wired today; the rest are declared for
 /// when those features migrate to the product scheme. Coinage keeps its own
 /// derivation layout for now.
 public enum BuiltInProduct {
@@ -9,6 +9,11 @@ public enum BuiltInProduct {
     /// `Sendable` type, which is how `HostPlacedProducts` names its backing product.
     @Sendable public static func dim2(for tld: String) -> String {
         product(for: "dim2", tld: tld)
+    }
+
+    /// Person-to-person chat, shipped with the app as a worker product.
+    @Sendable public static func chat(for tld: String) -> String {
+        product(for: "chat", tld: tld)
     }
 
     /// PoI (DIM1).

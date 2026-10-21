@@ -87,6 +87,9 @@ impl ChainOverrides {
 		.collect()
 	}
 }
+/// Env var replacing the preset's HOP nodes with a comma-separated list of
+/// `wss://` URLs.
+pub const HOP_NODES_ENV: &str = "TRUAPI_HOST_HOP_NODES";
 
 impl Network {
 	/// CLI resolution: the preset with the backend and chain URL overrides, or
@@ -137,6 +140,7 @@ impl Network {
 				live_chain_endpoints: PASEO_NEXT_V2_CHAIN_ENDPOINTS,
 				dotns_pop_controller: None,
 				disposable_identities: true,
+				hop_nodes: &[],
 			},
 			Self::Previewnet => NetworkConfig {
 				id: "previewnet",
@@ -151,6 +155,7 @@ impl Network {
 				live_chain_endpoints: PREVIEWNET_CHAIN_ENDPOINTS,
 				dotns_pop_controller: None,
 				disposable_identities: true,
+				hop_nodes: &[PREVIEWNET_BULLETIN.ws],
 			},
 			Self::Polkadot => NetworkConfig {
 				id: "polkadot",
@@ -165,6 +170,7 @@ impl Network {
 				live_chain_endpoints: POLKADOT_CHAIN_ENDPOINTS,
 				dotns_pop_controller: Some(POLKADOT_DOTNS_POP_CONTROLLER),
 				disposable_identities: false,
+				hop_nodes: &[],
 			},
 		}
 	}
@@ -421,6 +427,10 @@ pub struct NetworkConfig {
 	/// plaintext account store may keep and auto-accept may sign for. Only
 	/// test networks set it.
 	pub disposable_identities: bool,
+	/// HOP nodes the person chat uploads to and claims from. Previewnet's
+	/// Bulletin node serves HOP; Paseo's does not, and its HOP nodes are not
+	/// published, so give them with [`HOP_NODES_ENV`].
+	pub hop_nodes: &'static [&'static str],
 }
 
 #[derive(Debug, Clone, Copy)]

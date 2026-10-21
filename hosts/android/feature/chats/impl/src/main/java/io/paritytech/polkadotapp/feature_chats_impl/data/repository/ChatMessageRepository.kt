@@ -18,6 +18,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.LastMessageSum
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toDomain
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toLocal
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toLocalType
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toSearchableContent
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
@@ -67,6 +68,12 @@ interface ChatMessageRepository {
 
     suspend fun shiftChatMessagesToTimestamp(chatId: ChatId, timestamp: Timestamp)
     suspend fun removeMessage(messageId: ChatMessageId)
+
+    /** Replaces the message with a hidden [ChatMessage.Content.Deleted] tombstone and drops its reactions and revisions. */
+    suspend fun markMessageDeleted(messageId: ChatMessageId)
+
+    /** The newest message that a room shows at or before [timestamp]. */
+    suspend fun getNewestVisibleMessageIdUpTo(chatId: ChatId, timestamp: Timestamp): ChatMessageId?
 
     suspend fun markMessagesAsReadUpToTimestamp(chatId: ChatId, timestamp: Timestamp)
     suspend fun markMessagesByTypesAsRead(chatId: ChatId, types: List<String>)
@@ -210,7 +217,13 @@ class RealChatMessageRepository @Inject constructor(
         val now = System.currentTimeMillis()
         val local = modifications.map { (id, content) ->
             val (contentSerialized, contentTypeLocal) = content.toLocal(customContentDecoder)
-            MessageContentUpdateLocal(id, contentSerialized, contentTypeLocal, updatedAt = now)
+            MessageContentUpdateLocal(
+                id = id,
+                content = contentSerialized,
+                type = contentTypeLocal,
+                updatedAt = now,
+                searchableContent = content.toSearchableContent(),
+            )
         }
         chatMessageDao.updateMessagesContents(local)
     }
@@ -257,6 +270,14 @@ class RealChatMessageRepository @Inject constructor(
     override suspend fun removeMessage(messageId: ChatMessageId) {
         chatMessageDao.remove(messageId)
     }
+
+    override suspend fun markMessageDeleted(messageId: ChatMessageId) {
+        val (content, _) = ChatMessage.Content.Deleted.toLocal(AlwaysFailCustomContentDecoder())
+        chatMessageDao.rewriteAsDeleted(messageId, content, updatedAt = System.currentTimeMillis())
+    }
+
+    override suspend fun getNewestVisibleMessageIdUpTo(chatId: ChatId, timestamp: Timestamp): ChatMessageId? =
+        chatMessageDao.getNewestVisibleMessageIdUpTo(chatId.toLocal(), timestamp)
 
     override suspend fun markMessagesAsReadUpToTimestamp(chatId: ChatId, timestamp: Timestamp) {
         chatMessageDao.markMessagesAsReadUpToTimestamp(chatId.toLocal(), timestamp)

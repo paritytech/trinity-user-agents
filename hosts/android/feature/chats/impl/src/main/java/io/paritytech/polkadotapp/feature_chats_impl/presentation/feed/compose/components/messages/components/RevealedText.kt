@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.rememberReducedMotion
 import kotlinx.coroutines.delay
 import java.text.BreakIterator
 import java.text.StringCharacterIterator
@@ -29,9 +30,18 @@ fun rememberRevealedCharCount(
         mutableIntStateOf(if (isRevealing) 0 else fullText.length)
     }
 
+    val reducedMotion = rememberReducedMotion()
+
     LaunchedEffect(fullText, isRevealing) {
         if (!isRevealing) {
             revealedCount = fullText.length
+            return@LaunchedEffect
+        }
+
+        // With "Remove animations" on, the text shows at once, and the next message comes after it as before.
+        if (reducedMotion) {
+            revealedCount = fullText.length
+            onRevealComplete()
             return@LaunchedEffect
         }
 

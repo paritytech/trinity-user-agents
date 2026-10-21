@@ -9,7 +9,8 @@ enum ChatCallViewFactory {
         peer: CallPeer,
         engine: CallEngineProtocol,
         role: CallRole,
-        callType: ChatCallType
+        callType: ChatCallType,
+        answersAtOnce: Bool = false
     ) -> ChatCallViewProtocol? {
         let interactor = ChatCallInteractor(
             callEngine: engine,
@@ -37,6 +38,11 @@ enum ChatCallViewFactory {
 
         presenter.view = view
         interactor.presenter = presenter
+
+        // A call of a product room: the user accepted it in the room already.
+        if answersAtOnce {
+            interactor.acceptCall()
+        }
 
         return view
     }

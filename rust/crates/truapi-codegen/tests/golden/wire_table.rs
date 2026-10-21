@@ -260,6 +260,96 @@ pub const CHAT_SET_ROOM_FOOTER: MethodIds = MethodIds {
     method_id: 6,
 };
 
+/// Wire discriminants for `chat_set_room_metadata`.
+pub const CHAT_SET_ROOM_METADATA: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 8,
+};
+
+/// Wire discriminants for `chat_set_room_preview`.
+pub const CHAT_SET_ROOM_PREVIEW: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 9,
+};
+
+/// Wire discriminants for `chat_delete_room`.
+pub const CHAT_DELETE_ROOM: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 10,
+};
+
+/// Wire discriminants for `chat_update_feed`.
+pub const CHAT_UPDATE_FEED: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 11,
+};
+
+/// Wire discriminants for `chat_messages_query`.
+pub const CHAT_MESSAGES_QUERY: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 16,
+};
+
+/// Wire discriminants for `chat_user_action`.
+pub const CHAT_USER_ACTION: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 17,
+};
+
+/// Wire discriminants for `chat_reactions_query`.
+pub const CHAT_REACTIONS_QUERY: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 18,
+};
+
+/// Wire discriminants for `chat_participants_query`.
+pub const CHAT_PARTICIPANTS_QUERY: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 19,
+};
+
+/// Wire discriminants for `chat_message_actions_query`.
+pub const CHAT_MESSAGE_ACTIONS_QUERY: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 20,
+};
+
+/// Wire discriminants for `chat_capabilities`.
+pub const CHAT_CAPABILITIES: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 22,
+};
+
+/// Wire discriminants for `chat_set_room_features`.
+pub const CHAT_SET_ROOM_FEATURES: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 23,
+};
+
+/// Wire discriminants for `chat_set_room_call`.
+pub const CHAT_SET_ROOM_CALL: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 25,
+};
+
+/// Wire discriminants for `chat_room_events_subscribe`.
+pub const CHAT_ROOM_EVENTS_SUBSCRIBE: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 26,
+};
+
+/// Wire discriminants for `chat_search_query`.
+pub const CHAT_SEARCH_QUERY: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 27,
+};
+
+/// Wire discriminants for `chat_open_link`.
+pub const CHAT_OPEN_LINK: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 28,
+};
+
 /// Wire discriminants for `coin_payment_create_purse`.
 pub const COIN_PAYMENT_CREATE_PURSE: MethodIds = MethodIds {
     trait_id: 5,
@@ -548,6 +638,12 @@ pub const WORKER_END_OPERATION: MethodIds = MethodIds {
     method_id: 1,
 };
 
+/// Wire discriminants for `worker_set_wake_watches`.
+pub const WORKER_SET_WAKE_WATCHES: MethodIds = MethodIds {
+    trait_id: 19,
+    method_id: 2,
+};
+
 /// Wire discriminants for `contacts_pick`.
 pub const CONTACTS_PICK: MethodIds = MethodIds {
     trait_id: 20,
@@ -660,6 +756,120 @@ pub const NFT_PURSE_REFUND: MethodIds = MethodIds {
 pub const NFT_PURSE_TRANSFER_ITEM: MethodIds = MethodIds {
     trait_id: 26,
     method_id: 11,
+};
+
+/// Wire discriminants for `usernames_search`.
+pub const USERNAMES_SEARCH: MethodIds = MethodIds {
+    trait_id: 27,
+    method_id: 0,
+};
+
+/// Wire discriminants for `call_media_start`.
+pub const CALL_MEDIA_START: MethodIds = MethodIds {
+    trait_id: 29,
+    method_id: 0,
+};
+
+/// Wire discriminants for `call_media_signal`.
+pub const CALL_MEDIA_SIGNAL: MethodIds = MethodIds {
+    trait_id: 29,
+    method_id: 1,
+};
+
+/// Wire discriminants for `call_media_stop`.
+pub const CALL_MEDIA_STOP: MethodIds = MethodIds {
+    trait_id: 29,
+    method_id: 2,
+};
+
+/// Wire discriminants for `person_chat_get_profile`.
+pub const PERSON_CHAT_GET_PROFILE: MethodIds = MethodIds {
+    trait_id: 30,
+    method_id: 0,
+};
+
+/// Wire discriminants for `person_chat_chat_secrets`.
+pub const PERSON_CHAT_CHAT_SECRETS: MethodIds = MethodIds {
+    trait_id: 30,
+    method_id: 1,
+};
+
+/// Wire discriminants for `person_chat_prove_statement`.
+pub const PERSON_CHAT_PROVE_STATEMENT: MethodIds = MethodIds {
+    trait_id: 30,
+    method_id: 2,
+};
+
+/// Wire discriminants for `person_chat_prove_chat_request`.
+pub const PERSON_CHAT_PROVE_CHAT_REQUEST: MethodIds = MethodIds {
+    trait_id: 30,
+    method_id: 3,
+};
+
+/// Wire discriminants for `person_chat_push_tokens`.
+pub const PERSON_CHAT_PUSH_TOKENS: MethodIds = MethodIds {
+    trait_id: 30,
+    method_id: 4,
+};
+
+/// Wire discriminants for `person_chat_notify_peer`.
+pub const PERSON_CHAT_NOTIFY_PEER: MethodIds = MethodIds {
+    trait_id: 30,
+    method_id: 5,
+};
+
+/// Wire discriminants for `person_chat_set_push_routes`.
+pub const PERSON_CHAT_SET_PUSH_ROUTES: MethodIds = MethodIds {
+    trait_id: 30,
+    method_id: 6,
+};
+
+/// Wire discriminants for `person_chat_hop_upload`.
+pub const PERSON_CHAT_HOP_UPLOAD: MethodIds = MethodIds {
+    trait_id: 30,
+    method_id: 7,
+};
+
+/// Wire discriminants for `person_chat_hop_download`.
+pub const PERSON_CHAT_HOP_DOWNLOAD: MethodIds = MethodIds {
+    trait_id: 30,
+    method_id: 8,
+};
+
+/// Wire discriminants for `person_chat_hop_ack`.
+pub const PERSON_CHAT_HOP_ACK: MethodIds = MethodIds {
+    trait_id: 30,
+    method_id: 9,
+};
+
+/// Wire discriminants for `person_chat_prepare_delivery`.
+pub const PERSON_CHAT_PREPARE_DELIVERY: MethodIds = MethodIds {
+    trait_id: 30,
+    method_id: 10,
+};
+
+/// Wire discriminants for `person_chat_prove_delivery`.
+pub const PERSON_CHAT_PROVE_DELIVERY: MethodIds = MethodIds {
+    trait_id: 30,
+    method_id: 11,
+};
+
+/// Wire discriminants for `person_chat_publish_contacts`.
+pub const PERSON_CHAT_PUBLISH_CONTACTS: MethodIds = MethodIds {
+    trait_id: 30,
+    method_id: 12,
+};
+
+/// Wire discriminants for `person_chat_history_export`.
+pub const PERSON_CHAT_HISTORY_EXPORT: MethodIds = MethodIds {
+    trait_id: 30,
+    method_id: 13,
+};
+
+/// Wire discriminants for `person_chat_history_imported`.
+pub const PERSON_CHAT_HISTORY_IMPORTED: MethodIds = MethodIds {
+    trait_id: 30,
+    method_id: 14,
 };
 
 /// The full wire table. Trait ids and per-trait method ordering are
@@ -809,6 +1019,66 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "chat_set_room_footer",
         kind: WireKind::Request(CHAT_SET_ROOM_FOOTER),
+    },
+    WireEntry {
+        method: "chat_set_room_metadata",
+        kind: WireKind::Request(CHAT_SET_ROOM_METADATA),
+    },
+    WireEntry {
+        method: "chat_set_room_preview",
+        kind: WireKind::Request(CHAT_SET_ROOM_PREVIEW),
+    },
+    WireEntry {
+        method: "chat_delete_room",
+        kind: WireKind::Request(CHAT_DELETE_ROOM),
+    },
+    WireEntry {
+        method: "chat_update_feed",
+        kind: WireKind::Request(CHAT_UPDATE_FEED),
+    },
+    WireEntry {
+        method: "chat_messages_query",
+        kind: WireKind::Subscription(CHAT_MESSAGES_QUERY),
+    },
+    WireEntry {
+        method: "chat_user_action",
+        kind: WireKind::Subscription(CHAT_USER_ACTION),
+    },
+    WireEntry {
+        method: "chat_reactions_query",
+        kind: WireKind::Subscription(CHAT_REACTIONS_QUERY),
+    },
+    WireEntry {
+        method: "chat_participants_query",
+        kind: WireKind::Subscription(CHAT_PARTICIPANTS_QUERY),
+    },
+    WireEntry {
+        method: "chat_message_actions_query",
+        kind: WireKind::Subscription(CHAT_MESSAGE_ACTIONS_QUERY),
+    },
+    WireEntry {
+        method: "chat_capabilities",
+        kind: WireKind::Request(CHAT_CAPABILITIES),
+    },
+    WireEntry {
+        method: "chat_set_room_features",
+        kind: WireKind::Request(CHAT_SET_ROOM_FEATURES),
+    },
+    WireEntry {
+        method: "chat_set_room_call",
+        kind: WireKind::Request(CHAT_SET_ROOM_CALL),
+    },
+    WireEntry {
+        method: "chat_room_events_subscribe",
+        kind: WireKind::Subscription(CHAT_ROOM_EVENTS_SUBSCRIBE),
+    },
+    WireEntry {
+        method: "chat_search_query",
+        kind: WireKind::Subscription(CHAT_SEARCH_QUERY),
+    },
+    WireEntry {
+        method: "chat_open_link",
+        kind: WireKind::Subscription(CHAT_OPEN_LINK),
     },
     WireEntry {
         method: "coin_payment_create_purse",
@@ -1003,6 +1273,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
         kind: WireKind::Request(WORKER_END_OPERATION),
     },
     WireEntry {
+        method: "worker_set_wake_watches",
+        kind: WireKind::Request(WORKER_SET_WAKE_WATCHES),
+    },
+    WireEntry {
         method: "contacts_pick",
         kind: WireKind::Request(CONTACTS_PICK),
     },
@@ -1077,5 +1351,81 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "nft_purse_transfer_item",
         kind: WireKind::Subscription(NFT_PURSE_TRANSFER_ITEM),
+    },
+    WireEntry {
+        method: "usernames_search",
+        kind: WireKind::Request(USERNAMES_SEARCH),
+    },
+    WireEntry {
+        method: "call_media_start",
+        kind: WireKind::Request(CALL_MEDIA_START),
+    },
+    WireEntry {
+        method: "call_media_signal",
+        kind: WireKind::Request(CALL_MEDIA_SIGNAL),
+    },
+    WireEntry {
+        method: "call_media_stop",
+        kind: WireKind::Request(CALL_MEDIA_STOP),
+    },
+    WireEntry {
+        method: "person_chat_get_profile",
+        kind: WireKind::Request(PERSON_CHAT_GET_PROFILE),
+    },
+    WireEntry {
+        method: "person_chat_chat_secrets",
+        kind: WireKind::Request(PERSON_CHAT_CHAT_SECRETS),
+    },
+    WireEntry {
+        method: "person_chat_prove_statement",
+        kind: WireKind::Request(PERSON_CHAT_PROVE_STATEMENT),
+    },
+    WireEntry {
+        method: "person_chat_prove_chat_request",
+        kind: WireKind::Request(PERSON_CHAT_PROVE_CHAT_REQUEST),
+    },
+    WireEntry {
+        method: "person_chat_push_tokens",
+        kind: WireKind::Request(PERSON_CHAT_PUSH_TOKENS),
+    },
+    WireEntry {
+        method: "person_chat_notify_peer",
+        kind: WireKind::Request(PERSON_CHAT_NOTIFY_PEER),
+    },
+    WireEntry {
+        method: "person_chat_set_push_routes",
+        kind: WireKind::Request(PERSON_CHAT_SET_PUSH_ROUTES),
+    },
+    WireEntry {
+        method: "person_chat_hop_upload",
+        kind: WireKind::Request(PERSON_CHAT_HOP_UPLOAD),
+    },
+    WireEntry {
+        method: "person_chat_hop_download",
+        kind: WireKind::Request(PERSON_CHAT_HOP_DOWNLOAD),
+    },
+    WireEntry {
+        method: "person_chat_hop_ack",
+        kind: WireKind::Request(PERSON_CHAT_HOP_ACK),
+    },
+    WireEntry {
+        method: "person_chat_prepare_delivery",
+        kind: WireKind::Request(PERSON_CHAT_PREPARE_DELIVERY),
+    },
+    WireEntry {
+        method: "person_chat_prove_delivery",
+        kind: WireKind::Request(PERSON_CHAT_PROVE_DELIVERY),
+    },
+    WireEntry {
+        method: "person_chat_publish_contacts",
+        kind: WireKind::Request(PERSON_CHAT_PUBLISH_CONTACTS),
+    },
+    WireEntry {
+        method: "person_chat_history_export",
+        kind: WireKind::Request(PERSON_CHAT_HISTORY_EXPORT),
+    },
+    WireEntry {
+        method: "person_chat_history_imported",
+        kind: WireKind::Request(PERSON_CHAT_HISTORY_IMPORTED),
     },
 ];

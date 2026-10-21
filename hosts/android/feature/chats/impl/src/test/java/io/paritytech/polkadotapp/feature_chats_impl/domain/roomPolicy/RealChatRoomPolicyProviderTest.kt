@@ -1,0 +1,101 @@
+package io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy
+
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
+import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomDeclarationsRepository
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomUserStateRepository
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomUserStateModel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+class RealChatRoomPolicyProviderTest {
+    private val repository = mockk<ChatRoomDeclarationsRepository>()
+    private val userStates = mockk<ChatRoomUserStateRepository>()
+    private val provider = RealChatRoomPolicyProvider(repository, userStates)
+
+    private val personChat = ChatId.fromContact(ByteArray(32) { 1 }.toDataByteArray())
+    private val productRoom = ChatId.forExtensionRoom("ProductBot_weather", "berlin")
+    private val otherProductRoom = ChatId.forExtensionRoom("ProductBot_weather", "paris")
+
+    @Test
+    fun `a person chat has no policy and the repository is not asked`() = runBlocking<Unit> {
+        assertNull(provider.observePolicy(personChat).first())
+
+        verify(exactly = 0) { repository.observe(any()) }
+    }
+
+    @Test
+    fun `a product room without declarations has the default policy`() = runBlocking<Unit> {
+        withDeclarations(productRoom, null)
+        withUserStates()
+
+        assertEquals(ChatRoomPolicy.Defaults, provider.observePolicy(productRoom).first())
+    }
+
+    @Test
+    fun `a product room gets the policy of its declarations`() = runBlocking<Unit> {
+        withDeclarations(productRoom, declarations(description = "Forecasts"))
+        withUserStates()
+
+        assertEquals("Forecasts", provider.observePolicy(productRoom).first()?.description)
+    }
+
+    @Test
+    fun `the policies of a list have an entry for each product room only`() = runBlocking<Unit> {
+        withDeclarations(productRoom, declarations(description = "Berlin"))
+        withDeclarations(otherProductRoom, null)
+        withUserStates()
+
+        val policies = provider.observePolicies(setOf(personChat, productRoom, otherProductRoom)).first()
+
+        assertEquals(setOf(productRoom, otherProductRoom), policies.keys)
+        assertEquals("Berlin", policies.getValue(productRoom).description)
+        assertEquals(ChatRoomPolicy.Defaults, policies.getValue(otherProductRoom))
+    }
+
+    @Test
+    fun `a list of person chats has no policies`() = runBlocking<Unit> {
+        assertEquals(emptyMap<ChatId, ChatRoomPolicy>(), provider.observePolicies(setOf(personChat)).first())
+    }
+
+    @Test
+    fun `a product room gets the state that the user set for it`() = runBlocking<Unit> {
+        val muted = ChatRoomUserStateModel(mutedUntil = 1_700_000_000_000, archived = true)
+        withDeclarations(productRoom, null)
+        withUserStates(productRoom to muted)
+
+        assertEquals(muted, provider.observePolicy(productRoom).first()?.userState)
+    }
+
+    @Test
+    fun `the policies of a list carry the state of each room, and none for a room the user left alone`() = runBlocking<Unit> {
+        val archived = ChatRoomUserStateModel(mutedUntil = null, archived = true)
+        withDeclarations(productRoom, null)
+        withDeclarations(otherProductRoom, declarations())
+        withUserStates(productRoom to archived)
+
+        val policies = provider.observePolicies(setOf(productRoom, otherProductRoom)).first()
+
+        assertEquals(archived, policies.getValue(productRoom).userState)
+        assertEquals(ChatRoomUserStateModel.NONE, policies.getValue(otherProductRoom).userState)
+    }
+
+    private fun withUserStates(vararg states: Pair<ChatId, ChatRoomUserStateModel>) {
+        every { userStates.observeAll() } returns flowOf(states.toMap())
+        for (chatId in listOf(personChat, productRoom, otherProductRoom)) {
+            every { userStates.observe(chatId) } returns flowOf(states.toMap()[chatId] ?: ChatRoomUserStateModel.NONE)
+        }
+    }
+
+    private fun withDeclarations(chatId: ChatId, declarations: ChatRoomDeclarations?) {
+        every { repository.observe(chatId) } returns flowOf(declarations)
+    }
+}

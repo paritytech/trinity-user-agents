@@ -61,6 +61,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.RealPr
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.DeviceCapabilityPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionPromptUnavailableException
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionDeniedException
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.RemotePermissionRequest
@@ -300,10 +301,13 @@ class HostApiInteractor @Inject constructor(
     ): Result<PermissionDecision> = runCatching {
         val permission = ProductPermission.DeviceCapability(capability)
         val decision = permissionRequester.prompt(callingProductId, permission)
-        if (decision != PermissionDecision.Deny &&
-            !deviceCapabilityPermissionHandler.requestOsPermissionIfNeeded(capability)
-        ) {
-            throw ProductPermissionDeniedException(permission)
+        // Both failures go to the core as errors, not as a refusal, so the core keeps no decision for them.
+        if (decision != PermissionDecision.Deny) {
+            when (deviceCapabilityPermissionHandler.osPermissionOrNull(capability)) {
+                true -> Unit
+                false -> throw ProductPermissionDeniedException(permission)
+                null -> throw PermissionPromptUnavailableException("no screen can show the OS permission dialog")
+            }
         }
         decision
     }
@@ -364,7 +368,7 @@ class HostApiInteractor @Inject constructor(
     ): Result<NotificationId> {
         return if (scheduledAt == null) {
             val id = NotificationId.generate(callingProductId)
-            productNotificationPublisher.publishNotification(id.value, text, deeplink)
+            productNotificationPublisher.publishProductNotification(callingProductId, id.value, text, deeplink)
             Result.success(id)
         } else {
             productNotificationScheduler.schedule(callingProductId, text, deeplink, scheduledAt)

@@ -13,6 +13,11 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 object ReservedProductIds {
     fun game(tld: DotNsTld): ProductId = reserved("dim2", tld)
 
+    fun chat(tld: DotNsTld): ProductId = reserved("chat", tld)
+
+    /** Whether [productId] is the chat product of some network: `chat.<tld>` exactly. */
+    fun isChat(productId: ProductId): Boolean = productId.value.split('.').let { it.size == 2 && it[0] == "chat" }
+
     fun funding(tld: DotNsTld): ProductId = reserved("fund", tld)
 
     fun lightPersonIdentity(tld: DotNsTld): ProductId = reserved("uid", tld)

@@ -117,20 +117,3 @@ private extension ProductBotChatListTests {
         return try #require(viewModel.contactsById.first).configuration.message
     }
 }
-
-private struct FixedChatMessageDecoderFactory: ChatMessageDecoderMaking {
-    let decoders: [ChatMessageCustomDecoding]
-
-    func makeDecoders(for _: ChainModel, chatId _: Chat.Id) -> [ChatMessageCustomDecoding] {
-        decoders
-    }
-}
-
-private final class RecordingProductIconViewModelFactory: ProductIconViewModelMaking {
-    private(set) var requestedDomains: [String] = []
-
-    func createViewModel(for domain: String) -> any ImageViewModelProtocol {
-        requestedDomains.append(domain)
-        return StaticImageViewModel(image: nil)
-    }
-}

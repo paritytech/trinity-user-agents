@@ -16,6 +16,9 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.media3.ui.compose.ContentFrame
@@ -32,6 +35,7 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_chats_api.presentation.common.getMaxMessageHeight
 import io.paritytech.polkadotapp.feature_chats_api.presentation.common.getMaxMessageWidth
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel.Multimedia.MultimediaType
+import io.paritytech.polkadotapp.common.R as RCommon
 
 internal val MULTIMEDIA_CONTROL_DIAMETER = 60.dp
 internal val MULTIMEDIA_CONTROL_ICON_SIZE = 30.dp
@@ -113,8 +117,9 @@ private fun PlayButton(
     modifier: Modifier,
     onClick: () -> Unit
 ) {
+    val label = stringResource(RCommon.string.chat_media_play_video)
     Control(
-        modifier = modifier,
+        modifier = modifier.semantics { contentDescription = label },
         onClick = onClick
     ) {
         ControlIcon(NovaIcons.VideoPlay)

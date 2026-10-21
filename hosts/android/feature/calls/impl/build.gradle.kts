@@ -20,5 +20,8 @@ dependencies {
     implementation(project(":design"))
 
     testImplementation(project(":tools:media-connection:impl"))
+    testImplementation(libs.bundles.webrtc)
     testImplementation(libs.junit)
+    testImplementation(libs.mockk)
+    testImplementation(libs.kotlinx.coroutines.test)
 }

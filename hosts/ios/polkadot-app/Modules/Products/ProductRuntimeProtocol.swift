@@ -36,7 +36,17 @@ protocol ChatRuntimeProtocol: ProductRuntimeProtocol {
         actionId: String,
         payload: String?
     ) async
+    /// Reports a press on a button that the host drew for a product `Actions` message.
+    func dispatchActionTrigger(roomId: String?, messageId: String, actionId: String) async
+    /// Reports what the user did in a room that the host stores. A runtime sends the events that its
+    /// protocol version carries.
+    func publishUserEvent(_ event: ProductChatUserEvent, roomId: String?) async throws
     @MainActor func attach(presentationView: ControllerBackedProtocol)
+}
+
+extension ChatRuntimeProtocol {
+    /// A runtime that has no user events drops them.
+    func publishUserEvent(_: ProductChatUserEvent, roomId _: String?) async throws {}
 }
 
 protocol SPARuntimeProtocol: ProductRuntimeProtocol {

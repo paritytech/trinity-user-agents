@@ -27,15 +27,23 @@ import {
 } from "@parity/truapi";
 
 import type {
+  ChatRoomConfig,
+  ChatRoomFeatures,
   GenericError,
   HostChatCreateRoomRequest,
   HostChatCreateRoomResponse,
+  HostChatDeleteRoomRequest,
   HostChatListSubscribeItem,
   HostChatPostMessageRequest,
   HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
+  HostChatSetRoomCallRequest,
+  HostChatSetRoomFeaturesRequest,
   HostChatSetRoomFooterRequest,
+  HostChatSetRoomMetadataRequest,
+  HostChatSetRoomPreviewRequest,
+  HostChatUpdateFeedRequest,
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
   HostFundingStatusSubscribeItem,
@@ -124,6 +132,58 @@ export type AuthState =
    * in-progress presentation until a terminal state is emitted.
    */
   | { tag: "Authenticating"; value?: undefined };
+
+/**
+ * The bot ids of the personas of a product.
+ */
+export interface ChatBotIds {
+  /**
+   * One bot id for each persona.
+   */
+  botIds: Array<string>;
+}
+
+/**
+ * The Chat feature names a host lists.
+ */
+export interface ChatFeatureNames {
+  /**
+   * Names from `CHAT_FEATURE_NAMES`.
+   */
+  names: Array<string>;
+}
+
+/**
+ * The mute and archive state the user gave one room of a product.
+ */
+export interface ChatRoomUserState {
+  /**
+   * The room.
+   */
+  roomId: string;
+
+  /**
+   * Milliseconds since the Unix epoch when the mute ends. `u64::MAX` mutes
+   * the room with no end. ``undefined``: the room is not muted.
+   */
+  mutedUntil?: bigint;
+
+  /**
+   * The room is in the archive of the user.
+   */
+  archived: boolean;
+}
+
+/**
+ * The mute and archive state of each room of a product that the user muted
+ * or archived.
+ */
+export interface ChatRoomUserStates {
+  /**
+   * One entry for each such room.
+   */
+  rooms: Array<ChatRoomUserState>;
+}
 
 /**
  * Core-owned host-private storage slots. Products never address these slots;
@@ -232,7 +292,26 @@ export type CoreStorageKey =
    * Recorded funding sessions compacted out of the funding sessions blob,
    * as one versioned SCALE blob. Never trimmed.
    */
-  | { tag: "FundingSessionPack"; value?: undefined };
+  | { tag: "FundingSessionPack"; value?: undefined }
+  /**
+   * The wake watches of every product and the key this device registers
+   * with its push relay. The key authenticates wake pushes, so hosts must
+   * keep this slot private to the install.
+   */
+  | { tag: "PushWakeRegistry"; value?: undefined }
+  /**
+   * A file this device uploaded to HOP for a contact of the chat product.
+   * The core never acks such a file, so showing one's own photo cannot
+   * drop it from the node before the contact claims it. The value is empty.
+   */
+  | { tag: "HopUpload"; value: { identifier: Uint8Array } }
+  /**
+   * The X25519 secret the native chat of this install used as its device
+   * key, which the chat product keeps using so contacts still reach this
+   * device. The host writes it once, through the core, when it moves its
+   * native chat to the chat product; absent on every other install.
+   */
+  | { tag: "ChatDeviceKey"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -367,6 +446,58 @@ export interface HostChainSet {
 }
 
 /**
+ * A contact of the chat product, for the rest of the app.
+ */
+export interface HostChatContact {
+  /**
+   * The contact's identity account.
+   */
+  accountId: Uint8Array;
+
+  /**
+   * The contact's username, when the chat knows it.
+   */
+  username?: string;
+
+  /**
+   * The room of the chat product that holds the chat with the contact.
+   */
+  roomId: string;
+
+  /**
+   * Whether the user blocked the contact.
+   */
+  blocked: boolean;
+}
+
+/**
+ * How the host shows the chat pushes of one contact while no worker runs:
+ * the push id the contact sends to this device under, the room it opens, the
+ * title of the notification, and the key the payload is sealed with.
+ */
+export interface HostChatPushRoute {
+  /**
+   * 64 lowercase hex characters, as the push carries the id.
+   */
+  pushId: string;
+
+  /**
+   * The room of the chat product the notification opens.
+   */
+  roomId: string;
+
+  /**
+   * The title of the notification: the contact's name.
+   */
+  title: string;
+
+  /**
+   * The 32-byte ChaCha20-Poly1305 key of the payload, nonce first.
+   */
+  key: Uint8Array;
+}
+
+/**
  * Contact handles the core needs turned back into accounts, and the key they
  * were minted under.
  *
@@ -427,6 +558,99 @@ export type HostContactPick =
    * apart from "this host will never pick".
    */
   | { tag: "Unsupported"; value?: undefined };
+
+/**
+ * A part of the native chat history a host staged for the chat product.
+ */
+export interface HostHistoryExportChunk {
+  /**
+   * The size of the whole export in bytes; 0 when there is none.
+   */
+  total: bigint;
+
+  /**
+   * The bytes from the requested offset.
+   */
+  data: Uint8Array;
+}
+
+/**
+ * A device paired with this wallet device over SSO.
+ */
+export interface HostPairedDevice {
+  /**
+   * The device's statement account.
+   */
+  statementAccountId: Uint8Array;
+
+  /**
+   * The X25519 key the device decrypts chat with: its SSO encryption key.
+   */
+  encryptionPublicKey: Uint8Array;
+
+  /**
+   * The name the user knows the device by.
+   */
+  name: string;
+}
+
+/**
+ * One push that the host gives to its push relay.
+ */
+export interface HostPushDelivery {
+  /**
+   * The push service of the receiving device.
+   */
+  service: HostPushService;
+
+  /**
+   * The push token of the receiving device.
+   */
+  token: string;
+
+  /**
+   * The id of the room on the receiving device.
+   */
+  pushId: string;
+
+  /**
+   * The hex of the encrypted notification: a 24-byte nonce, then the
+   * XChaCha20-Poly1305 ciphertext for a product notification, or the
+   * person chat's own encryption for a chat push.
+   */
+  message: string;
+
+  /**
+   * Whether the push goes out as a VoIP push, which iOS hands to CallKit.
+   */
+  voip: boolean;
+}
+
+/**
+ * The push service that a device token belongs to.
+ */
+export type HostPushService = "Apns" | "Fcm";
+
+/**
+ * The push tokens of this device, which a contact needs to notify it.
+ */
+export interface HostPushTokens {
+  /**
+   * The push service of the tokens.
+   */
+  service: HostPushService;
+
+  /**
+   * The push token, when the device has one now: the hex of the APNs
+   * device token, or the FCM registration token.
+   */
+  token?: string;
+
+  /**
+   * The hex of the PushKit VoIP token, on iOS when it has one.
+   */
+  voipToken?: string;
+}
 
 /**
  * How the host's scanner ended.
@@ -805,6 +1029,45 @@ export const AuthState: S.Codec<AuthState> = S.lazy(
 );
 
 /**
+ * The bot ids of the personas of a product.
+ */
+export const ChatBotIds: S.Codec<ChatBotIds> = S.lazy(
+  (): S.Codec<ChatBotIds> =>
+    S.Struct({ botIds: S.Vector(S.str) }) as S.Codec<ChatBotIds>,
+);
+
+/**
+ * The Chat feature names a host lists.
+ */
+export const ChatFeatureNames: S.Codec<ChatFeatureNames> = S.lazy(
+  (): S.Codec<ChatFeatureNames> =>
+    S.Struct({ names: S.Vector(S.str) }) as S.Codec<ChatFeatureNames>,
+);
+
+/**
+ * The mute and archive state the user gave one room of a product.
+ */
+export const ChatRoomUserState: S.Codec<ChatRoomUserState> = S.lazy(
+  (): S.Codec<ChatRoomUserState> =>
+    S.Struct({
+      roomId: S.str,
+      mutedUntil: S.Option(S.u64),
+      archived: S.bool,
+    }) as S.Codec<ChatRoomUserState>,
+);
+
+/**
+ * The mute and archive state of each room of a product that the user muted
+ * or archived.
+ */
+export const ChatRoomUserStates: S.Codec<ChatRoomUserStates> = S.lazy(
+  (): S.Codec<ChatRoomUserStates> =>
+    S.Struct({
+      rooms: S.Vector(ChatRoomUserState),
+    }) as S.Codec<ChatRoomUserStates>,
+);
+
+/**
  * Core-owned host-private storage slots. Products never address these slots;
  * the host chooses the backing store for each slot.
  *
@@ -870,6 +1133,14 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
       FundingSessions: [13, S._void] as const,
       FundingSessionsUnreadable: [17, S._void] as const,
       FundingSessionPack: [18, S._void] as const,
+      PushWakeRegistry: [19, S._void] as const,
+      HopUpload: [
+        20,
+        S.Struct({ identifier: S.Bytes(32) }) as S.Codec<{
+          identifier: Uint8Array;
+        }>,
+      ] as const,
+      ChatDeviceKey: [21, S._void] as const,
     }),
 );
 
@@ -979,6 +1250,34 @@ export const HostChainSet: S.Codec<HostChainSet> = S.lazy(
 );
 
 /**
+ * A contact of the chat product, for the rest of the app.
+ */
+export const HostChatContact: S.Codec<HostChatContact> = S.lazy(
+  (): S.Codec<HostChatContact> =>
+    S.Struct({
+      accountId: S.Bytes(32),
+      username: S.Option(S.str),
+      roomId: S.str,
+      blocked: S.bool,
+    }) as S.Codec<HostChatContact>,
+);
+
+/**
+ * How the host shows the chat pushes of one contact while no worker runs:
+ * the push id the contact sends to this device under, the room it opens, the
+ * title of the notification, and the key the payload is sealed with.
+ */
+export const HostChatPushRoute: S.Codec<HostChatPushRoute> = S.lazy(
+  (): S.Codec<HostChatPushRoute> =>
+    S.Struct({
+      pushId: S.str,
+      roomId: S.str,
+      title: S.str,
+      key: S.Bytes(),
+    }) as S.Codec<HostChatPushRoute>,
+);
+
+/**
  * Contact handles the core needs turned back into accounts, and the key they
  * were minted under.
  *
@@ -1018,6 +1317,62 @@ export const HostContactPick: S.Codec<HostContactPick> = S.lazy(
       NoContacts: S._void,
       Unsupported: S._void,
     }),
+);
+
+/**
+ * A part of the native chat history a host staged for the chat product.
+ */
+export const HostHistoryExportChunk: S.Codec<HostHistoryExportChunk> = S.lazy(
+  (): S.Codec<HostHistoryExportChunk> =>
+    S.Struct({
+      total: S.u64,
+      data: S.Bytes(),
+    }) as S.Codec<HostHistoryExportChunk>,
+);
+
+/**
+ * A device paired with this wallet device over SSO.
+ */
+export const HostPairedDevice: S.Codec<HostPairedDevice> = S.lazy(
+  (): S.Codec<HostPairedDevice> =>
+    S.Struct({
+      statementAccountId: S.Bytes(32),
+      encryptionPublicKey: S.Bytes(32),
+      name: S.str,
+    }) as S.Codec<HostPairedDevice>,
+);
+
+/**
+ * One push that the host gives to its push relay.
+ */
+export const HostPushDelivery: S.Codec<HostPushDelivery> = S.lazy(
+  (): S.Codec<HostPushDelivery> =>
+    S.Struct({
+      service: HostPushService,
+      token: S.str,
+      pushId: S.str,
+      message: S.str,
+      voip: S.bool,
+    }) as S.Codec<HostPushDelivery>,
+);
+
+/**
+ * The push service that a device token belongs to.
+ */
+export const HostPushService: S.Codec<HostPushService> = S.lazy(
+  (): S.Codec<HostPushService> => S.Status("Apns", "Fcm"),
+);
+
+/**
+ * The push tokens of this device, which a contact needs to notify it.
+ */
+export const HostPushTokens: S.Codec<HostPushTokens> = S.lazy(
+  (): S.Codec<HostPushTokens> =>
+    S.Struct({
+      service: HostPushService,
+      token: S.Option(S.str),
+      voipToken: S.Option(S.str),
+    }) as S.Codec<HostPushTokens>,
 );
 
 /**
@@ -1295,6 +1650,48 @@ export interface BalancePlatform {
 }
 
 /**
+ * Host-run media of the calls of chat rooms (WebRTC with the relays of the
+ * host). Optional; a host without it leaves every product `callMedia` call
+ * `Unsupported`.
+ *
+ * - Start only for a call that the room shows as `Active`, and show the call screen of the host.
+ * - Give each media signal of the host to the product as `ChatRoomEvent::CallSignal`.
+ * - Keep a signal that comes before its call starts, and give it to the call when it starts.
+ * - Send `ChatRoomEvent::CallEnded` when the user ends the call on the call screen.
+ */
+export interface CallMediaPlatform {
+  /**
+   * Start the media of `call_id` of `room_id`.
+   */
+  startCallMedia(
+    product: ProductContext,
+    roomId: string,
+    callId: string,
+    video: boolean,
+    offerer: boolean,
+  ): Promise<void>;
+
+  /**
+   * A media signal of the other side of `call_id`.
+   */
+  callMediaSignal(
+    product: ProductContext,
+    roomId: string,
+    callId: string,
+    signal: Uint8Array,
+  ): Promise<void>;
+
+  /**
+   * Stop the media of `call_id`.
+   */
+  stopCallMedia(
+    product: ProductContext,
+    roomId: string,
+    callId: string,
+  ): Promise<void>;
+}
+
+/**
  * JSON-RPC provider factory for chain access.
  *
  * The platform provides a way to get a JSON-RPC connection for a given chain.
@@ -1339,11 +1736,16 @@ export interface ChainProvider {
  */
 export interface ChatPlatform {
   /**
-   * Create or resolve a product-scoped native chat room.
+   * Create or resolve a product-scoped native chat room. A room that exists
+   * keeps its stored declarations. `icon_url` is the `https` icon of a
+   * caller at the first protocol version, resolved by
+   * `validate_chat_icon`, or empty. The host draws it when the metadata
+   * has no avatar.
    */
   createChatRoom(
     product: ProductContext,
     request: HostChatCreateRoomRequest,
+    iconUrl: string,
   ): Promise<HostChatCreateRoomResponse>;
 
   /**
@@ -1381,6 +1783,106 @@ export interface ChatPlatform {
   subscribeChatRooms(
     product: ProductContext,
   ): AsyncIterable<Result<HostChatListSubscribeItem, GenericError>>;
+
+  /**
+   * The configuration the product last declared for a room, or the default
+   * configuration when it declared none. The core reads it to decide
+   * whether a room keeps its messages in the host and which queries the
+   * product answers.
+   */
+  readChatRoomConfig?(
+    product: ProductContext,
+    roomId: string,
+  ): Promise<ChatRoomConfig>;
+
+  /**
+   * Replace the name, avatar and description of a room.
+   */
+  setChatRoomMetadata?(
+    product: ProductContext,
+    request: HostChatSetRoomMetadataRequest,
+  ): Promise<void>;
+
+  /**
+   * Replace how a room shows in the chat list.
+   */
+  setChatRoomPreview?(
+    product: ProductContext,
+    request: HostChatSetRoomPreviewRequest,
+  ): Promise<void>;
+
+  /**
+   * Delete a room with its messages, cache and declarations, and close its
+   * screen. Delete also, in the same change, each room whose features name
+   * this room in `thread_of`, so that no thread stays hidden for ever. The
+   * core calls it only for a room the product hosts.
+   */
+  deleteChatRoom?(
+    product: ProductContext,
+    request: HostChatDeleteRoomRequest,
+  ): Promise<void>;
+
+  /**
+   * Apply one change to the messages of a room. With `persist` the host
+   * stores the change, because it keeps the messages of the room. Without
+   * it the host applies the change only to an open room screen and the chat
+   * list preview. The host answers `UnknownMessage`, `DuplicateMessage`
+   * and, for an edit of a message the product did not write, `NotOwner`.
+   */
+  updateChatFeed?(
+    product: ProductContext,
+    request: HostChatUpdateFeedRequest,
+    persist: boolean,
+  ): Promise<void>;
+
+  /**
+   * The names of the Chat features this host serves from end to end, from
+   * `CHAT_FEATURE_NAMES`. The core removes each name it cannot back and
+   * each name it does not know. A host that lists nothing serves the
+   * features of Chat Extension v2 only.
+   */
+  chatCapabilities?(product: ProductContext): Promise<ChatFeatureNames>;
+
+  /**
+   * The optional features the product last declared for a room, or the
+   * default features when it declared none.
+   */
+  readChatRoomFeatures?(
+    product: ProductContext,
+    roomId: string,
+  ): Promise<ChatRoomFeatures>;
+
+  /**
+   * Replace the optional features of a room whole and keep them across
+   * restarts. The host keeps a feature it does not serve, so that a later
+   * build of the host applies it. The core has already checked the product
+   * hosts the room, and the thread parent.
+   */
+  setChatRoomFeatures?(
+    product: ProductContext,
+    request: HostChatSetRoomFeaturesRequest,
+  ): Promise<void>;
+
+  /**
+   * Show, change or remove the call of a room. The core has already
+   * checked that the host serves the call.
+   */
+  setChatRoomCall?(
+    product: ProductContext,
+    request: HostChatSetRoomCallRequest,
+  ): Promise<void>;
+
+  /**
+   * The mute and archive state of each room of the product that the user
+   * muted or archived. The core sends it to a product when its
+   * `room_events_subscribe` starts.
+   */
+  readChatRoomUserStates?(product: ProductContext): Promise<ChatRoomUserStates>;
+
+  /**
+   * The bot ids of the personas the product registered.
+   */
+  readChatBots?(product: ProductContext): Promise<ChatBotIds>;
 }
 
 /**
@@ -1822,6 +2324,55 @@ export interface Permissions {
 }
 
 /**
+ * Host services of the person-to-person chat product that only the app
+ * knows or keeps: the HOP nodes of the network's Bulletin chain (its chain
+ * registry's `externalApi.hop`), the devices paired with the wallet, the
+ * chat's contacts for the rest of the app, and the native chat history it
+ * staged for the chat product. Optional; a host without it leaves the
+ * `PersonChat` HOP, contact and history calls `Unsupported`.
+ */
+export interface PersonChatPlatform {
+  /**
+   * The `wss://` URLs of the HOP nodes the app trusts: a sender picks one,
+   * a receiver claims only from one of them.
+   */
+  hopNodes(): Promise<Array<string>>;
+
+  /**
+   * The devices paired with this wallet device over SSO, as the native
+   * apps announce them to contacts (`DeviceAdded`): the device's statement
+   * account and the encryption key of its SSO session.
+   */
+  pairedDevices(): Promise<Array<HostPairedDevice>>;
+
+  /**
+   * Replace the chat contacts of `product`, which the app shows outside
+   * the chat: in the wallet, as caller names, and in the contact picker of
+   * other products.
+   */
+  setContacts(
+    product: ProductContext,
+    contacts: Array<HostChatContact>,
+  ): Promise<void>;
+
+  /**
+   * At most `max_len` bytes from `offset` of the native chat history the
+   * host staged for `product` when it moved its native chat over, and the
+   * size of the whole export; a `total` of 0 when it staged none.
+   */
+  historyExport(
+    product: ProductContext,
+    offset: bigint,
+    maxLen: number,
+  ): Promise<HostHistoryExportChunk>;
+
+  /**
+   * `product` imported the staged history: the host may drop it.
+   */
+  historyImported(product: ProductContext): Promise<void>;
+}
+
+/**
  * Host-implemented adapter through which product Pocket calls reach the
  * host's card collection. Optional: a host that omits it leaves Pocket
  * requests answered `Unsupported`. See `OptionalPlatform`.
@@ -1939,6 +2490,39 @@ export interface ProductStorage {
 }
 
 /**
+ * Host-owned push service: the push token of the device, the push routes of
+ * the rooms, and a relay that sends a push to another device. Optional; a
+ * host without one leaves every product `push` call `Unsupported`.
+ *
+ * - Keep the id and the key of each route where the notification receiver of the host reads them.
+ * - Send each delivery to the push relay with the credentials of the host.
+ */
+export interface PushPlatform {
+  /**
+   * Give `delivery` to the push relay. Answers whether the push service took
+   * it.
+   */
+  sendPush(
+    product: ProductContext,
+    delivery: HostPushDelivery,
+  ): Promise<boolean>;
+
+  /**
+   * The push tokens of this device now.
+   */
+  pushTokens(): Promise<HostPushTokens>;
+
+  /**
+   * Replace the chat push routes of `product` with `routes`, where the
+   * host's notification receiver reads them.
+   */
+  setChatPushRoutes(
+    product: ProductContext,
+    routes: Array<HostChatPushRoute>,
+  ): Promise<void>;
+}
+
+/**
  * Host-owned viewfinder for QR codes and barcodes. Optional. The Swift and
  * Kotlin bridges and the JS `scanner` callbacks follow the same rules.
  *
@@ -2023,6 +2607,22 @@ export interface UserConfirmation {
    * dismiss its prompt when that happens.
    */
   confirmUserAction(review: UserConfirmationReview): Promise<boolean>;
+}
+
+/**
+ * Host-owned directory of the usernames of the network. Optional; a host
+ * without one leaves every product search `Unsupported`.
+ *
+ * - Search the way the host's own contact search does, and give at most 20 usernames.
+ */
+export interface UsernamesPlatform {
+  /**
+   * Find the usernames that start with `prefix`.
+   */
+  searchUsernames(
+    product: ProductContext,
+    prefix: string,
+  ): Promise<Array<string>>;
 }
 
 /**

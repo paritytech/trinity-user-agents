@@ -17,7 +17,7 @@ The package exposes tree-shakeable subpath exports — import only what your env
 | `@parity/truapi-host/testing`        | `createMockHost`: the in-memory host seam a product is tested against.                                              |
 | `@parity/truapi-host/testing/playwright` | Playwright fixture that boots the test host and embeds the product in an iframe.                                |
 | `@parity/truapi-host/testing/server` | Node server that serves the host page and its bundle.                                                              |
-| `@parity/truapi-host/testing/client` | `createMockClient`: a product client over the mock with no iframe, for unit tests.                                  |
+| `@parity/truapi-host/testing/client` | `createMockClient`: a product client over the mock with no iframe, for unit tests, with the host's chat queries.   |
 | `@parity/truapi-host/testing/dev-accounts` | Named dev accounts derived from fixed BIP-39 entropy, which sign for real.                                    |
 | `@parity/truapi-host/testing/host-page` | The browser half the fixture drives, for a suite that boots its own page.                                        |
 | `@parity/truapi-host/wasm/testing`   | The raw glue for the signing-enabled bundle the test host runs on.                                                  |
@@ -199,10 +199,114 @@ renderer all arrive as `onError`. An open render holds one worker reference for
 the provider's product, released when the stream ends or the disposer runs, so
 the product's worker stays up for as long as something is being drawn.
 
-`publishChatAction` is the path for posted messages, commands and host-drawn
-`Actions` buttons. Each action entry point sits behind its own service's access
-policy: the renderer refuses a connection that is not a `Worker` execution, and
-chat additionally requires a live session.
+`publishChatEvent` is the path for every Chat event of the current version:
+posted messages with their host id, commands, host-drawn `Actions` buttons,
+message menu presses, and edits, deletes, reactions and seen reports in a room
+the host stores.
+The core gives a subscriber at the first protocol version only the events that
+version can carry. `publishChatAction` takes an item of the first version and
+remains for hosts written before Chat Extension v2. Each action entry point
+sits behind its own service's access policy: the renderer refuses a connection
+that is not a `Worker` execution, and chat additionally requires a live
+session.
+
+`publishChatRoomEvent` gives one event to the product's
+`room_events_subscribe` stream: the user muted or archived a room, pressed a
+call button, or answered, opened or ended a call. The core keeps the newest 64 events of a product that has no
+subscriber, and starts each subscription with the rooms the host reports as
+muted or archived (`readChatRoomUserStates`). `wakeProduct` holds the
+product's worker for 30 s for a reason (`ProductStart`, `MessageInFlight`,
+`Notification`) and resolves with `Held { untilMs }`, or `BudgetSpent` after
+12 notification wakes in one hour. `stageChatAttachment(roomId, mimeType,
+bytes)` stores a user attachment above the inline bound as one Bulletin
+preimage that the product's own allowance pays for and resolves with its key;
+it rejects for a room whose features do not declare `preimageAttachments`, an
+attachment above 8 MiB or above the chain's per-transaction bound, and a
+product the user refused `PreimageSubmit`. The test host keeps the preimage
+in the core.
+
+### Chat queries
+
+A host asks a product that keeps a room's messages six questions. Each is a
+host-initiated stream the product answers with one item, and the provider
+gives each as a function that resolves with a `neverthrow` `Result`:
+
+```ts
+const page = await provider.chatMessagesQuery!(
+  { roomId, anchor: { tag: "Before", value: {} }, pageSize: 40 },
+  { timeoutMs: 10_000 },
+);
+if (page.isOk()) show(page.value.messages);
+else if (page.error.tag === "Domain" && page.error.value.tag === "NotAvailable") {
+  // Not a failure: the host default applies.
+}
+```
+
+The six are `chatMessagesQuery`, `chatUserAction`, `chatReactionsQuery`,
+`chatParticipantsQuery`, `chatMessageActionsQuery` and `chatSearchQuery`. The refusal is the `CallError` of the query
+(`Domain` carries `ProductChatQueryError`, or `ProductChatUserActionError` for
+`chatUserAction`), `Timeout` when no answer came in `timeoutMs`, or `NoAnswer`
+when the product ended the query with no item. The default `timeoutMs` is the
+limit of the RFC: 10 s for a page, 30 s for a new message, 10 s for another
+user action, 10 s for a search, 5 s for the rest (`CHAT_QUERY_TIMEOUTS_MS`); an `AbortSignal` in
+`signal` stops the query with `Cancelled`. The core answers `NotAvailable`
+itself for a room whose configuration does not declare the handler (for a
+search: a room that does not keep its messages, or whose features do not set
+`search`), and the
+product's client keeps a query that arrives before the product registers its
+handler, up to 64 a route, so a handler registered at start misses none.
+
+### Chat on the test host
+
+`createMockHost` keeps what a chat product declares, in memory: per room the
+metadata, configuration, preview, footer and every feed update (`room(roomId)`, `rooms()`). `feed(roomId)`
+gives the messages: the store of a room the host stores, or the screen and
+page cache of a room the product keeps, where a feed update shows but is not
+stored. `preview(roomId)` gives the chat list row with the host defaults of the
+RFC, and `events()` the events the mock sent.
+
+It serves the Chat Extension v2 additions too: `chatCapabilities` lists every
+feature name of the additions RFC (or `chatFeatures` of the config), and the
+mock keeps per room the features and the call, and
+one persona per bot id (a repeat replaces its name and icon).
+`setRoomUserState(roomId, { mutedUntil, archived })` plays the user's mute and
+archive and `roomUserState(roomId)` reads it back; an attached product gets
+`UserStateChanged`, deleting a room drops its state, and `roomEvents()` gives
+the room events the mock sent.
+
+`host.chatUser` plays the person and the host screen against the product
+under test. It opens and closes rooms, pages older, sends, replies, edits,
+deletes, reacts, reports seen, retries, presses buttons, opens menus and asks
+for participants and reaction details. It
+also presses the call buttons (`pressCall`), answers, opens and ends a call
+(`answerCall`, `openCall`, `endCall`), searches
+a room (`search`), wakes the product (`wake`) and sends a photo, video or file
+(`sendAttachment`: inline up to 1 MiB, else staged through
+`stageChatAttachment`, with `Refused` and nothing sent when the core refuses). In
+a room the product keeps it asks the chat queries and applies the host rules:
+the optimistic message, `Rejected` and `Failed`, one retry after
+`NotAvailable`, and the host default after a refusal or a time-out. In a room
+the host stores it changes the store and sends the matching event.
+`createMockClient` attaches its own runtime, and returns it as `chat`:
+
+```ts
+const { client, host, chat, dispose } = await createMockClient({
+  runtimeConfig: { executionKind: "Worker" }, // chat is a Worker service
+});
+startMyChatProduct(client);
+await host.chatUser.open("support");
+const sent = await host.chatUser.send("support", "hello");
+expect(host.feed("support").at(-1)?.status).toBe("Sent");
+```
+
+`host.chatUser.setTimings` shortens the time limits and the retry delay for a
+suite. Pass `host` to `createMockClient` to start a product again on the rooms
+and storage of an earlier run, and `submitPreimagesLocally` with
+`grantAllowances` for a product that submits preimages, since the mock chain
+never answers. The WASM bridge gives every host refusal of `updateFeed` to the
+product as `Unknown` with the reason, so `DuplicateMessage`, `UnknownMessage`
+and `NotOwner` of the mock arrive as that reason; `NotOwner` for a message as
+the user comes from the core and keeps its variant.
 
 Two rules the core cannot check are the host's to keep: send a render context
 only for a surface the product's manifest `includes`, and publish a renderer

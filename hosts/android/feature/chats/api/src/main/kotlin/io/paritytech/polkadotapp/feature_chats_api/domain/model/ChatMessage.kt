@@ -21,7 +21,9 @@ data class ChatMessage(
     val origin: ChatMessageOrigin,
     val content: Content,
     val status: Status,
-    val replyToMessageId: String? = null
+    val replyToMessageId: String? = null,
+    /** The participant of a product room that wrote the message (Chat Extension v2). Null elsewhere. */
+    val originParticipantId: String? = null,
 ) : Identifiable {
     companion object {
         fun new(
@@ -158,6 +160,15 @@ data class ChatMessage(
          *                or [Result.failure] if deserialization failed.
          */
         data class Custom<T>(val rendererId: String, val content: Result<T>) : Content
+
+        /** A body of a product that the other kinds cannot hold (Chat Extension v2). */
+        data class ProductBody(val body: ProductMessageBody) : Content
+
+        /**
+         * What stays of a message that its product deleted. The host never shows it. It keeps the id taken, so a
+         * later change to the same id is refused.
+         */
+        data object Deleted : Content
     }
 
     enum class Status(val deliveryRank: Int) {
@@ -259,7 +270,8 @@ fun Content.isInternal(): Boolean {
         this is Content.DataChannelClosed ||
         this is Content.DeviceAdded ||
         this is Content.DeviceRemoved ||
-        this is Content.CompactionCommit
+        this is Content.CompactionCommit ||
+        this is Content.Deleted
 }
 
 inline fun <reified T> ChatMessage.customContentOrNull(): T? {

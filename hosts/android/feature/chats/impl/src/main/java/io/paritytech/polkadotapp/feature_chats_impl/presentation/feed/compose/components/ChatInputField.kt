@@ -35,6 +35,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.ChatTestTags
 internal fun ChatInputField(
     modifier: Modifier,
     text: String,
+    placeholder: String?,
     characterLimit: Int?,
     onTextChanged: (String) -> Unit,
     onSendAction: () -> Unit,
@@ -44,7 +45,7 @@ internal fun ChatInputField(
         verticalAlignment = Alignment.Bottom,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            MessageTextField(text = text, onTextChanged = onTextChanged)
+            MessageTextField(text = text, placeholder = placeholder, onTextChanged = onTextChanged)
 
             if (characterLimit != null) {
                 CharacterCounter(
@@ -80,6 +81,7 @@ internal fun ChatInputField(
 @Composable
 private fun MessageTextField(
     text: String,
+    placeholder: String?,
     onTextChanged: (String) -> Unit,
 ) {
     PolkadotInputField(
@@ -101,7 +103,7 @@ private fun MessageTextField(
             autoCorrectEnabled = true
         ),
         placeholder = {
-            NovaText(stringResource(R.string.chat_details_input_field_placeholder))
+            NovaText(placeholder ?: stringResource(R.string.chat_details_input_field_placeholder))
         },
         contentPadding = PaddingValues(PolkadotTheme.spacings.zero),
     )
@@ -129,6 +131,7 @@ private fun InputFieldPreview() {
         ChatInputField(
             modifier = Modifier.fillMaxWidth(),
             text = t,
+            placeholder = null,
             characterLimit = null,
             onTextChanged = { t = it },
             onSendAction = {}
@@ -144,6 +147,7 @@ private fun InputFieldWithCharacterCounterPreview() {
         ChatInputField(
             modifier = Modifier.fillMaxWidth(),
             text = t,
+            placeholder = null,
             characterLimit = 1000,
             onTextChanged = { t = it },
             onSendAction = {}

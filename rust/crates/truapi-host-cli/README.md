@@ -223,6 +223,160 @@ when the current account exhausts Statement Store slots and no saved pairing
 depends on its identity. A full period replaces the oldest slot past the runtime's
 replacement cooldown, so rotation only happens when no slot is replaceable.
 
+#### Chat workers
+
+A chat product ships a headless worker beside its app, and on a phone the
+worker talks to people through Chat. `dev` plays that phone too. It installs
+the CLI's in-memory chat host (and the Pocket host when `TRUAPI_POCKET_CARDS`
+is set) whatever kind the app runs as; an `App` connection is still refused
+Chat by the core, so the app is unaffected. Point `--worker-bundle` at the
+worker's built ESM file and open the chat page the CLI prints:
+
+```bash
+truapi-host dev --worker-bundle apps/worker/dist-dev/index.js -- yarn dev
+# Chat surface: http://127.0.0.1:9955/chat
+```
+
+![The chat page: rooms on the left, the thread and composer in the middle, the worker's log on the right](docs/chat-surface.png)
+
+The frame port then also serves:
+
+| Route                      | What                                                                                                                      |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `GET /chat`                | The chat page. It boots the worker from the two routes below when a bundle is configured.                                 |
+| `GET /worker/bootstrap.js` | The bridge script, pointed at `/worker`.                                                                                  |
+| `GET /worker/index.js`     | The bundle, read from disk on every request so a `vite build --watch` output is always current. A 404 when it is missing. |
+| `WS /worker`               | A product frame socket for the same product and session, opened as a `Worker`.                                            |
+| `WS /chat/ws`              | The page's view of the chat, as JSON text frames.                                                                         |
+
+The worker boots with the page, so reloading the page restarts the worker. The
+page is the phone's chat screen for [Chat Extension v2](../../../docs/rfcs/chat-extension-v2.md),
+drawn from what the in-memory host keeps.
+
+- **Chat list.** Each room with its name, avatar and description, ordered as
+  the product's preview says (pinned rooms first, then by time), with the
+  preview text (animated while `ongoing`) and the badge: a count, an image, or
+  nothing. Where the product set no preview, the host derives the text from
+  the newest message and counts the unread messages of a room it keeps.
+- **Room.** Every body kind: `Text` with its links, `RichText` as the Markdown
+  subset of the RFC (bold, italic, code, fenced code, lists, quotes, links;
+  headings bold, tables as text) with inline images, preimage images as a
+  placeholder with their key, a video poster that plays an inline video, a file
+  row that downloads an inline file, `Actions` buttons, and `Custom` as its
+  `preview_text` (the page runs no `Renderer`). Messages show "edited",
+  deletion, status ticks, reactions (yours highlighted, click to toggle) and a
+  reply quote that jumps to its message.
+- **Menus.** The message menu holds the built-in entries of the RFC defaults
+  (Copy, Reply, Edit and Delete for your own messages, React, Retry for a failed
+  message in a product-source room), then, when the room sets
+  `message_actions`, the product's entries from `message_actions_query`
+  (`hidden` removes built-ins; destructive entries are red and last). "Who
+  reacted" asks `reactions_query` when the room sets `reaction_details`.
+- **Header.** The participant count (`participants_query` `Count`, or 2) and a
+  participant sheet that pages by 100 with each kind drawn.
+- **Footer.** `Input` with its hint and the photo, video, file and payment
+  buttons it declares, `Empty`, or `Custom` as a placeholder box. Text you send
+  is a message. An empty room shows its `placeholder`.
+- **Chat Extension v2 additions.** The rooms pane ends with a **Capabilities**
+  line: the feature names this host lists in `capabilities`
+  (`product_source_rooms`, `reaction_details`, `participants`, `message_menus`,
+  `inline_attachments`, `preimage_attachments`, `sealed_attachments`, `search`,
+  `bot_personas`, `mute_archive`, `read_aloud`, `call_buttons`) and the
+  attachment bounds. The host keeps what a product declares with
+  `set_room_features` whole, and the room header lists each declared feature,
+  marked "not served" where the host does not serve it. The host also keeps the
+  call of each room (`set_room_call`), the personas of the product
+  (`register_bot`, where a repeat replaces the name and icon) and the mute and
+  archive state of each room.
+- **Attachments.** The photo, video and file buttons pick a file. Up to 1 MiB
+  it travels inline. Above it, in a room whose features declare
+  `preimage_attachments`, the core stages it as one Bulletin preimage that the
+  product's own allowance pays for, and the message carries the key; the core
+  refuses an undeclared room, and the page refuses a file above 8 MiB before
+  it reads it. The live Bulletin chain stores at most 2 MiB in one
+  transaction, which the core reads and enforces.
+- **Search.** **Search** in the room header opens a field above the messages.
+  300 ms after you stop typing, a room the host keeps is searched in the host's
+  store (case and diacritics ignored, 50 matches a page); a room the product
+  keeps that declares `search` asks the product with `search_query` (30 a page,
+  10 s), and shows "Search is not available" when it does not answer. Each
+  match shows its author, time and line with the match marked, and a click
+  jumps to the message. A room the product keeps without `search` shows no
+  search.
+- **Read aloud.** With `read_aloud` the message menu
+  offers **Read aloud** on text, Markdown read as plain text and a custom
+  body's preview, spoken by the browser, with a **Stop** line in the footer
+  until it ends or you leave the room.
+- **Calls.** A room that declares `calls` shows an audio and a video button
+  in the header, which send `CallRequested`. A `Ringing` call shows a banner
+  with the caller, **Accept** and **Decline** (`CallAnswered`), and "Incoming
+  call" in the list, until the product clears it or 60 s pass. An `Active`
+  call shows a bar with its timer, **Open** for a call without a media session
+  (`CallOpened`) and **End** (`CallEnded`). No media path: the host does not
+  list `room_calls`.
+- **Wake.** **Wake** in the room header stands in for an authenticated
+  notification on watch `dev` for the room: the core holds the product's
+  worker for 30 s and sends `Woken`, at most 12 times for each product in one
+  hour (then the page says the budget is spent). The host does not list
+  `wake`, which needs a push route to the device.
+- **Bot personas.** A message from `bot:<id>` draws with
+  the name and icon of the persona `<id>` the product registered, with no
+  `participants_query`; the **Bots** list of the rooms pane shows each persona.
+- **Mute and archive.** The room header has **Mute** (1 hour, 8 hours, 1 week
+  or always) or **Unmute**, and **Archive** or **Unarchive**. A muted row shows
+  a speaker mark and a grey badge; an archived room moves under an **Archived**
+  row at the top of the list and stays there when a message arrives. Each change
+  goes to the product as `UserStateChanged`. The core shows nothing for a
+  notification the product sends at once into a muted room, and the
+  **Notifications** list of the rooms pane shows every notification the host
+  delivered, so the missing one is visible; a click opens the room its deeplink
+  names.
+
+A room the host keeps stores what you send and tells the product with the
+events of `chat.actionSubscribe()` (`MessagePosted` with the host's id,
+`UserEdited`, `UserDeleted`, `UserReacted`, and `Seen` when the room asks for
+it). A room the product keeps (`product_source`) is paged from the product with
+`messages_query`, newest page first and older pages as you scroll up; what you
+send shows as `Preparing` until `user_action` answers `MessageCreated`, and your
+edits, deletions, reactions, retries and seen reports go there too. The host
+waits 10 s for a page, 30 s for a send, 10 s for another action and 5 s for the
+other queries, asks an `unavailable` query once more after 1 s, and draws the
+host default when the product answers `NotAvailable`. `?room=<id>` opens a
+room as soon as the product declares it.
+
+The worker runs as a module script in the page, so its console is the page's.
+The **Logs** pane shows it: every line levelled from its `[INF]`/`[WRN]`/`[ERR]`
+tag, filtered by substring, following the tail unless paused. Rooms, chat and
+log are each a pane to show, hide or resize from the header, and the layout is
+remembered across reloads.
+
+![Toggling the rooms and log panes and dragging the log wider](docs/chat-panes.gif)
+
+On `/chat/ws` the host sends a `snapshot` (rooms with their declarations,
+features, call, user state and list row, bots, the messages of rooms the
+host keeps, the time-outs and the capabilities) first,
+then a `room`, `roomDeleted`, `bot`, `message` or `notification` event as each lands, and
+`workers` whenever a worker connects or disconnects. The page sends one
+operation per thing a person does: `post`, `edit`, `delete`, `react`, `seen`,
+`retry`, `trigger`, `messageAction`, `attach` (a photo, video or file in base64,
+inline or staged), `search`, `wake`, `callRequest`, `callAnswer`, `callOpen`,
+`callEnd` and `userState` (which mutes or archives a room and sends
+`UserStateChanged` to `chat.roomEventsSubscribe()`; `mutedForever` mutes with
+no end), and the queries `messages`, `reactions`, `participants` and
+`messageActions`. An event is answered
+with `delivered` and the number of workers that took it, where 0 means none is
+connected; a query or a user action with `answer`, which carries the page's
+`reqId` and the product's answer or the reason there is none (`Timeout`,
+`NoWorker`, `NotAvailable`, `Rejected`, ...); a refusal with `error`. Every
+message and declaration the host takes is also a line of the `TRUAPI_CHAT_LOG`
+transcript. Without `--worker-bundle` the page still shows the chat, but no
+worker serves it. Other host modes serve none of these routes.
+
+[`scripts/lib/cli-chat-socket.mjs`](../../../scripts/lib/cli-chat-socket.mjs)
+is the person on `/chat/ws` for a test or a terminal: it lists the rooms, reads
+the messages of a room, reads a page of a room the worker keeps, types a
+message and presses a button.
+
 ### Interactive terminal UI
 
 In a TTY, both hosts open the same scrollable transcript above a single command
@@ -749,7 +903,7 @@ Scripts under `js/scripts/` include:
   scripts/battery.sh --pairing-host     # paired phase only
   make e2e-signing-cli                  # direct phase only
   make e2e-pairing-cli                  # paired phase only
-  make e2e-chat-cli                     # chat phase only
+  make e2e-chat-cli                     # chat phases only: screening, then the v2 sample on /chat
   scripts/battery.sh --pocket-host      # Pocket phase only
   make e2e-pocket-cli                   # Pocket phase only
   scripts/battery.sh --funding-host     # funding phase only, on a test-host build
@@ -1103,6 +1257,23 @@ ends the process, which is what a supervising dev server sends.
 nowhere to prompt: confirmations are denied instead, and the startup line says
 so. `--serve` cannot be combined with `--script` or `exec`, which are the
 one-shot modes.
+
+## Reference push relay (`wake-relay`)
+
+`truapi-host wake-relay` is a push relay for wake pushes, for tests ([Push wakes](../../../docs/design/push-wake.md)).
+A host registers a device, its key and its watched statement-store topics at `POST /v1/registrations`; the relay
+follows the topics on the People statement store of `--network` and, for each new statement, signs a wake push and
+gives it to its sinks. It has no APNs or FCM credentials.
+
+```bash
+truapi-host wake-relay --port 9988 --sink file:/tmp/pushes.jsonl --sink simulator
+curl -s http://127.0.0.1:9988/v1/registrations   # the registered devices and topics
+```
+
+- `file:<path>`: one JSON line for each push.
+- `simulator`: for a device registered with platform `simctl`, writes the payload in the app container
+  (`tmp/truapi-e2e/wake-pushes`) and posts the Darwin notification that the E2E iOS build reads.
+- `simctl`: runs `xcrun simctl push`; an iOS 27 simulator refuses a background payload, so it wakes nothing there.
 
 ## Scope / gaps
 

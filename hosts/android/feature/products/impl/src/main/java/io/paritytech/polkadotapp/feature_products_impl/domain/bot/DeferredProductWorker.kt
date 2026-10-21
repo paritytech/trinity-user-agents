@@ -2,9 +2,21 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantEntryModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatReactionDetailModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipantsPage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductSearchPage
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
+import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductRoomEvent
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,6 +49,70 @@ class DeferredProductWorker : ProductWorker {
             onFailure = { Result.failure(it) },
         )
 
+    override suspend fun publishRoomEvent(roomId: ProductChatIdParameter, event: ProductRoomEvent): Result<Unit> =
+        awaitWorker().fold(
+            onSuccess = { it.publishRoomEvent(roomId, event) },
+            onFailure = { Result.failure(it) },
+        )
+
+    override suspend fun openRoom(roomId: ProductChatIdParameter): Result<Unit> =
+        awaitWorker().fold(
+            onSuccess = { it.openRoom(roomId) },
+            onFailure = { Result.failure(it) },
+        )
+
+    override suspend fun closeRoom(roomId: ProductChatIdParameter) {
+        awaitWorker().getOrNull()?.closeRoom(roomId)
+    }
+
+    override fun holdBriefly() {
+        delegate.value?.getOrNull()?.holdBriefly()
+    }
+
+    override suspend fun messagesPage(
+        roomId: ProductChatIdParameter,
+        anchor: ChatPageAnchorModel,
+        pageSize: Int,
+    ): Result<ProductMessagesPage> = awaitWorker().fold(
+        onSuccess = { it.messagesPage(roomId, anchor, pageSize) },
+        onFailure = { Result.failure(ProductChatQueryException.Unavailable(it)) },
+    )
+
+    override suspend fun userAction(roomId: ProductChatIdParameter, action: ChatUserActionModel): Result<ChatUserActionOutcome> =
+        awaitWorker().fold(
+            onSuccess = { it.userAction(roomId, action) },
+            onFailure = { Result.failure(ProductChatQueryException.Unavailable(it)) },
+        )
+
+    override suspend fun messageMenu(roomId: ProductChatIdParameter, message: ProductRoomMessage): Result<ChatMessageMenuModel> =
+        awaitWorker().fold(
+            onSuccess = { it.messageMenu(roomId, message) },
+            onFailure = { Result.failure(ProductChatQueryException.Unavailable(it)) },
+        )
+
+    override suspend fun participantsCount(roomId: ProductChatIdParameter): Result<Int> =
+        withWorker { it.participantsCount(roomId) }
+
+    override suspend fun participantsPage(roomId: ProductChatIdParameter, cursor: String?, pageSize: Int): Result<ProductParticipantsPage> =
+        withWorker { it.participantsPage(roomId, cursor, pageSize) }
+
+    override suspend fun participantsByIds(roomId: ProductChatIdParameter, participantIds: List<String>): Result<List<ChatParticipantEntryModel>> =
+        withWorker { it.participantsByIds(roomId, participantIds) }
+
+    override suspend fun reactions(roomId: ProductChatIdParameter, messageId: String): Result<List<ChatReactionDetailModel>> =
+        withWorker { it.reactions(roomId, messageId) }
+
+    override suspend fun searchPage(roomId: ProductChatIdParameter, text: String, cursor: String?, pageSize: Int): Result<ProductSearchPage> =
+        withWorker { it.searchPage(roomId, text, cursor, pageSize) }
+
+    override suspend fun openLink(roomId: ProductChatIdParameter, payload: String): Result<ProductChatIdParameter?> =
+        withWorker { it.openLink(roomId, payload) }
+
+    private suspend fun <T> withWorker(query: suspend (ProductWorker) -> Result<T>): Result<T> = awaitWorker().fold(
+        onSuccess = { query(it) },
+        onFailure = { Result.failure(ProductChatQueryException.Unavailable(it)) },
+    )
+
     override fun renderMessage(
         roomId: ProductChatIdParameter?,
         messageId: ChatMessageId,
@@ -47,6 +123,17 @@ class DeferredProductWorker : ProductWorker {
             onSuccess = { emitAll(it.renderMessage(roomId, messageId, messageType, messageData)) },
             onFailure = { emit(Result.failure(it)) },
         )
+    }
+
+    override fun renderFooter(roomId: ProductChatIdParameter): Flow<Result<JsWidget>> = flow {
+        awaitWorker().fold(
+            onSuccess = { emitAll(it.renderFooter(roomId)) },
+            onFailure = { emit(Result.failure(it)) },
+        )
+    }
+
+    override fun dispatchFooterEvent(roomId: ProductChatIdParameter, actionId: String, eventType: JsUiEvent.Type) {
+        delegate.value?.getOrNull()?.dispatchFooterEvent(roomId, actionId, eventType)
     }
 
     // UI events only originate from already-rendered widgets, so the worker is attached by then.

@@ -5,6 +5,8 @@ import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.utils.combineToPair
 import io.paritytech.polkadotapp.common.utils.inBackground
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.mapToSet
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatExtensionId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
@@ -19,9 +21,17 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.middleware.ChatExtens
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.Chat
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatDisplay
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatSummary
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.chatListOrder
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.withRoomPolicy
+import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
+import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicyProvider
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.shareIn
 import javax.inject.Inject
 
 class SubscribeActiveChatsUseCase @Inject constructor(
@@ -29,20 +39,25 @@ class SubscribeActiveChatsUseCase @Inject constructor(
     private val contactsRepository: ContactsRepository,
     private val chatExtensionRegistry: ChatExtensionRegistry,
     private val chatDisplayGenerator: ChatDisplayGenerator,
+    private val roomPolicyProvider: ChatRoomPolicyProvider,
+    private val personChatMode: PersonChatMode,
 ) {
     context(scope: ComputationalScope)
     operator fun invoke(): Flow<List<Chat>> = combineToPair(
         chatExtensionRegistry.observeActiveExtensions(),
-        contactsRepository.subscribeContactsWithChatRequests(),
+        // While the chat product runs the chats, the native chat's contact chats are not listed (HX2).
+        if (personChatMode.isProductChat()) flowOf(emptyList()) else contactsRepository.subscribeContactsWithChatRequests(),
     ).flatMapLatest { (activeExtensions, contacts) ->
         val context = buildActiveChatsContext(activeExtensions, contacts)
 
-        chatEngine.subscribeChatSummaries()
-            .map { summaries ->
-                summaries.mapNotNull { summary ->
-                    val chatId = summary.chatId
+        withRoomPolicies(chatEngine.subscribeChatSummaries())
+            .map { (summaries, policies) ->
+                chatListOrder(summaries, policies.mapValues { it.value.listOrder }).mapNotNull { messageSummary ->
+                    val chatId = messageSummary.chatId
                     if (!context.isChatActive(chatId)) return@mapNotNull null
 
+                    val policy = policies[chatId]
+                    val summary = messageSummary.withRoomPolicy(policy)
                     val display = constructChatDisplay(chatId, summary, context.activeContactsById) ?: return@mapNotNull null
 
                     Chat(
@@ -52,11 +67,23 @@ class SubscribeActiveChatsUseCase @Inject constructor(
                         timestamp = summary.timestamp,
                         unreadBadge = summary.badge,
                         hasUnseenReaction = summary.hasUnseenReaction,
-                        customPreviewRenderer = summary.customPreviewRenderer
+                        customPreviewRenderer = summary.customPreviewRenderer,
+                        roomPolicy = policy,
                     )
                 }
             }
     }.inBackground()
+
+    context(scope: ComputationalScope)
+    private fun withRoomPolicies(summaries: Flow<List<ChatSummary>>): Flow<Pair<List<ChatSummary>, Map<ChatId, ChatRoomPolicy>>> {
+        val sharedSummaries = summaries.shareIn(scope, SharingStarted.WhileSubscribed(), replay = 1)
+        val policies = sharedSummaries
+            .map { list -> list.mapToSet { it.chatId } }
+            .distinctUntilChanged()
+            .flatMapLatest { roomPolicyProvider.observePolicies(it) }
+
+        return combineToPair(sharedSummaries, policies)
+    }
 
     private fun buildActiveChatsContext(
         activeExtensions: List<ChatExtension>,

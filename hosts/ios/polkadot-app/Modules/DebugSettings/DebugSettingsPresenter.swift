@@ -90,6 +90,27 @@ extension DebugSettingsPresenter: DebugSettingsPresenterProtocol {
         interactor.toggleStrategyDebug()
     }
 
+    /// The native chat and the chat product never run together, and each starts only at launch. Moving to the chat
+    /// product brings the native chat's contacts and messages over at that launch.
+    func toggleProductChat() {
+        interactor.toggleProductChat()
+
+        let viewModel = AlertPresentableViewModel(
+            title: "Restart Required",
+            message: "The chat that runs your chats changed. Restart the app to apply it.",
+            actions: [
+                AlertPresentableAction(title: "Restart") { [weak self] in
+                    self?.interactor.restartApp()
+                },
+                AlertPresentableAction(title: "Cancel", style: .cancel) { [weak self] in
+                    self?.interactor.toggleProductChat()
+                }
+            ]
+        )
+
+        wireframe.present(viewModel: viewModel, style: .alert, from: view)
+    }
+
     func toggleTruApiRuntime() {
         interactor.toggleTruApiRuntime()
 
@@ -181,5 +202,9 @@ extension DebugSettingsPresenter: DebugSettingsInteractorOutputProtocol {
 
     func didReceive(truApiRuntimeEnabled: Bool) {
         view?.didReceive(truApiRuntimeEnabled: truApiRuntimeEnabled)
+    }
+
+    func didReceive(productChatEnabled: Bool) {
+        view?.didReceive(productChatEnabled: productChatEnabled)
     }
 }

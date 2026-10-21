@@ -44,6 +44,8 @@ private extension JSEngineLogger {
         """
         (function() {
             var origLog = console.log;
+            var origDebug = console.debug;
+            var origInfo = console.info;
             var origWarn = console.warn;
             var origError = console.error;
 
@@ -56,6 +58,8 @@ private extension JSEngineLogger {
             }
 
             console.log = function() { send('log', arguments); origLog.apply(console, arguments); };
+            console.debug = function() { send('debug', arguments); origDebug.apply(console, arguments); };
+            console.info = function() { send('info', arguments); origInfo.apply(console, arguments); };
             console.warn = function() { send('warn', arguments); origWarn.apply(console, arguments); };
             console.error = function() { send('error', arguments); origError.apply(console, arguments); };
 

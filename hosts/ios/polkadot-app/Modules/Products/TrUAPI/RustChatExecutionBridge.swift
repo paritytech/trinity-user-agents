@@ -8,11 +8,22 @@ import TrUAPIHost
 /// `ChatHostBridge` callbacks against the product's chat binding.
 final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge, @unchecked Sendable {
     private let chatMessaging: any ProductChatMessaging
-    // The base class keeps `dependencies` private; hold on to the logger here.
+    private let feedListeners: ProductFeedListeners
+    private let pageCache: ProductMessageCaching
+    // The base class keeps `dependencies` private; hold on to what this bridge reads here.
+    private let productId: ProductId
     private let logger: LoggerProtocol
 
-    init(dependencies: Dependencies, chatMessaging: any ProductChatMessaging) {
+    init(
+        dependencies: Dependencies,
+        chatMessaging: any ProductChatMessaging,
+        feedListeners: ProductFeedListeners = .shared,
+        pageCache: ProductMessageCaching = ProductMessageCache.shared
+    ) {
         self.chatMessaging = chatMessaging
+        self.feedListeners = feedListeners
+        self.pageCache = pageCache
+        productId = dependencies.productId
         logger = dependencies.logger
         super.init(dependencies: dependencies)
     }
@@ -36,10 +47,22 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
         }
     }
 
-    func registerBot(botId: String, name _: String, icon _: String) async throws -> ChatBotRegistrationStatus {
-        logger.debug("[truapi:chat-bridge] registerBot \(botId) -> rejecting")
-        // No native bot registry; the container leaves it unimplemented too.
-        throw HostRejection.Rejected(reason: "bot registration is not supported by this host")
+    /// Keeps a persona that the product speaks as in its own rooms (07-LATER §5, D30). The core screened the
+    /// values and checked the bound of personas. The store checks the bound again.
+    func registerBot(botId: String, name: String, icon: String) async throws -> ChatBotRegistrationStatus {
+        logger.debug("[truapi:chat-bridge] registerBot \(botId)")
+        guard let botId = botId.nilIfEmpty else {
+            throw HostRejection.Rejected(reason: "a bot needs an id")
+        }
+
+        do {
+            return switch try await chatMessaging.registerPersona(botId: botId, name: name, icon: icon.nilIfEmpty) {
+            case .new: .new
+            case .exists: .exists
+            }
+        } catch let ChatProductPersonaError.tooMany(max) {
+            throw HostRejection.Rejected(reason: "a product registers at most \(max) bots")
+        }
     }
 
     func postMessage(roomId: String, content: ChatMessageContent, alt: String?) async throws -> String {
@@ -53,20 +76,7 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
             throw HostRejection.Rejected(reason: "a chat message needs a room")
         }
 
-        let message: ProductBotMessage =
-            switch content {
-            case let .text(text):
-                .text(text)
-            case let .custom(custom):
-                .custom(messageType: custom.messageType, data: custom.payload, alt: alt)
-            case .richText,
-                 .actions,
-                 .file,
-                 .reaction,
-                 .reactionRemoved:
-                throw HostRejection.Rejected(reason: "this host renders text and custom messages only")
-            }
-        return try await chatMessaging.sendMessage(message, roomId: roomId)
+        return try await chatMessaging.sendMessage(content.toBotMessage(alt: alt), roomId: roomId)
     }
 
     func setRoomFooter(roomId: String, footer: ChatRoomFooter) async throws {
@@ -75,12 +85,7 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
             throw HostRejection.Rejected(reason: "a chat room needs an id")
         }
 
-        let roomFooter: Chat.RoomFooter =
-            switch footer {
-            case .textInput: .textInput
-            case .empty: .empty
-            }
-        try await chatMessaging.setRoomFooter(roomId: roomId, footer: roomFooter)
+        try await chatMessaging.setRoomFooterConfig(roomId: roomId, footer: Chat.RoomFooterConfig(footer))
     }
 
     func listRooms() async throws -> [ChatRoom] {
@@ -91,6 +96,112 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
             return rooms.map { $0.toChatRoom() }
         }
         return []
+    }
+
+    // MARK: - Chat Extension v2
+
+    // The core checked that the product hosts each room and screened every value. A room that is gone by now
+    // answers `ChatRoomError.unknownRoom`, which the product receives as the reason of a rejection.
+
+    func roomConfig(roomId: String) async throws -> ChatRoomConfig {
+        try await chatMessaging.roomDeclarations(roomId: requireRoomId(roomId)).effectiveConfig.wireValue
+    }
+
+    func setRoomConfig(roomId: String, config: ChatRoomConfig) async throws {
+        logger.debug("[truapi:chat-bridge] setRoomConfig \(roomId)")
+        try await chatMessaging.setRoomConfig(roomId: requireRoomId(roomId), config: Chat.RoomConfig(config))
+    }
+
+    func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws {
+        logger.debug("[truapi:chat-bridge] setRoomMetadata \(roomId)")
+        try await chatMessaging.setRoomMetadata(
+            roomId: requireRoomId(roomId),
+            name: metadata.name,
+            description: metadata.description,
+            avatar: metadata.avatarImage
+        )
+    }
+
+    func setRoomPreview(roomId: String, preview: ChatRoomPreview) async throws {
+        try await chatMessaging.setRoomPreview(roomId: requireRoomId(roomId), preview: Chat.RoomPreview(preview))
+    }
+
+    /// A delete of a room is idempotent: a room that is gone already is not an error.
+    func deleteRoom(roomId: String) async throws {
+        logger.debug("[truapi:chat-bridge] deleteRoom \(roomId)")
+        do {
+            try await chatMessaging.deleteRoom(roomId: requireRoomId(roomId))
+        } catch ChatRoomError.unknownRoom {
+            logger.debug("[truapi:chat-bridge] deleteRoom \(roomId): no such room")
+        }
+    }
+
+    /// The core reads the configuration of the room and sets `persist` for a room that the host stores. For a
+    /// room that the product keeps, an open room screen takes the update. When no screen shows the room, the update
+    /// changes the cached page, so the next open shows the change before the newest page arrives (02-DESIGN §5.3).
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) async throws {
+        guard let roomId = roomId.nilIfEmpty else {
+            throw NativeChatFeedRejection.Rejected(reason: "a chat room needs an id")
+        }
+
+        let chatId = Chat.Id.chatExtension(productId, roomId: roomId)
+        let localUpdate = Chat.ProductFeedUpdate(update)
+
+        guard persist else {
+            if await !feedListeners.deliver(update, roomId: roomId, to: chatId) {
+                await pageCache.apply(update, productId: productId, roomId: roomId)
+                logger.debug("[truapi:chat-bridge] updateFeed \(roomId): no open room, the cached page takes it")
+            }
+            return
+        }
+
+        do {
+            try await chatMessaging.applyFeedUpdate(roomId: roomId, update: localUpdate)
+        } catch let error as Chat.ProductFeedError {
+            throw error.rejection
+        } catch let ChatRoomError.unknownRoom(roomId) {
+            throw NativeChatFeedRejection.Rejected(reason: "no chat room \(roomId)")
+        }
+    }
+
+    // MARK: - Chat Extension v2 additions
+
+    func capabilities() async throws -> [String] {
+        ChatHostCapabilities.served
+    }
+
+    func roomFeatures(roomId: String) async throws -> ChatRoomFeatures {
+        try await chatMessaging.roomFeatures(roomId: requireRoomId(roomId)).wireValue
+    }
+
+    /// The store keeps a feature that this build does not serve, so a later build applies it.
+    func setRoomFeatures(roomId: String, features: ChatRoomFeatures) async throws {
+        logger.debug("[truapi:chat-bridge] setRoomFeatures \(roomId)")
+        try await chatMessaging.setRoomFeatures(roomId: requireRoomId(roomId), features: Chat.RoomFeatures(features))
+    }
+
+    /// The core calls it only when this host lists `call_buttons`. The call stays in memory for the room screen.
+    func setRoomCall(roomId: String, call: ChatRoomCall?) async throws {
+        logger.debug("[truapi:chat-bridge] setRoomCall \(roomId)")
+        try await chatMessaging.setRoomCall(roomId: requireRoomId(roomId), call: call.map(Chat.RoomCall.init))
+    }
+
+    func roomUserStates() async throws -> [ChatRoomUserState] {
+        try await chatMessaging.roomUserStates().map(\.wireValue)
+    }
+
+    func bots() async throws -> [String] {
+        try await chatMessaging.personaIds()
+    }
+}
+
+private extension RustChatExecutionBridge {
+    /// The core never sends an empty room id. The check keeps a broken call away from the chat store.
+    func requireRoomId(_ roomId: String) throws -> String {
+        guard let roomId = roomId.nilIfEmpty else {
+            throw HostRejection.Rejected(reason: "a chat room needs an id")
+        }
+        return roomId
     }
 }
 
@@ -106,6 +217,35 @@ extension RoomInfo {
 }
 
 private extension ChatMessageContent {
+    /// The core screened every field: media and file URLs are `https` or inline images.
+    func toBotMessage(alt: String?) throws -> ProductBotMessage {
+        switch self {
+        case let .text(text):
+            .text(text)
+        case let .custom(custom):
+            .custom(messageType: custom.messageType, data: custom.payload, alt: alt)
+        case let .richText(richText):
+            .richText(text: richText.text, media: richText.media.map(\.url))
+        case let .actions(actions):
+            .actions(ProductBotActions(
+                text: actions.text,
+                buttons: actions.actions.map { .init(actionId: $0.actionId, title: $0.title) },
+                layout: actions.layout == .grid ? .grid : .column
+            ))
+        case let .file(file):
+            .file(ProductBotFile(
+                url: file.url,
+                fileName: file.fileName,
+                mimeType: file.mimeType,
+                sizeBytes: file.sizeBytes,
+                text: file.text
+            ))
+        case .reaction,
+             .reactionRemoved:
+            throw HostRejection.Rejected(reason: "this host does not apply reactions from a product")
+        }
+    }
+
     var variantName: String {
         switch self {
         case .text: "text"

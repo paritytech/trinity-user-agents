@@ -79,7 +79,7 @@ pub enum HostScannerScanError {
     CameraUnavailable,
     /// Another scan is already open.
     Busy,
-    /// The calling execution is not on screen, and is not a Worker handling a tap.
+    /// The calling execution is not on screen, and is not a Worker handling a press.
     NotVisible,
     /// No formats, a format named twice, or a prefix or hint that breaks its limit.
     InvalidRequest { reason: String },
@@ -102,7 +102,7 @@ What each answer means for the product:
 | `Dismissed` | Can offer the scan again. |
 | `CameraUnavailable` | Stops offering it until the user changes a setting. |
 | `Busy` | Waits for the other scan to end. |
-| `NotVisible` | Offers the scan from its own screen, or from a tap on its card. |
+| `NotVisible` | Offers the scan from its own screen, or from a press on its card or in its room. |
 | `InvalidRequest` | Fixes the call. Nothing was shown. |
 | `Unsupported` | Uses its own camera code. This host will never have a scanner. |
 
@@ -131,9 +131,10 @@ grocery code has no prefix to give, and a required prefix would not help anyway:
 
 **Only for what the user is looking at.** The viewfinder opens over whatever is on screen, so the call has to come from
 there. An App or Widget may scan only while it is the screen the user sees; the host checks that. A Worker has no screen
-of its own, so it may scan only within 5 seconds of the user tapping something the host drew for it, such as its card
-face. Chat messages and actions do not count, because they can come from other people. Anything else is answered
-`NotVisible` and no viewfinder opens. A product therefore cannot open the viewfinder from the background, or open it
+of its own, so it may scan only within 5 seconds of a press of the user on something the host drew for it: its card face,
+or a button, a menu entry or a command of one of its chat rooms. A posted message does not count, because it can come
+from another person. The press is the user asking for the scan. Anything else is answered `NotVisible` and no
+viewfinder opens. A product therefore cannot open the viewfinder from the background, or open it
 again each time the user closes it.
 
 **No permission.** The product never touches the camera, and the user pointing the viewfinder at a code is the consent.
@@ -160,7 +161,7 @@ test supplies, so a product can test its scan flow without a camera.
   checks the text itself.
 - A product that gives no prefix can receive any code the user points the viewfinder at, apart from a pairing request.
   The title names the product, so pointing the camera is the user's choice, as with the contact picker.
-- A Worker's 5-second window follows browsers' transient user activation. A Worker that needs longer between the tap
+- A Worker's 5-second window follows browsers' transient user activation. A Worker that needs longer between the press
   and the scan is doing work the user is not waiting on, and should not scan.
 - Raw bytes are not returned. They can be added later as an optional field without breaking existing callers.
 - Web hosts have no scanner yet, so a product keeps its own `getUserMedia` fallback there. A bundled decoder can come

@@ -14,6 +14,14 @@ extension NSPredicate {
         )
     }
 
+    /// The chats the chat list shows. While the chat product runs the chats, the native chat's person chats are not
+    /// listed (HX2).
+    static func listedChats(productChat: Bool) -> NSPredicate {
+        guard productChat else { return chatWithNonBlockedContact() }
+        let notPerson = NSPredicate(format: "%K != %d", #keyPath(CDChat.chatType), Chat.Id.ChatType.person.rawValue)
+        return NSCompoundPredicate(andPredicateWithSubpredicates: [chatWithNonBlockedContact(), notPerson])
+    }
+
     static func chatWithContact(for accountId: AccountId) -> NSPredicate {
         let chatContactId = Chat.Id.person(accountId)
 

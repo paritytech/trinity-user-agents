@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.permissions
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.ProductPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionPromptUnavailableException
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission.RemotePermission
 import kotlinx.coroutines.sync.Mutex
@@ -77,7 +78,7 @@ class RealProductPermissionGuard @Inject constructor(
             val stillNotGranted = notYetGranted.filterNot { check(productId, it) }
             if (stillNotGranted.isEmpty()) return@withLock true
 
-            when (requester.promptBatched(productId, stillNotGranted)) {
+            when (answeredOrNull { requester.promptBatched(productId, stillNotGranted) }) {
                 PermissionDecision.AllowAlways -> {
                     stillNotGranted.forEach { repository.grant(productId, it) }
                     true
@@ -86,7 +87,7 @@ class RealProductPermissionGuard @Inject constructor(
                     stillNotGranted.forEach { repository.grantOneTime(productId, it) }
                     true
                 }
-                PermissionDecision.Deny -> false
+                PermissionDecision.Deny, null -> false
             }
         }
     }
@@ -126,13 +127,24 @@ class RealProductPermissionGuard @Inject constructor(
         // A concurrent request may have granted this while we waited for the lock
         if (check(productId, permission)) return true
 
-        return when (permission) {
-            is RemotePermission -> remotePermissionHandler.request(productId, permission)
-            is ProductPermission.AccountAccess -> accountAccessHandler.request(productId, permission)
-            is ProductPermission.BalanceAccess -> balanceAccessHandler.request(productId, permission)
-            is ProductPermission.DeviceCapability -> deviceCapabilityHandler.request(productId, permission)
-            is ProductPermission.UserIdentityAccess -> userIdentityAccessHandler.request(productId, permission)
-            is ProductPermission.NftPurseRead -> nftPurseReadHandler.request(productId, permission)
-        }
+        return answeredOrNull {
+            when (permission) {
+                is RemotePermission -> remotePermissionHandler.request(productId, permission)
+                is ProductPermission.AccountAccess -> accountAccessHandler.request(productId, permission)
+                is ProductPermission.BalanceAccess -> balanceAccessHandler.request(productId, permission)
+                is ProductPermission.DeviceCapability -> deviceCapabilityHandler.request(productId, permission)
+                is ProductPermission.UserIdentityAccess -> userIdentityAccessHandler.request(productId, permission)
+                is ProductPermission.NftPurseRead -> nftPurseReadHandler.request(productId, permission)
+            }
+        } ?: false
     }
+
+    // The callers of the guard expect a yes or a no. A prompt with no answer is a no for this request only, and the
+    // handlers keep nothing for it.
+    private inline fun <T : Any> answeredOrNull(request: () -> T): T? =
+        try {
+            request()
+        } catch (_: PermissionPromptUnavailableException) {
+            null
+        }
 }

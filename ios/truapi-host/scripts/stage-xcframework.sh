@@ -21,12 +21,24 @@ if [ ! -d "$SOURCE" ]; then
     exit 66
 fi
 
-rm -rf "$DEST"
+# Package.swift links this copy only when the path exists while Xcode reads the
+# manifest, and Xcode keeps that choice. If the path is missing, Xcode links
+# the published release instead. Thus put the new copy beside the old one and
+# swap them, so that the path does not disappear.
+STAGING="$DEST.staging"
+OLD="$DEST.old"
+rm -rf "$STAGING" "$OLD"
 mkdir -p "$PACKAGE_ROOT/Binaries"
-cp -R "$SOURCE" "$PACKAGE_ROOT/Binaries/"
+cp -R "$SOURCE" "$STAGING"
 
 # The slice set follows XCFRAMEWORK_TARGETS, so match on the layout rather than
 # on fixed slice names.
-find "$DEST" -path '*/Headers/module.modulemap' -delete
+find "$STAGING" -path '*/Headers/module.modulemap' -delete
+
+if [ -d "$DEST" ]; then
+    mv "$DEST" "$OLD"
+fi
+mv "$STAGING" "$DEST"
+rm -rf "$OLD"
 
 echo "XCFramework staged into $PACKAGE_ROOT/Binaries"

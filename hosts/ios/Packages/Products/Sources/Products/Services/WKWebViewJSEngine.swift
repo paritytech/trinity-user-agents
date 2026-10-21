@@ -18,6 +18,7 @@ public final class WKWebViewJSEngine: NSObject, @unchecked Sendable {
     private var messageHandlers: [String: (Any) -> Void] = [:]
 
     private var jsDeviceCapabilityHandler: JSDeviceCapabilityHandler?
+    private var terminationHandler: (@Sendable () -> Void)?
 
     private let logger: SDKLoggerProtocol
     private let settings: WKWebViewJSEngineSettings
@@ -242,6 +243,12 @@ extension WKWebViewJSEngine: JSEngineProtocol {
             self.jsDeviceCapabilityHandler = handler
         }
     }
+
+    public func registerTerminationHandler(_ handler: @escaping @Sendable () -> Void) async {
+        await MainActor.run {
+            self.terminationHandler = handler
+        }
+    }
 }
 
 // MARK: - WKNavigationDelegate
@@ -264,6 +271,7 @@ extension WKWebViewJSEngine: WKNavigationDelegate {
     public func webViewWebContentProcessDidTerminate(_: WKWebView) {
         logger.error("JSEngine WebView process terminated")
         state = .error("WebView process terminated")
+        terminationHandler?()
     }
 }
 

@@ -73,6 +73,17 @@ object CarParser {
     }
 
     /**
+     * Checks that [carFile] is the content of [root]: its only root is [root], and every block hashes to its CID.
+     * Throws on the first mismatch, on a block whose hash function it cannot check, and on malformed input.
+     */
+    fun verify(carFile: File, root: Cid) {
+        buildIndex(carFile).use { index ->
+            require(index.roots == listOf(root)) { "the archive's root is not $root" }
+            index.verifyBlocks()
+        }
+    }
+
+    /**
      * Checks if the byte array starts with a valid CARv1 header.
      * Used to detect legacy deployments where the CID points to an uploaded CAR file
      * rather than a directory.

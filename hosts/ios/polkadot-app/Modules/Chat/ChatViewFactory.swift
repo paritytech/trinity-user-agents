@@ -110,6 +110,35 @@ enum ChatViewFactory {
         presenter.view = view
         interactor.presenter = presenter
 
+        if case let .chatExtension(extensionId, _) = chatId {
+            let room = RegistryProductRoom(extensionId: extensionId, registry: flowState.extensionsRegistry)
+            let productRoom = ChatProductRoomPresenter(
+                chatId: chatId,
+                room: room,
+                footerRenderer: room,
+                footerImageResolver: room.widgetImageResolver,
+                wireframe: wireframe,
+                additions: .live()
+            )
+            productRoom?.view = view
+            productRoom?.interactor = interactor
+            productRoom?.sendText = { [weak presenter] text in
+                presenter?.send(text: text, replyToMessageId: nil)
+            }
+            productRoom?.sendContent = { [engine = interactor.engine] content in
+                try await engine.sendUserMessage(with: content)
+            }
+            // The stager sends the staged attachments of every room through the bots of this registry (P10.3).
+            ProductOutboxDelivery.shared.attach(registry: flowState.extensionsRegistry)
+            productRoom?.followStaging()
+            productRoom?.backgroundObserver = ChatRoomBackgroundObserver(
+                openRoom: { [weak interactor] in interactor?.openRoom() },
+                closeRoom: { [weak interactor] in interactor?.closeRoom() }
+            )
+            presenter.productRoom = productRoom
+            viewModelFactory.productRoom = productRoom
+        }
+
         flowState.extensionsRegistry.getExtensions(for: chatId).forEach { chatExtension in
             chatExtension.attach(presentationView: view)
         }

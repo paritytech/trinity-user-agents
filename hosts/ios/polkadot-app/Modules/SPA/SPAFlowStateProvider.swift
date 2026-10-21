@@ -54,12 +54,12 @@ final class SPAFlowStateProvider: SPAFlowStateProviding {
             contentHashCache: ContentHashCache.shared
         )
 
-        let productResolver = ProductResolver(
+        let productResolver = BundledChatProductResolver(resolver: ProductResolver(
             dotNsResolver: resolver,
             hostProvider: hostProvider,
             logger: Logger.shared,
             screening: .core
-        )
+        ))
 
         let created = SPAFlowState(
             dotNsResolver: resolver,
@@ -72,7 +72,8 @@ final class SPAFlowStateProvider: SPAFlowStateProviding {
             iconViewModelFactory: ProductIconViewModelFactory(
                 dotNsResolver: resolver,
                 iconLoader: ProductIconLoader(productResolver: productResolver)
-            )
+            ),
+            chatProductReleases: ChatProductReleases(contractApi: contractApi, carFetcher: carFetcher)
         )
 
         return state.withLock { state in

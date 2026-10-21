@@ -1,0 +1,5 @@
+---
+"@parity/truapi-host": major
+---
+
+Native hosts serve Chat Extension v2 through the Swift and Kotlin packages. `ChatHostBridge` has `roomConfig`, `setRoomConfig`, `setRoomMetadata`, `setRoomPreview`, `deleteRoom` and `updateFeed`, and `setRoomFooter` receives the footer of `Input`, `Empty` or `Custom`. A host that does not implement them yet keeps creating rooms: the defaults accept the default configuration and the room metadata, and refuse every other request. `updateFeed` refuses a change with `NativeChatFeedRejection`. The product execution asks a product the five chat queries (`chatMessagesQuery`, `chatUserAction`, `chatReactionsQuery`, `chatParticipantsQuery`, `chatMessageActionsQuery`) with default timeouts from `ChatQueryTimeout`, and throws `ChatQueryError` (Swift) or `ChatQueryException` (Kotlin) for a query without an answer. `publishChatEvent` delivers every user event.

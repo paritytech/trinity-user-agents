@@ -103,13 +103,75 @@ suite("worker serving a signing host", () => {
       const client = createClient(createTransport(provider));
       const created = await client.chat.createRoom({
         roomId: "lobby",
-        name: "Lobby",
-        icon: "",
+        metadata: { name: "Lobby" },
+        config: {
+          productSource: false,
+          reactionDetails: false,
+          participants: false,
+          messageActions: false,
+          reportSeen: false,
+        },
       });
       expect(created._unsafeUnwrap()).toEqual({ status: "New" });
       expect(host.getChatRooms()).toEqual([
         { roomId: "lobby", participatingAs: "RoomHost" },
       ]);
+    } finally {
+      provider.dispose();
+    }
+  });
+
+  it("asks a Worker product's chat queries and sends its events through the worker", async () => {
+    const { runtime, host, productId } = await signingHost();
+    const provider = await runtime.createProvider({
+      productId,
+      executionKind: "Worker",
+    });
+    try {
+      const client = createClient(createTransport(provider));
+      await client.chat.createRoom({
+        roomId: "source",
+        metadata: { name: "Source" },
+        config: {
+          productSource: true,
+          reactionDetails: false,
+          participants: false,
+          messageActions: false,
+          reportSeen: false,
+        },
+      });
+      expect(host.room("source")?.config.productSource).toBe(true);
+
+      // The query starts before the handler exists; the client keeps it.
+      const answer = provider.chatMessagesQuery!(
+        {
+          roomId: "source",
+          anchor: { tag: "Before", value: {} },
+          pageSize: 40,
+        },
+        { timeoutMs: 5_000 },
+      );
+      client.chat.onMessagesQuery((request, send) => {
+        send({ messages: [], next: `${request.roomId}-older` });
+      });
+      expect((await answer)._unsafeUnwrap()).toEqual({
+        messages: [],
+        next: "source-older",
+      });
+
+      const events: string[] = [];
+      client.chat
+        .actionSubscribe()
+        .subscribe({ next: (item) => events.push(item.event.tag) });
+      await provider.publishChatEvent!({
+        roomId: "source",
+        peer: "native",
+        event: { tag: "UserDeleted", value: { messageId: "m1" } },
+      });
+      for (let tries = 0; tries < 50 && events.length === 0; tries++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(events).toEqual(["UserDeleted"]);
     } finally {
       provider.dispose();
     }

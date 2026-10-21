@@ -15,11 +15,14 @@ pub mod auth_state;
 mod authority;
 /// In-core Bulletin preimage submission over the shared Subxt client.
 pub mod bulletin_rpc;
+mod call_holds;
 mod capabilities;
 mod chat;
+mod chat_staging;
 pub mod contacts;
 mod dotns_lookup;
 mod funding;
+pub mod hop_client;
 mod host_session;
 mod identity;
 pub mod login_failure;
@@ -28,6 +31,7 @@ mod payment_id;
 mod product_accounts;
 pub mod product_manifest;
 mod product_subtree;
+mod push_wake;
 mod renderer;
 mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
@@ -47,6 +51,7 @@ mod statement_store_rpc;
 mod test_resource_controls;
 mod versioning;
 mod vrf;
+mod wake;
 
 use core::{future::Future, time::Duration};
 #[cfg(not(target_arch = "wasm32"))]
@@ -59,7 +64,11 @@ use std::{
 pub use actions::ActionChannel;
 use authority::{AuthorityCancelError, AuthoritySession};
 pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
-pub use chat::chat_platform_for;
+pub use call_holds::{CHAT_RINGING_HOLD_MS, ChatCallHolds};
+pub use chat::{ChatEventChannel, ChatHandler, ChatRoomEventHub, chat_platform_for};
+pub use chat_staging::{
+	CHAT_SEALED_AAD, ChatOpenRejection, ChatStageRejection, ChatStagingDeclarations,
+};
 pub use contacts::ContactResolutionError;
 pub use host_session::HostSession;
 
@@ -73,6 +82,10 @@ use pairing_host::PairingHost;
 pub use pairing_host::PairingHost as PairingHostRole;
 use payment_id::host_funding_intent;
 use product_accounts::ProductAccounts;
+pub use push_wake::{
+	PushWakeDelivery, PushWakeOutcome, PushWakeRejection, PushWakes, WAKE_PUSH_PAYLOAD_KEY,
+	WakePush, WakeRelay, WakeRelayRegistration, statement_hash, wake_push_mac,
+};
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
 pub use signing_host::{LocalActivation, SigningHost as SigningHostRole, SigningHostSsoService};
@@ -83,34 +96,29 @@ pub use sso_responder_service::{
 use versioning::version;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
 pub use vrf::ring_vrf_member;
+pub use wake::{
+	CHAT_NOTIFICATION_WAKES_PER_HOUR, CHAT_WAKE_HOLD_MS, ChatWakeOutcome, ChatWakeReason, ChatWakes,
+};
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 use crate::platform::{
 	AccountAccessReview, ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision, Platform,
 	ProductContext, ProductId, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
-	normalize_chat_identifier, validate_chat_icon, validate_chat_message_content,
-	validate_chat_name,
+	normalize_chat_identifier,
 };
 pub use signing_host::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use signing_host::TrackedStatementRenewalTarget;
-use tracing::{instrument, warn};
+use statement_allowance::{fetch_bulletin_allowance, rpc::RpcClient, wait_bulletin_authorization};
+use subxt::tx::Signer;
+use tracing::{info, instrument, warn};
 use truapi::{
 	CallContext, CallError, CancellationReason, Subscription,
-	api::{Chat, Contacts, Funding, Pocket, Renderer},
+	api::{Contacts, Funding, Pocket, Renderer},
 	latest, v01,
 	versioned::{
 		IntoLatest,
-		chat::{
-			HostChatActionSubscribeError, HostChatActionSubscribeItem,
-			HostChatActionSubscribeRequest, HostChatCreateRoomError, HostChatCreateRoomRequest,
-			HostChatCreateRoomResponse, HostChatListSubscribeError, HostChatListSubscribeItem,
-			HostChatListSubscribeRequest, HostChatPostMessageError, HostChatPostMessageRequest,
-			HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-			HostChatRegisterBotResponse, HostChatSetRoomFooterError, HostChatSetRoomFooterRequest,
-			HostChatSetRoomFooterResponse,
-		},
 		contacts::{HostContactsPickError, HostContactsPickRequest, HostContactsPickResponse},
 		funding::{
 			HostFundingError, HostFundingRequest, HostFundingResponse,
@@ -136,7 +144,7 @@ use crate::subscription::Spawner;
 use crate::{
 	chain_runtime::RuntimeFailure,
 	host_internal::{
-		bulletin::preimage_key,
+		bulletin::{allowance_signer, preimage_key},
 		permissions::{PermissionsService, TemporaryPermissions, cross_product_signature_key},
 		product_manifest::Granted,
 		sso_messages::RingVrfError,
@@ -336,7 +344,7 @@ pub struct ProductConnection {
 	/// concurrent operations per connection, so a connection shared with another
 	/// product makes those budgets collide.
 	chain: crate::chain_runtime::ChainRuntime,
-	chat: Arc<ActionChannel<HostChatActionSubscribeItem>>,
+	chat: Arc<ChatEventChannel>,
 	renderer: Arc<ActionChannel<HostRendererActionSubscribeItem>>,
 	pocket_platform: Option<Arc<dyn crate::platform::PocketPlatform>>,
 	game_platform: Option<Arc<dyn crate::platform::GamePlatform>>,
@@ -359,10 +367,18 @@ impl Drop for ProductConnection {
 
 impl ProductConnection {
 	/// Whether the host published a renderer action, which only the user
-	/// causes, within the last [`USER_TAP_WINDOW_SECS`]. A Worker may scan only
-	/// shortly after one, because it has no screen the user could be looking at.
+	/// causes, within the last [`USER_TAP_WINDOW_SECS`].
 	pub fn recently_tapped(&self) -> bool {
 		self.renderer.published_within(USER_TAP_WINDOW_SECS)
+	}
+
+	/// Whether the user pressed something the host drew for the product
+	/// within the last [`USER_TAP_WINDOW_SECS`]: a renderer action, or a
+	/// button or menu entry of one of its rooms. A Worker may open the
+	/// scanner only shortly after one, because it has no screen the user could
+	/// be looking at.
+	pub fn recently_pressed(&self) -> bool {
+		self.recently_tapped() || self.chat.pressed_within(USER_TAP_WINDOW_SECS)
 	}
 
 	/// Role-neutral services shared with the owning host runtime.
@@ -551,7 +567,7 @@ impl ProductConnection {
 	}
 
 	/// Chat access policy for this connection; see [`chat_platform_for`].
-	fn native_chat_platform(
+	pub fn native_chat_platform(
 		&self,
 	) -> Result<Arc<dyn crate::platform::ChatPlatform>, crate::host_core::ProductRuntimeError> {
 		chat_platform_for(
@@ -573,14 +589,37 @@ impl ProductConnection {
 		self.chat.detach();
 	}
 
-	/// Buffer one host-authored Chat action for this connection's product,
+	/// Buffer one host-authored Chat event for this connection's product,
 	/// behind the same access policy as every other Chat entry point.
-	pub fn publish_chat_action(
+	pub fn publish_chat_event(
 		&self,
-		action: truapi::versioned::chat::HostChatActionSubscribeItem,
+		event: latest::HostChatActionSubscribeItem,
 	) -> Result<(), crate::host_core::ProductRuntimeError> {
 		self.native_chat_platform()?;
-		self.chat.publish(action)
+		self.chat.publish(event, &self.services.spawner)
+	}
+
+	/// Send one event about a room to this product, or keep it until the
+	/// product subscribes.
+	pub fn publish_chat_room_event(
+		&self,
+		item: latest::HostChatRoomEventsSubscribeItem,
+	) -> Result<(), crate::host_core::ProductRuntimeError> {
+		self.services
+			.publish_chat_room_event(&self.product.product_id, item)
+			.map_err(|error| crate::host_core::ProductRuntimeError::Rejected {
+				reason: error.to_string(),
+			})
+	}
+
+	/// Hold the worker of this product for a wake.
+	pub fn wake(
+		&self,
+		reason: ChatWakeReason,
+	) -> Result<ChatWakeOutcome, crate::host_core::ProductRuntimeError> {
+		self.services.wake_product(&self.product.product_id, reason).map_err(|error| {
+			crate::host_core::ProductRuntimeError::Rejected { reason: error.to_string() }
+		})
 	}
 
 	/// Renderer access policy for this connection; see [`renderer_access_for`].
@@ -800,7 +839,7 @@ impl ProductRuntimeHost {
 		let pairing_host = PairingHost::new(services.clone(), host_config);
 		let core_instance = services.next_core_instance();
 		let chain = services.chain.for_product(core_instance);
-		let chat = Arc::new(ActionChannel::chat());
+		let chat = Arc::new(ChatEventChannel::default());
 		let renderer = Arc::new(ActionChannel::renderer());
 		let connection = Arc::new(ProductConnection {
 			services,
@@ -1318,173 +1357,6 @@ impl Contacts for ProductRuntimeHost {
 }
 
 #[crate::platform::async_trait]
-impl Chat for ProductRuntimeHost {
-	#[instrument(skip_all, fields(runtime.method = "chat.create_room"))]
-	async fn create_room(
-		&self,
-		_cx: &CallContext,
-		request: HostChatCreateRoomRequest,
-	) -> Result<HostChatCreateRoomResponse, CallError<HostChatCreateRoomError>> {
-		version(request)
-			.exec(|mut request| async move {
-				let platform = self.connection.chat_platform()?;
-				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
-					.map_err(chat_create_room_field_error)?;
-				request.name = validate_chat_name("name", &request.name)
-					.map_err(chat_create_room_field_error)?;
-				request.icon = validate_chat_icon("icon", &request.icon)
-					.map_err(chat_create_room_field_error)?;
-				platform
-					.create_chat_room(&self.connection.product, request)
-					.await
-					.map_err(CallError::Domain)
-			})
-			.await
-	}
-
-	#[instrument(skip_all, fields(runtime.method = "chat.register_bot"))]
-	async fn register_bot(
-		&self,
-		_cx: &CallContext,
-		request: HostChatRegisterBotRequest,
-	) -> Result<HostChatRegisterBotResponse, CallError<HostChatRegisterBotError>> {
-		version(request)
-			.exec(|mut request| async move {
-				let platform = self.connection.chat_platform()?;
-				request.bot_id = normalize_chat_identifier("botId", &request.bot_id)
-					.map_err(chat_register_bot_field_error)?;
-				request.name = validate_chat_name("name", &request.name)
-					.map_err(chat_register_bot_field_error)?;
-				request.icon = validate_chat_icon("icon", &request.icon)
-					.map_err(chat_register_bot_field_error)?;
-				platform
-					.register_chat_bot(&self.connection.product, request)
-					.await
-					.map_err(CallError::Domain)
-			})
-			.await
-	}
-
-	#[instrument(skip_all, fields(runtime.method = "chat.list_subscribe"))]
-	async fn list_subscribe(
-		&self,
-		_cx: &CallContext,
-		request: HostChatListSubscribeRequest,
-	) -> Subscription<HostChatListSubscribeItem, CallError<HostChatListSubscribeError>> {
-		version(request)
-			.exec(|()| async move {
-				let platform = match self.connection.chat_platform::<latest::GenericError>() {
-					Ok(platform) => platform,
-					Err(error) => return Subscription::interrupted(error),
-				};
-				Subscription::new(platform.subscribe_chat_rooms(&self.connection.product).map(
-					|item| {
-						item.map_err(|error| {
-							warn!(
-								reason = %error.reason,
-								"chat room list platform stream failed"
-							);
-							CallError::HostFailure { reason: error.reason }
-						})
-					},
-				))
-			})
-			.await
-	}
-
-	#[instrument(skip_all, fields(runtime.method = "chat.post_message"))]
-	async fn post_message(
-		&self,
-		_cx: &CallContext,
-		request: HostChatPostMessageRequest,
-	) -> Result<HostChatPostMessageResponse, CallError<HostChatPostMessageError>> {
-		version(request)
-			.exec(|mut request| async move {
-				let platform = self.connection.chat_platform()?;
-				// The same normalization create_room applied, so a product's own
-				// spelling of a room id still resolves to the stored room.
-				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
-					.map_err(chat_post_field_error)?;
-				// Content is product-authored and host-rendered, so it gets the same
-				// treatment the room fields get rather than reaching a host raw.
-				request.payload = validate_chat_message_content(request.payload)
-					.map_err(chat_post_field_error)?;
-				request.alt = request
-					.alt
-					.map(|alt| validate_chat_name("alt", &alt))
-					.transpose()
-					.map_err(chat_post_field_error)?
-					.filter(|alt| !alt.is_empty())
-					.filter(|_| {
-						matches!(request.payload, truapi::latest::ChatMessageContent::Custom(_))
-					});
-				platform
-					.post_chat_message(&self.connection.product, request)
-					.await
-					.map_err(CallError::Domain)
-			})
-			.await
-	}
-
-	#[instrument(skip_all, fields(runtime.method = "chat.set_room_footer"))]
-	async fn set_room_footer(
-		&self,
-		_cx: &CallContext,
-		request: HostChatSetRoomFooterRequest,
-	) -> Result<HostChatSetRoomFooterResponse, CallError<HostChatSetRoomFooterError>> {
-		version(request)
-			.exec(|mut request| async move {
-				let platform = self.connection.chat_platform()?;
-				let failure = |reason: String| {
-					CallError::Domain(latest::HostChatSetRoomFooterError::Unknown { reason })
-				};
-				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
-					.map_err(|error| failure(error.to_string()))?;
-
-				// Checked here rather than by each host, so every host answers a room
-				// the product never created the same way.
-				let rooms =
-					match platform.subscribe_chat_rooms(&self.connection.product).next().await {
-						Some(Ok(item)) => item.rooms,
-						Some(Err(error)) => return Err(failure(error.reason)),
-						None => return Err(failure("the host published no room list".to_string())),
-					};
-				let created = rooms.iter().any(|room| {
-					room.room_id == request.room_id &&
-						room.participating_as == latest::ChatRoomParticipation::RoomHost
-				});
-				if !created {
-					return Err(CallError::Domain(latest::HostChatSetRoomFooterError::UnknownRoom));
-				}
-
-				platform
-					.set_chat_room_footer(&self.connection.product, request)
-					.await
-					.map_err(|error| failure(error.reason))
-			})
-			.await
-	}
-
-	#[instrument(skip_all, fields(runtime.method = "chat.action_subscribe"))]
-	async fn action_subscribe(
-		&self,
-		_cx: &CallContext,
-		request: HostChatActionSubscribeRequest,
-	) -> Subscription<HostChatActionSubscribeItem, CallError<HostChatActionSubscribeError>> {
-		version(request)
-			.exec(|()| async move {
-				if let Err(error) = self.connection.chat_platform::<latest::GenericError>() {
-					return Subscription::interrupted(error);
-				}
-				Subscription::new(
-					self.connection.chat.subscribe().map(|item| item.map(IntoLatest::into_latest)),
-				)
-			})
-			.await
-	}
-}
-
-#[crate::platform::async_trait]
 impl Renderer for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "renderer.action_subscribe"))]
 	async fn action_subscribe(
@@ -1656,40 +1528,181 @@ fn pocket_field_error(error: ChatFieldError) -> CallError<latest::HostPocketRemo
 	CallError::Domain(latest::HostPocketRemoveCardError::Unknown { reason: error.to_string() })
 }
 
-/// Report a rejected chat bot field as a bot-registration domain error.
-fn chat_register_bot_field_error(
-	error: crate::platform::ChatFieldError,
-) -> CallError<latest::HostChatRegisterBotError> {
-	CallError::Domain(latest::HostChatRegisterBotError::Unknown { reason: error.to_string() })
-}
-
-/// Fields whose rejection a product resolves by sending less content, and the
-/// only ones the fieldless `MessageTooLarge` can describe.
-const CHAT_SIZED_CONTENT_FIELDS: [&str; 2] = ["text", "payload"];
-
-/// Maps a rejected `post_message` field onto the wire error, reporting a size
-/// rejection as the size variant the protocol declares for it.
-fn chat_post_field_error(error: ChatFieldError) -> CallError<latest::HostChatPostMessageError> {
-	let payload = match error {
-		// `MessageTooLarge` names no field, so it is reserved for the content
-		// a product shrinks by sending less. Every other rejection reports
-		// through `Unknown`, whose reason names the field and its limit.
-		ChatFieldError::TooLong { field, .. } if CHAT_SIZED_CONTENT_FIELDS.contains(&field) => {
-			latest::HostChatPostMessageError::MessageTooLarge
-		},
-		error => latest::HostChatPostMessageError::Unknown { reason: error.to_string() },
-	};
-	CallError::Domain(payload)
-}
-
-/// Report a rejected chat room field as a room-creation domain error.
-fn chat_create_room_field_error(
-	error: crate::platform::ChatFieldError,
-) -> CallError<latest::HostChatCreateRoomError> {
-	CallError::Domain(latest::HostChatCreateRoomError::Unknown { reason: error.to_string() })
+/// Why the core did not store a preimage for a product.
+#[derive(Debug, PartialEq, Eq)]
+enum ProductPreimageError {
+	/// No Bulletin allowance could be had for the product.
+	Allowance(String),
+	/// The Bulletin chain did not store the value.
+	Submit(String),
 }
 
 impl ProductRuntimeHost {
+	/// Store `value` as a Bulletin preimage that the product's own allowance
+	/// for `session` pays for, by `submission_deadline`, and answer its key.
+	/// The allowance is extended first when it cannot hold `value`, and
+	/// refreshed once when the chain refuses it. A stored value goes to the
+	/// lookup cache, so a lookup right after it hits. The caller checks
+	/// `PreimageSubmit` first.
+	async fn store_product_preimage(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		value: Vec<u8>,
+		submission_deadline: Instant,
+	) -> Result<Vec<u8>, ProductPreimageError> {
+		let bulletin = &self.connection.services.bulletin;
+		let authority_cx = remote_authority_context_until(
+			cx,
+			PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+			submission_deadline,
+		);
+		let allowance = remote_authority_call(
+			&authority_cx,
+			self.accounts.bulletin_allowance_key(&authority_cx, session),
+		)
+		.await
+		.map_err(|err| ProductPreimageError::Allowance(bulletin_allowance_error_reason(err)))?;
+
+		#[cfg(feature = "test-host")]
+		if self.accounts.submits_preimages_locally() {
+			let key = preimage_key(&value);
+			self.connection.services.keep_local_preimage(key, value);
+			return Ok(key.to_vec());
+		}
+
+		let allowance = self
+			.bulletin_allowance_for(cx, submission_deadline, session, allowance, value.len() as u64)
+			.await
+			.map_err(ProductPreimageError::Allowance)?;
+		let key = match bulletin.submit_preimage(cx, submission_deadline, &allowance, &value).await
+		{
+			Ok(key) => key,
+			Err(bulletin_rpc::BulletinSubmitError::AllowanceRejected { phase }) => {
+				warn!(
+					product = %self.connection.product_id(),
+					%phase,
+					"Bulletin rejected the preimage allowance; extending it and resubmitting once"
+				);
+				let authority_cx = remote_authority_context_until(
+					cx,
+					PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+					submission_deadline,
+				);
+				let allowance = remote_authority_call(
+					&authority_cx,
+					self.accounts.refresh_bulletin_allowance_key(&authority_cx, session),
+				)
+				.await
+				.map_err(|err| {
+					ProductPreimageError::Allowance(bulletin_allowance_error_reason(err))
+				})?;
+				bulletin
+					.submit_preimage(cx, submission_deadline, &allowance, &value)
+					.await
+					.map_err(|err| ProductPreimageError::Submit(err.to_string()))?
+			},
+			Err(err) => return Err(ProductPreimageError::Submit(err.to_string())),
+		};
+		// Move the owned body into the lookup cache (no extra copy) so an
+		// immediate product lookup hits before the content backend has it.
+		self.prime_preimage_cache(&key, value);
+		Ok(key)
+	}
+
+	/// The product's Bulletin allowance key, authorized for `size` bytes: what
+	/// signs a HOP submit, since a node keeps an unclaimed entry on chain at
+	/// the signer's cost.
+	async fn hop_submit_allowance(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		size: u64,
+	) -> Result<BulletinAllowanceKey, String> {
+		let deadline = Instant::now() + PREIMAGE_SUBMIT_TIMEOUT;
+		let authority_cx = remote_authority_context_until(
+			cx,
+			PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+			deadline,
+		);
+		let allowance = remote_authority_call(
+			&authority_cx,
+			self.accounts.bulletin_allowance_key(&authority_cx, session),
+		)
+		.await
+		.map_err(bulletin_allowance_error_reason)?;
+		if self.submits_preimages_locally() {
+			return Ok(allowance);
+		}
+		self.bulletin_allowance_for(cx, deadline, session, allowance, size).await
+	}
+
+	/// Extend the product's Bulletin authorization before signing a payload it
+	/// cannot hold, so the chain never rejects a submission the host could see coming.
+	async fn bulletin_allowance_for(
+		&self,
+		cx: &CallContext,
+		deadline: Instant,
+		session: &AuthoritySession,
+		allowance: BulletinAllowanceKey,
+		size: u64,
+	) -> Result<BulletinAllowanceKey, String> {
+		let rpc = RpcClient::new(
+			self.connection
+				.services
+				.bulletin
+				.client("Bulletin authorization")
+				.await
+				.map_err(|error| error.to_string())?,
+		);
+		let target = allowance_signer(&allowance)?.account_id().0;
+		let current = fetch_bulletin_allowance(&rpc, &target)
+			.await
+			.map_err(|error| error.to_string())?;
+		if current.is_some_and(|info| info.can_store(size)) {
+			info!(
+				product = %self.connection.product_id(),
+				size,
+				"Bulletin authorization sufficient for the preimage"
+			);
+			return Ok(allowance);
+		}
+		info!(
+			product = %self.connection.product_id(),
+			size,
+			?current,
+			"extending Bulletin authorization before submitting the preimage"
+		);
+		let authority_cx = remote_authority_context_until(
+			cx,
+			PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+			deadline,
+		);
+		let allowance = remote_authority_call(
+			&authority_cx,
+			self.accounts.refresh_bulletin_allowance_key(&authority_cx, session),
+		)
+		.await
+		.map_err(bulletin_allowance_error_reason)?;
+		let replacement = allowance_signer(&allowance)?.account_id().0;
+		let baseline = (replacement == target).then_some(current).flatten();
+		let timeout = PREIMAGE_BULLETIN_AUTHORIZATION_WAIT
+			.min(deadline.saturating_duration_since(Instant::now()));
+		wait_bulletin_authorization(&rpc, &replacement, baseline, size, timeout)
+			.await
+			.map_err(|error| error.to_string())?;
+		Ok(allowance)
+	}
+
+	/// Whether this host keeps a stored preimage in the core instead of
+	/// sending it to the Bulletin chain.
+	fn submits_preimages_locally(&self) -> bool {
+		#[cfg(feature = "test-host")]
+		return self.accounts.submits_preimages_locally();
+		#[cfg(not(feature = "test-host"))]
+		false
+	}
+
 	/// Cache a just-submitted preimage under its key for immediate lookups.
 	fn prime_preimage_cache(&self, key: &[u8], value: Vec<u8>) {
 		if let Ok(key_bytes) = <[u8; 32]>::try_from(key) {

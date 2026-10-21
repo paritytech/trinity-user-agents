@@ -7,8 +7,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import io.paritytech.polkadotapp.design.components.bottomsheet.NovaBottomSheetDefaults
 import io.paritytech.polkadotapp.design.components.bottomsheet.NovaModalBottomSheet
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuType
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ParticipantListUiState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ParticipantSheetUiState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
 
 @Composable
 fun ChatFeedMenu(
@@ -18,7 +22,13 @@ fun ChatFeedMenu(
     onLeaveChatRequest: () -> Unit,
     onLeaveChatConfirm: () -> Unit,
     onBlockUserRequest: () -> Unit,
-    onBlockUserConfirm: () -> Unit
+    onBlockUserConfirm: () -> Unit,
+    onDeleteMessageConfirm: (ChatMessageId) -> Unit,
+    onProductLinkConfirm: (String) -> Unit,
+    onPublicStorageNoticeAccept: () -> Unit,
+    participants: ParticipantListUiState,
+    participantSheet: ParticipantSheetUiState?,
+    onProductRoomAction: (ProductRoomAction) -> Unit,
 ) {
     NovaModalBottomSheet(
         isVisible = state.isVisible,
@@ -64,6 +74,46 @@ fun ChatFeedMenu(
 
                     is ChatMenuType.Custom -> {
                         it.renderer.DrawMenu(onDismiss = onDismiss)
+                    }
+
+                    is ChatMenuType.DeleteMessageConfirmation -> {
+                        DeleteMessageConfirmationContent(
+                            onConfirm = { onDeleteMessageConfirm(it.messageId) },
+                            onCancel = onDismiss
+                        )
+                    }
+
+                    ChatMenuType.Participants -> {
+                        ParticipantsListContent(
+                            state = participants,
+                            onLoadMore = { onProductRoomAction(ProductRoomAction.LoadMoreParticipants) },
+                            onSelect = { onProductRoomAction(ProductRoomAction.SelectParticipant(it)) },
+                        )
+                    }
+
+                    ChatMenuType.ParticipantSheet -> {
+                        participantSheet?.let { sheet ->
+                            ParticipantSheetContent(
+                                state = sheet,
+                                onSelect = { onProductRoomAction(ProductRoomAction.ParticipantSheet(it)) },
+                            )
+                        }
+                    }
+
+                    is ChatMenuType.ProductLinkConfirmation -> {
+                        ProductLinkConfirmationContent(
+                            url = it.url,
+                            onConfirm = { onProductLinkConfirm(it.url) },
+                            onCancel = onDismiss
+                        )
+                    }
+
+                    is ChatMenuType.PublicStorageNotice -> {
+                        PublicStorageNoticeContent(
+                            productName = it.productName,
+                            onConfirm = onPublicStorageNoticeAccept,
+                            onCancel = onDismiss
+                        )
                     }
                 }
             }

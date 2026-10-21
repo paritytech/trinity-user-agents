@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.permissions
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.ProductPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionPromptUnavailableException
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission.RemotePermission
 import io.paritytech.polkadotapp.test_shared.any
@@ -95,6 +96,29 @@ class RealProductPermissionGuardTest {
 
         assertTrue(result)
         verifyGrantedPermanently()
+    }
+
+    @Test
+    fun `requestPermission answers no and keeps nothing when no prompt can get an answer`() = runBlocking<Unit> {
+        withNotGranted()
+        whenever(remoteHandler.request(any(), any())).thenAnswer { throw PermissionPromptUnavailableException("no screen") }
+
+        val result = guard.requestPermission(productId, permission)
+
+        assertFalse(result)
+        verify(repository, never()).grant(any(), any())
+    }
+
+    @Test
+    fun `requestPermissionsBatched answers no and keeps nothing when no prompt can get an answer`() = runBlocking<Unit> {
+        withNotGranted()
+        whenever(requester.promptBatched(any(), any())).thenAnswer { throw PermissionPromptUnavailableException("no screen") }
+
+        val result = guard.requestPermissionsBatched(productId, listOf(permission))
+
+        assertFalse(result)
+        verify(repository, never()).grant(any(), any())
+        verify(repository, never()).grantOneTime(any(), any())
     }
 
     @Test

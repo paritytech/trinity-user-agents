@@ -466,10 +466,16 @@ describe("createWasmRawCallbacks", () => {
     });
     const request = HostChatCreateRoomRequest.enc({
       roomId: "room",
-      name: "Support",
-      icon: "",
+      metadata: { name: "Support" },
+      config: {
+        productSource: false,
+        reactionDetails: false,
+        participants: false,
+        messageActions: false,
+        reportSeen: false,
+      },
     });
-    const response = await raw.createChatRoom!(product, request);
+    const response = await raw.createChatRoom!(product, request, "");
 
     expect(seen).toEqual(["chat.dot:room"]);
     expect(HostChatCreateRoomResponse.dec(response)).toEqual({

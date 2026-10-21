@@ -14,14 +14,19 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
@@ -31,10 +36,15 @@ import org.mockito.Mockito.mock
 import java.util.concurrent.atomic.AtomicInteger
 
 class ProductWorkerRefCounterTest {
+    private companion object {
+        const val RACE_ROUNDS = 400
+        const val RACE_SPREAD = 10
+    }
+
     private val productId = ProductId.fromStoredValue("coinflip.dot")
     private val hostApiInteractor: HostApiInteractor = mock()
 
-    private class FakeWorker : ProductWorker {
+    private class FakeWorker(val scope: CoroutineScope? = null) : ProductWorker {
         override suspend fun onUserMessage(roomId: ProductChatIdParameter?, text: String): Result<Unit> = Result.success(Unit)
         override fun renderMessage(roomId: ProductChatIdParameter?, messageId: ChatMessageId, messageType: String, messageData: DataByteArray): Flow<Result<JsWidget>> = emptyFlow()
         override fun dispatchEvent(event: JsUiEvent) = Unit
@@ -56,7 +66,7 @@ class ProductWorkerRefCounterTest {
             bootFailure?.let { throw it }
             started.incrementAndGet()
             scope.coroutineContext.job.invokeOnCompletion { disposed.incrementAndGet() }
-            return FakeWorker()
+            return FakeWorker(scope)
         }
     }
 
@@ -240,6 +250,38 @@ class ProductWorkerRefCounterTest {
         assertEquals(0, factory.started.get())
         reference.release()
         advanceUntilIdle()
+    }
+
+    // A chat extension that the registry replaces releases its reference and the new one acquires at once,
+    // on another thread than the lifecycle chain. The new reference must never get the worker that the
+    // release disposes (S24: no RoomOpened, and the worker never stops).
+    @Test
+    fun `a release and an acquire at once never give a worker that the release disposes`() = runBlocking<Unit> {
+        val factory = FakeBootFactory()
+        val dispatchers = object : CoroutineDispatchers {
+            override val main: CoroutineDispatcher = Dispatchers.Default
+            override val io: CoroutineDispatcher = Dispatchers.Default
+            override val computation: CoroutineDispatcher = Dispatchers.Default
+        }
+        val counter = RealProductWorkerRefCounter(hostApiInteractor, Lazy { factory }, dispatchers)
+        var reference = counter.acquire(productId, "chat")
+        reference.worker()
+
+        repeat(RACE_ROUNDS) { round ->
+            reference.release()
+            spin(round % RACE_SPREAD)
+            reference = counter.acquire(productId, "chat")
+            val worker = reference.worker() as FakeWorker
+            withTimeout(5_000) { while (factory.started.get() != factory.disposed.get() + 1) delay(1) }
+
+            assertTrue("round $round got a disposed worker", worker.scope!!.isActive)
+        }
+        reference.release()
+    }
+
+    private fun spin(steps: Int) {
+        val until = System.nanoTime() + steps * 20_000L
+        while (System.nanoTime() < until) Thread.onSpinWait()
     }
 
     @Test

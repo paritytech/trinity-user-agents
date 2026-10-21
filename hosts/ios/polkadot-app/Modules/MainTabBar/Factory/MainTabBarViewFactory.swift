@@ -117,7 +117,7 @@ enum MainTabBarViewFactory {
             messageDecoder: messageDecoder
         )
 
-        return ChatFlowState(
+        let flowState = ChatFlowState(
             extensionsRegistry: serviceCoordinator.chatExtensionsRegistry,
             callCoordinator: serviceCoordinator.callCoordinator,
             outboxService: serviceCoordinator.chatCoordinator.outboxService,
@@ -130,6 +130,12 @@ enum MainTabBarViewFactory {
             networkStatusService: serviceCoordinator.networkStatusService,
             flowState: spaFlowState
         )
+
+        #if targetEnvironment(simulator)
+            TrUAPIE2ENativeChat.startIfRequested(flowState: flowState, logger: Logger.shared)
+        #endif
+
+        return flowState
     }
 
     private static func createURLHandler(
@@ -160,7 +166,17 @@ enum MainTabBarViewFactory {
             coinageService: serviceCoordinator.coinageService,
             moduleNavigator: moduleNavigator
         )
+        // The room and Pocket handlers go first: they own the reserved `-` target,
+        // which the SPA handler would otherwise open as a product page.
         let productHandlers: [URLHandlingServiceProtocol] = [
+            ChatRoomLinkService(
+                storageFacade: UserDataStorageFacade.shared,
+                moduleNavigator: moduleNavigator,
+                linkOpener: ProductRoomLinkOpener(
+                    registry: flowState.extensionsRegistry,
+                    moduleNavigator: moduleNavigator
+                )
+            ),
             PocketOpenService.makeDefault(
                 flowState: flowState.flowState,
                 moduleNavigator: moduleNavigator

@@ -21,6 +21,11 @@ public struct IdentifiableAnyContentConfiguration<ID: Hashable> {
     public let id: ID
     let configuration: any HashableContentConfiguration
 
+    /// The configuration of the item, for a caller that changes a copy of it.
+    public var contentConfiguration: any HashableContentConfiguration {
+        configuration
+    }
+
     public init(id: ID, configuration: any HashableContentConfiguration) {
         self.id = id
         self.configuration = configuration

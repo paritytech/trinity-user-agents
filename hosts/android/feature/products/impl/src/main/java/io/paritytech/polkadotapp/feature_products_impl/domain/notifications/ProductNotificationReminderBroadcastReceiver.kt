@@ -37,7 +37,8 @@ class ProductNotificationReminderBroadcastReceiver : BroadcastReceiver() {
 
         launchAsyncJob {
             val row = repository.find(productId, notificationId) ?: return@launchAsyncJob
-            notificationPublisher.publishNotification(notificationId.value, row.text, row.deeplink)
+            // The user can mute the room after the product scheduled the notification, so the check runs when it fires.
+            notificationPublisher.publishProductNotification(productId, notificationId.value, row.text, row.deeplink)
             repository.delete(productId, notificationId)
         }
     }

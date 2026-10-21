@@ -1,15 +1,28 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.usecase
 
 import com.google.gson.Gson
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
+import io.paritytech.polkadotapp.feature_products_api.model.Executables
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
+import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
+import io.paritytech.polkadotapp.feature_products_api.model.SemVer
+import io.paritytech.polkadotapp.feature_products_api.model.WorkerKeepAlive
+import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledChatProduct
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.ChatProductReleases
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCard
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCards
 import io.paritytech.polkadotapp.test_shared.whenever
@@ -20,6 +33,7 @@ import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
+import org.mockito.Mockito.verifyNoInteractions
 
 private const val CID = "QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco"
 
@@ -27,6 +41,13 @@ class RealResolveProductUseCaseTest {
     private val dotNsResolver: DotNsResolver = mock()
     private val productRepository: ProductRepository = mock()
     private val manifestParser = ManifestParser(Gson())
+    private val tld = requireNotNull(DotNsTld.parse("paseo"))
+    private val bundledChatProduct: BundledChatProduct = mockk {
+        every { isChatProduct(any(), any()) } answers { firstArg<ProductId>() == ReservedProductIds.chat(tld) }
+    }
+    private val chatProductReleases: ChatProductReleases = mockk()
+    private val tldProvider: DotNsTldProvider = mockk { every { currentTldOrNull() } returns tld }
+    private val chatId = ReservedProductIds.chat(tld)
 
     private val base = "coinflip.dot"
     private val productId = ProductId.fromStoredValue(base)
@@ -44,6 +65,9 @@ class RealResolveProductUseCaseTest {
         manifestParser,
         productRepository,
         debugPocketCards,
+        bundledChatProduct,
+        chatProductReleases,
+        tldProvider,
     )
 
     private fun appJson() = """{"${'$'}v":1,"kind":"app","appVersion":[1,0,0]}"""
@@ -194,5 +218,29 @@ class RealResolveProductUseCaseTest {
     private companion object {
         const val DEV_WORKER = "http://127.0.0.1:5173/worker.js"
         const val DEV_FACE = "http://127.0.0.1:5173/faces/loyalty.json"
+    }
+
+    // The chat product ships in the APK: on the core runtime it resolves with no chain read, so a
+    // device that cannot reach the chain, or a network where nobody published chat.<tld>, still chats.
+    @Test
+    fun `the chat product resolves to the bundled worker with no chain read`() = runBlocking {
+        val bundled = ProductExecutable.Worker(
+            scriptUrl = "https://worker.chat.paseo/index.js",
+            appVersion = SemVer.ZERO,
+            includesChat = true,
+            includesPocket = false,
+            pocketCards = emptyList(),
+            keepAlive = WorkerKeepAlive.FOREGROUND,
+        )
+        coEvery { chatProductReleases.resolved(tld) } returns ResolvedProduct(
+            product = Product(chatId, "Chats", icon = null),
+            executables = Executables(app = null, widget = null, worker = bundled),
+        )
+
+        val resolved = useCase().resolve(chatId).getOrThrow()
+
+        assertEquals(bundled, resolved.executables.worker)
+        coVerify { chatProductReleases.resolved(tld) }
+        verifyNoInteractions(dotNsResolver)
     }
 }

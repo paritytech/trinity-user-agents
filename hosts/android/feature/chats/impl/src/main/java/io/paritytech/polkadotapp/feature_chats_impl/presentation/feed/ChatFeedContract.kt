@@ -15,7 +15,12 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.Cha
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatInputUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMessagesState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatRoomUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatToolbarAction
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomUiState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.ChatRoomSearchUiState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.RoomSearchAction
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
@@ -39,14 +44,29 @@ interface ChatFeedContract {
     val revealingMessageId: StateFlow<ChatMessageId?>
     val scrollToPosition: SharedFlow<Int>
     val toolbarActions: StateFlow<ImmutableList<ChatToolbarAction>>
+    val roomState: StateFlow<ChatRoomUiState>
+
+    /** The parts of a product room that its product declares. [ProductRoomUiState.None] in any other chat. */
+    val productRoomState: StateFlow<ProductRoomUiState>
 
     val highlightEvents: Flow<HighlightedMessage>
+
+    /** The in-room search: the header action, the field and the results (07-LATER §8.2). */
+    val roomSearchState: StateFlow<ChatRoomSearchUiState>
 
     fun onBackClick()
     fun onMessageChange(message: String)
     fun onSendMessageClick()
     fun onPayClick()
     fun setChatActive()
+
+    /** The room screen became visible. A product room holds its product until [onScreenStopped]. */
+    fun onScreenStarted()
+
+    fun onScreenStopped()
+
+    /** Opens the room again and asks for the newest messages after the product did not answer. */
+    fun onRetryRoom()
     fun setChatInactive()
 
     fun onClearReply()
@@ -61,8 +81,26 @@ interface ChatFeedContract {
     fun onUnblockUserClick()
     fun onStartCallClick(withVideo: Boolean)
     fun onCloseMenu()
+    fun onDeleteMessageConfirm(messageId: ChatMessageId)
+
+    /** The user accepted the public-storage notice. The host sends the attachment that waits for it. */
+    fun onPublicStorageNoticeAccept()
+
+    /** An action on a part of a product room that its product declares. */
+    fun onProductRoomAction(action: ProductRoomAction)
+
+    fun onRoomSearchAction(action: RoomSearchAction)
 
     fun onClearEdit()
+
+    /** The user came near the oldest loaded message, or tapped the retry of a page that did not load. */
+    fun onLoadOlderMessages()
+
+    /** The user came near the newest loaded message, or tapped the retry of a page that did not load. */
+    fun onLoadNewerMessages()
+
+    /** The user asked for the newest messages of the room. */
+    fun onShowNewestMessages()
 
     fun onMessageAction(action: MessageAction)
 

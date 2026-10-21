@@ -73,20 +73,45 @@ The public surface lives in [`src/main/kotlin/io/parity/truapi/TrUAPIHost.kt`](s
 - `PocketHostBridge` - the host's Pocket card collection, implemented by hosts with a Pocket surface and passed as `pocket` to `openProductExecution`. The execution then offers `notifyPocketCardsChanged`. `removeCard` suspends, and decides and removes together, returning `NativePocketRemoval.Removed`, `Absent` or `Privileged`, so a card cannot be pinned between the check and the removal. Like Chat, Pocket is reachable only from a Worker execution with an active session, so without `activateLocalSession` every Pocket call answers `Denied`. Hosts without the bridge pass nothing and Pocket calls answer unsupported.
 - `GameHostBridge` - the host's game-reminder surface, implemented by hosts that can hold reminders and passed as `game` to `openProductExecution`. The host holds one reminder per product: a `scheduleReminder` replaces the reminder the same product already holds. The core asks for no per-product consent: the host asks the OS for what it needs, rings an alarm where the OS allows one and delivers a notification otherwise, may add the game to the user's calendar, keeps the reminder across app kill and reboot, and drops it once the game starts. A `scheduleReminder` that throws reaches the product as a host failure carrying its reason. Hosts without the bridge pass nothing and Game calls answer unsupported, as they do for every product but the game product, `dim2`.
 - `TopUpHostBridge`, `PaymentHostBridge`, `BalanceHostBridge` - the host's top-up, payment and balance engines, installed once on the runtime with `setTopUp`, `setPayments` and `setBalance` before any execution opens. The core checks the session, amounts, source keys and balance access, and hashes the product into every id it passes. It asks `topUpStatus` or `paymentStatus` once for an operation's current status and expects each later one through `notifyTopUpStatus` or `notifyPaymentStatus` until a terminal one; `notifyBalance` pushes each balance change. `requestPayment` answers `InsufficientBalance` whenever the balance is short, and the core turns that into `Rejected` for a product without balance access. A runtime without a bridge answers those calls unsupported.
+- `PushHostBridge`, `PersonChatHostBridge` and `CallMediaHostBridge` - the host's push service, its person chat services (the HOP nodes it trusts, the devices paired with the wallet, the chat's contacts it keeps for the rest of the app, and the native chat history it staged for the chat product) and its call engine for the calls of product rooms. Install each on the runtime with `setPush`, `setPersonChat` and `setCallMedia` before opening any product execution; each setter installs once. Without one, the calls that need it answer unsupported. The call engine gives its signals back to the product as the room event `CallSignal` through `publishChatRoomEvent`. An app that moves its native chat to the chat product gives the core the native device key with `importChatDeviceKey` before the product first runs.
 
 ## Chat
 
-A host serving the Chat modality implements `ChatHostBridge` (`createRoom`, `registerBot`, `postMessage`, `setRoomFooter`, `listRooms`) and opens the execution with `ProductExecutionKind.CHAT`:
+A host serving the Chat modality implements `ChatHostBridge` and passes it when it opens the product's `ProductExecutionKind.WORKER` execution. The bridge carries the requests of Chat Extension v2 ([RFC](../../docs/rfcs/chat-extension-v2.md)). `createRoom`, `registerBot`, `postMessage`, `setRoomFooter` and `listRooms` have no default. The other requests have defaults for a host that does not serve them yet: `roomConfig` answers `HOST_DEFAULT_CHAT_ROOM_CONFIG`, `setRoomConfig` accepts only that configuration, `setRoomMetadata` keeps the name and icon of `createRoom`, and every other request answers a rejection. Each room the product creates carries a configuration and metadata, so these three defaults keep room creation working.
+
+| Request | What the host does |
+| --- | --- |
+| `roomConfig` | Answers the configuration last declared for the room. The core reads it before each feed update, posted message and query |
+| `setRoomConfig` | Keeps the configuration a room was created with across restarts. The core calls it when `createRoom` makes a new room |
+| `setRoomMetadata`, `setRoomPreview` | Replace the name, avatar and description, and how the room shows in the chat list |
+| `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen |
+| `updateFeed` | Applies one change to the messages; `persist` is `true` for a room the host stores. Throw `NativeChatFeedRejection` to refuse it |
+| `setRoomFooter` | Shows the input with its `ChatInputConfig`, nothing, or a footer the product draws through `render` |
+
+The core checks that the product created the room before it calls any of these.
+
+The bridge also carries the Chat Extension v2 additions ([RFC](../../docs/rfcs/chat-extension-v2-additions.md)). Each has an interface default for a host that does not serve them: `capabilities`, `roomUserStates` and `bots` answer an empty list, `roomFeatures` answers `HOST_DEFAULT_CHAT_ROOM_FEATURES`, and the two setters answer a rejection.
+
+| Request | What the host does |
+| --- | --- |
+| `capabilities` | Answers the feature names it serves from end to end (the RFC's feature table). The core drops each name it does not know or cannot back, and answers the product's `capabilities` with the rest |
+| `roomFeatures`, `setRoomFeatures` | Answer and replace the optional features of a room. Keep a feature this build does not serve, so a later build applies it |
+| `setRoomCall` | Shows, changes or removes the call of a room. The core first checks that `capabilities` lists `call_buttons` or `room_calls` |
+| `roomUserStates` | Answers each room of the product the user muted or archived; the core sends it to the product when its `roomEventsSubscribe` starts, and silences an immediate notification into a muted room |
+| `bots` | Answers the bot ids of the personas the product registered; the core refuses a `bot:<id>` author that is not one of them |
 
 ```kotlin
 import io.parity.truapi.*
 import uniffi.truapi.ChatBotRegistrationStatus
+import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatRoom
+import uniffi.truapi.ChatRoomConfig
 import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomParticipation
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.HostRejection
+import uniffi.truapi.NativeChatFeedRejection
 
 // Called from a shared dispatch pool, so the backing store must be
 // thread-safe, and a slow call here stalls other product executions.
@@ -110,6 +135,15 @@ class MyChatBridge(private val store: ChatStore) : ChatHostBridge {
     override fun setRoomFooter(roomId: String, footer: ChatRoomFooter) = store.setFooter(roomId, footer)
 
     override fun listRooms(): List<ChatRoom> = store.rooms()
+
+    override suspend fun roomConfig(roomId: String): ChatRoomConfig =
+        store.config(roomId) ?: HOST_DEFAULT_CHAT_ROOM_CONFIG
+
+    override suspend fun setRoomConfig(roomId: String, config: ChatRoomConfig) = store.setConfig(roomId, config)
+
+    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean) {
+        if (!store.apply(roomId, update, persist)) throw NativeChatFeedRejection.UnknownMessage()
+    }
 }
 
 val runtime = TrUAPIHostRuntime(
@@ -127,7 +161,7 @@ runtime.activateLocalSession(secret)
 
 val execution = runtime.openProductExecution(
     bridge = bridge,
-    configuration = ProductExecutionConfig("chat.dot", ProductExecutionKind.CHAT),
+    configuration = ProductExecutionConfig("chat.dot", ProductExecutionKind.WORKER),
     chat = MyChatBridge(store),
 )
 val endpoint = execution.startWsBridge()
@@ -146,6 +180,18 @@ names are also normalized; a message body is bounded and screened but passed
 through byte-for-byte, and `ChatFile.size_bytes` is product-asserted and
 unverified. Contextual output escaping is the host's job.
 
+The host asks a room that declares a handler in its configuration through six `suspend` queries on the execution: `chatMessagesQuery`, `chatUserAction`, `chatReactionsQuery`, `chatParticipantsQuery`, `chatMessageActionsQuery` and `chatSearchQuery` (asked only of a product-source room whose features set `search`). Each one waits for one answer, and stops the query in the product after its timeout or when the coroutine is cancelled. The default timeouts are in `ChatQueryTimeout`: 10 s for a page of messages, 30 s for a sent message, 10 s for other user actions, 5 s for reactions, participants and menus, and 10 s for a search; each query also takes `timeout`. A query with no answer throws `ChatQueryException`: `Refused` with `ProductChatQueryError.NotAvailable` asks the host to apply its default, `ActionRefused` reverts a user action, and `Failed`, `NoAnswer` and `TimedOut` show the failure state of that query. The core answers `NotAvailable` itself for a room that does not declare the handler, without starting the worker.
+
+```kotlin
+val page = execution.chatMessagesQuery(
+    ProductChatMessagesQueryRequest(roomId, ChatPageAnchor.Before(null), 40u),
+)
+```
+
+`publishChatEvent(roomId, peer, event)` delivers what the user did in a room the host stores, and the room events of both kinds of room (`ActionTriggered`, `MessageActionTriggered` and the others), with peer `"native"` for the user of the host. The product receives at most one `Seen` event for each room each second, and a product at the first protocol version receives only the events that its version carries.
+
+The runtime carries the parts of the additions that need no execution: `publishChatRoomEvent(productId, roomId, event)` sends a `ChatRoomEvent` (mute and archive, call buttons and answers) and the core keeps the newest 64 of a product until its worker subscribes; `wakeProduct(productId, reason)` holds the worker for 30 seconds for a `ChatWakeReason` and answers `ChatWakeOutcome`, at most 12 notification wakes for each product in one hour; `stageChatAttachment(productId, roomId, mimeType, bytes)` stores a user attachment above the inline bound as one Bulletin preimage that the product's own allowance pays for and returns its key, or throws `NativeChatStageRejection` (the room does not declare `preimage_attachments`, the file is above 8 MiB or the chain's per-transaction bound, the user refused `PreimageSubmit`, no allowance, or the submission failed).
+
 `postMessage` receives any `ChatMessageContent` variant; throw from it for one this host cannot render. The id it returns is the correlation key `ActionTrigger.messageId` carries back, so it must name that message for as long as the host stores it. `alt` is the product's one-line description of the message, already trimmed and screened, for places that list the message rather than draw it, such as a chat list preview of a custom card. Only a custom message carries one, since every other kind previews from its own content.
 
 The runtime answers other devices pairing with it: `notifyPairingAllowanceAllocation` and `notifyPairingFailed` are the two notices a peer gets before the answer, `establishPairing` is the answer, `resumePairing` serves the session for its whole life and belongs in its own coroutine, and `disconnectPairedHost` ends it. Only `ResponderExit.PEER_DISCONNECTED` from `resumePairing` authorises dropping the stored pairing. The host persists the peer between answering and serving, which is why those are separate calls.
@@ -160,7 +206,7 @@ The `NativeAnnouncedPairing` that `notifyPairingAllowanceAllocation` returns hol
 
 `durableWorkChanged` on the runtime bridge reports whether the core has durable transactions still awaiting a verdict, starting with the state it finds at launch. While it is `true`, enqueue unique background work requiring a network connection that awaits `runDurableRecovery()`, which returns once nothing is live and throws `RecoveryException` when recovery stopped early, so the work is retried. Defaults to a no-op for a host that runs no durable work.
 
-On the execution: `publishChatAction` delivers a user's action back to the product (buffered until it subscribes), `notifyChatRoomsChanged` republishes the room list, `render` returns a `Flow` of `RendererNode` trees for one render context, `publishRendererAction` delivers a renderer action back to the product, and `sessionChatIdentityKey` reads the session's X25519 chat identity key. An open render stream is one worker reference the core holds on the product's behalf; the transition it causes arrives on the runtime bridge's `workerDemandChanged`, never on the execution's. Two rules the core cannot check are the host's to keep: send a render context only for a surface the product's manifest `includes`, and publish a renderer action only from the current tree of an open render stream.
+On the execution: `publishChatEvent` and `publishChatAction` deliver a user's action back to the product (buffered until it subscribes), `notifyChatRoomsChanged` republishes the room list, `render` returns a `Flow` of `RendererNode` trees for one render context, `publishRendererAction` delivers a renderer action back to the product, and `sessionChatIdentityKey` reads the session's X25519 chat identity key. An open render stream is one worker reference the core holds on the product's behalf; the transition it causes arrives on the runtime bridge's `workerDemandChanged`, never on the execution's. Two rules the core cannot check are the host's to keep: send a render context only for a surface the product's manifest `includes`, and publish a renderer action only from the current tree of an open render stream.
 
 ## Architecture
 
@@ -491,6 +537,8 @@ the cdylib's exported metadata symbols, which the `release` profile strips — a
 plain `--release` build produces a stripped library and no bindings. (`make
 uniffi` regenerates the Swift bindings; use `make uniffi-kotlin` for Android.)
 
-No CI job compiles this package. After changing `TrUAPIHost.kt` or the UniFFI
-surface it wraps, run `make android-check` locally — it regenerates the Kotlin
-bindings and compiles the module against them.
+The `android-bindings` CI job compiles this package against freshly generated
+bindings whenever this directory or the core surface it wraps changes. After
+changing `TrUAPIHost.kt` or that surface, run `make android-check` locally for
+the same check before you push: it regenerates the Kotlin bindings and compiles
+the module against them.

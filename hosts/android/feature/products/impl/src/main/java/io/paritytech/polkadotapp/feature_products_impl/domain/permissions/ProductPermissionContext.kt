@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.permissions
 
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionPromptUnavailableException
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import kotlinx.coroutines.CompletableDeferred
 import java.util.UUID
@@ -15,6 +16,11 @@ class ProductPermissionContext(
 
     fun deliver(decision: PermissionDecision) {
         result.complete(decision)
+    }
+
+    /** The prompt left the screen with no answer, so the wait stops. A decision that came first stays. */
+    fun abandon() {
+        result.completeExceptionally(PermissionPromptUnavailableException("the permission prompt closed without an answer"))
     }
 
     suspend fun awaitDecision(): PermissionDecision = result.await()

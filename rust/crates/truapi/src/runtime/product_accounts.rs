@@ -262,6 +262,53 @@ impl ProductAccounts {
 			.await
 	}
 
+	/// Prepare the delivery of a chat request. Only the chat product may.
+	pub async fn prepare_chat_delivery(
+		&self,
+		session: &AuthoritySession,
+		request_id: String,
+		size: u32,
+	) -> Result<crate::runtime::authority::ChatDelivery, AuthorityError> {
+		self.require_person_chat()?;
+		self.authority.prepare_chat_delivery(session, request_id, size).await
+	}
+
+	/// Sign with the delivery account of a chat request. Only the chat product may.
+	pub async fn sign_as_chat_delivery(
+		&self,
+		session: &AuthoritySession,
+		request_id: String,
+		period: u32,
+		payload: Vec<u8>,
+	) -> Result<([u8; 32], [u8; 64]), AuthorityError> {
+		self.require_person_chat()?;
+		self.authority.sign_as_chat_delivery(session, request_id, period, payload).await
+	}
+
+	fn require_person_chat(&self) -> Result<(), AuthorityError> {
+		if self.product.is_person_chat_product() {
+			Ok(())
+		} else {
+			Err(AuthorityError::NotSupported {
+				reason: "only the chat product has chat-request delivery accounts".to_string(),
+			})
+		}
+	}
+
+	/// Sign exact bytes with the identity account. Only the chat product may.
+	pub async fn sign_as_identity(
+		&self,
+		session: &AuthoritySession,
+		payload: Vec<u8>,
+	) -> Result<[u8; 64], AuthorityError> {
+		if !self.product.is_person_chat_product() {
+			return Err(AuthorityError::NotSupported {
+				reason: "only the chat product signs as the identity account".to_string(),
+			});
+		}
+		self.authority.sign_as_identity(session, payload).await
+	}
+
 	/// Derive entropy scoped to this product.
 	pub fn derive_entropy(
 		&self,

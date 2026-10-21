@@ -7,11 +7,27 @@ public protocol ChatScriptStorageProtocol: ProductFileProviding {
     func scriptExists(productId: ProductId) -> Bool
     func loadData(productId: ProductId, relativePath: String) -> Data?
     func chatEntrypointRelativePath() -> String
+    /// Whether the product has a file at `relativePath`, without a read of the file.
+    func fileExists(productId: ProductId, relativePath: String) -> Bool
 }
 
 public extension ChatScriptStorageProtocol {
     func load(for productId: ProductId, relativePath: String) -> Data? {
         loadData(productId: productId, relativePath: relativePath)
+    }
+
+    func fileExists(productId: ProductId, relativePath: String) -> Bool {
+        loadData(productId: productId, relativePath: relativePath) != nil
+    }
+
+    /// The entry of a worker compiled to wasm and installed by hand. It wins over the script entry.
+    func wasmEntrypointRelativePath() -> String {
+        "ChatExtension/index.wasm"
+    }
+
+    /// The Worker executable manifest of a worker installed by hand. The host reads only its `keepAlive` field.
+    func workerManifestRelativePath() -> String {
+        "ChatExtension/manifest.json"
     }
 }
 
@@ -57,6 +73,25 @@ public final class FileChatScriptStorage: ChatScriptStorageProtocol {
 
     public func chatEntrypointRelativePath() -> String {
         "ChatExtension/index.js"
+    }
+
+    /// Writes `data` at `relativePath` of the product, creating its directories.
+    public func saveData(productId: ProductId, relativePath: String, data: Data) throws {
+        let fileURL = baseDirectory
+            .appendingPathComponent(productId)
+            .appendingPathComponent(relativePath)
+        try fileManager.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: fileURL, options: .atomic)
+    }
+
+    public func fileExists(productId: ProductId, relativePath: String) -> Bool {
+        let fileURL = baseDirectory
+            .appendingPathComponent(productId)
+            .appendingPathComponent(relativePath)
+        return fileManager.fileExists(atPath: fileURL.path)
     }
 
     // MARK: - Private

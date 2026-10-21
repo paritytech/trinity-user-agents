@@ -1,17 +1,20 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import dagger.Lazy
+import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.childScope
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime.WebViewRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductChatHostBridge
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductChatStoredState
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIChainDirectory
@@ -33,6 +36,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import timber.log.Timber
 import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.WorkerKeepAlive
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Duration.Companion.seconds
@@ -58,9 +62,11 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val webViewProviderFactory: ChatWebViewProvider.Factory,
     private val bootstrapInstaller: TrUAPIBootstrapInstaller,
     private val refCounter: Lazy<ProductWorkerRefCounter>,
+    private val chatStoredState: ProductChatStoredState,
     dispatchers: CoroutineDispatchers,
 ) {
-    private class RunningWorker(val scope: CoroutineScope) {
+    // `bootLosses` counts the renderers that stopped during a boot of this start chain.
+    private class RunningWorker(val scope: CoroutineScope, val bootLosses: Int) {
         var webViewRuntime: WebViewRuntime? = null
     }
 
@@ -69,6 +75,10 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val transitions = Mutex()
     private val workers = mutableMapOf<ProductId, RunningWorker>()
     private val executionStates = MutableStateFlow<Map<ProductId, WorkerExecutionState>>(emptyMap())
+
+    // The core keeps one keep-alive flag for each product, so the declarations are counted, and the count and the
+    // call to the core change under one lock.
+    private val foregroundDeclarations = mutableMapOf<ProductId, Int>()
 
     /** Demand crossing zero, as the core reports it. May arrive on any thread, so the work is handed to [scope]. */
     fun onDemandChanged(productId: ProductId, demand: WorkerDemand) {
@@ -82,6 +92,54 @@ class TrUAPIWorkerSupervisor @Inject constructor(
         }
     }
 
+    /**
+     * Starts the worker again when its last start failed. A failed start keeps the references of the open rooms in
+     * the core, so the core sends no new start. A room calls this when it opens, also when the user asks to try again.
+     */
+    fun restartIfFailed(productId: ProductId) {
+        scope.launch {
+            transitions.withLock {
+                if (executionStates.value[productId] is WorkerExecutionState.Failed) start(productId)
+            }
+        }
+    }
+
+    /** Starts again each worker whose last start failed. The app calls this in the foreground. */
+    fun restartFailed() {
+        scope.launch {
+            transitions.withLock {
+                executionStates.value.filterValues { it is WorkerExecutionState.Failed }.keys.forEach { start(it) }
+            }
+        }
+    }
+
+    /**
+     * Declares that the worker of [productId] runs while the app is in the foreground. The core holds the worker
+     * while the host reports the app in the foreground. Pair each call with one [withdrawForegroundWorker].
+     */
+    fun declareForegroundWorker(runtime: TrUAPIHostRuntime, productId: ProductId) = synchronized(foregroundDeclarations) {
+        val count = foregroundDeclarations.getOrDefault(productId, 0) + 1
+        foregroundDeclarations[productId] = count
+        if (count == 1) setKeepAlive(runtime, productId, WorkerKeepAlive.FOREGROUND)
+    }
+
+    /** Gives back one [declareForegroundWorker]. The last one ends the foreground hold of the product. */
+    fun withdrawForegroundWorker(runtime: TrUAPIHostRuntime, productId: ProductId) = synchronized(foregroundDeclarations) {
+        val count = foregroundDeclarations[productId] ?: return@synchronized
+        if (count > 1) {
+            foregroundDeclarations[productId] = count - 1
+        } else {
+            foregroundDeclarations.remove(productId)
+            setKeepAlive(runtime, productId, WorkerKeepAlive.ON_DEMAND)
+        }
+    }
+
+    private fun setKeepAlive(runtime: TrUAPIHostRuntime, productId: ProductId, keepAlive: WorkerKeepAlive) {
+        runCatching { runtime.setWorkerKeepAlive(productId.value, keepAlive) }
+            .onSuccess { Timber.d("TrUAPI %s's worker keep alive: %s", productId.value, keepAlive) }
+            .onFailure { Timber.w(it, "TrUAPI %s's worker keep alive %s did not reach the core", productId.value, keepAlive) }
+    }
+
     /** The product's worker execution while it runs, null otherwise. */
     fun execution(productId: ProductId): Flow<TrUAPIProductExecution?> =
         executionState(productId).map { (it as? WorkerExecutionState.Running)?.execution }.distinctUntilChanged()
@@ -92,9 +150,9 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     fun executionState(productId: ProductId): Flow<WorkerExecutionState?> =
         executionStates.map { it[productId] }.distinctUntilChanged()
 
-    private fun start(productId: ProductId) {
+    private fun start(productId: ProductId, bootLosses: Int = 0) {
         if (productId in workers) return
-        val worker = RunningWorker(scope.childScope())
+        val worker = RunningWorker(scope.childScope(), bootLosses)
         workers[productId] = worker
         executionStates.update { it - productId }
         worker.scope.launch {
@@ -143,11 +201,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 chainDirectory.resolve(),
                 ignoredNavigation(),
                 ProductExecutionKind.WORKER,
-                chat = if (script.includesChat) {
-                    ProductChatHostBridge(productId, refCounter.get().chatMessaging(productId))
-                } else {
-                    null
-                },
+                chat = chatBridge(productId, script),
             ) { bootstrap -> provider.addWebViewSetup(installBootstrap(bootstrap)) }
             .flatMap { execution ->
                 runCatching {
@@ -164,22 +218,43 @@ class TrUAPIWorkerSupervisor @Inject constructor(
             }
     }
 
-    // The renderer takes the running script with it, and only a fresh boot runs the script again.
+    private fun chatBridge(productId: ProductId, script: ProductExecutable.Worker): ProductChatHostBridge? =
+        if (script.includesChat) {
+            ProductChatHostBridge(productId, refCounter.get().chatMessaging(productId), chatStoredState)
+        } else {
+            null
+        }
+
+    // The renderer takes the running script with it, and only a fresh boot runs the script again. A renderer
+    // that stops during the boot also gets a fresh boot. That boot waits for a page that does not come, and after
+    // its failure only a room that opens starts the worker again. Each start chain gets a limited number of
+    // these boots, so a renderer that always stops ends as a failed start.
     private fun rebootAfterRendererLoss(productId: ProductId, worker: RunningWorker) {
         scope.launch {
             transitions.withLock {
-                if (workers[productId] !== worker || currentExecution(productId) == null) return@withLock
+                if (workers[productId] !== worker) return@withLock
+                val booting = currentExecution(productId) == null
                 stop(productId)
-                start(productId)
+                when {
+                    !booting -> start(productId)
+                    worker.bootLosses < MAX_BOOT_LOSSES -> {
+                        Timber.w("TrUAPI worker for %s lost its renderer during the boot; it boots again", productId.value)
+                        start(productId, worker.bootLosses + 1)
+                    }
+                    else -> executionStates.update { it + (productId to WorkerExecutionState.Failed(RendererLostException())) }
+                }
             }
         }
     }
+
+    private class RendererLostException : Exception("the WebView renderer of the worker stopped during each boot")
 
     private fun stop(productId: ProductId) {
         executionStates.update { it - productId }
         val worker = workers.remove(productId) ?: return
         worker.webViewRuntime?.dispose()
         worker.scope.cancel()
+        Timber.d("TrUAPI worker for %s stopped", productId.value)
     }
 
     // A worker has no screen of its own to navigate; a `navigate_to` from it is logged and dropped.
@@ -192,5 +267,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
         private val READY_TIMEOUT = 60.seconds
 
         val EXECUTION_WAIT_TIMEOUT = READY_TIMEOUT + 30.seconds
+
+        private const val MAX_BOOT_LOSSES = 2
     }
 }

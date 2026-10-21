@@ -81,11 +81,13 @@ dependencies {
 
     implementation(project(":common"))
     implementation(project(":tools:ipfs:api"))
+    implementation(project(":tools:push-notifications:api"))
     implementation(project(":tools:remoteconfig:api"))
     implementation(project(":design"))
     implementation(project(":database"))
     implementation(project(":chains"))
     implementation(project(":feature:chats:api"))
+    implementation(project(":feature:calls:api"))
     implementation(project(":feature:account:api"))
     implementation(project(":feature:settings:api"))
     implementation(project(":feature:transaction-storage:api"))
@@ -97,6 +99,7 @@ dependencies {
     implementation(project(":feature:scan:api"))
     implementation(project(":feature:usernames:api"))
     implementation(project(":feature:dotns:api"))
+    implementation(project(":feature:sso:api"))
     implementation(project(":feature:coinage:api"))
 
     implementation(libs.squareup.okhttp3.core)

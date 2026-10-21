@@ -5,7 +5,8 @@ import AsyncExtensions
 import AsyncAlgorithms
 import Products
 
-protocol ChatExtensionDiscoverContextProtocol {
+protocol ChatExtensionDiscoverContextProtocol: ChatProductRoomDeclaring, ChatProductFeedApplying,
+    ChatProductRoomAdditions {
     @discardableResult
     func sendNewMessage(
         from chatBot: ChatExtensionBotProtocol,
@@ -39,6 +40,25 @@ protocol ChatExtensionDiscoverContextProtocol {
         for chatBot: ChatExtensionBotProtocol,
         roomId: String,
         footer: Chat.RoomFooter
+    ) async throws
+
+    /// Removes a room, its messages, its declarations and the resources that it referenced.
+    func deleteRoom(for chatBot: ChatExtensionBotProtocol, roomId: String) async throws
+
+    /// Replaces the name, the description and the avatar of a room.
+    func setRoomMetadata(
+        for chatBot: ChatExtensionBotProtocol,
+        roomId: String,
+        name: String,
+        description: String?,
+        avatar: Chat.RoomImage?
+    ) async throws
+
+    /// Replaces the chat-list preview of a room and leaves the rest of the room alone.
+    func setRoomPreview(
+        for chatBot: ChatExtensionBotProtocol,
+        roomId: String,
+        preview: Chat.RoomPreview
     ) async throws
 
     func subscribeRooms(
@@ -89,19 +109,26 @@ actor ChatExtensionDiscoverContext {
     let roomMetadataRepository: AnyDataProviderRepository<Chat.RoomMetadataUpdate>
     let roomFooterRepository: AnyDataProviderRepository<Chat.RoomFooterUpdate>
     let chatsProviderFactory: ChatContactDataProviderMaking
+    let roomRemover: ChatRoomRemoving
+    let calls: ChatRoomCallStoring
+    let messageOrderAllocator: ChatMessageOrderAllocating
 
     init(
         settings: SettingsManagerProtocol & ChatExtensionBotSettings,
         storageFacade: StorageFacadeProtocol,
         operationQueue: OperationQueue,
-        logger: LoggerProtocol
+        logger: LoggerProtocol,
+        messageOrderAllocator: ChatMessageOrderAllocating = FileChatMessageOrderAllocator.shared,
+        calls: ChatRoomCallStoring = ChatRoomCallStore.shared
     ) {
         self.settings = settings
         self.storageFacade = storageFacade
+        self.calls = calls
+        self.messageOrderAllocator = messageOrderAllocator
 
         messageRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
-                mapper: AnyCoreDataMapper(ChatMessageEntityMapper())
+                mapper: AnyCoreDataMapper(ChatMessageEntityMapper(orderAllocator: messageOrderAllocator))
             )
         )
 
@@ -127,6 +154,11 @@ actor ChatExtensionDiscoverContext {
             repositoryFactory: ChatContactRepositoryFactory(storageFacade: storageFacade),
             operationQueue: operationQueue,
             logger: logger
+        )
+
+        roomRemover = ChatRoomRemover(
+            databaseService: storageFacade.databaseService,
+            resources: ChatResourceResolver.shared
         )
     }
 }
@@ -392,6 +424,36 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
         try await roomFooterRepository.saveOperation({ [update] }, { [] }).asyncExecute()
     }
 
+    func deleteRoom(for chatBot: ChatExtensionBotProtocol, roomId: String) async throws {
+        let chatId = Chat.Id.chatExtension(chatBot.identifier, roomId: roomId)
+        calls.set(nil, for: chatId)
+
+        guard try await roomRemover.removeRoom(chatId) else {
+            throw ChatRoomError.unknownRoom(roomId)
+        }
+    }
+
+    func setRoomMetadata(
+        for chatBot: ChatExtensionBotProtocol,
+        roomId: String,
+        name: String,
+        description: String?,
+        avatar: Chat.RoomImage?
+    ) async throws {
+        let chatId = try await requireRoom(of: chatBot, roomId: roomId)
+        try await saveDeclaration(Chat.RoomNameUpdate(chatId: chatId, name: name))
+        try await saveDeclaration(Chat.RoomDescriptionUpdate(chatId: chatId, description: description, avatar: avatar))
+    }
+
+    func setRoomPreview(
+        for chatBot: ChatExtensionBotProtocol,
+        roomId: String,
+        preview: Chat.RoomPreview
+    ) async throws {
+        let chatId = try await requireRoom(of: chatBot, roomId: roomId)
+        try await saveDeclaration(Chat.RoomPreviewUpdate(chatId: chatId, preview: preview))
+    }
+
     func subscribeRooms(
         for chatBot: ChatExtensionBotProtocol
     ) async -> AnyAsyncSequence<[RoomInfo]> {
@@ -430,6 +492,43 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
         try await messageRepository.saveOperation({ [message] }, { [] }).asyncExecute()
 
         return message
+    }
+}
+
+extension ChatExtensionDiscoverContext {
+    /// The chat of a room that the product created, or `ChatRoomError.unknownRoom`.
+    func requireRoom(of chatBot: ChatExtensionBotProtocol, roomId: String) async throws -> Chat.Id {
+        let chatId = Chat.Id.chatExtension(chatBot.identifier, roomId: roomId)
+
+        let existingChat = try await chatRepository
+            .fetchOperation(by: { chatId.rawRepresentation }, options: RepositoryFetchOptions())
+            .asyncExecute()
+
+        guard existingChat != nil else {
+            throw ChatRoomError.unknownRoom(roomId)
+        }
+
+        return chatId
+    }
+
+    func saveDeclaration<Update: ChatRoomDeclarationUpdating>(_ update: Update) async throws {
+        let repository = storageFacade.createRepository(
+            filter: nil,
+            sortDescriptors: [],
+            mapper: AnyCoreDataMapper(ChatRoomDeclarationUpdateMapper<Update>())
+        )
+        try await repository.saveOperation({ [update] }, { [] }).asyncExecute()
+    }
+}
+
+enum ChatRoomError: LocalizedError {
+    case unknownRoom(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .unknownRoom(roomId):
+            "no chat room \(roomId)"
+        }
     }
 }
 

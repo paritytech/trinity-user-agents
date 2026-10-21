@@ -4,9 +4,14 @@
 //! the first reference starts it, and when the count returns to zero the host
 //! may stop it. The ledger owns the counts; starting and stopping the
 //! executable stays with the host.
+//!
+//! The ledger also holds one holder of its own: the foreground hold. A product
+//! that declares [`WorkerKeepAlive::Foreground`] gets one reference while the
+//! host reports the app in the foreground, and loses it when the host reports
+//! the app in the background.
 
 use std::{
-	collections::{HashMap, VecDeque},
+	collections::{BTreeSet, HashMap, VecDeque},
 	sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
@@ -20,6 +25,21 @@ pub enum WorkerTransition {
 	Start,
 	/// Demand went from some to none: the host may stop the worker.
 	Stop,
+}
+
+/// When the worker of a product runs, beside the holders of its modalities.
+///
+/// The product declares it in the `keepAlive` field of its Worker executable
+/// manifest, and the host gives it to the core with
+/// [`WorkerLedger::set_keep_alive`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum WorkerKeepAlive {
+	/// The worker runs only while a modality holds it. This is the default.
+	#[default]
+	OnDemand,
+	/// The worker also runs while the app is in the foreground.
+	Foreground,
 }
 
 /// Host notified whenever demand on a product's worker crosses zero, whoever
@@ -44,6 +64,39 @@ struct LedgerState {
 	pending: VecDeque<(ProductId, WorkerTransition)>,
 	/// Whether a thread is already draining `pending`.
 	draining: bool,
+	/// The host reports the app in the foreground.
+	foreground: bool,
+	/// The products that declare [`WorkerKeepAlive::Foreground`]. While
+	/// `foreground` is true, each of them has one reference in `references`
+	/// for the foreground hold.
+	keep_alive: BTreeSet<ProductId>,
+}
+
+impl LedgerState {
+	/// Add one reference, and queue [`WorkerTransition::Start`] for the first.
+	fn acquire(&mut self, product_id: &ProductId) {
+		let count = self.references.entry(product_id.clone()).or_insert(0);
+		*count += 1;
+		if *count == 1 {
+			self.pending.push_back((product_id.clone(), WorkerTransition::Start));
+		}
+	}
+
+	/// Remove one reference, and queue [`WorkerTransition::Stop`] for the
+	/// last. A product with no reference stays as it is.
+	fn release(&mut self, product_id: &ProductId) {
+		let Some(count) = self.references.get_mut(product_id) else {
+			return;
+		};
+		if *count > 1 {
+			*count -= 1;
+			return;
+		}
+		// The last one: an entry is dropped rather than left at zero, so
+		// every stored count is at least one and none of this can wrap.
+		self.references.remove(product_id);
+		self.pending.push_back((product_id.clone(), WorkerTransition::Stop));
+	}
 }
 
 /// Reference counts for every product worker the host tracks, keyed by
@@ -62,15 +115,7 @@ impl WorkerLedger {
 	/// Take one reference on the product's worker. The first one reports
 	/// [`WorkerTransition::Start`] to the installed observer.
 	pub fn acquire(&self, product_id: &ProductId) {
-		{
-			let mut state = self.state();
-			let count = state.references.entry(product_id.clone()).or_insert(0);
-			*count += 1;
-			if *count != 1 {
-				return;
-			}
-			state.pending.push_back((product_id.clone(), WorkerTransition::Start));
-		}
+		self.state().acquire(product_id);
 		self.drain();
 	}
 
@@ -78,21 +123,71 @@ impl WorkerLedger {
 	/// to the installed observer. Releasing a product with no reference is a
 	/// no-op.
 	pub fn release(&self, product_id: &ProductId) {
+		self.state().release(product_id);
+		self.drain();
+	}
+
+	/// Record whether the app is in the foreground. The change takes the
+	/// foreground hold of each product that declares
+	/// [`WorkerKeepAlive::Foreground`], or releases it. The ledger starts in
+	/// the background, so a host that never calls this holds nothing.
+	///
+	/// The counts and the flag change under one lock, so a foreground hold
+	/// never releases a reference that another holder took.
+	pub fn set_app_foreground(&self, foreground: bool) {
 		{
 			let mut state = self.state();
-			let Some(count) = state.references.get_mut(product_id) else {
-				return;
-			};
-			if *count > 1 {
-				*count -= 1;
+			if state.foreground == foreground {
 				return;
 			}
-			// The last one: an entry is dropped rather than left at zero, so
-			// every stored count is at least one and none of this can wrap.
-			state.references.remove(product_id);
-			state.pending.push_back((product_id.clone(), WorkerTransition::Stop));
+			state.foreground = foreground;
+			let products: Vec<ProductId> = state.keep_alive.iter().cloned().collect();
+			for product_id in &products {
+				if foreground {
+					state.acquire(product_id);
+				} else {
+					state.release(product_id);
+				}
+			}
 		}
 		self.drain();
+	}
+
+	/// Record when the worker of `product_id` runs. While the app is in the
+	/// foreground, a change to [`WorkerKeepAlive::Foreground`] takes the
+	/// foreground hold, and a change back releases it. The host sets
+	/// [`WorkerKeepAlive::OnDemand`] again when the product goes, for example
+	/// at the end of its chat session.
+	pub fn set_keep_alive(&self, product_id: &ProductId, keep_alive: WorkerKeepAlive) {
+		{
+			let mut state = self.state();
+			let changed = match keep_alive {
+				WorkerKeepAlive::Foreground => state.keep_alive.insert(product_id.clone()),
+				WorkerKeepAlive::OnDemand => state.keep_alive.remove(product_id),
+			};
+			if !changed || !state.foreground {
+				return;
+			}
+			match keep_alive {
+				WorkerKeepAlive::Foreground => state.acquire(product_id),
+				WorkerKeepAlive::OnDemand => state.release(product_id),
+			}
+		}
+		self.drain();
+	}
+
+	/// Whether the host reports the app in the foreground.
+	pub fn app_foreground(&self) -> bool {
+		self.state().foreground
+	}
+
+	/// What `product_id` declares with [`Self::set_keep_alive`].
+	pub fn keep_alive(&self, product_id: &ProductId) -> WorkerKeepAlive {
+		if self.state().keep_alive.contains(product_id) {
+			WorkerKeepAlive::Foreground
+		} else {
+			WorkerKeepAlive::OnDemand
+		}
 	}
 
 	/// Install the host's observer for every transition the ledger produces.
@@ -276,6 +371,120 @@ mod tests {
 				("b.dot".to_string(), WorkerTransition::Stop),
 			]
 		);
+	}
+
+	fn start(product_id: &str) -> (String, WorkerTransition) {
+		(product_id.to_string(), WorkerTransition::Start)
+	}
+
+	fn stop(product_id: &str) -> (String, WorkerTransition) {
+		(product_id.to_string(), WorkerTransition::Stop)
+	}
+
+	/// A product that declares a foreground worker runs while the app is in
+	/// the foreground, stops in the background, and starts again on return.
+	#[test]
+	fn a_foreground_product_runs_while_the_app_is_in_the_foreground() {
+		let (ledger, recorder) = observed();
+		ledger.set_keep_alive(&ProductId::for_test("a.dot"), WorkerKeepAlive::Foreground);
+		assert!(recorder.seen().is_empty(), "the ledger starts in the background");
+
+		ledger.set_app_foreground(true);
+		assert_eq!(ledger.count(&ProductId::for_test("a.dot")), 1);
+		ledger.set_app_foreground(false);
+		assert_eq!(ledger.count(&ProductId::for_test("a.dot")), 0);
+		ledger.set_app_foreground(true);
+
+		assert_eq!(recorder.seen(), vec![start("a.dot"), stop("a.dot"), start("a.dot")]);
+		assert!(ledger.app_foreground());
+	}
+
+	/// A declaration while the app is in the foreground takes the hold at once,
+	/// and the change back to on demand releases it.
+	#[test]
+	fn a_declaration_in_the_foreground_takes_and_releases_the_hold_at_once() {
+		let (ledger, recorder) = observed();
+		ledger.set_app_foreground(true);
+		assert!(recorder.seen().is_empty(), "no product declares a foreground worker");
+
+		ledger.set_keep_alive(&ProductId::for_test("a.dot"), WorkerKeepAlive::Foreground);
+		assert_eq!(ledger.keep_alive(&ProductId::for_test("a.dot")), WorkerKeepAlive::Foreground);
+		ledger.set_keep_alive(&ProductId::for_test("a.dot"), WorkerKeepAlive::OnDemand);
+
+		assert_eq!(recorder.seen(), vec![start("a.dot"), stop("a.dot")]);
+		assert_eq!(ledger.keep_alive(&ProductId::for_test("a.dot")), WorkerKeepAlive::OnDemand);
+		assert_eq!(ledger.count(&ProductId::for_test("a.dot")), 0);
+	}
+
+	/// A product has at most one foreground hold, however often the host
+	/// repeats a report or a declaration.
+	#[test]
+	fn a_repeated_report_or_declaration_holds_once() {
+		let (ledger, recorder) = observed();
+		ledger.set_app_foreground(true);
+		ledger.set_keep_alive(&ProductId::for_test("a.dot"), WorkerKeepAlive::Foreground);
+		ledger.set_keep_alive(&ProductId::for_test("a.dot"), WorkerKeepAlive::Foreground);
+		ledger.set_app_foreground(true);
+		assert_eq!(ledger.count(&ProductId::for_test("a.dot")), 1);
+
+		ledger.set_app_foreground(false);
+		ledger.set_app_foreground(false);
+		ledger.set_keep_alive(&ProductId::for_test("a.dot"), WorkerKeepAlive::OnDemand);
+		ledger.set_keep_alive(&ProductId::for_test("a.dot"), WorkerKeepAlive::OnDemand);
+
+		assert_eq!(recorder.seen(), vec![start("a.dot"), stop("a.dot")]);
+		assert_eq!(ledger.count(&ProductId::for_test("a.dot")), 0);
+	}
+
+	/// The foreground hold is one holder among the others: the background
+	/// releases only its own reference, so a room screen that holds the worker
+	/// keeps it running, and the worker stops when the screen closes.
+	#[test]
+	fn the_background_releases_only_the_foreground_hold() {
+		let (ledger, recorder) = observed();
+		ledger.set_keep_alive(&ProductId::for_test("a.dot"), WorkerKeepAlive::Foreground);
+		ledger.set_app_foreground(true);
+		ledger.acquire(&ProductId::for_test("a.dot"));
+
+		ledger.set_app_foreground(false);
+		assert_eq!(ledger.count(&ProductId::for_test("a.dot")), 1);
+		assert_eq!(recorder.seen(), vec![start("a.dot")]);
+
+		ledger.release(&ProductId::for_test("a.dot"));
+		assert_eq!(recorder.seen(), vec![start("a.dot"), stop("a.dot")]);
+	}
+
+	/// A product that declares nothing gets no hold from the foreground, and
+	/// each product that declares one gets its own.
+	#[test]
+	fn only_the_products_that_declare_it_are_held() {
+		let (ledger, recorder) = observed();
+		ledger.set_keep_alive(&ProductId::for_test("b.dot"), WorkerKeepAlive::Foreground);
+		ledger.set_keep_alive(&ProductId::for_test("a.dot"), WorkerKeepAlive::Foreground);
+		ledger.set_keep_alive(&ProductId::for_test("c.dot"), WorkerKeepAlive::OnDemand);
+
+		ledger.set_app_foreground(true);
+		ledger.set_app_foreground(false);
+
+		assert_eq!(
+			recorder.seen(),
+			vec![start("a.dot"), start("b.dot"), stop("a.dot"), stop("b.dot")]
+		);
+		assert_eq!(ledger.count(&ProductId::for_test("c.dot")), 0);
+	}
+
+	/// A declaration that comes before the observer is kept with its
+	/// transition, as a reference is.
+	#[test]
+	fn a_foreground_hold_before_the_observer_is_reported_once_it_arrives() {
+		let ledger = WorkerLedger::default();
+		ledger.set_app_foreground(true);
+		ledger.set_keep_alive(&ProductId::for_test("a.dot"), WorkerKeepAlive::Foreground);
+
+		let recorder = Arc::new(Recorder::default());
+		assert!(ledger.install_demand_observer(recorder.clone()));
+
+		assert_eq!(recorder.seen(), vec![start("a.dot")]);
 	}
 
 	/// Observer that takes and drops a reference of its own from inside the

@@ -15,11 +15,14 @@ public protocol ProductPermissionGuarding: Sendable {
         permissions: [ProductPermission]
     ) async throws -> Bool
 
+    /// The decision for the core. Throws ``ProductPermissionPromptError`` when no screen gets an answer, so the
+    /// core keeps no refusal. The Bool requests above give false for that case.
     func requestDevicePermissionDecision(
         productId: String,
         capability: DeviceCapabilityType
     ) async throws -> PermissionDecision
 
+    /// The decision for the core. Throws as ``requestDevicePermissionDecision(productId:capability:)`` does.
     func requestPermissionsDecision(
         productId: String,
         permissions: [ProductPermission]
@@ -62,24 +65,26 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
         productId: String,
         permission: ProductPermission
     ) async throws -> Bool {
-        switch permission {
-        case let .networkAccess(domain):
-            try await networkHandler.request(productId: productId, domain: domain)
-        case let .accountAccess(targetProductId):
-            try await accountHandler.request(
-                productId: productId,
-                targetProductId: targetProductId
-            )
-        case let .deviceCapability(capability):
-            try await deviceHandler.request(productId: productId, capability: capability)
-        case .balanceAccess,
-             .webRtcAccess,
-             .chainSubmitAccess,
-             .preimageSubmitAccess,
-             .statementSubmitAccess,
-             .userIdentityAccess,
-             .nftPurseRead:
-            try await remoteHandler.request(productId: productId, permission: permission)
+        try await answeredOrFalse {
+            switch permission {
+            case let .networkAccess(domain):
+                try await networkHandler.request(productId: productId, domain: domain)
+            case let .accountAccess(targetProductId):
+                try await accountHandler.request(
+                    productId: productId,
+                    targetProductId: targetProductId
+                )
+            case let .deviceCapability(capability):
+                try await deviceHandler.request(productId: productId, capability: capability)
+            case .balanceAccess,
+                 .webRtcAccess,
+                 .chainSubmitAccess,
+                 .preimageSubmitAccess,
+                 .statementSubmitAccess,
+                 .userIdentityAccess,
+                 .nftPurseRead:
+                try await remoteHandler.request(productId: productId, permission: permission)
+            }
         }
     }
 
@@ -100,10 +105,9 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
         let unique = notYetGranted.removingDuplicates()
         guard !unique.isEmpty else { return true }
 
-        let decision = await requester.promptBatched(
-            productId: productId,
-            permissions: unique
-        )
+        let decision = try await answeredOrNil {
+            try await requester.promptBatched(productId: productId, permissions: unique)
+        }
 
         switch decision {
         case .allowAlways:
@@ -116,7 +120,8 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
                 repository.grantOneTime(productId: productId, permission: permission)
             }
             return true
-        case .deny:
+        case .deny,
+             nil:
             return false
         }
     }
@@ -141,7 +146,7 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
             undecided.append(permission)
         }
         guard !undecided.isEmpty else { return .allowAlways }
-        return await requester.promptBatched(productId: productId, permissions: undecided)
+        return try await requester.promptBatched(productId: productId, permissions: undecided)
     }
 
     public func consumePermission(
@@ -185,6 +190,22 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
              .userIdentityAccess,
              .nftPurseRead:
             try await remoteHandler.isGranted(productId: productId, permission: permission)
+        }
+    }
+}
+
+private extension ProductPermissionGuard {
+    /// The callers of the Bool requests expect a yes or a no. A prompt with no answer is a no for this request
+    /// only, and the handlers keep nothing for it.
+    func answeredOrFalse(_ request: () async throws -> Bool) async throws -> Bool {
+        try await answeredOrNil(request) ?? false
+    }
+
+    func answeredOrNil<Value>(_ request: () async throws -> Value) async throws -> Value? {
+        do {
+            return try await request()
+        } catch is ProductPermissionPromptError {
+            return nil
         }
     }
 }

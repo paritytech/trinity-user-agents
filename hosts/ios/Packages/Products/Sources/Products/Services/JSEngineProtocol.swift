@@ -39,10 +39,16 @@ public protocol JSEngineProtocol: AnyObject {
 
     /// Register a handler that decides whether to grant media capture permissions.
     func registerJSDeviceCapabilityHandler(_ handler: @escaping JSDeviceCapabilityHandler) async
+
+    /// Register a handler called once when the engine's process ends on its own, which leaves
+    /// nothing running. An engine without a separate process never calls it.
+    func registerTerminationHandler(_ handler: @escaping @Sendable () -> Void) async
 }
 
 public extension JSEngineProtocol {
     func initialize() async throws {
         try await initialize(with: [])
     }
+
+    func registerTerminationHandler(_: @escaping @Sendable () -> Void) async {}
 }

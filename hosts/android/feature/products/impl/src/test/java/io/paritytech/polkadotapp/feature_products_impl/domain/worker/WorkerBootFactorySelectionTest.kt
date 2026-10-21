@@ -3,8 +3,10 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.worker
 import dagger.Lazy
 import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
+import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.BindableProductsBotApi
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.HostApiProductsScriptExecutor
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIChatWorker
@@ -25,7 +27,7 @@ import org.mockito.Mockito.verifyNoInteractions
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class WorkerBootFactorySelectionTest {
-    private val productId = ProductId.fromStoredValue("chat.dot")
+    private val productId = ProductId.fromStoredValue("coinflip.dot")
     private val botApi = BindableProductsBotApi(mock(), mock())
 
     private fun TestScope.factory(
@@ -38,6 +40,9 @@ class WorkerBootFactorySelectionTest {
         runtimeSettings = runtimeSettings,
         runtimeProvider = Lazy { runtimeProvider },
         workerSupervisor = Lazy { workerSupervisor },
+        scriptResolver = object : ProductScriptResolver {
+            override suspend fun resolveWorker(productId: ProductId) = Result.failure<ProductExecutable.Worker>(IllegalStateException("no worker"))
+        },
     )
 
     private fun settingsWith(enabled: Boolean): ProductRuntimeSettings {
@@ -107,12 +112,36 @@ class WorkerBootFactorySelectionTest {
         verifyNoInteractions(scriptExecutorFactory)
     }
 
+    // The chat product needs the core's PersonChat, so the setting that sends other products to the JS
+    // host must not send it there.
     @Test
-    fun `a construction failure on the core arm surfaces instead of falling back`() = runTest {
+    fun `the chat product boots on the core with the setting off`() = runTest {
+        val chat = ProductId.fromStoredValue("chat.dot")
         val runtimeProvider: TrUAPIHostRuntimeProvider = mock()
         val runtime: TrUAPIHostRuntime = mock()
         whenever(runtimeProvider.runtime()).thenReturn(Result.success(runtime))
-        whenever(runtime.acquireWorker(productId.value)).thenThrow(IllegalStateException("acquireWorker boom"))
+        val scriptExecutorFactory: HostApiProductsScriptExecutor.Factory = mock()
+        val workerSupervisor: TrUAPIWorkerSupervisor = mock()
+        whenever(workerSupervisor.executionState(chat)).thenReturn(emptyFlow())
+        val factory = factory(
+            settingsWith(enabled = false),
+            runtimeProvider = runtimeProvider,
+            workerSupervisor = workerSupervisor,
+            scriptExecutorFactory = scriptExecutorFactory,
+        )
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+
+        val worker = factory.boot(chat, botApi, scope)
+        advanceUntilIdle()
+
+        assertTrue("the chat product must boot on the core", worker is TrUAPIChatWorker)
+        verifyNoInteractions(scriptExecutorFactory)
+    }
+
+    @Test
+    fun `a construction failure on the core arm surfaces instead of falling back`() = runTest {
+        val runtimeProvider: TrUAPIHostRuntimeProvider = mock()
+        whenever(runtimeProvider.runtime()).thenReturn(Result.failure(IllegalStateException("no core runtime")))
         val scriptExecutorFactory: HostApiProductsScriptExecutor.Factory = mock()
         val factory = factory(
             settingsWith(enabled = true),

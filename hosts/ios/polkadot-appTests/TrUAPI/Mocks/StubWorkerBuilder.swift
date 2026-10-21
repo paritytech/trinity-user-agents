@@ -15,6 +15,7 @@ final class StubWorkerBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
         var executions: [ProductId: MockProductExecution] = [:]
         var cardsWhenTheEngineBooted: [PocketCard] = []
         var bridge: ProductPocketHostBridge?
+        var engine: MockJSEngine?
         var cannotBuild: Bool
         var engineFails: Bool
         var buildCount = 0
@@ -35,6 +36,11 @@ final class StubWorkerBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
     /// The bridge of the worker built last, so a test can read the slice the
     /// core is being served after the collection moves.
     var bridge: ProductPocketHostBridge? { state.withLock { $0.bridge } }
+    /// The engine of the worker built last, so a test can call the native functions of its page.
+    private(set) var engine: MockJSEngine? {
+        get { state.withLock { $0.engine } }
+        set { state.withLock { $0.engine = newValue } }
+    }
     /// Advances only when a test resumes a sleep, so the pauses inside a boot
     /// are placed by the test rather than by the wall clock.
     let clock = ManualClock()
@@ -117,7 +123,9 @@ final class StubWorkerBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
                 if isFirstBuild, let firstStartFailsAfter {
                     return SlowFailingJSEngine(after: firstStartFailsAfter, clock: clock)
                 }
-                return MockJSEngine()
+                let engine = MockJSEngine()
+                self?.engine = engine
+                return engine
             }
         )
     }

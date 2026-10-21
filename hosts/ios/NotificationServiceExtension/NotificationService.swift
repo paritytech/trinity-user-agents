@@ -20,6 +20,16 @@ class NotificationService: UNNotificationServiceExtension {
 
         self.contentHandler = contentHandler
 
+        let productContent = ProductPushContent.make(
+            userInfo: request.content.userInfo,
+            original: request.content,
+            fallback: (String(localized: .commonTitle), String(localized: .bestAttemptMessage))
+        )
+        if let productContent {
+            contentHandler(productContent)
+            return
+        }
+
         do {
             let message = try NotificationMessage(userInfo: request.content.userInfo)
 

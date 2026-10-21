@@ -18,12 +18,22 @@ struct HostPlacedProduct: Sendable {
 
     /// Reserved identity as a function of the network TLD, so one entry covers every chain.
     let productId: @Sendable (String) -> String
+
+    /// Placed only when workers run on the core runtime, for a product that needs a service only
+    /// the core serves (the chat product's `PersonChat`).
+    var requiresCoreRuntime = false
 }
 
 enum HostPlacedProducts {
     /// Whether the host places these is ``SettingsManagerProtocol/isHostPlacementEnabled``.
     static let all: [HostPlacedProduct] = [
-        HostPlacedProduct(roomId: "jollity", fallbackName: "Jollity", productId: BuiltInProduct.dim2(for:))
+        HostPlacedProduct(roomId: "jollity", fallbackName: "Jollity", productId: BuiltInProduct.dim2(for:)),
+        HostPlacedProduct(
+            roomId: "chats",
+            fallbackName: "Chats",
+            productId: BuiltInProduct.chat(for:),
+            requiresCoreRuntime: true
+        )
     ]
 
     /// Read against the candidate's own TLD, so it answers without the chain read that listing

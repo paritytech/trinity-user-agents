@@ -9,12 +9,14 @@ import dagger.hilt.components.SingletonComponent
 import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
 import io.paritytech.polkadotapp.database.AppDatabase
 import io.paritytech.polkadotapp.database.dao.BrowserTabDao
+import io.paritytech.polkadotapp.database.dao.ChatBotPersonaDao
 import io.paritytech.polkadotapp.database.dao.ChatDraftDao
 import io.paritytech.polkadotapp.database.dao.ChatMessageCompactionDao
 import io.paritytech.polkadotapp.database.dao.ChatMessageDao
 import io.paritytech.polkadotapp.database.dao.ChatRequestDao
 import io.paritytech.polkadotapp.database.dao.ChatRequestSyncStateDao
 import io.paritytech.polkadotapp.database.dao.ChatRoomDao
+import io.paritytech.polkadotapp.database.dao.ChatRoomDeclarationsDao
 import io.paritytech.polkadotapp.database.dao.ChatSearchRecentDao
 import io.paritytech.polkadotapp.database.dao.CoinDao
 import io.paritytech.polkadotapp.database.dao.ContactDao
@@ -175,6 +177,14 @@ class DbModule {
     @Provides
     @Singleton
     fun provideChatRoomDao(appDatabase: AppDatabase): ChatRoomDao = appDatabase.chatRoomDao()
+
+    @Provides
+    @Singleton
+    fun provideChatRoomDeclarationsDao(appDatabase: AppDatabase): ChatRoomDeclarationsDao = appDatabase.chatRoomDeclarationsDao()
+
+    @Provides
+    @Singleton
+    fun provideChatBotPersonaDao(appDatabase: AppDatabase): ChatBotPersonaDao = appDatabase.chatBotPersonaDao()
 
     @Provides
     @Singleton

@@ -14,4 +14,9 @@ class ChatRequestRenewalScheduler @Inject constructor(
     override fun initialize(): Result<Unit> = runCancellableCatching {
         ChatRequestRenewalWorker.schedule(appContext)
     }
+
+    // A periodic job outlives the launch that scheduled it.
+    fun cancel(): Result<Unit> = runCancellableCatching {
+        ChatRequestRenewalWorker.cancel(appContext)
+    }
 }

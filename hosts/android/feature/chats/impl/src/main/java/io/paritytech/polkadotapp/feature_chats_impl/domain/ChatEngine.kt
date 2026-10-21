@@ -42,6 +42,13 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReaction
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatOriginCustomConfiguration
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatVariant
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ContactOrigin
@@ -49,6 +56,12 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.MessageRevision
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.extensionOrNull
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.isExtensionChat
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomLifecycle
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.NoChatRoomLifecycle
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.usecase.DeleteRoomUseCase
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatAppearance
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageProcessingRepository
@@ -74,6 +87,9 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.chatSummaryOrd
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toDomain
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.DmChatMessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.ProductFeedApplier
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.ProductRoomAdditions
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.ProductRoomDeclarer
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.catch
@@ -111,6 +127,9 @@ class ChatEngine @Inject constructor(
     private val originConfigurations: Map<String, @JvmSuppressWildcards ChatOriginCustomConfiguration>,
     private val chatRoomRepository: ChatRoomRepository,
     private val deleteRoomUseCase: DeleteRoomUseCase,
+    private val productRoomDeclarer: ProductRoomDeclarer,
+    private val productFeedApplier: ProductFeedApplier,
+    private val productRoomAdditions: ProductRoomAdditions,
 ) : ChatMessageSender {
     private val savedMessagesFlow = MutableSharedFlow<ChatMessage>(extraBufferCapacity = 64)
 
@@ -136,8 +155,8 @@ class ChatEngine @Inject constructor(
                         .map(::getContactChatDisplay)
                 }
 
-            is ChatVariant.Extension -> flowOf {
-                val roomMetadata = chatRoomRepository.getRoomMetadata(chatId)
+            // The product can rename an open room, so the header follows the stored name and icon.
+            is ChatVariant.Extension -> chatRoomRepository.subscribeRoomMetadata(chatId).map { roomMetadata ->
                 getDefaultChatExtensionDisplay(chatId)
                     .map { chatDisplayGenerator.applyRoomMetadata(roomMetadata, it) }
             }
@@ -615,6 +634,35 @@ class ChatEngine @Inject constructor(
         }
     }
 
+    /** Gives an action of the user that is not a saved message to the extension of the room. */
+    suspend fun dispatchUserEvent(chatId: ChatId, event: ChatRoomUserEvent) {
+        chatExtensionRegistry.getExtensionForChat(chatId)?.onUserEvent(chatId, event)
+    }
+
+    /** Tells the extension of a room the newest message that the user saw, up to [timestamp]. */
+    suspend fun reportSeen(chatId: ChatId, timestamp: Timestamp) {
+        if (!chatId.isExtensionChat()) return
+        val messageId = chatMessageRepository.getNewestVisibleMessageIdUpTo(chatId, timestamp) ?: return
+        dispatchUserEvent(chatId, ChatRoomUserEvent.MessageSeen(messageId))
+    }
+
+    suspend fun roomLifecycle(chatId: ChatId): ChatRoomLifecycle =
+        chatExtensionRegistry.getExtensionForChat(chatId)?.roomLifecycle(chatId) ?: NoChatRoomLifecycle
+
+    suspend fun roomQuerying(chatId: ChatId): ProductChatQuerying? =
+        chatExtensionRegistry.getExtensionForChat(chatId)?.roomQuerying(chatId)
+
+    /** True while the room exists. A product room goes away when its product deletes it or the user uninstalls the product. */
+    fun observeRoomExists(chatId: ChatId): Flow<Boolean> {
+        val extension = chatId.extensionOrNull() ?: return flowOfValue(true)
+        return chatRoomRepository.subscribeRoomsByExtension(extension.extensionId)
+            .map { rooms -> chatId in rooms }
+            .distinctUntilChanged()
+    }
+
+    suspend fun productAppAddress(chatId: ChatId): String? =
+        chatExtensionRegistry.getExtensionForChat(chatId)?.productAppAddress(chatId)
+
     fun subscribeRevisions(chatId: ChatId): Flow<Map<ChatMessageId, MessageRevision>> {
         return flowOfAll {
             val decoder = getCustomContentDecoder(chatId)
@@ -777,6 +825,32 @@ class ChatEngine @Inject constructor(
         override fun subscribeOwnRooms(): Flow<List<ChatId>> {
             return chatRoomRepository.subscribeRoomsByExtension(extensionId)
         }
+
+        override suspend fun roomDeclarations(chatId: ChatId): ChatRoomDeclarations? =
+            productRoomDeclarer.declarations(extensionId, chatId)
+
+        override suspend fun setRoomConfig(chatId: ChatId, config: ChatRoomConfigModel): Result<Unit> =
+            productRoomDeclarer.setConfig(extensionId, chatId, config)
+                .onSuccess { messagesChangedFlow.tryEmit(Unit) }
+
+        override suspend fun setRoomMetadata(chatId: ChatId, name: String, metadata: ChatRoomMetadataModel): Result<Unit> =
+            productRoomDeclarer.setMetadata(extensionId, chatId, name, metadata)
+
+        override suspend fun setRoomPreview(chatId: ChatId, preview: ChatRoomPreviewModel): Result<Unit> =
+            productRoomDeclarer.setPreview(extensionId, chatId, preview)
+
+        override suspend fun setRoomFooter(chatId: ChatId, footer: ChatRoomFooterModel): Result<Unit> =
+            productRoomDeclarer.setFooter(extensionId, chatId, footer)
+
+        override suspend fun applyFeedUpdate(chatId: ChatId, update: ProductFeedUpdateModel): Result<Unit> =
+            productFeedApplier.apply(extensionId, chatId, update, getCustomContentDecoder(chatId)) { saveMessage(it) }
+                .onSuccess { messagesChangedFlow.tryEmit(Unit) }
+
+        override suspend fun setRoomFeatures(chatId: ChatId, features: ChatRoomFeaturesModel): Result<Unit> =
+            productRoomAdditions.setFeatures(extensionId, chatId, features)
+
+        override suspend fun setRoomCall(chatId: ChatId, call: ChatRoomCallModel?): Result<Unit> =
+            productRoomAdditions.setCall(extensionId, chatId, call)
     }
 }
 

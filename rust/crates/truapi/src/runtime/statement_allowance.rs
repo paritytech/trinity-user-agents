@@ -83,6 +83,9 @@ pub enum StatementAllowanceError {
 	/// Bulletin allowance polling timed out.
 	#[error("timed out waiting for Bulletin authorization")]
 	BulletinAuthorizationTimeout,
+	/// The statement store did not let a delivery account post in time.
+	#[error("timed out waiting for the statement allowance of a delivery account")]
+	StatementAllowanceTimeout,
 	/// The extended Bulletin authorization still cannot hold the payload.
 	#[error("Bulletin authorization holds {remained_size} bytes after extension, {size} needed")]
 	BulletinAuthorizationTooSmall {
@@ -456,6 +459,130 @@ pub struct LongTermStorageClaim<'a> {
 	pub period: u32,
 	/// Ring the membership proof is built against.
 	pub ring: &'a RingParams,
+}
+
+/// The parameters of a notification slot claim for a chat-request delivery account.
+pub struct NotificationSlotClaim<'a> {
+	/// People connection the claim is submitted on.
+	pub rpc: &'a RpcClient,
+	/// People runtime metadata.
+	pub metadata: &'a Metadata,
+	/// People signed-extension state.
+	pub chain_state: &'a ChainState,
+	/// Authorizes synchronous personhood operations for the selected wallet.
+	pub signer: &'a dyn PersonhoodSigner,
+	/// People suffix used for the product-scoped alias and proof.
+	pub network_suffix: &'a [u8],
+	/// The delivery account the slot lets post one statement.
+	pub target: &'a [u8; 32],
+	/// Notification period.
+	pub period: u32,
+	/// Rings the device is a member of, in the order to try them.
+	pub rings: &'a [RingParams],
+}
+
+/// Claim a notification slot of `period` for `target`, in the first ring with
+/// a free slot. `NoFreeNotificationSlot` when every slot of every ring is
+/// taken.
+pub async fn claim_notification_slot(
+	params: NotificationSlotClaim<'_>,
+) -> Result<String, StatementAllowanceError> {
+	let NotificationSlotClaim {
+		rpc,
+		metadata,
+		chain_state,
+		signer,
+		network_suffix,
+		target,
+		period,
+		rings,
+	} = params;
+	for ring in rings {
+		let revision = ring::read_ring_revision(
+			rpc,
+			metadata,
+			ring.collection,
+			ring.ring_index,
+			&ring.block_hash,
+		)
+		.await?;
+		let mut skipped_duplicate_seqs = Vec::new();
+		loop {
+			let seq = match slot::scan_notification_seq_excluding(
+				rpc,
+				metadata,
+				signer,
+				ring.collection,
+				network_suffix,
+				period,
+				&skipped_duplicate_seqs,
+			)
+			.await
+			{
+				Ok(seq) => seq,
+				Err(StatementAllowanceError::Slot(SlotError::NoFreeNotificationSlot {
+					..
+				})) => {
+					break;
+				},
+				Err(error) => return Err(error),
+			};
+			let context = slot::derive_notification_context(network_suffix, period, seq);
+			let call =
+				extrinsic::build_set_notification_account_call(metadata, period, seq, target)?;
+			let message = extension::build_proof_message(metadata, &call, chain_state)?;
+			let ring_proof = signer.prove(ring, &context, &message)?;
+			let as_resources_extra = extrinsic::build_notification_extra(
+				metadata,
+				&ring_proof,
+				ring.ring_index,
+				revision,
+				ring.collection,
+			)?;
+			let extrinsic = extrinsic::build_unsigned_extrinsic(
+				metadata,
+				chain_state,
+				&call,
+				&as_resources_extra,
+			)?;
+			debug!(period, seq, ring_index = ring.ring_index, "submitting notification slot claim");
+			match rpc.submit_and_watch(&extrinsic).await {
+				Ok(block_hash) => return Ok(block_hash),
+				Err(err) if duplicate_submit_error(&err.to_string()) => {
+					skipped_duplicate_seqs.push(seq)
+				},
+				Err(err) => return Err(err),
+			}
+		}
+	}
+	Err(SlotError::NoFreeNotificationSlot { period }.into())
+}
+
+/// Whether the statement store already lets `account` post: a notification
+/// slot or a statement-store slot names it.
+pub async fn has_statement_allowance(
+	rpc: &RpcClient,
+	account: &[u8; 32],
+) -> Result<bool, StatementAllowanceError> {
+	Ok(rpc.get_storage(&slot::statement_allowance_key(account)).await?.is_some())
+}
+
+/// Wait until the statement store lets `account` post, up to `timeout`.
+pub async fn wait_statement_allowance(
+	rpc: &RpcClient,
+	account: &[u8; 32],
+	timeout: Duration,
+) -> Result<(), StatementAllowanceError> {
+	let started = Instant::now();
+	loop {
+		if has_statement_allowance(rpc, account).await? {
+			return Ok(());
+		}
+		let Some(remaining) = timeout.checked_sub(started.elapsed()) else {
+			return Err(StatementAllowanceError::StatementAllowanceTimeout);
+		};
+		futures_timer::Delay::new(remaining.min(Duration::from_secs(2))).await;
+	}
 }
 
 /// Bulletin authorization state for one account.

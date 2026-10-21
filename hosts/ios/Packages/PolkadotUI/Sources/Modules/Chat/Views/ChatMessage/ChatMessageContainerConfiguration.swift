@@ -71,6 +71,8 @@ public struct ChatMessageContainerConfiguration: HashableContentConfiguration {
     let layoutType: LayoutType
     let statusLayout: StatusLayout
     private(set) var menuProvider: (() -> [UIMenuElement])?
+    /// The participant that wrote the message, drawn above the bubble in a room with many participants.
+    private(set) var author: ChatMessageAuthor?
 
     var canReact: Bool {
         addReaction != nil
@@ -129,7 +131,8 @@ public struct ChatMessageContainerConfiguration: HashableContentConfiguration {
             lhs.identifier == rhs.identifier &&
             lhs.canReply == rhs.canReply &&
             lhs.messageReaction == rhs.messageReaction &&
-            lhs.layoutType == rhs.layoutType
+            lhs.layoutType == rhs.layoutType &&
+            lhs.author == rhs.author
     }
 
     public func hash(into hasher: inout Hasher) {
@@ -141,10 +144,15 @@ public struct ChatMessageContainerConfiguration: HashableContentConfiguration {
         hasher.combine(statusConfiguration)
         hasher.combine(messageReaction)
         hasher.combine(layoutType)
+        hasher.combine(author)
     }
 
     public mutating func setActions(_ actions: (() -> [UIMenuElement])?) {
         menuProvider = actions
+    }
+
+    public mutating func setAuthor(_ author: ChatMessageAuthor?) {
+        self.author = author
     }
 }
 
@@ -160,6 +168,8 @@ final class ChatMessageContainerView: UIView, UIContentView {
     private var replyQuoteView: ChatReplyQuoteView?
     private var statusView: (UIView & UIContentView)?
     private var reactionsView: (UIView & UIContentView)?
+    private var authorView: ChatMessageAuthorView?
+    private var bubbleBelowAuthorConstraint: Constraint?
 
     // MARK: - Constraints References
 
@@ -256,6 +266,7 @@ final class ChatMessageContainerView: UIView, UIContentView {
             bubbleTrailingConstraint?.isActive = true
         }
 
+        updateAuthor(config.author)
         updateSubviews(with: config)
         updateLayoutConstraints()
 
@@ -306,6 +317,36 @@ final class ChatMessageContainerView: UIView, UIContentView {
 
         reactionsView.apply(reactionsConfiguration) { addSubview($0) }
         reactionsView.map { bringSubviewToFront($0) }
+    }
+
+    private func updateAuthor(_ author: ChatMessageAuthor?) {
+        guard let author else {
+            authorView?.removeFromSuperview()
+            authorView = nil
+            bubbleBelowAuthorConstraint = nil
+            bubbleTopConstraint?.activate()
+            return
+        }
+
+        let view = authorView ?? makeAuthorView()
+        view.configure(author)
+    }
+
+    private func makeAuthorView() -> ChatMessageAuthorView {
+        let view = ChatMessageAuthorView()
+        addSubview(view)
+        view.snp.makeConstraints {
+            $0.top.equalToSuperview()
+            $0.leading.equalTo(bubbleView)
+            $0.trailing.lessThanOrEqualToSuperview()
+        }
+
+        bubbleTopConstraint?.deactivate()
+        bubbleView.snp.makeConstraints {
+            bubbleBelowAuthorConstraint = $0.top.equalTo(view.snp.bottom).offset(DSSpacings.extraTiny).constraint
+        }
+        authorView = view
+        return view
     }
 
     // MARK: - Centralized Layout Logic

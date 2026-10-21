@@ -302,6 +302,21 @@ impl StatementStoreAllowanceKey {
 	}
 }
 
+/// What delivers a chat request of the chat product.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatDelivery {
+	/// The delivery account of `period`, which a notification slot lets post
+	/// one statement.
+	Anonymous {
+		/// The notification period.
+		period: u32,
+		/// The delivery account.
+		account_id: [u8; 32],
+	},
+	/// No notification slot is free: the request goes out under the identity.
+	NoSlot,
+}
+
 /// Host account authority used by product runtimes.
 #[async_trait]
 pub trait ProductAuthority: Send + Sync {
@@ -489,6 +504,48 @@ pub trait ProductAuthority: Send + Sync {
 		account: ProductAccountId,
 		payload: Vec<u8>,
 	) -> Result<[u8; 64], AuthorityError>;
+
+	/// Sign exact bytes with the identity account, for the chat product's
+	/// statements and chat requests. Callers check the payload's shape first;
+	/// an authority without the identity entropy is `Unavailable`.
+	async fn sign_as_identity(
+		&self,
+		_session: &AuthoritySession,
+		_payload: Vec<u8>,
+	) -> Result<[u8; 64], AuthorityError> {
+		Err(AuthorityError::Unavailable {
+			reason: "this host cannot sign as the identity account".to_string(),
+		})
+	}
+
+	/// Prepare the delivery of chat request `request_id` of `size` bytes: the
+	/// account of the current notification period, with a notification slot
+	/// claimed for it, or [`ChatDelivery::NoSlot`] when no slot is free. An
+	/// authority without the root entropy is `Unavailable`.
+	async fn prepare_chat_delivery(
+		&self,
+		_session: &AuthoritySession,
+		_request_id: String,
+		_size: u32,
+	) -> Result<ChatDelivery, AuthorityError> {
+		Err(AuthorityError::Unavailable {
+			reason: "this host has no chat-request delivery accounts".to_string(),
+		})
+	}
+
+	/// Sign `payload` with the delivery account of `request_id` in `period`.
+	/// Returns the account and the signature.
+	async fn sign_as_chat_delivery(
+		&self,
+		_session: &AuthoritySession,
+		_request_id: String,
+		_period: u32,
+		_payload: Vec<u8>,
+	) -> Result<([u8; 32], [u8; 64]), AuthorityError> {
+		Err(AuthorityError::Unavailable {
+			reason: "this host has no chat-request delivery accounts".to_string(),
+		})
+	}
 
 	/// Derive product-scoped entropy for a connected session.
 	fn derive_entropy(

@@ -21,6 +21,90 @@ pub enum HostRejection {
 	},
 }
 
+/// Why a native host refused a chat feed update.
+#[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
+pub enum NativeChatFeedRejection {
+	/// The update names a message the room does not hold.
+	#[error("the room holds no such message")]
+	UnknownMessage,
+	/// `New` names a message the room holds already.
+	#[error("the room holds this message already")]
+	DuplicateMessage,
+	/// The update edits a message the product did not write.
+	#[error("the product did not write this message")]
+	NotOwner,
+	/// Any other refusal.
+	#[error("{reason}")]
+	Rejected {
+		/// Human-readable rejection reason.
+		reason: String,
+	},
+}
+
+/// Why the core did not stage a chat attachment as a preimage.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
+pub enum NativeChatStageRejection {
+	/// The room does not declare `preimage_attachments`.
+	#[error("the room does not declare preimage attachments")]
+	NotDeclared,
+	/// The attachment is larger than the core stages.
+	#[error("the attachment is larger than {max_bytes} bytes")]
+	TooLarge {
+		/// The largest attachment the core stages, in bytes.
+		max_bytes: u32,
+	},
+	/// The user refused `PreimageSubmit` for the product.
+	#[error("the user refused preimage submission for the product")]
+	PermissionDenied,
+	/// No Bulletin allowance is available for the product.
+	#[error("no Bulletin allowance for the product: {reason}")]
+	AllowanceUnavailable {
+		/// Human-readable reason.
+		reason: String,
+	},
+	/// The submission failed.
+	#[error("the preimage submission failed: {reason}")]
+	SubmitFailed {
+		/// Human-readable reason.
+		reason: String,
+	},
+}
+
+impl From<crate::ChatStageRejection> for NativeChatStageRejection {
+	fn from(rejection: crate::ChatStageRejection) -> Self {
+		match rejection {
+			crate::ChatStageRejection::NotDeclared => Self::NotDeclared,
+			crate::ChatStageRejection::TooLarge { max_bytes } => Self::TooLarge { max_bytes },
+			crate::ChatStageRejection::PermissionDenied => Self::PermissionDenied,
+			crate::ChatStageRejection::AllowanceUnavailable { reason } => {
+				Self::AllowanceUnavailable { reason }
+			},
+			crate::ChatStageRejection::SubmitFailed { reason } => Self::SubmitFailed { reason },
+		}
+	}
+}
+
+impl From<NativeChatFeedRejection> for truapi::latest::HostChatUpdateFeedError {
+	fn from(rejection: NativeChatFeedRejection) -> Self {
+		match rejection {
+			NativeChatFeedRejection::UnknownMessage => Self::UnknownMessage,
+			NativeChatFeedRejection::DuplicateMessage => Self::DuplicateMessage,
+			NativeChatFeedRejection::NotOwner => Self::NotOwner,
+			NativeChatFeedRejection::Rejected { reason } => Self::Unknown { reason },
+		}
+	}
+}
+
+impl From<uniffi::UnexpectedUniFFICallbackError> for NativeChatFeedRejection {
+	fn from(err: uniffi::UnexpectedUniFFICallbackError) -> Self {
+		tracing::warn!(
+			reason = %err.reason,
+			"host chat feed callback threw an undeclared error; reporting it as a rejection"
+		);
+		NativeChatFeedRejection::Rejected { reason: err.reason }
+	}
+}
+
 impl From<HostRejection> for v01::GenericError {
 	fn from(err: HostRejection) -> Self {
 		let HostRejection::Rejected { reason } = err;

@@ -9,9 +9,13 @@ import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.repository.awaitAccountsInitialized
 import io.paritytech.polkadotapp.feature_chats_api.deeplink.ChatDeeplinkMapper
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatFeedPayload
 import io.paritytech.polkadotapp.feature_chats_impl.ChatsRouter
+import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.StartChatDataUseCase
 import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.WaitForChatExistsUseCase
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.search.models.toChatFeedPayload
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
@@ -25,6 +29,8 @@ internal class ChatDeepLinkHandler @Inject constructor(
     private val chatsRouter: ChatsRouter,
     private val chatDeeplinkMapper: ChatDeeplinkMapper,
     private val waitForChatExistsUseCase: WaitForChatExistsUseCase,
+    private val personChatMode: PersonChatMode,
+    private val startChatDataUseCase: StartChatDataUseCase,
 ) : DeepLinkHandler {
     override suspend fun canHandle(data: Uri) =
         data.scheme == DeepLinkHandler.APP_SCHEME && data.host == CHAT_HOST
@@ -37,9 +43,14 @@ internal class ChatDeepLinkHandler @Inject constructor(
             val deeplinkPayload = chatDeeplinkMapper.fromDeeplink(data)
                 .getOrThrow()
 
-            waitForChatExistsUseCase(deeplinkPayload.chatId)
-
-            val payload = ChatFeedPayload.existingChat(deeplinkPayload.chatId)
+            // The chat with a contact is the chat product's on an install whose chats it runs (HX2).
+            val contact = deeplinkPayload.chatId.contactOrNull()?.takeIf { personChatMode.isProductChat() }
+            val payload = if (contact != null) {
+                startChatDataUseCase(contact.contactAccountId).getOrThrow().toChatFeedPayload()
+            } else {
+                waitForChatExistsUseCase(deeplinkPayload.chatId)
+                ChatFeedPayload.existingChat(deeplinkPayload.chatId)
+            }
 
             withContext(coroutineDispatchers.main) {
                 chatsRouter.openChatFeed(payload)

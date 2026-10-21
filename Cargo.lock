@@ -5758,6 +5758,7 @@ dependencies = [
  "tracing-subscriber",
  "trinity-stack",
  "truapi",
+ "unicode-normalization",
  "unicode-width",
  "zeroize",
 ]

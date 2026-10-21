@@ -8,7 +8,9 @@ import dagger.hilt.components.SingletonComponent
 import io.paritytech.polkadotapp.common.data.network.NetworkApiCreator
 import io.paritytech.polkadotapp.tools_jwt_auth_api.BearerAuth
 import io.paritytech.polkadotapp.tools_media_connection_api.domain.PeerChannelFactory
+import io.paritytech.polkadotapp.tools_media_connection_api.domain.signaling.PeerSignalCoder
 import io.paritytech.polkadotapp.tools_media_connection_impl.RealPeerChannelFactory
+import io.paritytech.polkadotapp.tools_media_connection_impl.signaling.RealPeerSignalCoder
 import io.paritytech.polkadotapp.tools_media_connection_impl.turn.TurnApi
 import okhttp3.OkHttpClient
 import javax.inject.Singleton
@@ -18,6 +20,9 @@ import javax.inject.Singleton
 internal interface MediaConnectionFeatureModule {
     @Binds
     fun bindPeerChannelFactory(impl: RealPeerChannelFactory): PeerChannelFactory
+
+    @Binds
+    fun bindPeerSignalCoder(impl: RealPeerSignalCoder): PeerSignalCoder
 
     companion object {
         @Provides

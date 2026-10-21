@@ -29,7 +29,9 @@ class ChatMessageLocal(
     val searchableContent: String,
     val content: ByteArray,
     val replyToMessageId: String? = null,
-    val isInternal: Boolean
+    val isInternal: Boolean,
+    /** The participant of a product room that wrote the message (Chat Extension v2). Null elsewhere. */
+    val originParticipantId: String? = null,
 ) {
     companion object {
         const val UNORDERED = 0L
@@ -69,6 +71,8 @@ class ChatMessageLocal(
         DEVICE_ADDED,
         DEVICE_REMOVED,
         COMPACTION_COMMIT,
-        COMPACTION_UNAVAILABLE
+        COMPACTION_UNAVAILABLE,
+        PRODUCT_BODY,
+        DELETED,
     }
 }

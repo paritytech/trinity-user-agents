@@ -23,7 +23,7 @@ class PushNotificationService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) = runBlocking {
-        for (handler in handlers) {
+        for (handler in handlers.sortedByDescending { it.priority }) {
             val data = message.data
 
             if (handler.canHandle(data)) {

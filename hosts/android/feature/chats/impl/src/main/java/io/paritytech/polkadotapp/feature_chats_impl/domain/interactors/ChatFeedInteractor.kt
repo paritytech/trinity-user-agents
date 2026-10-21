@@ -34,17 +34,27 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReact
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReactionContent
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatVariant
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.MessageRevision
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.OpenChatRequest
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ProductMessageBody
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.extensionOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isOutgoing
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.isUser
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.onContact
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.userDeclinedIncomingRequest
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatAppearance
 import io.paritytech.polkadotapp.feature_chats_impl.data.AttachmentMetaBuilder
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.HopNodeUrlProvider
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.upload.FileUploadStarter
 import io.paritytech.polkadotapp.feature_chats_impl.data.notifications.ChatNotificationPublisher
+import io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.ProductAttachmentEncoder
+import io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.outbox.ProductAttachmentFailure
+import io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.outbox.ProductAttachmentOutbox
+import io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.outbox.ProductAttachmentUpload
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatDraftRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactsRepository
@@ -58,17 +68,35 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.chatDisplay.ChatDispl
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.IncomingChatRequestProcessor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.error.ChatRequestError
 import io.paritytech.polkadotapp.feature_chats_impl.domain.hop.FileUpload
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatFeedSnapshot
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatPageOutcome
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomSourceContext
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomSourceContextFactory
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceAction
+import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceActionOutcome
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatDisplay
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.InitiateCallResult
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.MessageEditHistoryItem
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.DmChatMessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.ProductAttachmentStager
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.ProductAttachmentStagingGate
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.PublicStorageNotice
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.withOutbox
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.productQueryMessage
+import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
+import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicyProvider
+import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ProductRoomUserActions
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.flow.flowOf as flowOfValue
@@ -97,7 +125,16 @@ class ChatFeedInteractor @Inject internal constructor(
     private val attachmentMetaBuilder: AttachmentMetaBuilder,
     private val attachmentFileStorage: AttachmentFileStorage,
     private val hopNodeUrlProvider: HopNodeUrlProvider,
+    private val roomPolicyProvider: ChatRoomPolicyProvider,
+    private val productRoomUserActions: ProductRoomUserActions,
+    private val roomSourceContextFactory: ChatRoomSourceContextFactory,
+    private val productAttachmentEncoder: ProductAttachmentEncoder,
+    private val attachmentStager: ProductAttachmentStager,
+    private val publicStorageNotice: PublicStorageNotice,
+    private val stagingGate: ProductAttachmentStagingGate,
 ) {
+    private val roomSources = ConcurrentHashMap<ChatId, ChatRoomSourceContext>()
+
     fun initiateCall(chatId: ChatId, callerName: String, withVideo: Boolean): InitiateCallResult {
         val activeCall = callStateTracker.getActiveCall()
 
@@ -134,10 +171,6 @@ class ChatFeedInteractor @Inject internal constructor(
     suspend fun getHeaderRendererForChat(chatId: ChatId): CustomChatHeaderRenderer? =
         chatEngine.getHeaderRendererForChat(chatId)
 
-    fun subscribeChatReactions(chatId: ChatId): Flow<Map<ChatMessageId, List<ChatMessageReaction>>> {
-        return chatEngine.subscribeReactions(chatId)
-    }
-
     suspend fun getMessageOriginDisplayResolver(request: OpenChatRequest): MessageOriginDisplayResolver {
         return when (request) {
             is OpenChatRequest.ExistingChat -> chatEngine.originDisplayResolver(request.chatId)
@@ -173,22 +206,164 @@ class ChatFeedInteractor @Inject internal constructor(
         )
     }
 
-    fun subscribeMessages(chatId: ChatId) = chatEngine.subscribeMessagesFeed(chatId)
+    /**
+     * The window of messages of the room, from the host database or from the product (02-DESIGN §8.3). The attachments
+     * that the host stages show at the newest end until the host sends them (07-LATER §7).
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun subscribeMessages(chatId: ChatId): Flow<ChatFeedSnapshot> = combine(
+        roomSource(chatId).observeSource().flatMapLatest { it.observeSnapshots() },
+        attachmentStager.observe(chatId),
+    ) { snapshot, outbox -> snapshot.withOutbox(outbox, attachmentStager::preview) }
+
+    suspend fun loadOlderMessages(chatId: ChatId): ChatPageOutcome = roomSource(chatId).source().loadOlder()
+
+    suspend fun loadNewerMessages(chatId: ChatId): ChatPageOutcome = roomSource(chatId).source().loadNewer()
+
+    /** Replaces the window with the newest page of the room. */
+    suspend fun showNewestMessages(chatId: ChatId) = roomSource(chatId).source().reload()
+
+    /** Pages until the message is in the window. False when the room has no such message. */
+    suspend fun jumpToMessage(chatId: ChatId, messageId: ChatMessageId): Boolean = roomSource(chatId).source().jump(messageId)
+
+    /** Stops the source of the room and closes the room when it is open. Call it when the room screen goes away. */
+    fun releaseRoom(chatId: ChatId) {
+        roomSources.remove(chatId)?.release()
+    }
 
     suspend fun sendTextMessage(
         chatId: ChatId,
         text: String,
         replyToMessageId: ChatMessageId?
-    ) {
+    ): ChatSourceActionOutcome {
         val content = ChatMessage.Content.Text(text)
+
+        performInProductRoom(chatId, ChatSourceAction.Send(content, replyToMessageId))?.let { return it }
+
         chatEngine.sendUserMessage(
             chatId = chatId,
             content = content,
             replyToMessageId = replyToMessageId
         )
+        return ChatSourceActionOutcome.Done
+    }
+
+    /**
+     * Adds the reaction of the user, or removes it when the user has it. In a host-store room the user has one
+     * reaction a message, so a new emoji replaces the old one.
+     */
+    suspend fun toggleUserReaction(
+        chatId: ChatId,
+        messageId: ChatMessageId,
+        emoji: String,
+        messageReactions: List<ChatMessageReaction>,
+    ): ChatSourceActionOutcome {
+        performInProductRoom(chatId, ChatSourceAction.ToggleReaction(messageId, emoji))?.let { return it }
+
+        val existingUserReaction = messageReactions.find { it.origin.isUser() }
+        if (existingUserReaction != null) removeUserReaction(chatId, existingUserReaction)
+        if (existingUserReaction?.content?.emoji != emoji) addUserReaction(chatId, messageId, ChatMessageReactionContent(emoji))
+        return ChatSourceActionOutcome.Done
+    }
+
+    /** Tells the product of a product-source room that the user saw the message. The host database needs nothing. */
+    suspend fun reportMessageSeen(chatId: ChatId, messageId: ChatMessageId) {
+        performInProductRoom(chatId, ChatSourceAction.MarkSeen(setOf(messageId)))
     }
 
     suspend fun sendAttachmentMessage(
+        chatId: ChatId,
+        contentUri: Uri,
+        mimeType: String,
+        fileSize: InformationSize,
+        text: String?,
+        replyToMessageId: ChatMessageId?
+    ): Result<ChatSourceActionOutcome> {
+        if (roomPolicyProvider.observePolicy(chatId).first() != null) {
+            return sendProductAttachment(chatId, contentUri, mimeType, fileSize, text, replyToMessageId)
+        }
+
+        return sendHostedAttachment(chatId, contentUri, mimeType, fileSize, text, replyToMessageId).map { ChatSourceActionOutcome.Done }
+    }
+
+    /**
+     * An attachment in a product room goes inline, up to 1 MiB, as rich text with one media item (02-DESIGN §3.5). The
+     * product of a product-source room gets it as `NewMessage`; the product of a host-store room gets `MessagePosted`.
+     * In a room that stages attachments, a larger attachment goes to the outbox, and a background job stages it as a
+     * preimage and then sends it (07-LATER §7). In a room that seals attachments, the job seals it in place of a
+     * preimage.
+     */
+    private suspend fun sendProductAttachment(
+        chatId: ChatId,
+        contentUri: Uri,
+        mimeType: String,
+        fileSize: InformationSize,
+        text: String?,
+        replyToMessageId: ChatMessageId?
+    ): Result<ChatSourceActionOutcome> {
+        val upload = uploadFor(chatId)
+        if (upload != null && productAttachmentEncoder.goesToStaging(mimeType, fileSize, upload)) {
+            return productAttachmentEncoder.prepareStaged(contentUri, mimeType, fileSize, upload).map { draft ->
+                attachmentStager.enqueue(chatId, draft, text, replyToMessageId, upload)
+                ChatSourceActionOutcome.Done
+            }
+        }
+
+        return sendInlineProductAttachment(chatId, contentUri, mimeType, fileSize, text, replyToMessageId)
+    }
+
+    /**
+     * The name of the product when the user must see the public-storage notice before the host stages this
+     * attachment, or null. The host shows the notice one time for each product (07-LATER §7.2). A sealed file is
+     * encrypted, so it needs no notice.
+     */
+    suspend fun publicStorageNoticeFor(chatId: ChatId, mimeType: String, fileSize: InformationSize): String? {
+        // The host refuses an attachment above the staging bound before it shows the notice.
+        if (uploadFor(chatId) != ProductAttachmentUpload.PREIMAGE) return null
+        if (fileSize > ProductAttachmentEncoder.STAGED_LIMIT) return null
+        if (!productAttachmentEncoder.goesToStaging(mimeType, fileSize, ProductAttachmentUpload.PREIMAGE)) return null
+        val extensionId = chatId.extensionOrNull()?.extensionId ?: return null
+        if (publicStorageNotice.isAccepted(extensionId)) return null
+
+        return chatEngine.getDefaultChatExtensionDisplay(chatId).getOrNull()?.name ?: extensionId
+    }
+
+    fun acceptPublicStorageNotice(chatId: ChatId) {
+        chatId.extensionOrNull()?.extensionId?.let(publicStorageNotice::accept)
+    }
+
+    /** The failures of the attachments that the host stages for the room, as they occur. */
+    fun observeAttachmentFailures(chatId: ChatId): Flow<ProductAttachmentFailure> =
+        attachmentStager.observeFailures(chatId).map { it.failure }
+
+    /** Where the room has the host put a user attachment, or null when the room takes inline attachments only. */
+    private suspend fun uploadFor(chatId: ChatId): ProductAttachmentUpload? {
+        val features = roomPolicyProvider.observePolicy(chatId).first()?.features ?: return null
+        return when {
+            stagingGate.hopsServed && features.hopAttachments -> ProductAttachmentUpload.HOP
+            stagingGate.sealsServed && features.sealedAttachments -> ProductAttachmentUpload.SEALED
+            stagingGate.isServed && features.preimageAttachments -> ProductAttachmentUpload.PREIMAGE
+            else -> null
+        }
+    }
+
+    private suspend fun sendInlineProductAttachment(
+        chatId: ChatId,
+        contentUri: Uri,
+        mimeType: String,
+        fileSize: InformationSize,
+        text: String?,
+        replyToMessageId: ChatMessageId?
+    ): Result<ChatSourceActionOutcome> = productAttachmentEncoder.encode(contentUri, mimeType, fileSize).map { media ->
+        val content = ChatMessage.Content.ProductBody(ProductMessageBody.RichText(text = text, media = listOf(media)))
+
+        performInProductRoom(chatId, ChatSourceAction.Send(content, replyToMessageId)) ?: run {
+            chatEngine.sendUserMessage(chatId = chatId, content = content, replyToMessageId = replyToMessageId)
+            ChatSourceActionOutcome.Done
+        }
+    }
+
+    private suspend fun sendHostedAttachment(
         chatId: ChatId,
         contentUri: Uri,
         mimeType: String,
@@ -249,7 +424,42 @@ class ChatFeedInteractor @Inject internal constructor(
     suspend fun markMessagesAsReadUpToTimestamp(chatId: ChatId, timestamp: Timestamp) {
         chatMessageRepository.markMessagesAsReadUpToTimestamp(chatId, timestamp)
         chatNotificationPublisher.cancelChatNotification(chatId)
+        chatEngine.reportSeen(chatId, timestamp)
     }
+
+    /**
+     * Holds the worker of a product room while the room screen shows it, and tells the product. A room that
+     * cannot open shows "unavailable". A person chat holds nothing. The open and close calls keep their order.
+     */
+    fun openRoom(chatId: ChatId) = roomSource(chatId).open()
+
+    fun closeRoom(chatId: ChatId) = roomSource(chatId).close()
+
+    fun observeRoomExists(chatId: ChatId): Flow<Boolean> = chatEngine.observeRoomExists(chatId)
+
+    /** Opens the room again when the last open failed, then asks the product for the newest page. */
+    fun retryRoom(chatId: ChatId) = roomSource(chatId).retry()
+
+    /** The page and user-action queries of a room whose messages the product keeps, or null without a product. */
+    suspend fun roomQuerying(chatId: ChatId): ProductChatQuerying? = chatEngine.roomQuerying(chatId)
+
+    /**
+     * The menu that the product gives for [message] of the window [snapshot] (`message_actions_query`). A failure is
+     * a refusal, no answer in time, or a room without a product: the room screen then shows the host menu.
+     */
+    suspend fun productMessageMenu(chatId: ChatId, message: ChatMessage, snapshot: ChatFeedSnapshot): Result<ChatMessageMenuModel> {
+        // The product does not know an attachment that waits in the outbox.
+        if (ProductAttachmentOutbox.isOutboxId(message.id)) return Result.failure(ProductChatQueryException.NotAvailable())
+        val querying = roomQuerying(chatId) ?: return Result.failure(ProductChatQueryException.NotAvailable())
+        return querying.messageMenu(chatId, snapshot.productQueryMessage(message))
+    }
+
+    /** The address of the App of the product of the room, or null when no product serves the room. */
+    suspend fun productAppAddress(chatId: ChatId): String? = chatEngine.productAppAddress(chatId)
+
+    /** A product action of a menu, the toolbar or a suggestion that the user selected. */
+    suspend fun sendUserEvent(chatId: ChatId, event: ChatRoomUserEvent): Result<Unit> =
+        productRoomUserActions.sendEvent(chatId, event)
 
     // Workaround: messages like reactions and edits exist in DB but not in UI models,
     // causing the unread counter to be wrong. Mark them as read directly.
@@ -321,12 +531,11 @@ class ChatFeedInteractor @Inject internal constructor(
         return deleteContactChatLocalData(chatId)
     }
 
-    fun subscribeRevisions(chatId: ChatId): Flow<Map<ChatMessageId, MessageRevision>> {
-        return chatEngine.subscribeRevisions(chatId)
-    }
+    suspend fun sendEdit(chatId: ChatId, messageId: ChatMessageId, newText: String): ChatSourceActionOutcome {
+        performInProductRoom(chatId, ChatSourceAction.Edit(messageId, ChatMessage.Content.Text(newText)))?.let { return it }
 
-    suspend fun sendEdit(chatId: ChatId, messageId: ChatMessageId, newText: String) {
         chatEngine.editMessage(chatId, messageId, newText)
+        return ChatSourceActionOutcome.Done
     }
 
     suspend fun getEditHistory(chatId: ChatId, messageId: ChatMessageId): List<MessageEditHistoryItem> {
@@ -429,6 +638,36 @@ class ChatFeedInteractor @Inject internal constructor(
             removeContactUseCase.removeContact(contactChat.contactAccountId)
         }
     }
+
+    fun observeRoomPolicy(chatId: ChatId): Flow<ChatRoomPolicy?> = roomPolicyProvider.observePolicy(chatId)
+
+    suspend fun triggerMessageAction(chatId: ChatId, messageId: ChatMessageId, actionId: String): Result<Unit> =
+        productRoomUserActions.sendEvent(chatId, ChatRoomUserEvent.ActionTriggered(messageId, actionId))
+
+    suspend fun deleteProductRoomMessage(chatId: ChatId, messageId: ChatMessageId, policy: ChatRoomPolicy): Result<ChatSourceActionOutcome> {
+        if (ProductAttachmentOutbox.isOutboxId(messageId)) {
+            return runCancellableCatching { attachmentStager.delete(messageId) }.map { ChatSourceActionOutcome.Done }
+        }
+        performInProductRoom(chatId, ChatSourceAction.Delete(messageId))?.let { return Result.success(it) }
+
+        return productRoomUserActions.deleteMessage(chatId, messageId, policy).map { ChatSourceActionOutcome.Done }
+    }
+
+    suspend fun retryProductRoomMessage(chatId: ChatId, messageId: ChatMessageId): Result<ChatSourceActionOutcome> {
+        if (ProductAttachmentOutbox.isOutboxId(messageId)) {
+            return runCancellableCatching { attachmentStager.retry(messageId) }.map { ChatSourceActionOutcome.Done }
+        }
+        performInProductRoom(chatId, ChatSourceAction.Retry(messageId))?.let { return Result.success(it) }
+
+        return productRoomUserActions.retry(chatId, messageId).map { ChatSourceActionOutcome.Done }
+    }
+
+    /** The outcome of the action in a product-source room, or null when the host database keeps the messages. */
+    private suspend fun performInProductRoom(chatId: ChatId, action: ChatSourceAction): ChatSourceActionOutcome? =
+        roomSource(chatId).productSource()?.perform(action)
+
+    private fun roomSource(chatId: ChatId): ChatRoomSourceContext =
+        roomSources.computeIfAbsent(chatId) { roomSourceContextFactory.create(it) }
 
     companion object {
         private val LEFT_CHAT_SENT_TIMEOUT = 15.seconds

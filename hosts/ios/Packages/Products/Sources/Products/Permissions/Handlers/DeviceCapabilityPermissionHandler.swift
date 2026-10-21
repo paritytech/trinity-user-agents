@@ -6,19 +6,29 @@ public enum DevicePermissionRequestError: Error {
 
 /// Handles `.deviceCapability` permissions: two-step flow that first asks the
 /// user (via the prompt) and then requests the matching OS-level permission.
+///
+/// The OS dialog shows only when the app is in the foreground. A permission that the OS gave already needs no
+/// screen. When no screen can show the OS dialog, the request fails with ``ProductPermissionPromptError``: that is
+/// not a refusal.
 public final class DeviceCapabilityPermissionHandler: Sendable {
     private let repository: ProductPermissionRepositoryProtocol
     private let requester: ProductPermissionRequesting
     private let osAsker: OSPermissionAsking
+    private let foreground: ProductPromptForegroundWaiting
+    private let foregroundWait: Duration
 
     public init(
         repository: ProductPermissionRepositoryProtocol,
         requester: ProductPermissionRequesting,
-        osAsker: OSPermissionAsking
+        osAsker: OSPermissionAsking,
+        foreground: ProductPromptForegroundWaiting = AlwaysInForeground(),
+        foregroundWait: Duration = ProductPermissionRequester.foregroundWait
     ) {
         self.repository = repository
         self.requester = requester
         self.osAsker = osAsker
+        self.foreground = foreground
+        self.foregroundWait = foregroundWait
     }
 
     public func isGranted(productId: String, capability: DeviceCapabilityType) async throws -> Bool {
@@ -82,7 +92,7 @@ public final class DeviceCapabilityPermissionHandler: Sendable {
                 .deny
             case .allowedOnce,
                  .notDetermined:
-                await requester.prompt(productId: productId, permission: permission)
+                try await requester.prompt(productId: productId, permission: permission)
             }
         guard decision != .deny else { return .deny }
         guard try await promptOsPermissionIfNeeded(currentStatus: osPermission, capability: capability) else {
@@ -94,7 +104,7 @@ public final class DeviceCapabilityPermissionHandler: Sendable {
 
 private extension DeviceCapabilityPermissionHandler {
     func promptAppLevelPermission(productId: String, permission: ProductPermission) async throws -> Bool {
-        let decision = await requester.prompt(productId: productId, permission: permission)
+        let decision = try await requester.prompt(productId: productId, permission: permission)
 
         switch decision {
         case .allowAlways:
@@ -113,10 +123,10 @@ private extension DeviceCapabilityPermissionHandler {
         currentStatus: OSPermissionStatus,
         capability: DeviceCapabilityType
     ) async throws -> Bool {
-        if currentStatus.isNotDetermined {
-            await osAsker.requestPermission(for: capability)
-        } else {
-            true
+        guard currentStatus.isNotDetermined else { return true }
+        guard await foreground.waitForForeground(timeout: foregroundWait) else {
+            throw ProductPermissionPromptError.notInForeground
         }
+        return await osAsker.requestPermission(for: capability)
     }
 }

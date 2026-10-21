@@ -28,6 +28,28 @@ protocol TrUAPIWorkerManaging: AnyObject, Sendable {
 
     func releaseWorker(for productId: ProductId)
 
+    /// Wakes the worker of the product: the core holds it for 30 seconds, and a UIKit background task keeps the app
+    /// active for the same time (07-LATER §10.2). Gives nil when the core cannot wake the product.
+    @discardableResult
+    func wake(_ productId: ProductId, reason: ChatWakeReason) async -> ChatWakeOutcome?
+
+    /// Gives a wake push of the push relay to the core, which wakes each product that watches its topic. For each
+    /// product that the core holds, a UIKit background task keeps the app active until the end of the hold
+    /// (VERBOSITY-WASM-PRODUCT A1). It throws when the core refuses the push.
+    func receiveWakePush(payload: String) async throws -> [PushWakeDelivery]
+
+    /// Declares that the worker of the product runs while the app is in the foreground (VERBOSITY-WASM-PRODUCT I5).
+    /// The core holds the worker while the host reports the app in the foreground. Pair each call with one
+    /// ``withdrawForegroundWorker(for:)``.
+    func declareForegroundWorker(for productId: ProductId)
+
+    /// Gives back one ``declareForegroundWorker(for:)``. The last one ends the foreground hold of the product.
+    func withdrawForegroundWorker(for productId: ProductId)
+
+    /// The host reported the app in the foreground or in the background to the core. In the foreground, a worker
+    /// that ended on a fault starts again, because the core still counts it and sends no start.
+    func appForegroundChanged(_ foreground: Bool)
+
     /// What `productId`'s worker is built against, for the life of the session
     /// rather than of any one worker.
     func context(of productId: ProductId) -> ProductWorkerContext
@@ -92,11 +114,20 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     /// publishes no execution, so without this a handler would wait for one
     /// forever.
     private let startupWindow: Duration
+    private let backgroundTasks: any ProductWakeBackgroundTasking
     private let logger: LoggerProtocol
 
     private var held: [ProductId: Held] = [:]
+    /// The products whose worker ended on an uncaught error while the core still counted references to it
+    /// (06-OPEN-ITEMS O26). The core sends no new start for these, so the next request starts the worker.
+    private var faulted: Set<ProductId> = []
     private var draining: Task<Void, Never>?
     private var isShutDown = false
+
+    /// The declarations of a foreground worker, by product. The core holds one flag for each product, so the
+    /// manager counts the declarations and tells the core only when the count goes from zero or to zero. The
+    /// count and the call to the core change under one lock, so two holders cannot reorder them.
+    private let foregroundDeclarations = OSAllocatedUnfairLock<[ProductId: Int]>(initialState: [:])
 
     /// Read from `context(of:)`, which a chat session calls before any worker
     /// exists, so it is held beside the actor's own state rather than in it.
@@ -106,6 +137,9 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     /// Handing each to its own task leaves the order to the scheduler, where a
     /// start and the stop that cancels it can overtake each other.
     private let transitions = AsyncStream<(ProductId, WorkerTransition)>.makeStream()
+    /// The transitions of each product the core sent and the manager has not applied yet. A queued transition ends
+    /// a fault itself, so a fault restart waits for it rather than booting a worker the transition then replaces.
+    private let pendingTransitions = OSAllocatedUnfairLock<[ProductId: Int]>(initialState: [:])
     private let executionSubject = AsyncCurrentValueSubject<[ProductId: TrUAPIProductExecutionProtocol]>([:])
 
     init(
@@ -113,12 +147,14 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         collection: any PocketCardStore,
         references: @escaping @Sendable () throws -> any TrUAPIWorkerReferencing,
         startupWindow: Duration = .seconds(30),
+        backgroundTasks: any ProductWakeBackgroundTasking = ProductWakeBackgroundTasks(),
         logger: LoggerProtocol = Logger.shared
     ) {
         self.builder = builder
         self.collection = collection
         self.references = references
         self.startupWindow = startupWindow
+        self.backgroundTasks = backgroundTasks
         self.logger = logger
 
         Task { await self.beginFollowing() }
@@ -126,6 +162,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
 
     nonisolated func ensureWorker(for productId: ProductId) async throws -> TrUAPIProductExecutionProtocol {
         try references().acquireWorker(productId: productId)
+        await restartIfFaulted(productId)
 
         return try await withTimeout(startupWindow) { [self] in
             for try await execution in executions(of: productId) {
@@ -141,6 +178,81 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             try references().releaseWorker(productId: productId)
         } catch {
             logger.error("[truapi] \(productId)'s worker request could not be given back: \(error)")
+        }
+    }
+
+    nonisolated func wake(_ productId: ProductId, reason: ChatWakeReason) async -> ChatWakeOutcome? {
+        let outcome: ChatWakeOutcome
+        do {
+            outcome = try references().wakeProduct(productId: productId, reason: reason)
+        } catch {
+            logger.error("[truapi] \(productId) was not woken for \(reason.logName): \(error)")
+            return nil
+        }
+
+        guard case let .held(untilMs) = outcome else {
+            logger.warning("[truapi] \(productId) used its notification wakes of this hour")
+            return outcome
+        }
+
+        await restartIfFaulted(productId)
+        let deadline = Date(timeIntervalSince1970: TimeInterval(untilMs) / 1_000)
+        await backgroundTasks.hold(productId: productId, until: deadline)
+        logger.debug("[truapi] \(productId) woken for \(reason.logName) until \(untilMs)")
+        return outcome
+    }
+
+    nonisolated func receiveWakePush(payload: String) async throws -> [PushWakeDelivery] {
+        let deliveries = try await references().handleWakePush(payload: payload)
+        for delivery in deliveries {
+            let productId = delivery.productId
+            guard case let .held(untilMs) = delivery.outcome else {
+                logger.info("[truapi] wake push for \(productId) on watch \(delivery.watchId): \(delivery.outcome)")
+                continue
+            }
+
+            await restartIfFaulted(productId)
+            let deadline = Date(timeIntervalSince1970: TimeInterval(untilMs) / 1_000)
+            await backgroundTasks.hold(productId: productId, until: deadline)
+            logger.info("[truapi] \(productId) woken by a push on watch \(delivery.watchId) until \(untilMs)")
+        }
+        return deliveries
+    }
+
+    nonisolated func declareForegroundWorker(for productId: ProductId) {
+        foregroundDeclarations.withLock { counts in
+            counts[productId, default: 0] += 1
+            guard counts[productId] == 1 else { return }
+
+            setKeepAlive(.foreground, of: productId)
+        }
+    }
+
+    nonisolated func withdrawForegroundWorker(for productId: ProductId) {
+        foregroundDeclarations.withLock { counts in
+            guard let count = counts[productId] else { return }
+
+            guard count == 1 else {
+                counts[productId] = count - 1
+                return
+            }
+            counts[productId] = nil
+            setKeepAlive(.onDemand, of: productId)
+        }
+    }
+
+    nonisolated func appForegroundChanged(_ foreground: Bool) {
+        guard foreground else { return }
+
+        Task { await self.restartFaultedWorkers() }
+    }
+
+    private nonisolated func setKeepAlive(_ keepAlive: WorkerKeepAlive, of productId: ProductId) {
+        do {
+            try references().setWorkerKeepAlive(productId: productId, keepAlive: keepAlive)
+            logger.debug("[truapi] \(productId)'s worker keep alive: \(keepAlive)")
+        } catch {
+            logger.error("[truapi] \(productId)'s worker keep alive \(keepAlive) did not reach the core: \(error)")
         }
     }
 
@@ -177,6 +289,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     }
 
     nonisolated func demandChanged(productId: ProductId, transition: WorkerTransition) {
+        pendingTransitions.withLock { $0[productId, default: 0] += 1 }
         transitions.continuation.yield((productId, transition))
     }
 
@@ -201,6 +314,13 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     }
 
     private func apply(_ transition: WorkerTransition, to productId: ProductId) async {
+        pendingTransitions.withLock { pending in
+            let left = (pending[productId] ?? 1) - 1
+            pending[productId] = left > 0 ? left : nil
+        }
+        // The core starts or stops the worker itself now, so the fault no longer applies.
+        faulted.remove(productId)
+
         switch transition {
         case .start: start(productId)
         case .stop: await stop(productId)
@@ -247,6 +367,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             bridge.start { [weak self] cards in
                 self?.publishCards(cards, of: productId)
             }
+            followFaults(of: runtime, productId: productId, boot: boot)
         } catch {
             // Only a failure of the boot still holding the product: a stop may
             // already have cleared this one and a restart taken its place, and
@@ -274,7 +395,55 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         await worker.runtime.dispose()
     }
 
+    /// Stops the worker at its first uncaught error. The stream ends when the runtime goes, so the task ends too.
+    private func followFaults(of runtime: TrUAPIWorkerRuntime, productId: ProductId, boot: Boot) {
+        Task { [weak self] in
+            for await message in runtime.faults {
+                await self?.workerFaulted(productId, boot: boot, message: message)
+                return
+            }
+        }
+    }
+
+    private func workerFaulted(_ productId: ProductId, boot: Boot, message: String) async {
+        guard case let .running(worker)? = held[productId], worker.boot === boot else { return }
+
+        logger.error("[truapi] \(productId)'s worker ended on an uncaught error: \(message)")
+        faulted.insert(productId)
+        await stop(productId)
+    }
+
+    /// Starts again a worker that ended on an uncaught error, because the core still counts it as running and
+    /// sends no start.
+    private func restartIfFaulted(_ productId: ProductId) {
+        guard faulted.contains(productId), held[productId] == nil, !isShutDown,
+              pendingTransitions.withLock({ $0[productId] == nil })
+        else { return }
+
+        faulted.remove(productId)
+        logger.debug("[truapi] \(productId)'s worker starts again after its fault")
+        start(productId)
+    }
+
+    /// The app came back to the foreground: each worker that ended on a fault starts again (I5).
+    private func restartFaultedWorkers() {
+        for productId in faulted.sorted() {
+            restartIfFaulted(productId)
+        }
+    }
+
     private nonisolated func publishCards(_ cards: [PocketCard], of productId: ProductId) {
         executionSubject.value[productId]?.notifyPocketCardsChanged(cards: cards)
+    }
+}
+
+extension ChatWakeReason {
+    /// The reason in the console lines of the app.
+    var logName: String {
+        switch self {
+        case .productStart: "product-start"
+        case let .messageInFlight(roomId): "message-in-flight \(roomId)"
+        case let .notification(roomId, watchId): "notification \(roomId) \(watchId)"
+        }
     }
 }

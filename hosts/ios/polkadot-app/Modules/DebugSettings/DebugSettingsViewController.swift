@@ -103,6 +103,12 @@ final class DebugSettingsViewController: UIViewController, ViewHolder {
             for: .valueChanged
         )
 
+        rootView.productChatSwitch.addTarget(
+            self,
+            action: #selector(actionToggleProductChat),
+            for: .valueChanged
+        )
+
         rootView.hostPlacedSwitch.addTarget(
             self,
             action: #selector(actionToggleHostPlacement),
@@ -181,6 +187,10 @@ final class DebugSettingsViewController: UIViewController, ViewHolder {
         presenter.toggleStrategyDebug()
     }
 
+    @objc func actionToggleProductChat() {
+        presenter.toggleProductChat()
+    }
+
     @objc func actionToggleTruApiRuntime() {
         presenter.toggleTruApiRuntime()
     }
@@ -230,6 +240,10 @@ extension DebugSettingsViewController: DebugSettingsViewProtocol {
 
     func didReceive(hostPlacementEnabled: Bool) {
         rootView.hostPlacedSwitch.isOn = hostPlacementEnabled
+    }
+
+    func didReceive(productChatEnabled: Bool) {
+        rootView.productChatSwitch.isOn = productChatEnabled
     }
 
     func didReceive(truApiRuntimeEnabled: Bool) {

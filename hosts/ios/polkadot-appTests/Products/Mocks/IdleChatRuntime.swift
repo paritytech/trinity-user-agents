@@ -24,6 +24,8 @@ final class IdleChatRuntime: ChatRuntimeProtocol, @unchecked Sendable {
         payload _: String?
     ) async {}
 
+    func dispatchActionTrigger(roomId _: String?, messageId _: String, actionId _: String) async {}
+
     @MainActor func attach(presentationView _: ControllerBackedProtocol) {}
     func dispose() async {}
 }

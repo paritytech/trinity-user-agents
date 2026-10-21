@@ -4,7 +4,9 @@ import io.paritytech.polkadotapp.common.utils.combineResults
 import io.paritytech.polkadotapp.common.utils.flatten
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.mapErrorNotInstance
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
@@ -14,9 +16,12 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.SemVer
+import io.paritytech.polkadotapp.feature_products_api.model.WorkerKeepAlive
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.RootManifest
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledChatProduct
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.ChatProductReleases
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.toDefinition
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductManifest
@@ -35,6 +40,9 @@ internal class RealResolveProductUseCase @Inject constructor(
     private val manifestParser: ManifestParser,
     private val productRepository: ProductRepository,
     private val debugPocketCards: DebugPocketCards,
+    private val bundledChatProduct: BundledChatProduct,
+    private val chatProductReleases: ChatProductReleases,
+    private val dotNsTldProvider: DotNsTldProvider,
 ) : ResolveProductUseCase {
     // Successful resolutions only, so a transient read failure stays retryable. Hit without the
     // lock, since the WebView's request-interception thread blocks on this for every request.
@@ -49,7 +57,7 @@ internal class RealResolveProductUseCase @Inject constructor(
             cache[productId.value]?.let { return@withLock Result.success(it) }
 
             // runCatching guards the storage and coroutine machinery; the read itself fails as a Result.
-            runCatching { resolveFromChain(productId) }
+            runCatching { resolveBundled(productId) ?: resolveFromChain(productId) }
                 .flatten()
                 // Payload-free variants cannot carry the cause, and this is the last place with it.
                 .mapErrorNotInstance<ResolvedProduct, ProductResolutionError> {
@@ -62,6 +70,13 @@ internal class RealResolveProductUseCase @Inject constructor(
 
     override suspend fun invalidate(productId: ProductId) {
         cache.remove(productId.value)
+    }
+
+    // The chat product ships in the APK; a dotNS release of it runs only once it passed the checks of HX4.
+    private suspend fun resolveBundled(productId: ProductId): Result<ResolvedProduct>? {
+        val tld = dotNsTldProvider.currentTldOrNull() ?: return null
+        if (!bundledChatProduct.isChatProduct(productId, tld)) return null
+        return runCancellableCatching { chatProductReleases.resolved(tld) }
     }
 
     private suspend fun resolveFromChain(productId: ProductId): Result<ResolvedProduct> {
@@ -143,6 +158,7 @@ internal class RealResolveProductUseCase @Inject constructor(
             includesChat = true,
             includesPocket = card != null,
             pocketCards = listOfNotNull(card?.toDefinition()),
+            keepAlive = WorkerKeepAlive.ON_DEMAND,
         )
     }
 

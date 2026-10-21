@@ -67,6 +67,10 @@ extension ChatRequestInProgressBannerView: ChatTextInputPresenting {
     public func activateTextField() {
         chatInputView.activateTextField()
     }
+
+    public func restoreText(_ text: String) {
+        chatInputView.restoreText(text)
+    }
 }
 
 public extension ChatRequestInProgressBannerView {

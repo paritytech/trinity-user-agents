@@ -30,6 +30,20 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     /// Attach what runs product workers when the core's reference ledger asks
     /// for them. Called once at startup, before the runtime is first built.
     func attach(workerManager: any TrUAPIWorkerManaging)
+
+    /// The manager that ``attach(workerManager:)`` gave. Nil before the attach.
+    var attachedWorkerManager: (any TrUAPIWorkerManaging)? { get }
+
+    /// Builds the runtime on a background task, so that no caller on the main
+    /// thread builds it (06-OPEN-ITEMS O24). Called once at startup, after
+    /// ``attach(workerManager:)``.
+    func prepareInBackground()
+}
+
+extension TrUAPIHostRuntimeProviding {
+    var attachedWorkerManager: (any TrUAPIWorkerManaging)? {
+        nil
+    }
 }
 
 /// Lazily builds one ``TrUAPIHostRuntime`` from host identity + people/bulletin
@@ -56,6 +70,9 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     /// Set once at startup, after the payment engines are assembled. Installed on the runtime when
     /// it is built, or right away if it already is.
     private var paymentsBridge: RustPaymentsBridge?
+    /// Tells the runtime whether the app is in the foreground, for the foreground workers (I5). Nil without a
+    /// monitor.
+    private var foregroundReporter: TrUAPIForegroundReporter?
 
     init(
         chainRegistry: ChainRegistryProtocol,
@@ -64,6 +81,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
+        foreground: AppForegroundMonitor? = nil,
         logger: LoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
@@ -73,6 +91,23 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.confirmationRouterFacade = confirmationRouterFacade
         self.tldProvider = tldProvider
         self.logger = logger
+
+        foregroundReporter = foreground.map { monitor in
+            TrUAPIForegroundReporter(
+                monitor: monitor,
+                runtime: { [weak self] in self?.builtRuntime },
+                workers: { [weak self] in self?.attachedWorkerManager },
+                logger: logger
+            )
+        }
+    }
+
+    /// The runtime when it is built. It does not build the runtime.
+    private var builtRuntime: TrUAPIHostRuntime? {
+        lock.lock()
+        defer { lock.unlock() }
+
+        return cachedRuntime
     }
 
     @MainActor
@@ -114,12 +149,28 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         }
     }
 
+    var attachedWorkerManager: (any TrUAPIWorkerManaging)? {
+        lock.lock()
+        defer { lock.unlock() }
+
+        return workerManager
+    }
+
+    func prepareInBackground() {
+        TrUAPIRuntimeWarmUp(build: { [weak self] in _ = try self?.sharedRuntime() }, logger: logger).start()
+    }
+
     func sharedRuntime() throws -> TrUAPIHostRuntime {
         lock.lock()
         defer { lock.unlock() }
 
         if let cachedRuntime {
             return cachedRuntime
+        }
+
+        if Thread.isMainThread {
+            // The core opens its database with a blocking wait (06-OPEN-ITEMS O24).
+            logger.warning("[truapi] the core runtime is built on the main thread")
         }
 
         let secret = try entropyManager.fetchRootEntropy()
@@ -159,6 +210,26 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         )
         runtime.setContacts(contactsBridge)
         paymentsBridge?.install(on: runtime)
+        runtime.setScanner(AppScannerHostBridge(routerFacade: confirmationRouterFacade))
+        runtime.setPush(AppPushHostBridge(
+            deviceToken: { APNSTokenProviderFacade.sharedManager.currentToken },
+            voipToken: { await PushKitService.shared.token(with: .voIP) },
+            relay: BackendProductPushRelay(tokenProvider: JWTTokenManager.shared)
+        ))
+        let roomEvents = TrUAPIChatRoomEventPublisher(runtimeProvider: self)
+        runtime.setCallMedia(AppCallMediaHostBridge.app(publisher: roomEvents))
+        if PersonChatMode.isProductChat {
+            ProductVoIPCalls.shared.watchAnswers(of: VoIPCallKitManager.shared, publisher: roomEvents)
+        }
+        let migration = ProductChatMigration()
+        runtime.setPersonChat(AppPersonChatHostBridge(chainRegistry: chainRegistry, migration: migration))
+        Task { [weak runtime] in
+            await migration.start(productChat: PersonChatMode.isProductChat) { secret in
+                guard let runtime else { return false }
+                return try await runtime.importChatDeviceKey(secret)
+            }
+        }
+        runtime.setUsernames(AppUsernamesHostBridge(directory: RemoteContactOperationFactory()))
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
             logger: logger,
@@ -170,8 +241,11 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             }
         )
         try runtime.activateLocalSession(secret: secret, liteUsername: settingsManager.string(for: .username))
+        installWakeRelay(on: runtime)
 
         cachedRuntime = runtime
+        // The core starts in the background. The report runs on its own queue after this lock.
+        foregroundReporter?.report()
         return runtime
     }
 }
@@ -240,5 +314,23 @@ extension TrUAPIHostRuntimeProvider {
         values.isExcludedFromBackup = true
         try directory.setResourceValues(values)
         return directory.path
+    }
+}
+
+private extension TrUAPIHostRuntimeProvider {
+    /// Gives the core the push relay client, where this build has a relay (VERBOSITY-WASM-PRODUCT A1). The core then
+    /// registers the stored wake topics of every product.
+    func installWakeRelay(on runtime: TrUAPIHostRuntime) {
+        guard let relay = TrUAPIWakeRelayClient.configured() else { return }
+
+        let logger = logger
+        Task {
+            do {
+                try await runtime.setWakeRelay(relay)
+                logger.info("[truapi] wake relay installed")
+            } catch {
+                logger.warning("[truapi] the wake relay refused the stored topics: \(error)")
+            }
+        }
     }
 }

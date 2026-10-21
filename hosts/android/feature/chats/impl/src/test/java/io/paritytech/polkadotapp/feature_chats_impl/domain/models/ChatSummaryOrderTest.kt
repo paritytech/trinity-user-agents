@@ -7,6 +7,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
+import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -56,6 +57,83 @@ class ChatSummaryOrderTest {
             listOf(legacyOld, legacyNew, ordered).sortedWith(chatSummaryOrder)
         )
     }
+
+    @Test
+    fun `a room that its product pins goes above the chats that are not pinned`() {
+        val pinnedByProduct = chatWithMessage(seed = 1, sortOrder = 1, timestamp = now)
+        val latest = chatWithMessage(seed = 2, sortOrder = 5, timestamp = now + 1_000)
+
+        val ordered = chatListOrder(listOf(latest, pinnedByProduct), mapOf(pinnedByProduct.chatId to listOrder(isPinned = true)))
+
+        assertEquals(listOf(pinnedByProduct, latest), ordered)
+    }
+
+    @Test
+    fun `a product timestamp goes in before the first chat whose last message is older`() {
+        val newer = chatWithMessage(seed = 1, sortOrder = 9, timestamp = now + 2_000)
+        val older = chatWithMessage(seed = 2, sortOrder = 8, timestamp = now)
+        val product = chatWithMessage(seed = 3, sortOrder = 1, timestamp = now - 60_000)
+
+        val ordered = chatListOrder(listOf(older, product, newer), mapOf(product.chatId to listOrder(timestamp = now + 1_000)))
+
+        assertEquals(listOf(newer, product, older), ordered)
+    }
+
+    @Test
+    fun `the chats that sort by their last message keep their order around the product rooms`() {
+        val first = chatWithMessage(seed = 1, sortOrder = 3, timestamp = now)
+        val second = chatWithMessage(seed = 2, sortOrder = 2, timestamp = now + 5_000)
+        val third = chatWithMessage(seed = 3, sortOrder = 1, timestamp = now - 5_000)
+        val product = emptyChat(seed = 4, createdAt = now)
+
+        val ordered = chatListOrder(listOf(third, product, second, first), mapOf(product.chatId to listOrder(timestamp = now - 1_000)))
+
+        assertEquals(listOf(first, second, product, third), ordered)
+    }
+
+    @Test
+    fun `product rooms sort by their timestamps and go above chats without messages`() {
+        val empty = emptyChat(seed = 1, createdAt = now + 60_000)
+        val oldProduct = emptyChat(seed = 2, createdAt = now)
+        val newProduct = emptyChat(seed = 3, createdAt = now)
+
+        val ordered = chatListOrder(
+            listOf(empty, oldProduct, newProduct),
+            mapOf(
+                oldProduct.chatId to listOrder(timestamp = now - 1_000),
+                newProduct.chatId to listOrder(timestamp = now + 1_000),
+            ),
+        )
+
+        assertEquals(listOf(newProduct, oldProduct, empty), ordered)
+    }
+
+    @Test
+    fun `pinned rooms sort by recency among themselves`() {
+        val pinnedOld = chatWithMessage(seed = 1, sortOrder = 1, timestamp = now, order = Order.PinToTop)
+        val pinnedProduct = emptyChat(seed = 2, createdAt = now)
+        val unpinned = chatWithMessage(seed = 3, sortOrder = 9, timestamp = now + 9_000)
+
+        val ordered = chatListOrder(
+            listOf(unpinned, pinnedOld, pinnedProduct),
+            mapOf(pinnedProduct.chatId to listOrder(isPinned = true, timestamp = now + 1_000)),
+        )
+
+        assertEquals(listOf(pinnedProduct, pinnedOld, unpinned), ordered)
+    }
+
+    @Test
+    fun `without product orders the list keeps the order of the last messages`() {
+        val alice = chatWithMessage(seed = 1, sortOrder = 1, timestamp = now + 60_000)
+        val bob = chatWithMessage(seed = 2, sortOrder = 2, timestamp = now)
+        val pinned = emptyChat(seed = 3, createdAt = now, order = Order.PinToTop)
+
+        val summaries = listOf(alice, pinned, bob)
+
+        assertEquals(summaries.sortedWith(chatSummaryOrder), chatListOrder(summaries, emptyMap()))
+    }
+
+    private fun listOrder(isPinned: Boolean = false, timestamp: Long? = null) = ChatRoomPolicy.ListOrder(isPinned, timestamp)
 
     private fun chatWithMessage(seed: Byte, sortOrder: Long, timestamp: Long, order: Order = Order.ByTimestamp): ChatSummary {
         val chatId = chatId(seed)

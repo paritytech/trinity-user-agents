@@ -36,7 +36,13 @@ public final class ProductsRouter: ProductsRouting {
             return false
         }
 
-        presentationView.controller.topmostPresented.present(view.controller, animated: true)
+        // A controller that goes off the screen cannot present: UIKit drops the presentation. Then the one under it
+        // presents.
+        var presenter = presentationView.controller.topmostPresented
+        while presenter.isBeingDismissed, let below = presenter.presentingViewController {
+            presenter = below
+        }
+        presenter.present(view.controller, animated: true)
         return true
     }
 }

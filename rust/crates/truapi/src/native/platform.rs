@@ -20,9 +20,11 @@ use crate::{DevicePairingObserver, PairedSsoPeer, host_logic::worker::WorkerTran
 
 use super::{
 	callbacks::{
-		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
-		NativePocketRemoval, NativeScannerCallbacks, NativeTopUpCallbacks,
+		HostCallbacks, NativeBalanceCallbacks, NativeCallMediaCallbacks, NativeChatCallbacks,
+		NativeContactsCallbacks, NativeFundingCallbacks, NativeGameCallbacks,
+		NativePaymentCallbacks, NativePersonChatCallbacks, NativePocketCallbacks,
+		NativePocketRemoval, NativePushCallbacks, NativeScannerCallbacks, NativeTopUpCallbacks,
+		NativeUsernamesCallbacks, NativeWakeRelayCallbacks,
 	},
 	errors::HostRejection,
 	events::NativeEventBus,
@@ -74,6 +76,197 @@ impl crate::platform::ScannerPlatform for ScannerCallbackPlatform {
 	) -> Result<crate::platform::HostScan, v01::GenericError> {
 		self.scanner
 			.scan_code(product.product_id.clone(), product.execution_kind, request.clone())
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+}
+
+/// [`crate::platform::PersonChatPlatform`] served by host-provided
+/// [`NativePersonChatCallbacks`]; constructed only when the host passed one.
+pub struct PersonChatCallbackPlatform {
+	/// Host person chat services.
+	pub person_chat: Arc<dyn NativePersonChatCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::PersonChatPlatform for PersonChatCallbackPlatform {
+	async fn hop_nodes(&self) -> Result<Vec<String>, v01::GenericError> {
+		self.person_chat
+			.hop_nodes()
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+
+	async fn paired_devices(
+		&self,
+	) -> Result<Vec<crate::platform::HostPairedDevice>, v01::GenericError> {
+		self.person_chat
+			.paired_devices()
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+
+	async fn set_contacts(
+		&self,
+		product: &ProductContext,
+		contacts: Vec<crate::platform::HostChatContact>,
+	) -> Result<(), v01::GenericError> {
+		self.person_chat
+			.set_contacts(product.product_id.clone(), contacts)
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+
+	async fn history_export(
+		&self,
+		product: &ProductContext,
+		offset: u64,
+		max_len: u32,
+	) -> Result<crate::platform::HostHistoryExportChunk, v01::GenericError> {
+		self.person_chat
+			.history_export(product.product_id.clone(), offset, max_len)
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+
+	async fn history_imported(&self, product: &ProductContext) -> Result<(), v01::GenericError> {
+		self.person_chat
+			.history_imported(product.product_id.clone())
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+}
+
+/// [`crate::platform::UsernamesPlatform`] served by host-provided
+/// [`NativeUsernamesCallbacks`]; constructed only when the host passed one.
+pub struct UsernamesCallbackPlatform {
+	/// Host username directory.
+	pub usernames: Arc<dyn NativeUsernamesCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::UsernamesPlatform for UsernamesCallbackPlatform {
+	async fn search_usernames(
+		&self,
+		product: &ProductContext,
+		prefix: &str,
+	) -> Result<Vec<String>, v01::GenericError> {
+		self.usernames
+			.search_usernames(product.product_id.clone(), prefix.to_string())
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+}
+
+/// [`crate::platform::CallMediaPlatform`] served by host-provided
+/// [`NativeCallMediaCallbacks`]; constructed only when the host passed one.
+pub struct CallMediaCallbackPlatform {
+	/// Host call media.
+	pub media: Arc<dyn NativeCallMediaCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::CallMediaPlatform for CallMediaCallbackPlatform {
+	async fn start_call_media(
+		&self,
+		product: &ProductContext,
+		room_id: &str,
+		call_id: &str,
+		video: bool,
+		offerer: bool,
+	) -> Result<(), v01::GenericError> {
+		self.media
+			.start_call_media(
+				product.product_id.clone(),
+				room_id.into(),
+				call_id.into(),
+				video,
+				offerer,
+			)
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+
+	async fn call_media_signal(
+		&self,
+		product: &ProductContext,
+		room_id: &str,
+		call_id: &str,
+		signal: Vec<u8>,
+	) -> Result<(), v01::GenericError> {
+		self.media
+			.call_media_signal(product.product_id.clone(), room_id.into(), call_id.into(), signal)
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+
+	async fn stop_call_media(
+		&self,
+		product: &ProductContext,
+		room_id: &str,
+		call_id: &str,
+	) -> Result<(), v01::GenericError> {
+		self.media
+			.stop_call_media(product.product_id.clone(), room_id.into(), call_id.into())
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+}
+
+/// [`crate::platform::PushPlatform`] served by host-provided
+/// [`NativePushCallbacks`]; constructed only when the host passed one.
+pub struct PushCallbackPlatform {
+	/// Host push service.
+	pub push: Arc<dyn NativePushCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::PushPlatform for PushCallbackPlatform {
+	async fn send_push(
+		&self,
+		product: &ProductContext,
+		delivery: crate::platform::HostPushDelivery,
+	) -> Result<bool, v01::GenericError> {
+		self.push
+			.send_push(product.product_id.clone(), delivery)
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+
+	async fn push_tokens(&self) -> Result<crate::platform::HostPushTokens, v01::GenericError> {
+		self.push
+			.push_tokens()
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+
+	async fn set_chat_push_routes(
+		&self,
+		product: &ProductContext,
+		routes: Vec<crate::platform::HostChatPushRoute>,
+	) -> Result<(), v01::GenericError> {
+		self.push
+			.set_chat_push_routes(product.product_id.clone(), routes)
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+}
+
+/// [`crate::runtime::WakeRelay`] served by host-provided
+/// [`NativeWakeRelayCallbacks`].
+pub struct WakeRelayCallbackPlatform {
+	/// Host push relay client.
+	pub relay: Arc<dyn NativeWakeRelayCallbacks>,
+}
+
+#[async_trait]
+impl crate::runtime::WakeRelay for WakeRelayCallbackPlatform {
+	async fn register_wake_topics(
+		&self,
+		registration: crate::runtime::WakeRelayRegistration,
+	) -> Result<(), v01::GenericError> {
+		self.relay
+			.register_wake_topics(registration)
 			.await
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
@@ -525,18 +718,36 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 	async fn create_chat_room(
 		&self,
 		_product: &ProductContext,
-		request: v01::HostChatCreateRoomRequest,
+		request: truapi::latest::HostChatCreateRoomRequest,
+		icon_url: String,
 	) -> Result<v01::HostChatCreateRoomResponse, v01::HostChatCreateRoomError> {
+		let icon = match request.metadata.avatar.as_ref().and_then(inline_icon_url) {
+			Some(inline) if icon_url.is_empty() => inline,
+			_ => icon_url,
+		};
 		let status: v01::ChatRoomRegistrationStatus = self
 			.chat
-			.create_room(request.room_id, request.name, request.icon)
+			.create_room(request.room_id.clone(), request.metadata.name.clone(), icon)
 			.await
 			.map_err(|error| v01::HostChatCreateRoomError::Unknown { reason: error.to_string() })?;
 
-		if status == v01::ChatRoomRegistrationStatus::New &&
-			let Ok(rooms) = self.chat.list_rooms().await
-		{
-			self.events.notify_chat_rooms_changed(rooms);
+		// A room that exists keeps what the product declared for it; a new one
+		// takes the declarations the request carries.
+		if status == v01::ChatRoomRegistrationStatus::New {
+			let declared = async {
+				self.chat.set_room_metadata(request.room_id.clone(), request.metadata).await?;
+				self.chat.set_room_config(request.room_id.clone(), request.config).await?;
+				if let Some(preview) = request.preview {
+					self.chat.set_room_preview(request.room_id, preview).await?;
+				}
+				Ok::<_, HostRejection>(())
+			};
+			declared.await.map_err(|error| v01::HostChatCreateRoomError::Unknown {
+				reason: error.to_string(),
+			})?;
+			if let Ok(rooms) = self.chat.list_rooms().await {
+				self.events.notify_chat_rooms_changed(rooms);
+			}
 		}
 
 		Ok(v01::HostChatCreateRoomResponse { status })
@@ -579,7 +790,7 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 	async fn set_chat_room_footer(
 		&self,
 		_product: &ProductContext,
-		request: v01::HostChatSetRoomFooterRequest,
+		request: truapi::latest::HostChatSetRoomFooterRequest,
 	) -> Result<(), v01::GenericError> {
 		self.chat
 			.set_room_footer(request.room_id, request.footer)
@@ -601,6 +812,128 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		.chain(changes)
 		.map(Ok)
 		.boxed()
+	}
+
+	async fn read_chat_room_config(
+		&self,
+		_product: &ProductContext,
+		room_id: String,
+	) -> Result<truapi::latest::ChatRoomConfig, v01::GenericError> {
+		self.chat.room_config(room_id).await.map_err(v01::GenericError::from)
+	}
+
+	async fn set_chat_room_metadata(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatSetRoomMetadataRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat
+			.set_room_metadata(request.room_id, request.metadata)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn set_chat_room_preview(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatSetRoomPreviewRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat
+			.set_room_preview(request.room_id, request.preview)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn delete_chat_room(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatDeleteRoomRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat.delete_room(request.room_id).await.map_err(v01::GenericError::from)?;
+		if let Ok(rooms) = self.chat.list_rooms().await {
+			self.events.notify_chat_rooms_changed(rooms);
+		}
+		Ok(())
+	}
+
+	async fn update_chat_feed(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatUpdateFeedRequest,
+		persist: bool,
+	) -> Result<(), truapi::latest::HostChatUpdateFeedError> {
+		self.chat
+			.update_feed(request.room_id, request.update, persist)
+			.await
+			.map_err(Into::into)
+	}
+
+	async fn chat_capabilities(
+		&self,
+		_product: &ProductContext,
+	) -> Result<crate::platform::ChatFeatureNames, v01::GenericError> {
+		let names = self.chat.capabilities().await.map_err(v01::GenericError::from)?;
+		Ok(crate::platform::ChatFeatureNames { names })
+	}
+
+	async fn read_chat_room_features(
+		&self,
+		_product: &ProductContext,
+		room_id: String,
+	) -> Result<truapi::latest::ChatRoomFeatures, v01::GenericError> {
+		self.chat.room_features(room_id).await.map_err(v01::GenericError::from)
+	}
+
+	async fn set_chat_room_features(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatSetRoomFeaturesRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat
+			.set_room_features(request.room_id, request.features)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn set_chat_room_call(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatSetRoomCallRequest,
+	) -> Result<(), v01::GenericError> {
+		self.chat
+			.set_room_call(request.room_id, request.call)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn read_chat_room_user_states(
+		&self,
+		_product: &ProductContext,
+	) -> Result<crate::platform::ChatRoomUserStates, v01::GenericError> {
+		let rooms = self.chat.room_user_states().await.map_err(v01::GenericError::from)?;
+		Ok(crate::platform::ChatRoomUserStates { rooms })
+	}
+
+	async fn read_chat_bots(
+		&self,
+		_product: &ProductContext,
+	) -> Result<crate::platform::ChatBotIds, v01::GenericError> {
+		let bot_ids = self.chat.bots().await.map_err(v01::GenericError::from)?;
+		Ok(crate::platform::ChatBotIds { bot_ids })
+	}
+}
+
+/// The `data:` URL of an inline avatar, the form a native `create_room` icon
+/// takes. A preimage avatar has no such form.
+fn inline_icon_url(avatar: &truapi::latest::ChatResource) -> Option<String> {
+	use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+	match avatar {
+		truapi::latest::ChatResource::Inline { mime_type, bytes } => {
+			Some(format!("data:{mime_type};base64,{}", BASE64.encode(bytes)))
+		},
+		truapi::latest::ChatResource::Preimage { .. } |
+		truapi::latest::ChatResource::Sealed { .. } |
+		truapi::latest::ChatResource::Hop { .. } => None,
 	}
 }
 

@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models
 
 import androidx.compose.runtime.Immutable
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMenuRenderer
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessageRevisionUiModel
 import kotlinx.collections.immutable.ImmutableList
 
@@ -11,6 +12,19 @@ sealed interface ChatMenuType {
     data class BlockConfirmation(val username: String) : ChatMenuType
     data class MessageHistory(val current: MessageRevisionUiModel, val history: ImmutableList<MessageRevisionUiModel>) : ChatMenuType
     data class Custom(val renderer: CustomChatMenuRenderer) : ChatMenuType
+    data class DeleteMessageConfirmation(val messageId: ChatMessageId) : ChatMenuType
+
+    /** A product action opens [url] after the user confirms it. */
+    data class ProductLinkConfirmation(val url: String) : ChatMenuType
+
+    /** Files over 1 MiB go to the public Bulletin chain. The host shows it one time for each product (07-LATER §7.2). */
+    data class PublicStorageNotice(val productName: String) : ChatMenuType
+
+    /** The participants of a product room. The product room state holds the list. */
+    data object Participants : ChatMenuType
+
+    /** The sheet of one participant of a product room. The product room state holds it. */
+    data object ParticipantSheet : ChatMenuType
 }
 
 enum class ChatMenuAction {

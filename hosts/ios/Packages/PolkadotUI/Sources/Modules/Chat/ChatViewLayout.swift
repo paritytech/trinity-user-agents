@@ -14,6 +14,8 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
     private let chatInputHostView = ChatInputHostView()
     private let scrollDownButton = ScrollToBottomButton()
     private let scrollToReactionButton = ScrollToReactionButton()
+    private let placeholderView = ChatPlaceholderView()
+    private let roomStatusView = ChatRoomStatusView()
     private var currentInputViewHeight: CGFloat = 0
     private var currentKeyboardHeight: CGFloat = 0
 
@@ -22,6 +24,10 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
     private static let chatDayHeaderElementKind = "ChatDayHeaderElement"
     private static let footerSectionIdentifier = "FooterSection"
     private static let footerCellIdentifier = "ChatFooterCell"
+    static let olderPagingSectionIdentifier = "ChatPagingOlderSection"
+    static let newerPagingSectionIdentifier = "ChatPagingNewerSection"
+    static let olderPagingRowIdentifier = "ChatPagingOlderRow"
+    static let newerPagingRowIdentifier = "ChatPagingNewerRow"
 
     private var currentFooterConfiguration: (any HashableContentConfiguration)?
 
@@ -36,6 +42,14 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
     public var onReplyMessage: ((_ identifier: String) -> Void)?
     public var onScrollToBottomTap: (() -> Void)?
     public var onScrollToReactionTap: (() -> Void)?
+    /// The user scrolled near the oldest message of the window, or tapped a failed row there.
+    public var onLoadOlder: (() -> Void)?
+    /// The user scrolled near the newest message of the window, or tapped a failed row there.
+    public var onLoadNewer: (() -> Void)?
+    /// The user tapped a reply quote whose message is not in the window.
+    public var onJumpToMessage: ((_ identifier: String) -> Void)?
+    /// The user asked the product of the room again after it did not answer.
+    public var onRetryRoom: (() -> Void)?
 
     var viewModel: ViewModel?
 
@@ -47,6 +61,12 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
     private var scrollDownButtonVisible = false
     private var scrollToReactionButtonVisible = false
     private var dismissedReactionTargetId: String?
+    private var olderPageRequested = false
+    private var newerPageRequested = false
+    /// The message that the chat shows when it arrives in the window, after a jump.
+    private var pendingScrollTarget: String?
+    /// The item that `prepend(items:keepingVisible:)` keeps in place.
+    private var forcedAnchorIdentifier: String?
 
     override public func baseSetup() {
         dataSource.supplementaryViewProvider = { [weak self] collectionView, kind, indexPath in
@@ -60,6 +80,7 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
         collectionView.backgroundColor = .clear
         collectionView.keyboardDismissMode = .interactive
         collectionView.delegate = self
+        collectionView.backgroundView = placeholderView
 
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboard))
         tapGesture.cancelsTouchesInView = false
@@ -85,6 +106,15 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
         scrollToReactionButton.snp.makeConstraints { make in
             make.trailing.equalTo(scrollDownButton)
             make.bottom.equalTo(scrollDownButton.snp.top).offset(-7)
+        }
+
+        addSubview(roomStatusView)
+        roomStatusView.onRetry = { [weak self] in
+            self?.onRetryRoom?()
+        }
+        roomStatusView.snp.makeConstraints {
+            $0.top.equalTo(safeAreaLayoutGuide.snp.top)
+            $0.leading.trailing.equalToSuperview()
         }
 
         setupScrollEdgeEffect()
@@ -116,6 +146,10 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
             ChatMessageMediaViewConfiguration.defaultReuseIdentifier,
             ChatRichTextMessageConfiguration.reuseIdentifier,
             SwiftUIContentConfiguration.defaultReuseIdentifier,
+            ChatPagingRowConfiguration.defaultReuseIdentifier,
+            // The media and the buttons of product bodies (Chat Extension v2).
+            ChatMediaStackView.reuseIdentifier,
+            ChatActionsMessageView.reuseIdentifier,
         ]
         .forEach {
             CollectionRegistration.registerCell(
@@ -184,7 +218,10 @@ extension ChatViewLayout {
 public extension ChatViewLayout {
     // General model binding
     func bind(viewModel: ViewModel) {
+        let previousPaging = self.viewModel?.paging
         self.viewModel = viewModel
+        resetPageRequests(from: previousPaging, to: viewModel.paging)
+        roomStatusView.status = viewModel.roomStatus
 
         if let inputConfiguration = viewModel.chatInputConfiguration {
             attachInputHostIfNeeded()
@@ -208,12 +245,32 @@ public extension ChatViewLayout {
 
         centerItem.configuration = viewModel.headerConfiguration
 
+        placeholderView.text = viewModel.sections.isEmpty ? viewModel.placeholderText : nil
+
         updateView(
             sections: viewModel.sections,
             footer: viewModel.footerConfiguration
         )
 
         updateScrollToReactionButtonVisibility()
+    }
+
+    /// Binds a view model whose window gained messages above the visible ones. The item stays where it is
+    /// on the screen.
+    func prepend(items viewModel: ViewModel, keepingVisible anchorIdentifier: ItemIdentifierType?) {
+        forcedAnchorIdentifier = anchorIdentifier
+        bind(viewModel: viewModel)
+        forcedAnchorIdentifier = nil
+    }
+
+    /// Scrolls to the message now, or when it arrives in the window.
+    func scrollToMessage(_ identifier: ItemIdentifierType) {
+        if dataSource.indexPath(for: identifier) != nil {
+            pendingScrollTarget = nil
+            scrollTo(itemIdentifier: identifier, animated: true, position: .centeredVertically)
+        } else {
+            pendingScrollTarget = identifier
+        }
     }
 
     // Use for footer updates optimization
@@ -248,7 +305,7 @@ public extension ChatViewLayout {
 
         guard shouldAutoScroll else { return }
         scrollToBottom(animated: isInitialScrollDone)
-        isInitialScrollDone = true
+        markInitialScrollDone()
     }
 }
 
@@ -265,6 +322,22 @@ public extension ChatViewLayout {
 
     func adoptToVisibleKeyboard(bottomInset: CGFloat) {
         updateContentInsets(bottomInset: bottomInset)
+    }
+
+    /// Moves the messages below a view over the top of the list, for example the call bar of a room. A list at its
+    /// top stays at its top, so the first message shows below the view.
+    func setTopOverlayInset(_ inset: CGFloat) {
+        guard collectionView.contentInset.top != inset else { return }
+
+        let oldTop = -collectionView.adjustedContentInset.top
+        let wasAtTop = collectionView.contentOffset.y <= oldTop + 1
+        collectionView.contentInset.top = inset
+        collectionView.verticalScrollIndicatorInsets.top = inset
+
+        let newTop = -collectionView.adjustedContentInset.top
+        if wasAtTop || collectionView.contentOffset.y < newTop {
+            collectionView.contentOffset.y = newTop
+        }
     }
 
     func adoptToHiddenKeyboard() {
@@ -324,12 +397,40 @@ private extension ChatViewLayout {
         sections: [Section],
         footer: (any HashableContentConfiguration)?
     ) {
+        if let target = pendingScrollTarget, sections.contains(where: { $0.contains(target) }) {
+            // A jump brought the message into the window. The chat shows it instead of the bottom.
+            pendingScrollTarget = nil
+            pendingSendScroll = false
+            UIView.performWithoutAnimation {
+                updateSectionProviders(sections: sections, footer: footer)
+            }
+            collectionView.layoutIfNeeded()
+            scrollTo(itemIdentifier: target, animated: false, position: .centeredVertically)
+            isInitialScrollDone = true
+            return
+        }
+
         let autoScroll = makeAutoScrollResult()
+
+        // When the user reads older messages of a room that pages, the visible message stays in place while
+        // pages arrive above it.
+        if autoScroll.closure == nil, viewModel?.paging != .complete || forcedAnchorIdentifier != nil,
+           let anchor = captureScrollAnchor() {
+            UIView.performWithoutAnimation {
+                updateSectionProviders(sections: sections, footer: footer)
+            }
+            restore(anchor)
+            evaluatePaging()
+            return
+        }
 
         updateSectionProviders(
             sections: sections,
             footer: footer,
-            completion: autoScroll.closureForUpdateScrolling
+            completion: { [weak self] in
+                autoScroll.closureForUpdateScrolling?()
+                self?.evaluatePaging()
+            }
         )
 
         autoScroll.closureForInitialScrolling?()
@@ -342,6 +443,16 @@ private extension ChatViewLayout {
     ) {
         var providers = [SectionProviderType]()
         var headerTexts = [String]()
+
+        if let olderRow = pagingRow(for: viewModel?.paging.older) {
+            providers.append(makePagingSection(
+                id: Self.olderPagingSectionIdentifier,
+                rowId: Self.olderPagingRowIdentifier,
+                configuration: olderRow
+            ))
+            // The paging section has no day header, so its text is never read.
+            headerTexts.append("")
+        }
 
         for section in sections {
             headerTexts.append(section.dateText)
@@ -366,6 +477,14 @@ private extension ChatViewLayout {
             ) { _, _ in layoutSection }
 
             providers.append(providerType)
+        }
+
+        if let newerRow = pagingRow(for: viewModel?.paging.newer) {
+            providers.append(makePagingSection(
+                id: Self.newerPagingSectionIdentifier,
+                rowId: Self.newerPagingRowIdentifier,
+                configuration: newerRow
+            ))
         }
 
         if let footer {
@@ -451,7 +570,7 @@ private extension ChatViewLayout {
         let closure: () -> Void = { [weak self] in
             guard let self else { return }
             performScrollToBottom(animated: animated)
-            isInitialScrollDone = true
+            markInitialScrollDone()
             updateScrollDownButtonVisibility()
         }
 
@@ -459,6 +578,15 @@ private extension ChatViewLayout {
             closure: closure,
             isInitialScrolling: !isInitialScrollDone
         )
+    }
+
+    /// The first scroll is done once the window has a message. A window that opens empty, while its first page
+    /// is on its way, keeps the first scroll for that page: else the page lands at the top of the screen, and
+    /// the window asks for older pages that the user did not scroll to.
+    private func markInitialScrollDone() {
+        guard !(viewModel?.sections.isEmpty ?? true) else { return }
+
+        isInitialScrollDone = true
     }
 
     private func performScrollToBottom(animated: Bool) {
@@ -668,6 +796,11 @@ public extension ChatViewLayout {
         focusTextField()
     }
 
+    /// Puts a refused text in the input again, so the user can change it and send it.
+    func restoreInputText(_ text: String) {
+        chatInputHostView.textInputInterface?.restoreText(text)
+    }
+
     func activateEdit(messageId: String, currentText: String) {
         clearReplyContext()
 
@@ -686,6 +819,22 @@ extension ChatViewLayout: UICollectionViewDelegate {
         updateScrollDownButtonVisibility()
         updateScrollToReactionButtonVisibility()
         updateDayHeadersPinnedState(insideOf: scrollView)
+        evaluatePaging()
+    }
+
+    public func collectionView(_: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        switch dataSource.itemIdentifier(for: indexPath) {
+        case Self.olderPagingRowIdentifier:
+            if case .failed = viewModel?.paging.older {
+                onLoadOlder?()
+            }
+        case Self.newerPagingRowIdentifier:
+            if case .failed = viewModel?.paging.newer {
+                onLoadNewer?()
+            }
+        default:
+            break
+        }
     }
 
     public func scrollViewDidEndScrollingAnimation(_: UIScrollView) {
@@ -711,7 +860,7 @@ extension ChatViewLayout: UICollectionViewDelegate {
                 self?.onReplyMessage?(identifier)
             }
             containerView.onQuoteTap = { [weak self] messageId in
-                self?.scrollTo(itemIdentifier: messageId, animated: true, position: .centeredVertically)
+                self?.showQuotedMessage(messageId)
             }
         }
     }
@@ -821,12 +970,160 @@ extension ChatViewLayout {
             guard attr.representedElementCategory == .cell else {
                 return nil
             }
-            // Exclude footer
+            // Exclude footer and paging rows
             let identifier = dataSource.itemIdentifier(for: attr.indexPath)
-            guard identifier != Self.footerCellIdentifier else {
+            guard let identifier, !Self.nonMessageItemIdentifiers.contains(identifier) else {
                 return nil
             }
             return identifier
         }
+    }
+}
+
+// MARK: - Paging
+
+private extension ChatViewLayout {
+    static let nonMessageItemIdentifiers: Set<String> = [
+        footerCellIdentifier,
+        olderPagingRowIdentifier,
+        newerPagingRowIdentifier,
+    ]
+
+    func pagingRow(for edge: ViewModel.Paging.Edge?) -> ChatPagingRowConfiguration? {
+        switch edge {
+        case .loading:
+            ChatPagingRowConfiguration(state: .loading)
+        case let .failed(text):
+            ChatPagingRowConfiguration(state: .failed(text))
+        case .end,
+             .more,
+             .none:
+            nil
+        }
+    }
+
+    func makePagingSection(
+        id: String,
+        rowId: String,
+        configuration: ChatPagingRowConfiguration
+    ) -> SectionProviderType {
+        let itemProvider = ItemProviderType(
+            id: rowId,
+            configuration: configuration,
+            reuseIdentifier: ChatPagingRowConfiguration.defaultReuseIdentifier
+        )
+        return SectionProviderType(id: id, itemProviders: [itemProvider]) { _, _ in
+            let section = NSCollectionLayoutSection.autoHeightSingleItem(44)
+            section.contentInsets = .zero
+            return section
+        }
+    }
+
+    /// A request for a page ends when its end stops to show the loading row.
+    func resetPageRequests(from _: ViewModel.Paging?, to paging: ViewModel.Paging) {
+        if paging.older != .loading {
+            olderPageRequested = false
+        }
+
+        if paging.newer != .loading {
+            newerPageRequested = false
+        }
+    }
+
+    /// Asks for a page when the user scrolls near an end of the window that has more messages.
+    func evaluatePaging() {
+        guard isInitialScrollDone, !isAutoScrolling, let paging = viewModel?.paging else {
+            return
+        }
+
+        let trigger = ChatPagingTrigger(
+            contentOffsetY: collectionView.contentOffset.y,
+            topInset: collectionView.adjustedContentInset.top,
+            bottomInset: collectionView.adjustedContentInset.bottom,
+            contentHeight: collectionView.contentSize.height,
+            boundsHeight: collectionView.bounds.height
+        )
+
+        if trigger.loadsOlder, paging.older == .more, !olderPageRequested {
+            olderPageRequested = true
+            onLoadOlder?()
+        }
+
+        if trigger.loadsNewer, paging.newer == .more, !newerPageRequested {
+            newerPageRequested = true
+            onLoadNewer?()
+        }
+    }
+
+    /// The top visible message, or the item that `prepend(items:keepingVisible:)` names.
+    func captureScrollAnchor() -> ChatScrollAnchor? {
+        guard isInitialScrollDone else {
+            return nil
+        }
+
+        let contentOffsetY = collectionView.contentOffset.y
+        let topInset = collectionView.adjustedContentInset.top
+        let visibleTop = contentOffsetY + topInset
+
+        let candidates: [(String, CGFloat)] = collectionView.indexPathsForVisibleItems.compactMap { indexPath in
+            guard
+                let identifier = dataSource.itemIdentifier(for: indexPath),
+                !Self.nonMessageItemIdentifiers.contains(identifier),
+                forcedAnchorIdentifier == nil || forcedAnchorIdentifier == identifier,
+                let attributes = collectionView.layoutAttributesForItem(at: indexPath),
+                attributes.frame.maxY > visibleTop
+            else {
+                return nil
+            }
+
+            return (identifier, attributes.frame.minY)
+        }
+
+        guard let top = candidates.min(by: { $0.1 < $1.1 }) else {
+            return nil
+        }
+
+        return ChatScrollAnchor(
+            itemIdentifier: top.0,
+            itemMinY: top.1,
+            contentOffsetY: contentOffsetY,
+            topInset: topInset
+        )
+    }
+
+    func restore(_ anchor: ChatScrollAnchor) {
+        collectionView.layoutIfNeeded()
+
+        guard
+            let indexPath = dataSource.indexPath(for: anchor.itemIdentifier),
+            let attributes = collectionView.layoutAttributesForItem(at: indexPath)
+        else {
+            return
+        }
+
+        let offsetY = anchor.contentOffsetY(
+            itemMinY: attributes.frame.minY,
+            topInset: collectionView.adjustedContentInset.top,
+            bottomInset: collectionView.adjustedContentInset.bottom,
+            contentHeight: collectionView.contentSize.height,
+            boundsHeight: collectionView.bounds.height
+        )
+        collectionView.setContentOffset(CGPoint(x: collectionView.contentOffset.x, y: offsetY), animated: false)
+    }
+
+    /// Scrolls to the quoted message, or asks for the pages that hold it.
+    func showQuotedMessage(_ identifier: String) {
+        if dataSource.indexPath(for: identifier) != nil {
+            scrollTo(itemIdentifier: identifier, animated: true, position: .centeredVertically)
+        } else {
+            pendingScrollTarget = identifier
+            onJumpToMessage?(identifier)
+        }
+    }
+}
+
+private extension ChatViewLayout.Section {
+    func contains(_ identifier: String) -> Bool {
+        messages.contains { $0.id == identifier }
     }
 }

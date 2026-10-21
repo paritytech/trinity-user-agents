@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.di
 
 import android.content.Context
 import dagger.Binds
+import dagger.Lazy
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -10,11 +11,18 @@ import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
 import dagger.multibindings.Multibinds
 import io.paritytech.polkadotapp.common.BuildConfig
+import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
+import io.paritytech.polkadotapp.feature_chats_api.domain.NativeChatHistoryExporter
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContacts
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatRooms
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtensionProvider
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatHopFiles
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductAttachmentStaging
 import io.paritytech.polkadotapp.feature_chats_api.domain.search.ChatSearchResultProvider
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.FundingDomainProvider
@@ -73,6 +81,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.menu.RealProdu
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductMessageRenderObserver
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.DevServers
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.RealProductSessionController
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.ProductPersonChatRooms
 import io.paritytech.polkadotapp.feature_products_impl.domain.deriveEntropy.RealDeriveEntropyUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.RealExploreProductsService
@@ -138,6 +147,18 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.Execu
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealExecuteTopUpUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealTopUpService
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpService
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ChatPushDecoder
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.CoreChatPushDecoder
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductChatContacts
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductChatMigration
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductChatPushHandler
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductChatRoomEventSink
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductStorageCipher
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductStorageFiles
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIChatHopFiles
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIChatRoomEventSink
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIProductAttachmentStaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIPocketFaceStreams
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.RealResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
@@ -146,16 +167,21 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWork
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RealProductWorkerRefCounter
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RealWorkerBootFactory
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerBootFactory
+import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.ChatRoomLinkDeepLinkHandler
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketDeepLinkHandler
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketScanContentParser
+import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.BundledChatInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.ProductWorkerInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.TopUpResumeInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserFragment
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.RuntimeSelectingSpaHost
 import io.paritytech.polkadotapp.feature_scan_api.domain.ScanContentParser
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.OurDeviceKeypairProvider
+import io.paritytech.polkadotapp.tools_push_notifications_api.PushNotificationHandler
 import okhttp3.Call
 import okhttp3.OkHttpClient
+import java.io.File
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
 
@@ -225,6 +251,32 @@ internal interface ProductsModule {
     fun bindPocketFaceStreams(impl: TrUAPIPocketFaceStreams): PocketFaceStreams
 
     @Binds
+    fun bindProductChatRoomEventSink(impl: TrUAPIChatRoomEventSink): ProductChatRoomEventSink
+
+    @Binds
+    fun bindPersonChatContacts(impl: ProductChatContacts): PersonChatContacts
+
+    @Binds
+    fun bindPersonChatRooms(impl: ProductPersonChatRooms): PersonChatRooms
+
+    @Binds
+    @IntoSet
+    fun bindProductChatMigration(impl: ProductChatMigration): AppInitializer
+
+    @Binds
+    fun bindProductAttachmentStaging(impl: TrUAPIProductAttachmentStaging): ProductAttachmentStaging
+
+    @Binds
+    fun bindChatHopFiles(impl: TrUAPIChatHopFiles): ChatHopFiles
+
+    @Binds
+    fun bindChatPushDecoder(impl: CoreChatPushDecoder): ChatPushDecoder
+
+    @Binds
+    @IntoSet
+    fun bindProductChatPushHandler(impl: ProductChatPushHandler): PushNotificationHandler
+
+    @Binds
     fun bindProductImageResolver(impl: RealProductImageResolver): ProductImageResolver
 
     @Binds
@@ -252,6 +304,10 @@ internal interface ProductsModule {
     fun bindPocketDeepLinkHandler(impl: PocketDeepLinkHandler): DeepLinkHandler
 
     @Binds
+    @IntoSet
+    fun bindChatRoomLinkDeepLinkHandler(impl: ChatRoomLinkDeepLinkHandler): DeepLinkHandler
+
+    @Binds
     fun bindProductLocalStorage(impl: RealProductLocalStorage): ProductLocalStorage
 
     @Binds
@@ -277,6 +333,10 @@ internal interface ProductsModule {
     @Binds
     @IntoSet
     fun bindProductWorkerInitializer(impl: ProductWorkerInitializer): AppInitializer
+
+    @Binds
+    @IntoSet
+    fun bindBundledChatInitializer(impl: BundledChatInitializer): AppInitializer
 
     @Binds
     @IntoSet
@@ -441,6 +501,39 @@ internal interface ProductsModule {
                 prefs = context.getSharedPreferences("debug_pocket_cards", Context.MODE_PRIVATE),
                 isDebugBuild = BuildConfig.DEBUG,
             )
+
+        /** A product may keep this many bytes, sealed, in its storage. */
+        private const val PRODUCT_STORAGE_BUDGET_BYTES = 256L shl 20
+
+        @Provides
+        @Singleton
+        fun provideProductStorageFiles(
+            @ApplicationContext context: Context,
+            cipher: ProductStorageCipher,
+            preferences: EncryptedPreferences,
+        ): ProductStorageFiles = ProductStorageFiles(
+            root = File(context.noBackupFilesDir, "truapi-product-storage"),
+            cipher = cipher,
+            legacy = preferences,
+            budgetBytes = PRODUCT_STORAGE_BUDGET_BYTES,
+        )
+
+        @Provides
+        @Singleton
+        fun provideProductChatMigration(
+            @ApplicationContext context: Context,
+            mode: PersonChatMode,
+            exporter: NativeChatHistoryExporter,
+            deviceKeys: OurDeviceKeypairProvider,
+            runtimeProvider: Lazy<TrUAPIHostRuntimeProvider>,
+        ): ProductChatMigration = ProductChatMigration(
+            mode = mode,
+            exporter = exporter,
+            deviceKeys = deviceKeys,
+            runtimeProvider = runtimeProvider,
+            preferences = context.getSharedPreferences("product_chat_migration", Context.MODE_PRIVATE),
+            file = File(context.noBackupFilesDir, "product-chat-history.bin"),
+        )
 
         @Provides
         @Singleton

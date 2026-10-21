@@ -23,6 +23,7 @@ final class ProductBotProvider: ProductBotProviding {
     private let botFactory: ProductBotFactory
     private let dotNsResolver: DotNsResolverProtocol
     private let productResolver: ProductResolving
+    private let chatProductReleases: ChatProductReleases?
     private let tldProvider: DotNsTldProviding
     private let settingsManager: SettingsManagerProtocol
     private let logger: LoggerProtocol
@@ -35,6 +36,7 @@ final class ProductBotProvider: ProductBotProviding {
         botFactory: ProductBotFactory,
         dotNsResolver: DotNsResolverProtocol,
         productResolver: ProductResolving,
+        chatProductReleases: ChatProductReleases? = nil,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         settingsManager: SettingsManagerProtocol = SettingsManager.shared,
         logger: LoggerProtocol = Logger.shared
@@ -43,6 +45,7 @@ final class ProductBotProvider: ProductBotProviding {
         self.botFactory = botFactory
         self.dotNsResolver = dotNsResolver
         self.productResolver = productResolver
+        self.chatProductReleases = chatProductReleases
         self.tldProvider = tldProvider
         self.settingsManager = settingsManager
         self.logger = logger
@@ -150,9 +153,26 @@ private extension ProductBotProvider {
 
         guard let tld = await tldProvider.tldRetrying(attempts: Self.tldAttempts) else { return [] }
 
-        return HostPlacedProducts.all.map {
-            Product(id: $0.productId(tld), name: $0.fallbackName)
+        // The chat product is placed only on an install whose chats it runs (HX2).
+        let chatProduct = PersonChatMode.isProductChat
+        if chatProduct {
+            // Before the bot is built: its worker source is read from these files.
+            do {
+                if let chatProductReleases {
+                    try chatProductReleases.installBundled(tld: tld)
+                    // A newer release that passes its checks runs from the next start of the worker.
+                    Task { await chatProductReleases.update(tld: tld) }
+                } else {
+                    try BundledChatProduct.install(tld: tld)
+                }
+            } catch {
+                logger.error("Bundled chat product not installed: \(error)")
+            }
         }
+
+        return HostPlacedProducts.all
+            .filter { chatProduct || !$0.requiresCoreRuntime }
+            .map { Product(id: $0.productId(tld), name: $0.fallbackName) }
     }
 
     /// The last async seam before a bot is built: the file provider that serves the worker runs

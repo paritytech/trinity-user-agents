@@ -36,7 +36,7 @@ impl Scanner for ProductRuntimeHost {
 					CallError::Domain(latest::HostScannerScanError::InvalidRequest { reason })
 				})?;
 				if self.connection.execution_kind() == ProductExecutionKind::Worker &&
-					!self.connection.recently_tapped()
+					!self.connection.recently_pressed()
 				{
 					return Err(CallError::Domain(latest::HostScannerScanError::NotVisible));
 				}
