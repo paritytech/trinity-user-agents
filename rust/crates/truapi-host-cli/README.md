@@ -26,6 +26,8 @@ One binary, `truapi-host`:
 | `register-name` | Register a full-person username via `DotnsGateway.register_name` on Asset Hub, linked to a lite username or standalone with a chat key. |
 | `alloc-check` | Diagnose (or `--submit`) on-chain statement-store allowance: ring membership, chosen slot, and the `set_statement_store_account` extrinsic. On a full period it prints each occupied slot's age and which one would be replaced. |
 | `pgas-check` | Diagnose (or `--submit`) an Asset Hub PGAS allowance claim: ring membership on People, whether Asset Hub has imported that ring revision, the day's first unclaimed slot, and the `Pgas.claim_pgas` extrinsic. |
+| `attest` | Attest a given mnemonic's `uid.<tld>` identity for a lite username, wait for its ring membership, and print `{address, publicKey, liteUsername}` as JSON. For e2e suites that hold their own mnemonics. |
+| `local-network-check` | Validate the `HOST_CLI_LOCAL_NETWORK_CONFIG` file and print the resolved routing as JSON, without contacting a chain. |
 | `stack` | Trinity stack descriptors: `keygen`, `publish` a model to `.well-known/trinity-stack.json`, `verify` a link, URL or file, `bundle` the signed copy a host build ships, and print a pointer's `link` and QR code. The rules come from the [`trinity-stack`](../trinity-stack) crate. |
 
 The repository's `make e2e-dotli` target builds this binary and runs the
@@ -749,6 +751,8 @@ Scripts under `js/scripts/` include:
   make e2e-chat-cli                     # chat phase only
   scripts/battery.sh --pocket-host      # Pocket phase only
   make e2e-pocket-cli                   # Pocket phase only
+  scripts/battery.sh --funding-host     # funding phase only, on a test-host build
+  make e2e-funding-cli                  # funding phase only
   scripts/battery.sh --release          # release binary
   scripts/battery.sh -- --network foo   # arguments after `--` go to every host process
   ```
@@ -763,6 +767,14 @@ Scripts under `js/scripts/` include:
   removable and one privileged, and records every removal the host is asked for
   in `TRUAPI_POCKET_LOG`. The cases read that transcript, so a pass means the
   host and the product agree rather than resting on the product's word.
+
+  The funding phase builds the host with `--features test-host` and installs
+  a scripted funding overlay: each request the product makes is answered with
+  the next outcome from `TRUAPI_FUNDING_OUTCOMES`
+  (`deliver:900,release:500,fail,dismiss`), and a started session is settled
+  through the core's test hook with no chain behind it. Every overlay request
+  and session change is recorded in `TRUAPI_FUNDING_LOG`, which the cases read.
+  The live on-ramp on Paseo Next is `truapi-host funding-check`.
 
   The CLI accepts and logs Game reminders on every execution kind, without
   holding or firing them. The core serves Game to the game product (`dim2`)
@@ -1020,8 +1032,15 @@ descriptors target previewnet, so its statements, its host chain routes and its
 own chain reads all land on one network. The CLI mints the identity backend's
 bearer token itself (SPEC.md §12.3). Sessions are per preset, so each network
 gets its own signer identity on the same machine.
-`HOST_CLI_IDENTITY_BACKEND_BASE` swaps only
-the identity backend (for a local one); `HOST_CLI_IDENTITY_BACKEND_TOKEN`
+`HOST_CLI_IDENTITY_BACKEND_BASE` swaps
+the identity backend (for a local one), and `HOST_CLI_PEOPLE_WS`,
+`HOST_CLI_ASSET_HUB_WS` and `HOST_CLI_BULLETIN_WS` swap a chain's URL for a fork
+of the preset's network, which keeps its genesis hashes. Each must be a `ws://` or
+`wss://` URL. `attest` against a fork also needs `HOST_CLI_IDENTITY_BACKEND_BASE`
+pointing at a backend that serves the fork. For a local network that
+is not a fork, `HOST_CLI_LOCAL_NETWORK_CONFIG` names a file with every chain's URL
+and genesis hash and the backend instead (`docs/local-network.md`); it cannot be
+combined with the chain URL overrides. `HOST_CLI_IDENTITY_BACKEND_TOKEN`
 supplies its bearer token instead of the CLI minting one. For username
 registration, an injected token's subject must match the session's `uid.<tld>`
 candidate account. The automatically minted token uses that identity; and

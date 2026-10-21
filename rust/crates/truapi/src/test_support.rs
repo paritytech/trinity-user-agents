@@ -30,7 +30,7 @@ use crate::platform::{
 	CoreStorage as PlatformCoreStorage, CoreStorageKey, CreateTransactionReview,
 	Features as PlatformFeatures, HostInfo, JsonRpcConnection, LocaleHost,
 	Navigation as PlatformNavigation, Notifications as PlatformNotifications, PairingHostConfig,
-	Permissions as PlatformPermissions, PlatformInfo, PreimageHost, ProductContext,
+	Permissions as PlatformPermissions, PlatformInfo, PreimageHost, ProductContext, ProductId,
 	ProductOperations as PlatformProductOperations, ProductStorage as PlatformProductStorage,
 	ProductSubtreeReview, ProviderError, ResourceAllocationReview, SignPayloadReview,
 	SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
@@ -231,9 +231,9 @@ pub struct StubPlatform {
 	pub storage_subscribers: Arc<Mutex<Vec<(String, StorageChangeSender)>>>,
 	/// Every `begin_operation` as `(product_id, label)`, in order. The
 	/// returned id is the call's 1-based position.
-	pub begun_operations: Arc<Mutex<Vec<(String, String)>>>,
+	pub begun_operations: Arc<Mutex<Vec<(ProductId, String)>>>,
 	/// Every `end_operation` as `(product_id, id)`, in order.
-	pub ended_operations: Arc<Mutex<Vec<(String, u32)>>>,
+	pub ended_operations: Arc<Mutex<Vec<(ProductId, u32)>>>,
 	/// Held open by a test so `begin_operation` is still in flight while the
 	/// dispatch awaiting it goes away.
 	pub begin_operation_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
@@ -243,6 +243,10 @@ pub struct StubPlatform {
 	pub end_operation_error: Option<&'static str>,
 	/// When set, product/core storage reads fail with this reason.
 	pub local_storage_error: Option<&'static str>,
+	/// When set, core-storage writes and clears fail with this reason. Unlike
+	/// `local_storage_error` a test can set it mid-flow, after the reads it
+	/// needs have succeeded.
+	pub core_storage_write_error: Mutex<Option<&'static str>>,
 	/// When set, only `PermissionAuthorization` reads fail. Narrower than
 	/// `local_storage_error`, which fails every key: a test that needs the
 	/// manifest cache to answer while the stored permission decision is
@@ -350,7 +354,7 @@ pub fn runtime_config(product_id: &str) -> (PairingHostConfig, ProductContext) {
 			"polkadotapp".to_string(),
 		)
 		.expect("test host runtime config is valid"),
-		ProductContext::new(product_id.to_string()).expect("test product context is valid"),
+		ProductContext::new(ProductId::for_test(product_id)),
 	)
 }
 
@@ -805,7 +809,7 @@ pub fn sign_raw_legacy_response_message(
 /// canonical decimal form of `index`.
 pub fn account_id(identifier: &str, index: u32) -> v01::ProductAccountId {
 	v01::ProductAccountId {
-		dot_ns_identifier: identifier.to_string(),
+		dot_ns_identifier: ProductId::for_test(identifier),
 		derivation_index: v01::DerivationIndex::Index(index),
 	}
 }
@@ -835,7 +839,7 @@ pub fn ring_location_fixture() -> v01::RingLocation {
 pub fn account_alias_request(product_id: &str) -> HostAccountGetAliasRequest {
 	HostAccountGetAliasRequest::V1(v01::HostAccountGetAliasRequest {
 		key_handle: v01::ProductAccountId {
-			dot_ns_identifier: product_id.to_string(),
+			dot_ns_identifier: ProductId::for_test(product_id),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 		context: product_proof_context(product_id),
@@ -847,7 +851,7 @@ pub fn account_alias_request(product_id: &str) -> HostAccountGetAliasRequest {
 pub fn create_proof_request(product_id: &str) -> HostAccountCreateProofRequest {
 	HostAccountCreateProofRequest::V1(v01::HostAccountCreateProofRequest {
 		key_handle: v01::ProductAccountId {
-			dot_ns_identifier: product_id.to_string(),
+			dot_ns_identifier: ProductId::for_test(product_id),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 		context: product_proof_context(product_id),
@@ -1089,7 +1093,10 @@ impl PlatformCoreStorage for StubPlatform {
 			}
 			return Ok(());
 		}
-		if let Some(reason) = self.local_storage_error {
+		if let Some(reason) = self
+			.local_storage_error
+			.or(*self.core_storage_write_error.lock().expect("write error mutex poisoned"))
+		{
 			return Err(v01::GenericError { reason: reason.to_string() });
 		}
 		self.local_storage
@@ -1104,7 +1111,10 @@ impl PlatformCoreStorage for StubPlatform {
 			*self.session_clears.lock().expect("session clear counter mutex poisoned") += 1;
 			return Ok(());
 		}
-		if let Some(reason) = self.local_storage_error {
+		if let Some(reason) = self
+			.local_storage_error
+			.or(*self.core_storage_write_error.lock().expect("write error mutex poisoned"))
+		{
 			return Err(v01::GenericError { reason: reason.to_string() });
 		}
 		self.local_storage
@@ -1230,6 +1240,11 @@ impl PlatformFeatures for StubPlatform {
 
 struct RecordingConnection {
 	sent: Arc<Mutex<Vec<String>>>,
+	/// Requests sent on this connection alone. Scripted `responses` wait on
+	/// these: connections share `sent`, and two of them can each issue
+	/// `truapi:1`, so matching against `sent` can answer a request that has not
+	/// been sent here yet and the client drops the reply.
+	sent_here: Arc<Mutex<Vec<String>>>,
 	responses: Vec<String>,
 	method_responses: Vec<(&'static str, String)>,
 	method_responses_gate: Arc<Mutex<Option<futures::channel::oneshot::Receiver<()>>>>,
@@ -1376,6 +1391,7 @@ fn sso_scripted_responses(
 
 impl JsonRpcConnection for RecordingConnection {
 	fn send(&self, request: String) {
+		self.sent_here.lock().expect("rpc list mutex poisoned").push(request.clone());
 		self.sent.lock().expect("rpc list mutex poisoned").push(request);
 	}
 	fn responses(&self) -> BoxStream<'static, String> {
@@ -1568,7 +1584,7 @@ impl JsonRpcConnection for RecordingConnection {
 			Box::pin(futures::stream::pending())
 		} else {
 			let responses = self.responses.clone();
-			let sent = self.sent.clone();
+			let sent = self.sent_here.clone();
 			Box::pin(stream::unfold(0, move |index| {
 				let responses = responses.clone();
 				let sent = sent.clone();
@@ -1742,6 +1758,7 @@ impl ChainProvider for StubPlatform {
 		}
 		Ok(Box::new(RecordingConnection {
 			sent: self.sent_rpc.clone(),
+			sent_here: Arc::default(),
 			responses: self.rpc_responses.clone(),
 			method_responses: self.rpc_method_responses.clone(),
 			method_responses_gate: self.rpc_method_responses_gate.clone(),

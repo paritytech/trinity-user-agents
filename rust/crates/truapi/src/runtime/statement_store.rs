@@ -21,7 +21,7 @@ use crate::host_logic::statement_store::{
 };
 
 use crate::platform::{
-	CrossProductSignatureKind, StatementStoreProductSignReview, UserConfirmationReview,
+	CrossProductSignatureKind, ProductId, StatementStoreProductSignReview, UserConfirmationReview,
 };
 use serde_json::Value;
 use subxt_rpcs::client::RpcSubscription;
@@ -67,24 +67,20 @@ impl StatementStore for ProductRuntimeHost {
 		RemoteStatementStoreCreateProofResponse,
 		CallError<RemoteStatementStoreCreateProofError>,
 	> {
-		let RemoteStatementStoreCreateProofRequest::V1(mut inner) = request;
-		inner.product_account_id = Self::normalize_product_account_id(inner.product_account_id)
-			.map_err(|()| {
-				CallError::Domain(RemoteStatementStoreCreateProofError::V1(
-					latest::RemoteStatementStoreCreateProofError::UnknownAccount,
-				))
-			})?;
-		let Some(owner) = self
-			.authorized_product_account(&inner.product_account_id.dot_ns_identifier, cx)
-			.await
-		else {
+		let RemoteStatementStoreCreateProofRequest::V1(inner) = request;
+		let owner = inner.product_account_id.dot_ns_identifier.clone();
+		if !self.may_use_product_account(&owner, cx).await {
 			return Err(CallError::Domain(RemoteStatementStoreCreateProofError::V1(
 				latest::RemoteStatementStoreCreateProofError::UnknownAccount,
 			)));
-		};
-		inner.product_account_id.dot_ns_identifier = owner;
+		}
 		let proof = self
-			.create_product_statement_proof(cx, inner.product_account_id, inner.statement)
+			.create_product_statement_proof(
+				cx,
+				owner,
+				inner.product_account_id.derivation_index,
+				inner.statement,
+			)
 			.await
 			.map_err(statement_proof_error)?;
 		Ok(RemoteStatementStoreCreateProofResponse::V1(
@@ -322,34 +318,33 @@ impl ProductRuntimeHost {
 	async fn create_product_statement_proof(
 		&self,
 		cx: &CallContext,
-		product_account_id: latest::ProductAccountId,
+		owner: ProductId,
+		derivation_index: latest::DerivationIndex,
 		statement: latest::Statement,
 	) -> Result<latest::StatementProof, StatementProofFailure> {
+		let product_account_id =
+			latest::ProductAccountId { dot_ns_identifier: owner.clone(), derivation_index };
 		let session = self.accounts.current_session().ok_or(StatementProofFailure::NoSession)?;
 		let signer = self
-			.product_account_public_key(cx, &session, &product_account_id)
+			.product_account_public_key(cx, &session, &owner, &product_account_id.derivation_index)
 			.await
 			.map_err(|err| StatementProofFailure::UnableToSign(err.to_string()))?;
 		let fields = statement_fields_from_v01(statement)
 			.map_err(StatementProofFailure::InvalidStatement)?;
 		let payload = unsigned_statement_signing_payload(fields)
 			.map_err(StatementProofFailure::UnableToSign)?;
-		if product_account_id.dot_ns_identifier != self.connection.product_id() {
+		if &owner != self.connection.product_id() {
 			let confirmed = self
 				.connection
-				.confirm_signature(
-					CrossProductSignatureKind::StatementProof,
-					&product_account_id,
-					|| {
-						UserConfirmationReview::StatementStoreProductSign(
-							StatementStoreProductSignReview {
-								calling_product_id: Some(self.connection.product_id()),
-								account: product_account_id.clone(),
-								payload: payload.clone(),
-							},
-						)
-					},
-				)
+				.confirm_signature(CrossProductSignatureKind::StatementProof, &owner, || {
+					UserConfirmationReview::StatementStoreProductSign(
+						StatementStoreProductSignReview {
+							calling_product_id: Some(self.connection.product_id().clone()),
+							account: product_account_id.clone(),
+							payload: payload.clone(),
+						},
+					)
+				})
 				.await
 				.map_err(|err| StatementProofFailure::UnableToSign(err.reason))?;
 			if !confirmed {
@@ -463,7 +458,7 @@ mod tests {
 			SR25519_SIGNING_CONTEXT, derive_product_keypair, derive_root_keypair_from_entropy,
 			index_bytes,
 		},
-		platform::ProductContext,
+		platform::{CoreStorageKey, ProductContext},
 		test_support::{
 			StubPlatform, account_id, new_statements_frame, runtime_config, signed_statement,
 			sso_session_info, sso_success_response_script, statement, stub_platform,
@@ -502,7 +497,7 @@ mod tests {
 		};
 		futures::executor::block_on(crate::platform::CoreStorage::write_core_storage(
 			platform,
-			crate::runtime::product_manifest::manifest_cache_key(owner),
+			CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
 			entry.encode(),
 		))
 		.expect("stub core storage accepts the entry");
@@ -538,7 +533,7 @@ mod tests {
 			crate::host_core::ConnectionAdapters::from_services(&services),
 			signing_host.clone(),
 			signing_host.clone(),
-			ProductContext::new(product_id.to_string()).expect("valid product id"),
+			ProductContext::new(ProductId::for_test(product_id)),
 		);
 		(host, signing_host)
 	}
@@ -548,7 +543,11 @@ mod tests {
 		let host =
 			ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), test_spawner());
 		let session = sso_session_info();
-		host.test_cache_product_subtree(&session, "myapp.dot", session.public_key);
+		host.test_cache_product_subtree(
+			&session,
+			&ProductId::for_test("myapp.dot"),
+			session.public_key,
+		);
 		host.test_session_state().set_session(session);
 		let cx = CallContext::default();
 		let request = RemoteStatementStoreCreateProofRequest::V1(
@@ -575,7 +574,9 @@ mod tests {
 		let statement = statement();
 		let payload = statement_payload(statement.clone());
 		let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-		let product_keypair = derive_product_keypair(&root, "myapp.dot", index_bytes(0)).unwrap();
+		let product_keypair =
+			derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0))
+				.unwrap();
 		let expected_signer = product_keypair.public.to_bytes();
 		let cx = CallContext::default();
 		let request = RemoteStatementStoreCreateProofRequest::V1(
@@ -608,7 +609,9 @@ mod tests {
 		let statement = statement();
 		let payload = statement_payload(statement.clone());
 		let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-		let owner = derive_product_keypair(&root, "dim2.paseo", index_bytes(0)).unwrap();
+		let owner =
+			derive_product_keypair(&root, &ProductId::for_test("dim2.paseo"), index_bytes(0))
+				.unwrap();
 		let request = RemoteStatementStoreCreateProofRequest::V1(
 			latest::RemoteStatementStoreCreateProofRequest {
 				product_account_id: account_id("dim2.paseo", 0),
@@ -636,8 +639,8 @@ mod tests {
 			.expect("statement store product sign review list mutex poisoned");
 		assert_eq!(reviews.len(), 1, "the user saw the signature");
 		assert_eq!(
-			reviews[0].calling_product_id.as_deref(),
-			Some("dim2next.paseo"),
+			reviews[0].calling_product_id,
+			Some(ProductId::for_test("dim2next.paseo")),
 			"and saw which product asked",
 		);
 	}

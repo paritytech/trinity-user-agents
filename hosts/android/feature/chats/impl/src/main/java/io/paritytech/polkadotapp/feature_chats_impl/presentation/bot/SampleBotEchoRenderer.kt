@@ -12,6 +12,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
@@ -24,6 +26,7 @@ import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessag
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.LastMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.messages.defaultAlignment
 import kotlinx.serialization.Serializable
+import io.paritytech.polkadotapp.common.R as RCommon
 
 @Serializable
 data class EchoContent(
@@ -99,7 +102,7 @@ private fun EchoMessageBubble(
             onSuccess = { echo ->
                 Column {
                     Text(
-                        text = "🔊 Echo",
+                        text = stringResource(RCommon.string.chat_echo_title),
                         style = PolkadotTheme.typography.body.small,
                         fontWeight = FontWeight.Bold,
                         color = AccentColor
@@ -114,7 +117,10 @@ private fun EchoMessageBubble(
                     )
 
                     Text(
-                        text = "You watched this message for total of ${echo.watchTime} seconds",
+                        text = stringResource(
+                            RCommon.string.chat_echo_watch_time,
+                            pluralStringResource(RCommon.plurals.common_seconds_format, echo.watchTime, echo.watchTime)
+                        ),
                         style = PolkadotTheme.typography.body.large,
                         color = PolkadotTheme.colors.fg.secondary,
                         modifier = Modifier.padding(top = PolkadotTheme.spacings.tiny)
@@ -123,7 +129,7 @@ private fun EchoMessageBubble(
             },
             onFailure = {
                 Text(
-                    text = "Failed to decode echo message",
+                    text = stringResource(RCommon.string.chat_echo_decode_failed),
                     style = PolkadotTheme.typography.body.large,
                     color = PolkadotTheme.colors.fg.error
                 )

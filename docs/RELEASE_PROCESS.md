@@ -41,11 +41,12 @@ The first command writes a markdown file under `.changeset/`; the second
 consumes it, bumps the selected package `package.json`, appends the package
 `CHANGELOG.md`, deletes the changeset file, and then runs
 `scripts/sync-release-versions.mjs`. That script keeps
-`rust/crates/truapi/Cargo.toml` and the host package's `@parity/truapi`
-dependency aligned with `js/packages/truapi/package.json`; the command then
-refreshes `package-lock.json`. A protocol release should therefore include the
-`@parity/truapi` package, its changelog, the Cargo version, the host dependency,
-and the lockfile. A host-runtime-only release can bump
+`rust/crates/truapi/Cargo.toml`, the host package's `@parity/truapi`
+dependency and the `@parity/truapi` version recorded in
+`js/container/package-lock.json` aligned with `js/packages/truapi/package.json`;
+the command then refreshes `package-lock.json`. A protocol release should
+therefore include the `@parity/truapi` package, its changelog, the Cargo
+version, the host dependency, and both lockfiles. A host-runtime-only release can bump
 `@parity/truapi-host` without changing the Rust crate version.
 
 `@parity/trinity-stack` ships the `rust/crates/trinity-stack` crate built to

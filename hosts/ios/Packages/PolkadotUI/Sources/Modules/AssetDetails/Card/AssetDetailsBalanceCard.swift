@@ -13,22 +13,12 @@ public struct AssetDetailsBalanceCard: View {
         self.isExpanded = isExpanded
     }
 
+    /// The card is a leather wallet, so it has the wallet's own proportions and outline rather
+    /// than a bordered rectangle's.
     public var body: some View {
         content
             .accessibilityId(AccessibilityID.Wallet.cashCard)
-            .cardAspectRatio()
-            .bordered(
-                width: 0.5,
-                cornerRadius: 24,
-                gradient: LinearGradient(
-                    stops: [
-                        .init(color: .white, location: 0),
-                        .init(color: Color(hex: 0xEFEDED).opacity(0.1), location: 0.37)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
+            .aspectRatio(Constants.wallet.aspectRatio, contentMode: .fit)
     }
 
     /// The total, which sits at the foot of the card in both of its states.
@@ -40,18 +30,10 @@ public struct AssetDetailsBalanceCard: View {
 
     private var content: some View {
         ZStack(alignment: .leading) {
-            Image(.cashBg)
+            Image(.walletLeather)
                 .resizable()
-                .scaledToFill()
-                .clipped()
-                .overlay(alignment: .trailing) {
-                    Image(.cashBgIcon)
-                        .motionShineReveal(
-                            .balanceCardIcon,
-                            baseOpacity: 0.2,
-                            isActive: isExpanded
-                        )
-                }
+                .scaledToFit()
+                .walletLeather(Constants.wallet)
 
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 5) {
@@ -135,6 +117,7 @@ public extension AssetDetailsBalanceCard {
 private extension AssetDetailsBalanceCard {
     enum Constants {
         static let logoHeight: CGFloat = 35
+        static let wallet = WalletLeatherImage.cashWallet
     }
 }
 
