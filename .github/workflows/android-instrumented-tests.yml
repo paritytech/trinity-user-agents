@@ -119,7 +119,7 @@ jobs:
           profile: pixel_5
           disable-animations: true
           emulator-boot-timeout: 900
-          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back emulated
           working-directory: hosts/android
           # Flavours are declared only in the app module, so this resolves
           # there and runs that module's tests. The instrumented tests in the
