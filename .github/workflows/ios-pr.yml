@@ -133,6 +133,7 @@ jobs:
       skip: ${{ steps.check_skip.outputs.skip }}
       app: ${{ steps.check_skip.outputs.app }}
       tests: ${{ steps.check_skip.outputs.tests }}
+      device: ${{ steps.check_skip.outputs.device }}
     steps:
       - name: Decide which jobs this run needs
         id: check_skip
@@ -144,6 +145,7 @@ jobs:
               core.setOutput('skip', 'false');
               core.setOutput('app', 'true');
               core.setOutput('tests', 'true');
+              core.setOutput('device', 'true');
               return;
             }
             // Every job here runs on the Parity machines, which are persistent
@@ -153,6 +155,7 @@ jobs:
               core.setOutput('skip', 'true');
               core.setOutput('app', 'false');
               core.setOutput('tests', 'false');
+              core.setOutput('device', 'false');
               return;
             }
             const label = 'ios-simulator-build';
@@ -163,6 +166,7 @@ jobs:
               core.setOutput('skip', 'false');
               core.setOutput('app', 'false');
               core.setOutput('tests', 'false');
+              core.setOutput('device', 'false');
               return;
             }
             const labels = (await github.paginate(github.rest.issues.listLabelsOnIssue, {
@@ -171,11 +175,15 @@ jobs:
             })).map(l => l.name);
             const app = labels.includes(label);
             core.info(app
-              ? `Building the app: the ${label} label is set.`
-              : `No ${label} label; the app jobs are skipped.`);
+              ? `Publishing a simulator preview: the ${label} label is set.`
+              : `No ${label} label; the simulator preview is skipped.`);
             core.setOutput('skip', labels.includes('skip-ci').toString());
             core.setOutput('app', app.toString());
             core.setOutput('tests', 'true');
+            // The device archive runs on every iOS pull request. The test job
+            // builds the simulator slice, so only this one compiles for a
+            // device, builds the extension target and exercises signing.
+            core.setOutput('device', 'true');
 
   # Whether this change can reach the iOS app at all. A pull request that
   # changes only core crates reaches it through the Swift bindings and the
@@ -414,7 +422,7 @@ jobs:
 
   build:
     needs: [check-skip-label, core]
-    if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
+    if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.device == 'true' && !startsWith(github.head_ref, 'release/')
     timeout-minutes: 30
     runs-on: parity-macos
     steps:
