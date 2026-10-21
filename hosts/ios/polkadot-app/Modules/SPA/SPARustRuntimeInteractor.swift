@@ -23,6 +23,7 @@ final class SPARustRuntimeInteractor {
 
     private var setupTask: Task<Void, Never>?
     private var openChatTask: Task<Void, Never>?
+    private var reloadTask: Task<Void, Never>?
 
     init(
         runtimeFactory: SPARuntimeFactoryProtocol,
@@ -43,6 +44,7 @@ final class SPARustRuntimeInteractor {
     deinit {
         setupTask?.cancel()
         openChatTask?.cancel()
+        reloadTask?.cancel()
         // Runtime ownership contract: the holder disposes before release.
         Task { [runtime] in await runtime?.dispose() }
     }
@@ -63,6 +65,23 @@ extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
         Task { await previousRuntime?.dispose() }
 
         startRuntime(engine: engine)
+    }
+
+    func reloadLatestBuild() {
+        reloadTask?.cancel()
+        reloadTask = Task { [weak self] in
+            do {
+                try await self?.runtime?.useLatestBuild()
+            } catch {
+                self?.logger.error("SPA(rust): Failed to load latest build: \(error)")
+            }
+
+            guard !Task.isCancelled else {
+                return
+            }
+
+            self?.presenter?.didRequestReload()
+        }
     }
 
     func hasChatEntry() -> Bool {

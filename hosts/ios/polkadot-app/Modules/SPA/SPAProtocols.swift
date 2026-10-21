@@ -26,6 +26,7 @@ protocol SPAPresenterProtocol: AnyObject {
     func didTapMinimize()
     func didTapClose()
     func didTapRetry()
+    func didTapRefresh()
     func didInterceptNavigation(to url: URL)
     func didRequestDeeplink(_ url: URL)
     func didUpdateWebViewTitle(_ title: String)
@@ -38,6 +39,7 @@ protocol SPAPresenterProtocol: AnyObject {
 protocol SPAInteractorInputProtocol: AnyObject {
     func setup(engine: JSEngineProtocol)
     func retry()
+    func reloadLatestBuild()
     func hasChatEntry() -> Bool
     func openChat()
 }
@@ -46,6 +48,7 @@ protocol SPAInteractorInputProtocol: AnyObject {
 protocol SPAInteractorOutputProtocol: AnyObject {
     func didFail(error: Error)
     func didRequestNavigation(to url: URL)
+    func didRequestReload()
     func didPrepareChat(chatId: Chat.Id)
     func didUpdateLoadProgress(_ progress: DotNsLoadProgress)
 }

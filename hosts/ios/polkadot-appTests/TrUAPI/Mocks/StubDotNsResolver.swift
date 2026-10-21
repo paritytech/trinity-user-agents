@@ -7,6 +7,8 @@ final class StubDotNsResolver: DotNsResolverProtocol {
     var contentURL = URL(fileURLWithPath: "/tmp/spa-test-content")
     /// Content hash returned per name; an absent name reads as `0x00`.
     var contentHashes: [String: String] = [:]
+    /// Names whose content download fails; their hash still reads.
+    var failingContentNames: Set<String> = []
     private(set) var resolvedNames: [String] = []
 
     func resolveToLocalURL(dotNsName: String) async throws -> URL {
@@ -20,6 +22,9 @@ final class StubDotNsResolver: DotNsResolverProtocol {
 
     func resolveContent(dotNsName: String) async throws -> DotNsResolvedContent {
         resolvedNames.append(dotNsName)
+        if failingContentNames.contains(dotNsName) {
+            throw URLError(.timedOut)
+        }
         return try await DotNsResolvedContent(
             contentHash: resolveContentHash(dotNsName: dotNsName),
             localURL: contentURL

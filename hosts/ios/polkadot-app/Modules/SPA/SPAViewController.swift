@@ -217,7 +217,7 @@ private extension SPAViewController {
             title: String(localized: .spaActionRefresh),
             image: UIImage(systemName: "arrow.clockwise")
         ) { [weak self] _ in
-            self?.reload()
+            self?.presenter.didTapRefresh()
         })
 
         elements.append(UIAction(

@@ -93,6 +93,10 @@ extension SPANativeRuntimeInteractor: SPAInteractorInputProtocol {
         }
     }
 
+    func reloadLatestBuild() {
+        presenter?.didRequestReload()
+    }
+
     func hasChatEntry() -> Bool {
         // Declared, or not offered: a product with no worker manifest has no chat surface here.
         resolvedProduct?.executables.worker?.serves(.chat) ?? false

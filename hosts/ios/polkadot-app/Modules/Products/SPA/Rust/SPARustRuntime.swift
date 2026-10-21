@@ -13,7 +13,7 @@ import UIKitExt
 /// An actor so `start`/`dispose` never race on runtime state. Actors are
 /// reentrant, so `dispose()` can interleave while `start` is suspended:
 /// `dispose` flips `disposed` before its first await and `start` re-checks
-/// it after every await, destroying anything it created in the gap.
+/// it after every await, destroying anything it created in the gap. `useLatestBuild` follows the same rule.
 actor SPARustRuntime {
     private let executionModel: RustRuntimeEnvironment.ExecutionModel
     private let configuration: SPAConfiguration
@@ -27,6 +27,7 @@ actor SPARustRuntime {
     private var started = false
     private var disposed = false
     private var servedContent: DotNsResolvedContent?
+    private var unavailableContentHash: String?
 
     init(
         executionModel: RustRuntimeEnvironment.ExecutionModel,
@@ -121,15 +122,46 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
         logger.debug("SPA(rust): runtime disposed for \(configuration.page.host.name)")
     }
+
+    func useLatestBuild() async throws {
+        try checkNotDisposed()
+
+        guard case .dotNs = configuration.contentSource, let servedContent else { return }
+
+        let contentId = try await dotNsContentId()
+        let latestHash = try await dotNsResolver.resolveContentHash(dotNsName: contentId)
+        try checkNotDisposed()
+        guard latestHash != servedContent.contentHash else { return }
+
+        let content: DotNsResolvedContent
+        do {
+            content = try await dotNsResolver.resolveContent(dotNsName: contentId)
+        } catch {
+            if !(error is CancellationError) {
+                unavailableContentHash = latestHash
+            }
+            throw error
+        }
+
+        _ = try await serve(content)
+        unavailableContentHash = nil
+
+        logger.debug("SPA(rust): '\(contentId)' now serves build \(content.contentHash)")
+    }
 }
 
 private extension SPARustRuntime {
+    /// Bytes come from the executable's own subname; the origin stays the base domain, which
+    /// is what permission grants and web storage are keyed by.
+    func dotNsContentId() async throws -> String {
+        let domain = configuration.page.host.toDotDomain()
+        return try await productResolver.resolve(domain).contentId(for: configuration.executable)
+    }
+
     func prepareDotNsContent() async throws -> URL {
         let domain = configuration.page.host.toDotDomain()
 
-        // Bytes come from the executable's own subname; the origin stays the base domain, which
-        // is what permission grants and web storage are keyed by.
-        let contentId = try await productResolver.resolve(domain).contentId(for: configuration.executable)
+        let contentId = try await dotNsContentId()
         let content = try await dotNsResolver.resolveContent(dotNsName: contentId)
 
         logger.debug("SPA(rust): '\(domain)' content resolved to \(content.localURL.path)")

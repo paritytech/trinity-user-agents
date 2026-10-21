@@ -48,7 +48,7 @@ extension SPAPresenter: SPAPresenterProtocol {
                 icon: .iconRefresh,
                 title: String(localized: .spaActionRefresh),
                 isEnabled: true,
-                handler: { [weak self] in self?.view?.reload() }
+                handler: { [weak self] in self?.didTapRefresh() }
             ),
             SPAMoreAction(
                 icon: .iconShare,
@@ -78,6 +78,10 @@ extension SPAPresenter: SPAPresenterProtocol {
     func didTapRetry() {
         view?.showLoading()
         interactor.retry()
+    }
+
+    func didTapRefresh() {
+        interactor.reloadLatestBuild()
     }
 
     func hasChatEntry() -> Bool {
@@ -115,6 +119,10 @@ extension SPAPresenter: SPAInteractorOutputProtocol {
     func didRequestNavigation(to url: URL) {
         view?.hideLoading()
         view?.navigate(to: url)
+    }
+
+    func didRequestReload() {
+        view?.reload()
     }
 
     func didPrepareChat(chatId: Chat.Id) {
