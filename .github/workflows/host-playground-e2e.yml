@@ -112,6 +112,7 @@ jobs:
         if: inputs.mode == 'native-telemetry' || inputs.mode == 'native-telemetry-ingestion'
         env:
           CANDIDATE_REF: ${{ inputs.ref }}
+          PLATFORM: ${{ inputs.platform }}
           PRODUCT: ${{ inputs.product }}
         run: |
           set -euo pipefail
@@ -119,7 +120,7 @@ jobs:
             echo "::error::native telemetry acceptance requires an exact 40-character commit SHA"
             exit 1
           }
-          [[ "${{ inputs.platform }}" == "android" ]] || {
+          [[ "${PLATFORM}" == "android" ]] || {
             echo "::error::native telemetry acceptance currently supports Android only"
             exit 1
           }
@@ -207,6 +208,7 @@ jobs:
           TERMS_OF_USE_URL: ${{ vars.TERMS_OF_USE_URL }}
           SENTRY_ORG: ${{ inputs.mode == 'native-telemetry-ingestion' && (vars.SENTRY_ORG != '' && vars.SENTRY_ORG != 'your-sentry-org' && vars.SENTRY_ORG || 'paritytech') || vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ inputs.mode == 'native-telemetry-ingestion' && (vars.SENTRY_NATIVE_PROJECT != '' && vars.SENTRY_NATIVE_PROJECT != 'your-sentry-project' && vars.SENTRY_NATIVE_PROJECT || 'polkadot-android') || vars.SENTRY_PROJECT }}
+          TELEMETRY_MODE: ${{ inputs.mode }}
           FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
           GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
           GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
@@ -216,7 +218,7 @@ jobs:
           CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
         run: |
           set -euo pipefail
-          if [ "${{ inputs.mode }}" = "native-telemetry-ingestion" ]; then
+          if [ "${TELEMETRY_MODE}" = "native-telemetry-ingestion" ]; then
             IFS= read -r SENTRY_DSN < "${RUNNER_TEMP}/android-sentry-dsn"
             export SENTRY_DSN
           fi

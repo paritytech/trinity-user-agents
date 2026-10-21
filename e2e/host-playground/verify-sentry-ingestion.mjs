@@ -231,7 +231,7 @@ export async function verifySentryIngestion({
     const jollityInfo = projects.find((project) => project?.slug === jollity);
     if (!nativeInfo || !/^\d+$/.test(String(nativeInfo.id))) throw new Error("SENTRY_NATIVE_PROJECT has no numeric project ID");
     if (!jollityInfo || !/^\d+$/.test(String(jollityInfo.id))) throw new Error("SENTRY_JOLLITY_PROJECT has no numeric project ID");
-    if (nativeInfo.id === jollityInfo.id) throw new Error("native and Jollity Sentry projects must be distinct");
+    if (String(nativeInfo.id) === String(jollityInfo.id)) throw new Error("native and Jollity Sentry projects must be distinct");
     evidence.projects = { native: { slug: native, id: String(nativeInfo.id) }, jollity: { slug: jollity, id: String(jollityInfo.id) } };
     evidence.stages.preflight = "passed";
     save();
@@ -346,7 +346,8 @@ export async function resolveAndroidDsn({
   } catch {
     throw new Error("SENTRY_NATIVE_PROJECT returned an invalid public DSN");
   }
-  if (parsed.protocol !== "https:" || !parsed.hostname.endsWith("ingest.de.sentry.io") || parsed.pathname !== `/${project.id}`) {
+  const isEuSentryHost = parsed.hostname === "ingest.de.sentry.io" || parsed.hostname.endsWith(".ingest.de.sentry.io");
+  if (parsed.protocol !== "https:" || !isEuSentryHost || parsed.pathname !== `/${project.id}`) {
     throw new Error("SENTRY_NATIVE_PROJECT public DSN is not an EU key for the configured project");
   }
   writeFileSync(output, dsn, { mode: 0o600 });

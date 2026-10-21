@@ -10,7 +10,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs, promisify } from "node:util";
 import { classify } from "../report.mjs";
-import { hasMarkerEvent, hasPreviousSessionEnd, validateTelemetryCapture } from "../telemetry-acceptance.mjs";
+import { hasMarkerEvent, hasPreviousSessionEnd, isProductUrl, validateTelemetryCapture, withTimeout } from "../telemetry-acceptance.mjs";
 
 const SUITE_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 const suite = JSON.parse(readFileSync(join(SUITE_DIR, "tests.json"), "utf8"));
@@ -50,6 +50,7 @@ const ANSWER_GRACE_MS = 60_000;
 const APPROVER_INTERVAL_MS = 1_500;
 const POLL_MS = 2_000;
 const READY_POLL_MS = 500;
+const TARGET_REPLY_TIMEOUT_MS = 5_000;
 
 const exec = promisify(execFile);
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -212,8 +213,6 @@ async function listTargets(port) {
   }
 }
 
-const isProductUrl = (url) => url.includes(suite.product.split(".")[0]);
-
 // WebView DevTools rejects Playwright's browser-level attach, so this drives the page target directly.
 class PageTarget {
   #socket;
@@ -285,7 +284,6 @@ function deepLinkOpener(adb, product, { immediately }) {
 }
 
 async function openProduct(adb, forwards, product = suite.product) {
-  const productFragment = product.split(".")[0];
   const deadline = Date.now() + PRODUCT_OPEN_TIMEOUT_MS;
   const openDeepLink = deepLinkOpener(adb, product, { immediately: true });
   while (Date.now() < deadline) {
@@ -304,7 +302,7 @@ async function openProduct(adb, forwards, product = suite.product) {
     }
     const port = forwards.get(socket);
     const target = (await listTargets(port)).find(
-      (candidate) => candidate.type === "page" && candidate.url.includes(productFragment),
+      (candidate) => candidate.type === "page" && isProductUrl(candidate.url, product),
     );
     if (!target) continue;
 
@@ -316,7 +314,7 @@ async function openProduct(adb, forwards, product = suite.product) {
 
 async function readyPage(adb, forwards, page) {
   const href = page && !page.closed ? await page.evaluate("location.href").catch(() => null) : null;
-  if (!href || !isProductUrl(href)) {
+  if (!href || !isProductUrl(href, suite.product)) {
     page?.close();
     page = await openProduct(adb, forwards);
   }
@@ -341,7 +339,11 @@ async function readyPage(adb, forwards, page) {
 async function waitForTelemetryCapture(page, accept, failure) {
   const deadline = Date.now() + READY_TIMEOUT_MS;
   for (;;) {
-    const capture = await page.evaluate("globalThis.__nativeTelemetryAcceptance?.snapshot() ?? null").catch(() => null);
+    const capture = await withTimeout(
+      page.evaluate("globalThis.__nativeTelemetryAcceptance?.snapshot() ?? null"),
+      TARGET_REPLY_TIMEOUT_MS,
+      "the telemetry page target stopped answering",
+    ).catch(() => null);
     if (capture && accept(capture)) return capture;
     if (Date.now() >= deadline) throw new Error(failure);
     await sleep(READY_POLL_MS);
@@ -357,8 +359,16 @@ async function runTelemetryAcceptance(adb, forwards, product, out, passThrough) 
   const source = telemetryTap
     .replace('"__NATIVE_TELEMETRY_MARKER__"', JSON.stringify(marker))
     .replace("__NATIVE_TELEMETRY_PASS_THROUGH__", JSON.stringify(passThrough));
-  await page.command("Page.addScriptToEvaluateOnNewDocument", { source });
-  await page.command("Page.reload", { ignoreCache: true });
+  await withTimeout(
+    page.command("Page.addScriptToEvaluateOnNewDocument", { source }),
+    TARGET_REPLY_TIMEOUT_MS,
+    "the telemetry page target did not install the acceptance tap",
+  );
+  await withTimeout(
+    page.command("Page.reload", { ignoreCache: true }),
+    TARGET_REPLY_TIMEOUT_MS,
+    "the telemetry page target did not reload",
+  );
 
   const capture = await waitForTelemetryCapture(
     page,

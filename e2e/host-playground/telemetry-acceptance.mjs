@@ -34,6 +34,27 @@ function exceptionText(event) {
   return typeof event?.message === "string" ? event.message : event?.message?.formatted ?? "";
 }
 
+export function isProductUrl(value, product) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && (url.hostname === product || url.hostname.endsWith(`.${product}`));
+  } catch {
+    return false;
+  }
+}
+
+export async function withTimeout(promise, timeoutMs, message) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function hasPreviousSessionEnd(capture) {
   return capture.envelopes.some((body) =>
     envelopeItems(body).some(({ header, payload }) =>
@@ -84,13 +105,8 @@ export function validateTelemetryCapture(capture, { platform, marker, candidateR
   requireEqual(capture.descriptor?.frozen, true, "bootstrap frozen");
   requireEqual(capture.descriptor?.writable, false, "bootstrap writable");
   requireEqual(capture.descriptor?.configurable, false, "bootstrap configurable");
-  let pageUrl;
-  try {
-    pageUrl = new URL(capture.href);
-  } catch {
-    throw new Error("captured page URL is invalid");
-  }
-  if (!pageUrl.hostname.includes(product.split(".")[0])) throw new Error(`captured page ${pageUrl.hostname} is not ${product}`);
+  if (!isProductUrl(capture.href, product)) throw new Error(`captured page is not ${product}`);
+  const pageUrl = new URL(capture.href);
 
   const items = capture.envelopes.flatMap(envelopeItems);
   const previous = items

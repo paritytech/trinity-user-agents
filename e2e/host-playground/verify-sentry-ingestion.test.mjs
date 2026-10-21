@@ -25,6 +25,31 @@ const projects = [
   { id: "200", slug: "jollity-next" },
 ];
 
+function nativeDetail() {
+  return {
+    id: nativeEventId,
+    message: "host.webview.created",
+    tags: [
+      { key: "host.session_id", value: sessionId },
+      { key: "host.app_variant", value: bootstrap.appVariant },
+      { key: "host.platform", value: "android" },
+      { key: "host.native_app_version", value: bootstrap.appVersion },
+      { key: "truapi.host_version", value: bootstrap.truapiHostVersion },
+    ],
+    context: { "host.app_build": 456, "event.monotonic_ms": 123.5 },
+  };
+}
+
+function jollityDetail() {
+  return {
+    eventID: eventId,
+    exception: { values: [{ value: marker }] },
+    tags: [{ key: "host.session_id", value: sessionId }],
+    contexts: { native_host: { hostSessionId: sessionId } },
+    breadcrumbs: [{ category: "replay", message: "session.link", data: { data: JSON.stringify({ observation: { hostSessionId: sessionId } }) } }],
+  };
+}
+
 function json(payload, status = 200, headers = {}) {
   return new Response(JSON.stringify(payload), { status, headers });
 }
@@ -56,31 +81,25 @@ function setup(t) {
       return json({ data: [{ id: eventId, timestamp: "2026-10-21T05:00:01Z", message: marker }] });
     }
     if (url.pathname.endsWith(`/${nativeEventId}/`)) {
-      return json({
-        id: nativeEventId,
-        message: "host.webview.created",
-        tags: [
-          { key: "host.session_id", value: sessionId },
-          { key: "host.app_variant", value: bootstrap.appVariant },
-          { key: "host.platform", value: "android" },
-          { key: "host.native_app_version", value: bootstrap.appVersion },
-          { key: "truapi.host_version", value: bootstrap.truapiHostVersion },
-        ],
-        context: { "host.app_build": 456, "event.monotonic_ms": 123.5 },
-      });
+      return json(nativeDetail());
     }
     if (url.pathname.endsWith(`/${eventId}/`)) {
-      return json({
-        eventID: eventId,
-        exception: { values: [{ value: marker }] },
-        tags: [{ key: "host.session_id", value: sessionId }],
-        contexts: { native_host: { hostSessionId: sessionId } },
-        breadcrumbs: [{ category: "replay", message: "session.link", data: { data: JSON.stringify({ observation: { hostSessionId: sessionId } }) } }],
-      });
+      return json(jollityDetail());
     }
     throw new Error(`unexpected fixture URL: ${url.pathname}`);
   };
   return { evidencePath, calls, fetchImpl };
+}
+
+function replaceEventDetail(fixture, wantedEventId, mutate) {
+  const defaultFetch = fixture.fetchImpl;
+  fixture.fetchImpl = async (input) => {
+    const url = new URL(input);
+    if (!url.pathname.endsWith(`/${wantedEventId}/`)) return defaultFetch(input);
+    const detail = wantedEventId === nativeEventId ? nativeDetail() : jollityDetail();
+    mutate(detail);
+    return json(detail);
+  };
 }
 
 function verifyOptions(setupResult, overrides = {}) {
@@ -194,6 +213,36 @@ test("native event requires finite context extras and exact platform and TruAPI 
   await assert.rejects(verifySentryIngestion(verifyOptions(truapiFixture)), /native TruAPI host version tag did not match/);
 });
 
+test("every native event identity and metadata check fails closed", async (t) => {
+  const cases = [
+    ["event ID", (event) => { event.id = "c".repeat(32); }, /native event ID/],
+    ["message", (event) => { event.message = "host.webview.closed"; }, /native event message/],
+    ["session", (event) => { event.tags[0].value = "623e4567-e89b-42d3-a456-426614174000"; }, /native host\.session_id tag/],
+    ["variant", (event) => { event.tags[1].value = "release"; }, /native app variant tag/],
+    ["version", (event) => { event.tags[3].value = "9.9.9"; }, /native app version tag/],
+  ];
+  for (const [, mutate, expected] of cases) {
+    const fixture = setup(t);
+    replaceEventDetail(fixture, nativeEventId, mutate);
+    await assert.rejects(verifySentryIngestion(verifyOptions(fixture)), expected);
+  }
+});
+
+test("every Jollity event join check fails closed", async (t) => {
+  const cases = [
+    ["event ID", (event) => { event.eventID = "c".repeat(32); }, /Jollity event ID/],
+    ["marker", (event) => { event.exception.values[0].value = "different marker"; }, /Jollity marker/],
+    ["tag", (event) => { event.tags[0].value = "623e4567-e89b-42d3-a456-426614174000"; }, /Jollity host\.session_id tag/],
+    ["context", (event) => { event.contexts.native_host.hostSessionId = "623e4567-e89b-42d3-a456-426614174000"; }, /Jollity native host session context/],
+    ["breadcrumb", (event) => { event.breadcrumbs[0].data.data = JSON.stringify({ observation: { hostSessionId: "623e4567-e89b-42d3-a456-426614174000" } }); }, /Jollity session\.link breadcrumb/],
+  ];
+  for (const [, mutate, expected] of cases) {
+    const fixture = setup(t);
+    replaceEventDetail(fixture, eventId, mutate);
+    await assert.rejects(verifySentryIngestion(verifyOptions(fixture)), expected);
+  }
+});
+
 test("previous-session-end log fields must match captured build and version metadata", async (t) => {
   for (const changed of ["host.app_build", "host.native_app_version", "truapi.host_version"]) {
     const fixture = setup(t);
@@ -304,6 +353,39 @@ test("retries 429, 5xx, and network failures and resolves only a matching active
   }), /does not belong/);
 });
 
+test("rejects a deceptive DSN hostname even when the key belongs to the configured project", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "sentry-dsn-host-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const destination = join(dir, "dsn");
+  const deceptiveDsn = "https://public-key@evil-ingest.de.sentry.io/100";
+  await assert.rejects(resolveAndroidDsn({
+    apiBase: "https://de.sentry.io", org: "paritytech", nativeProject: "polkadot-android",
+    jollityProject: "jollity-next", token, destination,
+    fetchImpl: async (input) => {
+      const url = new URL(input);
+      return url.pathname.endsWith("/projects/")
+        ? json(projects)
+        : json([{ isActive: true, projectId: 100, dsn: { public: deceptiveDsn } }]);
+    },
+    sleep: async () => {},
+  }), /not an EU key/);
+});
+
+test("rejects native and Jollity project IDs that differ only by JSON type", async (t) => {
+  const fixture = setup(t);
+  fixture.fetchImpl = async (input) => {
+    const url = new URL(input);
+    if (url.pathname.endsWith("/projects/")) {
+      return json([
+        { id: "100", slug: "polkadot-android" },
+        { id: 100, slug: "jollity-next" },
+      ]);
+    }
+    throw new Error(`unexpected fixture URL: ${url.pathname}`);
+  };
+  await assert.rejects(verifySentryIngestion(verifyOptions(fixture)), /must be distinct/);
+});
+
 test("empty rows fail after the bounded poll and preserve missing lanes", async (t) => {
   const fixture = setup(t);
   fixture.fetchImpl = async (input) => {
@@ -315,4 +397,26 @@ test("empty rows fail after the bounded poll and preserve missing lanes", async 
   await assert.rejects(verifySentryIngestion(verifyOptions(fixture)), /incomplete Host\/Jollity/);
   const partial = JSON.parse(readFileSync(fixture.evidencePath, "utf8"));
   assert.deepEqual(partial.missing, ["native", "jollity", "log"]);
+});
+
+test("polling stops at the configured attempt bound", async (t) => {
+  const fixture = setup(t);
+  let queries = 0;
+  let sleeps = 0;
+  fixture.fetchImpl = async (input) => {
+    const url = new URL(input);
+    if (url.pathname.endsWith("/projects/")) return json(projects);
+    if (url.pathname.endsWith("/events/")) {
+      queries += 1;
+      return json({ data: [] });
+    }
+    throw new Error(`unexpected fixture URL: ${url.pathname}`);
+  };
+  await assert.rejects(verifySentryIngestion(verifyOptions(fixture, {
+    pollAttempts: 3,
+    pollIntervalMs: 1,
+    sleep: async () => { sleeps += 1; },
+  })), /incomplete Host\/Jollity/);
+  assert.equal(queries, 9);
+  assert.equal(sleeps, 2);
 });

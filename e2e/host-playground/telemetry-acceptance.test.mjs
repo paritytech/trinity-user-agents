@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
-import { hasMarkerEvent, hasPreviousSessionEnd, validateTelemetryCapture } from "./telemetry-acceptance.mjs";
+import { hasMarkerEvent, hasPreviousSessionEnd, isProductUrl, validateTelemetryCapture, withTimeout } from "./telemetry-acceptance.mjs";
 
 const id = "123e4567-e89b-42d3-a456-426614174000";
 const eventId = "abcdef0123456789abcdef0123456789";
@@ -59,6 +59,85 @@ test("accepts one UUID across bootstrap, log attributes, context and session lin
   assert.equal(result.pageOrigin, "https://app.dim2next.paseo");
   assert.equal(JSON.stringify(result).includes("sent_at"), false);
   assert.equal(JSON.stringify(result).includes("must-not-leave-memory"), false);
+});
+
+test("matches only the requested product hostname or its host prefix", () => {
+  assert.equal(isProductUrl("https://dim2next.paseo/", "dim2next.paseo"), true);
+  assert.equal(isProductUrl("https://app.dim2next.paseo/", "dim2next.paseo"), true);
+  assert.equal(isProductUrl("http://app.dim2next.paseo/", "dim2next.paseo"), false);
+  assert.equal(isProductUrl("https://dim2next.paseo.example/", "dim2next.paseo"), false);
+  assert.equal(isProductUrl("https://not-dim2next.paseo/", "dim2next.paseo"), false);
+  assert.equal(isProductUrl("not a URL", "dim2next.paseo"), false);
+});
+
+test("bounds a page command that never answers", async () => {
+  await assert.rejects(withTimeout(new Promise(() => {}), 1, "target timeout"), /target timeout/);
+  assert.equal(await withTimeout(Promise.resolve("ready"), 1_000, "target timeout"), "ready");
+});
+
+test("rejects every mismatched bootstrap and descriptor field", () => {
+  const cases = [
+    ["platform", "ios", /bootstrap\.platform/],
+    ["appVariant", "release", /bootstrap\.appVariant/],
+    ["schemaVersion", "2", /bootstrap\.schemaVersion/],
+    ["appVersion", "", /bootstrap\.appVersion/],
+    ["appBuild", "", /bootstrap\.appBuild/],
+    ["osVersion", "", /bootstrap\.osVersion/],
+    ["truapiHostVersion", "", /bootstrap\.truapiHostVersion/],
+    ["sourceCommit", "c".repeat(40), /bootstrap\.sourceCommit/],
+  ];
+  for (const [field, value, expected] of cases) {
+    const broken = structuredClone(capture);
+    broken.bootstrap[field] = value;
+    assert.throws(
+      () => validateTelemetryCapture(broken, {
+        platform: "android", marker, candidateRef: "a".repeat(40), product: "dim2next.paseo",
+      }),
+      expected,
+    );
+  }
+  for (const [field, value] of [["frozen", false], ["writable", true], ["configurable", true]]) {
+    const broken = structuredClone(capture);
+    broken.descriptor[field] = value;
+    assert.throws(
+      () => validateTelemetryCapture(broken, { platform: "android", marker, product: "dim2next.paseo" }),
+      new RegExp(`bootstrap ${field}`),
+    );
+  }
+});
+
+test("rejects every mismatched previous-session attribute", () => {
+  for (const name of Object.keys(attrs)) {
+    const broken = structuredClone(capture);
+    const payload = JSON.parse(broken.envelopes[0].split("\n")[2]);
+    payload.items[0].attributes[name].value = "mismatch";
+    broken.envelopes[0] = envelope("log", payload);
+    assert.throws(
+      () => validateTelemetryCapture(broken, { platform: "android", marker, product: "dim2next.paseo" }),
+      new RegExp(name.replace(".", "\\.")),
+    );
+  }
+});
+
+test("rejects a deceptive product hostname and mismatched event join fields", () => {
+  const wrongProduct = structuredClone(capture);
+  wrongProduct.href = "https://dim2next.paseo.example/";
+  assert.throws(
+    () => validateTelemetryCapture(wrongProduct, { platform: "android", marker, product: "dim2next.paseo" }),
+    /captured page is not/,
+  );
+
+  for (const field of ["tag", "context"]) {
+    const broken = structuredClone(capture);
+    const payload = JSON.parse(broken.envelopes[1].split("\n")[2]);
+    if (field === "tag") payload.tags["host.session_id"] = "623e4567-e89b-42d3-a456-426614174000";
+    else payload.contexts.native_host.hostSessionId = "623e4567-e89b-42d3-a456-426614174000";
+    broken.envelopes[1] = envelope("event", payload);
+    assert.throws(
+      () => validateTelemetryCapture(broken, { platform: "android", marker, product: "dim2next.paseo" }),
+      /hostSessionId|host\.session_id/,
+    );
+  }
 });
 
 test("rejects a session-link mismatch", () => {

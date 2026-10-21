@@ -57,7 +57,8 @@ if (actual !== expected) throw new Error("the Android APK Sentry DSN does not ma
 
 try {
   const url = new URL(actual);
-  if (!url.hostname.endsWith("sentry.io") || !/^\/[0-9]+$/.test(url.pathname)) {
+  const isSentryHost = url.hostname === "sentry.io" || url.hostname.endsWith(".sentry.io");
+  if (!isSentryHost || !/^\/[0-9]+$/.test(url.pathname)) {
     throw new Error("invalid DSN shape");
   }
 } catch {
