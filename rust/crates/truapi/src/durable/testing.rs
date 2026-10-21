@@ -1,5 +1,14 @@
 //! Fixtures shared by the durable engine's tests.
 
+mod harness;
+mod policy;
+
+pub use harness::{ScheduledTxHarness, other_domain, test_domain};
+pub use policy::{
+	PrepareAnswer, PrepareScript, RetryQuestion, ScriptedPolicy, answer_all_with,
+	extrinsic_for_index, first_builds, insert_retryable, test_plan, test_policy_id, without_plan,
+};
+
 use core::time::Duration;
 use std::{
 	collections::{HashMap, HashSet, VecDeque},
@@ -24,7 +33,7 @@ use tempfile::TempDir;
 use super::{
 	engine::{DurableDeps, DurableTxEngine},
 	ladder::{PinnedView, SearchResult},
-	model::{DomainId, DurableTxEntry, DurableTxId, DurableTxStatus, HeadKind},
+	model::{DomainId, DurableTxEntry, DurableTxId, DurableTxStatus, HeadKind, SubmissionPlan},
 	oracle::{DurableRegistry, PassScope, Unobservable},
 	time::Timer,
 };
@@ -392,7 +401,8 @@ impl ManualTimer {
 		}
 	}
 
-	/// How many sleeps were started.
+	/// How many sleeps were started. A zero-duration sleep does not count:
+	/// it never waits.
 	pub fn sleeps(&self) -> usize {
 		self.sleeps.load(Ordering::SeqCst)
 	}
@@ -400,6 +410,9 @@ impl ManualTimer {
 
 impl Timer for ManualTimer {
 	fn sleep(&self, duration: Duration) -> BoxFuture<'static, ()> {
+		if duration.is_zero() {
+			return Box::pin(futures::future::ready(()));
+		}
 		let (wake, woken) = oneshot::channel();
 		let mut state = self.state.lock();
 		let deadline = state.now + duration;
@@ -452,11 +465,21 @@ pub fn engine_with_spawner(
 /// Records `extrinsic` as a pending row of `domain` without watching it, as a
 /// previous process would have left it.
 pub fn insert(db: &Db, domain: &DomainId, extrinsic: MortalExtrinsic) -> DurableTxId {
+	insert_with_plan(db, domain, extrinsic, None)
+}
+
+/// [`insert`], for a row rebuilt through `plan` after a failure its policy
+/// retries.
+pub fn insert_with_plan(
+	db: &Db,
+	domain: &DomainId,
+	extrinsic: MortalExtrinsic,
+	plan: Option<SubmissionPlan>,
+) -> DurableTxId {
 	let domain = domain.clone();
-	futures::executor::block_on(
-		db.write(move |tx| super::dao::insert(tx, &domain, None, &extrinsic)),
-	)
-	.unwrap()
+	let write =
+		db.write(move |tx| super::dao::insert(tx, &domain, None, &extrinsic, plan.as_ref()));
+	futures::executor::block_on(write).unwrap()
 }
 
 /// A spawner running each task on its own thread, counting the tasks that
