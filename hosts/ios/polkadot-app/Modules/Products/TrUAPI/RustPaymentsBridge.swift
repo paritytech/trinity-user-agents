@@ -43,8 +43,12 @@ final class RustPaymentsBridge: TopUpHostBridge, PaymentHostBridge, BalanceHostB
                 if case .notFound = error as? IncomingPaymentError { return true }
                 return false
             },
-            notify: { [target] key, status in
-                target.runtime?.notifyTopUpStatus(productId: key.productId, id: key.id, status: status)
+            notify: { [target, logger] key, status in
+                do {
+                    try target.runtime?.notifyTopUpStatus(productId: key.productId, id: key.id, status: status)
+                } catch {
+                    logger.error("[truapi] top-up status could not be reported: \(error)")
+                }
             },
             pending: .detecting,
             abandoned: .notClaimed,
@@ -57,8 +61,12 @@ final class RustPaymentsBridge: TopUpHostBridge, PaymentHostBridge, BalanceHostB
                     .eraseToAnyAsyncSequence()
             },
             isNotFound: { ($0 as? ExternalPaymentError) == .notFound },
-            notify: { [target] key, status in
-                target.runtime?.notifyPaymentStatus(productId: key.productId, id: key.id, status: status)
+            notify: { [target, logger] key, status in
+                do {
+                    try target.runtime?.notifyPaymentStatus(productId: key.productId, id: key.id, status: status)
+                } catch {
+                    logger.error("[truapi] payment status could not be reported: \(error)")
+                }
             },
             pending: .processing,
             abandoned: .failed(reason: Self.paymentDidNotComplete),

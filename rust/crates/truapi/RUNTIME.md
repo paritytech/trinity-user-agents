@@ -103,8 +103,9 @@ and tests live in `runtime/tests.rs` and `runtime/tests/`.
 Permission grants are scoped by product id and typed request, so a grant for
 one product never authorizes another product or another permission class.
 
-Blessed products in `truapi::platform::REMOTE_PERMISSION_TRUSTED_LABELS` bypass
-recorded permissions. Only device permissions require consent.
+Trusted products in `truapi::platform::REMOTE_PERMISSION_TRUSTED_LABELS` bypass
+recorded permissions and permission prompts. Device permissions still need the OS
+grant.
 Account access, username disclosure, signing with their own product accounts and
 AutoSigning proceed without approval. Legacy-account signing still asks the user,
 except for raw bytes signed inside the `<Bytes>` watermark, which cannot pass for a
@@ -126,7 +127,8 @@ ProductRuntime
         v
 PermissionsService(storage, platform, product_id)
         |
-        +-- blessed product, non-device --> allow without storage or prompt
+        +-- trusted product --> allow without storage or prompt,
+        |                       unless the OS refuses a device capability
         |
         | builds storage key:
         |
@@ -170,7 +172,7 @@ CoreStorage lookup
 
 #### Auto-granted remote permissions
 
-A valid remote permission request from a blessed product is authorized before
+A valid remote permission request from a trusted product is authorized before
 reading or writing permission storage. Empty or invalid domain bundles are denied.
 Other products resolve saved decisions and prompt when undecided.
 
@@ -399,23 +401,26 @@ are exposed through the trait signatures below. `ProductContext` and
 `ProductExecutionKind` are defined here instead, and codegen emits their host
 codecs from these definitions. Both are SCALE-encodable so they can cross the
 wasm callback boundary, where every parameter is encoded with
-`parity-scale-codec`; `ProductContext` decodes through its validating
-constructor, so a context off the wire carries a normalized product id.
+`parity-scale-codec`; `ProductContext` holds a `ProductId`, which decodes by
+parsing, so a context off the wire carries a normalized product id.
 
 ### Product Identity
 
-`normalize_product_identifier` is the single chokepoint that turns a host- or
-wire-supplied product id into the canonical form derivation, product storage and
-permission scopes are keyed by; `is_product_identifier` is its boolean form.
+Parsing a `ProductId` (its `FromStr` implementation) is the single chokepoint
+that turns a host- or wire-supplied product id into the canonical form
+derivation, product storage and permission scopes are keyed by. Nothing else
+builds a `ProductId`, so holding one means the id is normalized. Code that reads
+an id uses its methods, such as `bare_label` and `has_trusted_remote_permissions`,
+and `CoreStorageKey::product_manifest` keys its manifest cache entry.
 
-`DOTNS_TLDS` (`dot`, `paseo`, `test`) backs it: the TLDs dotNS deployments
+`DOTNS_TLDS` (`dot`, `paseo`, `testnet`) backs it: the TLDs dotNS deployments
 register product names under, one entry per network a host can be pointed at. A
 name ending in one of them is also what navigation resolves back into the host's
 own product surface, so it bypasses the outbound domain grant.
 
-`REMOTE_PERMISSION_TRUSTED_LABELS` lists the blessed product labels across
+`REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels across
 all networks in `DOTNS_TLDS`. These products bypass recorded permissions and
-prompt only for device permissions. The runtime grants
+permission prompts. Device permissions still need the OS grant. The runtime grants
 account access, username disclosure, signing with their own product accounts and
 AutoSigning without approval. Legacy-account signing still asks the user, except
 for raw bytes signed inside the `<Bytes>` watermark.
