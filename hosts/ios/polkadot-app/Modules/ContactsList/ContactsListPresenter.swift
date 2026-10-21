@@ -62,13 +62,26 @@ extension ContactsListPresenter: ContactsListPresenterProtocol {
                 return
             }
 
-            let route = await interactor.entryRoute(for: openModel)
+            view?.didStartOpeningChat()
 
-            guard !Task.isCancelled else {
-                return
+            do {
+                let route = try await interactor.entryRoute(for: openModel)
+
+                // A later tap owns the indicator now.
+                guard !Task.isCancelled else {
+                    return
+                }
+
+                view?.didStopOpeningChat()
+                open(route)
+            } catch {
+                guard !Task.isCancelled else {
+                    return
+                }
+
+                view?.didStopOpeningChat()
+                didReceive(error: error)
             }
-
-            open(route)
         }
     }
 
