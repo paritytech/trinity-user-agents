@@ -5,9 +5,12 @@ import Products
 protocol ModuleNavigating: AnyObject {
     func openChat(_ model: ChatOpenModel)
     func presentModally(_ viewController: UIViewController)
-    func presentFullScreen(
+    func presentFullScreen(_ viewController: UIViewController)
+    /// Leaves the screen it opens from in the window, for a presentation the
+    /// delegate animates over it.
+    func presentOverFullScreen(
         _ viewController: UIViewController,
-        transitioningDelegate: UIViewControllerTransitioningDelegate?
+        animatedBy transitioningDelegate: UIViewControllerTransitioningDelegate
     )
     func openProduct(page: ProductPage)
     func presentProduct(page: ProductPage)
@@ -30,12 +33,20 @@ extension ModuleNavigator: ModuleNavigating {
         UIWindow.topWindow?.topmostViewController?.present(navigationController, animated: true)
     }
 
-    func presentFullScreen(
-        _ viewController: UIViewController,
-        transitioningDelegate: UIViewControllerTransitioningDelegate?
-    ) {
+    func presentFullScreen(_ viewController: UIViewController) {
         let navigationController = AppNavigationController(rootViewController: viewController)
         navigationController.modalPresentationStyle = .fullScreen
+        UIWindow.topWindow?.topmostViewController?.present(navigationController, animated: true)
+    }
+
+    func presentOverFullScreen(
+        _ viewController: UIViewController,
+        animatedBy transitioningDelegate: UIViewControllerTransitioningDelegate
+    ) {
+        let navigationController = AppNavigationController(rootViewController: viewController)
+        navigationController.modalPresentationStyle = .overFullScreen
+        navigationController.modalPresentationCapturesStatusBarAppearance = true
+        navigationController.view.accessibilityViewIsModal = true
         navigationController.transitioningDelegate = transitioningDelegate
 
         UIWindow.topWindow?.topmostViewController?.present(navigationController, animated: true)

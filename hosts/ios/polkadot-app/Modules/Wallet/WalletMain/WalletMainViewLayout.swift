@@ -22,6 +22,7 @@ struct WalletView: View {
                         // The Humanity card the Pocket pins replaces the identity card,
                         // so only the asset card is drawn here.
                         assetCard
+                            .pocketMotion(viewModel.isPocketCleared ? .shrunkAway : .resting)
                         pocketCards
                     }
                     .padding(.horizontal, PocketCardSize.sideMargin)
@@ -33,6 +34,8 @@ struct WalletView: View {
                     }
                     .id(scrollTopAnchor)
                 }
+                .scrollClipDisabled(viewModel.openPocketCard != nil)
+                .modifier(TopScrollEdgeEffectHidden(hidden: viewModel.openPocketCard != nil))
                 .safeAreaInset(edge: .bottom) {
                     if viewModel.expandedSection == .assetDetails {
                         AssetDetailsFundingBar(viewModel: viewModel.assetDetailsViewModel)
@@ -188,7 +191,7 @@ private extension WalletView {
                 dimensions[.top] - offScreenOffset
             }
         }
-        .opacity(collectiblesOpacity)
+        .opacity(viewModel.isPocketCleared ? 0 : collectiblesOpacity)
         .onTapGesture { viewModel.onCollectibles?() }
         .allowsHitTesting(collectiblesHitTest)
     }
@@ -232,6 +235,29 @@ private struct OverscrollReader: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+/// A card lifted out of the Pocket can sit under the title bar, where iOS 26
+/// would darken it with the scroll view's top edge effect.
+private struct TopScrollEdgeEffectHidden: ViewModifier {
+    let hidden: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26, *) {
+            content.scrollEdgeEffectHidden(hidden, for: .top)
+        } else {
+            content
+        }
+    }
+}
+
+private extension View {
+    /// Applied inside any geometry reader, so a card's slot stays where layout puts it.
+    func pocketMotion(_ motion: PocketCardMotion) -> some View {
+        offset(motion.offset)
+            .scaleEffect(motion.scale)
+            .opacity(motion.opacity)
     }
 }
 
