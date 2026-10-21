@@ -25,6 +25,10 @@ impl<T> DecodableAtBlock<T> {
 	}
 }
 
+/// The value of each watched key at one block, in request order and `None`
+/// when absent.
+pub type StorageSnapshot = DecodableAtBlock<Vec<Option<Vec<u8>>>>;
+
 /// Storage of a chain, read once per head.
 #[async_trait::async_trait]
 pub trait StorageSnapshots: Send + Sync {
@@ -32,17 +36,14 @@ pub trait StorageSnapshots: Send + Sync {
 	/// keys before a watch starts.
 	async fn current_metadata(&self, genesis: H256) -> Result<ArcMetadata, RuntimeFailure>;
 
-	/// The value of each of `keys`, in request order and `None` when absent,
-	/// at the current `head` and then at each later head. Heads that arrive
-	/// during a read are skipped in favour of the newest. A failed read is an
-	/// `Err` item, never an absent value, and later heads are still read.
+	/// A snapshot of `keys` at the current `head`, then one at each later
+	/// head. Heads that arrive during a read are skipped in favour of the
+	/// newest. A failed read is an `Err` item, never an absent value, and
+	/// later heads are still read.
 	async fn snapshots(
 		&self,
 		genesis: H256,
 		head: WatchedHead,
 		keys: Vec<Vec<u8>>,
-	) -> Result<
-		BoxStream<'static, Result<DecodableAtBlock<Vec<Option<Vec<u8>>>>, RuntimeFailure>>,
-		RuntimeFailure,
-	>;
+	) -> Result<BoxStream<'static, Result<StorageSnapshot, RuntimeFailure>>, RuntimeFailure>;
 }

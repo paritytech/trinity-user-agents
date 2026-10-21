@@ -25,7 +25,7 @@ mod snapshots;
 mod tests;
 
 pub use codec::EntryName;
-pub use snapshots::{DecodableAtBlock, StorageSnapshots};
+pub use snapshots::{DecodableAtBlock, StorageSnapshot, StorageSnapshots};
 
 /// Which heads a watch reads at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,7 +126,7 @@ where
 {
 	fn decode(
 		&self,
-		raw: DecodableAtBlock<Vec<(usize, Option<Vec<u8>>)>>,
+		raw: diff::RawChanges,
 	) -> Result<EntryChanges<A::KeyParts, A::Value>, StorageWatchError> {
 		let DecodableAtBlock { at, metadata, value: changed } = raw;
 		let changed = changed

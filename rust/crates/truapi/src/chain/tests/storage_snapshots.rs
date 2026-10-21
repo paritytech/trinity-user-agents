@@ -13,7 +13,7 @@ use super::{
 	method_count, serve, wait_for_subscriptions,
 };
 use crate::{
-	chain::{DecodableAtBlock, StorageSnapshots, WatchedHead},
+	chain::{StorageSnapshot, StorageSnapshots, WatchedHead},
 	chain_runtime::{ChainRuntime, RuntimeFailure},
 	test_support::{ScriptedProvider, notification_sender},
 };
@@ -21,9 +21,7 @@ use crate::{
 const WATCHED: &[u8] = b"watched";
 const OTHER: &[u8] = b"other";
 
-type Snapshot = DecodableAtBlock<Vec<Option<Vec<u8>>>>;
-
-type Snapshots = Receiver<Result<Snapshot, RuntimeFailure>>;
+type Snapshots = Receiver<Result<StorageSnapshot, RuntimeFailure>>;
 
 fn last_runtime_upgrade_key() -> Vec<u8> {
 	[twox_128(b"System"), twox_128(b"LastRuntimeUpgrade")].concat()
@@ -32,7 +30,7 @@ fn last_runtime_upgrade_key() -> Vec<u8> {
 /// Polls `snapshots` on a thread, since the node only announces heads after
 /// the subscriptions are open, and hands each one over as it arrives.
 fn forward_in_background(
-	mut snapshots: BoxStream<'static, Result<Snapshot, RuntimeFailure>>,
+	mut snapshots: BoxStream<'static, Result<StorageSnapshot, RuntimeFailure>>,
 ) -> Snapshots {
 	let (sender, receiver) = channel();
 	std::thread::spawn(move || {

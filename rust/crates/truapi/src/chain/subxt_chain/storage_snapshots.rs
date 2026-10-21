@@ -16,7 +16,8 @@ use subxt::{ArcMetadata, ext::frame_decode::storage::encode_storage_key_prefix, 
 use super::{failure, finalized_block};
 use crate::{
 	chain::{
-		ChainHeads, DecodableAtBlock, HashAndNumber, HeadEvent, StorageSnapshots, WatchedHead,
+		ChainHeads, DecodableAtBlock, HashAndNumber, HeadEvent, StorageSnapshot, StorageSnapshots,
+		WatchedHead,
 	},
 	chain_runtime::{ChainRuntime, LegacyConnection, RuntimeFailure},
 };
@@ -33,9 +34,6 @@ const MAX_SKIPPED_HEADS: usize = 64;
 
 type Blocks = BoxStream<'static, Result<HashAndNumber, RuntimeFailure>>;
 
-/// Every watched key's value at one block, `None` when absent.
-type Snapshot = DecodableAtBlock<Vec<Option<Vec<u8>>>>;
-
 #[async_trait::async_trait]
 impl StorageSnapshots for ChainRuntime {
 	async fn current_metadata(&self, genesis: H256) -> Result<ArcMetadata, RuntimeFailure> {
@@ -49,7 +47,7 @@ impl StorageSnapshots for ChainRuntime {
 		genesis: H256,
 		head: WatchedHead,
 		keys: Vec<Vec<u8>>,
-	) -> Result<BoxStream<'static, Result<Snapshot, RuntimeFailure>>, RuntimeFailure> {
+	) -> Result<BoxStream<'static, Result<StorageSnapshot, RuntimeFailure>>, RuntimeFailure> {
 		let legacy = self.legacy(genesis).await?;
 		let blocks = self.watched_blocks(genesis, head).await?;
 		let reader = Arc::new(SnapshotReader::new(legacy, keys));
@@ -134,7 +132,7 @@ impl SnapshotReader {
 		Self { legacy, keys, runtime: Mutex::new(None) }
 	}
 
-	async fn read(self: Arc<Self>, at: HashAndNumber) -> Result<Snapshot, RuntimeFailure> {
+	async fn read(self: Arc<Self>, at: HashAndNumber) -> Result<StorageSnapshot, RuntimeFailure> {
 		let mut values = query_storage_at(&self.legacy, &self.keys, at.hash).await?;
 		let last_upgrade = values.remove(0);
 		let metadata = self.metadata_for(last_upgrade, at).await?;
