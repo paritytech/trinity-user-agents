@@ -804,7 +804,7 @@ fn contacts_host(
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	if connected {
@@ -874,7 +874,7 @@ fn a_host_that_only_resolves_contacts_reports_unsupported() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -1196,7 +1196,7 @@ fn host_with_contacts(contacts: Arc<dyn crate::platform::ContactsPlatform>) -> P
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -1459,7 +1459,7 @@ fn a_withdrawn_request_already_published_is_cancelled_on_the_phone() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host.clone(),
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session.clone());
@@ -1474,7 +1474,7 @@ fn a_withdrawn_request_already_published_is_cancelled_on_the_phone() {
 	});
 	let published = submitted_remote_message(&platform, &session).message_id;
 	wait_until(
-		|| pairing_host.newest_request_for_tests().as_deref() == Some(&published),
+		|| pairing_host.session().newest_request_for_tests().as_deref() == Some(&published),
 		"the request was not published",
 	);
 
@@ -1547,7 +1547,7 @@ fn a_request_that_times_out_is_not_withdrawn_from_the_phone() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host.clone(),
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session.clone());
@@ -1561,7 +1561,7 @@ fn a_request_that_times_out_is_not_withdrawn_from_the_phone() {
 	futures::executor::block_on(host.sign_raw(&cx, request)).unwrap_err();
 
 	let published = submitted_remote_message(&platform, &session).message_id;
-	assert_eq!(pairing_host.newest_request_for_tests(), Some(published));
+	assert_eq!(pairing_host.session().newest_request_for_tests(), Some(published));
 }
 
 /// `message_id`s every `Cancel` this host has published names, oldest first.
@@ -1610,7 +1610,7 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host.clone(),
+		pairing_host.session().clone(),
 		product,
 	));
 	install_pairing_session(&host, session.clone());
@@ -1632,7 +1632,7 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
 			|| {
 				let published = submitted_remote_messages(&platform, &session);
 				published.len() == count &&
-					pairing_host.newest_request_for_tests().as_deref() ==
+					pairing_host.session().newest_request_for_tests().as_deref() ==
 						published.last().map(|message| message.message_id.as_str())
 			},
 			"the request was not published",
@@ -1684,7 +1684,7 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -1835,7 +1835,7 @@ fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -1942,7 +1942,7 @@ fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -2025,7 +2025,7 @@ fn chat_room_ids_agree_across_create_and_post() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -2110,7 +2110,7 @@ fn chat_register_bot_rejects_unsafe_product_fields() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product.clone(),
 	);
 	install_pairing_session(&host, session_info());
@@ -2200,7 +2200,7 @@ fn chat_register_bot_reaches_the_installed_adapter() {
 		services.clone(),
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product.clone(),
 	);
 	install_pairing_session(&host, session_info());
@@ -2302,7 +2302,7 @@ fn pocket_dot_host(
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	)
 }
@@ -2652,7 +2652,7 @@ fn game_host_for(
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	)
 }
@@ -2849,6 +2849,604 @@ fn game_is_unsupported_for_every_product_but_the_game() {
 	}
 }
 
+struct RecordingFundingPlatform {
+	outcome: crate::platform::FundingPresentOutcome,
+	presented: Mutex<Vec<(Option<String>, crate::platform::FundingPresentation)>>,
+	announced: Mutex<Vec<String>>,
+}
+
+impl RecordingFundingPlatform {
+	fn answering(outcome: crate::platform::FundingPresentOutcome) -> Arc<Self> {
+		Arc::new(Self {
+			outcome,
+			presented: Mutex::new(Vec::new()),
+			announced: Mutex::new(Vec::new()),
+		})
+	}
+}
+
+#[truapi::async_trait]
+impl crate::platform::FundingPlatform for RecordingFundingPlatform {
+	async fn present_funding(
+		&self,
+		product: Option<&ProductContext>,
+		session: crate::platform::FundingPresentation,
+	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
+		self.presented
+			.lock()
+			.expect("presented mutex poisoned")
+			.push((product.map(|product| product.product_id.clone()), session));
+		Ok(self.outcome)
+	}
+
+	fn funding_session_changed(
+		&self,
+		intent: String,
+		_status: truapi::latest::HostFundingStatusSubscribeItem,
+	) {
+		self.announced.lock().expect("announced mutex poisoned").push(intent);
+	}
+}
+
+fn funding_services() -> Arc<RuntimeServices> {
+	funding_services_on(stub_platform(), test_spawner())
+}
+
+fn funding_services_on(
+	storage: Arc<crate::test_support::StubPlatform>,
+	spawner: crate::subscription::Spawner,
+) -> Arc<RuntimeServices> {
+	let (host_config, _) = runtime_config("funding.dot");
+	RuntimeServices::new(
+		storage,
+		host_config.host.host_info.clone(),
+		host_config.people_chain_genesis_hash,
+		host_config.bulletin_chain_genesis_hash,
+		host_config.asset_hub_chain_genesis_hash,
+		spawner,
+	)
+}
+
+/// Spawner that holds every task until the test runs it, so the test knows
+/// when spawned work has finished.
+#[derive(Clone, Default)]
+struct HeldTasks(Arc<Mutex<Vec<futures::future::BoxFuture<'static, ()>>>>);
+
+impl HeldTasks {
+	fn spawner(&self) -> crate::subscription::Spawner {
+		let tasks = self.0.clone();
+		Arc::new(move |task| tasks.lock().expect("tasks mutex poisoned").push(task))
+	}
+
+	fn take(&self) -> Vec<futures::future::BoxFuture<'static, ()>> {
+		core::mem::take(&mut *self.0.lock().expect("tasks mutex poisoned"))
+	}
+}
+
+// A host's history writes one row per outcome, so an ended session it has
+// not recorded is announced again each time funding resumes, until the host
+// acknowledges it.
+#[test]
+fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
+	let tasks = HeldTasks::default();
+	let services = funding_services_on(stub_platform(), tasks.spawner());
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	let opening =
+		services.open_funding(None, "fs_resume".to_string(), v01::FundingDirection::Out, None);
+	let intent = futures::executor::block_on(async {
+		futures::pin_mut!(opening);
+		assert!(futures::poll!(&mut opening).is_pending());
+		// The overlay runs on a task of its own, which these held tasks run.
+		for task in tasks.take() {
+			task.await;
+		}
+		opening.await
+	})
+	.expect("opened")
+	.intent;
+	assert!(futures::executor::block_on(services.cancel_funding(&intent)).expect("cancelled"));
+	// The expiry sweep the open armed would wait out the session's deadline.
+	drop(tasks.take());
+	let announced_on_resume = || {
+		platform.announced.lock().expect("announced mutex poisoned").clear();
+		services.resume_funding();
+		for task in tasks.take() {
+			futures::executor::block_on(task);
+		}
+		platform.announced.lock().expect("announced mutex poisoned").clone()
+	};
+
+	let before = announced_on_resume();
+	let acknowledged = futures::executor::block_on(services.acknowledge_funding_session(&intent))
+		.expect("acknowledged");
+	let after = announced_on_resume();
+
+	assert_eq!((before, acknowledged, after), (vec![intent], true, Vec::new()));
+}
+
+/// A funding overlay that, while it is up, records how many sessions the
+/// core has stored.
+struct ObservingFundingPlatform {
+	storage: Arc<crate::test_support::StubPlatform>,
+	stored_while_shown: Mutex<Option<usize>>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::FundingPlatform for ObservingFundingPlatform {
+	async fn present_funding(
+		&self,
+		_product: Option<&ProductContext>,
+		_session: crate::platform::FundingPresentation,
+	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
+		let stored = crate::host_logic::funding::load_sessions(self.storage.as_ref())
+			.await
+			.expect("sessions read")
+			.len();
+		*self.stored_while_shown.lock().expect("stored mutex poisoned") = Some(stored);
+		Ok(crate::platform::FundingPresentOutcome::Started)
+	}
+}
+
+// An app killed while the overlay is up must not come back to a session the
+// user never started, so nothing is stored until the user starts it.
+#[test]
+fn a_session_is_stored_only_once_the_user_starts_it() {
+	let storage = Arc::new(crate::test_support::StubPlatform::default());
+	let services = funding_services_on(storage.clone(), test_spawner());
+	let platform = Arc::new(ObservingFundingPlatform {
+		storage: storage.clone(),
+		stored_while_shown: Mutex::new(None),
+	});
+	assert!(services.funding().install_platform(platform.clone()));
+
+	futures::executor::block_on(services.open_funding(
+		None,
+		"fs_observed".to_string(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened");
+	let stored_after =
+		futures::executor::block_on(crate::host_logic::funding::load_sessions(storage.as_ref()))
+			.expect("sessions read")
+			.len();
+
+	assert_eq!(
+		(*platform.stored_while_shown.lock().expect("stored mutex poisoned"), stored_after),
+		(Some(0), 1)
+	);
+}
+
+/// A funding overlay whose storage starts failing writes while it is up.
+struct StorageFailingFundingPlatform {
+	storage: Arc<crate::test_support::StubPlatform>,
+	outcome: crate::platform::FundingPresentOutcome,
+}
+
+#[truapi::async_trait]
+impl crate::platform::FundingPlatform for StorageFailingFundingPlatform {
+	async fn present_funding(
+		&self,
+		_product: Option<&ProductContext>,
+		_session: crate::platform::FundingPresentation,
+	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
+		*self
+			.storage
+			.core_storage_write_error
+			.lock()
+			.expect("write error mutex poisoned") = Some("disk full");
+		Ok(self.outcome)
+	}
+}
+
+// A session the user left the overlay without, or that could not be stored
+// once started, must not linger in memory where the host's views and the
+// next save would pick it up.
+#[test]
+fn a_session_that_does_not_start_is_gone_even_when_storage_fails() {
+	for outcome in [
+		crate::platform::FundingPresentOutcome::Started,
+		crate::platform::FundingPresentOutcome::Dismissed,
+	] {
+		let storage = Arc::new(crate::test_support::StubPlatform::default());
+		let services = funding_services_on(storage.clone(), test_spawner());
+		assert!(services.funding().install_platform(Arc::new(StorageFailingFundingPlatform {
+			storage: storage.clone(),
+			outcome,
+		})));
+
+		let opened = futures::executor::block_on(services.open_funding(
+			None,
+			"fs_failing".to_string(),
+			v01::FundingDirection::In,
+			None,
+		));
+
+		assert!(opened.is_err(), "{outcome:?} opened a session");
+		assert_eq!(services.funding().sessions(), Vec::new(), "{outcome:?} left a session");
+	}
+}
+
+// The host writes one history row per announcement, so a session an edit
+// names and the same commit expires is announced once.
+#[test]
+fn a_session_is_announced_once_per_commit() {
+	let services = funding_services();
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	let now = crate::unix_time::current_unix_millis();
+	let overdue = crate::host_logic::funding::FundingSession {
+		deadline_ms: now - 1,
+		..crate::host_logic::funding::FundingSession::new(
+			"fs_overdue".to_string(),
+			None,
+			v01::FundingDirection::In,
+			None,
+			now - 2,
+		)
+	};
+
+	futures::executor::block_on(services.funding().commit(
+		services.platform.as_ref(),
+		now,
+		move |sessions| {
+			sessions.insert(overdue.intent.clone(), overdue);
+			((), vec!["fs_overdue".to_string()])
+		},
+	))
+	.expect("committed");
+
+	assert_eq!(
+		platform.announced.lock().expect("announced mutex poisoned").clone(),
+		vec!["fs_overdue".to_string()]
+	);
+}
+
+fn funding_host(
+	services: &Arc<RuntimeServices>,
+	product_id: &str,
+	with_session: bool,
+) -> ProductRuntimeHost {
+	let (host_config, product) = runtime_config(product_id);
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let host = ProductRuntimeHost::from_services(
+		services.clone(),
+		crate::host_core::ConnectionAdapters::from_services(services),
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	if with_session {
+		install_pairing_session(&host, session_info());
+	}
+	host
+}
+
+/// The funding id the tests' products choose.
+const FUNDING_ID: [u8; 32] = [7; 32];
+
+fn funding_request(id: [u8; 32]) -> truapi::versioned::funding::HostFundingRequest {
+	truapi::versioned::funding::HostFundingRequest::V1(v01::HostFundingRequest {
+		id,
+		direction: v01::FundingDirection::In,
+		amount: Some(1_000),
+	})
+}
+
+fn request_funding(
+	host: &ProductRuntimeHost,
+) -> Result<
+	truapi::versioned::funding::HostFundingResponse,
+	CallError<truapi::versioned::funding::HostFundingError>,
+> {
+	futures::executor::block_on(truapi::api::Funding::request(
+		host,
+		&CallContext::default(),
+		funding_request(FUNDING_ID),
+	))
+}
+
+fn watch_funding(
+	host: &ProductRuntimeHost,
+	id: [u8; 32],
+) -> Subscription<
+	truapi::versioned::funding::HostFundingStatusSubscribeItem,
+	CallError<truapi::versioned::funding::HostFundingStatusSubscribeError>,
+> {
+	futures::executor::block_on(truapi::api::Funding::status_subscribe(
+		host,
+		&CallContext::default(),
+		truapi::versioned::funding::HostFundingStatusSubscribeRequest::V1(
+			v01::HostFundingStatusSubscribeRequest { id },
+		),
+	))
+}
+
+fn first_funding_status(
+	host: &ProductRuntimeHost,
+	id: [u8; 32],
+) -> Option<
+	Result<
+		truapi::versioned::funding::HostFundingStatusSubscribeItem,
+		CallError<truapi::versioned::funding::HostFundingStatusSubscribeError>,
+	>,
+> {
+	futures::executor::block_on(watch_funding(host, id).next())
+}
+
+fn funding_not_found() -> CallError<truapi::versioned::funding::HostFundingStatusSubscribeError> {
+	CallError::Domain(truapi::versioned::funding::HostFundingStatusSubscribeError::V1(
+		v01::HostFundingStatusSubscribeError::NotFound,
+	))
+}
+
+#[test]
+fn a_funding_request_opens_the_overlay_and_only_its_product_can_watch_it() {
+	let services = funding_services();
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	let owner = funding_host(&services, "wallet.dot", true);
+
+	request_funding(&owner).expect("request accepted");
+
+	let presented = platform.presented.lock().expect("presented mutex poisoned").clone();
+	assert_eq!(
+		presented,
+		[(
+			Some("wallet.dot".to_string()),
+			crate::platform::FundingPresentation {
+				intent: crate::runtime::payment_id::host_funding_intent(
+					&owner.connection.product,
+					FUNDING_ID,
+				),
+				direction: v01::FundingDirection::In,
+				amount: Some(1_000),
+			},
+		)]
+	);
+	assert!(matches!(
+		first_funding_status(&owner, FUNDING_ID),
+		Some(Ok(truapi::versioned::funding::HostFundingStatusSubscribeItem::V1(
+			v01::HostFundingStatusSubscribeItem::InProgress { .. }
+		)))
+	));
+	// Another product's session reads exactly like one that does not exist,
+	// even under the same id.
+	assert_eq!(
+		first_funding_status(&funding_host(&services, "other.dot", true), FUNDING_ID),
+		Some(Err(funding_not_found()))
+	);
+}
+
+// An id names one session, so a retried request cannot open a second one.
+#[test]
+fn a_reused_funding_id_is_refused() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let host = funding_host(&services, "wallet.dot", true);
+	request_funding(&host).expect("request accepted");
+
+	assert_eq!(
+		request_funding(&host),
+		Err(CallError::Domain(truapi::versioned::funding::HostFundingError::V1(
+			v01::HostFundingError::AlreadyExists
+		)))
+	);
+}
+
+// Watching a session, like paying, needs a connected account.
+#[test]
+fn watching_a_funding_session_needs_a_session() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+
+	assert_eq!(
+		first_funding_status(&funding_host(&services, "wallet.dot", false), FUNDING_ID),
+		Some(Err(CallError::Denied))
+	);
+}
+
+/// A funding overlay that stays up until the test answers for the user.
+struct GatedFundingPlatform {
+	answer:
+		Mutex<Option<futures::channel::oneshot::Receiver<crate::platform::FundingPresentOutcome>>>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::FundingPlatform for GatedFundingPlatform {
+	async fn present_funding(
+		&self,
+		_product: Option<&ProductContext>,
+		_session: crate::platform::FundingPresentation,
+	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
+		let answer = self.answer.lock().expect("answer mutex poisoned").take();
+		Ok(answer.expect("overlay shown once").await.expect("answered"))
+	}
+}
+
+// A product that reloads while the overlay is up drops its request, but the
+// overlay is the user's: it still ends the session, and the product, watching
+// by its id, hears how. A session the user dismisses ends as cancelled and
+// is not left presenting.
+#[test]
+fn a_request_dropped_under_the_overlay_still_ends_its_session() {
+	for (outcome, ends) in [
+		(crate::platform::FundingPresentOutcome::Dismissed, true),
+		(crate::platform::FundingPresentOutcome::Started, false),
+	] {
+		let services = funding_services();
+		let (answer, answered) = futures::channel::oneshot::channel();
+		assert!(services.funding().install_platform(Arc::new(GatedFundingPlatform {
+			answer: Mutex::new(Some(answered)),
+		})));
+		let host = funding_host(&services, "wallet.dot", true);
+		let cx = CallContext::default();
+		futures::executor::block_on(async {
+			let request = truapi::api::Funding::request(&host, &cx, funding_request(FUNDING_ID));
+			futures::pin_mut!(request);
+			assert!(futures::poll!(request).is_pending());
+		});
+
+		let mut watch = watch_funding(&host, FUNDING_ID);
+		let first = futures::executor::block_on(watch.next());
+		answer.send(outcome).expect("overlay waiting");
+		let intent =
+			crate::runtime::payment_id::host_funding_intent(&host.connection.product, FUNDING_ID);
+		let last = if ends {
+			futures::executor::block_on(watch.next())
+		} else {
+			wait_until(|| services.funding().sessions().len() == 1, "session started");
+			None
+		};
+
+		assert!(
+			matches!(
+				first,
+				Some(Ok(truapi::versioned::funding::HostFundingStatusSubscribeItem::V1(
+					v01::HostFundingStatusSubscribeItem::InProgress { .. }
+				)))
+			),
+			"{outcome:?}: {first:?}"
+		);
+		if ends {
+			assert_eq!(
+				(last, services.funding().get(&intent)),
+				(
+					Some(Ok(truapi::versioned::funding::HostFundingStatusSubscribeItem::V1(
+						v01::HostFundingStatusSubscribeItem::Failed {
+							reason: v01::FundingFailure::Cancelled,
+						}
+					))),
+					None,
+				)
+			);
+		}
+	}
+}
+
+#[test]
+fn a_dismissed_funding_overlay_is_rejected_and_leaves_no_session() {
+	let services = funding_services();
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Dismissed);
+	assert!(services.funding().install_platform(platform.clone()));
+	let host = funding_host(&services, "wallet.dot", true);
+
+	assert_eq!(
+		request_funding(&host),
+		Err(CallError::Domain(truapi::versioned::funding::HostFundingError::V1(
+			v01::HostFundingError::Rejected
+		)))
+	);
+	assert_eq!(first_funding_status(&host, FUNDING_ID), Some(Err(funding_not_found())));
+}
+
+// The host's in-flight pill reads these announcements, so a session the user
+// never started must not appear there.
+#[test]
+fn the_host_hears_of_started_sessions_only() {
+	for (outcome, expected) in [
+		(crate::platform::FundingPresentOutcome::Started, 1),
+		(crate::platform::FundingPresentOutcome::Dismissed, 0),
+	] {
+		let services = funding_services();
+		let platform = RecordingFundingPlatform::answering(outcome);
+		assert!(services.funding().install_platform(platform.clone()));
+
+		let _ = request_funding(&funding_host(&services, "wallet.dot", true));
+
+		assert_eq!(platform.announced.lock().expect("announced mutex poisoned").len(), expected);
+	}
+}
+
+#[test]
+fn a_host_opened_funding_session_belongs_to_no_product() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let session =
+		futures::executor::block_on(services.open_host_funding(v01::FundingDirection::Out, None))
+			.expect("opened")
+			.expect("started");
+
+	assert!(services.funding().get(&session).is_some());
+	assert_eq!(
+		first_funding_status(&funding_host(&services, "wallet.dot", true), FUNDING_ID),
+		Some(Err(funding_not_found()))
+	);
+}
+
+#[test]
+fn a_funding_request_needs_a_host_overlay_then_a_session() {
+	let services = funding_services();
+	assert_eq!(
+		request_funding(&funding_host(&services, "wallet.dot", false)),
+		Err(CallError::Unsupported)
+	);
+
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	assert_eq!(
+		request_funding(&funding_host(&services, "wallet.dot", false)),
+		Err(CallError::Domain(truapi::versioned::funding::HostFundingError::V1(
+			v01::HostFundingError::NotConnected
+		)))
+	);
+}
+
+// A test host settles a session as though its funds had moved, and the
+// product sees that ending; a session already over, or unknown, is left as
+// it is.
+#[cfg(feature = "test-host")]
+#[test]
+fn a_test_host_settles_a_funding_session_once() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		"fs_settled".to_string(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	let delivered = |credited| crate::host_logic::funding::FundingStage::Delivered {
+		credited,
+		settled_at_ms: 1,
+	};
+	let settle = |intent: &str, credited| {
+		futures::executor::block_on(services.settle_funding_for_test(intent, delivered(credited)))
+			.expect("saved")
+	};
+
+	assert_eq!(
+		(
+			settle(&intent, 900),
+			settle(&intent, 1),
+			settle("fs_unknown", 900),
+			services.funding().get(&intent).map(|session| session.wire_item()),
+		),
+		(
+			true,
+			false,
+			false,
+			Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 900 }),
+		)
+	);
+}
+
 #[test]
 fn chain_follow_ids_are_scoped_per_product_core() {
 	let (host_config, product) = runtime_config("same.dot");
@@ -2867,14 +3465,14 @@ fn chain_follow_ids_are_scoped_per_product_core() {
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(&services),
 		pairing_host.clone(),
-		pairing_host.clone(),
+		pairing_host.session().clone(),
 		product.clone(),
 	);
 	let second = ProductRuntimeHost::from_services(
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(&services),
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 
@@ -2983,7 +3581,7 @@ fn permission_prompts_name_the_requesting_product_and_execution_kind() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product.clone(),
 	);
 	let cx = CallContext::default();
@@ -3127,8 +3725,8 @@ fn navigate_to_internal_targets_do_not_consume_open_url_permission() {
 	for url in [
 		"mytestapp.dot",
 		"localhost:3000",
-		"polkadot://mytestapp.dot/-/pocket/open?card=loyalty",
-		"polkadot://mytestapp.dot/-/pocket",
+		"polkadotapp://pocket/open?product=mytestapp.dot&card=loyalty",
+		"polkadotapp://pocket",
 	] {
 		let request =
 			HostNavigateToRequest::V1(v01::HostNavigateToRequest { url: url.to_string() });
@@ -5149,7 +5747,7 @@ fn idle_peer_disconnect_monitor_clears_session_store_and_broadcasts() {
 		)
 	);
 
-	pairing_host.start_session_supervision_for_current_session();
+	pairing_host.session().start_session_supervision_for_current_session();
 
 	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
 	let disconnected = loop {
@@ -5331,18 +5929,18 @@ fn resource_allocation_rejects_when_user_declines() {
 	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
 	install_pairing_session(&host, session_info());
 	let cx = CallContext::default();
-	let err = futures::executor::block_on(ResourceAllocation::request(
+	let response = futures::executor::block_on(ResourceAllocation::request(
 		&host,
 		&cx,
 		resource_allocation_request(),
 	))
-	.unwrap_err();
-	match err {
-		CallError::Domain(HostRequestResourceAllocationError::V1(
-			v01::ResourceAllocationError::Unknown { reason },
-		)) => assert_eq!(reason, "User rejected resource allocation"),
-		other => panic!("expected user-rejected resource allocation error, got {other:?}"),
-	}
+	.unwrap();
+	assert_eq!(
+		response,
+		HostRequestResourceAllocationResponse::V1(v01::HostRequestResourceAllocationResponse {
+			outcomes: vec![v01::AllocationOutcome::Rejected; 2],
+		})
+	);
 }
 
 #[test]
@@ -6119,7 +6717,7 @@ fn auto_signing_ring_vrf_requires_registration_and_signs_locally() {
 	.unwrap();
 	futures::executor::block_on(pairing_host.remember_auto_signing_key_for_tests(
 		&session,
-		pairing_host.current_session_lifecycle_epoch(),
+		pairing_host.session().current_session_lifecycle_epoch(),
 		"myapp.dot",
 		subtree.public.to_bytes(),
 		subtree.secret.to_bytes(),
@@ -6294,7 +6892,7 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
 		test_spawner(),
 	);
 	install_pairing_session(&host, session.clone());
-	let stale_epoch = pairing_host.current_session_lifecycle_epoch();
+	let stale_epoch = pairing_host.session().current_session_lifecycle_epoch();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let subtree =
@@ -6302,7 +6900,9 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
 			.unwrap();
 
 	futures::executor::block_on(pairing_host.logout_and_reset_pairing()).unwrap();
-	futures::executor::block_on(pairing_host.set_connected_session_for_tests(session.clone()));
+	futures::executor::block_on(
+		pairing_host.session().set_connected_session_for_tests(session.clone()),
+	);
 	let auto_signing_error =
 		futures::executor::block_on(pairing_host.remember_auto_signing_key_for_tests(
 			&session,
@@ -6370,7 +6970,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 	);
 	install_pairing_session(&host, session.clone());
 	cache_test_product_subtree(&host, &session, "other.dot");
-	let stale_epoch = pairing_host.current_session_lifecycle_epoch();
+	let stale_epoch = pairing_host.session().current_session_lifecycle_epoch();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let first =
@@ -6407,7 +7007,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 	}
 
 	futures::executor::block_on(pairing_host.clear_product_state("myapp.dot")).unwrap();
-	let current_epoch = pairing_host.current_session_lifecycle_epoch();
+	let current_epoch = pairing_host.session().current_session_lifecycle_epoch();
 	assert_ne!(current_epoch, stale_epoch);
 	assert_eq!(pairing_host.capability_cache_sizes_for_tests(), (1, 1, 1, 1));
 	assert!(
@@ -6499,7 +7099,7 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
 		test_spawner(),
 	);
 	install_pairing_session(&host, session.clone());
-	let lifecycle_epoch = pairing_host.current_session_lifecycle_epoch();
+	let lifecycle_epoch = pairing_host.session().current_session_lifecycle_epoch();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let subtree =
@@ -6530,9 +7130,9 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
 	.unwrap();
 	assert_eq!(pairing_host.capability_cache_sizes_for_tests(), (1, 1, 1, 1));
 
-	futures::executor::block_on(pairing_host.reset_session_state());
+	futures::executor::block_on(pairing_host.session().reset_session_state());
 
-	assert!(pairing_host.session_state().current().is_none());
+	assert!(pairing_host.session().session_state().current().is_none());
 	assert_eq!(pairing_host.capability_cache_sizes_for_tests(), (0, 0, 0, 0));
 	assert!(platform.local_storage.lock().expect("local storage mutex poisoned").is_empty());
 	assert!(
@@ -6554,7 +7154,7 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
 	);
 	install_pairing_session(&host, session.clone());
 	request_auto_signing(&host, "auto-replace");
-	let lifecycle_epoch = pairing_host.current_session_lifecycle_epoch();
+	let lifecycle_epoch = pairing_host.session().current_session_lifecycle_epoch();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let subtree =
@@ -6578,7 +7178,9 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
 	let mut replacement = session;
 	replacement.public_key = [0x44; 32];
 	replacement.sso.as_mut().expect("fixture has SSO identity").identity_account_id = [0x55; 32];
-	futures::executor::block_on(pairing_host.set_connected_session_for_tests(replacement.clone()));
+	futures::executor::block_on(
+		pairing_host.session().set_connected_session_for_tests(replacement.clone()),
+	);
 
 	assert_eq!(host.test_session_state().current(), Some(replacement.clone()));
 	assert!(
@@ -6685,7 +7287,7 @@ fn external_session_activation_is_memory_only_and_rejects_trailing_bytes() {
 	let session = sso_session_info();
 	let blob = crate::host_logic::session::encode_persisted_session(&session);
 
-	futures::executor::block_on(pairing_host.activate_external_session(&blob))
+	futures::executor::block_on(pairing_host.session().activate_external_session(&blob))
 		.expect("valid external session activates");
 
 	assert_eq!(host.test_session_state().current(), Some(session.clone()));
@@ -6698,14 +7300,16 @@ fn external_session_activation_is_memory_only_and_rejects_trailing_bytes() {
 		"external activation must not copy the blob into core storage"
 	);
 
-	let invalid = futures::executor::block_on(pairing_host.activate_external_session(&[0xff]))
-		.expect_err("invalid bytes are rejected");
+	let invalid =
+		futures::executor::block_on(pairing_host.session().activate_external_session(&[0xff]))
+			.expect_err("invalid bytes are rejected");
 	assert!(invalid.starts_with("invalid session blob:"));
 
 	let mut trailing = blob;
 	trailing.push(0);
-	let error = futures::executor::block_on(pairing_host.activate_external_session(&trailing))
-		.expect_err("trailing bytes are rejected");
+	let error =
+		futures::executor::block_on(pairing_host.session().activate_external_session(&trailing))
+			.expect_err("trailing bytes are rejected");
 	assert_eq!(error, "invalid session blob: trailing bytes");
 	assert_eq!(
 		host.test_session_state().current(),
@@ -6720,7 +7324,7 @@ fn external_session_activation_reports_its_outcome_when_the_blob_is_corrupt() {
 	let (_host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	futures::executor::block_on(pairing_host.activate_external_session(&[0xff]))
+	futures::executor::block_on(pairing_host.session().activate_external_session(&[0xff]))
 		.expect_err("invalid bytes are rejected");
 
 	// The decode fails before any transition can run, so without an
@@ -6739,7 +7343,7 @@ fn resetting_session_state_reports_its_outcome_when_nothing_was_active() {
 	let (_host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	futures::executor::block_on(pairing_host.reset_session_state());
+	futures::executor::block_on(pairing_host.session().reset_session_state());
 
 	// Clearing an already-signed-out state changes nothing, so without an
 	// explicit announcement this is the silent case a host cannot tell
@@ -6764,12 +7368,12 @@ fn external_session_activation_replaces_and_fences_the_previous_session() {
 	replacement.sso.as_mut().expect("fixture has SSO").identity_account_id = [0x55; 32];
 
 	futures::executor::block_on(
-		pairing_host.activate_external_session(
+		pairing_host.session().activate_external_session(
 			&crate::host_logic::session::encode_persisted_session(&first),
 		),
 	)
 	.expect("first external session activates");
-	futures::executor::block_on(pairing_host.activate_external_session(
+	futures::executor::block_on(pairing_host.session().activate_external_session(
 		&crate::host_logic::session::encode_persisted_session(&replacement),
 	))
 	.expect("replacement external session activates");
@@ -6786,7 +7390,10 @@ fn store_notification_during_external_activation_restores_persisted_session() {
 	});
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 	wait_until(
 		|| host.test_session_state().current() == Some(persisted.clone()),
 		"initial persisted session was not restored",
@@ -6796,15 +7403,19 @@ fn store_notification_during_external_activation_restores_persisted_session() {
 	stale_external.public_key = [0x44; 32];
 	let stale_blob = crate::host_logic::session::encode_persisted_session(&stale_external);
 	let (activation_entered, resume_activation) =
-		pairing_host.pause_external_session_activation_for_tests();
+		pairing_host.session().pause_external_session_activation_for_tests();
 	let activation = std::thread::spawn({
 		let pairing_host = pairing_host.clone();
-		move || futures::executor::block_on(pairing_host.activate_external_session(&stale_blob))
+		move || {
+			futures::executor::block_on(
+				pairing_host.session().activate_external_session(&stale_blob),
+			)
+		}
 	});
 	futures::executor::block_on(activation_entered)
 		.expect("external activation reached the installation fence");
 
-	pairing_host.notify_session_store_changed();
+	pairing_host.session().notify_session_store_changed();
 	resume_activation.send(()).expect("external activation remains in flight");
 	activation
 		.join()
@@ -6826,10 +7437,14 @@ fn disconnect_during_external_activation_prevents_stale_reinstallation() {
 	);
 	let stale_blob = crate::host_logic::session::encode_persisted_session(&sso_session_info());
 	let (activation_entered, resume_activation) =
-		pairing_host.pause_external_session_activation_for_tests();
+		pairing_host.session().pause_external_session_activation_for_tests();
 	let activation = std::thread::spawn({
 		let pairing_host = pairing_host.clone();
-		move || futures::executor::block_on(pairing_host.activate_external_session(&stale_blob))
+		move || {
+			futures::executor::block_on(
+				pairing_host.session().activate_external_session(&stale_blob),
+			)
+		}
 	});
 	futures::executor::block_on(activation_entered)
 		.expect("external activation reached the installation fence");
@@ -6857,7 +7472,7 @@ fn stored_session_activation_resolves_after_connected_installation() {
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	futures::executor::block_on(pairing_host.activate_stored_session())
+	futures::executor::block_on(pairing_host.session().activate_stored_session())
 		.expect("valid stored session activates");
 
 	assert_eq!(host.test_session_state().current(), Some(stored.clone()));
@@ -6879,7 +7494,7 @@ fn stored_session_activation_rejects_invalid_blob_and_disconnects() {
 		ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
 	install_pairing_session(&host, sso_session_info());
 
-	let error = futures::executor::block_on(pairing_host.activate_stored_session())
+	let error = futures::executor::block_on(pairing_host.session().activate_stored_session())
 		.expect_err("invalid stored session is rejected");
 
 	assert!(error.starts_with("invalid stored auth session:"));
@@ -6900,7 +7515,7 @@ fn activating_an_untagged_stored_session_restores_it_and_rewrites_the_slot() {
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	futures::executor::block_on(pairing_host.activate_stored_session())
+	futures::executor::block_on(pairing_host.session().activate_stored_session())
 		.expect("an untagged stored session activates");
 
 	assert_eq!(host.test_session_state().current(), Some(stored.clone()));
@@ -6930,7 +7545,10 @@ fn session_store_sync_restores_valid_blob_from_tick() {
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 	wait_until(
 		|| host.test_session_state().current() == Some(stored.clone()),
 		"session store sync did not restore valid blob",
@@ -6957,7 +7575,10 @@ fn session_store_sync_announces_a_signed_out_boot() {
 	let (_host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 
 	wait_until(
 		|| !platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty(),
@@ -6979,13 +7600,16 @@ fn session_store_sync_announces_a_restored_boot_once() {
 	let (_host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 
 	wait_until(
 		|| !platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty(),
 		"boot reconcile did not report the restored session",
 	);
-	futures::executor::block_on(pairing_host.activate_stored_session())
+	futures::executor::block_on(pairing_host.session().activate_stored_session())
 		.expect("valid stored session activates");
 	assert_eq!(
 		*platform.auth_states.lock().expect("auth state list mutex poisoned"),
@@ -7003,15 +7627,18 @@ fn session_store_sync_stays_silent_on_an_unchanged_tick() {
 	let (_host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 	wait_until(
 		|| !platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty(),
 		"boot reconcile did not report the restored session",
 	);
 
-	pairing_host.notify_session_store_changed();
+	pairing_host.session().notify_session_store_changed();
 	wait_until(
-		|| pairing_host.session_store_change_ticks_for_tests() == 1,
+		|| pairing_host.session().session_store_change_ticks_for_tests() == 1,
 		"session store sync did not process the change tick",
 	);
 
@@ -7038,7 +7665,10 @@ fn session_store_sync_replaces_valid_blob_and_broadcasts_connected() {
 	let mut statuses = host.test_session_state().subscribe();
 	let _ = futures::executor::block_on(statuses.next());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 
 	assert_eq!(
 		futures::executor::block_on(statuses.next()).unwrap(),
@@ -7056,7 +7686,10 @@ fn session_store_sync_clears_invalid_blob() {
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 	install_pairing_session(&host, sso_session_info());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 	wait_until(
 		|| host.test_session_state().current().is_none(),
 		"session store sync did not clear invalid blob",
@@ -7088,7 +7721,10 @@ fn session_store_sync_clears_unreadable_blob() {
 	);
 	install_pairing_session(&host, sso_session_info());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 	wait_until(
 		|| *session_clears.lock().unwrap() == 1,
 		"session store sync did not clear unreadable blob",
@@ -7113,7 +7749,10 @@ fn session_store_sync_clears_once_on_initial_persistent_read_error() {
 	);
 	install_pairing_session(&host, sso_session_info());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 
 	wait_until(|| *session_clears.lock().unwrap() == 1, "clear_stored_session was never called");
 	assert_eq!(*session_clears.lock().unwrap(), 1);
@@ -7213,7 +7852,10 @@ fn disconnect_emits_disconnected_auth_state_after_store_sync_connected() {
 	});
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 	wait_until(
 		|| platform.auth_states.lock().expect("auth state list mutex poisoned").len() == 1,
 		"session store sync did not emit connected auth state",
@@ -7283,7 +7925,7 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host.clone(),
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -7367,7 +8009,7 @@ fn the_pairing_authority_admits_a_context_only_its_product_granted() {
 			services,
 			adapters,
 			pairing_host.clone(),
-			pairing_host.clone(),
+			pairing_host.session().clone(),
 			product,
 		);
 		install_pairing_session(&host, session_info());
@@ -7436,7 +8078,7 @@ fn a_grant_lookup_obeys_the_callers_deadline() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -7632,7 +8274,7 @@ fn scanner_host_for(
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	)
 }
@@ -7850,7 +8492,7 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_pairing_for_tests(platform, host_config, product, test_spawner());
 	install_pairing_session(&host, session.clone());
-	let lifecycle_epoch = pairing_host.current_session_lifecycle_epoch();
+	let lifecycle_epoch = pairing_host.session().current_session_lifecycle_epoch();
 	futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
 		&session,
 		lifecycle_epoch,
@@ -7912,7 +8554,7 @@ fn payment_host(
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(services),
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	if with_session {
@@ -8360,6 +9002,102 @@ fn the_balance_needs_the_users_permission_before_the_host_is_asked() {
 			))),
 			0,
 			vec![v01::RemotePermissionRequest { permission: v01::RemotePermission::BalanceAccess }],
+		)
+	);
+}
+
+/// A balance view whose pushes the test drives.
+struct PushedBalancePlatform(
+	Mutex<
+		Option<
+			futures::channel::mpsc::UnboundedReceiver<
+				Result<v01::HostPaymentBalanceSubscribeItem, v01::HostPaymentBalanceSubscribeError>,
+			>,
+		>,
+	>,
+);
+
+impl crate::platform::BalancePlatform for PushedBalancePlatform {
+	fn subscribe_balance(
+		&self,
+		_product: &crate::platform::ProductContext,
+		_purse: Option<u32>,
+	) -> futures::stream::BoxStream<
+		'static,
+		Result<v01::HostPaymentBalanceSubscribeItem, v01::HostPaymentBalanceSubscribeError>,
+	> {
+		self.0
+			.lock()
+			.expect("pushes mutex poisoned")
+			.take()
+			.expect("one subscription")
+			.boxed()
+	}
+}
+
+// A host pushes a purse's balance to every product following it, so the core
+// checks the product's balance access again before each push: once the user
+// revokes it, the stream ends with PermissionDenied and later balances never
+// reach the product.
+#[test]
+fn a_revoked_balance_access_ends_the_balance_stream() {
+	let services = payment_services();
+	let (push, pushes) = futures::channel::mpsc::unbounded();
+	assert!(
+		services
+			.install_balance_platform(Arc::new(PushedBalancePlatform(Mutex::new(Some(pushes)))))
+	);
+	let host = payment_host(&services, "wallet.dot", true);
+	let balance_access = || {
+		PermissionAuthorizationRequest::Remote(v01::RemotePermissionRequest {
+			permission: v01::RemotePermission::BalanceAccess,
+		})
+	};
+	futures::executor::block_on(host.connection.set_permission_authorization_status(
+		balance_access(),
+		PermissionAuthorizationStatus::Authorized,
+	))
+	.expect("grant stored");
+	let mut balances = futures::executor::block_on(truapi::api::Payment::balance_subscribe(
+		&host,
+		&CallContext::default(),
+		truapi::versioned::payment::HostPaymentBalanceSubscribeRequest::V1(
+			v01::HostPaymentBalanceSubscribeRequest { purse: None },
+		),
+	));
+	let mut next = || {
+		futures::executor::block_on(balances.next()).map(|item| {
+			item.map(|truapi::versioned::payment::HostPaymentBalanceSubscribeItem::V1(item)| {
+				item.available
+			})
+		})
+	};
+
+	push.unbounded_send(Ok(v01::HostPaymentBalanceSubscribeItem { available: 7 }))
+		.expect("pushed");
+	let while_granted = next();
+	futures::executor::block_on(host.connection.set_permission_authorization_status(
+		balance_access(),
+		PermissionAuthorizationStatus::Denied,
+	))
+	.expect("revocation stored");
+	push.unbounded_send(Ok(v01::HostPaymentBalanceSubscribeItem { available: 8 }))
+		.expect("pushed");
+	push.unbounded_send(Ok(v01::HostPaymentBalanceSubscribeItem { available: 9 }))
+		.expect("pushed");
+	let after_revoking = next();
+	let after_the_end = next();
+
+	assert_eq!(
+		(while_granted, after_revoking, after_the_end),
+		(
+			Some(Ok(7)),
+			Some(Err(CallError::Domain(
+				truapi::versioned::payment::HostPaymentBalanceSubscribeError::V1(
+					v01::HostPaymentBalanceSubscribeError::PermissionDenied,
+				),
+			))),
+			None,
 		)
 	);
 }

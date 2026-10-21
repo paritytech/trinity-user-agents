@@ -8,30 +8,38 @@ import Testing
 struct PocketDeeplinkParserTests {
     let parser = PocketDeeplinkParser()
 
-    @Test
-    func readsAnAddLink() {
-        #expect(parser.classify("polkadot://game.dot/-/pocket/add?card=loyalty") == .pocket(PocketDeeplink(
-            productHost: "game.dot",
-            action: .add,
-            cardId: PocketCardId(value: "loyalty"),
-            canonicalUrl: "polkadot://game.dot/-/pocket/add?card=loyalty"
-        )))
+    private func classify(_ link: String) -> PocketLinkClassification {
+        parser.classify(URL(string: link)!)
     }
 
     @Test
-    func readsAnOpenLink() throws {
-        guard case let .pocket(link) = parser.classify("polkadot://game.dot/-/pocket/open?card=loyalty") else {
+    func readsAnAddLink() {
+        #expect(classify("polkadotapp://pocket/add?product=game.dot&card=loyalty") == .pocket(PocketDeeplink(
+            productHost: "game.dot",
+            action: .add,
+            cardId: PocketCardId(value: "loyalty"),
+            canonicalUrl: "polkadotapp://pocket/add?product=game.dot&card=loyalty"
+        )))
+    }
+
+    /// A build answers to its own flavor of the scheme, `polkadotappdev` in a
+    /// debug build, and has to read a link under it as the one the core mints.
+    @Test
+    func readsALinkUnderTheAppsOwnScheme() throws {
+        let link = "\(DeeplinkTestSchemes.active)://pocket/open?product=game.dot&card=loyalty"
+        guard case let .pocket(deeplink) = classify(link) else {
             Issue.record("expected a pocket link")
             return
         }
 
-        #expect(link.action == .open)
+        #expect(deeplink.action == .open)
+        #expect(deeplink.canonicalUrl == "polkadotapp://pocket/open?product=game.dot&card=loyalty")
     }
 
     /// The card id arrives screened, so nothing downstream screens it again.
     @Test
     func carriesTheCardIdTheCoreScreened() throws {
-        guard case let .pocket(link) = parser.classify("polkadot://game.dot/-/pocket/add?card=cafe%CC%81") else {
+        guard case let .pocket(link) = classify("polkadotapp://pocket/add?product=game.dot&card=cafe%CC%81") else {
             Issue.record("expected a pocket link")
             return
         }
@@ -39,36 +47,42 @@ struct PocketDeeplinkParserTests {
         #expect(link.cardId.value == "caf\u{e9}")
     }
 
-    /// A bare `/-/pocket` names the collection itself, so a product can send the
-    /// user to the Pocket without naming a card.
+    /// A bare `polkadotapp://pocket` names the collection itself, so a product can
+    /// send the user to the Pocket without naming a card.
     @Test
     func readsACollectionLink() {
-        #expect(parser.classify("polkadot://game.dot/-/pocket") == .collection)
+        #expect(classify("polkadotapp://pocket") == .collection)
     }
 
-    /// The reserved `-` segment belongs to the host. An ordinary product path is
-    /// not a Pocket link and must fall through to the App.
+    /// A product's paths are its own App routes, whatever they spell. The host
+    /// claims none of them.
     @Test
-    func doesNotClaimAnOrdinaryProductLink() {
-        #expect(parser.classify("polkadot://game.dot/some/page") == .notOurs)
+    func doesNotClaimAProductsOwnPath() {
+        #expect(classify("polkadot://game.dot/-/pocket/add?card=loyalty") == .notOurs)
     }
 
-    /// A Pocket verb this core does not serve is the core's to route, and it
-    /// routes it to the App so a link minted for a newer host still opens.
+    /// Every Pocket link is the host's, so a Pocket action this core does not
+    /// serve is answered here rather than left with nobody to answer it.
     @Test
-    func doesNotClaimAnActionTheCoreDoesNotServe() {
-        #expect(parser.classify("polkadot://game.dot/-/pocket/pin?card=loyalty") == .notOurs)
+    func readsAnActionTheCoreDoesNotServeAsMalformed() {
+        #expect(classify("polkadotapp://pocket/pin?product=game.dot&card=loyalty") == .malformed)
     }
 
-    /// A known action whose card is missing is malformed, not a target this
-    /// core lacks, so the host answers it rather than opening the product.
     @Test
     func readsAMissingCardAsMalformed() {
-        #expect(parser.classify("polkadot://game.dot/-/pocket/add") == .malformed)
+        #expect(classify("polkadotapp://pocket/add?product=game.dot") == .malformed)
     }
 
+    /// A deeplink's host is lowercase, and the app matches it exactly, as it does
+    /// chat, pay and pair, so it reads a Pocket link the way Android does.
     @Test
-    func doesNotClaimAnUnrelatedUrl() {
-        #expect(parser.classify("https://example.com/-/pocket/add?card=loyalty") == .notOurs)
+    func doesNotClaimAMixedCaseHost() {
+        #expect(classify("polkadotapp://Pocket/add?product=game.dot&card=loyalty") == .notOurs)
+    }
+
+    /// Under a web scheme `pocket` is an ordinary host name, not the Pocket.
+    @Test
+    func doesNotClaimAWebUrl() {
+        #expect(classify("https://pocket/add?product=game.dot&card=loyalty") == .notOurs)
     }
 }

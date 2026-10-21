@@ -21,7 +21,7 @@ use crate::{
 	runtime::{
 		RuntimeServices,
 		authority::ProductAuthority,
-		signing_host::sso_responder::current_unix_secs,
+		signing_host::allowance::current_unix_secs,
 		statement_allowance::{
 			self, fetch_chain_state, fetch_metadata, find_including_rings,
 			renewal::{

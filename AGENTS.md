@@ -11,7 +11,8 @@ rust/crates/
                          feature); ships as WASM (browser/node); its `platform` module
                          holds the host syscall traits (storage, navigation, consent, ...)
                          and, on native targets, its `durable` module follows presigned
-                         transactions to a verdict over the core database
+                         transactions to a verdict over the core database and builds
+                         scheduled ones through their submission policies
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher
   truapi-macros/         #[wire_trait(id = N)] and #[wire(id = N)] proc-macros;
                          #[sso_service] for truapi's inter-host SSO protocol
@@ -49,6 +50,9 @@ js/packages/
                           same-page host, no server, no dial). @parity/truapi has
                           no debug seam. Where the app ultimately lives is still
                           an open decision.
+  trinity-stack/          @parity/trinity-stack: the trinity-stack crate built to wasm/
+                          by `npm run build:wasm`, plus read/publish; its bun tests
+                          run the crate's vectors
 js/container/              Shared TS lockdown container for native web views and CLI dev; scripts reuse its web API gates
                            `npm run build` bundles it into ios/truapi-host/Sources/TrUAPIHost/Resources/
 ios/truapi-provider/       TrUAPIProvider Swift package (chain transport over UniFFI);

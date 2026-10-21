@@ -1,10 +1,9 @@
 //! Wallet-local signing authority and incoming SSO handling.
 
+mod allowance;
 mod allowance_renewal;
 mod local_activation;
 pub mod ring_vrf;
-mod sso_replay;
-mod sso_responder;
 mod sso_service;
 
 use std::{
@@ -21,12 +20,6 @@ pub use allowance_renewal::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::TrackedStatementRenewalTarget;
 pub use local_activation::LocalActivation;
-pub use sso_responder::{
-	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-	PairingProposal, PairingProposalMetadata, ResponderExit, disconnect_paired_host,
-	establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
-	respond_to_pairing, resume_pairing,
-};
 pub use sso_service::SigningHostSsoService;
 
 use super::{
@@ -67,7 +60,6 @@ use crate::{
 	},
 };
 use ring_vrf::{ChainRingResolver, MemberCandidate, RingResolver, context_bytes, create_proof};
-use sso_replay::SsoReplayLocks;
 
 /// The network suffix the unit tests configure their signing host for. `dot`
 /// keeps the `peopl.dot` handles the RFC examples use meaningful; the
@@ -182,8 +174,6 @@ pub struct SigningHost {
 	local_grants: Mutex<LocalGrantState>,
 	/// Durable RFC-0024 registry, scoped by the active wallet root.
 	ring_vrf_registry: Arc<RingVrfRegistryStore>,
-	/// Serializes replay-ledger updates within each wallet and peer scope.
-	sso_replay_locks: SsoReplayLocks,
 	/// Paired-host requests the pairing host can still withdraw.
 	sso_withdrawals: SsoWithdrawals,
 	renewal: allowance_renewal::RenewalState,
@@ -208,7 +198,6 @@ impl SigningHost {
 			root_entropy: Mutex::new(None),
 			local_grants: Mutex::new(LocalGrantState::default()),
 			ring_vrf_registry: RingVrfRegistryStore::new(platform),
-			sso_replay_locks: SsoReplayLocks::default(),
 			sso_withdrawals: Default::default(),
 			renewal: allowance_renewal::RenewalState::default(),
 		})
@@ -289,7 +278,6 @@ impl SigningHost {
 			root_entropy: Mutex::new(None),
 			local_grants: Mutex::new(LocalGrantState::default()),
 			ring_vrf_registry: RingVrfRegistryStore::new(platform),
-			sso_replay_locks: SsoReplayLocks::default(),
 			sso_withdrawals: Default::default(),
 			renewal: allowance_renewal::RenewalState::default(),
 		})
@@ -308,7 +296,7 @@ impl SigningHost {
 
 	/// Current root entropy, or [`AuthorityError::Disconnected`] when no local
 	/// session is active.
-	fn root_entropy(&self) -> Result<Zeroizing<Vec<u8>>, AuthorityError> {
+	pub fn root_entropy(&self) -> Result<Zeroizing<Vec<u8>>, AuthorityError> {
 		self.root_entropy
 			.lock()
 			.expect("signing host entropy mutex poisoned")
@@ -326,11 +314,8 @@ impl SigningHost {
 			.map_err(product_authority_error)
 	}
 
-	fn sso_replay_locks(&self) -> &SsoReplayLocks {
-		&self.sso_replay_locks
-	}
-
-	fn sso_withdrawals(&self) -> &SsoWithdrawals {
+	/// Paired-host requests the pairing host can still withdraw.
+	pub fn sso_withdrawals(&self) -> &SsoWithdrawals {
 		&self.sso_withdrawals
 	}
 
@@ -363,9 +348,9 @@ impl SigningHost {
 		session: &AuthoritySession,
 		product_id: &str,
 		policy: OnExistingAllowancePolicy,
-	) -> Result<StatementStoreAllowanceKey, sso_responder::AllowanceAllocationError> {
+	) -> Result<StatementStoreAllowanceKey, allowance::AllowanceAllocationError> {
 		let (_, activation_generation) = self.require_current_session(session)?;
-		let allocation = sso_responder::allocate_statement_store_allowance(
+		let allocation = allowance::allocate_statement_store_allowance(
 			&self.services,
 			self,
 			session,
@@ -747,15 +732,15 @@ impl SigningHost {
 		let keypair = self.product_keypair(&request.account)?;
 		let (current, activation_generation) = self.require_current_session(session)?;
 		let granted = authenticated_caller &&
-			super::authority::is_blessed_owner(
+			(super::authority::is_blessed_owner(
 				&calling_product_id,
 				&request.account.dot_ns_identifier,
 			) || self.has_auto_signing_grant(
-			activation_generation,
-			current.public_key,
-			&calling_product_id,
-			&request.account.dot_ns_identifier,
-		);
+				activation_generation,
+				current.public_key,
+				&calling_product_id,
+				&request.account.dot_ns_identifier,
+			));
 		if !granted {
 			let confirmed =
 				super::until_cancelled(
@@ -1297,7 +1282,7 @@ impl ProductAuthority for SigningHost {
 					.await
 					.map(|_| v01::AllocationOutcome::Allocated),
 				v01::AllocatableResource::BulletinAllowance => {
-					sso_responder::allocate_bulletin_allowance(
+					allowance::allocate_bulletin_allowance(
 						&self.services,
 						self,
 						session,
@@ -1308,7 +1293,7 @@ impl ProductAuthority for SigningHost {
 					.map(|_| v01::AllocationOutcome::Allocated)
 				},
 				v01::AllocatableResource::SmartContractAllowance(index) => {
-					sso_responder::allocate_smart_contract_allowance(
+					allowance::allocate_smart_contract_allowance(
 						&self.services,
 						self,
 						session,
@@ -1322,7 +1307,7 @@ impl ProductAuthority for SigningHost {
 				v01::AllocatableResource::AutoSigning => self
 					.grant_auto_signing(session, &product_id)
 					.map(|_| v01::AllocationOutcome::Allocated)
-					.map_err(sso_responder::AllowanceAllocationError::Authority),
+					.map_err(allowance::AllowanceAllocationError::Authority),
 			};
 			match outcome {
 				Ok(outcome) => outcomes.push(outcome),
@@ -1346,8 +1331,8 @@ impl ProductAuthority for SigningHost {
 		self.resource_controls
 			.refuse_withheld(&v01::AllocatableResource::StatementStoreAllowance)?;
 		let period = statement_allowance::slot::current_period(
-			sso_responder::current_unix_secs()
-				.map_err(sso_responder::AllowanceAllocationError::into_authority_error)?,
+			allowance::current_unix_secs()
+				.map_err(allowance::AllowanceAllocationError::into_authority_error)?,
 		);
 		if let Some(key) = self
 			.local_grants
@@ -1363,7 +1348,7 @@ impl ProductAuthority for SigningHost {
 			OnExistingAllowancePolicy::Ignore,
 		)
 		.await
-		.map_err(sso_responder::AllowanceAllocationError::into_authority_error)
+		.map_err(allowance::AllowanceAllocationError::into_authority_error)
 	}
 
 	#[cfg(feature = "test-host")]
@@ -1389,7 +1374,7 @@ impl ProductAuthority for SigningHost {
 		#[cfg(feature = "test-host")]
 		self.resource_controls
 			.refuse_withheld(&v01::AllocatableResource::BulletinAllowance)?;
-		let secret = sso_responder::allocate_bulletin_allowance(
+		let secret = allowance::allocate_bulletin_allowance(
 			&self.services,
 			self,
 			session,
@@ -1397,7 +1382,7 @@ impl ProductAuthority for SigningHost {
 			OnExistingAllowancePolicy::Ignore,
 		)
 		.await
-		.map_err(sso_responder::AllowanceAllocationError::into_authority_error)?;
+		.map_err(allowance::AllowanceAllocationError::into_authority_error)?;
 		BulletinAllowanceKey::from_secret_bytes(secret)
 	}
 
@@ -1411,7 +1396,7 @@ impl ProductAuthority for SigningHost {
 		#[cfg(feature = "test-host")]
 		self.resource_controls
 			.refuse_withheld(&v01::AllocatableResource::BulletinAllowance)?;
-		let secret = sso_responder::allocate_bulletin_allowance(
+		let secret = allowance::allocate_bulletin_allowance(
 			&self.services,
 			self,
 			session,
@@ -1419,7 +1404,7 @@ impl ProductAuthority for SigningHost {
 			OnExistingAllowancePolicy::Increase,
 		)
 		.await
-		.map_err(sso_responder::AllowanceAllocationError::into_authority_error)?;
+		.map_err(allowance::AllowanceAllocationError::into_authority_error)?;
 		BulletinAllowanceKey::from_secret_bytes(secret)
 	}
 
@@ -1575,7 +1560,8 @@ mod tests {
 	/// than being visible in a refusal.
 	#[test]
 	fn the_signing_role_adjudicates_grants_against_the_asset_hub_it_installed() {
-		let (services, _authority) = signing_runtime();
+		let (services, _authority) =
+			signing_runtime_on_asset_hub(Arc::new(StubPlatform::default()), [0xcc; 32]);
 		assert_eq!(
 			services.asset_hub_chain_genesis_hash(),
 			Some([0xcc; 32]),
@@ -1611,8 +1597,16 @@ mod tests {
 		signing_runtime_with_platform(platform)
 	}
 
+	/// No dotNS Asset Hub, so activation looks up no username on the scripted chain.
 	fn signing_runtime_with_platform(
 		platform: Arc<dyn Platform>,
+	) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
+		signing_runtime_on_asset_hub(platform, [0; 32])
+	}
+
+	fn signing_runtime_on_asset_hub(
+		platform: Arc<dyn Platform>,
+		asset_hub_chain_genesis_hash: [u8; 32],
 	) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
 		let config = SigningHostConfig::new(
 			HostInfo {
@@ -1624,7 +1618,7 @@ mod tests {
 			PlatformInfo::default(),
 			[0; 32],
 			[0xbb; 32],
-			[0xcc; 32],
+			asset_hub_chain_genesis_hash,
 			TEST_NETWORK_SUFFIX.to_string(),
 		)
 		.expect("signing host config is valid");

@@ -99,8 +99,8 @@ fn signing_config() -> SigningHostConfig {
 		PlatformInfo::default(),
 		[0; 32],
 		[0xbb; 32],
-		// Distinct from its siblings so a transposition stays visible.
-		[0xcc; 32],
+		// No dotNS Asset Hub, so activation looks up no username.
+		[0; 32],
 		"paseo".to_string(),
 	)
 	.expect("signing host config is valid")

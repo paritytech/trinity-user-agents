@@ -87,11 +87,11 @@ impl Account for ProductRuntimeHost {
 			{
 				let approved = until_cancelled(
 					cx,
-					self.connection.confirm_product_action(UserConfirmationReview::ProductSubtree(
-						ProductSubtreeReview {
+					self.connection.confirm_user_action_if_needed(
+						UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
 							product_id: product_account_id.dot_ns_identifier.clone(),
-						},
-					)),
+						}),
+					),
 				)
 				.await
 				.map_err(account_get_authority_error)?

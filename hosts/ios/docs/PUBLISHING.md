@@ -110,7 +110,9 @@ Optional — these gate reporting steps only, and a fork can leave them unset:
 
 `SENTRY_DSN` and `MELD_BASIC_AUTH_TOKEN` from the first table are also stored as
 GitHub Actions secrets, because CI runs `generate_secrets.sh` from
-`.github/actions/configure-secrets` instead of reading `env-vars.sh`.
+`.github/actions/configure-secrets` instead of reading `env-vars.sh`. The DSN is
+stored as `SENTRY_DSN_IOS`, since the Android app reports to its own Sentry
+project through `SENTRY_DSN_ANDROID`.
 
 Tester groups are a workflow variable rather than a secret: `FIREBASE_GROUPS` is
 set in `ios-firebase-debug-distribution.yml` (default `polkadotapp-ios`) and can be

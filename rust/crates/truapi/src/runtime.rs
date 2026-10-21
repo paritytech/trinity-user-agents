@@ -19,6 +19,7 @@ mod capabilities;
 mod chat;
 pub mod contacts;
 mod dotns_lookup;
+mod funding;
 mod host_session;
 mod identity;
 pub mod login_failure;
@@ -32,10 +33,10 @@ mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
 pub mod services;
 mod signing_host;
-/// Pairing flow for wallet login.
-pub mod sso_pairing;
 /// SSO remote request/response messaging over the statement store.
 pub mod sso_remote;
+mod sso_request_service;
+mod sso_responder_service;
 pub mod sso_service;
 /// Statement Store and Bulletin allowance allocation.
 pub mod statement_allowance;
@@ -69,15 +70,14 @@ use futures::{FutureExt, StreamExt, pin_mut};
 #[cfg(test)]
 use pairing_host::PairingHost;
 pub use pairing_host::PairingHost as PairingHostRole;
+use payment_id::host_funding_intent;
 use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
-pub use signing_host::{
-	AnnouncedPairing, DevicePairingObserver, LocalActivation, MAX_PAIRING_METADATA_CHARS,
-	PairedSsoPeer, PairingProposal, PairingProposalMetadata, ResponderExit,
-	SigningHost as SigningHostRole, SigningHostSsoService, disconnect_paired_host,
-	establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
-	respond_to_pairing, resume_pairing,
+pub use signing_host::{LocalActivation, SigningHost as SigningHostRole, SigningHostSsoService};
+pub use sso_responder_service::{
+	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
+	PairingProposal, PairingProposalMetadata, ResponderExit, SsoResponderService,
 };
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
 pub use vrf::ring_vrf_member;
@@ -96,10 +96,10 @@ pub use signing_host::TrackedStatementRenewalTarget;
 use tracing::{instrument, warn};
 use truapi::{
 	CallContext, CallError, CancellationReason, Subscription,
-	api::{Chat, Contacts, Pocket, Renderer},
+	api::{Chat, Contacts, Funding, Pocket, Renderer},
 	latest, v01,
 	versioned::{
-		IntoLatest,
+		FromLatest, IntoLatest, Versioned,
 		chat::{
 			HostChatActionSubscribeError, HostChatActionSubscribeItem,
 			HostChatActionSubscribeRequest, HostChatCreateRoomError, HostChatCreateRoomRequest,
@@ -110,6 +110,11 @@ use truapi::{
 			HostChatSetRoomFooterResponse,
 		},
 		contacts::{HostContactsPickError, HostContactsPickRequest, HostContactsPickResponse},
+		funding::{
+			HostFundingError, HostFundingRequest, HostFundingResponse,
+			HostFundingStatusSubscribeError, HostFundingStatusSubscribeItem,
+			HostFundingStatusSubscribeRequest,
+		},
 		pocket::{
 			HostPocketListSubscribeError, HostPocketListSubscribeItem,
 			HostPocketListSubscribeRequest, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
@@ -169,6 +174,10 @@ const PREIMAGE_SUBMIT_TIMEOUT: Duration = Duration::from_secs(360);
 /// end-to-end submit deadline may reduce it further.
 const PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT: Duration =
 	RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT;
+/// Cap on waiting for an extended Bulletin authorization to reach this host's
+/// Bulletin node. The claim is on chain once the extension returns, so only
+/// propagation is left, and the submit keeps the rest of its deadline.
+const PREIMAGE_BULLETIN_AUTHORIZATION_WAIT: Duration = Duration::from_secs(18);
 
 const LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON: &str =
 	"Account can't be derived from product account id";
@@ -461,7 +470,7 @@ impl ProductConnection {
 		}
 	}
 
-	async fn confirm_product_action(
+	async fn confirm_user_action_if_needed(
 		&self,
 		review: UserConfirmationReview,
 	) -> Result<bool, v01::GenericError> {
@@ -482,7 +491,7 @@ impl ProductConnection {
 		review: impl FnOnce() -> UserConfirmationReview,
 	) -> Result<bool, v01::GenericError> {
 		if account.dot_ns_identifier == self.product_id() {
-			return self.confirm_product_action(review()).await;
+			return self.confirm_user_action_if_needed(review()).await;
 		}
 		let approval =
 			cross_product_signature_key(&self.product_id(), &account.dot_ns_identifier, kind);
@@ -494,7 +503,7 @@ impl ProductConnection {
 		if permissions.authorize(&approval, false) {
 			return Ok(true);
 		}
-		let approved = self.confirm_product_action(review()).await?;
+		let approved = self.confirm_user_action_if_needed(review()).await?;
 		if approved {
 			permissions.grant(approval);
 		}
@@ -804,7 +813,7 @@ impl ProductRuntimeHost {
 			chat_platform: None,
 			permission_status: None,
 			temporary_permissions: Arc::default(),
-			session_state: pairing_host.session_state(),
+			session_state: pairing_host.session().session_state(),
 			product,
 			core_instance,
 			chain,
@@ -818,7 +827,7 @@ impl ProductRuntimeHost {
 		let host = Self {
 			accounts: ProductAccounts::new(pairing_host.clone(), connection.product.clone()),
 			connection,
-			host_session: pairing_host.clone(),
+			host_session: pairing_host.session().clone(),
 		};
 		(host, pairing_host)
 	}
@@ -1499,6 +1508,95 @@ impl Renderer for ProductRuntimeHost {
 			return Subscription::interrupted(CallError::Denied);
 		}
 		self.connection.renderer.subscribe()
+	}
+}
+
+#[truapi::async_trait]
+impl Funding for ProductRuntimeHost {
+	#[instrument(skip_all, fields(runtime.method = "funding.request"))]
+	async fn request(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingRequest,
+	) -> Result<HostFundingResponse, CallError<HostFundingError>> {
+		let version = request.version();
+		let latest::HostFundingRequest { id, direction, amount } = request.into_latest();
+		let domain = |error| CallError::Domain(HostFundingError::from_latest(error, version));
+		// A capability the host does not serve is a framework answer; a
+		// missing session is one the product handles.
+		if self.connection.services.funding().platform().is_none() {
+			return Err(CallError::Unsupported);
+		}
+		if self.accounts.current_session().is_none() {
+			return Err(domain(latest::HostFundingError::NotConnected));
+		}
+		self.connection
+			.services
+			.open_funding(
+				Some(&self.connection.product),
+				host_funding_intent(&self.connection.product, id),
+				direction,
+				amount,
+			)
+			.await
+			.map_err(|error| match error {
+				funding::OpenFundingError::Unsupported => CallError::Unsupported,
+				funding::OpenFundingError::Dismissed => domain(latest::HostFundingError::Rejected),
+				funding::OpenFundingError::InvalidAmount => {
+					domain(latest::HostFundingError::InvalidAmount)
+				},
+				funding::OpenFundingError::AlreadyExists => {
+					domain(latest::HostFundingError::AlreadyExists)
+				},
+				funding::OpenFundingError::Stopped => {
+					CallError::HostFailure { reason: error.to_string() }
+				},
+				funding::OpenFundingError::Present(error) => {
+					CallError::HostFailure { reason: error.reason }
+				},
+				funding::OpenFundingError::Session(error) => {
+					CallError::HostFailure { reason: error.to_string() }
+				},
+			})?;
+		Ok(HostFundingResponse::from_latest((), version))
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "funding.status_subscribe"))]
+	async fn status_subscribe(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingStatusSubscribeRequest,
+	) -> Subscription<HostFundingStatusSubscribeItem, CallError<HostFundingStatusSubscribeError>> {
+		let version = request.version();
+		let latest::HostFundingStatusSubscribeRequest { id } = request.into_latest();
+		let registry = self.connection.services.funding();
+		if registry.platform().is_none() {
+			return Subscription::interrupted(CallError::Unsupported);
+		}
+		if let Err(error) = self.require_session() {
+			return Subscription::interrupted(error);
+		}
+		let intent = host_funding_intent(&self.connection.product, id);
+		if let Err(error) = registry.load(&self.connection.services).await {
+			return Subscription::interrupted(CallError::HostFailure { reason: error.to_string() });
+		}
+		// Another product's session reads as absent, so ids reveal nothing.
+		let owned = registry.owner(&intent).is_some_and(|owner| {
+			owner.as_deref() == Some(self.connection.product.product_id.as_str())
+		});
+		match owned.then(|| registry.subscribe(&intent)).flatten() {
+			Some(stream) => {
+				Subscription::new(Box::pin(stream.map(move |item| {
+					Ok(HostFundingStatusSubscribeItem::from_latest(item, version))
+				})))
+			},
+			None => Subscription::interrupted(CallError::Domain(
+				HostFundingStatusSubscribeError::from_latest(
+					latest::HostFundingStatusSubscribeError::NotFound,
+					version,
+				),
+			)),
+		}
 	}
 }
 
