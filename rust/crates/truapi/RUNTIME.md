@@ -242,9 +242,26 @@ a submission watch. Whatever no watch owns, including everything a previous
 process left live, is decided by recovery passes: the completion ladder over
 the shared chain capabilities and the domain's `CompletionOracle`. Every
 verdict is a compare-and-set against the status and attempt it was derived
-from, and rows are never deleted. The engine reports whether work is pending
-to `HostCallbacks::durable_work_changed`; the host then runs a background task
-awaiting `run_durable_recovery()`, which returns once nothing is live.
+from, and rows are never deleted.
+
+A domain can also schedule transactions it cannot sign yet
+(`DurableRequest::scheduled`), each with a `SubmissionPlan`: the
+`SubmissionPolicy` registered in the `DurableRegistry` that builds it, and that
+policy's `PolicyParams` for it. They wait as `PENDING_SUBMISSION` rows until the
+submission executor builds them: one task per domain, policy and group asks the
+policy to `prepare` its waiting rows, starts an attempt for each `Ready` answer
+and fails each `GiveUp`, backing off after rounds that decide nothing. A
+presigned submission may carry a plan as well. When a verdict proves a
+transaction with a policy failed, the verdict writer asks the policy's
+`can_retry`, and a yes sends the row back to be built instead of failing it.
+It is built again after a cooldown that grows with the attempts the row
+records, so the wait survives a restart. The executor starts with the engine in `set_core_db` and again in every
+recovery run.
+
+The engine reports whether work is pending, including rows waiting to be
+built, to `HostCallbacks::durable_work_changed`; the host then runs a
+background task awaiting `run_durable_recovery()`, which returns once nothing
+is live.
 
 ### The two roles
 
