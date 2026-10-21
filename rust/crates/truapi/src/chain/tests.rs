@@ -23,6 +23,7 @@ use crate::{
 	test_support::{ScriptedProvider, notification_sender, test_spawner, wait_for_sent},
 };
 
+mod live_storage_watch;
 mod storage_snapshots;
 
 const GENESIS: H256 = H256([0xab; 32]);
