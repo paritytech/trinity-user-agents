@@ -325,6 +325,8 @@ Rust linting treats correctness and complexity diagnostics as errors, and public
 
 Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
 
+The runtime's shared RPC fixture matches scripted replies against requests on the same connection, since request IDs can repeat across connections. Its platform-wide request log records all connections for assertions.
+
 The native `truapi-host` utility runs pairing and signing hosts against the real
 SSO transport for local end-to-end work. See [Install the CLI](#install-the-cli)
 to get it, and the [`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md)

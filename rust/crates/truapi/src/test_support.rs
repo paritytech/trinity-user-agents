@@ -1240,6 +1240,7 @@ impl PlatformFeatures for StubPlatform {
 
 struct RecordingConnection {
 	sent: Arc<Mutex<Vec<String>>>,
+	all_sent: Arc<Mutex<Vec<String>>>,
 	responses: Vec<String>,
 	method_responses: Vec<(&'static str, String)>,
 	method_responses_gate: Arc<Mutex<Option<futures::channel::oneshot::Receiver<()>>>>,
@@ -1386,6 +1387,7 @@ fn sso_scripted_responses(
 
 impl JsonRpcConnection for RecordingConnection {
 	fn send(&self, request: String) {
+		self.all_sent.lock().expect("rpc list mutex poisoned").push(request.clone());
 		self.sent.lock().expect("rpc list mutex poisoned").push(request);
 	}
 	fn responses(&self) -> BoxStream<'static, String> {
@@ -1692,6 +1694,57 @@ fn method_keyed_responses_do_not_replay_an_exhausted_answer() {
 	});
 }
 
+fn assert_rpc_responses_are_connection_local(platform: StubPlatform) {
+	use futures::FutureExt;
+
+	futures::executor::block_on(async {
+		let first = platform.connect([0xaa; 32]).await.unwrap();
+		let second = platform.connect([0xaa; 32]).await.unwrap();
+		let mut first_responses = first.responses();
+		let mut second_responses = second.responses();
+		let mut expected_requests = Vec::new();
+
+		for index in 1..=2 {
+			let request = format!(
+				r#"{{"jsonrpc":"2.0","id":"truapi:{index}","method":"state_getStorage","params":[]}}"#
+			);
+			let response =
+				format!(r#"{{"jsonrpc":"2.0","id":"truapi:{index}","result":"0x0{index}"}}"#);
+			first.send(request.clone());
+			assert_eq!(first_responses.next().await, Some(response.clone()));
+			assert_eq!(second_responses.next().now_or_never(), None);
+
+			second.send(request.clone());
+			assert_eq!(second_responses.next().await, Some(response));
+			expected_requests.extend([request.clone(), request]);
+		}
+
+		assert_eq!(*platform.sent_rpc.lock().unwrap(), expected_requests);
+	});
+}
+
+#[test]
+fn scripted_rpc_responses_wait_for_their_own_connection_request() {
+	assert_rpc_responses_are_connection_local(StubPlatform {
+		rpc_responses: vec![
+			r#"{"jsonrpc":"2.0","id":"truapi:1","result":"0x01"}"#.to_string(),
+			r#"{"jsonrpc":"2.0","id":"truapi:2","result":"0x02"}"#.to_string(),
+		],
+		..Default::default()
+	});
+}
+
+#[test]
+fn method_keyed_rpc_responses_count_requests_per_connection() {
+	assert_rpc_responses_are_connection_local(StubPlatform {
+		rpc_method_responses: vec![
+			("state_getStorage", r#""0x01""#.to_string()),
+			("state_getStorage", r#""0x02""#.to_string()),
+		],
+		..Default::default()
+	});
+}
+
 async fn wait_for_matching_request_id(sent: Arc<Mutex<Vec<String>>>, response: &str) {
 	let Some(id) = json_rpc_id(response) else {
 		return;
@@ -1751,7 +1804,8 @@ impl ChainProvider for StubPlatform {
 			futures::future::pending::<()>().await;
 		}
 		Ok(Box::new(RecordingConnection {
-			sent: self.sent_rpc.clone(),
+			sent: Arc::default(),
+			all_sent: self.sent_rpc.clone(),
 			responses: self.rpc_responses.clone(),
 			method_responses: self.rpc_method_responses.clone(),
 			method_responses_gate: self.rpc_method_responses_gate.clone(),
