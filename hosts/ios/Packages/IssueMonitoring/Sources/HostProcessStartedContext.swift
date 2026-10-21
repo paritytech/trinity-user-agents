@@ -2,9 +2,9 @@ import Foundation
 
 public struct HostProcessStartedContext: Sendable {
     public let appLaunchID: UUID
-    public let monotonicMilliseconds: Double
+    public let processStartUptimeMilliseconds: Double
     public let appVersion: String?
-    public let appBuild: String?
+    public let appBuild: Int?
     public let appVariant: String
     public let platform: String
     public let osVersion: String?
@@ -12,16 +12,16 @@ public struct HostProcessStartedContext: Sendable {
 
     public init(
         appLaunchID: UUID,
-        monotonicMilliseconds: Double,
+        processStartUptimeMilliseconds: Double,
         appVersion: String?,
-        appBuild: String?,
+        appBuild: Int?,
         appVariant: String,
         platform: String,
         osVersion: String?,
         truapiHostVersion: String?
     ) {
         self.appLaunchID = appLaunchID
-        self.monotonicMilliseconds = monotonicMilliseconds
+        self.processStartUptimeMilliseconds = processStartUptimeMilliseconds
         self.appVersion = appVersion
         self.appBuild = appBuild
         self.appVariant = appVariant
@@ -32,19 +32,26 @@ public struct HostProcessStartedContext: Sendable {
 
     let eventName = "host.process.started"
 
-    var attributes: [String: Any] {
-        var values: [String: Any] = [
-            "app.launch_id": appLaunchID.uuidString.lowercased(),
-            "event.monotonic_ms": monotonicMilliseconds,
+    var sentryFields: HostProcessStartedSentryFields {
+        var tags = [
             "host.app_variant": appVariant,
             "host.platform": platform
         ]
+        var extras: [String: Any] = [
+            "app.launch_id": appLaunchID.uuidString.lowercased(),
+            "event.monotonic_ms": processStartUptimeMilliseconds
+        ]
 
-        values["host.native_app_version"] = appVersion
-        values["host.app_build"] = appBuild
-        values["host.os_version"] = osVersion
-        values["truapi.host_version"] = truapiHostVersion
+        tags["host.native_app_version"] = appVersion
+        extras["host.app_build"] = appBuild
+        tags["host.os_version"] = osVersion
+        tags["truapi.host_version"] = truapiHostVersion
 
-        return values
+        return HostProcessStartedSentryFields(tags: tags, extras: extras)
     }
+}
+
+struct HostProcessStartedSentryFields {
+    let tags: [String: String]
+    let extras: [String: Any]
 }

@@ -7,6 +7,7 @@ import TrUAPIHost
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
     private let appLaunchID = UUID()
+    private let processStartUptimeMilliseconds = ProcessInfo.processInfo.systemUptime * 1_000
     let logger: LoggerProtocol = Logger.shared
     let issueMonitoringService: IssueMonitoringServiceProtocol = IssueMonitoringFactory.createService(
         dsn: GeneratedSecrets.sentryDSN
@@ -73,13 +74,13 @@ private extension AppDelegate {
             issueMonitoringService.recordProcessStarted(
                 HostProcessStartedContext(
                     appLaunchID: appLaunchID,
-                    monotonicMilliseconds: ProcessInfo.processInfo.systemUptime * 1_000,
+                    processStartUptimeMilliseconds: processStartUptimeMilliseconds,
                     appVersion: Bundle.main.appVersion,
-                    appBuild: Bundle.main.appBuild,
+                    appBuild: Bundle.main.appBuild.flatMap { Int($0) },
                     appVariant: issueMonitoringAppVariant,
                     platform: "ios",
                     osVersion: UIDevice.current.systemVersion,
-                    truapiHostVersion: truapiHostVersion()
+                    truapiHostVersion: TrUAPIHost.version
                 )
             )
         #endif

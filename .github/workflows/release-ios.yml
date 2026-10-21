@@ -245,8 +245,12 @@ jobs:
 
           current_url="$(read_manifest_value publishedBinaryURL)"
           current_checksum="$(read_manifest_value publishedBinaryChecksum)"
-          if [ "${current_url}" = "${PUBLISHED_URL}" ] && [ "${current_checksum}" = "${PUBLISHED_CHECKSUM}" ]; then
-            echo "Package.swift already references @parity/ios-host@${IOS_VERSION}."
+          host_source="ios/truapi-host/Sources/TrUAPIHost/TrUAPIHost.swift"
+          current_version="$(sed -n -E 's/^    public static let version = "([^"]+)"$/\1/p' "${host_source}")"
+          if [ "${current_url}" = "${PUBLISHED_URL}" ] && \
+            [ "${current_checksum}" = "${PUBLISHED_CHECKSUM}" ] && \
+            [ "${current_version}" = "${IOS_VERSION}" ]; then
+            echo "Package.swift and TrUAPIHost.version already reference @parity/ios-host@${IOS_VERSION}."
             exit 0
           fi
           if [ "${current_url}" != "${BASE_URL}" ] || [ "${current_checksum}" != "${BASE_CHECKSUM}" ]; then
@@ -256,17 +260,20 @@ jobs:
 
           sed -i '' -E "s|^let publishedBinaryURL = .*|let publishedBinaryURL = \"${PUBLISHED_URL}\"|" Package.swift
           sed -i '' -E "s|^let publishedBinaryChecksum = .*|let publishedBinaryChecksum = \"${PUBLISHED_CHECKSUM}\"|" Package.swift
+          sed -i '' -E \
+            "s|^    public static let version = .*|    public static let version = \"${IOS_VERSION}\"|" \
+            "${host_source}"
           grep -q '^let useLocalBinary = ProcessInfo' Package.swift
 
-          git add Package.swift
+          git add Package.swift "${host_source}"
           git commit -m "build(ios): publish host XCFramework ${IOS_VERSION}"
 
           gh auth setup-git
           manifest_branch="release/ios-host-${IOS_VERSION}"
           if git ls-remote --exit-code --heads origin "refs/heads/${manifest_branch}" >/dev/null 2>&1; then
             git fetch origin "refs/heads/${manifest_branch}:refs/remotes/origin/${manifest_branch}"
-            if ! git show "origin/${manifest_branch}:Package.swift" | cmp - Package.swift; then
-              echo "::error::${manifest_branch} already exists with a different Package.swift."
+            if ! git diff --quiet "origin/${manifest_branch}" -- Package.swift "${host_source}"; then
+              echo "::error::${manifest_branch} already exists with different iOS host metadata."
               exit 1
             fi
           else

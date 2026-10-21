@@ -17,7 +17,7 @@ import UIKit
 
 /// Package metadata.
 public enum TrUAPIHost {
-    public static let version = "0.1.0"
+    public static let version = "0.25.0"
 }
 
 /// Bootstrap helper for the native localhost WebSocket bridge that a product
