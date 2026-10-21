@@ -34,7 +34,7 @@ struct ProductGameReminderCenterTests {
         return (center, fakes)
     }
 
-    @Test("A schedule rings an alarm at the native lead time when AlarmKit is available")
+    @Test("A schedule rings an alarm at the start when AlarmKit is available")
     func scheduleRingsAlarm() async {
         let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-3_600))
 
