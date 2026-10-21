@@ -88,6 +88,8 @@ on:
 
 permissions:
   contents: read
+  # Reading another run's artifact, the core main built from the same inputs.
+  actions: read
   checks: write
   pull-requests: write
 
@@ -108,25 +110,26 @@ env:
   DEBUG_CI: false
 
 jobs:
-  # Whether this run builds the app. Every job below is macOS time, so on a
-  # pull request they run only when the ios-simulator-build label asks for
-  # them, the same way ios-device-build and android-device-build ask for their
-  # builds. CI's `iOS package (Swift + WebKit)` job still compiles the
-  # TrUAPIHost package against the core on a pull request touching `ios/` or
-  # the core crates. Nothing compiles the app itself on a pull request without
-  # the label, so a change that breaks it is caught by the push to main, where
-  # these jobs and manual runs build everything.
+  # Which jobs this run needs. The unit tests, and the core they build
+  # against, run on every pull request this workflow's paths match, so a
+  # change that breaks or hangs them is caught before it merges, unless the
+  # bindings job finds the pull request changes only core crates and leaves
+  # what the app compiles against as main tested it. The app
+  # builds are macOS time no test needs, so they run only when the
+  # ios-simulator-build label asks for them, the same way ios-device-build
+  # and android-device-build ask for their builds.
   #
   # The labels are read from the API rather than the event, so re-running a
-  # push's run sees a label added since. A run started by another label stays
-  # skipped on a re-run, because building there would duplicate the run the
-  # ios-simulator-build label starts on its own.
+  # push's run sees a label added since. A run started by another label
+  # skips everything on a re-run too, because it would duplicate the run
+  # already in progress for the branch.
   check-skip-label:
     timeout-minutes: 5
     runs-on: ubuntu-latest
     outputs:
       skip: ${{ steps.check_skip.outputs.skip }}
       app: ${{ steps.check_skip.outputs.app }}
+      tests: ${{ steps.check_skip.outputs.tests }}
     steps:
       - name: Decide which jobs this run needs
         id: check_skip
@@ -137,6 +140,7 @@ jobs:
             if (!pr) {
               core.setOutput('skip', 'false');
               core.setOutput('app', 'true');
+              core.setOutput('tests', 'true');
               return;
             }
             const label = 'ios-simulator-build';
@@ -146,6 +150,7 @@ jobs:
               core.info(`Label ${context.payload.label.name} does not ask for a build.`);
               core.setOutput('skip', 'false');
               core.setOutput('app', 'false');
+              core.setOutput('tests', 'false');
               return;
             }
             const labels = (await github.paginate(github.rest.issues.listLabelsOnIssue, {
@@ -158,9 +163,152 @@ jobs:
               : `No ${label} label; the app jobs are skipped.`);
             core.setOutput('skip', labels.includes('skip-ci').toString());
             core.setOutput('app', app.toString());
+            core.setOutput('tests', 'true');
 
-  # The app jobs all need the core generated from this commit, and it is the
-  # same output for each of them, so it is built once here and carried across.
+  # Whether this change can reach the iOS app at all. A pull request that
+  # changes only core crates reaches it through the Swift bindings and the
+  # TypeScript the host's container bundles, and most such changes leave both
+  # byte for byte as they are. This job generates them on Linux and looks for
+  # main's record that the iOS tests passed against exactly that output. When
+  # it finds one, the core build and the tests are skipped: the app compiles
+  # as it does on main, and only a runtime change the tests would catch is left
+  # for main's run and the nightly. A pull request that changes anything on the
+  # iOS side skips this check and runs everything.
+  bindings:
+    name: Check whether the app's bindings changed
+    needs: check-skip-label
+    if: needs.check-skip-label.outputs.skip == 'false' && (needs.check-skip-label.outputs.app == 'true' || needs.check-skip-label.outputs.tests == 'true') && !startsWith(github.head_ref, 'release/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      key: ${{ steps.hash.outputs.key }}
+      unchanged: ${{ steps.record.outputs.run-id != '' }}
+    steps:
+      # A pull request's checkout is its merge commit, so its first parent is
+      # the base and the diff to it is exactly what the pull request changes.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 2
+
+      # The paths this workflow runs on, less the core crates and their
+      # manifests, plus the TypeScript packages the host's container bundles.
+      # Keep it in step with on.paths.
+      - name: Decide whether only core crates changed
+        id: scope
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            echo "check=$([ "$GITHUB_REF" = refs/heads/main ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ios_side='^(hosts/ios/|ios/|Package\.swift$|Makefile$|nightly-toolchain$|js/container/|js/packages/|scripts/|package\.json$|package-lock\.json$|\.github/workflows/ios-pr\.yml$|\.github/actions/(rust-nightly|bootstrap-ios-core|find-main-artifact|upsert-pr-comment|setup-swiftlint)/)'
+          changed="$(git diff --name-only HEAD^1 HEAD)"
+          if grep -qE "$ios_side" <<<"$changed"; then
+            echo "The iOS side changed; running everything"
+            echo "check=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "check=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
+        if: steps.scope.outputs.check == 'true'
+        with:
+          toolchain: stable
+
+      - uses: ./.github/actions/rust-nightly
+        if: steps.scope.outputs.check == 'true'
+        with:
+          components: rustfmt
+
+      # Restores the cache ci.yml's iOS bindings job saves, and never saves one
+      # of its own, so this adds nothing to the repository's cache.
+      - uses: ./.github/actions/rust-cache
+        if: steps.scope.outputs.check == 'true'
+        with:
+          shared-key: ios-bindings
+          save: "false"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.scope.outputs.check == 'true'
+        with:
+          node-version: "22"
+
+      - name: Generate the bindings and codegen output
+        if: steps.scope.outputs.check == 'true'
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          TRUAPI_SKIP_PACKAGE_BUILD=1 ./scripts/codegen.sh
+          make uniffi
+          ./ios/truapi-host/scripts/sync-bindings.sh
+          make provider-swift
+          ./ios/truapi-provider/scripts/sync-bindings.sh
+
+      # The bundled container resources are left out: they are built from the
+      # TypeScript client, whose generated sources are hashed here.
+      - name: Hash what the app is built against
+        id: hash
+        if: steps.scope.outputs.check == 'true'
+        run: |
+          set -euo pipefail
+          hash="$(find ios/truapi-host/Sources ios/truapi-provider/Sources js/packages/truapi/src/generated \
+            -type f ! -path '*/Resources/*' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -c1-32)"
+          echo "key=ios-bindings-$hash" >> "$GITHUB_OUTPUT"
+
+      - name: Find main's tests against the same bindings
+        id: record
+        if: steps.scope.outputs.check == 'true' && github.event_name == 'pull_request'
+        uses: ./.github/actions/find-main-artifact
+        with:
+          name: ${{ steps.hash.outputs.key }}
+          workflow: .github/workflows/ios-pr.yml
+
+  # Whether main already built the core from exactly this commit's core inputs.
+  # Most iOS pull requests change only the app, so the Rust core they build is
+  # byte for byte the one main built, and rebuilding it costs a large macOS
+  # runner for minutes. The inputs are hashed from the tree, and only an
+  # artifact a push of this workflow to main published is trusted, so a pull
+  # request run cannot plant a core for others to use.
+  core-lookup:
+    name: Find a core built from the same inputs
+    needs: [check-skip-label, bindings]
+    if: ${{ !cancelled() && needs.check-skip-label.result == 'success' && needs.check-skip-label.outputs.skip == 'false' && (needs.check-skip-label.outputs.app == 'true' || (needs.check-skip-label.outputs.tests == 'true' && needs.bindings.outputs.unchanged != 'true')) && !startsWith(github.head_ref, 'release/') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+      run-id: ${{ steps.find.outputs.run-id }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # Everything the bootstrap reads: the crates and their lockfile, the
+      # toolchain pins, codegen and its npm manifests, the TypeScript client and
+      # container bundled into the host, the scripts that stage the bindings,
+      # the Xcode pin, and the packaging below.
+      - name: Hash the core inputs
+        id: key
+        run: |
+          set -euo pipefail
+          inputs=(
+            rust ios js/packages/truapi js/container scripts
+            Makefile Cargo.toml Cargo.lock nightly-toolchain
+            package.json package-lock.json
+            .github/actions/bootstrap-ios-core .github/actions/rust-nightly
+            hosts/ios/.github/actions/install .github/workflows/ios-pr.yml
+          )
+          hash="$(git ls-tree -r HEAD -- "${inputs[@]}" | sha256sum | cut -c1-32)"
+          echo "key=ios-core-inputs-$hash" >> "$GITHUB_OUTPUT"
+
+      - name: Find a core main built from them
+        id: find
+        uses: ./.github/actions/find-main-artifact
+        with:
+          name: ${{ steps.key.outputs.key }}
+          workflow: .github/workflows/ios-pr.yml
+
+  # The app and test jobs all need the core generated from this commit, and it
+  # is the same output for each of them, so it is built once here and carried
+  # across.
   # Built on the larger runner because it is Rust compilation and CPU bound.
   # The `release/` test on this job and the three below it is deliberately every
   # release branch, app and package alike, behind the label check that already
@@ -169,18 +317,34 @@ jobs:
   # and lifecycle workflows use.
   core:
     name: Build the in-tree core
-    needs: check-skip-label
-    if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
-    runs-on: parity-macos-large
+    needs: [check-skip-label, bindings, core-lookup]
+    if: ${{ !cancelled() && needs.check-skip-label.result == 'success' && needs.check-skip-label.outputs.skip == 'false' && (needs.check-skip-label.outputs.app == 'true' || (needs.check-skip-label.outputs.tests == 'true' && needs.bindings.outputs.unchanged != 'true')) && !startsWith(github.head_ref, 'release/') }}
+    # Fetching a core main already built needs no Mac, so it does not wait for
+    # one in the large runner pool.
+    runs-on: ${{ needs.core-lookup.outputs.run-id != '' && 'ubuntu-latest' || 'parity-macos-large' }}
     timeout-minutes: 45
+    env:
+      REUSE: ${{ needs.core-lookup.outputs.run-id != '' }}
     steps:
+      - name: Fetch the core main built from the same inputs
+        if: env.REUSE == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.core-lookup.outputs.key }}
+          run-id: ${{ needs.core-lookup.outputs.run-id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}
+
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        if: env.REUSE != 'true'
 
       # The xcframework targets iOS, so this needs the SDK.
       - name: Setup iOS Environment
+        if: env.REUSE != 'true'
         uses: ./hosts/ios/.github/actions/install
 
       - name: Bootstrap the in-tree core
+        if: env.REUSE != 'true'
         uses: ./.github/actions/bootstrap-ios-core
         with:
           save: "true"
@@ -195,6 +359,7 @@ jobs:
       # bootstrap that quietly stops producing one fails here rather than in
       # three app jobs.
       - name: Package the generated core
+        if: env.REUSE != 'true'
         run: |
           set -euo pipefail
           paths=(
@@ -220,6 +385,18 @@ jobs:
           name: ios-core-${{ github.run_id }}
           path: ${{ runner.temp }}/ios-core.tgz
           retention-days: 1
+          if-no-files-found: error
+          overwrite: true
+
+      # Kept for a week under its inputs, for pull requests that do not change
+      # them. Published again when main reuses it, so a core in use never expires.
+      - name: Publish the core for reuse
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: ${{ needs.core-lookup.outputs.key }}
+          path: ${{ runner.temp }}/ios-core.tgz
+          retention-days: 7
           if-no-files-found: error
           overwrite: true
 
@@ -264,7 +441,7 @@ jobs:
       - name: Configure secrets
         uses: ./hosts/ios/.github/actions/configure-secrets
         with:
-          sentry_dsn: ${{ secrets.SENTRY_DSN }}
+          sentry_dsn: ${{ secrets.SENTRY_DSN_IOS }}
           meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
 
       - name: Build app
@@ -392,7 +569,7 @@ jobs:
       - name: Configure secrets
         uses: ./hosts/ios/.github/actions/configure-secrets
         with:
-          sentry_dsn: ${{ secrets.SENTRY_DSN }}
+          sentry_dsn: ${{ secrets.SENTRY_DSN_IOS }}
           meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
 
       # DevCI to match the build job, so the preview exercises the same chains
@@ -498,8 +675,8 @@ jobs:
           body-file: ${{ runner.temp }}/preview.md
 
   test:
-    needs: [check-skip-label, core]
-    if: needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.app == 'true' && !startsWith(github.head_ref, 'release/')
+    needs: [check-skip-label, bindings, core]
+    if: ${{ !cancelled() && needs.core.result == 'success' && needs.check-skip-label.outputs.skip == 'false' && needs.check-skip-label.outputs.tests == 'true' && needs.bindings.outputs.unchanged != 'true' && !startsWith(github.head_ref, 'release/') }}
     timeout-minutes: 30
     runs-on: parity-macos-large
     steps:
@@ -533,7 +710,7 @@ jobs:
       - name: Configure secrets
         uses: ./hosts/ios/.github/actions/configure-secrets
         with:
-          sentry_dsn: ${{ secrets.SENTRY_DSN }}
+          sentry_dsn: ${{ secrets.SENTRY_DSN_IOS }}
           meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
 
       - name: Run tests
@@ -547,9 +724,20 @@ jobs:
             bundle exec fastlane run_unit_tests
           fi
 
-      # Upload test artifacts for debugging - only when DEBUG_CI is enabled
+      # xcpretty drops Swift Testing results, so a failing @Test is named only
+      # in the result bundle.
+      - name: Report failed tests
+        if: failure()
+        working-directory: hosts/ios
+        run: |
+          result=fastlane/test_output/polkadot-app.xcresult
+          if [[ -d "$result" ]]; then
+            xcrun xcresulttool get test-results summary --path "$result"
+          fi
+
+      # Upload test artifacts on failure, or always when DEBUG_CI is enabled
       - name: Upload test artifacts
-        if: env.DEBUG_CI == 'true' && (failure() || success())
+        if: failure() || (env.DEBUG_CI == 'true' && success())
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: test-artifacts-${{ github.run_number }}
@@ -557,3 +745,26 @@ jobs:
             hosts/ios/fastlane/test_output/
             hosts/ios/fastlane/build_logs/
           retention-days: 3
+
+  # Main's record that the iOS tests passed against these bindings, for pull
+  # requests that leave them unchanged. Written only after the tests pass, so
+  # a skipped pull request never rests on a failing run.
+  publish-bindings:
+    name: Record the bindings the tests passed against
+    needs: [bindings, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.result == 'success' && needs.bindings.outputs.key != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Write the record
+        env:
+          KEY: ${{ needs.bindings.outputs.key }}
+        run: echo "$KEY $GITHUB_SHA" > "$RUNNER_TEMP/bindings.txt"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.0
+        with:
+          name: ${{ needs.bindings.outputs.key }}
+          path: ${{ runner.temp }}/bindings.txt
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: true

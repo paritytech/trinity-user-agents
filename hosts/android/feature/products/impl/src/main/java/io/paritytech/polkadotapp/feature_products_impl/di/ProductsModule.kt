@@ -22,6 +22,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.ProductAccountIdPro
 import io.paritytech.polkadotapp.feature_products_api.domain.ProductRequestAccountResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.AccountsProtocol
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.MembersRingLocator
+import io.paritytech.polkadotapp.feature_products_api.domain.browser.DevServerAddresses
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
 import io.paritytech.polkadotapp.feature_products_api.domain.deriveEntropy.DeriveEntropyUseCase
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardFaceOnOpen
@@ -70,6 +71,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.external.Produ
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.menu.ProductChatMenuInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.menu.RealProductChatMenuInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductMessageRenderObserver
+import io.paritytech.polkadotapp.feature_products_impl.domain.browser.DevServers
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.RealProductSessionController
 import io.paritytech.polkadotapp.feature_products_impl.domain.deriveEntropy.RealDeriveEntropyUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
@@ -145,13 +147,11 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RealWorkerB
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerBootFactory
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketDeepLinkHandler
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketScanContentParser
-import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketTabDeepLinkHandler
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.ProductWorkerInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.TopUpResumeInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserFragment
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.RuntimeSelectingSpaHost
-import io.paritytech.polkadotapp.feature_scan_api.domain.DeeplinkScanContentParser
 import io.paritytech.polkadotapp.feature_scan_api.domain.ScanContentParser
 import okhttp3.Call
 import okhttp3.OkHttpClient
@@ -175,6 +175,9 @@ internal interface ProductsModule {
     @Binds
     @Singleton
     fun bindProductSessionController(impl: RealProductSessionController): ProductSessionController
+
+    @Binds
+    fun bindDevServerAddresses(impl: DevServers): DevServerAddresses
 
     @Binds
     @Singleton
@@ -246,10 +249,6 @@ internal interface ProductsModule {
     @Binds
     @IntoSet
     fun bindPocketDeepLinkHandler(impl: PocketDeepLinkHandler): DeepLinkHandler
-
-    @Binds
-    @IntoSet
-    fun bindPocketTabDeepLinkHandler(impl: PocketTabDeepLinkHandler): DeepLinkHandler
 
     @Binds
     fun bindProductLocalStorage(impl: RealProductLocalStorage): ProductLocalStorage
@@ -458,11 +457,6 @@ internal interface ProductsModule {
         @IntoSet
         fun providePocketScanContentParser(handler: PocketDeepLinkHandler): ScanContentParser =
             PocketScanContentParser(handler)
-
-        @Provides
-        @IntoSet
-        fun providePocketTabScanContentParser(handler: PocketTabDeepLinkHandler): ScanContentParser =
-            DeeplinkScanContentParser(handler)
 
         @Provides
         @Singleton

@@ -1,6 +1,6 @@
-import Foundation
-import AsyncExtensions
 import Products
+import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 import Testing
 import TrUAPIHost
 @testable import polkadot_app
@@ -20,33 +20,61 @@ struct TrUAPIPocketHandlerTests {
         execution.keepsRenderStreamOpen = true
         let streams = makeStreams(workers: workers)
 
-        let drawing = Task { for try await _ in streams.renderFaces(for: loyalty) {} }
-        try await settle()
+        let drawing = Task {
+            for try await _ in streams.renderFaces(for: loyalty) {
+                return true
+            }
+            return false
+        }
+        defer { drawing.cancel() }
 
+        // Subscribed before anything is published, so the count of deliveries
+        // below starts from the empty map the handler opens with.
+        try await withTimeout(.hangGuard) { await workers.awaitExecutionsDelivered() }
         workers.publish(["game.paseo": execution])
-        try await settle()
+        try await withTimeout(.hangGuard) { await execution.awaitRenderRequest() }
         workers.publish(["game.paseo": execution, "shop.paseo": MockProductExecution()])
-        try await settle()
         workers.publish(["game.paseo": execution])
-        try await settle()
-        drawing.cancel()
+        // The last republish arriving means the one before it has been handled.
+        for _ in 0 ..< 3 {
+            try await withTimeout(.hangGuard) { await workers.awaitExecutionsDelivered() }
+        }
 
+        // A reopen cancels the drain of the first stream, so this face would never reach the card.
+        let live = try #require(execution.renderContinuations.first)
+        live.yield(.string(text: "still live"))
+
+        #expect(try await withTimeout(.hangGuard) { try await drawing.value })
         #expect(execution.renderRequests.count == 1)
+    }
+
+    /// A worker that restarts is a new execution, and the card has to draw from
+    /// it rather than stay on the stream of the one that went away.
+    @Test
+    func opensARenderOnTheExecutionThatReplacesTheWorker() async throws {
+        let workers = StubWorkerManager()
+        let first = MockProductExecution()
+        first.keepsRenderStreamOpen = true
+        let streams = makeStreams(workers: workers)
+
+        let drawing = Task { for try await _ in streams.renderFaces(for: loyalty) {} }
+        defer { drawing.cancel() }
+
+        workers.publish(["game.paseo": first])
+        try await withTimeout(.hangGuard) { await first.awaitRenderRequest() }
+
+        let replacement = MockProductExecution()
+        replacement.keepsRenderStreamOpen = true
+        workers.publish(["game.paseo": replacement])
+        try await withTimeout(.hangGuard) { await replacement.awaitRenderRequest() }
+
+        #expect(first.renderRequests.count == 1)
     }
 }
 
 // MARK: - Fixtures
 
 private let loyalty = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
-
-/// The handler hands its work to tasks, so the assertions wait for them rather
-/// than for a fixed time.
-private func settle() async throws {
-    for _ in 0 ..< 20 {
-        await Task.yield()
-    }
-    try await Task.sleep(for: .milliseconds(20))
-}
 
 private func makeStreams(workers: StubWorkerManager) -> TrUAPIPocketHandler {
     TrUAPIPocketHandler(productId: "game.paseo", workers: workers)

@@ -196,18 +196,25 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             product: ProductExecutionConfig,
             request: HostDevicePermissionRequest,
         ): TrUAPIPermissionDecision =
-            hostApiInteractor
-                .requestDevicePermissionDecision(callingProductId, request.toCapability())
-                .getOrElse { throw it }
-                .toNative()
+            // Android WebView serves motion sensors without asking, so the
+            // capability is granted without a prompt. Allow once keeps the core
+            // from storing a grant that no settings screen can revoke.
+            if (request == HostDevicePermissionRequest.MOTION) {
+                TrUAPIPermissionDecision.ALLOW_ONCE
+            } else {
+                hostApiInteractor
+                    .requestDevicePermissionDecision(callingProductId, request.toCapability())
+                    .getOrElse { throw it }
+                    .toNative()
+            }
 
         override suspend fun remotePermission(
             product: ProductExecutionConfig,
             request: RemotePermission,
         ): TrUAPIPermissionDecision =
-            when (val domain = request.toDomain()) {
-                null -> hostApiInteractor.requestBalanceAccessDecision(callingProductId)
-                else -> hostApiInteractor.requestRemotePermissionDecision(callingProductId, domain)
+            when (request) {
+                RemotePermission.BalanceAccess -> hostApiInteractor.requestBalanceAccessDecision(callingProductId)
+                else -> hostApiInteractor.requestRemotePermissionDecision(callingProductId, request.toRemoteAccessRequest())
             }
                 .getOrElse { throw it }
                 .toNative()
@@ -385,16 +392,20 @@ private fun HostDevicePermissionRequest.toCapability(): DeviceCapabilityType = w
     HostDevicePermissionRequest.CLIPBOARD -> DeviceCapabilityType.Clipboard
     HostDevicePermissionRequest.OPEN_URL -> DeviceCapabilityType.OpenUrl
     HostDevicePermissionRequest.BIOMETRICS -> DeviceCapabilityType.Biometrics
+    HostDevicePermissionRequest.MOTION -> DeviceCapabilityType.Motion
 }
 
-/** `null` for balance access, which this host asks about as a product permission. */
-private fun RemotePermission.toDomain(): RemotePermissionRequest? = when (this) {
+/**
+ * The request this host's remote-access prompt shows for `this`. Balance access
+ * has its own prompt (`ProductPermission.BalanceAccess`) and never reaches here.
+ */
+private fun RemotePermission.toRemoteAccessRequest(): RemotePermissionRequest = when (this) {
     is RemotePermission.Remote -> RemotePermissionRequest.Remote(domains)
     RemotePermission.WebRtc -> RemotePermissionRequest.WebRtc
     RemotePermission.ChainSubmit -> RemotePermissionRequest.ChainSubmit
     RemotePermission.PreimageSubmit -> RemotePermissionRequest.PreimageSubmit
     RemotePermission.StatementSubmit -> RemotePermissionRequest.StatementSubmit
-    RemotePermission.BalanceAccess -> null
+    RemotePermission.BalanceAccess -> error("balance access has its own prompt")
 }
 
 private fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this) {

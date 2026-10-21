@@ -130,11 +130,12 @@ impl StatementStore for ProductRuntimeHost {
 	) -> Result<RemoteStatementStoreSubmitResponse, CallError<RemoteStatementStoreSubmitError>> {
 		version(request)
 			.exec(|statement| async move {
-				self.require_remote_permission(
-					latest::RemotePermission::StatementSubmit,
-					latest::GenericError { reason: PERMISSION_DENIED_REASON.to_string() },
-				)
-				.await?;
+				self.connection
+					.require_remote_permission(
+						latest::RemotePermission::StatementSubmit,
+						latest::GenericError { reason: PERMISSION_DENIED_REASON.to_string() },
+					)
+					.await?;
 				if let Some(reason) = cx.cancel().reason() {
 					return Err(CallError::Domain(latest::GenericError {
 						reason: format!("statement submit {reason}"),
@@ -149,14 +150,13 @@ impl StatementStore for ProductRuntimeHost {
 						if let latest::StatementProof::Sr25519 { signer, .. } = statement.proof &&
 							statement_store_rpc::is_no_allowance_rejection(&reason)
 						{
-							self.authority
-								.forget_statement_store_allowance_key(&self.product_id(), signer);
+							self.accounts.forget_statement_store_allowance_key(signer);
 						}
 						CallError::Domain(latest::GenericError {
 							reason: format!("statement-store submit failed: {reason}"),
 						})
 					})?;
-				self.services.cache_statement(statement);
+				self.connection.services.cache_statement(statement);
 				Ok(())
 			})
 			.await
@@ -279,12 +279,12 @@ impl ProductRuntimeHost {
 		};
 		let remote_stream =
 			statement_store_subscription_stream(subscription, remote_subscription_id);
-		let cached = self.services.cached_statements(kind, &topics);
+		let cached = self.connection.services.cached_statements(kind, &topics);
 		let cached_page = (!cached.is_empty()).then(|| latest::RemoteStatementStoreSubscribeItem {
 			statements: cached.clone(),
 			is_complete: false,
 		});
-		let services = self.services.clone();
+		let services = self.connection.services.clone();
 		let mut pending_local = cached;
 		let remote_stream = remote_stream.filter_map(move |mut page| {
 			let mut visible_local = Vec::new();
@@ -308,7 +308,7 @@ impl ProductRuntimeHost {
 
 	/// `StatementStoreRpc` bound to this runtime's people chain.
 	pub fn statement_store_rpc(&self) -> StatementStoreRpc {
-		self.services.statement_store.clone()
+		self.connection.services.statement_store.clone()
 	}
 
 	async fn create_product_statement_proof(
@@ -317,7 +317,7 @@ impl ProductRuntimeHost {
 		product_account_id: latest::ProductAccountId,
 		statement: latest::Statement,
 	) -> Result<latest::StatementProof, StatementProofFailure> {
-		let session = self.authority.current_session().ok_or(StatementProofFailure::NoSession)?;
+		let session = self.accounts.current_session().ok_or(StatementProofFailure::NoSession)?;
 		let signer = self
 			.product_account_public_key(cx, &session, &product_account_id)
 			.await
@@ -326,15 +326,16 @@ impl ProductRuntimeHost {
 			.map_err(StatementProofFailure::InvalidStatement)?;
 		let payload = unsigned_statement_signing_payload(fields)
 			.map_err(StatementProofFailure::UnableToSign)?;
-		if product_account_id.dot_ns_identifier != self.product_id() {
+		if product_account_id.dot_ns_identifier != self.connection.product_id() {
 			let confirmed = self
+				.connection
 				.confirm_signature(
 					CrossProductSignatureKind::StatementProof,
 					&product_account_id,
 					|| {
 						UserConfirmationReview::StatementStoreProductSign(
 							StatementStoreProductSignReview {
-								calling_product_id: Some(self.product_id()),
+								calling_product_id: Some(self.connection.product_id()),
 								account: product_account_id.clone(),
 								payload: payload.clone(),
 							},
@@ -350,10 +351,9 @@ impl ProductRuntimeHost {
 		let cx = remote_authority_context(cx);
 		let signature = remote_authority_call(
 			&cx,
-			self.authority.sign_statement_store_product_payload(
-				&cx,
+			self.accounts.sign_statement_store_product_payload(
 				&session,
-				Some(self.product_id().as_str()),
+				&cx,
 				product_account_id,
 				payload,
 			),
@@ -368,14 +368,12 @@ impl ProductRuntimeHost {
 		cx: &CallContext,
 		statement: latest::Statement,
 	) -> Result<latest::StatementProof, StatementProofFailure> {
-		let session = self.authority.current_session().ok_or(StatementProofFailure::NoSession)?;
+		let session = self.accounts.current_session().ok_or(StatementProofFailure::NoSession)?;
 		let cx = remote_authority_context(cx);
-		let allowance = remote_authority_call(
-			&cx,
-			self.authority.statement_store_allowance_key(&cx, &session, self.product_id()),
-		)
-		.await
-		.map_err(statement_authority_failure)?;
+		let allowance =
+			remote_authority_call(&cx, self.accounts.statement_store_allowance_key(&cx, &session))
+				.await
+				.map_err(statement_authority_failure)?;
 		create_statement_proof_with_key(statement, &allowance)
 	}
 }
@@ -514,6 +512,7 @@ mod tests {
 		let host = ProductRuntimeHost::from_services(
 			services.clone(),
 			crate::host_core::ConnectionAdapters::from_services(&services),
+			signing_host.clone(),
 			signing_host.clone(),
 			ProductContext::new(product_id.to_string()).expect("valid product id"),
 		);
@@ -828,7 +827,9 @@ mod tests {
 			signed_statement([7; 32])
 		);
 		assert_eq!(
-			host.services.cached_statements(TopicFilterKind::MatchAll, &[[7; 32]]),
+			host.connection
+				.services
+				.cached_statements(TopicFilterKind::MatchAll, &[[7; 32]]),
 			vec![signed_statement([7; 32])]
 		);
 	}
@@ -937,7 +938,7 @@ mod tests {
 			..Default::default()
 		});
 		let host = ProductRuntimeHost::new(platform, runtime_config("myapp.dot"), test_spawner());
-		host.services.cache_statement(cached.clone());
+		host.connection.services.cache_statement(cached.clone());
 		let cx = CallContext::with_request_id("sub-cached".to_string());
 		let mut subscription = futures::executor::block_on(StatementStore::subscribe(
 			&host,
@@ -963,7 +964,8 @@ mod tests {
 			)))
 		);
 		assert!(
-			host.services
+			host.connection
+				.services
 				.cached_statements(TopicFilterKind::MatchAny, &[[7; 32]])
 				.is_empty()
 		);

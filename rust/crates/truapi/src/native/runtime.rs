@@ -11,7 +11,7 @@ use crate::platform::{
 	ProductExecutionKind,
 };
 use parity_scale_codec::Encode;
-use truapi::{Bytes32, v01};
+use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
 
 use super::{
 	reject_undecodable_deeplink,
@@ -37,8 +37,8 @@ use super::parse_pairing_deeplink;
 use super::{
 	callbacks::{
 		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-		NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks, NativeScannerCallbacks,
-		NativeTopUpCallbacks,
+		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
+		NativeScannerCallbacks, NativeTopUpCallbacks,
 	},
 	config::{
 		HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -49,8 +49,8 @@ use super::{
 	executor::shared_native_executor,
 	platform::{
 		BalanceCallbackPlatform, CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform,
-		GameCallbackPlatform, PaymentCallbackPlatform, PocketCallbackPlatform,
-		ScannerCallbackPlatform, TopUpCallbackPlatform,
+		FundingCallbackPlatform, GameCallbackPlatform, PaymentCallbackPlatform,
+		PocketCallbackPlatform, ScannerCallbackPlatform, TopUpCallbackPlatform,
 	},
 };
 #[cfg(doc)]
@@ -264,6 +264,57 @@ pub struct NativeAnnouncedPairing {
 
 #[uniffi::export]
 impl NativeTrUApiHostRuntime {
+	/// Install the host's funding overlay. Set-once; answers whether this
+	/// call installed it. Call it before opening any product execution.
+	pub fn set_funding_callbacks(&self, callbacks: Arc<dyn NativeFundingCallbacks>) -> bool {
+		self.runtime
+			.set_funding_platform(Arc::new(FundingCallbackPlatform { funding: callbacks }))
+	}
+
+	/// Open a funding session on the host's own behalf, as the Balance
+	/// card does, and show the overlay. Answers the session id, or `None`
+	/// when the user dismissed it.
+	pub async fn open_funding(
+		&self,
+		direction: v01::FundingDirection,
+		amount: Option<u128>,
+	) -> Result<Option<String>, HostRejection> {
+		Ok(self.runtime.open_funding(direction, amount).await?)
+	}
+
+	/// Session `intent` as the core holds it, for the host's status and
+	/// history views.
+	pub fn funding_session(
+		&self,
+		intent: String,
+	) -> Option<crate::host_logic::funding::FundingSession> {
+		self.runtime.funding_session(&intent)
+	}
+
+	/// Every funding session the core keeps, in flight first, then ended,
+	/// each newest first.
+	pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
+		self.runtime.funding_sessions()
+	}
+
+	/// Every ended funding session the host recorded or the core compacted,
+	/// as summaries newest first,
+	/// for rebuilding the host's own history when it was lost.
+	pub fn funding_history(&self) -> Vec<crate::host_logic::funding::FundingSessionSummary> {
+		self.runtime.funding_history()
+	}
+
+	/// Record that the host wrote ended session `intent` into its own
+	/// history; until then it is handed over again on each resume.
+	pub async fn acknowledge_funding_session(&self, intent: String) -> Result<bool, HostRejection> {
+		Ok(self.runtime.acknowledge_funding_session(&intent).await?)
+	}
+
+	/// Cancel open funding session `intent`.
+	pub async fn cancel_funding(&self, intent: String) -> Result<bool, HostRejection> {
+		Ok(self.runtime.cancel_funding(&intent).await?)
+	}
+
 	/// Install the host's top-up engine. Set-once; answers whether this call
 	/// installed it. Report each later status with
 	/// [`Self::notify_top_up_status`].
@@ -314,7 +365,9 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Report the new balance of `purse` (`None` for the main purse), a
-	/// decimal string of CASH units, to the products following it.
+	/// decimal string of CASH units, to the products following it. The
+	/// balance is the user's, so one call reaches every such product; the
+	/// core passes it on only to those that still hold balance access.
 	pub fn notify_balance(&self, purse: Option<u32>, available: u128) {
 		if let Some(platform) = self.balance.get() {
 			platform.notify_balance(purse, available);
@@ -775,8 +828,6 @@ impl NativeProductExecution {
 		&self,
 		request: truapi::latest::RemotePermissionRequest,
 	) -> Result<bool, HostRejection> {
-		use truapi::{api::Permissions, versioned::IntoLatest};
-
 		if self.closed.load(Ordering::Acquire) {
 			return Err(HostRejection::Rejected {
 				reason: "product execution is closed".to_string(),
@@ -785,10 +836,33 @@ impl NativeProductExecution {
 		let response = self
 			.admin()
 			.product_runtime()
-			.authorize_remote_permission(
-				&truapi::CallContext::default(),
-				truapi::versioned::permissions::RemotePermissionRequest::V1(request),
-			)
+			.authorize_remote_permission(&truapi::CallContext::default(), request.into())
+			.await
+			.map_err(|error| HostRejection::Rejected { reason: format!("{error:?}") })?;
+		if self.closed.load(Ordering::Acquire) {
+			return Err(HostRejection::Rejected {
+				reason: "product execution is closed".to_string(),
+			});
+		}
+		Ok(response.into_latest().granted)
+	}
+
+	/// Authorize one device capability that the host's web view gates itself,
+	/// such as WebKit's motion request, using this execution's saved and
+	/// one-use permissions.
+	pub async fn authorize_device_permission(
+		&self,
+		request: truapi::latest::HostDevicePermissionRequest,
+	) -> Result<bool, HostRejection> {
+		if self.closed.load(Ordering::Acquire) {
+			return Err(HostRejection::Rejected {
+				reason: "product execution is closed".to_string(),
+			});
+		}
+		let response = self
+			.admin()
+			.product_runtime()
+			.authorize_device_permission(&truapi::CallContext::default(), request.into())
 			.await
 			.map_err(|error| HostRejection::Rejected { reason: format!("{error:?}") })?;
 		if self.closed.load(Ordering::Acquire) {
@@ -880,9 +954,18 @@ impl NativeProductExecution {
 	}
 
 	/// Notify this execution's chain adapter that a connection closed.
+	///
+	/// The connection belongs to exactly one of the two buses, so both are
+	/// offered the close and only the owner reacts. A miss is reported as an
+	/// early close once, against this execution's own bus, because that is the
+	/// bus whose connects this execution's ids race. Bumping both would fail
+	/// unrelated connects on the shared bus for every close an execution makes.
 	pub fn notify_chain_closed(&self, connection_id: u32) {
-		self.shared_events.notify_chain_closed(connection_id);
-		self.events.notify_chain_closed(connection_id);
+		let shared = self.shared_events.close_chain_if_registered(connection_id);
+		let scoped = self.events.close_chain_if_registered(connection_id);
+		if !shared && !scoped {
+			self.events.note_early_chain_close();
+		}
 	}
 
 	/// Push a complete native Chat room-list replacement to this execution.
@@ -897,8 +980,7 @@ impl NativeProductExecution {
 		action: v01::HostChatActionSubscribeItem,
 	) -> Result<(), crate::ProductRuntimeError> {
 		self.require_chat()?;
-		self.chat_connection
-			.publish(truapi::versioned::chat::HostChatActionSubscribeItem::V1(action))
+		self.chat_connection.publish(action.into())
 	}
 
 	/// Ask the product to draw one body, delivering each replacement tree to
@@ -927,8 +1009,7 @@ impl NativeProductExecution {
 		item: v01::HostRendererActionSubscribeItem,
 	) -> Result<(), crate::ProductRuntimeError> {
 		self.require_renderer()?;
-		self.renderer_connection
-			.publish(truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(item))
+		self.renderer_connection.publish(item.into())
 	}
 
 	/// Push a complete native Pocket card-list replacement to this execution.
@@ -1217,14 +1298,10 @@ mod tests {
 			core::task::Poll::Ready(Some(item)) => item,
 			other => panic!("a published renderer action must be ready, got {other:?}"),
 		};
-		let Ok(truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(delivered)) =
-			delivered
-		else {
-			panic!("expected a renderer action item")
-		};
+		let delivered = delivered.expect("expected a renderer action item").into_latest();
 		assert_eq!(delivered, published);
 		// The scanner checks taps on a connection, while hosts publish them here.
-		assert!(admin.product_runtime().recently_tapped());
+		assert!(admin.product_runtime().connection().recently_tapped());
 	}
 
 	#[test]
@@ -1254,9 +1331,7 @@ mod tests {
 		let reply = futures::executor::block_on(truapi::api::ExpandedCard::set_face_shown(
 			admin.product_runtime().as_ref(),
 			&truapi::CallContext::default(),
-			truapi::versioned::expanded_card::HostExpandedCardSetFaceShownRequest::V1(
-				v01::HostExpandedCardSetFaceShownRequest { shown: false },
-			),
+			v01::HostExpandedCardSetFaceShownRequest { shown: false }.into(),
 		));
 
 		assert!(reply.is_ok(), "the card's own host applied the request: {reply:?}");
@@ -1297,10 +1372,113 @@ mod tests {
 		assert_eq!(futures::executor::block_on(scoped_responses.next()), None);
 	}
 
+	/// An execution's close reaches both buses, so it necessarily misses one of
+	/// them. That miss must not read as a close racing a connect, or every
+	/// close an execution makes invalidates the shared bus's in-flight
+	/// connects and they fail with "chain connection closed during setup".
+	#[test]
+	fn an_execution_close_does_not_invalidate_shared_bus_connects() {
+		let host = NativeTrUApiHostRuntime::with_runtime_config(
+			Arc::new(EventCallbacks::new()),
+			native_host_runtime_config(),
+		)
+		.expect("host runtime config should be valid");
+		let execution = host
+			.open_product_execution(
+				Arc::new(EventCallbacks::new()),
+				None,
+				None,
+				None,
+				native_execution_config("chain.dot", ProductExecutionKind::App),
+			)
+			.expect("App execution should open");
+
+		// A connect on the shared bus reads the generation, then an unrelated
+		// execution connection closes while it is still in flight.
+		let generation = host.events.chain_close_generation();
+		let _scoped = execution.events.register_chain(7, 0).expect("scoped registration");
+		execution.notify_chain_closed(7);
+
+		assert_eq!(
+			host.events.chain_close_generation(),
+			generation,
+			"an execution's close bumped the shared bus generation",
+		);
+		assert!(
+			host.events.register_chain(99, generation).is_some(),
+			"a shared-bus connect was invalidated by an unrelated execution close",
+		);
+	}
+
+	/// A close for an id neither bus registered is the real early-close case
+	/// and must still invalidate the execution's own in-flight connects.
+	#[test]
+	fn an_unknown_close_still_invalidates_the_executions_own_connects() {
+		let host = NativeTrUApiHostRuntime::with_runtime_config(
+			Arc::new(EventCallbacks::new()),
+			native_host_runtime_config(),
+		)
+		.expect("host runtime config should be valid");
+		let execution = host
+			.open_product_execution(
+				Arc::new(EventCallbacks::new()),
+				None,
+				None,
+				None,
+				native_execution_config("chain.dot", ProductExecutionKind::App),
+			)
+			.expect("App execution should open");
+
+		let generation = execution.events.chain_close_generation();
+		execution.notify_chain_closed(404);
+
+		assert!(
+			execution.events.register_chain(404, generation).is_none(),
+			"a close that beat its own connect was not reported as an early close",
+		);
+	}
+
+	#[test]
+	fn native_execution_authorizes_device_permission_from_stored_decision() {
+		let callbacks = Arc::new(EventCallbacks::new());
+		let host = NativeTrUApiHostRuntime::with_runtime_config(
+			callbacks.clone(),
+			native_host_runtime_config(),
+		)
+		.unwrap();
+		let execution = host
+			.open_product_execution(
+				callbacks.clone(),
+				None,
+				None,
+				None,
+				native_execution_config("stash.dot", ProductExecutionKind::App),
+			)
+			.unwrap();
+		let motion = truapi::latest::HostDevicePermissionRequest::Motion;
+		let permission = PermissionAuthorizationRequest::Device(motion);
+		let authorize =
+			|| futures::executor::block_on(execution.authorize_device_permission(motion));
+		let prompts = || callbacks.device_permission_calls.load(Ordering::SeqCst);
+		let undecided = (authorize().unwrap(), prompts());
+		execution
+			.set_permission_authorization_status(
+				permission.clone(),
+				PermissionAuthorizationStatus::Authorized,
+			)
+			.unwrap();
+		let saved = (authorize().unwrap(), prompts());
+		execution
+			.set_permission_authorization_status(permission, PermissionAuthorizationStatus::Denied)
+			.unwrap();
+		let denied = (authorize().unwrap(), prompts());
+		execution.shutdown();
+		let closed = matches!(authorize(), Err(HostRejection::Rejected { .. }));
+		assert_eq!((undecided, saved, denied, closed), ((false, 1), (true, 1), (false, 1), true));
+	}
+
 	#[test]
 	fn native_execution_shares_one_use_permissions_across_connections_only() {
-		use truapi::api::Permissions;
-
 		let callbacks = Arc::new(EventCallbacks {
 			remote_permission_result: Ok(PermissionDecision::AllowOnce),
 			..EventCallbacks::new()
@@ -1331,12 +1509,11 @@ mod tests {
 			};
 			let context = truapi::CallContext::default();
 			let sdk_request = || {
-				admin.product_runtime().request_remote_permission(
-					&context,
-					truapi::versioned::permissions::RemotePermissionRequest::V1(request.clone()),
-				)
+				admin
+					.product_runtime()
+					.request_remote_permission(&context, request.clone().into())
 			};
-			let granted = sdk_request().await.unwrap();
+			let granted = sdk_request().await.unwrap().into_latest();
 			let permission = PermissionAuthorizationRequest::Remote(request.clone());
 			let other_status =
 				other.permission_authorization_status(permission.clone()).await.unwrap();
@@ -1364,9 +1541,7 @@ mod tests {
 					after_shutdown
 				),
 				(
-					truapi::versioned::permissions::RemotePermissionResponse::V1(
-						truapi::latest::RemotePermissionResponse { granted: true },
-					),
+					truapi::latest::RemotePermissionResponse { granted: true },
 					PermissionAuthorizationStatus::NotDetermined,
 					true,
 					PermissionAuthorizationStatus::NotDetermined,

@@ -15,7 +15,7 @@ use truapi::{
 
 use crate::{
 	platform::GamePlatform,
-	runtime::{ProductRuntimeHost, versioning::version},
+	runtime::{ProductConnection, ProductRuntimeHost, versioning::version},
 	unix_time::current_unix_secs,
 };
 
@@ -29,7 +29,7 @@ fn ensure_upcoming(starts_at: u64) -> Result<(), CallError<latest::HostRemindNex
 	}
 }
 
-impl ProductRuntimeHost {
+impl ProductConnection {
 	/// The host's Game adapter, for the game product only. Any other product,
 	/// or a host without an adapter, gets `Unsupported` before anything else
 	/// runs. Serving one product is why the API asks for no per-product
@@ -52,14 +52,14 @@ impl Game for ProductRuntimeHost {
 	) -> Result<HostRemindNextGameResponse, CallError<HostRemindNextGameError>> {
 		version(request)
 			.exec(|request| async move {
-				let platform = self.game_platform()?;
+				let platform = self.connection.game_platform()?;
 				let latest::HostRemindNextGameRequest { starts_at } = request;
 				ensure_upcoming(starts_at)?;
 				if cx.cancel().is_cancelled() {
 					return Err(CallError::Cancelled);
 				}
 				platform
-					.schedule_game_reminder(&self.product, starts_at)
+					.schedule_game_reminder(&self.connection.product, starts_at)
 					.await
 					.map_err(|error| CallError::HostFailure { reason: error.reason })
 			})
@@ -74,9 +74,12 @@ impl Game for ProductRuntimeHost {
 	) -> Result<HostCancelNextGameResponse, CallError<HostCancelNextGameError>> {
 		version(request)
 			.exec(|request| async move {
-				let platform = self.game_platform()?;
+				let platform = self.connection.game_platform()?;
 				let latest::HostCancelNextGameRequest {} = request;
-				platform.cancel_game_reminder(&self.product).await.map_err(CallError::Domain)
+				platform
+					.cancel_game_reminder(&self.connection.product)
+					.await
+					.map_err(CallError::Domain)
 			})
 			.await
 	}

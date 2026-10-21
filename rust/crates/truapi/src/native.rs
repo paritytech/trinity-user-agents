@@ -30,14 +30,15 @@ mod ws_bridge;
 pub use crate::{
 	host_internal::sso_messages::SsoRequestOutcome,
 	host_logic::{
+		dev_server::{DevServerError, DevServerProduct},
 		dotns::{NavigateDecision, PocketDeeplinkAction},
 		scanner::{ScanFilter, ScanVerdict},
 	},
 };
 pub use callbacks::{
 	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-	NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks, NativePocketRemoval,
-	NativeScannerCallbacks, NativeTopUpCallbacks,
+	NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
+	NativePocketRemoval, NativeScannerCallbacks, NativeTopUpCallbacks,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
 pub use errors::{
@@ -58,9 +59,9 @@ use crate::SigningHostRuntime;
 use crate::{PairingProposal, host_logic::dotns};
 
 /// Classify a navigation input exactly like the core's internal navigate host
-/// call: dotNS first, then `localhost`, then normalized external, with
-/// everything else rejected. Pure and stateless; hosts call it on every
-/// webview-internal navigation.
+/// call: the Pocket deeplink first, then dotNS, then `localhost`, then
+/// normalized external, with everything else rejected. Pure and stateless;
+/// hosts call it on every webview-internal navigation.
 #[uniffi::export]
 pub fn parse_navigate(input: String) -> NavigateDecision {
 	dotns::parse_navigate(&input)
@@ -71,6 +72,14 @@ pub fn parse_navigate(input: String) -> NavigateDecision {
 #[uniffi::export]
 pub fn truapi_host_version() -> String {
 	env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// The development product a debug build opens for an address the developer
+/// typed. Hosts call it only in development builds, since the product it
+/// returns runs with the core's development wildcard or as a named product.
+#[uniffi::export]
+pub fn parse_dev_server(input: String) -> Result<DevServerProduct, DevServerError> {
+	input.parse()
 }
 
 /// The bridge script a host injects into a product's web view, for the `port`
