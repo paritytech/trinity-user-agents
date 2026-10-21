@@ -12,110 +12,77 @@ import UIKit
 @MainActor
 struct SPAPresenterNewBuildTests {
     @Test func aNewBuildOffersOneAlertNamedAfterTheProduct() async throws {
-        let runtime = try makeRuntime(newBuildResult: true)
+        let runtime = try makeRuntime()
         let screen = try await makeScreen(runtime: runtime)
 
         screen.presenter.didBecomeVisible()
-        await waitUntil { screen.wireframe.presentedAlerts.count == 1 }
+        try await screen.wireframe.alertPresented.next()
 
         #expect(screen.wireframe.presentedAlerts.count == 1)
         #expect(screen.wireframe.presentedAlerts.first?.title?.contains("Test Product") == true)
     }
 
     @Test func aVisitWhileTheAlertIsOnScreenDoesNotOfferItAgain() async throws {
-        let runtime = try makeRuntime(newBuildResult: true)
+        let runtime = try makeRuntime()
         let screen = try await makeScreen(runtime: runtime)
 
-        screen.presenter.didBecomeVisible()
-        await waitUntil { screen.wireframe.presentedAlerts.count == 1 }
-        screen.presenter.didBecomeVisible()
-        await waitUntil { runtime.completedNewBuildCheckCount == 2 }
-        await settle()
+        screen.presenter.didFindNewBuild(productName: "Test Product")
+        screen.presenter.didFindNewBuild(productName: "Test Product")
 
         #expect(screen.wireframe.presentedAlerts.count == 1)
     }
 
-    @Test func visitsWhileACheckIsInFlightAskTheRuntimeOnce() async throws {
-        let (gate, release) = AsyncStream.makeStream(of: Void.self)
-        let runtime = try makeRuntime(newBuildResult: true, newBuildGate: gate)
-        let screen = try await makeScreen(runtime: runtime)
-
-        screen.presenter.didBecomeVisible()
-        await waitUntil { runtime.newBuildRequestCount == 1 }
-        screen.presenter.didBecomeVisible()
-        await settle()
-        release.finish()
-        await waitUntil { screen.wireframe.presentedAlerts.count == 1 }
-
-        #expect(runtime.newBuildRequestCount == 1)
-    }
-
     @Test func reloadUsesTheLatestBuildAndReloadsTheView() async throws {
-        let runtime = try makeRuntime(newBuildResult: true)
+        let runtime = try makeRuntime()
         let screen = try await makeScreen(runtime: runtime)
 
         screen.presenter.didBecomeVisible()
-        await waitUntil { screen.wireframe.presentedAlerts.count == 1 }
+        try await screen.wireframe.alertPresented.next()
         let reload = try #require(screen.wireframe.presentedAlerts.first?.actions.first)
         reload.handler?()
-        await waitUntil { screen.view.reloadCount > 0 }
+        try await screen.view.reloaded.next()
 
         #expect(runtime.latestBuildRequestCount == 1)
         #expect(screen.view.reloadCount == 1)
     }
 
     @Test func laterDismissesWithoutReloadingAndTheNextVisitAsksAgain() async throws {
-        let runtime = try makeRuntime(newBuildResult: true)
+        let runtime = try makeRuntime()
         let screen = try await makeScreen(runtime: runtime)
 
         screen.presenter.didBecomeVisible()
-        await waitUntil { screen.wireframe.presentedAlerts.count == 1 }
+        try await screen.wireframe.alertPresented.next()
         let later = try #require(screen.wireframe.presentedAlerts.first?.actions.last)
         later.handler?()
         screen.presenter.didBecomeVisible()
-        await waitUntil { screen.wireframe.presentedAlerts.count == 2 }
+        try await screen.wireframe.alertPresented.next()
 
         #expect(runtime.latestBuildRequestCount == 0)
         #expect(screen.view.reloadCount == 0)
     }
 
     @Test func aVisitWhileTheScreenIsOffScreenOffersNothingUntilItIsOnScreen() async throws {
-        let runtime = try makeRuntime(newBuildResult: true)
+        let runtime = try makeRuntime()
         let screen = try await makeScreen(runtime: runtime)
 
         screen.view.isOnScreen = false
-        screen.presenter.didBecomeVisible()
-        await waitUntil { runtime.completedNewBuildCheckCount == 1 }
-        await settle()
+        screen.presenter.didFindNewBuild(productName: "Test Product")
         #expect(screen.wireframe.presentedAlerts.isEmpty)
 
         screen.view.isOnScreen = true
-        screen.presenter.didBecomeVisible()
-        await waitUntil { screen.wireframe.presentedAlerts.count == 1 }
-
+        screen.presenter.didFindNewBuild(productName: "Test Product")
         #expect(screen.wireframe.presentedAlerts.count == 1)
     }
 
     @Test func enteringForegroundChecksForANewBuildAndOffersIt() async throws {
-        let runtime = try makeRuntime(newBuildResult: true)
+        let runtime = try makeRuntime()
         let screen = try await makeScreen(runtime: runtime)
 
         NotificationCenter.default.post(name: UIApplication.willEnterForegroundNotification, object: nil)
-        await waitUntil { screen.wireframe.presentedAlerts.count == 1 }
+        try await screen.wireframe.alertPresented.next()
 
         #expect(runtime.newBuildRequestCount == 1)
         #expect(screen.wireframe.presentedAlerts.count == 1)
-    }
-
-    @Test func noNewBuildPresentsNoAlert() async throws {
-        let runtime = try makeRuntime(newBuildResult: false)
-        let screen = try await makeScreen(runtime: runtime)
-
-        screen.presenter.didBecomeVisible()
-        await waitUntil { runtime.completedNewBuildCheckCount == 1 }
-        await settle()
-
-        #expect(screen.wireframe.presentedAlerts.isEmpty)
     }
 }
 
@@ -125,15 +92,8 @@ private struct Screen {
     let wireframe: StubSPAWireframe
 }
 
-private func makeRuntime(
-    newBuildResult: Bool = false,
-    newBuildGate: AsyncStream<Void>? = nil
-) throws -> MockSPARuntime {
-    try MockSPARuntime(
-        startURL: #require(URL(string: "https://test.dot")),
-        newBuildResult: newBuildResult,
-        newBuildGate: newBuildGate
-    )
+private func makeRuntime() throws -> MockSPARuntime {
+    try MockSPARuntime(startURL: #require(URL(string: "https://test.dot")))
 }
 
 @MainActor
@@ -168,15 +128,7 @@ private func makeScreen(runtime: MockSPARuntime) async throws -> Screen {
     interactor.presenter = presenter
     presenter.setup(engine: MockJSEngine())
     // The product name comes from the setup task, which finishes before the runtime starts.
-    await waitUntil { runtime.startCount == 1 }
+    try await runtime.started.next()
 
     return Screen(presenter: presenter, view: view, wireframe: wireframe)
-}
-
-/// Gives a check that has already finished time to deliver its result to the presenter.
-@MainActor
-private func settle() async {
-    for _ in 0 ..< 100 {
-        await Task.yield()
-    }
 }

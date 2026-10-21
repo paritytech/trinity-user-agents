@@ -14,7 +14,7 @@ struct SPAPresenterRefreshTests {
         let screen = try makeScreen(runtime: runtime)
 
         screen.presenter.didTapRefresh()
-        await waitUntil { screen.view.reloadCount > 0 }
+        try await screen.view.reloaded.next()
 
         #expect(runtime.latestBuildRequestCount == 1)
         #expect(screen.view.reloadCount == 1)
@@ -28,7 +28,7 @@ struct SPAPresenterRefreshTests {
         let screen = try makeScreen(runtime: runtime)
 
         screen.presenter.didTapRefresh()
-        await waitUntil { screen.view.reloadCount > 0 }
+        try await screen.view.reloaded.next()
 
         #expect(runtime.latestBuildRequestCount == 1)
         #expect(screen.view.reloadCount == 1)

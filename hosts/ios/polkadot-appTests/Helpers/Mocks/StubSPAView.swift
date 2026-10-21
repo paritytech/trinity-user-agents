@@ -13,6 +13,7 @@ import UIKitExt
 final class StubSPAView: SPAViewProtocol {
     private(set) var navigatedPages: [ProductPage] = []
     private(set) var reloadCount = 0
+    let reloaded = TestSignal()
     let controller = UIViewController()
     let pageScrollView = UIScrollView()
     var isSetup: Bool { true }
@@ -21,7 +22,11 @@ final class StubSPAView: SPAViewProtocol {
     func navigate(to _: URL) {}
     func navigate(to page: ProductPage) { navigatedPages.append(page) }
     func updateTitle(_: String) {}
-    func reload() { reloadCount += 1 }
+    func reload() {
+        reloadCount += 1
+        reloaded.fire()
+    }
+
     func showLoading() {}
     func hideLoading() {}
     func showLoadFailure(_: ErrorContent) {}

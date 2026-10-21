@@ -9,6 +9,7 @@ import UIKitExt
 @MainActor
 final class StubSPAWireframe: SPAWireframeProtocol {
     private(set) var presentedAlerts: [AlertPresentableViewModel] = []
+    let alertPresented = TestSignal()
 
     func present(
         message _: String?,
@@ -23,6 +24,7 @@ final class StubSPAWireframe: SPAWireframeProtocol {
         from _: ControllerBackedProtocol?
     ) {
         presentedAlerts.append(viewModel)
+        alertPresented.fire()
     }
 
     func present(error _: ErrorContent, from _: ControllerBackedProtocol?) -> Bool {
