@@ -5,6 +5,10 @@ version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    # Set explicitly, because its default ecosystem label is not one
+    # .github/labels.yml defines.
+    labels:
+      - dependencies
     schedule:
       interval: weekly
     cooldown:

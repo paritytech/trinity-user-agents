@@ -62,19 +62,19 @@ jobs:
 
             const builds = [
               {
-                label: 'ios-simulator-build',
+                label: 'ci:ios-simulator',
                 name: 'iOS simulator build',
                 path: /^(hosts\/ios\/|ios\/|Package\.swift$)/,
                 what: 'builds the iOS app and attaches a build for the iOS Simulator on a Mac; its unit tests run on every pull request',
               },
               {
-                label: 'ios-device-build',
+                label: 'ci:ios-device',
                 name: 'iOS device build',
                 path: /^(hosts\/ios\/|ios\/|Package\.swift$)/,
                 what: 'attaches a signed build that installs on a registered iPhone or iPad',
               },
               {
-                label: 'android-device-build',
+                label: 'ci:android-device',
                 name: 'Android build',
                 path: /^(hosts\/android\/|android\/truapi-host\/)/,
                 what: 'attaches an APK that installs on an Android phone or an emulator',

@@ -1,0 +1,97 @@
+name: Issue areas
+
+# Gives an issue the `area:` labels of the pull request that closes it, so the
+# issue list can be filtered by area without anyone labelling by hand. New pull
+# requests carry no area themselves; docs/labels.md has the system.
+#
+# It runs when a pull request merges, which is when its closing references take
+# effect, so an unmerged or abandoned pull request labels nothing. Only issues it
+# closes are labelled: those it names with a closing keyword (`Closes #12`) or
+# links under Development. A plain mention such as "part of #12" does not count,
+# so an epic does not collect every area its pull requests touch. Labels are only
+# ever added, so one set by hand stays.
+#
+# pull_request_target, so a merged pull request from a fork works too. It reads
+# the base branch's .github/areas.yml and checks out no pull request code.
+
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: issue-areas-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  areas:
+    name: Label the closed issues by area
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pr = context.payload.pull_request;
+
+            const { repository } = await github.graphql(`
+              query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $number) {
+                    closingIssuesReferences(first: 25) {
+                      nodes { number repository { nameWithOwner } }
+                    }
+                  }
+                }
+              }`, { owner, repo, number: pr.number });
+            const issues = repository.pullRequest.closingIssuesReferences.nodes
+              .filter(issue => issue.repository.nameWithOwner === `${owner}/${repo}`)
+              .map(issue => issue.number);
+            if (issues.length === 0) {
+              core.info('This pull request closes no issue here.');
+              return;
+            }
+
+            // A glob with `**` matches across directories and `*` within one.
+            const glob = g => new RegExp('^' + g
+              .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+              .replace(/\*\*\//g, '\u0001')
+              .replace(/\*\*/g, '\0')
+              .replace(/\*/g, '[^/]*')
+              .replace(/\?/g, '[^/]')
+              .replace(/\u0001/g, '(.*/)?')
+              .replace(/\0/g, '.*') + '$');
+            const { data } = await github.rest.repos.getContent({
+              owner, repo, path: '.github/areas.yml', ref: pr.base.sha,
+            });
+            // The file is flat: an area label, then its globs one per line.
+            const areas = {};
+            let current = null;
+            for (const raw of Buffer.from(data.content, 'base64').toString().split('\n')) {
+              const line = raw.replace(/#.*$/, '').trimEnd();
+              const label = line.match(/^"([^"]+)":\s*$/);
+              const path = line.match(/^\s+-\s+"([^"]+)"\s*$/);
+              if (label) areas[current = label[1]] = [];
+              else if (path && current) areas[current].push(glob(path[1]));
+            }
+
+            const files = (await github.paginate(github.rest.pulls.listFiles, {
+              owner, repo, pull_number: pr.number, per_page: 100,
+            })).flatMap(f => [f.filename, f.previous_filename].filter(Boolean));
+            const labels = Object.keys(areas)
+              .filter(area => files.some(f => areas[area].some(re => re.test(f))));
+            if (labels.length === 0) {
+              core.info('No changed path belongs to an area.');
+              return;
+            }
+
+            for (const number of issues) {
+              await github.rest.issues.addLabels({ owner, repo, issue_number: number, labels });
+              core.info(`#${number}: ${labels.join(', ')}`);
+            }

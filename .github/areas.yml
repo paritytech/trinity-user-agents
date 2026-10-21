@@ -1,0 +1,45 @@
+# Which paths belong to which area. issue-areas.yml reads this to label the
+# issues a pull request closes; new pull requests carry no area themselves. Every
+# label here is defined in .github/labels.yml.
+#
+# The same paths decide who is asked to review in .github/CODEOWNERS. The two
+# files are different formats, so scripts/check-path-routing.py holds them to the
+# same set of roots and CI runs it. Change one and the check tells you about the
+# other.
+#
+# Globs: `**` matches across directories, `*` within one. A glob with no slash,
+# like `*.md`, matches at the repository root only.
+#
+# Keep it flat: a quoted label, then one quoted glob per line. issue-areas.yml
+# reads it without a YAML parser.
+
+"area:rfc":
+  - "docs/rfcs/**"
+
+"area:docs":
+  - "docs/**"
+  - "*.md"
+
+"area:ci":
+  - ".github/workflows/**"
+  - ".github/actions/**"
+
+"area:js":
+  - "js/**"
+  - "playground/**"
+  - "explorer/**"
+
+# The core reaches every host at once, so a change here is the most expensive
+# one to get wrong.
+"area:core":
+  - "rust/crates/**"
+
+# The hosts are apart rather than together. An iOS-only change and an
+# Android-only change are reviewed by different people and break differently.
+"area:ios":
+  - "hosts/ios/**"
+  - "ios/**"
+
+"area:android":
+  - "hosts/android/**"
+  - "android/**"

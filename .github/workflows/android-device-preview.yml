@@ -33,13 +33,13 @@ jobs:
     name: Installable APK
     # Narrow on purpose. `labeled` fires for every label, so matching only on
     # the label being present lets anything else being added, by a person or by
-    # labeler.yml, start a second run for the same commit that cancels the one
+    # automation, start a second run for the same commit that cancels the one
     # already building.
     if: >-
       (github.event.action == 'labeled'
-       && github.event.label.name == 'android-device-build')
+       && github.event.label.name == 'ci:android-device')
       || (github.event.action == 'synchronize'
-          && contains(github.event.pull_request.labels.*.name, 'android-device-build'))
+          && contains(github.event.pull_request.labels.*.name, 'ci:android-device'))
     # On the job rather than the workflow. Adding any label starts a run of this
     # workflow, and a workflow-level group would let that run cancel a build in
     # progress before its own job is skipped. A skipped job never joins the

@@ -27,14 +27,14 @@ jobs:
     name: Instrumented tests
     # Narrow deliberately. `labeled` fires for every label, so matching only on
     # the label being present would let any other label, added by a person or
-    # by labeler.yml, start a second run that cancels the one already booting
+    # by automation, start a second run that cancels the one already booting
     # an emulator.
     if: >-
       github.event_name == 'workflow_dispatch'
       || (github.event.action == 'labeled'
-          && github.event.label.name == 'android-instrumented-tests')
+          && github.event.label.name == 'ci:android-emulator-tests')
       || (github.event.action != 'labeled'
-          && contains(github.event.pull_request.labels.*.name, 'android-instrumented-tests'))
+          && contains(github.event.pull_request.labels.*.name, 'ci:android-emulator-tests'))
     runs-on: macos-15
     timeout-minutes: 90
     steps:

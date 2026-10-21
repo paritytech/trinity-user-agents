@@ -195,7 +195,7 @@ nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc 
   `ci-status`, which is the check worth requiring: a job skipped by its filter
   counts as a pass, so a gate cannot stall a PR it does not apply to.
   `Changeset guard` reads live PR titles and labels, so re-running failed jobs
-  picks up a `no-changeset` opt-out. `Release guard` rejects npm version changes
+  picks up a `ci:no-changeset` opt-out. `Release guard` rejects npm version changes
   with unconsumed changesets on the merge result, including in the merge queue.
   `registry-drift.yml` checks default-branch manifests against npm daily and
   maintains one issue; explicit package-version exceptions live in
@@ -272,6 +272,15 @@ Two ways to lose work that involve no pushing at all:
   retitling one; it defines what breaking means here. CI blocks a title that
   does not parse, and a `major` changeset whose title lacks `!`. The nightly
   announcements read `!` to list breaking changes first.
+
+## Labels
+
+- Load `.claude/skills/labels/SKILL.md` before labelling a pull request or an
+  issue, and before adding or renaming a label. Pull requests get their size
+  and first status automatically and carry no area; add a `ci:` label only to
+  get the build it runs. Labels are defined in `.github/labels.yml`, so never
+  create one with `gh label` or the web UI. `docs/labels.md` describes the
+  system.
 
 ## Scope of a change
 

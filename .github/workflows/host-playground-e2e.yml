@@ -65,9 +65,9 @@ jobs:
       (inputs.platform == '' || inputs.platform == 'android')
       && (github.event_name != 'pull_request'
       || (github.event.pull_request.head.repo.full_name == github.repository
-          && ((github.event.action == 'labeled' && github.event.label.name == 'host-playground-e2e')
+          && ((github.event.action == 'labeled' && github.event.label.name == 'ci:host-playground-e2e')
               || (github.event.action == 'synchronize'
-                  && contains(github.event.pull_request.labels.*.name, 'host-playground-e2e')))))
+                  && contains(github.event.pull_request.labels.*.name, 'ci:host-playground-e2e')))))
     # On the job, so a skipped run from another label never cancels this one.
     concurrency:
       group: host-playground-e2e-android-${{ inputs.release_tag || github.event.pull_request.number || github.ref }}
@@ -190,9 +190,9 @@ jobs:
       (inputs.platform == '' || inputs.platform == 'ios')
       && (github.event_name != 'pull_request'
       || (github.event.pull_request.head.repo.full_name == github.repository
-          && ((github.event.action == 'labeled' && github.event.label.name == 'host-playground-e2e')
+          && ((github.event.action == 'labeled' && github.event.label.name == 'ci:host-playground-e2e')
               || (github.event.action == 'synchronize'
-                  && contains(github.event.pull_request.labels.*.name, 'host-playground-e2e')))))
+                  && contains(github.event.pull_request.labels.*.name, 'ci:host-playground-e2e')))))
     # On the job, so a skipped run from another label never cancels this one.
     concurrency:
       group: host-playground-e2e-ios-${{ inputs.release_tag || github.event.pull_request.number || github.ref }}

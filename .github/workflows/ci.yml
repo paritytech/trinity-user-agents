@@ -350,7 +350,7 @@ jobs:
           }
 
           gate sdk_swift '^(ios/|Package\.swift$|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|js/container/|scripts/codegen\.sh$|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/truapi-provider/|rust/crates/uniffi-bindgen-cli/|\.github/workflows/ci\.yml$)'
-          gate workflows '^(\.github/workflows/|\.github/actions/|\.github/labeler\.yml$|\.github/CODEOWNERS$|hosts/[a-z]+/\.github/|scripts/(lint-composite-shell|check-path-routing)\.py$)'
+          gate workflows '^(\.github/workflows/|\.github/actions/|\.github/areas\.yml$|\.github/labels\.yml$|\.github/CODEOWNERS$|hosts/[a-z]+/\.github/|scripts/(lint-composite-shell|check-path-routing)\.py$)'
           gate sdk_kotlin '^(android/|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|build\.gradle\.kts$|settings\.gradle\.kts$|gradle\.properties$|package\.json$|package-lock\.json$|scripts/codegen\.sh$|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/uniffi-bindgen-cli/|\.github/workflows/ci\.yml$)'
 
           # The provider AAR is generated from its own cdylib and compiles
@@ -1360,8 +1360,8 @@ jobs:
           set -euo pipefail
 
           pr="$(gh pr view "$PR_NUMBER" --json title,labels)"
-          if jq -e '(.title | startswith("release:")) or any(.labels[]; .name == "no-changeset")' <<<"$pr" >/dev/null; then
-            echo "Release PR or explicit no-changeset opt-out."
+          if jq -e '(.title | startswith("release:")) or any(.labels[]; .name == "ci:no-changeset")' <<<"$pr" >/dev/null; then
+            echo "Release PR or an explicit \`ci:no-changeset\` opt-out."
             exit 0
           fi
 
@@ -1370,7 +1370,7 @@ jobs:
             exit 0
           fi
 
-          echo "::error::This change reaches a published artifact but adds no changeset, so it would ship undescribed and at a version level chosen by some other change. Run \`npm run changeset\`, or add the \`no-changeset\` label if it genuinely ships nothing."
+          echo "::error::This change reaches a published artifact but adds no changeset, so it would ship undescribed and at a version level chosen by some other change. Run \`npm run changeset\`, or add the \`ci:no-changeset\` label if it genuinely ships nothing."
           exit 1
 
   ci-status:

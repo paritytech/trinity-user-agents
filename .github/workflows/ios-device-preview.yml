@@ -47,15 +47,15 @@ jobs:
     name: Signed device build
     # Narrow on purpose. `labeled` fires for every label, so matching only on
     # the label being present lets anything else being added, by a person or by
-    # labeler.yml, start a second run for the same commit that cancels the one
+    # automation, start a second run for the same commit that cancels the one
     # already building. Never from a fork, because the Parity machines are
     # persistent and shared, and a label once set keeps every later push running.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository
       && ((github.event.action == 'labeled'
-           && github.event.label.name == 'ios-device-build')
+           && github.event.label.name == 'ci:ios-device')
           || (github.event.action == 'synchronize'
-              && contains(github.event.pull_request.labels.*.name, 'ios-device-build')))
+              && contains(github.event.pull_request.labels.*.name, 'ci:ios-device')))
     runs-on: parity-macos
     timeout-minutes: 45
     steps:

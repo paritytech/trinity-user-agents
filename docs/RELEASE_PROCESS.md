@@ -28,14 +28,10 @@ and lockfiles, and package build scripts and configuration. Deleting, editing
 or renaming an existing changeset, or adding `.changeset/README.md`, does not
 satisfy the guard.
 
-A change that ships nothing can use the `no-changeset` label. After adding the
+A change that ships nothing can use the `ci:no-changeset` label. After adding the
 label or correcting a title to `release:`, select **Re-run failed jobs** on CI;
 the guard reads the current PR metadata, so no new commit or full CI run is
-needed. Repository maintainers must create the label once before using it:
-
-```bash
-gh label create no-changeset --color d4c5f9 --description "No published artifact changes; changeset not required"
-```
+needed. The label is defined in `.github/labels.yml`, like every other.
 
 The first command writes a markdown file under `.changeset/`; the second
 consumes it, bumps the selected package `package.json`, appends the package
