@@ -36,7 +36,7 @@ class HostWebViewCreatedTelemetry private constructor(
             val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
             HostWebViewCreatedEvent(
                 sessionId = "",
-                appVariant = appVariant(BuildConfig.BUILD_TYPE),
+                appVariant = BuildConfig.BUILD_TYPE,
                 nativeAppVersion = packageInfo.versionName.orEmpty(),
                 hostVersion = truapiHostVersion(),
                 appBuild = packageInfo.longVersionCode,
@@ -64,7 +64,6 @@ class HostWebViewCreatedTelemetry private constructor(
 
         internal fun newSessionId(): String = UUID.randomUUID().toString()
 
-        internal fun appVariant(buildType: String): String = buildType
     }
 }
 

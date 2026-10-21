@@ -70,13 +70,12 @@ internal fun hostTelemetryScript(
     buildType: String = BuildConfig.BUILD_TYPE,
 ): String {
     val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-    val appVariant = HostWebViewCreatedTelemetry.appVariant(buildType)
     val telemetry = hostTelemetryJson.encodeToString(
         HostTelemetryBootstrap(
             hostSessionId = hostSessionId,
             appVersion = packageInfo.versionName?.takeIf(String::isNotBlank),
             appBuild = packageInfo.longVersionCode.toString(),
-            appVariant = appVariant,
+            appVariant = buildType,
             platform = "android",
             osVersion = osVersion.takeIf(String::isNotBlank),
             truapiHostVersion = hostVersion.takeIf(String::isNotBlank),
