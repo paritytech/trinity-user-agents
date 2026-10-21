@@ -77,7 +77,8 @@ extension SPARustRuntime: SPARuntimeProtocol {
         let bootstrapScript = try executionModel.startBridge()
         let scriptsFactory = RustRuntimeScriptsFactory(
             bootstrapScript: bootstrapScript,
-            hostTelemetry: .current(hostSessionId: hostSessionId)
+            hostTelemetry: .current(hostSessionId: hostSessionId),
+            logger: logger
         )
 
         await engine.registerJSDeviceCapabilityHandler(

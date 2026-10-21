@@ -80,7 +80,7 @@ struct SPARustRuntimeTests {
         #expect(engine.initializedScripts[0].content.contains("writable: false"))
         #expect(engine.initializedScripts[0].content.contains("configurable: false"))
         #expect(engine.initializedScripts[0].content.contains("try {"))
-        #expect(engine.initializedScripts[0].content.contains("} catch {}"))
+        #expect(engine.initializedScripts[0].content.contains("console.warn"))
         #expect(engine.initializedScripts[0].insertionPoint == .atDocStart)
         #expect(engine.initializedScripts[0].frameScope == .mainFrameOnly)
         #expect(engine.initializedScripts[1]
@@ -212,23 +212,22 @@ struct SPARustRuntimeTests {
         )
         let factory = RustRuntimeScriptsFactory(
             bootstrapScript: "/*bootstrap*/",
-            hostTelemetry: telemetry
+            hostTelemetry: telemetry,
+            logger: StubLogger()
         )
 
         let scripts = try factory.makeScripts()
+        let expectedJSON = [
+            #"{"appBuild":"456","appVariant":"nightly","appVersion":"1.2.3","#,
+            #""hostSessionId":"d93fe846-8f3c-4cfa-a440-402b6f7b43d3","osVersion":"18.1","#,
+            #""platform":"ios","schemaVersion":"1","truapiHostVersion":"0.9.0"}"#
+        ].joined()
 
         #expect(scripts.count == 3)
         #expect(scripts[0].content.contains("Object.defineProperty(globalThis, \"__trinityHostTelemetry\""))
         #expect(scripts[0].content.contains("try {"))
-        #expect(scripts[0].content.contains("} catch {}"))
-        #expect(scripts[0].content.contains("\"hostSessionId\":\"d93fe846-8f3c-4cfa-a440-402b6f7b43d3\""))
-        #expect(scripts[0].content.contains("\"appVersion\":\"1.2.3\""))
-        #expect(scripts[0].content.contains("\"appBuild\":\"456\""))
-        #expect(scripts[0].content.contains("\"appVariant\":\"nightly\""))
-        #expect(scripts[0].content.contains("\"platform\":\"ios\""))
-        #expect(scripts[0].content.contains("\"osVersion\":\"18.1\""))
-        #expect(scripts[0].content.contains("\"truapiHostVersion\":\"0.9.0\""))
-        #expect(scripts[0].content.contains("\"schemaVersion\":\"1\""))
+        #expect(scripts[0].content.contains("console.warn"))
+        #expect(scripts[0].content.contains(expectedJSON))
         #expect(scripts[0].insertionPoint == .atDocStart)
         #expect(scripts[0].frameScope == .mainFrameOnly)
         #expect(try factory.makeScripts()[0].content == scripts[0].content)
@@ -238,6 +237,15 @@ struct SPARustRuntimeTests {
         #expect(scripts[2].content.contains("__truapi_localhost"))
         #expect(scripts[2].insertionPoint == .atDocStart)
         #expect(scripts[2].frameScope == .allFrames)
+    }
+
+    @Test func nativeHostTelemetryIsAbsentWhenDisabled() throws {
+        let telemetry = NativeHostTelemetry.current(
+            hostSessionId: try #require(UUID(uuidString: "d93fe846-8f3c-4cfa-a440-402b6f7b43d3")),
+            enabled: false
+        )
+
+        #expect(telemetry == nil)
     }
 
     @Test func directURLHandlerAllowsSameHostInterceptsOthers() throws {

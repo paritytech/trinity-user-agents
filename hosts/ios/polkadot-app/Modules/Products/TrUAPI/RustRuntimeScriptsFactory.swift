@@ -18,21 +18,25 @@ struct NativeHostTelemetry: Encodable {
 
     static func current(hostSessionId: UUID) -> NativeHostTelemetry? {
         #if NIGHTLY || SAFETYNET || UNSTABLE || DEBUG
-            let hostVersion = currentTrUAPIHostVersion()
-
-            return NativeHostTelemetry(
-                hostSessionId: hostSessionId.uuidString.lowercased(),
-                appVersion: Bundle.main.appVersion,
-                appBuild: Bundle.main.appBuild,
-                appVariant: currentAppVariant,
-                platform: "ios",
-                osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
-                truapiHostVersion: hostVersion,
-                schemaVersion: "1"
-            )
+            current(hostSessionId: hostSessionId, enabled: true)
         #else
-            return nil
+            current(hostSessionId: hostSessionId, enabled: false)
         #endif
+    }
+
+    static func current(hostSessionId: UUID, enabled: Bool) -> NativeHostTelemetry? {
+        guard enabled else { return nil }
+
+        return NativeHostTelemetry(
+            hostSessionId: hostSessionId.uuidString.lowercased(),
+            appVersion: Bundle.main.appVersion,
+            appBuild: Bundle.main.appBuild,
+            appVariant: currentAppVariant,
+            platform: "ios",
+            osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            truapiHostVersion: currentTrUAPIHostVersion(),
+            schemaVersion: "1"
+        )
     }
 
     private static var currentAppVariant: String {
@@ -54,17 +58,27 @@ struct NativeHostTelemetry: Encodable {
 final class RustRuntimeScriptsFactory {
     private let bootstrapScript: String
     private let hostTelemetry: NativeHostTelemetry?
+    private let logger: LoggerProtocol
 
-    init(bootstrapScript: String, hostTelemetry: NativeHostTelemetry? = nil) {
+    init(
+        bootstrapScript: String,
+        hostTelemetry: NativeHostTelemetry? = nil,
+        logger: LoggerProtocol
+    ) {
         self.bootstrapScript = bootstrapScript
         self.hostTelemetry = hostTelemetry
+        self.logger = logger
     }
 
     func makeScripts() throws -> [JSEngineScript] {
         var scripts: [JSEngineScript] = []
 
-        if let hostTelemetry, let telemetryScript = try? makeHostTelemetryScript(hostTelemetry) {
-            scripts.append(telemetryScript)
+        if let hostTelemetry {
+            do {
+                scripts.append(try makeHostTelemetryScript(hostTelemetry))
+            } catch {
+                logger.warning("[truapi] host telemetry bootstrap could not be encoded: \(error)")
+            }
         }
 
         scripts.append(contentsOf: try [
@@ -93,7 +107,9 @@ final class RustRuntimeScriptsFactory {
                 writable: false,
                 configurable: false
             });
-        } catch {}
+        } catch (error) {
+            console.warn("Native host telemetry bootstrap was not installed", error);
+        }
         """
 
         return JSEngineScript(content: script, insertionPoint: .atDocStart)
