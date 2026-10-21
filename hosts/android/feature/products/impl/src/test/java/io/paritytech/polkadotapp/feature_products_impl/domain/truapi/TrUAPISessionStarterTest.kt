@@ -20,6 +20,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
 import org.mockito.MockedStatic
+import org.mockito.Mockito.doAnswer
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.mockStatic
 import org.mockito.Mockito.times
@@ -99,11 +100,11 @@ class TrUAPISessionStarterTest {
             val installer: (String) -> (WebView) -> Unit = { { Unit } }
             installer
         }
-        whenever(provider.addWebViewSetup(any())).thenAnswer { invocation ->
+        doAnswer { invocation ->
             webViewSetups += invocation.getArgument<(WebView) -> Unit>(0)
             Unit
-        }
-        whenever(provider.loadInitialContent()).thenReturn(Unit)
+        }.`when`(provider).addWebViewSetup(any())
+        doAnswer { Unit }.`when`(provider).loadInitialContent()
         whenever(
             bridge.attach(
                 runtime = eq(runtime),
