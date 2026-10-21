@@ -55,6 +55,15 @@ class ProductStorageFiles(
 
     private fun fileOf(productId: String, key: String) = File(directoryOf(productId), sha256Hex(key))
 
+    /** Writes `sealed` beside `file` and renames it over `file`, so a reader never sees a partial value. */
+    private fun replace(file: File, sealed: ByteArray, key: String) {
+        val directory = file.parentFile ?: throw HostLocalStorageReadException.Unknown("no directory for $key")
+        directory.mkdirs()
+        val partial = File(directory, "${file.name}.partial")
+        partial.writeBytes(sealed)
+        if (!partial.renameTo(file)) throw HostLocalStorageReadException.Unknown("failed to persist $key")
+    }
+
     private fun used(directory: File): Long =
         usedBytes.getOrPut(directory.name) { directory.listFiles()?.sumOf { it.length() } ?: 0 }
 
@@ -79,10 +88,7 @@ class ProductStorageFiles(
                 val directory = file.parentFile ?: throw HostLocalStorageReadException.Unknown("no directory for $key")
                 val used = used(directory) - file.length()
                 if (used + sealed.size > budgetBytes) throw HostLocalStorageReadException.Full()
-                directory.mkdirs()
-                val partial = File(directory, "${file.name}.partial")
-                partial.writeBytes(sealed)
-                if (!partial.renameTo(file)) throw HostLocalStorageReadException.Unknown("failed to persist $key")
+                replace(file, sealed, key)
                 usedBytes[directory.name] = used + sealed.size
             }
             earlier.clear(key)

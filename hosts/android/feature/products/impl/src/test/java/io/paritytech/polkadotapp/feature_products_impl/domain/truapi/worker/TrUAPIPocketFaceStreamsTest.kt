@@ -13,6 +13,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.SemVer
+import io.paritytech.polkadotapp.feature_products_api.model.WorkerKeepAlive
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PublishedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.cardKey
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.gameProduct
@@ -39,6 +40,7 @@ class TrUAPIPocketFaceStreamsTest {
                 pocketCards = listOf(
                     PocketCardDefinition(PocketCardId("loyalty"), "Loyalty", PocketCardPreview.Archive("face.json"), faceShown = true),
                 ),
+                keepAlive = WorkerKeepAlive.ON_DEMAND,
             ),
         ),
     )
