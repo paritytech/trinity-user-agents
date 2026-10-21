@@ -2,6 +2,7 @@
   if (window !== window.top || globalThis.__nativeTelemetryAcceptance) return;
 
   const marker = "__NATIVE_TELEMETRY_MARKER__";
+  const passThrough = __NATIVE_TELEMETRY_PASS_THROUGH__;
   const envelopes = [];
   let markerTriggered = false;
   const originalFetch = globalThis.fetch.bind(globalThis);
@@ -43,7 +44,7 @@
     } catch {
       // The acceptance hook must not affect the page if a body cannot be copied.
     }
-    return new Response("", { status: 200 });
+    return passThrough ? originalFetch(input, init) : new Response("", { status: 200 });
   };
 
   const snapshot = () => {

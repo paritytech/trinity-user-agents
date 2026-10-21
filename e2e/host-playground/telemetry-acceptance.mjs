@@ -43,9 +43,21 @@ export function hasPreviousSessionEnd(capture) {
 }
 
 export function hasMarkerEvent(capture, marker) {
-  return capture.envelopes.some((body) =>
-    envelopeItems(body).some(({ header, payload }) => header.type === "event" && exceptionText(payload).includes(marker)),
-  );
+  return findMarkerEvent(capture, marker) !== null;
+}
+
+export function findMarkerEvent(capture, marker) {
+  for (const body of capture.envelopes) {
+    for (const { header, payload } of envelopeItems(body)) {
+      if (header.type !== "event" || !exceptionText(payload).includes(marker)) continue;
+      const eventId = header.event_id ?? payload.event_id ?? payload.eventID ?? payload.id;
+      if (typeof eventId !== "string" || !/^[0-9a-f]{32}$/i.test(eventId)) {
+        throw new Error("marked Sentry event has no valid event ID");
+      }
+      return { payload, eventId };
+    }
+  }
+  return null;
 }
 
 function requireEqual(actual, expected, label) {
@@ -99,7 +111,8 @@ export function validateTelemetryCapture(capture, { platform, marker, candidateR
     requireEqual(attribute(previous, name), expected, `previous-session-end ${name}`);
   }
 
-  const event = items.find(({ header, payload }) => header.type === "event" && exceptionText(payload).includes(marker))?.payload;
+  const marked = findMarkerEvent(capture, marker);
+  const event = marked?.payload;
   if (!event) throw new Error("marked Sentry error event was not captured");
   const tags = tagsOf(event);
   requireEqual(tags["host.session_id"], bootstrap.hostSessionId, "event host.session_id");
@@ -138,6 +151,7 @@ export function validateTelemetryCapture(capture, { platform, marker, candidateR
     },
     previousSessionEnd: expectedAttributes,
     event: {
+      eventId: marked.eventId,
       marker,
       hostSessionId: tags["host.session_id"],
       nativeHostSessionId: event.contexts.native_host.hostSessionId,

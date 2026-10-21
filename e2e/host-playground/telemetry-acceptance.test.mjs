@@ -5,6 +5,7 @@ import vm from "node:vm";
 import { hasMarkerEvent, hasPreviousSessionEnd, validateTelemetryCapture } from "./telemetry-acceptance.mjs";
 
 const id = "123e4567-e89b-42d3-a456-426614174000";
+const eventId = "abcdef0123456789abcdef0123456789";
 const marker = "native-telemetry-e2e-deadbeef";
 const attrs = Object.fromEntries(
   Object.entries({
@@ -33,6 +34,7 @@ const capture = {
   envelopes: [
     envelope("log", { items: [{ body: "previous-session-end", attributes: attrs }] }),
     envelope("event", {
+      event_id: eventId,
       exception: { values: [{ value: marker }] },
       tags: { "host.session_id": id },
       contexts: { native_host: { hostSessionId: id } },
@@ -53,6 +55,7 @@ test("accepts one UUID across bootstrap, log attributes, context and session lin
   });
   assert.equal(result.bootstrap.hostSessionId, id);
   assert.equal(result.event.sessionLinkHostSessionId, id);
+  assert.equal(result.event.eventId, eventId);
   assert.equal(result.pageOrigin, "https://app.dim2next.paseo");
   assert.equal(JSON.stringify(result).includes("sent_at"), false);
   assert.equal(JSON.stringify(result).includes("must-not-leave-memory"), false);
@@ -120,7 +123,7 @@ test("the document-start tap leaves relative application fetches alone and captu
   context.top = context;
   context.globalThis = context;
   vm.createContext(context);
-  vm.runInContext(readFileSync(new URL("./telemetry-tap.js", import.meta.url), "utf8"), context);
+  vm.runInContext(readFileSync(new URL("./telemetry-tap.js", import.meta.url), "utf8").replace("__NATIVE_TELEMETRY_PASS_THROUGH__", "false"), context);
 
   assert.equal(await (await context.fetch("/health")).text(), "application");
   assert.equal(originalCalls.length, 1);
@@ -156,9 +159,40 @@ test("the tap triggers the marked probe as soon as the previous-session log is c
   const source = readFileSync(new URL("./telemetry-tap.js", import.meta.url), "utf8").replace(
     '"__NATIVE_TELEMETRY_MARKER__"',
     JSON.stringify(marker),
-  );
+  ).replace("__NATIVE_TELEMETRY_PASS_THROUGH__", "false");
   vm.runInContext(source, context);
 
   await context.fetch("https://o1.ingest.de.sentry.io/api/7/envelope/", { body: "previous-session-end" });
   assert.equal(thrown?.message, marker);
+});
+
+test("the explicit ingestion tap passes Sentry requests to the original fetch", async () => {
+  let calls = 0;
+  const context = {
+    URL,
+    Blob,
+    ArrayBuffer,
+    TextDecoder,
+    Request,
+    Response,
+    location: { href: "https://app.dim2next.paseo/" },
+    setTimeout: () => 0,
+    fetch: async () => {
+      calls += 1;
+      return new Response("accepted by Sentry", { status: 202 });
+    },
+  };
+  context.window = context;
+  context.top = context;
+  context.globalThis = context;
+  vm.createContext(context);
+  const source = readFileSync(new URL("./telemetry-tap.js", import.meta.url), "utf8")
+    .replace('"__NATIVE_TELEMETRY_MARKER__"', JSON.stringify(marker))
+    .replace("__NATIVE_TELEMETRY_PASS_THROUGH__", "true");
+  vm.runInContext(source, context);
+  const response = await context.fetch("https://o1.ingest.de.sentry.io/api/7/envelope/", { body: "event" });
+  assert.equal(response.status, 202);
+  assert.equal(await response.text(), "accepted by Sentry");
+  assert.equal(calls, 1);
+  assert.deepEqual(Array.from(context.__nativeTelemetryAcceptance.snapshot().envelopes), ["event"]);
 });

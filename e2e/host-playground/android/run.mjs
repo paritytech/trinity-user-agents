@@ -2,7 +2,7 @@
 // Runs host-playground inside the Android host on a device or emulator. See ../README.md.
 //
 //   node e2e/host-playground/android/run.mjs --apk <path> --mnemonic-file <path> --out <dir>
-//     [--serial <adb serial>] [--telemetry-product <DotNS name>]
+//     [--serial <adb serial>] [--telemetry-product <DotNS name>] [--telemetry-ingestion]
 
 import { execFile, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -348,13 +348,15 @@ async function waitForTelemetryCapture(page, accept, failure) {
   }
 }
 
-async function runTelemetryAcceptance(adb, forwards, product, out) {
+async function runTelemetryAcceptance(adb, forwards, product, out, passThrough) {
   // The first navigation is needed to discover the WebView target, so it emits
   // ordinary startup telemetry. The uniquely marked probe runs only after the
   // synthetic Sentry tap is installed for the reload below.
   const page = await openProduct(adb, forwards, product);
   const marker = `native-telemetry-e2e-${Date.now().toString(16)}`;
-  const source = telemetryTap.replace('"__NATIVE_TELEMETRY_MARKER__"', JSON.stringify(marker));
+  const source = telemetryTap
+    .replace('"__NATIVE_TELEMETRY_MARKER__"', JSON.stringify(marker))
+    .replace("__NATIVE_TELEMETRY_PASS_THROUGH__", JSON.stringify(passThrough));
   await page.command("Page.addScriptToEvaluateOnNewDocument", { source });
   await page.command("Page.reload", { ignoreCache: true });
 
@@ -431,10 +433,15 @@ async function main() {
       out: { type: "string" },
       serial: { type: "string" },
       "telemetry-product": { type: "string" },
+      "telemetry-ingestion": { type: "boolean", default: false },
     },
   });
   if (!values.apk || !values["mnemonic-file"] || !values.out) {
     console.error("usage: run.mjs --apk <path> --mnemonic-file <path> --out <dir> [--serial <adb serial>]");
+    process.exit(2);
+  }
+  if (values["telemetry-ingestion"] && !values["telemetry-product"]) {
+    console.error("--telemetry-ingestion requires --telemetry-product");
     process.exit(2);
   }
   const out = resolve(values.out);
@@ -462,7 +469,13 @@ async function main() {
 
     if (values["telemetry-product"]) {
       const started = Date.now();
-      const result = await runTelemetryAcceptance(adb, forwards, values["telemetry-product"], out);
+      const result = await runTelemetryAcceptance(
+        adb,
+        forwards,
+        values["telemetry-product"],
+        out,
+        values["telemetry-ingestion"],
+      );
       run.results.push({
         id: "native-telemetry",
         status: "success",

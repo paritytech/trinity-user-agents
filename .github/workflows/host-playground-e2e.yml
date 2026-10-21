@@ -19,11 +19,11 @@ on:
         required: false
         type: string
       mode:
-        description: "Run host-playground or Android Jollity native-telemetry acceptance"
+        description: "Run host-playground or Android native telemetry acceptance"
         required: true
         default: host-playground
         type: choice
-        options: [host-playground, native-telemetry]
+        options: [host-playground, native-telemetry, native-telemetry-ingestion]
       product:
         description: "DotNS product route for native-telemetry mode"
         required: true
@@ -74,6 +74,10 @@ on:
         required: false
       SENTRY_DSN_IOS:
         required: false
+      SENTRY_DSN_ANDROID:
+        required: false
+      SENTRY_AUTH_TOKEN:
+        required: false
       E2E_IOS_MNEMONIC:
         required: false
 
@@ -85,7 +89,7 @@ jobs:
     name: Android emulator
     # Only this label starts a pull request run, and never from a fork.
     if: >-
-      (inputs.mode == 'native-telemetry' || inputs.platform == '' || inputs.platform == 'android')
+      (inputs.mode == 'native-telemetry' || inputs.mode == 'native-telemetry-ingestion' || inputs.platform == '' || inputs.platform == 'android')
       && (github.event_name != 'pull_request'
       || (github.event.pull_request.head.repo.full_name == github.repository
           && ((github.event.action == 'labeled' && github.event.label.name == 'host-playground-e2e')
@@ -105,18 +109,18 @@ jobs:
       E2E_HARNESS_SHA: ${{ github.sha }}
     steps:
       - name: Validate telemetry dispatch inputs
-        if: inputs.mode == 'native-telemetry'
+        if: inputs.mode == 'native-telemetry' || inputs.mode == 'native-telemetry-ingestion'
         env:
           CANDIDATE_REF: ${{ inputs.ref }}
           PRODUCT: ${{ inputs.product }}
         run: |
           set -euo pipefail
           [[ "${CANDIDATE_REF}" =~ ^[0-9a-f]{40}$ ]] || {
-            echo "::error::native-telemetry requires an exact 40-character commit SHA"
+            echo "::error::native telemetry acceptance requires an exact 40-character commit SHA"
             exit 1
           }
           [[ "${{ inputs.platform }}" == "android" ]] || {
-            echo "::error::native-telemetry currently supports Android only"
+            echo "::error::native telemetry acceptance currently supports Android only"
             exit 1
           }
           [[ "${PRODUCT}" =~ ^[a-z0-9-]+(\.[a-z0-9-]+)+$ ]] || {
@@ -130,7 +134,7 @@ jobs:
           persist-credentials: false
 
       - name: Verify the telemetry candidate checkout
-        if: inputs.mode == 'native-telemetry'
+        if: inputs.mode == 'native-telemetry' || inputs.mode == 'native-telemetry-ingestion'
         env:
           CANDIDATE_REF: ${{ inputs.ref }}
         run: test "$(git rev-parse HEAD)" = "${CANDIDATE_REF}"
@@ -138,7 +142,7 @@ jobs:
       # Build the exact candidate while retaining this branch's reviewed,
       # test-only acceptance driver. Product sources always come from ref.
       - name: Check out the telemetry acceptance harness
-        if: inputs.mode == 'native-telemetry'
+        if: inputs.mode == 'native-telemetry' || inputs.mode == 'native-telemetry-ingestion'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
@@ -146,22 +150,26 @@ jobs:
           persist-credentials: false
 
       - name: Overlay the telemetry acceptance harness
-        if: inputs.mode == 'native-telemetry'
+        if: inputs.mode == 'native-telemetry' || inputs.mode == 'native-telemetry-ingestion'
         run: |
           set -euo pipefail
           cp .acceptance-harness/e2e/host-playground/android/run.mjs e2e/host-playground/android/run.mjs
           cp .acceptance-harness/e2e/host-playground/telemetry-acceptance.mjs e2e/host-playground/telemetry-acceptance.mjs
           cp .acceptance-harness/e2e/host-playground/telemetry-acceptance.test.mjs e2e/host-playground/telemetry-acceptance.test.mjs
           cp .acceptance-harness/e2e/host-playground/telemetry-tap.js e2e/host-playground/telemetry-tap.js
+          cp .acceptance-harness/e2e/host-playground/resolve-sentry-dsn.mjs e2e/host-playground/resolve-sentry-dsn.mjs
+          cp .acceptance-harness/e2e/host-playground/verify-apk-dsn.mjs e2e/host-playground/verify-apk-dsn.mjs
+          cp .acceptance-harness/e2e/host-playground/verify-sentry-ingestion.mjs e2e/host-playground/verify-sentry-ingestion.mjs
+          cp .acceptance-harness/e2e/host-playground/verify-sentry-ingestion.test.mjs e2e/host-playground/verify-sentry-ingestion.test.mjs
           rm -rf .acceptance-harness
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
 
-      - name: Test the telemetry acceptance parser
-        if: inputs.mode == 'native-telemetry'
-        run: node --test e2e/host-playground/telemetry-acceptance.test.mjs
+      - name: Test the telemetry acceptance and Sentry API checks
+        if: inputs.mode == 'native-telemetry' || inputs.mode == 'native-telemetry-ingestion'
+        run: node --test e2e/host-playground/telemetry-acceptance.test.mjs e2e/host-playground/verify-sentry-ingestion.test.mjs
 
       - name: Set up the Android build
         uses: ./.github/actions/setup-android-build
@@ -172,6 +180,18 @@ jobs:
           keystore_pass: ${{ secrets.CI_KEYSTORE_PASS }}
           keystore_alias: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
           keystore_key_pass: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
+
+      - name: Preflight Sentry projects and resolve the Android public DSN
+        if: inputs.mode == 'native-telemetry-ingestion'
+        env:
+          SENTRY_API_BASE: ${{ vars.SENTRY_API_BASE || 'https://de.sentry.io' }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG != '' && vars.SENTRY_ORG != 'your-sentry-org' && vars.SENTRY_ORG || 'paritytech' }}
+          SENTRY_NATIVE_PROJECT: ${{ vars.SENTRY_NATIVE_PROJECT != '' && vars.SENTRY_NATIVE_PROJECT != 'your-sentry-project' && vars.SENTRY_NATIVE_PROJECT || 'polkadot-android' }}
+          SENTRY_JOLLITY_PROJECT: ${{ vars.SENTRY_JOLLITY_PROJECT != '' && vars.SENTRY_JOLLITY_PROJECT != 'your-sentry-project' && vars.SENTRY_JOLLITY_PROJECT || 'jollity-next' }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_DSN_ANDROID: ${{ secrets.SENTRY_DSN_ANDROID }}
+          SENTRY_DSN_FILE: ${{ runner.temp }}/android-sentry-dsn
+        run: node e2e/host-playground/resolve-sentry-dsn.mjs
 
       - name: Build the nightly APK with the e2e hooks
         working-directory: hosts/android
@@ -185,8 +205,8 @@ jobs:
           LOG_COLLECTION_EMAIL: ${{ vars.LOG_COLLECTION_EMAIL }}
           PRIVACY_POLICY_URL: ${{ vars.PRIVACY_POLICY_URL }}
           TERMS_OF_USE_URL: ${{ vars.TERMS_OF_USE_URL }}
-          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_ORG: ${{ inputs.mode == 'native-telemetry-ingestion' && (vars.SENTRY_ORG != '' && vars.SENTRY_ORG != 'your-sentry-org' && vars.SENTRY_ORG || 'paritytech') || vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ inputs.mode == 'native-telemetry-ingestion' && (vars.SENTRY_NATIVE_PROJECT != '' && vars.SENTRY_NATIVE_PROJECT != 'your-sentry-project' && vars.SENTRY_NATIVE_PROJECT || 'polkadot-android') || vars.SENTRY_PROJECT }}
           FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
           GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
           GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
@@ -196,6 +216,10 @@ jobs:
           CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
         run: |
           set -euo pipefail
+          if [ "${{ inputs.mode }}" = "native-telemetry-ingestion" ]; then
+            IFS= read -r SENTRY_DSN < "${RUNNER_TEMP}/android-sentry-dsn"
+            export SENTRY_DSN
+          fi
           ./gradlew --no-daemon \
             --init-script "${GITHUB_WORKSPACE}/e2e/host-playground/android/e2e.init.gradle.kts" \
             :app:assembleGpNightly
@@ -215,6 +239,12 @@ jobs:
           umask 077
           printf '%s' "${MNEMONIC}" > "${RUNNER_TEMP}/android.mnemonic"
 
+      - name: Verify the APK uses the configured Android Sentry project
+        if: inputs.mode == 'native-telemetry-ingestion'
+        env:
+          SENTRY_DSN_FILE: ${{ runner.temp }}/android-sentry-dsn
+        run: node e2e/host-playground/verify-apk-dsn.mjs "${RUNNER_TEMP}/app-e2e.apk"
+
       - name: Enable KVM
         run: |
           set -euo pipefail
@@ -227,7 +257,7 @@ jobs:
       - name: Run host-playground on the emulator
         env:
           APPLICATION_ID: ${{ vars.APPLICATION_ID }}
-          TELEMETRY_ARGUMENT: ${{ inputs.mode == 'native-telemetry' && format('--telemetry-product={0}', inputs.product) || '' }}
+          TELEMETRY_ARGUMENT: ${{ inputs.mode == 'native-telemetry-ingestion' && format('--telemetry-product={0} --telemetry-ingestion', inputs.product) || (inputs.mode == 'native-telemetry' && format('--telemetry-product={0}', inputs.product) || '') }}
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 34
@@ -241,11 +271,28 @@ jobs:
           # PRODUCT is regex-validated before it can enter the unquoted optional argument.
           script: node e2e/host-playground/android/run.mjs --apk "${RUNNER_TEMP}/app-e2e.apk" --mnemonic-file "${RUNNER_TEMP}/android.mnemonic" --out "${OUT}" $TELEMETRY_ARGUMENT
 
+      - name: Verify the combined Host and Jollity Sentry ingestion
+        if: inputs.mode == 'native-telemetry-ingestion'
+        env:
+          SENTRY_API_BASE: ${{ vars.SENTRY_API_BASE || 'https://de.sentry.io' }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG != '' && vars.SENTRY_ORG != 'your-sentry-org' && vars.SENTRY_ORG || 'paritytech' }}
+          SENTRY_NATIVE_PROJECT: ${{ vars.SENTRY_NATIVE_PROJECT != '' && vars.SENTRY_NATIVE_PROJECT != 'your-sentry-project' && vars.SENTRY_NATIVE_PROJECT || 'polkadot-android' }}
+          SENTRY_JOLLITY_PROJECT: ${{ vars.SENTRY_JOLLITY_PROJECT != '' && vars.SENTRY_JOLLITY_PROJECT != 'your-sentry-project' && vars.SENTRY_JOLLITY_PROJECT || 'jollity-next' }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_POLL_ATTEMPTS: ${{ vars.SENTRY_POLL_ATTEMPTS || '20' }}
+          SENTRY_POLL_INTERVAL_MS: ${{ vars.SENTRY_POLL_INTERVAL_MS || '15000' }}
+          TELEMETRY_DEVICE_EVIDENCE: ${{ env.OUT }}/telemetry.json
+          TELEMETRY_EVIDENCE: ${{ env.OUT }}/sentry-ingestion.json
+          E2E_CANDIDATE_REF: ${{ inputs.ref || github.sha }}
+          E2E_HARNESS_SHA: ${{ github.sha }}
+        run: node e2e/host-playground/verify-sentry-ingestion.mjs
+
       - name: Summary
         if: always()
         run: |
           set -euo pipefail
           rm -f "${RUNNER_TEMP}/android.mnemonic"
+          rm -f "${RUNNER_TEMP}/android-sentry-dsn"
           if [ -f "${OUT}/report.md" ]; then
             cat "${OUT}/report.md" >> "$GITHUB_STEP_SUMMARY"
           else
@@ -265,7 +312,7 @@ jobs:
     name: iOS simulator
     # Only this label starts a pull request run, and never from a fork.
     if: >-
-      inputs.mode != 'native-telemetry'
+      inputs.mode != 'native-telemetry' && inputs.mode != 'native-telemetry-ingestion'
       &&
       (inputs.platform == '' || inputs.platform == 'ios')
       && (github.event_name != 'pull_request'
