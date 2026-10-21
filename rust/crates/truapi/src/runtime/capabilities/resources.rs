@@ -32,17 +32,17 @@ impl ResourceAllocation for ProductRuntimeHost {
 	{
 		version(request)
 			.exec(|inner| async move {
-				let Some(session) = self.accounts.current_session() else {
-					return Err(CallError::Domain(latest::ResourceAllocationError::Unknown {
+				let session = self.accounts.current_session().ok_or_else(|| {
+					CallError::Domain(latest::ResourceAllocationError::Unknown {
 						reason: "No active session".to_string(),
-					}));
-				};
+					})
+				})?;
 
 				let confirmed = until_cancelled(
 					cx,
 					self.connection.confirm_user_action_if_needed(
 						UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
-							calling_product_id: self.connection.product_id(),
+							calling_product_id: self.connection.product_id().clone(),
 							resources: inner.resources.clone(),
 						}),
 					),
@@ -87,11 +87,11 @@ impl Entropy for ProductRuntimeHost {
 	) -> Result<HostDeriveEntropyResponse, CallError<HostDeriveEntropyError>> {
 		version(request)
 			.exec(|latest::HostDeriveEntropyRequest { context }| async move {
-				let Some(session) = self.accounts.current_session() else {
-					return Err(CallError::Domain(latest::HostDeriveEntropyError::Unknown {
+				let session = self.accounts.current_session().ok_or_else(|| {
+					CallError::Domain(latest::HostDeriveEntropyError::Unknown {
 						reason: "Not connected".to_string(),
-					}));
-				};
+					})
+				})?;
 				let entropy = self.accounts.derive_entropy(&session, &context).map_err(|err| {
 					CallError::Domain(latest::HostDeriveEntropyError::Unknown {
 						reason: err.to_string(),

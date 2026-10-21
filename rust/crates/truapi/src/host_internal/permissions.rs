@@ -39,15 +39,11 @@ use std::{collections::HashSet, sync::Arc};
 
 use parity_scale_codec::{Decode, Encode};
 
-use crate::{
-	host_internal::product_manifest::bare_product_label,
-	platform::{
-		BLESSED_REMOTE_DOMAINS, CoreStorage, CoreStorageKey, CrossProductSignatureKind,
-		DevicePermissionStatus, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
-		PermissionDecision, PermissionStatusHost, Permissions, ProductContext,
-		has_trusted_remote_permissions, is_valid_remote_domain_pattern, normalize_remote_domain,
-		remote_domain_candidates,
-	},
+use crate::platform::{
+	BLESSED_REMOTE_DOMAINS, CoreStorage, CoreStorageKey, CrossProductSignatureKind,
+	DevicePermissionStatus, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
+	PermissionDecision, PermissionStatusHost, Permissions, ProductContext, ProductId,
+	is_valid_remote_domain_pattern, normalize_remote_domain, remote_domain_candidates,
 };
 use truapi::latest::{
 	GenericError, HostDevicePermissionRequest, RemotePermission, RemotePermissionRequest,
@@ -103,14 +99,14 @@ enum BundleResolution {
 /// are reduced to their bare label, as the manifest grant files them, so one
 /// approval covers every account of the owning product.
 pub fn cross_product_signature_key(
-	product_id: &str,
-	target_product_id: &str,
+	product_id: &ProductId,
+	target_product_id: &ProductId,
 	kind: CrossProductSignatureKind,
 ) -> CoreStorageKey {
 	CoreStorageKey::PermissionAuthorization {
-		product_id: bare_product_label(product_id).to_string(),
+		product_id: product_id.bare_label().to_string(),
 		request: PermissionAuthorizationRequest::CrossProductSignature {
-			target_product_id: bare_product_label(target_product_id).to_string(),
+			target_product_id: target_product_id.bare_label().to_string(),
 			kind,
 		},
 	}
@@ -200,7 +196,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 			prompt,
 			product,
 			status: None,
-			trusted_product: has_trusted_remote_permissions(&product.product_id),
+			trusted_product: product.product_id.has_trusted_remote_permissions(),
 			temporary_permissions: Arc::default(),
 		}
 	}
@@ -211,7 +207,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 	}
 
 	fn product_id(&self) -> &str {
-		&self.product.product_id
+		self.product.product_id.as_str()
 	}
 
 	/// Revalidate device capabilities against the OS state `status` reports.
@@ -418,16 +414,18 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 				.await
 			},
 			PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
-				Ok(
-					if self.temporary_permissions.authorize(
-						&cross_product_signature_key(self.product_id(), target_product_id, *kind),
+				// An id that names no product owns no account, so nothing was approved for it.
+				let approved = target_product_id.parse::<ProductId>().is_ok_and(|target| {
+					self.temporary_permissions.authorize(
+						&cross_product_signature_key(&self.product.product_id, &target, *kind),
 						false,
-					) {
-						PermissionAuthorizationStatus::Authorized
-					} else {
-						PermissionAuthorizationStatus::NotDetermined
-					},
-				)
+					)
+				});
+				Ok(if approved {
+					PermissionAuthorizationStatus::Authorized
+				} else {
+					PermissionAuthorizationStatus::NotDetermined
+				})
 			},
 		}
 	}
@@ -486,7 +484,10 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 			// Held in memory for the execution only, so nothing is stored. A
 			// denial is not kept either, like a refusal at the prompt.
 			PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
-				let key = cross_product_signature_key(self.product_id(), target_product_id, *kind);
+				let target = target_product_id
+					.parse::<ProductId>()
+					.map_err(|err| GenericError { reason: err.to_string() })?;
+				let key = cross_product_signature_key(&self.product.product_id, &target, *kind);
 				if status == PermissionAuthorizationStatus::Authorized {
 					self.temporary_permissions.grant(key);
 				} else {
@@ -763,21 +764,17 @@ mod tests {
 	};
 	use truapi::{latest::RemotePermission, v01, v01::GenericError};
 
-	static PRODUCT: LazyLock<ProductContext> = LazyLock::new(|| {
-		ProductContext::new("product.dot".to_string()).expect("product id is valid")
-	});
+	static PRODUCT: LazyLock<ProductContext> =
+		LazyLock::new(|| ProductContext::new(ProductId::for_test("product.dot")));
 
-	static OTHER_PRODUCT: LazyLock<ProductContext> = LazyLock::new(|| {
-		ProductContext::new("other.dot".to_string()).expect("product id is valid")
-	});
+	static OTHER_PRODUCT: LazyLock<ProductContext> =
+		LazyLock::new(|| ProductContext::new(ProductId::for_test("other.dot")));
 
-	static PEOPL_APP: LazyLock<ProductContext> = LazyLock::new(|| {
-		ProductContext::new("app.peopl.dot".to_string()).expect("product id is valid")
-	});
+	static PEOPL_APP: LazyLock<ProductContext> =
+		LazyLock::new(|| ProductContext::new(ProductId::for_test("app.peopl.dot")));
 
-	static PEOPL: LazyLock<ProductContext> = LazyLock::new(|| {
-		ProductContext::new("peopl.dot".to_string()).expect("product id is valid")
-	});
+	static PEOPL: LazyLock<ProductContext> =
+		LazyLock::new(|| ProductContext::new(ProductId::for_test("peopl.dot")));
 
 	#[derive(Default)]
 	struct MemStorage {
@@ -1868,7 +1865,7 @@ mod tests {
 		let prompt = ScriptedPrompt::new(vec![], vec![]);
 
 		for product_id in ["peopl.dot", "peopl.paseo", "peopl.testnet", "dim2.dot", "stash.dot"] {
-			let product = ProductContext::new(product_id.to_string()).expect("product id is valid");
+			let product = ProductContext::new(ProductId::for_test(product_id));
 			let service = PermissionsService::new(&storage, &prompt, &product);
 			assert_eq!(
 				futures::executor::block_on(
@@ -1905,7 +1902,7 @@ mod tests {
 		let prompt = ScriptedPrompt::new(vec![], vec![true, true]);
 
 		for product_id in ["localhost", "localhost:3000"] {
-			let product = ProductContext::new(product_id.to_string()).expect("product id is valid");
+			let product = ProductContext::new(ProductId::for_test(product_id));
 			let service = PermissionsService::new(&storage, &prompt, &product);
 			let request = remote(RemotePermission::ChainSubmit);
 			assert_eq!(
@@ -2726,8 +2723,8 @@ mod tests {
 			kind: CrossProductSignatureKind::Payload,
 		};
 		let checked_by_runtime = cross_product_signature_key(
-			"product.dot",
-			"dim2.dot",
+			&PRODUCT.product_id,
+			&crate::platform::ProductId::for_test("dim2.dot"),
 			CrossProductSignatureKind::Payload,
 		);
 
@@ -2755,6 +2752,41 @@ mod tests {
 				futures::executor::block_on(storage.inner.lock()).is_empty(),
 			),
 			(PermissionAuthorizationStatus::NotDetermined, false, true),
+		);
+	}
+
+	/// The administration API reports a target that is not a product id as not
+	/// approved, and refuses to approve it.
+	#[test]
+	fn a_signature_approval_for_a_target_that_names_no_product_is_refused() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let grants = Arc::new(TemporaryPermissions::default());
+		let service = PermissionsService::new(&storage, &prompt, &PRODUCT)
+			.with_temporary_permissions(Arc::clone(&grants));
+		let request = PermissionAuthorizationRequest::CrossProductSignature {
+			target_product_id: "example.com".to_string(),
+			kind: CrossProductSignatureKind::Payload,
+		};
+		// The key a lookup by the bare label of `example.com` would find, so a
+		// status read that skipped parsing would report this as authorized.
+		grants.grant(CoreStorageKey::PermissionAuthorization {
+			product_id: PRODUCT.product_id.bare_label().to_string(),
+			request: PermissionAuthorizationRequest::CrossProductSignature {
+				target_product_id: "example".to_string(),
+				kind: CrossProductSignatureKind::Payload,
+			},
+		});
+
+		let set = futures::executor::block_on(
+			service.set_authorization_status(&request, PermissionAuthorizationStatus::Authorized),
+		);
+		assert_eq!(
+			(
+				set.is_err(),
+				futures::executor::block_on(service.authorization_status(&request)).unwrap(),
+			),
+			(true, PermissionAuthorizationStatus::NotDetermined),
 		);
 	}
 }

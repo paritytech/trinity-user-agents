@@ -832,6 +832,7 @@
     <string name="products_message_custom_preview">Custom message</string>
     <string name="products_message_load_failed">Couldn\'t load this message.</string>
     <string name="products_message_render_failed">Couldn\'t display this message.</string>
+    <string name="products_widget_image_unavailable">This image is not available</string>
     <string name="product_settings_version">version %1$s</string>
     <string name="product_settings_created_by">created by %1$s</string>
     <string name="product_settings_section_privacy">Privacy &amp; Security</string>

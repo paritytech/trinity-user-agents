@@ -1,6 +1,6 @@
 //! Product-facing platform capability adapters.
 
-use crate::platform::PermissionAuthorizationStatus;
+use crate::platform::{PermissionAuthorizationStatus, ProductId};
 use futures::StreamExt;
 use tracing::{instrument, warn};
 use truapi::{
@@ -250,22 +250,22 @@ impl LocalStorage for ProductRuntimeHost {
 				// would make this call a probe for which products exist and which hold
 				// data. A prompt is not the fallback either, since stored values are
 				// opaque bytes nobody could inspect to approve.
+				let access_not_granted =
+					|| CallError::Domain(latest::HostLocalStorageReadError::AccessNotGranted);
 				let owner = match product {
 					Some(target) => {
-						match self
+						let target =
+							target.parse::<ProductId>().map_err(|_| access_not_granted())?;
+						if !self
 							.connection
-							.cross_product_scope_target(&target, Granted::Storage)
+							.holds_cross_product_scope(&target, Granted::Storage)
 							.await
 						{
-							Some(owner) => owner,
-							None => {
-								return Err(CallError::Domain(
-									latest::HostLocalStorageReadError::AccessNotGranted,
-								));
-							},
+							return Err(access_not_granted());
 						}
+						target
 					},
-					None => self.connection.product_id(),
+					None => self.connection.product_id().clone(),
 				};
 
 				self.connection
@@ -286,9 +286,8 @@ impl LocalStorage for ProductRuntimeHost {
 	) -> Result<HostLocalStorageWriteResponse, CallError<HostLocalStorageWriteError>> {
 		version(request)
 			.exec(|latest::HostLocalStorageWriteRequest { key, value }| async move {
-				let storage_key = self
-					.connection
-					.product_storage_key(self.connection.product.product_id.as_str(), key);
+				let storage_key =
+					self.connection.product_storage_key(self.connection.product_id(), key);
 				self.connection
 					.platform
 					.write(storage_key, value)
@@ -308,10 +307,7 @@ impl LocalStorage for ProductRuntimeHost {
 			.exec(|latest::HostLocalStorageClearRequest { key }| async move {
 				self.connection
 					.platform
-					.clear(
-						self.connection
-							.product_storage_key(self.connection.product.product_id.as_str(), key),
-					)
+					.clear(self.connection.product_storage_key(self.connection.product_id(), key))
 					.await
 					.map_err(CallError::Domain)
 			})
@@ -335,8 +331,7 @@ impl LocalStorage for ProductRuntimeHost {
 					.connection
 					.platform
 					.subscribe_storage(
-						self.connection
-							.product_storage_key(self.connection.product.product_id.as_str(), key),
+						self.connection.product_storage_key(self.connection.product_id(), key),
 					)
 					.filter_map(move |item| {
 						let next = match item {
