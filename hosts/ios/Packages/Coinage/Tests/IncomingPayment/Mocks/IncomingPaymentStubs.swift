@@ -2,11 +2,14 @@ import AsyncExtensions
 import Foundation
 import KeyDerivation
 import os
+import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 import SubstrateSdk
 @testable import Coinage
 
 /// In-memory `IncomingPaymentSecretStoring` for tests. Records removals for wipe-on-settle assertions.
-/// `fetchError` fails every read; `corruptedGroupIds` fail only those reads as `.corrupted`.
+/// `fetchError` fails every read; `corruptedGroupIds` fail only those reads as `.corrupted`, and
+/// `unreadableGroupIds` only those reads with a plain failure.
 final class InMemoryIncomingPaymentSecretStore: IncomingPaymentSecretStoring, @unchecked Sendable {
     struct Failure: Error {}
 
@@ -19,6 +22,7 @@ final class InMemoryIncomingPaymentSecretStore: IncomingPaymentSecretStoring, @u
     var saveError: Error?
     var fetchError: Error?
     var corruptedGroupIds: Set<CoinageTxGroupId> = []
+    var unreadableGroupIds: Set<CoinageTxGroupId> = []
 
     init(seed: [CoinageTxGroupId: IncomingPaymentSourceDescriptor] = [:]) {
         state.withLock { $0.descriptors = seed }
@@ -32,6 +36,7 @@ final class InMemoryIncomingPaymentSecretStore: IncomingPaymentSecretStoring, @u
     func fetch(groupId: CoinageTxGroupId) throws -> IncomingPaymentSourceDescriptor? {
         if let fetchError { throw fetchError }
         if corruptedGroupIds.contains(groupId) { throw IncomingPaymentSecretStoreError.corrupted }
+        if unreadableGroupIds.contains(groupId) { throw Failure() }
         return state.withLock { $0.descriptors[groupId] }
     }
 
@@ -170,6 +175,7 @@ final class StubGroupVerdictResolver: CoinageGroupVerdictResolving, @unchecked S
 
     private let result: Result<CoinageTransferDetection, Error>
     private let asked = OSAllocatedUnfairLock(initialState: [CoinageTxGroupId]())
+    private let askedSubject = AsyncCurrentValueSubject<[CoinageTxGroupId]>([])
 
     init(verdict: CoinageTransferDetection) {
         result = .success(verdict)
@@ -184,11 +190,24 @@ final class StubGroupVerdictResolver: CoinageGroupVerdictResolving, @unchecked S
         amount _: Balance,
         context _: DenominationBreakdownContext
     ) async throws -> CoinageTransferDetection {
-        asked.withLock { $0.append(groupId) }
+        asked.withLock { groupIds in
+            groupIds.append(groupId)
+            askedSubject.send(groupIds)
+        }
         return try result.get()
     }
 
     func askedGroupIds() -> [CoinageTxGroupId] { asked.withLock { $0 } }
+
+    /// Returns once the resolver has been asked about `groupId`, failing rather than hanging if it never is.
+    func waitUntilAsked(about groupId: CoinageTxGroupId) async throws {
+        try await withTimeout(.hangGuard) { [askedSubject] in
+            for await asked in askedSubject where asked.contains(groupId) {
+                return
+            }
+            throw CancellationError()
+        }
+    }
 }
 
 private func replay(_ detections: [CoinageTransferDetection]) -> AnyAsyncSequence<CoinageTransferDetection> {

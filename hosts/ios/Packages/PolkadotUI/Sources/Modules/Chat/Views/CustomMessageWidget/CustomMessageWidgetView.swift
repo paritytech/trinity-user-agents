@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import DesignSystem
 
 // MARK: - Action Handler
@@ -9,10 +10,40 @@ private struct WidgetActionHandlerKey: EnvironmentKey {
     static let defaultValue: WidgetActionHandler? = nil
 }
 
+/// Loads the picture an image node names. A source names a product archive
+/// path or a Bulletin CID, which only the host can fetch, so the renderer asks
+/// for the picture rather than knowing where it lives. Nil means it could not
+/// be loaded.
+///
+/// A named type rather than a function typealias, because the resolver is held
+/// in the environment and read from a view body. A bare function value carries
+/// the isolation of wherever it was formed, which the environment then has to
+/// convert away.
+public struct WidgetImageResolver: Sendable {
+    private let load: @Sendable (CustomMessageWidgetNode.ImageSource) async -> UIImage?
+
+    public init(_ load: @escaping @Sendable (CustomMessageWidgetNode.ImageSource) async -> UIImage?) {
+        self.load = load
+    }
+
+    public func callAsFunction(_ source: CustomMessageWidgetNode.ImageSource) async -> UIImage? {
+        await load(source)
+    }
+}
+
+private struct WidgetImageResolverKey: EnvironmentKey {
+    static let defaultValue: WidgetImageResolver? = nil
+}
+
 extension EnvironmentValues {
     var widgetActionHandler: WidgetActionHandler? {
         get { self[WidgetActionHandlerKey.self] }
         set { self[WidgetActionHandlerKey.self] = newValue }
+    }
+
+    var widgetImageResolver: WidgetImageResolver? {
+        get { self[WidgetImageResolverKey.self] }
+        set { self[WidgetImageResolverKey.self] = newValue }
     }
 }
 
@@ -21,18 +52,22 @@ extension EnvironmentValues {
 public struct CustomMessageWidgetView: View {
     let node: CustomMessageWidgetNode
     var onAction: WidgetActionHandler?
+    var resolveImage: WidgetImageResolver?
 
     public init(
         node: CustomMessageWidgetNode,
-        onAction: WidgetActionHandler? = nil
+        onAction: WidgetActionHandler? = nil,
+        resolveImage: WidgetImageResolver?
     ) {
         self.node = node
         self.onAction = onAction
+        self.resolveImage = resolveImage
     }
 
     public var body: some View {
         WidgetNodeContent(node: node)
             .environment(\.widgetActionHandler, onAction)
+            .environment(\.widgetImageResolver, resolveImage)
     }
 }
 
@@ -58,6 +93,103 @@ private struct WidgetNodeContent: View {
             NodeButtonView(props: props, modifiers: node.modifiers)
         case let .textField(props):
             NodeTextFieldView(props: props, modifiers: node.modifiers)
+        case let .image(props):
+            NodeImageView(props: props, modifiers: node.modifiers)
+        case let .effect(props, children):
+            NodeEffectView(props: props, children: children, modifiers: node.modifiers)
+        }
+    }
+}
+
+// MARK: - Image
+
+private struct NodeImageView: View {
+    let props: CustomMessageWidgetNode.ImageProps
+    let modifiers: CustomMessageWidgetNode.Modifiers
+
+    private enum Picture {
+        case loading
+        case loaded(UIImage)
+        case unavailable
+    }
+
+    @Environment(\.widgetImageResolver) private var resolveImage
+    @State private var picture: Picture = .loading
+
+    var body: some View {
+        content
+            .applyWidgetNodeModifiers(modifiers)
+            .task(id: props.source) {
+                picture = .loading
+                picture = await resolveImage?(props.source).map(Picture.loaded) ?? .unavailable
+            }
+    }
+
+    /// Loading and failure both fill the space the node reserves, so a missing
+    /// file costs the card one node rather than its layout.
+    @ViewBuilder
+    private var content: some View {
+        switch picture {
+        case .loading:
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case let .loaded(image):
+            props.fit.apply(to: Image(uiImage: image))
+        case .unavailable:
+            Image(.fileNotFound)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: 44, maxHeight: 44)
+                .foregroundStyle(Color.fgTertiary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityLabel(String(localized: .chatMediaNoLongerAvailable))
+        }
+    }
+}
+
+private extension CustomMessageWidgetNode.ImageFit {
+    @ViewBuilder
+    func apply(to image: Image) -> some View {
+        switch self {
+        case .none:
+            image
+        case .fill:
+            image.resizable()
+        case .cover:
+            image.resizable().aspectRatio(contentMode: .fill)
+        case .contain:
+            image.resizable().aspectRatio(contentMode: .fit)
+        case .scaleDown:
+            image.resizable().aspectRatio(contentMode: .fit).scaledToFit()
+        }
+    }
+}
+
+// MARK: - Effect
+
+private struct NodeEffectView: View {
+    let props: CustomMessageWidgetNode.EffectProps
+    let children: [CustomMessageWidgetNode]
+    let modifiers: CustomMessageWidgetNode.Modifiers
+
+    var body: some View {
+        ZStack {
+            ForEach(children.indices, id: \.self) { index in
+                WidgetNodeContent(node: children[index])
+            }
+        }
+        .modifier(NodeEffectModifier(effect: props.effect))
+        .applyWidgetNodeModifiers(modifiers)
+    }
+}
+
+private struct NodeEffectModifier: ViewModifier {
+    let effect: CustomMessageWidgetNode.Effect
+
+    func body(content: Content) -> some View {
+        switch effect {
+        case .rainbow:
+            content.motionFillingShader(shader: HolographicShaders.iridescentShine)
         }
     }
 }
@@ -75,7 +207,7 @@ private struct NodeBoxView: View {
                 WidgetNodeContent(node: children[index])
             }
         }
-        .applyWidgetNodeModifiers(modifiers)
+        .applyWidgetNodeModifiers(modifiers, alignment: props.alignment)
     }
 }
 
@@ -89,16 +221,20 @@ private struct NodeColumnView: View {
     var body: some View {
         if modifiers.hasWidthConstraint {
             columnContent
-                .applyWidgetNodeModifiers(modifiers)
+                .applyWidgetNodeModifiers(modifiers, alignment: fillAlignment)
         } else {
             ViewThatFits(in: .horizontal) {
                 columnContent
                     .fixedSize(horizontal: true, vertical: false)
-                    .applyWidgetNodeModifiers(modifiers)
+                    .applyWidgetNodeModifiers(modifiers, alignment: fillAlignment)
                 columnContent
-                    .applyWidgetNodeModifiers(modifiers)
+                    .applyWidgetNodeModifiers(modifiers, alignment: fillAlignment)
             }
         }
+    }
+
+    private var fillAlignment: Alignment {
+        Alignment(horizontal: props.alignment, vertical: .top)
     }
 
     private var columnContent: some View {
@@ -159,7 +295,7 @@ private struct NodeRowView: View {
             horizontal: false,
             vertical: !modifiers.hasHeightConstraint
         )
-        .applyWidgetNodeModifiers(modifiers)
+        .applyWidgetNodeModifiers(modifiers, alignment: Alignment(horizontal: .leading, vertical: props.alignment))
     }
 
     @ViewBuilder
@@ -303,10 +439,12 @@ private struct NodeTextFieldView: View {
     #Preview {
         ScrollView {
             CustomMessageWidgetView(
-                node: .previewTransferCard
-            ) { actionId, payload in
-                print("Action: \(actionId), payload: \(payload ?? "nil")")
-            }
+                node: .previewTransferCard,
+                onAction: { actionId, payload in
+                    print("Action: \(actionId), payload: \(payload ?? "nil")")
+                },
+                resolveImage: nil
+            )
             .padding()
         }
     }

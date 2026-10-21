@@ -17,11 +17,7 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
             visibilityReporter: foregroundPresentationController
         )
 
-        #if FEATURE_DIMS
-            let chatExtensionRouters: [ChatExtensionPushRouting] = [DIM2ExtensionPushRouter()]
-        #else
-            let chatExtensionRouters: [ChatExtensionPushRouting] = []
-        #endif
+        let chatExtensionRouters: [ChatExtensionPushRouting] = []
 
         let chatExtensionRouteHandler = ChatExtensionPushRouteHandler(
             routers: chatExtensionRouters,
@@ -94,7 +90,7 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
         #if TESTNET_FEATURE
             interactor.appFactoryResetCheckerFactory = AppFactoryResetCheckerFactory(
                 operationQueue: OperationManagerFacade.sharedDefaultQueue,
-                usernameChain: AppConfig.Chains.usernameChain
+                identityChain: AppConfig.Chains.assethubChain
             )
         #endif
 
@@ -107,11 +103,7 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
 
     @MainActor
     private static func createProductLabels(flowStateProvider: SPAFlowStateProviding) async -> [String] {
-        #if FEATURE_PRODUCTS
-            let staticProducts = [AppConfig.DotNs.dotNsBrowse]
-        #else
-            let staticProducts: [String] = []
-        #endif
+        let staticProducts = [AppConfig.DotNs.dotNsBrowse]
 
         let fundingProvider = FundingDomainProvider(
             hostProvider: flowStateProvider.flowState().hostProvider

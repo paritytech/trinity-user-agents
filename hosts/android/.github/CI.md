@@ -37,13 +37,13 @@ not contain credentials.
 Most variables below are **mandatory**: the build reads them with `readSecretOrThrow`
 and fails at configuration time when one is missing or empty, so a deploy can never ship
 a placeholder fallback. Only `signingConfigs` still uses `readSecretOrDefault`.
-`SENTRY_DSN`, `REFERRAL_WEB_HOST` and `GAME_RESULTS_FALLBACK_URL` are optional and keep a
-fallback — the features they configure are not part of the current production build.
+`SENTRY_DSN` is optional and keeps a fallback.
 
 | Variable | Purpose |
 |----------|---------|
 | `APPLICATION_ID` | Base Android application ID. The build adds `.debug`, `.nightly` or `.safetynet` for those build types. Every resulting id must match a client in `google-services.json`. |
 | `APPLICATION_NAME` | Launcher name of the application. `DEBUG_APPLICATION_NAME`, `NIGHTLY_APPLICATION_NAME` and `SAFETYNET_APPLICATION_NAME` optionally override it per build type; when unset they are derived from this value. |
+| `IOS_BUNDLE_ID` | Bundle ID of the iOS app, sent as the APNs topic when a chat push goes to an iOS peer. Debug builds append `.develop`, safetynet builds `.safety`. |
 | `PRIVACY_POLICY_URL` | Privacy-policy destination shown by the application. |
 | `CURRENCY_SYMBOL` | Symbol of the in-app digital currency shown in the UI — card title, send/get actions, and every formatted amount. |
 | `FIAT_SYMBOL` | Fiat symbol prefixed to formatted amounts. `$` also puts the dollar icon on the chat pay button; any other value shows the neutral cash icon. |
@@ -53,8 +53,6 @@ fallback — the features they configure are not part of the current production 
 | `SENTRY_DSN` | Client DSN embedded in debug/nightly manifests for runtime error reporting. Optional; an empty value disables runtime reporting. |
 | `SENTRY_ORG` | Sentry organization slug used by the Gradle plugin. |
 | `SENTRY_PROJECT` | Sentry project slug used by the Gradle plugin. |
-| `REFERRAL_WEB_HOST` | Allowed web host for referral-ticket deeplinks. Supply a host only, without a scheme or path. Optional. |
-| `GAME_RESULTS_FALLBACK_URL` | Final HTTPS fallback for the game-results webview when DotNs and Remote Config do not provide a URL. Optional. |
 
 ### Workflow Variables
 

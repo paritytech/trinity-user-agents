@@ -7,68 +7,47 @@ import android.content.Intent
 import android.os.Build
 import io.paritytech.polkadotapp.common.domain.model.Timestamp
 import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
+import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.VideoGameSettingsPreferences
 import javax.inject.Inject
-import kotlin.time.Duration.Companion.minutes
-import kotlin.time.Duration.Companion.seconds
 
 interface VideoGameReminderScheduler {
-    fun scheduleRegistration(timestamp: Timestamp)
-    fun scheduleWaitingRoom(gameStartMillis: Timestamp)
-    fun scheduleGameAboutToStart(gameStartMillis: Timestamp)
-    fun scheduleGameStart(gameStartMillis: Timestamp)
+    fun scheduleProductGameStart(productId: ProductId, gameStartMillis: Timestamp)
+    fun cancelProductGameStart(productId: ProductId)
 }
 
 class RealVideoGameReminderScheduler @Inject constructor(
     private val contextManager: ContextManager,
-    private val alarmPreferences: VideoGameSettingsPreferences
+    private val alarmPreferences: VideoGameSettingsPreferences,
 ) : VideoGameReminderScheduler {
     private companion object {
-        val WAITING_ROOM_SCHEDULE_OFFSET_MILLIS = 5.minutes.inWholeMilliseconds
-        val ABOUT_TO_START_SCHEDULE_OFFSET_MILLIS = 1.minutes.inWholeMilliseconds
+        const val PRODUCT_GAME_REQUEST_CODE_BASE = 1000
+        const val PRODUCT_GAME_REQUEST_CODE_MASK = 0x3FFFFFFF
     }
 
     private val alarmManager = contextManager.applicationContext.getSystemService(AlarmManager::class.java)
 
-    override fun scheduleRegistration(timestamp: Timestamp) {
-        scheduleAlarm(VideoGameNotificationType.RegistrationOpened(timestamp), timestamp)
-    }
-
-    override fun scheduleWaitingRoom(gameStartMillis: Timestamp) {
-        scheduleAlarm(
-            VideoGameNotificationType.WaitingRoomAvailable,
-            gameStartMillis - WAITING_ROOM_SCHEDULE_OFFSET_MILLIS
-        )
-    }
-
-    override fun scheduleGameAboutToStart(gameStartMillis: Timestamp) {
-        scheduleAlarm(
-            VideoGameNotificationType.GameAboutToStart,
-            gameStartMillis - ABOUT_TO_START_SCHEDULE_OFFSET_MILLIS
-        )
-    }
-
-    override fun scheduleGameStart(gameStartMillis: Timestamp) {
-        val offsetMillis = alarmPreferences.getAlarmOffset().seconds.seconds.inWholeMilliseconds
-        val triggerAtMillis = gameStartMillis - offsetMillis
+    override fun scheduleProductGameStart(productId: ProductId, gameStartMillis: Timestamp) {
+        val notificationType = VideoGameNotificationType.ProductGameStartsSoon(productId.value)
+        val triggerAtMillis = gameStartMillis - alarmPreferences.getAlarmOffset().inWholeMilliseconds
 
         if (triggerAtMillis <= System.currentTimeMillis()) {
-            cancelAlarm(VideoGameNotificationType.GameStartsSoon)
+            cancelAlarm(notificationType)
             return
         }
 
-        scheduleAlarm(VideoGameNotificationType.GameStartsSoon, triggerAtMillis)
+        scheduleAlarm(notificationType, triggerAtMillis)
     }
+
+    override fun cancelProductGameStart(productId: ProductId) =
+        cancelAlarm(VideoGameNotificationType.ProductGameStartsSoon(productId.value))
 
     private fun cancelAlarm(notificationType: VideoGameNotificationType) {
         alarmManager.cancel(createPendingIntent(notificationType))
     }
 
     @SuppressLint("MissingPermission")
-    private fun scheduleAlarm(
-        notificationType: VideoGameNotificationType,
-        timestamp: Timestamp
-    ) {
+    private fun scheduleAlarm(notificationType: VideoGameNotificationType, timestamp: Timestamp) {
         val pendingIntent = createPendingIntent(notificationType)
 
         alarmManager.cancel(pendingIntent)
@@ -78,11 +57,9 @@ class RealVideoGameReminderScheduler @Inject constructor(
         } else true
 
         if (canScheduleAlarms) {
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP,
-                timestamp,
-                pendingIntent
-            )
+            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, timestamp, pendingIntent)
+        } else {
+            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, timestamp, pendingIntent)
         }
     }
 
@@ -102,10 +79,9 @@ class RealVideoGameReminderScheduler @Inject constructor(
         )
     }
 
+    // One pending intent per product. The hash is masked non-negative and small enough not to overflow.
     private fun VideoGameNotificationType.requestCode(): Int = when (this) {
-        is VideoGameNotificationType.RegistrationOpened -> 1
-        VideoGameNotificationType.WaitingRoomAvailable -> 2
-        VideoGameNotificationType.GameAboutToStart -> 3
-        VideoGameNotificationType.GameStartsSoon -> 4
+        is VideoGameNotificationType.ProductGameStartsSoon ->
+            PRODUCT_GAME_REQUEST_CODE_BASE + (productId.hashCode() and PRODUCT_GAME_REQUEST_CODE_MASK)
     }
 }

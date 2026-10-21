@@ -15,10 +15,14 @@ func makeChatBridgeDependencies(
         permissionGuard: MockPermissionGuard(),
         osPermissionAsker: MockOSPermissionAsker(),
         notificationScheduler: MockNotificationScheduler(),
+        gameReminders: MockGameReminderScheduler(),
+        reminderPermissionAsker: MockReminderPermissionAsker(),
         navigationRouter: MockNavigationRouter(),
         chainRegistry: MockChainRegistry(),
-        chainConnections: TrUAPIChainConnectionPool(
-            engineResolver: { _ in nil },
+        chainConnections: TrUAPIV2SpecConnectionPool(
+            chainRegistry: MockChainRegistry(),
+            applicationHandler: MockApplicationHandler(),
+            dateProvider: MockDateProvider(),
             logger: Logger.shared
         ),
         productStorage: TrUAPILocalStorage.createProductLocalStorage(
@@ -29,6 +33,7 @@ func makeChatBridgeDependencies(
         confirmationPresenter: MockConfirmationPresenter(),
         preimageCache: TrUAPIPreimageCache { _ in nil },
         hostProvider: InertHostProvider(),
+        themeManager: MockThemeManager(),
         logger: Logger.shared
     )
 }

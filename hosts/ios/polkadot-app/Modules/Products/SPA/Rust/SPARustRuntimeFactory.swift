@@ -37,7 +37,8 @@ extension SPARustRuntimeFactory: SPARuntimeFactoryProtocol {
 
         let executionModel = try environment.rust.makeSPAExecution(
             productId: productId,
-            routers: environment.routers
+            routers: environment.routers,
+            cardFace: environment.configuration.cardFace
         )
 
         return SPARustRuntime(

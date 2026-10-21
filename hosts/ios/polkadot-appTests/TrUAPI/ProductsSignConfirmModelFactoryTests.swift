@@ -134,7 +134,10 @@ struct ProductsSignConfirmModelFactoryTests {
         let bytes = Data(repeating: 0x11, count: 32)
         let review: SignRawReview = legacy
             ? .legacyAccount(
-                request: HostSignRawWithLegacyAccountRequest(signer: "5Fff", payload: .payload(payload: bytes.toHex(includePrefix: true))),
+                request: HostSignRawWithLegacyAccountRequest(
+                    signer: "5Fff",
+                    payload: .payload(payload: bytes.toHex(includePrefix: true))
+                ),
                 watermarked: false
             )
             : .product(

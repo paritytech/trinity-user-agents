@@ -23,6 +23,8 @@ import {
   type SigningLogEntry,
   type StatementEntry,
 } from "../web/create-mock-host.js";
+import type { HostScan } from "../generated/host-callbacks.js";
+import type { HostPaymentStatusSubscribeItem } from "@parity/truapi";
 import type { StatementInput } from "../web/loopback-statements.js";
 
 // The statement shapes `@parity/host-api-test-sdk` names, so a suite that
@@ -265,6 +267,8 @@ export interface TestHost {
   clearPreimages(): Promise<void>;
   getTheme(): Promise<string>;
   setTheme(variant: string): Promise<void>;
+  /** Set the next scan's answer. Throws unless created with a `scanner` answer. */
+  setScanAnswer(answer: HostScan): Promise<void>;
   getIsAuthenticated(): Promise<boolean>;
   getChainStatus(): Promise<ChainStatus>;
   getConnectionStatus(): Promise<ChainStatus>;
@@ -348,7 +352,10 @@ export interface TestHost {
    */
   dispose(): Promise<void>;
 
-  /** Set the spendable balance. Always throws; payments are unimplemented. */
+  /**
+   * Set the spendable balance. Always throws: this host cannot serve
+   * payments, and answers every payment call `Unsupported`.
+   */
   setPaymentBalance(amount: bigint): Promise<never>;
   /** Payment operations the product performed. Always throws; see above. */
   getPaymentLog(): Promise<never>;
@@ -356,10 +363,14 @@ export interface TestHost {
   clearPaymentLog(): Promise<never>;
   /** How top-ups resolve. Always throws; see above. */
   setPaymentTopUpBehavior(behavior: unknown): Promise<never>;
-  /** Force a payment's status. Always throws; see above. */
+  /**
+   * Force the status of the payment with this 32-byte id. Always throws; see
+   * above. The string id and loose status are `@parity/host-api-test-sdk`'s
+   * shapes, still accepted so a suite written against it type-checks.
+   */
   simulatePaymentStatus(
-    paymentId: string,
-    status: { tag: string; value?: string },
+    id: Uint8Array | string,
+    status: HostPaymentStatusSubscribeItem | { tag: string; value?: string },
   ): Promise<never>;
 
   /**
@@ -391,20 +402,22 @@ export interface TestHost {
 /**
  * Why the payment controls cannot be served.
  *
- * Not a seam the mock declined to implement: every method in the core's
- * `capabilities/payment.rs` returns an error and ignores its arguments, so
- * there is no behaviour for a host to model or a test to observe.
+ * The core serves payments through `TopUpPlatform`, `PaymentPlatform` and
+ * `BalancePlatform`, which only a native or Rust host can install: the browser
+ * host-callback bridge cannot carry them yet. This host therefore answers
+ * every payment call `Unsupported`, and has no payment engine to record or
+ * drive.
  */
 const NO_PAYMENT_SEAM =
-  "is not available in the TrUAPI test host: the protocol declares payments " +
-  "but no host implements them -- every method in the core's payment " +
-  "capability returns an error and ignores its arguments, so there is nothing " +
-  "to record or simulate. See docs/rfcs/0006-payments.md.";
+  "is not available in the TrUAPI test host: payments are served only by " +
+  "native and Rust hosts, since the browser host-callback bridge cannot carry " +
+  "the payment platforms yet, so this host answers every payment call " +
+  "Unsupported. See the payment platforms in rust/crates/truapi/RUNTIME.md.";
 
 /** Why login behaviour is fixed once the host page has booted. */
 const LOGIN_BEHAVIOR_IS_CONSTRUCTION_TIME =
   "cannot be changed after boot in the TrUAPI test host: the host page reads " +
-  "it once at start. Pass `loginBehavior: \"auto\" | \"manual\"` to " +
+  'it once at start. Pass `loginBehavior: "auto" | "manual"` to ' +
   "createTestHostFixture instead.";
 
 /** One chain, in `@parity/host-api-test-sdk`'s shape. */
@@ -598,7 +611,9 @@ function accountNames(
  */
 export function createTestHostFixture(defaults: TestHostFixtureOptions) {
   if (defaults.productAccounts) {
-    throw new Error(`testHost \`productAccounts\` ${NO_PINNED_PRODUCT_ACCOUNT}`);
+    throw new Error(
+      `testHost \`productAccounts\` ${NO_PINNED_PRODUCT_ACCOUNT}`,
+    );
   }
   // Started at most once and shared by every test in the file. Held as the
   // promise, not the server, so concurrent first tests await one start rather
@@ -622,7 +637,8 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
         "both -- `chain: x` is exactly `networks: [x]`.",
     );
   }
-  const chains = defaults.networks ?? (defaults.chain ? [defaults.chain] : undefined);
+  const chains =
+    defaults.networks ?? (defaults.chain ? [defaults.chain] : undefined);
   // Defaults to on when allocation is granted unchecked, so a product handed
   // an unregistered allowance key has somewhere its statements are accepted.
   // Carried as "default" rather than `true` so the networks the suite declared
@@ -642,7 +658,9 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
     ? fromNetworks(chains, loopbackStatements)
     : undefined;
   // Explicit settings win over anything derived from `networks`.
-  const mock = expanded ? { ...expanded.mock, ...defaults.mock } : defaults.mock;
+  const mock = expanded
+    ? { ...expanded.mock, ...defaults.mock }
+    : defaults.mock;
   const runtimeConfig = expanded
     ? { ...expanded.runtimeConfig, ...defaults.runtimeConfig }
     : defaults.runtimeConfig;
@@ -754,6 +772,7 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
         clearPreimages: () => call("clearPreimages"),
         getTheme: () => call("getTheme"),
         setTheme: (variant) => call("setTheme", variant),
+        setScanAnswer: (answer) => call("setScanAnswer", answer),
         getIsAuthenticated: () => call("getIsAuthenticated"),
         getChainStatus: () => call("getChainStatus"),
         getConnectionStatus: () => call("getConnectionStatus"),
@@ -796,7 +815,8 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
           page.evaluate(
             (value) => {
               const host = window.__TRUAPI_TEST_HOST__;
-              if (!host) throw new Error("test host is not running on this page");
+              if (!host)
+                throw new Error("test host is not running on this page");
               return host.injectStatement(value);
             },
             // A `Uint8Array` is reduced to hex here because `page.evaluate`
@@ -826,7 +846,9 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
           throw new Error(`testHost.clearPaymentLog ${NO_PAYMENT_SEAM}`);
         },
         setPaymentTopUpBehavior: () => {
-          throw new Error(`testHost.setPaymentTopUpBehavior ${NO_PAYMENT_SEAM}`);
+          throw new Error(
+            `testHost.setPaymentTopUpBehavior ${NO_PAYMENT_SEAM}`,
+          );
         },
         simulatePaymentStatus: () => {
           throw new Error(`testHost.simulatePaymentStatus ${NO_PAYMENT_SEAM}`);

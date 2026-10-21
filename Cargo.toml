@@ -25,7 +25,9 @@ clap = "4"
 console_error_panic_hook = "0.1"
 convert_case = "0.6"
 crossterm = "0.29"
+curve25519-dalek = { version = "4", default-features = false }
 derive_more = "2"
+ed25519-dalek = "2"
 flate2 = "1"
 frame-metadata = { version = "23", default-features = false }
 fs2 = "0.4"
@@ -37,10 +39,11 @@ hex = "0.4"
 hkdf = "0.12"
 image = { version = "0.25", default-features = false }
 indoc = "2"
+itertools = "0.14"
 js-sys = "0.3"
-jsonrpsee = "0.24"
-jsonrpsee-client-transport = "0.24"
-jsonrpsee-core = "0.24"
+jsonrpsee = "0.26"
+jsonrpsee-client-transport = "0.26"
+jsonrpsee-core = "0.26"
 libc = "0.2"
 libsecp256k1 = { version = "0.7", default-features = false, features = ["lazy-static-context"] }
 log = "0.4"
@@ -66,15 +69,17 @@ schnorrkel = { version = "0.11.5", default-features = false }
 send_wrapper = "0.6"
 serde = "1"
 serde_json = "1"
+serde_with = { version = "3", default-features = false, features = ["macros"] }
 sha2 = "0.10"
 shlex = "1"
 smoldot = { version = "4", default-features = false }
 smoldot-light = { version = "2.1", default-features = false }
 socket2 = "0.6"
 sp-crypto-hashing = { version = "0.1", default-features = false }
+strum = { version = "0.28", features = ["derive"] }
 substrate-bip39 = { version = "0.6", default-features = false }
-subxt = { version = "0.50.3", default-features = false }
-subxt-rpcs = { version = "0.50.3", default-features = false }
+subxt = { version = "0.51.1", default-features = false }
+subxt-rpcs = { version = "0.51.1", default-features = false }
 syn = "2"
 tar = "0.4"
 tempfile = "3"
@@ -86,6 +91,7 @@ tokio-tungstenite = "0.24"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false }
 trybuild = "1"
+tsify = { version = "0.5", default-features = false, features = ["js"] }
 unicode-normalization = "0.1"
 unicode-width = "0.2"
 uniffi = "0.32.0"
@@ -102,6 +108,10 @@ zeroize = { version = "1", default-features = false }
 [workspace.lints.rust]
 missing_docs = "warn"
 unsafe_code = "deny"
+
+[workspace.lints.clippy]
+complexity = "warn"
+correctness = "warn"
 
 # Line tables carry the file and line a failing test's backtrace needs, without
 # the variable-level DWARF only an attached debugger reads. Measured on a cold

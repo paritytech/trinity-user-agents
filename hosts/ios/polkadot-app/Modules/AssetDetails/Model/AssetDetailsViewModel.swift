@@ -13,6 +13,8 @@ struct CoinageBalanceBreakdownViewModel {
     let symbol: String
     /// Every holding, in display order, drawn as coins. Clearing leads.
     let strip: [CoinageScene.Coin]
+    /// What each coin says about itself when tapped, by the coin's id.
+    let traces: [String: CoinageCoinTrace]
 }
 
 protocol AssetDetailsViewModelProtocol: Observation.Observable {
@@ -34,8 +36,6 @@ protocol AssetDetailsViewModelProtocol: Observation.Observable {
 
     var isTopUpInProgress: Bool { get set }
     var onTopUp: (() -> Void)? { get set }
-    var isWithdrawInProgress: Bool { get set }
-    var onWithdraw: (() -> Void)? { get set }
 
     var coinageBreakdown: CoinageBalanceBreakdownViewModel? { get set }
     #if TESTNET_FEATURE
@@ -63,8 +63,6 @@ class AssetDetailsViewModel: AssetDetailsViewModelProtocol {
 
     var isTopUpInProgress: Bool = false
     var onTopUp: (() -> Void)?
-    var isWithdrawInProgress: Bool = false
-    var onWithdraw: (() -> Void)?
 
     var coinageBreakdown: CoinageBalanceBreakdownViewModel?
     #if TESTNET_FEATURE

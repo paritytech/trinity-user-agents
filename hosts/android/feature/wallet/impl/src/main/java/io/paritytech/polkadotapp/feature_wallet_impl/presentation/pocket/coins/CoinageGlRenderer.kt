@@ -47,7 +47,10 @@ class CoinageGlRenderer private constructor(
         GLES20.glEnable(GLES20.GL_CULL_FACE)
         GLES20.glCullFace(GLES20.GL_BACK)
         GLES20.glFrontFace(GLES20.GL_CCW)
-        GLES20.glDisable(GLES20.GL_BLEND)
+        // Receded coins come out of the shader premultiplied by their own fade, over a clear background, so
+        // the card shows through them whatever colour it is.
+        GLES20.glEnable(GLES20.GL_BLEND)
+        GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA)
 
         GLES20.glUseProgram(program)
         GLES30.glBindVertexArray(vertexArray)
@@ -117,7 +120,9 @@ class CoinageGlRenderer private constructor(
         GLES20.glUniform1f(uniforms.aaVariance, material.aaVariance)
         GLES20.glUniform1f(uniforms.aaThreshold, material.aaThreshold)
         GLES20.glUniform1f(uniforms.reliefBias, material.reliefBias)
-        GLES20.glUniform3f(uniforms.backdrop, 0f, 0f, 0f)
+        GLES20.glUniform1f(uniforms.reliefGain, CoinageTuning.RELIEF_GAIN)
+        GLES20.glUniform1f(uniforms.roomLift, CoinageTuning.ROOM_LIFT)
+        GLES20.glUniform4fv(uniforms.panels, CoinageTuning.packedPanels.size / 4, CoinageTuning.packedPanels, 0)
         GLES20.glUniform1i(uniforms.debug, 0)
         GLES20.glUniform4fv(uniforms.metals, bundle.metalRows.size / 4, bundle.metalRows, 0)
     }
@@ -250,7 +255,9 @@ class CoinageGlRenderer private constructor(
         val aaVariance = GLES20.glGetUniformLocation(program, "uAaVariance")
         val aaThreshold = GLES20.glGetUniformLocation(program, "uAaThreshold")
         val reliefBias = GLES20.glGetUniformLocation(program, "uReliefBias")
-        val backdrop = GLES20.glGetUniformLocation(program, "uBackdrop")
+        val reliefGain = GLES20.glGetUniformLocation(program, "uReliefGain")
+        val roomLift = GLES20.glGetUniformLocation(program, "uRoomLift")
+        val panels = GLES20.glGetUniformLocation(program, "uPanels")
         val debug = GLES20.glGetUniformLocation(program, "uDebug")
         val metals = GLES20.glGetUniformLocation(program, "uMetals")
         val atlas = GLES20.glGetUniformLocation(program, "uAtlas")

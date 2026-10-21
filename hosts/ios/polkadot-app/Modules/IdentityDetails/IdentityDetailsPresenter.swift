@@ -57,7 +57,6 @@ extension IdentityDetailsPresenter: IdentityDetailsInteractorOutputProtocol {
 
     func didReceive(profile: IdentityProfile) {
         username = profile.username
-        view?.didReceive(isPerson: profile.rank == .membership)
 
         guard let username = profile.username else {
             return

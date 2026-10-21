@@ -17,88 +17,98 @@
 //! (`Unsupported`, `HostFailure`, ...). This avoids leaking json-rpc plumbing
 //! into the public API.
 
-use core::pin::Pin;
-use core::task::{Context, Poll};
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::{
+	pin::Pin,
+	task::{Context, Poll},
+};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
+use std::{
+	collections::{BTreeMap, HashMap, HashSet},
+	sync::{
+		Arc, Mutex, OnceLock,
+		atomic::{AtomicBool, AtomicU64, Ordering},
+	},
+};
 #[cfg(target_arch = "wasm32")]
 use web_time::Duration;
 
 use crate::platform::JsonRpcConnection;
 use derive_more::{Display, Error};
-use futures::channel::mpsc;
-use futures::future::{AbortHandle, Abortable};
-use futures::future::{BoxFuture, Shared};
-use futures::stream::BoxStream;
-use futures::{FutureExt, pin_mut};
-use futures::{Stream, StreamExt};
+use futures::{
+	FutureExt, Stream, StreamExt,
+	channel::mpsc,
+	future::{AbortHandle, Abortable, BoxFuture, Shared},
+	pin_mut,
+	stream::BoxStream,
+};
 use parity_scale_codec::{Decode, Error as ScaleError, Input};
 use parking_lot::Mutex as ParkingMutex;
 use serde::de::{Deserializer, Error as DeError};
 use serde_json::Value;
-use subxt::OnlineClient;
-use subxt::backend::{ChainHeadBackend, LegacyBackend};
-use subxt::config::RpcConfigFor;
-use subxt::config::substrate::{SubstrateConfig, SubstrateConfigBuilder};
-use subxt::utils::H256;
-use subxt_rpcs::client::RpcClient;
-use subxt_rpcs::methods::chain_head as subxt_chain;
-use subxt_rpcs::{ChainHeadRpcMethods, Error as SubxtRpcError, LegacyRpcMethods, RpcConfig};
+use subxt::{
+	OnlineClient,
+	backend::{ChainHeadBackend, LegacyBackend},
+	config::{
+		RpcConfigFor,
+		substrate::{SubstrateConfig, SubstrateConfigBuilder},
+	},
+	utils::H256,
+};
+use subxt_rpcs::{
+	ChainHeadRpcMethods, Error as SubxtRpcError, LegacyRpcMethods, RpcConfig, client::RpcClient,
+	methods::chain_head as subxt_chain,
+};
 use tracing::{instrument, warn};
 use truapi::v01::{
-    OperationStartedResult, RemoteChainHeadBodyRequest, RemoteChainHeadBodyResponse,
-    RemoteChainHeadCallRequest, RemoteChainHeadCallResponse, RemoteChainHeadContinueRequest,
-    RemoteChainHeadFollowItem, RemoteChainHeadFollowRequest, RemoteChainHeadHeaderRequest,
-    RemoteChainHeadHeaderResponse, RemoteChainHeadStopOperationRequest,
-    RemoteChainHeadStorageRequest, RemoteChainHeadStorageResponse, RemoteChainHeadUnpinRequest,
-    RemoteChainSpecChainNameResponse, RemoteChainSpecGenesisHashResponse,
-    RemoteChainSpecPropertiesResponse, RemoteChainTransactionBroadcastRequest,
-    RemoteChainTransactionBroadcastResponse, RemoteChainTransactionStopRequest, RuntimeApi,
-    RuntimeSpec, RuntimeType, StorageQueryItem, StorageQueryType, StorageResultItem,
+	OperationStartedResult, RemoteChainHeadBodyRequest, RemoteChainHeadBodyResponse,
+	RemoteChainHeadCallRequest, RemoteChainHeadCallResponse, RemoteChainHeadContinueRequest,
+	RemoteChainHeadFollowItem, RemoteChainHeadFollowRequest, RemoteChainHeadHeaderRequest,
+	RemoteChainHeadHeaderResponse, RemoteChainHeadStopOperationRequest,
+	RemoteChainHeadStorageRequest, RemoteChainHeadStorageResponse, RemoteChainHeadUnpinRequest,
+	RemoteChainSpecChainNameResponse, RemoteChainSpecGenesisHashResponse,
+	RemoteChainSpecPropertiesResponse, RemoteChainTransactionBroadcastRequest,
+	RemoteChainTransactionBroadcastResponse, RemoteChainTransactionStopRequest, RuntimeApi,
+	RuntimeSpec, RuntimeType, StorageQueryItem, StorageQueryType, StorageResultItem,
 };
 
-use crate::host_rpc_client::HostRpcClient;
-use crate::subscription::Spawner;
+use crate::{host_rpc_client::HostRpcClient, subscription::Spawner};
 
 const FOLLOW_METHOD: &str = "remote_chain_head_follow";
+const CONNECT_METHOD: &str = "remote_chain_connect";
 /// Method tag for failures building or using the legacy Subxt client.
 const LEGACY_CONNECTION: &str = "legacy_connection";
 
 struct TruapiRpcConfig;
 
 impl RpcConfig for TruapiRpcConfig {
-    type Header = RawHeader;
-    type Hash = H256;
-    type AccountId = ();
+	type Header = RawHeader;
+	type Hash = H256;
+	type AccountId = ();
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RawHeader(Vec<u8>);
 
 impl Decode for RawHeader {
-    fn decode<I: Input>(input: &mut I) -> Result<Self, ScaleError> {
-        let Some(len) = input.remaining_len()? else {
-            return Err("raw header input length is unknown".into());
-        };
-        let mut bytes = vec![0u8; len];
-        input.read(&mut bytes)?;
-        Ok(Self(bytes))
-    }
+	fn decode<I: Input>(input: &mut I) -> Result<Self, ScaleError> {
+		let Some(len) = input.remaining_len()? else {
+			return Err("raw header input length is unknown".into());
+		};
+		let mut bytes = vec![0u8; len];
+		input.read(&mut bytes)?;
+		Ok(Self(bytes))
+	}
 }
 
 impl<'de> serde::Deserialize<'de> for RawHeader {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let bytes = subxt_chain::Bytes::deserialize(deserializer).map_err(D::Error::custom)?;
-        Ok(Self(bytes.0))
-    }
+	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+	where
+		D: Deserializer<'de>,
+	{
+		let bytes = subxt_chain::Bytes::deserialize(deserializer).map_err(D::Error::custom)?;
+		Ok(Self(bytes.0))
+	}
 }
 
 /// Shared, single-flight `chainHead_v1_follow` setup keyed by local follow id.
@@ -110,6 +120,12 @@ type FollowSetup = Shared<BoxFuture<'static, Result<String, RuntimeFailure>>>;
 /// created. Follow-bound operations await it so they cannot overtake setup.
 type LocalFollowStart = Shared<BoxFuture<'static, Result<(), RuntimeFailure>>>;
 type FollowStartRegistry = Arc<ParkingMutex<HashMap<(Vec<u8>, String), LocalFollowStart>>>;
+
+/// One scope's registered follow ids, keyed by genesis hash.
+type ScopeFollowIntents = HashMap<String, HashSet<String>>;
+
+/// One scope's broadcast operations, keyed by the sequence in the id handed out.
+type ScopeTransactionOperations = BTreeMap<u64, TransactionOperation>;
 
 /// Shared, single-flight provider connect keyed by genesis hash. Concurrent
 /// first connections for the same chain await one in-flight `connect` rather
@@ -125,8 +141,8 @@ type SubxtConnectionSetup = Shared<BoxFuture<'static, Result<SubxtConnection, Ru
 /// The backend driver is owned by the setup task that created this value.
 #[derive(Clone)]
 pub struct SubxtConnection {
-    /// Client whose chain config pins the host-configured genesis hash.
-    pub client: OnlineClient<SubstrateConfig>,
+	/// Client whose chain config pins the host-configured genesis hash.
+	pub client: OnlineClient<SubstrateConfig>,
 }
 
 /// Cached Subxt client over the legacy JSON-RPC methods, which reach any
@@ -135,12 +151,12 @@ pub struct SubxtConnection {
 /// connection's [`SubxtConnection`].
 #[derive(Clone)]
 pub struct LegacyConnection {
-    /// Client for metadata-aware reads at a block, such as events.
-    pub client: OnlineClient<SubstrateConfig>,
-    /// Backend for block-level reads that need no metadata.
-    pub backend: Arc<LegacyBackend<SubstrateConfig>>,
-    /// Legacy methods the backend does not expose, such as the best block hash.
-    pub methods: LegacyRpcMethods<RpcConfigFor<SubstrateConfig>>,
+	/// Client for metadata-aware reads at a block, such as events.
+	pub client: OnlineClient<SubstrateConfig>,
+	/// Backend for block-level reads that need no metadata.
+	pub backend: Arc<LegacyBackend<SubstrateConfig>>,
+	/// Legacy methods the backend does not expose, such as the best block hash.
+	pub methods: LegacyRpcMethods<RpcConfigFor<SubstrateConfig>>,
 }
 
 /// Classification of framework-level chain failures separate from JSON-RPC
@@ -148,10 +164,10 @@ pub struct LegacyConnection {
 /// `ProductRuntimeHost` boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeFailureKind {
-    /// Backend is not wired or refused the request for plumbing reasons.
-    Unavailable,
-    /// Backend responded but the payload was malformed or the call failed.
-    HostFailure,
+	/// Backend is not wired or refused the request for plumbing reasons.
+	Unavailable,
+	/// Backend responded but the payload was malformed or the call failed.
+	HostFailure,
 }
 
 /// Framework-level chain failure with a diagnostic reason.
@@ -162,83 +178,90 @@ pub enum RuntimeFailureKind {
     reason.as_deref().unwrap_or_default()
 )]
 pub struct RuntimeFailure {
-    kind: RuntimeFailureKind,
-    method: &'static str,
-    reason: Option<String>,
+	kind: RuntimeFailureKind,
+	method: &'static str,
+	reason: Option<String>,
 }
 
 impl RuntimeFailure {
-    /// Backend refused the call for unavailability reasons (no provider, the
-    /// connection died, etc.).
-    pub fn unavailable(method: &'static str) -> Self {
-        Self {
-            kind: RuntimeFailureKind::Unavailable,
-            method,
-            reason: None,
-        }
-    }
+	/// Backend refused the call for unavailability reasons (no provider, the
+	/// connection died, etc.).
+	pub fn unavailable(method: &'static str) -> Self {
+		Self { kind: RuntimeFailureKind::Unavailable, method, reason: None }
+	}
 
-    /// Backend produced a structural error (malformed json-rpc, unexpected
-    /// shape, ...).
-    pub fn host_failure(method: &'static str, reason: impl Into<String>) -> Self {
-        Self {
-            kind: RuntimeFailureKind::HostFailure,
-            method,
-            reason: Some(reason.into()),
-        }
-    }
+	/// Backend produced a structural error (malformed json-rpc, unexpected
+	/// shape, ...).
+	pub fn host_failure(method: &'static str, reason: impl Into<String>) -> Self {
+		Self { kind: RuntimeFailureKind::HostFailure, method, reason: Some(reason.into()) }
+	}
 
-    /// [`Self::unavailable`] carrying the underlying failure text for
-    /// diagnostics.
-    pub fn unavailable_with_reason(method: &'static str, reason: impl Into<String>) -> Self {
-        Self {
-            kind: RuntimeFailureKind::Unavailable,
-            method,
-            reason: Some(reason.into()),
-        }
-    }
+	/// [`Self::unavailable`] carrying the underlying failure text for
+	/// diagnostics.
+	pub fn unavailable_with_reason(method: &'static str, reason: impl Into<String>) -> Self {
+		Self { kind: RuntimeFailureKind::Unavailable, method, reason: Some(reason.into()) }
+	}
 
-    /// Failure classification.
-    #[cfg(test)]
-    pub fn kind(&self) -> RuntimeFailureKind {
-        self.kind
-    }
+	/// Failure classification.
+	#[cfg(test)]
+	pub fn kind(&self) -> RuntimeFailureKind {
+		self.kind
+	}
 
-    /// Method tag the failure originated from.
-    #[cfg(test)]
-    fn method(&self) -> &'static str {
-        self.method
-    }
+	/// Method tag the failure originated from.
+	#[cfg(test)]
+	fn method(&self) -> &'static str {
+		self.method
+	}
 
-    /// Diagnostic reason. Always non-empty for `HostFailure`.
-    pub fn reason(&self) -> String {
-        match &self.reason {
-            Some(reason) => format!("{}: {}", self.method, reason),
-            None => self.method.to_string(),
-        }
-    }
+	/// Diagnostic reason. Always non-empty for `HostFailure`.
+	pub fn reason(&self) -> String {
+		match &self.reason {
+			Some(reason) => format!("{}: {}", self.method, reason),
+			None => self.method.to_string(),
+		}
+	}
 
-    /// Re-tag this failure under `method`, preserving its kind and nesting
-    /// the original reason (when one exists) for diagnostics.
-    fn reclassify(&self, method: &'static str) -> RuntimeFailure {
-        RuntimeFailure {
-            kind: self.kind,
-            method,
-            reason: self.reason.as_ref().map(|_| self.reason()),
-        }
-    }
+	/// Re-tag this failure under `method`, preserving its kind and nesting
+	/// the original method and reason so the caller still sees where it
+	/// failed.
+	fn reclassify(&self, method: &'static str) -> RuntimeFailure {
+		RuntimeFailure { kind: self.kind, method, reason: Some(self.reason()) }
+	}
 }
 
 /// Provider of `JsonRpcConnection` instances keyed by chain genesis hash.
 /// Hosts plug in the platform-side `ChainProvider`.
 #[async_trait::async_trait]
 pub trait RuntimeChainProvider: Send + Sync {
-    /// Open or reuse a JSON-RPC connection for the chain identified by
-    /// `genesis_hash`.
-    async fn connect(
-        &self,
-        genesis_hash: Vec<u8>,
-    ) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure>;
+	/// Open or reuse a JSON-RPC connection for the chain identified by
+	/// `genesis_hash`.
+	async fn connect(
+		&self,
+		genesis_hash: Vec<u8>,
+	) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure>;
+}
+
+/// Which caller a chain connection belongs to.
+///
+/// A node allows four `chainHead_v1_follow` subscriptions and sixteen concurrent
+/// operations per connection, so one connection shared across products makes
+/// those budgets collide: four products plus the core's own client is a fifth
+/// follow the node refuses. Each product runtime gets its own connection, and
+/// the core's internal traffic keeps one of its own.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum ConnectionScope {
+	/// The core's own traffic: metadata, transaction assembly, internal reads.
+	Core,
+	/// One product runtime, identified by its `core_instance`.
+	///
+	/// Per runtime instance rather than per product id, so each connection has
+	/// exactly one owner and releasing it is a drop. Keying by product id would
+	/// put two concurrent runtimes of the same product on one connection, which
+	/// needs refcounting and a liveness story for a runtime that dies holding
+	/// it. The cost is that `App`, `Widget` and `Worker` are separate runtimes,
+	/// so one product with a card and a chat extension holds three connections.
+	Product(u64),
 }
 
 /// chainHead-v1 state machine on top of a [`RuntimeChainProvider`].
@@ -249,2607 +272,3284 @@ pub trait RuntimeChainProvider: Send + Sync {
 /// [`RemoteChainHeadFollowItem`] values.
 #[derive(Clone)]
 pub struct ChainRuntime {
-    provider: Arc<dyn RuntimeChainProvider>,
-    spawner: Spawner,
-    connections: Arc<Mutex<HashMap<String, Arc<ChainConnection>>>>,
-    connection_setups: Arc<Mutex<HashMap<String, ConnectionSetup>>>,
-    follow_starts: FollowStartRegistry,
-    /// Synchronously registered follow intents, keyed by genesis hash. Alias
-    /// cardinality includes setup tasks that have not yet been polled.
-    follow_intents: Arc<Mutex<HashMap<String, HashSet<String>>>>,
-    transaction_operations: Arc<Mutex<BTreeMap<u64, TransactionOperation>>>,
-    next_transaction_operation_id: Arc<AtomicU64>,
+	/// The way out to a host, which opens the sockets this runtime hands around.
+	provider: Arc<dyn RuntimeChainProvider>,
+	/// Where response pumps and follow setup run.
+	spawner: Spawner,
+	/// Which caller this view belongs to. Cheap to re-scope: every other
+	/// field is shared, so two scopes see the same maps under different keys.
+	scope: ConnectionScope,
+	/// Open connections, grouped by scope and then keyed by genesis hash.
+	/// A scope's group exists only while that scope is live, so releasing one
+	/// takes the whole group with it and a connect still in flight has nowhere
+	/// to land. Two callers on one chain are two entries, because a node
+	/// budgets follows per connection.
+	connections: Arc<Mutex<HashMap<ConnectionScope, HashMap<String, ConnectionEntry>>>>,
+	/// Follow setup in flight, keyed by genesis hash and local follow id, so a
+	/// follow-bound request can await the setup rather than miss the follow.
+	follow_starts: FollowStartRegistry,
+	/// Synchronously registered follow intents, grouped by scope and then keyed
+	/// by genesis hash, so a scope resolves only its own follows and releasing
+	/// it takes them with it. Alias cardinality includes setup tasks that have
+	/// not yet been polled.
+	follow_intents: Arc<Mutex<HashMap<ConnectionScope, ScopeFollowIntents>>>,
+	/// Broadcast operations each scope started, keyed by the sequence in the id
+	/// handed to the product. A scope reaches only its own, so an id another
+	/// product knows or guesses is unknown here.
+	transaction_operations: Arc<Mutex<HashMap<ConnectionScope, ScopeTransactionOperations>>>,
+	/// Mints the sequence above. One counter for every scope, so no two
+	/// callers can be handed the same operation id.
+	next_transaction_operation_id: Arc<AtomicU64>,
 }
 
 #[derive(Clone)]
 struct TransactionOperation {
-    genesis_hash: Vec<u8>,
-    provider_operation_id: String,
+	genesis_hash: Vec<u8>,
+	provider_operation_id: String,
 }
 
 /// Prefix of the host-assigned transaction operation ids handed to products.
 const TRANSACTION_OPERATION_ID_PREFIX: &str = "truapi-tx-";
-/// Cap on tracked broadcast operations; products that never stop an operation
-/// would otherwise grow the map for the whole session. Provider operation ids
-/// are short-lived, so evicting the oldest handles is safe.
+/// Cap on tracked broadcast operations per scope; a product that never stops an
+/// operation would otherwise grow its map for the whole session. Provider
+/// operation ids are short-lived, so evicting the oldest handles is safe.
 const MAX_TRACKED_TRANSACTION_OPERATIONS: usize = 256;
 
 fn transaction_operation_sequence(operation_id: &str) -> Option<u64> {
-    operation_id
-        .strip_prefix(TRANSACTION_OPERATION_ID_PREFIX)?
-        .parse()
-        .ok()
+	operation_id.strip_prefix(TRANSACTION_OPERATION_ID_PREFIX)?.parse().ok()
 }
 
 fn follow_product_namespace(follow_id: &str) -> Option<&str> {
-    let (namespace, _) = follow_id.split_once(':')?;
-    let instance = namespace.strip_prefix('c')?;
-    (!instance.is_empty() && instance.bytes().all(|byte| byte.is_ascii_digit()))
-        .then_some(namespace)
+	let (namespace, _) = follow_id.split_once(':')?;
+	let instance = namespace.strip_prefix('c')?;
+	(!instance.is_empty() && instance.bytes().all(|byte| byte.is_ascii_digit()))
+		.then_some(namespace)
 }
 
 impl ChainRuntime {
-    /// Build a `ChainRuntime` driven by `provider`. Background tasks (response
-    /// pumps, follow setup) are spawned on `spawner`.
-    pub fn new(provider: Arc<dyn RuntimeChainProvider>, spawner: Spawner) -> Self {
-        Self {
-            provider,
-            spawner,
-            connections: Arc::new(Mutex::new(HashMap::new())),
-            connection_setups: Arc::new(Mutex::new(HashMap::new())),
-            follow_starts: Arc::new(ParkingMutex::new(HashMap::new())),
-            follow_intents: Arc::new(Mutex::new(HashMap::new())),
-            transaction_operations: Arc::new(Mutex::new(BTreeMap::new())),
-            next_transaction_operation_id: Arc::new(AtomicU64::new(1)),
-        }
-    }
+	/// Build a `ChainRuntime` driven by `provider`. Background tasks (response
+	/// pumps, follow setup) are spawned on `spawner`.
+	pub fn new(provider: Arc<dyn RuntimeChainProvider>, spawner: Spawner) -> Self {
+		Self {
+			provider,
+			spawner,
+			scope: ConnectionScope::Core,
+			connections: Arc::new(Mutex::new(HashMap::from([(
+				ConnectionScope::Core,
+				HashMap::new(),
+			)]))),
+			follow_starts: Arc::new(ParkingMutex::new(HashMap::new())),
+			follow_intents: Arc::new(Mutex::new(HashMap::new())),
+			transaction_operations: Arc::new(Mutex::new(HashMap::new())),
+			next_transaction_operation_id: Arc::new(AtomicU64::new(1)),
+		}
+	}
 
-    /// Start (or attach to an existing) `chainHead_v1_follow` subscription.
-    /// Returns a stream of typed follow items that ends with `Err` when setup
-    /// or the remote subscription fails, and without one when the remote sends
-    /// `stop`.
-    #[instrument(skip_all, fields(runtime.method = "chain_runtime.follow"))]
-    pub fn remote_chain_head_follow(
-        &self,
-        follow_subscription_id: String,
-        request: RemoteChainHeadFollowRequest,
-    ) -> BoxStream<'static, Result<RemoteChainHeadFollowItem, RuntimeFailure>> {
-        // Product SDKs assign operation aliases independently of the outer
-        // subscription frame id. Publish the intent synchronously so the next
-        // product frame can resolve its alias before async setup is polled.
-        self.register_follow_intent(&request.genesis_hash, &follow_subscription_id);
-        let (tx, rx) = mpsc::unbounded();
-        let setup_tx = tx.clone();
-        let runtime = self.clone();
-        let cleanup_runtime = self.clone();
-        let cleanup_genesis_hash = request.genesis_hash.clone();
-        let cleanup_follow_id = follow_subscription_id.clone();
-        let setup_genesis_hash = cleanup_genesis_hash.clone();
-        let setup_follow_id = cleanup_follow_id.clone();
-        let follow_start_key = (request.genesis_hash.clone(), follow_subscription_id.clone());
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let setup_cancelled = cancelled.clone();
-        let cleanup_cancelled = cancelled.clone();
+	/// This runtime seen as `scope`. Shares every map with the original, so a
+	/// product's connections live beside the core's rather than replacing them.
+	pub fn for_product(&self, core_instance: u64) -> Self {
+		let scope = ConnectionScope::Product(core_instance);
+		self.connections.lock().unwrap().entry(scope).or_default();
+		Self { scope, ..self.clone() }
+	}
 
-        // Publish the shared start before spawning it. A follow-bound request
-        // may arrive in the next product frame before the executor first polls
-        // this task; it must await this exact setup rather than reject the
-        // provider-synthetic local follow id as unknown.
-        let start: LocalFollowStart = async move {
-            let result = runtime
-                .start_follow(follow_subscription_id, request, tx, setup_cancelled)
-                .await;
-            if let Err(failure) = &result {
-                // Cleanup drops the sender the connection holds, which on its
-                // own reads as a clean end. Report the failure on this
-                // caller's own handle first.
-                let _ = setup_tx.unbounded_send(Err(failure.clone()));
-                runtime.cleanup_follow(&setup_genesis_hash, &setup_follow_id);
-            }
-            result
-        }
-        .boxed()
-        .shared();
-        self.follow_starts
-            .lock()
-            .insert(follow_start_key, start.clone());
-        (self.spawner)(
-            async move {
-                let _ = start.await;
-            }
-            .boxed(),
-        );
+	/// Key for this scope's connection to `genesis_hash`, within this scope's
+	/// own map. The scope is the outer key, so the chain alone identifies the
+	/// connection here and two scopes on one chain are still two connections.
+	fn connection_key(&self, genesis_hash: &[u8]) -> String {
+		encode_hex(genesis_hash)
+	}
 
-        ManagedSubscription::new(
-            rx.boxed(),
-            Some(Box::new(move || {
-                cleanup_cancelled.store(true, Ordering::SeqCst);
-                cleanup_runtime.cleanup_follow(&cleanup_genesis_hash, &cleanup_follow_id);
-            })),
-        )
-        .boxed()
-    }
+	/// Drop everything this scope holds, on every chain, and tear it down.
+	///
+	/// Removing the map's handle is not enough on its own. Each live follow
+	/// runs a pump holding a strong handle to the connection, so until those
+	/// are aborted the connection cannot drop, both `HostRpcClient` handles
+	/// stay alive, and the host's socket is never closed. Removing the entry
+	/// first would also destroy the route `cleanup_follow` uses to find the
+	/// connection, so a later teardown could no longer abort anything.
+	///
+	/// Pending connections occupy an entry too; completion cannot restore an
+	/// entry removed by teardown.
+	pub fn release_scope(&self) {
+		let dropped: Vec<Arc<ChainConnection>> = self
+			.connections
+			.lock()
+			.unwrap()
+			.remove(&self.scope)
+			.into_iter()
+			.flat_map(|connections| connections.into_values())
+			.filter_map(|entry| entry.ready().cloned())
+			.collect();
 
-    /// [`Self::remote_chain_head_follow`] for host-internal callers that read
-    /// a follow themselves. They wait for the events one operation needs and
-    /// time out on their own, so a failure ends the stream rather than
-    /// becoming an item every one of them has to match.
-    pub fn remote_chain_head_follow_items(
-        &self,
-        follow_subscription_id: String,
-        request: RemoteChainHeadFollowRequest,
-    ) -> BoxStream<'static, RemoteChainHeadFollowItem> {
-        self.remote_chain_head_follow(follow_subscription_id, request)
-            .scan((), |_, item| core::future::ready(item.ok()))
-            .boxed()
-    }
+		// `follow_intents` already holds exactly this scope's follow ids, so
+		// sweeping `follow_starts` against them needs no assumption about how
+		// an id is shaped and covers host-internal follows too.
+		let released_follow_ids: HashSet<String> = self
+			.follow_intents
+			.lock()
+			.unwrap()
+			.remove(&self.scope)
+			.into_iter()
+			.flat_map(|chains| chains.into_values().flatten())
+			.collect();
+		self.transaction_operations.lock().unwrap().remove(&self.scope);
+		self.follow_starts
+			.lock()
+			.retain(|(_, follow_id), _| !released_follow_ids.contains(follow_id));
 
-    /// Fetch a block header.
-    #[instrument(skip_all, fields(runtime.method = "chain_runtime.header"))]
-    pub async fn remote_chain_head_header(
-        &self,
-        request: RemoteChainHeadHeaderRequest,
-    ) -> Result<RemoteChainHeadHeaderResponse, RuntimeFailure> {
-        let method = "remote_chain_head_header";
-        let connection = self.connection_for(method, &request.genesis_hash).await?;
-        let remote_follow_id = self
-            .ensure_follow_context(method, &connection, request.follow_subscription_id, false)
-            .await?;
+		for connection in dropped {
+			connection.abort_all_follows();
+		}
+	}
 
-        let hash = hash_from_bytes(method, &request.hash)?;
-        let header = connection
-            .methods
-            .chainhead_v1_header(&remote_follow_id, hash)
-            .await
-            .map_err(|err| rpc_failure(method, err))?
-            .map(|header| header.0);
-        Ok(RemoteChainHeadHeaderResponse { header })
-    }
+	/// Start (or attach to an existing) `chainHead_v1_follow` subscription.
+	/// Returns a stream of typed follow items that ends with `Err` when setup
+	/// or the remote subscription fails, and without one when the remote sends
+	/// `stop`.
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.follow"))]
+	pub fn remote_chain_head_follow(
+		&self,
+		follow_subscription_id: String,
+		request: RemoteChainHeadFollowRequest,
+	) -> BoxStream<'static, Result<RemoteChainHeadFollowItem, RuntimeFailure>> {
+		// Product SDKs assign operation aliases independently of the outer
+		// subscription frame id. Publish the intent synchronously so the next
+		// product frame can resolve its alias before async setup is polled.
+		self.register_follow_intent(&request.genesis_hash, &follow_subscription_id);
+		let (tx, rx) = mpsc::unbounded();
+		let setup_tx = tx.clone();
+		let runtime = self.clone();
+		let cleanup_runtime = self.clone();
+		let cleanup_genesis_hash = request.genesis_hash.clone();
+		let cleanup_follow_id = follow_subscription_id.clone();
+		let setup_genesis_hash = cleanup_genesis_hash.clone();
+		let setup_follow_id = cleanup_follow_id.clone();
+		let follow_start_key = (request.genesis_hash.clone(), follow_subscription_id.clone());
+		let cancelled = Arc::new(AtomicBool::new(false));
+		let setup_cancelled = cancelled.clone();
+		let cleanup_cancelled = cancelled.clone();
 
-    /// Start a chainHead_v1_body operation.
-    #[instrument(skip_all, fields(runtime.method = "chain_runtime.body"))]
-    pub async fn remote_chain_head_body(
-        &self,
-        request: RemoteChainHeadBodyRequest,
-    ) -> Result<RemoteChainHeadBodyResponse, RuntimeFailure> {
-        let method = "remote_chain_head_body";
-        let connection = self.connection_for(method, &request.genesis_hash).await?;
-        let remote_follow_id = self
-            .ensure_follow_context(method, &connection, request.follow_subscription_id, false)
-            .await?;
+		// Publish the shared start before spawning it. A follow-bound request
+		// may arrive in the next product frame before the executor first polls
+		// this task; it must await this exact setup rather than reject the
+		// provider-synthetic local follow id as unknown.
+		let start: LocalFollowStart = async move {
+			let result =
+				runtime.start_follow(follow_subscription_id, request, tx, setup_cancelled).await;
+			if let Err(failure) = &result {
+				// Cleanup drops the sender the connection holds, which on its
+				// own reads as a clean end. Report the failure on this
+				// caller's own handle first.
+				let _ = setup_tx.unbounded_send(Err(failure.clone()));
+				runtime.cleanup_follow(&setup_genesis_hash, &setup_follow_id);
+			}
+			result
+		}
+		.boxed()
+		.shared();
+		self.record_follow_start(follow_start_key, start.clone());
+		(self.spawner)(
+			async move {
+				let _ = start.await;
+			}
+			.boxed(),
+		);
 
-        let operation = connection
-            .methods
-            .chainhead_v1_body(&remote_follow_id, hash_from_bytes(method, &request.hash)?)
-            .await
-            .map_err(|err| rpc_failure(method, err))
-            .and_then(operation_started_result)?;
-        Ok(RemoteChainHeadBodyResponse { operation })
-    }
+		ManagedSubscription::new(
+			rx.boxed(),
+			Some(Box::new(move || {
+				cleanup_cancelled.store(true, Ordering::SeqCst);
+				cleanup_runtime.cleanup_follow(&cleanup_genesis_hash, &cleanup_follow_id);
+			})),
+		)
+		.boxed()
+	}
 
-    /// Start a chainHead_v1_storage operation.
-    #[instrument(skip_all, fields(runtime.method = "chain_runtime.storage"))]
-    pub async fn remote_chain_head_storage(
-        &self,
-        request: RemoteChainHeadStorageRequest,
-    ) -> Result<RemoteChainHeadStorageResponse, RuntimeFailure> {
-        let method = "remote_chain_head_storage";
-        let connection = self.connection_for(method, &request.genesis_hash).await?;
-        let remote_follow_id = self
-            .ensure_follow_context(method, &connection, request.follow_subscription_id, false)
-            .await?;
+	/// [`Self::remote_chain_head_follow`] for host-internal callers that read
+	/// a follow themselves. They wait for the events one operation needs and
+	/// time out on their own, so a failure ends the stream rather than
+	/// becoming an item every one of them has to match.
+	pub fn remote_chain_head_follow_items(
+		&self,
+		follow_subscription_id: String,
+		request: RemoteChainHeadFollowRequest,
+	) -> BoxStream<'static, RemoteChainHeadFollowItem> {
+		self.remote_chain_head_follow(follow_subscription_id, request)
+			.scan((), |_, item| core::future::ready(item.ok()))
+			.boxed()
+	}
 
-        let items = request
-            .items
-            .iter()
-            .map(map_storage_query_item)
-            .collect::<Vec<_>>();
+	/// Fetch a block header.
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.header"))]
+	pub async fn remote_chain_head_header(
+		&self,
+		request: RemoteChainHeadHeaderRequest,
+	) -> Result<RemoteChainHeadHeaderResponse, RuntimeFailure> {
+		let method = "remote_chain_head_header";
+		let connection = self.connection_for(method, &request.genesis_hash).await?;
+		let remote_follow_id = self
+			.ensure_follow_context(method, &connection, request.follow_subscription_id, false)
+			.await?;
 
-        let operation = connection
-            .methods
-            .chainhead_v1_storage(
-                &remote_follow_id,
-                hash_from_bytes(method, &request.hash)?,
-                items,
-                request.child_trie.as_deref(),
-            )
-            .await
-            .map_err(|err| rpc_failure(method, err))
-            .and_then(operation_started_result)?;
-        Ok(RemoteChainHeadStorageResponse { operation })
-    }
+		let hash = hash_from_bytes(method, &request.hash)?;
+		let header = connection
+			.methods
+			.chainhead_v1_header(&remote_follow_id, hash)
+			.await
+			.map_err(|err| rpc_failure(method, err))?
+			.map(|header| header.0);
+		Ok(RemoteChainHeadHeaderResponse { header })
+	}
 
-    /// Start a chainHead_v1_call operation.
-    #[instrument(skip_all, fields(runtime.method = "chain_runtime.call"))]
-    pub async fn remote_chain_head_call(
-        &self,
-        request: RemoteChainHeadCallRequest,
-    ) -> Result<RemoteChainHeadCallResponse, RuntimeFailure> {
-        let method = "remote_chain_head_call";
-        let connection = self.connection_for(method, &request.genesis_hash).await?;
-        let remote_follow_id = self
-            .ensure_follow_context(method, &connection, request.follow_subscription_id, true)
-            .await?;
+	/// Start a chainHead_v1_body operation.
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.body"))]
+	pub async fn remote_chain_head_body(
+		&self,
+		request: RemoteChainHeadBodyRequest,
+	) -> Result<RemoteChainHeadBodyResponse, RuntimeFailure> {
+		let method = "remote_chain_head_body";
+		let connection = self.connection_for(method, &request.genesis_hash).await?;
+		let remote_follow_id = self
+			.ensure_follow_context(method, &connection, request.follow_subscription_id, false)
+			.await?;
 
-        let operation = connection
-            .methods
-            .chainhead_v1_call(
-                &remote_follow_id,
-                hash_from_bytes(method, &request.hash)?,
-                &request.function,
-                &request.call_parameters,
-            )
-            .await
-            .map_err(|err| rpc_failure(method, err))
-            .and_then(operation_started_result)?;
-        Ok(RemoteChainHeadCallResponse { operation })
-    }
+		let operation = connection
+			.methods
+			.chainhead_v1_body(&remote_follow_id, hash_from_bytes(method, &request.hash)?)
+			.await
+			.map_err(|err| rpc_failure(method, err))
+			.and_then(operation_started_result)?;
+		Ok(RemoteChainHeadBodyResponse { operation })
+	}
 
-    /// Release pinned blocks.
-    #[instrument(skip_all, fields(runtime.method = "chain_runtime.unpin"))]
-    pub async fn remote_chain_head_unpin(
-        &self,
-        request: RemoteChainHeadUnpinRequest,
-    ) -> Result<(), RuntimeFailure> {
-        let method = "remote_chain_head_unpin";
-        let connection = self.connection_for(method, &request.genesis_hash).await?;
-        let remote_follow_id = self
-            .ensure_follow_context(method, &connection, request.follow_subscription_id, false)
-            .await?;
-        let hashes = request
-            .hashes
-            .iter()
-            .map(|hash| hash_from_bytes(method, hash))
-            .collect::<Result<Vec<_>, _>>()?;
-        for hash in hashes {
-            connection
-                .methods
-                .chainhead_v1_unpin(&remote_follow_id, hash)
-                .await
-                .map_err(|err| rpc_failure(method, err))?;
-        }
-        Ok(())
-    }
+	/// Start a chainHead_v1_storage operation.
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.storage"))]
+	pub async fn remote_chain_head_storage(
+		&self,
+		request: RemoteChainHeadStorageRequest,
+	) -> Result<RemoteChainHeadStorageResponse, RuntimeFailure> {
+		let method = "remote_chain_head_storage";
+		let connection = self.connection_for(method, &request.genesis_hash).await?;
+		let remote_follow_id = self
+			.ensure_follow_context(method, &connection, request.follow_subscription_id, false)
+			.await?;
 
-    /// Continue a paused operation.
-    #[instrument(skip_all, fields(runtime.method = "chain_runtime.continue"))]
-    pub async fn remote_chain_head_continue(
-        &self,
-        request: RemoteChainHeadContinueRequest,
-    ) -> Result<(), RuntimeFailure> {
-        let method = "remote_chain_head_continue";
-        let connection = self.connection_for(method, &request.genesis_hash).await?;
-        let remote_follow_id = self
-            .ensure_follow_context(method, &connection, request.follow_subscription_id, false)
-            .await?;
-        connection
-            .methods
-            .chainhead_v1_continue(&remote_follow_id, &request.operation_id)
-            .await
-            .map_err(|err| rpc_failure(method, err))
-    }
+		let items = request.items.iter().map(map_storage_query_item).collect::<Vec<_>>();
 
-    /// Stop a chain-head operation.
-    #[instrument(skip_all, fields(runtime.method = "chain_runtime.stop_operation"))]
-    pub async fn remote_chain_head_stop_operation(
-        &self,
-        request: RemoteChainHeadStopOperationRequest,
-    ) -> Result<(), RuntimeFailure> {
-        let method = "remote_chain_head_stop_operation";
-        let connection = self.connection_for(method, &request.genesis_hash).await?;
-        let remote_follow_id = self
-            .ensure_follow_context(method, &connection, request.follow_subscription_id, false)
-            .await?;
-        connection
-            .methods
-            .chainhead_v1_stop_operation(&remote_follow_id, &request.operation_id)
-            .await
-            .map_err(|err| rpc_failure(method, err))
-    }
+		let operation = connection
+			.methods
+			.chainhead_v1_storage(
+				&remote_follow_id,
+				hash_from_bytes(method, &request.hash)?,
+				items,
+				request.child_trie.as_deref(),
+			)
+			.await
+			.map_err(|err| rpc_failure(method, err))
+			.and_then(operation_started_result)?;
+		Ok(RemoteChainHeadStorageResponse { operation })
+	}
 
-    /// Echo back the chain genesis hash via chainSpec_v1_genesisHash.
-    #[instrument(skip_all, fields(runtime.method = "chain_runtime.spec_genesis_hash"))]
-    pub async fn remote_chain_spec_genesis_hash(
-        &self,
-        genesis_hash: Vec<u8>,
-    ) -> Result<RemoteChainSpecGenesisHashResponse, RuntimeFailure> {
-        let method = "remote_chain_spec_genesis_hash";
-        let connection = self.connection_for(method, &genesis_hash).await?;
-        let genesis_hash = connection
-            .methods
-            .chainspec_v1_genesis_hash()
-            .await
-            .map_err(|err| rpc_failure(method, err))
-            .map(hash_to_bytes)?;
-        Ok(RemoteChainSpecGenesisHashResponse { genesis_hash })
-    }
+	/// Start a chainHead_v1_call operation.
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.call"))]
+	pub async fn remote_chain_head_call(
+		&self,
+		request: RemoteChainHeadCallRequest,
+	) -> Result<RemoteChainHeadCallResponse, RuntimeFailure> {
+		let method = "remote_chain_head_call";
+		let connection = self.connection_for(method, &request.genesis_hash).await?;
+		let remote_follow_id = self
+			.ensure_follow_context(method, &connection, request.follow_subscription_id, true)
+			.await?;
 
-    /// Fetch the chain display name via chainSpec_v1_chainName.
-    #[instrument(skip_all, fields(runtime.method = "chain_runtime.spec_chain_name"))]
-    pub async fn remote_chain_spec_chain_name(
-        &self,
-        genesis_hash: Vec<u8>,
-    ) -> Result<RemoteChainSpecChainNameResponse, RuntimeFailure> {
-        let method = "remote_chain_spec_chain_name";
-        let connection = self.connection_for(method, &genesis_hash).await?;
-        let chain_name = connection
-            .methods
-            .chainspec_v1_chain_name()
-            .await
-            .map_err(|err| rpc_failure(method, err))?;
-        Ok(RemoteChainSpecChainNameResponse { chain_name })
-    }
+		let operation = connection
+			.methods
+			.chainhead_v1_call(
+				&remote_follow_id,
+				hash_from_bytes(method, &request.hash)?,
+				&request.function,
+				&request.call_parameters,
+			)
+			.await
+			.map_err(|err| rpc_failure(method, err))
+			.and_then(operation_started_result)?;
+		Ok(RemoteChainHeadCallResponse { operation })
+	}
 
-    /// Fetch the chain JSON properties via chainSpec_v1_properties.
-    #[instrument(skip_all, fields(runtime.method = "chain_runtime.spec_properties"))]
-    pub async fn remote_chain_spec_properties(
-        &self,
-        genesis_hash: Vec<u8>,
-    ) -> Result<RemoteChainSpecPropertiesResponse, RuntimeFailure> {
-        let method = "remote_chain_spec_properties";
-        let connection = self.connection_for(method, &genesis_hash).await?;
-        let value = connection
-            .methods
-            .chainspec_v1_properties::<Value>()
-            .await
-            .map_err(|err| rpc_failure(method, err))?;
-        let properties = serde_json::to_string(&value)
-            .map_err(|err| RuntimeFailure::host_failure(method, err.to_string()))?;
-        Ok(RemoteChainSpecPropertiesResponse { properties })
-    }
+	/// Release pinned blocks.
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.unpin"))]
+	pub async fn remote_chain_head_unpin(
+		&self,
+		request: RemoteChainHeadUnpinRequest,
+	) -> Result<(), RuntimeFailure> {
+		let method = "remote_chain_head_unpin";
+		let connection = self.connection_for(method, &request.genesis_hash).await?;
+		let remote_follow_id = self
+			.ensure_follow_context(method, &connection, request.follow_subscription_id, false)
+			.await?;
+		let hashes = request
+			.hashes
+			.iter()
+			.map(|hash| hash_from_bytes(method, hash))
+			.collect::<Result<Vec<_>, _>>()?;
+		for hash in hashes {
+			connection
+				.methods
+				.chainhead_v1_unpin(&remote_follow_id, hash)
+				.await
+				.map_err(|err| rpc_failure(method, err))?;
+		}
+		Ok(())
+	}
 
-    /// Broadcast a signed transaction via transaction_v1_broadcast.
-    #[instrument(skip_all, fields(runtime.method = "chain_runtime.transaction_broadcast"))]
-    pub async fn remote_chain_transaction_broadcast(
-        &self,
-        request: RemoteChainTransactionBroadcastRequest,
-    ) -> Result<RemoteChainTransactionBroadcastResponse, RuntimeFailure> {
-        let method = "remote_chain_transaction_broadcast";
-        let connection = self.connection_for(method, &request.genesis_hash).await?;
-        let provider_operation_id = connection
-            .methods
-            .transaction_v1_broadcast(&request.transaction)
-            .await
-            .map_err(|err| rpc_failure(method, err))?;
-        let operation_id = provider_operation_id.map(|provider_operation_id| {
-            let sequence = self
-                .next_transaction_operation_id
-                .fetch_add(1, Ordering::Relaxed);
-            let mut operations = self
-                .transaction_operations
-                .lock()
-                .expect("transaction operation mutex poisoned");
-            operations.insert(
-                sequence,
-                TransactionOperation {
-                    genesis_hash: request.genesis_hash,
-                    provider_operation_id,
-                },
-            );
-            while operations.len() > MAX_TRACKED_TRANSACTION_OPERATIONS {
-                operations.pop_first();
-            }
-            format!("{TRANSACTION_OPERATION_ID_PREFIX}{sequence}")
-        });
-        Ok(RemoteChainTransactionBroadcastResponse { operation_id })
-    }
+	/// Continue a paused operation.
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.continue"))]
+	pub async fn remote_chain_head_continue(
+		&self,
+		request: RemoteChainHeadContinueRequest,
+	) -> Result<(), RuntimeFailure> {
+		let method = "remote_chain_head_continue";
+		let connection = self.connection_for(method, &request.genesis_hash).await?;
+		let remote_follow_id = self
+			.ensure_follow_context(method, &connection, request.follow_subscription_id, false)
+			.await?;
+		connection
+			.methods
+			.chainhead_v1_continue(&remote_follow_id, &request.operation_id)
+			.await
+			.map_err(|err| rpc_failure(method, err))
+	}
 
-    /// Stop a transaction broadcast via transaction_v1_stop.
-    #[instrument(skip_all, fields(runtime.method = "chain_runtime.transaction_stop"))]
-    pub async fn remote_chain_transaction_stop(
-        &self,
-        request: RemoteChainTransactionStopRequest,
-    ) -> Result<(), RuntimeFailure> {
-        let method = "remote_chain_transaction_stop";
-        let sequence = transaction_operation_sequence(&request.operation_id).ok_or_else(|| {
-            RuntimeFailure::host_failure(method, "unknown transaction operation id")
-        })?;
-        let operation = self
-            .transaction_operations
-            .lock()
-            .expect("transaction operation mutex poisoned")
-            .remove(&sequence)
-            .ok_or_else(|| {
-                RuntimeFailure::host_failure(method, "unknown transaction operation id")
-            })?;
-        if operation.genesis_hash != request.genesis_hash {
-            self.transaction_operations
-                .lock()
-                .expect("transaction operation mutex poisoned")
-                .insert(sequence, operation);
-            return Err(RuntimeFailure::host_failure(
-                method,
-                "transaction operation belongs to a different chain",
-            ));
-        }
-        let connection = match self.connection_for(method, &request.genesis_hash).await {
-            Ok(connection) => connection,
-            Err(err) => {
-                self.transaction_operations
-                    .lock()
-                    .expect("transaction operation mutex poisoned")
-                    .insert(sequence, operation);
-                return Err(err);
-            }
-        };
-        match connection
-            .methods
-            .transaction_v1_stop(&operation.provider_operation_id)
-            .await
-        {
-            Ok(()) => Ok(()),
-            Err(err) if transaction_operation_already_finished(&err) => Ok(()),
-            Err(err) => {
-                self.transaction_operations
-                    .lock()
-                    .expect("transaction operation mutex poisoned")
-                    .insert(sequence, operation);
-                Err(rpc_failure(method, err))
-            }
-        }
-    }
+	/// Stop a chain-head operation.
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.stop_operation"))]
+	pub async fn remote_chain_head_stop_operation(
+		&self,
+		request: RemoteChainHeadStopOperationRequest,
+	) -> Result<(), RuntimeFailure> {
+		let method = "remote_chain_head_stop_operation";
+		let connection = self.connection_for(method, &request.genesis_hash).await?;
+		let remote_follow_id = self
+			.ensure_follow_context(method, &connection, request.follow_subscription_id, false)
+			.await?;
+		connection
+			.methods
+			.chainhead_v1_stop_operation(&remote_follow_id, &request.operation_id)
+			.await
+			.map_err(|err| rpc_failure(method, err))
+	}
 
-    /// Genesis-pinned Subxt client for the chain identified by `genesis_hash`.
-    /// The cached unit is the underlying Subxt connection bundle, not just
-    /// the cheap client handle.
-    #[instrument(skip_all, fields(runtime.method = "chain_runtime.online_client"))]
-    pub async fn online_client(
-        &self,
-        genesis_hash: &[u8],
-    ) -> Result<OnlineClient<SubstrateConfig>, RuntimeFailure> {
-        Ok(self.subxt_connection(genesis_hash).await?.client)
-    }
+	/// Echo back the chain genesis hash via chainSpec_v1_genesisHash.
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.spec_genesis_hash"))]
+	pub async fn remote_chain_spec_genesis_hash(
+		&self,
+		genesis_hash: Vec<u8>,
+	) -> Result<RemoteChainSpecGenesisHashResponse, RuntimeFailure> {
+		let method = "remote_chain_spec_genesis_hash";
+		let connection = self.connection_for(method, &genesis_hash).await?;
+		let genesis_hash = connection
+			.methods
+			.chainspec_v1_genesis_hash()
+			.await
+			.map_err(|err| rpc_failure(method, err))
+			.map(hash_to_bytes)?;
+		Ok(RemoteChainSpecGenesisHashResponse { genesis_hash })
+	}
 
-    /// Raw JSON-RPC client for the chain identified by `genesis_hash`.
-    pub async fn rpc_client(
-        &self,
-        method: &'static str,
-        genesis_hash: &[u8],
-    ) -> Result<HostRpcClient, RuntimeFailure> {
-        Ok(self
-            .connection_for(method, genesis_hash)
-            .await?
-            .rpc_client
-            .clone())
-    }
+	/// Fetch the chain display name via chainSpec_v1_chainName.
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.spec_chain_name"))]
+	pub async fn remote_chain_spec_chain_name(
+		&self,
+		genesis_hash: Vec<u8>,
+	) -> Result<RemoteChainSpecChainNameResponse, RuntimeFailure> {
+		let method = "remote_chain_spec_chain_name";
+		let connection = self.connection_for(method, &genesis_hash).await?;
+		let chain_name = connection
+			.methods
+			.chainspec_v1_chain_name()
+			.await
+			.map_err(|err| rpc_failure(method, err))?;
+		Ok(RemoteChainSpecChainNameResponse { chain_name })
+	}
 
-    /// Legacy-RPC Subxt client for the chain identified by `genesis_hash`,
-    /// for reads at blocks a chainHead follow no longer pins.
-    #[instrument(skip_all, fields(runtime.method = "chain_runtime.legacy_connection"))]
-    pub async fn legacy_connection(
-        &self,
-        genesis_hash: &[u8],
-    ) -> Result<LegacyConnection, RuntimeFailure> {
-        self.connection_for(LEGACY_CONNECTION, genesis_hash)
-            .await?
-            .legacy_connection()
-            .await
-    }
+	/// Fetch the chain JSON properties via chainSpec_v1_properties.
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.spec_properties"))]
+	pub async fn remote_chain_spec_properties(
+		&self,
+		genesis_hash: Vec<u8>,
+	) -> Result<RemoteChainSpecPropertiesResponse, RuntimeFailure> {
+		let method = "remote_chain_spec_properties";
+		let connection = self.connection_for(method, &genesis_hash).await?;
+		let value = connection
+			.methods
+			.chainspec_v1_properties::<Value>()
+			.await
+			.map_err(|err| rpc_failure(method, err))?;
+		let properties = serde_json::to_string(&value)
+			.map_err(|err| RuntimeFailure::host_failure(method, err.to_string()))?;
+		Ok(RemoteChainSpecPropertiesResponse { properties })
+	}
 
-    async fn subxt_connection(
-        &self,
-        genesis_hash: &[u8],
-    ) -> Result<SubxtConnection, RuntimeFailure> {
-        let connection = self
-            .connection_for("subxt_connection", genesis_hash)
-            .await?;
-        connection.subxt_connection().await
-    }
+	/// Broadcast a signed transaction via transaction_v1_broadcast.
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.transaction_broadcast"))]
+	pub async fn remote_chain_transaction_broadcast(
+		&self,
+		request: RemoteChainTransactionBroadcastRequest,
+	) -> Result<RemoteChainTransactionBroadcastResponse, RuntimeFailure> {
+		let method = "remote_chain_transaction_broadcast";
+		let connection = self.connection_for(method, &request.genesis_hash).await?;
+		let provider_operation_id = connection
+			.methods
+			.transaction_v1_broadcast(&request.transaction)
+			.await
+			.map_err(|err| rpc_failure(method, err))?;
+		let operation_id = provider_operation_id.map(|provider_operation_id| {
+			let sequence = self.next_transaction_operation_id.fetch_add(1, Ordering::Relaxed);
+			self.with_transaction_operations(|operations| {
+				operations.insert(
+					sequence,
+					TransactionOperation {
+						genesis_hash: request.genesis_hash,
+						provider_operation_id,
+					},
+				);
+				while operations.len() > MAX_TRACKED_TRANSACTION_OPERATIONS {
+					operations.pop_first();
+				}
+			});
+			format!("{TRANSACTION_OPERATION_ID_PREFIX}{sequence}")
+		});
+		Ok(RemoteChainTransactionBroadcastResponse { operation_id })
+	}
 
-    #[instrument(skip_all, fields(runtime.method = "chain_runtime.connection_for", method = method))]
-    async fn connection_for(
-        &self,
-        method: &'static str,
-        genesis_hash: &[u8],
-    ) -> Result<Arc<ChainConnection>, RuntimeFailure> {
-        let key = encode_hex(genesis_hash);
-        let setup = {
-            let mut connections = self.connections.lock().unwrap();
-            match connections.get(&key) {
-                Some(connection) if !connection.is_closed() => return Ok(connection.clone()),
-                Some(_) => {
-                    connections.remove(&key);
-                }
-                None => {}
-            }
-            // Single-flight the provider connect (same shape as
-            // `follow_setups`): concurrent first connections for the same
-            // chain share one in-flight `connect` instead of racing the
-            // insert and orphaning the loser's connection.
-            let mut setups = self.connection_setups.lock().unwrap();
-            if let Some(existing) = setups.get(&key) {
-                existing.clone()
-            } else {
-                let provider = self.provider.clone();
-                let spawner = self.spawner.clone();
-                let connections = self.connections.clone();
-                let setups_map = self.connection_setups.clone();
-                let setup_key = key.clone();
-                let genesis_hash = genesis_hash.to_owned();
-                let setup: ConnectionSetup = async move {
-                    let result = provider.connect(genesis_hash.clone()).await.map(|rpc| {
-                        let connection = ChainConnection::new(rpc, spawner, genesis_hash);
-                        connections
-                            .lock()
-                            .unwrap()
-                            .insert(setup_key.clone(), connection.clone());
-                        connection
-                    });
-                    setups_map.lock().unwrap().remove(&setup_key);
-                    result
-                }
-                .boxed()
-                .shared();
-                setups.insert(key, setup.clone());
-                setup
-            }
-        };
+	/// Stop a transaction broadcast via transaction_v1_stop.
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.transaction_stop"))]
+	pub async fn remote_chain_transaction_stop(
+		&self,
+		request: RemoteChainTransactionStopRequest,
+	) -> Result<(), RuntimeFailure> {
+		let method = "remote_chain_transaction_stop";
+		let sequence = transaction_operation_sequence(&request.operation_id).ok_or_else(|| {
+			RuntimeFailure::host_failure(method, "unknown transaction operation id")
+		})?;
+		let operation = self
+			.with_transaction_operations(|operations| operations.remove(&sequence))
+			.ok_or_else(|| {
+				RuntimeFailure::host_failure(method, "unknown transaction operation id")
+			})?;
+		if operation.genesis_hash != request.genesis_hash {
+			self.with_transaction_operations(|operations| operations.insert(sequence, operation));
+			return Err(RuntimeFailure::host_failure(
+				method,
+				"transaction operation belongs to a different chain",
+			));
+		}
+		let connection = match self.connection_for(method, &request.genesis_hash).await {
+			Ok(connection) => connection,
+			Err(err) => {
+				self.with_transaction_operations(|operations| {
+					operations.insert(sequence, operation)
+				});
+				return Err(err);
+			},
+		};
+		match connection.methods.transaction_v1_stop(&operation.provider_operation_id).await {
+			Ok(()) => Ok(()),
+			Err(err) if transaction_operation_already_finished(&err) => Ok(()),
+			Err(err) => {
+				self.with_transaction_operations(|operations| {
+					operations.insert(sequence, operation)
+				});
+				Err(rpc_failure(method, err))
+			},
+		}
+	}
 
-        setup.await.map_err(|failure| failure.reclassify(method))
-    }
+	/// Runs `f` on the broadcast operations this scope started, and no other scope's.
+	fn with_transaction_operations<R>(
+		&self,
+		f: impl FnOnce(&mut ScopeTransactionOperations) -> R,
+	) -> R {
+		self.with_scope_group(&self.transaction_operations, BTreeMap::is_empty, f)
+	}
 
-    #[instrument(skip_all, fields(runtime.method = "chain_runtime.start_follow"))]
-    async fn start_follow(
-        &self,
-        local_follow_id: String,
-        request: RemoteChainHeadFollowRequest,
-        sender: mpsc::UnboundedSender<Result<RemoteChainHeadFollowItem, RuntimeFailure>>,
-        cancelled: Arc<AtomicBool>,
-    ) -> Result<(), RuntimeFailure> {
-        if cancelled.load(Ordering::SeqCst) {
-            return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
-        }
-        let connection = self
-            .connection_for(FOLLOW_METHOD, &request.genesis_hash)
-            .await?;
-        if cancelled.load(Ordering::SeqCst) {
-            return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
-        }
-        // Record this subscriber's sender before kicking off (or joining) the
-        // single-flight setup so events route to it regardless of which caller
-        // wins the setup.
-        connection.register_follow_intent(
-            &local_follow_id,
-            request.with_runtime,
-            sender,
-            cancelled,
-        );
-        if connection.follow_cancelled_or_missing(&local_follow_id) {
-            connection.unfollow(&local_follow_id);
-            return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
-        }
-        connection
-            .ensure_remote_follow(local_follow_id, request.with_runtime)
-            .await?;
-        Ok(())
-    }
+	/// Runs `f` on the follow intents this scope registered, and no other scope's.
+	fn with_follow_intents<R>(&self, f: impl FnOnce(&mut ScopeFollowIntents) -> R) -> R {
+		self.with_scope_group(&self.follow_intents, HashMap::is_empty, f)
+	}
 
-    #[instrument(skip_all, fields(runtime.method = "chain_runtime.ensure_follow_context", method = method))]
-    async fn ensure_follow_context(
-        &self,
-        method: &'static str,
-        connection: &Arc<ChainConnection>,
-        local_follow_id: String,
-        with_runtime: bool,
-    ) -> Result<String, RuntimeFailure> {
-        // The connection owns the sticky alias-to-transport binding, so it
-        // resolves first and always sees the alias the caller asked for. It can
-        // only answer once the follow exists, so a miss falls back to this
-        // chain's pending intent, waits for that setup, and lets the connection
-        // bind the alias afterwards.
-        let local_follow_id = match connection.resolve_local_follow_id(&local_follow_id) {
-            Some(resolved) => resolved,
-            None => {
-                let pending_id = self.resolve_local_follow_id(
-                    method,
-                    &connection.genesis_hash,
-                    &local_follow_id,
-                )?;
-                let follow_start = self
-                    .follow_starts
-                    .lock()
-                    .get(&(connection.genesis_hash.clone(), pending_id.clone()))
-                    .cloned();
-                if let Some(start) = follow_start {
-                    start.await.map_err(|failure| failure.reclassify(method))?;
-                }
-                connection
-                    .resolve_local_follow_id(&local_follow_id)
-                    .ok_or_else(|| {
-                        RuntimeFailure::host_failure(
-                            method,
-                            format!("unknown follow subscription id {local_follow_id:?}"),
-                        )
-                    })?
-            }
-        };
-        let remote_follow_id = connection
-            .require_remote_follow(method, local_follow_id.clone())
-            .await?;
-        if with_runtime && !connection.follow_with_runtime(&local_follow_id) {
-            return Err(RuntimeFailure::host_failure(
-                method,
-                "follow subscription was created without runtime metadata",
-            ));
-        }
-        Ok(remote_follow_id)
-    }
+	/// Runs `f` on this scope's group in `groups`, dropping the group once it is empty.
+	///
+	/// A released scope gets a throwaway group, so a call that finishes after
+	/// `release_scope` cannot bring the scope's entries back. The connections
+	/// lock is held throughout, and `release_scope` removes the scope from
+	/// `connections` before it touches `groups`, so the check cannot race it.
+	fn with_scope_group<Group: Default, R>(
+		&self,
+		groups: &Mutex<HashMap<ConnectionScope, Group>>,
+		is_empty: impl Fn(&Group) -> bool,
+		f: impl FnOnce(&mut Group) -> R,
+	) -> R {
+		let connections = self.connections.lock().unwrap();
+		if !connections.contains_key(&self.scope) {
+			return f(&mut Group::default());
+		}
+		let mut groups = groups.lock().unwrap();
+		let group = groups.entry(self.scope).or_default();
+		let result = f(group);
+		if is_empty(group) {
+			groups.remove(&self.scope);
+		}
+		result
+	}
 
-    /// Resolve an exact follow id or the Product SDK's provider-local alias.
-    ///
-    /// Alias candidates stay inside the requesting `cN:` product namespace.
-    /// A unique pending intent is eligible; multiple candidates fail closed.
-    fn resolve_local_follow_id(
-        &self,
-        method: &'static str,
-        genesis_hash: &[u8],
-        requested_follow_id: &str,
-    ) -> Result<String, RuntimeFailure> {
-        let key = encode_hex(genesis_hash);
-        let intents = self.follow_intents.lock().unwrap();
-        let intents = intents.get(&key);
-        if intents.is_some_and(|intents| intents.contains(requested_follow_id)) {
-            return Ok(requested_follow_id.to_string());
-        }
+	/// Records a follow's shared setup unless this scope has already been
+	/// released.
+	///
+	/// Holds the connections lock across the check and the insert for the same
+	/// reason [`Self::with_scope_group`] does: `release_scope` leaves
+	/// `connections` before it sweeps `follow_starts`, so a writer that sees
+	/// the scope cannot have its entry swept afterwards, and one that does not
+	/// see it never inserts. Without this the setup outlives the scope, and
+	/// `core_instance` never repeats, so nothing asks for that key again.
+	fn record_follow_start(&self, key: (Vec<u8>, String), start: LocalFollowStart) {
+		let connections = self.connections.lock().unwrap();
+		if !connections.contains_key(&self.scope) {
+			return;
+		}
+		self.follow_starts.lock().insert(key, start);
+	}
 
-        let requested_namespace = follow_product_namespace(requested_follow_id);
-        if let Some(intents) = intents
-            && (requested_namespace.is_some() || !requested_follow_id.contains(':'))
-        {
-            let mut candidates = intents.iter().filter(|intent| {
-                requested_namespace
-                    .is_none_or(|namespace| follow_product_namespace(intent) == Some(namespace))
-            });
-            if let Some(candidate) = candidates.next()
-                && candidates.next().is_none()
-            {
-                return Ok(candidate.clone());
-            }
-        }
-        Err(RuntimeFailure::host_failure(
-            method,
-            format!("unknown follow subscription id {requested_follow_id:?}"),
-        ))
-    }
+	/// Genesis-pinned Subxt client for the chain identified by `genesis_hash`.
+	/// The cached unit is the underlying Subxt connection bundle, not just
+	/// the cheap client handle.
+	///
+	/// Core scope only. The Subxt backend spawns a driver task holding a
+	/// `HostRpcClient` handle that nothing aborts, so a connection carrying one
+	/// never reaches a zero handle count and `release_scope` cannot close its
+	/// socket. The product-facing capability uses `remote_chain_*` instead,
+	/// which goes through `connection.methods` and spawns no such task.
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.online_client"))]
+	pub async fn online_client(
+		&self,
+		genesis_hash: &[u8],
+	) -> Result<OnlineClient<SubstrateConfig>, RuntimeFailure> {
+		debug_assert!(
+			matches!(self.scope, ConnectionScope::Core),
+			"the Subxt backend's driver task defeats release_scope on a product scope",
+		);
+		Ok(self.subxt_connection(genesis_hash).await?.client)
+	}
 
-    fn register_follow_intent(&self, genesis_hash: &[u8], local_follow_id: &str) {
-        self.follow_intents
-            .lock()
-            .unwrap()
-            .entry(encode_hex(genesis_hash))
-            .or_default()
-            .insert(local_follow_id.to_string());
-    }
+	/// Raw JSON-RPC client for the chain identified by `genesis_hash`.
+	pub async fn rpc_client(
+		&self,
+		method: &'static str,
+		genesis_hash: &[u8],
+	) -> Result<HostRpcClient, RuntimeFailure> {
+		Ok(self.connection_for(method, genesis_hash).await?.rpc_client.clone())
+	}
 
-    fn remove_follow_intent(&self, genesis_hash: &[u8], local_follow_id: &str) {
-        let key = encode_hex(genesis_hash);
-        let mut intents = self.follow_intents.lock().unwrap();
-        let remove_key = intents.get_mut(&key).is_some_and(|chain_intents| {
-            chain_intents.remove(local_follow_id);
-            chain_intents.is_empty()
-        });
-        if remove_key {
-            intents.remove(&key);
-        }
-    }
+	/// Legacy-RPC Subxt client for the chain identified by `genesis_hash`,
+	/// for reads at blocks a chainHead follow no longer pins.
+	///
+	/// Core scope only, for the same reason as [`Self::online_client`].
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.legacy_connection"))]
+	pub async fn legacy_connection(
+		&self,
+		genesis_hash: &[u8],
+	) -> Result<LegacyConnection, RuntimeFailure> {
+		self.connection_for(LEGACY_CONNECTION, genesis_hash)
+			.await?
+			.legacy_connection()
+			.await
+	}
 
-    #[instrument(skip_all, fields(runtime.method = "chain_runtime.cleanup_follow"))]
-    fn cleanup_follow(&self, genesis_hash: &[u8], local_follow_id: &str) {
-        self.remove_follow_intent(genesis_hash, local_follow_id);
-        self.follow_starts
-            .lock()
-            .remove(&(genesis_hash.to_vec(), local_follow_id.to_string()));
-        let key = encode_hex(genesis_hash);
-        let Some(connection) = self.connections.lock().unwrap().get(&key).cloned() else {
-            return;
-        };
-        connection.unfollow(local_follow_id);
-    }
+	async fn subxt_connection(
+		&self,
+		genesis_hash: &[u8],
+	) -> Result<SubxtConnection, RuntimeFailure> {
+		let connection = self.connection_for("subxt_connection", genesis_hash).await?;
+		connection.subxt_connection().await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.connection_for", method = method))]
+	async fn connection_for(
+		&self,
+		method: &'static str,
+		genesis_hash: &[u8],
+	) -> Result<Arc<ChainConnection>, RuntimeFailure> {
+		let key = self.connection_key(genesis_hash);
+		let setup = {
+			let mut scopes = self.connections.lock().unwrap();
+			let connections = scopes.get_mut(&self.scope).ok_or_else(|| scope_released(method))?;
+			match connections.get(&key) {
+				Some(ConnectionEntry::Ready(connection)) if !connection.is_closed() => {
+					return Ok(connection.clone());
+				},
+				Some(ConnectionEntry::Connecting { setup, .. }) => setup.clone(),
+				_ => {
+					let provider = self.provider.clone();
+					let spawner = self.spawner.clone();
+					let registry = Arc::downgrade(&self.connections);
+					let scope = self.scope;
+					let setup_key = key.clone();
+					let genesis_hash = genesis_hash.to_owned();
+					let identity = Arc::new(());
+					let setup_identity = identity.clone();
+					let setup: ConnectionSetup = async move {
+						let result = provider
+							.connect(genesis_hash.clone())
+							.await
+							.map(|rpc| ChainConnection::new(rpc, spawner, genesis_hash));
+						let registry =
+							registry.upgrade().ok_or_else(|| scope_released(CONNECT_METHOD))?;
+						let mut scopes = registry.lock().unwrap();
+						let connections =
+							scopes.get_mut(&scope).ok_or_else(|| scope_released(CONNECT_METHOD))?;
+						let Some(ConnectionEntry::Connecting { identity, .. }) =
+							connections.get(&setup_key)
+						else {
+							return Err(connection_superseded());
+						};
+						if !Arc::ptr_eq(identity, &setup_identity) {
+							return Err(connection_superseded());
+						}
+						match &result {
+							Ok(connection) => {
+								connections
+									.insert(setup_key, ConnectionEntry::Ready(connection.clone()));
+							},
+							Err(_) => {
+								connections.remove(&setup_key);
+							},
+						}
+						result
+					}
+					.boxed()
+					.shared();
+					connections.insert(
+						key,
+						ConnectionEntry::Connecting { identity, setup: setup.clone() },
+					);
+					setup
+				},
+			}
+		};
+
+		setup.await.map_err(|failure| failure.reclassify(method))
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.start_follow"))]
+	async fn start_follow(
+		&self,
+		local_follow_id: String,
+		request: RemoteChainHeadFollowRequest,
+		sender: mpsc::UnboundedSender<Result<RemoteChainHeadFollowItem, RuntimeFailure>>,
+		cancelled: Arc<AtomicBool>,
+	) -> Result<(), RuntimeFailure> {
+		if cancelled.load(Ordering::SeqCst) {
+			return Err(follow_closed());
+		}
+		let connection = self.connection_for(FOLLOW_METHOD, &request.genesis_hash).await?;
+		if cancelled.load(Ordering::SeqCst) {
+			return Err(follow_closed());
+		}
+		// Record this subscriber's sender before kicking off (or joining) the
+		// single-flight setup so events route to it regardless of which caller
+		// wins the setup.
+		connection.register_follow_intent(
+			&local_follow_id,
+			request.with_runtime,
+			sender,
+			cancelled,
+		);
+		if connection.follow_cancelled_or_missing(&local_follow_id) {
+			connection.unfollow(&local_follow_id);
+			return Err(follow_closed());
+		}
+		connection.ensure_remote_follow(local_follow_id, request.with_runtime).await?;
+		Ok(())
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.ensure_follow_context", method = method))]
+	async fn ensure_follow_context(
+		&self,
+		method: &'static str,
+		connection: &Arc<ChainConnection>,
+		local_follow_id: String,
+		with_runtime: bool,
+	) -> Result<String, RuntimeFailure> {
+		// The connection owns the sticky alias-to-transport binding, so it
+		// resolves first and always sees the alias the caller asked for. It can
+		// only answer once the follow exists, so a miss falls back to this
+		// chain's pending intent, waits for that setup, and lets the connection
+		// bind the alias afterwards.
+		let local_follow_id = match connection.resolve_local_follow_id(&local_follow_id) {
+			Some(resolved) => resolved,
+			None => {
+				let pending_id = self.resolve_local_follow_id(
+					method,
+					&connection.genesis_hash,
+					&local_follow_id,
+				)?;
+				let follow_start = self
+					.follow_starts
+					.lock()
+					.get(&(connection.genesis_hash.clone(), pending_id.clone()))
+					.cloned();
+				if let Some(start) = follow_start {
+					start.await.map_err(|failure| failure.reclassify(method))?;
+				}
+				connection.resolve_local_follow_id(&local_follow_id).ok_or_else(|| {
+					RuntimeFailure::host_failure(
+						method,
+						format!("unknown follow subscription id {local_follow_id:?}"),
+					)
+				})?
+			},
+		};
+		let remote_follow_id =
+			connection.require_remote_follow(method, local_follow_id.clone()).await?;
+		if with_runtime && !connection.follow_with_runtime(&local_follow_id) {
+			return Err(RuntimeFailure::host_failure(
+				method,
+				"follow subscription was created without runtime metadata",
+			));
+		}
+		Ok(remote_follow_id)
+	}
+
+	/// Resolve an exact follow id or the Product SDK's provider-local alias.
+	///
+	/// Alias candidates stay inside the requesting `cN:` product namespace.
+	/// A unique pending intent is eligible; multiple candidates fail closed.
+	fn resolve_local_follow_id(
+		&self,
+		method: &'static str,
+		genesis_hash: &[u8],
+		requested_follow_id: &str,
+	) -> Result<String, RuntimeFailure> {
+		let key = self.connection_key(genesis_hash);
+		let intents = self.follow_intents.lock().unwrap();
+		let intents = intents.get(&self.scope).and_then(|chains| chains.get(&key));
+		if intents.is_some_and(|intents| intents.contains(requested_follow_id)) {
+			return Ok(requested_follow_id.to_string());
+		}
+
+		let requested_namespace = follow_product_namespace(requested_follow_id);
+		if let Some(intents) = intents &&
+			(requested_namespace.is_some() || !requested_follow_id.contains(':'))
+		{
+			let mut candidates = intents.iter().filter(|intent| {
+				requested_namespace
+					.is_none_or(|namespace| follow_product_namespace(intent) == Some(namespace))
+			});
+			if let Some(candidate) = candidates.next() &&
+				candidates.next().is_none()
+			{
+				return Ok(candidate.clone());
+			}
+		}
+		Err(RuntimeFailure::host_failure(
+			method,
+			format!("unknown follow subscription id {requested_follow_id:?}"),
+		))
+	}
+
+	fn register_follow_intent(&self, genesis_hash: &[u8], local_follow_id: &str) {
+		let key = self.connection_key(genesis_hash);
+		self.with_follow_intents(|chains| {
+			chains.entry(key).or_default().insert(local_follow_id.to_string());
+		});
+	}
+
+	fn remove_follow_intent(&self, genesis_hash: &[u8], local_follow_id: &str) {
+		let key = self.connection_key(genesis_hash);
+		self.with_follow_intents(|chains| {
+			let emptied = chains.get_mut(&key).is_some_and(|chain_intents| {
+				chain_intents.remove(local_follow_id);
+				chain_intents.is_empty()
+			});
+			if emptied {
+				chains.remove(&key);
+			}
+		});
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "chain_runtime.cleanup_follow"))]
+	fn cleanup_follow(&self, genesis_hash: &[u8], local_follow_id: &str) {
+		self.remove_follow_intent(genesis_hash, local_follow_id);
+		self.follow_starts
+			.lock()
+			.remove(&(genesis_hash.to_vec(), local_follow_id.to_string()));
+		let key = self.connection_key(genesis_hash);
+		let Some(connection) = self
+			.connections
+			.lock()
+			.unwrap()
+			.get(&self.scope)
+			.and_then(|connections| connections.get(&key))
+			.and_then(ConnectionEntry::ready)
+			.cloned()
+		else {
+			return;
+		};
+		connection.unfollow(local_follow_id);
+	}
+}
+
+enum ConnectionEntry {
+	Connecting { identity: Arc<()>, setup: ConnectionSetup },
+	Ready(Arc<ChainConnection>),
+}
+
+impl ConnectionEntry {
+	fn ready(&self) -> Option<&Arc<ChainConnection>> {
+		match self {
+			Self::Connecting { .. } => None,
+			Self::Ready(connection) => Some(connection),
+		}
+	}
 }
 
 struct ChainConnection {
-    rpc_client: HostRpcClient,
-    methods: ChainHeadRpcMethods<TruapiRpcConfig>,
-    spawner: Spawner,
-    /// Host-configured genesis hash this connection was opened for; pins the
-    /// cached Subxt bundle's chain config.
-    genesis_hash: Vec<u8>,
-    follows: Mutex<HashMap<String, FollowState>>,
-    follow_setups: Mutex<HashMap<String, FollowSetup>>,
-    /// Cached Subxt bundle setup tagged with its generation, so invalidation
-    /// (on setup failure or backend-driver exit) can never evict a newer
-    /// rebuild.
-    subxt_connection_setup: Mutex<Option<(u64, SubxtConnectionSetup)>>,
-    subxt_connection_generation: AtomicU64,
-    /// Config shared by every Subxt client on this connection, so they share
-    /// one metadata cache.
-    chain_config: OnceLock<SubstrateConfig>,
-    legacy_connection: Mutex<Option<LegacyConnection>>,
+	/// This connection's handle on the host's socket. Both this and the clone
+	/// inside `methods` count, so the socket closes once every holder is gone.
+	rpc_client: HostRpcClient,
+	/// Typed `chainHead_v1` calls over the same client.
+	methods: ChainHeadRpcMethods<TruapiRpcConfig>,
+	spawner: Spawner,
+	/// Host-configured genesis hash this connection was opened for; pins the
+	/// cached Subxt bundle's chain config.
+	genesis_hash: Vec<u8>,
+	/// Live follows on this connection, keyed by local follow id. Entries are
+	/// recorded on intent and gain a remote id once the node acknowledges one,
+	/// so a count of these is not a count of follows the node knows about.
+	follows: Mutex<HashMap<String, FollowState>>,
+	/// Follow setup in flight, so concurrent callers for one local id await a
+	/// single remote subscription rather than each opening one.
+	follow_setups: Mutex<HashMap<String, FollowSetup>>,
+	/// Cached Subxt bundle setup tagged with its generation, so invalidation
+	/// (on setup failure or backend-driver exit) can never evict a newer
+	/// rebuild.
+	subxt_connection_setup: Mutex<Option<(u64, SubxtConnectionSetup)>>,
+	subxt_connection_generation: AtomicU64,
+	/// Config shared by every Subxt client on this connection, so they share
+	/// one metadata cache.
+	chain_config: OnceLock<SubstrateConfig>,
+	legacy_connection: Mutex<Option<LegacyConnection>>,
 }
 
 impl ChainConnection {
-    fn new(rpc: Arc<dyn JsonRpcConnection>, spawner: Spawner, genesis_hash: Vec<u8>) -> Arc<Self> {
-        let rpc_client = HostRpcClient::new(rpc, spawner.clone());
-        let methods = ChainHeadRpcMethods::new(RpcClient::new(rpc_client.clone()));
-        Arc::new(Self {
-            rpc_client,
-            methods,
-            spawner,
-            genesis_hash,
-            follows: Mutex::new(HashMap::new()),
-            follow_setups: Mutex::new(HashMap::new()),
-            subxt_connection_setup: Mutex::new(None),
-            subxt_connection_generation: AtomicU64::new(0),
-            chain_config: OnceLock::new(),
-            legacy_connection: Mutex::new(None),
-        })
-    }
+	fn new(rpc: Arc<dyn JsonRpcConnection>, spawner: Spawner, genesis_hash: Vec<u8>) -> Arc<Self> {
+		let rpc_client = HostRpcClient::new(rpc, spawner.clone());
+		let methods = ChainHeadRpcMethods::new(RpcClient::new(rpc_client.clone()));
+		Arc::new(Self {
+			rpc_client,
+			methods,
+			spawner,
+			genesis_hash,
+			follows: Mutex::new(HashMap::new()),
+			follow_setups: Mutex::new(HashMap::new()),
+			subxt_connection_setup: Mutex::new(None),
+			subxt_connection_generation: AtomicU64::new(0),
+			chain_config: OnceLock::new(),
+			legacy_connection: Mutex::new(None),
+		})
+	}
 
-    fn is_closed(&self) -> bool {
-        self.rpc_client.is_closed()
-    }
+	fn is_closed(&self) -> bool {
+		self.rpc_client.is_closed()
+	}
 
-    /// Lazily build (single-flight) and cache the Subxt bundle over this
-    /// connection's transport. The chain config pins the host-configured
-    /// genesis hash, so Subxt never reads a provider-echoed one, and the
-    /// backend follow started here is shared by every user of this connection.
-    async fn subxt_connection(self: &Arc<Self>) -> Result<SubxtConnection, RuntimeFailure> {
-        let (generation, setup) = {
-            let mut slot = self.subxt_connection_setup.lock().unwrap();
-            if let Some(existing) = slot.clone() {
-                existing
-            } else {
-                let generation = self
-                    .subxt_connection_generation
-                    .fetch_add(1, Ordering::Relaxed)
-                    + 1;
-                let connection = self.clone();
-                let setup: SubxtConnectionSetup =
-                    async move { connection.build_subxt_connection(generation).await }
-                        .boxed()
-                        .shared();
-                *slot = Some((generation, setup.clone()));
-                (generation, setup)
-            }
-        };
-        let result = setup.await;
-        // On failure, drop the cached setup so a later call can retry.
-        if result.is_err() {
-            self.invalidate_subxt_connection(generation);
-        }
-        result
-    }
+	/// Lazily build (single-flight) and cache the Subxt bundle over this
+	/// connection's transport. The chain config pins the host-configured
+	/// genesis hash, so Subxt never reads a provider-echoed one, and the
+	/// backend follow started here is shared by every user of this connection.
+	async fn subxt_connection(self: &Arc<Self>) -> Result<SubxtConnection, RuntimeFailure> {
+		let (generation, setup) = {
+			let mut slot = self.subxt_connection_setup.lock().unwrap();
+			if let Some(existing) = slot.clone() {
+				existing
+			} else {
+				let generation =
+					self.subxt_connection_generation.fetch_add(1, Ordering::Relaxed) + 1;
+				let connection = self.clone();
+				let setup: SubxtConnectionSetup =
+					async move { connection.build_subxt_connection(generation).await }
+						.boxed()
+						.shared();
+				*slot = Some((generation, setup.clone()));
+				(generation, setup)
+			}
+		};
+		let result = setup.await;
+		// On failure, drop the cached setup so a later call can retry.
+		if result.is_err() {
+			self.invalidate_subxt_connection(generation);
+		}
+		result
+	}
 
-    /// Drop the cached Subxt setup if it still belongs to `generation`;
-    /// stale invalidations (an old driver exiting after a rebuild) are
-    /// ignored.
-    fn invalidate_subxt_connection(&self, generation: u64) {
-        let mut slot = self.subxt_connection_setup.lock().unwrap();
-        if slot
-            .as_ref()
-            .is_some_and(|(cached, _)| *cached == generation)
-        {
-            *slot = None;
-        }
-    }
+	/// Drop the cached Subxt setup if it still belongs to `generation`;
+	/// stale invalidations (an old driver exiting after a rebuild) are
+	/// ignored.
+	fn invalidate_subxt_connection(&self, generation: u64) {
+		let mut slot = self.subxt_connection_setup.lock().unwrap();
+		if slot.as_ref().is_some_and(|(cached, _)| *cached == generation) {
+			*slot = None;
+		}
+	}
 
-    /// Body of the single-flight Subxt setup: start the chainHead backend,
-    /// drive it on the connection's spawner, and build the client with the
-    /// config-pinned genesis hash.
-    async fn build_subxt_connection(
-        self: Arc<Self>,
-        generation: u64,
-    ) -> Result<SubxtConnection, RuntimeFailure> {
-        const METHOD: &str = "subxt_connection";
-        let config = self.chain_config(METHOD)?;
-        let (backend, mut driver) = ChainHeadBackend::<SubstrateConfig>::builder()
-            .build(RpcClient::new(self.rpc_client.clone()));
-        // The pump holds only a weak handle so a torn-down connection is not
-        // kept alive by its own driver task.
-        let pump_connection = Arc::downgrade(&self);
-        (self.spawner)(
-            async move {
-                while let Some(result) = driver.next().await {
-                    if let Err(error) = result {
-                        tracing::debug!(target: "subxt", "chainHead backend error={error}");
-                    }
-                }
-                // The backend can make no further progress; drop the cached
-                // Subxt bundle so the next caller rebuilds instead of hitting
-                // a permanently dead backend.
-                if let Some(connection) = pump_connection.upgrade() {
-                    connection.invalidate_subxt_connection(generation);
-                }
-            }
-            .boxed(),
-        );
-        let backend = Arc::new(backend);
-        let client = OnlineClient::from_backend_with_config(config, backend.clone())
-            .await
-            .map_err(|error| RuntimeFailure::host_failure(METHOD, error.to_string()))?;
-        Ok(SubxtConnection { client })
-    }
+	/// Body of the single-flight Subxt setup: start the chainHead backend,
+	/// drive it on the connection's spawner, and build the client with the
+	/// config-pinned genesis hash.
+	async fn build_subxt_connection(
+		self: Arc<Self>,
+		generation: u64,
+	) -> Result<SubxtConnection, RuntimeFailure> {
+		const METHOD: &str = "subxt_connection";
+		let config = self.chain_config(METHOD)?;
+		let (backend, mut driver) = ChainHeadBackend::<SubstrateConfig>::builder()
+			.build(RpcClient::new(self.rpc_client.clone()));
+		// The pump holds only a weak handle so a torn-down connection is not
+		// kept alive by its own driver task.
+		let pump_connection = Arc::downgrade(&self);
+		(self.spawner)(
+			async move {
+				while let Some(result) = driver.next().await {
+					if let Err(error) = result {
+						tracing::debug!(target: "subxt", "chainHead backend error={error}");
+					}
+				}
+				// The backend can make no further progress; drop the cached
+				// Subxt bundle so the next caller rebuilds instead of hitting
+				// a permanently dead backend.
+				if let Some(connection) = pump_connection.upgrade() {
+					connection.invalidate_subxt_connection(generation);
+				}
+			}
+			.boxed(),
+		);
+		let backend = Arc::new(backend);
+		let client = OnlineClient::from_backend_with_config(config, backend.clone())
+			.await
+			.map_err(|error| RuntimeFailure::host_failure(METHOD, error.to_string()))?;
+		Ok(SubxtConnection { client })
+	}
 
-    /// The config every Subxt client on this connection is built with. It
-    /// pins the host-configured genesis hash, so Subxt never reads a
-    /// provider-echoed one.
-    fn chain_config(&self, method: &'static str) -> Result<SubstrateConfig, RuntimeFailure> {
-        if let Some(config) = self.chain_config.get() {
-            return Ok(config.clone());
-        }
-        let genesis_hash: [u8; 32] = self.genesis_hash.as_slice().try_into().map_err(|_| {
-            RuntimeFailure::host_failure(
-                method,
-                format!(
-                    "expected 32-byte genesis hash, got {}",
-                    self.genesis_hash.len()
-                ),
-            )
-        })?;
-        Ok(self
-            .chain_config
-            .get_or_init(|| {
-                SubstrateConfigBuilder::new()
-                    .set_genesis_hash(H256(genesis_hash))
-                    .build()
-            })
-            .clone())
-    }
+	/// The config every Subxt client on this connection is built with. It
+	/// pins the host-configured genesis hash, so Subxt never reads a
+	/// provider-echoed one.
+	fn chain_config(&self, method: &'static str) -> Result<SubstrateConfig, RuntimeFailure> {
+		if let Some(config) = self.chain_config.get() {
+			return Ok(config.clone());
+		}
+		let genesis_hash: [u8; 32] = self.genesis_hash.as_slice().try_into().map_err(|_| {
+			RuntimeFailure::host_failure(
+				method,
+				format!("expected 32-byte genesis hash, got {}", self.genesis_hash.len()),
+			)
+		})?;
+		Ok(self
+			.chain_config
+			.get_or_init(|| {
+				SubstrateConfigBuilder::new().set_genesis_hash(H256(genesis_hash)).build()
+			})
+			.clone())
+	}
 
-    /// Lazily build and cache the legacy Subxt client. Building it sends no
-    /// request and starts no background task, so concurrent first callers
-    /// may each build one; the first one stored is kept.
-    async fn legacy_connection(&self) -> Result<LegacyConnection, RuntimeFailure> {
-        if let Some(existing) = self.legacy_connection.lock().unwrap().clone() {
-            return Ok(existing);
-        }
-        let config = self.chain_config(LEGACY_CONNECTION)?;
-        let rpc = RpcClient::new(self.rpc_client.clone());
-        let backend = Arc::new(LegacyBackend::builder().build(rpc.clone()));
-        let client = OnlineClient::from_backend_with_config(config, backend.clone())
-            .await
-            .map_err(|error| RuntimeFailure::host_failure(LEGACY_CONNECTION, error.to_string()))?;
-        let built = LegacyConnection {
-            client,
-            backend,
-            methods: LegacyRpcMethods::new(rpc),
-        };
-        Ok(self
-            .legacy_connection
-            .lock()
-            .unwrap()
-            .get_or_insert(built)
-            .clone())
-    }
+	/// Lazily build and cache the legacy Subxt client. Building it sends no
+	/// request and starts no background task, so concurrent first callers
+	/// may each build one; the first one stored is kept.
+	async fn legacy_connection(&self) -> Result<LegacyConnection, RuntimeFailure> {
+		if let Some(existing) = self.legacy_connection.lock().unwrap().clone() {
+			return Ok(existing);
+		}
+		let config = self.chain_config(LEGACY_CONNECTION)?;
+		let rpc = RpcClient::new(self.rpc_client.clone());
+		let backend = Arc::new(LegacyBackend::builder().build(rpc.clone()));
+		let client = OnlineClient::from_backend_with_config(config, backend.clone())
+			.await
+			.map_err(|error| RuntimeFailure::host_failure(LEGACY_CONNECTION, error.to_string()))?;
+		let built = LegacyConnection { client, backend, methods: LegacyRpcMethods::new(rpc) };
+		Ok(self.legacy_connection.lock().unwrap().get_or_insert(built).clone())
+	}
 
-    /// Whether the already-resolved follow was registered with runtime metadata.
-    fn follow_with_runtime(&self, local_follow_id: &str) -> bool {
-        self.follows
-            .lock()
-            .unwrap()
-            .get(local_follow_id)
-            .is_some_and(|follow| follow.with_runtime)
-    }
+	/// Whether the already-resolved follow was registered with runtime metadata.
+	fn follow_with_runtime(&self, local_follow_id: &str) -> bool {
+		self.follows
+			.lock()
+			.unwrap()
+			.get(local_follow_id)
+			.is_some_and(|follow| follow.with_runtime)
+	}
 
-    /// Resolve the product-visible follow id to the transport-owned follow.
-    ///
-    /// Product adapters assign their own ids (for example `follow_0`) after
-    /// starting a subscription, while the dispatcher keys that subscription
-    /// by its transport request id. The first follow-bound request claims the
-    /// sole unaliased follow for this chain; later requests reuse that alias.
-    fn resolve_local_follow_id(&self, requested_id: &str) -> Option<String> {
-        let mut follows = self.follows.lock().unwrap();
+	/// Resolve the product-visible follow id to the transport-owned follow.
+	///
+	/// Product adapters assign their own ids (for example `follow_0`) after
+	/// starting a subscription, while the dispatcher keys that subscription
+	/// by its transport request id. The first follow-bound request claims the
+	/// sole unaliased follow for this chain; later requests reuse that alias.
+	fn resolve_local_follow_id(&self, requested_id: &str) -> Option<String> {
+		let mut follows = self.follows.lock().unwrap();
 
-        if follows.contains_key(requested_id) {
-            return Some(requested_id.to_string());
-        }
+		if follows.contains_key(requested_id) {
+			return Some(requested_id.to_string());
+		}
 
-        if let Some((local_follow_id, _)) = follows
-            .iter()
-            .find(|(_, follow)| follow.client_subscription_id.as_deref() == Some(requested_id))
-        {
-            return Some(local_follow_id.clone());
-        }
+		if let Some((local_follow_id, _)) = follows
+			.iter()
+			.find(|(_, follow)| follow.client_subscription_id.as_deref() == Some(requested_id))
+		{
+			return Some(local_follow_id.clone());
+		}
 
-        let unaliased: Vec<_> = follows
-            .iter()
-            .filter(|(_, follow)| follow.client_subscription_id.is_none())
-            .map(|(local_follow_id, _)| local_follow_id.clone())
-            .take(2)
-            .collect();
+		let unaliased: Vec<_> = follows
+			.iter()
+			.filter(|(_, follow)| follow.client_subscription_id.is_none())
+			.map(|(local_follow_id, _)| local_follow_id.clone())
+			.take(2)
+			.collect();
 
-        let [local_follow_id] = unaliased.as_slice() else {
-            return None;
-        };
+		let [local_follow_id] = unaliased.as_slice() else {
+			return None;
+		};
 
-        follows
-            .get_mut(local_follow_id)
-            .expect("unaliased follow still exists")
-            .client_subscription_id = Some(requested_id.to_string());
+		follows
+			.get_mut(local_follow_id)
+			.expect("unaliased follow still exists")
+			.client_subscription_id = Some(requested_id.to_string());
 
-        Some(local_follow_id.clone())
-    }
+		Some(local_follow_id.clone())
+	}
 
-    fn remote_follow_id(&self, local_follow_id: &str) -> Option<String> {
-        self.follows
-            .lock()
-            .unwrap()
-            .get(local_follow_id)
-            .and_then(|follow| follow.remote_subscription_id.clone())
-    }
+	fn remote_follow_id(&self, local_follow_id: &str) -> Option<String> {
+		self.follows
+			.lock()
+			.unwrap()
+			.get(local_follow_id)
+			.and_then(|follow| follow.remote_subscription_id.clone())
+	}
 
-    /// Record intent to follow `local_follow_id`, attaching `sender` for a
-    /// follow subscriber. Idempotent: an existing follow keeps its
-    /// `with_runtime` flag and remote id; only the sender is (re)attached.
-    fn register_follow_intent(
-        &self,
-        local_follow_id: &str,
-        with_runtime: bool,
-        sender: mpsc::UnboundedSender<Result<RemoteChainHeadFollowItem, RuntimeFailure>>,
-        cancelled: Arc<AtomicBool>,
-    ) {
-        let mut follows = self.follows.lock().unwrap();
-        match follows.get_mut(local_follow_id) {
-            Some(follow) => {
-                follow.sender = sender;
-                follow.cancelled = cancelled;
-            }
-            None => {
-                follows.insert(
-                    local_follow_id.to_string(),
-                    FollowState {
-                        with_runtime,
-                        client_subscription_id: None,
-                        remote_subscription_id: None,
-                        abort: None,
-                        sender,
-                        cancelled,
-                    },
-                );
-            }
-        }
-    }
+	/// Record intent to follow `local_follow_id`, attaching `sender` for a
+	/// follow subscriber. Idempotent: an existing follow keeps its
+	/// `with_runtime` flag and remote id; only the sender is (re)attached.
+	fn register_follow_intent(
+		&self,
+		local_follow_id: &str,
+		with_runtime: bool,
+		sender: mpsc::UnboundedSender<Result<RemoteChainHeadFollowItem, RuntimeFailure>>,
+		cancelled: Arc<AtomicBool>,
+	) {
+		let mut follows = self.follows.lock().unwrap();
+		match follows.get_mut(local_follow_id) {
+			Some(follow) => {
+				follow.sender = sender;
+				follow.cancelled = cancelled;
+			},
+			None => {
+				follows.insert(
+					local_follow_id.to_string(),
+					FollowState {
+						with_runtime,
+						client_subscription_id: None,
+						remote_subscription_id: None,
+						abort: None,
+						sender,
+						cancelled,
+					},
+				);
+			},
+		}
+	}
 
-    fn follow_cancelled_or_missing(&self, local_follow_id: &str) -> bool {
-        match self.follows.lock().unwrap().get(local_follow_id) {
-            Some(follow) => follow.cancelled.load(Ordering::SeqCst),
-            None => true,
-        }
-    }
+	fn follow_cancelled_or_missing(&self, local_follow_id: &str) -> bool {
+		match self.follows.lock().unwrap().get(local_follow_id) {
+			Some(follow) => follow.cancelled.load(Ordering::SeqCst),
+			None => true,
+		}
+	}
 
-    /// Issue `chainHead_v1_follow` exactly once per local follow id and return
-    /// the remote subscription id. Concurrent callers for the same id share
-    /// one in-flight setup instead of each opening a duplicate remote
-    /// subscription that would then leak.
-    #[instrument(skip_all, fields(runtime.method = "chain_connection.ensure_remote_follow"))]
-    async fn ensure_remote_follow(
-        self: &Arc<Self>,
-        local_follow_id: String,
-        with_runtime: bool,
-    ) -> Result<String, RuntimeFailure> {
-        if self.follow_cancelled_or_missing(&local_follow_id) {
-            return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
-        }
-        if let Some(remote_follow_id) = self.remote_follow_id(&local_follow_id) {
-            return Ok(remote_follow_id);
-        }
+	/// Issue `chainHead_v1_follow` exactly once per local follow id and return
+	/// the remote subscription id. Concurrent callers for the same id share
+	/// one in-flight setup instead of each opening a duplicate remote
+	/// subscription that would then leak.
+	#[instrument(skip_all, fields(runtime.method = "chain_connection.ensure_remote_follow"))]
+	async fn ensure_remote_follow(
+		self: &Arc<Self>,
+		local_follow_id: String,
+		with_runtime: bool,
+	) -> Result<String, RuntimeFailure> {
+		if self.follow_cancelled_or_missing(&local_follow_id) {
+			return Err(follow_closed());
+		}
+		if let Some(remote_follow_id) = self.remote_follow_id(&local_follow_id) {
+			return Ok(remote_follow_id);
+		}
 
-        let setup = {
-            let mut setups = self.follow_setups.lock().unwrap();
-            if let Some(existing) = setups.get(&local_follow_id) {
-                existing.clone()
-            } else {
-                let connection = self.clone();
-                let id = local_follow_id.clone();
-                let setup: FollowSetup =
-                    async move { connection.run_follow_setup(id, with_runtime).await }
-                        .boxed()
-                        .shared();
-                setups.insert(local_follow_id.clone(), setup.clone());
-                setup
-            }
-        };
+		let setup = {
+			let mut setups = self.follow_setups.lock().unwrap();
+			if let Some(existing) = setups.get(&local_follow_id) {
+				existing.clone()
+			} else {
+				let connection = self.clone();
+				let id = local_follow_id.clone();
+				let setup: FollowSetup =
+					async move { connection.run_follow_setup(id, with_runtime).await }
+						.boxed()
+						.shared();
+				setups.insert(local_follow_id.clone(), setup.clone());
+				setup
+			}
+		};
 
-        let result = setup.await;
-        // On failure, drop the cached setup so a later re-subscribe can retry.
-        // On success the established follow short-circuits the fast path above,
-        // and `remove_follow` clears the entry at teardown.
-        if result.is_err() {
-            self.follow_setups.lock().unwrap().remove(&local_follow_id);
-        }
-        result
-    }
+		let result = setup.await;
+		// On failure, drop the cached setup so a later re-subscribe can retry.
+		// On success the established follow short-circuits the fast path above,
+		// and `remove_follow` clears the entry at teardown.
+		if result.is_err() {
+			self.follow_setups.lock().unwrap().remove(&local_follow_id);
+		}
+		result
+	}
 
-    /// Return the remote follow id for an already-created local follow.
-    ///
-    /// Follow-bound request methods must not create remote follows themselves:
-    /// the local follow stream owns cleanup, so only `follow_head_subscribe`
-    /// may establish the remote subscription.
-    #[instrument(skip_all, fields(runtime.method = "chain_connection.require_remote_follow"))]
-    async fn require_remote_follow(
-        self: &Arc<Self>,
-        method: &'static str,
-        local_follow_id: String,
-    ) -> Result<String, RuntimeFailure> {
-        if let Some(remote_follow_id) = self.remote_follow_id(&local_follow_id) {
-            return Ok(remote_follow_id);
-        }
+	/// Return the remote follow id for an already-created local follow.
+	///
+	/// Follow-bound request methods must not create remote follows themselves:
+	/// the local follow stream owns cleanup, so only `follow_head_subscribe`
+	/// may establish the remote subscription.
+	#[instrument(skip_all, fields(runtime.method = "chain_connection.require_remote_follow"))]
+	async fn require_remote_follow(
+		self: &Arc<Self>,
+		method: &'static str,
+		local_follow_id: String,
+	) -> Result<String, RuntimeFailure> {
+		if let Some(remote_follow_id) = self.remote_follow_id(&local_follow_id) {
+			return Ok(remote_follow_id);
+		}
 
-        let setup = self
-            .follow_setups
-            .lock()
-            .unwrap()
-            .get(&local_follow_id)
-            .cloned();
+		let setup = self.follow_setups.lock().unwrap().get(&local_follow_id).cloned();
 
-        match setup {
-            Some(setup) => setup.await.map_err(|failure| failure.reclassify(method)),
-            None => Err(RuntimeFailure::host_failure(
-                method,
-                format!("follow subscription {local_follow_id:?} is not established"),
-            )),
-        }
-    }
+		match setup {
+			Some(setup) => setup.await.map_err(|failure| failure.reclassify(method)),
+			None => Err(RuntimeFailure::host_failure(
+				method,
+				format!("follow subscription {local_follow_id:?} is not established"),
+			)),
+		}
+	}
 
-    /// Body of the single-flight follow setup: ensure the `FollowState`
-    /// exists, issue `chainHead_v1_follow`, and record the remote id.
-    #[instrument(skip_all, fields(runtime.method = "chain_connection.run_follow_setup"))]
-    async fn run_follow_setup(
-        self: Arc<Self>,
-        local_follow_id: String,
-        with_runtime: bool,
-    ) -> Result<String, RuntimeFailure> {
-        if self.follow_cancelled_or_missing(&local_follow_id) {
-            self.remove_follow(&local_follow_id);
-            return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
-        }
-        let mut follow = self
-            .methods
-            .chainhead_v1_follow(with_runtime)
-            .await
-            .map_err(|err| {
-                self.remove_follow(&local_follow_id);
-                rpc_failure(FOLLOW_METHOD, err)
-            })?;
-        let remote_follow_id = follow
-            .subscription_id()
-            .ok_or_else(|| {
-                self.remove_follow(&local_follow_id);
-                RuntimeFailure::host_failure(FOLLOW_METHOD, "missing follow subscription id")
-            })?
-            .to_string();
-        if self.follow_cancelled_or_missing(&local_follow_id) {
-            self.remove_follow(&local_follow_id);
-            drop(follow);
-            return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
-        }
+	/// Body of the single-flight follow setup: ensure the `FollowState`
+	/// exists, issue `chainHead_v1_follow`, and record the remote id.
+	#[instrument(skip_all, fields(runtime.method = "chain_connection.run_follow_setup"))]
+	async fn run_follow_setup(
+		self: Arc<Self>,
+		local_follow_id: String,
+		with_runtime: bool,
+	) -> Result<String, RuntimeFailure> {
+		if self.follow_cancelled_or_missing(&local_follow_id) {
+			self.remove_follow(&local_follow_id);
+			return Err(follow_closed());
+		}
+		let mut follow = self.methods.chainhead_v1_follow(with_runtime).await.map_err(|err| {
+			self.remove_follow(&local_follow_id);
+			rpc_failure(FOLLOW_METHOD, err)
+		})?;
+		let remote_follow_id = follow
+			.subscription_id()
+			.ok_or_else(|| {
+				self.remove_follow(&local_follow_id);
+				RuntimeFailure::host_failure(FOLLOW_METHOD, "missing follow subscription id")
+			})?
+			.to_string();
+		if self.follow_cancelled_or_missing(&local_follow_id) {
+			self.remove_follow(&local_follow_id);
+			drop(follow);
+			return Err(follow_closed());
+		}
 
-        let (abort, abort_registration) = AbortHandle::new_pair();
-        let connection = self.clone();
-        let pump_follow_id = local_follow_id.clone();
-        let pump = async move {
-            while let Some(item) = follow.next().await {
-                match item {
-                    Ok(event) => match map_follow_event(event) {
-                        Ok(item) => {
-                            let is_stop = matches!(item, RemoteChainHeadFollowItem::Stop);
-                            connection.deliver_follow_event(&pump_follow_id, item);
-                            if is_stop {
-                                break;
-                            }
-                        }
-                        Err(failure) => {
-                            connection.interrupt_follow(&pump_follow_id, failure);
-                            break;
-                        }
-                    },
-                    Err(error) => {
-                        connection
-                            .interrupt_follow(&pump_follow_id, rpc_failure(FOLLOW_METHOD, error));
-                        break;
-                    }
-                }
-            }
-            connection.remove_follow_without_abort(&pump_follow_id);
-        };
+		let (abort, abort_registration) = AbortHandle::new_pair();
+		let connection = self.clone();
+		let pump_follow_id = local_follow_id.clone();
+		let pump = async move {
+			while let Some(item) = follow.next().await {
+				match item {
+					Ok(event) => match map_follow_event(event) {
+						Ok(item) => {
+							let is_stop = matches!(item, RemoteChainHeadFollowItem::Stop);
+							connection.deliver_follow_event(&pump_follow_id, item);
+							if is_stop {
+								break;
+							}
+						},
+						Err(failure) => {
+							connection.interrupt_follow(&pump_follow_id, failure);
+							break;
+						},
+					},
+					Err(error) => {
+						connection
+							.interrupt_follow(&pump_follow_id, rpc_failure(FOLLOW_METHOD, error));
+						break;
+					},
+				}
+			}
+			connection.remove_follow_without_abort(&pump_follow_id);
+		};
 
-        if !self.attach_remote_follow(&local_follow_id, remote_follow_id.clone(), abort) {
-            return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
-        }
+		if !self.attach_remote_follow(&local_follow_id, remote_follow_id.clone(), abort) {
+			return Err(follow_closed());
+		}
 
-        (self.spawner)(Abortable::new(pump, abort_registration).map(|_| ()).boxed());
-        Ok(remote_follow_id)
-    }
+		(self.spawner)(Abortable::new(pump, abort_registration).map(|_| ()).boxed());
+		Ok(remote_follow_id)
+	}
 
-    fn attach_remote_follow(
-        &self,
-        local_follow_id: &str,
-        remote_follow_id: String,
-        abort: AbortHandle,
-    ) -> bool {
-        let mut follows = self.follows.lock().unwrap();
-        let Some(follow) = follows.get_mut(local_follow_id) else {
-            return false;
-        };
-        follow.remote_subscription_id = Some(remote_follow_id);
-        follow.abort = Some(abort);
-        true
-    }
+	fn attach_remote_follow(
+		&self,
+		local_follow_id: &str,
+		remote_follow_id: String,
+		abort: AbortHandle,
+	) -> bool {
+		let mut follows = self.follows.lock().unwrap();
+		let Some(follow) = follows.get_mut(local_follow_id) else {
+			return false;
+		};
+		follow.remote_subscription_id = Some(remote_follow_id);
+		follow.abort = Some(abort);
+		true
+	}
 
-    fn remove_follow(&self, local_follow_id: &str) {
-        self.follow_setups.lock().unwrap().remove(local_follow_id);
-        if let Some(mut follow) = self.follows.lock().unwrap().remove(local_follow_id)
-            && let Some(abort) = follow.abort.take()
-        {
-            abort.abort();
-        }
-    }
+	/// Abort every follow pump on this connection.
+	///
+	/// A pump holds a strong handle to the connection, so while one runs the
+	/// connection cannot drop and the host's socket stays open.
+	fn abort_all_follows(&self) {
+		let ids: Vec<String> = self.follows.lock().unwrap().keys().cloned().collect();
+		for id in ids {
+			self.remove_follow(&id);
+		}
+	}
 
-    fn remove_follow_without_abort(&self, local_follow_id: &str) {
-        self.follow_setups.lock().unwrap().remove(local_follow_id);
-        self.follows.lock().unwrap().remove(local_follow_id);
-    }
+	fn remove_follow(&self, local_follow_id: &str) {
+		self.follow_setups.lock().unwrap().remove(local_follow_id);
+		if let Some(mut follow) = self.follows.lock().unwrap().remove(local_follow_id) &&
+			let Some(abort) = follow.abort.take()
+		{
+			abort.abort();
+		}
+	}
 
-    fn unfollow(&self, local_follow_id: &str) {
-        self.remove_follow(local_follow_id);
-    }
+	fn remove_follow_without_abort(&self, local_follow_id: &str) {
+		self.follow_setups.lock().unwrap().remove(local_follow_id);
+		self.follows.lock().unwrap().remove(local_follow_id);
+	}
 
-    /// Deliver one follow event to the local subscriber; a `Stop` event also
-    /// tears the follow down, ending the local stream via sender drop.
-    /// Cleanup never aborts: the only caller is the pump itself, which the
-    /// stored abort handle targets.
-    fn deliver_follow_event(&self, local_follow_id: &str, event: RemoteChainHeadFollowItem) {
-        let sender = self.follow_sender(local_follow_id);
-        let is_stop = matches!(event, RemoteChainHeadFollowItem::Stop);
-        if let Some(sender) = sender {
-            let _ = sender.unbounded_send(Ok(event));
-        }
-        if is_stop {
-            self.remove_follow_without_abort(local_follow_id);
-        }
-    }
+	fn unfollow(&self, local_follow_id: &str) {
+		self.remove_follow(local_follow_id);
+	}
 
-    /// End the local follow stream on an abnormal close, delivering `failure`
-    /// as its last item before tearing the follow down. Cleanup never aborts,
-    /// same as [`Self::deliver_follow_event`].
-    fn interrupt_follow(&self, local_follow_id: &str, failure: RuntimeFailure) {
-        warn!(%failure, "chain follow interrupted");
-        if let Some(sender) = self.follow_sender(local_follow_id) {
-            let _ = sender.unbounded_send(Err(failure));
-        }
-        self.remove_follow_without_abort(local_follow_id);
-    }
+	/// Deliver one follow event to the local subscriber; a `Stop` event also
+	/// tears the follow down, ending the local stream via sender drop.
+	/// Cleanup never aborts: the only caller is the pump itself, which the
+	/// stored abort handle targets.
+	fn deliver_follow_event(&self, local_follow_id: &str, event: RemoteChainHeadFollowItem) {
+		let sender = self.follow_sender(local_follow_id);
+		let is_stop = matches!(event, RemoteChainHeadFollowItem::Stop);
+		if let Some(sender) = sender {
+			let _ = sender.unbounded_send(Ok(event));
+		}
+		if is_stop {
+			self.remove_follow_without_abort(local_follow_id);
+		}
+	}
 
-    /// Handle on the local subscriber of `local_follow_id`, cloned so the
-    /// `follows` lock is released before anything is sent through it.
-    fn follow_sender(
-        &self,
-        local_follow_id: &str,
-    ) -> Option<mpsc::UnboundedSender<Result<RemoteChainHeadFollowItem, RuntimeFailure>>> {
-        self.follows
-            .lock()
-            .unwrap()
-            .get(local_follow_id)
-            .map(|follow| follow.sender.clone())
-    }
+	/// End the local follow stream on an abnormal close, delivering `failure`
+	/// as its last item before tearing the follow down. Cleanup never aborts,
+	/// same as [`Self::deliver_follow_event`].
+	fn interrupt_follow(&self, local_follow_id: &str, failure: RuntimeFailure) {
+		warn!(%failure, "chain follow interrupted");
+		if let Some(sender) = self.follow_sender(local_follow_id) {
+			let _ = sender.unbounded_send(Err(failure));
+		}
+		self.remove_follow_without_abort(local_follow_id);
+	}
+
+	/// Handle on the local subscriber of `local_follow_id`, cloned so the
+	/// `follows` lock is released before anything is sent through it.
+	fn follow_sender(
+		&self,
+		local_follow_id: &str,
+	) -> Option<mpsc::UnboundedSender<Result<RemoteChainHeadFollowItem, RuntimeFailure>>> {
+		self.follows
+			.lock()
+			.unwrap()
+			.get(local_follow_id)
+			.map(|follow| follow.sender.clone())
+	}
 }
 
 struct FollowState {
-    with_runtime: bool,
-    client_subscription_id: Option<String>,
-    remote_subscription_id: Option<String>,
-    abort: Option<AbortHandle>,
-    /// Local subscriber; dropping it (with the follow state) is what ends the
-    /// local follow stream.
-    sender: mpsc::UnboundedSender<Result<RemoteChainHeadFollowItem, RuntimeFailure>>,
-    cancelled: Arc<AtomicBool>,
+	with_runtime: bool,
+	client_subscription_id: Option<String>,
+	remote_subscription_id: Option<String>,
+	abort: Option<AbortHandle>,
+	/// Local subscriber; dropping it (with the follow state) is what ends the
+	/// local follow stream.
+	sender: mpsc::UnboundedSender<Result<RemoteChainHeadFollowItem, RuntimeFailure>>,
+	cancelled: Arc<AtomicBool>,
 }
 
 /// Subscription wrapper that runs an `on_drop` cleanup when the stream is
 /// dropped. Used by `remote_chain_head_follow` to send `chainHead_v1_unfollow`
 /// when the local follow stream is dropped.
 struct ManagedSubscription<T> {
-    inner: BoxStream<'static, T>,
-    on_drop: Option<Box<dyn FnOnce() + Send + Sync>>,
+	inner: BoxStream<'static, T>,
+	on_drop: Option<Box<dyn FnOnce() + Send + Sync>>,
 }
 
 impl<T> ManagedSubscription<T> {
-    fn new(inner: BoxStream<'static, T>, on_drop: Option<Box<dyn FnOnce() + Send + Sync>>) -> Self {
-        Self { inner, on_drop }
-    }
+	fn new(inner: BoxStream<'static, T>, on_drop: Option<Box<dyn FnOnce() + Send + Sync>>) -> Self {
+		Self { inner, on_drop }
+	}
 }
 
 impl<T> Drop for ManagedSubscription<T> {
-    fn drop(&mut self) {
-        if let Some(on_drop) = self.on_drop.take() {
-            on_drop();
-        }
-    }
+	fn drop(&mut self) {
+		if let Some(on_drop) = self.on_drop.take() {
+			on_drop();
+		}
+	}
 }
 
 impl<T> Stream for ManagedSubscription<T> {
-    type Item = T;
+	type Item = T;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let this = self.get_mut();
-        this.inner.as_mut().poll_next(cx)
-    }
+	fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+		let this = self.get_mut();
+		this.inner.as_mut().poll_next(cx)
+	}
 }
 
 fn operation_started_result(
-    response: subxt_chain::MethodResponse,
+	response: subxt_chain::MethodResponse,
 ) -> Result<OperationStartedResult, RuntimeFailure> {
-    match response {
-        subxt_chain::MethodResponse::Started(started) => Ok(OperationStartedResult::Started {
-            operation_id: started.operation_id,
-        }),
-        subxt_chain::MethodResponse::LimitReached => Ok(OperationStartedResult::LimitReached),
-    }
+	match response {
+		subxt_chain::MethodResponse::Started(started) => {
+			Ok(OperationStartedResult::Started { operation_id: started.operation_id })
+		},
+		subxt_chain::MethodResponse::LimitReached => Ok(OperationStartedResult::LimitReached),
+	}
 }
 
 fn map_follow_event(
-    event: subxt_chain::FollowEvent<H256>,
+	event: subxt_chain::FollowEvent<H256>,
 ) -> Result<RemoteChainHeadFollowItem, RuntimeFailure> {
-    match event {
-        subxt_chain::FollowEvent::Initialized(event) => {
-            Ok(RemoteChainHeadFollowItem::Initialized {
-                finalized_block_hashes: event
-                    .finalized_block_hashes
-                    .into_iter()
-                    .map(hash_to_bytes)
-                    .collect(),
-                finalized_block_runtime: event
-                    .finalized_block_runtime
-                    .map(map_runtime_event)
-                    .transpose()?,
-            })
-        }
-        subxt_chain::FollowEvent::NewBlock(event) => Ok(RemoteChainHeadFollowItem::NewBlock {
-            block_hash: hash_to_bytes(event.block_hash),
-            parent_block_hash: hash_to_bytes(event.parent_block_hash),
-            new_runtime: event.new_runtime.map(map_runtime_event).transpose()?,
-        }),
-        subxt_chain::FollowEvent::BestBlockChanged(event) => {
-            Ok(RemoteChainHeadFollowItem::BestBlockChanged {
-                best_block_hash: hash_to_bytes(event.best_block_hash),
-            })
-        }
-        subxt_chain::FollowEvent::Finalized(event) => Ok(RemoteChainHeadFollowItem::Finalized {
-            finalized_block_hashes: event
-                .finalized_block_hashes
-                .into_iter()
-                .map(hash_to_bytes)
-                .collect(),
-            pruned_block_hashes: event
-                .pruned_block_hashes
-                .into_iter()
-                .map(hash_to_bytes)
-                .collect(),
-        }),
-        subxt_chain::FollowEvent::OperationBodyDone(event) => {
-            Ok(RemoteChainHeadFollowItem::OperationBodyDone {
-                operation_id: event.operation_id,
-                value: event.value.into_iter().map(|bytes| bytes.0).collect(),
-            })
-        }
-        subxt_chain::FollowEvent::OperationCallDone(event) => {
-            Ok(RemoteChainHeadFollowItem::OperationCallDone {
-                operation_id: event.operation_id,
-                output: event.output.0,
-            })
-        }
-        subxt_chain::FollowEvent::OperationStorageItems(event) => {
-            Ok(RemoteChainHeadFollowItem::OperationStorageItems {
-                operation_id: event.operation_id,
-                items: event
-                    .items
-                    .into_iter()
-                    .map(map_storage_result)
-                    .collect::<Result<Vec<_>, _>>()?,
-            })
-        }
-        subxt_chain::FollowEvent::OperationStorageDone(event) => {
-            Ok(RemoteChainHeadFollowItem::OperationStorageDone {
-                operation_id: event.operation_id,
-            })
-        }
-        subxt_chain::FollowEvent::OperationWaitingForContinue(event) => {
-            Ok(RemoteChainHeadFollowItem::OperationWaitingForContinue {
-                operation_id: event.operation_id,
-            })
-        }
-        subxt_chain::FollowEvent::OperationInaccessible(event) => {
-            Ok(RemoteChainHeadFollowItem::OperationInaccessible {
-                operation_id: event.operation_id,
-            })
-        }
-        subxt_chain::FollowEvent::OperationError(event) => {
-            Ok(RemoteChainHeadFollowItem::OperationError {
-                operation_id: event.operation_id,
-                error: event.error,
-            })
-        }
-        subxt_chain::FollowEvent::Stop => Ok(RemoteChainHeadFollowItem::Stop),
-    }
+	match event {
+		subxt_chain::FollowEvent::Initialized(event) => {
+			Ok(RemoteChainHeadFollowItem::Initialized {
+				finalized_block_hashes: event
+					.finalized_block_hashes
+					.into_iter()
+					.map(hash_to_bytes)
+					.collect(),
+				finalized_block_runtime: event
+					.finalized_block_runtime
+					.map(map_runtime_event)
+					.transpose()?,
+			})
+		},
+		subxt_chain::FollowEvent::NewBlock(event) => Ok(RemoteChainHeadFollowItem::NewBlock {
+			block_hash: hash_to_bytes(event.block_hash),
+			parent_block_hash: hash_to_bytes(event.parent_block_hash),
+			new_runtime: event.new_runtime.map(map_runtime_event).transpose()?,
+		}),
+		subxt_chain::FollowEvent::BestBlockChanged(event) => {
+			Ok(RemoteChainHeadFollowItem::BestBlockChanged {
+				best_block_hash: hash_to_bytes(event.best_block_hash),
+			})
+		},
+		subxt_chain::FollowEvent::Finalized(event) => Ok(RemoteChainHeadFollowItem::Finalized {
+			finalized_block_hashes: event
+				.finalized_block_hashes
+				.into_iter()
+				.map(hash_to_bytes)
+				.collect(),
+			pruned_block_hashes: event.pruned_block_hashes.into_iter().map(hash_to_bytes).collect(),
+		}),
+		subxt_chain::FollowEvent::OperationBodyDone(event) => {
+			Ok(RemoteChainHeadFollowItem::OperationBodyDone {
+				operation_id: event.operation_id,
+				value: event.value.into_iter().map(|bytes| bytes.0).collect(),
+			})
+		},
+		subxt_chain::FollowEvent::OperationCallDone(event) => {
+			Ok(RemoteChainHeadFollowItem::OperationCallDone {
+				operation_id: event.operation_id,
+				output: event.output.0,
+			})
+		},
+		subxt_chain::FollowEvent::OperationStorageItems(event) => {
+			Ok(RemoteChainHeadFollowItem::OperationStorageItems {
+				operation_id: event.operation_id,
+				items: event
+					.items
+					.into_iter()
+					.map(map_storage_result)
+					.collect::<Result<Vec<_>, _>>()?,
+			})
+		},
+		subxt_chain::FollowEvent::OperationStorageDone(event) => {
+			Ok(RemoteChainHeadFollowItem::OperationStorageDone { operation_id: event.operation_id })
+		},
+		subxt_chain::FollowEvent::OperationWaitingForContinue(event) => {
+			Ok(RemoteChainHeadFollowItem::OperationWaitingForContinue {
+				operation_id: event.operation_id,
+			})
+		},
+		subxt_chain::FollowEvent::OperationInaccessible(event) => {
+			Ok(RemoteChainHeadFollowItem::OperationInaccessible {
+				operation_id: event.operation_id,
+			})
+		},
+		subxt_chain::FollowEvent::OperationError(event) => {
+			Ok(RemoteChainHeadFollowItem::OperationError {
+				operation_id: event.operation_id,
+				error: event.error,
+			})
+		},
+		subxt_chain::FollowEvent::Stop => Ok(RemoteChainHeadFollowItem::Stop),
+	}
 }
 
 fn map_runtime_event(event: subxt_chain::RuntimeEvent) -> Result<RuntimeType, RuntimeFailure> {
-    match event {
-        subxt_chain::RuntimeEvent::Valid(event) => {
-            let mut apis = event
-                .spec
-                .apis
-                .into_iter()
-                .map(|(name, version)| RuntimeApi { name, version })
-                .collect::<Vec<_>>();
-            apis.sort_by(|left, right| left.name.cmp(&right.name));
-            Ok(RuntimeType::Valid(RuntimeSpec {
-                spec_name: event.spec.spec_name,
-                impl_name: event.spec.impl_name,
-                spec_version: event.spec.spec_version,
-                impl_version: event.spec.impl_version,
-                transaction_version: Some(event.spec.transaction_version),
-                apis,
-            }))
-        }
-        subxt_chain::RuntimeEvent::Invalid(event) => {
-            Ok(RuntimeType::Invalid { error: event.error })
-        }
-    }
+	match event {
+		subxt_chain::RuntimeEvent::Valid(event) => {
+			let mut apis = event
+				.spec
+				.apis
+				.into_iter()
+				.map(|(name, version)| RuntimeApi { name, version })
+				.collect::<Vec<_>>();
+			apis.sort_by(|left, right| left.name.cmp(&right.name));
+			Ok(RuntimeType::Valid(RuntimeSpec {
+				spec_name: event.spec.spec_name,
+				impl_name: event.spec.impl_name,
+				spec_version: event.spec.spec_version,
+				impl_version: event.spec.impl_version,
+				transaction_version: Some(event.spec.transaction_version),
+				apis,
+			}))
+		},
+		subxt_chain::RuntimeEvent::Invalid(event) => {
+			Ok(RuntimeType::Invalid { error: event.error })
+		},
+	}
 }
 
 fn map_storage_query_item(item: &StorageQueryItem) -> subxt_chain::StorageQuery<&[u8]> {
-    subxt_chain::StorageQuery {
-        key: item.key.as_slice(),
-        query_type: match item.query_type {
-            StorageQueryType::Value => subxt_chain::StorageQueryType::Value,
-            StorageQueryType::Hash => subxt_chain::StorageQueryType::Hash,
-            StorageQueryType::ClosestDescendantMerkleValue => {
-                subxt_chain::StorageQueryType::ClosestDescendantMerkleValue
-            }
-            StorageQueryType::DescendantsValues => subxt_chain::StorageQueryType::DescendantsValues,
-            StorageQueryType::DescendantsHashes => subxt_chain::StorageQueryType::DescendantsHashes,
-        },
-    }
+	subxt_chain::StorageQuery {
+		key: item.key.as_slice(),
+		query_type: match item.query_type {
+			StorageQueryType::Value => subxt_chain::StorageQueryType::Value,
+			StorageQueryType::Hash => subxt_chain::StorageQueryType::Hash,
+			StorageQueryType::ClosestDescendantMerkleValue => {
+				subxt_chain::StorageQueryType::ClosestDescendantMerkleValue
+			},
+			StorageQueryType::DescendantsValues => subxt_chain::StorageQueryType::DescendantsValues,
+			StorageQueryType::DescendantsHashes => subxt_chain::StorageQueryType::DescendantsHashes,
+		},
+	}
 }
 
 fn map_storage_result(
-    item: subxt_chain::StorageResult,
+	item: subxt_chain::StorageResult,
 ) -> Result<StorageResultItem, RuntimeFailure> {
-    let mut result = StorageResultItem {
-        key: item.key.0,
-        value: None,
-        hash: None,
-        closest_descendant_merkle_value: None,
-    };
-    match item.result {
-        subxt_chain::StorageResultType::Value(value) => result.value = Some(value.0),
-        subxt_chain::StorageResultType::Hash(hash) => result.hash = Some(hash.0),
-        subxt_chain::StorageResultType::ClosestDescendantMerkleValue(value) => {
-            result.closest_descendant_merkle_value = Some(value.0);
-        }
-    }
-    Ok(result)
+	let mut result = StorageResultItem {
+		key: item.key.0,
+		value: None,
+		hash: None,
+		closest_descendant_merkle_value: None,
+	};
+	match item.result {
+		subxt_chain::StorageResultType::Value(value) => result.value = Some(value.0),
+		subxt_chain::StorageResultType::Hash(hash) => result.hash = Some(hash.0),
+		subxt_chain::StorageResultType::ClosestDescendantMerkleValue(value) => {
+			result.closest_descendant_merkle_value = Some(value.0);
+		},
+	}
+	Ok(result)
 }
 
 fn hash_from_bytes(method: &'static str, bytes: &[u8]) -> Result<H256, RuntimeFailure> {
-    if bytes.len() != 32 {
-        return Err(RuntimeFailure::host_failure(
-            method,
-            format!("expected 32-byte hash, got {}", bytes.len()),
-        ));
-    }
-    Ok(H256::from_slice(bytes))
+	if bytes.len() != 32 {
+		return Err(RuntimeFailure::host_failure(
+			method,
+			format!("expected 32-byte hash, got {}", bytes.len()),
+		));
+	}
+	Ok(H256::from_slice(bytes))
 }
 
 fn hash_to_bytes(hash: H256) -> Vec<u8> {
-    hash.as_bytes().to_vec()
+	hash.as_bytes().to_vec()
 }
 
 fn transaction_operation_already_finished(error: &SubxtRpcError) -> bool {
-    let reason = error.to_string();
-    reason.contains("Invalid operation id") && reason.contains("-32602")
+	let reason = error.to_string();
+	reason.contains("Invalid operation id") && reason.contains("-32602")
+}
+
+fn scope_released(method: &'static str) -> RuntimeFailure {
+	RuntimeFailure::unavailable_with_reason(method, "chain connections were released")
+}
+
+fn connection_superseded() -> RuntimeFailure {
+	RuntimeFailure::unavailable_with_reason(CONNECT_METHOD, "connection setup was superseded")
+}
+
+fn follow_closed() -> RuntimeFailure {
+	RuntimeFailure::unavailable_with_reason(FOLLOW_METHOD, "follow subscription was closed")
 }
 
 fn rpc_failure(method: &'static str, error: SubxtRpcError) -> RuntimeFailure {
-    match error {
-        SubxtRpcError::Client(_) | SubxtRpcError::DisconnectedWillReconnect(_) => {
-            RuntimeFailure::unavailable(method)
-        }
-        error => RuntimeFailure::host_failure(method, error.to_string()),
-    }
+	match error {
+		SubxtRpcError::Client(_) | SubxtRpcError::DisconnectedWillReconnect(_) => {
+			RuntimeFailure::unavailable_with_reason(method, error.to_string())
+		},
+		error => RuntimeFailure::host_failure(method, error.to_string()),
+	}
 }
 
 /// Encode a byte slice as a `0x`-prefixed lowercase hex string.
 pub fn encode_hex(value: &[u8]) -> String {
-    format!("0x{}", hex::encode(value))
+	format!("0x{}", hex::encode(value))
 }
 
 /// Wait for a usable best block hash from a `chainHead_v1_follow` stream.
 pub async fn wait_for_chain_head_best_hash(
-    follow: &mut BoxStream<'static, RemoteChainHeadFollowItem>,
-    label: &'static str,
-    initialization_timeout: Duration,
-    best_hash_timeout: Duration,
+	follow: &mut BoxStream<'static, RemoteChainHeadFollowItem>,
+	label: &'static str,
+	initialization_timeout: Duration,
+	best_hash_timeout: Duration,
 ) -> Result<Vec<u8>, String> {
-    let timeout = futures_timer::Delay::new(initialization_timeout).fuse();
-    pin_mut!(timeout);
-    loop {
-        let next = follow.next().fuse();
-        pin_mut!(next);
-        futures::select! {
-            item = next => match item {
-                Some(RemoteChainHeadFollowItem::Initialized { finalized_block_hashes, .. }) => {
-                    let fallback = finalized_block_hashes.last().cloned();
-                    return wait_for_chain_head_best_hash_after_initialization(
-                        follow,
-                        label,
-                        fallback,
-                        best_hash_timeout,
-                    )
-                    .await;
-                }
-                Some(RemoteChainHeadFollowItem::BestBlockChanged { best_block_hash }) => {
-                    return Ok(best_block_hash);
-                }
-                Some(RemoteChainHeadFollowItem::Stop) | None => {
-                    return Err(format!("{label} follow stopped before initialization"));
-                }
-                _ => {}
-            },
-            () = timeout => return Err(format!("{label} follow initialization timed out")),
-        }
-    }
+	let timeout = futures_timer::Delay::new(initialization_timeout).fuse();
+	pin_mut!(timeout);
+	loop {
+		let next = follow.next().fuse();
+		pin_mut!(next);
+		futures::select! {
+			item = next => match item {
+				Some(RemoteChainHeadFollowItem::Initialized { finalized_block_hashes, .. }) => {
+					let fallback = finalized_block_hashes.last().cloned();
+					return wait_for_chain_head_best_hash_after_initialization(
+						follow,
+						label,
+						fallback,
+						best_hash_timeout,
+					)
+					.await;
+				}
+				Some(RemoteChainHeadFollowItem::BestBlockChanged { best_block_hash }) => {
+					return Ok(best_block_hash);
+				}
+				Some(RemoteChainHeadFollowItem::Stop) | None => {
+					return Err(format!("{label} follow stopped before initialization"));
+				}
+				_ => {}
+			},
+			() = timeout => return Err(format!("{label} follow initialization timed out")),
+		}
+	}
 }
 
 async fn wait_for_chain_head_best_hash_after_initialization(
-    follow: &mut BoxStream<'static, RemoteChainHeadFollowItem>,
-    label: &'static str,
-    fallback: Option<Vec<u8>>,
-    timeout: Duration,
+	follow: &mut BoxStream<'static, RemoteChainHeadFollowItem>,
+	label: &'static str,
+	fallback: Option<Vec<u8>>,
+	timeout: Duration,
 ) -> Result<Vec<u8>, String> {
-    let timeout = futures_timer::Delay::new(timeout).fuse();
-    pin_mut!(timeout);
-    loop {
-        let next = follow.next().fuse();
-        pin_mut!(next);
-        futures::select! {
-            item = next => match item {
-                Some(RemoteChainHeadFollowItem::BestBlockChanged { best_block_hash }) => {
-                    return Ok(best_block_hash);
-                }
-                Some(RemoteChainHeadFollowItem::Stop) | None => {
-                    return Err(format!("{label} follow stopped before best block"));
-                }
-                _ => {}
-            },
-            () = timeout => {
-                return fallback.clone().ok_or_else(|| {
-                    format!("{label} follow best block timed out")
-                });
-            },
-        }
-    }
+	let timeout = futures_timer::Delay::new(timeout).fuse();
+	pin_mut!(timeout);
+	loop {
+		let next = follow.next().fuse();
+		pin_mut!(next);
+		futures::select! {
+			item = next => match item {
+				Some(RemoteChainHeadFollowItem::BestBlockChanged { best_block_hash }) => {
+					return Ok(best_block_hash);
+				}
+				Some(RemoteChainHeadFollowItem::Stop) | None => {
+					return Err(format!("{label} follow stopped before best block"));
+				}
+				_ => {}
+			},
+			() = timeout => {
+				return fallback.clone().ok_or_else(|| {
+					format!("{label} follow best block timed out")
+				});
+			},
+		}
+	}
 }
 
 /// Context for one storage operation observed on a `chainHead_v1_follow` stream.
 pub struct ChainHeadStorageValueLookup<'a> {
-    pub chain: &'a ChainRuntime,
-    pub genesis_hash: &'a [u8],
-    pub follow_subscription_id: &'a str,
-    pub operation_id: &'a str,
-    pub key: &'a [u8],
-    pub label: &'static str,
-    pub timeout: Duration,
+	pub chain: &'a ChainRuntime,
+	pub genesis_hash: &'a [u8],
+	pub follow_subscription_id: &'a str,
+	pub operation_id: &'a str,
+	pub key: &'a [u8],
+	pub label: &'static str,
+	pub timeout: Duration,
 }
 
 /// Result of one value query observed on a `chainHead_v1_follow` stream.
 pub enum ChainHeadStorageValue {
-    Found(Vec<u8>),
-    Missing,
-    Inaccessible,
+	Found(Vec<u8>),
+	Missing,
+	Inaccessible,
 }
 
 /// Wait for one storage operation's value from a `chainHead_v1_follow` stream.
 pub async fn wait_for_chain_head_storage_value(
-    follow: &mut BoxStream<'static, RemoteChainHeadFollowItem>,
-    lookup: ChainHeadStorageValueLookup<'_>,
+	follow: &mut BoxStream<'static, RemoteChainHeadFollowItem>,
+	lookup: ChainHeadStorageValueLookup<'_>,
 ) -> Result<ChainHeadStorageValue, String> {
-    let timeout = futures_timer::Delay::new(lookup.timeout).fuse();
-    pin_mut!(timeout);
-    let mut value = None;
-    loop {
-        let next = follow.next().fuse();
-        pin_mut!(next);
-        futures::select! {
-            item = next => match item {
-                Some(RemoteChainHeadFollowItem::OperationStorageItems { operation_id: item_operation_id, items })
-                    if item_operation_id == lookup.operation_id =>
-                {
-                    for item in items {
-                        if item.key == lookup.key {
-                            value = item.value;
-                        }
-                    }
-                }
-                Some(RemoteChainHeadFollowItem::OperationStorageDone { operation_id: item_operation_id })
-                    if item_operation_id == lookup.operation_id =>
-                {
-                    return Ok(match value {
-                        Some(value) => ChainHeadStorageValue::Found(value),
-                        None => ChainHeadStorageValue::Missing,
-                    });
-                }
-                Some(RemoteChainHeadFollowItem::OperationWaitingForContinue { operation_id: item_operation_id })
-                    if item_operation_id == lookup.operation_id =>
-                {
-                    lookup
-                        .chain
-                        .remote_chain_head_continue(RemoteChainHeadContinueRequest {
-                            genesis_hash: lookup.genesis_hash.to_vec(),
-                            follow_subscription_id: lookup.follow_subscription_id.to_string(),
-                            operation_id: lookup.operation_id.to_string(),
-                        })
-                        .await
-                        .map_err(|failure| failure.reason())?;
-                }
-                Some(RemoteChainHeadFollowItem::OperationInaccessible { operation_id: item_operation_id })
-                    if item_operation_id == lookup.operation_id =>
-                {
-                    return Ok(ChainHeadStorageValue::Inaccessible);
-                }
-                Some(RemoteChainHeadFollowItem::OperationError { operation_id: item_operation_id, error })
-                    if item_operation_id == lookup.operation_id =>
-                {
-                    return Err(error);
-                }
-                Some(RemoteChainHeadFollowItem::Stop) | None => {
-                    return Err(format!("{} follow stopped during storage lookup", lookup.label));
-                }
-                _ => {}
-            },
-            () = timeout => return Err(format!("{} storage lookup timed out", lookup.label)),
-        }
-    }
+	let timeout = futures_timer::Delay::new(lookup.timeout).fuse();
+	pin_mut!(timeout);
+	let mut value = None;
+	loop {
+		let next = follow.next().fuse();
+		pin_mut!(next);
+		futures::select! {
+			item = next => match item {
+				Some(RemoteChainHeadFollowItem::OperationStorageItems { operation_id: item_operation_id, items })
+					if item_operation_id == lookup.operation_id =>
+				{
+					for item in items {
+						if item.key == lookup.key {
+							value = item.value;
+						}
+					}
+				}
+				Some(RemoteChainHeadFollowItem::OperationStorageDone { operation_id: item_operation_id })
+					if item_operation_id == lookup.operation_id =>
+				{
+					return Ok(match value {
+						Some(value) => ChainHeadStorageValue::Found(value),
+						None => ChainHeadStorageValue::Missing,
+					});
+				}
+				Some(RemoteChainHeadFollowItem::OperationWaitingForContinue { operation_id: item_operation_id })
+					if item_operation_id == lookup.operation_id =>
+				{
+					lookup
+						.chain
+						.remote_chain_head_continue(RemoteChainHeadContinueRequest {
+							genesis_hash: lookup.genesis_hash.to_vec(),
+							follow_subscription_id: lookup.follow_subscription_id.to_string(),
+							operation_id: lookup.operation_id.to_string(),
+						})
+						.await
+						.map_err(|failure| failure.reason())?;
+				}
+				Some(RemoteChainHeadFollowItem::OperationInaccessible { operation_id: item_operation_id })
+					if item_operation_id == lookup.operation_id =>
+				{
+					return Ok(ChainHeadStorageValue::Inaccessible);
+				}
+				Some(RemoteChainHeadFollowItem::OperationError { operation_id: item_operation_id, error })
+					if item_operation_id == lookup.operation_id =>
+				{
+					return Err(error);
+				}
+				Some(RemoteChainHeadFollowItem::Stop) | None => {
+					return Err(format!("{} follow stopped during storage lookup", lookup.label));
+				}
+				_ => {}
+			},
+			() = timeout => return Err(format!("{} storage lookup timed out", lookup.label)),
+		}
+	}
 }
 
 /// Waits for one runtime-API call operation's output from a
 /// `chainHead_v1_follow` stream.
 pub async fn wait_for_chain_head_call_output(
-    follow: &mut BoxStream<'static, RemoteChainHeadFollowItem>,
-    operation_id: &str,
-    label: &'static str,
-    timeout: Duration,
+	follow: &mut BoxStream<'static, RemoteChainHeadFollowItem>,
+	operation_id: &str,
+	label: &'static str,
+	timeout: Duration,
 ) -> Result<Vec<u8>, String> {
-    let timeout = futures_timer::Delay::new(timeout).fuse();
-    pin_mut!(timeout);
-    loop {
-        let next = follow.next().fuse();
-        pin_mut!(next);
-        futures::select! {
-            item = next => match item {
-                Some(RemoteChainHeadFollowItem::OperationCallDone { operation_id: item_operation_id, output })
-                    if item_operation_id == operation_id =>
-                {
-                    return Ok(output);
-                }
-                Some(RemoteChainHeadFollowItem::OperationInaccessible { operation_id: item_operation_id })
-                    if item_operation_id == operation_id =>
-                {
-                    return Err(format!("{label} runtime call was inaccessible"));
-                }
-                Some(RemoteChainHeadFollowItem::OperationError { operation_id: item_operation_id, error })
-                    if item_operation_id == operation_id =>
-                {
-                    return Err(error);
-                }
-                Some(RemoteChainHeadFollowItem::Stop) | None => {
-                    return Err(format!("{label} follow stopped during runtime call"));
-                }
-                _ => {}
-            },
-            () = timeout => return Err(format!("{label} runtime call timed out")),
-        }
-    }
+	let timeout = futures_timer::Delay::new(timeout).fuse();
+	pin_mut!(timeout);
+	loop {
+		let next = follow.next().fuse();
+		pin_mut!(next);
+		futures::select! {
+			item = next => match item {
+				Some(RemoteChainHeadFollowItem::OperationCallDone { operation_id: item_operation_id, output })
+					if item_operation_id == operation_id =>
+				{
+					return Ok(output);
+				}
+				Some(RemoteChainHeadFollowItem::OperationInaccessible { operation_id: item_operation_id })
+					if item_operation_id == operation_id =>
+				{
+					return Err(format!("{label} runtime call was inaccessible"));
+				}
+				Some(RemoteChainHeadFollowItem::OperationError { operation_id: item_operation_id, error })
+					if item_operation_id == operation_id =>
+				{
+					return Err(error);
+				}
+				Some(RemoteChainHeadFollowItem::Stop) | None => {
+					return Err(format!("{label} follow stopped during runtime call"));
+				}
+				_ => {}
+			},
+			() = timeout => return Err(format!("{label} runtime call timed out")),
+		}
+	}
 }
 
 #[cfg(test)]
 fn decode_hex(value: &str) -> Result<Vec<u8>, String> {
-    hex::decode(value.strip_prefix("0x").unwrap_or(value)).map_err(|_| "invalid hex".to_string())
+	hex::decode(value.strip_prefix("0x").unwrap_or(value)).map_err(|_| "invalid hex".to_string())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::test_support::{ScriptedProvider, extract_id, notification_sender, wait_for_sent};
-    use async_trait::async_trait;
-    use futures::stream;
-    use parking_lot::{Condvar, Mutex as ParkingMutex};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+	use super::*;
+	use crate::test_support::{ScriptedProvider, extract_id, notification_sender, wait_for_sent};
+	use async_trait::async_trait;
+	use futures::stream;
+	use parking_lot::{Condvar, Mutex as ParkingMutex};
+	use std::sync::atomic::{AtomicUsize, Ordering};
 
-    fn spawner_for_tests() -> Spawner {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            crate::subscription::thread_per_subscription_spawner()
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            Arc::new(futures::executor::block_on)
-        }
-    }
+	fn spawner_for_tests() -> Spawner {
+		#[cfg(not(target_arch = "wasm32"))]
+		{
+			crate::subscription::thread_per_subscription_spawner()
+		}
+		#[cfg(target_arch = "wasm32")]
+		{
+			Arc::new(futures::executor::block_on)
+		}
+	}
 
-    #[test]
-    fn chain_head_best_hash_prefers_best_block_after_initialization() {
-        let mut follow = stream::iter(vec![
-            RemoteChainHeadFollowItem::Initialized {
-                finalized_block_hashes: vec![vec![0x01]],
-                finalized_block_runtime: None,
-            },
-            RemoteChainHeadFollowItem::BestBlockChanged {
-                best_block_hash: vec![0x02],
-            },
-        ])
-        .boxed();
+	/// A stop the node acknowledges.
+	const STOPPED: &str = r#""result":null"#;
 
-        let hash = futures::executor::block_on(wait_for_chain_head_best_hash(
-            &mut follow,
-            "test chain",
-            Duration::from_secs(10),
-            Duration::from_secs(2),
-        ))
-        .expect("best hash should resolve");
+	/// A provider answering every broadcast with one provider operation id and
+	/// every stop with `stop_reply`, the JSON-RPC member that follows `"id"`.
+	fn broadcast_provider(stop_reply: &'static str) -> Arc<ScriptedProvider> {
+		Arc::new(ScriptedProvider::new(move |request| {
+			let id = extract_id(request).unwrap();
+			if request.contains("transaction_v1_broadcast") {
+				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-OP"}}"#))
+			} else if request.contains("transaction_v1_stop") {
+				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}",{stop_reply}}}"#))
+			} else {
+				None
+			}
+		}))
+	}
 
-        assert_eq!(hash, vec![0x02]);
-    }
+	/// Broadcasts one transaction on `genesis` and returns the operation id handed out.
+	fn broadcast(runtime: &ChainRuntime, genesis: &[u8]) -> String {
+		futures::executor::block_on(runtime.remote_chain_transaction_broadcast(
+			RemoteChainTransactionBroadcastRequest {
+				genesis_hash: genesis.to_vec(),
+				transaction: vec![0],
+			},
+		))
+		.expect("broadcast succeeds")
+		.operation_id
+		.expect("operation id")
+	}
 
-    #[test]
-    fn chain_head_best_hash_timeout_falls_back_to_finalized_not_new_block() {
-        let mut follow = stream::iter(vec![
-            RemoteChainHeadFollowItem::Initialized {
-                finalized_block_hashes: vec![vec![0x01]],
-                finalized_block_runtime: None,
-            },
-            RemoteChainHeadFollowItem::NewBlock {
-                block_hash: vec![0x03],
-                parent_block_hash: vec![0x01],
-                new_runtime: None,
-            },
-        ])
-        .chain(stream::pending())
-        .boxed();
+	fn stop(
+		runtime: &ChainRuntime,
+		genesis: &[u8],
+		operation_id: &str,
+	) -> Result<(), RuntimeFailure> {
+		futures::executor::block_on(runtime.remote_chain_transaction_stop(
+			RemoteChainTransactionStopRequest {
+				genesis_hash: genesis.to_vec(),
+				operation_id: operation_id.to_owned(),
+			},
+		))
+	}
 
-        let hash = futures::executor::block_on(wait_for_chain_head_best_hash(
-            &mut follow,
-            "test chain",
-            Duration::from_secs(10),
-            Duration::from_millis(1),
-        ))
-        .expect("best hash should fall back to finalized hash");
+	#[test]
+	fn chain_head_best_hash_prefers_best_block_after_initialization() {
+		let mut follow = stream::iter(vec![
+			RemoteChainHeadFollowItem::Initialized {
+				finalized_block_hashes: vec![vec![0x01]],
+				finalized_block_runtime: None,
+			},
+			RemoteChainHeadFollowItem::BestBlockChanged { best_block_hash: vec![0x02] },
+		])
+		.boxed();
 
-        assert_eq!(hash, vec![0x01]);
-    }
+		let hash = futures::executor::block_on(wait_for_chain_head_best_hash(
+			&mut follow,
+			"test chain",
+			Duration::from_secs(10),
+			Duration::from_secs(2),
+		))
+		.expect("best hash should resolve");
 
-    #[test]
-    fn chain_head_best_hash_errors_on_stop_before_best_block() {
-        let mut follow = stream::iter(vec![
-            RemoteChainHeadFollowItem::Initialized {
-                finalized_block_hashes: vec![vec![0x01]],
-                finalized_block_runtime: None,
-            },
-            RemoteChainHeadFollowItem::NewBlock {
-                block_hash: vec![0x03],
-                parent_block_hash: vec![0x01],
-                new_runtime: None,
-            },
-            RemoteChainHeadFollowItem::Stop,
-        ])
-        .boxed();
+		assert_eq!(hash, vec![0x02]);
+	}
 
-        let err = futures::executor::block_on(wait_for_chain_head_best_hash(
-            &mut follow,
-            "test chain",
-            Duration::from_secs(10),
-            Duration::from_secs(2),
-        ))
-        .expect_err("follow stop should be terminal before best block");
+	#[test]
+	fn chain_head_best_hash_timeout_falls_back_to_finalized_not_new_block() {
+		let mut follow = stream::iter(vec![
+			RemoteChainHeadFollowItem::Initialized {
+				finalized_block_hashes: vec![vec![0x01]],
+				finalized_block_runtime: None,
+			},
+			RemoteChainHeadFollowItem::NewBlock {
+				block_hash: vec![0x03],
+				parent_block_hash: vec![0x01],
+				new_runtime: None,
+			},
+		])
+		.chain(stream::pending())
+		.boxed();
 
-        assert_eq!(err, "test chain follow stopped before best block");
-    }
+		let hash = futures::executor::block_on(wait_for_chain_head_best_hash(
+			&mut follow,
+			"test chain",
+			Duration::from_secs(10),
+			Duration::from_millis(1),
+		))
+		.expect("best hash should fall back to finalized hash");
 
-    #[derive(Default)]
-    struct UnavailableChainProvider;
+		assert_eq!(hash, vec![0x01]);
+	}
 
-    #[async_trait]
-    impl RuntimeChainProvider for UnavailableChainProvider {
-        async fn connect(
-            &self,
-            _genesis_hash: Vec<u8>,
-        ) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
-            Err(RuntimeFailure::unavailable("remote_chain_connect"))
-        }
-    }
+	#[test]
+	fn chain_head_best_hash_errors_on_stop_before_best_block() {
+		let mut follow = stream::iter(vec![
+			RemoteChainHeadFollowItem::Initialized {
+				finalized_block_hashes: vec![vec![0x01]],
+				finalized_block_runtime: None,
+			},
+			RemoteChainHeadFollowItem::NewBlock {
+				block_hash: vec![0x03],
+				parent_block_hash: vec![0x01],
+				new_runtime: None,
+			},
+			RemoteChainHeadFollowItem::Stop,
+		])
+		.boxed();
 
-    #[test]
-    fn unavailable_provider_surfaces_failure() {
-        let provider = Arc::new(UnavailableChainProvider);
-        let result = futures::executor::block_on(provider.connect(vec![0u8; 32]));
-        let err = match result {
-            Ok(_) => panic!("expected failure"),
-            Err(err) => err,
-        };
-        assert_eq!(err.kind(), RuntimeFailureKind::Unavailable);
-        assert_eq!(err.method(), "remote_chain_connect");
-    }
+		let err = futures::executor::block_on(wait_for_chain_head_best_hash(
+			&mut follow,
+			"test chain",
+			Duration::from_secs(10),
+			Duration::from_secs(2),
+		))
+		.expect_err("follow stop should be terminal before best block");
 
-    #[test]
-    fn header_request_reuses_existing_follow() {
-        let provider = Arc::new(ScriptedProvider::new(|request| {
-            let id = extract_id(request).unwrap();
-            if request.contains("chainHead_v1_follow") {
-                Some(format!(
-                    r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#
-                ))
-            } else if request.contains("chainHead_v1_header") {
-                Some(format!(
-                    r#"{{"jsonrpc":"2.0","id":"{id}","result":"0xdeadbeef"}}"#
-                ))
-            } else {
-                None
-            }
-        }));
-        let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
-        let _follow_stream = runtime.remote_chain_head_follow(
-            "local-follow".to_string(),
-            RemoteChainHeadFollowRequest {
-                genesis_hash: vec![0u8; 32],
-                with_runtime: false,
-            },
-        );
-        let sent = wait_for_sent(&provider, |sent| {
-            sent.iter()
-                .any(|request| request.contains("chainHead_v1_follow"))
-        });
-        assert!(
-            sent.iter()
-                .any(|request| request.contains("chainHead_v1_follow")),
-            "follow setup did not start; sent: {sent:?}",
-        );
+		assert_eq!(err, "test chain follow stopped before best block");
+	}
 
-        let response = futures::executor::block_on(runtime.remote_chain_head_header(
-            RemoteChainHeadHeaderRequest {
-                genesis_hash: vec![0u8; 32],
-                follow_subscription_id: "local-follow".to_string(),
-                hash: vec![1u8; 32],
-            },
-        ))
-        .expect("ok response");
-        assert_eq!(response.header, Some(vec![0xde, 0xad, 0xbe, 0xef]));
-        assert_eq!(provider.connect_calls.load(Ordering::SeqCst), 1);
-        let sent = provider.sent.lock().unwrap().clone();
-        assert_eq!(sent.len(), 2);
-        assert!(sent[0].contains("chainHead_v1_follow"));
-        assert!(sent[1].contains("chainHead_v1_header"));
-    }
+	#[derive(Default)]
+	struct UnavailableChainProvider;
 
-    #[test]
-    fn header_waits_for_a_just_created_follow() {
-        let provider = Arc::new(ScriptedProvider::new(|request| {
-            let id = extract_id(request).unwrap();
-            if request.contains("chainHead_v1_follow") {
-                Some(format!(
-                    r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#
-                ))
-            } else if request.contains("chainHead_v1_header") {
-                let request: Value = serde_json::from_str(request).unwrap();
-                assert_eq!(request["params"][0], "REMOTE-FOLLOW");
-                Some(format!(
-                    r#"{{"jsonrpc":"2.0","id":"{id}","result":"0xdeadbeef"}}"#
-                ))
-            } else {
-                None
-            }
-        }));
-        let gate = Arc::new((ParkingMutex::new(false), Condvar::new()));
-        let spawner_gate = gate.clone();
-        let spawner: Spawner = Arc::new(move |future| {
-            let task_gate = spawner_gate.clone();
-            std::thread::spawn(move || {
-                let (released, ready) = &*task_gate;
-                let mut released = released.lock();
-                ready.wait_while(&mut released, |released| !*released);
-                drop(released);
-                futures::executor::block_on(future);
-            });
-        });
-        let runtime = ChainRuntime::new(provider.clone(), spawner);
-        let _follow_stream = runtime.remote_chain_head_follow(
-            "c1:follow-ab".to_string(),
-            RemoteChainHeadFollowRequest {
-                genesis_hash: vec![0u8; 32],
-                with_runtime: false,
-            },
-        );
+	#[async_trait]
+	impl RuntimeChainProvider for UnavailableChainProvider {
+		async fn connect(
+			&self,
+			_genesis_hash: Vec<u8>,
+		) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
+			Err(RuntimeFailure::unavailable("remote_chain_connect"))
+		}
+	}
 
-        let (result_sender, result_receiver) = std::sync::mpsc::channel();
-        let header_runtime = runtime.clone();
-        std::thread::spawn(move || {
-            let result = futures::executor::block_on(header_runtime.remote_chain_head_header(
-                RemoteChainHeadHeaderRequest {
-                    genesis_hash: vec![0u8; 32],
-                    follow_subscription_id: "c1:follow_0".to_string(),
-                    hash: vec![1u8; 32],
-                },
-            ));
-            result_sender.send(result).unwrap();
-        });
-        for _ in 0..100 {
-            if provider.connect_calls.load(Ordering::SeqCst) == 1 {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        assert_eq!(
-            provider.connect_calls.load(Ordering::SeqCst),
-            1,
-            "the follow-bound request opened the shared connection",
-        );
+	#[test]
+	fn unavailable_provider_surfaces_failure() {
+		let provider = Arc::new(UnavailableChainProvider);
+		let result = futures::executor::block_on(provider.connect(vec![0u8; 32]));
+		let err = match result {
+			Ok(_) => panic!("expected failure"),
+			Err(err) => err,
+		};
+		assert_eq!(err.kind(), RuntimeFailureKind::Unavailable);
+		assert_eq!(err.method(), "remote_chain_connect");
+	}
 
-        let early = result_receiver.recv_timeout(std::time::Duration::from_millis(50));
-        {
-            let (released, ready) = &*gate;
-            *released.lock() = true;
-            ready.notify_all();
-        }
-        assert!(
-            matches!(early, Err(std::sync::mpsc::RecvTimeoutError::Timeout)),
-            "the follow-bound request overtook setup: {early:?}",
-        );
+	#[test]
+	fn header_request_reuses_existing_follow() {
+		let provider = Arc::new(ScriptedProvider::new(|request| {
+			let id = extract_id(request).unwrap();
+			if request.contains("chainHead_v1_follow") {
+				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
+			} else if request.contains("chainHead_v1_header") {
+				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"0xdeadbeef"}}"#))
+			} else {
+				None
+			}
+		}));
+		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let _follow_stream = runtime.remote_chain_head_follow(
+			"local-follow".to_string(),
+			RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: false },
+		);
+		let sent = wait_for_sent(&provider, |sent| {
+			sent.iter().any(|request| request.contains("chainHead_v1_follow"))
+		});
+		assert!(
+			sent.iter().any(|request| request.contains("chainHead_v1_follow")),
+			"follow setup did not start; sent: {sent:?}",
+		);
 
-        let response = result_receiver
-            .recv_timeout(std::time::Duration::from_secs(2))
-            .expect("header request completes after follow setup")
-            .expect("header response succeeds");
-        assert_eq!(response.header, Some(vec![0xde, 0xad, 0xbe, 0xef]));
-        let sent = provider.sent.lock().unwrap().clone();
-        assert_eq!(sent.len(), 2);
-        assert!(sent[0].contains("chainHead_v1_follow"));
-        assert!(sent[1].contains("chainHead_v1_header"));
-    }
+		let response = futures::executor::block_on(runtime.remote_chain_head_header(
+			RemoteChainHeadHeaderRequest {
+				genesis_hash: vec![0u8; 32],
+				follow_subscription_id: "local-follow".to_string(),
+				hash: vec![1u8; 32],
+			},
+		))
+		.expect("ok response");
+		assert_eq!(response.header, Some(vec![0xde, 0xad, 0xbe, 0xef]));
+		assert_eq!(provider.connect_calls.load(Ordering::SeqCst), 1);
+		let sent = provider.sent.lock().unwrap().clone();
+		assert_eq!(sent.len(), 2);
+		assert!(sent[0].contains("chainHead_v1_follow"));
+		assert!(sent[1].contains("chainHead_v1_header"));
+	}
 
-    #[test]
-    fn header_request_binds_product_follow_alias_to_transport_follow() {
-        let provider = Arc::new(ScriptedProvider::new(|request| {
-            let id = extract_id(request).unwrap();
-            if request.contains("chainHead_v1_follow") {
-                Some(format!(
-                    r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#
-                ))
-            } else if request.contains("chainHead_v1_header") {
-                Some(format!(
-                    r#"{{"jsonrpc":"2.0","id":"{id}","result":"0xdeadbeef"}}"#
-                ))
-            } else {
-                None
-            }
-        }));
-        let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
-        let _follow_stream = runtime.remote_chain_head_follow(
-            "transport-request-id".to_string(),
-            RemoteChainHeadFollowRequest {
-                genesis_hash: vec![0u8; 32],
-                with_runtime: true,
-            },
-        );
-        let sent = wait_for_sent(&provider, |sent| {
-            sent.iter()
-                .any(|request| request.contains("chainHead_v1_follow"))
-        });
-        assert!(
-            sent.iter()
-                .any(|request| request.contains("chainHead_v1_follow")),
-            "follow setup did not start; sent: {sent:?}",
-        );
+	#[test]
+	fn header_waits_for_a_just_created_follow() {
+		let provider = Arc::new(ScriptedProvider::new(|request| {
+			let id = extract_id(request).unwrap();
+			if request.contains("chainHead_v1_follow") {
+				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
+			} else if request.contains("chainHead_v1_header") {
+				let request: Value = serde_json::from_str(request).unwrap();
+				assert_eq!(request["params"][0], "REMOTE-FOLLOW");
+				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"0xdeadbeef"}}"#))
+			} else {
+				None
+			}
+		}));
+		let gate = Arc::new((ParkingMutex::new(false), Condvar::new()));
+		let spawner_gate = gate.clone();
+		let spawner: Spawner = Arc::new(move |future| {
+			let task_gate = spawner_gate.clone();
+			std::thread::spawn(move || {
+				let (released, ready) = &*task_gate;
+				let mut released = released.lock();
+				ready.wait_while(&mut released, |released| !*released);
+				drop(released);
+				futures::executor::block_on(future);
+			});
+		});
+		let runtime = ChainRuntime::new(provider.clone(), spawner);
+		let _follow_stream = runtime.remote_chain_head_follow(
+			"c1:follow-ab".to_string(),
+			RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: false },
+		);
 
-        let response = futures::executor::block_on(runtime.remote_chain_head_header(
-            RemoteChainHeadHeaderRequest {
-                genesis_hash: vec![0u8; 32],
-                follow_subscription_id: "follow_0".to_string(),
-                hash: vec![1u8; 32],
-            },
-        ))
-        .expect("product alias should resolve to the active transport follow");
+		let (result_sender, result_receiver) = std::sync::mpsc::channel();
+		let header_runtime = runtime.clone();
+		std::thread::spawn(move || {
+			let result = futures::executor::block_on(header_runtime.remote_chain_head_header(
+				RemoteChainHeadHeaderRequest {
+					genesis_hash: vec![0u8; 32],
+					follow_subscription_id: "c1:follow_0".to_string(),
+					hash: vec![1u8; 32],
+				},
+			));
+			result_sender.send(result).unwrap();
+		});
+		for _ in 0..100 {
+			if provider.connect_calls.load(Ordering::SeqCst) == 1 {
+				break;
+			}
+			std::thread::sleep(std::time::Duration::from_millis(1));
+		}
+		assert_eq!(
+			provider.connect_calls.load(Ordering::SeqCst),
+			1,
+			"the follow-bound request opened the shared connection",
+		);
 
-        assert_eq!(response.header, Some(vec![0xde, 0xad, 0xbe, 0xef]));
-        assert_eq!(provider.connect_calls.load(Ordering::SeqCst), 1);
-        let sent = provider.sent.lock().unwrap().clone();
-        assert_eq!(sent.len(), 2);
-        assert!(sent[1].contains("chainHead_v1_header"));
-    }
+		let early = result_receiver.recv_timeout(std::time::Duration::from_millis(50));
+		{
+			let (released, ready) = &*gate;
+			*released.lock() = true;
+			ready.notify_all();
+		}
+		assert!(
+			matches!(early, Err(std::sync::mpsc::RecvTimeoutError::Timeout)),
+			"the follow-bound request overtook setup: {early:?}",
+		);
 
-    #[test]
-    fn opening_a_second_follow_keeps_an_established_alias_working() {
-        let follows_started = Arc::new(AtomicUsize::new(0));
-        let script_follows = follows_started.clone();
-        let provider = Arc::new(ScriptedProvider::new(move |request| {
-            let id = extract_id(request).unwrap();
-            if request.contains("chainHead_v1_follow") {
-                let index = script_follows.fetch_add(1, Ordering::SeqCst);
-                Some(format!(
-                    r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW-{index}"}}"#
-                ))
-            } else if request.contains("chainHead_v1_header") {
-                Some(format!(
-                    r#"{{"jsonrpc":"2.0","id":"{id}","result":"0xdeadbeef"}}"#
-                ))
-            } else {
-                None
-            }
-        }));
-        let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
-        let follow_request = || RemoteChainHeadFollowRequest {
-            genesis_hash: vec![0u8; 32],
-            with_runtime: false,
-        };
-        let header_request = |follow_subscription_id: &str| RemoteChainHeadHeaderRequest {
-            genesis_hash: vec![0u8; 32],
-            follow_subscription_id: follow_subscription_id.to_string(),
-            hash: vec![1u8; 32],
-        };
-        let follows_sent = |sent: &[String], count: usize| {
-            sent.iter()
-                .filter(|request| request.contains("chainHead_v1_follow"))
-                .count()
-                == count
-        };
+		let response = result_receiver
+			.recv_timeout(std::time::Duration::from_secs(2))
+			.expect("header request completes after follow setup")
+			.expect("header response succeeds");
+		assert_eq!(response.header, Some(vec![0xde, 0xad, 0xbe, 0xef]));
+		let sent = provider.sent.lock().unwrap().clone();
+		assert_eq!(sent.len(), 2);
+		assert!(sent[0].contains("chainHead_v1_follow"));
+		assert!(sent[1].contains("chainHead_v1_header"));
+	}
 
-        let _first_follow =
-            runtime.remote_chain_head_follow("c1:follow-one".to_string(), follow_request());
-        wait_for_sent(&provider, |sent| follows_sent(sent, 1));
-        futures::executor::block_on(
-            runtime.remote_chain_head_header(header_request("c1:follow_0")),
-        )
-        .expect("the first alias resolves while one follow is live");
+	#[test]
+	fn header_request_binds_product_follow_alias_to_transport_follow() {
+		let provider = Arc::new(ScriptedProvider::new(|request| {
+			let id = extract_id(request).unwrap();
+			if request.contains("chainHead_v1_follow") {
+				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
+			} else if request.contains("chainHead_v1_header") {
+				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"0xdeadbeef"}}"#))
+			} else {
+				None
+			}
+		}));
+		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let _follow_stream = runtime.remote_chain_head_follow(
+			"transport-request-id".to_string(),
+			RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: true },
+		);
+		let sent = wait_for_sent(&provider, |sent| {
+			sent.iter().any(|request| request.contains("chainHead_v1_follow"))
+		});
+		assert!(
+			sent.iter().any(|request| request.contains("chainHead_v1_follow")),
+			"follow setup did not start; sent: {sent:?}",
+		);
 
-        // Tarik's case: a second follow makes the pending-intent lookup
-        // ambiguous, which must not strand the alias that already works.
-        let _second_follow =
-            runtime.remote_chain_head_follow("c1:follow-two".to_string(), follow_request());
-        wait_for_sent(&provider, |sent| follows_sent(sent, 2));
-        futures::executor::block_on(
-            runtime.remote_chain_head_header(header_request("c1:follow_0")),
-        )
-        .expect("the established alias survives a second follow on the same chain");
-        futures::executor::block_on(
-            runtime.remote_chain_head_header(header_request("c1:follow_1")),
-        )
-        .expect("the second alias binds to the remaining follow");
+		let response = futures::executor::block_on(runtime.remote_chain_head_header(
+			RemoteChainHeadHeaderRequest {
+				genesis_hash: vec![0u8; 32],
+				follow_subscription_id: "follow_0".to_string(),
+				hash: vec![1u8; 32],
+			},
+		))
+		.expect("product alias should resolve to the active transport follow");
 
-        let headers: Vec<Value> = provider
-            .sent
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|request| request.contains("chainHead_v1_header"))
-            .map(|request| serde_json::from_str(request).unwrap())
-            .collect();
-        assert_eq!(headers.len(), 3);
-        assert_eq!(headers[0]["params"][0], "REMOTE-FOLLOW-0");
-        assert_eq!(
-            headers[1]["params"][0], "REMOTE-FOLLOW-0",
-            "the established alias stayed bound to its own follow",
-        );
-        assert_eq!(
-            headers[2]["params"][0], "REMOTE-FOLLOW-1",
-            "the new alias bound to the second follow",
-        );
-    }
+		assert_eq!(response.header, Some(vec![0xde, 0xad, 0xbe, 0xef]));
+		assert_eq!(provider.connect_calls.load(Ordering::SeqCst), 1);
+		let sent = provider.sent.lock().unwrap().clone();
+		assert_eq!(sent.len(), 2);
+		assert!(sent[1].contains("chainHead_v1_header"));
+	}
 
-    #[test]
-    fn pending_follow_aliases_are_product_scoped_and_ambiguous_aliases_fail_closed() {
-        let provider = Arc::new(ScriptedProvider::new(|_| None));
-        let runtime = ChainRuntime::new(provider, spawner_for_tests());
-        let genesis_hash = vec![0u8; 32];
+	#[test]
+	fn opening_a_second_follow_keeps_an_established_alias_working() {
+		let follows_started = Arc::new(AtomicUsize::new(0));
+		let script_follows = follows_started.clone();
+		let provider = Arc::new(ScriptedProvider::new(move |request| {
+			let id = extract_id(request).unwrap();
+			if request.contains("chainHead_v1_follow") {
+				let index = script_follows.fetch_add(1, Ordering::SeqCst);
+				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW-{index}"}}"#))
+			} else if request.contains("chainHead_v1_header") {
+				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"0xdeadbeef"}}"#))
+			} else {
+				None
+			}
+		}));
+		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let follow_request =
+			|| RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: false };
+		let header_request = |follow_subscription_id: &str| RemoteChainHeadHeaderRequest {
+			genesis_hash: vec![0u8; 32],
+			follow_subscription_id: follow_subscription_id.to_string(),
+			hash: vec![1u8; 32],
+		};
+		let follows_sent = |sent: &[String], count: usize| {
+			sent.iter().filter(|request| request.contains("chainHead_v1_follow")).count() == count
+		};
 
-        runtime.register_follow_intent(&genesis_hash, "c1:request-first");
-        runtime.register_follow_intent(&genesis_hash, "c2:request-first");
-        assert_eq!(
-            runtime
-                .resolve_local_follow_id("test", &genesis_hash, "c1:follow_0",)
-                .expect("c1 alias resolves within c1"),
-            "c1:request-first",
-        );
-        assert_eq!(
-            runtime
-                .resolve_local_follow_id("test", &genesis_hash, "c2:follow_0",)
-                .expect("c2 alias resolves within c2"),
-            "c2:request-first",
-        );
+		let _first_follow =
+			runtime.remote_chain_head_follow("c1:follow-one".to_string(), follow_request());
+		wait_for_sent(&provider, |sent| follows_sent(sent, 1));
+		futures::executor::block_on(
+			runtime.remote_chain_head_header(header_request("c1:follow_0")),
+		)
+		.expect("the first alias resolves while one follow is live");
 
-        runtime.register_follow_intent(&genesis_hash, "c1:request-second");
-        let error = runtime
-            .resolve_local_follow_id("test", &genesis_hash, "c1:follow_1")
-            .expect_err("two c1 intents make an unknown alias ambiguous");
-        assert_eq!(error.kind(), RuntimeFailureKind::HostFailure);
-        assert!(error.reason().contains("unknown follow subscription id"));
-    }
+		// Tarik's case: a second follow makes the pending-intent lookup
+		// ambiguous, which must not strand the alias that already works.
+		let _second_follow =
+			runtime.remote_chain_head_follow("c1:follow-two".to_string(), follow_request());
+		wait_for_sent(&provider, |sent| follows_sent(sent, 2));
+		futures::executor::block_on(
+			runtime.remote_chain_head_header(header_request("c1:follow_0")),
+		)
+		.expect("the established alias survives a second follow on the same chain");
+		futures::executor::block_on(
+			runtime.remote_chain_head_header(header_request("c1:follow_1")),
+		)
+		.expect("the second alias binds to the remaining follow");
 
-    #[test]
-    fn transaction_stop_uses_host_handle_and_accepts_finished_provider_operation() {
-        let provider = Arc::new(ScriptedProvider::new(|request| {
-            let id = extract_id(request).unwrap();
-            if request.contains("transaction_v1_broadcast") {
-                Some(format!(
-                    r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-OP"}}"#
-                ))
-            } else if request.contains("transaction_v1_stop") {
-                Some(format!(
-                    r#"{{"jsonrpc":"2.0","id":"{id}","error":{{"code":-32602,"message":"Invalid operation id"}}}}"#
-                ))
-            } else {
-                None
-            }
-        }));
-        let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
-        let genesis_hash = vec![0x11; 32];
+		let headers: Vec<Value> = provider
+			.sent
+			.lock()
+			.unwrap()
+			.iter()
+			.filter(|request| request.contains("chainHead_v1_header"))
+			.map(|request| serde_json::from_str(request).unwrap())
+			.collect();
+		assert_eq!(headers.len(), 3);
+		assert_eq!(headers[0]["params"][0], "REMOTE-FOLLOW-0");
+		assert_eq!(
+			headers[1]["params"][0], "REMOTE-FOLLOW-0",
+			"the established alias stayed bound to its own follow",
+		);
+		assert_eq!(
+			headers[2]["params"][0], "REMOTE-FOLLOW-1",
+			"the new alias bound to the second follow",
+		);
+	}
 
-        let broadcast = futures::executor::block_on(runtime.remote_chain_transaction_broadcast(
-            RemoteChainTransactionBroadcastRequest {
-                genesis_hash: genesis_hash.clone(),
-                transaction: vec![0],
-            },
-        ))
-        .expect("broadcast succeeds");
-        let local_id = broadcast.operation_id.expect("operation id");
-        assert!(local_id.starts_with("truapi-tx-"));
-        assert_ne!(local_id, "REMOTE-OP");
+	#[test]
+	fn pending_follow_aliases_are_product_scoped_and_ambiguous_aliases_fail_closed() {
+		let provider = Arc::new(ScriptedProvider::new(|_| None));
+		let runtime = ChainRuntime::new(provider, spawner_for_tests());
+		let genesis_hash = vec![0u8; 32];
 
-        futures::executor::block_on(runtime.remote_chain_transaction_stop(
-            RemoteChainTransactionStopRequest {
-                genesis_hash,
-                operation_id: local_id,
-            },
-        ))
-        .expect("an already-finished provider operation is stopped idempotently");
+		runtime.register_follow_intent(&genesis_hash, "c1:request-first");
+		runtime.register_follow_intent(&genesis_hash, "c2:request-first");
+		assert_eq!(
+			runtime
+				.resolve_local_follow_id("test", &genesis_hash, "c1:follow_0",)
+				.expect("c1 alias resolves within c1"),
+			"c1:request-first",
+		);
+		assert_eq!(
+			runtime
+				.resolve_local_follow_id("test", &genesis_hash, "c2:follow_0",)
+				.expect("c2 alias resolves within c2"),
+			"c2:request-first",
+		);
 
-        let sent = provider.sent.lock().unwrap().clone();
-        let stop: Value = serde_json::from_str(
-            sent.iter()
-                .find(|request| request.contains("transaction_v1_stop"))
-                .expect("stop request"),
-        )
-        .unwrap();
-        assert_eq!(stop["params"][0].as_str(), Some("REMOTE-OP"));
-    }
+		runtime.register_follow_intent(&genesis_hash, "c1:request-second");
+		let error = runtime
+			.resolve_local_follow_id("test", &genesis_hash, "c1:follow_1")
+			.expect_err("two c1 intents make an unknown alias ambiguous");
+		assert_eq!(error.kind(), RuntimeFailureKind::HostFailure);
+		assert!(error.reason().contains("unknown follow subscription id"));
+	}
 
-    #[test]
-    fn transaction_operations_evict_oldest_beyond_cap() {
-        let provider = Arc::new(ScriptedProvider::new(|request| {
-            let id = extract_id(request).unwrap();
-            request
-                .contains("transaction_v1_broadcast")
-                .then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-OP"}}"#))
-        }));
-        let runtime = ChainRuntime::new(provider, spawner_for_tests());
-        let genesis_hash = vec![0x11; 32];
+	#[test]
+	fn transaction_stop_uses_host_handle_and_accepts_finished_provider_operation() {
+		let provider =
+			broadcast_provider(r#""error":{"code":-32602,"message":"Invalid operation id"}"#);
+		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let genesis = vec![0x11; 32];
 
-        let mut first_id = None;
-        for _ in 0..=MAX_TRACKED_TRANSACTION_OPERATIONS {
-            let broadcast =
-                futures::executor::block_on(runtime.remote_chain_transaction_broadcast(
-                    RemoteChainTransactionBroadcastRequest {
-                        genesis_hash: genesis_hash.clone(),
-                        transaction: vec![0],
-                    },
-                ))
-                .expect("broadcast succeeds");
-            first_id.get_or_insert(broadcast.operation_id.expect("operation id"));
-        }
+		let local_id = broadcast(&runtime, &genesis);
+		assert!(local_id.starts_with("truapi-tx-"));
+		assert_ne!(local_id, "REMOTE-OP");
 
-        let err = futures::executor::block_on(runtime.remote_chain_transaction_stop(
-            RemoteChainTransactionStopRequest {
-                genesis_hash,
-                operation_id: first_id.expect("first operation id"),
-            },
-        ))
-        .expect_err("evicted operation id is unknown");
-        assert!(err.reason().contains("unknown transaction operation id"));
-    }
+		stop(&runtime, &genesis, &local_id)
+			.expect("an already-finished provider operation is stopped idempotently");
 
-    #[test]
-    fn unpin_uses_typed_subxt_method_for_each_hash() {
-        let provider = Arc::new(ScriptedProvider::new(|request| {
-            let id = extract_id(request).unwrap();
-            if request.contains("chainHead_v1_follow") {
-                Some(format!(
-                    r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#
-                ))
-            } else if request.contains("chainHead_v1_unpin") {
-                Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":null}}"#))
-            } else {
-                None
-            }
-        }));
-        let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
-        let _follow_stream = runtime.remote_chain_head_follow(
-            "local-follow".to_string(),
-            RemoteChainHeadFollowRequest {
-                genesis_hash: vec![0u8; 32],
-                with_runtime: false,
-            },
-        );
-        let sent = wait_for_sent(&provider, |sent| {
-            sent.iter()
-                .any(|request| request.contains("chainHead_v1_follow"))
-        });
-        assert!(
-            sent.iter()
-                .any(|request| request.contains("chainHead_v1_follow")),
-            "follow setup did not start; sent: {sent:?}",
-        );
+		let sent = provider.sent.lock().unwrap().clone();
+		let stop: Value = serde_json::from_str(
+			sent.iter()
+				.find(|request| request.contains("transaction_v1_stop"))
+				.expect("stop request"),
+		)
+		.unwrap();
+		assert_eq!(stop["params"][0].as_str(), Some("REMOTE-OP"));
+	}
 
-        futures::executor::block_on(
-            runtime.remote_chain_head_unpin(RemoteChainHeadUnpinRequest {
-                genesis_hash: vec![0u8; 32],
-                follow_subscription_id: "local-follow".to_string(),
-                hashes: vec![vec![0x11; 32], vec![0x22; 32]],
-            }),
-        )
-        .expect("unpin succeeds");
+	#[test]
+	fn transaction_operations_evict_oldest_beyond_cap() {
+		let runtime = ChainRuntime::new(broadcast_provider(STOPPED), spawner_for_tests());
+		let genesis = vec![0x11; 32];
 
-        let sent = provider.sent.lock().unwrap().clone();
-        let unpin_requests: Vec<_> = sent
-            .iter()
-            .filter(|request| request.contains("chainHead_v1_unpin"))
-            .collect();
-        assert_eq!(
-            unpin_requests.len(),
-            2,
-            "unpin should send each hash through Subxt; sent: {sent:?}",
-        );
-        let params = unpin_requests
-            .iter()
-            .map(|request| {
-                let request: Value = serde_json::from_str(request).expect("json request");
-                assert_eq!(
-                    request.get("method").and_then(Value::as_str),
-                    Some("chainHead_v1_unpin"),
-                );
-                request
-                    .get("params")
-                    .and_then(Value::as_array)
-                    .expect("params array")
-                    .clone()
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(params[0][0].as_str(), Some("REMOTE-FOLLOW"));
-        assert_eq!(params[1][0].as_str(), Some("REMOTE-FOLLOW"));
-        assert_eq!(
-            params[0][1][0].as_str(),
-            Some("0x1111111111111111111111111111111111111111111111111111111111111111"),
-        );
-        assert_eq!(
-            params[1][1][0].as_str(),
-            Some("0x2222222222222222222222222222222222222222222222222222222222222222"),
-        );
-    }
+		let first_id = broadcast(&runtime, &genesis);
+		for _ in 0..MAX_TRACKED_TRANSACTION_OPERATIONS {
+			broadcast(&runtime, &genesis);
+		}
 
-    #[test]
-    fn header_request_rejects_unknown_follow_id_without_opening_follow() {
-        let provider = Arc::new(ScriptedProvider::new(|request| {
-            let id = extract_id(request).unwrap();
-            if request.contains("chainHead_v1_follow") {
-                Some(format!(
-                    r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#
-                ))
-            } else if request.contains("chainHead_v1_header") {
-                Some(format!(
-                    r#"{{"jsonrpc":"2.0","id":"{id}","result":"0xdeadbeef"}}"#
-                ))
-            } else {
-                None
-            }
-        }));
-        let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let err = stop(&runtime, &genesis, &first_id).expect_err("evicted operation id is unknown");
+		assert!(err.reason().contains("unknown transaction operation id"));
+	}
 
-        let err = futures::executor::block_on(runtime.remote_chain_head_header(
-            RemoteChainHeadHeaderRequest {
-                genesis_hash: vec![0u8; 32],
-                follow_subscription_id: "missing-follow".to_string(),
-                hash: vec![1u8; 32],
-            },
-        ))
-        .expect_err("unknown follow id should fail");
+	#[test]
+	fn unpin_uses_typed_subxt_method_for_each_hash() {
+		let provider = Arc::new(ScriptedProvider::new(|request| {
+			let id = extract_id(request).unwrap();
+			if request.contains("chainHead_v1_follow") {
+				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
+			} else if request.contains("chainHead_v1_unpin") {
+				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":null}}"#))
+			} else {
+				None
+			}
+		}));
+		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let _follow_stream = runtime.remote_chain_head_follow(
+			"local-follow".to_string(),
+			RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: false },
+		);
+		let sent = wait_for_sent(&provider, |sent| {
+			sent.iter().any(|request| request.contains("chainHead_v1_follow"))
+		});
+		assert!(
+			sent.iter().any(|request| request.contains("chainHead_v1_follow")),
+			"follow setup did not start; sent: {sent:?}",
+		);
 
-        assert_eq!(err.kind(), RuntimeFailureKind::HostFailure);
-        assert!(
-            err.reason().contains("unknown follow subscription id"),
-            "unexpected error: {}",
-            err.reason(),
-        );
-        assert!(provider.sent.lock().unwrap().is_empty());
-    }
+		futures::executor::block_on(runtime.remote_chain_head_unpin(RemoteChainHeadUnpinRequest {
+			genesis_hash: vec![0u8; 32],
+			follow_subscription_id: "local-follow".to_string(),
+			hashes: vec![vec![0x11; 32], vec![0x22; 32]],
+		}))
+		.expect("unpin succeeds");
 
-    /// Two concurrent calls for the same chain must share one provider
-    /// `connect` instead of racing the first connection and orphaning the
-    /// loser.
-    #[test]
-    fn concurrent_connection_for_shares_one_connect() {
-        struct SlowConnectProvider {
-            inner: ScriptedProvider,
-        }
+		let sent = provider.sent.lock().unwrap().clone();
+		let unpin_requests: Vec<_> =
+			sent.iter().filter(|request| request.contains("chainHead_v1_unpin")).collect();
+		assert_eq!(
+			unpin_requests.len(),
+			2,
+			"unpin should send each hash through Subxt; sent: {sent:?}",
+		);
+		let params = unpin_requests
+			.iter()
+			.map(|request| {
+				let request: Value = serde_json::from_str(request).expect("json request");
+				assert_eq!(
+					request.get("method").and_then(Value::as_str),
+					Some("chainHead_v1_unpin"),
+				);
+				request.get("params").and_then(Value::as_array).expect("params array").clone()
+			})
+			.collect::<Vec<_>>();
+		assert_eq!(params[0][0].as_str(), Some("REMOTE-FOLLOW"));
+		assert_eq!(params[1][0].as_str(), Some("REMOTE-FOLLOW"));
+		assert_eq!(
+			params[0][1][0].as_str(),
+			Some("0x1111111111111111111111111111111111111111111111111111111111111111"),
+		);
+		assert_eq!(
+			params[1][1][0].as_str(),
+			Some("0x2222222222222222222222222222222222222222222222222222222222222222"),
+		);
+	}
 
-        #[async_trait]
-        impl RuntimeChainProvider for SlowConnectProvider {
-            async fn connect(
-                &self,
-                genesis_hash: Vec<u8>,
-            ) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
-                futures_timer::Delay::new(std::time::Duration::from_millis(50)).await;
-                self.inner.connect(genesis_hash).await
-            }
-        }
+	#[test]
+	fn header_request_rejects_unknown_follow_id_without_opening_follow() {
+		let provider = Arc::new(ScriptedProvider::new(|request| {
+			let id = extract_id(request).unwrap();
+			if request.contains("chainHead_v1_follow") {
+				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
+			} else if request.contains("chainHead_v1_header") {
+				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"0xdeadbeef"}}"#))
+			} else {
+				None
+			}
+		}));
+		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
 
-        let provider = Arc::new(SlowConnectProvider {
-            inner: ScriptedProvider::new(|request| {
-                let id = extract_id(request).unwrap();
-                if request.contains("chainSpec_v1_chainName") {
-                    Some(format!(
-                        r#"{{"jsonrpc":"2.0","id":"{id}","result":"Polkadot"}}"#
-                    ))
-                } else {
-                    None
-                }
-            }),
-        });
-        let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let err = futures::executor::block_on(runtime.remote_chain_head_header(
+			RemoteChainHeadHeaderRequest {
+				genesis_hash: vec![0u8; 32],
+				follow_subscription_id: "missing-follow".to_string(),
+				hash: vec![1u8; 32],
+			},
+		))
+		.expect_err("unknown follow id should fail");
 
-        let (first, second) = futures::executor::block_on(futures::future::join(
-            runtime.remote_chain_spec_chain_name(vec![0u8; 32]),
-            runtime.remote_chain_spec_chain_name(vec![0u8; 32]),
-        ));
+		assert_eq!(err.kind(), RuntimeFailureKind::HostFailure);
+		assert!(
+			err.reason().contains("unknown follow subscription id"),
+			"unexpected error: {}",
+			err.reason(),
+		);
+		assert!(provider.sent.lock().unwrap().is_empty());
+	}
 
-        assert_eq!(first.unwrap().chain_name, "Polkadot");
-        assert_eq!(second.unwrap().chain_name, "Polkadot");
-        assert_eq!(provider.inner.connect_calls.load(Ordering::SeqCst), 1);
-    }
+	/// Two concurrent calls for the same chain must share one provider
+	/// `connect` instead of racing the first connection and orphaning the
+	/// loser.
+	#[test]
+	fn concurrent_connection_for_shares_one_connect() {
+		struct SlowConnectProvider {
+			inner: ScriptedProvider,
+		}
 
-    /// The cached Subxt bundle must pin the host-configured genesis hash
-    /// (never fetch it from the provider) and be built once per connection.
-    #[cfg_attr(target_arch = "wasm32", ignore)]
-    #[test]
-    fn subxt_connection_pins_configured_genesis_and_is_cached() {
-        let provider = Arc::new(ScriptedProvider::new(|_| None));
-        let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
-        let genesis = vec![0xab; 32];
+		#[async_trait]
+		impl RuntimeChainProvider for SlowConnectProvider {
+			async fn connect(
+				&self,
+				genesis_hash: Vec<u8>,
+			) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
+				futures_timer::Delay::new(std::time::Duration::from_millis(50)).await;
+				self.inner.connect(genesis_hash).await
+			}
+		}
 
-        let connection =
-            futures::executor::block_on(runtime.connection_for("subxt_connection_test", &genesis))
-                .expect("connection");
-        let first = futures::executor::block_on(connection.subxt_connection()).expect("client");
-        let second = futures::executor::block_on(connection.subxt_connection()).expect("client");
+		let provider = Arc::new(SlowConnectProvider {
+			inner: ScriptedProvider::new(|request| {
+				let id = extract_id(request).unwrap();
+				if request.contains("chainSpec_v1_chainName") {
+					Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"Polkadot"}}"#))
+				} else {
+					None
+				}
+			}),
+		});
+		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
 
-        // With the config pin, construction never asks the provider for the
-        // genesis hash. The scripted provider answers nothing, so a fetch
-        // would have hung instead of returning.
-        assert_eq!(first.client.genesis_hash(), H256([0xab; 32]));
-        assert_eq!(second.client.genesis_hash(), H256([0xab; 32]));
-        let sent = provider.sent.lock().unwrap().clone();
-        assert!(
-            !sent
-                .iter()
-                .any(|request| request.contains("chainSpec_v1_genesisHash")),
-            "genesis hash must come from config, not the provider; sent: {sent:?}",
-        );
+		let (first, second) = futures::executor::block_on(futures::future::join(
+			runtime.remote_chain_spec_chain_name(vec![0u8; 32]),
+			runtime.remote_chain_spec_chain_name(vec![0u8; 32]),
+		));
 
-        // One backend driver total: its follow subscription shows up once.
-        let sent = wait_for_sent(&provider, |sent| {
-            sent.iter()
-                .any(|request| request.contains("chainHead_v1_follow"))
-        });
-        assert!(
-            sent.iter()
-                .any(|request| request.contains("chainHead_v1_follow")),
-            "backend follow did not start; sent: {sent:?}",
-        );
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let follows = provider
-            .sent
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|request| request.contains("chainHead_v1_follow"))
-            .count();
-        assert_eq!(
-            follows, 1,
-            "cached Subxt bundle must reuse one backend follow"
-        );
-    }
+		assert_eq!(first.unwrap().chain_name, "Polkadot");
+		assert_eq!(second.unwrap().chain_name, "Polkadot");
+		assert_eq!(provider.inner.connect_calls.load(Ordering::SeqCst), 1);
+	}
 
-    /// When the backend driver exits (transport gone quiet for good), the
-    /// cached Subxt bundle must be dropped so the next caller rebuilds it.
-    #[cfg_attr(target_arch = "wasm32", ignore)]
-    #[test]
-    fn subxt_connection_invalidated_when_backend_driver_exits() {
-        let provider = Arc::new(ScriptedProvider::new(|_| None));
-        let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
-        let genesis = vec![0xab; 32];
+	/// The cached Subxt bundle must pin the host-configured genesis hash
+	/// (never fetch it from the provider) and be built once per connection.
+	#[cfg_attr(target_arch = "wasm32", ignore)]
+	#[test]
+	fn subxt_connection_pins_configured_genesis_and_is_cached() {
+		let provider = Arc::new(ScriptedProvider::new(|_| None));
+		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let genesis = vec![0xab; 32];
 
-        let connection =
-            futures::executor::block_on(runtime.connection_for("subxt_connection_test", &genesis))
-                .expect("connection");
-        let _client = futures::executor::block_on(connection.subxt_connection()).expect("client");
-        assert!(connection.subxt_connection_setup.lock().unwrap().is_some());
+		let connection =
+			futures::executor::block_on(runtime.connection_for("subxt_connection_test", &genesis))
+				.expect("connection");
+		let first = futures::executor::block_on(connection.subxt_connection()).expect("client");
+		let second = futures::executor::block_on(connection.subxt_connection()).expect("client");
 
-        // End the response stream: the backend driver's follow stream ends,
-        // the pump exits, and the exit hook must clear the cached setup.
-        provider.sender.lock().unwrap().take();
-        for _ in 0..500 {
-            if connection.subxt_connection_setup.lock().unwrap().is_none() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        assert!(
-            connection.subxt_connection_setup.lock().unwrap().is_none(),
-            "driver exit must invalidate the cached Subxt bundle",
-        );
-    }
+		// With the config pin, construction never asks the provider for the
+		// genesis hash. The scripted provider answers nothing, so a fetch
+		// would have hung instead of returning.
+		assert_eq!(first.client.genesis_hash(), H256([0xab; 32]));
+		assert_eq!(second.client.genesis_hash(), H256([0xab; 32]));
+		let sent = provider.sent.lock().unwrap().clone();
+		assert!(
+			!sent.iter().any(|request| request.contains("chainSpec_v1_genesisHash")),
+			"genesis hash must come from config, not the provider; sent: {sent:?}",
+		);
 
-    #[test]
-    fn unknown_genesis_chain_spec_propagates_failure() {
-        let provider = Arc::new(UnavailableChainProvider);
-        let runtime = ChainRuntime::new(provider, spawner_for_tests());
-        let err = match futures::executor::block_on(
-            runtime.remote_chain_spec_chain_name(vec![0u8; 32]),
-        ) {
-            Ok(_) => panic!("expected failure"),
-            Err(err) => err,
-        };
-        assert_eq!(err.kind(), RuntimeFailureKind::Unavailable);
-        assert_eq!(err.method(), "remote_chain_spec_chain_name");
-    }
+		// One backend driver total: its follow subscription shows up once.
+		let sent = wait_for_sent(&provider, |sent| {
+			sent.iter().any(|request| request.contains("chainHead_v1_follow"))
+		});
+		assert!(
+			sent.iter().any(|request| request.contains("chainHead_v1_follow")),
+			"backend follow did not start; sent: {sent:?}",
+		);
+		std::thread::sleep(std::time::Duration::from_millis(200));
+		let follows = provider
+			.sent
+			.lock()
+			.unwrap()
+			.iter()
+			.filter(|request| request.contains("chainHead_v1_follow"))
+			.count();
+		assert_eq!(follows, 1, "cached Subxt bundle must reuse one backend follow");
+	}
 
-    #[test]
-    fn json_rpc_error_becomes_host_failure() {
-        let provider = Arc::new(ScriptedProvider::new(|request| {
-            let id = extract_id(request).unwrap();
-            Some(format!(
-                r#"{{"jsonrpc":"2.0","id":"{id}","error":{{"code":-32601,"message":"method not found"}}}}"#
-            ))
-        }));
-        let runtime = ChainRuntime::new(provider, spawner_for_tests());
-        let err = match futures::executor::block_on(
-            runtime.remote_chain_spec_chain_name(vec![0u8; 32]),
-        ) {
-            Ok(_) => panic!("expected failure"),
-            Err(err) => err,
-        };
-        assert_eq!(err.kind(), RuntimeFailureKind::HostFailure);
-        assert!(
-            err.reason().contains("method not found"),
-            "unexpected reason: {}",
-            err.reason()
-        );
-    }
+	/// When the backend driver exits (transport gone quiet for good), the
+	/// cached Subxt bundle must be dropped so the next caller rebuilds it.
+	#[cfg_attr(target_arch = "wasm32", ignore)]
+	#[test]
+	fn subxt_connection_invalidated_when_backend_driver_exits() {
+		let provider = Arc::new(ScriptedProvider::new(|_| None));
+		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let genesis = vec![0xab; 32];
 
-    #[test]
-    fn follow_event_initialized_translates_to_v01_item() {
-        // Answer `chainHead_v1_follow` through the synchronized responder so
-        // the ack cannot reach the response loop before the pending request
-        // is registered.
-        let provider = Arc::new(ScriptedProvider::new(|request| {
-            let id = extract_id(request).unwrap();
-            if request.contains("chainHead_v1_follow") {
-                Some(format!(
-                    r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#
-                ))
-            } else {
-                None
-            }
-        }));
-        let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let connection =
+			futures::executor::block_on(runtime.connection_for("subxt_connection_test", &genesis))
+				.expect("connection");
+		let _client = futures::executor::block_on(connection.subxt_connection()).expect("client");
+		assert!(connection.subxt_connection_setup.lock().unwrap().is_some());
 
-        let mut stream = runtime.remote_chain_head_follow(
-            "local-follow".to_string(),
-            RemoteChainHeadFollowRequest {
-                genesis_hash: vec![0u8; 32],
-                with_runtime: false,
-            },
-        );
+		// End the response stream: the backend driver's follow stream ends,
+		// the pump exits, and the exit hook must clear the cached setup.
+		provider.sender.lock().unwrap().take();
+		for _ in 0..500 {
+			if connection.subxt_connection_setup.lock().unwrap().is_none() {
+				break;
+			}
+			std::thread::sleep(std::time::Duration::from_millis(10));
+		}
+		assert!(
+			connection.subxt_connection_setup.lock().unwrap().is_none(),
+			"driver exit must invalidate the cached Subxt bundle",
+		);
+	}
 
-        // Push follow events keyed by remote subscription id. Events that
-        // land before the follow ack are buffered by remote id and replayed
-        // once the follow is established.
-        let tx = notification_sender(&provider);
-        tx.unbounded_send(
+	/// Each product runtime gets its own connection to a chain, and the core's
+	/// own traffic keeps one of its own. A node budgets follows and concurrent
+	/// operations per connection, so sharing one makes those budgets collide.
+	#[test]
+	fn each_scope_gets_its_own_connection_to_the_same_chain() {
+		let provider = Arc::new(ScriptedProvider::new(|request| {
+			let id = extract_id(request).unwrap();
+			request
+				.contains("chainSpec_v1_chainName")
+				.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"Polkadot"}}"#))
+		}));
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let genesis = vec![0xab; 32];
+
+		let first = core.for_product(1);
+		let second = core.for_product(2);
+
+		for runtime in [&core, &first, &second] {
+			futures::executor::block_on(runtime.connection_for("scope_test", &genesis))
+				.expect("connection");
+		}
+
+		// Same chain, three scopes, three connections.
+		assert_eq!(provider.connect_calls.load(Ordering::SeqCst), 3);
+		assert_eq!(core.connections.lock().unwrap().values().map(HashMap::len).sum::<usize>(), 3);
+	}
+
+	/// Re-scoping shares the maps rather than starting a fresh runtime, so a
+	/// product that asks twice reuses its own connection and does not open a
+	/// second one.
+	#[test]
+	fn the_same_product_reuses_its_connection() {
+		let provider = Arc::new(ScriptedProvider::new(|_| None));
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let genesis = vec![0xab; 32];
+
+		futures::executor::block_on(core.for_product(7).connection_for("scope_test", &genesis))
+			.expect("first");
+		futures::executor::block_on(core.for_product(7).connection_for("scope_test", &genesis))
+			.expect("second");
+
+		assert_eq!(provider.connect_calls.load(Ordering::SeqCst), 1);
+		assert_eq!(core.connections.lock().unwrap().values().map(HashMap::len).sum::<usize>(), 1);
+	}
+
+	/// A product's follow budget is its own. Four follows for one product must
+	/// not consume another's, and the node counts follows per connection, so
+	/// the check is that no single connection carries more than four.
+	///
+	/// Counts remote follows, not local intents: `register_follow_intent`
+	/// records an entry before the node has acknowledged anything, so counting
+	/// entries alone would pass even if every follow went to one socket.
+	#[test]
+	fn a_products_follows_do_not_consume_another_scopes_budget() {
+		let provider = Arc::new(ScriptedProvider::new(|request| {
+			let id = extract_id(request).unwrap();
+			request
+				.contains("chainHead_v1_follow")
+				.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-{id}"}}"#))
+		}));
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let genesis = vec![0xab; 32];
+
+		let busy = core.for_product(1);
+		let _busy_follows: Vec<_> = (0..4)
+			.map(|n| {
+				busy.remote_chain_head_follow(
+					format!("c1:follow{n}"),
+					RemoteChainHeadFollowRequest {
+						genesis_hash: genesis.clone(),
+						with_runtime: false,
+					},
+				)
+			})
+			.collect();
+		wait_for_sent(&provider, |sent| {
+			sent.iter().filter(|r| r.contains("chainHead_v1_follow")).count() >= 4
+		});
+
+		let quiet = core.for_product(2);
+		let _quiet_follow = quiet.remote_chain_head_follow(
+			"c2:follow".to_string(),
+			RemoteChainHeadFollowRequest { genesis_hash: genesis.clone(), with_runtime: false },
+		);
+		wait_for_sent(&provider, |sent| {
+			sent.iter().filter(|r| r.contains("chainHead_v1_follow")).count() >= 5
+		});
+
+		// Each follow is established only once the node has answered, which it
+		// does on the connection that asked.
+		let established = |connection: &Arc<ChainConnection>| {
+			connection
+				.follows
+				.lock()
+				.unwrap()
+				.values()
+				.filter(|follow| follow.remote_subscription_id.is_some())
+				.count()
+		};
+		let mut per_connection = Vec::new();
+		for _ in 0..200 {
+			per_connection = core
+				.connections
+				.lock()
+				.unwrap()
+				.values()
+				.flat_map(|connections| connections.values())
+				.filter_map(ConnectionEntry::ready)
+				.map(established)
+				.collect::<Vec<_>>();
+			if per_connection.iter().sum::<usize>() == 5 {
+				break;
+			}
+			std::thread::sleep(std::time::Duration::from_millis(10));
+		}
+		per_connection.sort_unstable();
+
+		assert_eq!(provider.connect_calls.load(Ordering::SeqCst), 2);
+		assert_eq!(
+			per_connection,
+			vec![1, 4],
+			"five established follows did not split one per product across two connections",
+		);
+	}
+
+	/// A scope that ends takes its connections with it. `core_instance` never
+	/// repeats, so without this the entry is never asked for again and the
+	/// cache grows for the life of the process. The smoldot provider caps
+	/// connections at 32, so a leak there eventually refuses every connect.
+	#[test]
+	fn a_scope_releases_its_connections_when_it_ends() {
+		let provider = Arc::new(ScriptedProvider::new(|_| None));
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let genesis = vec![0xab; 32];
+		let other_chain = vec![0xcd; 32];
+
+		let product = core.for_product(1);
+		for chain in [&genesis, &other_chain] {
+			futures::executor::block_on(product.connection_for("release_test", chain))
+				.expect("connection");
+		}
+		futures::executor::block_on(core.connection_for("release_test", &genesis))
+			.expect("core connection");
+		assert_eq!(core.connections.lock().unwrap().values().map(HashMap::len).sum::<usize>(), 3);
+
+		product.release_scope();
+
+		let remaining: Vec<(ConnectionScope, String)> = core
+			.connections
+			.lock()
+			.unwrap()
+			.iter()
+			.flat_map(|(scope, connections)| {
+				connections.keys().map(|key| (*scope, key.clone())).collect::<Vec<_>>()
+			})
+			.collect();
+		assert_eq!(
+			remaining,
+			vec![(ConnectionScope::Core, encode_hex(&genesis))],
+			"releasing a product took the core's connection with it: {remaining:?}",
+		);
+	}
+
+	/// Releasing a scope with a live follow must close the host's socket, not
+	/// just forget the connection. The follow pump holds a strong handle, so
+	/// without aborting it the connection stays alive and the socket stays
+	/// open, which is worse than leaving the entry cached.
+	#[test]
+	fn releasing_a_scope_with_a_live_follow_closes_the_socket() {
+		let provider = Arc::new(ScriptedProvider::new(|request| {
+			let id = extract_id(request).unwrap();
+			request
+				.contains("chainHead_v1_follow")
+				.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
+		}));
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let product = core.for_product(1);
+
+		// Hold the stream, so nothing tears the follow down on our behalf.
+		let _follow = product.remote_chain_head_follow(
+			"c1:follow".to_string(),
+			RemoteChainHeadFollowRequest { genesis_hash: vec![0xab; 32], with_runtime: false },
+		);
+		wait_for_sent(&provider, |sent| {
+			sent.iter().any(|request| request.contains("chainHead_v1_follow"))
+		});
+		assert!(provider.sender.lock().unwrap().is_some(), "socket closed too early");
+
+		product.release_scope();
+
+		// The socket closes once the aborted pump drops the last handle.
+		let mut closed = false;
+		for _ in 0..200 {
+			if provider.sender.lock().unwrap().is_none() {
+				closed = true;
+				break;
+			}
+			std::thread::sleep(std::time::Duration::from_millis(10));
+		}
+		assert!(closed, "the host socket stayed open after the scope was released");
+	}
+
+	/// A connect genuinely in flight when its scope ends must not reinstate it.
+	/// `core_instance` never repeats, so a reinstated entry is never asked for
+	/// again and never evicted. The connect is parked inside the provider until
+	/// after `release_scope` has run, which is the ordering that matters.
+	#[cfg_attr(target_arch = "wasm32", ignore)]
+	#[test]
+	fn a_connect_in_flight_cannot_resurrect_a_released_scope() {
+		/// Holds every `connect` until the test lets it through.
+		struct ParkedProvider {
+			gate: Arc<(ParkingMutex<bool>, Condvar)>,
+		}
+		#[async_trait]
+		impl RuntimeChainProvider for ParkedProvider {
+			async fn connect(
+				&self,
+				_genesis_hash: Vec<u8>,
+			) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
+				{
+					// Scoped, so no guard is held across the await below.
+					let (lock, cv) = &*self.gate;
+					let mut open = lock.lock();
+					while !*open {
+						cv.wait(&mut open);
+					}
+				}
+				ScriptedProvider::new(|_| None).connect(Vec::new()).await
+			}
+		}
+
+		let gate = Arc::new((ParkingMutex::new(false), Condvar::new()));
+		let provider = Arc::new(ParkedProvider { gate: gate.clone() });
+		let core = ChainRuntime::new(provider, spawner_for_tests());
+		let product = core.for_product(1);
+		let genesis = vec![0xab; 32];
+
+		// Start the connect on another thread and let it reach the provider.
+		let connecting = product.clone();
+		let connecting_genesis = genesis.clone();
+		let handle = std::thread::spawn(move || {
+			futures::executor::block_on(
+				connecting.connection_for("resurrect_test", &connecting_genesis),
+			)
+			.is_ok()
+		});
+		for _ in 0..200 {
+			if core
+				.connections
+				.lock()
+				.unwrap()
+				.values()
+				.flat_map(|connections| connections.values())
+				.filter(|entry| matches!(entry, ConnectionEntry::Connecting { .. }))
+				.count() == 1
+			{
+				break;
+			}
+			std::thread::sleep(std::time::Duration::from_millis(10));
+		}
+		assert_eq!(
+			core.connections
+				.lock()
+				.unwrap()
+				.values()
+				.flat_map(|connections| connections.values())
+				.filter(|entry| matches!(entry, ConnectionEntry::Connecting { .. }))
+				.count(),
+			1,
+			"the connect never reached the provider",
+		);
+
+		// The scope ends while that connect is still parked.
+		product.release_scope();
+
+		// Now let it finish.
+		{
+			let (lock, cv) = &*gate;
+			*lock.lock() = true;
+			cv.notify_all();
+		}
+		let succeeded = handle.join().expect("connect thread");
+
+		let remaining: Vec<String> = core
+			.connections
+			.lock()
+			.unwrap()
+			.values()
+			.flat_map(|connections| connections.keys())
+			.cloned()
+			.collect();
+		assert!(
+			remaining.is_empty(),
+			"a connect in flight reinstated the released scope: {remaining:?}",
+		);
+		assert!(
+			!succeeded,
+			"a connect for a released scope should fail, not hand back a connection"
+		);
+	}
+
+	#[test]
+	fn releasing_a_product_drops_only_its_own_follow_intents() {
+		let provider = Arc::new(ScriptedProvider::new(|_| None));
+		let core = ChainRuntime::new(provider, spawner_for_tests());
+		let genesis = vec![0xab; 32];
+		let first = core.for_product(1);
+		let second = core.for_product(2);
+		first.register_follow_intent(&genesis, "c1:request");
+		second.register_follow_intent(&genesis, "c2:request");
+
+		first.release_scope();
+
+		assert!(
+			first.resolve_local_follow_id("test", &genesis, "c1:request").is_err(),
+			"a released product's follow intent outlived it",
+		);
+		assert_eq!(
+			second
+				.resolve_local_follow_id("test", &genesis, "c2:request")
+				.expect("c2 intent"),
+			"c2:request",
+		);
+	}
+
+	#[test]
+	fn a_product_cannot_resolve_another_products_follow() {
+		let provider = Arc::new(ScriptedProvider::new(|_| None));
+		let core = ChainRuntime::new(provider, spawner_for_tests());
+		let genesis = vec![0xab; 32];
+		let first = core.for_product(1);
+		let second = core.for_product(2);
+		first.register_follow_intent(&genesis, "host-internal");
+
+		assert!(
+			second.resolve_local_follow_id("test", &genesis, "host-internal").is_err(),
+			"one product resolved another product's follow id",
+		);
+		assert!(
+			second.resolve_local_follow_id("test", &genesis, "follow_0").is_err(),
+			"one product's alias resolved to another product's follow",
+		);
+	}
+
+	#[test]
+	fn a_product_cannot_stop_another_products_transaction() {
+		let provider = broadcast_provider(STOPPED);
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let genesis = vec![0x11; 32];
+		let owner = core.for_product(1);
+		let other = core.for_product(2);
+
+		let operation_id = broadcast(&owner, &genesis);
+
+		let err = stop(&other, &genesis, &operation_id)
+			.expect_err("another product stopped this product's transaction");
+		assert!(err.reason().contains("unknown transaction operation id"));
+		assert!(
+			!provider
+				.sent
+				.lock()
+				.unwrap()
+				.iter()
+				.any(|request| request.contains("transaction_v1_stop")),
+			"the stop reached the node",
+		);
+
+		stop(&owner, &genesis, &operation_id)
+			.expect("the owner can still stop its own transaction");
+	}
+
+	#[test]
+	fn the_transaction_cap_applies_per_product() {
+		let core = ChainRuntime::new(broadcast_provider(STOPPED), spawner_for_tests());
+		let genesis = vec![0x11; 32];
+		let quiet = core.for_product(1);
+		let flooding = core.for_product(2);
+
+		let kept = broadcast(&quiet, &genesis);
+		for _ in 0..=MAX_TRACKED_TRANSACTION_OPERATIONS {
+			broadcast(&flooding, &genesis);
+		}
+
+		stop(&quiet, &genesis, &kept).expect("one product's flood evicted another's operation");
+	}
+
+	#[test]
+	fn releasing_a_product_forgets_its_transactions() {
+		let core = ChainRuntime::new(broadcast_provider(STOPPED), spawner_for_tests());
+		let genesis = vec![0x11; 32];
+		let product = core.for_product(1);
+		broadcast(&product, &genesis);
+
+		product.release_scope();
+
+		assert!(core.transaction_operations.lock().unwrap().is_empty());
+	}
+
+	/// A call that lands after `release_scope` leaves nothing behind, taken
+	/// through the public follow rather than the scope-group helpers, because
+	/// the public path writes `follow_starts` outside them. The spawner is
+	/// inert so the setup task never runs: its failure path would clear the
+	/// same entries and hide a missing release gate.
+	#[test]
+	fn a_call_finishing_after_release_leaves_nothing_behind() {
+		let inert: Spawner = Arc::new(|_task| {});
+		let core = ChainRuntime::new(broadcast_provider(STOPPED), inert);
+		let genesis = vec![0x11; 32];
+		let product = core.for_product(1);
+		product.release_scope();
+
+		let _follow = product.remote_chain_head_follow(
+			"c1:late".to_owned(),
+			RemoteChainHeadFollowRequest { genesis_hash: genesis.clone(), with_runtime: false },
+		);
+		product.with_transaction_operations(|operations| {
+			operations.insert(
+				1,
+				TransactionOperation {
+					genesis_hash: genesis.clone(),
+					provider_operation_id: "REMOTE-OP".to_owned(),
+				},
+			)
+		});
+
+		assert!(core.follow_intents.lock().unwrap().is_empty());
+		assert!(core.follow_starts.lock().is_empty(), "a released scope kept its follow setup");
+		assert!(core.transaction_operations.lock().unwrap().is_empty());
+	}
+
+	#[test]
+	fn releasing_a_product_sweeps_only_its_own_follow_starts() {
+		let core = ChainRuntime::new(broadcast_provider(STOPPED), spawner_for_tests());
+		let genesis = vec![0xab; 32];
+		let first = core.for_product(1);
+		let second = core.for_product(2);
+		for (runtime, follow_id) in [(&first, "c1:request"), (&second, "c2:request")] {
+			runtime.register_follow_intent(&genesis, follow_id);
+			let started: LocalFollowStart = futures::future::ready(Ok(())).boxed().shared();
+			core.follow_starts
+				.lock()
+				.insert((genesis.clone(), follow_id.to_owned()), started);
+		}
+
+		first.release_scope();
+
+		let remaining: Vec<String> = core
+			.follow_starts
+			.lock()
+			.keys()
+			.map(|(_, follow_id)| follow_id.clone())
+			.collect();
+		assert_eq!(remaining, vec!["c2:request".to_owned()]);
+	}
+
+	/// Releasing one product leaves another product's connections alone.
+	#[test]
+	fn releasing_one_product_does_not_touch_another() {
+		let provider = Arc::new(ScriptedProvider::new(|_| None));
+		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let genesis = vec![0xab; 32];
+
+		let first = core.for_product(1);
+		let second = core.for_product(2);
+		for runtime in [&first, &second] {
+			futures::executor::block_on(runtime.connection_for("release_test", &genesis))
+				.expect("connection");
+		}
+
+		first.release_scope();
+
+		let remaining: Vec<(ConnectionScope, String)> = core
+			.connections
+			.lock()
+			.unwrap()
+			.iter()
+			.flat_map(|(scope, connections)| {
+				connections.keys().map(|key| (*scope, key.clone())).collect::<Vec<_>>()
+			})
+			.collect();
+		assert_eq!(remaining, vec![(ConnectionScope::Product(2), encode_hex(&genesis))]);
+	}
+
+	#[test]
+	fn a_queued_follow_cannot_open_a_connection_after_product_release() {
+		let queued = Arc::new(Mutex::new(Vec::<BoxFuture<'static, ()>>::new()));
+		let queue = queued.clone();
+		let spawner: Spawner = Arc::new(move |task| queue.lock().unwrap().push(task));
+		let provider = Arc::new(ScriptedProvider::new(|_| None));
+		let core = ChainRuntime::new(provider, spawner);
+		let product = core.for_product(1);
+		let mut follow = product.remote_chain_head_follow(
+			"c1:queued".to_string(),
+			RemoteChainHeadFollowRequest { genesis_hash: vec![0xab; 32], with_runtime: false },
+		);
+		let task = queued.lock().unwrap().pop().expect("queued follow setup");
+
+		product.release_scope();
+		let completed = task.now_or_never();
+		let connections_empty =
+			!core.connections.lock().unwrap().contains_key(&ConnectionScope::Product(1));
+
+		assert_eq!(
+			(completed, connections_empty, follow.next().now_or_never()),
+			(Some(()), true, Some(Some(Err(scope_released(FOLLOW_METHOD)))),),
+			"closing the product must reject follow setup queued before teardown",
+		);
+	}
+
+	#[test]
+	fn a_failed_connection_can_be_retried() {
+		struct FailOnceProvider {
+			attempted: AtomicBool,
+			inner: ScriptedProvider,
+		}
+
+		#[async_trait]
+		impl RuntimeChainProvider for FailOnceProvider {
+			async fn connect(
+				&self,
+				genesis_hash: Vec<u8>,
+			) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
+				if !self.attempted.swap(true, Ordering::SeqCst) {
+					return Err(RuntimeFailure::unavailable("remote_chain_connect"));
+				}
+				self.inner.connect(genesis_hash).await
+			}
+		}
+
+		let provider = Arc::new(FailOnceProvider {
+			attempted: AtomicBool::new(false),
+			inner: ScriptedProvider::new(|_| None),
+		});
+		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let genesis = vec![0xab; 32];
+		let failed =
+			futures::executor::block_on(runtime.connection_for("retry", &genesis)).map(|_| ());
+		let retried =
+			futures::executor::block_on(runtime.connection_for("retry", &genesis)).map(|_| ());
+		assert_eq!(
+			(failed, retried, provider.inner.connect_calls.load(Ordering::SeqCst)),
+			(
+				Err(RuntimeFailure::unavailable_with_reason("retry", "remote_chain_connect")),
+				Ok(()),
+				1
+			),
+		);
+	}
+
+	#[test]
+	fn closed_products_do_not_accumulate_in_the_connection_registry() {
+		let provider = Arc::new(ScriptedProvider::new(|_| None));
+		let core = ChainRuntime::new(provider, spawner_for_tests());
+		for instance in 1..=1_000 {
+			core.for_product(instance).release_scope();
+		}
+		let remaining: Vec<_> = core.connections.lock().unwrap().keys().copied().collect();
+		assert_eq!(remaining, vec![ConnectionScope::Core]);
+	}
+
+	#[test]
+	fn unknown_genesis_chain_spec_propagates_failure() {
+		let provider = Arc::new(UnavailableChainProvider);
+		let runtime = ChainRuntime::new(provider, spawner_for_tests());
+		let err = match futures::executor::block_on(
+			runtime.remote_chain_spec_chain_name(vec![0u8; 32]),
+		) {
+			Ok(_) => panic!("expected failure"),
+			Err(err) => err,
+		};
+		assert_eq!(err.kind(), RuntimeFailureKind::Unavailable);
+		assert_eq!(err.method(), "remote_chain_spec_chain_name");
+	}
+
+	#[test]
+	fn json_rpc_error_becomes_host_failure() {
+		let provider = Arc::new(ScriptedProvider::new(|request| {
+			let id = extract_id(request).unwrap();
+			Some(format!(
+				r#"{{"jsonrpc":"2.0","id":"{id}","error":{{"code":-32601,"message":"method not found"}}}}"#
+			))
+		}));
+		let runtime = ChainRuntime::new(provider, spawner_for_tests());
+		let err = match futures::executor::block_on(
+			runtime.remote_chain_spec_chain_name(vec![0u8; 32]),
+		) {
+			Ok(_) => panic!("expected failure"),
+			Err(err) => err,
+		};
+		assert_eq!(err.kind(), RuntimeFailureKind::HostFailure);
+		assert!(err.reason().contains("method not found"), "unexpected reason: {}", err.reason());
+	}
+
+	/// A product only sees the reason string, so a transport that closes under
+	/// a chain-head call must say so instead of naming just the method.
+	#[test]
+	fn a_closed_transport_names_its_cause_on_the_call_and_the_follow() {
+		let provider = Arc::new(ScriptedProvider::new(|request| {
+			let id = extract_id(request).unwrap();
+			request
+				.contains("chainHead_v1_follow")
+				.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
+		}));
+		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let mut follow = runtime.remote_chain_head_follow(
+			"local-follow".to_string(),
+			RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: false },
+		);
+		notification_sender(&provider)
+			.unbounded_send(
+				r#"{"jsonrpc":"2.0","method":"chainHead_v1_followEvent","params":{"subscription":"REMOTE-FOLLOW","result":{"event":"initialized","finalizedBlockHashes":[]}}}"#
+					.to_string(),
+			)
+			.unwrap();
+		assert!(matches!(
+			futures::executor::block_on(follow.next()),
+			Some(Ok(RemoteChainHeadFollowItem::Initialized { .. }))
+		));
+		let storage_runtime = runtime.clone();
+		let storage = std::thread::spawn(move || {
+			futures::executor::block_on(storage_runtime.remote_chain_head_storage(
+				RemoteChainHeadStorageRequest {
+					genesis_hash: vec![0u8; 32],
+					follow_subscription_id: "local-follow".to_string(),
+					hash: vec![1u8; 32],
+					items: vec![StorageQueryItem {
+						key: vec![0xaa],
+						query_type: StorageQueryType::Value,
+					}],
+					child_trie: None,
+				},
+			))
+		});
+		wait_for_sent(&provider, |sent| {
+			sent.iter().any(|request| request.contains("chainHead_v1_storage"))
+		});
+
+		provider.sender.lock().unwrap().take();
+
+		let cause = "RPC error: client error: json-rpc connection closed: RPC error: client error: json-rpc response stream ended";
+		let storage_failure =
+			storage.join().unwrap().map(|_| ()).map_err(|failure| failure.reason());
+		let follow_failures: Vec<String> = futures::executor::block_on(
+			follow.filter_map(|item| core::future::ready(item.err())).collect::<Vec<_>>(),
+		)
+		.into_iter()
+		.map(|failure| failure.reason())
+		.collect();
+		assert_eq!(
+			(storage_failure, follow_failures),
+			(
+				Err(format!("remote_chain_head_storage: {cause}")),
+				vec![format!("remote_chain_head_follow: {cause}")]
+			),
+		);
+	}
+
+	#[test]
+	fn follow_event_initialized_translates_to_v01_item() {
+		// Answer `chainHead_v1_follow` through the synchronized responder so
+		// the ack cannot reach the response loop before the pending request
+		// is registered.
+		let provider = Arc::new(ScriptedProvider::new(|request| {
+			let id = extract_id(request).unwrap();
+			if request.contains("chainHead_v1_follow") {
+				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
+			} else {
+				None
+			}
+		}));
+		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+
+		let mut stream = runtime.remote_chain_head_follow(
+			"local-follow".to_string(),
+			RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: false },
+		);
+
+		// Push follow events keyed by remote subscription id. Events that
+		// land before the follow ack are buffered by remote id and replayed
+		// once the follow is established.
+		let tx = notification_sender(&provider);
+		tx.unbounded_send(
             r#"{"jsonrpc":"2.0","method":"chainHead_v1_followEvent","params":{"subscription":"REMOTE-FOLLOW","result":{"event":"initialized","finalizedBlockHashes":["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}}}"#
                 .to_string(),
         ).unwrap();
-        tx.unbounded_send(
+		tx.unbounded_send(
             r#"{"jsonrpc":"2.0","method":"chainHead_v1_followEvent","params":{"subscription":"REMOTE-FOLLOW","result":{"event":"stop"}}}"#
                 .to_string(),
         ).unwrap();
 
-        let items: Vec<_> = futures::executor::block_on(async {
-            let mut out = Vec::new();
-            while let Some(item) = stream.next().await {
-                let is_stop = matches!(item, Ok(RemoteChainHeadFollowItem::Stop));
-                out.push(item);
-                if is_stop {
-                    break;
-                }
-            }
-            out
-        });
+		let items: Vec<_> = futures::executor::block_on(async {
+			let mut out = Vec::new();
+			while let Some(item) = stream.next().await {
+				let is_stop = matches!(item, Ok(RemoteChainHeadFollowItem::Stop));
+				out.push(item);
+				if is_stop {
+					break;
+				}
+			}
+			out
+		});
 
-        match &items[0] {
-            Ok(RemoteChainHeadFollowItem::Initialized {
-                finalized_block_hashes,
-                finalized_block_runtime,
-            }) => {
-                assert_eq!(finalized_block_hashes, &vec![vec![0xaa; 32]]);
-                assert!(finalized_block_runtime.is_none());
-            }
-            other => panic!("expected Initialized, got {other:?}"),
-        }
-        assert!(matches!(items[1], Ok(RemoteChainHeadFollowItem::Stop)));
-    }
+		match &items[0] {
+			Ok(RemoteChainHeadFollowItem::Initialized {
+				finalized_block_hashes,
+				finalized_block_runtime,
+			}) => {
+				assert_eq!(finalized_block_hashes, &vec![vec![0xaa; 32]]);
+				assert!(finalized_block_runtime.is_none());
+			},
+			other => panic!("expected Initialized, got {other:?}"),
+		}
+		assert!(matches!(items[1], Ok(RemoteChainHeadFollowItem::Stop)));
+	}
 
-    /// A follow whose setup never reaches the chain must end with that
-    /// failure. Ending without one reaches the product as `complete`, which
-    /// reads as a subscription that simply had nothing more to say.
-    #[test]
-    fn follow_setup_failure_ends_the_stream_with_the_failure() {
-        let runtime = ChainRuntime::new(Arc::new(UnavailableChainProvider), spawner_for_tests());
+	/// A follow whose setup never reaches the chain must end with that
+	/// failure. Ending without one reaches the product as `complete`, which
+	/// reads as a subscription that simply had nothing more to say.
+	#[test]
+	fn follow_setup_failure_ends_the_stream_with_the_failure() {
+		let runtime = ChainRuntime::new(Arc::new(UnavailableChainProvider), spawner_for_tests());
 
-        let mut stream = runtime.remote_chain_head_follow(
-            "local-follow".to_string(),
-            RemoteChainHeadFollowRequest {
-                genesis_hash: vec![0u8; 32],
-                with_runtime: false,
-            },
-        );
+		let mut stream = runtime.remote_chain_head_follow(
+			"local-follow".to_string(),
+			RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: false },
+		);
 
-        let failure = match futures::executor::block_on(stream.next()) {
-            Some(Err(failure)) => failure,
-            other => panic!("expected the setup failure, got {other:?}"),
-        };
-        assert_eq!(failure.kind(), RuntimeFailureKind::Unavailable);
-        assert_eq!(failure.method(), FOLLOW_METHOD);
-        assert!(futures::executor::block_on(stream.next()).is_none());
-    }
+		let failure = match futures::executor::block_on(stream.next()) {
+			Some(Err(failure)) => failure,
+			other => panic!("expected the setup failure, got {other:?}"),
+		};
+		assert_eq!(failure.kind(), RuntimeFailureKind::Unavailable);
+		assert_eq!(failure.method(), FOLLOW_METHOD);
+		assert!(futures::executor::block_on(stream.next()).is_none());
+	}
 
-    /// An upstream event the follow cannot read ends the stream with a
-    /// failure, after the items that arrived before it.
-    #[cfg_attr(target_arch = "wasm32", ignore)]
-    #[test]
-    fn an_unreadable_follow_event_interrupts_the_stream_after_earlier_items() {
-        let provider = Arc::new(ScriptedProvider::new(|request| {
-            let id = extract_id(request).unwrap();
-            if request.contains("chainHead_v1_follow") {
-                Some(format!(
-                    r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#
-                ))
-            } else {
-                None
-            }
-        }));
-        let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	/// An upstream event the follow cannot read ends the stream with a
+	/// failure, after the items that arrived before it.
+	#[cfg_attr(target_arch = "wasm32", ignore)]
+	#[test]
+	fn an_unreadable_follow_event_interrupts_the_stream_after_earlier_items() {
+		let provider = Arc::new(ScriptedProvider::new(|request| {
+			let id = extract_id(request).unwrap();
+			if request.contains("chainHead_v1_follow") {
+				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
+			} else {
+				None
+			}
+		}));
+		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
 
-        let mut stream = runtime.remote_chain_head_follow(
-            "local-follow".to_string(),
-            RemoteChainHeadFollowRequest {
-                genesis_hash: vec![0u8; 32],
-                with_runtime: false,
-            },
-        );
+		let mut stream = runtime.remote_chain_head_follow(
+			"local-follow".to_string(),
+			RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: false },
+		);
 
-        let tx = notification_sender(&provider);
-        tx.unbounded_send(
+		let tx = notification_sender(&provider);
+		tx.unbounded_send(
             r#"{"jsonrpc":"2.0","method":"chainHead_v1_followEvent","params":{"subscription":"REMOTE-FOLLOW","result":{"event":"initialized","finalizedBlockHashes":["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}}}"#
                 .to_string(),
         ).unwrap();
-        // `newBlock` without its `parentBlockHash`: an event the follow
-        // cannot read.
-        tx.unbounded_send(
+		// `newBlock` without its `parentBlockHash`: an event the follow
+		// cannot read.
+		tx.unbounded_send(
             r#"{"jsonrpc":"2.0","method":"chainHead_v1_followEvent","params":{"subscription":"REMOTE-FOLLOW","result":{"event":"newBlock","blockHash":"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}"#
                 .to_string(),
         ).unwrap();
 
-        assert!(matches!(
-            futures::executor::block_on(stream.next()),
-            Some(Ok(RemoteChainHeadFollowItem::Initialized { .. }))
-        ));
-        let failure = match futures::executor::block_on(stream.next()) {
-            Some(Err(failure)) => failure,
-            other => panic!("expected the follow to be interrupted, got {other:?}"),
-        };
-        assert_eq!(failure.method(), FOLLOW_METHOD);
-        assert!(futures::executor::block_on(stream.next()).is_none());
-    }
+		assert!(matches!(
+			futures::executor::block_on(stream.next()),
+			Some(Ok(RemoteChainHeadFollowItem::Initialized { .. }))
+		));
+		let failure = match futures::executor::block_on(stream.next()) {
+			Some(Err(failure)) => failure,
+			other => panic!("expected the follow to be interrupted, got {other:?}"),
+		};
+		assert_eq!(failure.method(), FOLLOW_METHOD);
+		assert!(futures::executor::block_on(stream.next()).is_none());
+	}
 
-    #[cfg_attr(target_arch = "wasm32", ignore)]
-    #[test]
-    fn drop_follow_stream_sends_unfollow() {
-        let provider = Arc::new(ScriptedProvider::new(|request| {
-            let id = extract_id(request).unwrap();
-            if request.contains("chainHead_v1_follow") {
-                Some(format!(
-                    r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#
-                ))
-            } else {
-                None
-            }
-        }));
-        let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
-        let sent = provider.sent.clone();
+	#[cfg_attr(target_arch = "wasm32", ignore)]
+	#[test]
+	fn drop_follow_stream_sends_unfollow() {
+		let provider = Arc::new(ScriptedProvider::new(|request| {
+			let id = extract_id(request).unwrap();
+			if request.contains("chainHead_v1_follow") {
+				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
+			} else {
+				None
+			}
+		}));
+		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let sent = provider.sent.clone();
 
-        let stream = runtime.remote_chain_head_follow(
-            "local-follow".to_string(),
-            RemoteChainHeadFollowRequest {
-                genesis_hash: vec![0u8; 32],
-                with_runtime: false,
-            },
-        );
+		let stream = runtime.remote_chain_head_follow(
+			"local-follow".to_string(),
+			RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: false },
+		);
 
-        // Wait until the follow setup roundtrips and lands in `sent`.
-        // Generous timeout so the test stays robust under loaded CI runners
-        // where the spawner can be slow to schedule the request task.
-        for _ in 0..500 {
-            if !sent.lock().unwrap().is_empty() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+		// Wait until the follow setup roundtrips and lands in `sent`.
+		// Generous timeout so the test stays robust under loaded CI runners
+		// where the spawner can be slow to schedule the request task.
+		for _ in 0..500 {
+			if !sent.lock().unwrap().is_empty() {
+				break;
+			}
+			std::thread::sleep(std::time::Duration::from_millis(10));
+		}
 
-        drop(stream);
+		drop(stream);
 
-        // Wait for the cleanup task to run and emit the unfollow request.
-        for _ in 0..500 {
-            if sent.lock().unwrap().len() >= 2 {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+		// Wait for the cleanup task to run and emit the unfollow request.
+		for _ in 0..500 {
+			if sent.lock().unwrap().len() >= 2 {
+				break;
+			}
+			std::thread::sleep(std::time::Duration::from_millis(10));
+		}
 
-        let messages = sent.lock().unwrap().clone();
-        assert!(
-            messages.iter().any(|m| m.contains("chainHead_v1_unfollow")),
-            "unfollow not sent; messages: {messages:?}",
-        );
-    }
+		let messages = sent.lock().unwrap().clone();
+		assert!(
+			messages.iter().any(|m| m.contains("chainHead_v1_unfollow")),
+			"unfollow not sent; messages: {messages:?}",
+		);
+	}
 
-    #[test]
-    fn encode_hex_round_trip() {
-        let bytes = vec![0x00u8, 0x12, 0xab, 0xff];
-        let s = encode_hex(&bytes);
-        assert_eq!(s, "0x0012abff");
-        assert_eq!(decode_hex(&s).unwrap(), bytes);
-    }
+	#[test]
+	fn encode_hex_round_trip() {
+		let bytes = vec![0x00u8, 0x12, 0xab, 0xff];
+		let s = encode_hex(&bytes);
+		assert_eq!(s, "0x0012abff");
+		assert_eq!(decode_hex(&s).unwrap(), bytes);
+	}
 
-    #[test]
-    fn parse_runtime_type_valid_sorts_apis() {
-        let runtime_type = map_runtime_event(subxt_chain::RuntimeEvent::Valid(
-            subxt_chain::RuntimeVersionEvent {
-                spec: subxt_chain::RuntimeSpec {
-                    spec_name: "polkadot".to_string(),
-                    impl_name: "parity-polkadot".to_string(),
-                    spec_version: 1000,
-                    impl_version: 1,
-                    transaction_version: 24,
-                    apis: HashMap::from([("0xbeef".to_string(), 2), ("0xbabe".to_string(), 4)]),
-                },
-            },
-        ))
-        .unwrap();
-        match runtime_type {
-            RuntimeType::Valid(spec) => {
-                assert_eq!(spec.apis.len(), 2);
-                assert_eq!(spec.apis[0].name, "0xbabe");
-                assert_eq!(spec.apis[1].name, "0xbeef");
-                assert_eq!(spec.transaction_version, Some(24));
-            }
-            other => panic!("expected Valid, got {other:?}"),
-        }
-    }
+	#[test]
+	fn parse_runtime_type_valid_sorts_apis() {
+		let runtime_type =
+			map_runtime_event(subxt_chain::RuntimeEvent::Valid(subxt_chain::RuntimeVersionEvent {
+				spec: subxt_chain::RuntimeSpec {
+					spec_name: "polkadot".to_string(),
+					impl_name: "parity-polkadot".to_string(),
+					spec_version: 1000,
+					impl_version: 1,
+					transaction_version: 24,
+					apis: HashMap::from([("0xbeef".to_string(), 2), ("0xbabe".to_string(), 4)]),
+				},
+			}))
+			.unwrap();
+		match runtime_type {
+			RuntimeType::Valid(spec) => {
+				assert_eq!(spec.apis.len(), 2);
+				assert_eq!(spec.apis[0].name, "0xbabe");
+				assert_eq!(spec.apis[1].name, "0xbeef");
+				assert_eq!(spec.transaction_version, Some(24));
+			},
+			other => panic!("expected Valid, got {other:?}"),
+		}
+	}
 }

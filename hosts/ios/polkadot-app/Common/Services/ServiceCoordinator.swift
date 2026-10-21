@@ -1,4 +1,5 @@
 import Foundation
+import BackgroundExecution
 import Keystore_iOS
 import Operation_iOS
 import AssetExchange
@@ -16,6 +17,7 @@ import FoundationExt
 import Individuality
 import UniqueDevice
 import ChainRegistry
+import DesignSystem
 
 protocol ServiceCoordinatorProtocol: ApplicationServiceProtocol {
     var depositService: DepositServiceProtocol { get }
@@ -30,8 +32,6 @@ protocol ServiceCoordinatorProtocol: ApplicationServiceProtocol {
     var attachmentUploadService: AttachmentUploadingServicing { get }
     var attachmentDownloadService: AttachmentDownloadingServicing { get }
     var audioSessionManager: AudioSessionManaging { get }
-    var determineStateSyncService: DetermineStateSyncServicing { get }
-    var personDataStore: DetermineStatePersonDataStore { get }
     var coinageService: CoinageServicing { get }
     var coinageBackupSyncService: CoinageBackupSyncServicing { get }
     var accountManager: ProductsAccountManaging { get }
@@ -62,9 +62,6 @@ final class ServiceCoordinator {
     let durableTransactionEngine: DurableTxServices
     let w3sPaymentTracking: W3sPaymentTracking
     let audioSessionManager: AudioSessionManaging
-    let determineStateSyncService: DetermineStateSyncServicing
-    let personhoodBackgroundService: PersonhoodBackgroundService
-    let personDataStore: DetermineStatePersonDataStore
     let coinageBackupSyncService: CoinageBackupSyncServicing
     let messageExpansionService: CompactedMessageExpansionServicing
     let notificationBadgeSyncService: NotificationBadgeSyncService
@@ -77,6 +74,9 @@ final class ServiceCoordinator {
     let chainStatusProvider: ChainStatusProviding
     let truapiRuntimeProvider: TrUAPIHostRuntimeProviding
     let tldProvider: DotNsTldProviding
+    /// Held rather than looked up, so the session that started the Pocket is
+    /// the one that stops it. Nil in a build without the products feature.
+    let pocket: ProductPocketService?
     let logger: LoggerProtocol
 
     // Retained so the weakly-held dependency-locator entry stays alive for the product host.
@@ -104,9 +104,6 @@ final class ServiceCoordinator {
         durableTransactionEngine: DurableTxServices,
         w3sPaymentTracking: W3sPaymentTracking,
         audioSessionManager: AudioSessionManaging,
-        determineStateSyncService: DetermineStateSyncServicing,
-        personhoodBackgroundService: PersonhoodBackgroundService,
-        personDataStore: DetermineStatePersonDataStore,
         coinageBackupSyncService: CoinageBackupSyncServicing,
         messageExpansionService: CompactedMessageExpansionServicing,
         notificationBadgeSyncService: NotificationBadgeSyncService,
@@ -120,6 +117,7 @@ final class ServiceCoordinator {
         chainStatusProvider: ChainStatusProviding,
         truapiRuntimeProvider: TrUAPIHostRuntimeProviding,
         tldProvider: DotNsTldProviding,
+        pocket: ProductPocketService?,
         logger: LoggerProtocol
     ) {
         self.chatCoordinator = chatCoordinator
@@ -139,9 +137,6 @@ final class ServiceCoordinator {
         self.durableTransactionEngine = durableTransactionEngine
         self.w3sPaymentTracking = w3sPaymentTracking
         self.audioSessionManager = audioSessionManager
-        self.determineStateSyncService = determineStateSyncService
-        self.personhoodBackgroundService = personhoodBackgroundService
-        self.personDataStore = personDataStore
         self.coinageBackupSyncService = coinageBackupSyncService
         self.messageExpansionService = messageExpansionService
         self.notificationBadgeSyncService = notificationBadgeSyncService
@@ -153,6 +148,7 @@ final class ServiceCoordinator {
         self.chainStatusProvider = chainStatusProvider
         self.truapiRuntimeProvider = truapiRuntimeProvider
         self.tldProvider = tldProvider
+        self.pocket = pocket
         self.logger = logger
         self.paymentsSupport = paymentsSupport
         self.turnService = turnService
@@ -163,11 +159,6 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
     func setup() {
         // Keep the cached TLD warm on each launch without blocking.
         tldProvider.refresh()
-
-        #if FEATURE_DIMS
-            determineStateSyncService.setup()
-            personhoodBackgroundService.setup()
-        #endif
 
         chatCoordinator.setup()
         productWorkerFacade.setup()
@@ -212,11 +203,6 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
     }
 
     func throttle() {
-        #if FEATURE_DIMS
-            determineStateSyncService.throttle()
-            personhoodBackgroundService.throttle()
-        #endif
-
         chatCoordinator.throttle()
         chatRequestCoordinator.throttle()
         fiatOnrampTrackingService.throttle()
@@ -227,6 +213,11 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
 
         messageExpansionService.stop()
         durableTransactionEngine.txService.stop()
+
+        // The workers and the product behind an opened card belong to this
+        // session's runtime provider, so they go with the session rather than
+        // waiting for a tap that may come after another user has signed in.
+        pocket?.stop()
 
         Task {
             await deviceSyncService.throttle()
@@ -239,6 +230,7 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
 }
 
 extension ServiceCoordinator {
+    @MainActor
     // swiftlint:disable:next function_body_length
     static func createDefault(spaFlowState: SPAFlowState) -> ServiceCoordinatorProtocol? {
         let walletRepo: WalletManagerRepositoryProtocol = .shared
@@ -287,7 +279,7 @@ extension ServiceCoordinator {
         )
 
         let sponsorVrfRepo: BandersnatchManagerRepositoryProtocol = .shared
-        guard let sponsorKeyResolver = try? sponsorVrfRepo.keyResolver() else {
+        guard let personKeyResolver = try? sponsorVrfRepo.keyResolver() else {
             return nil
         }
 
@@ -295,7 +287,7 @@ extension ServiceCoordinator {
             accountManager: accountManager,
             resourceKeyManager: resourceKeyManager,
             chainRegistry: ChainRegistryFacade.sharedRegistry,
-            keyResolver: sponsorKeyResolver,
+            keyResolver: personKeyResolver,
             logger: logger
         )
 
@@ -314,6 +306,38 @@ extension ServiceCoordinator {
             logger: logger
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
+        CoreDurableRecoveryTask.shared.attach(
+            truapiRuntimeProvider,
+            executor: ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry)
+        )
+
+        let gameReminders = ProductGameReminderCenter.makeDefault()
+        RootDependencyLocator.setDependency(gameReminders as ProductGameReminderScheduling)
+        RootDependencyLocator.setDependency(gameReminders as ProductGamePillProviding)
+
+        let productFileProvider = CompositeProductFileProvider(
+            dotNsContentStorage: DotNsContentStorage(),
+            chatScriptStorage: FileChatScriptStorage(),
+            contentHashCache: ContentHashCache.shared
+        )
+
+        // Built here rather than alongside chat: every modality is served from
+        // one worker per product, and hanging the Pocket off chat's assembly
+        // would let any chat service failing take every live card face with it,
+        // silently.
+        var pocket: ProductPocketService?
+        if let service = ProductPocketService.make() {
+            RootDependencyLocator.setDependency(service)
+            service.start(
+                runtimeProvider: truapiRuntimeProvider,
+                flowState: spaFlowState,
+                productFileProvider: productFileProvider,
+                chainRegistry: ChainRegistryFacade.sharedRegistry,
+                gameReminders: gameReminders,
+                themeManager: MainActor.assumeIsolated { ThemeManager.shared }
+            )
+            pocket = service
+        }
 
         guard
             let signInHostCoordinator = createSignInHostCoordinator(
@@ -342,22 +366,20 @@ extension ServiceCoordinator {
                 bulletInManager: allowanceManagerFacade.bulletInManager
             ),
             let attachmentDownloadService = createAttachmentDownloadService(),
-            let syncServiceResult = createDetermineStateSyncService(),
-            let deviceSyncService = try? createDeviceSyncService(turnService: turnService, logger: logger)
+            let deviceSyncService = try? createDeviceSyncService(turnService: turnService, logger: logger),
+            let notificationAllocator = try? createNotificationAllocator(
+                durable: coinageServices.durableTransactionEngine,
+                keyResolver: personKeyResolver
+            )
         else {
             return nil
         }
 
-        guard let personhoodServices = createPersonhoodServices(
-            syncStateStore: syncServiceResult.syncStore
-        ) else {
-            return nil
-        }
-
-        let chatRequestCoordinator = createChatRequestCoordinator()
+        let chatRequestCoordinator = createChatRequestCoordinator(notificationAllocator: notificationAllocator)
         let audioSessionManager = AudioSessionManager()
 
         let paymentsSupport = PaymentsSupport(coinageService: coinageServices.coinageService)
+        truapiRuntimeProvider.attach(paymentsSupport: paymentsSupport, hostProvider: spaFlowState.hostProvider)
 
         let truApiDependencies = TruApiDependenciesLocator()
         truApiDependencies.setDependency(allowanceSupport)
@@ -367,12 +389,9 @@ extension ServiceCoordinator {
         let (chatExtensionsRegistry, productWorkerFacade) = createChatExtensionsRegistry(
             accountManager: accountManager,
             truapiRuntimeProvider: truapiRuntimeProvider,
-            syncStore: syncServiceResult.syncStore,
-            personDataStore: syncServiceResult.personDataStore,
-            syncService: syncServiceResult.service,
-            personhoodRegistrationService: personhoodServices.registrationService,
-            audioSessionManager: audioSessionManager,
-            spaFlowState: spaFlowState
+            spaFlowState: spaFlowState,
+            productFileProvider: productFileProvider,
+            pocket: pocket
         )
         // Registered so the SPA screen, opened outside this assembly, resolves the
         // same facade.
@@ -463,9 +482,6 @@ extension ServiceCoordinator {
             durableTransactionEngine: coinageServices.durableTransactionEngine,
             w3sPaymentTracking: coinageServices.w3sPaymentTracking,
             audioSessionManager: audioSessionManager,
-            determineStateSyncService: syncServiceResult.service,
-            personhoodBackgroundService: personhoodServices.backgroundService,
-            personDataStore: syncServiceResult.personDataStore,
             coinageBackupSyncService: coinageServices.backupSyncService,
             messageExpansionService: messageExpansionService,
             notificationBadgeSyncService: notificationBadgeSyncService,
@@ -479,6 +495,7 @@ extension ServiceCoordinator {
             chainStatusProvider: chainStatusProvider,
             truapiRuntimeProvider: truapiRuntimeProvider,
             tldProvider: DotNsTldProviderFacade.shared,
+            pocket: pocket,
             logger: logger
         )
     }
@@ -523,10 +540,13 @@ private extension ServiceCoordinator {
 }
 
 private extension ServiceCoordinator {
-    static func createChatRequestCoordinator() -> ChatRequestCoordinatorServicing {
+    static func createChatRequestCoordinator(
+        notificationAllocator: NotificationStatementAccountAllocating
+    ) -> ChatRequestCoordinatorServicing {
         let storageFacade = UserDataStorageFacade.shared
         let operationQueue = OperationManagerFacade.sharedDefaultQueue
         let logger = Logger.shared
+        let backgroundExecutor = ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry)
 
         return ChatRequestCoordinatorService(
             contactsProviderFactory: ChatContactDataProviderFactory(
@@ -542,27 +562,16 @@ private extension ServiceCoordinator {
             serviceFactory: ChatRequestServiceFactory(
                 remoteContactResolver: CompoundRemoteContactResolver(
                     resolvers: [
-                        playerContactOperation(chatChainId: AppConfig.Chains.usernameChain),
-                        remoteAccountOperation(chatChainId: AppConfig.Chains.usernameChain)
+                        remoteAccountOperation(chatChainId: AppConfig.Chains.assethubChain)
                     ],
                     logger: Logger.shared
-                )
+                ),
+                notificationAllocator: notificationAllocator,
+                backgroundExecutor: backgroundExecutor,
+                issueReporter: IssueReportingFacade.shared
             ),
+            backgroundExecutor: backgroundExecutor,
             logger: Logger.shared
-        )
-    }
-
-    static func playerContactOperation(chatChainId: ChainModel.Id) -> RemoteContactResolving {
-        let identifierService = ChatIdentifierService(
-            chainRegistry: ChainRegistryFacade.sharedRegistry,
-            chain: chatChainId,
-            operationQueue: OperationManagerFacade.sharedDefaultQueue,
-            logger: Logger.shared
-        )
-
-        return PlayerContactOperationFactory(
-            gameVotesRepositoryFactory: GameVoteRepositoryFactory(),
-            identifierService: identifierService
         )
     }
 
@@ -655,64 +664,5 @@ private extension ServiceCoordinator {
         }
 
         return providers
-    }
-}
-
-// MARK: - DetermineStateSyncService Creation
-
-private extension ServiceCoordinator {
-    static func createDetermineStateSyncService() -> (
-        service: DetermineStateSyncService,
-        syncStore: DetermineStateSyncStore,
-        personDataStore: DetermineStatePersonDataStore
-    )? {
-        let logger = Logger.shared
-        let walletRepo: WalletManagerRepositoryProtocol = .shared
-        let vrfRepo: BandersnatchManagerRepositoryProtocol = .shared
-
-        guard
-            let mainAccountId = try? walletRepo.main().getRawPublicKey(),
-            let candidateAccountId = try? walletRepo.candidate().getRawPublicKey(),
-            let mobRuleAccountId = try? walletRepo.mobRuleAlias().getRawPublicKey(),
-            let scoreAccountId = try? walletRepo.scoreAlias().getRawPublicKey(),
-            let resourcesAccountId = try? walletRepo.resourcesAlias().getRawPublicKey()
-        else {
-            logger.error("Failed to get wallet account IDs for DetermineStateSyncService")
-            return nil
-        }
-
-        guard
-            let vrfManager = try? vrfRepo.fullPerson(),
-            let memberKey = try? vrfManager.getMemberKey()
-        else {
-            logger.error("Failed to get member key for DetermineStateSyncService")
-            return nil
-        }
-
-        let syncQueue = DispatchQueue(label: "io.polkadot.app.dims.service.queue")
-
-        let personDataStore = DetermineStatePersonDataStore(
-            candidateAccountId: candidateAccountId,
-            logger: logger
-        )
-
-        let syncStore = DetermineStateSyncStore(logger: logger)
-
-        let syncService = DetermineStateSyncService(
-            walletAccountId: mainAccountId,
-            candidateAccountId: candidateAccountId,
-            mobRuleAccountId: mobRuleAccountId,
-            scoreAccountId: scoreAccountId,
-            resourcesAccountId: resourcesAccountId,
-            memberKey: memberKey,
-            chainId: AppConfig.Chains.usernameChain,
-            chainRegistry: ChainRegistryFacade.sharedRegistry,
-            observers: [syncStore, personDataStore],
-            operationQueue: OperationManagerFacade.sharedDefaultQueue,
-            proccessingQueue: syncQueue,
-            logger: logger
-        )
-
-        return (service: syncService, syncStore: syncStore, personDataStore: personDataStore)
     }
 }

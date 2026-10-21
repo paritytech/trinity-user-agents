@@ -19,6 +19,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     private let chainRegistry: ChainRegistryProtocol
     private let chainConnections: TrUAPIChainConnecting
     private let confirmationPresenter: TrUAPIConfirmationPresenting
+    private let workerManager: (any TrUAPIWorkerManaging)?
     private let logger: LoggerProtocol
     private weak var runtime: TrUAPIHostRuntime?
 
@@ -27,11 +28,13 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         coreStorage: TrUAPILocalStoring,
         chainConnections: TrUAPIChainConnecting,
         confirmationPresenter: TrUAPIConfirmationPresenting,
+        workerManager: (any TrUAPIWorkerManaging)? = nil,
         logger: LoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
         self.chainConnections = chainConnections
         self.confirmationPresenter = confirmationPresenter
+        self.workerManager = workerManager
         self.logger = logger
         self.coreStorage = CoreStorageBackend(storage: coreStorage)
         storage = EmptyHostStorageBackend()
@@ -46,6 +49,13 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
 
     func onCoreLog(marker: String, detail: String) {
         logger.debug("[truapi:host:\(marker)] \(detail)")
+    }
+
+    /// Demand is runtime-wide, so it arrives here rather than on a product's
+    /// own bridge, and can arrive re-entrantly from inside `acquireWorker`,
+    /// the manager hands the transition off rather than acting on it here.
+    func workerDemandChanged(productId: String, transition: WorkerTransition) {
+        workerManager?.demandChanged(productId: productId, transition: transition)
     }
 
     func navigateTo(url: String) async throws {
@@ -96,6 +106,16 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
                 return false
             }
             return chainRegistry.getConnection(for: chain.chainId) != nil
+        }
+    }
+
+    /// Recovers in-process now and schedules a background task in case the
+    /// app is suspended first. A run returns by itself once nothing is live,
+    /// so `false` needs no action.
+    func durableWorkChanged(pending: Bool) {
+        if pending {
+            CoreDurableRecoveryTask.shared.runInForeground()
+            CoreDurableRecoveryTask.shared.schedule()
         }
     }
 

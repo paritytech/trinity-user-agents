@@ -13,7 +13,6 @@ final class MockRemoteConfigManager: RemoteConfigManaging {
     var remoteConfig = RemoteAppConfig(
         identityBackendUrl: URL(string: "https://polkadot-app-stg.parity.io/"),
         ipfsGatewayUrl: nil,
-        gameDashboardUrl: nil,
         dotNsResolver: nil,
         dotNsNameRegistry: nil,
         coinageInstanceId: nil,
