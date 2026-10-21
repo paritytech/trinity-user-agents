@@ -8,10 +8,7 @@ import TrUAPIHost
 
 /// How the payments bridge answers the core's synchronous status read from an
 /// engine's status stream, and what it pushes to the core.
-@Suite(
-    .timeLimit(.minutes(1)),
-    .disabled("Fails on CI: https://github.com/paritytech/trinity-user-agents/issues/1557")
-)
+@Suite(.timeLimit(.minutes(1)))
 struct EngineStatusFollowersTests {
     private let key = EngineStatusKey(productId: "wallet.dot", id: Data(repeating: 7, count: 32))
 
