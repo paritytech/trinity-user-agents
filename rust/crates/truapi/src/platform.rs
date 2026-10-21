@@ -21,13 +21,11 @@ pub use truapi_provider::{
 	platform::{ChainProvider, JsonRpcConnection},
 };
 
-pub use product_id::ProductId;
 use truapi::Bytes32;
 
 /// In-memory mock platform for tests and host simulators (enable the `mock` feature).
 #[cfg(feature = "mock")]
 pub mod mock;
-mod product_id;
 
 pub use crate::{
 	dotns_name::{DOTNS_TLDS, MAX_DNS_LABEL_LEN, has_dotns_tld, is_dns_label},

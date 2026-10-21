@@ -10,7 +10,7 @@ use truapi::latest::{
 
 use crate::{
 	nft::{CreatePurseError, NftLedger, PurseId, PurseRecord, PurseTag},
-	platform::{ProductId, RuntimeConfigValidationError},
+	platform::{ProductId, ProductIdError},
 	store::{Db, DbError},
 };
 
@@ -26,10 +26,10 @@ pub enum PurseOwner {
 
 impl PurseOwner {
 	/// The owner a product named, refusing a product id that is not one.
-	pub fn parse(owner: &NftPurseOwner) -> Result<Self, RuntimeConfigValidationError> {
+	pub fn parse(owner: &NftPurseOwner) -> Result<Self, ProductIdError> {
 		match owner {
 			NftPurseOwner::Root => Ok(Self::Root),
-			NftPurseOwner::Product(id) => ProductId::parse(id).map(Self::Product),
+			NftPurseOwner::Product(id) => id.parse().map(Self::Product),
 		}
 	}
 
@@ -127,7 +127,7 @@ mod tests {
 	}
 
 	fn product_id(id: &str) -> ProductId {
-		ProductId::parse(id).expect("valid product id")
+		ProductId::for_test(id)
 	}
 
 	fn product(id: &str) -> PurseOwner {
@@ -181,7 +181,7 @@ mod tests {
 	#[test]
 	fn an_empty_product_owner_is_refused() {
 		let refused = PurseOwner::parse(&NftPurseOwner::Product(String::new()));
-		assert_eq!(refused, Err(RuntimeConfigValidationError::EmptyField { field: "product_id" }));
+		assert_eq!(refused, Err(ProductIdError::Empty));
 	}
 
 	/// Lookups match tags byte for byte, so an owner a product spells

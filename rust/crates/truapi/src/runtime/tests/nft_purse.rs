@@ -142,7 +142,8 @@ fn purses_need_a_paired_session() {
 }
 
 // The empty product id shares Root's empty tag, so naming it must fail before
-// any prompt rather than show Root's purses under a blank owner.
+// any prompt rather than show Root's purses under a blank owner. Like any
+// product id a product sends that does not parse, it is a malformed request.
 #[test]
 fn an_empty_product_owner_is_refused_without_a_prompt() {
 	let platform = Arc::new(StubPlatform::default());
@@ -150,12 +151,8 @@ fn an_empty_product_owner_is_refused_without_a_prompt() {
 
 	let refused = list(&host, v01::NftPurseOwner::Product(String::new()));
 
-	let reason = "invalid purse owner: product_id must not be empty".to_owned();
-	let invalid =
-		HostNftPurseListPursesError::V1(v01::NftPurseListPursesError::Other(v01::GenericError {
-			reason,
-		}));
-	assert_eq!(refused, Err(CallError::Domain(invalid)));
+	let reason = "product_id must not be empty".to_owned();
+	assert_eq!(refused, Err(CallError::MalformedFrame { reason }));
 	assert_eq!(requested_permissions(&platform), vec![]);
 }
 
