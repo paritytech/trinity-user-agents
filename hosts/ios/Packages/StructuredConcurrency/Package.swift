@@ -62,6 +62,7 @@ let package = Package(
             name: "StructuredConcurrencyTests",
             dependencies: [
                 "StructuredConcurrency",
+                "StructuredConcurrencyTestSupport",
                 .product(name: "Operation-iOS", package: "operation-ios"),
             ],
             path: "Tests"

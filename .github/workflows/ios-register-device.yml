@@ -18,7 +18,9 @@ on:
 
 jobs:
   register_device:
-    runs-on: macos-26
+    # The Parity pool, out of the hosted macOS queue. The install action pins
+    # the Xcode the app builds with, so the machine's default does not matter.
+    runs-on: parity-macos
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 

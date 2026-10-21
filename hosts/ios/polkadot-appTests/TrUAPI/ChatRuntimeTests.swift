@@ -1,8 +1,9 @@
 import Foundation
 import os
-import Testing
 import Products
 import StructuredConcurrency
+import StructuredConcurrencyTestSupport
+import Testing
 import TrUAPIHost
 import UIKitExt
 @testable import polkadot_app
@@ -179,13 +180,13 @@ struct ChatRuntimeTests {
         let runtime = makeRustRuntime(workers: workers)
 
         let start = Task { try await runtime.start(messagingSupport: .init(bot: nil, context: nil)) }
-        try await withTimeout(.seconds(5)) {
+        try await withTimeout(.hangGuard) {
             var asks = workers.asks.makeAsyncIterator()
             _ = await asks.next()
         }
 
         workers.publish([chatProduct: execution])
-        try await withTimeout(.seconds(5)) {
+        try await withTimeout(.hangGuard) {
             try await withTaskCancellationHandler { try await start.value } onCancel: { start.cancel() }
         }
 
@@ -355,7 +356,7 @@ struct ChatRuntimeTests {
                 roomId: "room", messageId: "m1", messageType: "t", messageData: Data()
             )
         }
-        try await withTimeout(.seconds(5)) {
+        try await withTimeout(.hangGuard) {
             var lookups = workers.executionLookups.makeAsyncIterator()
             _ = await lookups.next()
         }

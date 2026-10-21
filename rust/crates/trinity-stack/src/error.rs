@@ -111,6 +111,9 @@ pub enum Error {
 	/// A spec is not a chain spec this crate can read.
 	#[error("malformed spec: {0}")]
 	MalformedSpec(String),
+	/// A secret key is not 32 bytes.
+	#[error("a secret key is 32 bytes, got {0}")]
+	SecretKeyLength(usize),
 }
 
 impl Error {
@@ -139,6 +142,7 @@ mod tests {
 				"envelope-version-mismatch",
 			),
 			(Error::ForkSignedWithSourceKey, "fork-signed-with-source-key"),
+			(Error::SecretKeyLength(3), "secret-key-length"),
 		];
 		for (error, code) in codes {
 			assert_eq!(error.code(), code);

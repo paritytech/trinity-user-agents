@@ -94,7 +94,7 @@ enum ProductStorageKey {
         return String(rest[start ..< end])
     }
 
-    /// Matches the core's `normalize_product_identifier`, the form written into keys.
+    /// Matches the normalization in the core's `ProductId::parse`, the form written into keys.
     static func normalize(_ productId: String) -> String {
         productId.trimmingCharacters(in: .whitespacesAndNewlines)
             .precomposedStringWithCanonicalMapping

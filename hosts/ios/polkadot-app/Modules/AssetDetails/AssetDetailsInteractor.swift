@@ -161,7 +161,8 @@ extension AssetDetailsInteractor: AssetDetailsInteractorInputProtocol {
                             availableNow: context.decimal(fromPlanks: balance.ready),
                             gainingPrivacy: context.decimal(fromPlanks: balance.clearing)
                         ),
-                        holdings: summary.holdings
+                        holdings: summary.holdings,
+                        denominations: context
                     )
                 }
             } catch {

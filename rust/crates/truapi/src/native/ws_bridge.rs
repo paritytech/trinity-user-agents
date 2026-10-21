@@ -837,7 +837,7 @@ impl FrameSink for WsFrameSink {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::platform::{HostInfo, PlatformInfo, ProductContext, SigningHostConfig};
+	use crate::platform::{HostInfo, PlatformInfo, ProductContext, ProductId, SigningHostConfig};
 	use parity_scale_codec::{Decode, Encode};
 	use truapi::v01;
 
@@ -871,8 +871,7 @@ mod tests {
 		)
 		.expect("test signing host config is valid");
 		let runtime = Arc::new(SigningHostRuntime::new(platform, config, test_spawner()));
-		let product =
-			ProductContext::new("dotli.dot".to_string()).expect("test product context is valid");
+		let product = ProductContext::new(ProductId::for_test("dotli.dot"));
 		Arc::new(move |sink| runtime.product_runtime(product.clone(), sink))
 	}
 
