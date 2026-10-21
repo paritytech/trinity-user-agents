@@ -235,17 +235,6 @@ private extension MainTabBarViewController {
 
         TabBarScrollToTopLocator.scrollToTop(scrollView)
     }
-
-    /// Drops a screen presented over the tab being left, so it does not stay on screen over the new one.
-    func dismissPresentationOverContent() {
-        guard
-            let presented = container.selectedController?.presentedViewController,
-            presented.modalPresentationStyle == .overCurrentContext
-        else {
-            return
-        }
-        presented.dismiss(animated: false)
-    }
 }
 
 // MARK: - Selection
@@ -261,22 +250,8 @@ extension MainTabBarViewController {
             return
         }
 
-        dismissPresentationOverContent()
         container.select(index: index)
         refreshChrome()
-    }
-}
-
-// MARK: - Overlay presentation
-
-extension MainTabBarViewController {
-    /// The presented screen sits under the tab bar chrome, so the bar stays on top of it.
-    func presentOverContent(_ controller: UIViewController) {
-        let host = container.selectedController ?? self
-        host.definesPresentationContext = true
-        host.dismiss(animated: false)
-        controller.modalPresentationStyle = .overCurrentContext
-        host.present(controller, animated: true)
     }
 }
 
@@ -307,7 +282,6 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
 
         guard let index = tabs.firstIndex(of: tab) else { return }
 
-        dismissPresentationOverContent()
         chromeController.setSelectedIndex(index)
         container.select(index: index)
         refreshChrome()
