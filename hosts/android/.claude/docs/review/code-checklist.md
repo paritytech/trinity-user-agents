@@ -95,6 +95,9 @@ Walk this for every file the diff touches. Cite the rule's doc and section. Tag 
 - **major** — `withSessionEnabled { awaitCancellation() }` abuse for long-lived connections; use `requestConnectionEnabled` ref counting.
 - **major** — Notification cancellation logic in `App.kt` instead of the owning feature.
 - **major** — Expedited Worker without `getForegroundInfo()` override.
+- **major** — New work on the cold-start path (`App.onCreate`, an `AppInitializer`) that loads a native library, touches disk or the network, or otherwise blocks, without moving off the main thread. The first UniFFI call in a process pays the whole JNA and `dlopen` cost.
+- **major** — A startup side effect whose failure is swallowed with no log and no breadcrumb. `AppInitializer` returns `Result` and the pipeline logs it; a bare `runCatching` in `App.kt` does not, and anything logged before `Timber.plant` is dropped.
+- **minor** — Work placed in `App.onCreate` above `Timber.plant`, where it cannot report its own failure.
 - **minor** — `try { ... } finally { dispose() }` patterns at callers when an explicit `dispose()` lifecycle is cleaner.
 
 ## Navigation / Routers (`code/navigation-and-routers.md`)
@@ -154,6 +157,23 @@ Walk this for every file the diff touches. Cite the rule's doc and section. Tag 
 - **minor** — New entity using legacy `Entry<N>Encoders` backward-compat layer (only for migration of old data).
 
 ---
+
+## Testing (`code/testing.md`)
+
+- **major** — An assertion that cannot fail for any implementation, for example `assertSame` on a value the test itself passed in, or a trap that the code under test swallows before it can fire.
+- **major** — A test whose name claims a behaviour the test does not exercise. Check the named behaviour can be broken and the test still goes red.
+- **major** — MockK in a new Android test, or `runTest` where the house style is `runBlocking<Unit>`. (`code/testing.md § Stack`, `§ Rules at a glance #3`.)
+- **major** — An unstubbed method the subject calls. Mockito returns `null`, Kotlin unboxes it, and the failure surfaces as an unrelated NPE. (`code/testing.md § Rules at a glance #1`.)
+- **minor** — A stub in `@Before` that is not needed by every test, which hides the opposite case. (`code/testing.md § Rules at a glance #4`.)
+- **minor** — Test name not in `<expected behavior> when <condition>` form. (`code/testing.md § Rules at a glance #10`.)
+- **minor** — Mockito mechanics inline in the test body instead of behind an intent-revealing helper. (`code/testing.md § Rules at a glance #5`.)
+
+## Telemetry
+
+- **blocking** — Telemetry reaching a build type it was not meant for, or a gate that no test covers. The gate is what keeps events off Release, so prove it fails when the gate is removed.
+- **major** — A high-cardinality value as a Sentry tag. Tags are indexed dimensions; a per-launch or per-request id belongs in extras.
+- **major** — A routine `SentryEvent` at `INFO`, which lands in Issues beside crashes. A breadcrumb or a transaction is the place for a lifecycle signal.
+- **minor** — A field whose name does not match what it carries, for example a variant tag holding only the build type, or an uptime value named as a duration since start.
 
 ## Git / PR hygiene (always minor)
 
