@@ -92,7 +92,10 @@ env:
 jobs:
   prepare_build_metadata:
     name: Prepare Build Metadata
-    runs-on: macos-26
+    # The Parity pool, like the TestFlight build it gates: reading the build
+    # number needs fastlane and Xcode, and the hosted macOS queue can hold this
+    # short job for hours.
+    runs-on: parity-macos-large
     # actions: read is what lets the pull request lookup below find the run
     # this one follows. check_build_result declares it for the same call.
     permissions:
