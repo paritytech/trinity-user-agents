@@ -81,7 +81,9 @@ final class RustRuntimeScriptsFactory {
 
     private func makeHostTelemetryScript(_ telemetry: NativeHostTelemetry) throws -> JSEngineScript {
         let data = try JSONEncoder().encode(telemetry)
-        let json = String(decoding: data, as: UTF8.self)
+        guard let json = String(data: data, encoding: .utf8) else {
+            throw CocoaError(.fileReadInapplicableStringEncoding)
+        }
         let script = """
         try {
             Object.defineProperty(globalThis, "__trinityHostTelemetry", {
