@@ -1,5 +1,6 @@
 import Foundation
 import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 import Testing
 @testable import polkadot_app
 
@@ -106,7 +107,7 @@ private final class Recorder: @unchecked Sendable {
 
     /// The one answer `handle` dispatched; fails rather than hangs if none arrives.
     func answer() async throws -> Event {
-        try await withTimeout(.seconds(5)) { [events] in
+        try await withTimeout(.hangGuard) { [events] in
             for await event in events {
                 return event
             }
