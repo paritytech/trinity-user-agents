@@ -41,7 +41,6 @@ enum MainTabBarViewFactory {
             hostProvider: spaFlowState.hostProvider
         )
 
-        let mnemonicBackupHelper = MnemonicBackupHelper()
         let browserCoordinator = createBrowserCoordinator(flowStateProvider: flowStateProvider)
         let interactor = MainTabBarInteractor(
             serviceCoordinator: serviceCoordinator,
@@ -49,19 +48,12 @@ enum MainTabBarViewFactory {
             userNotificationService: userNotificationService,
             urlHandlingService: urlHandler,
             deferredLinkHandler: deepLinkHandling,
-            mnemonicBackupHelper: mnemonicBackupHelper,
             browserCoordinator: browserCoordinator,
             productGamePills: RootDependencyLocator.getDependency()
         )
 
         let qrHandler = WalletQRScanResultHandler(
             dsfinvkRouter: W3sDsfinvkRouter.createDefault(coinageService: serviceCoordinator.coinageService)
-        )
-
-        let wireframe = MainTabBarWireframe(
-            serviceCoordinator: serviceCoordinator,
-            scanResultHandler: qrHandler,
-            moduleNavigator: moduleNavigator
         )
 
         let chipViewModelFactory = SPATabChipViewModelFactory(
@@ -73,6 +65,12 @@ enum MainTabBarViewFactory {
             scanResultHandler: qrHandler,
             flowStateProvider: flowStateProvider,
             foregroundVisibilityReporter: foregroundVisibilityReporter
+        )
+
+        let wireframe = MainTabBarWireframe(
+            serviceCoordinator: serviceCoordinator,
+            tabFactory: tabFactory,
+            moduleNavigator: moduleNavigator
         )
 
         let presenter = MainTabBarPresenter(
@@ -162,20 +160,16 @@ enum MainTabBarViewFactory {
             coinageService: serviceCoordinator.coinageService,
             moduleNavigator: moduleNavigator
         )
-        #if FEATURE_PRODUCTS
-            let productHandlers: [URLHandlingServiceProtocol] = [
-                PocketOpenService.makeDefault(
-                    flowState: flowState.flowState,
-                    moduleNavigator: moduleNavigator
-                ),
-                ProductSPAOpenService(
-                    moduleNavigator: moduleNavigator,
-                    hostProvider: hostProvider
-                )
-            ]
-        #else
-            let productHandlers: [URLHandlingServiceProtocol] = []
-        #endif
+        let productHandlers: [URLHandlingServiceProtocol] = [
+            PocketOpenService.makeDefault(
+                flowState: flowState.flowState,
+                moduleNavigator: moduleNavigator
+            ),
+            ProductSPAOpenService(
+                moduleNavigator: moduleNavigator,
+                hostProvider: hostProvider
+            )
+        ]
 
         let historyStorage = W3sPaymentHistoryCoreDataStore(storageFacade: UserDataStorageFacade.shared)
 

@@ -10,8 +10,10 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.core.graphics.Insets
@@ -27,6 +29,7 @@ import io.paritytech.polkadotapp.app.R
 import io.paritytech.polkadotapp.app.root.navigation.NavigationHolder
 import io.paritytech.polkadotapp.app.root.presentation.debug.reportIssue.DebugScreenshotObserver
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.DevResetOverlay
+import io.paritytech.polkadotapp.app.root.presentation.root.compose.PaymentsSetupNotice
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.RootNavBarHost
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.chatoverlay.ChatExtensionOverlayHost
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
@@ -102,6 +105,7 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
         setupAppNotificationOverlay()
 
         setupChatExtensionOverlay()
+        setupPaymentsSetupNotice()
         setupChainHealthBar()
     }
 
@@ -238,6 +242,21 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
                         bottomNavHeight = viewModel.bottomNavHeight,
                     )
                 }
+            }
+        }
+        addContentView(composeView, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+
+    private fun setupPaymentsSetupNotice() {
+        val composeView = ComposeView(this).apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+            setContent {
+                val isVisible by viewModel.isPaymentsSetupNoticeVisible.collectAsStateWithLifecycle()
+                PaymentsSetupNotice(
+                    modifier = Modifier.fillMaxSize(),
+                    isVisible = isVisible,
+                    onDismissClick = viewModel::dismissPaymentsSetupNotice,
+                )
             }
         }
         addContentView(composeView, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))

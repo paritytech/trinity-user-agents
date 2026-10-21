@@ -1,4 +1,5 @@
 import SwiftUI
+import DesignSystem
 
 private enum AssetFundingStatusViewLayout {
     static let leadingSize = CGSize(width: 40, height: 40)
@@ -61,7 +62,7 @@ private struct StateContentRowView: View {
                 Image(systemName: "chevron.up")
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .foregroundStyle(Color(.white100))
+                    .foregroundStyle(Color.fgStaticWhite)
                     .frame(width: 24, height: 24)
             }
         }
@@ -484,7 +485,7 @@ public extension AssetFundingStatusView.Configuration {
                 waiting: AssetFundingStatusView.StateConfig(
                     leadingStyle: .icon(.waitingIcon),
                     subtitle: String(localized: .AssetFunding.fundingDigitalDollarWaitingSubtitle),
-                    subtitleColor: Color(.yellowBadge),
+                    subtitleColor: Color.fgWarning,
                     details: .string(
                         String(localized: .AssetFunding.fundingDigitalDollarWaitingDetails)
                     ),
@@ -493,7 +494,7 @@ public extension AssetFundingStatusView.Configuration {
                 inProgress: AssetFundingStatusView.StateConfig(
                     leadingStyle: .progress,
                     subtitle: String(localized: .Common.inProgress),
-                    subtitleColor: Color(.systemSuccess),
+                    subtitleColor: Color.fgSuccess,
                     details: nil,
                     action: actionHide
                 ),
@@ -504,7 +505,7 @@ public extension AssetFundingStatusView.Configuration {
                     details: nil,
                     action: AssetFundingStatusView.ActionConfig(
                         title: String(localized: .Common.done),
-                        background: Color(.white100),
+                        background: Color.fgStaticWhite,
                         textColor: Color(.textAndIconsPrimaryLight),
                         handler: onCompletedAction
                     )
@@ -512,11 +513,11 @@ public extension AssetFundingStatusView.Configuration {
                 failed: AssetFundingStatusView.StateConfig(
                     leadingStyle: .icon(.failedIcon),
                     subtitle: String(localized: .Common.transactionFailed),
-                    subtitleColor: Color(.systemError),
+                    subtitleColor: Color.fgError,
                     details: .string(String(localized: .AssetFunding.fundingDigitalDollarFailedDetails)),
                     action: AssetFundingStatusView.ActionConfig(
                         title: String(localized: .Common.emailSupport),
-                        background: Color(.white100),
+                        background: Color.fgStaticWhite,
                         textColor: Color(.textAndIconsPrimaryLight),
                         handler: onFailedAction
                     )

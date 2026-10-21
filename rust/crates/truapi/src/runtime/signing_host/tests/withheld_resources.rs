@@ -147,11 +147,11 @@ fn a_withheld_bulletin_allowance_yields_no_key_on_either_call() {
 	let keys = futures::executor::block_on(async {
 		[
 			activation
-				.bulletin_allowance_key(&cx, &session, "myapp.dot".to_string())
+				.bulletin_allowance_key(&cx, &session, &ProductId::for_test("myapp.dot"))
 				.await
 				.is_ok(),
 			activation
-				.refresh_bulletin_allowance_key(&cx, &session, "myapp.dot".to_string())
+				.refresh_bulletin_allowance_key(&cx, &session, &ProductId::for_test("myapp.dot"))
 				.await
 				.is_ok(),
 		]

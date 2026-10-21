@@ -5644,7 +5644,7 @@ dependencies = [
 
 [[package]]
 name = "truapi"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "async-sqlite",
  "async-trait",
@@ -5678,6 +5678,7 @@ dependencies = [
  "sha2 0.10.9",
  "socket2",
  "sp-crypto-hashing",
+ "strum 0.28.0",
  "substrate-bip39",
  "subxt",
  "subxt-rpcs",
@@ -5719,7 +5720,7 @@ dependencies = [
 
 [[package]]
 name = "truapi-host-cli"
-version = "0.25.0"
+version = "0.26.0"
 dependencies = [
  "anyhow",
  "arboard",

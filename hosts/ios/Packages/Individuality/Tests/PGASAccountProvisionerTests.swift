@@ -1,6 +1,6 @@
 import BigInt
-import IssueMonitoring
 import Foundation
+import IssueMonitoring
 import StructuredConcurrency
 import StructuredConcurrencyTestSupport
 import SubstrateSdk
@@ -96,7 +96,7 @@ struct PGASAccountProvisionerTests {
             try await provisioner.ensureCovers(account: Self.account, required: Self.required)
         }
         defer { attempt.cancel() }
-        try await withTimeout(.seconds(5)) { [clock] in await clock.resumeSleep(for: Self.claimTimeout) }
+        try await withTimeout(.hangGuard) { [clock] in await clock.resumeSleep(for: Self.claimTimeout) }
 
         await #expect(throws: PGASClaimTimeoutError.self) { try await attempt.value }
     }

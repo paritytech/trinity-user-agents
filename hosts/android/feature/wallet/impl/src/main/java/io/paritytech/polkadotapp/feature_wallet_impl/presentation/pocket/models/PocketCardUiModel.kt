@@ -11,14 +11,12 @@ sealed interface PocketCardUiModel {
     data class DigitalDollar(
         val amounts: LoadingState<Amounts>,
         val syncInProgress: Boolean,
-        val accountBackupPending: Boolean,
     ) : PocketCardUiModel {
         override val id = "digital_dollar_card"
 
         val balanceStatus: DigitalDollarBalanceStatus = amounts.dataOrNull.let { loaded ->
             when {
                 syncInProgress -> DigitalDollarBalanceStatus.Syncing
-                accountBackupPending -> DigitalDollarBalanceStatus.AccountBackupPending
                 loaded != null && loaded.notFullyReady -> DigitalDollarBalanceStatus.PartlyReady(loaded.ready)
                 else -> DigitalDollarBalanceStatus.TotalOnly
             }

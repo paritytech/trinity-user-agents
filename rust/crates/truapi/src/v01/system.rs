@@ -2,12 +2,13 @@ use derive_more::Display;
 use parity_scale_codec::{Decode, Encode};
 
 use super::common::GenericError;
+use crate::product_id::ProductId;
 
 /// Response containing the product context bound to the current host runtime.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostGetProductContextResponse {
 	/// Full canonical identifier used for authorization and account derivation.
-	pub product_id: String,
+	pub product_id: ProductId,
 }
 
 /// Request to query whether a feature is supported by the host.

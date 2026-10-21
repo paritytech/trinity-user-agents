@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.mapResult
 import io.paritytech.polkadotapp.common.utils.progressStallReport.StalenessReportCollector
 import io.paritytech.polkadotapp.common.utils.progressStallReport.markRegion
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatMessageSender
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
@@ -179,7 +180,8 @@ class RealSendEnterAmountInteractor @Inject constructor(
     private suspend fun sendCoinage(recipient: AccountId, value: BigDecimal): Result<Unit> =
         diagnostics.markRegion(RCommon.string.wallet_stall_sending) {
             prepareCoinageTransferUseCase.prepareScheduledMemo(value, retryUntil = timeProvider.now() + CHAT_PAYMENT_RETRY_WINDOW)
-                .map { prepared -> sendChatMessage(recipient, prepared) }
+                // A refused commit throws to roll the message back; here it ends as a failed send.
+                .flatMap { prepared -> runCancellableCatching { sendChatMessage(recipient, prepared) } }
                 .onSuccess { Timber.d("CoinageTransfer: Successful") }
                 .logFailure("Coinage transfer failed")
         }
