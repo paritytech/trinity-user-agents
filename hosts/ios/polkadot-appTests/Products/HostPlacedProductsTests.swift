@@ -1,19 +1,34 @@
 import Testing
 import Keystore_iOS
 import KeyDerivation
+import Products
 @testable import polkadot_app
 
 @Suite("Host-placed products")
 struct HostPlacedProductsTests {
     /// The Jollity leg of #562: a Release build has to carry the game's chat with no add, install
     /// or discover step. The list is what the host places; whether it places at all is the setting.
-    @Test("Jollity is the host-placed product")
+    @Test("Jollity is host-placed on every runtime")
     func jollityIsTheHostPlacedProduct() throws {
         let hostPlaced = try #require(HostPlacedProducts.all.first)
 
-        #expect(HostPlacedProducts.all.count == 1)
         #expect(hostPlaced.fallbackName == "Jollity")
         #expect(hostPlaced.productId("paseo") == BuiltInProduct.dim2(for: "paseo"))
+        #expect(!hostPlaced.requiresCoreRuntime)
+    }
+
+    /// The chat product needs the core's `PersonChat`; on the native runtime it could only show
+    /// that chat is unavailable, so it is placed on the core runtime alone. Its room id is the home
+    /// room the product registers.
+    @Test("The bundled chat product is host-placed on the core runtime")
+    func chatIsHostPlacedOnTheCoreRuntime() throws {
+        let chat = try #require(HostPlacedProducts.all.first { $0.productId("paseo") == "chat.paseo" })
+
+        #expect(HostPlacedProducts.all.count == 2)
+        #expect(chat.roomId == "chats")
+        #expect(chat.requiresCoreRuntime)
+        #expect(HostPlacedProducts.contains(productId: "chat.dot"))
+        #expect(!HostPlacedProducts.contains(productId: "app.chat.dot"))
     }
 
     /// A reserved identity lives in each network's own namespace, so one entry has to answer for
@@ -73,5 +88,33 @@ struct HostPlacedChatPinningTests {
     @Test("An ordinary product's bot is not pinned")
     func ordinaryProductIsNotPinned() {
         #expect(!Chat.Peer.chatExtension("coinflip.paseo", roomId: nil).isPinnedToTop)
+    }
+}
+
+@Suite("The bundled chat product")
+struct BundledChatProductResolverTests {
+    /// The chat label reaches `PersonChat`, so whatever dotNS publishes under it must not run before verified updates
+    /// exist: the resolver gives no published worker, and the app serves the bundle it installed.
+    @Test("chat.<tld> never resolves to a published worker")
+    func chatNeverResolvesToAPublishedWorker() async throws {
+        let inner = CountingResolver()
+        let resolver = BundledChatProductResolver(resolver: inner)
+
+        let chat = try await resolver.resolve("chat.paseo")
+        _ = try await resolver.resolve("coinflip.paseo")
+
+        #expect(chat.executables.worker == nil)
+        #expect(!chat.hasManifest)
+        #expect(await inner.resolved == ["coinflip.paseo"])
+        #expect(!BundledChatProductResolver.isChatProduct("app.chat.paseo"))
+    }
+}
+
+private actor CountingResolver: ProductResolving {
+    private(set) var resolved: [String] = []
+
+    func resolve(_ productId: ProductId) async throws -> ResolvedProduct {
+        resolved.append(productId)
+        return .legacy(id: productId)
     }
 }

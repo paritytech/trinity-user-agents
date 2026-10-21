@@ -8,15 +8,25 @@ extension Chat.PeerMetadata.Icon {
             data.flatMap { UIImage(data: $0) }
         case .bot:
             .iconBot
-        case .product:
+        case .product,
+             .resource,
+             .roomImage:
             nil
         }
     }
 
-    /// The image a product peer loads by its domain, drawn over the letter avatar.
+    /// The image a product peer or a product room loads on demand, drawn over the letter avatar.
     func imageViewModel(using factory: ProductIconViewModelMaking) -> (any ImageViewModelProtocol)? {
-        guard case let .product(domain) = self else { return nil }
-
-        return factory.createViewModel(for: domain)
+        switch self {
+        case let .product(domain):
+            factory.createViewModel(for: domain)
+        case let .resource(source):
+            factory.createViewModel(forResource: source)
+        case let .roomImage(image):
+            factory.createViewModel(forChatResource: image.resource)
+        case .image,
+             .bot:
+            nil
+        }
     }
 }

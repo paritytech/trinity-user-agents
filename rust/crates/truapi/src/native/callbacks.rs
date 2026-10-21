@@ -7,7 +7,10 @@ use crate::{PairedSsoPeer, host_logic::worker::WorkerTransition};
 
 #[cfg(doc)]
 use super::NativeTrUApiHostRuntime;
-use super::{config::ProductExecutionConfig, errors::HostRejection};
+use super::{
+	config::ProductExecutionConfig,
+	errors::{HostRejection, NativeChatFeedRejection},
+};
 #[cfg(doc)]
 use crate::platform::CoreStorageKey;
 
@@ -267,15 +270,98 @@ pub trait NativeChatCallbacks: Send + Sync {
 	/// Set what a product's native Chat room shows below its messages, and keep
 	/// it until the product sets another. The core has already checked the
 	/// product created the room. A room the product never set a footer on shows
-	/// the text input.
+	/// the input with photo and video on.
 	async fn set_room_footer(
 		&self,
 		room_id: String,
-		footer: v01::ChatRoomFooter,
+		footer: truapi::latest::ChatRoomFooter,
 	) -> Result<(), HostRejection>;
 
 	/// Return the current product-scoped native Chat room list.
 	async fn list_rooms(&self) -> Result<Vec<v01::ChatRoom>, HostRejection>;
+
+	/// Return the configuration the product last declared for a room, or the
+	/// default configuration when it declared none. The core reads it before
+	/// each feed update, posted message and query of the room.
+	async fn room_config(
+		&self,
+		room_id: String,
+	) -> Result<truapi::latest::ChatRoomConfig, HostRejection>;
+
+	/// Keep the configuration a room was created with across restarts.
+	async fn set_room_config(
+		&self,
+		room_id: String,
+		config: truapi::latest::ChatRoomConfig,
+	) -> Result<(), HostRejection>;
+
+	/// Replace the name, avatar and description of a room.
+	async fn set_room_metadata(
+		&self,
+		room_id: String,
+		metadata: truapi::latest::ChatRoomMetadata,
+	) -> Result<(), HostRejection>;
+
+	/// Replace how a room shows in the chat list.
+	async fn set_room_preview(
+		&self,
+		room_id: String,
+		preview: truapi::latest::ChatRoomPreview,
+	) -> Result<(), HostRejection>;
+
+	/// Delete a room with its messages, cache and declarations, and close its
+	/// screen. Delete also, in the same change, each room whose features name
+	/// this room in `thread_of`.
+	async fn delete_room(&self, room_id: String) -> Result<(), HostRejection>;
+
+	/// Apply one change to the messages of a room. With `persist` the host
+	/// stores the change; without it the host applies it only to an open room
+	/// screen and the chat list preview.
+	async fn update_feed(
+		&self,
+		room_id: String,
+		update: truapi::latest::ChatFeedUpdate,
+		persist: bool,
+	) -> Result<(), NativeChatFeedRejection>;
+
+	/// The names of the Chat features this host serves from end to end, from
+	/// [`CHAT_FEATURE_NAMES`]. The core removes each name it cannot back. A
+	/// host that lists nothing serves the features of Chat Extension v2 only.
+	///
+	/// [`CHAT_FEATURE_NAMES`]: crate::platform::CHAT_FEATURE_NAMES
+	async fn capabilities(&self) -> Result<Vec<String>, HostRejection>;
+
+	/// Return the optional features the product last declared for a room, or
+	/// the default features when it declared none.
+	async fn room_features(
+		&self,
+		room_id: String,
+	) -> Result<truapi::latest::ChatRoomFeatures, HostRejection>;
+
+	/// Replace the optional features of a room whole, and keep them across
+	/// restarts. Keep a feature this host does not serve, so that a later
+	/// build applies it.
+	async fn set_room_features(
+		&self,
+		room_id: String,
+		features: truapi::latest::ChatRoomFeatures,
+	) -> Result<(), HostRejection>;
+
+	/// Show or change the call of a room, or remove it with `None`.
+	async fn set_room_call(
+		&self,
+		room_id: String,
+		call: Option<truapi::latest::ChatRoomCall>,
+	) -> Result<(), HostRejection>;
+
+	/// Return the state of each room of the product that the user muted or
+	/// archived.
+	async fn room_user_states(
+		&self,
+	) -> Result<Vec<crate::platform::ChatRoomUserState>, HostRejection>;
+
+	/// Return the bot ids of the personas the product registered.
+	async fn bots(&self) -> Result<Vec<String>, HostRejection>;
 }
 
 /// Native Pocket collection adapter. Hosts with a Pocket surface pass an
@@ -435,6 +521,134 @@ pub trait NativeBalanceCallbacks: Send + Sync {
 		product_id: String,
 		purse: Option<u32>,
 	) -> Result<u128, v01::HostPaymentBalanceSubscribeError>;
+}
+
+/// Native form of [`crate::runtime::WakeRelay`]: the push relay client of the
+/// host. Installed with [`NativeTrUApiHostRuntime::set_wake_relay`].
+///
+/// The host adds what identifies the device to its relay (the push token and
+/// the app id) and sends the registration to its relay endpoint. Only the
+/// core calls it.
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeWakeRelayCallbacks: Send + Sync {
+	/// Replace the registration of this device with `registration`. An empty
+	/// topic list removes the registration.
+	async fn register_wake_topics(
+		&self,
+		registration: crate::runtime::WakeRelayRegistration,
+	) -> Result<(), HostRejection>;
+}
+
+/// Native form of [`crate::platform::PersonChatPlatform`], whose rules it
+/// follows. Installed with [`NativeTrUApiHostRuntime::set_person_chat_callbacks`].
+///
+/// [`NativeTrUApiHostRuntime::set_person_chat_callbacks`]: super::NativeTrUApiHostRuntime::set_person_chat_callbacks
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativePersonChatCallbacks: Send + Sync {
+	/// The `wss://` URLs of the HOP nodes of the network's Bulletin chain.
+	async fn hop_nodes(&self) -> Result<Vec<String>, HostRejection>;
+
+	/// The devices paired with this wallet device over SSO.
+	async fn paired_devices(&self)
+	-> Result<Vec<crate::platform::HostPairedDevice>, HostRejection>;
+
+	/// Replace the chat contacts of `product_id`.
+	async fn set_contacts(
+		&self,
+		product_id: String,
+		contacts: Vec<crate::platform::HostChatContact>,
+	) -> Result<(), HostRejection>;
+
+	/// At most `max_len` bytes from `offset` of the native chat history
+	/// staged for `product_id`, and the size of the whole export.
+	async fn history_export(
+		&self,
+		product_id: String,
+		offset: u64,
+		max_len: u32,
+	) -> Result<crate::platform::HostHistoryExportChunk, HostRejection>;
+
+	/// `product_id` imported the staged history.
+	async fn history_imported(&self, product_id: String) -> Result<(), HostRejection>;
+}
+
+/// Native form of [`crate::platform::UsernamesPlatform`], whose rules it
+/// follows. Installed with [`NativeTrUApiHostRuntime::set_usernames_callbacks`].
+///
+/// [`NativeTrUApiHostRuntime::set_usernames_callbacks`]: super::NativeTrUApiHostRuntime::set_usernames_callbacks
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeUsernamesCallbacks: Send + Sync {
+	/// Find the usernames that start with `prefix`, on behalf of `product_id`.
+	async fn search_usernames(
+		&self,
+		product_id: String,
+		prefix: String,
+	) -> Result<Vec<String>, HostRejection>;
+}
+
+/// Native form of [`crate::platform::PushPlatform`], whose rules it follows.
+/// Installed with [`NativeTrUApiHostRuntime::set_push_callbacks`].
+///
+/// [`NativeTrUApiHostRuntime::set_push_callbacks`]: super::NativeTrUApiHostRuntime::set_push_callbacks
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativePushCallbacks: Send + Sync {
+	/// Give `delivery` to the push relay, on behalf of `product_id`. Answers
+	/// whether the push service took it.
+	async fn send_push(
+		&self,
+		product_id: String,
+		delivery: crate::platform::HostPushDelivery,
+	) -> Result<bool, HostRejection>;
+
+	/// The push tokens of this device now.
+	async fn push_tokens(&self) -> Result<crate::platform::HostPushTokens, HostRejection>;
+
+	/// Replace the chat push routes of `product_id` with `routes`.
+	async fn set_chat_push_routes(
+		&self,
+		product_id: String,
+		routes: Vec<crate::platform::HostChatPushRoute>,
+	) -> Result<(), HostRejection>;
+}
+
+/// Native form of [`crate::platform::CallMediaPlatform`], whose rules it
+/// follows. Installed with
+/// [`NativeTrUApiHostRuntime::set_call_media_callbacks`].
+///
+/// [`NativeTrUApiHostRuntime::set_call_media_callbacks`]: super::NativeTrUApiHostRuntime::set_call_media_callbacks
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeCallMediaCallbacks: Send + Sync {
+	/// Start the media of `call_id` of `room_id` of `product_id`.
+	async fn start_call_media(
+		&self,
+		product_id: String,
+		room_id: String,
+		call_id: String,
+		video: bool,
+		offerer: bool,
+	) -> Result<(), HostRejection>;
+
+	/// A media signal of the other side of `call_id`.
+	async fn call_media_signal(
+		&self,
+		product_id: String,
+		room_id: String,
+		call_id: String,
+		signal: Vec<u8>,
+	) -> Result<(), HostRejection>;
+
+	/// Stop the media of `call_id`.
+	async fn stop_call_media(
+		&self,
+		product_id: String,
+		room_id: String,
+		call_id: String,
+	) -> Result<(), HostRejection>;
 }
 
 /// Native form of [`crate::platform::ScannerPlatform`], whose rules it follows.

@@ -1,0 +1,266 @@
+import Foundation
+import os
+import PolkadotUI
+import TrUAPIHost
+import UIKit
+import UIKitExt
+@testable import polkadot_app
+
+/// A product that answers the questions of a room screen from scripted answers and records what it received.
+final class RecordingProductRoom: ProductRoomInteracting, @unchecked Sendable {
+    struct Calls {
+        var messageMenus: [ProductChatMessageActionsQueryRequest] = []
+        var participants: [ProductChatParticipantsQueryRequest] = []
+        var reactions: [ProductChatReactionsQueryRequest] = []
+        var events: [PublishedChatEvent] = []
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: Calls())
+
+    var messageMenuAnswer: Result<ProductChatMessageActionsQueryItem, Error> = .failure(
+        ChatQueryError.refused(.notAvailable)
+    )
+    var participantsAnswer: (ChatParticipantsQuery) -> Result<ProductChatParticipantsQueryItem, Error> = { _ in
+        .failure(ChatQueryError.refused(.notAvailable))
+    }
+
+    var reactionsAnswer: Result<ProductChatReactionsQueryItem, Error> = .failure(
+        ChatQueryError.refused(.notAvailable)
+    )
+
+    var calls: Calls {
+        state.withLock { $0 }
+    }
+
+    var events: [ChatEvent] {
+        calls.events.map(\.event)
+    }
+
+    func messageMenu(
+        _ request: ProductChatMessageActionsQueryRequest
+    ) async throws -> ProductChatMessageActionsQueryItem {
+        state.withLock { $0.messageMenus.append(request) }
+        return try messageMenuAnswer.get()
+    }
+
+    func participants(_ request: ProductChatParticipantsQueryRequest) async throws -> ProductChatParticipantsQueryItem {
+        state.withLock { $0.participants.append(request) }
+        return try participantsAnswer(request.query).get()
+    }
+
+    func reactions(_ request: ProductChatReactionsQueryRequest) async throws -> ProductChatReactionsQueryItem {
+        state.withLock { $0.reactions.append(request) }
+        return try reactionsAnswer.get()
+    }
+
+    func publish(_ event: ChatEvent, roomId: String) async throws {
+        state.withLock { $0.events.append(PublishedChatEvent(roomId: roomId, peer: "native", event: event)) }
+    }
+
+    /// Waits until the product has `count` events, for an event that a task sends.
+    func waitForEvents(_ count: Int) async {
+        for _ in 0 ..< 200 where calls.events.count < count {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+    }
+}
+
+/// Records the navigation of a product room. A confirmation runs at once when `confirms` is true.
+@MainActor
+final class RecordingProductRoomWireframe: ChatProductRoomWireframing {
+    var confirms = true
+    /// The answer to the public-storage notice (P10.3).
+    var acceptsNotice = true
+    private(set) var notices: [String] = []
+    private(set) var confirmed: [URL] = []
+    private(set) var opened: [URL] = []
+
+    func confirmProductLink(_ url: URL, from _: ControllerBackedProtocol?, onOpen: @escaping () -> Void) {
+        confirmed.append(url)
+        if confirms {
+            onOpen()
+        }
+    }
+
+    func openProductLink(_ url: URL, from _: ControllerBackedProtocol?) {
+        opened.append(url)
+    }
+
+    private(set) var participantListsShown = 0
+    private(set) var sheets: [ChatParticipantSheetViewModel] = []
+    private(set) var openedProducts: [String] = []
+    private(set) var selectSheetEntry: ((ChatParticipantSheetEntry) -> Void)?
+
+    func showParticipants(of _: ChatProductRoomPresenter, from _: ControllerBackedProtocol?) {
+        participantListsShown += 1
+    }
+
+    func showParticipantSheet(
+        _ viewModel: ChatParticipantSheetViewModel,
+        from _: ControllerBackedProtocol?,
+        onSelect: @escaping (ChatParticipantSheetEntry) -> Void
+    ) {
+        sheets.append(viewModel)
+        selectSheetEntry = onSelect
+    }
+
+    func openProduct(_ productId: String) {
+        openedProducts.append(productId)
+    }
+
+    /// The media items that the room showed, as the local file and the kind.
+    private(set) var shownMedia: [(url: URL, kind: Chat.LocalMessage.Content.ProductMediaInfo.Kind)] = []
+
+    func showProductMedia(
+        _ fileURL: URL,
+        kind: Chat.LocalMessage.Content.ProductMediaInfo.Kind,
+        from _: ControllerBackedProtocol?
+    ) {
+        shownMedia.append((fileURL, kind))
+    }
+}
+
+/// A resolver that has no image.
+struct NoImageResolver: ChatResourceResolving {
+    func data(for _: polkadot_app.ChatResource) async -> Data? { nil }
+    func image(for _: polkadot_app.ChatResource) async -> UIImage? { nil }
+}
+
+enum ProductRoomTestData {
+    static let productId = "game.dot"
+    static let chatId = Chat.Id.chatExtension(productId, roomId: "lobby")
+
+    static func policy(_ config: Chat.RoomConfig) -> ChatRoomPolicy {
+        ChatRoomPolicy(footer: nil, declarations: declarations(config: config))
+    }
+
+    static func declarations(
+        config: Chat.RoomConfig = .hostDefault,
+        footer: Chat.RoomFooterConfig? = nil
+    ) -> Chat.RoomDeclarations {
+        Chat.RoomDeclarations(
+            description: nil,
+            avatar: nil,
+            config: config,
+            configGeneration: 1,
+            preview: .hostDefault,
+            footerConfig: footer
+        )
+    }
+
+    static func config(
+        messageActions: Bool = false,
+        participants: Bool = false,
+        reactionDetails: Bool = false,
+        productSource: Bool = false
+    ) -> Chat.RoomConfig {
+        Chat.RoomConfig(
+            productSource: productSource,
+            reactionDetails: reactionDetails,
+            participants: participants,
+            messageActions: messageActions,
+            allowedReactions: nil,
+            placeholder: nil,
+            reportSeen: false
+        )
+    }
+
+    static func message(
+        _ id: String,
+        content: Chat.LocalMessage.Content = .text("hello"),
+        origin: Chat.LocalMessage.Origin = .chatExtension(productId),
+        status: Chat.LocalMessage.Status = .incoming(.seen),
+        reactions: [Chat.MessageReaction] = []
+    ) -> Chat.LocalMessage {
+        Chat.LocalMessage(
+            messageId: id,
+            chatId: chatId,
+            origin: origin,
+            creationSource: .localDevice,
+            status: status,
+            timestamp: 1_767_225_600_000,
+            content: content,
+            reactions: reactions,
+            compactionId: nil,
+            relatedMessages: []
+        )
+    }
+
+    static func action(
+        _ id: String,
+        destructive: Bool = false,
+        handler: Chat.ProductActionHandler = .callback
+    ) -> Chat.ProductMenuAction {
+        Chat.ProductMenuAction(actionId: id, label: id, icon: nil, destructive: destructive, handler: handler)
+    }
+
+    static func wireAction(
+        _ id: String,
+        destructive: Bool = false,
+        handler: ChatActionHandler = .callback
+    ) -> ChatProductAction {
+        ChatProductAction(actionId: id, label: id, icon: nil, destructive: destructive, handler: handler)
+    }
+}
+
+/// Records what a product room shows.
+@MainActor
+final class RecordingProductRoomView: ChatProductRoomViewProtocol {
+    let controller = UIViewController()
+    private(set) var toolbars: [[UIBarButtonItem]] = []
+    private(set) var reactionDetails: [ReactionDetailsViewModel] = []
+    private(set) var failures: [String] = []
+    /// The search actions of the header, nil for none (P10.5).
+    private(set) var searchItems: [UIBarButtonItem?] = []
+    private(set) var scrolledTo: [String] = []
+    private(set) var callBars: [ChatRoomCallBarModel] = []
+
+    var isSetup: Bool { true }
+
+    func didReceive(callBar: ChatRoomCallBarModel) {
+        callBars.append(callBar)
+    }
+
+    func didReceive(searchItem: UIBarButtonItem?) {
+        searchItems.append(searchItem)
+    }
+
+    func didReceive(productToolbar: [UIBarButtonItem]) {
+        toolbars.append(productToolbar)
+    }
+
+    func showReactionDetails(viewModel: ReactionDetailsViewModel) {
+        reactionDetails.append(viewModel)
+    }
+
+    func showActionFailure(_ message: String) {
+        failures.append(message)
+    }
+
+    func scrollToMessage(_ messageId: String) {
+        scrolledTo.append(messageId)
+    }
+}
+
+extension RecordingProductRoomWireframe {
+    func chooseAttachmentKind(
+        _: [ChatAttachmentKind],
+        from _: ControllerBackedProtocol?,
+        onSelect _: @escaping (ChatAttachmentKind) -> Void
+    ) {}
+
+    func pickAttachment(
+        _: ChatAttachmentKind,
+        from _: ControllerBackedProtocol?,
+        completion _: @escaping (PickedAttachment) -> Void
+    ) {}
+
+    func confirmPublicStorage(
+        productName: String,
+        from _: ControllerBackedProtocol?,
+        onAnswer: @escaping (Bool) -> Void
+    ) {
+        notices.append(productName)
+        onAnswer(acceptsNotice)
+    }
+}

@@ -12,8 +12,9 @@ use crate::platform::{
 use parity_scale_codec::Encode;
 use truapi::{
 	api::{
-		Account, Chain, Entropy, ExpandedCard, Game, LocalStorage, Notifications, Permissions,
-		Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme, Worker,
+		Account, Chain, Chat, Entropy, ExpandedCard, Game, LocalStorage, Notifications,
+		Permissions, Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme,
+		Worker,
 	},
 	v02,
 	versioned::{
@@ -31,6 +32,11 @@ use truapi::{
 			RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
 			RemoteChainTransactionBroadcastError, RemoteChainTransactionBroadcastRequest,
 			RemoteChainTransactionBroadcastResponse,
+		},
+		chat::{
+			HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatPostMessageError,
+			HostChatPostMessageRequest, HostChatRegisterBotError, HostChatRegisterBotRequest,
+			HostChatRegisterBotResponse, HostChatSetRoomFooterError, HostChatSetRoomFooterRequest,
 		},
 		entropy::{HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse},
 		expanded_card::HostExpandedCardSetFaceShownRequest,
@@ -1336,7 +1342,7 @@ struct RecordingChatPlatform {
 	posted_rooms: Mutex<Vec<String>>,
 	posted_payloads: Mutex<Vec<v01::ChatMessageContent>>,
 	posted_alts: Mutex<Vec<Option<String>>>,
-	room_footers: Mutex<Vec<(String, v01::ChatRoomFooter)>>,
+	room_footers: Mutex<Vec<(String, truapi::latest::ChatRoomFooter)>>,
 	bot_rooms: Vec<String>,
 }
 
@@ -1346,6 +1352,7 @@ impl crate::platform::ChatPlatform for RecordingChatPlatform {
 		&self,
 		_product: &ProductContext,
 		request: truapi::latest::HostChatCreateRoomRequest,
+		_icon_url: String,
 	) -> Result<truapi::latest::HostChatCreateRoomResponse, truapi::latest::HostChatCreateRoomError>
 	{
 		self.created_rooms
@@ -1712,7 +1719,7 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
 	.expect_err("a javascript: file url must not reach the host");
 	assert!(matches!(
 		rejected,
-		CallError::Domain(HostChatPostMessageError::V2(
+		CallError::Domain(HostChatPostMessageError::V1(
 			v01::HostChatPostMessageError::Unknown { .. }
 		))
 	));
@@ -1724,7 +1731,7 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
 	.expect_err("an over-budget body must not reach the host");
 	assert!(matches!(
 		too_large,
-		CallError::Domain(HostChatPostMessageError::V2(
+		CallError::Domain(HostChatPostMessageError::V1(
 			v01::HostChatPostMessageError::MessageTooLarge
 		))
 	));
@@ -1737,7 +1744,7 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
 	.expect_err("an over-budget custom payload must not reach the host");
 	assert!(matches!(
 		big_payload,
-		CallError::Domain(HostChatPostMessageError::V2(
+		CallError::Domain(HostChatPostMessageError::V1(
 			v01::HostChatPostMessageError::MessageTooLarge
 		))
 	));
@@ -1754,7 +1761,7 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
 	.expect_err("an over-long room id must be rejected");
 	assert!(matches!(
 		long_room,
-		CallError::Domain(HostChatPostMessageError::V2(
+		CallError::Domain(HostChatPostMessageError::V1(
 			v01::HostChatPostMessageError::Unknown { .. }
 		))
 	));
@@ -1912,7 +1919,7 @@ fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
 	);
 	assert_eq!(
 		*chat_platform.room_footers.lock().expect("room footers mutex poisoned"),
-		[("caf\u{e9}".to_string(), v01::ChatRoomFooter::Empty)]
+		[("caf\u{e9}".to_string(), truapi::latest::ChatRoomFooter::Empty)]
 	);
 }
 
@@ -8299,6 +8306,31 @@ fn a_worker_scans_only_shortly_after_the_user_taps_its_card() {
 }
 
 #[test]
+fn a_worker_scans_shortly_after_a_press_in_its_room_but_not_after_a_message() {
+	// A chat Worker offers a scan from a button or a command of its room. A
+	// posted message can come from another person, so it opens nothing.
+	let scanner = StubScannerPlatform::answering(HostScan::Dismissed);
+	let host = scanner_host_for(ProductExecutionKind::Worker, Some(scanner.clone()));
+	let posted = latest::HostChatActionSubscribeItem {
+		event: latest::ChatEvent::MessagePosted {
+			message_id: "m2".into(),
+			body: latest::ChatMessageBody::Text { text: "scan".into() },
+			reply_to: None,
+		},
+		..room_press()
+	};
+	host.connection.chat.publish(posted, &host.connection.services.spawner).unwrap();
+	assert_eq!(scan(&host), Err(CallError::Domain(v01::HostScannerScanError::NotVisible)));
+	assert!(scanner.asked().is_empty());
+
+	host.connection
+		.chat
+		.publish(room_press(), &host.connection.services.spawner)
+		.unwrap();
+	assert_eq!(scan(&host), Ok(v01::ScanOutcome::Dismissed));
+}
+
+#[test]
 fn each_host_answer_reaches_the_product_as_its_own_result() {
 	// `Unsupported` tells a product to use its own camera code, a dismissal is
 	// worth offering again, and a code the request does not accept never
@@ -9171,5 +9203,228 @@ fn a_payment_of_nothing_is_refused_before_the_host_sees_it() {
 			))),
 			0,
 		)
+	);
+}
+
+/// The user pressing a button of a message in a room of the product.
+fn room_press() -> latest::HostChatActionSubscribeItem {
+	latest::HostChatActionSubscribeItem {
+		room_id: "verbosity".into(),
+		peer: "native".into(),
+		event: latest::ChatEvent::ActionTriggered(latest::ActionTrigger {
+			message_id: "m1".into(),
+			action_id: "share".into(),
+			payload: None,
+		}),
+	}
+}
+
+/// A username directory that records what it was asked and finds `found`.
+struct StubUsernamesPlatform {
+	found: Vec<String>,
+	asked: Mutex<Vec<String>>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::UsernamesPlatform for StubUsernamesPlatform {
+	async fn search_usernames(
+		&self,
+		product: &crate::platform::ProductContext,
+		prefix: &str,
+	) -> Result<Vec<String>, truapi::latest::GenericError> {
+		self.asked
+			.lock()
+			.unwrap()
+			.push(format!("{} searches {prefix}", product.product_id));
+		Ok(self.found.clone())
+	}
+}
+
+fn usernames_host(
+	kind: ProductExecutionKind,
+	directory: Arc<StubUsernamesPlatform>,
+) -> ProductRuntimeHost {
+	let host = scanner_host_for(kind, None);
+	host.connection.services.install_usernames_platform(directory);
+	host
+}
+
+fn search_usernames(
+	host: &ProductRuntimeHost,
+	prefix: &str,
+) -> Result<Vec<String>, CallError<v01::HostUsernamesSearchError>> {
+	use truapi::versioned::usernames as wire;
+	let result = futures::executor::block_on(truapi::api::Usernames::search(
+		host,
+		&CallContext::default(),
+		wire::HostUsernamesSearchRequest::V1(v01::HostUsernamesSearchRequest {
+			prefix: prefix.into(),
+		}),
+	));
+	match result {
+		Ok(wire::HostUsernamesSearchResponse::V1(response)) => Ok(response.usernames),
+		Err(CallError::Domain(wire::HostUsernamesSearchError::V1(error))) => {
+			Err(CallError::Domain(error))
+		},
+		Err(CallError::Unsupported) => Err(CallError::Unsupported),
+		Err(other) => panic!("unexpected search error: {other:?}"),
+	}
+}
+
+#[test]
+fn a_search_gives_only_usernames_and_at_most_twenty() {
+	// The host is not trusted with the limits: a product gets usernames only,
+	// each one time, and never more than the maximum.
+	let mut found = vec!["alice.1".to_string(), "alice.1".into(), "not a name".into()];
+	found.extend((2..40).map(|n| format!("alice.{n}")));
+	let directory = Arc::new(StubUsernamesPlatform { found, asked: Mutex::default() });
+	let host = usernames_host(ProductExecutionKind::Worker, directory.clone());
+	let expected: Vec<String> = (1..=20).map(|n| format!("alice.{n}")).collect();
+	assert_eq!(search_usernames(&host, " @Ali"), Ok(expected));
+	assert!(matches!(
+		search_usernames(&host, "a"),
+		Err(CallError::Domain(v01::HostUsernamesSearchError::InvalidRequest { .. }))
+	));
+	assert_eq!(*directory.asked.lock().unwrap(), ["greenmarket.dot searches ali"]);
+	assert_eq!(
+		search_usernames(&scanner_host_for(ProductExecutionKind::App, None), "ali"),
+		Err(CallError::Unsupported)
+	);
+}
+
+/// Call media that records what the core asked.
+#[derive(Default)]
+struct StubCallMedia {
+	asked: Mutex<Vec<String>>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::CallMediaPlatform for StubCallMedia {
+	async fn start_call_media(
+		&self,
+		_product: &crate::platform::ProductContext,
+		room_id: &str,
+		call_id: &str,
+		video: bool,
+		offerer: bool,
+	) -> Result<(), truapi::latest::GenericError> {
+		self.asked
+			.lock()
+			.unwrap()
+			.push(format!("start {room_id} {call_id} video={video} offerer={offerer}"));
+		Ok(())
+	}
+
+	async fn call_media_signal(
+		&self,
+		_product: &crate::platform::ProductContext,
+		room_id: &str,
+		call_id: &str,
+		signal: Vec<u8>,
+	) -> Result<(), truapi::latest::GenericError> {
+		self.asked
+			.lock()
+			.unwrap()
+			.push(format!("signal {room_id} {call_id} {}", signal.len()));
+		Ok(())
+	}
+
+	async fn stop_call_media(
+		&self,
+		_product: &crate::platform::ProductContext,
+		room_id: &str,
+		call_id: &str,
+	) -> Result<(), truapi::latest::GenericError> {
+		self.asked.lock().unwrap().push(format!("stop {room_id} {call_id}"));
+		Ok(())
+	}
+}
+
+fn call_media_start(
+	host: &ProductRuntimeHost,
+	room_id: &str,
+) -> Result<(), CallError<v01::HostCallMediaError>> {
+	use truapi::versioned::call_media as wire;
+	futures::executor::block_on(truapi::api::CallMedia::start(
+		host,
+		&CallContext::default(),
+		wire::HostCallMediaStartRequest::V1(v01::HostCallMediaStartRequest {
+			room_id: room_id.into(),
+			call_id: "c1".into(),
+			video: true,
+			offerer: true,
+		}),
+	))
+	.map(drop)
+	.map_err(|error| error.map_domain(|wire::HostCallMediaError::V1(error)| error))
+}
+
+fn call_media_signal(
+	host: &ProductRuntimeHost,
+	signal: Vec<u8>,
+) -> Result<(), CallError<v01::HostCallMediaError>> {
+	use truapi::versioned::call_media as wire;
+	futures::executor::block_on(truapi::api::CallMedia::signal(
+		host,
+		&CallContext::default(),
+		wire::HostCallMediaSignalRequest::V1(v01::HostCallMediaSignalRequest {
+			room_id: "dm-7".into(),
+			call_id: "c1".into(),
+			signal,
+		}),
+	))
+	.map(drop)
+	.map_err(|error| error.map_domain(|wire::HostCallMediaError::V1(error)| error))
+}
+
+#[test]
+fn call_media_starts_only_shortly_after_the_user_calls_or_accepts_in_that_room() {
+	// The media opens the microphone and the camera: a Worker cannot start
+	// it unasked, and a press in one room does not start a call in another.
+	let media = Arc::new(StubCallMedia::default());
+	let host = scanner_host_for(ProductExecutionKind::Worker, None);
+	assert_eq!(call_media_start(&host, "dm-7"), Err(CallError::Unsupported));
+	host.connection.services.install_call_media_platform(media.clone());
+	assert_eq!(
+		call_media_start(&host, "dm-7"),
+		Err(CallError::Domain(v01::HostCallMediaError::NotAllowed))
+	);
+
+	host.connection.services.chat_room_events.publish(
+		"greenmarket.dot",
+		latest::HostChatRoomEventsSubscribeItem {
+			room_id: "dm-7".into(),
+			event: latest::ChatRoomEvent::CallAnswered { call_id: "c1".into(), accept: false },
+		},
+	);
+	assert_eq!(
+		call_media_start(&host, "dm-7"),
+		Err(CallError::Domain(v01::HostCallMediaError::NotAllowed))
+	);
+	host.connection.services.chat_room_events.publish(
+		"greenmarket.dot",
+		latest::HostChatRoomEventsSubscribeItem {
+			room_id: "dm-7".into(),
+			event: latest::ChatRoomEvent::CallRequested { video: true },
+		},
+	);
+
+	assert_eq!(
+		call_media_start(&host, "dm-8"),
+		Err(CallError::Domain(v01::HostCallMediaError::NotAllowed))
+	);
+	call_media_start(&host, "dm-7").unwrap();
+	call_media_signal(&host, vec![1; 10]).unwrap();
+	assert!(matches!(
+		call_media_signal(&host, Vec::new()),
+		Err(CallError::Domain(v01::HostCallMediaError::InvalidRequest { .. }))
+	));
+	assert!(matches!(
+		call_media_signal(&host, vec![1; 64 * 1024 + 1]),
+		Err(CallError::Domain(v01::HostCallMediaError::InvalidRequest { .. }))
+	));
+	assert_eq!(
+		*media.asked.lock().unwrap(),
+		["start dm-7 c1 video=true offerer=true", "signal dm-7 c1 10"]
 	);
 }

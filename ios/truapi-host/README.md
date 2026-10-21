@@ -106,6 +106,15 @@ indistinguishable from the other product having granted nothing. Pass 32 zero
 bytes only to declare deliberately that this host has no Asset Hub. Include this
 configuration update in the embedding app's package upgrade.
 
+The runtime takes the host's services before any product execution opens, each
+installed once: `setPush` (`PushHostBridge`, the push service), `setPersonChat`
+(`PersonChatHostBridge`: the HOP nodes it trusts, the devices paired with the
+wallet, the chat's contacts it keeps for the rest of the app, and the native
+chat history it staged for the chat product) and `setCallMedia`
+(`CallMediaHostBridge`, its call engine for the calls of product rooms). An app
+that moves its native chat to the chat product gives the core the native
+device key with `importChatDeviceKey` before the product first runs.
+
 Run the package tests in their UIKit host on an iOS simulator (the xcframework has no macOS slice). The helper installs pinned XcodeGen under `.agent/tools`, generates the project, and selects an available simulator:
 
 ```bash
@@ -115,9 +124,45 @@ Run the package tests in their UIKit host on an iOS simulator (the xcframework h
 
 ## Chat
 
-A host serving the Chat modality implements `ChatHostBridge` and opens the
-execution with `ProductExecutionKind.chat`. Hosts without it pass nothing and
-Chat calls answer unsupported.
+A host serving the Chat modality implements `ChatHostBridge` and passes it
+when it opens the product's `.worker` execution. Hosts without it pass nothing
+and Chat calls answer unsupported.
+
+The bridge carries the requests of Chat Extension v2
+([RFC](../../docs/rfcs/chat-extension-v2.md)). `createRoom`, `registerBot`,
+`postMessage`, `setRoomFooter` and `listRooms` have no default. The other
+requests have defaults for a host that does not serve them yet:
+`roomConfig` answers `ChatRoomConfig.hostDefault`, `setRoomConfig` accepts only
+that configuration, `setRoomMetadata` keeps the name and icon of `createRoom`,
+and every other request answers a rejection. Each room the product creates
+carries a configuration and metadata, so these three defaults keep room
+creation working.
+
+| Request | What the host does |
+| --- | --- |
+| `roomConfig` | Answers the configuration last declared for the room. The core reads it before each feed update, posted message and query |
+| `setRoomConfig` | Keeps the configuration a room was created with across restarts. The core calls it when `createRoom` makes a new room |
+| `setRoomMetadata`, `setRoomPreview` | Replace the name, avatar and description, and how the room shows in the chat list |
+| `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen |
+| `updateFeed` | Applies one change to the messages; `persist` is `true` for a room the host stores. Throw `NativeChatFeedRejection` to refuse it |
+| `setRoomFooter` | Shows the input with its `ChatInputConfig`, nothing, or a footer the product draws through `render` |
+
+The core checks that the product created the room before it calls any of
+these, and bounds and screens every field.
+
+The bridge also carries the Chat Extension v2 additions
+([RFC](../../docs/rfcs/chat-extension-v2-additions.md)). Each has a default
+for a host that does not serve them: `capabilities`, `roomUserStates` and
+`bots` answer an empty list, `roomFeatures` answers
+`ChatRoomFeatures.hostDefault`, and the two setters answer a rejection.
+
+| Request | What the host does |
+| --- | --- |
+| `capabilities` | Answers the feature names it serves from end to end (the RFC's feature table). The core drops each name it does not know or cannot back, and answers the product's `capabilities` with the rest |
+| `roomFeatures`, `setRoomFeatures` | Answer and replace the optional features of a room. Keep a feature this build does not serve, so a later build applies it |
+| `setRoomCall` | Shows, changes or removes the call of a room. The core first checks that `capabilities` lists `call_buttons` or `room_calls` |
+| `roomUserStates` | Answers each room of the product the user muted or archived; the core sends it to the product when its `roomEventsSubscribe` starts, and silences an immediate notification into a muted room |
+| `bots` | Answers the bot ids of the personas the product registered; the core refuses a `bot:<id>` author that is not one of them |
 
 ```swift
 // Called from a shared dispatch pool, so the backing store must be
@@ -154,6 +199,20 @@ final class MyChatBridge: ChatHostBridge, @unchecked Sendable {
     }
 
     func listRooms() throws -> [ChatRoom] { store.rooms() }
+
+    func roomConfig(roomId: String) throws -> ChatRoomConfig {
+        store.config(roomId) ?? .hostDefault
+    }
+
+    func setRoomConfig(roomId: String, config: ChatRoomConfig) throws {
+        store.setConfig(roomId, config: config)
+    }
+
+    func updateFeed(roomId: String, update: ChatFeedUpdate, persist: Bool) throws {
+        guard store.apply(update, to: roomId, persist: persist) else {
+            throw NativeChatFeedRejection.UnknownMessage
+        }
+    }
 }
 
 let runtime = try TrUAPIHostRuntime(
@@ -171,7 +230,7 @@ try runtime.activateLocalSession(secret: secret)
 
 let execution = try runtime.openProductExecution(
     bridge: bridge,
-    configuration: ProductExecutionConfig(productId: "chat.dot", executionKind: .chat),
+    configuration: ProductExecutionConfig(productId: "chat.dot", executionKind: .worker),
     chat: MyChatBridge(store: store)
 )
 let endpoint = try execution.startWsBridge()
@@ -183,6 +242,37 @@ names are also normalized; a message body is bounded and screened but passed
 through byte-for-byte, and `ChatFile.sizeBytes` is product-asserted and
 unverified. Contextual output escaping is the host's job.
 
+The host asks a room that declares a handler in its configuration through six
+queries on the execution. Each one waits for one answer, and stops the query in
+the product after its timeout or when the task is cancelled:
+
+```swift
+let page = try await execution.chatMessagesQuery(
+    ProductChatMessagesQueryRequest(roomId: roomId, anchor: .before(cursor: nil), pageSize: 40)
+)
+```
+
+| Query | Default timeout (`ChatQueryTimeout`) |
+| --- | --- |
+| `chatMessagesQuery` | 10 s (`messages`) |
+| `chatUserAction` | 30 s for a sent message (`sentMessage`), 10 s for other actions (`userAction`) |
+| `chatReactionsQuery`, `chatParticipantsQuery`, `chatMessageActionsQuery` | 5 s (`lookup`) |
+| `chatSearchQuery` | 10 s (`search`) |
+
+Each query also takes `timeout:`. A query with no answer throws
+`ChatQueryError`: `.refused(.notAvailable)` asks the host to apply its default,
+`.actionRefused` reverts a user action, and `.failed`, `.noAnswer` and
+`.timedOut` show the failure state of that query. The core answers
+`.notAvailable` itself for a room that does not declare the handler, without
+starting the worker.
+
+`publishChatEvent(roomId:peer:event:)` delivers what the user did in a room
+the host stores, and the room events of both kinds of room (`actionTriggered`,
+`messageActionTriggered` and the others), with peer `"native"` for the user of the
+host. The product receives at most one `seen` event for each room each second,
+and a product at the first protocol version receives only the events that its
+version carries.
+
 The id `postMessage` returns is the correlation key `ActionTrigger.messageId`
 carries back, so it must name that message for as long as the host stores it.
 `alt` is the product's one-line description of the message, already trimmed
@@ -191,6 +281,27 @@ chat list preview of a custom card. Only a custom message carries one, since
 every other kind previews from its own content.
 Ids arriving _in_ a `Reaction` or `ReactionRemoved` are product-chosen and
 untrusted: they may name a message in another room, or one that never existed.
+
+The runtime carries the parts of the additions that need no execution:
+`publishChatRoomEvent(productId:roomId:event:)` sends a `ChatRoomEvent` (mute
+and archive, call buttons and answers) and the core keeps the
+newest 64 of a product until its worker subscribes; `wakeProduct(productId:reason:)`
+holds the worker for 30 seconds for a `ChatWakeReason` and answers
+`ChatWakeOutcome`, at most 12 notification wakes for each product in one hour;
+`stageChatAttachment(productId:roomId:mimeType:bytes:)` stores a user
+attachment above the inline bound as one Bulletin preimage that the product's
+own allowance pays for, and returns its key, or throws
+`NativeChatStageRejection` (the room does not declare `preimage_attachments`,
+the file is above 8 MiB or the chain's per-transaction bound, the user refused
+`PreimageSubmit`, no allowance, or the submission failed).
+
+Push wakes ([design](../../docs/design/push-wake.md)): `setWakeRelay(_:)` installs
+the host's push relay client (`WakeRelayHostBridge.registerWakeTopics`), which
+gets the wake topics of every product and the key of the device, and
+`handleWakePush(payload:)` takes the JSON text of the `truapi-wake` value of a
+background push, checks it, and wakes each product that watches its topic
+(`[PushWakeDelivery]`, or throws `PushWakeRejection`). Keep the app running
+until the end of each hold.
 
 ## Pocket
 
@@ -233,8 +344,9 @@ A card's face does not cross this bridge. The host keeps each card's newest
 face itself: that is what the card shows while the worker is down, and at cold
 start before the worker answers.
 
-On the execution: `publishChatAction` delivers a user's action back to the
-product, buffering up to 64 before it subscribes; `notifyChatRoomsChanged`
+On the execution: `publishChatEvent` and `publishChatAction` deliver a user's
+action back to the product, buffering up to 64 before it subscribes;
+`notifyChatRoomsChanged`
 republishes the room list; `render` returns a stream of `RendererNode` trees
 for one render context; `publishRendererAction` delivers a renderer action
 back to the product; and `sessionChatIdentityKey` reads the session's X25519

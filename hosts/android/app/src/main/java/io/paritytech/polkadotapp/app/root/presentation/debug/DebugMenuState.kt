@@ -15,4 +15,7 @@ data class DebugMenuState(
     val truapiRuntimeEnabled: Boolean = true,
     /** Non-null while the restart prompt is up; the value to restore if it is declined. */
     val runtimeRestartRevertsTo: Boolean? = null,
+    val productChatEnabled: Boolean = false,
+    /** Non-null while the restart prompt for the chat mode is up; the value to restore if it is declined. */
+    val chatModeRestartRevertsTo: Boolean? = null,
 )

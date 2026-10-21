@@ -195,7 +195,9 @@ enum TransferAmountViewFactory {
     }
 
     private static func makeContactChatSubmitter() -> TransferSubmitting {
-        ContactChatSubmitter(
+        guard !PersonChatMode.isProductChat else { return ChatInProductSubmitter() }
+
+        return ContactChatSubmitter(
             chatContactsProvider: ContactsLocalStorageService(),
             createMessageFactory: LocalMessageCreatingOperationFactory(
                 messagesStorageService: MessagesLocalStorageService()

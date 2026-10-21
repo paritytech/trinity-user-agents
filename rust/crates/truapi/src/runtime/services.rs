@@ -4,9 +4,9 @@
 //! and signing hosts. Pairing state, signing state, active sessions, and role
 //! controls live on the concrete role objects.
 
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::{
-	collections::VecDeque,
+	collections::{HashMap, VecDeque},
 	sync::{Arc, Mutex, OnceLock},
 };
 
@@ -18,9 +18,9 @@ use crate::{
 	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
 	host_logic::worker::WorkerLedger,
 	platform::{
-		BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, JsonRpcConnection,
-		PaymentPlatform, PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform,
-		TopUpPlatform,
+		BalancePlatform, CallMediaPlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo,
+		JsonRpcConnection, PaymentPlatform, PermissionStatusHost, PersonChatPlatform, Platform,
+		PocketPlatform, PushPlatform, ScannerPlatform, TopUpPlatform, UsernamesPlatform,
 	},
 	runtime::{
 		bulletin_rpc::BulletinRpc, signing_host::DevicePairingObserver,
@@ -79,6 +79,20 @@ pub struct RuntimeServices {
 	/// Whether a scan is open. Shared by every product runtime of this host,
 	/// because the device has one viewfinder.
 	scan_open: AtomicBool,
+	/// Host username directory, installed once at startup by a host that has
+	/// one. Unset leaves every product search `Unsupported`.
+	usernames_platform: OnceLock<Arc<dyn UsernamesPlatform>>,
+	person_chat_platform: OnceLock<Arc<dyn PersonChatPlatform>>,
+	hop_connector: OnceLock<Arc<dyn crate::runtime::hop_client::HopConnector>>,
+	/// Host push service, installed once at startup by a host that has one.
+	/// Unset leaves every product push call `Unsupported`.
+	push_platform: OnceLock<Arc<dyn PushPlatform>>,
+	/// Host call media, installed once at startup by a host that has it.
+	/// Unset leaves every product `callMedia` call `Unsupported`.
+	call_media_platform: OnceLock<Arc<dyn CallMediaPlatform>>,
+	/// The times of the recent notifications of each product, for the rate
+	/// limit of `push.notify`.
+	push_sent: Mutex<HashMap<String, VecDeque<u64>>>,
 	/// Host observer told when a device finishes pairing with this signing
 	/// host. Unset leaves a paired device unannounced.
 	device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
@@ -99,6 +113,18 @@ pub struct RuntimeServices {
 	asset_hub_chain_genesis_hash: [u8; 32],
 	/// Reference counts per product worker.
 	pub worker_ledger: WorkerLedger,
+	/// Call budgets of every product chat room.
+	pub chat_rate_limits: crate::runtime::chat::ChatRateLimits,
+	/// Room events of each product, kept until the product subscribes.
+	pub chat_room_events: crate::runtime::ChatRoomEventHub,
+	/// Wake holds of each product.
+	pub chat_wakes: crate::runtime::ChatWakes,
+	/// Wake watches of each product and the push relay of the host.
+	pub push_wakes: crate::runtime::PushWakes,
+	/// The `preimage_attachments` flag of each room the core saw declared.
+	pub chat_staging: crate::runtime::ChatStagingDeclarations,
+	/// The rooms whose call holds the worker of their product.
+	pub chat_call_holds: crate::runtime::ChatCallHolds,
 	/// Shared chainHead-v1 runtime behind the Chain surface.
 	pub chain: ChainRuntime,
 	/// People-chain statement store RPC client.
@@ -126,6 +152,9 @@ pub struct RuntimeServices {
 	/// persist it, leaving peers addressing an overwritten key.
 	device_encryption_key: futures::lock::Mutex<()>,
 	next_core_instance: AtomicU64,
+	/// The id of the next notification the core silences, counted down from
+	/// `u32::MAX`, far from the ids a host gives.
+	next_silenced_notification: AtomicU32,
 }
 
 impl RuntimeServices {
@@ -169,6 +198,12 @@ impl RuntimeServices {
 			game_platform: OnceLock::new(),
 			scanner_platform: OnceLock::new(),
 			scan_open: AtomicBool::new(false),
+			usernames_platform: OnceLock::new(),
+			person_chat_platform: OnceLock::new(),
+			hop_connector: OnceLock::new(),
+			push_platform: OnceLock::new(),
+			call_media_platform: OnceLock::new(),
+			push_sent: Mutex::default(),
 			device_pairing_observer: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			core_db: OnceLock::new(),
@@ -178,6 +213,12 @@ impl RuntimeServices {
 			durable_work_observer: OnceLock::new(),
 			asset_hub_chain_genesis_hash,
 			worker_ledger: WorkerLedger::default(),
+			chat_rate_limits: Default::default(),
+			chat_room_events: Default::default(),
+			chat_wakes: Default::default(),
+			push_wakes: Default::default(),
+			chat_staging: Default::default(),
+			chat_call_holds: Default::default(),
 			chain,
 			statement_store,
 			bulletin,
@@ -189,6 +230,7 @@ impl RuntimeServices {
 			spawner,
 			device_encryption_key: futures::lock::Mutex::new(()),
 			next_core_instance: AtomicU64::new(1),
+			next_silenced_notification: AtomicU32::new(u32::MAX),
 		})
 	}
 
@@ -337,11 +379,95 @@ impl RuntimeServices {
 
 	/// Claim the one open scan, or `None` while another holds it. Dropping the
 	/// claim frees it, so a cancelled or failed scan cannot keep it.
-	pub fn claim_scan(&self) -> Option<ScanClaim<'_>> {
-		self.scan_open
-			.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-			.ok()
-			.map(|_| ScanClaim(&self.scan_open))
+	pub fn claim_scan(&self) -> Option<OverlayClaim<'_>> {
+		OverlayClaim::take(&self.scan_open)
+	}
+
+	/// Install the host's username directory. Answers whether this call was
+	/// the one that installed it.
+	pub fn install_usernames_platform(&self, platform: Arc<dyn UsernamesPlatform>) -> bool {
+		self.usernames_platform.set(platform).is_ok()
+	}
+
+	/// The host's username directory, when one is installed.
+	pub fn usernames_platform(&self) -> Option<Arc<dyn UsernamesPlatform>> {
+		self.usernames_platform.get().cloned()
+	}
+
+	/// Install the host's person chat services. Set-once: answers whether this
+	/// call installed it.
+	pub fn install_person_chat_platform(&self, platform: Arc<dyn PersonChatPlatform>) -> bool {
+		self.person_chat_platform.set(platform).is_ok()
+	}
+
+	/// The host's person chat services, when it has them.
+	pub fn person_chat_platform(&self) -> Option<Arc<dyn PersonChatPlatform>> {
+		self.person_chat_platform.get().cloned()
+	}
+
+	/// Replace how the core reaches HOP nodes, for a host or test that carries
+	/// the connections itself. Set-once: answers whether this call installed it.
+	pub fn install_hop_connector(
+		&self,
+		connector: Arc<dyn crate::runtime::hop_client::HopConnector>,
+	) -> bool {
+		self.hop_connector.set(connector).is_ok()
+	}
+
+	/// How the core reaches HOP nodes: the installed connector, else a direct
+	/// dial on native targets. None in a browser, which cannot dial from Rust.
+	pub fn hop_connector(&self) -> Option<Arc<dyn crate::runtime::hop_client::HopConnector>> {
+		if let Some(connector) = self.hop_connector.get() {
+			return Some(connector.clone());
+		}
+		#[cfg(not(target_arch = "wasm32"))]
+		return Some(Arc::new(crate::runtime::hop_client::NativeHopConnector));
+		#[cfg(target_arch = "wasm32")]
+		None
+	}
+
+	/// Install the host's push service. Answers whether this call was the one
+	/// that installed it.
+	pub fn install_push_platform(&self, platform: Arc<dyn PushPlatform>) -> bool {
+		self.push_platform.set(platform).is_ok()
+	}
+
+	/// The host's push service, when one is installed.
+	pub fn push_platform(&self) -> Option<Arc<dyn PushPlatform>> {
+		self.push_platform.get().cloned()
+	}
+
+	/// Install the host's call media. Answers whether this call was the one
+	/// that installed it.
+	pub fn install_call_media_platform(&self, platform: Arc<dyn CallMediaPlatform>) -> bool {
+		self.call_media_platform.set(platform).is_ok()
+	}
+
+	/// The host's call media, when it is installed.
+	pub fn call_media_platform(&self) -> Option<Arc<dyn CallMediaPlatform>> {
+		self.call_media_platform.get().cloned()
+	}
+
+	/// Count one notification of `product_id` at `now_secs`, unless the
+	/// product sent `max` in the `window_secs` before. Answers whether it was
+	/// counted.
+	pub fn admit_push(
+		&self,
+		product_id: &str,
+		now_secs: u64,
+		window_secs: u64,
+		max: usize,
+	) -> bool {
+		let mut sent = self.push_sent.lock().expect("push rate mutex poisoned");
+		let times = sent.entry(product_id.to_string()).or_default();
+		while times.front().is_some_and(|at| now_secs.saturating_sub(*at) >= window_secs) {
+			times.pop_front();
+		}
+		if times.len() >= max {
+			return false;
+		}
+		times.push_back(now_secs);
+		true
 	}
 
 	/// Install the host's device-pairing observer.
@@ -415,10 +541,38 @@ impl RuntimeServices {
 		.await
 	}
 
+	/// The X25519 secret the chat product uses as this device's chat key:
+	/// the native chat's key the host imported, else
+	/// [`Self::device_encryption_secret`].
+	pub async fn chat_device_secret(&self) -> Result<[u8; 32], String> {
+		let imported = {
+			let _guard = self.device_encryption_key.lock().await;
+			crate::host_logic::device_key::read_chat_device_secret(self.platform.as_ref()).await?
+		};
+		match imported {
+			Some(secret) => Ok(secret),
+			None => self.device_encryption_secret().await,
+		}
+	}
+
+	/// Keep the native chat's device secret as this device's chat key; false
+	/// when a different one is already kept.
+	pub async fn import_chat_device_secret(&self, secret: [u8; 32]) -> Result<bool, String> {
+		let _guard = self.device_encryption_key.lock().await;
+		crate::host_logic::device_key::import_chat_device_secret(self.platform.as_ref(), secret)
+			.await
+	}
+
 	/// Allocate the next per-product-runtime id, used to scope chain follow
 	/// operation ids within the shared host runtime.
 	pub fn next_core_instance(&self) -> u64 {
 		self.next_core_instance.fetch_add(1, Ordering::Relaxed)
+	}
+
+	/// Give a fresh id to a notification the core silences, so that the
+	/// product cannot tell it from a notification the host shows.
+	pub fn next_silenced_notification_id(&self) -> u32 {
+		self.next_silenced_notification.fetch_sub(1, Ordering::Relaxed)
 	}
 
 	/// Store a preimage value under its key for later lookup hits.
@@ -581,10 +735,18 @@ impl RuntimeChainProvider for HostChainProvider {
 	}
 }
 
-/// The open scan. Frees the slot when dropped.
-pub struct ScanClaim<'a>(&'a AtomicBool);
+/// The open scan or share sheet. Frees the slot when dropped.
+pub struct OverlayClaim<'a>(&'a AtomicBool);
 
-impl Drop for ScanClaim<'_> {
+impl<'a> OverlayClaim<'a> {
+	fn take(open: &'a AtomicBool) -> Option<Self> {
+		open.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+			.ok()
+			.map(|_| Self(open))
+	}
+}
+
+impl Drop for OverlayClaim<'_> {
 	fn drop(&mut self) {
 		self.0.store(false, Ordering::Release);
 	}

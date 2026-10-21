@@ -40,7 +40,6 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.chatRequest.ChatRequest
 import io.paritytech.polkadotapp.feature_chats_impl.data.chatRequest.ChatRequestProver
 import io.paritytech.polkadotapp.feature_chats_impl.data.chatRequest.RealChatRequestCrypto
 import io.paritytech.polkadotapp.feature_chats_impl.data.chatRequest.RealChatRequestProver
-import io.paritytech.polkadotapp.feature_chats_impl.data.hop.transfer.HopTransferResumeInitializer
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.upload.CompressImages
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.upload.FileUploadPreProcessor
 import io.paritytech.polkadotapp.feature_chats_impl.data.notifications.ChatMessageNotificationSentRepository
@@ -72,7 +71,6 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealMessageR
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealProcessedChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RealRemovedChatsRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.RemovedChatsRepository
-import io.paritytech.polkadotapp.feature_chats_impl.data.worker.ChatRequestRenewalScheduler
 import io.paritytech.polkadotapp.feature_chats_impl.deeplink.RealChatDeeplinkMapper
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatActiveTrackerInternal
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
@@ -94,11 +92,9 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.RealIncom
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.RealIncomingChatRequestService
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.RealIncomingChatRequestVerifier
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.RealOutgoingChatRequestService
-import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.delivery.ChatRequestDeliveryService
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.transport.ChatRequestTransport
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.transport.RealChatRequestTransport
 import io.paritytech.polkadotapp.feature_chats_impl.domain.deviceLifecycle.DeviceLifecycleMessageProcessor
-import io.paritytech.polkadotapp.feature_chats_impl.domain.devices.ContactDeviceFanOutService
 import io.paritytech.polkadotapp.feature_chats_impl.domain.devices.RealBroadcastDeviceLifecycleUseCase
 import io.paritytech.polkadotapp.feature_chats_impl.domain.devices.RealContactDeviceProvider
 import io.paritytech.polkadotapp.feature_chats_impl.domain.devices.RealOurDevicesProvider
@@ -119,9 +115,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.RealTextMessage
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.address.RealContactsAddressConverterFactory
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.ChatMessageTimeFormatter
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.RealChatMessageTimeFormatter
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.initialization.ContactSessionChainBridge
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.initialization.ContactSessionLifecycleBinder
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.initialization.RealContactChatSessionManagerInitializer
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.initialization.NativePersonChatServices
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.transfer.MultimediaMessageStateHolder
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.ContactDeviceProvider
 import io.paritytech.polkadotapp.tools_push_notifications_api.PushNotificationHandler
@@ -159,15 +153,7 @@ internal interface ChatsFeatureApiModule {
 
     @Binds
     @IntoSet
-    fun bindContactDeviceFanOutService(impl: ContactDeviceFanOutService): AppInitializer
-
-    @Binds
-    @IntoSet
-    fun bindChatRequestDeliveryService(impl: ChatRequestDeliveryService): AppInitializer
-
-    @Binds
-    @IntoSet
-    fun bindChatRequestRenewalScheduler(impl: ChatRequestRenewalScheduler): AppInitializer
+    fun bindNativePersonChatServices(impl: NativePersonChatServices): AppInitializer
 
     @Binds
     fun bindChatBroadcastUseCase(impl: RealChatBroadcastUseCase): ChatBroadcastUseCase
@@ -327,22 +313,6 @@ internal interface ChatsFeatureApiModule {
     @Binds
     @Singleton
     fun bindIncomingChatPushDecoder(impl: RealIncomingChatPushDecoder): IncomingChatPushDecoder
-
-    @Binds
-    @IntoSet
-    fun bindContactSessionChainBridge(impl: ContactSessionChainBridge): AppInitializer
-
-    @Binds
-    @IntoSet
-    fun bindContactSessionLifecycleBinder(impl: ContactSessionLifecycleBinder): AppInitializer
-
-    @Binds
-    @IntoSet
-    fun bindContactChatSessionManagerInitializer(impl: RealContactChatSessionManagerInitializer): AppInitializer
-
-    @Binds
-    @IntoSet
-    fun bindHopTransferResumeInitializer(impl: HopTransferResumeInitializer): AppInitializer
 
     @Binds
     fun bindTextMessageDrawer(impl: RealTextMessageDrawer): TextMessageDrawer

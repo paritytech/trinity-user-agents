@@ -6,8 +6,10 @@ import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsBundledContent
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsVerifiedContent
 import io.paritytech.polkadotapp.feature_dotns_impl.data.config.DotNsConfigProvider
 import io.paritytech.polkadotapp.feature_dotns_impl.data.config.RemoteConfigDotNsConfigProvider
 import io.paritytech.polkadotapp.feature_dotns_impl.data.contract.DotNsContractApi
@@ -19,7 +21,9 @@ import io.paritytech.polkadotapp.feature_dotns_impl.data.repository.RealNetworkS
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.ContentHashOverrides
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsContentStorage
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsTldStorage
+import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.RealDotNsBundledContent
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.RealDotNsContentStorage
+import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.RealDotNsVerifiedContent
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.RealDotNsTldStorage
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.SharedPrefsContentHashOverrides
 import io.paritytech.polkadotapp.feature_dotns_impl.domain.dotNs.RealDotNsResolver
@@ -49,6 +53,12 @@ internal interface DotNsModule {
     @Binds
     @Singleton
     fun bindContentHashCache(impl: SharedPrefsContentHashOverrides): ContentHashOverrides
+
+    @Binds
+    fun bindDotNsBundledContent(impl: RealDotNsBundledContent): DotNsBundledContent
+
+    @Binds
+    fun bindDotNsVerifiedContent(impl: RealDotNsVerifiedContent): DotNsVerifiedContent
 
     @Binds
     @Singleton

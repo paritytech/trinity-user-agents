@@ -11,6 +11,8 @@ sealed class ChatInputUiState {
         val isChatRequest: Boolean,
         val showPayButton: Boolean = false,
         val showAttachButton: Boolean = false,
+        /** The hint of the empty input. Null shows the host hint. */
+        val placeholder: String? = null,
     ) : ChatInputUiState()
 
     data class AcceptChatRequest(

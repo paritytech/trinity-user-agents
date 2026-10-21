@@ -1,3 +1,4 @@
+import CoreData
 import Foundation
 import Operation_iOS
 import Products
@@ -22,16 +23,25 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
     private let storageFacade: StorageFacadeProtocol
     private let notificationCenter: UNUserNotificationCenter
     private let mapper: AnyCoreDataMapper<ScheduledNotificationEntry, CDScheduledNotification>
+    private let userStates: ChatRoomUserStateReading
+    private let roomNames: ChatRoomNameReading
+    private let notificationAdding: (UNNotificationRequest) async throws -> Void
     private let logger: LoggerProtocol
 
     init(
         storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared,
         notificationCenter: UNUserNotificationCenter = .current(),
+        userStates: ChatRoomUserStateReading? = nil,
+        roomNames: ChatRoomNameReading? = nil,
+        notificationAdding: ((UNNotificationRequest) async throws -> Void)? = nil,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.storageFacade = storageFacade
         self.notificationCenter = notificationCenter
         mapper = AnyCoreDataMapper(ScheduledNotificationMapper())
+        self.userStates = userStates ?? ChatRoomUserStateReader(storageFacade: storageFacade)
+        self.roomNames = roomNames ?? ChatRoomNameReader(storageFacade: storageFacade)
+        self.notificationAdding = notificationAdding ?? Self.systemAdding(notificationCenter, logger: logger)
         self.logger = logger
     }
 
@@ -39,6 +49,11 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
         productId: ProductId,
         request: ScheduledNotificationRequest
     ) async throws -> UInt32 {
+        if await opensMutedRoom(productId: productId, request: request) {
+            logger.debug("Notification of \(productId) into a muted room shows nothing")
+            return Self.hashId(productId: productId)
+        }
+
         try await reconcileStaleEntries()
 
         let allRepository = createRepository()
@@ -54,12 +69,13 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
         )
 
         let content = UNMutableNotificationContent()
-        content.title = productId
+        content.title = await title(productId: productId, request: request)
         content.body = request.text
         content.sound = .default
 
         var userInfo: [String: Any] = [
-            PushNotificationKeys.pushSource: PushNotificationSource.products.rawValue
+            PushNotificationKeys.pushSource: PushNotificationSource.products.rawValue,
+            PushNotificationKeys.productId: productId
         ]
 
         if let deeplink = request.deeplink {
@@ -76,7 +92,7 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
             trigger: trigger
         )
 
-        try await notificationCenter.add(notificationRequest)
+        try await notificationAdding(notificationRequest)
         try await allRepository.saveOperation({ [entry] }, { [] }).asyncExecute()
 
         logger.debug("Scheduled push notification for \(productId)")
@@ -118,6 +134,62 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
 // MARK: - Private
 
 private extension ProductNotificationScheduler {
+    /// Gives a notification to the OS. Under the truapi E2E harness that grants notifications, the app has no OS
+    /// permission and the OS never answers, so the harness gets a log line in place of the notification. When the
+    /// harness also gave the OS permission (A1), the notification goes to the OS.
+    static func systemAdding(
+        _ notificationCenter: UNUserNotificationCenter,
+        logger: LoggerProtocol
+    ) -> (UNNotificationRequest) async throws -> Void {
+        guard !TrUAPIE2ENotificationGrant.isOn || TrUAPIE2ENotificationGrant.osPermissionGranted else {
+            return { logger.debug("[e2e] notification \($0.identifier) given to the OS") }
+        }
+        return { try await notificationCenter.add($0) }
+    }
+
+    /// True when the deeplink of the notification opens a room of the product that the user muted until after the
+    /// notification shows (D34). The OS shows a scheduled notification, so a mute that starts after the schedule
+    /// does not stop it.
+    func opensMutedRoom(productId: ProductId, request: ScheduledNotificationRequest) async -> Bool {
+        guard
+            let deeplink = request.deeplink,
+            let link = ChatRoomLink(deeplink),
+            link.productId == productId
+        else {
+            return false
+        }
+
+        let showsAt = request.scheduledAtMs.map { Date.fromChatTimestamp($0) } ?? Date()
+        do {
+            return try await userStates.state(of: link.chatId).isMuted(at: max(showsAt, Date()))
+        } catch {
+            logger.warning("Notification of \(productId) shows: the room state is not readable: \(error)")
+            return false
+        }
+    }
+
+    /// The name of the room that the notification opens, as a person chat notification shows the name of the
+    /// person. A notification that opens no known room of the product shows the product id.
+    func title(productId: ProductId, request: ScheduledNotificationRequest) async -> String {
+        guard
+            let deeplink = request.deeplink,
+            let link = ChatRoomLink(deeplink),
+            link.productId == productId
+        else {
+            return productId
+        }
+
+        do {
+            guard let name = try await roomNames.name(of: link.chatId), !name.isEmpty else {
+                return productId
+            }
+            return name
+        } catch {
+            logger.warning("Notification of \(productId) shows the product id: the room name is not readable: \(error)")
+            return productId
+        }
+    }
+
     func createRepository() -> AnyDataProviderRepository<ScheduledNotificationEntry> {
         AnyDataProviderRepository(
             storageFacade.createRepository(
@@ -202,5 +274,28 @@ private extension ProductNotificationScheduler {
 
         let deltaSeconds = TimeInterval(scheduledAtMs - nowMs).seconds
         return UNTimeIntervalNotificationTrigger(timeInterval: deltaSeconds, repeats: false)
+    }
+}
+
+/// Reads the name that a product gave its room.
+protocol ChatRoomNameReading: Sendable {
+    /// The name of the room, or nil when the app does not store the room or the room has no name.
+    func name(of chatId: Chat.Id) async throws -> String?
+}
+
+/// Reads the room name from `CDChatRoomMetadata`.
+struct ChatRoomNameReader: ChatRoomNameReading {
+    let storageFacade: StorageFacadeProtocol
+
+    func name(of chatId: Chat.Id) async throws -> String? {
+        let predicate = NSPredicate.chat(for: chatId.rawRepresentation)
+
+        return try await storageFacade.databaseService.performRead { context in
+            let request: NSFetchRequest<CDChat> = CDChat.fetchRequest()
+            request.predicate = predicate
+            request.fetchLimit = 1
+
+            return try context.fetch(request).first?.roomMetadata?.name
+        }
     }
 }

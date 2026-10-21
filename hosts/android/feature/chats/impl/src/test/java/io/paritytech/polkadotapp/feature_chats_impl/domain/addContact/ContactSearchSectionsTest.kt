@@ -116,6 +116,7 @@ class ContactSearchSectionsTest {
         unreadBadge = ChatSummaryBadge.None,
         hasUnseenReaction = false,
         customPreviewRenderer = null,
+        roomPolicy = null,
     )
 
     private fun user(name: String) = ContactSearchResult(

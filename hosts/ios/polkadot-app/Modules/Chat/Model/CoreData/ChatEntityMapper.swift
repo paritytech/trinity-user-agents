@@ -75,7 +75,8 @@ extension ChatModelMapper: CoreDataMapperProtocol {
                 hasIncomingReaction: hasIncomingReaction,
                 createdAt: entity.createdAt,
                 roomMetadata: roomMetadata,
-                roomFooter: entity.footer.flatMap(Chat.RoomFooter.init(rawValue:))
+                roomFooter: entity.footer.flatMap(Chat.RoomFooter.init(rawValue:)),
+                roomDeclarations: entity.roomMetadata.map { Chat.RoomDeclarations(entity: $0) }
             )
         }
     }
@@ -103,15 +104,14 @@ extension ChatModelMapper: CoreDataMapperProtocol {
         case .chatExtension:
             entity.createdAt = model.createdAt
 
+            // A model without room metadata does not delete the stored room. The stored room also keeps the
+            // declarations of the product, and only a delete of the chat removes them.
             if let metadata = model.roomMetadata {
                 let metadataEntity = try entity.roomMetadata ?? context.insertNew(CDChatRoomMetadata.self)
 
                 ChatRoomMetadataEntityMapper().populate(entity: metadataEntity, from: metadata)
 
                 entity.roomMetadata = metadataEntity
-            } else if let existing = entity.roomMetadata {
-                context.delete(existing)
-                entity.roomMetadata = nil
             }
         }
     }

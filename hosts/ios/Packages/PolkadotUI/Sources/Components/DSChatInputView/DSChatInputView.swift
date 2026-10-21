@@ -485,6 +485,17 @@ extension DSChatInputView: ChatTextInputPresenting {
     func activateTextField() {
         textView.becomeFirstResponder()
     }
+
+    func restoreText(_ text: String) {
+        textView.text = text
+        updateCharacterCounter()
+        updatePlaceholderVisibility()
+        updateSendButtonState()
+        updateTextViewScrolling()
+        invalidateIntrinsicContentSize()
+        inputHandler?.chatInputDidChange()
+        textView.becomeFirstResponder()
+    }
 }
 
 extension DSChatInputView: ChatInputReplyPresenting {

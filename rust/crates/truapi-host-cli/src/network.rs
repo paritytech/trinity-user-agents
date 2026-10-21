@@ -82,6 +82,9 @@ impl ChainOverrides {
 		.collect()
 	}
 }
+/// Env var replacing the preset's HOP nodes with a comma-separated list of
+/// `wss://` URLs.
+pub const HOP_NODES_ENV: &str = "TRUAPI_HOST_HOP_NODES";
 
 impl Network {
 	/// CLI resolution: the preset with the backend and chain URL overrides, or
@@ -122,6 +125,7 @@ impl Network {
 				bulletin_genesis: PASEO_BULLETIN.genesis,
 				asset_hub_genesis: PASEO_ASSET_HUB.genesis,
 				live_chain_endpoints: PASEO_NEXT_V2_CHAIN_ENDPOINTS,
+				hop_nodes: &[],
 			},
 			Self::Previewnet => NetworkConfig {
 				id: "previewnet",
@@ -134,6 +138,7 @@ impl Network {
 				bulletin_genesis: PREVIEWNET_BULLETIN.genesis,
 				asset_hub_genesis: PREVIEWNET_ASSET_HUB.genesis,
 				live_chain_endpoints: PREVIEWNET_CHAIN_ENDPOINTS,
+				hop_nodes: &[PREVIEWNET_BULLETIN.ws],
 			},
 		}
 	}
@@ -286,6 +291,10 @@ pub struct NetworkConfig {
 	/// the chain does not report sends Asset Hub traffic to the fallback chain.
 	pub asset_hub_genesis: [u8; 32],
 	pub live_chain_endpoints: &'static [ChainEndpoint],
+	/// HOP nodes the person chat uploads to and claims from. Previewnet's
+	/// Bulletin node serves HOP; Paseo's does not, and its HOP nodes are not
+	/// published, so give them with [`HOP_NODES_ENV`].
+	pub hop_nodes: &'static [&'static str],
 }
 
 #[derive(Debug, Clone, Copy)]

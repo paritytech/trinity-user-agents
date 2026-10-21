@@ -1,9 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
-import io.mockk.every
-import io.mockk.mockk
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
@@ -40,10 +37,8 @@ class ContactRemovalsTest {
         assertEquals(2, removals(listOf(alice, bob), listOf(alice), listOf(alice, bob), listOf(bob)))
     }
 
-    private suspend fun removals(vararg lists: List<Contact>): Int =
+    private suspend fun removals(vararg lists: List<PickableContact>): Int =
         flowOf(*lists).contactRemovals().toList().size
 
-    private fun contact(byte: Int): Contact = mockk {
-        every { accountId } returns DataByteArray(ByteArray(32) { byte.toByte() })
-    }
+    private fun contact(byte: Int) = PickableContact(DataByteArray(ByteArray(32) { byte.toByte() }), username = null)
 }

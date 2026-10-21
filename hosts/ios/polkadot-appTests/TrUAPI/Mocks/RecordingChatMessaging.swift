@@ -15,6 +15,22 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
     private(set) var createdRooms: [CreateRoomRequest] = []
     private(set) var roomFooters: [(roomId: String, footer: Chat.RoomFooter)] = []
     private(set) var subscribeRoomsCallCount = 0
+    private(set) var roomPreviews: [(roomId: String, preview: Chat.RoomPreview)] = []
+    struct RoomMetadataCall: Equatable {
+        let roomId: String
+        let name: String
+        let description: String?
+        let avatar: Chat.RoomImage?
+    }
+
+    private(set) var roomMetadata: [RoomMetadataCall] = []
+    private(set) var deletedRoomIds: [String] = []
+
+    /// Rooms that every room call refuses with `ChatRoomError.unknownRoom`.
+    var unknownRooms: Set<String> = []
+    var declarations = Chat.RoomDeclarations(entity: nil)
+    private(set) var roomConfigs: [(roomId: String, config: Chat.RoomConfig)] = []
+    private(set) var footerConfigs: [(roomId: String, footer: Chat.RoomFooterConfig)] = []
 
     func sendMessage(_ message: ProductBotMessage, roomId: String?) async throws -> String {
         if let sendMessageError { throw sendMessageError }
@@ -30,6 +46,91 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
 
     func setRoomFooter(roomId: String, footer: Chat.RoomFooter) async throws {
         roomFooters.append((roomId, footer))
+    }
+
+    func deleteRoom(roomId: String) async throws {
+        try requireRoom(roomId)
+        deletedRoomIds.append(roomId)
+    }
+
+    func setRoomPreview(roomId: String, preview: Chat.RoomPreview) async throws {
+        try requireRoom(roomId)
+        roomPreviews.append((roomId, preview))
+    }
+
+    func setRoomMetadata(roomId: String, name: String, description: String?, avatar: Chat.RoomImage?) async throws {
+        try requireRoom(roomId)
+        roomMetadata.append(RoomMetadataCall(roomId: roomId, name: name, description: description, avatar: avatar))
+    }
+
+    func roomDeclarations(roomId: String) async throws -> Chat.RoomDeclarations {
+        try requireRoom(roomId)
+        return declarations
+    }
+
+    func setRoomConfig(roomId: String, config: Chat.RoomConfig) async throws {
+        try requireRoom(roomId)
+        roomConfigs.append((roomId, config))
+    }
+
+    func setRoomFooterConfig(roomId: String, footer: Chat.RoomFooterConfig) async throws {
+        try requireRoom(roomId)
+        footerConfigs.append((roomId, footer))
+    }
+
+    var feedError: Error?
+    private(set) var feedUpdates: [(roomId: String, update: Chat.ProductFeedUpdate)] = []
+
+    func applyFeedUpdate(roomId: String, update: Chat.ProductFeedUpdate) async throws {
+        try requireRoom(roomId)
+        if let feedError { throw feedError }
+        feedUpdates.append((roomId, update))
+    }
+
+    var features: [String: Chat.RoomFeatures] = [:]
+    private(set) var calls: [(roomId: String, call: Chat.RoomCall?)] = []
+    var userStates: [Chat.RoomUserStateEntry] = []
+    var personas: [String] = []
+    struct PersonaCall: Equatable {
+        let botId: String
+        let name: String
+        let icon: String?
+    }
+
+    private(set) var registeredPersonas: [PersonaCall] = []
+
+    func roomFeatures(roomId: String) async throws -> Chat.RoomFeatures {
+        try requireRoom(roomId)
+        return features[roomId] ?? .hostDefault
+    }
+
+    func setRoomFeatures(roomId: String, features: Chat.RoomFeatures) async throws {
+        try requireRoom(roomId)
+        self.features[roomId] = features
+    }
+
+    func setRoomCall(roomId: String, call: Chat.RoomCall?) async throws {
+        try requireRoom(roomId)
+        calls.append((roomId, call))
+    }
+
+    func roomUserStates() async throws -> [Chat.RoomUserStateEntry] {
+        userStates
+    }
+
+    func personaIds() async throws -> [String] {
+        personas
+    }
+
+    func registerPersona(botId: String, name: String, icon: String?) async throws -> Chat.PersonaRegistration {
+        registeredPersonas.append(.init(botId: botId, name: name, icon: icon))
+        guard !personas.contains(botId) else { return .exists }
+        personas.append(botId)
+        return .new
+    }
+
+    private func requireRoom(_ roomId: String) throws {
+        if unknownRooms.contains(roomId) { throw ChatRoomError.unknownRoom(roomId) }
     }
 
     func subscribeRooms() async throws -> AnyAsyncSequence<[RoomInfo]> {

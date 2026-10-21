@@ -3,12 +3,15 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment
 import io.paritytech.polkadotapp.common.domain.model.intoAccountId
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.search.RemoteSearchPhase
+import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
+import io.paritytech.polkadotapp.design.configs.colors.AvatarColorScheme
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.converter.ParseAddressConverterFactory
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.mixin.AddressInputMixin
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.AddressCandidates
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddress
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddressesCategory
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddressesSection
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.usecase.GetContactsUseCase
 import io.paritytech.polkadotapp.feature_chats_api.presentation.ChatStarter
 import io.paritytech.polkadotapp.feature_chats_api.presentation.address.ContactsAddressConverterFactory
@@ -45,6 +48,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.verifyNoInteractions
 import kotlin.time.Duration.Companion.seconds
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -57,6 +61,7 @@ class SendPaymentViewModelTest {
     private val clipboardService: ClipboardService = mock(ClipboardService::class.java)
     private val getContactsUseCase: GetContactsUseCase = mock(GetContactsUseCase::class.java)
     private val chatStarter: ChatStarter = mock(ChatStarter::class.java)
+    private val personChatMode: PersonChatMode = mock(PersonChatMode::class.java)
     private val addressInputMixinFactory: AddressInputMixin.Factory = mock(AddressInputMixin.Factory::class.java)
     private val addressInputMixin: AddressInputMixin = mock(AddressInputMixin::class.java)
     private val usernameAddressConverterFactory: UsernameAddressConverterFactory =
@@ -94,6 +99,20 @@ class SendPaymentViewModelTest {
     @After
     fun tearDown() {
         Dispatchers.resetMain()
+    }
+
+    // The native chat does not run beside the chat product, which sends no coins yet (HX2, M9).
+    @Test
+    fun `with the chat product a contact is not paid through chat and no native chat starts`() = runBlocking<Unit> {
+        whenever(personChatMode.isProductChat()).thenReturn(true)
+        val viewModel = createViewModel()
+
+        viewModel.onRecipientSelect(
+            PaymentSearchResultUiModel(address("bob"), AvatarUiModel.Name("bob", AvatarColorScheme.from("bob".encodeToByteArray())))
+        )
+
+        assertEquals(RCommon.string.send_payment_chat_product_unavailable, withTimeout(STATE_TIMEOUT) { viewModel.messageEvents.first() })
+        verifyNoInteractions(chatStarter)
     }
 
     @Test
@@ -253,6 +272,7 @@ class SendPaymentViewModelTest {
         clipboardService = clipboardService,
         getContactsUseCase = getContactsUseCase,
         chatStarter = chatStarter,
+        personChatMode = personChatMode,
         addressInputMixinFactory = addressInputMixinFactory,
         usernameAddressConverterFactory = usernameAddressConverterFactory,
         parseAddressConverterFactory = parseAddressConverterFactory,

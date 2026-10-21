@@ -160,21 +160,23 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
         // Keep the cached TLD warm on each launch without blocking.
         tldProvider.refresh()
 
-        chatCoordinator.setup()
         productWorkerFacade.setup()
         chatExtensionsRegistry.discover()
-        chatRequestCoordinator.setup()
         fiatOnrampTrackingService.setup()
-        attachmentUploadService.setup()
-        attachmentDownloadService.setup()
         notificationBadgeSyncService.setup()
-        messageExpansionService.start()
         allowanceRenewalService.setup()
+        // The native chat and the chat product never both run the user's chats (HX2).
+        if !PersonChatMode.isProductChat {
+            setupNativePersonChat()
+        }
 
         Task {
             await chainStatusProvider.start()
             await signInHostCoordinator.setup()
-            await setupDeviceSyncService()
+            if !PersonChatMode.isProductChat {
+                // Device sync with Polkadot Desktop carries the native chat; it pauses on the chat product.
+                await setupDeviceSyncService()
+            }
 
             // Setup coinage service with main asset from chain
             let chainRegistry = ChainRegistryFacade.sharedRegistry
@@ -203,15 +205,13 @@ extension ServiceCoordinator: ServiceCoordinatorProtocol {
     }
 
     func throttle() {
-        chatCoordinator.throttle()
-        chatRequestCoordinator.throttle()
+        if !PersonChatMode.isProductChat {
+            throttleNativePersonChat()
+        }
         fiatOnrampTrackingService.throttle()
-        attachmentUploadService.throttle()
-        attachmentDownloadService.throttle()
         notificationBadgeSyncService.throttle()
         allowanceRenewalService.throttle()
 
-        messageExpansionService.stop()
         durableTransactionEngine.txService.stop()
 
         // The workers and the product behind an opened card belong to this
@@ -303,9 +303,25 @@ extension ServiceCoordinator {
             settingsManager: SettingsManager.shared,
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationRouterFacade: ProductRoutersFacade.sso(),
+            foreground: AppForegroundMonitor(),
             logger: logger
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
+        // The seam of the room events: the mute and archive actions record through it (P10.10).
+        let roomEventPublisher = TrUAPIChatRoomEventPublisher(runtimeProvider: truapiRuntimeProvider)
+        RootDependencyLocator.setDependency(roomEventPublisher as ChatRoomEventPublishing)
+        let userStateRecorder = ChatRoomUserStateRecorder(
+            storageFacade: UserDataStorageFacade.shared,
+            publisher: roomEventPublisher,
+            logger: logger
+        )
+        RootDependencyLocator.setDependency(userStateRecorder as ChatRoomUserStateRecording)
+        RootDependencyLocator.setDependency(
+            ChatRoomUserStateService(
+                reader: ChatRoomUserStateReader(storageFacade: UserDataStorageFacade.shared),
+                recorder: userStateRecorder
+            ) as ChatRoomUserStateServicing
+        )
         CoreDurableRecoveryTask.shared.attach(
             truapiRuntimeProvider,
             executor: ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry)
@@ -340,6 +356,9 @@ extension ServiceCoordinator {
                 pocket = service
             }
         #endif
+
+        // After the worker manager is attached, because the runtime reads it when it is built.
+        truapiRuntimeProvider.prepareInBackground()
 
         guard
             let signInHostCoordinator = createSignInHostCoordinator(
@@ -398,6 +417,8 @@ extension ServiceCoordinator {
         // Registered so the SPA screen, opened outside this assembly, resolves the
         // same facade.
         RootDependencyLocator.setDependency(productWorkerFacade)
+        // The share sheet of the SPA screen lists product rooms as targets.
+        RootDependencyLocator.setDependency(ShareProductRooms(registry: chatExtensionsRegistry))
 
         let fiatOnrampConfiguration = MeldFiatOnrampConfiguration.prod
         let fiatOnrampStorage = FiatOnrampStorage()
@@ -666,5 +687,23 @@ private extension ServiceCoordinator {
         }
 
         return providers
+    }
+}
+
+private extension ServiceCoordinator {
+    func setupNativePersonChat() {
+        chatCoordinator.setup()
+        chatRequestCoordinator.setup()
+        attachmentUploadService.setup()
+        attachmentDownloadService.setup()
+        messageExpansionService.start()
+    }
+
+    func throttleNativePersonChat() {
+        chatCoordinator.throttle()
+        chatRequestCoordinator.throttle()
+        attachmentUploadService.throttle()
+        attachmentDownloadService.throttle()
+        messageExpansionService.stop()
     }
 }

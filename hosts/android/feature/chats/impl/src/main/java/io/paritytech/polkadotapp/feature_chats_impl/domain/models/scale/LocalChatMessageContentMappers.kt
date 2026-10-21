@@ -46,6 +46,8 @@ fun ChatMessageContentLocal.toDomain(
             nodeUrl = nodeUrl
         )
         is ChatMessageContentLocal.CompactionUnavailable -> ChatMessage.Content.CompactionUnavailable
+        is ChatMessageContentLocal.ProductBody -> ChatMessage.Content.ProductBody(body.toDomain())
+        is ChatMessageContentLocal.Deleted -> ChatMessage.Content.Deleted
 
         is ChatMessageContentLocal.Custom -> {
             val decoded = rawContent?.let { customContentDecoder.decode(rendererId, rawContent) }
@@ -95,6 +97,8 @@ fun ChatMessage.Content.toData(
             nodeUrl = nodeUrl
         )
         ChatMessage.Content.CompactionUnavailable -> ChatMessageContentLocal.CompactionUnavailable
+        is ChatMessage.Content.ProductBody -> ChatMessageContentLocal.ProductBody(body.toLocal())
+        ChatMessage.Content.Deleted -> ChatMessageContentLocal.Deleted
     }
 }
 

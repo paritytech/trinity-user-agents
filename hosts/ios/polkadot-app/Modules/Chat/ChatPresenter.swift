@@ -17,6 +17,10 @@ final class ChatPresenter {
     private var metadata: MessageListMetadata?
     private var footer: (any HashableContentConfiguration)?
     private var paymentAssetViewModel: PaymentAssetViewModelProtocol?
+    /// See ``scheduleListUpdate()``.
+    var listUpdatePending = false, lastListUpdate: CFTimeInterval = 0
+    /// The parts of a product room that its product declares (P6). Nil for a person chat.
+    var productRoom: ChatProductRoomPresenter?
 
     init(
         interactor: ChatInteractorInputProtocol,
@@ -47,14 +51,20 @@ extension ChatPresenter: ChatPresenterProtocol {
     func setup() {
         interactor.setup()
         subscribeToPaymentAsset()
+        productRoom?.onChange = { [weak self] in self?.provideViewModel() }
+        productRoom?.onHeaderChange = { [weak self] in self?.provideMoreActions() }
     }
 
     func viewWillAppear() {
         interactor.notifyViewAppeared()
+        interactor.openRoom()
+        productRoom?.screenWillAppear()
     }
 
     func viewWillDisappear() {
         interactor.notifyViewDisappeared()
+        interactor.closeRoom()
+        productRoom?.screenWillDisappear()
     }
 
     func send(text: String, replyToMessageId: String? = nil) {
@@ -126,7 +136,12 @@ extension ChatPresenter: ChatInteractorOutputProtocol {
 
     func didReceive(listModel: MessageListModel) {
         self.listModel = listModel
+        scheduleListUpdate()
+    }
 
+    /// Draws the newest list model. ``scheduleListUpdate()`` calls it at most once in each frame.
+    func applyListModel() {
+        guard let listModel else { return }
         markInvisibleMessagesAsRead(in: listModel)
         provideViewModel()
     }
@@ -151,6 +166,26 @@ extension ChatPresenter: ChatInteractorOutputProtocol {
 
     func didDeclineChatRequest() {
         wireframe.dismissChat(from: view)
+    }
+
+    func didRemoveChat() {
+        productRoom?.mark("screen", "removed")
+        wireframe.dismissChat(from: view)
+    }
+
+    /// The user sees why, and finds the text in the input again, with its reply or its edit.
+    func didRefuseSend(_ refused: ChatRefusedSend) {
+        didRefuseUserAction(reason: refused.reason)
+
+        if let editedMessageId = refused.editedMessageId {
+            view?.showEdit(messageId: editedMessageId, currentText: refused.text)
+            return
+        }
+
+        if let replyToMessageId = refused.replyToMessageId {
+            handleReplyAction(for: replyToMessageId)
+        }
+        view?.restoreInput(text: refused.text)
     }
 }
 
@@ -201,6 +236,9 @@ private extension ChatPresenter {
             showFile: { [weak self] url in
                 self?.handleShowFile(at: url)
             },
+            openLink: { [weak self] url in
+                self?.handleOpenLink(url)
+            },
             processAction: { [weak self] action in
                 self?.interactor.processAction(action)
             },
@@ -219,15 +257,23 @@ private extension ChatPresenter {
                 Task {
                     @MainActor in moduleNavigator.openProduct(page: productPage)
                 }
+            },
+            retry: { [weak self] messageId in
+                self?.interactor.retrySend(messageId: messageId)
+            },
+            delete: { [weak self] messageId in
+                self?.handleDeleteAction(for: messageId)
             }
         )
 
-        let viewModel = viewModelFactory.viewModel(
+        var viewModel = viewModelFactory.viewModel(
             model: listModel,
             metadata: metadata,
             actions: contextActions,
             footerConfiguration: footer
         )
+        viewModel.paging = ChatViewLayout.ViewModel.Paging(paging: listModel.paging)
+        viewModel.roomStatus = ChatViewLayout.ViewModel.RoomStatus(readiness: listModel.readiness)
         view?.didReceive(viewModel: viewModel)
     }
 
@@ -253,7 +299,7 @@ private extension ChatPresenter {
                  .videoCall: false
             default: true
             }
-        }
+        } + (MainActor.assumeIsolated { productRoom?.headerMenuActions() } ?? [])
         let menu = menuActions.isEmpty ? nil : MainActor.assumeIsolated {
             wireframe.makeContactActionsMenu(
                 from: view,
@@ -309,11 +355,11 @@ private extension ChatPresenter {
                 case let .versionedChatRequest(content):
                     content.ensureV1().welcomeMessage?.text ?? String(localized: .chatReplyPlaceholder)
                 default:
-                    String(localized: .chatReplyPlaceholder)
+                    message.content.productReplyPreview ?? String(localized: .chatReplyPlaceholder)
                 }
             }
 
-        view?.showReply(messageId: messageId, username: username, text: currentText)
+        view?.showReply(messageId: messageId, username: username, text: message.quoteText(currentText))
     }
 
     func handleCopyAction(content: String) {
@@ -398,14 +444,28 @@ private extension ChatPresenter {
         }
     }
 
+    func handleDeleteAction(for messageId: String) {
+        MainActor.assumeIsolated {
+            wireframe.confirmDeleteMessage(from: view) { [weak self] in
+                self?.interactor.deleteMessage(messageId: messageId)
+            }
+        }
+    }
+
     func handleShowFile(at url: URL) {
         MainActor.assumeIsolated {
             wireframe.showDocument(at: url)
         }
     }
 
+    func handleOpenLink(_ url: URL) {
+        MainActor.assumeIsolated {
+            wireframe.confirmOpenLink(url, from: view)
+        }
+    }
+
     func handleStartCall(callType: ChatCallType) {
-        guard let metadata else { return }
+        guard let metadata, !routesCallToProduct(callType) else { return }
         MainActor.assumeIsolated {
             if interactor.isMicrophoneDenied() {
                 wireframe.presentMicrophoneAccessDenied(from: view)
@@ -452,21 +512,5 @@ private extension ChatPresenter {
                 )
             }
         }
-    }
-}
-
-extension ChatPresenter: ChatMoreActionsDelegate {
-    func didConfirmLeaveChat() {
-        interactor.leaveChat()
-    }
-
-    func didConfirmBlockUser() {
-        interactor.blockUser()
-    }
-}
-
-extension ChatPresenter: ChatAttachmentPreviewDelegate {
-    func attachmentPreview(didComplete text: String, attachment: ProcessedAttachment) {
-        interactor.send(text: text, attachments: [attachment], replyToMessageId: nil)
     }
 }

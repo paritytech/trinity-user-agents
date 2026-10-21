@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -23,13 +24,20 @@ import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonS
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.ChatPlaceholder
+import io.paritytech.polkadotapp.design.components.icon.vectors.Clock
+import io.paritytech.polkadotapp.design.components.icon.vectors.Downloading
 import io.paritytech.polkadotapp.design.components.icon.vectors.Leave
+import io.paritytech.polkadotapp.design.components.icon.vectors.NotificationsBellOutlined
+import io.paritytech.polkadotapp.design.components.icon.vectors.SpeakerXMark
+import io.paritytech.polkadotapp.design.components.icon.vectors.Upload
 import io.paritytech.polkadotapp.design.components.menu.NovaMenuOption
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatMuteDuration
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMenuRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomUserStateModel
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -43,6 +51,8 @@ internal class ProductChatMenuRenderer(
     override fun DrawMenu(onDismiss: () -> Unit) {
         val viewModel = hiltViewModel<ProductChatMenuViewModel>()
         val currentPage by viewModel.currentPage.collectAsState()
+        val userState by remember(chatId) { viewModel.userState(chatId) }.collectAsState(ChatRoomUserStateModel.NONE)
+        val isMuted = userState.isMutedAt(System.currentTimeMillis())
 
         DisposableEffect(Unit) {
             onDispose { viewModel.onMenuDismissed() }
@@ -55,12 +65,29 @@ internal class ProductChatMenuRenderer(
             when (page) {
                 ProductChatMenuPage.MAIN -> MainContent(
                     appName = product.name,
+                    isMuted = isMuted,
+                    isArchived = userState.archived,
                     onOpenAppClick = {
                         viewModel.onOpenAppClick(product.id)
                         onDismiss()
                     },
+                    onMuteClick = {
+                        viewModel.onMuteClick(chatId, isMuted)
+                        if (isMuted) onDismiss()
+                    },
+                    onArchiveClick = {
+                        viewModel.onArchiveClick(chatId, userState.archived)
+                        onDismiss()
+                    },
                     removable = removable,
                     onRemoveChatClick = { viewModel.onRemoveChatClick() }
+                )
+
+                ProductChatMenuPage.MUTE_DURATION -> MuteDurationContent(
+                    onSelect = { duration ->
+                        viewModel.onMuteDurationSelected(chatId, duration)
+                        onDismiss()
+                    },
                 )
 
                 ProductChatMenuPage.REMOVE_CONFIRMATION -> RemoveConfirmationContent(
@@ -75,7 +102,11 @@ internal class ProductChatMenuRenderer(
 @Composable
 private fun MainContent(
     appName: String,
+    isMuted: Boolean,
+    isArchived: Boolean,
     onOpenAppClick: () -> Unit,
+    onMuteClick: () -> Unit,
+    onArchiveClick: () -> Unit,
     removable: Boolean,
     onRemoveChatClick: () -> Unit
 ) {
@@ -97,6 +128,21 @@ private fun MainContent(
             onClick = onOpenAppClick
         )
 
+        // The mute and the archive are the user's: the product hears of them, but cannot set them (D34).
+        NovaMenuOption(
+            text = stringResource(if (isMuted) RCommon.string.chat_room_unmute else RCommon.string.chat_room_mute),
+            icon = if (isMuted) NovaIcons.NotificationsBellOutlined else NovaIcons.SpeakerXMark,
+            color = PolkadotTheme.colors.fg.primary,
+            onClick = onMuteClick
+        )
+
+        NovaMenuOption(
+            text = stringResource(if (isArchived) RCommon.string.chat_room_unarchive else RCommon.string.chat_room_archive),
+            icon = if (isArchived) NovaIcons.Upload else NovaIcons.Downloading,
+            color = PolkadotTheme.colors.fg.primary,
+            onClick = onArchiveClick
+        )
+
         if (removable) {
             NovaMenuOption(
                 text = stringResource(RCommon.string.product_chat_menu_remove_chat),
@@ -106,6 +152,45 @@ private fun MainContent(
             )
         }
     }
+}
+
+/** The durations of a mute (07-LATER §6.2): 1 hour, 8 hours, 1 week, or always. */
+@Composable
+private fun MuteDurationContent(onSelect: (ChatMuteDuration) -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                top = PolkadotTheme.spacings.small,
+                bottom = PolkadotTheme.spacings.mediumIncreased
+            ),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        NovaBottomSheetDragHandler()
+
+        NovaText(
+            modifier = Modifier.padding(vertical = PolkadotTheme.spacings.medium),
+            text = stringResource(RCommon.string.chat_room_mute_title),
+            style = PolkadotTheme.typography.headline.small,
+            color = PolkadotTheme.colors.fg.primary,
+        )
+
+        ChatMuteDuration.entries.forEach { duration ->
+            NovaMenuOption(
+                text = stringResource(duration.label()),
+                icon = if (duration == ChatMuteDuration.ALWAYS) NovaIcons.SpeakerXMark else NovaIcons.Clock,
+                color = PolkadotTheme.colors.fg.primary,
+                onClick = { onSelect(duration) }
+            )
+        }
+    }
+}
+
+private fun ChatMuteDuration.label(): Int = when (this) {
+    ChatMuteDuration.ONE_HOUR -> RCommon.string.chat_room_mute_one_hour
+    ChatMuteDuration.EIGHT_HOURS -> RCommon.string.chat_room_mute_eight_hours
+    ChatMuteDuration.ONE_WEEK -> RCommon.string.chat_room_mute_one_week
+    ChatMuteDuration.ALWAYS -> RCommon.string.chat_room_mute_always
 }
 
 @Composable
@@ -157,7 +242,11 @@ private fun MainContentPreview() {
     PolkadotTheme {
         MainContent(
             appName = "Nova Swap",
+            isMuted = false,
+            isArchived = false,
             onOpenAppClick = {},
+            onMuteClick = {},
+            onArchiveClick = {},
             removable = true,
             onRemoveChatClick = {}
         )

@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot.external
 import android.content.Context
 import androidx.annotation.StringRes
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
@@ -21,20 +22,23 @@ import io.paritytech.polkadotapp.common.R as RCommon
  * ([io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards]).
  *
  * Today that is Jollity, backed by the governance-reserved game product of whichever network the
- * app is on. Placing one grants no permissions; it still prompts like any other product.
+ * app is on, and, on an install whose chats it runs ([PersonChatMode]), the chat product shipped in
+ * the APK. Placing one grants no permissions; it still prompts like any other product.
  */
 @Singleton
 class HostPlacedProducts @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val dotNsTldProvider: DotNsTldProvider,
+    personChatMode: PersonChatMode,
 ) {
     private class Definition(
         @StringRes val nameRes: Int,
         val backingProduct: (DotNsTld) -> ProductId,
     )
 
-    private val definitions = listOf(
+    private val definitions = listOfNotNull(
         Definition(RCommon.string.host_placed_chat_jollity, ReservedProductIds::game),
+        Definition(RCommon.string.host_placed_chat_chats, ReservedProductIds::chat).takeIf { personChatMode.isProductChat() },
     )
 
     /**

@@ -19,6 +19,7 @@ use super::{
 pub const STATEMENT_STORE_PERIOD_SECONDS: u64 = 86_400;
 const PRODUCT_CONTEXT_PREFIX: &[u8] = b"product/peopl.";
 const SYSTEM_CONTEXT_PREFIX: &[u8] = b"sys/";
+const NOTIFICATION_CONTEXT_FAMILY: u32 = 1;
 const STATEMENT_STORE_CONTEXT_FAMILY: u32 = 2;
 const LONG_TERM_STORAGE_CONTEXT_FAMILY: u32 = 3;
 const PGAS_CONTEXT_FAMILY: u32 = 4;
@@ -59,6 +60,12 @@ pub enum SlotError {
 		period: u32,
 		/// Maximum slot count.
 		max: u32,
+	},
+	/// No free notification slot was found in any collection the device is a member of.
+	#[error("no free notification slot in period {period}")]
+	NoFreeNotificationSlot {
+		/// Period scanned.
+		period: u32,
 	},
 	/// No free long-term-storage slot was found.
 	#[error("no free long-term-storage slot in period {period} (max {max})")]
@@ -183,6 +190,11 @@ pub fn derive_slot_context(network_suffix: &[u8], period: u32, seq: u32) -> [u8;
 	derive_product_context(network_suffix, STATEMENT_STORE_CONTEXT_FAMILY, period, seq)
 }
 
+/// Derive the network-scoped 32-byte notification slot context.
+pub fn derive_notification_context(network_suffix: &[u8], period: u32, seq: u8) -> [u8; 32] {
+	derive_product_context(network_suffix, NOTIFICATION_CONTEXT_FAMILY, period, u32::from(seq))
+}
+
 /// Derive the network-scoped 32-byte Asset Hub PGAS claim context.
 pub fn derive_pgas_context(network_suffix: &[u8], day: u32, slot_index: u32) -> [u8; 32] {
 	derive_product_context(network_suffix, PGAS_CONTEXT_FAMILY, day, slot_index)
@@ -286,6 +298,82 @@ fn spent_long_term_storage_alias_key(period: u32, alias: &[u8; 32]) -> Vec<u8> {
 		&blake2_128_concat(alias),
 	]
 	.concat()
+}
+
+/// `Resources.NotificationRegistrationByAlias[alias]` storage key; the hasher
+/// is `Blake2_128Concat`.
+fn notification_registration_key(alias: &[u8; 32]) -> Vec<u8> {
+	[
+		twox_128(b"Resources").as_slice(),
+		twox_128(b"NotificationRegistrationByAlias").as_slice(),
+		&blake2_128_concat(alias),
+	]
+	.concat()
+}
+
+/// The well-known key the statement store reads an account's allowance from.
+pub fn statement_allowance_key(account: &[u8; 32]) -> Vec<u8> {
+	[b":statement_allowance:".as_slice(), account].concat()
+}
+
+/// The highest notification `seq` of `collection` in one period: slots run
+/// from 0 to it, inclusive.
+pub async fn highest_notification_seq(
+	rpc: &RpcClient,
+	metadata: &Metadata,
+	collection: PersonhoodCollection,
+) -> Result<u8, StatementAllowanceError> {
+	let function = match collection {
+		PersonhoodCollection::People => "get_notification_slots_per_period",
+		PersonhoodCollection::LitePeople => "get_lite_notification_slots_per_period",
+	};
+	let value = view::read_resource_u32(rpc, metadata, function).await?;
+	Ok(u8::try_from(value).unwrap_or(u8::MAX))
+}
+
+/// The notification period of `now_seconds`, by `Resources.NotificationPeriodDuration`
+/// when the runtime declares it, else by day as the Android app counts it.
+pub fn current_notification_period(now_seconds: u64, metadata: &Metadata) -> u32 {
+	let duration = metadata
+		.constant_u32("Resources", "NotificationPeriodDuration")
+		.ok()
+		.filter(|duration| *duration > 0)
+		.map(u64::from)
+		.unwrap_or(STATEMENT_STORE_PERIOD_SECONDS);
+	(now_seconds / duration) as u32
+}
+
+/// The first notification `seq` of `period` whose alias for `collection` no
+/// registration holds yet, skipping `excluded`.
+pub async fn scan_notification_seq_excluding(
+	rpc: &RpcClient,
+	metadata: &Metadata,
+	signer: &dyn PersonhoodSigner,
+	collection: PersonhoodCollection,
+	network_suffix: &[u8],
+	period: u32,
+	excluded: &[u8],
+) -> Result<u8, StatementAllowanceError> {
+	let function = match collection {
+		PersonhoodCollection::People => "get_notification_slots_per_period",
+		PersonhoodCollection::LitePeople => "get_lite_notification_slots_per_period",
+	};
+	// A runtime that does not say how many slots a period has offers none.
+	if !view::supports_resource_u32(metadata, function) {
+		return Err(SlotError::NoFreeNotificationSlot { period }.into());
+	}
+	let highest = highest_notification_seq(rpc, metadata, collection).await?;
+	for seq in 0..=highest {
+		if excluded.contains(&seq) {
+			continue;
+		}
+		let context = derive_notification_context(network_suffix, period, seq);
+		let alias = alias_in_context(signer, collection, &context, "notification slot")?;
+		if rpc.get_storage(&notification_registration_key(&alias)).await?.is_none() {
+			return Ok(seq);
+		}
+	}
+	Err(SlotError::NoFreeNotificationSlot { period }.into())
 }
 
 /// Max StatementStore slots per period for `collection`.
@@ -733,6 +821,20 @@ mod tests {
 
 		assert_eq!(max_pgas_claims(metadata, PersonhoodCollection::People).unwrap(), 100,);
 		assert_eq!(max_pgas_claims(metadata, PersonhoodCollection::LitePeople).unwrap(), 40,);
+	}
+
+	// iOS and Android derive the notification context as
+	// `blake2_256("product/peopl." ‖ suffix ‖ "/" ‖ "sys/" ‖ u32le(1) ‖ u32le(period) ‖ u8(seq) ‖
+	// zeros)`.
+	#[test]
+	fn the_notification_context_is_the_native_family_one_context() {
+		let mut suffix = [0u8; 32];
+		suffix[..4].copy_from_slice(b"sys/");
+		suffix[4..8].copy_from_slice(&1u32.to_le_bytes());
+		suffix[8..12].copy_from_slice(&20_380u32.to_le_bytes());
+		suffix[12] = 4;
+		let preimage = [b"product/peopl.paseo/".as_slice(), &suffix].concat();
+		assert_eq!(derive_notification_context(b"paseo", 20_380, 4), blake2_256(&preimage));
 	}
 
 	#[test]

@@ -169,6 +169,8 @@
 				Modules/Chat/Model/ChatNotificationPayload.swift,
 				"Modules/Chat/Model/ChatNotificationPayload+Coding.swift",
 				Modules/Chat/Model/ChatRichRemoteContent.swift,
+				Modules/Chat/Model/ChatRoomAdditions.swift,
+				Modules/Chat/Model/ChatRoomDeclarations.swift,
 				Modules/Chat/Model/ChatRoomMetadata.swift,
 				Modules/Chat/Model/ChatTokenRemoteContent.swift,
 				Modules/Chat/Model/ChatTransferState.swift,
@@ -185,7 +187,10 @@
 				"Modules/Chat/Model/CoreData/ChatMessageEntityMapper+Invariant.swift",
 				"Modules/Chat/Model/CoreData/ChatMessageEntityMapper+TransferState.swift",
 				Modules/Chat/Model/CoreData/ChatMessageOrderAllocator.swift,
+				Modules/Chat/Model/CoreData/ChatMessageSearchableText.swift,
 				Modules/Chat/Model/CoreData/ChatMessageStatusUpdateMapper.swift,
+				Modules/Chat/Model/CoreData/ChatRoomAdditionMappers.swift,
+				Modules/Chat/Model/CoreData/ChatRoomDeclarationMappers.swift,
 				Modules/Chat/Model/CoreData/ChatRoomMetadataEntityMapper.swift,
 				Modules/Chat/Model/CoreData/ContactDeviceSettingsMapper.swift,
 				Modules/Chat/Model/CoreData/ContactDevicesFanOutSettingsMapper.swift,
@@ -206,6 +211,7 @@
 				Modules/Chat/Model/CoreData/VoIPContactIncomingSettings.swift,
 				Modules/Chat/Model/CoreData/VoIPContactOutgoingSettings.swift,
 				"Modules/Chat/Model/Date+Chat.swift",
+				"Modules/Chat/Model/LocalMessage+ProductBody.swift",
 				"Modules/Chat/Model/LocalMessage+RichContent.swift",
 				Modules/Chat/Model/OpaqueMessageWrapper.swift,
 				Modules/Chat/Model/RemoteChatMessage.swift,
@@ -256,7 +262,11 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Handler/PushNotificationChatMessageEntityMapper.swift,
+				ProductChatPushText.swift,
+				ProductPush.swift,
+				ProductPushContent.swift,
 				SharedPushNotificationKeys.swift,
+				XChaCha20Poly1305.swift,
 			);
 			target = A5EDAAD42E93ECAF005DDA62 /* polkadot-app */;
 		};

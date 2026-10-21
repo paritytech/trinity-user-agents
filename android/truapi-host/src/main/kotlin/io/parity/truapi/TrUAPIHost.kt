@@ -28,15 +28,55 @@ package io.parity.truapi
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
+import uniffi.truapi.ChatResource
+import uniffi.truapi.ChatRoomCall
+import uniffi.truapi.ChatRoomEvent
+import uniffi.truapi.ChatRoomFeatures
+import uniffi.truapi.ChatRoomUserState
+import uniffi.truapi.ChatWakeOutcome
+import uniffi.truapi.ChatWakeReason
+import uniffi.truapi.NativeChatStageRejection
+import uniffi.truapi.WorkerKeepAlive
+import uniffi.truapi.ProductChatSearchQueryItem
+import uniffi.truapi.ProductChatOpenLinkRequest
+import uniffi.truapi.ProductChatOpenLinkItem
+import uniffi.truapi.ProductChatSearchQueryRequest
+import uniffi.truapi.ChatEvent
+import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatRoom
+import uniffi.truapi.ChatRoomConfig
 import uniffi.truapi.ChatRoomFooter
+import uniffi.truapi.ChatRoomMetadata
+import uniffi.truapi.ChatRoomPreview
+import uniffi.truapi.ChatUserAction
 import uniffi.truapi.HostChatActionSubscribeItem
+import uniffi.truapi.NativeChatFeedRejection
+import uniffi.truapi.NativeChatQuery
+import uniffi.truapi.NativeChatQueryAnswer
+import uniffi.truapi.NativeChatQueryObserver
+import uniffi.truapi.NativeChatQueryRefusal
+import uniffi.truapi.ProductChatMessageActionsQueryItem
+import uniffi.truapi.ProductChatMessageActionsQueryRequest
+import uniffi.truapi.ProductChatMessagesQueryItem
+import uniffi.truapi.ProductChatMessagesQueryRequest
+import uniffi.truapi.ProductChatParticipantsQueryItem
+import uniffi.truapi.ProductChatParticipantsQueryRequest
+import uniffi.truapi.ProductChatQueryError
+import uniffi.truapi.ProductChatReactionsQueryItem
+import uniffi.truapi.ProductChatReactionsQueryRequest
+import uniffi.truapi.ProductChatUserActionError
+import uniffi.truapi.ProductChatUserActionItem
+import uniffi.truapi.ProductChatUserActionRequest
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostLocaleSubscribeItem
@@ -59,6 +99,7 @@ import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.DbStatus
 import uniffi.truapi.HostCallbacks
 import uniffi.truapi.ChatBotRegistrationStatus
+import uniffi.truapi.NativeCallMediaCallbacks
 import uniffi.truapi.NativeChatCallbacks
 import uniffi.truapi.NativeCoreDatabaseException
 import uniffi.truapi.RecoveryException
@@ -105,6 +146,15 @@ import uniffi.truapi.NativeBalanceCallbacks
 import uniffi.truapi.NativePaymentCallbacks
 import uniffi.truapi.NativeScannerCallbacks
 import uniffi.truapi.NativeTopUpCallbacks
+import uniffi.truapi.NativePersonChatCallbacks
+import uniffi.truapi.HostChatContact
+import uniffi.truapi.HostHistoryExportChunk
+import uniffi.truapi.HostPairedDevice
+import uniffi.truapi.NativePushCallbacks
+import uniffi.truapi.HostChatPushRoute
+import uniffi.truapi.HostPushDelivery
+import uniffi.truapi.HostPushTokens
+import uniffi.truapi.NativeHopFile
 import uniffi.truapi.ProductExecutionKind
 
 /** Package metadata. */
@@ -427,7 +477,8 @@ interface ChatHostBridge {
 
     /**
      * Set what a product's native Chat room shows below its messages, and keep
-     * it until the product sets another.
+     * it until the product sets another. A room without a footer shows the
+     * input with photo and video on.
      */
     @Throws(HostRejection::class)
     suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter)
@@ -435,7 +486,139 @@ interface ChatHostBridge {
     /** Return the current product-scoped native Chat rooms. */
     @Throws(HostRejection::class)
     suspend fun listRooms(): List<ChatRoom>
+
+    // The members below have defaults for a host that does not serve the Chat
+    // Extension v2 requests yet. The product receives a rejection for each
+    // request, except for the declarations that a new room always carries:
+    // the host keeps the name and icon of `createRoom`, and the configuration
+    // that the host serves anyway.
+
+    /**
+     * Return the configuration the product last declared for a room, or
+     * [HOST_DEFAULT_CHAT_ROOM_CONFIG] when it declared none. The core reads it
+     * before each feed update, posted message and query of the room.
+     */
+    @Throws(HostRejection::class)
+    suspend fun roomConfig(roomId: String): ChatRoomConfig = HOST_DEFAULT_CHAT_ROOM_CONFIG
+
+    /**
+     * Replace the configuration of a room whole, and keep it across restarts.
+     * A change of `productSource` discards the stored messages or the cached
+     * pages of the room.
+     */
+    @Throws(HostRejection::class)
+    suspend fun setRoomConfig(roomId: String, config: ChatRoomConfig) {
+        if (config != HOST_DEFAULT_CHAT_ROOM_CONFIG) throw unservedChatRequest("setRoomConfig")
+    }
+
+    /** Replace the name, avatar and description of a room. */
+    @Throws(HostRejection::class)
+    suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) {}
+
+    /** Replace how a room shows in the chat list. */
+    @Throws(HostRejection::class)
+    suspend fun setRoomPreview(roomId: String, preview: ChatRoomPreview): Unit =
+        throw unservedChatRequest("setRoomPreview")
+
+    /**
+     * Delete a room with its messages, cache and declarations, and close its
+     * screen. A room that does not exist is not an error.
+     */
+    @Throws(HostRejection::class)
+    suspend fun deleteRoom(roomId: String): Unit = throw unservedChatRequest("deleteRoom")
+
+    /**
+     * Apply one change to the messages of a room. With [persist] the host
+     * stores the change. Without it the host applies the change only to an
+     * open room screen and to the chat list preview.
+     *
+     * Throw [NativeChatFeedRejection] to refuse the change. The product
+     * receives each case as its own error, and any other exception as
+     * [NativeChatFeedRejection.Rejected].
+     */
+    @Throws(NativeChatFeedRejection::class)
+    suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean): Unit =
+        throw NativeChatFeedRejection.Rejected(unservedChatRequestReason("updateFeed"))
+
+    // The members below have defaults for a host that does not serve the Chat
+    // Extension v2 additions: it lists no feature, reads default declarations
+    // and refuses each change.
+
+    /**
+     * Return the names of the Chat features that this host serves from end to
+     * end, from the feature table of the Chat Extension v2 additions RFC. The
+     * core removes each name that it does not know or cannot back. List a name
+     * only in the build that serves its feature.
+     */
+    @Throws(HostRejection::class)
+    suspend fun capabilities(): List<String> = emptyList()
+
+    /**
+     * Return the optional features the product last declared for a room, or
+     * [HOST_DEFAULT_CHAT_ROOM_FEATURES] when it declared none.
+     */
+    @Throws(HostRejection::class)
+    suspend fun roomFeatures(roomId: String): ChatRoomFeatures = HOST_DEFAULT_CHAT_ROOM_FEATURES
+
+    /**
+     * Replace the optional features of a room whole, and keep them across
+     * restarts. Keep a feature that this host does not serve, so that a later
+     * build applies it.
+     */
+    @Throws(HostRejection::class)
+    suspend fun setRoomFeatures(roomId: String, features: ChatRoomFeatures): Unit =
+        throw unservedChatRequest("setRoomFeatures")
+
+    /**
+     * Show or change the call of a room, or remove it with `null`. The core
+     * has already checked that this host lists the feature of the call.
+     */
+    @Throws(HostRejection::class)
+    suspend fun setRoomCall(roomId: String, call: ChatRoomCall?): Unit =
+        throw unservedChatRequest("setRoomCall")
+
+    /** Return the state of each room of the product that the user muted or archived. */
+    @Throws(HostRejection::class)
+    suspend fun roomUserStates(): List<ChatRoomUserState> = emptyList()
+
+    /** Return the bot ids of the personas that the product registered. */
+    @Throws(HostRejection::class)
+    suspend fun bots(): List<String> = emptyList()
 }
+
+/**
+ * The features of a room that declares none: the room shows what a room of
+ * Chat Extension v2 shows.
+ */
+val HOST_DEFAULT_CHAT_ROOM_FEATURES: ChatRoomFeatures =
+    ChatRoomFeatures(
+        preimageAttachments = false,
+        search = false,
+        calls = null,
+        readAloud = false,
+        sealedAttachments = false,
+        hopAttachments = false,
+    )
+
+/**
+ * The configuration of a room that declares nothing: the host stores the
+ * messages and serves every part of the room itself.
+ */
+val HOST_DEFAULT_CHAT_ROOM_CONFIG: ChatRoomConfig =
+    ChatRoomConfig(
+        productSource = false,
+        reactionDetails = false,
+        participants = false,
+        messageActions = false,
+        allowedReactions = null,
+        placeholder = null,
+        reportSeen = false,
+    )
+
+private fun unservedChatRequestReason(request: String): String = "this host does not serve chat $request"
+
+private fun unservedChatRequest(request: String): HostRejection =
+    HostRejection.Rejected(unservedChatRequestReason(request))
 
 /**
  * Native Pocket collection surface. Implement and pass to
@@ -688,6 +871,54 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
         withHostRejection { bridge.setRoomFooter(roomId, footer) }
 
     override suspend fun listRooms(): List<ChatRoom> = withHostRejection { bridge.listRooms() }
+
+    override suspend fun roomConfig(roomId: String): ChatRoomConfig =
+        withHostRejection { bridge.roomConfig(roomId) }
+
+    override suspend fun setRoomConfig(roomId: String, config: ChatRoomConfig) =
+        withHostRejection { bridge.setRoomConfig(roomId, config) }
+
+    override suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) =
+        withHostRejection { bridge.setRoomMetadata(roomId, metadata) }
+
+    override suspend fun setRoomPreview(roomId: String, preview: ChatRoomPreview) =
+        withHostRejection { bridge.setRoomPreview(roomId, preview) }
+
+    override suspend fun deleteRoom(roomId: String) = withHostRejection { bridge.deleteRoom(roomId) }
+
+    override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean) =
+        withFeedRejection { bridge.updateFeed(roomId, update, persist) }
+
+    override suspend fun capabilities(): List<String> = withHostRejection { bridge.capabilities() }
+
+    override suspend fun roomFeatures(roomId: String): ChatRoomFeatures =
+        withHostRejection { bridge.roomFeatures(roomId) }
+
+    override suspend fun setRoomFeatures(roomId: String, features: ChatRoomFeatures) =
+        withHostRejection { bridge.setRoomFeatures(roomId, features) }
+
+    override suspend fun setRoomCall(roomId: String, call: ChatRoomCall?) =
+        withHostRejection { bridge.setRoomCall(roomId, call) }
+
+    override suspend fun roomUserStates(): List<ChatRoomUserState> =
+        withHostRejection { bridge.roomUserStates() }
+
+    override suspend fun bots(): List<String> = withHostRejection { bridge.bots() }
+
+    /**
+     * Pass a [NativeChatFeedRejection] to the product as it is, and any other
+     * exception as [NativeChatFeedRejection.Rejected].
+     */
+    private suspend fun withFeedRejection(operation: suspend () -> Unit) =
+        try {
+            operation()
+        } catch (rejection: NativeChatFeedRejection) {
+            throw rejection
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            throw NativeChatFeedRejection.Rejected(hostRejectionReason(error)).apply { initCause(error) }
+        }
 }
 
 /**
@@ -750,6 +981,110 @@ private class ScannerCallbackAdapter(private val bridge: ScannerHostBridge) : Na
         executionKind: ProductExecutionKind,
         request: HostScannerScanRequest,
     ): HostScan = withHostRejection { bridge.scanCode(productId, executionKind, request) }
+}
+
+/**
+ * The person chat services of the host, following the rules on the core's
+ * `PersonChatPlatform`: the `wss://` URLs of the HOP nodes of the network's
+ * Bulletin chain, the devices paired with the wallet, and the chat's contacts
+ * for the rest of the app.
+ */
+interface PersonChatHostBridge {
+    @Throws(HostRejection::class)
+    suspend fun hopNodes(): List<String>
+
+    /** The devices paired with this wallet device over SSO, as the chat announces them to contacts. */
+    @Throws(HostRejection::class)
+    suspend fun pairedDevices(): List<HostPairedDevice>
+
+    /** Replace the chat contacts of [productId], which the app shows outside the chat. */
+    @Throws(HostRejection::class)
+    suspend fun setContacts(productId: String, contacts: List<HostChatContact>)
+
+    /**
+     * At most [maxLen] bytes from [offset] of the native chat history staged for [productId], and the size of the
+     * whole export; a total of 0 when none is staged.
+     */
+    @Throws(HostRejection::class)
+    suspend fun historyExport(productId: String, offset: ULong, maxLen: UInt): HostHistoryExportChunk
+
+    /** [productId] imported the staged history: drop it. */
+    @Throws(HostRejection::class)
+    suspend fun historyImported(productId: String)
+}
+
+private class PersonChatCallbackAdapter(private val bridge: PersonChatHostBridge) : NativePersonChatCallbacks {
+    override suspend fun hopNodes(): List<String> = withHostRejection { bridge.hopNodes() }
+
+    override suspend fun pairedDevices(): List<HostPairedDevice> = withHostRejection { bridge.pairedDevices() }
+
+    override suspend fun setContacts(productId: String, contacts: List<HostChatContact>) =
+        withHostRejection { bridge.setContacts(productId, contacts) }
+
+    override suspend fun historyExport(productId: String, offset: ULong, maxLen: UInt): HostHistoryExportChunk =
+        withHostRejection { bridge.historyExport(productId, offset, maxLen) }
+
+    override suspend fun historyImported(productId: String) = withHostRejection { bridge.historyImported(productId) }
+}
+
+/**
+ * The push service of the host, following the rules on the core's
+ * `PushPlatform`: the push relay, the push tokens of the device, and the
+ * chat push routes the host shows pushes with while no chat worker runs. Only the core calls it.
+ */
+interface PushHostBridge {
+    /** Give [delivery] to the push relay. Returns whether the push service took it. */
+    @Throws(HostRejection::class)
+    suspend fun sendPush(productId: String, delivery: HostPushDelivery): Boolean
+
+    /** The push tokens of this device now, which the chat product shares with its contacts. */
+    @Throws(HostRejection::class)
+    suspend fun pushTokens(): HostPushTokens
+
+    /** Replace the chat push routes of [productId] with [routes]. */
+    @Throws(HostRejection::class)
+    suspend fun setChatPushRoutes(productId: String, routes: List<HostChatPushRoute>)
+}
+
+private class PushCallbackAdapter(private val bridge: PushHostBridge) : NativePushCallbacks {
+    override suspend fun sendPush(productId: String, delivery: HostPushDelivery): Boolean =
+        withHostRejection { bridge.sendPush(productId, delivery) }
+
+    override suspend fun pushTokens(): HostPushTokens = withHostRejection { bridge.pushTokens() }
+
+    override suspend fun setChatPushRoutes(productId: String, routes: List<HostChatPushRoute>) =
+        withHostRejection { bridge.setChatPushRoutes(productId, routes) }
+}
+
+/**
+ * The call engine of the host for the calls of product rooms, following the
+ * rules on the core's `CallMediaPlatform`. The product carries the signals
+ * between the two hosts: the engine's own signals go back to it as the room
+ * event `CallSignal`. Only the core calls it.
+ */
+interface CallMediaHostBridge {
+    /** Start the media of [callId] of [roomId] of [productId]. */
+    @Throws(HostRejection::class)
+    suspend fun startCallMedia(productId: String, roomId: String, callId: String, video: Boolean, offerer: Boolean)
+
+    /** A media signal of the other side of [callId]. */
+    @Throws(HostRejection::class)
+    suspend fun callMediaSignal(productId: String, roomId: String, callId: String, signal: ByteArray)
+
+    /** Stop the media of [callId]. */
+    @Throws(HostRejection::class)
+    suspend fun stopCallMedia(productId: String, roomId: String, callId: String)
+}
+
+private class CallMediaCallbackAdapter(private val bridge: CallMediaHostBridge) : NativeCallMediaCallbacks {
+    override suspend fun startCallMedia(productId: String, roomId: String, callId: String, video: Boolean, offerer: Boolean) =
+        withHostRejection { bridge.startCallMedia(productId, roomId, callId, video, offerer) }
+
+    override suspend fun callMediaSignal(productId: String, roomId: String, callId: String, signal: ByteArray) =
+        withHostRejection { bridge.callMediaSignal(productId, roomId, callId, signal) }
+
+    override suspend fun stopCallMedia(productId: String, roomId: String, callId: String) =
+        withHostRejection { bridge.stopCallMedia(productId, roomId, callId) }
 }
 
 private class PocketCallbackAdapter(private val bridge: PocketHostBridge) : NativePocketCallbacks {
@@ -941,6 +1276,56 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         return inner.setScannerCallbacks(adapter)
     }
 
+    // Co-owns the push adapter for as long as the runtime holds it.
+    private var pushRetainer: NativePushCallbacks? = null
+
+    /**
+     * Install the host's push service before opening any product execution.
+     * Set-once: returns whether this call installed it.
+     */
+    fun setPush(push: PushHostBridge): Boolean {
+        val adapter = PushCallbackAdapter(push)
+        pushRetainer = adapter
+        return inner.setPushCallbacks(adapter)
+    }
+
+    // Co-owns the call media adapter for as long as the runtime holds it.
+    private var callMediaRetainer: NativeCallMediaCallbacks? = null
+
+    /**
+     * Install the host's call engine for the calls of product rooms before
+     * opening any product execution. Set-once: returns whether this call
+     * installed it.
+     */
+    fun setCallMedia(callMedia: CallMediaHostBridge): Boolean {
+        val adapter = CallMediaCallbackAdapter(callMedia)
+        callMediaRetainer = adapter
+        return inner.setCallMediaCallbacks(adapter)
+    }
+
+    // Co-owns the person chat adapter for as long as the runtime holds it.
+    private var personChatRetainer: NativePersonChatCallbacks? = null
+
+    /**
+     * Install the host's person chat services (the HOP nodes) before opening
+     * any product execution. Set-once: returns whether this call installed it.
+     */
+    fun setPersonChat(personChat: PersonChatHostBridge): Boolean {
+        val adapter = PersonChatCallbackAdapter(personChat)
+        personChatRetainer = adapter
+        return inner.setPersonChatCallbacks(adapter)
+    }
+
+    /**
+     * Keep [secret], the X25519 key the native chat of this install used as
+     * its device key, so the chat product goes on using it and contacts keep
+     * reaching this device. Call it once, when the app moves its native chat
+     * to the chat product, before the product first runs. Returns false when
+     * the core already keeps a different key, which it never replaces.
+     */
+    @Throws(HostRejection::class)
+    suspend fun importChatDeviceKey(secret: ByteArray): Boolean = inner.importChatDeviceKey(secret)
+
     /**
      * Tell the core the host's contacts changed. Call it whenever a contact is
      * removed or blocked, so a contact handle the core cached stops resolving.
@@ -1049,6 +1434,105 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     fun releaseWorker(productId: String) {
         inner.releaseWorker(productId)
     }
+
+    /**
+     * Tell the core if the app is in the foreground. While it is, the core
+     * holds the worker of each product that declares
+     * [WorkerKeepAlive.FOREGROUND]. The core starts in the background, so
+     * the host reports the state when it builds the runtime and at each
+     * change.
+     */
+    fun setAppForeground(foreground: Boolean) {
+        inner.setAppForeground(foreground)
+    }
+
+    /**
+     * Tell the core when the worker of a product runs, from the `keepAlive`
+     * field of its Worker executable manifest. The host sets
+     * [WorkerKeepAlive.ON_DEMAND] again when the product goes.
+     */
+    fun setWorkerKeepAlive(productId: String, keepAlive: WorkerKeepAlive) {
+        inner.setWorkerKeepAlive(productId, keepAlive)
+    }
+
+    /**
+     * Send one event about a room to the product: the user muted or archived
+     * the room, pressed a call button, answered a call, or selected another
+     * alternative of a message. The core keeps the newest events of a product
+     * until its worker subscribes, so the worker does not have to run.
+     */
+    @Throws(HostRejection::class)
+    fun publishChatRoomEvent(productId: String, roomId: String, event: ChatRoomEvent) {
+        inner.publishChatRoomEvent(productId, roomId, event)
+    }
+
+    /**
+     * Hold the worker of the product for a wake of 30 seconds. A new wake moves
+     * the end of the hold. A notification wake also sends
+     * [ChatRoomEvent.Woken] to the room, at most 12 times in one hour; after
+     * that the core answers [ChatWakeOutcome.BudgetSpent].
+     */
+    @Throws(HostRejection::class)
+    fun wakeProduct(productId: String, reason: ChatWakeReason): ChatWakeOutcome =
+        inner.wakeProduct(productId, reason)
+
+    /**
+     * Stage a user attachment of a room as a preimage that the Bulletin
+     * allowance of the product pays for, and return its key. The core throws
+     * [NativeChatStageRejection]: `NotDeclared` for a room whose features do
+     * not declare `preimage_attachments`, `TooLarge` above 8 MiB or above the
+     * Bulletin chain's per-transaction bound, `PermissionDenied` when the user
+     * refused `PreimageSubmit` for the product (the core prompts through the
+     * product's open Worker execution when the user did not decide yet),
+     * `AllowanceUnavailable` and `SubmitFailed`. Staging needs no worker
+     * reference.
+     */
+    @Throws(NativeChatStageRejection::class)
+    suspend fun stageChatAttachment(
+        productId: String,
+        roomId: String,
+        mimeType: String,
+        bytes: ByteArray,
+    ): ByteArray = inner.chatStageAttachment(productId, roomId, mimeType, bytes)
+
+    /**
+     * Seal a user file of a room that declares `sealed_attachments`: the core
+     * encrypts it with a new key and stores the ciphertext as Bulletin parts
+     * that the allowance of the product pays for, up to 32 MiB. It gives the
+     * `ChatResource.Sealed` that opens the file and throws
+     * [NativeChatStageRejection] as [stageChatAttachment] does.
+     */
+    @Throws(NativeChatStageRejection::class)
+    suspend fun sealChatAttachment(
+        productId: String,
+        roomId: String,
+        bytes: ByteArray,
+    ): ChatResource = inner.chatSealAttachment(productId, roomId, bytes)
+
+    /**
+     * The bytes of a `ChatResource.Hop` of a room of the chat product, which
+     * the core claims from the node it names when [PersonChatHostBridge]
+     * lists that node, or from Bulletin once the node promoted it. Keep the
+     * bytes, then call [ackHopChatResource] with the entries.
+     */
+    /**
+     * Upload a user file of a room of the chat product that declares
+     * `hop_attachments` to a HOP node, up to 128 MiB, and give the
+     * `ChatResource.Hop` to send to the product. Throws
+     * [NativeChatStageRejection] as [sealChatAttachment] does.
+     */
+    @Throws(NativeChatStageRejection::class)
+    suspend fun hopChatAttachment(productId: String, roomId: String, bytes: ByteArray): ChatResource =
+        inner.chatHopAttachment(productId, roomId, bytes)
+
+    @Throws(HostRejection::class)
+    suspend fun openHopChatResource(productId: String, resource: ChatResource): NativeHopFile =
+        inner.openHopChatResource(productId, resource)
+
+    /** Tell the node that the entries [openHopChatResource] gave were taken, once the bytes are kept. */
+    @Throws(HostRejection::class)
+    suspend fun ackHopChatResource(productId: String, resource: ChatResource, entries: List<ByteArray>) =
+        inner.ackHopChatResource(productId, resource, entries)
 
     /**
      * Tell the pairing host behind [deeplink] that allowance allocation is
@@ -1227,6 +1711,110 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     }
 }
 
+/**
+ * How long the host waits for the answer to a chat query. After the timeout
+ * the host shows its failure state for that query.
+ */
+object ChatQueryTimeout {
+    /** A page of messages. */
+    val MESSAGES: Duration = 10.seconds
+
+    /** A message that the user sent. */
+    val SENT_MESSAGE: Duration = 30.seconds
+
+    /** A user action that is not a sent message. */
+    val USER_ACTION: Duration = 10.seconds
+
+    /** Reactions, participants, a message menu or a participant menu. */
+    val LOOKUP: Duration = 5.seconds
+
+    /** The messages that match a search. */
+    val SEARCH: Duration = 10.seconds
+
+    /** The room a link opens: the product may first do network work, such as sending a chat request. */
+    val OPEN_LINK: Duration = 90.seconds
+
+    /** The timeout of one user action. */
+    fun forUserAction(action: ChatUserAction): Duration =
+        if (action is ChatUserAction.NewMessage) SENT_MESSAGE else USER_ACTION
+}
+
+/** Why a chat query has no answer. */
+sealed class ChatQueryException(message: String) : Exception(message) {
+    /**
+     * The product, or the core for a room that does not declare the handler,
+     * refused the query. [ProductChatQueryError.NotAvailable] asks the host to
+     * apply its default.
+     */
+    class Refused(val error: ProductChatQueryError) : ChatQueryException("chat query refused: $error")
+
+    /**
+     * The product, or the core for a room that the host stores, refused the
+     * user action. The host reverts the action, and shows the reason of
+     * [ProductChatUserActionError.Rejected] to the user.
+     */
+    class ActionRefused(val error: ProductChatUserActionError) :
+        ChatQueryException("chat user action refused: $error")
+
+    /** The query failed on its way, for example because the worker stopped. */
+    class Failed(val reason: String) : ChatQueryException(reason)
+
+    /** The product ended the query without an answer. */
+    class NoAnswer : ChatQueryException("the product ended the chat query without an answer")
+
+    /** No answer came before the timeout. */
+    class TimedOut(val timeout: Duration) : ChatQueryException("no answer to the chat query in $timeout")
+}
+
+/**
+ * The first result of one chat query: the answer of the product or its
+ * refusal. Later results have no effect.
+ */
+internal class ChatQueryOutcome : NativeChatQueryObserver {
+    val answer = CompletableDeferred<NativeChatQueryAnswer>()
+
+    // The core declares all three infallible, so uniffi has no error type to
+    // convert a throw into and panics, which aborts under `panic = "abort"`.
+    override fun onAnswer(answer: NativeChatQueryAnswer) {
+        runCatching { this.answer.complete(answer) }
+    }
+
+    override fun onRefusal(refusal: NativeChatQueryRefusal) {
+        val error =
+            when (refusal) {
+                is NativeChatQueryRefusal.Query -> ChatQueryException.Refused(refusal.error)
+                is NativeChatQueryRefusal.UserAction -> ChatQueryException.ActionRefused(refusal.error)
+                is NativeChatQueryRefusal.Failed -> ChatQueryException.Failed(refusal.reason)
+            }
+        runCatching { answer.completeExceptionally(error) }
+    }
+
+    override fun onComplete() {
+        runCatching { answer.completeExceptionally(ChatQueryException.NoAnswer()) }
+    }
+}
+
+/**
+ * Start one chat query, and wait for its answer. A timeout or a cancelled
+ * coroutine stops the query in the product.
+ */
+internal suspend fun <T> chatQuery(
+    timeout: Duration,
+    start: (NativeChatQueryObserver) -> NativeChatQuery,
+    extract: (NativeChatQueryAnswer) -> T?,
+): T {
+    val outcome = ChatQueryOutcome()
+    val query = start(outcome)
+    try {
+        val answer = withTimeoutOrNull(timeout) { outcome.answer.await() }
+            ?: throw ChatQueryException.TimedOut(timeout)
+        return extract(answer) ?: throw ChatQueryException.Failed("the product answered another query")
+    } finally {
+        query.cancel()
+        query.close()
+    }
+}
+
 /** A render the product declined or could not encode. */
 class RendererStreamException(
     /** Why the product ended the render. */
@@ -1267,6 +1855,89 @@ class TrUAPIProductExecution internal constructor(
     fun publishChatAction(action: HostChatActionSubscribeItem) {
         inner.publishChatAction(action)
     }
+
+    /**
+     * Publish one chat event, and keep it until the product connection
+     * subscribes. A subscriber at the first protocol version receives only the
+     * events that its version carries. The product receives at most one `Seen`
+     * event for each room each second.
+     */
+    @Throws(ProductRuntimeException::class)
+    fun publishChatEvent(roomId: String, peer: String, event: ChatEvent) {
+        inner.publishChatEvent(roomId, peer, event)
+    }
+
+    /** Ask the product for one page of messages of a room that it keeps. */
+    @Throws(ProductRuntimeException::class, ChatQueryException::class)
+    suspend fun chatMessagesQuery(
+        request: ProductChatMessagesQueryRequest,
+        timeout: Duration = ChatQueryTimeout.MESSAGES,
+    ): ProductChatMessagesQueryItem =
+        chatQuery(timeout, { inner.chatMessagesQuery(request, it) }) {
+            (it as? NativeChatQueryAnswer.Messages)?.page
+        }
+
+    /** Tell the product what the user did in a room that it keeps. */
+    @Throws(ProductRuntimeException::class, ChatQueryException::class)
+    suspend fun chatUserAction(
+        request: ProductChatUserActionRequest,
+        timeout: Duration = ChatQueryTimeout.forUserAction(request.action),
+    ): ProductChatUserActionItem =
+        chatQuery(timeout, { inner.chatUserAction(request, it) }) {
+            (it as? NativeChatQueryAnswer.UserAction)?.answer
+        }
+
+    /** Ask the product who reacted to one message. */
+    @Throws(ProductRuntimeException::class, ChatQueryException::class)
+    suspend fun chatReactionsQuery(
+        request: ProductChatReactionsQueryRequest,
+        timeout: Duration = ChatQueryTimeout.LOOKUP,
+    ): ProductChatReactionsQueryItem =
+        chatQuery(timeout, { inner.chatReactionsQuery(request, it) }) {
+            (it as? NativeChatQueryAnswer.Reactions)?.reactions
+        }
+
+    /** Ask the product about the participants of a room. */
+    @Throws(ProductRuntimeException::class, ChatQueryException::class)
+    suspend fun chatParticipantsQuery(
+        request: ProductChatParticipantsQueryRequest,
+        timeout: Duration = ChatQueryTimeout.LOOKUP,
+    ): ProductChatParticipantsQueryItem =
+        chatQuery(timeout, { inner.chatParticipantsQuery(request, it) }) {
+            (it as? NativeChatQueryAnswer.Participants)?.answer
+        }
+
+    /** Ask the product for the menu of one message. */
+    @Throws(ProductRuntimeException::class, ChatQueryException::class)
+    suspend fun chatMessageActionsQuery(
+        request: ProductChatMessageActionsQueryRequest,
+        timeout: Duration = ChatQueryTimeout.LOOKUP,
+    ): ProductChatMessageActionsQueryItem =
+        chatQuery(timeout, { inner.chatMessageActionsQuery(request, it) }) {
+            (it as? NativeChatQueryAnswer.MessageMenu)?.menu
+        }
+
+    /**
+     * Ask the product for the messages of a room that it keeps that match what
+     * the user typed, newest first.
+     */
+    @Throws(ProductRuntimeException::class, ChatQueryException::class)
+    suspend fun chatSearchQuery(
+        request: ProductChatSearchQueryRequest,
+        timeout: Duration = ChatQueryTimeout.SEARCH,
+    ): ProductChatSearchQueryItem =
+        chatQuery(timeout, { inner.chatSearchQuery(request, it) }) {
+            (it as? NativeChatQueryAnswer.Search)?.page
+        }
+
+    /** Give the product the payload of a room link the user opened, and get the room to show. */
+    suspend fun chatOpenLink(
+        request: ProductChatOpenLinkRequest,
+        timeout: Duration = ChatQueryTimeout.OPEN_LINK,
+    ): ProductChatOpenLinkItem =
+        chatQuery(timeout, { inner.chatOpenLink(request, it) }) {
+            (it as? NativeChatQueryAnswer.OpenLink)?.answer
+        }
 
     /**
      * Republish the product-scoped native Chat room list. Call it whenever the

@@ -107,8 +107,8 @@ Transfer plans determine how coins are spent:
 
 ## Payment Processing
 
-- `CoinagePaymentProcessingExtension` watches on-chain events for payment confirmations
-- Integrates with chat for payment request/confirmation messages
+- There is no payment chat extension on iOS. A coinage transfer bubble renders the `coinageSend` content from the
+  transfer state row
 - See `architecture/chat-extension.md` for chat integration
 
 ## Submission Policies (retries)

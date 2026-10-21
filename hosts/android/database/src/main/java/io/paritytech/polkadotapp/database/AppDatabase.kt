@@ -13,6 +13,7 @@ import io.paritytech.polkadotapp.database.converters.IntListConverter
 import io.paritytech.polkadotapp.database.converters.LongMathConverters
 import io.paritytech.polkadotapp.database.dao.BrowserTabDao
 import io.paritytech.polkadotapp.database.dao.ChainDao
+import io.paritytech.polkadotapp.database.dao.ChatBotPersonaDao
 import io.paritytech.polkadotapp.database.dao.ChatBotStateDao
 import io.paritytech.polkadotapp.database.dao.ChatDraftDao
 import io.paritytech.polkadotapp.database.dao.ChatMessageCompactionDao
@@ -22,6 +23,7 @@ import io.paritytech.polkadotapp.database.dao.ChatMessageReactionDao
 import io.paritytech.polkadotapp.database.dao.ChatRequestDao
 import io.paritytech.polkadotapp.database.dao.ChatRequestSyncStateDao
 import io.paritytech.polkadotapp.database.dao.ChatRoomDao
+import io.paritytech.polkadotapp.database.dao.ChatRoomDeclarationsDao
 import io.paritytech.polkadotapp.database.dao.ChatSearchRecentDao
 import io.paritytech.polkadotapp.database.dao.CoinDao
 import io.paritytech.polkadotapp.database.dao.CoinageEntryDao
@@ -90,6 +92,7 @@ import io.paritytech.polkadotapp.database.migrations.Migration65To66
 import io.paritytech.polkadotapp.database.migrations.Migration68To69
 import io.paritytech.polkadotapp.database.migrations.Migration69To70Spec
 import io.paritytech.polkadotapp.database.model.BrowserTabLocal
+import io.paritytech.polkadotapp.database.model.ChatBotPersonaLocal
 import io.paritytech.polkadotapp.database.model.ChatBotStateLocal
 import io.paritytech.polkadotapp.database.model.ChatDraftLocal
 import io.paritytech.polkadotapp.database.model.ChatMessageCompactionLinkLocal
@@ -99,6 +102,7 @@ import io.paritytech.polkadotapp.database.model.ChatMessageProcessingLocal
 import io.paritytech.polkadotapp.database.model.ChatMessageReactionLocal
 import io.paritytech.polkadotapp.database.model.ChatRequestLocal
 import io.paritytech.polkadotapp.database.model.ChatRequestSyncStateLocal
+import io.paritytech.polkadotapp.database.model.ChatRoomDeclarationsLocal
 import io.paritytech.polkadotapp.database.model.ChatRoomLocal
 import io.paritytech.polkadotapp.database.model.ChatSearchRecentLocal
 import io.paritytech.polkadotapp.database.model.CoinLocal
@@ -144,7 +148,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainNodeLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
 
 @Database(
-    version = 71,
+    version = 73,
     entities = [
         ProductFundingOperationLocal::class,
         ChainLocal::class,
@@ -199,6 +203,8 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         ProductTopUpLocal::class,
         PocketCardLocal::class,
         PocketCardFaceLocal::class,
+        ChatRoomDeclarationsLocal::class,
+        ChatBotPersonaLocal::class,
     ],
     autoMigrations = [
         // Add ChatMessageReactionLocal
@@ -285,6 +291,11 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         AutoMigration(from = 69, to = 70, spec = Migration69To70Spec::class),
         // Add chat_requests delivery state (deliveryStatus, deliveredVia, lastDeliveredPeriod)
         AutoMigration(from = 70, to = 71),
+        // Add chat_room_declarations (Chat Extension v2) and chat_messages.originParticipantId
+        AutoMigration(from = 71, to = 72),
+        // Add the room features and the user state to chat_room_declarations, and chat_bots
+        // (Chat Extension v2 additions)
+        AutoMigration(from = 72, to = 73),
     ]
 )
 @TypeConverters(
@@ -401,6 +412,10 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun productIntegrationDao(): ProductIntegrationDao
 
     abstract fun chatRoomDao(): ChatRoomDao
+
+    abstract fun chatRoomDeclarationsDao(): ChatRoomDeclarationsDao
+
+    abstract fun chatBotPersonaDao(): ChatBotPersonaDao
 
     abstract fun fileUploadDao(): FileUploadDao
 

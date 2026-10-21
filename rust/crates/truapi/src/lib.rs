@@ -93,11 +93,18 @@ pub mod latest {
 	use crate::versioned::{self, Versioned};
 
 	pub use crate::v01::{
-		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
-		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
-		ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
-		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
-		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
+		ActionTrigger, AllocatableResource, AllocationOutcome, Arrangement, Background,
+		BlendingMode, BorderStyle, BoxProps, ButtonProps, ButtonVariant, ChainIdentifier,
+		ChatAction, ChatActionHandler, ChatActionLayout, ChatActions, ChatBotRegistrationStatus,
+		ChatBuiltInMessageAction, ChatCommand, ChatCustomMessage, ChatEvent, ChatFeedUpdate,
+		ChatFile, ChatInputConfig, ChatInputPayment, ChatMedia, ChatMediaItem, ChatMediaMeta,
+		ChatMessage, ChatMessageBody, ChatMessageContent, ChatMessageMenu, ChatMessageOrigin,
+		ChatMessageStatus, ChatPageAnchor, ChatParticipant, ChatParticipantEntry,
+		ChatParticipantsQuery, ChatProductAction, ChatReaction, ChatReactionDetail,
+		ChatReactionSummary, ChatResource, ChatRichText, ChatRoom, ChatRoomBadge, ChatRoomCall,
+		ChatRoomCalls, ChatRoomConfig, ChatRoomEvent, ChatRoomFeatures, ChatRoomMetadata,
+		ChatRoomOrder, ChatRoomParticipation, ChatRoomPreview, ChatRoomPreviewText,
+		ChatRoomRegistrationStatus, ChatUserAction, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
 		Dimensions, Effect, EffectProps, FundingDirection, FundingFailure, GenericError,
 		HorizontalAlignment, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
@@ -105,7 +112,8 @@ pub mod latest {
 		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
 		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
 		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
-		ImageSource, Modifier, OperationStartedResult, PaymentTopUpSource, PocketCard,
+		ImageSource, Modifier, OperationStartedResult, PaymentTopUpSource, PersonChatDelivery,
+		PersonChatDevice, PersonChatPushPlatform, PersonChatPushToken, PersonChatRole, PocketCard,
 		ProductAccount, ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey,
 		RemoteChainTransactionStopRequest, RemotePermission, RemoteStatementStoreCreateProofError,
 		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
@@ -114,8 +122,10 @@ pub mod latest {
 		RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape,
 		SignedStatement, Size, Statement, StatementProof, StorageQueryItem, StorageQueryType,
 		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
-		TypographyStyle, VerticalAlignment, VrfSignature,
+		TypographyStyle, VerticalAlignment, VrfSignature, WorkerWakeDelivery, WorkerWakeWatch,
 	};
+
+	pub use crate::v02::ChatRoomFooter;
 
 	/// Latest payload type of a versioned envelope.
 	pub type LatestOf<T> = <T as Versioned>::Latest;
@@ -210,6 +220,70 @@ pub mod latest {
 	pub type HostChatSetRoomFooterRequest = LatestOf<versioned::chat::HostChatSetRoomFooterRequest>;
 	/// Failure to set what a native chat room shows below its messages.
 	pub type HostChatSetRoomFooterError = LatestOf<versioned::chat::HostChatSetRoomFooterError>;
+	/// Failure of a request that changes a native chat room.
+	pub type HostChatRoomError = LatestOf<versioned::chat::HostChatRoomError>;
+	/// Failure of a chat query the host sends to a product.
+	pub type ProductChatQueryError = LatestOf<versioned::chat::ProductChatQueryError>;
+	/// Request to replace the name, avatar and description of a native chat room.
+	pub type HostChatSetRoomMetadataRequest =
+		LatestOf<versioned::chat::HostChatSetRoomMetadataRequest>;
+	/// Request to replace how a native chat room shows in the chat list.
+	pub type HostChatSetRoomPreviewRequest =
+		LatestOf<versioned::chat::HostChatSetRoomPreviewRequest>;
+	/// Request to delete a native chat room.
+	pub type HostChatDeleteRoomRequest = LatestOf<versioned::chat::HostChatDeleteRoomRequest>;
+	/// Request to push one change to the messages of a native chat room.
+	pub type HostChatUpdateFeedRequest = LatestOf<versioned::chat::HostChatUpdateFeedRequest>;
+	/// Failure to push a change to the messages of a native chat room.
+	pub type HostChatUpdateFeedError = LatestOf<versioned::chat::HostChatUpdateFeedError>;
+	/// Host-to-product question for one page of chat messages.
+	pub type ProductChatMessagesQueryRequest =
+		LatestOf<versioned::chat::ProductChatMessagesQueryRequest>;
+	/// Product-to-host page of chat messages.
+	pub type ProductChatMessagesQueryItem = LatestOf<versioned::chat::ProductChatMessagesQueryItem>;
+	/// Host-to-product report of what the user did in a chat room.
+	pub type ProductChatUserActionRequest = LatestOf<versioned::chat::ProductChatUserActionRequest>;
+	/// Product-to-host answer to a chat user action.
+	pub type ProductChatUserActionItem = LatestOf<versioned::chat::ProductChatUserActionItem>;
+	/// Failure to apply a chat user action.
+	pub type ProductChatUserActionError = LatestOf<versioned::chat::ProductChatUserActionError>;
+	/// Host-to-product question about who reacted to a chat message.
+	pub type ProductChatReactionsQueryRequest =
+		LatestOf<versioned::chat::ProductChatReactionsQueryRequest>;
+	/// Product-to-host list of who reacted to a chat message.
+	pub type ProductChatReactionsQueryItem =
+		LatestOf<versioned::chat::ProductChatReactionsQueryItem>;
+	/// Host-to-product question about the participants of a chat room.
+	pub type ProductChatParticipantsQueryRequest =
+		LatestOf<versioned::chat::ProductChatParticipantsQueryRequest>;
+	/// Product-to-host answer about the participants of a chat room.
+	pub type ProductChatParticipantsQueryItem =
+		LatestOf<versioned::chat::ProductChatParticipantsQueryItem>;
+	/// Host-to-product question for the menu of a chat message.
+	pub type ProductChatMessageActionsQueryRequest =
+		LatestOf<versioned::chat::ProductChatMessageActionsQueryRequest>;
+	/// Product-to-host menu of a chat message.
+	pub type ProductChatMessageActionsQueryItem =
+		LatestOf<versioned::chat::ProductChatMessageActionsQueryItem>;
+	/// The Chat features a host serves, and its attachment bounds.
+	pub type HostChatCapabilitiesResponse = LatestOf<versioned::chat::HostChatCapabilitiesResponse>;
+	/// Request to declare the optional features of a native chat room.
+	pub type HostChatSetRoomFeaturesRequest =
+		LatestOf<versioned::chat::HostChatSetRoomFeaturesRequest>;
+	/// Request to show, change or remove the call of a native chat room.
+	pub type HostChatSetRoomCallRequest = LatestOf<versioned::chat::HostChatSetRoomCallRequest>;
+	/// What the user did with the optional features of a native chat room.
+	pub type HostChatRoomEventsSubscribeItem =
+		LatestOf<versioned::chat::HostChatRoomEventsSubscribeItem>;
+	/// Host-to-product question for the messages of a room that match a search.
+	pub type ProductChatSearchQueryRequest =
+		LatestOf<versioned::chat::ProductChatSearchQueryRequest>;
+	/// Product-to-host page of the messages that match a search.
+	pub type ProductChatSearchQueryItem = LatestOf<versioned::chat::ProductChatSearchQueryItem>;
+	/// Host-to-product room link that carries a payload for the product.
+	pub type ProductChatOpenLinkRequest = LatestOf<versioned::chat::ProductChatOpenLinkRequest>;
+	/// Product-to-host answer to an opened room link.
+	pub type ProductChatOpenLinkItem = LatestOf<versioned::chat::ProductChatOpenLinkItem>;
 	/// Current native room list for a product.
 	pub type HostChatListSubscribeItem = LatestOf<versioned::chat::HostChatListSubscribeItem>;
 	/// Native chat message posting request.
@@ -238,6 +312,25 @@ pub mod latest {
 	pub type HostScannerScanResponse = LatestOf<versioned::scanner::HostScannerScanResponse>;
 	/// Scanner failure.
 	pub type HostScannerScanError = LatestOf<versioned::scanner::HostScannerScanError>;
+	/// Request to start the media of a call.
+	pub type HostCallMediaStartRequest = LatestOf<versioned::call_media::HostCallMediaStartRequest>;
+	/// Media signal of the other side of a call.
+	pub type HostCallMediaSignalRequest =
+		LatestOf<versioned::call_media::HostCallMediaSignalRequest>;
+	/// Request to stop the media of a call.
+	pub type HostCallMediaStopRequest = LatestOf<versioned::call_media::HostCallMediaStopRequest>;
+	/// The host took a call media request.
+	pub type HostCallMediaResponse = LatestOf<versioned::call_media::HostCallMediaResponse>;
+	/// Call media failure.
+	pub type HostCallMediaError = LatestOf<versioned::call_media::HostCallMediaError>;
+	/// Username search request.
+	pub type HostUsernamesSearchRequest =
+		LatestOf<versioned::usernames::HostUsernamesSearchRequest>;
+	/// Usernames that a search found.
+	pub type HostUsernamesSearchResponse =
+		LatestOf<versioned::usernames::HostUsernamesSearchResponse>;
+	/// Username search failure.
+	pub type HostUsernamesSearchError = LatestOf<versioned::usernames::HostUsernamesSearchError>;
 	/// Contextual alias derivation result.
 	pub type HostAccountGetAliasResponse =
 		LatestOf<versioned::account::HostAccountGetAliasResponse>;
@@ -276,6 +369,86 @@ pub mod latest {
 	pub type HostRemindNextGameRequest = LatestOf<versioned::game::HostRemindNextGameRequest>;
 	/// Why a game reminder was not taken.
 	pub type HostRemindNextGameError = LatestOf<versioned::game::HostRemindNextGameError>;
+	/// Request for the chat profile of the signed-in identity.
+	pub type HostPersonChatGetProfileRequest =
+		LatestOf<versioned::person_chat::HostPersonChatGetProfileRequest>;
+	/// The chat profile of the signed-in identity on this device.
+	pub type HostPersonChatGetProfileResponse =
+		LatestOf<versioned::person_chat::HostPersonChatGetProfileResponse>;
+	/// Request for the X25519 secrets of the chat protocol.
+	pub type HostPersonChatSecretsRequest =
+		LatestOf<versioned::person_chat::HostPersonChatSecretsRequest>;
+	/// The X25519 secrets of the chat protocol.
+	pub type HostPersonChatSecretsResponse =
+		LatestOf<versioned::person_chat::HostPersonChatSecretsResponse>;
+	/// Request to prove a statement with the chat statement account.
+	pub type HostPersonChatProveStatementRequest =
+		LatestOf<versioned::person_chat::HostPersonChatProveStatementRequest>;
+	/// Proof of a chat statement.
+	pub type HostPersonChatProveStatementResponse =
+		LatestOf<versioned::person_chat::HostPersonChatProveStatementResponse>;
+	/// Request to sign a chat request as the identity account.
+	pub type HostPersonChatProveChatRequestRequest =
+		LatestOf<versioned::person_chat::HostPersonChatProveChatRequestRequest>;
+	/// Identity signature of a chat request.
+	pub type HostPersonChatProveChatRequestResponse =
+		LatestOf<versioned::person_chat::HostPersonChatProveChatRequestResponse>;
+	/// Request for the push tokens of this device.
+	pub type HostPersonChatPushTokensRequest =
+		LatestOf<versioned::person_chat::HostPersonChatPushTokensRequest>;
+	/// The push tokens of this device.
+	pub type HostPersonChatPushTokensResponse =
+		LatestOf<versioned::person_chat::HostPersonChatPushTokensResponse>;
+	/// Request to notify a contact's device.
+	pub type HostPersonChatNotifyPeerRequest =
+		LatestOf<versioned::person_chat::HostPersonChatNotifyPeerRequest>;
+	/// Whether the push relay took a push.
+	pub type HostPersonChatNotifyPeerResponse =
+		LatestOf<versioned::person_chat::HostPersonChatNotifyPeerResponse>;
+	/// Request to replace the chat push routes of this device.
+	pub type HostPersonChatSetPushRoutesRequest =
+		LatestOf<versioned::person_chat::HostPersonChatSetPushRoutesRequest>;
+	/// Request to upload a file to a HOP node.
+	pub type HostPersonChatHopUploadRequest =
+		LatestOf<versioned::person_chat::HostPersonChatHopUploadRequest>;
+	/// Where a contact claims an uploaded file.
+	pub type HostPersonChatHopUploadResponse =
+		LatestOf<versioned::person_chat::HostPersonChatHopUploadResponse>;
+	/// Request to download a file a contact uploaded.
+	pub type HostPersonChatHopDownloadRequest =
+		LatestOf<versioned::person_chat::HostPersonChatHopDownloadRequest>;
+	/// A downloaded file.
+	pub type HostPersonChatHopDownloadResponse =
+		LatestOf<versioned::person_chat::HostPersonChatHopDownloadResponse>;
+	/// Request to ack the entries of a downloaded file.
+	pub type HostPersonChatHopAckRequest =
+		LatestOf<versioned::person_chat::HostPersonChatHopAckRequest>;
+	/// Request to prepare the delivery of a chat request.
+	pub type HostPersonChatPrepareDeliveryRequest =
+		LatestOf<versioned::person_chat::HostPersonChatPrepareDeliveryRequest>;
+	/// The delivery of a chat request.
+	pub type HostPersonChatPrepareDeliveryResponse =
+		LatestOf<versioned::person_chat::HostPersonChatPrepareDeliveryResponse>;
+	/// Request to prove a chat request statement with its delivery account.
+	pub type HostPersonChatProveDeliveryRequest =
+		LatestOf<versioned::person_chat::HostPersonChatProveDeliveryRequest>;
+	/// The proof of a chat request statement.
+	pub type HostPersonChatProveDeliveryResponse =
+		LatestOf<versioned::person_chat::HostPersonChatProveDeliveryResponse>;
+	/// Request to replace the contacts the host keeps.
+	pub type HostPersonChatPublishContactsRequest =
+		LatestOf<versioned::person_chat::HostPersonChatPublishContactsRequest>;
+	/// Request for a part of the staged native chat history.
+	pub type HostPersonChatHistoryExportRequest =
+		LatestOf<versioned::person_chat::HostPersonChatHistoryExportRequest>;
+	/// A part of the staged native chat history.
+	pub type HostPersonChatHistoryExportResponse =
+		LatestOf<versioned::person_chat::HostPersonChatHistoryExportResponse>;
+	/// Request to tell the host that the staged history is imported.
+	pub type HostPersonChatHistoryImportedRequest =
+		LatestOf<versioned::person_chat::HostPersonChatHistoryImportedRequest>;
+	/// Why a `PersonChat` call failed.
+	pub type HostPersonChatError = LatestOf<versioned::person_chat::HostPersonChatError>;
 	/// Storage key change pushed to a subscriber.
 	pub type HostLocalStorageChangeItem =
 		LatestOf<versioned::local_storage::HostLocalStorageChangeItem>;
@@ -386,6 +559,15 @@ pub mod latest {
 	/// Result of beginning a worker pending operation.
 	pub type HostWorkerBeginOperationResponse =
 		LatestOf<versioned::worker::HostWorkerBeginOperationResponse>;
+	/// Request to replace the wake watches of a worker.
+	pub type HostWorkerSetWakeWatchesRequest =
+		LatestOf<versioned::worker::HostWorkerSetWakeWatchesRequest>;
+	/// Result of a wake watch replacement.
+	pub type HostWorkerSetWakeWatchesResponse =
+		LatestOf<versioned::worker::HostWorkerSetWakeWatchesResponse>;
+	/// Wake watch replacement failure.
+	pub type HostWorkerSetWakeWatchesError =
+		LatestOf<versioned::worker::HostWorkerSetWakeWatchesError>;
 	/// Transaction creation payload for a legacy account.
 	pub type LegacyAccountTxPayload =
 		LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountRequest>;
@@ -781,7 +963,7 @@ pub use host_logic::session::{
 	ExternalPairedSession, SsoSessionInfo, decode_persisted_session, encode_external_paired_session,
 };
 #[cfg(feature = "runtime")]
-pub use host_logic::worker::{WorkerLedger, WorkerTransition};
+pub use host_logic::worker::{WorkerKeepAlive, WorkerLedger, WorkerTransition};
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{
@@ -810,6 +992,13 @@ pub use runtime::statement_allowance;
 pub use runtime::{
 	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
 	PairingProposal, PairingProposalMetadata, ResponderExit,
+};
+#[cfg(feature = "runtime")]
+pub use runtime::{
+	CHAT_NOTIFICATION_WAKES_PER_HOUR, CHAT_RINGING_HOLD_MS, CHAT_SEALED_AAD, CHAT_WAKE_HOLD_MS,
+	ChatOpenRejection, ChatStageRejection, ChatWakeOutcome, ChatWakeReason, PushWakeDelivery,
+	PushWakeOutcome, PushWakeRejection, WAKE_PUSH_PAYLOAD_KEY, WakePush, WakeRelay,
+	WakeRelayRegistration, statement_hash, wake_push_mac,
 };
 #[cfg(feature = "runtime")]
 pub use unix_time::current_unix_millis;

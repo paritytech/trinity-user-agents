@@ -69,6 +69,21 @@ final class ContactChatSubmitter: TransferSubmitting {
 enum TransferSubmitterError: Error {
     /// The recipient has no chat contact, so no message can carry the memo.
     case noChatContact
+    /// Person chat runs in the chat product, which does not carry payment memos, and the native chat sends nothing.
+    case chatInProduct
+}
+
+/// The transport while person chat runs in the chat product. Nothing would send a memo written to the native chat, so
+/// the payment fails before anything is committed and its reservation is dropped.
+struct ChatInProductSubmitter: TransferSubmitting {
+    func sendTransfer(
+        _: TransferMemo,
+        to _: AccountId,
+        messageId _: Chat.MessageId,
+        onSaved _: @escaping (any DurableTxRegistrationScope) throws -> Void
+    ) async throws {
+        throw TransferSubmitterError.chatInProduct
+    }
 }
 
 /// A transport for flows that carry the memo themselves. There is nothing to be atomic with, so the

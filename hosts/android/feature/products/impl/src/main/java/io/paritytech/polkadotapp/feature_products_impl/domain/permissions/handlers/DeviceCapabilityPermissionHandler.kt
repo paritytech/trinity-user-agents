@@ -1,7 +1,12 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers
 
 import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
+import androidx.core.content.ContextCompat
+import dagger.hilt.android.qualifiers.ApplicationContext
+import io.paritytech.polkadotapp.common.utils.permissions.ForegroundPrompt
 import io.paritytech.polkadotapp.common.utils.permissions.PermissionAsker
 import io.paritytech.polkadotapp.common.utils.permissions.PermissionResult
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
@@ -16,6 +21,8 @@ class DeviceCapabilityPermissionHandler @Inject constructor(
     private val repository: ProductPermissionRepository,
     private val requester: ProductPermissionRequester,
     private val permissionAsker: PermissionAsker,
+    @param:ApplicationContext private val context: Context,
+    private val foregroundPrompt: ForegroundPrompt,
 ) : ProductPermissionHandler<ProductPermission.DeviceCapability> {
     override suspend fun isGranted(productId: ProductId, permission: ProductPermission.DeviceCapability): Boolean {
         return repository.isGranted(productId, permission)
@@ -48,6 +55,19 @@ class DeviceCapabilityPermissionHandler @Inject constructor(
         val manifestPermission = capability.toManifestPermission() ?: return true
         val result = permissionAsker.askPermission(manifestPermission)
         return result == PermissionResult.GRANTED
+    }
+
+    /**
+     * The OS answer for [capability], for a request that can come with no screen, such as from a chat worker.
+     * A permission that the OS gave already needs no activity. Otherwise the OS dialog shows only when the app is in
+     * front. Returns null when no screen can show the dialog: that is not a refusal.
+     */
+    suspend fun osPermissionOrNull(capability: DeviceCapabilityType): Boolean? {
+        val manifestPermission = capability.toManifestPermission() ?: return true
+        if (ContextCompat.checkSelfPermission(context, manifestPermission) == PackageManager.PERMISSION_GRANTED) {
+            return true
+        }
+        return foregroundPrompt.ask { permissionAsker.askPermission(manifestPermission) == PermissionResult.GRANTED }
     }
 
     private fun DeviceCapabilityType.toManifestPermission(): String? = when (this) {

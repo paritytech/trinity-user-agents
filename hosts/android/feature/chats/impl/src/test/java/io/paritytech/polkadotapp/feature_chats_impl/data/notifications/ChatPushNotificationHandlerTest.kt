@@ -17,6 +17,7 @@ import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepo
 import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_calls_api.domain.CallController
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatActiveTracker
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
@@ -38,6 +39,8 @@ import io.paritytech.polkadotapp.feature_chats_impl.utils.ChatMessageMappingHelp
 import io.paritytech.polkadotapp.feature_statement_store_api.data.StatementRequestDecoder
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import io.paritytech.polkadotapp.common.R as RCommon
@@ -59,6 +62,7 @@ class ChatPushNotificationHandlerTest {
     private val accountRepository: AccountRepository = mockk()
     private val chainRegistry: ChainRegistry = mockk()
     private val knownChains: KnownChains = mockk()
+    private val personChatMode: PersonChatMode = mockk { every { isProductChat() } returns false }
 
     private val handler = ChatPushNotificationHandler(
         incomingChatPushDecoder = incomingChatPushDecoder,
@@ -78,6 +82,7 @@ class ChatPushNotificationHandlerTest {
         chainRegistry = chainRegistry,
         knownChains = knownChains,
         compactionExpansionStarter = mockk(),
+        personChatMode = personChatMode,
         appContext = appContext,
     )
 
@@ -89,6 +94,15 @@ class ChatPushNotificationHandlerTest {
         every { appLifecycleObserver.getCurrentState() } returns AppLifecycleState.BACKGROUND
         every { chatActiveTracker.getActive() } returns null
         coEvery { chatEngine.saveMessage(any(), any(), any(), any()) } returns true
+    }
+
+    @Test
+    fun `while the chat product runs the chats the native chat takes no push`() = runBlocking<Unit> {
+        assertTrue(handler.canHandle(LEGACY_PUSH))
+
+        every { personChatMode.isProductChat() } returns true
+
+        assertFalse(handler.canHandle(LEGACY_PUSH))
     }
 
     @Test

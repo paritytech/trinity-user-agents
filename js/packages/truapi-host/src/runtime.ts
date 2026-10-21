@@ -1,10 +1,17 @@
 import type {
   HostChatActionSubscribeItem,
+  HostChatRoomEventsSubscribeItem,
   HostRendererActionSubscribeItem,
   ProductRendererRenderRequest,
   RendererNode,
+  V01HostChatActionSubscribeItem,
   WireProvider,
 } from "@parity/truapi";
+import type {
+  ChatHostQueries,
+  ChatWakeOutcome,
+  ChatWakeReason,
+} from "./chat-queries.js";
 import { CoreStorageKey as GeneratedCoreStorageKey } from "./generated/host-callbacks.js";
 import type {
   CoreAdmin,
@@ -19,6 +26,20 @@ import type {
 // SCALE bytes. The web worker pairing-host runtime adapts this typed surface
 // into the byte-oriented callback bridge consumed by the WASM core.
 export * from "./generated/host-callbacks.js";
+export {
+  CHAT_QUERY_NAMES,
+  CHAT_QUERY_TIMEOUTS_MS,
+  chatQueryTimeoutMs,
+} from "./chat-queries.js";
+export type { ChatWakeOutcome, ChatWakeReason } from "./chat-queries.js";
+export type {
+  ChatHostQueries,
+  ChatHostRuntime,
+  ChatQueryName,
+  ChatQueryOptions,
+  ChatQueryRefusal,
+  ChatQueryResult,
+} from "./chat-queries.js";
 export type { JsonRpcConnection as PlatformJsonRpcConnection } from "./generated/host-callbacks.js";
 
 /** Encode a typed core-storage slot for hosts that need an opaque backing key. */
@@ -157,7 +178,16 @@ export interface WorkerDemandChange {
   wanted: boolean;
 }
 
-export interface TrUApiProductProvider extends WireProvider, CoreAdmin {
+/**
+ * The chat queries of a provider. Each member is optional, because only a
+ * runtime with a live channel to the core can ask the product.
+ */
+export type TrUApiProductChatQueries = {
+  [Name in keyof ChatHostQueries]?: ChatHostQueries[Name];
+};
+
+export interface TrUApiProductProvider
+  extends WireProvider, CoreAdmin, TrUApiProductChatQueries {
   /**
    * Re-tune the wasm core's log level at runtime. Present on runtimes that
    * keep a live channel to the core (e.g. the Web Worker provider); absent on
@@ -166,14 +196,64 @@ export interface TrUApiProductProvider extends WireProvider, CoreAdmin {
   setLogLevel?(level: LogLevel): void;
 
   /**
-   * Publish one host-authored Chat action into the product's action stream —
-   * the path a posted message, a command, or a host-drawn `Actions` button
-   * takes back to the product. Buffered until the product subscribes. Rejects
-   * when this connection may not reach Chat.
+   * Publish one host-authored Chat action of the first protocol version into
+   * the product's action stream — the path a posted message, a command, or a
+   * host-drawn `Actions` button takes back to the product. The core converts
+   * it to the current version. Buffered until the product subscribes. Rejects
+   * when this connection may not reach Chat. Prefer {@link publishChatEvent},
+   * which carries every event.
    *
    * Present only on runtimes that keep a live channel to the core.
    */
-  publishChatAction?(action: HostChatActionSubscribeItem): Promise<void>;
+  publishChatAction?(action: V01HostChatActionSubscribeItem): Promise<void>;
+
+  /**
+   * Publish one Chat event of the current protocol version into the
+   * product's action stream: a posted message with its id, a command, a
+   * button, menu, toolbar or quick-reply press, an edit, delete, reaction or
+   * seen report in a room the host stores, or the room screen as it opens and
+   * closes. The core keeps it until the product subscribes, and gives a
+   * subscriber at the first protocol version only the events that version can
+   * carry. Rejects when this connection may not reach Chat.
+   *
+   * Present only on runtimes that keep a live channel to the core.
+   */
+  publishChatEvent?(item: HostChatActionSubscribeItem): Promise<void>;
+
+  /**
+   * Give one event to the product's `room_events_subscribe` stream: the user
+   * muted or archived a room, pressed a call button, answered or ended a
+   * call, or picked another alternative of a message. The core keeps the
+   * newest 64 events of a product that has no subscriber. Rejects when this
+   * connection may not reach Chat, or the core refuses the event.
+   *
+   * Present only on runtimes that keep a live channel to the core.
+   */
+  publishChatRoomEvent?(item: HostChatRoomEventsSubscribeItem): Promise<void>;
+
+  /**
+   * Hold the worker of the provider's product for 30 s. A new wake moves the
+   * end of the hold. A notification wake also sends `Woken` to the room, at
+   * most 12 times in one rolling hour; after that it answers `BudgetSpent`.
+   *
+   * Present only on runtimes that keep a live channel to the core.
+   */
+  wakeProduct?(reason: ChatWakeReason): Promise<ChatWakeOutcome>;
+
+  /**
+   * Store a user attachment of a room as a preimage that the Bulletin
+   * allowance of the product pays for, and give its key. The core rejects a
+   * room whose features do not declare `preimageAttachments`, an attachment
+   * above 8 MiB or above the Bulletin chain's per-transaction bound, and a
+   * product the user refused `PreimageSubmit`; the reason names which.
+   *
+   * Present only on runtimes that keep a live channel to the core.
+   */
+  stageChatAttachment?(
+    roomId: string,
+    mimeType: string,
+    bytes: Uint8Array,
+  ): Promise<Uint8Array>;
 
   /**
    * Publish one action triggered inside a product-rendered body. Buffered

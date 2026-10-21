@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.tools_car_parser
 
 import com.google.protobuf.ByteString
 import io.ipfs.multihash.Multihash
+import io.paritytech.polkadotapp.common.utils.blake2b256
 import io.paritytech.polkadotapp.common.utils.padEnd
 import io.paritytech.polkadotapp.tools_car_parser.proto.MerkleDagProto.PBLink
 import io.paritytech.polkadotapp.tools_car_parser.proto.MerkleDagProto.PBNode
@@ -13,6 +14,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.security.MessageDigest
 
 /**
  * Verifies the streaming [CarParser.unpack] reconstructs byte-for-byte the same files as the
@@ -129,6 +131,50 @@ class CarParserStreamingTest {
     }
 
     // -- Assertions --
+
+    // The chat product takes a dotNS release only once its archive is the content of the name's contenthash (HX4).
+    @Test
+    fun `an archive whose blocks hash to their CIDs is the content of its root and of no other`() {
+        val file = buildFileNode("worker".toByteArray())
+        val fileCid = contentCid(file, Multihash.Type.blake2b_256)
+        val root = buildDirectoryNode(links = listOf("index.js" to fileCid))
+        val rootCid = contentCid(root, Multihash.Type.sha2_256)
+
+        withCarFile(buildCar(rootCid, listOf(rootCid to root, fileCid to file))) { car ->
+            CarParser.verify(car, rootCid)
+            assertThrows(IllegalArgumentException::class.java) { CarParser.verify(car, createFakeCid("other")) }
+        }
+    }
+
+    @Test
+    fun `a block that does not hash to its CID fails the check`() {
+        val file = buildFileNode("tampered".toByteArray())
+        val fileCid = contentCid(buildFileNode("worker".toByteArray()), Multihash.Type.sha2_256)
+        val root = buildDirectoryNode(links = listOf("index.js" to fileCid))
+        val rootCid = contentCid(root, Multihash.Type.sha2_256)
+
+        withCarFile(buildCar(rootCid, listOf(rootCid to root, fileCid to file))) { car ->
+            assertThrows(IllegalArgumentException::class.java) { CarParser.verify(car, rootCid) }
+        }
+    }
+
+    private fun contentCid(block: BlockData, type: Multihash.Type): Cid {
+        val digest = when (type) {
+            Multihash.Type.blake2b_256 -> block.blake2b256()
+            else -> MessageDigest.getInstance("SHA-256").digest(block)
+        }
+        return Cid.buildCidV1(Cid.Codec.DagProtobuf, type, digest)
+    }
+
+    private fun withCarFile(carBytes: ByteArray, check: (File) -> Unit) {
+        val tempFile = File.createTempFile("test-car", ".car")
+        try {
+            tempFile.writeBytes(carBytes)
+            check(tempFile)
+        } finally {
+            tempFile.delete()
+        }
+    }
 
     private fun assertParity(carBytes: ByteArray) {
         val buffered = CarParser.parse(carBytes).getOrThrow().files

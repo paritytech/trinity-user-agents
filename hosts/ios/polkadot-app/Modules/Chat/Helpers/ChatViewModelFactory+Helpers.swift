@@ -14,13 +14,12 @@ extension ChatMetadata {
             return .colored(text: prefix, colorSeed: chatId.colorSeed)
         }()
 
-        let info: String? = nil
-
+        // The count of participants replaces the description in P6.3.
         return ChatHeaderConfiguration(
             avatarViewModel: avatarViewModel,
             icon: peerMetadata.icon.imageViewModel(using: iconViewModelFactory),
             username: peerMetadata.name,
-            additionalInfo: info
+            additionalInfo: subtitle
         )
     }
 }
@@ -104,6 +103,25 @@ extension UIAction {
         UIAction(
             title: String(localized: .chatCopy),
             image: UIImage(resource: .copy).withTintColor(.fgPrimary, renderingMode: .alwaysOriginal)
+        ) { _ in
+            action()
+        }
+    }
+
+    static func chatDelete(_ action: @escaping () -> Void) -> UIAction {
+        UIAction(
+            title: String(localized: .ChatExtension.messageDelete),
+            image: UIImage(systemName: "trash"),
+            attributes: .destructive
+        ) { _ in
+            action()
+        }
+    }
+
+    static func chatRetry(_ action: @escaping () -> Void) -> UIAction {
+        UIAction(
+            title: String(localized: .Common.retry),
+            image: UIImage(resource: .iconRefresh).withTintColor(.fgPrimary, renderingMode: .alwaysOriginal)
         ) { _ in
             action()
         }

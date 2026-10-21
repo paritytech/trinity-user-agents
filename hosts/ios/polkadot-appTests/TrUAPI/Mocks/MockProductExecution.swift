@@ -24,6 +24,8 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     private(set) var pocketCardNotifications: [[PocketCard]] = []
 
     private(set) var publishedChatActions: [HostChatActionSubscribeItem] = []
+    /// The Chat Extension v2 events, in order.
+    private(set) var publishedChatEvents: [PublishedChatEvent] = []
     private(set) var publishedRendererActions: [HostRendererActionSubscribeItem] = []
     /// Requests passed to `render`, in order, including ones that threw, so
     /// `renderRequests.count` is the call count the retry tests assert on.
@@ -40,6 +42,26 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     /// does. A stream that finishes is reopened after a wall-clock backoff, so
     /// a test counting `render` calls has to hold it open to be deterministic.
     var keepsRenderStreamOpen = false
+
+    /// One chat query that the host asked, with its timeout.
+    enum ChatQueryCall {
+        case messages(ProductChatMessagesQueryRequest, Duration)
+        case userAction(ProductChatUserActionRequest, Duration)
+        case reactions(ProductChatReactionsQueryRequest, Duration)
+        case participants(ProductChatParticipantsQueryRequest, Duration)
+        case messageActions(ProductChatMessageActionsQueryRequest, Duration)
+    }
+
+    /// The chat queries, in order.
+    private(set) var queryLog: [ChatQueryCall] = []
+    /// The answers of the chat queries. Nil answers as the product without the query does.
+    var messagesAnswer: Result<ProductChatMessagesQueryItem, Error>?
+    var userActionAnswer: Result<ProductChatUserActionItem, Error>?
+    var reactionsAnswer: Result<ProductChatReactionsQueryItem, Error>?
+    var participantsAnswer: Result<ProductChatParticipantsQueryItem, Error>?
+    /// Answers each participants question by its kind. It wins over `participantsAnswer`.
+    var participantsAnswerFor: ((ChatParticipantsQuery) -> Result<ProductChatParticipantsQueryItem, Error>)?
+    var messageActionsAnswer: Result<ProductChatMessageActionsQueryItem, Error>?
 
     private let renderSignal: AsyncStream<Void>.Continuation
     private var renderSignals: AsyncStream<Void>.AsyncIterator
@@ -101,6 +123,53 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
 
     func publishChatAction(_ item: HostChatActionSubscribeItem) throws {
         publishedChatActions.append(item)
+    }
+
+    func publishChatEvent(roomId: String, peer: String, event: ChatEvent) throws {
+        publishedChatEvents.append(PublishedChatEvent(roomId: roomId, peer: peer, event: event))
+    }
+
+    func chatMessagesQuery(
+        _ request: ProductChatMessagesQueryRequest,
+        timeout: Duration
+    ) async throws -> ProductChatMessagesQueryItem {
+        queryLog.append(.messages(request, timeout))
+        return try (messagesAnswer ?? .failure(ChatQueryError.refused(.notAvailable))).get()
+    }
+
+    func chatUserAction(
+        _ request: ProductChatUserActionRequest,
+        timeout: Duration
+    ) async throws -> ProductChatUserActionItem {
+        queryLog.append(.userAction(request, timeout))
+        return try (userActionAnswer ?? .failure(ChatQueryError.actionRefused(.unknownRoom))).get()
+    }
+
+    func chatReactionsQuery(
+        _ request: ProductChatReactionsQueryRequest,
+        timeout: Duration
+    ) async throws -> ProductChatReactionsQueryItem {
+        queryLog.append(.reactions(request, timeout))
+        return try (reactionsAnswer ?? .failure(ChatQueryError.refused(.notAvailable))).get()
+    }
+
+    func chatParticipantsQuery(
+        _ request: ProductChatParticipantsQueryRequest,
+        timeout: Duration
+    ) async throws -> ProductChatParticipantsQueryItem {
+        queryLog.append(.participants(request, timeout))
+        if let participantsAnswerFor {
+            return try participantsAnswerFor(request.query).get()
+        }
+        return try (participantsAnswer ?? .failure(ChatQueryError.refused(.notAvailable))).get()
+    }
+
+    func chatMessageActionsQuery(
+        _ request: ProductChatMessageActionsQueryRequest,
+        timeout: Duration
+    ) async throws -> ProductChatMessageActionsQueryItem {
+        queryLog.append(.messageActions(request, timeout))
+        return try (messageActionsAnswer ?? .failure(ChatQueryError.refused(.notAvailable))).get()
     }
 
     func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error> {
@@ -169,4 +238,11 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         pocketCardNotifications.append(cards)
         pocketCardSignal.yield(cards)
     }
+}
+
+/// One event that a test execution received through `publishChatEvent`.
+struct PublishedChatEvent: Equatable {
+    let roomId: String
+    let peer: String
+    let event: ChatEvent
 }

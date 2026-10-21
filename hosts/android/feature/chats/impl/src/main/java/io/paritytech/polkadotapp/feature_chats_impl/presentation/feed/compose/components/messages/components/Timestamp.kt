@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -71,6 +72,8 @@ fun FilledMessageTimestamp(
     }
 }
 
+private const val DELIVERED_ICON_ALPHA = 0.5f
+
 @Composable
 private fun MessageTimestampContent(
     modifier: Modifier = Modifier,
@@ -95,11 +98,17 @@ private fun MessageTimestampContent(
         if (message.direction == ChatMessageUiModel.Direction.OUTGOING) {
             val isFailed = message.status == ChatMessageUiModel.Status.FAILED
 
+            // Delivered and read both show two ticks; delivered ticks are weaker (02-DESIGN §6.5).
+            val isDelivered = message.status == ChatMessageUiModel.Status.DELIVERED
+
             NovaIcon(
-                modifier = Modifier.size(12.dp),
+                modifier = Modifier
+                    .size(12.dp)
+                    .alpha(if (isDelivered) DELIVERED_ICON_ALPHA else 1f),
                 imageVector = when (message.status) {
                     ChatMessageUiModel.Status.PENDING -> MessageStatusPending
                     ChatMessageUiModel.Status.SENT -> MessageStatusSent
+                    ChatMessageUiModel.Status.DELIVERED,
                     ChatMessageUiModel.Status.READ -> MessageStatusRead
                     ChatMessageUiModel.Status.FAILED -> MessageStatusFailed
                 },
@@ -128,7 +137,8 @@ private fun MessageTimestampPreview() {
                     reactions = persistentListOf(),
                     origin = ChatMessageOrigin.User,
                     replyPreview = null,
-                    isEdited = false
+                    isEdited = false,
+                    isMarkdown = false
                 )
 
                 ChatMessageSurface(
@@ -148,7 +158,8 @@ private fun MessageTimestampPreview() {
                     reactions = persistentListOf(),
                     origin = ChatMessageOrigin.User,
                     replyPreview = null,
-                    isEdited = false
+                    isEdited = false,
+                    isMarkdown = false
                 )
 
                 ChatMessageSurface(

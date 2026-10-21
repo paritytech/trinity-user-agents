@@ -15,4 +15,5 @@ fun StartChatData.toChatFeedPayload(): ChatFeedPayload = when (this) {
     )
 
     is StartChatData.ExistingChat -> ChatFeedPayload.existingContactChat(contactAccountId)
+    is StartChatData.ProductRoom -> ChatFeedPayload.existingChat(chatId)
 }

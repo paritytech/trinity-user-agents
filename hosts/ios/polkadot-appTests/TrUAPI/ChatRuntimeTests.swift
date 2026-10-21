@@ -79,6 +79,24 @@ private func workersRunning(_ execution: MockProductExecution) -> StubWorkerMana
     return workers
 }
 
+/// Starts `runtime`, runs `body` and disposes the runtime on every path. A started handler that is dropped
+/// without `dispose()` fires an `assert` in its `deinit`, and that ends the whole test process.
+private func withStartedRuntime(
+    _ runtime: TrUAPIChatHandler,
+    _ body: (TrUAPIChatHandler) async throws -> Void
+) async throws {
+    try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+    let outcome: Result<Void, Error>
+    do {
+        try await body(runtime)
+        outcome = .success(())
+    } catch {
+        outcome = .failure(error)
+    }
+    await runtime.dispose()
+    try outcome.get()
+}
+
 // MARK: - Tests
 
 struct ChatRuntimeTests {
@@ -129,6 +147,7 @@ struct ChatRuntimeTests {
         let runtime = makeRustRuntime(workers: workers)
 
         try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+        try await runtime.open(roomId: "room")
         #expect(workers.references.acquired == [chatProduct])
 
         await runtime.dispose()
@@ -171,15 +190,30 @@ struct ChatRuntimeTests {
         await live.dispose()
     }
 
-    /// The bot posts its welcome message the moment `start` returns, so `start`
+    /// The discovery of the bot holds no worker (02-DESIGN D10): `start` returns at once and asks for nothing.
+    @Test func rustRuntimeStartHoldsNoWorker() async throws {
+        let workers = StubWorkerManager()
+        let runtime = makeRustRuntime(workers: workers)
+
+        try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+
+        #expect(workers.references.acquired.isEmpty)
+        #expect(workers.context(of: chatProduct).chat.currentMessaging != nil)
+
+        await runtime.dispose()
+        #expect(workers.references.released.isEmpty)
+    }
+
+    /// The room screen sends its first request the moment `open` returns, so `open`
     /// has to wait for the worker rather than return onto an execution that is
     /// not there yet.
-    @Test func rustRuntimeStartWaitsForTheWorkerToComeUp() async throws {
+    @Test func rustRuntimeOpenWaitsForTheWorkerToComeUp() async throws {
         let workers = StubWorkerManager()
         let execution = MockProductExecution()
         let runtime = makeRustRuntime(workers: workers)
+        try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
 
-        let start = Task { try await runtime.start(messagingSupport: .init(bot: nil, context: nil)) }
+        let opening = Task { try await runtime.open(roomId: "room") }
         try await withTimeout(.hangGuard) {
             var asks = workers.asks.makeAsyncIterator()
             _ = await asks.next()
@@ -187,7 +221,7 @@ struct ChatRuntimeTests {
 
         workers.publish([chatProduct: execution])
         try await withTimeout(.hangGuard) {
-            try await withTaskCancellationHandler { try await start.value } onCancel: { start.cancel() }
+            try await withTaskCancellationHandler { try await opening.value } onCancel: { opening.cancel() }
         }
 
         try await runtime.onUserMessage(text: "hi", roomId: "room")
@@ -205,7 +239,7 @@ struct ChatRuntimeTests {
         let runtime = makeRustRuntime(workers: workers)
 
         var asks = workers.asks.makeAsyncIterator()
-        let starting = Task { try await runtime.start(messagingSupport: .init(bot: nil, context: nil)) }
+        let starting = Task { try await runtime.holdWorker() }
         await asks.next()
 
         await runtime.dispose()
@@ -223,18 +257,25 @@ struct ChatRuntimeTests {
         let runtime = makeRustRuntime(workers: workers)
 
         await #expect(throws: TimeoutError.self) {
-            try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+            try await runtime.open(roomId: "room")
+        }
+        await #expect(throws: TimeoutError.self) {
+            try await runtime.holdWorker()
         }
 
-        #expect(workers.references.acquired == [chatProduct])
-        #expect(workers.references.released == [chatProduct])
+        #expect(workers.references.acquired == [chatProduct, chatProduct])
+        #expect(workers.references.released == [chatProduct, chatProduct])
     }
 
     /// `ProductBot` downgrades this one to a debug log, so it has to stay distinct
-    /// from a real failure.
+    /// from a real failure. The message wakes the worker and waits for it for the start window of a message.
     @Test func rustRuntimeChatSeamsFailBeforeTheWorkerIsUp() async {
         let execution = MockProductExecution()
-        let runtime = makeRustRuntime(workers: StubWorkerManager())
+        let runtime = TrUAPIChatHandler(
+            productId: chatProduct,
+            workers: StubWorkerManager(),
+            messageStartupWindow: .milliseconds(100)
+        )
 
         await #expect(throws: TrUAPIChatHandler.ChatSeamError.notStarted) {
             try await runtime.onUserMessage(text: "hi", roomId: "room")
@@ -262,17 +303,18 @@ struct ChatRuntimeTests {
             ProductRuntimeError.NotConnected,
             ProductRuntimeError.NotConnected
         ]
-        let runtime = makeRustRuntime(workers: workersRunning(execution))
-        try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+        // The window only bounds a product that never attaches. A loaded test
+        // process can stretch the two retries, so the window is wide here.
+        let runtime = makeRustRuntime(workers: workersRunning(execution), renderStartupWindow: .seconds(60))
 
-        let stream = await runtime.renderMessage(
-            roomId: "room", messageId: "m1", messageType: "t", messageData: Data()
-        )
-        for try await _ in stream {}
+        try await withStartedRuntime(runtime) { runtime in
+            let stream = await runtime.renderMessage(
+                roomId: "room", messageId: "m1", messageType: "t", messageData: Data()
+            )
+            for try await _ in stream {}
+        }
 
         #expect(execution.renderRequests.count == 3)
-
-        await runtime.dispose()
     }
 
     /// Anything that is not a startup race is terminal: surface it on the first
@@ -314,13 +356,14 @@ struct ChatRuntimeTests {
         let execution = MockProductExecution()
         execution.renderNodes = [.string(text: "hello")]
         let runtime = makeRustRuntime(workers: workersRunning(execution))
-        try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
 
         var outputs: [ChatRendererOutput] = []
-        for try await output in await runtime.renderMessage(
-            roomId: "room", messageId: "m1", messageType: "t", messageData: Data()
-        ) {
-            outputs.append(output)
+        try await withStartedRuntime(runtime) { runtime in
+            for try await output in await runtime.renderMessage(
+                roomId: "room", messageId: "m1", messageType: "t", messageData: Data()
+            ) {
+                outputs.append(output)
+            }
         }
 
         #expect(outputs.count == 1)
@@ -338,8 +381,6 @@ struct ChatRuntimeTests {
         } else {
             Issue.record("a chat body must be rendered under a chatMessage context")
         }
-
-        await runtime.dispose()
     }
 
     /// A cell can decode before the product's worker is up. Without `.notStarted`
@@ -349,7 +390,7 @@ struct ChatRuntimeTests {
         let workers = StubWorkerManager()
         let execution = MockProductExecution()
         execution.renderNodes = [.string(text: "late")]
-        let runtime = makeRustRuntime(workers: workers)
+        let runtime = makeRustRuntime(workers: workers, renderStartupWindow: .seconds(60))
 
         let render = Task {
             await runtime.renderMessage(
@@ -362,17 +403,16 @@ struct ChatRuntimeTests {
         }
 
         workers.publish([chatProduct: execution])
-        try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
 
         var outputs: [ChatRendererOutput] = []
-        for try await output in await render.value {
-            outputs.append(output)
+        try await withStartedRuntime(runtime) { _ in
+            for try await output in await render.value {
+                outputs.append(output)
+            }
         }
 
         #expect(outputs.count == 1)
         #expect(execution.renderRequests.count == 1)
-
-        await runtime.dispose()
     }
 
     /// The rust path opts out of the native bot's typing delay: its callbacks are

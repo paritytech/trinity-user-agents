@@ -10,6 +10,12 @@ public extension ChatViewLayout {
         let scrollToReactionConfiguration: ScrollToReactionButtonConfiguration
         let sections: [Section]
         let footerConfiguration: (any HashableContentConfiguration)?
+        /// The text that the chat shows while it has no messages. Nil shows nothing.
+        let placeholderText: String?
+        /// The state of each end of the window. A product-source room pages, other rooms hold every message.
+        public var paging: Paging = .complete
+        /// The line above the input while the product of the room loads or does not answer.
+        public var roomStatus: RoomStatus?
 
         public init(
             headerConfiguration: ChatHeaderConfiguration,
@@ -19,7 +25,8 @@ public extension ChatViewLayout {
             scrollDownConfiguration: ScrollDownButtonConfiguration,
             scrollToReactionConfiguration: ScrollToReactionButtonConfiguration = .init(),
             sections: [Section],
-            footerConfiguration: (any HashableContentConfiguration)?
+            footerConfiguration: (any HashableContentConfiguration)?,
+            placeholderText: String? = nil
         ) {
             self.headerConfiguration = headerConfiguration
             self.chatInputConfiguration = chatInputConfiguration
@@ -29,6 +36,7 @@ public extension ChatViewLayout {
             self.initiallyVisibleMessageIdentifier = initiallyVisibleMessageIdentifier
             self.firstUnreadMessageIdentifier = firstUnreadMessageIdentifier
             self.footerConfiguration = footerConfiguration
+            self.placeholderText = placeholderText
         }
     }
 }
@@ -60,8 +68,8 @@ public extension ChatViewLayout.ViewModel {
 
 public extension ChatViewLayout {
     struct Section {
-        let identifier: String
-        let dateText: String
+        public let identifier: String
+        public let dateText: String
         public let messages: [IdentifiableAnyContentConfiguration<ChatViewLayout.ItemIdentifierType>]
 
         public init(

@@ -134,6 +134,44 @@ pub fn build_long_term_storage_extra(
 	Ok(extra)
 }
 
+/// Encode `Resources.set_notification_statement_account_for_sequence((period, seq), account_id)`:
+/// `pallet ‖ call ‖ period_u32LE ‖ seq_u8 ‖ account_id[32]`, with the dispatch
+/// indices resolved from `metadata`.
+pub fn build_set_notification_account_call(
+	metadata: &Metadata,
+	period: u32,
+	seq: u8,
+	account_id: &[u8; 32],
+) -> Result<Vec<u8>, StatementAllowanceError> {
+	let indices =
+		metadata.call_indices("Resources", "set_notification_statement_account_for_sequence")?;
+	let mut call = Vec::with_capacity(2 + 4 + 1 + 32);
+	call.extend_from_slice(&indices);
+	ClaimLongTermStorageCallArgs { period, counter: seq, account_id: *account_id }
+		.encode_to(&mut call);
+	Ok(call)
+}
+
+/// Encode the `AsResources` extension `extra` for a notification slot:
+/// `Some(RegisterNotificationForCollection { proof, ring_index, revision, collection })`,
+/// with the variant indices resolved from `metadata`.
+pub fn build_notification_extra(
+	metadata: &Metadata,
+	proof: &[u8],
+	ring_index: u32,
+	revision: u32,
+	collection: PersonhoodCollection,
+) -> Result<Vec<u8>, StatementAllowanceError> {
+	let (info_index, personhood) =
+		metadata.as_resources_variant_indices("RegisterNotificationForCollection", collection)?;
+	let mut extra = Vec::with_capacity(2 + 2 + proof.len() + 4 + 4 + 1);
+	extra.push(OPTION_SOME);
+	extra.push(info_index);
+	RegisterStatementStoreAllowanceInfo { proof: proof.to_vec(), ring_index, revision, personhood }
+		.encode_to(&mut extra);
+	Ok(extra)
+}
+
 /// Encode `Pgas.claim_pgas(slot_index, target)` on Asset Hub:
 /// `pallet ‖ call ‖ slot_index_u32LE ‖ target[32]`, with the dispatch indices
 /// resolved from `metadata`.
@@ -447,6 +485,31 @@ mod tests {
 		let args = ClaimPgasCallArgs { slot_index: 5, target };
 
 		assert_eq!(args.encode(), [5u32.encode(), target.to_vec()].concat());
+	}
+
+	// The native apps claim a notification slot for each chat-request
+	// delivery account with this call and this extension; both names must be
+	// in the People runtime the fixture captures.
+	#[test]
+	fn a_notification_slot_claim_is_the_call_and_variant_the_native_apps_send() {
+		let metadata = crate::runtime::statement_allowance::test_fixtures::people();
+		let call = build_set_notification_account_call(metadata, 7, 3, &[5u8; 32]).unwrap();
+		assert_eq!(&call[2..], [7u32.to_le_bytes().to_vec(), vec![3], vec![5u8; 32]].concat());
+		let proof = vec![0xEE; 785];
+		let extra =
+			build_notification_extra(metadata, &proof, 3, 9, PersonhoodCollection::People).unwrap();
+		assert_eq!(&extra[..1], &[0x01]);
+		assert_eq!(
+			&extra[2..],
+			[
+				Compact(785u32).encode(),
+				proof,
+				3u32.to_le_bytes().to_vec(),
+				9u32.to_le_bytes().to_vec(),
+				vec![0x00],
+			]
+			.concat()
+		);
 	}
 
 	#[test]

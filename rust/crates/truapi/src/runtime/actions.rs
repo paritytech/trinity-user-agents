@@ -34,17 +34,12 @@ pub struct ActionChannel<Item> {
 impl<Item: Send + 'static> ActionChannel<Item> {
 	/// Create an empty channel; `closed_reason` names the stream in the
 	/// interrupt a late subscriber sees after `close`.
-	fn new(closed_reason: &'static str) -> Self {
+	pub fn new(closed_reason: &'static str) -> Self {
 		Self {
 			state: Mutex::new(State::default()),
 			closed_reason,
 			last_published_secs: AtomicU64::new(0),
 		}
-	}
-
-	/// One connection's Chat action stream.
-	pub fn chat() -> Self {
-		Self::new("chat is closed for this product connection")
 	}
 
 	/// One connection's Renderer action stream.

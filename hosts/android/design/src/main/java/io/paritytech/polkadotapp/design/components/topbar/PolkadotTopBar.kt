@@ -51,6 +51,8 @@ fun PolkadotTopBar(
     titleSize: TopBarTitleSize = TopBarTitleSize.Standard,
     actions: ImmutableList<TopBarAction> = persistentListOf(),
     leadingContent: (@Composable () -> Unit)? = null,
+    // Buttons that draw before [actions], such as product buttons whose icons are images, not vectors.
+    extraActions: (@Composable () -> Unit)? = null,
     content: (@Composable () -> Unit)? = null,
 ) {
     TopBar(
@@ -62,6 +64,7 @@ fun PolkadotTopBar(
         titleSize = titleSize,
         actions = actions,
         leadingContent = leadingContent,
+        extraActions = extraActions,
         content = content,
     )
 }
@@ -76,6 +79,8 @@ fun PolkadotTopBar(
     titleSize: TopBarTitleSize = TopBarTitleSize.Standard,
     actions: ImmutableList<TopBarAction> = persistentListOf(),
     leadingContent: (@Composable () -> Unit)? = null,
+    // Buttons that draw before [actions], such as product buttons whose icons are images, not vectors.
+    extraActions: (@Composable () -> Unit)? = null,
     content: (@Composable () -> Unit)? = null,
 ) {
     TopBar(
@@ -87,6 +92,7 @@ fun PolkadotTopBar(
         titleSize = titleSize,
         actions = actions,
         leadingContent = leadingContent,
+        extraActions = extraActions,
         content = content,
     )
 }
@@ -101,6 +107,7 @@ private fun TopBar(
     titleSize: TopBarTitleSize,
     actions: ImmutableList<TopBarAction>,
     leadingContent: (@Composable () -> Unit)?,
+    extraActions: (@Composable () -> Unit)?,
     content: (@Composable () -> Unit)?,
 ) {
     require(actions.size <= MAX_TOP_BAR_ACTIONS) { "Top bar supports at most $MAX_TOP_BAR_ACTIONS actions" }
@@ -133,6 +140,7 @@ private fun TopBar(
                 subtitle = subtitle,
                 titleStyle = titleStyle,
                 actions = actions,
+                extraActions = extraActions,
             )
         } else {
             StartTopBar(
@@ -143,6 +151,7 @@ private fun TopBar(
                 subtitle = subtitle,
                 titleStyle = titleStyle,
                 actions = actions,
+                extraActions = extraActions,
                 content = content,
             )
         }
@@ -157,6 +166,7 @@ private fun CenteredTopBar(
     subtitle: String?,
     titleStyle: TextStyle,
     actions: ImmutableList<TopBarAction>,
+    extraActions: (@Composable () -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     // Reserve equal side gutters (= the wider side) so the title is centered to the bar itself,
@@ -174,7 +184,7 @@ private fun CenteredTopBar(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 )
             },
-            { if (actions.isNotEmpty()) TopBarActions(actions) },
+            { if (actions.isNotEmpty() || extraActions != null) TopBarActions(actions, extraActions) },
         ),
     ) { (startMeasurables, centerMeasurables, endMeasurables), constraints ->
         val looseConstraints = constraints.copy(minWidth = 0)
@@ -215,6 +225,7 @@ private fun StartTopBar(
     subtitle: String?,
     titleStyle: TextStyle,
     actions: ImmutableList<TopBarAction>,
+    extraActions: (@Composable () -> Unit)?,
     content: (@Composable () -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
@@ -244,8 +255,8 @@ private fun StartTopBar(
             )
         }
 
-        if (actions.isNotEmpty()) {
-            TopBarActions(actions)
+        if (actions.isNotEmpty() || extraActions != null) {
+            TopBarActions(actions, extraActions)
         }
     }
 }
@@ -314,10 +325,11 @@ private fun TitleColumn(
 }
 
 @Composable
-private fun TopBarActions(actions: ImmutableList<TopBarAction>) {
+private fun TopBarActions(actions: ImmutableList<TopBarAction>, extraActions: (@Composable () -> Unit)?) {
     // Single Row so the parent's itemSpacing never separates individual action buttons —
     // Figma keeps trailing icon buttons flush (their 12dp internal padding is the only gap).
     Row(verticalAlignment = Alignment.CenterVertically) {
+        extraActions?.invoke()
         actions.fastForEach { action ->
             TopBarActionButton(
                 icon = action.icon,

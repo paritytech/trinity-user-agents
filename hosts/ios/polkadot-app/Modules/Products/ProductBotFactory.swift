@@ -46,10 +46,16 @@ final class ProductBotFactory {
         let images = productImages.resolver(contentId: { resolved.contentId(for: .worker) })
         let resolveImage = WidgetImageResolver.cached { await images.resolve($0) }
 
-        if settingsManager.isTrUAPIRuntimeEnabled, let workers = workers() {
+        // The chat product needs the core's `PersonChat`: it runs there whatever the runtime setting says, and the
+        // native bridge never runs it.
+        let chatProduct = BundledChatProductResolver.isChatProduct(product.identifier)
+        if settingsManager.isTrUAPIRuntimeEnabled || chatProduct, let workers = workers() {
             let runtime = TrUAPIChatHandler(
                 productId: product.identifier,
                 workers: workers,
+                keepAlive: ProductWorkerKeepAlive.of(resolved) {
+                    productFileProvider.manualWorkerKeepAlive(productId: $0)
+                },
                 logger: logger
             )
             return ProductBot(
@@ -60,6 +66,8 @@ final class ProductBotFactory {
                 logger: logger
             )
         }
+
+        guard !chatProduct else { return nil }
 
         let runtime = ManagedChatRuntime(productId: product.identifier, manager: workerManager)
         return ProductBot(

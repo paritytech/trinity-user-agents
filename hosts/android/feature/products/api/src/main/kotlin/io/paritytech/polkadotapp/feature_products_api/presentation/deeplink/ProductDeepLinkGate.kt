@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_api.presentation.deeplink
 
+import android.net.Uri
 import io.paritytech.polkadotapp.feature_products_api.domain.FundingDomainProvider
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 
@@ -20,4 +21,19 @@ class ProductDeepLinkGate(
 
         return productId in fundingDomainProvider.getFundingProductIds().getOrNull().orEmpty()
     }
+}
+
+/** The first path segment the core reserves for targets the host answers itself, rather than the product. */
+private const val RESERVED_SEGMENT = "-"
+
+private const val CHAT_SEGMENT = "chat"
+private const val CHAT_ROOM_PATH_SIZE = 3
+
+/** `/-/chat/<room>`, the link into a chat room of the product (02-DESIGN §13 item 15). */
+fun Uri.isChatRoomTarget(): Boolean = chatRoomIdOf(pathSegments) != null
+
+/** The room of `/-/chat/<room>` path segments, decoded and trimmed, or null for another path. */
+fun chatRoomIdOf(pathSegments: List<String>): String? {
+    if (pathSegments.size != CHAT_ROOM_PATH_SIZE || pathSegments[0] != RESERVED_SEGMENT || pathSegments[1] != CHAT_SEGMENT) return null
+    return pathSegments[2].trim().takeIf { it.isNotEmpty() }
 }

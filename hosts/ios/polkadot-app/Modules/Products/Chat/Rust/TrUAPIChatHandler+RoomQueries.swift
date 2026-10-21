@@ -1,0 +1,50 @@
+import Foundation
+import TrUAPIHost
+
+/// The lookups and the events of the room screen (P6). Each one holds the worker while it runs.
+extension TrUAPIChatHandler: ProductRoomInteracting {
+    /// The `peer` of every event of the host user, until a room has more than one user (02-DESIGN §8.4).
+    static let hostUserPeer = "native"
+
+    func messageMenu(
+        _ request: ProductChatMessageActionsQueryRequest
+    ) async throws -> ProductChatMessageActionsQueryItem {
+        try await withWorker { try await $0.chatMessageActionsQuery(request, timeout: ChatQueryTimeout.lookup) }
+    }
+
+    func participants(_ request: ProductChatParticipantsQueryRequest) async throws -> ProductChatParticipantsQueryItem {
+        try await withWorker { try await $0.chatParticipantsQuery(request, timeout: ChatQueryTimeout.lookup) }
+    }
+
+
+    func reactions(_ request: ProductChatReactionsQueryRequest) async throws -> ProductChatReactionsQueryItem {
+        try await withWorker { try await $0.chatReactionsQuery(request, timeout: ChatQueryTimeout.lookup) }
+    }
+
+    /// Runs `body` with the execution of the worker, and holds the worker while it runs (02-DESIGN D10). A worker
+    /// that does not run starts first.
+    func withWorker<Answer: Sendable>(
+        _ body: @Sendable (TrUAPIProductExecutionProtocol) async throws -> Answer
+    ) async throws -> Answer {
+        guard !disposed else { throw CancellationError() }
+
+        let execution: TrUAPIProductExecutionProtocol
+        do {
+            execution = try await workers.ensureWorker(for: productId)
+        } catch {
+            workers.releaseWorker(for: productId)
+            throw error
+        }
+        defer { workers.releaseWorker(for: productId) }
+
+        return try await body(execution)
+    }
+
+    func publish(_ event: ChatEvent, roomId: String) async throws {
+        try await withWorker { execution in
+            try execution.publishChatEvent(roomId: roomId, peer: Self.hostUserPeer, event: event)
+        }
+    }
+}
+
+extension TrUAPIChatHandler: ProductRoomFooterRendering {}

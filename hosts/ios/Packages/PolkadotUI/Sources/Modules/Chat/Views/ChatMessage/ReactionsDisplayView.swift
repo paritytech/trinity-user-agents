@@ -192,6 +192,14 @@ private struct ReactionBubble: View {
                 onLongPress()
             }
         )
+        // VoiceOver reads one button: the emoji, its count and whether the user placed it (P7.2). The long
+        // press, which shows who reacted, is a named action.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(emoji))
+        .accessibilityValue(Text(count, format: .number))
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { handleTap() }
+        .accessibilityAction(named: Text(String(localized: .reactionsTitle))) { onLongPress() }
     }
 }
 

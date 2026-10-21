@@ -8,9 +8,14 @@ extension ProductPermissionGuard {
         router: ProductPermissionRouting,
         fundingProvider: FundingDomainProviding,
         repository: ProductPermissionRepositoryProtocol = ProductPermissionRepository(),
-        osAsker: OSPermissionAsking = OSPermissionAsker()
+        osAsker: OSPermissionAsking = OSPermissionAsker(),
+        foreground: ProductPromptForegroundWaiting = ApplicationForegroundWaiter()
     ) -> ProductPermissionGuard {
-        let requester = ProductPermissionRequesterFactory.create(router: router, fundingProvider: fundingProvider)
+        let requester = ProductPermissionRequesterFactory.create(
+            router: router,
+            fundingProvider: fundingProvider,
+            foreground: foreground
+        )
 
         let networkHandler = NetworkAccessPermissionHandler(
             repository: repository,
@@ -23,7 +28,8 @@ extension ProductPermissionGuard {
         let deviceHandler = DeviceCapabilityPermissionHandler(
             repository: repository,
             requester: requester,
-            osAsker: osAsker
+            osAsker: osAsker,
+            foreground: foreground
         )
         let accountHandler = AccountAccessPermissionHandler(
             repository: repository,

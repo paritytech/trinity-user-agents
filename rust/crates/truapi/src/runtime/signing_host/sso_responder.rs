@@ -25,7 +25,7 @@ use futures::{
 	pin_mut,
 };
 use parity_scale_codec::Encode;
-use tracing::{debug, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 use truapi::latest as api;
 
 use super::{
@@ -1049,6 +1049,115 @@ pub async fn allocate_statement_store_allowance(
 	}
 	signing_host.require_current_session(session)?;
 	Ok(StatementStoreAllocation { secret: allowance.secret.to_bytes().to_vec(), period })
+}
+
+/// How long a delivery account may wait for the statement allowance its slot grants.
+const CHAT_DELIVERY_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// The delivery account of chat request `request_id` in notification `period`:
+/// `//chat-request//<request_id>//<period>` from the root, as the native apps derive it.
+pub fn chat_delivery_keypair(
+	entropy: &[u8],
+	request_id: &str,
+	period: u32,
+) -> Result<schnorrkel::Keypair, AllowanceAllocationError> {
+	Ok(derive_sr25519_hard_path(entropy, &["chat-request", request_id, &period.to_string()])?)
+}
+
+/// Prepare the delivery of chat request `request_id`, of `size` bytes: derive
+/// the delivery account of the current notification period and claim a
+/// notification slot for it, as the native apps do, unless it already has its
+/// statement allowance. [`ChatDelivery::NoSlot`] when no slot is free, or the
+/// device is in no ring; a slot that does not take effect within five minutes
+/// is an error, which the caller retries.
+pub async fn prepare_chat_delivery(
+	services: &RuntimeServices,
+	signing_host: &SigningHost,
+	session: &AuthoritySession,
+	request_id: &str,
+	size: u32,
+) -> Result<crate::runtime::authority::ChatDelivery, AllowanceAllocationError> {
+	use crate::runtime::{
+		authority::ChatDelivery,
+		statement_allowance::{
+			self, NotificationSlotClaim, StatementAllowanceError, claim_notification_slot,
+			collection::PersonhoodCollection,
+			find_including_rings, has_statement_allowance,
+			slot::{SlotError, current_notification_period, read_chain_now_seconds},
+			wait_statement_allowance,
+		},
+	};
+
+	signing_host.require_current_session(session)?;
+	let entropy = signing_host.root_entropy()?;
+	#[cfg(feature = "test-host")]
+	if signing_host.grants_allowances_unchecked() {
+		let period = (current_unix_secs()? /
+			statement_allowance::slot::STATEMENT_STORE_PERIOD_SECONDS) as u32;
+		let account_id = chat_delivery_keypair(&entropy, request_id, period)?.public.to_bytes();
+		return Ok(ChatDelivery::Anonymous { period, account_id });
+	}
+
+	let people_client = services.statement_store.chain_client("chat-request delivery").await?;
+	let people_rpc = people_client.rpc();
+	let chain = services.chain_context.get(&people_client).await?;
+	if let Some(max_size) = chain
+		.metadata
+		.constant("Resources", "NotificationAllowance")
+		.and_then(|bytes| <(u32, u32) as parity_scale_codec::Decode>::decode(&mut &bytes[..]).ok())
+		.map(|(_max_count, max_size)| max_size) &&
+		size > max_size
+	{
+		return Err(AllowanceAllocationError::Authority(AuthorityError::Unknown {
+			reason: format!(
+				"a chat request of {size} bytes is larger than a notification holds ({max_size})"
+			),
+		}));
+	}
+	let period =
+		current_notification_period(read_chain_now_seconds(people_rpc).await?, &chain.metadata);
+	let account_id = chat_delivery_keypair(&entropy, request_id, period)?.public.to_bytes();
+	if has_statement_allowance(people_rpc, &account_id).await? {
+		info!(period, "chat request: its delivery account already has an allowance");
+		return Ok(ChatDelivery::Anonymous { period, account_id });
+	}
+
+	let network_suffix = statement_allowance::slot::read_network_suffix(people_rpc).await?;
+	let candidates = signing_host.reserved_person_collection_candidates(session)?;
+	let signer = statement_allowance::FixedPersonhoodSigner::new(&candidates).await?;
+	let collections: Vec<_> = candidates.iter().map(|candidate| candidate.collection).collect();
+	let mut rings =
+		find_including_rings(people_rpc, &chain.metadata, &signer, &collections, u32::MAX).await?;
+	// The native apps try People before LitePeople.
+	rings.sort_by_key(|ring| ring.collection != PersonhoodCollection::People);
+	if rings.is_empty() {
+		info!(period, "chat request: the device is in no ring yet, sending under the identity");
+		return Ok(ChatDelivery::NoSlot);
+	}
+	signing_host.require_current_session(session)?;
+	match claim_notification_slot(NotificationSlotClaim {
+		rpc: people_rpc,
+		metadata: &chain.metadata,
+		chain_state: &chain.state,
+		signer: &signer,
+		network_suffix: &network_suffix,
+		target: &account_id,
+		period,
+		rings: &rings,
+	})
+	.await
+	{
+		Ok(block_hash) => info!(%block_hash, period, "chat request: claimed a notification slot"),
+		Err(StatementAllowanceError::Slot(SlotError::NoFreeNotificationSlot { .. })) => {
+			info!(period, "chat request: no notification slot is free, sending under the identity");
+			return Ok(ChatDelivery::NoSlot);
+		},
+		Err(error) => return Err(error.into()),
+	}
+	wait_statement_allowance(people_rpc, &account_id, CHAT_DELIVERY_WAIT).await?;
+	info!(period, "chat request: the delivery account may post");
+	signing_host.require_current_session(session)?;
+	Ok(ChatDelivery::Anonymous { period, account_id })
 }
 
 /// Issue the product's Bulletin allowance key.

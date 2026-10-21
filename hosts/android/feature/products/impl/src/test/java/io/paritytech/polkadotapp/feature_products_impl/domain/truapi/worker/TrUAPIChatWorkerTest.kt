@@ -95,6 +95,34 @@ class TrUAPIChatWorkerTest {
     }
 
     @Test
+    fun `the footer of a room renders with the footer context and an empty payload`() = runTest {
+        val execution: TrUAPIProductExecution = mock()
+        whenever(execution.render(any())).thenReturn(flowOf(RendererNode.Nil))
+        val worker = worker(workers = runningWorkers(execution))
+
+        val results = worker.renderFooter(roomId).toList()
+
+        assertEquals(listOf(Result.success(JsWidget.Spacer())), results)
+        var captured: ProductRendererRenderRequest? = null
+        verify(execution, times(1)).render(argThat { captured = it; true })
+        assertEquals(RenderContext.ChatFooter(roomId = roomId.value), requireNotNull(captured).context)
+        assertTrue(requireNotNull(captured).payload.isEmpty())
+    }
+
+    @Test
+    fun `a press in the footer reaches the renderer of the product with the footer context`() = runTest {
+        val execution: TrUAPIProductExecution = mock()
+        val worker = worker(workers = runningWorkers(execution))
+
+        worker.dispatchFooterEvent(roomId, "send", JsUiEvent.Type.ButtonClick)
+
+        var captured: HostRendererActionSubscribeItem? = null
+        verify(execution, times(1)).publishRendererAction(argThat { captured = it; true })
+        assertEquals(RenderContext.ChatFooter(roomId.value), requireNotNull(captured).context)
+        assertEquals("send", requireNotNull(captured).actionId)
+    }
+
+    @Test
     fun `a Failed execution state whose cause is a TimeoutCancellationException still yields a failure value`() = runTest {
         val timeoutCause = try {
             withTimeout(1.milliseconds) { awaitCancellation() }
@@ -515,18 +543,13 @@ class TrUAPIChatWorkerTest {
     }
 
     @Test
-    fun `the lease is acquired once and released once when the scope is cancelled`() = runTest {
+    fun `an installed chat holds no worker until a room opens`() = runTest {
         val runtime: TrUAPIHostRuntime = mock()
         val workerScope = CoroutineScope(StandardTestDispatcher(testScheduler))
 
         worker(runtime = runtime, scope = workerScope)
-
-        verify(runtime, times(1)).acquireWorker(productId.value)
-        verify(runtime, never()).releaseWorker(productId.value)
-
         workerScope.cancel()
-        advanceUntilIdle()
 
-        verify(runtime, times(1)).releaseWorker(productId.value)
+        verify(runtime, never()).acquireWorker(productId.value)
     }
 }

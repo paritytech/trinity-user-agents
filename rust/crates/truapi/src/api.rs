@@ -1,6 +1,7 @@
 //! Unified TrUAPI trait set.
 
 pub mod account;
+pub mod call_media;
 pub mod chain;
 pub mod chat;
 pub mod coin_payment;
@@ -14,6 +15,7 @@ pub mod locale;
 pub mod notifications;
 pub mod payment;
 pub mod permissions;
+pub mod person_chat;
 pub mod pocket;
 pub mod preimage;
 pub mod renderer;
@@ -23,9 +25,11 @@ pub mod signing;
 pub mod statement_store;
 pub mod system;
 pub mod theme;
+pub mod usernames;
 pub mod worker;
 
 pub use account::Account;
+pub use call_media::CallMedia;
 pub use chain::Chain;
 pub use chat::Chat;
 pub use coin_payment::CoinPayment;
@@ -39,6 +43,7 @@ pub use locale::Locale;
 pub use notifications::Notifications;
 pub use payment::Payment;
 pub use permissions::Permissions;
+pub use person_chat::PersonChat;
 pub use pocket::Pocket;
 pub use preimage::Preimage;
 pub use renderer::Renderer;
@@ -48,6 +53,7 @@ pub use signing::Signing;
 pub use statement_store::StatementStore;
 pub use system::System;
 pub use theme::Theme;
+pub use usernames::Usernames;
 pub use worker::Worker;
 
 /// The unified TrUAPI contract.
@@ -66,11 +72,14 @@ pub trait TrUApi:
 	+ Notifications
 	+ Payment
 	+ Permissions
+	+ PersonChat
 	+ Pocket
 	+ Preimage
 	+ Renderer
 	+ ResourceAllocation
 	+ Scanner
+	+ Usernames
+	+ CallMedia
 	+ Signing
 	+ StatementStore
 	+ System
@@ -96,11 +105,14 @@ impl<T> TrUApi for T where
 		+ Notifications
 		+ Payment
 		+ Permissions
+		+ PersonChat
 		+ Pocket
 		+ Preimage
 		+ Renderer
 		+ ResourceAllocation
 		+ Scanner
+		+ Usernames
+		+ CallMedia
 		+ Signing
 		+ StatementStore
 		+ System

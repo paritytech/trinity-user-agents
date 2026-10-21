@@ -1,9 +1,12 @@
 package io.paritytech.polkadotapp.tools_car_parser
 
+import io.ipfs.multihash.Multihash
+import io.paritytech.polkadotapp.common.utils.blake2b256
 import io.paritytech.polkadotapp.tools_ipfs_api.Cid
 import java.io.Closeable
 import java.io.InputStream
 import java.io.RandomAccessFile
+import java.security.MessageDigest
 
 /**
  * Location of a single block's data region within a CAR file on disk.
@@ -49,6 +52,13 @@ internal class CarBlockIndex(
     /** Opens a stream over a block's data region; reads are pulled lazily from disk. */
     fun openRegion(ref: BlockRef): InputStream = RegionInputStream(file, ref.offset, ref.length)
 
+    /** Throws for the first block whose bytes do not hash to its CID. */
+    fun verifyBlocks() {
+        for (cid in blocks.keys) {
+            require(cid.matches(readBlock(cid))) { "block $cid does not match its CID" }
+        }
+    }
+
     override fun close() = file.close()
 
     private class RegionInputStream(
@@ -77,4 +87,11 @@ internal class CarBlockIndex(
 
         override fun available(): Int = length - position
     }
+}
+
+private fun Cid.matches(data: ByteArray): Boolean = when (type) {
+    Multihash.Type.sha2_256 -> MessageDigest.getInstance("SHA-256").digest(data).contentEquals(hash)
+    Multihash.Type.blake2b_256 -> data.blake2b256().contentEquals(hash)
+    Multihash.Type.id -> data.contentEquals(hash)
+    else -> throw IllegalArgumentException("a block of $this uses ${type.name}, which cannot be checked")
 }

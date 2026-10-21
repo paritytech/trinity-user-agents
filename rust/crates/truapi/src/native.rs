@@ -17,6 +17,7 @@
 //! none leaves `contacts.pick` answering `Unsupported`.
 
 mod callbacks;
+mod chat_query;
 mod config;
 mod errors;
 mod events;
@@ -36,17 +37,24 @@ pub use crate::{
 	},
 };
 pub use callbacks::{
-	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-	NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
-	NativePocketRemoval, NativeScannerCallbacks, NativeTopUpCallbacks,
+	HostCallbacks, NativeBalanceCallbacks, NativeCallMediaCallbacks, NativeChatCallbacks,
+	NativeContactsCallbacks, NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
+	NativePersonChatCallbacks, NativePocketCallbacks, NativePocketRemoval, NativePushCallbacks,
+	NativeScannerCallbacks, NativeTopUpCallbacks, NativeUsernamesCallbacks,
+	NativeWakeRelayCallbacks,
+};
+pub use chat_query::{
+	NativeChatQuery, NativeChatQueryAnswer, NativeChatQueryObserver, NativeChatQueryRefusal,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
 pub use errors::{
-	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
+	HostRejection, NativeChatFeedRejection, NativeChatFieldError, NativeChatStageRejection,
+	NativeCoreDatabaseError, NativeRendererError,
 };
 pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
-	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
+	NativeAnnouncedPairing, NativeHopFile, NativePairingError, NativeProductExecution,
+	NativeTrUApiHostRuntime,
 };
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
@@ -65,6 +73,19 @@ use crate::{PairingProposal, host_logic::dotns};
 #[uniffi::export]
 pub fn parse_navigate(input: String) -> NavigateDecision {
 	dotns::parse_navigate(&input)
+}
+
+/// What to show for a push of the person-to-person chat while no chat worker
+/// runs: the message `message` (the relay's hex decoded), opened with the
+/// 32-byte `key` of the contact's push route. `None` when it does not open
+/// or carries nothing to show.
+#[uniffi::export]
+pub fn decode_chat_push(
+	key: Vec<u8>,
+	message: Vec<u8>,
+) -> Option<crate::host_logic::chat_push::ChatPushPreview> {
+	let key: [u8; 32] = key.try_into().ok()?;
+	crate::host_logic::chat_push::decode_chat_push(&key, &message)
 }
 
 /// The `@parity/truapi-host` release this core was built from, which the

@@ -30,6 +30,31 @@ private extension ChatMessageContainerConfiguration {
 }
 
 public extension ChatMessageContainerConfiguration {
+    /// How the text of a product body draws (02-DESIGN §6.1). A person chat draws its text with no such value.
+    struct ProductText {
+        enum Format {
+            /// A `Text` body: plain text with no Markdown, and its web links. A tapped link opens through the
+            /// host.
+            case plain(openLink: ((URL) -> Void)?)
+            /// A `RichText` body: the Markdown subset of ``ChatMarkdownText``. A tapped link opens through the host.
+            case markdown(openLink: ((URL) -> Void)?)
+        }
+
+        let format: Format
+        /// The "Show more" button of a long text. Nil shows the text in full.
+        let collapse: ChatTextCollapse?
+
+        /// A `Text` body of a product. The host confirms a tapped link before it opens it.
+        public static func plain(openLink: ((URL) -> Void)?, collapse: ChatTextCollapse? = nil) -> Self {
+            Self(format: .plain(openLink: openLink), collapse: collapse)
+        }
+
+        /// A `RichText` body of a product. The host confirms a tapped link before it opens it.
+        public static func markdown(openLink: ((URL) -> Void)?, collapse: ChatTextCollapse? = nil) -> Self {
+            Self(format: .markdown(openLink: openLink), collapse: collapse)
+        }
+    }
+
     static func outboxRichText(
         text: String?,
         statusConfiguration: ChatMessageStatusViewConfiguration?,
@@ -39,11 +64,13 @@ public extension ChatMessageContainerConfiguration {
         canReply: Bool = true,
         addReaction: AddReactionViewModel? = nil,
         messageReaction: MessageReactionViewModel? = nil,
-        layoutType: LayoutType = .plain
+        layoutType: LayoutType = .plain,
+        productText: ProductText? = nil
     ) -> Self {
         makeRichText(
             style: .outbox,
             text: text,
+            productText: productText,
             statusConfiguration: statusConfiguration,
             attachments: attachments,
             productLinkPreview: productLinkPreview,
@@ -64,11 +91,13 @@ public extension ChatMessageContainerConfiguration {
         canReply: Bool = true,
         addReaction: AddReactionViewModel? = nil,
         messageReaction: MessageReactionViewModel? = nil,
-        layoutType: LayoutType = .plain
+        layoutType: LayoutType = .plain,
+        productText: ProductText? = nil
     ) -> Self {
         makeRichText(
             style: .inbox,
             text: text,
+            productText: productText,
             statusConfiguration: statusConfiguration,
             attachments: attachments,
             productLinkPreview: productLinkPreview,
@@ -93,12 +122,14 @@ public extension ChatMessageContainerConfiguration {
         canReply: Bool = true,
         addReaction: AddReactionViewModel? = nil,
         messageReaction: MessageReactionViewModel? = nil,
-        layoutType: LayoutType = .plain
+        layoutType: LayoutType = .plain,
+        productText: ProductText? = nil
     ) -> Self {
         let style = RichTextStyle(side: .leading, bubbleColor: bubbleColor, textColor: textColor)
         return makeRichText(
             style: style,
             text: text,
+            productText: productText,
             bubbleStrokeColor: bubbleStrokeColor,
             bubbleStrokeWidth: bubbleStrokeWidth,
             statusConfiguration: statusConfiguration,
@@ -163,14 +194,22 @@ public extension ChatMessageContainerConfiguration {
         )
     }
 
-    static func file(viewModel: ChatMessageFileCell.ViewModel, layoutType: LayoutType = .plain) -> Self {
+    static func file(
+        viewModel: ChatMessageFileCell.ViewModel,
+        layoutType: LayoutType = .plain,
+        canReply: Bool = false,
+        addReaction: AddReactionViewModel? = nil,
+        messageReaction: MessageReactionViewModel? = nil
+    ) -> Self {
         let view = ChatMessageFileCell(viewModel: viewModel)
         let configuration = SwiftUIContentConfiguration(view: view)
         return ChatMessageContainerConfiguration(
             innerContent: configuration,
             side: .leading,
             bubbleColor: .bgSurfaceContainer,
-            canReply: false,
+            canReply: canReply,
+            addReaction: addReaction,
+            messageReaction: messageReaction,
             contentInsets: .zero,
             layoutType: layoutType,
             identifier: ChatMessageFileCell.reuseIdentifier
@@ -347,9 +386,39 @@ private extension ChatMessageContainerConfiguration {
         )
     }
 
+    /// The text of a bubble: the text of a person chat, or a product body by its format (02-DESIGN §6.1).
+    private static func textViewModel(
+        text: String,
+        productText: ProductText?,
+        textColor: UIColor,
+        placeholderImage: UIImage?
+    ) -> ChatMessageTextView.ViewModel {
+        switch productText?.format {
+        case let .markdown(openLink):
+            .init(
+                markdown: text,
+                textColor: textColor,
+                statusPlaceholderImage: placeholderImage,
+                openLink: openLink,
+                collapse: productText?.collapse
+            )
+        case let .plain(openLink):
+            .init(
+                plainText: text,
+                textColor: textColor,
+                statusPlaceholderImage: placeholderImage,
+                openLink: openLink,
+                collapse: productText?.collapse
+            )
+        case nil:
+            .init(text: text, textColor: textColor, statusPlaceholderImage: placeholderImage)
+        }
+    }
+
     static func makeRichText(
         style: RichTextStyle,
         text: String?,
+        productText: ProductText? = nil,
         bubbleStrokeColor: UIColor? = nil,
         bubbleStrokeWidth: CGFloat = 0,
         statusConfiguration: ChatMessageStatusViewConfiguration?,
@@ -386,11 +455,12 @@ private extension ChatMessageContainerConfiguration {
 
         let innerContent = ChatRichTextMessageConfiguration(
             attachmentItems: attachments ?? [],
-            textViewModel: trimmedText.map {
-                .init(
-                    text: $0,
+            textViewModel: trimmedText.map { text in
+                textViewModel(
+                    text: text,
+                    productText: productText,
                     textColor: style.textColor,
-                    statusPlaceholderImage: statusConfiguration?.placeholderImage
+                    placeholderImage: statusConfiguration?.placeholderImage
                 )
             },
             productLinkPreview: productLinkPreview

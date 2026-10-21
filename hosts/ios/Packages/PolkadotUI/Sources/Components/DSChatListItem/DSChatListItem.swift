@@ -11,6 +11,10 @@ public struct DSChatListItem<Avatar: View>: View {
         public let isMuted: Bool
         public let hasReaction: Bool
         public let unreadCount: Int
+        /// A badge that the chat sets. It replaces the reaction and the unread badges.
+        public let badge: DSChatListBadge.Kind?
+        /// The message is an activity that continues, for example "Alice is typing".
+        public let isOngoing: Bool
 
         public init(
             sender: String,
@@ -20,7 +24,9 @@ public struct DSChatListItem<Avatar: View>: View {
             messageContext: DSChatMessage.Context = .single,
             isMuted: Bool = false,
             hasReaction: Bool = false,
-            unreadCount: Int = 0
+            unreadCount: Int = 0,
+            badge: DSChatListBadge.Kind? = nil,
+            isOngoing: Bool = false
         ) {
             self.sender = sender
             self.timestamp = timestamp
@@ -30,6 +36,8 @@ public struct DSChatListItem<Avatar: View>: View {
             self.isMuted = isMuted
             self.hasReaction = hasReaction
             self.unreadCount = unreadCount
+            self.badge = badge
+            self.isOngoing = isOngoing
         }
     }
 
@@ -99,19 +107,29 @@ public struct DSChatListItem<Avatar: View>: View {
 
     private var content: some View {
         HStack(alignment: .top, spacing: DSSpacings.small) {
-            DSChatMessage(
-                text: data.message,
-                kind: data.messageKind,
-                context: data.messageContext
-            )
-            .equatable()
+            if data.isOngoing {
+                DSChatListOngoingText(text: data.message)
+            } else {
+                DSChatMessage(
+                    text: data.message,
+                    kind: data.messageKind,
+                    context: data.messageContext
+                )
+                .equatable()
+            }
             badges
         }
     }
 
     @ViewBuilder
     private var badges: some View {
-        if data.hasReaction || data.unreadCount > 0 {
+        if let badge = data.badge {
+            if badge.isVisible {
+                DSChatListBadge(kind: badge, isMuted: data.isMuted)
+                    .equatable()
+                    .padding(.top, DSSpacings.extraSmall)
+            }
+        } else if data.hasReaction || data.unreadCount > 0 {
             HStack(spacing: DSSpacings.small) {
                 if data.hasReaction {
                     DSChatListBadge(kind: .reaction, isMuted: data.isMuted)
@@ -129,6 +147,17 @@ public struct DSChatListItem<Avatar: View>: View {
 
 private enum DSChatListItemMetrics {
     static let muteIconSize: CGFloat = 20
+}
+
+private extension DSChatListBadge.Kind {
+    var isVisible: Bool {
+        switch self {
+        case .hidden: false
+        case let .counter(value): value > 0
+        case .reaction,
+             .image: true
+        }
+    }
 }
 
 private struct DSChatListItemButtonStyle: ButtonStyle {
@@ -191,6 +220,17 @@ private struct DSChatListItemButtonStyle: ButtonStyle {
                 )
             ) {
                 previewAvatar("B", bg: .avatarBgRuby, fg: .avatarFgRuby)
+            }
+            DSChatListItem(
+                data: .init(
+                    sender: "Game room",
+                    timestamp: "12:31",
+                    message: "Alice is thinking",
+                    badge: .counter(2),
+                    isOngoing: true
+                )
+            ) {
+                previewAvatar("G", bg: .avatarBgEmerald, fg: .avatarFgEmerald)
             }
             DSChatListItem(
                 data: .init(

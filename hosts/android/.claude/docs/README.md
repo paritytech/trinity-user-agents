@@ -88,5 +88,5 @@ Local notes on the direction live in `architecture/chat-extension.md` (§ "North
 Canonical positive examples (cited throughout docs):
 - ViewModel: `feature/sso/impl/.../presentation/pairRequest/PairRequestViewModel.kt`
 - Extrinsic submission: `feature/transactions/impl/.../data/RealExtrinsicService.kt`
-- ChatExtension: `feature/chats/impl/.../domain/payment/CoinagePaymentProcessingExtension.kt` (lightweight) and `feature/chats/impl/.../domain/middleware/bot/sample/SampleBot.kt` (bot)
+- ChatExtension: `feature/chats/impl/.../domain/extension/CoinagePaymentProcessingExtension.kt` (lightweight) and `feature/chats/impl/.../domain/middleware/bot/sample/SampleBot.kt` (bot)
 - Mixin / component composition: `code/state-management.md § Mixins`.

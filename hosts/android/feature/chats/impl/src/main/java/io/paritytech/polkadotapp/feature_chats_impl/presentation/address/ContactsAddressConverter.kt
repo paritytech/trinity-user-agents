@@ -4,8 +4,7 @@ import io.paritytech.polkadotapp.feature_account_api.presentation.address.mixin.
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddress
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddressesCategory
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.ExtractedAddressesSection
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.hasEstablishedChat
+import io.paritytech.polkadotapp.feature_chats_api.domain.usecase.AddressBookContact
 import io.paritytech.polkadotapp.feature_chats_api.domain.usecase.GetContactsUseCase
 import io.paritytech.polkadotapp.feature_chats_api.domain.username.FallbackUsernameGenerator
 import io.paritytech.polkadotapp.feature_chats_api.presentation.address.ContactsAddressConverterFactory
@@ -27,7 +26,7 @@ private class ContactsAddressConverter(
 ) : AddressConverter {
     override suspend fun convertToAddress(input: String): ExtractedAddressesSection {
         val contacts = getContactsUseCase()
-            .filter { it.hasEstablishedChat() && !it.isBlocked }
+            .filter { it.established && !it.blocked }
             .map { it.toExtractedAddress() }
             .filter { it.display.contains(input, ignoreCase = true) }
             .sortedBy { it.display.lowercase() }
@@ -38,7 +37,7 @@ private class ContactsAddressConverter(
         )
     }
 
-    private fun Contact.toExtractedAddress(): ExtractedAddress {
+    private fun AddressBookContact.toExtractedAddress(): ExtractedAddress {
         return ExtractedAddress(
             display = username ?: fallbackUsernameGenerator.generateFromAccountId(accountId),
             type = ExtractedAddress.DisplayType.USERNAME,

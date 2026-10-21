@@ -19,6 +19,7 @@ import io.paritytech.polkadotapp.feature_calls_impl.notification.CallNotificatio
 import io.paritytech.polkadotapp.feature_calls_impl.state.CallStateHolder
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.contactOrNull
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.isExtensionChat
 import io.paritytech.polkadotapp.feature_chats_api.domain.sessions.ContactChatSessionRefCounter
 import io.paritytech.polkadotapp.feature_chats_api.domain.sessions.ContactChatSessionReference
 import io.paritytech.polkadotapp.feature_chats_api.domain.sessions.requestSessionEnabled
@@ -226,6 +227,8 @@ class CallService : Service(), CoroutineScope {
     }
 
     private fun ensureContactSessionHeld(callParams: CallParams, startId: Int): Boolean {
+        if (callParams.computeChatId().isExtensionChat()) return true
+
         val accountId = callParams.computeChatId().contactOrNull()?.contactAccountId ?: run {
             Timber.w("CallService: chatId is not a contact chat; aborting call setup")
             stopSelf(startId)
@@ -307,6 +310,10 @@ class CallService : Service(), CoroutineScope {
         incomingCallCanceledJob?.cancel()
         incomingCallCanceledJob = null
 
+        // A product room rang in the room, not here, so its call starts at the answer.
+        if (callStateHolder.getActiveCall()?.offerId != callParams.offerId) {
+            callStateHolder.initCall(chatId, callParams.offerId, callParams.direction, callParams.withVideo)
+        }
         callStateHolder.updateStatus(CallStatus.Connecting)
         Timber.i("acceptIncomingCall: status updated, activeCall=${callStateHolder.getActiveCall()}")
 

@@ -37,6 +37,8 @@ use truapi::{
 			HostWorkerBeginOperationError, HostWorkerBeginOperationRequest,
 			HostWorkerBeginOperationResponse, HostWorkerEndOperationError,
 			HostWorkerEndOperationRequest, HostWorkerEndOperationResponse,
+			HostWorkerSetWakeWatchesError, HostWorkerSetWakeWatchesRequest,
+			HostWorkerSetWakeWatchesResponse,
 		},
 	},
 };
@@ -412,6 +414,28 @@ impl Worker for ProductRuntimeHost {
 		})?;
 		Ok(HostWorkerEndOperationResponse::from_latest((), version))
 	}
+
+	#[instrument(skip_all, fields(runtime.method = "worker.set_wake_watches"))]
+	async fn set_wake_watches(
+		&self,
+		_cx: &CallContext,
+		request: HostWorkerSetWakeWatchesRequest,
+	) -> Result<HostWorkerSetWakeWatchesResponse, CallError<HostWorkerSetWakeWatchesError>> {
+		let version = request.version();
+		let latest::HostWorkerSetWakeWatchesRequest { watches } = request.into_latest();
+		let delivery = self
+			.connection
+			.services
+			.set_wake_watches(&self.connection.product.product_id, watches)
+			.await
+			.map_err(|error| {
+				CallError::Domain(HostWorkerSetWakeWatchesError::from_latest(error, version))
+			})?;
+		Ok(HostWorkerSetWakeWatchesResponse::from_latest(
+			latest::HostWorkerSetWakeWatchesResponse { delivery },
+			version,
+		))
+	}
 }
 
 #[truapi::async_trait]
@@ -492,6 +516,17 @@ impl Notifications for ProductRuntimeHost {
 				},
 				version,
 			)));
+		}
+		// The user muted the room the notification opens: it shows nothing.
+		if inner.scheduled_at.is_none() &&
+			let Some(deeplink) = &inner.deeplink &&
+			self.chat_room_muted(deeplink).await
+		{
+			let id = self.connection.services.next_silenced_notification_id();
+			return Ok(HostPushNotificationResponse::from_latest(
+				latest::HostPushNotificationResponse { id },
+				version,
+			));
 		}
 		self.connection
 			.platform

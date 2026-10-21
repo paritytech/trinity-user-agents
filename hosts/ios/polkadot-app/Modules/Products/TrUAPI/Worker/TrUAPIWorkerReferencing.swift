@@ -10,6 +10,19 @@ protocol TrUAPIWorkerReferencing: Sendable {
     func acquireWorker(productId: ProductId)
 
     func releaseWorker(productId: ProductId)
+
+    /// Holds the worker of the product for one wake of 30 seconds (07-LATER §10.2). A product has one wake hold, and
+    /// a new wake moves its end. The core releases the hold itself.
+    func wakeProduct(productId: ProductId, reason: ChatWakeReason) throws -> ChatWakeOutcome
+
+    /// Tells the core when the worker of the product runs. The core holds a `foreground` worker while the host
+    /// reports the app in the foreground (VERBOSITY-WASM-PRODUCT I5).
+    func setWorkerKeepAlive(productId: ProductId, keepAlive: WorkerKeepAlive)
+
+    /// Gives a wake push of the push relay to the core. The core checks the push and wakes each product that watches
+    /// its topic for 30 seconds (VERBOSITY-WASM-PRODUCT A1). It throws `PushWakeRejection` for a push it does not
+    /// trust.
+    func handleWakePush(payload: String) async throws -> [PushWakeDelivery]
 }
 
 extension TrUAPIHostRuntime: TrUAPIWorkerReferencing {}

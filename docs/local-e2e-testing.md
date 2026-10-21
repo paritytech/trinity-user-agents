@@ -265,6 +265,78 @@ The wire-table generator has property tests (sorted, no duplicates,
 well-formed for empty input) plus targeted regression tests for the
 `detect_versioned_wrapper` heuristic.
 
+## 8. Chat Extension v2
+
+The dotli flow above does not reach Chat, a Worker service that dotli does
+not serve. A change to the `Chat` trait, its core capability or a host's chat
+is verified on the hosts below, each with a chat Worker.
+
+| Host | Command | Runbook |
+|---|---|---|
+| CLI dev chat page | `truapi-host dev --worker-bundle <worker>/index.js -- yarn dev`, then the `/chat` URL; headless content screening: `make e2e-chat-cli` | [Chat workers](../rust/crates/truapi-host-cli/README.md#chat-workers) |
+| iOS simulator | `make ios-chat-run` (the playground's chat Worker) | [README](../README.md) |
+| Android emulator | `make android-chat-playground-run` (the playground's chat Worker) | [README](../README.md) |
+
+The CLI page lists its features in **Capabilities** on the rooms pane, and
+shows each [addition](rfcs/chat-extension-v2-additions.md) it serves: the
+declared features of the room ("not served" where the host does not serve
+one), staged attachments from the file buttons, a search field, **Read aloud**
+in the message menu, call buttons with the ringing banner and the call bar, a
+**Wake** button that stands in for an authenticated notification, bot personas
+in a **Bots** list, and **Mute**, **Archive**, an **Archived** row and a
+**Notifications** list. The
+[CLI README](../rust/crates/truapi-host-cli/README.md#chat-workers) describes
+each one.
+
+### Simulator and emulator switches
+
+The launchers set the app switches themselves. Each switch works only in a
+simulator build (iOS) or a debug build (Android), and none of them gives the
+app a key, a chain connection or a statement store that the host would not
+have.
+
+| iOS | What it does |
+|---|---|
+| `TRUAPI_IOS_E2E_DEVICE`, `TRUAPI_IOS_E2E_APP`, `TRUAPI_IOS_E2E_BUNDLE` | The simulator, the built app and its bundle id (launcher) |
+| `TRUAPI_IOS_E2E_SKIP_PRODUCT_BUILD=1` | Uses the product as built (launcher) |
+| `TRUAPI_IOS_E2E_CHAT_PRODUCT_DIR`, `_HOST`, `_NAME` | The product source, its DotNS name and display name (launcher) |
+| `TRUAPI_IOS_E2E_SEED_IDENTITY` | Creates a random wallet and a lite username when the simulator has none (app) |
+| `TRUAPI_IOS_E2E_CHAT_PRODUCT_HOST`, `TRUAPI_IOS_E2E_CHAT_ROOM_ID` | Injects the product as a chat bot and names the first room (app) |
+| `TRUAPI_IOS_E2E_CHAT_COMMANDS=1` | Holds the worker and reads the command feed in `tmp/truapi-e2e/commands` (app) |
+| `TRUAPI_IOS_E2E_RUNTIME_MARKERS=1` | Writes the `[e2e:ui]` and runtime markers to the console (app) |
+| `TRUAPI_IOS_E2E_NO_PUSH_PROMPT=1` | Skips the notification prompt of the app (app) |
+| `TRUAPI_IOS_E2E_GRANT_NOTIFICATIONS=1` | Grants products the notification permission and logs a notification in place of the OS call, for `/notify` (app) |
+| `TRUAPI_IOS_E2E_STAGING=1` | Stages attachments in a room that declares `preimage_attachments`, although the app does not list the feature (app) |
+
+| Android | What it does |
+|---|---|
+| `TRUAPI_ANDROID_E2E_DEVICE`, `_AVD`, `_APK`, `_PACKAGE` | The device or AVD, the APK and its package (launcher) |
+| `TRUAPI_ANDROID_E2E_CHAT_PRODUCT_DIR`, `_HOST`, `_NAME`, `_URL`, `TRUAPI_ANDROID_E2E_SKIP_PRODUCT_BUILD=1`, `TRUAPI_ANDROID_E2E_USERNAME` | The product source, name and served URL, and the seeded username (launcher) |
+| `seed_identity`, `username` | Seeds a wallet and a lite username (`E2EHookReceiver` broadcast) |
+| `product_id`, `product_name`, `worker_url` | Installs the product as a chat product with the served worker (broadcast) |
+| `message`, `room_id` | Sends a user message into a room through the real chat path (broadcast) |
+| `clipboard` | Puts a text on the clipboard, which the launcher pastes into the input (broadcast) |
+| `wake` | Wakes the product for a room with `ChatWakeReason.Notification`, in place of the receiving layer (broadcast) |
+| `serve_preimage_attachments` | Stages attachments in a room that declares `preimage_attachments`, although the app does not list the feature (broadcast) |
+| `reset_preimage_permission` | Clears the stored PreimageSubmit decision of the product, as the settings of the product do (broadcast) |
+| `stage_probe` | Times the bytes of an attachment across the binding into the core, with a room that declares nothing (broadcast) |
+
+### Known limits
+
+- **The Bulletin bound (O32).** The live Paseo Next Bulletin chain stores at
+  most 2 MiB in one transaction, and the core reads and enforces that bound.
+  Devices stage up to 2 MiB.
+- **No Bulletin allowance for the harness identity (O34).** The simulator and
+  emulator sign in with a new wallet that is not a personhood ring member, so
+  the core has no Bulletin allowance for the product. Every staged upload
+  stops at `AllowanceUnavailable`.
+- **No push route for wakes (O27, O28).** No host lists `wake`. The CLI
+  **Wake** button and the iOS and Android `wake` harness actions stand in for
+  the receiving layer.
+- **No media in calls (O29).** No host lists `room_calls`.
+- **`preimage_attachments` is not listed by an app.** The staging paths run
+  through the switches above.
+
 ## Gotchas
 
 ### yarn 1.x `file:` dep stale snapshot

@@ -79,7 +79,8 @@ struct InboxTextConfigurationBuilder: TextMessageConfigurationBuilding {
                 canReply: context.canReply,
                 addReaction: context.addReaction,
                 messageReaction: context.messageReaction,
-                layoutType: context.layoutContext.layoutType
+                layoutType: context.layoutContext.layoutType,
+                productText: context.productText
             )
         }
         return .inboxRichText(
@@ -91,7 +92,8 @@ struct InboxTextConfigurationBuilder: TextMessageConfigurationBuilding {
             canReply: context.canReply,
             addReaction: context.addReaction,
             messageReaction: context.messageReaction,
-            layoutType: context.layoutContext.layoutType
+            layoutType: context.layoutContext.layoutType,
+            productText: context.productText
         )
     }
 }
@@ -146,7 +148,8 @@ struct OutboxTextConfigurationBuilder: TextMessageConfigurationBuilding {
             canReply: context.canReply,
             addReaction: context.addReaction,
             messageReaction: context.messageReaction,
-            layoutType: context.layoutContext.layoutType
+            layoutType: context.layoutContext.layoutType,
+            productText: context.productText
         )
     }
 }

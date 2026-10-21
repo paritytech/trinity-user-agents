@@ -42,7 +42,7 @@ fun TextMessage(
     isRevealing: Boolean = false,
     onRevealComplete: () -> Unit = {},
 ) {
-    val isSingleEmoji = remember(message.text) { message.text.isSingleEmoji() }
+    val isSingleEmoji = remember(message.text) { !message.isMarkdown && message.text.isSingleEmoji() }
     val visibleCharCount = rememberRevealedCharCount(message.text, isRevealing, onRevealComplete)
     val surfaceStyle = when {
         isSingleEmoji -> ChatMessageSurfaceStyle.Transparent
@@ -66,6 +66,14 @@ fun TextMessage(
             EmojiOnlyContent(
                 message = message,
                 showTimestamp = showTimestamp
+            )
+        } else if (message.isMarkdown) {
+            MarkdownMessageContent(
+                showTimestamp = showTimestamp,
+                message = message,
+                markdown = message.text,
+                isEdited = message.isEdited,
+                textColor = surfaceStyle.textColor ?: message.direction.defaultTextColor,
             )
         } else {
             TextMessageContent(
@@ -174,7 +182,8 @@ private fun MessagesPreview() {
                         reactions = persistentListOf(),
                         origin = ChatMessageOrigin.User,
                         isEdited = false,
-                        replyPreview = null
+                        replyPreview = null,
+                        isMarkdown = false
                     ),
                     grouping = ChatMessageGrouping.Standalone,
                     showTimestamp = false,
@@ -198,7 +207,8 @@ private fun MessagesPreview() {
                         ),
                         origin = ChatMessageOrigin.User,
                         replyPreview = null,
-                        isEdited = false
+                        isEdited = false,
+                        isMarkdown = false
                     ),
                     grouping = ChatMessageGrouping.Standalone,
                     showTimestamp = true,
@@ -225,7 +235,8 @@ private fun MessagesPreview() {
                             content = ReplyPreview.Content.Text("Hello, want to chat?")
                         ),
                         origin = ChatMessageOrigin.User,
-                        isEdited = false
+                        isEdited = false,
+                        isMarkdown = false
                     ),
                     grouping = ChatMessageGrouping.Standalone,
                     showTimestamp = true,
@@ -254,7 +265,8 @@ private fun MessagesPreview() {
                             )
                         ),
                         origin = ChatMessageOrigin.User,
-                        isEdited = true
+                        isEdited = true,
+                        isMarkdown = false
                     ),
                     grouping = ChatMessageGrouping.Standalone,
                     showTimestamp = true,
@@ -281,7 +293,8 @@ private fun MessagesPreview() {
                             content = ReplyPreview.Content.Text("Okay")
                         ),
                         origin = ChatMessageOrigin.User,
-                        isEdited = true
+                        isEdited = true,
+                        isMarkdown = false
                     ),
                     grouping = ChatMessageGrouping.Standalone,
                     showTimestamp = true,
@@ -308,7 +321,8 @@ private fun MessagesPreview() {
                             content = ReplyPreview.Content.Text("Okay")
                         ),
                         origin = ChatMessageOrigin.User,
-                        isEdited = true
+                        isEdited = true,
+                        isMarkdown = false
                     ),
                     grouping = ChatMessageGrouping.Standalone,
                     showTimestamp = true,
@@ -332,7 +346,8 @@ private fun MessagesPreview() {
                         ),
                         replyPreview = null,
                         origin = ChatMessageOrigin.User,
-                        isEdited = false
+                        isEdited = false,
+                        isMarkdown = false
                     ),
                     grouping = ChatMessageGrouping.Standalone,
                     showTimestamp = true,

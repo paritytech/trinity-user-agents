@@ -13,8 +13,8 @@ import io.paritytech.polkadotapp.common.utils.shareInBackground
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.converter.ParseAddressConverterFactory
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.mixin.AddressInputMixin
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.model.toParcel
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.error.asStartChatError
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.hasEstablishedChat
 import io.paritytech.polkadotapp.feature_chats_api.domain.usecase.GetContactsUseCase
 import io.paritytech.polkadotapp.feature_chats_api.presentation.ChatStarter
 import io.paritytech.polkadotapp.feature_chats_api.presentation.address.ContactsAddressConverterFactory
@@ -46,6 +46,7 @@ class SendPaymentViewModel @Inject constructor(
     private val clipboardService: ClipboardService,
     private val getContactsUseCase: GetContactsUseCase,
     private val chatStarter: ChatStarter,
+    private val personChatMode: PersonChatMode,
     addressInputMixinFactory: AddressInputMixin.Factory,
     usernameAddressConverterFactory: UsernameAddressConverterFactory,
     parseAddressConverterFactory: ParseAddressConverterFactory,
@@ -77,7 +78,7 @@ class SendPaymentViewModel @Inject constructor(
     )
 
     private val searchResults = combine(addressInputMixin.addressCandidates, contacts) { candidates, contacts ->
-        val blockedAccountIds = contacts.filter { it.isBlocked }.map { it.accountId }.toSet()
+        val blockedAccountIds = contacts.filter { it.blocked }.map { it.accountId }.toSet()
 
         candidates.toSearchResults(hiddenAccountIds = blockedAccountIds)
     }
@@ -110,10 +111,15 @@ class SendPaymentViewModel @Inject constructor(
     }
 
     override fun onRecipientSelect(recipient: PaymentSearchResultUiModel) = launchUnit {
+        // The native chat does not run beside the chat product, which carries no coins yet (HX2, M9).
+        if (personChatMode.isProductChat()) {
+            _messageEvents.trySend(RCommon.string.send_payment_chat_product_unavailable)
+            return@launchUnit
+        }
         val accountId = recipient.extractedAddress.accountId
         val contact = contacts.first().find { it.accountId == accountId }
 
-        if (contact != null && contact.hasEstablishedChat()) {
+        if (contact != null && contact.paysViaChat) {
             walletRouter.openSendEnterAmount(
                 SendEnterAmountPayload(
                     showTransactionResult = true,

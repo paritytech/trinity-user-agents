@@ -858,6 +858,37 @@ mod tests {
 		);
 	}
 
+	/// A second submission goes over the connection of the first: a new
+	/// connection to the node for each statement costs as much as the
+	/// submission itself.
+	#[test]
+	fn statement_store_submissions_use_one_kept_connection() {
+		let platform = Arc::new(StubPlatform {
+			rpc_method_responses: vec![
+				("statement_submit", r#"{"status":"new"}"#.to_string()),
+				("statement_submit", r#"{"status":"known"}"#.to_string()),
+			],
+			..Default::default()
+		});
+		let host =
+			ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+
+		for (id, topic) in [("submit-1", [7; 32]), ("submit-2", [8; 32])] {
+			let cx = CallContext::with_request_id(id.to_string());
+			let request = RemoteStatementStoreSubmitRequest::V1(signed_statement(topic));
+			futures::executor::block_on(StatementStore::submit(&host, &cx, request)).unwrap();
+		}
+
+		let submits = platform
+			.sent_rpc
+			.lock()
+			.unwrap()
+			.iter()
+			.filter(|request| request.contains("\"statement_submit\""))
+			.count();
+		assert_eq!((platform.chain_connects.lock().unwrap().len(), submits), (1, 2));
+	}
+
 	/// The permission prompt ends on its own terms, but a call withdrawn while
 	/// it was up must not go on to publish the statement.
 	#[test]

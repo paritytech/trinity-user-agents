@@ -1,10 +1,16 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.ContactDirectory
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContact
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContacts
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -21,7 +27,7 @@ class AppContactsHostBridgeTest {
     private val otherKey = ByteArray(32) { 0x12 }
     private val alice = ByteArray(32) { 0xA1.toByte() }
     private val bob = ByteArray(32) { 0xB0.toByte() }
-    private val bridge = AppContactsHostBridge(mockk<ContactDirectory>(), mockk(relaxed = true))
+    private val bridge = AppContactsHostBridge(mockk<ContactDirectory>(), mockk<PersonChatContacts>(), mockk(relaxed = true))
 
     @Test
     fun `a handle resolves to the contact it hashes from`() {
@@ -57,7 +63,35 @@ class AppContactsHostBridgeTest {
         assertArrayEquals(alice, matches.accounts[1])
     }
 
-    private fun contact(account: ByteArray): Contact = mockk {
-        every { accountId } returns DataByteArray(account)
+    @Test
+    fun `the picker offers the chat product's unblocked contacts beside the native ones, each person once`() = runBlocking {
+        val carol = ByteArray(32) { 0xC0.toByte() }
+        val directory = mockk<ContactDirectory> {
+            coEvery { getContacts() } returns listOf(mockk<Contact> {
+                every { accountId } returns DataByteArray(alice)
+                every { username } returns "alice"
+            })
+        }
+        val personChat = mockk<PersonChatContacts> {
+            coEvery { getContacts() } returns listOf(
+                productContact(alice, "alice.product", blocked = false),
+                productContact(bob, "bob", blocked = false),
+                productContact(carol, "carol", blocked = true),
+            )
+        }
+        val request = slot<ContactPickRequest>()
+        val picks = mockk<TrUAPIContactPicks> { coEvery { ask(capture(request)) } returns null }
+
+        AppContactsHostBridge(directory, personChat, picks).pickContact("notes.dot")
+
+        assertEquals(
+            listOf(DataByteArray(alice) to "alice", DataByteArray(bob) to "bob"),
+            request.captured.options.map { DataByteArray(it.account) to it.displayName },
+        )
     }
+
+    private fun contact(account: ByteArray) = PickableContact(DataByteArray(account), username = null)
+
+    private fun productContact(account: ByteArray, name: String, blocked: Boolean) =
+        PersonChatContact(DataByteArray(account), name, ChatId.forExtensionRoom("ProductBot_chat.dot", "dm-x"), blocked)
 }

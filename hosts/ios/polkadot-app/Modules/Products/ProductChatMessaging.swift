@@ -4,13 +4,42 @@ import Products
 import AsyncExtensions
 
 /// The chat calls a product's bot can make. All the rust chat bridge needs from
-/// the native surface: `ChatHostBridge`'s fourth callback, `registerBot`, is
-/// rejected outright.
+/// the native surface.
+///
+/// A call about a room that the product did not create throws `ChatRoomError.unknownRoom`.
 protocol ProductChatMessaging: Sendable {
     func sendMessage(_ message: ProductBotMessage, roomId: String?) async throws -> String
     func createRoom(_ request: CreateRoomRequest) async throws -> CreateRoomResult
     func setRoomFooter(roomId: String, footer: Chat.RoomFooter) async throws
     func subscribeRooms() async throws -> AnyAsyncSequence<[RoomInfo]>
+    /// Chat Extension v2 `set_room_preview`, as Swift domain values. The rust bridge calls it once the
+    /// bindings of P2.10 give it the request.
+    func setRoomPreview(roomId: String, preview: Chat.RoomPreview) async throws
+    /// Chat Extension v2 `delete_room`.
+    func deleteRoom(roomId: String) async throws
+    /// Chat Extension v2 `set_room_metadata`, as Swift domain values.
+    func setRoomMetadata(roomId: String, name: String, description: String?, avatar: Chat.RoomImage?) async throws
+    /// What the product declared for a room. The core reads the configuration before each feed update.
+    func roomDeclarations(roomId: String) async throws -> Chat.RoomDeclarations
+    /// Chat Extension v2 `set_room_config`.
+    func setRoomConfig(roomId: String, config: Chat.RoomConfig) async throws
+    /// Chat Extension v2 `set_room_footer`, second version.
+    func setRoomFooterConfig(roomId: String, footer: Chat.RoomFooterConfig) async throws
+    /// Chat Extension v2 `update_feed` for a room that the host stores. Throws `Chat.ProductFeedError` for a
+    /// refused update.
+    func applyFeedUpdate(roomId: String, update: Chat.ProductFeedUpdate) async throws
+    /// The features that the product declared for a room (Chat Extension v2 additions).
+    func roomFeatures(roomId: String) async throws -> Chat.RoomFeatures
+    /// Chat Extension v2 additions `set_room_features`.
+    func setRoomFeatures(roomId: String, features: Chat.RoomFeatures) async throws
+    /// Chat Extension v2 additions `set_room_call`.
+    func setRoomCall(roomId: String, call: Chat.RoomCall?) async throws
+    /// The rooms of the product that the user muted or archived.
+    func roomUserStates() async throws -> [Chat.RoomUserStateEntry]
+    /// The bot ids of the personas that the product registered.
+    func personaIds() async throws -> [String]
+    /// Chat Extension v2 additions `register_bot`: keeps a persona that the product speaks as (07-LATER §5).
+    func registerPersona(botId: String, name: String, icon: String?) async throws -> Chat.PersonaRegistration
 }
 
 /// Serves those calls from a chat binding. Conformers differ only in where the
@@ -72,6 +101,77 @@ extension BoundProductChatMessaging {
     func subscribeRooms() async throws -> AnyAsyncSequence<[RoomInfo]> {
         let (context, bot) = try requireMessaging()
         return await context.subscribeRooms(for: bot)
+    }
+
+    func setRoomPreview(roomId: String, preview: Chat.RoomPreview) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.setRoomPreview(for: bot, roomId: roomId, preview: preview)
+    }
+
+    func deleteRoom(roomId: String) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.deleteRoom(for: bot, roomId: roomId)
+    }
+
+    func setRoomMetadata(roomId: String, name: String, description: String?, avatar: Chat.RoomImage?) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.setRoomMetadata(
+            for: bot,
+            roomId: roomId,
+            name: name,
+            description: description,
+            avatar: avatar
+        )
+    }
+
+    func roomDeclarations(roomId: String) async throws -> Chat.RoomDeclarations {
+        let (context, bot) = try requireMessaging()
+        return try await context.roomDeclarations(for: bot, roomId: roomId)
+    }
+
+    func setRoomConfig(roomId: String, config: Chat.RoomConfig) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.setRoomConfig(for: bot, roomId: roomId, config: config)
+    }
+
+    func setRoomFooterConfig(roomId: String, footer: Chat.RoomFooterConfig) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.setRoomFooterConfig(for: bot, roomId: roomId, footer: footer)
+    }
+
+    func applyFeedUpdate(roomId: String, update: Chat.ProductFeedUpdate) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.applyFeedUpdate(for: bot, roomId: roomId, update: update)
+    }
+
+    func roomFeatures(roomId: String) async throws -> Chat.RoomFeatures {
+        let (context, bot) = try requireMessaging()
+        return try await context.roomFeatures(for: bot, roomId: roomId)
+    }
+
+    func setRoomFeatures(roomId: String, features: Chat.RoomFeatures) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.setRoomFeatures(for: bot, roomId: roomId, features: features)
+    }
+
+    func setRoomCall(roomId: String, call: Chat.RoomCall?) async throws {
+        let (context, bot) = try requireMessaging()
+        try await context.setRoomCall(for: bot, roomId: roomId, call: call)
+    }
+
+    func roomUserStates() async throws -> [Chat.RoomUserStateEntry] {
+        let (context, bot) = try requireMessaging()
+        return try await context.roomUserStates(for: bot)
+    }
+
+    func personaIds() async throws -> [String] {
+        let (context, bot) = try requireMessaging()
+        return try await context.personaIds(for: bot)
+    }
+
+    func registerPersona(botId: String, name: String, icon: String?) async throws -> Chat.PersonaRegistration {
+        let (context, bot) = try requireMessaging()
+        return try await context.registerPersona(for: bot, botId: botId, name: name, icon: icon)
     }
 }
 

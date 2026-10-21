@@ -9,9 +9,11 @@ import io.paritytech.polkadotapp.feature_calls_api.domain.models.CallDirection
 import io.paritytech.polkadotapp.feature_calls_api.domain.models.CallStatus
 import io.paritytech.polkadotapp.feature_calls_api.domain.models.isTerminal
 import io.paritytech.polkadotapp.feature_calls_impl.media.CallAudioRouteController
+import io.paritytech.polkadotapp.feature_calls_impl.product.RealProductCallMedia
 import io.paritytech.polkadotapp.feature_calls_impl.signaling.asPeerChannelSignaling
 import io.paritytech.polkadotapp.feature_calls_impl.state.CallStateHolder
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.isExtensionChat
 import io.paritytech.polkadotapp.tools_media_connection_api.domain.PeerChannel
 import io.paritytech.polkadotapp.tools_media_connection_api.domain.PeerChannelFactory
 import io.paritytech.polkadotapp.tools_media_connection_api.domain.PeerConnectionLogger
@@ -34,8 +36,10 @@ class CallSessionManager @Inject constructor(
     private val callStateHolder: CallStateHolder,
     private val callAudioRouteController: CallAudioRouteController,
     private val peerChannelFactory: PeerChannelFactory,
+    private val productCallMedia: RealProductCallMedia,
 ) {
     private val peerChannel = MutableStateFlow<PeerChannel?>(null)
+    private var sessionSignaling: ExternalCallSignaling? = null
 
     fun startSession(
         sessionScope: CoroutineScope,
@@ -50,7 +54,13 @@ class CallSessionManager @Inject constructor(
 
         with(sessionScope) { callAudioRouteController.start(defaultToSpeaker = withVideo) }
 
-        val signaling = externalCallSignaling.asPeerChannelSignaling(chatId, offerId, withVideo)
+        val callSignaling = signalingOf(chatId, offerId) ?: run {
+            Timber.w("startSession: product call $offerId is not running")
+            onTerminated()
+            return
+        }
+        sessionSignaling = callSignaling
+        val signaling = callSignaling.asPeerChannelSignaling(chatId, offerId, withVideo)
 
         sessionScope.launch {
             val channel = peerChannelFactory.createSingleConnection(
@@ -72,7 +82,7 @@ class CallSessionManager @Inject constructor(
 
             channel.startConnection()
 
-            observeStatus(sessionScope, channel, chatId, offerId, callDirection, onTerminated)
+            observeStatus(sessionScope, callSignaling, channel, chatId, offerId, callDirection, onTerminated)
             observeMediaTracks(sessionScope, channel)
             observeMediaState(sessionScope, channel)
 
@@ -89,6 +99,7 @@ class CallSessionManager @Inject constructor(
         callAudioRouteController.stop()
         peerChannel.value?.dispose()
         peerChannel.value = null
+        sessionSignaling = null
         Timber.i("endSession: complete")
     }
 
@@ -99,17 +110,22 @@ class CallSessionManager @Inject constructor(
             return
         }
         Timber.i("sendCloseSignal: offerId=${activeCall.offerId}")
-        declineOffer(activeCall.offerId, activeCall.chatId)
+        val signaling = sessionSignaling ?: signalingOf(activeCall.chatId, activeCall.offerId)
+        signaling?.sendCloseSignal(activeCall.offerId, activeCall.chatId)
     }
 
     suspend fun declineOffer(offerId: OfferId, chatId: ChatId) {
-        externalCallSignaling.sendCloseSignal(offerId, chatId)
+        signalingOf(chatId, offerId)?.sendCloseSignal(offerId, chatId)
     }
+
+    // A product room's call goes through the product, which may have ended it already.
+    private fun signalingOf(chatId: ChatId, offerId: OfferId): ExternalCallSignaling? =
+        if (chatId.isExtensionChat()) productCallMedia.session(chatId, offerId) else externalCallSignaling
 
     context(scope: CoroutineScope)
     fun observeIncomingCallCanceled(chatId: ChatId, offerId: OfferId, onCanceled: () -> Unit) = scope.launch {
         Timber.i("observeIncomingCallClose: waiting for close signal, offerId=$offerId")
-        externalCallSignaling.subscribeIncomingCloseSignal(offerId, chatId).first()
+        signalingOf(chatId, offerId)?.subscribeIncomingCloseSignal(offerId, chatId)?.first()
         Timber.i("observeIncomingCallClose: received close signal")
         callStateHolder.updateStatus(CallStatus.Ended)
         onCanceled()
@@ -117,6 +133,7 @@ class CallSessionManager @Inject constructor(
 
     private fun observeStatus(
         sessionScope: CoroutineScope,
+        signaling: ExternalCallSignaling,
         channel: PeerChannel,
         chatId: ChatId,
         offerId: OfferId,
@@ -125,7 +142,7 @@ class CallSessionManager @Inject constructor(
     ) {
         var connectedTimestamp: Long? = null
 
-        val closeSignals = externalCallSignaling.subscribeIncomingCloseSignal(offerId, chatId)
+        val closeSignals = signaling.subscribeIncomingCloseSignal(offerId, chatId)
             .map { CallStatus.Ended }
 
         val connectionStatuses = channel.connectionState.flatMapLatest { state ->
@@ -147,7 +164,7 @@ class CallSessionManager @Inject constructor(
                 }
 
                 else -> when (callDirection) {
-                    CallDirection.Outgoing -> externalCallSignaling.observeOfferReadStatus(offerId)
+                    CallDirection.Outgoing -> signaling.observeOfferReadStatus(offerId)
                         .map { isRead -> if (isRead) CallStatus.Ringing else CallStatus.Requesting }
                     CallDirection.Incoming -> flowOf(CallStatus.Connecting)
                 }

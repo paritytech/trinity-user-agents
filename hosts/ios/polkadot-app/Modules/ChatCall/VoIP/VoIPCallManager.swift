@@ -43,6 +43,7 @@ final class VoIPCallKitManager: NSObject {
     private let audioSessionManager: CallAudioSessionManaging
     private let contactsService: ContactsLocalStorageServicing
     private let messageCoder: ChatPushMessageCoding
+    private let productCalls: ProductVoIPCallResolving
     private let logger: LoggerProtocol
 
     private let activeCallDataSubject = AsyncCurrentValueSubject<VoIPCallKitData?>(nil)
@@ -63,9 +64,11 @@ final class VoIPCallKitManager: NSObject {
                 entropyManager: RootEntropyManager.shared
             )
         ),
+        productCalls: ProductVoIPCallResolving = ProductVoIPCalls.shared,
         queue: DispatchQueue = PushKitQueueProvider.queue,
         logger: LoggerProtocol = Logger.shared
     ) {
+        self.productCalls = productCalls
         self.audioSessionManager = audioSessionManager
         self.contactsService = contactsService
         self.messageCoder = messageCoder
@@ -428,6 +431,11 @@ private extension VoIPCallKitManager {
             PushNotificationKeys.message
         ] as? String else {
             throw InputError.invalidMessageData
+        }
+
+        // The chat product's offers open with its routes; the native chat does not run beside it (HX2).
+        if PersonChatMode.isProductChat, let input = productCalls.input(pushId: pushId, message: messageHex) {
+            return input
         }
 
         let contact = try await contactsService.getContact(byPushId: pushId)

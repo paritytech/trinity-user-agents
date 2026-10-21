@@ -7,6 +7,7 @@
 // Links `verifiable` directly, which the browser core loads on demand instead.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod attestation;
+pub mod chat_push;
 pub mod contact_substitution;
 // Only native hosts open a page from a development server.
 #[cfg(not(target_arch = "wasm32"))]
@@ -17,6 +18,7 @@ pub mod dotns_gateway;
 pub mod entropy;
 pub mod features;
 pub mod funding;
+pub mod hop;
 pub mod product_account;
 pub mod raw_signing;
 pub mod scanner;

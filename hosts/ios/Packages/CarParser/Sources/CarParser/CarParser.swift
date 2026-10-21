@@ -6,7 +6,11 @@ public enum CarParserError: Error {
     case invalidHeader(Error)
     case blockParseFailed(Error)
     case fileTreeReconstructionFailed(Error)
+    case verificationFailed(String)
 }
+
+/// The digest of a block under the multihash function `code`, or nil for a function the caller cannot compute.
+public typealias BlockDigest = (_ code: Int, _ block: Data) throws -> Data?
 
 public typealias BlockWindowSink = (_ window: Data) throws -> Void
 public typealias CarContentWriter = (_ path: String, _ produce: (BlockWindowSink) throws -> Void) throws -> Void
@@ -26,6 +30,28 @@ public enum CarParser {
     ) throws {
         let data = try Data(contentsOf: fileURL, options: .mappedIfSafe)
         try unpack(data: data, writer: writer)
+    }
+
+    /// Checks that the archive at `fileURL` is the content of `root`, the raw bytes of a CID: its only root is `root`,
+    /// and every block hashes to its CID under `digest`. Throws `verificationFailed` on the first mismatch and on a
+    /// block whose hash function `digest` cannot compute.
+    public static func verify(fileURL: URL, root: Data, digest: BlockDigest) throws {
+        let data = try Data(contentsOf: fileURL, options: .mappedIfSafe)
+        let (header, blocks) = try parseHeaderAndBlocks(data: data)
+        guard header.roots.count == 1, try rootCid(from: header).rawData == root else {
+            throw CarParserError.verificationFailed("the archive's root is not the expected content")
+        }
+        for (cid, ref) in blocks {
+            guard let code = cid.multihash.code, let expected = cid.multihash.digest else {
+                throw CarParserError.verificationFailed("a block has no readable multihash")
+            }
+            guard let actual = try digest(code, Data(data[ref.range])) else {
+                throw CarParserError.verificationFailed("a block uses hash function \(code), which cannot be checked")
+            }
+            guard actual == Data(expected) else {
+                throw CarParserError.verificationFailed("a block does not match its CID")
+            }
+        }
     }
 
     /// Heuristic check: does this data look like a CARv1 archive?

@@ -8,7 +8,10 @@
 //   └───────────────┬─────────────────────────────────────────────────┘
 //                   │ MainToWorker: init, createCore, frame,
 //                   │               callbackResponse, subscriptionItem,
-//                   │               chainResponse
+//                   │               chainResponse, renderStart,
+//                   │               chatQueryStart, publishChatEvent,
+//                   │               publishChatRoomEvent, wakeProduct,
+//                   │               stageChatAttachment
 //                   v
 //   Dedicated Worker
 //   ┌─────────────────────────────────────────────────────────────────┐
@@ -16,7 +19,8 @@
 //   │ generated raw-callback proxy                                    │
 //   └───────────────┬─────────────────────────────────────────────────┘
 //                   │ WorkerToMain: coreReady, frame, callbackRequest,
-//                   │               subscriptionStart, chainConnect
+//                   │               subscriptionStart, chainConnect,
+//                   │               renderItem, chatQueryAnswer
 //                   v
 //   Main window dispatches those requests to the actual host callbacks.
 //
@@ -29,6 +33,7 @@
 // views into WASM memory) and frames are small, so the copy is the simpler
 // safe choice.
 
+import type { ChatQueryName } from "./chat-queries.js";
 import type { OptionalCapabilities } from "./generated/worker-callbacks.js";
 import type { LogLevel, PermissionAuthorizationStatus } from "./runtime.js";
 import type {
@@ -163,12 +168,58 @@ export type MainToWorker =
       action: Uint8Array;
     }
   | {
+      kind: "publishChatEvent";
+      coreId: number;
+      requestId: number;
+      /** SCALE-encoded `HostChatActionSubscribeItem` of the current version. */
+      action: Uint8Array;
+    }
+  | {
+      kind: "publishChatRoomEvent";
+      coreId: number;
+      requestId: number;
+      /** SCALE-encoded `HostChatRoomEventsSubscribeItem`. */
+      action: Uint8Array;
+    }
+  | {
       kind: "publishRendererAction";
       coreId: number;
       requestId: number;
       /** SCALE-encoded `HostRendererActionSubscribeItem`. */
       action: Uint8Array;
     }
+  /** Hold the worker of the product of `coreId`. See `wakeProduct` of the core. */
+  | {
+      kind: "wakeProduct";
+      coreId: number;
+      requestId: number;
+      roomId: string | undefined;
+      watchId: string | undefined;
+    }
+  /** Store a user attachment as a preimage. See `stageChatAttachment`. */
+  | {
+      kind: "stageChatAttachment";
+      coreId: number;
+      requestId: number;
+      roomId: string;
+      mimeType: string;
+      bytes: Uint8Array;
+    }
+  /**
+   * Ask the product one chat query. The worker answers with exactly one of
+   * `chatQueryAnswer`, `chatQueryRefusal`, `chatQueryEnd` or
+   * `chatQueryFailure` for the same `queryId`.
+   */
+  | {
+      kind: "chatQueryStart";
+      coreId: number;
+      queryId: number;
+      name: ChatQueryName;
+      /** The SCALE-encoded request of the query. */
+      request: Uint8Array;
+    }
+  /** Stop a query that has no answer yet. The worker sends nothing more for it. */
+  | { kind: "chatQueryStop"; queryId: number }
   | {
       kind: "renderStart";
       coreId: number;
@@ -322,6 +373,48 @@ export type WorkerToMain =
    * the latest message for a product is its current level.
    */
   | { kind: "workerDemandChanged"; productId: string; wanted: boolean }
+  | { kind: "publishChatEventResponse"; requestId: number; ok: true }
+  | {
+      kind: "publishChatEventResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
+  /** The SCALE-encoded item of a chat query. */
+  | { kind: "chatQueryAnswer"; queryId: number; item: Uint8Array }
+  /** The SCALE-encoded `CallError` of a chat query. */
+  | { kind: "chatQueryRefusal"; queryId: number; error: Uint8Array }
+  /** The product ended a chat query with no item. */
+  | { kind: "chatQueryEnd"; queryId: number }
+  /** The core could not start a chat query. */
+  | { kind: "chatQueryFailure"; queryId: number; error: string }
+  | { kind: "publishChatRoomEventResponse"; requestId: number; ok: true }
+  | {
+      kind: "publishChatRoomEventResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
+  /** `untilMs` is `undefined` when the product used its notification wakes. */
+  | {
+      kind: "wakeProductResponse";
+      requestId: number;
+      ok: true;
+      untilMs: number | undefined;
+    }
+  | { kind: "wakeProductResponse"; requestId: number; ok: false; error: string }
+  | {
+      kind: "stageChatAttachmentResponse";
+      requestId: number;
+      ok: true;
+      key: Uint8Array;
+    }
+  | {
+      kind: "stageChatAttachmentResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
   | { kind: "publishRendererActionResponse"; requestId: number; ok: true }
   | {
       kind: "publishRendererActionResponse";

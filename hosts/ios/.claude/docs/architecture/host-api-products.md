@@ -14,6 +14,10 @@ Products (UI)  →  HostApi (JS↔Swift bridge)  →  ChatExtension (messaging i
 2. **HostApi** — JavaScript bridge (ContainerBridge pattern) for native capabilities
 3. **ChatExtension** — integration with chat for product-related messages
 
+Chat products (Chat Extension v2 product rooms, the worker lifetime, the message-source seam) are
+described in `architecture/chat-extension.md`. For chat, this page covers only how the runtime is chosen
+and built.
+
 ## Key Components
 
 ### Products Package (`Packages/Products/`)
@@ -82,12 +86,17 @@ Settings toggle (`TESTNET_FEATURE`: Debug, DevCI, Nightly, Safetynet); Release s
 toggle and stays on native, so the default there is deliberately still native.
 
 Layout under `polkadot-app/Modules/Products/`: `ProductRuntimeProtocol.swift` at the root
-defines the runtime protocols (+ the SPA factory protocol); `Chat/Native/`, `Chat/Rust/`,
-`SPA/Native/`, `SPA/Rust/` hold the per-surface, per-mode runtimes and scripts factories.
-Shared rust infrastructure lives in `TrUAPI/`: `RustRuntimeEnvironment` +
-`RustRuntimeSessionParams` (per-runtime core assembly), `RustRuntimeBridge`
-(HostCallbacks), `TrUAPIConfirmationPresenter`, `Connection/` (per-lease raw socket pool
-`TrUAPIV2SpecConnectionPool` + the `TrUAPIChainConnecting` seam), `Storage/` (`TrUAPILocalStorage`), and `Preimage/`
+defines the runtime protocols (`ChatRuntimeProtocol`, `SPARuntimeProtocol`, the SPA factory
+protocol). `Chat/Native/` holds `ManagedChatRuntime`; `Chat/Rust/` holds `TrUAPIChatHandler`
+and `ProductFirstRoomHold`; `SPA/Native/` holds `SPANativeRuntimeScriptsFactory`; `SPA/Rust/`
+holds `SPARustRuntime` and `SPARustRuntimeFactory`. Shared rust infrastructure lives in
+`TrUAPI/`: `TrUAPIHostRuntimeProvider` (the process-wide `TrUAPIHostRuntime`),
+`RustRuntimeEnvironment` (opens one execution off that runtime), `RustHostRuntimeBridge` and
+`RustProductExecutionBridge` (`HostBridge` conformers; `RustChatExecutionBridge` adds
+`ChatHostBridge`), `RustRuntimeScriptsFactory`, `Worker/` (`TrUAPIWorkerManager`,
+`TrUAPIWorkerRuntime`), `TrUAPIConfirmationPresenter`, `Connection/` (per-lease raw socket
+pool `TrUAPIV2SpecConnectionPool` + the `TrUAPIChainConnecting` seam), `Storage/`
+(`TrUAPILocalStorage`), and `Preimage/`
 (`TrUAPIPreimageCache`). The rust core itself is the remote `TrUAPIHost` SPM package. The
 debug playground lives in `Modules/DebugSettings/` (`TrUAPIPlaygroundViewFactory`,
 presented by `DebugSettingsWireframe.showTrUAPIPlayground(from:)`), and assembles its SPA
@@ -99,11 +108,15 @@ Rules:
 
 1. **Runtimes are assembled at creation time, per call.** SPA uses
    `SPARuntimeFactoryProtocol.createRuntime(for productId:)` (the factory is per-view: it
-   carries `SPAConfiguration`, resolver, scheme handler proxy, routers); chat rust
-   runtimes are built by `ProductBotFactory.createRustRuntime(product:)`, parallel to
-   `createNativeRuntime` — no separate chat factory type. There is no session/handle
-   entity: each creation assembles core + bridge + connection pool + ws-bridge via a
-   fresh `RustRuntimeEnvironment`. Nothing rust-related is built at app startup.
+   carries `SPAConfiguration`, resolver, scheme handler proxy, routers). Chat runtimes
+   are built by `ProductBotFactory.create(resolved:)`: `TrUAPIChatHandler` when the flag
+   is on and a worker manager exists, else `ManagedChatRuntime` — no separate chat
+   factory type. `TrUAPIChatHandler` opens no execution of its own: it asks
+   `TrUAPIWorkerManager` for the product's one Worker execution while a room is open or a
+   query runs (see `architecture/chat-extension.md`). The one rust piece built at app
+   startup is the shared core runtime: `ServiceCoordinator` calls
+   `TrUAPIHostRuntimeProvider.prepareInBackground()`, so its blocking `Db::open` never
+   runs on the main thread.
 2. **The runtime owns setup and teardown.** `SPARuntimeProtocol.start(with engine:)`
    activates the local session and starts the localhost ws-bridge
    (`CoreModel.startSession()` — creation via `makeRustCore` is side-effect free), resolves
@@ -129,7 +142,7 @@ Rules:
    container behind the public `ContainerScriptBundle.load()` accessor. Its TypeScript
    source and esbuild live in the truapi repo, not in this one.
 6. **Routers are consumed through `ProductRoutersFacadeProtocol`.** One facade instance per
-   context, composed via `ProductRoutersFacade.chatExtension()` / `.sso()` /
+   context, composed via `ProductRoutersFacade.worker()` / `.sso()` /
    `.spa()` — never pass router parameter lists. The facade exposes signing,
    navigation, permission, top-up, payment, create-proof prompt, sign-vrf prompt,
    allowance prompt, and statement-sign prompt routers; one `setPresentationView` fans the
@@ -152,17 +165,21 @@ Rules:
    `setPresentationView`, and prompts deliver denial/rejection when no view is attached.
    The SPA runtime factory receives the view (`setPresentationView`) and anchors the
    routers on every `createRuntime` — interactors never see the view; chat runtimes
-   forward `attach(presentationView:)` to their facade; the SSO facade is owned by
+   forward `attach(presentationView:)` to the product's worker facade
+   (`ProductWorkerContext.routers` for `TrUAPIChatHandler`, the managed worker for
+   `ManagedChatRuntime`); the SSO facade is owned by
    `MessageExchangeSignInHostCoordinator` and its view is bound by
    `MainTabBarViewFactory` through `serviceCoordinator.signInHostCoordinator` (prompts
    arriving before the tab bar exists deny).
-7. **One scripts protocol per surface, one factory per runtime mode.** `SPAScriptsMaking`
-   (`[JSEngineScript]`, doc-start injection) is implemented by
-   `SPANativeRuntimeScriptsFactory` and `SPARustRuntimeScriptsFactory`; `ChatScriptsMaking`
-   (`[String]`, evaluated in order — Products package, consumed by `ProductsScriptExecutor`)
-   is implemented by `ChatNativeRuntimeScriptsFactory` and `ChatRustRuntimeScriptsFactory`.
-   Rust factories load the TrUAPI bundle directly — no adapter types.
-   Bootstrap-before-container script ordering is load-bearing.
+7. **Native scripts go through a protocol per surface; rust scripts through one shared
+   factory.** `SPAScriptsMaking` (`[JSEngineScript]`, doc-start injection) is implemented by
+   `SPANativeRuntimeScriptsFactory`; `ChatScriptsMaking` (`[String]`, evaluated in order —
+   Products package, consumed by `ProductsScriptExecutor` and `DefaultProductWorkerFactory`)
+   is implemented by `ChatNativeRuntimeScriptsFactory`. Both rust modes use
+   `RustRuntimeScriptsFactory` (bootstrap, then `ContainerScriptBundle.load()`):
+   `SPARustRuntime` for an SPA, `TrUAPIWorkerRuntime` for a worker, which also adds its fault
+   script. There is no adapter type. Bootstrap-before-container script ordering is
+   load-bearing.
 8. **Bridge params/results go through Codable DTOs, not hand-rolled JSON.** In a
    `registerRequestHandler`/`registerSubscriptionHandler`, decode the whole `params` with
    `params.map(to: SomeRequestDto.self)` and encode results with `result.toScaleCompatibleJSON()` —
@@ -197,6 +214,8 @@ Rules:
 | SPA module                    | `polkadot-app/Modules/SPA/`             | Smart Proposal Agent changes         |
 | DotNs contract reads          | `Packages/Products/Sources/Products/DotNs/ReviveDotNsContractApi.swift` over `Revive` (architecture/revive.md) | Resolver / registry lookups, cache policy |
 | Product runtimes              | `polkadot-app/Modules/Products/{Chat,SPA}/{Native,Rust}/` | Adding a runtime mode, changing runtime lifecycle |
+| Chat product rooms (v2)       | `Modules/Chat/`, `Modules/Products/Chat/`, `Modules/Products/TrUAPI/` (architecture/chat-extension.md) | Room declarations, message sources, queries, worker holds |
+| Product workers (rust)        | `polkadot-app/Modules/Products/TrUAPI/Worker/` | Worker start, stop, faults, reference counts |
 
 ## Anti-Patterns
 

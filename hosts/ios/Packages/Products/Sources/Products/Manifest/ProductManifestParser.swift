@@ -175,9 +175,20 @@ private extension ProductManifestParser {
                 identifier: identifier,
                 appVersion: appVersion,
                 entrypoint: entrypoint,
-                modalities: modalities
+                modalities: modalities,
+                keepAlive: keepAlive(dto.keepAlive, identifier: identifier)
             )
         )
+    }
+
+    /// An unknown value costs the product its foreground worker and nothing more, so that a later value of the
+    /// manifest format does not take the worker down on this host.
+    func keepAlive(_ field: KeepAliveDTO?, identifier: ProductId) -> ProductWorkerKeepAlive {
+        guard let field else { return .onDemand }
+
+        return ProductWorkerKeepAlive(manifestValue: field.value)
+            ?? reject("\(identifier): unknown keepAlive '\(field.value ?? "")', the worker runs on demand")
+            ?? .onDemand
     }
 
     /// A stricter Host must not see a different manifest, so cards are read only behind

@@ -226,6 +226,7 @@ private extension Chat.Request {
         }
 
         return outgoingStatus != .delivered &&
+            outgoingStatus != .read &&
             requestId == matchingRequestId &&
             incomingMessage.timestamp >= timestamp
     }

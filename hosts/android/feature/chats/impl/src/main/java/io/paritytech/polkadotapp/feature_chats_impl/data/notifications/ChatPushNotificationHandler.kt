@@ -13,9 +13,11 @@ import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_calls_api.domain.CallController
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatActiveTracker
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.asAnyRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.previewText
 import io.paritytech.polkadotapp.feature_chats_api.domain.notifications.ChatPushContent
 import io.paritytech.polkadotapp.feature_chats_api.domain.notifications.IncomingChatPushDecoder
 import io.paritytech.polkadotapp.feature_chats_api.domain.notifications.IncomingChatPushDecoder.Companion.MESSAGE_KEY
@@ -69,10 +71,12 @@ internal class ChatPushNotificationHandler @Inject constructor(
     private val chainRegistry: ChainRegistry,
     private val knownChains: KnownChains,
     private val compactionExpansionStarter: CompactionExpansionStarter,
+    private val personChatMode: PersonChatMode,
     @param:ApplicationContext private val appContext: Context
 ) : PushNotificationHandler {
+    // While the chat product runs the chats, the native chat answers no push (HX2).
     override suspend fun canHandle(data: Map<String, String>): Boolean {
-        return data.isLegacyChatPush() || data.isNewSpecChatPush()
+        return !personChatMode.isProductChat() && (data.isLegacyChatPush() || data.isNewSpecChatPush())
     }
 
     override suspend fun handle(data: Map<String, String>) {
@@ -295,6 +299,10 @@ internal class ChatPushNotificationHandler @Inject constructor(
             }
 
             is ChatMessage.Content.ChatRequest -> content.welcome?.text
+
+            is ChatMessage.Content.ProductBody -> content.body.previewText() ?: unsupportedText()
+
+            is ChatMessage.Content.Deleted -> null
         }
     }
 
@@ -320,6 +328,7 @@ internal fun ChatMessage.Content.isDisplayableAsPush(): Boolean = when (this) {
     is ChatMessage.Content.DataChannelOffer,
     is ChatMessage.Content.ChatRequest,
     is ChatMessage.Content.Unsupported,
+    is ChatMessage.Content.ProductBody,
     is ChatMessage.Content.Custom<*> -> true
 
     is ChatMessage.Content.LeftChat,
@@ -332,5 +341,6 @@ internal fun ChatMessage.Content.isDisplayableAsPush(): Boolean = when (this) {
     is ChatMessage.Content.DeviceAdded,
     is ChatMessage.Content.DeviceRemoved,
     is ChatMessage.Content.CompactionCommit,
-    is ChatMessage.Content.CompactionUnavailable -> false
+    is ChatMessage.Content.CompactionUnavailable,
+    is ChatMessage.Content.Deleted -> false
 }

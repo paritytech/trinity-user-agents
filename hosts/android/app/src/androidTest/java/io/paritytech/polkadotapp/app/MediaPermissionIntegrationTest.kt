@@ -78,7 +78,7 @@ class MediaPermissionIntegrationTest {
                     webView = WebView(context)
                     webView.settings.javaScriptEnabled = true
                     webView.webChromeClient = ProductWebChromeClient(
-                        unused(), DeviceCapabilityPermissionHandler(unused(), unused(), permissionAsker),
+                        unused(), DeviceCapabilityPermissionHandler(unused(), unused(), permissionAsker, context, unused()),
                         unused(), unused(), "Media test", FixedProductId(ProductId.fromStoredValue("media.paseo")), scope, null,
                     )
                     webView.addJavascriptInterface(reports, "mediaReport")

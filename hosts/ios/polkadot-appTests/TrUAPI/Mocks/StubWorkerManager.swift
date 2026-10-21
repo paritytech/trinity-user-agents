@@ -25,6 +25,12 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
 
     private(set) var demands: [(productId: ProductId, transition: WorkerTransition)] = []
 
+    /// The wakes that the handlers asked for, in order (07-LATER §10.2).
+    var wakes: [ChatWakeReason] { wakeRecords.withLock { $0 } }
+    /// What ``wake(_:reason:)`` gives. Nil stands for a core that cannot wake the product.
+    var wakeOutcome: ChatWakeOutcome? = .held(untilMs: 0)
+    private let wakeRecords = OSAllocatedUnfairLock(initialState: [ChatWakeReason]())
+
     init(references: StubWorkerReferences = StubWorkerReferences(), startupWindow: Duration = .seconds(10)) {
         let (delivered, continuation) = AsyncStream.makeStream(of: Void.self)
         deliveredSignal = continuation
@@ -65,6 +71,35 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
 
     func releaseWorker(for productId: ProductId) {
         references.releaseWorker(productId: productId)
+    }
+
+    func wake(_: ProductId, reason: ChatWakeReason) async -> ChatWakeOutcome? {
+        wakeRecords.withLock { $0.append(reason) }
+        return wakeOutcome
+    }
+
+    /// The core of the stub references answers the push (A1).
+    func receiveWakePush(payload: String) async throws -> [PushWakeDelivery] {
+        try await references.handleWakePush(payload: payload)
+    }
+
+    /// The foreground declarations and withdrawals of the handlers, in order (I5).
+    var foregroundDeclarations: [String] { foregroundRecords.withLock { $0 } }
+    /// The reports of the app state, in order.
+    var foregroundReports: [Bool] { reportRecords.withLock { $0 } }
+    private let foregroundRecords = OSAllocatedUnfairLock(initialState: [String]())
+    private let reportRecords = OSAllocatedUnfairLock(initialState: [Bool]())
+
+    func declareForegroundWorker(for productId: ProductId) {
+        foregroundRecords.withLock { $0.append("declare \(productId)") }
+    }
+
+    func withdrawForegroundWorker(for productId: ProductId) {
+        foregroundRecords.withLock { $0.append("withdraw \(productId)") }
+    }
+
+    func appForegroundChanged(_ foreground: Bool) {
+        reportRecords.withLock { $0.append(foreground) }
     }
 
     func publish(_ executions: [ProductId: TrUAPIProductExecutionProtocol]) {
@@ -138,5 +173,26 @@ final class StubWorkerReferences: TrUAPIWorkerReferencing, @unchecked Sendable {
             $0.released.append(productId)
             $0.log.append("release \(productId)")
         }
+    }
+
+    /// Records the keep alive in the log beside the requests (I5).
+    func setWorkerKeepAlive(productId: ProductId, keepAlive: WorkerKeepAlive) {
+        records.withLock { $0.log.append("keep alive \(productId) \(keepAlive)") }
+    }
+
+    /// Records the wake in the log beside the requests, and holds until 30 seconds after `now`.
+    func wakeProduct(productId: ProductId, reason: ChatWakeReason) throws -> ChatWakeOutcome {
+        records.withLock { $0.log.append("wake \(productId) \(reason.logName)") }
+        return .held(untilMs: UInt64(Date().timeIntervalSince1970 * 1_000) + 30_000)
+    }
+
+    /// What ``handleWakePush(payload:)`` gives; it throws `PushWakeRejection.Stale` when nil.
+    var pushDeliveries: [PushWakeDelivery]? = []
+
+    /// Records the push in the log beside the requests (A1).
+    func handleWakePush(payload: String) async throws -> [PushWakeDelivery] {
+        records.withLock { $0.log.append("push \(payload)") }
+        guard let pushDeliveries else { throw PushWakeRejection.Stale }
+        return pushDeliveries
     }
 }

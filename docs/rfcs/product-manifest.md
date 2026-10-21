@@ -182,6 +182,7 @@ type WorkerManifest = CommonExecutableFields & {
     input?: boolean;
     funding?: FundingConfig;                       // Present means the worker serves Funding; see [Funding configuration](#funding-configuration).
   };
+  keepAlive?: 'onDemand' | 'foreground';           // When the worker runs; an omitted key means `onDemand`.
 };
 
 type SemVer = [major: number, minor: number, patch: number, build?: string];
@@ -190,7 +191,7 @@ type SemVer = [major: number, minor: number, patch: number, build?: string];
 
 - `app` — full-screen App. No extra fields beyond the common ones.
 - `widget` — `dimensions.height` is the list of grid-step heights the widget can render at; the Host picks one per layout. `width` defaults to `1` column. The grid unit and bounds belong to the Host's dashboard spec (see [Future Directions](#future-directions)). By convention `8` in `height` signals a full-screen widget; this RFC does not normalise that convention.
-- `worker` — background JS worker. `entrypoint` is the module the Host loads inside the worker. `includes` declares which surfaces it serves. Hosts MUST ignore an `includes` key they do not recognise, so a surface added later does not break them.
+- `worker` — background JS worker. `entrypoint` is the module the Host loads inside the worker. `includes` declares which surfaces it serves. Hosts MUST ignore an `includes` key they do not recognise, so a surface added later does not break them. `keepAlive` declares when the worker runs ([Worker Lifecycle](worker-lifecycle.md#foreground)): `onDemand` only while a modality holds it, `foreground` also while the app is in the foreground. A Host reads an unknown value as `onDemand` and keeps the worker.
 
 **`appVersion` is a label, not a change signal.** Hosts detect a new deployment from the subname's `contenthash`, not from this field (see [Cache invalidation](#resolving-a-product)). `appVersion` names the release for the user — "update to 1.4.0", "you declined 1.3.2" — so publishers SHOULD keep it meaningful, but nothing about resolution or caching depends on it moving.
 
@@ -371,6 +372,7 @@ type WorkerConfig = {
     pocket?: boolean;
     input?: boolean;
   };
+  keepAlive?: 'onDemand' | 'foreground'; // Copied to WorkerManifest.keepAlive when set.
 };
 ```
 

@@ -63,6 +63,18 @@ final class ChatEngineFactory: ChatEngineFactoryProtocol {
             storageFacade: storageFacade
         )
 
+        let productRoomServices: ProductRoomServices? =
+            switch chatId {
+            case .person:
+                nil
+            case let .chatExtension(extensionId, _):
+                // The bot of the product can come after the room screen, so each call finds it then.
+                ProductRoomServices(bot: RegistryProductRoom(
+                    extensionId: extensionId,
+                    registry: flowState.extensionsRegistry
+                ))
+            }
+
         return ChatEngine(
             chatId: chatId,
             chatRequestContext: requestContext,
@@ -71,7 +83,8 @@ final class ChatEngineFactory: ChatEngineFactoryProtocol {
             chatProvider: ChatContactDataProviderFactory(),
             settings: SettingsManager.shared,
             leaveChatService: leaveChatService,
-            blockUserService: blockUserService
+            blockUserService: blockUserService,
+            productRoomServices: productRoomServices
         )
     }
 }

@@ -5,7 +5,8 @@ import ChainRegistry
 @MainActor
 enum ContactsListViewFactory {
     static func createView(
-        flowState: ChatFlowState
+        flowState: ChatFlowState,
+        scope: ChatListScope = .main
     ) -> ContactsListViewProtocol? {
         let chainRegistry = ChainRegistryFacade.sharedRegistry
         let chainAssetId = AppConfig.Assets.mainAsset
@@ -28,6 +29,8 @@ enum ContactsListViewFactory {
             chatExtensionsRegistry: flowState.extensionsRegistry,
             networkStatusObserver: networkStatusObserver,
             foregroundVisibilityReporter: flowState.foregroundVisibilityReporter,
+            scope: scope,
+            userStates: RootDependencyLocator.getDependency(),
             logger: Logger.shared
         )
 
@@ -55,13 +58,16 @@ enum ContactsListViewFactory {
             wireframe: wireframe,
             viewModelFactory: viewModelFactory,
             titleViewModelFactory: NetworkStatusTitleViewModelFactory(
-                screenTitle: String(localized: .chatMainTitle)
+                screenTitle: scope == .main ? String(localized: .chatMainTitle)
+                    : String(localized: .ChatExtension.listArchived)
             ),
-            assetDisplayInfo: chainAsset.asset.digitalDollarDisplayInfo
+            assetDisplayInfo: chainAsset.asset.digitalDollarDisplayInfo,
+            scope: scope
         )
 
         let view = ContactsListViewController(
-            presenter: presenter
+            presenter: presenter,
+            scope: scope
         )
 
         presenter.view = view

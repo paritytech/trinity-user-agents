@@ -83,3 +83,5 @@ tmp/
 
 # Agent scratch notes (worklog, memory, tools)
 .agent/
+# The bundled person chat worker, pinned by BundledChatDigest.kt
+!feature/products/impl/src/main/assets/person-chat/index.js

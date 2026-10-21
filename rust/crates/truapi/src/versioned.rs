@@ -35,6 +35,7 @@ pub trait FromLatest: Versioned {
 }
 
 pub mod account;
+pub mod call_media;
 pub mod chain;
 pub mod chat;
 pub mod coin_payment;
@@ -48,6 +49,7 @@ pub mod locale;
 pub mod notifications;
 pub mod payment;
 pub mod permissions;
+pub mod person_chat;
 pub mod pocket;
 pub mod preimage;
 pub mod renderer;
@@ -57,6 +59,7 @@ pub mod signing;
 pub mod statement_store;
 pub mod system;
 pub mod theme;
+pub mod usernames;
 pub mod worker;
 
 #[cfg(test)]

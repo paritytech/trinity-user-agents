@@ -118,23 +118,6 @@ private extension ProductBotChatListTests {
     }
 }
 
-private struct FixedChatMessageDecoderFactory: ChatMessageDecoderMaking {
-    let decoders: [ChatMessageCustomDecoding]
-
-    func makeDecoders(for _: ChainModel, chatId _: Chat.Id) -> [ChatMessageCustomDecoding] {
-        decoders
-    }
-}
-
-private final class RecordingProductIconViewModelFactory: ProductIconViewModelMaking {
-    private(set) var requestedDomains: [String] = []
-
-    func createViewModel(for domain: String) -> any ImageViewModelProtocol {
-        requestedDomains.append(domain)
-        return StaticImageViewModel(image: nil)
-    }
-}
-
 private final class IdleChatRuntime: ChatRuntimeProtocol, @unchecked Sendable {
     func start(messagingSupport _: ProductsNativeApi.MessagingSupport) async throws {}
     func onUserMessage(text _: String, roomId _: String?) async throws {}
@@ -155,6 +138,8 @@ private final class IdleChatRuntime: ChatRuntimeProtocol, @unchecked Sendable {
         actionId _: String,
         payload _: String?
     ) async {}
+
+    func dispatchActionTrigger(roomId _: String?, messageId _: String, actionId _: String) async {}
 
     @MainActor func attach(presentationView _: ControllerBackedProtocol) {}
     func dispose() async {}

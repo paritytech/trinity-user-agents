@@ -1439,6 +1439,51 @@ impl ProductAuthority for SigningHost {
 			.to_bytes())
 	}
 
+	async fn prepare_chat_delivery(
+		&self,
+		session: &AuthoritySession,
+		request_id: String,
+		size: u32,
+	) -> Result<crate::runtime::authority::ChatDelivery, AuthorityError> {
+		sso_responder::prepare_chat_delivery(&self.services, self, session, &request_id, size)
+			.await
+			.map_err(|error| match error {
+				sso_responder::AllowanceAllocationError::Authority(error) => error,
+				other => AuthorityError::Unknown { reason: other.to_string() },
+			})
+	}
+
+	async fn sign_as_chat_delivery(
+		&self,
+		session: &AuthoritySession,
+		request_id: String,
+		period: u32,
+		payload: Vec<u8>,
+	) -> Result<([u8; 32], [u8; 64]), AuthorityError> {
+		self.require_current_session(session)?;
+		let keypair =
+			sso_responder::chat_delivery_keypair(&self.root_entropy()?, &request_id, period)
+				.map_err(|error| AuthorityError::Unknown { reason: error.to_string() })?;
+		let signature = keypair
+			.secret
+			.sign_simple(SR25519_SIGNING_CONTEXT, &payload, &keypair.public)
+			.to_bytes();
+		Ok((keypair.public.to_bytes(), signature))
+	}
+
+	async fn sign_as_identity(
+		&self,
+		session: &AuthoritySession,
+		payload: Vec<u8>,
+	) -> Result<[u8; 64], AuthorityError> {
+		self.require_current_session(session)?;
+		let keypair = self.identity_keypair()?;
+		Ok(keypair
+			.secret
+			.sign_simple(SR25519_SIGNING_CONTEXT, &payload, &keypair.public)
+			.to_bytes())
+	}
+
 	fn derive_entropy(
 		&self,
 		session: &AuthoritySession,
@@ -1476,9 +1521,12 @@ fn product_authority_error(err: ProductAccountError) -> AuthorityError {
 mod tests {
 	mod allowance_keys;
 	mod auto_signing;
+	#[cfg(feature = "test-host")]
+	mod chat_staging;
 	mod cross_product_account;
 	#[cfg(feature = "test-host")]
 	mod local_preimages;
+	mod person_chat;
 	mod raw_signing;
 	#[cfg(feature = "test-host")]
 	mod withheld_resources;

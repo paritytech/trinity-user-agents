@@ -1,5 +1,7 @@
-import UIKit
+import KeyDerivation
 import Products
+import SubstrateSdk
+import UIKit
 
 @MainActor
 protocol ModuleNavigating: AnyObject {
@@ -41,6 +43,13 @@ extension ModuleNavigator: ModuleNavigating {
     }
 
     func openChat(_ model: ChatOpenModel) {
+        // The chat product runs the person chats on this install (HX2): its room link opens the chat with the
+        // account, and the product sends a chat request first when it is no contact yet.
+        if PersonChatMode.isProductChat, let link = Self.productChatLink(for: model) {
+            UIApplication.shared.open(link)
+            return
+        }
+
         guard let view = UIApplication.shared.mainTabBarController else {
             return
         }
@@ -78,6 +87,17 @@ extension ModuleNavigator: ModuleNavigating {
 
 @MainActor
 private extension ModuleNavigator {
+    static func productChatLink(for model: ChatOpenModel) -> URL? {
+        let account: AccountId
+        switch model {
+        case let .existingChat(.person(accountId)): account = accountId
+        case let .newRequest(request): account = request.remoteContact.accountId
+        case .existingChat: return nil
+        }
+        guard let tld = DotNsTldProviderFacade.shared.currentTld() else { return nil }
+        return ProductChatLink.url(account: account, tld: tld)
+    }
+
     static func isPinnedPresentation(_ controller: UIViewController) -> Bool {
         controller is any LocalAuthViewProtocol
     }
@@ -114,5 +134,13 @@ private extension ModuleNavigator {
             return
         }
         tabNavigation.viewControllers = [rootViewController, topViewController]
+    }
+}
+
+/// The room link that opens the chat product's chat with an account: its home room, with the payload the product
+/// answers with that contact's room (`contact:<account hex>`).
+enum ProductChatLink {
+    static func url(account: AccountId, tld: String) -> URL? {
+        URL(string: "polkadot://\(BuiltInProduct.chat(for: tld))/-/chat/chats#contact:\(account.toHex())")
     }
 }
