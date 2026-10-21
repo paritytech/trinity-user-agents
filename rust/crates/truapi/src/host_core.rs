@@ -912,9 +912,10 @@ impl SigningHostRuntime {
 	/// Set-once, so durable state cannot move to another file under a running
 	/// consumer. Returns whether this call installed it.
 	///
-	/// Also starts the durable transaction engine over it, which reports
-	/// pending work to the observer installed with
-	/// [`Self::set_durable_work_observer`]; install that first.
+	/// Also starts the durable transaction engine over it, which builds
+	/// scheduled transactions and reports pending work to the observer
+	/// installed with [`Self::set_durable_work_observer`]; install that
+	/// first.
 	#[cfg(not(target_arch = "wasm32"))]
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_core_db"))]
 	pub fn set_core_db(&self, db: crate::store::Db) -> bool {
@@ -924,6 +925,7 @@ impl SigningHostRuntime {
 		let engine = durable_engine(&self.services, db);
 		self.services.install_durable_engine(engine.clone());
 		forward_durable_work(&self.services, &engine);
+		engine.ensure_submissions_started();
 		true
 	}
 
@@ -937,7 +939,8 @@ impl SigningHostRuntime {
 		self.services.install_durable_work_observer(observer)
 	}
 
-	/// Runs durable recovery until no transaction is live.
+	/// Runs durable recovery until no transaction is live, building scheduled
+	/// transactions meanwhile.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub async fn run_durable_recovery(&self) -> Result<(), crate::durable::RecoveryError> {
 		self.services

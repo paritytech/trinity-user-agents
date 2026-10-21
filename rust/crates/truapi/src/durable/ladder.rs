@@ -4,7 +4,9 @@
 use subxt::utils::H256;
 
 use super::{
-	model::{DurableTxEntry, DurableTxStatus, FailureKind, HeadKind, Verdict},
+	model::{
+		DurableTxEntry, DurableTxStatus, HeadKind, Verdict, VerdictFailureKind, VerdictStatus,
+	},
 	oracle::PassScope,
 };
 use crate::chain::{DispatchOutcome, HashAndNumber, Heads};
@@ -90,17 +92,17 @@ fn oracle_rules(
 	window_closed: bool,
 ) -> Option<RuleOutcome> {
 	if scope.proven_completed(tx, HeadKind::Finalized) {
-		return Some(decided(DurableTxStatus::FinalizedSuccess { at: None }));
+		return Some(decided(VerdictStatus::FinalizedSuccess { at: None }));
 	}
 	if scope.proven_completed(tx, HeadKind::Best) {
-		return Some(decided(DurableTxStatus::PendingSuccess { at: heads.best }));
+		return Some(decided(VerdictStatus::PendingSuccess { at: heads.best }));
 	}
 	if window_closed && scope.proven_not_completed(tx, HeadKind::Finalized) {
-		return Some(decided(DurableTxStatus::Failure(FailureKind::Expired)));
+		return Some(decided(VerdictStatus::Failure(VerdictFailureKind::Expired)));
 	}
 	// Past the era the search is the only thing left that can decide it.
 	let short_circuit = !window_closed && scope.proven_not_completed(tx, HeadKind::Best);
-	short_circuit.then(|| decided(DurableTxStatus::Pending))
+	short_circuit.then(|| decided(VerdictStatus::Pending))
 }
 
 /// Rule 5: nothing above decided it, so look for the transaction itself in
@@ -124,13 +126,13 @@ async fn search_rule(
 fn searched(tx: &DurableTxEntry, result: SearchResult, window_closed: bool) -> RuleOutcome {
 	match result {
 		SearchResult::Found { block, outcome: Some(DispatchOutcome::Succeeded) } => {
-			decided(DurableTxStatus::FinalizedSuccess { at: Some(block) })
+			decided(VerdictStatus::FinalizedSuccess { at: Some(block) })
 		},
 		SearchResult::Found { outcome: Some(DispatchOutcome::Failed), .. } => {
-			decided(DurableTxStatus::Failure(FailureKind::DispatchFailed))
+			decided(VerdictStatus::Failure(VerdictFailureKind::DispatchFailed))
 		},
 		SearchResult::NotFound { read_advanced_to } => absent(tx, read_advanced_to, window_closed),
-		SearchResult::Found { outcome: None, .. } => decided(DurableTxStatus::Pending),
+		SearchResult::Found { outcome: None, .. } => decided(VerdictStatus::Pending),
 	}
 }
 
@@ -141,9 +143,9 @@ fn absent(tx: &DurableTxEntry, read_advanced_to: Option<u64>, window_closed: boo
 	let scanned_to = read_advanced_to.or(tx.scanned_to);
 	let read_to_death = scanned_to.is_some_and(|scanned| scanned >= tx.mortality.death());
 	if window_closed && read_to_death {
-		return decided(DurableTxStatus::Failure(FailureKind::Expired));
+		return decided(VerdictStatus::Failure(VerdictFailureKind::Expired));
 	}
-	RuleOutcome::Decided(Verdict { status: DurableTxStatus::Pending, scanned_to: read_advanced_to })
+	RuleOutcome::Decided(Verdict { status: VerdictStatus::Pending, scanned_to: read_advanced_to })
 }
 
 /// Rule 0: the transaction was seen included at `recorded`; check that block
@@ -159,21 +161,21 @@ fn recorded_inclusion(
 	match recorded_canonical {
 		RecordedCanonicity::Unknown => RuleOutcome::Undecided,
 		RecordedCanonicity::Canonical if recorded.number <= heads.finalized.number => {
-			decided(DurableTxStatus::FinalizedSuccess { at: Some(recorded) })
+			decided(VerdictStatus::FinalizedSuccess { at: Some(recorded) })
 		},
-		RecordedCanonicity::Canonical => decided(DurableTxStatus::PendingSuccess { at: recorded }),
+		RecordedCanonicity::Canonical => decided(VerdictStatus::PendingSuccess { at: recorded }),
 		RecordedCanonicity::Reorged if scope.proven_completed(tx, HeadKind::Finalized) => {
-			decided(DurableTxStatus::FinalizedSuccess { at: Some(heads.finalized) })
+			decided(VerdictStatus::FinalizedSuccess { at: Some(heads.finalized) })
 		},
 		RecordedCanonicity::Reorged if scope.proven_completed(tx, HeadKind::Best) => {
-			decided(DurableTxStatus::PendingSuccess { at: heads.best })
+			decided(VerdictStatus::PendingSuccess { at: heads.best })
 		},
-		RecordedCanonicity::Reorged => decided(DurableTxStatus::Pending),
+		RecordedCanonicity::Reorged => decided(VerdictStatus::Pending),
 	}
 }
 
 /// `status`, leaving the recorded search cursor as it is.
-fn decided(status: DurableTxStatus) -> RuleOutcome {
+fn decided(status: VerdictStatus) -> RuleOutcome {
 	RuleOutcome::Decided(status.into())
 }
 
@@ -211,7 +213,7 @@ mod tests {
 		evaluate_ladder(&tx, &scope, &FakeView::new(finalized, search), recorded_canonical).await
 	}
 
-	fn decided(status: DurableTxStatus) -> RuleOutcome {
+	fn decided(status: VerdictStatus) -> RuleOutcome {
 		RuleOutcome::Decided(status.into())
 	}
 
@@ -224,7 +226,7 @@ mod tests {
 	}
 
 	fn pending_scanned_to(number: u64) -> RuleOutcome {
-		RuleOutcome::Decided(Verdict { scanned_to: Some(number), status: DurableTxStatus::Pending })
+		RuleOutcome::Decided(Verdict { scanned_to: Some(number), status: VerdictStatus::Pending })
 	}
 
 	fn scanned_to(number: u64) -> DurableTxEntry {
@@ -242,10 +244,7 @@ mod tests {
 				evaluate(recorded_at(120), says(), 130, RecordedCanonicity::Canonical, INCOMPLETE)
 					.await;
 
-			assert_eq!(
-				outcome,
-				decided(DurableTxStatus::FinalizedSuccess { at: Some(block(120)) })
-			);
+			assert_eq!(outcome, decided(VerdictStatus::FinalizedSuccess { at: Some(block(120)) }));
 		})
 	}
 
@@ -256,7 +255,7 @@ mod tests {
 				evaluate(recorded_at(140), says(), 130, RecordedCanonicity::Canonical, INCOMPLETE)
 					.await;
 
-			assert_eq!(outcome, decided(DurableTxStatus::PendingSuccess { at: block(140) }));
+			assert_eq!(outcome, decided(VerdictStatus::PendingSuccess { at: block(140) }));
 		})
 	}
 
@@ -270,7 +269,7 @@ mod tests {
 				evaluate(recorded_at(120), says(), 130, RecordedCanonicity::Reorged, INCOMPLETE)
 					.await;
 
-			assert_eq!(outcome, decided(DurableTxStatus::Pending));
+			assert_eq!(outcome, decided(VerdictStatus::Pending));
 		})
 	}
 
@@ -286,7 +285,7 @@ mod tests {
 				evaluate_ladder(&recorded_at(120), &scope, &view, RecordedCanonicity::Reorged)
 					.await;
 
-			assert_eq!(outcome, decided(DurableTxStatus::PendingSuccess { at: view.heads().best }));
+			assert_eq!(outcome, decided(VerdictStatus::PendingSuccess { at: view.heads().best }));
 		})
 	}
 
@@ -305,7 +304,7 @@ mod tests {
 
 			assert_eq!(
 				outcome,
-				decided(DurableTxStatus::FinalizedSuccess { at: Some(view.heads().finalized) })
+				decided(VerdictStatus::FinalizedSuccess { at: Some(view.heads().finalized) })
 			);
 		})
 	}
@@ -332,7 +331,7 @@ mod tests {
 
 			let outcome = evaluate(tx(), scope, 130, RecordedCanonicity::Unknown, INCOMPLETE).await;
 
-			assert_eq!(outcome, decided(DurableTxStatus::FinalizedSuccess { at: None }));
+			assert_eq!(outcome, decided(VerdictStatus::FinalizedSuccess { at: None }));
 		})
 	}
 
@@ -344,7 +343,7 @@ mod tests {
 
 			let outcome = evaluate_ladder(&tx(), &scope, &view, RecordedCanonicity::Unknown).await;
 
-			assert_eq!(outcome, decided(DurableTxStatus::PendingSuccess { at: view.heads().best }));
+			assert_eq!(outcome, decided(VerdictStatus::PendingSuccess { at: view.heads().best }));
 		})
 	}
 
@@ -356,7 +355,7 @@ mod tests {
 
 			let outcome = evaluate(tx(), scope, 130, RecordedCanonicity::Unknown, INCOMPLETE).await;
 
-			assert_eq!(outcome, decided(DurableTxStatus::FinalizedSuccess { at: None }));
+			assert_eq!(outcome, decided(VerdictStatus::FinalizedSuccess { at: None }));
 		})
 	}
 
@@ -368,7 +367,7 @@ mod tests {
 			let outcome =
 				evaluate(tx(), scope, DEATH + 1, RecordedCanonicity::Unknown, INCOMPLETE).await;
 
-			assert_eq!(outcome, decided(DurableTxStatus::Failure(FailureKind::Expired)));
+			assert_eq!(outcome, decided(VerdictStatus::Failure(VerdictFailureKind::Expired)));
 		})
 	}
 
@@ -413,7 +412,7 @@ mod tests {
 			let outcome =
 				evaluate(tx(), scope, DEATH + 1, RecordedCanonicity::Unknown, INCOMPLETE).await;
 
-			assert_eq!(outcome, decided(DurableTxStatus::FinalizedSuccess { at: None }));
+			assert_eq!(outcome, decided(VerdictStatus::FinalizedSuccess { at: None }));
 		})
 	}
 
@@ -427,7 +426,7 @@ mod tests {
 
 			let outcome = evaluate_ladder(&tx(), &scope, &view, RecordedCanonicity::Unknown).await;
 
-			assert_eq!(outcome, decided(DurableTxStatus::Pending));
+			assert_eq!(outcome, decided(VerdictStatus::Pending));
 			assert_eq!(view.searches(), 0);
 		})
 	}
@@ -455,10 +454,7 @@ mod tests {
 
 			let outcome = evaluate(tx(), says(), 130, RecordedCanonicity::Unknown, found).await;
 
-			assert_eq!(
-				outcome,
-				decided(DurableTxStatus::FinalizedSuccess { at: Some(block(110)) })
-			);
+			assert_eq!(outcome, decided(VerdictStatus::FinalizedSuccess { at: Some(block(110)) }));
 		})
 	}
 
@@ -472,7 +468,10 @@ mod tests {
 
 			let outcome = evaluate(tx(), says(), 130, RecordedCanonicity::Unknown, found).await;
 
-			assert_eq!(outcome, decided(DurableTxStatus::Failure(FailureKind::DispatchFailed)));
+			assert_eq!(
+				outcome,
+				decided(VerdictStatus::Failure(VerdictFailureKind::DispatchFailed))
+			);
 		})
 	}
 
@@ -485,7 +484,7 @@ mod tests {
 			let outcome =
 				evaluate(tx(), says(), DEATH + 1, RecordedCanonicity::Unknown, found).await;
 
-			assert_eq!(outcome, decided(DurableTxStatus::Pending));
+			assert_eq!(outcome, decided(VerdictStatus::Pending));
 		})
 	}
 
@@ -497,7 +496,7 @@ mod tests {
 			let outcome =
 				evaluate(tx(), says(), DEATH + 1, RecordedCanonicity::Unknown, ABSENT).await;
 
-			assert_eq!(outcome, decided(DurableTxStatus::Failure(FailureKind::Expired)));
+			assert_eq!(outcome, decided(VerdictStatus::Failure(VerdictFailureKind::Expired)));
 		})
 	}
 
@@ -508,7 +507,7 @@ mod tests {
 			let outcome =
 				evaluate(tx(), says(), DEATH + 1, RecordedCanonicity::Unknown, INCOMPLETE).await;
 
-			assert_eq!(outcome, decided(DurableTxStatus::Pending));
+			assert_eq!(outcome, decided(VerdictStatus::Pending));
 		})
 	}
 
@@ -535,7 +534,7 @@ mod tests {
 
 			let outcome = evaluate_ladder(&tx(), &says(), &view, RecordedCanonicity::Unknown).await;
 
-			assert_eq!(outcome, decided(DurableTxStatus::Pending));
+			assert_eq!(outcome, decided(VerdictStatus::Pending));
 			assert_eq!(view.searches(), 0);
 		})
 	}
@@ -558,10 +557,7 @@ mod tests {
 			let outcome =
 				evaluate_ladder(&tx(), scope.as_ref(), &view, RecordedCanonicity::Unknown).await;
 
-			assert_eq!(
-				outcome,
-				decided(DurableTxStatus::FinalizedSuccess { at: Some(block(110)) })
-			);
+			assert_eq!(outcome, decided(VerdictStatus::FinalizedSuccess { at: Some(block(110)) }));
 		})
 	}
 
@@ -598,7 +594,7 @@ mod tests {
 				evaluate(scanned_to(120), says(), 123, RecordedCanonicity::Unknown, INCOMPLETE)
 					.await;
 
-			assert_eq!(outcome, decided(DurableTxStatus::Pending));
+			assert_eq!(outcome, decided(VerdictStatus::Pending));
 		})
 	}
 
@@ -613,7 +609,7 @@ mod tests {
 				evaluate_ladder(&scanned_to(DEATH), &says(), &view, RecordedCanonicity::Unknown)
 					.await;
 
-			assert_eq!(outcome, decided(DurableTxStatus::Failure(FailureKind::Expired)));
+			assert_eq!(outcome, decided(VerdictStatus::Failure(VerdictFailureKind::Expired)));
 			assert_eq!(view.searches(), 0);
 		})
 	}
@@ -627,7 +623,7 @@ mod tests {
 				evaluate(scanned_to(150), says(), DEATH + 1, RecordedCanonicity::Unknown, ABSENT)
 					.await;
 
-			assert_eq!(outcome, decided(DurableTxStatus::Failure(FailureKind::Expired)));
+			assert_eq!(outcome, decided(VerdictStatus::Failure(VerdictFailureKind::Expired)));
 		})
 	}
 
@@ -641,7 +637,7 @@ mod tests {
 				evaluate_ladder(&scanned_to(120), &says(), &view, RecordedCanonicity::Unknown)
 					.await;
 
-			assert_eq!(outcome, decided(DurableTxStatus::Pending));
+			assert_eq!(outcome, decided(VerdictStatus::Pending));
 			assert_eq!(view.searches(), 0);
 		})
 	}
