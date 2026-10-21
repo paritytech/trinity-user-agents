@@ -295,7 +295,10 @@ jobs:
 
       # Actions has no per-job paths filter, so compute every gate once here and
       # have each gated job read an output. On pull_request the checkout is the
-      # merge commit, so HEAD^1 is the base. Other events always run every gate.
+      # merge commit, so HEAD^1 is the base. In the merge queue the base is the
+      # main commit the group was built on, so the diff covers every pull request
+      # queued ahead in the same group. A push or a dispatch runs every gate, so
+      # each commit that lands on main is still checked in full.
       #
       # Neither binding set is committed, so a UniFFI surface change leaves no
       # ios/ or android/ diff to key on. Each list therefore names every input
@@ -312,10 +315,20 @@ jobs:
         id: filter
         env:
           EVENT_NAME: ${{ github.event_name }}
+          MERGE_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
 
-          if [ "$EVENT_NAME" != "pull_request" ]; then
+          case "$EVENT_NAME" in
+            pull_request) base="HEAD^1" ;;
+            merge_group)
+              git fetch --no-tags --depth=1 origin "$MERGE_BASE"
+              base="$MERGE_BASE"
+              ;;
+            *) base="" ;;
+          esac
+
+          if [ -z "$base" ]; then
             {
               echo "sdk_swift=true"
               echo "sdk_kotlin=true"
@@ -327,7 +340,7 @@ jobs:
             exit 0
           fi
 
-          changed="$(git diff --name-only HEAD^1 HEAD)"
+          changed="$(git diff --name-only "$base" HEAD)"
           gate() {
             if grep -qE "$2" <<<"$changed"; then
               echo "$1=true" >> "$GITHUB_OUTPUT"
@@ -364,7 +377,7 @@ jobs:
 
           # Deleting, editing or renaming an old changeset does not declare a
           # new change. README.md is Changesets' documentation, not a release.
-          changed="$(git diff --name-only --find-renames --diff-filter=A HEAD^1 HEAD -- .changeset/)"
+          changed="$(git diff --name-only --find-renames --diff-filter=A "$base" HEAD -- .changeset/)"
           changed="$(sed '\|^\.changeset/README\.md$|d' <<<"$changed")"
           gate adds_changeset '^\.changeset/[^/]+\.md$'
 
