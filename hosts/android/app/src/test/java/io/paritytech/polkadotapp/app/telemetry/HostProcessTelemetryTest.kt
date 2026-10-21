@@ -3,6 +3,8 @@ package io.paritytech.polkadotapp.app.telemetry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Test
+import java.util.UUID
+import kotlin.time.Duration.Companion.milliseconds
 
 class HostProcessTelemetryTest {
     private val metadata = HostProcessMetadata(
@@ -15,23 +17,23 @@ class HostProcessTelemetryTest {
     )
 
     @Test
-    fun `captures one process start event with stable launch id and numeric monotonic time`() {
-        val expectedLaunchId = "608ad8ee-51f5-49ab-af80-e25fd72c434f"
+    fun `captures one process start event with stable launch id and numeric process start time`() {
+        val expectedLaunchId = UUID.fromString("608ad8ee-51f5-49ab-af80-e25fd72c434f")
         val captured = mutableListOf<HostProcessStartEvent>()
         val telemetry = HostProcessTelemetry(
             appLaunchId = expectedLaunchId,
-            monotonicMillis = { 1_234L },
+            processStartElapsedRealtime = { 1_234.milliseconds },
             metadata = { metadata },
             capture = captured::add,
         )
 
-        telemetry.captureProcessStarted(enabled = true)
+        telemetry.captureProcessStarted()
 
         assertEquals(
             HostProcessStartEvent(
                 name = "host.process.started",
                 appLaunchId = expectedLaunchId,
-                monotonicMs = 1_234L,
+                processStartElapsedRealtime = 1_234.milliseconds,
                 metadata = metadata,
             ),
             captured.single(),
@@ -42,14 +44,13 @@ class HostProcessTelemetryTest {
     fun `uses canonical cross-platform Sentry field names and native numeric values`() {
         val fields = HostProcessStartEvent(
             name = "host.process.started",
-            appLaunchId = "608ad8ee-51f5-49ab-af80-e25fd72c434f",
-            monotonicMs = 1_234L,
+            appLaunchId = UUID.fromString("608ad8ee-51f5-49ab-af80-e25fd72c434f"),
+            processStartElapsedRealtime = 1_234.milliseconds,
             metadata = metadata,
         ).sentryFields()
 
         assertEquals(
             mapOf(
-                "app.launch_id" to "608ad8ee-51f5-49ab-af80-e25fd72c434f",
                 "host.native_app_version" to "1.2.3",
                 "host.app_variant" to "nightly",
                 "host.platform" to "android",
@@ -60,6 +61,7 @@ class HostProcessTelemetryTest {
         )
         assertEquals(
             mapOf(
+                "app.launch_id" to "608ad8ee-51f5-49ab-af80-e25fd72c434f",
                 "host.app_build" to 42L,
                 "event.monotonic_ms" to 1_234L,
             ),
@@ -68,57 +70,62 @@ class HostProcessTelemetryTest {
     }
 
     @Test
-    fun `does nothing when telemetry is disabled`() {
-        var metadataCalls = 0
-        val captured = mutableListOf<HostProcessStartEvent>()
-        val telemetry = HostProcessTelemetry(
-            appLaunchId = "launch-id",
-            monotonicMillis = { error("clock must not be read") },
-            metadata = {
-                metadataCalls += 1
-                metadata
-            },
-            capture = captured::add,
-        )
+    fun `does not invoke capture when telemetry is disabled`() {
+        var captureCalls = 0
 
-        telemetry.captureProcessStarted(enabled = false)
+        val result = captureHostProcessStartedIfEnabled(enabled = false) {
+            captureCalls += 1
+            Result.success(Unit)
+        }
 
-        assertEquals(0, metadataCalls)
-        assertEquals(emptyList<HostProcessStartEvent>(), captured)
+        assertEquals(0, captureCalls)
+        assertEquals(Result.success(Unit), result)
     }
 
     @Test
-    fun `telemetry failures never escape app startup`() {
+    fun `telemetry failures are returned for initializer logging`() {
+        val metadataError = IllegalStateException("native version unavailable")
         val metadataFailure = HostProcessTelemetry(
-            appLaunchId = "launch-id",
-            monotonicMillis = { 1L },
-            metadata = { error("native version unavailable") },
+            appLaunchId = UUID.fromString("608ad8ee-51f5-49ab-af80-e25fd72c434f"),
+            processStartElapsedRealtime = { 1.milliseconds },
+            metadata = { throw metadataError },
             capture = { error("must not capture") },
         )
+        val captureError = IllegalStateException("Sentry unavailable")
         val captureFailure = HostProcessTelemetry(
-            appLaunchId = "launch-id",
-            monotonicMillis = { 1L },
+            appLaunchId = UUID.fromString("608ad8ee-51f5-49ab-af80-e25fd72c434f"),
+            processStartElapsedRealtime = { 1.milliseconds },
             metadata = { metadata },
-            capture = { error("Sentry unavailable") },
+            capture = { throw captureError },
         )
 
-        metadataFailure.captureProcessStarted(enabled = true)
-        captureFailure.captureProcessStarted(enabled = true)
+        val metadataResult = metadataFailure.captureProcessStarted()
+        val captureResult = captureFailure.captureProcessStarted()
+
+        assertSame(metadataError, metadataResult.exceptionOrNull())
+        assertSame(captureError, captureResult.exceptionOrNull())
     }
 
     @Test
     fun `launch id belongs to the process telemetry instance`() {
         val captured = mutableListOf<HostProcessStartEvent>()
+        val expectedLaunchId = UUID.fromString("608ad8ee-51f5-49ab-af80-e25fd72c434f")
         val telemetry = HostProcessTelemetry(
-            appLaunchId = "same-process-id",
-            monotonicMillis = { 1L },
+            appLaunchId = expectedLaunchId,
+            processStartElapsedRealtime = { 1.milliseconds },
             metadata = { metadata },
             capture = captured::add,
         )
 
-        telemetry.captureProcessStarted(enabled = true)
-        telemetry.captureProcessStarted(enabled = true)
+        telemetry.captureProcessStarted()
+        telemetry.captureProcessStarted()
 
         assertSame(captured[0].appLaunchId, captured[1].appLaunchId)
+    }
+
+    @Test
+    fun `reports distribution flavor together with nightly build type`() {
+        assertEquals("gpNightly", appVariant(flavor = "gp", buildType = "nightly"))
+        assertEquals("vanillaNightly", appVariant(flavor = "vanilla", buildType = "nightly"))
     }
 }

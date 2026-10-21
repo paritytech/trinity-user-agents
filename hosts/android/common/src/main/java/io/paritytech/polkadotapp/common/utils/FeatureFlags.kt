@@ -11,6 +11,7 @@ object FeatureFlags {
 
             FeatureOption.DEBUG_MENU -> BuildConfig.DEBUG_TOOLS_ENABLED
             FeatureOption.DEV_SERVER_PRODUCTS -> BuildConfig.BUILD_TYPE == "debug"
+            FeatureOption.HOST_PROCESS_TELEMETRY -> BuildConfig.BUILD_TYPE != "release"
 
             FeatureOption.ARBITRARY_PRODUCTS,
             FeatureOption.BROWSE_TAB,
@@ -38,6 +39,7 @@ enum class FeatureOption {
     // build type alone: nightly and safetynet are debuggable too, and src/debug's network config, which
     // lets the WebView reach the server in the clear, does not apply to them.
     DEV_SERVER_PRODUCTS,
+    HOST_PROCESS_TELEMETRY,
     BROWSE_TAB,
 
     // The chain-health indicators repeated in the tab bar, with the expandable details above it. Carried

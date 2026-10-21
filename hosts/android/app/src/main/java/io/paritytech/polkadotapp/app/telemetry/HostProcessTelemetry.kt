@@ -1,14 +1,21 @@
 package io.paritytech.polkadotapp.app.telemetry
 
 import android.os.Build
-import android.os.SystemClock
+import android.os.Process
 import io.paritytech.polkadotapp.app.BuildConfig
+import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
+import io.paritytech.polkadotapp.common.presentation.AppInitializer
+import io.paritytech.polkadotapp.common.utils.FeatureOption
+import io.paritytech.polkadotapp.common.utils.isEnabled
+import io.parity.truapi.BuildConfig as TrUAPIBuildConfig
 import io.sentry.Sentry
 import io.sentry.SentryEvent
 import io.sentry.SentryLevel
 import io.sentry.protocol.Message
-import uniffi.truapi.truapiHostVersion
 import java.util.UUID
+import javax.inject.Inject
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 
 internal data class HostProcessMetadata(
     val appVersion: String,
@@ -21,8 +28,8 @@ internal data class HostProcessMetadata(
 
 internal data class HostProcessStartEvent(
     val name: String,
-    val appLaunchId: String,
-    val monotonicMs: Long,
+    val appLaunchId: UUID,
+    val processStartElapsedRealtime: Duration,
     val metadata: HostProcessMetadata,
 )
 
@@ -33,7 +40,6 @@ internal data class HostProcessSentryFields(
 
 internal fun HostProcessStartEvent.sentryFields() = HostProcessSentryFields(
     tags = mapOf(
-        "app.launch_id" to appLaunchId,
         "host.native_app_version" to metadata.appVersion,
         "host.app_variant" to metadata.appVariant,
         "host.platform" to metadata.platform,
@@ -41,30 +47,35 @@ internal fun HostProcessStartEvent.sentryFields() = HostProcessSentryFields(
         "truapi.host_version" to metadata.truapiHostVersion,
     ),
     extras = mapOf(
+        "app.launch_id" to appLaunchId.toString(),
         "host.app_build" to metadata.appBuild,
-        "event.monotonic_ms" to monotonicMs,
+        "event.monotonic_ms" to processStartElapsedRealtime.inWholeMilliseconds,
     ),
 )
 
+internal fun appVariant(flavor: String, buildType: String): String =
+    "$flavor${buildType.replaceFirstChar { it.titlecase() }}"
+
+internal inline fun captureHostProcessStartedIfEnabled(
+    enabled: Boolean,
+    capture: () -> Result<Unit>,
+): Result<Unit> = if (enabled) capture() else Result.success(Unit)
+
 internal class HostProcessTelemetry(
-    private val appLaunchId: String,
-    private val monotonicMillis: () -> Long,
+    private val appLaunchId: UUID,
+    private val processStartElapsedRealtime: () -> Duration,
     private val metadata: () -> HostProcessMetadata,
     private val capture: (HostProcessStartEvent) -> Unit,
 ) {
-    fun captureProcessStarted(enabled: Boolean) {
-        if (!enabled) return
-
-        runCatching {
-            capture(
-                HostProcessStartEvent(
-                    name = PROCESS_STARTED_EVENT,
-                    appLaunchId = appLaunchId,
-                    monotonicMs = monotonicMillis(),
-                    metadata = metadata(),
-                )
+    fun captureProcessStarted(): Result<Unit> = runCatching {
+        capture(
+            HostProcessStartEvent(
+                name = PROCESS_STARTED_EVENT,
+                appLaunchId = appLaunchId,
+                processStartElapsedRealtime = processStartElapsedRealtime(),
+                metadata = metadata(),
             )
-        }
+        )
     }
 
     private companion object {
@@ -72,29 +83,26 @@ internal class HostProcessTelemetry(
     }
 }
 
-internal object AndroidHostProcessTelemetry {
-    private val telemetry = HostProcessTelemetry(
-        appLaunchId = UUID.randomUUID().toString(),
-        monotonicMillis = SystemClock::elapsedRealtime,
-        metadata = {
-            HostProcessMetadata(
-                appVersion = BuildConfig.VERSION_NAME,
-                appBuild = BuildConfig.VERSION_CODE.toLong(),
-                appVariant = BuildConfig.BUILD_TYPE,
-                platform = "android",
-                osVersion = Build.VERSION.RELEASE,
-                truapiHostVersion = truapiHostVersion(),
-            )
-        },
-        capture = ::captureWithSentry,
-    )
-
-    fun captureProcessStarted() {
-        telemetry.captureProcessStarted(
-            enabled = BuildConfig.BUILD_TYPE == "debug" ||
-                BuildConfig.BUILD_TYPE == "nightly" ||
-                BuildConfig.BUILD_TYPE == "safetynet"
-        )
+internal class AndroidHostProcessTelemetryInitializer @Inject constructor() : AppInitializer {
+    context(scope: ComputationalScope)
+    override fun initialize(): Result<Unit> = captureHostProcessStartedIfEnabled(
+        enabled = FeatureOption.HOST_PROCESS_TELEMETRY.isEnabled,
+    ) {
+        HostProcessTelemetry(
+            appLaunchId = UUID.randomUUID(),
+            processStartElapsedRealtime = { Process.getStartElapsedRealtime().milliseconds },
+            metadata = {
+                HostProcessMetadata(
+                    appVersion = BuildConfig.VERSION_NAME,
+                    appBuild = BuildConfig.VERSION_CODE.toLong(),
+                    appVariant = appVariant(BuildConfig.FLAVOR, BuildConfig.BUILD_TYPE),
+                    platform = "android",
+                    osVersion = Build.VERSION.RELEASE,
+                    truapiHostVersion = TrUAPIBuildConfig.TRUAPI_HOST_VERSION,
+                )
+            },
+            capture = ::captureWithSentry,
+        ).captureProcessStarted()
     }
 
     private fun captureWithSentry(event: HostProcessStartEvent) {
