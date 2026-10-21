@@ -80,12 +80,12 @@ impl ChainRuntime {
 		genesis: H256,
 		reader: Arc<StorageReader>,
 	) -> Result<Changes, RuntimeFailure> {
-		let first = self.head_events(genesis).await?;
 		let chain = self.clone();
-		let events = reopening(first, move || {
+		let open_head_events = move || {
 			let chain = chain.clone();
 			async move { chain.head_events(genesis).await }
-		});
+		};
+		let events = reopening(open_head_events).await?;
 		let blocks = events.try_filter_map(|event| ready(Ok(finalized(event))));
 		let newest = newest_only(blocks.boxed());
 		let snapshots = newest.and_then(move |at| reader.clone().read_at(at));
@@ -96,8 +96,8 @@ impl ChainRuntime {
 /// The notifications of the storage subscription, as changes. It is opened
 /// here, so a chain that cannot be reached fails the call.
 async fn subscribed_changes(reader: Arc<StorageReader>) -> Result<Changes, RuntimeFailure> {
-	let first = reader.clone().subscribe().await?;
-	Ok(reopening(first, move || reader.clone().subscribe()))
+	let open_subscription = move || reader.clone().subscribe();
+	reopening(open_subscription).await
 }
 
 /// The block `event` announces when it is finalized.
@@ -108,12 +108,12 @@ fn finalized(event: HeadEvent) -> Option<HashAndNumber> {
 	}
 }
 
-/// `first`, then the stream `open` gives each time the one before it ends.
-/// A failure to open is reported as an item after [`RESUBSCRIBE_DELAY`].
-fn reopening<T, Open, Opening>(
-	first: BoxStream<'static, Result<T, RuntimeFailure>>,
+/// The stream `open` gives, then the one it gives again each time the one
+/// before ends. A failure to open the first one fails the call; a later one
+/// is reported as an item after [`RESUBSCRIBE_DELAY`].
+async fn reopening<T, Open, Opening>(
 	open: Open,
-) -> BoxStream<'static, Result<T, RuntimeFailure>>
+) -> Result<BoxStream<'static, Result<T, RuntimeFailure>>, RuntimeFailure>
 where
 	T: Send + 'static,
 	Open: Fn() -> Opening + Send + 'static,
@@ -121,11 +121,12 @@ where
 		+ Send
 		+ 'static,
 {
+	let first = open().await?;
 	let reopened = stream::unfold(open, |open| async move {
 		let items = reopened_items(open()).await;
 		Some((items, open))
 	});
-	first.chain(reopened.flatten()).boxed()
+	Ok(first.chain(reopened.flatten()).boxed())
 }
 
 /// What `opening` opens, or after waiting [`RESUBSCRIBE_DELAY`] the failure
