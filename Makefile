@@ -3,7 +3,7 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-trusted-device-permission e2e-chain-head-failure-cause e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run e2e-funding-cli
+.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-cli e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run
 
 CARGO ?= cargo
 # The dated nightly CI runs; see nightly-toolchain.
@@ -468,35 +468,19 @@ e2e-cli-diagnosis: cli-runner ## Full playground diagnosis in a plain browser ta
 	cargo build --release -p truapi-host-cli
 	cd $(PLAYGROUND) && TRUAPI_HOST_BIN="$(abspath target/release/truapi-host)" bun tests/e2e/cli-diagnosis.ts
 
-e2e-signing-cli: ## Run the generated battery against the direct signing-host CLI.
-	scripts/battery.sh --signing-host
+# Every e2e/cli/<name>.sh is a scenario; add one by adding a file, not a target.
+# See e2e/cli/README.md.
+E2E_CLI_SCENARIOS := $(sort $(patsubst e2e/cli/%.sh,%,$(wildcard e2e/cli/*.sh)))
 
-e2e-pairing-cli: ## Run the generated battery against the paired pairing-host CLI.
-	scripts/battery.sh --pairing-host
-
-e2e-chat-cli: ## Run the Chat content-screening battery against a chat signing-host CLI.
-	scripts/battery.sh --chat-host
-
-e2e-pocket-cli: ## Run the Pocket protocol battery against a Pocket signing-host CLI.
-	scripts/battery.sh --pocket-host
-
-e2e-funding-cli: ## Run the funding battery against a scripted funding signing-host CLI.
-	scripts/battery.sh --funding-host
-
-CROSS_PRODUCT_SCENARIOS := $(patsubst scripts/cross-product-%-e2e.sh,%,$(wildcard scripts/cross-product-*-e2e.sh))
-
-e2e-cross-product: ## One product uses another's storage, keys or accounts on the signing-host CLI. Pick a scenario with SCENARIO=<name>.
-	@test -x scripts/cross-product-$(SCENARIO)-e2e.sh || { echo "SCENARIO must be one of: $(CROSS_PRODUCT_SCENARIOS)" >&2; exit 1; }
-	scripts/cross-product-$(SCENARIO)-e2e.sh
-
-e2e-preimage-submit-prompt: ## Upload preimages under a PreimageSubmit grant on the signing-host CLI with no per-upload confirmation.
-	scripts/preimage-submit-prompt-e2e.sh
-
-e2e-trusted-device-permission: ## Send a notification as a trusted product on the signing-host CLI with no device permission prompt.
-	scripts/trusted-device-permission-e2e.sh
-
-e2e-chain-head-failure-cause: ## Cut the chain connection under a chain-head call on the signing-host CLI; both failures must name their cause.
-	scripts/chain-head-failure-cause-e2e.sh
+e2e-cli: ## Run e2e/cli/<SCENARIO>.sh against the headless CLI host, passing ARGS through. Lists scenarios without SCENARIO.
+	@if [ -z "$(SCENARIO)" ]; then \
+		echo "Usage: make e2e-cli SCENARIO=<name> [ARGS=...]"; echo; echo "Scenarios:"; \
+		printf '  %s\n' $(E2E_CLI_SCENARIOS); \
+	elif [ -n "$(filter $(SCENARIO),$(E2E_CLI_SCENARIOS))" ]; then \
+		echo "e2e/cli/$(SCENARIO).sh $(ARGS)"; "e2e/cli/$(SCENARIO).sh" $(ARGS); \
+	else \
+		echo "SCENARIO must be one of: $(E2E_CLI_SCENARIOS)" >&2; exit 1; \
+	fi
 
 e2e-cli-update: cli-dist ## Install the packaged truapi-host from a fake release and self-update it, with no network.
 	node scripts/e2e-cli-update.mjs

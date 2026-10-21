@@ -2,7 +2,7 @@
 // Funding protocol check against a real host, over the real wire.
 //
 // Run via:
-//   scripts/battery.sh --funding-host
+//   e2e/cli/battery.sh --funding-host
 //
 // which builds the CLI with `--features test-host` and starts a signing host
 // with a scripted funding overlay, so a product's requests are shown, started

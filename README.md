@@ -143,8 +143,8 @@ docs/                      Design docs, RFCs, feature proposals
 scripts/codegen.sh         Regenerate the TS client from the Rust source
 scripts/refresh-host-import.sh
                            Refresh a vendored host tree from its source repository
-scripts/battery.sh         Run the generated battery against both headless CLI host roles,
-                           plus the Pocket phase a Worker execution serves
+e2e/cli/                   End to end scenarios against the headless CLI host, one script each,
+                           including the generated battery; see its README
 scripts/bundle-size.mjs    Measure the JS and WASM the truapi-* packages ship, against a baseline
 scripts/ci-gates.py        Evaluate .github/hosts.json, what each host is built from, into the
                            ci.yml change gates
@@ -361,22 +361,24 @@ CLI reserved identities follow the selected network's dotNS suffix. Old account
 and pairing stores are left unused as the CLI starts fresh under its
 [versioned state directory](rust/crates/truapi-host-cli/README.md#state-directory).
 
-`scripts/battery.sh` drives that CLI from source over every code-generated
+`e2e/cli/battery.sh` drives that CLI from source over every code-generated
 example and writes both committed compatibility reports:
 `explorer/diagnosis-reports/spa/signing-host-cli.md` from a direct signing-host
 run, and `spa/pairing-host-cli.md` from a pairing host that the script pairs with a
 signing host it starts itself.
 
 ```bash
-scripts/battery.sh                  # both phases
-scripts/battery.sh --signing-host   # direct phase only
-scripts/battery.sh --pairing-host   # paired phase only
-make e2e-signing-cli                # same direct signing-host phase
-make e2e-pairing-cli                # same paired pairing-host phase
-make e2e-chat-cli                   # chat content screening against a chat signing-host
-make e2e-pocket-cli                 # Pocket protocol check against a Pocket signing-host
-make e2e-funding-cli                # funding requests and statuses against a scripted funding host
+e2e/cli/battery.sh                  # both phases
+e2e/cli/battery.sh --signing-host   # direct phase only
+e2e/cli/battery.sh --pairing-host   # paired phase only
+e2e/cli/battery.sh --chat-host      # chat content screening against a chat signing-host
+e2e/cli/battery.sh --pocket-host    # Pocket protocol check against a Pocket signing-host
+e2e/cli/battery.sh --funding-host   # funding requests and statuses against a scripted funding host
+make e2e-cli SCENARIO=battery ARGS=--signing-host   # same, through make
 ```
+
+The battery is one of the scenarios in [`e2e/cli/`](e2e/cli/README.md); `make e2e-cli`
+lists them all.
 
 The Pocket phase runs its product as a Worker execution, the only execution
 Pocket is served to. It seeds the CLI's in-memory Pocket host from

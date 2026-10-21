@@ -14,7 +14,7 @@ import type {
 import type { HostPocketListSubscribeItem } from "../../../../js/packages/truapi/src/generated/types.ts";
 import type { DiagnosisRow } from "./diagnosis.ts";
 
-/** Cards the battery seeds the host with; see `scripts/battery.sh`. */
+/** Cards the battery seeds the host with; see `e2e/cli/battery.sh`. */
 export const SEEDED_CARDS = { removable: "loyalty", privileged: "humanity" };
 
 const WAIT_MS = 15_000;

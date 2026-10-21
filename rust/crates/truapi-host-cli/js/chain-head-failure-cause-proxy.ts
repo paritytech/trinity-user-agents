@@ -1,4 +1,4 @@
-// WebSocket proxy for `scripts/chain-head-failure-cause-e2e.sh`. It closes the
+// WebSocket proxy for `e2e/cli/chain-head-failure-cause.sh`. It closes the
 // connection when the host sends `chainHead_v1_storage` instead of forwarding
 // it, so the call is always in flight when its transport closes.
 // Usage: bun chain-head-failure-cause-proxy.ts <upstream-ws-url> <port-file>

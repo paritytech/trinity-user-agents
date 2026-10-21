@@ -1061,7 +1061,7 @@ The top-level `--script` option does not update remembered `/script` state.
 | `chat-battery.ts` | Run host-backed Chat screening diagnostics and write a report. |
 
 `battery.ts` writes to `explorer/diagnosis-reports/spa/<role>-cli.md` unless
-`TRUAPI_BATTERY_REPORT_PATH` overrides the destination. `scripts/battery.sh` in
+`TRUAPI_BATTERY_REPORT_PATH` overrides the destination. `e2e/cli/battery.sh` in
 the repository root produces both reports in one invocation: it runs the direct
 signing-host phase, then starts a pairing host and answers its emitted link
 with a second signing host using the same product id and forwarded host flags
@@ -1077,7 +1077,7 @@ confirmation being consulted. When `TRUAPI_APPROVALS_LOG` names a file, every
 host process appends one `<approved|denied> <action>` line per decided
 confirmation there before the confirmation resolves; the case reads the file
 to prove the prompt-free window (and is reported as skipped when the variable
-is unset). `scripts/battery.sh` exports the variable for each phase, sharing
+is unset). `e2e/cli/battery.sh` exports the variable for each phase, sharing
 one file across both paired-phase host processes.
 
 ## 11. Pairing lifecycle
@@ -2295,7 +2295,7 @@ The implementation is covered by:
 - `truapi` runtime, protocol, cryptographic vector, and integration
   tests;
 - shared container, script-runner/Bun diagnosis and packaged-runtime tests;
-- paired and direct `battery.ts` runs, both driven by `scripts/battery.sh`; and
+- paired and direct `battery.ts` runs, both driven by `e2e/cli/battery.sh`; and
 - checked-in compatibility reports:
   - `explorer/diagnosis-reports/spa/pairing-host-cli.md`
   - `explorer/diagnosis-reports/spa/signing-host-cli.md`
@@ -2312,7 +2312,7 @@ lists 45 methods and predates later additions to the surface, and only the
 signing-host report carries measured `Unsupported` Coin Payment details — the
 pairing-host report still records the older `HostFailure` shape, because the
 pairing phase needs a personhood ring member before it runs any method. It
-refreshes on the next `make e2e-pairing-cli` run from such a signer.
+refreshes on the next `e2e/cli/battery.sh --pairing-host` run from such a signer.
 
 Recommended local verification after CLI changes:
 

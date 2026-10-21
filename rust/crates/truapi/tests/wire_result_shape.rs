@@ -319,7 +319,7 @@ fn foreign_account_proof_encodes_a_domain_refusal() {
 	// assertion would race the dispatch. That the grant is what refuses a
 	// foreign handle is asserted in
 	// `runtime::signing_host::tests::a_foreign_proof_is_refused_when_the_owner_granted_nothing`
-	// and end to end by `make e2e-cross-product SCENARIO=ringvrf`.
+	// and end to end by `make e2e-cli SCENARIO=cross-product-ringvrf`.
 	let expected =
 		versioned_result_err_payload(truapi::versioned::account::HostAccountCreateProofError::V1(
 			v01::HostAccountCreateProofError::Rejected,

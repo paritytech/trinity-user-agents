@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
  * `explorer/diagnosis-reports/spa/`, method by method.
  *
  * Both are written by the same generated battery -- the CLI's by
- * `scripts/battery.sh`, the mock's by `scripts/fidelity-report.ts` -- so the
+ * `e2e/cli/battery.sh`, the mock's by `scripts/fidelity-report.ts` -- so the
  * rows line up and a difference means the two hosts answered differently on
  * the runs that produced them.
  *

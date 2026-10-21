@@ -6,7 +6,7 @@
 // the fix the host asked the user to approve each upload as well, so a
 // background backup prompted on every run.
 //
-// `scripts/preimage-submit-prompt-e2e.sh` runs the host with `--auto-accept`
+// `e2e/cli/preimage-submit-prompt.sh` runs the host with `--auto-accept`
 // and `TRUAPI_APPROVALS_LOG`, so every prompt the host raised is a line in that
 // file by the time the call that raised it resolves.
 //
@@ -21,7 +21,7 @@ const PERMISSION_PROMPT = "approved remote permission";
 const log = process.env.TRUAPI_APPROVALS_LOG;
 assert(
   log,
-  "TRUAPI_APPROVALS_LOG is not set; run scripts/preimage-submit-prompt-e2e.sh",
+  "TRUAPI_APPROVALS_LOG is not set; run e2e/cli/preimage-submit-prompt.sh",
 );
 const transcript = () =>
   existsSync(log)

@@ -4,7 +4,7 @@
 #
 # One product signs with another product's registered ring-VRF key; only the
 # `context` grant in `peopl.paseo`'s local product config permits that. The
-# sibling of `cross-product-storage-e2e.sh`, and the first end-to-end run in
+# sibling of `cross-product-storage.sh`, and the first end-to-end run in
 # which a cross-product ring-VRF call is *granted* rather than refused.
 #
 # Unlike the storage sibling this reaches a chain: registering a ring-VRF key
@@ -16,7 +16,7 @@
 # registered by a process that has already exited.
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 fixtures="rust/crates/truapi-host-cli/js/fixtures"

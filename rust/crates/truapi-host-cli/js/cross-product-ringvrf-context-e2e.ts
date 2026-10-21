@@ -1,5 +1,5 @@
 // A ring-VRF proof in a third product's context, for
-// paritytech/platform-bugs#99. Run by `scripts/cross-product-ringvrf-context-e2e.sh`,
+// paritytech/platform-bugs#99. Run by `e2e/cli/cross-product-ringvrf-context.sh`,
 // once per phase, with the grants from local product configs:
 //
 //   peopl.paseo  grants dim2next `context`: the key grant.
