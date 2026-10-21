@@ -5,10 +5,9 @@ use std::sync::{
 
 use crate::platform::{
 	AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus, Features,
-	InstallationId, InstallationIdProvider, JsonRpcConnection, LocaleHost, Navigation,
-	Notifications, PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId,
-	ProductOperations, ProductStorage, ProviderError, ThemeHost, UserConfirmation,
-	UserConfirmationReview, async_trait,
+	JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision, Permissions,
+	PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage, ProviderError,
+	ThemeHost, UserConfirmation, UserConfirmationReview, async_trait,
 };
 use futures::{
 	channel::mpsc,
@@ -17,7 +16,11 @@ use futures::{
 use parity_scale_codec::Encode;
 use truapi::v01;
 
-use crate::{DevicePairingObserver, PairedSsoPeer, host_logic::worker::WorkerTransition};
+use crate::{
+	DevicePairingObserver, PairedSsoPeer,
+	host_logic::worker::WorkerTransition,
+	installation::{InstallationId, InstallationIdProvider},
+};
 
 use super::{
 	callbacks::{

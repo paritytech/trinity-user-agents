@@ -11,7 +11,7 @@ use futures::stream::BoxStream;
 
 use crate::{
 	chain::HashAndNumber,
-	platform::InstallationId,
+	installation::InstallationId,
 	store::{Db, DbError},
 };
 

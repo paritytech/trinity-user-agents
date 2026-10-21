@@ -28,10 +28,9 @@ use crate::{
 use crate::platform::{
 	AccountAccessReview, AuthPresenter, AuthState, ChainProvider,
 	CoreStorage as PlatformCoreStorage, CoreStorageKey, CreateTransactionReview,
-	Features as PlatformFeatures, HostInfo, InstallationId, InstallationIdProvider,
-	JsonRpcConnection, LocaleHost, Navigation as PlatformNavigation,
-	Notifications as PlatformNotifications, PairingHostConfig, Permissions as PlatformPermissions,
-	PlatformInfo, PreimageHost, ProductContext, ProductId,
+	Features as PlatformFeatures, HostInfo, JsonRpcConnection, LocaleHost,
+	Navigation as PlatformNavigation, Notifications as PlatformNotifications, PairingHostConfig,
+	Permissions as PlatformPermissions, PlatformInfo, PreimageHost, ProductContext, ProductId,
 	ProductOperations as PlatformProductOperations, ProductStorage as PlatformProductStorage,
 	ProductSubtreeReview, ProviderError, ResourceAllocationReview, SignPayloadReview,
 	SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
@@ -1132,11 +1131,16 @@ pub fn core_storage_test_key(key: CoreStorageKey) -> String {
 }
 
 /// The installation every [`StubPlatform`] hands out.
-pub const STUB_INSTALLATION: InstallationId = InstallationId([0x1d; 32]);
+#[cfg(not(target_arch = "wasm32"))]
+pub const STUB_INSTALLATION: crate::installation::InstallationId =
+	crate::installation::InstallationId([0x1d; 32]);
 
+#[cfg(not(target_arch = "wasm32"))]
 #[crate::platform::async_trait]
-impl InstallationIdProvider for StubPlatform {
-	async fn current_installation(&self) -> Result<InstallationId, v01::GenericError> {
+impl crate::installation::InstallationIdProvider for StubPlatform {
+	async fn current_installation(
+		&self,
+	) -> Result<crate::installation::InstallationId, v01::GenericError> {
 		Ok(STUB_INSTALLATION)
 	}
 }

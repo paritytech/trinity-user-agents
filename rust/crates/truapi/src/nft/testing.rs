@@ -9,7 +9,8 @@ use super::{
 	ledger::{NftLedger, NftLedgerDeps},
 };
 use crate::{
-	platform::{InstallationId, InstallationIdProvider, async_trait},
+	installation::{InstallationId, InstallationIdProvider},
+	platform::async_trait,
 	runtime::AuthorityError,
 	store::Db,
 };

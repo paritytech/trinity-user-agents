@@ -10,7 +10,7 @@ use super::{
 	keys::{ItemIndex, ItemKey, ItemKeyDeriver, ItemSlot},
 	purse::PurseId,
 };
-use crate::{platform::InstallationId, runtime::AuthorityError, store::DbError};
+use crate::{installation::InstallationId, runtime::AuthorityError, store::DbError};
 
 /// Why items could not be allocated.
 #[derive(Debug, thiserror::Error)]

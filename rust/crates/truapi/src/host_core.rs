@@ -924,7 +924,7 @@ impl SigningHostRuntime {
 	pub fn set_core_db(
 		&self,
 		db: crate::store::Db,
-		installation: Arc<dyn crate::platform::InstallationIdProvider>,
+		installation: Arc<dyn crate::installation::InstallationIdProvider>,
 	) -> bool {
 		if !self.services.install_core_db(db.clone()) {
 			return false;
@@ -944,7 +944,7 @@ impl SigningHostRuntime {
 	fn nft_ledger(
 		&self,
 		db: crate::store::Db,
-		installation: Arc<dyn crate::platform::InstallationIdProvider>,
+		installation: Arc<dyn crate::installation::InstallationIdProvider>,
 	) -> crate::nft::NftLedger {
 		crate::nft::NftLedger::new(crate::nft::NftLedgerDeps {
 			db,

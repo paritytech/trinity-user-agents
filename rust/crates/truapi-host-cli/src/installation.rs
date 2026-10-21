@@ -5,8 +5,9 @@
 use std::{io::ErrorKind, path::PathBuf};
 
 use truapi::{
+	installation::{InstallationId, InstallationIdProvider},
 	latest::GenericError,
-	platform::{InstallationId, InstallationIdProvider, async_trait},
+	platform::async_trait,
 };
 
 /// The installation id stored at one path.

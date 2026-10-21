@@ -7,12 +7,13 @@ use truapi::latest::GenericError;
 use super::*;
 use crate::{
 	host_logic::product_account::derive_sr25519_hard_path,
+	installation::InstallationId,
 	nft::{
 		ItemSlot, item_keys_from_entropy,
 		keys::ItemIndex,
 		testing::{FixedEntropy, FixedInstallation, TEST_ENTROPY, TEST_INSTALLATION},
 	},
-	platform::{InstallationId, async_trait},
+	platform::async_trait,
 	runtime::AuthorityError,
 	store::open_temporary_core_db,
 };

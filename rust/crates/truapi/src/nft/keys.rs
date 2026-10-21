@@ -5,7 +5,7 @@ use crate::{
 	host_logic::product_account::{
 		ProductAccountError, derive_hard_path_from_keypair, derive_root_keypair_from_entropy,
 	},
-	platform::InstallationId,
+	installation::InstallationId,
 	runtime::AuthorityError,
 };
 

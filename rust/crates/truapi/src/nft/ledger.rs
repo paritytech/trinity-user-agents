@@ -13,7 +13,7 @@ use super::{
 };
 use crate::{
 	chain::HashAndNumber,
-	platform::InstallationIdProvider,
+	installation::InstallationIdProvider,
 	store::{Db, DbError},
 };
 

@@ -807,6 +807,10 @@ pub mod durable;
 
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
+pub mod installation;
+
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
 mod nft;
 
 #[cfg(feature = "runtime")]
