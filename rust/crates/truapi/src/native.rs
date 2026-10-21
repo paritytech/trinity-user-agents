@@ -302,6 +302,7 @@ pub fn has_trusted_remote_permissions(product_id: String) -> bool {
 /// the `tracing` output, which on native routes to stderr (system logs on
 /// iOS/Android). Most native diagnostics flow through `on_core_log` instead;
 /// this controls the cross-platform `tracing` events shared with wasm.
+/// Warnings and errors reach `on_core_log` as well, whatever this level.
 #[uniffi::export]
 pub fn set_log_level(level: String) {
 	crate::logging::set_level_from_str(&level);

@@ -28,6 +28,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         configureTips()
 
         issueMonitoringService.setup()
+        addHostLogSink()
 
         CoreDurableRecoveryTask.shared.register()
 
@@ -65,6 +66,12 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 }
 
 private extension AppDelegate {
+    func addHostLogSink() {
+        guard let sink = IssueMonitoringFactory.createLogSink(dsn: GeneratedSecrets.sentryDSN) else { return }
+
+        Logger.shared.log.addDestination(HostLogSinkDestination(sink: sink))
+    }
+
     func configureTips() {
         #if TESTNET_FEATURE
             resetTipsDatastoreIfRequested()

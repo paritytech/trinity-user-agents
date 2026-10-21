@@ -128,7 +128,7 @@ impl Signing for ProductRuntimeHost {
 	) -> Result<HostSignRawResponse, CallError<HostSignRawError>> {
 		let version = request.version();
 		let request = request.into_latest();
-		tracing::warn!(
+		tracing::info!(
 			"Temporary unwatermarked signing API is deprecated and will be removed: https://github.com/paritytech/trinity-user-agents/issues/612"
 		);
 		let result = self.sign_raw_with_watermark(cx, request, false).await;
@@ -335,7 +335,7 @@ impl Signing for ProductRuntimeHost {
 	{
 		let version = request.version();
 		let request = request.into_latest();
-		tracing::warn!(
+		tracing::info!(
 			"Temporary unwatermarked signing API is deprecated and will be removed: https://github.com/paritytech/trinity-user-agents/issues/612"
 		);
 		let result = self.sign_raw_with_legacy_account_with_watermark(cx, request, false).await;

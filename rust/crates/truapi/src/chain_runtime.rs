@@ -202,7 +202,6 @@ impl RuntimeFailure {
 	}
 
 	/// Failure classification.
-	#[cfg(test)]
 	pub fn kind(&self) -> RuntimeFailureKind {
 		self.kind
 	}
@@ -1810,7 +1809,7 @@ fn transaction_operation_already_finished(error: &SubxtRpcError) -> bool {
 fn rpc_failure(method: &'static str, error: SubxtRpcError) -> RuntimeFailure {
 	match error {
 		SubxtRpcError::Client(_) | SubxtRpcError::DisconnectedWillReconnect(_) => {
-			RuntimeFailure::unavailable(method)
+			RuntimeFailure::unavailable_with_reason(method, error.to_string())
 		},
 		error => RuntimeFailure::host_failure(method, error.to_string()),
 	}
@@ -3255,6 +3254,46 @@ mod tests {
 		};
 		assert_eq!(err.kind(), RuntimeFailureKind::Unavailable);
 		assert_eq!(err.method(), "remote_chain_spec_chain_name");
+	}
+
+	/// A socket that drops under a call keeps the reason the transport gave, so the
+	/// product and the host log can tell it apart from a node that answered
+	/// with an error.
+	#[test]
+	fn dropped_connection_keeps_the_transport_reason() {
+		let provider = Arc::new(ScriptedProvider::new(|_| None));
+		provider.sender.lock().unwrap().take();
+		let runtime = ChainRuntime::new(provider, spawner_for_tests());
+		let err = match futures::executor::block_on(
+			runtime.remote_chain_spec_genesis_hash(vec![0u8; 32]),
+		) {
+			Ok(_) => panic!("expected failure"),
+			Err(err) => err,
+		};
+		assert_eq!(err.kind(), RuntimeFailureKind::Unavailable);
+		assert!(
+			err.reason()
+				.starts_with("remote_chain_spec_genesis_hash: RPC error: client error: json-rpc"),
+			"unexpected reason: {}",
+			err.reason()
+		);
+	}
+
+	/// A transport that is reconnecting is unavailable rather than broken, and
+	/// its reason still reaches the product and the host log.
+	#[test]
+	fn reconnecting_transport_keeps_its_reason() {
+		let failure = rpc_failure(
+			"get_head_header",
+			SubxtRpcError::DisconnectedWillReconnect("socket closed".to_string()),
+		);
+		assert_eq!(failure.kind(), RuntimeFailureKind::Unavailable);
+		assert_eq!(failure.method(), "get_head_header");
+		assert!(
+			failure.reason().contains("socket closed"),
+			"unexpected reason: {}",
+			failure.reason()
+		);
 	}
 
 	#[test]

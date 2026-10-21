@@ -235,6 +235,10 @@ Timber.d("Encoded payload bytes: %s", bytes.toHex())
 
 ✗ Logging an **expected** branch at `error` level.
 
+### What reaches Sentry
+
+Only Timber lines whose tag starts with `truapi.` leave the device, at `info` and above, as Sentry logs through `SentryLogTree`. The iOS host sends the same lines with the same tags. On `truapi.core`, only the core tracing markers (`truapi.tracing.warn` and `truapi.tracing.error`) are logged at `info`, through `logCoreLine`. Every other core marker stays at `debug`, because those lines carry notification bodies, URLs and permission requests. `Timber.e` does not raise a Sentry event, because the Timber integration the plugin installs is excluded in `app/build.gradle.kts`.
+
 ### Don't log noise
 
 - ✗ Per-frame logs in a tight loop.

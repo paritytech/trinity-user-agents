@@ -96,7 +96,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val chainProvider = WebSocketChainProvider(
         resolver = { genesisHash -> cachedChains.get().endpoints[genesisHash.hexKey()].orEmpty() },
         client = chainHttpClient,
-        onLog = { Timber.tag("truapi.chain").d("%s", it) },
+        onLog = { Timber.tag("truapi.chain").i("%s", it) },
     )
 
     /**
@@ -218,7 +218,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
 
         override fun onCoreLog(marker: String, detail: String) {
-            Timber.tag("truapi.core").d("%s: %s", marker, detail)
+            logCoreLine(marker, detail)
         }
 
         // Runtime-wide demand from the core's worker ledger; the supervisor marshals it off this thread.
@@ -278,7 +278,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
          */
         override fun authStateChanged(state: AuthState) {
             authState.value = state
-            Timber.tag("truapi.auth").d("%s", state.marker())
+            Timber.tag("truapi.auth").i("%s", state.marker())
         }
     }
 
