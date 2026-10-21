@@ -19,7 +19,6 @@ use super::super::from_latest_error;
 use crate::{
 	nft::CreatePurseError,
 	nft_purse::{self, CreateProductPurseError, NftPurses, PurseOwner},
-	platform::{ProductId, RuntimeConfigValidationError},
 	runtime::{ProductConnection, ProductRuntimeHost},
 	store::DbError,
 };
@@ -28,13 +27,6 @@ impl ProductConnection {
 	/// NFT purses, or `Unsupported` when the host configured no core database.
 	fn nft_purses<E>(&self) -> Result<NftPurses, CallError<E>> {
 		self.services.nft_purses().ok_or(CallError::Unsupported)
-	}
-
-	/// The calling product's id. Its context validated it when the connection
-	/// was built, so a refusal here is a host failure.
-	fn caller_product_id<E>(&self) -> Result<ProductId, CallError<E>> {
-		ProductId::parse(&self.product.product_id)
-			.map_err(|error| CallError::HostFailure { reason: error.to_string() })
 	}
 }
 
@@ -74,9 +66,8 @@ impl ProductRuntimeHost {
 	) -> Result<latest::HostNftPurseCreatePurseResponse, CallError<latest::GenericError>> {
 		self.require_session()?;
 		let purses = self.connection.nft_purses()?;
-		let caller = self.connection.caller_product_id()?;
 		let latest::HostNftPurseCreatePurseRequest { name } = request;
-		let created = purses.create_purse(&caller, name).await;
+		let created = purses.create_purse(&self.connection.product.product_id, name).await;
 		let purse = created.map_err(create_purse_failure)?;
 		Ok(latest::HostNftPurseCreatePurseResponse { purse: latest::NftPurseId(purse.0) })
 	}
@@ -90,10 +81,10 @@ impl ProductRuntimeHost {
 	> {
 		self.require_session()?;
 		let purses = self.connection.nft_purses()?;
-		let caller = self.connection.caller_product_id()?;
 		let latest::HostNftPurseListPursesRequest { owner } = request;
-		let owner = PurseOwner::parse(&owner).map_err(invalid_owner)?;
-		if let Some(grant) = nft_purse::read_grant(&caller, &owner) {
+		let owner = PurseOwner::parse(&owner)?;
+		let caller = &self.connection.product.product_id;
+		if let Some(grant) = nft_purse::read_grant(caller, &owner) {
 			let denied = latest::HostNftPurseListPursesError::Denied;
 			self.connection.require_remote_permission(grant, denied).await?;
 		}
@@ -109,14 +100,6 @@ fn create_purse_failure(error: CreateProductPurseError) -> CallError<latest::Gen
 		return host_failure(db);
 	}
 	CallError::Domain(latest::GenericError { reason: error.to_string() })
-}
-
-/// An owner that names no valid product is the product's error.
-fn invalid_owner(
-	error: RuntimeConfigValidationError,
-) -> CallError<latest::HostNftPurseListPursesError> {
-	let reason = format!("invalid purse owner: {error}");
-	CallError::Domain(latest::HostNftPurseListPursesError::Other(latest::GenericError { reason }))
 }
 
 fn host_failure<E>(error: DbError) -> CallError<E> {
