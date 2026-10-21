@@ -77,20 +77,24 @@ impl WatchedKeysReader {
 	pub async fn subscribe_to_changes(self: Arc<Self>) -> Result<RawChangeStream, RuntimeFailure> {
 		let subscription = self.open_storage_subscription().await?;
 		let finder = self.clone();
-		let changed_keys = subscription.scan(None, move |held_hashes, change_set| {
-			let change_set = change_set.map_err(|error| failure(STORAGE_WATCH, error));
-			let changed = change_set.and_then(|change_set| {
-				finder.find_changed_keys(held_hashes.as_deref(), change_set)
-			});
-			if let Ok(Some(changed)) = &changed {
-				record_hashes(held_hashes, finder.keys.len(), &changed.changed);
-			}
-			ready(Some(changed))
-		});
-		let nonempty_changed_keys = changed_keys.try_filter_map(|changed| ready(Ok(changed)));
-		let enriched = nonempty_changed_keys
-			.and_then(move |changed| self.clone().enrich_raw_changes_with_metadata(changed));
-		Ok(enriched.boxed())
+		let changes = subscription
+			.map_err(|error| failure(STORAGE_WATCH, error))
+			.scan(None, move |held_hashes, change_set| {
+				let changed = change_set
+					.and_then(|change_set| {
+						finder.find_changed_keys(held_hashes.as_deref(), change_set)
+					})
+					.inspect(|changed| {
+						if let Some(changed) = changed {
+							record_hashes(held_hashes, finder.keys.len(), &changed.changed);
+						}
+					});
+				ready(Some(changed))
+			})
+			.try_filter_map(|changed| ready(Ok(changed)))
+			.and_then(move |changed| self.clone().enrich_raw_changes_with_metadata(changed))
+			.boxed();
+		Ok(changes)
 	}
 
 	/// A `state_subscribeStorage` of every one of the reader's keys.

@@ -30,9 +30,8 @@ pub fn diffed(
 		.scan(None, |previous_hashes: &mut Option<Vec<Option<[u8; 32]>>>, snapshot| {
 			let changes = snapshot.map(|snapshot| {
 				let current_hashes = snapshot.value.iter().map(value_hash).collect();
-				let changes = find_changes(previous_hashes.as_deref(), snapshot);
-				*previous_hashes = Some(current_hashes);
-				changes
+				let previous = previous_hashes.replace(current_hashes);
+				find_changes(previous.as_deref(), snapshot)
 			});
 			ready(Some(changes))
 		})
