@@ -2,13 +2,17 @@
 
 use std::{num::NonZeroU32, sync::Arc};
 
+use futures::stream::BoxStream;
+
 use super::{
 	dao,
+	holding::{HeldItem, record_in},
 	item::{AllocateItemsError, Allocation, allocate_in},
 	keys::{ItemKey, ItemKeyDeriver},
 	purse::{CreatePurseError, PurseId, PurseRecord, PurseTag},
 };
 use crate::{
+	chain::HashAndNumber,
 	platform::InstallationIdProvider,
 	store::{Db, DbError},
 };
@@ -75,6 +79,21 @@ impl NftLedger {
 		let allocation = Allocation { purse, installation, count };
 		let keys = self.keys.clone();
 		self.db.write(move |tx| allocate_in(tx, allocation, keys.as_ref())).await?
+	}
+
+	/// Every item key, now and after each allocation.
+	pub fn observe_item_keys(&self) -> BoxStream<'static, Result<Vec<ItemKey>, DbError>> {
+		dao::observe_item_keys(&self.db)
+	}
+
+	/// Stores what each key holds at `at`, in one write. Called by the
+	/// tracker.
+	pub async fn record_holdings(
+		&self,
+		at: HashAndNumber,
+		holdings: Vec<(ItemKey, Option<HeldItem>)>,
+	) -> Result<(), DbError> {
+		self.db.write(move |tx| record_in(tx, at, &holdings)).await
 	}
 }
 

@@ -5,16 +5,20 @@
 //! that tag. Layer 1 stores and matches tags but never reads them.
 
 mod dao;
+mod holding;
 mod item;
 mod keys;
 mod ledger;
 mod purse;
+mod scarcity;
 #[cfg(test)]
 pub mod testing;
 
+pub use holding::HeldItem;
 pub use item::AllocateItemsError;
 pub use keys::{ItemKey, ItemKeyDeriver, ItemSlot, item_keys_from_entropy};
 pub use ledger::{NftLedger, NftLedgerDeps};
 pub use purse::{CreatePurseError, PurseId, PurseRecord, PurseTag};
+pub use scarcity::{HoldingTracker, HoldingTrackerDeps};
 #[cfg(test)]
 pub use testing::test_ledger;

@@ -3,10 +3,17 @@
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, named_params};
 
 use super::{
+	holding::HeldItem,
 	keys::{ItemKey, ItemSlot},
 	purse::{PurseId, PurseRecord, PurseTag},
 };
-use crate::{platform::InstallationId, store::DbError};
+use futures::stream::BoxStream;
+
+use crate::{
+	chain::HashAndNumber,
+	platform::InstallationId,
+	store::{Db, DbError},
+};
 
 const NEXT_PURSE_ID: &str = "SELECT COALESCE(MAX(id) + 1, 0) FROM nft_purse WHERE id < :main";
 
@@ -80,6 +87,47 @@ pub fn insert_items(
 			":idx": slot.index.0,
 		})?;
 	}
+	Ok(())
+}
+
+const ITEM_KEYS: &str = "SELECT key FROM nft_item";
+
+/// Every item key, now and after each change.
+pub fn observe_item_keys(db: &Db) -> BoxStream<'static, Result<Vec<ItemKey>, DbError>> {
+	db.observe(ITEM_KEYS, |statement| statement.query_map([], |row| Ok(ItemKey(row.get("key")?))))
+}
+
+const UPSERT_HOLDING: &str = "INSERT INTO nft_holding
+	(key, collection, item, instance, seen_number, seen_hash)
+	VALUES (:key, :collection, :item, :instance, :seen_number, :seen_hash)
+	ON CONFLICT (key) DO UPDATE SET collection = excluded.collection, item = excluded.item,
+		instance = excluded.instance, seen_number = excluded.seen_number,
+		seen_hash = excluded.seen_hash";
+
+/// Records that `key` holds `held` at `at`. The instance is stored as the
+/// bit pattern of an `i64`, since SQLite integers are signed.
+pub fn upsert_holding(
+	tx: &Transaction<'_>,
+	key: &ItemKey,
+	held: &HeldItem,
+	at: &HashAndNumber,
+) -> Result<(), DbError> {
+	tx.prepare_cached(UPSERT_HOLDING)?.execute(named_params! {
+		":key": key.0,
+		":collection": held.collection,
+		":item": held.item,
+		":instance": held.instance as i64,
+		":seen_number": at.number,
+		":seen_hash": at.hash.0,
+	})?;
+	Ok(())
+}
+
+const DELETE_HOLDING: &str = "DELETE FROM nft_holding WHERE key = :key";
+
+/// Records that `key` holds nothing.
+pub fn delete_holding(tx: &Transaction<'_>, key: &ItemKey) -> Result<(), DbError> {
+	tx.prepare_cached(DELETE_HOLDING)?.execute(named_params! { ":key": key.0 })?;
 	Ok(())
 }
 

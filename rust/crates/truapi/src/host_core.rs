@@ -933,7 +933,9 @@ impl SigningHostRuntime {
 		self.services.install_durable_engine(engine.clone());
 		forward_durable_work(&self.services, &engine);
 		engine.ensure_submissions_started();
-		self.services.install_nft_ledger(self.nft_ledger(db, installation));
+		let ledger = self.nft_ledger(db, installation);
+		self.services.install_nft_ledger(ledger.clone());
+		start_holding_tracker(&self.services, ledger);
 		true
 	}
 
@@ -1290,6 +1292,26 @@ fn durable_engine(
 		timer: Arc::new(RealTimer),
 		spawner: services.spawner.clone(),
 	})
+}
+
+/// Starts tracking what NFT item keys hold on Asset Hub, which runs the
+/// Scarcity pallet. Without an Asset Hub genesis there is nothing to track.
+#[cfg(not(target_arch = "wasm32"))]
+fn start_holding_tracker(services: &RuntimeServices, ledger: crate::nft::NftLedger) {
+	use crate::nft::{HoldingTracker, HoldingTrackerDeps};
+
+	let Some(genesis) = services.asset_hub_chain_genesis_hash() else {
+		tracing::warn!("no Asset Hub genesis configured, NFT holdings are not tracked");
+		return;
+	};
+	let tracker = HoldingTracker::new(HoldingTrackerDeps {
+		ledger,
+		storage: Arc::new(services.chain.clone()),
+		genesis: genesis.into(),
+		spawner: services.spawner.clone(),
+	});
+	tracker.ensure_started();
+	services.install_holding_tracker(tracker);
 }
 
 /// Reports every change of the engine's pending work to the host observer,
