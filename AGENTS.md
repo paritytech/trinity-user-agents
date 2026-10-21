@@ -273,6 +273,15 @@ Two ways to lose work that involve no pushing at all:
   does not parse, and a `major` changeset whose title lacks `!`. The nightly
   announcements read `!` to list breaking changes first.
 
+## Labels
+
+- Load `.claude/skills/labels/SKILL.md` before labelling a pull request or an
+  issue, and before adding or renaming a label. Pull requests get their size
+  and first status automatically and carry no area; add a `ci:` label only to
+  get the build it runs. Labels are defined in `.github/labels.yml`, so never
+  create one with `gh label` or the web UI. `docs/labels.md` describes the
+  system.
+
 ## Scope of a change
 
 - Do not improve adjacent code, comments, or formatting unless asked. Do not
