@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 import android.content.Context
 import android.os.SystemClock
 import dagger.hilt.android.qualifiers.ApplicationContext
-import io.parity.truapi.BuildConfig as TrUAPIBuildConfig
 import io.paritytech.polkadotapp.feature_products_impl.BuildConfig
 import io.sentry.Sentry
 import io.sentry.SentryEvent
@@ -14,6 +13,7 @@ import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.logFailure
 import java.util.UUID
 import javax.inject.Inject
+import uniffi.truapi.truapiHostVersion
 
 internal data class HostWebViewCreatedEvent(
     val sessionId: String,
@@ -36,9 +36,9 @@ class HostWebViewCreatedTelemetry private constructor(
             val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
             HostWebViewCreatedEvent(
                 sessionId = "",
-                appVariant = appVariant(BuildConfig.FLAVOR, BuildConfig.BUILD_TYPE),
+                appVariant = appVariant(BuildConfig.BUILD_TYPE),
                 nativeAppVersion = packageInfo.versionName.orEmpty(),
-                hostVersion = TrUAPIBuildConfig.TRUAPI_HOST_VERSION,
+                hostVersion = truapiHostVersion(),
                 appBuild = packageInfo.longVersionCode,
                 monotonicMs = SystemClock.elapsedRealtime(),
             )
@@ -64,8 +64,7 @@ class HostWebViewCreatedTelemetry private constructor(
 
         internal fun newSessionId(): String = UUID.randomUUID().toString()
 
-        internal fun appVariant(flavor: String, buildType: String): String =
-            "$flavor${buildType.replaceFirstChar { it.titlecase() }}"
+        internal fun appVariant(buildType: String): String = buildType
     }
 }
 

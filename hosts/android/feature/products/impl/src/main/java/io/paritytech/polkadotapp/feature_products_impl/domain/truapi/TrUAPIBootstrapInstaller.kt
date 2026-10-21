@@ -6,7 +6,6 @@ import android.webkit.WebView
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import dagger.hilt.android.qualifiers.ApplicationContext
-import io.parity.truapi.BuildConfig as TrUAPIBuildConfig
 import io.parity.truapi.ContainerScriptBundle
 import io.paritytech.polkadotapp.feature_products_impl.BuildConfig
 import io.paritytech.polkadotapp.common.utils.FeatureOption
@@ -17,6 +16,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import javax.inject.Inject
+import uniffi.truapi.truapiHostVersion
 
 /**
  * Builds the WebView setup that runs a product's bootstrap script at document start, for the app
@@ -65,13 +65,12 @@ class TrUAPIBootstrapInstaller @Inject constructor(
 internal fun hostTelemetryScript(
     context: Context,
     hostSessionId: String,
-    hostVersion: String = TrUAPIBuildConfig.TRUAPI_HOST_VERSION,
+    hostVersion: String = truapiHostVersion(),
     osVersion: String = Build.VERSION.RELEASE,
-    flavor: String = BuildConfig.FLAVOR,
     buildType: String = BuildConfig.BUILD_TYPE,
 ): String {
     val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-    val appVariant = HostWebViewCreatedTelemetry.appVariant(flavor, buildType)
+    val appVariant = HostWebViewCreatedTelemetry.appVariant(buildType)
     val telemetry = hostTelemetryJson.encodeToString(
         HostTelemetryBootstrap(
             hostSessionId = hostSessionId,

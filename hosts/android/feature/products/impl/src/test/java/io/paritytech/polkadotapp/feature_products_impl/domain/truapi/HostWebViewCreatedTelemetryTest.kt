@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.paritytech.polkadotapp.feature_products_impl.BuildConfig
 import io.sentry.SentryEvent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -84,8 +85,8 @@ class HostWebViewCreatedTelemetryTest {
     }
 
     @Test
-    fun `app variant identifies the distribution flavor and build type`() {
-        assertEquals("gpNightly", HostWebViewCreatedTelemetry.appVariant(flavor = "gp", buildType = "nightly"))
-        assertEquals("vanillaNightly", HostWebViewCreatedTelemetry.appVariant(flavor = "vanilla", buildType = "nightly"))
+    fun `app variant uses the module's real build type`() {
+        assertTrue(BuildConfig.BUILD_TYPE.isNotBlank())
+        assertEquals(BuildConfig.BUILD_TYPE, HostWebViewCreatedTelemetry.appVariant(BuildConfig.BUILD_TYPE))
     }
 }
