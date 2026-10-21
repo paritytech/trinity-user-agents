@@ -5,7 +5,7 @@
 //! uses as `Arc<dyn …>`. Every method names the chain by its genesis hash, so
 //! one implementation serves every chain. The runtime's `ChainRuntime`
 //! implements all of them over its per-chain subxt clients: reads, storage
-//! snapshots and validation go through the legacy JSON-RPC methods, which
+//! watches and validation go through the legacy JSON-RPC methods, which
 //! reach any block the node still keeps, and submission goes through the
 //! shared chainHead client.
 //!
@@ -31,8 +31,8 @@ pub use block_backend::{BlockBackend, DispatchOutcome};
 pub use heads::{ChainHeads, HeadEvent, Heads};
 pub use mortality::{MortalExtrinsic, Mortality, MortalityError};
 pub use storage_watch::{
-	DecodableAtBlock, EntryChanges, EntryName, StorageSnapshot, StorageSnapshots,
-	StorageWatchError, WatchedHead,
+	DecodableAtBlock, EntryChanges, EntryName, RawStorageChanges, StorageWatchError, WatchedHead,
+	WatchedStorage,
 };
 pub use tx_submitter::{TxSubmitter, WatchEvent};
 pub use tx_validator::TxValidator;

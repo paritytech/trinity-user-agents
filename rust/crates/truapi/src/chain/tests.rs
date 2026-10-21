@@ -24,12 +24,13 @@ use crate::{
 };
 
 mod live_storage_watch;
-mod storage_snapshots;
+mod watched_storage;
 
 const GENESIS: H256 = H256([0xab; 32]);
 const FOLLOW_ID: &str = "follow-1";
 const FINALIZED_SUBSCRIPTION: &str = "finalized-heads";
 const BEST_SUBSCRIPTION: &str = "best-heads";
+const STORAGE_SUBSCRIPTION: &str = "storage";
 
 /// A linear chain the scripted node serves over both the legacy methods and
 /// chainHead, plus the scripted outcome of validation and submission.
@@ -103,12 +104,23 @@ impl Node {
 		validation_output(valid)
 	}
 
-	/// One change set holding every requested key the node answers for, with
-	/// `null` for the absent ones.
+	/// `state_queryStorageAt`: one change set at the requested block.
 	fn query_storage_at(&self, params: &Value) -> Value {
 		let at = parse_hash(&params[1]).unwrap();
+		json!([self.change_set(&params[0], at)])
+	}
+
+	/// The first `state_subscribeStorage` notification, at the best block.
+	fn initial_storage_notification(&self, params: &Value) -> String {
+		let best = self.block(self.best).hash;
+		storage_notification(self.change_set(&params[0], best))
+	}
+
+	/// A change set holding every one of `keys` the node answers for at `at`,
+	/// with `null` for the absent ones.
+	fn change_set(&self, keys: &Value, at: H256) -> Value {
 		let stored = self.storage.get(&at);
-		let changes: Vec<Value> = params[0]
+		let changes: Vec<Value> = keys
 			.as_array()
 			.unwrap()
 			.iter()
@@ -120,7 +132,7 @@ impl Node {
 				json!([format!("0x{}", hex::encode(&key)), value])
 			})
 			.collect();
-		json!([{"block": at, "changes": changes}])
+		json!({"block": at, "changes": changes})
 	}
 
 	fn respond(&mut self, request: &str) -> Vec<String> {
@@ -181,6 +193,12 @@ impl Node {
 				vec![response(events.unwrap_or(Value::Null))]
 			},
 			"state_queryStorageAt" => vec![response(self.query_storage_at(params))],
+			"state_subscribeStorage" => {
+				vec![
+					response(json!(STORAGE_SUBSCRIPTION)),
+					self.initial_storage_notification(params),
+				]
+			},
 			"chain_subscribeFinalizedHeads" => vec![response(json!(FINALIZED_SUBSCRIPTION))],
 			"chain_subscribeNewHeads" => vec![response(json!(BEST_SUBSCRIPTION))],
 			"chainHead_v1_follow" => {
@@ -225,6 +243,7 @@ impl Node {
 				}));
 				frames
 			},
+			"state_unsubscribeStorage" |
 			"chainHead_v1_unpin" |
 			"chainHead_v1_stopOperation" |
 			"transactionWatch_v1_unwatch" |
@@ -279,6 +298,16 @@ fn follow_event(result: Value) -> String {
 		"jsonrpc": "2.0",
 		"method": "chainHead_v1_followEvent",
 		"params": {"subscription": FOLLOW_ID, "result": result}
+	})
+	.to_string()
+}
+
+/// A `state_storage` notification of `change_set`.
+fn storage_notification(change_set: Value) -> String {
+	json!({
+		"jsonrpc": "2.0",
+		"method": "state_storage",
+		"params": {"subscription": STORAGE_SUBSCRIPTION, "result": change_set}
 	})
 	.to_string()
 }

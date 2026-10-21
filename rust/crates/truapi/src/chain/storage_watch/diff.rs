@@ -1,23 +1,23 @@
-//! Snapshots into changes: which raw values differ from the ones reported
-//! last.
+//! Full snapshots into changes, for a source that can only read every key:
+//! which values differ from the ones reported last.
 
 use core::future::ready;
 
 use futures::stream::{BoxStream, StreamExt};
 
-use super::{DecodableAtBlock, StorageSnapshot};
+use super::{DecodableAtBlock, RawStorageChanges};
 use crate::chain_runtime::RuntimeFailure;
 
-/// The position of each changed key among the watched keys, and its new
-/// value, at one block.
-pub type RawChanges = DecodableAtBlock<Vec<(usize, Option<Vec<u8>>)>>;
+/// The value of every watched key at one block, in request order and `None`
+/// when absent.
+pub type StorageSnapshot = DecodableAtBlock<Vec<Option<Vec<u8>>>>;
 
 /// The changes between consecutive `snapshots`. The first snapshot reports
 /// every key, and a snapshot equal to the one before reports nothing. An
 /// error passes through and leaves the earlier snapshot as the baseline.
 pub fn snapshot_changes(
 	snapshots: BoxStream<'static, Result<StorageSnapshot, RuntimeFailure>>,
-) -> BoxStream<'static, Result<RawChanges, RuntimeFailure>> {
+) -> BoxStream<'static, Result<RawStorageChanges, RuntimeFailure>> {
 	snapshots
 		.scan(None, |reported, snapshot| {
 			let changes = snapshot.map(|snapshot| next_changes(reported, snapshot));
@@ -32,7 +32,7 @@ pub fn snapshot_changes(
 fn next_changes(
 	reported: &mut Option<Vec<Option<Vec<u8>>>>,
 	snapshot: StorageSnapshot,
-) -> Option<RawChanges> {
+) -> Option<RawStorageChanges> {
 	let Some(previous) = reported.replace(snapshot.value.clone()) else {
 		return Some(snapshot.map(|values| values.into_iter().enumerate().collect()));
 	};

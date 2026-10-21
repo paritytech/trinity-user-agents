@@ -1,4 +1,5 @@
-//! [`StorageSnapshots`]: raw storage keys, read once per head.
+//! [`WatchedStorage`]: changes to raw storage keys, as of one head after
+//! another.
 
 use futures::stream::BoxStream;
 use subxt::{ArcMetadata, utils::H256};
@@ -25,25 +26,24 @@ impl<T> DecodableAtBlock<T> {
 	}
 }
 
-/// The value of each watched key at one block, in request order and `None`
-/// when absent.
-pub type StorageSnapshot = DecodableAtBlock<Vec<Option<Vec<u8>>>>;
+/// The position of each changed key among the watched keys, and its new
+/// value, `None` when absent.
+pub type RawStorageChanges = DecodableAtBlock<Vec<(usize, Option<Vec<u8>>)>>;
 
-/// Storage of a chain, read once per head.
+/// Storage of a chain, watched by raw key.
 #[async_trait::async_trait]
-pub trait StorageSnapshots: Send + Sync {
+pub trait WatchedStorage: Send + Sync {
 	/// Metadata of the runtime at the current finalized head, for encoding
 	/// keys before a watch starts.
 	async fn current_metadata(&self, genesis: H256) -> Result<ArcMetadata, RuntimeFailure>;
 
-	/// A snapshot of `keys` at the current `head`, then one at each later
-	/// head. Heads that arrive during a read are skipped in favour of the
-	/// newest. A failed read is an `Err` item, never an absent value, and
-	/// later heads are still read.
-	async fn snapshots(
+	/// Changes to `keys` at `head`. The first item holds every key; each later
+	/// one holds the keys whose value changed since the item before. A failed
+	/// read is an `Err` item, never an absent value, and the watch goes on.
+	async fn changes(
 		&self,
 		genesis: H256,
 		head: WatchedHead,
 		keys: Vec<Vec<u8>>,
-	) -> Result<BoxStream<'static, Result<StorageSnapshot, RuntimeFailure>>, RuntimeFailure>;
+	) -> Result<BoxStream<'static, Result<RawStorageChanges, RuntimeFailure>>, RuntimeFailure>;
 }

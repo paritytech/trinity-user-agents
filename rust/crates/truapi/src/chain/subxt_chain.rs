@@ -1,5 +1,5 @@
 //! The chain capabilities implemented directly on `ChainRuntime`, over its
-//! per-chain subxt clients: the legacy client for reads, storage snapshots
+//! per-chain subxt clients: the legacy client for reads, storage watches
 //! and validation, the shared chainHead client for submission. One file per
 //! capability.
 
@@ -13,9 +13,9 @@ use crate::chain_runtime::{ChainRuntime, LegacyConnection, RuntimeFailure};
 
 mod block_backend;
 mod heads;
-mod storage_snapshots;
 mod tx_submitter;
 mod tx_validator;
+mod watched_storage;
 
 impl ChainRuntime {
 	async fn legacy(&self, genesis: H256) -> Result<LegacyConnection, RuntimeFailure> {

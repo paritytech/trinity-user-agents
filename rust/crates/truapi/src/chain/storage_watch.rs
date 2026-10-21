@@ -1,13 +1,14 @@
 //! Watching storage entries: the values of chosen keys, read once per head
 //! and reported only when they change.
 //!
-//! [`StorageSnapshots`] reads raw keys at each head. On top of it,
-//! `watch_entry` encodes the keys of a subxt storage address, keeps the bytes
-//! reported last, and decodes only the values that changed, with the metadata
-//! of the runtime they were read under. Heads that arrive during a read are
-//! skipped, because the next read includes their effect, so a value that
-//! changes and changes back during one read is never reported. A consumer
-//! that needs every transition reads events instead.
+//! [`WatchedStorage`] reports changes to raw keys. On top of it,
+//! `watch_entry` encodes the keys of a subxt storage address and decodes the
+//! changed values, with the metadata of the runtime they were read under. A
+//! source that reads every key at each head turns its snapshots into changes
+//! with [`snapshot_changes`]. Such a source may skip heads that arrive during
+//! a read, because the next read includes their effect, so a value that
+//! changes and changes back meanwhile is never reported. A consumer that needs
+//! every transition reads events instead.
 
 use std::sync::Arc;
 
@@ -19,13 +20,14 @@ use crate::chain_runtime::RuntimeFailure;
 
 mod codec;
 mod diff;
-mod snapshots;
+mod watched_storage;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 
 pub use codec::EntryName;
-pub use snapshots::{DecodableAtBlock, StorageSnapshot, StorageSnapshots};
+pub use diff::{StorageSnapshot, snapshot_changes};
+pub use watched_storage::{DecodableAtBlock, RawStorageChanges, WatchedStorage};
 
 /// Which heads a watch reads at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,7 +88,7 @@ pub enum StorageWatchError {
 /// Changes to a watched entry, item by item.
 type EntryChangeStream<K, V> = BoxStream<'static, Result<EntryChanges<K, V>, StorageWatchError>>;
 
-impl dyn StorageSnapshots {
+impl dyn WatchedStorage {
 	/// Watches `keys` of the entry `address` names on `genesis`, at `head`.
 	/// The first item has every key, and later items only the keys whose
 	/// value changed. A failed read is an `Err` item, and later heads are
@@ -106,9 +108,8 @@ impl dyn StorageSnapshots {
 	{
 		let metadata = self.current_metadata(genesis).await?;
 		let encoded = codec::encode_keys(&address, &keys, &metadata)?;
-		let snapshots = self.snapshots(genesis, head, encoded).await?;
+		let changes = self.changes(genesis, head, encoded).await?;
 		let decoder = EntryDecoder { address, keys };
-		let changes = diff::snapshot_changes(snapshots);
 		Ok(changes.map(move |raw| decoder.decode(raw?)).boxed())
 	}
 }
@@ -126,7 +127,7 @@ where
 {
 	fn decode(
 		&self,
-		raw: diff::RawChanges,
+		raw: RawStorageChanges,
 	) -> Result<EntryChanges<A::KeyParts, A::Value>, StorageWatchError> {
 		let DecodableAtBlock { at, metadata, value: changed } = raw;
 		let changed = changed

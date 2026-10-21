@@ -11,7 +11,7 @@ use subxt::{ext::scale_value::Value, storage::dynamic, utils::H256};
 use truapi_provider::{ChainSource, EmbeddedChainProvider, platform::ChainProvider};
 
 use crate::{
-	chain::{EntryChanges, StorageSnapshots, StorageWatchError, WatchedHead},
+	chain::{EntryChanges, StorageWatchError, WatchedHead, WatchedStorage},
 	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
 	platform::JsonRpcConnection,
 	subscription::Spawner,
@@ -52,7 +52,7 @@ fn asset_hub_genesis() -> H256 {
 }
 
 /// The chain runtime over the live node, its tasks on the test's runtime.
-fn live_storage(genesis: H256) -> Arc<dyn StorageSnapshots> {
+fn live_storage(genesis: H256) -> Arc<dyn WatchedStorage> {
 	let url = std::env::var("LIVE_ASSET_HUB_WS").unwrap_or_else(|_| ASSET_HUB_WS.into());
 	let source = ChainSource::rpc_node(url.parse().expect("LIVE_ASSET_HUB_WS is a URL"));
 	let provider = EmbeddedChainProvider::builder().chain(genesis.0, source).build();

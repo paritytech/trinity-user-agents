@@ -11,10 +11,10 @@ use sp_crypto_hashing::{blake2_128, twox_64, twox_128};
 use subxt::{ArcMetadata, storage::dynamic, utils::H256};
 
 use super::{
-	DecodableAtBlock, EntryChanges, StorageSnapshot, StorageSnapshots, StorageWatchError,
-	WatchedHead,
+	DecodableAtBlock, EntryChanges, RawStorageChanges, StorageSnapshot, StorageWatchError,
+	WatchedHead, WatchedStorage,
 	codec::{decode_value, encode_keys},
-	diff::{RawChanges, snapshot_changes},
+	snapshot_changes,
 };
 use crate::{
 	chain::HashAndNumber, chain_runtime::RuntimeFailure,
@@ -56,7 +56,7 @@ fn reported(
 	snapshots: Vec<Result<StorageSnapshot, RuntimeFailure>>,
 ) -> Vec<Result<Reported, RuntimeFailure>> {
 	let changes = snapshot_changes(stream::iter(snapshots).boxed());
-	let collected: Vec<Result<RawChanges, RuntimeFailure>> = block_on(changes.collect());
+	let collected: Vec<Result<RawStorageChanges, RuntimeFailure>> = block_on(changes.collect());
 	collected
 		.into_iter()
 		.map(|raw| raw.map(|raw| reported_at(raw.at.number, raw.value)))
@@ -181,37 +181,48 @@ fn bytes_left_over_after_the_value_are_an_error() {
 	assert!(error.to_string().ends_with("did not decode: 1 of 5 bytes left over"), "{error}");
 }
 
-/// Snapshots a test scripts by hand, and the keys the watch asked for.
-struct FakeSnapshots {
-	snapshots: Mutex<Option<UnboundedReceiver<Result<StorageSnapshot, RuntimeFailure>>>>,
+/// Changes a test scripts by hand, and the keys the watch asked for.
+struct FakeStorage {
+	changes: Mutex<Option<UnboundedReceiver<Result<RawStorageChanges, RuntimeFailure>>>>,
 	requested: Mutex<Option<(WatchedHead, Vec<Vec<u8>>)>>,
 }
 
-impl FakeSnapshots {
-	fn new() -> (Arc<Self>, UnboundedSender<Result<StorageSnapshot, RuntimeFailure>>) {
+impl FakeStorage {
+	fn new() -> (Arc<Self>, UnboundedSender<Result<RawStorageChanges, RuntimeFailure>>) {
 		let (sender, receiver) = unbounded();
 		let fake =
-			Arc::new(Self { snapshots: Mutex::new(Some(receiver)), requested: Mutex::new(None) });
+			Arc::new(Self { changes: Mutex::new(Some(receiver)), requested: Mutex::new(None) });
 		(fake, sender)
 	}
 }
 
 #[async_trait::async_trait]
-impl StorageSnapshots for FakeSnapshots {
+impl WatchedStorage for FakeStorage {
 	async fn current_metadata(&self, _genesis: H256) -> Result<ArcMetadata, RuntimeFailure> {
 		Ok(metadata())
 	}
 
-	async fn snapshots(
+	async fn changes(
 		&self,
 		_genesis: H256,
 		head: WatchedHead,
 		keys: Vec<Vec<u8>>,
-	) -> Result<BoxStream<'static, Result<StorageSnapshot, RuntimeFailure>>, RuntimeFailure> {
+	) -> Result<BoxStream<'static, Result<RawStorageChanges, RuntimeFailure>>, RuntimeFailure> {
 		*self.requested.lock().unwrap() = Some((head, keys));
-		let receiver = self.snapshots.lock().unwrap().take().expect("one watch per fake");
+		let receiver = self.changes.lock().unwrap().take().expect("one watch per fake");
 		Ok(receiver.boxed())
 	}
+}
+
+fn changes_at(
+	number: u64,
+	changed: &[(usize, Option<&[u8]>)],
+) -> Result<RawStorageChanges, RuntimeFailure> {
+	let changed = changed
+		.iter()
+		.map(|(index, value)| (*index, value.map(<[u8]>::to_vec)))
+		.collect();
+	Ok(DecodableAtBlock { at: block(number), metadata: metadata(), value: changed })
 }
 
 /// `System.BlockHash` of `number`: a `Twox64Concat` map over `u32`.
@@ -222,15 +233,13 @@ fn block_hash_key(number: u32) -> Vec<u8> {
 
 #[test]
 fn a_watch_reads_the_encoded_keys_and_reports_decoded_values_under_the_callers_keys() {
-	let (fake, snapshots) = FakeSnapshots::new();
-	let storage: Arc<dyn StorageSnapshots> = fake.clone();
+	let (fake, sender) = FakeStorage::new();
+	let storage: Arc<dyn WatchedStorage> = fake.clone();
 	let address = dynamic::<(u32,), [u8; 32]>("System", "BlockHash");
 	let watch = storage.watch_entry(GENESIS, WatchedHead::Best, address, vec![(1,), (2,)]);
 	let mut changes = block_on(watch).unwrap();
-	snapshots.unbounded_send(snapshot(5, &[Some(&[1; 32]), None])).unwrap();
-	snapshots
-		.unbounded_send(snapshot(6, &[Some(&[1; 32]), Some(&[2; 32])]))
-		.unwrap();
+	sender.unbounded_send(changes_at(5, &[(0, Some(&[1; 32])), (1, None)])).unwrap();
+	sender.unbounded_send(changes_at(6, &[(1, Some(&[2; 32]))])).unwrap();
 
 	let first = block_on(changes.next()).unwrap().unwrap();
 	let second = block_on(changes.next()).unwrap().unwrap();
@@ -246,13 +255,15 @@ fn a_watch_reads_the_encoded_keys_and_reports_decoded_values_under_the_callers_k
 
 #[test]
 fn a_failed_read_is_an_error_item_and_the_watch_goes_on() {
-	let (fake, snapshots) = FakeSnapshots::new();
-	let storage: Arc<dyn StorageSnapshots> = fake;
+	let (fake, sender) = FakeStorage::new();
+	let storage: Arc<dyn WatchedStorage> = fake;
 	let address = dynamic::<(), u32>("System", "Number");
 	let mut changes =
 		block_on(storage.watch_entry(GENESIS, WatchedHead::Finalized, address, vec![()])).unwrap();
-	snapshots.unbounded_send(read_failure()).unwrap();
-	snapshots.unbounded_send(snapshot(2, &[Some(&7u32.encode())])).unwrap();
+	sender
+		.unbounded_send(Err(RuntimeFailure::host_failure("storage_watch", "scripted failure")))
+		.unwrap();
+	sender.unbounded_send(changes_at(2, &[(0, Some(&7u32.encode()))])).unwrap();
 
 	let failed = block_on(changes.next()).unwrap();
 	let read = block_on(changes.next()).unwrap().unwrap();
@@ -263,8 +274,8 @@ fn a_failed_read_is_an_error_item_and_the_watch_goes_on() {
 
 #[test]
 fn metadata_without_the_watched_entry_fails_the_watch_before_it_starts() {
-	let (fake, _snapshots) = FakeSnapshots::new();
-	let storage: Arc<dyn StorageSnapshots> = fake.clone();
+	let (fake, _sender) = FakeStorage::new();
+	let storage: Arc<dyn WatchedStorage> = fake.clone();
 	let address = dynamic::<(), u32>("NoSuchPallet", "Number");
 
 	let watch = block_on(storage.watch_entry(GENESIS, WatchedHead::Finalized, address, vec![()]));
