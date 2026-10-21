@@ -88,7 +88,7 @@ class RealDotNsResolverTest {
 
     // A page fetches its scripts and styles one by one. Serving them from two builds would break it.
     @Test
-    fun `requests keep the build in use after a new one is released`() = runTest {
+    fun `requests keep the build served after a new one is released`() = runTest {
         withChainRecord(releasedBuild)
         withDownloaded(releasedBuild, newBuild)
         val resolver = resolver()
@@ -101,7 +101,7 @@ class RealDotNsResolverTest {
 
     // Without this, a player stays on the build they first opened until the app process dies.
     @Test
-    fun `a document load switches to a build released after the first one`() = runTest {
+    fun `an update switches to a build released after the first one`() = runTest {
         withChainRecord(releasedBuild)
         withDownloaded(releasedBuild, newBuild)
         val resolver = resolver()
@@ -109,13 +109,13 @@ class RealDotNsResolverTest {
 
         withChainRecord(newBuild)
 
-        assertServes(newBuild, resolver.resolveLatestToLocalUri(domain))
+        assertServes(newBuild, resolver.updateToLatest(domain))
         assertServes(newBuild, resolver.resolveToLocalUri(domain))
     }
 
     // Offline, the build on the device is still better than an error page.
     @Test
-    fun `a document load keeps the build in use when the chain cannot be reached`() = runTest {
+    fun `an update keeps the build served when the chain cannot be reached`() = runTest {
         withChainRecord(releasedBuild)
         withDownloaded(releasedBuild)
         val resolver = resolver()
@@ -123,12 +123,12 @@ class RealDotNsResolverTest {
 
         withUnreachableChain()
 
-        assertServes(releasedBuild, resolver.resolveLatestToLocalUri(domain))
+        assertServes(releasedBuild, resolver.updateToLatest(domain))
         assertEquals(DotNsLoadProgress.Completed, resolver.getProgressByDomain(domain).first())
     }
 
     @Test
-    fun `a document load keeps the build in use when the new one fails to download`() = runTest {
+    fun `an update keeps the build served when the new one fails to download`() = runTest {
         withChainRecord(releasedBuild)
         withDownloaded(releasedBuild)
         val resolver = resolver()
@@ -137,11 +137,11 @@ class RealDotNsResolverTest {
         withChainRecord(newBuild)
         withFailingDownload()
 
-        assertServes(releasedBuild, resolver.resolveLatestToLocalUri(domain))
+        assertServes(releasedBuild, resolver.updateToLatest(domain))
         assertEquals(DotNsLoadProgress.Completed, resolver.getProgressByDomain(domain).first())
     }
 
-    // Reloading would land on the build in use again, and the user would lose their work for nothing on every visit.
+    // Reloading would land on the build served again, and the user would lose their work for nothing on every visit.
     @Test
     fun `a build that failed to download is not offered`() = runTest {
         withChainRecord(releasedBuild)
@@ -151,9 +151,9 @@ class RealDotNsResolverTest {
 
         withChainRecord(newBuild)
         withFailingDownload()
-        resolver.resolveLatestToLocalUri(domain)
+        resolver.updateToLatest(domain)
 
-        assertEquals(false, resolver.isOutdated(domain, localUriOf(releasedBuild)).getOrNull())
+        assertEquals(false, resolver.hasNewBuild(domain).getOrNull())
     }
 
     @Test
@@ -164,33 +164,35 @@ class RealDotNsResolverTest {
         resolver.resolveToLocalUri(domain)
         withChainRecord(newBuild)
         withFailingDownload()
-        resolver.resolveLatestToLocalUri(domain)
+        resolver.updateToLatest(domain)
 
         withChainRecord(nextBuild)
 
-        assertEquals(true, resolver.isOutdated(domain, localUriOf(releasedBuild)).getOrNull())
+        assertEquals(true, resolver.hasNewBuild(domain).getOrNull())
     }
 
     // The check runs while the user is in the product, so it must not start a download behind their back.
     @Test
-    fun `a page is outdated once its domain points to another build, and nothing is downloaded`() = runTest {
-        withChainRecord(newBuild)
+    fun `a domain has a new build once chain points to another one, and nothing is downloaded`() = runTest {
+        withChainRecord(releasedBuild)
         withDownloaded(releasedBuild)
+        val resolver = resolver()
+        resolver.resolveToLocalUri(domain)
 
-        val result = resolver().isOutdated(domain, localUriOf(releasedBuild))
+        withChainRecord(newBuild)
 
-        assertEquals(true, result.getOrNull())
+        assertEquals(true, resolver.hasNewBuild(domain).getOrNull())
         verifyNothingDownloaded()
     }
 
     @Test
-    fun `a page on the build its domain points to is not outdated`() = runTest {
+    fun `a domain served the build chain points to has no new build`() = runTest {
         withChainRecord(releasedBuild)
         withDownloaded(releasedBuild)
+        val resolver = resolver()
+        resolver.resolveToLocalUri(domain)
 
-        val result = resolver().isOutdated(domain, localUriOf(releasedBuild))
-
-        assertEquals(false, result.getOrNull())
+        assertEquals(false, resolver.hasNewBuild(domain).getOrNull())
     }
 
     private fun withChainRecord(build: ByteArray?) {
@@ -221,8 +223,6 @@ class RealDotNsResolverTest {
     private fun hashOf(build: ByteArray): String = build.toHexString()
 
     private fun directoryOf(build: ByteArray) = File("/dotns_content/${hashOf(build)}")
-
-    private fun localUriOf(build: ByteArray): Uri = localUriOf(directoryOf(build))
 
     private fun localUriOf(file: File): Uri = mockk { every { path } returns file.absolutePath }
 

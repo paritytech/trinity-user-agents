@@ -161,11 +161,11 @@ class RealProductSessionController @Inject constructor(
 
     override suspend fun productWithNewBuild(id: Long): Result<ProductId?> {
         val tab = tabs.value.firstOrNull { it.id == id } ?: return Result.success(null)
-        return tab.isOutdated().map { isOutdated -> if (isOutdated) productIdOf(tab.url.value) else null }
+        return tab.hasNewBuild().map { hasNewBuild -> if (hasNewBuild) productIdOf(tab.url.value) else null }
     }
 
     override fun reloadTab(id: Long) {
-        tabs.value.firstOrNull { it.id == id }?.reload()
+        tabs.value.firstOrNull { it.id == id }?.reloadOnNewBuild()
     }
 
     // Focus the same-product tab (one per product), else open a new one from [url] (keeping its path).
@@ -239,11 +239,11 @@ class RealProductSessionController @Inject constructor(
             loadProgress.value = DotNsLoadProgress.Idle
         }
 
-        suspend fun isOutdated(): Result<Boolean> = provider?.isContentOutdated() ?: Result.success(false)
+        suspend fun hasNewBuild(): Result<Boolean> = provider?.hasNewBuild() ?: Result.success(false)
 
-        fun reload() {
+        fun reloadOnNewBuild() {
             val provider = provider ?: return
-            scope?.launch { provider.reload() }
+            scope?.launch { provider.reloadOnNewBuild() }
         }
 
         fun info(activeId: Long?, icons: Map<String, String>): Flow<TabInfo> =

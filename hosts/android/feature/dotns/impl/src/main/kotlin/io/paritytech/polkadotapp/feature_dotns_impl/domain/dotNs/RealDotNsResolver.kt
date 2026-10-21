@@ -27,7 +27,7 @@ import javax.inject.Inject
 
 private typealias DomainName = String
 
-private class ResolvedContent(val contentHash: ContentHash, val uri: Uri)
+private data class ServedBuild(val contentHash: ContentHash, val uri: Uri, val failedUpdate: ContentHash?)
 
 @OptIn(ExperimentalStdlibApi::class)
 internal class RealDotNsResolver @Inject constructor(
@@ -39,44 +39,39 @@ internal class RealDotNsResolver @Inject constructor(
 ) : DotNsResolver {
     private val progressRegistry = DotNsLoadProgressRegistry()
 
-    private val contentInUseMutex = Mutex()
-    private val contentInUse = mutableMapOf<DomainName, ResolvedContent>()
+    private val downloadMutex = Mutex()
 
-    // A page whose new content failed to download is served its content in use, so offering that content as a new
-    // build would only reload the page into the same one. Read without the lock, which a download may hold.
-    private val unavailableContent = ConcurrentHashMap<DomainName, ContentHash>()
+    // Written under the lock and read without it by hasNewBuild, which must not wait for a download.
+    private val servedBuilds = ConcurrentHashMap<DomainName, ServedBuild>()
 
     override suspend fun resolveToLocalUri(dotNsName: String): Result<Uri> = withContext(dispatchers.computation) {
-        contentInUseMutex.withLock {
-            contentInUse[dotNsName]?.let { return@withLock Result.success(it.uri) }
+        downloadMutex.withLock {
+            servedBuilds[dotNsName]?.let { return@withLock Result.success(it.uri) }
 
             readContentHash(dotNsName)
-                .flatMap { contentHash -> useContent(dotNsName, contentHash) }
+                .flatMap { contentHash -> serve(dotNsName, contentHash) }
                 .reportFailure(dotNsName)
         }
     }
 
-    override suspend fun resolveLatestToLocalUri(dotNsName: String): Result<Uri> = withContext(dispatchers.computation) {
+    override suspend fun updateToLatest(dotNsName: String): Result<Uri> = withContext(dispatchers.computation) {
         // Read before taking the lock, so the round trip to chain does not hold up the pages being served.
         val latestContentHash = readContentHash(dotNsName)
 
-        contentInUseMutex.withLock {
-            val inUse = contentInUse[dotNsName]
+        downloadMutex.withLock {
+            val served = servedBuilds[dotNsName]
 
             latestContentHash
-                .flatMap { contentHash -> useLatestContent(dotNsName, contentHash, inUse) }
-                .flatRecover { error -> fallBackToContentInUse(dotNsName, inUse, error) }
+                .flatMap { contentHash -> updateServed(dotNsName, served, contentHash) }
+                .flatRecover { error -> keepServed(dotNsName, served, error) }
                 .reportFailure(dotNsName)
         }
     }
 
-    override suspend fun isOutdated(dotNsName: String, localUri: Uri): Result<Boolean> = withContext(dispatchers.computation) {
-        readContentHash(dotNsName).map { contentHash ->
-            val failedToDownload = contentHash == unavailableContent[dotNsName]
-            val isAlreadyServed = contentStorage.getContentDirectory(contentHash)?.absolutePath == localUri.path
+    override suspend fun hasNewBuild(dotNsName: String): Result<Boolean> = withContext(dispatchers.computation) {
+        val served = servedBuilds[dotNsName] ?: return@withContext Result.success(false)
 
-            !failedToDownload && !isAlreadyServed
-        }
+        readContentHash(dotNsName).map { latest -> latest != served.contentHash && latest != served.failedUpdate }
     }
 
     private suspend fun readContentHash(domainName: DomainName): Result<ContentHash> {
@@ -87,27 +82,23 @@ internal class RealDotNsResolver @Inject constructor(
             .requireNotNull { IllegalStateException("Domain $domainName is not registered or has no content") }
     }
 
-    private suspend fun useContent(dotNsName: DomainName, contentHash: ContentHash): Result<Uri> {
+    private suspend fun serve(dotNsName: DomainName, contentHash: ContentHash): Result<Uri> {
         return resolveContentHash(dotNsName, contentHash)
-            .onSuccess { uri ->
-                contentInUse[dotNsName] = ResolvedContent(contentHash, uri)
-                unavailableContent.remove(dotNsName)
-            }
+            .onSuccess { uri -> servedBuilds[dotNsName] = ServedBuild(contentHash, uri, failedUpdate = null) }
     }
 
-    private suspend fun useLatestContent(dotNsName: DomainName, latest: ContentHash, inUse: ResolvedContent?): Result<Uri> {
-        if (inUse?.contentHash == latest) return Result.success(inUse.uri)
-
-        return useContent(dotNsName, latest)
-            .onFailure { unavailableContent[dotNsName] = latest }
+    // A build that failed to download is remembered, or every visit would offer a reload into the build served.
+    private suspend fun updateServed(dotNsName: DomainName, served: ServedBuild?, latest: ContentHash): Result<Uri> {
+        return serve(dotNsName, latest)
+            .onFailure { if (served != null) servedBuilds[dotNsName] = served.copy(failedUpdate = latest) }
     }
 
-    private fun fallBackToContentInUse(dotNsName: DomainName, inUse: ResolvedContent?, cause: Throwable): Result<Uri> {
-        if (inUse == null) return Result.failure(cause)
+    private fun keepServed(dotNsName: DomainName, served: ServedBuild?, cause: Throwable): Result<Uri> {
+        if (served == null) return Result.failure(cause)
 
-        Timber.w(cause, "keeping content ${inUse.contentHash} for $dotNsName")
+        Timber.w(cause, "keeping content ${served.contentHash} for $dotNsName")
         progressRegistry.markCompleted(dotNsName)
-        return Result.success(inUse.uri)
+        return Result.success(served.uri)
     }
 
     // Reported once the resolution is over, never from a step a fallback may still recover: a host screen reads
@@ -169,8 +160,7 @@ internal class RealDotNsResolver @Inject constructor(
     }
 
     override suspend fun clearCache() {
-        contentInUseMutex.withLock { contentInUse.clear() }
-        unavailableContent.clear()
+        downloadMutex.withLock { servedBuilds.clear() }
         progressRegistry.clear()
 
         contentStorage.deleteAll()

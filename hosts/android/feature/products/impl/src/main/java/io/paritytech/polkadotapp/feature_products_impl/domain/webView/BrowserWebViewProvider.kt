@@ -20,6 +20,7 @@ import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsContentLoader
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
@@ -138,17 +139,27 @@ class BrowserWebViewProvider @AssistedInject constructor(
     }
 
     override suspend fun loadInitialContent() {
+        dotNsNameOf(initialUrl)?.let { contentLoader.updateToLatest(it) }
         accessWebView { it.loadUrl(initialUrl) }
     }
 
-    suspend fun isContentOutdated(): Result<Boolean> {
-        val host = accessWebView { it.url }?.toUri()?.host ?: return Result.success(false)
-        return contentLoader.isDocumentOutdated(servingHostResolver.servingHostFor(host, servedExecutable))
+    suspend fun hasNewBuild(): Result<Boolean> {
+        val dotNsName = accessWebView { it.url }?.let { dotNsNameOf(it) } ?: return Result.success(false)
+        return dotNsResolver.hasNewBuild(dotNsName)
     }
 
-    suspend fun reload() {
-        contentLoader.pickUpLatest()
+    suspend fun reloadOnNewBuild() {
+        accessWebView { it.url }?.let { dotNsNameOf(it) }?.let { contentLoader.updateToLatest(it) }
         accessWebView { it.reload() }
+    }
+
+    private suspend fun dotNsNameOf(url: String): String? {
+        val uri = url.toUri()
+        val host = uri.host ?: return null
+        val tld = dotNsTldProvider.getTld().getOrNull() ?: return null
+        if (!DotNsUtils.isDotDomain(uri, tld)) return null
+
+        return servingHostResolver.servingHostFor(host, servedExecutable)
     }
 
     private inner class InternalWebViewClient(
