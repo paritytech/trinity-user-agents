@@ -9,7 +9,7 @@ use crate::platform::{
 	AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey, HostScan,
 	PermissionAuthorizationRequest, ProductExecutionKind,
 };
-use parity_scale_codec::Encode;
+use parity_scale_codec::{Decode, Encode};
 use truapi::{
 	api::{
 		Account, Chain, Entropy, ExpandedCard, Game, LocalStorage, Notifications, Permissions,
@@ -21,9 +21,9 @@ use truapi::{
 			HostAccountConnectionStatusSubscribeItem, HostAccountCreateProofError,
 			HostAccountCreateProofResponse, HostAccountGetAliasError, HostAccountGetAliasResponse,
 			HostAccountGetError, HostAccountGetRequest, HostAccountGetResponse,
-			HostAccountRingVrfSignError, HostAccountRingVrfSignRequest,
-			HostAccountRingVrfSignResponse, HostAccountSignVrfError, HostAccountSignVrfRequest,
-			HostAccountSignVrfResponse, HostGetLegacyAccountsRequest,
+			HostAccountListRingVrfKeysRequest, HostAccountRingVrfSignError,
+			HostAccountRingVrfSignRequest, HostAccountRingVrfSignResponse, HostAccountSignVrfError,
+			HostAccountSignVrfRequest, HostAccountSignVrfResponse, HostGetLegacyAccountsRequest,
 			HostGetLegacyAccountsResponse, HostGetUserIdError, HostGetUserIdRequest,
 			HostGetUserIdResponse,
 		},
@@ -101,10 +101,13 @@ use crate::{
 fn test_product_subtree(product_id: &str) -> [u8; 32] {
 	let root = crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16])
 		.expect("test entropy derives a root");
-	crate::host_logic::product_account::derive_product_subtree_keypair(&root, product_id)
-		.expect("test product id derives a subtree")
-		.public
-		.to_bytes()
+	crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&ProductId::for_test(product_id),
+	)
+	.expect("test product id derives a subtree")
+	.public
+	.to_bytes()
 }
 
 fn test_product_account_public(product_id: &str, index: u32) -> [u8; 32] {
@@ -113,16 +116,23 @@ fn test_product_account_public(product_id: &str, index: u32) -> [u8; 32] {
 }
 
 fn install_pairing_session(host: &ProductRuntimeHost, session: SessionInfo) {
-	let product_id = normalize_product_identifier(&host.connection.product_id())
-		.expect("test product identifier is valid");
+	let product_id = host.connection.product_id();
 	if session.sso.is_some() {
-		host.test_cache_product_subtree(&session, &product_id, test_product_subtree(&product_id));
+		host.test_cache_product_subtree(
+			&session,
+			product_id,
+			test_product_subtree(product_id.as_str()),
+		);
 	}
 	host.test_session_state().set_session(session);
 }
 
 fn cache_test_product_subtree(host: &ProductRuntimeHost, session: &SessionInfo, product_id: &str) {
-	host.test_cache_product_subtree(session, product_id, test_product_subtree(product_id));
+	host.test_cache_product_subtree(
+		session,
+		&ProductId::for_test(product_id),
+		test_product_subtree(product_id),
+	);
 }
 
 #[test]
@@ -185,7 +195,7 @@ fn get_product_context_returns_the_runtime_canonical_product_id() {
 
 		assert_eq!(
 			context,
-			v01::HostGetProductContextResponse { product_id: expected.to_string() },
+			v01::HostGetProductContextResponse { product_id: ProductId::for_test(expected) },
 			"configured product id {configured:?}",
 		);
 	}
@@ -211,7 +221,7 @@ fn local_storage_read_success_preserves_the_request_version() {
 	let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
 	platform.local_storage.lock().expect("mutex").insert(
 		host.connection
-			.product_storage_key(&host.connection.product_id(), "k".to_string()),
+			.product_storage_key(host.connection.product_id(), "k".to_string()),
 		b"value".to_vec(),
 	);
 	let response = v01::HostLocalStorageReadResponse { value: Some(b"value".to_vec()) };
@@ -298,9 +308,11 @@ fn a_storage_key_is_namespaced_under_its_owner() {
 	// The owner is an argument, not `self`: keying off the caller would hand a
 	// granted foreign read the caller's own values under the target's name.
 	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
-	let key = host.connection.product_storage_key("wallet.dot", "k".to_string());
+	let key = host
+		.connection
+		.product_storage_key(&ProductId::for_test("wallet.dot"), "k".to_string());
 	let decoded = ProductStorageKey::decode(&key).expect("the key round-trips");
-	assert_eq!(decoded.product_id(), "wallet.dot");
+	assert_eq!(decoded.product_id().as_str(), "wallet.dot");
 	assert_ne!(decoded.product_id(), host.connection.product_id());
 }
 
@@ -312,9 +324,9 @@ fn a_read_naming_the_caller_however_it_is_spelled_reaches_its_own_storage() {
 	let platform = stub_platform();
 	let storage = platform.clone();
 	let host = ProductRuntimeHost::new_compat(platform, test_spawner());
-	let own = host.connection.product_id();
+	let own = host.connection.product_id().to_string();
 	storage.local_storage.lock().expect("mutex").insert(
-		ProductStorageKey::new(&own, "k").expect("the owner normalizes").encode(),
+		ProductStorageKey::new(host.connection.product_id().clone(), "k").encode(),
 		b"my own value".to_vec(),
 	);
 
@@ -366,7 +378,7 @@ fn granted_value(host: &ProductRuntimeHost, owner: &str) -> Option<Vec<u8>> {
 /// Seeds `owner`'s storage with a value only a granted read can reach.
 fn seed_owner_value(platform: &StubPlatform, owner: &str) {
 	platform.local_storage.lock().expect("mutex").insert(
-		ProductStorageKey::new(owner, "k").expect("the owner normalizes").encode(),
+		ProductStorageKey::new(ProductId::for_test(owner), "k").encode(),
 		b"wallet's own value".to_vec(),
 	);
 }
@@ -385,7 +397,7 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
 	);
 	let entry = CachedManifest { fetched_at_secs, json: Some(json) };
 	futures::executor::block_on(platform.write_core_storage(
-		crate::runtime::product_manifest::manifest_cache_key(owner),
+		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
 		entry.encode(),
 	))
 	.expect("stub core storage accepts the entry");
@@ -396,7 +408,7 @@ fn cache_manifest_entry(platform: &StubPlatform, owner: &str, json: Option<Strin
 	let entry =
 		CachedManifest { fetched_at_secs: current_unix_secs().saturating_sub(age_secs), json };
 	futures::executor::block_on(platform.write_core_storage(
-		crate::runtime::product_manifest::manifest_cache_key(owner),
+		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
 		entry.encode(),
 	))
 	.expect("stub core storage accepts the entry");
@@ -436,8 +448,10 @@ fn a_grant_to_another_product_does_not_admit_this_caller() {
 /// The account gate, which decides whether a signature may be made with
 /// another product's account. The caller is `unknown.dot` throughout, so a
 /// manifest names the bare label `unknown`.
-fn account_target(host: &ProductRuntimeHost, target: &str) -> Option<String> {
-	futures::executor::block_on(host.authorized_product_account(target, &CallContext::default()))
+fn may_use_account_of(host: &ProductRuntimeHost, owner: &str) -> bool {
+	futures::executor::block_on(
+		host.may_use_product_account(&ProductId::for_test(owner), &CallContext::default()),
+	)
 }
 
 #[test]
@@ -445,7 +459,7 @@ fn the_callers_own_account_needs_no_grant_and_no_manifest() {
 	// No manifest is cached for anyone: reaching for one here would be a
 	// chain read in front of every signature a product makes for itself.
 	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
-	assert_eq!(account_target(&host, "unknown.dot").as_deref(), Some("unknown.dot"));
+	assert!(may_use_account_of(&host, "unknown.dot"));
 }
 
 #[test]
@@ -453,7 +467,7 @@ fn a_context_grant_admits_the_granting_products_account() {
 	let platform = stub_platform();
 	cache_manifest(&platform, "wallet.dot", r#"{"unknown":["context"]}"#, 0);
 	let host = ProductRuntimeHost::new_compat(platform, test_spawner());
-	assert_eq!(account_target(&host, "wallet.dot").as_deref(), Some("wallet.dot"));
+	assert!(may_use_account_of(&host, "wallet.dot"));
 }
 
 #[test]
@@ -461,7 +475,7 @@ fn all_admits_the_granting_products_account() {
 	let platform = stub_platform();
 	cache_manifest(&platform, "wallet.dot", r#"{"unknown":["all"]}"#, 0);
 	let host = ProductRuntimeHost::new_compat(platform, test_spawner());
-	assert_eq!(account_target(&host, "wallet.dot").as_deref(), Some("wallet.dot"));
+	assert!(may_use_account_of(&host, "wallet.dot"));
 }
 
 #[test]
@@ -471,7 +485,7 @@ fn a_storage_grant_alone_does_not_admit_the_account() {
 	let platform = stub_platform();
 	cache_manifest(&platform, "wallet.dot", r#"{"unknown":["storage"]}"#, 0);
 	let host = ProductRuntimeHost::new_compat(platform, test_spawner());
-	assert_eq!(account_target(&host, "wallet.dot"), None);
+	assert!(!may_use_account_of(&host, "wallet.dot"));
 }
 
 #[test]
@@ -479,7 +493,7 @@ fn a_context_grant_to_another_product_does_not_admit_this_caller() {
 	let platform = stub_platform();
 	cache_manifest(&platform, "wallet.dot", r#"{"stash":["context"]}"#, 0);
 	let host = ProductRuntimeHost::new_compat(platform, test_spawner());
-	assert_eq!(account_target(&host, "wallet.dot"), None);
+	assert!(!may_use_account_of(&host, "wallet.dot"));
 }
 
 #[test]
@@ -487,7 +501,7 @@ fn a_product_publishing_no_manifest_admits_nobody() {
 	let platform = stub_platform();
 	cache_manifest_entry(&platform, "wallet.dot", None, 0);
 	let host = ProductRuntimeHost::new_compat(platform, test_spawner());
-	assert_eq!(account_target(&host, "wallet.dot"), None);
+	assert!(!may_use_account_of(&host, "wallet.dot"));
 }
 
 /// A subname of the granting product is that product, as it is for every
@@ -497,7 +511,7 @@ fn a_subname_of_the_granting_product_is_admitted_under_its_base_grant() {
 	let platform = stub_platform();
 	cache_manifest(&platform, "app.wallet.dot", r#"{"unknown":["context"]}"#, 0);
 	let host = ProductRuntimeHost::new_compat(platform, test_spawner());
-	assert_eq!(account_target(&host, "app.wallet.dot").as_deref(), Some("app.wallet.dot"));
+	assert!(may_use_account_of(&host, "app.wallet.dot"));
 }
 
 /// What `sign_payload` answers for an account owned by `wallet.dot`.
@@ -628,7 +642,7 @@ fn with_no_session_a_proof_refusal_never_discloses_whether_a_grant_exists() {
 
 	assert_eq!(proof_refusal(&host, "granting.dot"), sessionless);
 	assert_eq!(proof_refusal(&host, "silent.dot"), sessionless);
-	assert_eq!(proof_refusal(&host, &host.connection.product_id()), sessionless);
+	assert_eq!(proof_refusal(&host, host.connection.product_id().as_str()), sessionless);
 }
 
 fn proof_refusal(
@@ -646,29 +660,11 @@ fn a_proof_naming_the_caller_in_another_spelling_is_still_its_own() {
 	// Normalized before comparison, so casing cannot turn a product's own
 	// key into a cross-product refusal.
 	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
-	let shouted = host.connection.product_id().to_uppercase();
+	let shouted = host.connection.product_id().as_str().to_uppercase();
 	assert_eq!(
 		proof_refusal(&host, &shouted),
 		Some(CallError::Domain(HostAccountCreateProofError::V1(
 			v01::HostAccountCreateProofError::Rejected
-		)))
-	);
-}
-
-#[test]
-fn an_unresolvable_product_cannot_reach_a_foreign_key() {
-	// A key handle that does not normalize names no product, so it cannot be
-	// reached. Note what this asserts: the frontend answers `Unknown { reason }`
-	// here, naming the malformed handle, where the authority answers the uniform
-	// `NotAllowlisted` for the same input. That asymmetry is real and deliberate
-	// at this layer: the id came from this Host's own caller, not off the wire,
-	// so telling it that its handle is malformed discloses nothing it did not
-	// already send. The authority cannot say the same and does not.
-	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
-	assert_eq!(
-		proof_refusal(&host, "not a product"),
-		Some(CallError::Domain(HostAccountCreateProofError::V1(
-			v01::HostAccountCreateProofError::Unknown { reason: "Invalid key handle".to_string() }
 		)))
 	);
 }
@@ -769,7 +765,7 @@ impl crate::platform::ContactsPlatform for StubContactsPlatform {
 		self.asked_for
 			.lock()
 			.expect("asked_for mutex poisoned")
-			.push(product.product_id.clone());
+			.push(product.product_id.to_string());
 		match self.failure {
 			Some(reason) => Err(truapi::latest::GenericError { reason: reason.to_string() }),
 			None => Ok(self.pick),
@@ -804,7 +800,7 @@ fn contacts_host(
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	if connected {
@@ -874,7 +870,7 @@ fn a_host_that_only_resolves_contacts_reports_unsupported() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -1196,7 +1192,7 @@ fn host_with_contacts(contacts: Arc<dyn crate::platform::ContactsPlatform>) -> P
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -1444,7 +1440,7 @@ fn a_withdrawn_request_already_published_is_cancelled_on_the_phone() {
 		..Default::default()
 	});
 	let (host_config, _) = runtime_config("myapp.dot");
-	let product = ProductContext::new("myapp.dot".to_string()).expect("product context is valid");
+	let product = ProductContext::new(ProductId::for_test("myapp.dot"));
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
@@ -1459,7 +1455,7 @@ fn a_withdrawn_request_already_published_is_cancelled_on_the_phone() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host.clone(),
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session.clone());
@@ -1474,7 +1470,7 @@ fn a_withdrawn_request_already_published_is_cancelled_on_the_phone() {
 	});
 	let published = submitted_remote_message(&platform, &session).message_id;
 	wait_until(
-		|| pairing_host.newest_request_for_tests().as_deref() == Some(&published),
+		|| pairing_host.session().newest_request_for_tests().as_deref() == Some(&published),
 		"the request was not published",
 	);
 
@@ -1532,7 +1528,7 @@ fn a_request_that_times_out_is_not_withdrawn_from_the_phone() {
 		..Default::default()
 	});
 	let (host_config, _) = runtime_config("myapp.dot");
-	let product = ProductContext::new("myapp.dot".to_string()).expect("product context is valid");
+	let product = ProductContext::new(ProductId::for_test("myapp.dot"));
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
@@ -1547,7 +1543,7 @@ fn a_request_that_times_out_is_not_withdrawn_from_the_phone() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host.clone(),
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session.clone());
@@ -1561,7 +1557,7 @@ fn a_request_that_times_out_is_not_withdrawn_from_the_phone() {
 	futures::executor::block_on(host.sign_raw(&cx, request)).unwrap_err();
 
 	let published = submitted_remote_message(&platform, &session).message_id;
-	assert_eq!(pairing_host.newest_request_for_tests(), Some(published));
+	assert_eq!(pairing_host.session().newest_request_for_tests(), Some(published));
 }
 
 /// `message_id`s every `Cancel` this host has published names, oldest first.
@@ -1595,7 +1591,7 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
 		..Default::default()
 	});
 	let (host_config, _) = runtime_config("myapp.dot");
-	let product = ProductContext::new("myapp.dot".to_string()).expect("product context is valid");
+	let product = ProductContext::new(ProductId::for_test("myapp.dot"));
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
@@ -1610,7 +1606,7 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host.clone(),
+		pairing_host.session().clone(),
 		product,
 	));
 	install_pairing_session(&host, session.clone());
@@ -1632,7 +1628,7 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
 			|| {
 				let published = submitted_remote_messages(&platform, &session);
 				published.len() == count &&
-					pairing_host.newest_request_for_tests().as_deref() ==
+					pairing_host.session().newest_request_for_tests().as_deref() ==
 						published.last().map(|message| message.message_id.as_str())
 			},
 			"the request was not published",
@@ -1662,10 +1658,9 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
 fn chat_post_message_screens_content_before_it_reaches_a_host() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
-		"chat.dot".to_string(),
+		ProductId::for_test("chat.dot"),
 		crate::platform::ProductExecutionKind::Worker,
-	)
-	.expect("test chat product context is valid");
+	);
 	let spawner = test_spawner();
 	let platform: Arc<dyn Platform> = stub_platform();
 	let services = RuntimeServices::new(
@@ -1684,7 +1679,7 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -1810,10 +1805,9 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
 fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
-		"chat.dot".to_string(),
+		ProductId::for_test("chat.dot"),
 		crate::platform::ProductExecutionKind::Worker,
-	)
-	.expect("test chat product context is valid");
+	);
 	let spawner = test_spawner();
 	let platform: Arc<dyn Platform> = stub_platform();
 	let services = RuntimeServices::new(
@@ -1835,7 +1829,7 @@ fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -1920,10 +1914,9 @@ fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
 fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
-		"chat.dot".to_string(),
+		ProductId::for_test("chat.dot"),
 		crate::platform::ProductExecutionKind::Worker,
-	)
-	.expect("test chat product context is valid");
+	);
 	let spawner = test_spawner();
 	let platform: Arc<dyn Platform> = stub_platform();
 	let services = RuntimeServices::new(
@@ -1942,7 +1935,7 @@ fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -2003,10 +1996,9 @@ fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
 fn chat_room_ids_agree_across_create_and_post() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
-		"chat.dot".to_string(),
+		ProductId::for_test("chat.dot"),
 		crate::platform::ProductExecutionKind::Worker,
-	)
-	.expect("test chat product context is valid");
+	);
 	let spawner = test_spawner();
 	let platform: Arc<dyn Platform> = stub_platform();
 	let services = RuntimeServices::new(
@@ -2025,7 +2017,7 @@ fn chat_room_ids_agree_across_create_and_post() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -2088,10 +2080,9 @@ fn chat_room_ids_agree_across_create_and_post() {
 fn chat_register_bot_rejects_unsafe_product_fields() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
-		"chat.dot".to_string(),
+		ProductId::for_test("chat.dot"),
 		crate::platform::ProductExecutionKind::Worker,
-	)
-	.expect("test chat product context is valid");
+	);
 	let spawner = test_spawner();
 	let platform: Arc<dyn Platform> = stub_platform();
 	let services = RuntimeServices::new(
@@ -2110,7 +2101,7 @@ fn chat_register_bot_rejects_unsafe_product_fields() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product.clone(),
 	);
 	install_pairing_session(&host, session_info());
@@ -2178,10 +2169,9 @@ fn chat_register_bot_rejects_unsafe_product_fields() {
 fn chat_register_bot_reaches_the_installed_adapter() {
 	let (host_config, _) = runtime_config("chat.dot");
 	let product = ProductContext::new_with_execution(
-		"chat.dot".to_string(),
+		ProductId::for_test("chat.dot"),
 		crate::platform::ProductExecutionKind::Worker,
-	)
-	.expect("test chat product context is valid");
+	);
 	let spawner = test_spawner();
 	let platform: Arc<dyn Platform> = stub_platform();
 	let services = RuntimeServices::new(
@@ -2200,7 +2190,7 @@ fn chat_register_bot_reaches_the_installed_adapter() {
 		services.clone(),
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product.clone(),
 	);
 	install_pairing_session(&host, session_info());
@@ -2284,8 +2274,7 @@ fn pocket_dot_host(
 	configure: impl FnOnce(&mut crate::host_core::ConnectionAdapters),
 ) -> ProductRuntimeHost {
 	let (host_config, _) = runtime_config("pocket.dot");
-	let product = ProductContext::new_with_execution("pocket.dot".to_string(), kind)
-		.expect("test pocket product context is valid");
+	let product = ProductContext::new_with_execution(ProductId::for_test("pocket.dot"), kind);
 	let platform: Arc<dyn Platform> = stub_platform();
 	let services = RuntimeServices::new(
 		platform,
@@ -2302,7 +2291,7 @@ fn pocket_dot_host(
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	)
 }
@@ -2599,7 +2588,7 @@ impl crate::platform::GamePlatform for RecordingGamePlatform {
 		self.scheduled
 			.lock()
 			.expect("scheduled mutex poisoned")
-			.push((product.product_id.clone(), starts_at));
+			.push((product.product_id.to_string(), starts_at));
 		Ok(())
 	}
 
@@ -2611,7 +2600,7 @@ impl crate::platform::GamePlatform for RecordingGamePlatform {
 		self.cancelled
 			.lock()
 			.expect("cancelled mutex poisoned")
-			.push(product.product_id.clone());
+			.push(product.product_id.to_string());
 		Ok(())
 	}
 }
@@ -2634,8 +2623,7 @@ fn game_host_for(
 	game: Option<Arc<RecordingGamePlatform>>,
 ) -> ProductRuntimeHost {
 	let (host_config, _) = runtime_config(product_id);
-	let product = ProductContext::new_with_execution(product_id.to_string(), kind)
-		.expect("test game product context is valid");
+	let product = ProductContext::new_with_execution(ProductId::for_test(product_id), kind);
 	let platform: Arc<dyn Platform> = platform;
 	let services = RuntimeServices::new(
 		platform,
@@ -2652,7 +2640,7 @@ fn game_host_for(
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	)
 }
@@ -2849,6 +2837,604 @@ fn game_is_unsupported_for_every_product_but_the_game() {
 	}
 }
 
+struct RecordingFundingPlatform {
+	outcome: crate::platform::FundingPresentOutcome,
+	presented: Mutex<Vec<(Option<ProductId>, crate::platform::FundingPresentation)>>,
+	announced: Mutex<Vec<String>>,
+}
+
+impl RecordingFundingPlatform {
+	fn answering(outcome: crate::platform::FundingPresentOutcome) -> Arc<Self> {
+		Arc::new(Self {
+			outcome,
+			presented: Mutex::new(Vec::new()),
+			announced: Mutex::new(Vec::new()),
+		})
+	}
+}
+
+#[truapi::async_trait]
+impl crate::platform::FundingPlatform for RecordingFundingPlatform {
+	async fn present_funding(
+		&self,
+		product: Option<&ProductContext>,
+		session: crate::platform::FundingPresentation,
+	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
+		self.presented
+			.lock()
+			.expect("presented mutex poisoned")
+			.push((product.map(|product| product.product_id.clone()), session));
+		Ok(self.outcome)
+	}
+
+	fn funding_session_changed(
+		&self,
+		intent: String,
+		_status: truapi::latest::HostFundingStatusSubscribeItem,
+	) {
+		self.announced.lock().expect("announced mutex poisoned").push(intent);
+	}
+}
+
+fn funding_services() -> Arc<RuntimeServices> {
+	funding_services_on(stub_platform(), test_spawner())
+}
+
+fn funding_services_on(
+	storage: Arc<crate::test_support::StubPlatform>,
+	spawner: crate::subscription::Spawner,
+) -> Arc<RuntimeServices> {
+	let (host_config, _) = runtime_config("funding.dot");
+	RuntimeServices::new(
+		storage,
+		host_config.host.host_info.clone(),
+		host_config.people_chain_genesis_hash,
+		host_config.bulletin_chain_genesis_hash,
+		host_config.asset_hub_chain_genesis_hash,
+		spawner,
+	)
+}
+
+/// Spawner that holds every task until the test runs it, so the test knows
+/// when spawned work has finished.
+#[derive(Clone, Default)]
+struct HeldTasks(Arc<Mutex<Vec<futures::future::BoxFuture<'static, ()>>>>);
+
+impl HeldTasks {
+	fn spawner(&self) -> crate::subscription::Spawner {
+		let tasks = self.0.clone();
+		Arc::new(move |task| tasks.lock().expect("tasks mutex poisoned").push(task))
+	}
+
+	fn take(&self) -> Vec<futures::future::BoxFuture<'static, ()>> {
+		core::mem::take(&mut *self.0.lock().expect("tasks mutex poisoned"))
+	}
+}
+
+// A host's history writes one row per outcome, so an ended session it has
+// not recorded is announced again each time funding resumes, until the host
+// acknowledges it.
+#[test]
+fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
+	let tasks = HeldTasks::default();
+	let services = funding_services_on(stub_platform(), tasks.spawner());
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	let opening =
+		services.open_funding(None, "fs_resume".to_string(), v01::FundingDirection::Out, None);
+	let intent = futures::executor::block_on(async {
+		futures::pin_mut!(opening);
+		assert!(futures::poll!(&mut opening).is_pending());
+		// The overlay runs on a task of its own, which these held tasks run.
+		for task in tasks.take() {
+			task.await;
+		}
+		opening.await
+	})
+	.expect("opened")
+	.intent;
+	assert!(futures::executor::block_on(services.cancel_funding(&intent)).expect("cancelled"));
+	// The expiry sweep the open armed would wait out the session's deadline.
+	drop(tasks.take());
+	let announced_on_resume = || {
+		platform.announced.lock().expect("announced mutex poisoned").clear();
+		services.resume_funding();
+		for task in tasks.take() {
+			futures::executor::block_on(task);
+		}
+		platform.announced.lock().expect("announced mutex poisoned").clone()
+	};
+
+	let before = announced_on_resume();
+	let acknowledged = futures::executor::block_on(services.acknowledge_funding_session(&intent))
+		.expect("acknowledged");
+	let after = announced_on_resume();
+
+	assert_eq!((before, acknowledged, after), (vec![intent], true, Vec::new()));
+}
+
+/// A funding overlay that, while it is up, records how many sessions the
+/// core has stored.
+struct ObservingFundingPlatform {
+	storage: Arc<crate::test_support::StubPlatform>,
+	stored_while_shown: Mutex<Option<usize>>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::FundingPlatform for ObservingFundingPlatform {
+	async fn present_funding(
+		&self,
+		_product: Option<&ProductContext>,
+		_session: crate::platform::FundingPresentation,
+	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
+		let stored = crate::host_logic::funding::load_sessions(self.storage.as_ref())
+			.await
+			.expect("sessions read")
+			.len();
+		*self.stored_while_shown.lock().expect("stored mutex poisoned") = Some(stored);
+		Ok(crate::platform::FundingPresentOutcome::Started)
+	}
+}
+
+// An app killed while the overlay is up must not come back to a session the
+// user never started, so nothing is stored until the user starts it.
+#[test]
+fn a_session_is_stored_only_once_the_user_starts_it() {
+	let storage = Arc::new(crate::test_support::StubPlatform::default());
+	let services = funding_services_on(storage.clone(), test_spawner());
+	let platform = Arc::new(ObservingFundingPlatform {
+		storage: storage.clone(),
+		stored_while_shown: Mutex::new(None),
+	});
+	assert!(services.funding().install_platform(platform.clone()));
+
+	futures::executor::block_on(services.open_funding(
+		None,
+		"fs_observed".to_string(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened");
+	let stored_after =
+		futures::executor::block_on(crate::host_logic::funding::load_sessions(storage.as_ref()))
+			.expect("sessions read")
+			.len();
+
+	assert_eq!(
+		(*platform.stored_while_shown.lock().expect("stored mutex poisoned"), stored_after),
+		(Some(0), 1)
+	);
+}
+
+/// A funding overlay whose storage starts failing writes while it is up.
+struct StorageFailingFundingPlatform {
+	storage: Arc<crate::test_support::StubPlatform>,
+	outcome: crate::platform::FundingPresentOutcome,
+}
+
+#[truapi::async_trait]
+impl crate::platform::FundingPlatform for StorageFailingFundingPlatform {
+	async fn present_funding(
+		&self,
+		_product: Option<&ProductContext>,
+		_session: crate::platform::FundingPresentation,
+	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
+		*self
+			.storage
+			.core_storage_write_error
+			.lock()
+			.expect("write error mutex poisoned") = Some("disk full");
+		Ok(self.outcome)
+	}
+}
+
+// A session the user left the overlay without, or that could not be stored
+// once started, must not linger in memory where the host's views and the
+// next save would pick it up.
+#[test]
+fn a_session_that_does_not_start_is_gone_even_when_storage_fails() {
+	for outcome in [
+		crate::platform::FundingPresentOutcome::Started,
+		crate::platform::FundingPresentOutcome::Dismissed,
+	] {
+		let storage = Arc::new(crate::test_support::StubPlatform::default());
+		let services = funding_services_on(storage.clone(), test_spawner());
+		assert!(services.funding().install_platform(Arc::new(StorageFailingFundingPlatform {
+			storage: storage.clone(),
+			outcome,
+		})));
+
+		let opened = futures::executor::block_on(services.open_funding(
+			None,
+			"fs_failing".to_string(),
+			v01::FundingDirection::In,
+			None,
+		));
+
+		assert!(opened.is_err(), "{outcome:?} opened a session");
+		assert_eq!(services.funding().sessions(), Vec::new(), "{outcome:?} left a session");
+	}
+}
+
+// The host writes one history row per announcement, so a session an edit
+// names and the same commit expires is announced once.
+#[test]
+fn a_session_is_announced_once_per_commit() {
+	let services = funding_services();
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	let now = crate::unix_time::current_unix_millis();
+	let overdue = crate::host_logic::funding::FundingSession {
+		deadline_ms: now - 1,
+		..crate::host_logic::funding::FundingSession::new(
+			"fs_overdue".to_string(),
+			None,
+			v01::FundingDirection::In,
+			None,
+			now - 2,
+		)
+	};
+
+	futures::executor::block_on(services.funding().commit(
+		services.platform.as_ref(),
+		now,
+		move |sessions| {
+			sessions.insert(overdue.intent.clone(), overdue);
+			((), vec!["fs_overdue".to_string()])
+		},
+	))
+	.expect("committed");
+
+	assert_eq!(
+		platform.announced.lock().expect("announced mutex poisoned").clone(),
+		vec!["fs_overdue".to_string()]
+	);
+}
+
+fn funding_host(
+	services: &Arc<RuntimeServices>,
+	product_id: &str,
+	with_session: bool,
+) -> ProductRuntimeHost {
+	let (host_config, product) = runtime_config(product_id);
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let host = ProductRuntimeHost::from_services(
+		services.clone(),
+		crate::host_core::ConnectionAdapters::from_services(services),
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	if with_session {
+		install_pairing_session(&host, session_info());
+	}
+	host
+}
+
+/// The funding id the tests' products choose.
+const FUNDING_ID: [u8; 32] = [7; 32];
+
+fn funding_request(id: [u8; 32]) -> truapi::versioned::funding::HostFundingRequest {
+	truapi::versioned::funding::HostFundingRequest::V1(v01::HostFundingRequest {
+		id,
+		direction: v01::FundingDirection::In,
+		amount: Some(1_000),
+	})
+}
+
+fn request_funding(
+	host: &ProductRuntimeHost,
+) -> Result<
+	truapi::versioned::funding::HostFundingResponse,
+	CallError<truapi::versioned::funding::HostFundingError>,
+> {
+	futures::executor::block_on(truapi::api::Funding::request(
+		host,
+		&CallContext::default(),
+		funding_request(FUNDING_ID),
+	))
+}
+
+fn watch_funding(
+	host: &ProductRuntimeHost,
+	id: [u8; 32],
+) -> Subscription<
+	truapi::versioned::funding::HostFundingStatusSubscribeItem,
+	CallError<truapi::versioned::funding::HostFundingStatusSubscribeError>,
+> {
+	futures::executor::block_on(truapi::api::Funding::status_subscribe(
+		host,
+		&CallContext::default(),
+		truapi::versioned::funding::HostFundingStatusSubscribeRequest::V1(
+			v01::HostFundingStatusSubscribeRequest { id },
+		),
+	))
+}
+
+fn first_funding_status(
+	host: &ProductRuntimeHost,
+	id: [u8; 32],
+) -> Option<
+	Result<
+		truapi::versioned::funding::HostFundingStatusSubscribeItem,
+		CallError<truapi::versioned::funding::HostFundingStatusSubscribeError>,
+	>,
+> {
+	futures::executor::block_on(watch_funding(host, id).next())
+}
+
+fn funding_not_found() -> CallError<truapi::versioned::funding::HostFundingStatusSubscribeError> {
+	CallError::Domain(truapi::versioned::funding::HostFundingStatusSubscribeError::V1(
+		v01::HostFundingStatusSubscribeError::NotFound,
+	))
+}
+
+#[test]
+fn a_funding_request_opens_the_overlay_and_only_its_product_can_watch_it() {
+	let services = funding_services();
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	let owner = funding_host(&services, "wallet.dot", true);
+
+	request_funding(&owner).expect("request accepted");
+
+	let presented = platform.presented.lock().expect("presented mutex poisoned").clone();
+	assert_eq!(
+		presented,
+		[(
+			Some(ProductId::for_test("wallet.dot")),
+			crate::platform::FundingPresentation {
+				intent: crate::runtime::payment_id::host_funding_intent(
+					&owner.connection.product,
+					FUNDING_ID,
+				),
+				direction: v01::FundingDirection::In,
+				amount: Some(1_000),
+			},
+		)]
+	);
+	assert!(matches!(
+		first_funding_status(&owner, FUNDING_ID),
+		Some(Ok(truapi::versioned::funding::HostFundingStatusSubscribeItem::V1(
+			v01::HostFundingStatusSubscribeItem::InProgress { .. }
+		)))
+	));
+	// Another product's session reads exactly like one that does not exist,
+	// even under the same id.
+	assert_eq!(
+		first_funding_status(&funding_host(&services, "other.dot", true), FUNDING_ID),
+		Some(Err(funding_not_found()))
+	);
+}
+
+// An id names one session, so a retried request cannot open a second one.
+#[test]
+fn a_reused_funding_id_is_refused() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let host = funding_host(&services, "wallet.dot", true);
+	request_funding(&host).expect("request accepted");
+
+	assert_eq!(
+		request_funding(&host),
+		Err(CallError::Domain(truapi::versioned::funding::HostFundingError::V1(
+			v01::HostFundingError::AlreadyExists
+		)))
+	);
+}
+
+// Watching a session, like paying, needs a connected account.
+#[test]
+fn watching_a_funding_session_needs_a_session() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+
+	assert_eq!(
+		first_funding_status(&funding_host(&services, "wallet.dot", false), FUNDING_ID),
+		Some(Err(CallError::Denied))
+	);
+}
+
+/// A funding overlay that stays up until the test answers for the user.
+struct GatedFundingPlatform {
+	answer:
+		Mutex<Option<futures::channel::oneshot::Receiver<crate::platform::FundingPresentOutcome>>>,
+}
+
+#[truapi::async_trait]
+impl crate::platform::FundingPlatform for GatedFundingPlatform {
+	async fn present_funding(
+		&self,
+		_product: Option<&ProductContext>,
+		_session: crate::platform::FundingPresentation,
+	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
+		let answer = self.answer.lock().expect("answer mutex poisoned").take();
+		Ok(answer.expect("overlay shown once").await.expect("answered"))
+	}
+}
+
+// A product that reloads while the overlay is up drops its request, but the
+// overlay is the user's: it still ends the session, and the product, watching
+// by its id, hears how. A session the user dismisses ends as cancelled and
+// is not left presenting.
+#[test]
+fn a_request_dropped_under_the_overlay_still_ends_its_session() {
+	for (outcome, ends) in [
+		(crate::platform::FundingPresentOutcome::Dismissed, true),
+		(crate::platform::FundingPresentOutcome::Started, false),
+	] {
+		let services = funding_services();
+		let (answer, answered) = futures::channel::oneshot::channel();
+		assert!(services.funding().install_platform(Arc::new(GatedFundingPlatform {
+			answer: Mutex::new(Some(answered)),
+		})));
+		let host = funding_host(&services, "wallet.dot", true);
+		let cx = CallContext::default();
+		futures::executor::block_on(async {
+			let request = truapi::api::Funding::request(&host, &cx, funding_request(FUNDING_ID));
+			futures::pin_mut!(request);
+			assert!(futures::poll!(request).is_pending());
+		});
+
+		let mut watch = watch_funding(&host, FUNDING_ID);
+		let first = futures::executor::block_on(watch.next());
+		answer.send(outcome).expect("overlay waiting");
+		let intent =
+			crate::runtime::payment_id::host_funding_intent(&host.connection.product, FUNDING_ID);
+		let last = if ends {
+			futures::executor::block_on(watch.next())
+		} else {
+			wait_until(|| services.funding().sessions().len() == 1, "session started");
+			None
+		};
+
+		assert!(
+			matches!(
+				first,
+				Some(Ok(truapi::versioned::funding::HostFundingStatusSubscribeItem::V1(
+					v01::HostFundingStatusSubscribeItem::InProgress { .. }
+				)))
+			),
+			"{outcome:?}: {first:?}"
+		);
+		if ends {
+			assert_eq!(
+				(last, services.funding().get(&intent)),
+				(
+					Some(Ok(truapi::versioned::funding::HostFundingStatusSubscribeItem::V1(
+						v01::HostFundingStatusSubscribeItem::Failed {
+							reason: v01::FundingFailure::Cancelled,
+						}
+					))),
+					None,
+				)
+			);
+		}
+	}
+}
+
+#[test]
+fn a_dismissed_funding_overlay_is_rejected_and_leaves_no_session() {
+	let services = funding_services();
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Dismissed);
+	assert!(services.funding().install_platform(platform.clone()));
+	let host = funding_host(&services, "wallet.dot", true);
+
+	assert_eq!(
+		request_funding(&host),
+		Err(CallError::Domain(truapi::versioned::funding::HostFundingError::V1(
+			v01::HostFundingError::Rejected
+		)))
+	);
+	assert_eq!(first_funding_status(&host, FUNDING_ID), Some(Err(funding_not_found())));
+}
+
+// The host's in-flight pill reads these announcements, so a session the user
+// never started must not appear there.
+#[test]
+fn the_host_hears_of_started_sessions_only() {
+	for (outcome, expected) in [
+		(crate::platform::FundingPresentOutcome::Started, 1),
+		(crate::platform::FundingPresentOutcome::Dismissed, 0),
+	] {
+		let services = funding_services();
+		let platform = RecordingFundingPlatform::answering(outcome);
+		assert!(services.funding().install_platform(platform.clone()));
+
+		let _ = request_funding(&funding_host(&services, "wallet.dot", true));
+
+		assert_eq!(platform.announced.lock().expect("announced mutex poisoned").len(), expected);
+	}
+}
+
+#[test]
+fn a_host_opened_funding_session_belongs_to_no_product() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let session =
+		futures::executor::block_on(services.open_host_funding(v01::FundingDirection::Out, None))
+			.expect("opened")
+			.expect("started");
+
+	assert!(services.funding().get(&session).is_some());
+	assert_eq!(
+		first_funding_status(&funding_host(&services, "wallet.dot", true), FUNDING_ID),
+		Some(Err(funding_not_found()))
+	);
+}
+
+#[test]
+fn a_funding_request_needs_a_host_overlay_then_a_session() {
+	let services = funding_services();
+	assert_eq!(
+		request_funding(&funding_host(&services, "wallet.dot", false)),
+		Err(CallError::Unsupported)
+	);
+
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	assert_eq!(
+		request_funding(&funding_host(&services, "wallet.dot", false)),
+		Err(CallError::Domain(truapi::versioned::funding::HostFundingError::V1(
+			v01::HostFundingError::NotConnected
+		)))
+	);
+}
+
+// A test host settles a session as though its funds had moved, and the
+// product sees that ending; a session already over, or unknown, is left as
+// it is.
+#[cfg(feature = "test-host")]
+#[test]
+fn a_test_host_settles_a_funding_session_once() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		"fs_settled".to_string(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	let delivered = |credited| crate::host_logic::funding::FundingStage::Delivered {
+		credited,
+		settled_at_ms: 1,
+	};
+	let settle = |intent: &str, credited| {
+		futures::executor::block_on(services.settle_funding_for_test(intent, delivered(credited)))
+			.expect("saved")
+	};
+
+	assert_eq!(
+		(
+			settle(&intent, 900),
+			settle(&intent, 1),
+			settle("fs_unknown", 900),
+			services.funding().get(&intent).map(|session| session.wire_item()),
+		),
+		(
+			true,
+			false,
+			false,
+			Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 900 }),
+		)
+	);
+}
+
 #[test]
 fn chain_follow_ids_are_scoped_per_product_core() {
 	let (host_config, product) = runtime_config("same.dot");
@@ -2867,14 +3453,14 @@ fn chain_follow_ids_are_scoped_per_product_core() {
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(&services),
 		pairing_host.clone(),
-		pairing_host.clone(),
+		pairing_host.session().clone(),
 		product.clone(),
 	);
 	let second = ProductRuntimeHost::from_services(
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(&services),
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 
@@ -2887,13 +3473,9 @@ fn bare_localhost_product_allows_dev_product_accounts() {
 	let host =
 		ProductRuntimeHost::new(stub_platform(), runtime_config("localhost"), test_spawner());
 
-	assert_eq!(
-		futures::executor::block_on(
-			host.authorized_product_account("myapp.dot", &CallContext::default())
-		)
-		.as_deref(),
-		Some("myapp.dot")
-	);
+	assert!(futures::executor::block_on(
+		host.may_use_product_account(&ProductId::for_test("myapp.dot"), &CallContext::default())
+	));
 }
 
 /// A product destination reaches the platform as a `polkadot://` URL, whatever
@@ -2963,10 +3545,9 @@ fn navigate_to_hands_a_web_address_over_unchanged() {
 fn permission_prompts_name_the_requesting_product_and_execution_kind() {
 	let (host_config, _) = runtime_config("camera.dot");
 	let product = ProductContext::new_with_execution(
-		"camera.dot".to_string(),
+		ProductId::for_test("camera.dot"),
 		crate::platform::ProductExecutionKind::Worker,
-	)
-	.expect("test product context is valid");
+	);
 	let spawner = test_spawner();
 	let platform = stub_platform();
 	let services = RuntimeServices::new(
@@ -2983,7 +3564,7 @@ fn permission_prompts_name_the_requesting_product_and_execution_kind() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product.clone(),
 	);
 	let cx = CallContext::default();
@@ -3127,8 +3708,8 @@ fn navigate_to_internal_targets_do_not_consume_open_url_permission() {
 	for url in [
 		"mytestapp.dot",
 		"localhost:3000",
-		"polkadot://mytestapp.dot/-/pocket/open?card=loyalty",
-		"polkadot://mytestapp.dot/-/pocket",
+		"polkadotapp://pocket/open?product=mytestapp.dot&card=loyalty",
+		"polkadotapp://pocket",
 	] {
 		let request =
 			HostNavigateToRequest::V1(v01::HostNavigateToRequest { url: url.to_string() });
@@ -3632,7 +4213,7 @@ fn get_account_requires_session() {
 	let cx = CallContext::default();
 	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 		product_account_id: v01::ProductAccountId {
-			dot_ns_identifier: "myapp.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("myapp.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 	});
@@ -3665,23 +4246,34 @@ fn get_account_maps_subtree_disconnect_race_to_not_connected() {
 	));
 }
 
+/// An account that names no product is rejected when the request is decoded,
+/// so no handler ever sees it.
 #[test]
-fn get_account_rejects_invalid_product_identifier() {
+fn a_request_for_an_account_of_no_product_does_not_decode() {
+	let request_naming =
+		|product: &str| (0u8, product.to_string(), v01::DerivationIndex::Index(0)).encode();
+
+	assert!(HostAccountGetRequest::decode(&mut &request_naming("myapp.dot")[..]).is_ok());
+	assert!(HostAccountGetRequest::decode(&mut &request_naming("example.com")[..]).is_err());
+}
+
+/// An owner that names no product is the product's malformed request, not a
+/// failure of the host.
+#[test]
+fn list_ring_vrf_keys_reports_an_invalid_owner_as_a_malformed_request() {
 	let host =
 		ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), test_spawner());
 	install_pairing_session(&host, session_info());
-	let cx = CallContext::default();
-	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
-		product_account_id: v01::ProductAccountId {
-			dot_ns_identifier: "example.com".to_string(),
-			derivation_index: v01::DerivationIndex::Index(0),
-		},
+	let request = HostAccountListRingVrfKeysRequest::V1(v01::HostAccountListRingVrfKeysRequest {
+		owner: "example.com".to_string(),
+		disclosure: v01::RingVrfKeyDisclosure::Anonymized,
 	});
-	let err = futures::executor::block_on(host.get_account(&cx, request)).unwrap_err();
-	assert!(matches!(
-		err,
-		CallError::Domain(HostAccountGetError::V1(v01::HostAccountGetError::DomainNotValid))
-	));
+
+	let err =
+		futures::executor::block_on(host.list_ring_vrf_keys(&CallContext::default(), request))
+			.unwrap_err();
+
+	assert!(matches!(err, CallError::MalformedFrame { .. }), "{err:?}");
 }
 
 #[test]
@@ -3693,7 +4285,7 @@ fn get_account_other_product_rejects_when_user_declines() {
 	let cx = CallContext::default();
 	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 		product_account_id: v01::ProductAccountId {
-			dot_ns_identifier: "other.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("other.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 	});
@@ -3709,8 +4301,8 @@ fn get_account_other_product_rejects_when_user_declines() {
 			.expect("account access review list mutex poisoned")
 			.as_slice(),
 		&[AccountAccessReview {
-			requesting_product_id: "myapp.dot".to_string(),
-			target_product_id: "other.dot".to_string(),
+			requesting_product_id: ProductId::for_test("myapp.dot"),
+			target_product_id: ProductId::for_test("other.dot"),
 		}]
 	);
 }
@@ -3726,7 +4318,7 @@ fn get_account_other_product_maps_confirmation_failure_to_host_failure() {
 	let cx = CallContext::default();
 	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 		product_account_id: v01::ProductAccountId {
-			dot_ns_identifier: "other.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("other.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 	});
@@ -3747,7 +4339,7 @@ fn get_account_other_product_accepts_confirmation_then_derives_key() {
 	let cx = CallContext::default();
 	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 		product_account_id: v01::ProductAccountId {
-			dot_ns_identifier: "other.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("other.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 	});
@@ -3829,7 +4421,7 @@ fn get_account_derives_rfc0022_product_key() {
 	let cx = CallContext::default();
 	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 		product_account_id: v01::ProductAccountId {
-			dot_ns_identifier: "myapp.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("myapp.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 	});
@@ -3905,7 +4497,7 @@ fn get_account_normalizes_product_identifier_before_deriving() {
 	let cx = CallContext::default();
 	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 		product_account_id: v01::ProductAccountId {
-			dot_ns_identifier: "MyApp.DOT".to_string(),
+			dot_ns_identifier: ProductId::for_test("MyApp.DOT"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 	});
@@ -3930,7 +4522,7 @@ fn get_account_localhost_product_prompts_for_other_product_identifier() {
 	let cx = CallContext::default();
 	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 		product_account_id: v01::ProductAccountId {
-			dot_ns_identifier: "myapp.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("myapp.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 	});
@@ -4804,7 +5396,9 @@ fn local_storage_subscribe_interrupts_on_a_platform_stream_failure() {
 	assert_eq!(futures::executor::block_on(subscription.next()), Some(storage_item(None)));
 
 	platform.fail_storage_subscriptions(
-		&host.connection.product_storage_key("myapp.dot", "progress".to_string()),
+		&host
+			.connection
+			.product_storage_key(&ProductId::for_test("myapp.dot"), "progress".to_string()),
 		"store unavailable",
 	);
 
@@ -4845,8 +5439,8 @@ fn worker_operations_reach_the_platform_scoped_to_the_calling_product() {
 	assert_eq!(
 		*platform.begun_operations.lock().expect("begun operations mutex poisoned"),
 		vec![
-			("myapp.dot".to_string(), "funding".to_string()),
-			("myapp.dot".to_string(), String::new()),
+			(ProductId::for_test("myapp.dot"), "funding".to_string()),
+			(ProductId::for_test("myapp.dot"), String::new()),
 		],
 		"begin reaches the platform under the calling product; a missing label is empty"
 	);
@@ -4855,7 +5449,7 @@ fn worker_operations_reach_the_platform_scoped_to_the_calling_product() {
 	end(99);
 	assert_eq!(
 		*platform.ended_operations.lock().expect("ended operations mutex poisoned"),
-		vec![("myapp.dot".to_string(), 1), ("myapp.dot".to_string(), 99)],
+		vec![(ProductId::for_test("myapp.dot"), 1), (ProductId::for_test("myapp.dot"), 99)],
 		"end reaches the platform under the calling product, unknown ids included"
 	);
 }
@@ -4878,7 +5472,7 @@ fn an_open_operation_holds_worker_demand_until_it_ends() {
 		.expect("begin operation");
 
 	assert_eq!(
-		ledger.count("myapp.dot"),
+		ledger.count(&ProductId::for_test("myapp.dot")),
 		1,
 		"an open operation is demand on the worker, so the host is told to run it"
 	);
@@ -4889,7 +5483,11 @@ fn an_open_operation_holds_worker_demand_until_it_ends() {
 	))
 	.expect("end operation");
 
-	assert_eq!(ledger.count("myapp.dot"), 0, "ending the last operation drops the demand it held");
+	assert_eq!(
+		ledger.count(&ProductId::for_test("myapp.dot")),
+		0,
+		"ending the last operation drops the demand it held"
+	);
 }
 
 #[test]
@@ -4920,13 +5518,13 @@ fn ending_an_operation_twice_releases_only_the_demand_it_held() {
 
 	let first = begin();
 	begin();
-	assert_eq!(ledger.count("myapp.dot"), 2);
+	assert_eq!(ledger.count(&ProductId::for_test("myapp.dot")), 2);
 
 	end(first);
 	end(first);
 
 	assert_eq!(
-		ledger.count("myapp.dot"),
+		ledger.count(&ProductId::for_test("myapp.dot")),
 		1,
 		"a repeated end is idempotent, so it cannot drop the demand the other operation holds"
 	);
@@ -4947,7 +5545,7 @@ impl DemandRecorder {
 impl crate::host_logic::worker::WorkerDemandObserver for DemandRecorder {
 	fn worker_demand_changed(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		transition: crate::host_logic::worker::WorkerTransition,
 	) {
 		self.transitions
@@ -5036,7 +5634,7 @@ fn a_cancelled_begin_ends_the_operation_the_host_started() {
 			.lock()
 			.expect("ended operations mutex poisoned")
 			.clone();
-		if ended == vec![("myapp.dot".to_string(), 1)] {
+		if ended == vec![(ProductId::for_test("myapp.dot"), 1)] {
 			break;
 		}
 		assert!(
@@ -5045,7 +5643,13 @@ fn a_cancelled_begin_ends_the_operation_the_host_started() {
 		);
 		std::thread::yield_now();
 	}
-	assert_eq!(host.connection.services().worker_ledger.count("myapp.dot"), 0);
+	assert_eq!(
+		host.connection
+			.services()
+			.worker_ledger
+			.count(&ProductId::for_test("myapp.dot")),
+		0
+	);
 }
 
 #[test]
@@ -5067,7 +5671,7 @@ fn a_failed_end_still_drops_the_demand_the_operation_held() {
 			}),
 		))
 		.expect("begin operation");
-	assert_eq!(ledger.count("myapp.dot"), 1);
+	assert_eq!(ledger.count(&ProductId::for_test("myapp.dot")), 1);
 
 	let ended = futures::executor::block_on(host.end_operation(
 		&cx,
@@ -5076,7 +5680,7 @@ fn a_failed_end_still_drops_the_demand_the_operation_held() {
 	assert!(ended.is_err(), "the host's failure still reaches the product");
 
 	assert_eq!(
-		ledger.count("myapp.dot"),
+		ledger.count(&ProductId::for_test("myapp.dot")),
 		0,
 		"the product declared the operation over, so the core stops counting it \
          whatever the host made of the call"
@@ -5096,12 +5700,12 @@ fn dropping_a_connection_releases_the_demand_its_open_operations_held() {
 		HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest { label: None }),
 	))
 	.expect("begin operation");
-	assert_eq!(services.worker_ledger.count("myapp.dot"), 1);
+	assert_eq!(services.worker_ledger.count(&ProductId::for_test("myapp.dot")), 1);
 
 	drop(host);
 
 	assert_eq!(
-		services.worker_ledger.count("myapp.dot"),
+		services.worker_ledger.count(&ProductId::for_test("myapp.dot")),
 		0,
 		"a product that goes away without ending its operations leaves no demand behind"
 	);
@@ -5149,7 +5753,7 @@ fn idle_peer_disconnect_monitor_clears_session_store_and_broadcasts() {
 		)
 	);
 
-	pairing_host.start_session_supervision_for_current_session();
+	pairing_host.session().start_session_supervision_for_current_session();
 
 	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
 	let disconnected = loop {
@@ -5302,7 +5906,7 @@ fn legacy_create_transaction_accepts_derived_key_then_returns_sso_response() {
 	assert_eq!(
 		payload.signer,
 		v01::ProductAccountId {
-			dot_ns_identifier: "myapp.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("myapp.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		}
 	);
@@ -5331,18 +5935,18 @@ fn resource_allocation_rejects_when_user_declines() {
 	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
 	install_pairing_session(&host, session_info());
 	let cx = CallContext::default();
-	let err = futures::executor::block_on(ResourceAllocation::request(
+	let response = futures::executor::block_on(ResourceAllocation::request(
 		&host,
 		&cx,
 		resource_allocation_request(),
 	))
-	.unwrap_err();
-	match err {
-		CallError::Domain(HostRequestResourceAllocationError::V1(
-			v01::ResourceAllocationError::Unknown { reason },
-		)) => assert_eq!(reason, "User rejected resource allocation"),
-		other => panic!("expected user-rejected resource allocation error, got {other:?}"),
-	}
+	.unwrap();
+	assert_eq!(
+		response,
+		HostRequestResourceAllocationResponse::V1(v01::HostRequestResourceAllocationResponse {
+			outcomes: vec![v01::AllocationOutcome::Rejected; 2],
+		})
+	);
 }
 
 #[test]
@@ -5547,9 +6151,11 @@ fn resource_allocation_accepts_confirmation_then_returns_sso_response() {
 fn auto_signing_test_platform(session: &SessionInfo, request_id: &str) -> Arc<StubPlatform> {
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
-			.unwrap();
+	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&ProductId::for_test("myapp.dot"),
+	)
+	.unwrap();
 	Arc::new(StubPlatform {
         resource_allocation_confirmed: true,
         // A grant skips confirmation, except for a call naming contacts.
@@ -5568,7 +6174,7 @@ fn auto_signing_test_platform(session: &SessionInfo, request_id: &str) -> Arc<St
                                     ring_vrf_domain_entropy:
                                         crate::host_logic::product_account::derive_ring_vrf_domain_entropy(
                                             &[0xAB; 16],
-                                            "myapp.dot",
+                                            &ProductId::for_test("myapp.dot"),
                                         )
                                         .unwrap(),
                                 },
@@ -5620,8 +6226,12 @@ fn granted_pairing_host() -> (Arc<StubPlatform>, ProductRuntimeHost) {
 fn granted_keypair() -> schnorrkel::Keypair {
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	crate::host_logic::product_account::derive_product_keypair(&root, "myapp.dot", index_bytes(0))
-		.unwrap()
+	crate::host_logic::product_account::derive_product_keypair(
+		&root,
+		&ProductId::for_test("myapp.dot"),
+		index_bytes(0),
+	)
+	.unwrap()
 }
 
 #[test]
@@ -5987,9 +6597,11 @@ fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
 	let session = sso_session_info();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
-			.unwrap();
+	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&ProductId::for_test("myapp.dot"),
+	)
+	.unwrap();
 	let product_root_private_key = subtree.secret.to_bytes();
 	let platform = Arc::new(StubPlatform {
         resource_allocation_confirmed: true,
@@ -6007,7 +6619,7 @@ fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
                                     ring_vrf_domain_entropy:
                                         crate::host_logic::product_account::derive_ring_vrf_domain_entropy(
                                             &[0xAB; 16],
-                                            "myapp.dot",
+                                            &ProductId::for_test("myapp.dot"),
                                         )
                                         .unwrap(),
                                 },
@@ -6056,7 +6668,7 @@ fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
 
 	let keypair = crate::host_logic::product_account::derive_product_keypair(
 		&root,
-		"myapp.dot",
+		&ProductId::for_test("myapp.dot"),
 		index_bytes(0),
 	)
 	.unwrap();
@@ -6102,24 +6714,26 @@ fn auto_signing_ring_vrf_requires_registration_and_signs_locally() {
 	let (host, pairing_host) = ProductRuntimeHost::new_pairing_for_tests(
 		platform.clone(),
 		ProductRuntimeHost::compat_host_config(),
-		ProductContext::new("myapp.dot".to_string()).unwrap(),
+		ProductContext::new(ProductId::for_test("myapp.dot")),
 		test_spawner(),
 	);
 	install_pairing_session(&host, session.clone());
 
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
-			.unwrap();
+	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&ProductId::for_test("myapp.dot"),
+	)
+	.unwrap();
 	let domain = crate::host_logic::product_account::derive_ring_vrf_domain_entropy(
 		&[0xAB; 16],
-		"myapp.dot",
+		&ProductId::for_test("myapp.dot"),
 	)
 	.unwrap();
 	futures::executor::block_on(pairing_host.remember_auto_signing_key_for_tests(
 		&session,
-		pairing_host.current_session_lifecycle_epoch(),
+		pairing_host.session().current_session_lifecycle_epoch(),
 		"myapp.dot",
 		subtree.public.to_bytes(),
 		subtree.secret.to_bytes(),
@@ -6294,15 +6908,19 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
 		test_spawner(),
 	);
 	install_pairing_session(&host, session.clone());
-	let stale_epoch = pairing_host.current_session_lifecycle_epoch();
+	let stale_epoch = pairing_host.session().current_session_lifecycle_epoch();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
-			.unwrap();
+	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&ProductId::for_test("myapp.dot"),
+	)
+	.unwrap();
 
 	futures::executor::block_on(pairing_host.logout_and_reset_pairing()).unwrap();
-	futures::executor::block_on(pairing_host.set_connected_session_for_tests(session.clone()));
+	futures::executor::block_on(
+		pairing_host.session().set_connected_session_for_tests(session.clone()),
+	);
 	let auto_signing_error =
 		futures::executor::block_on(pairing_host.remember_auto_signing_key_for_tests(
 			&session,
@@ -6317,7 +6935,7 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
 		futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
 			&session,
 			stale_epoch,
-			"myapp.dot",
+			&ProductId::for_test("myapp.dot"),
 			subtree.secret.to_bytes().to_vec(),
 		));
 	let Err(statement_store_error) = statement_store_result else {
@@ -6326,7 +6944,7 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
 	let bulletin_result = futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
 		&session,
 		stale_epoch,
-		"myapp.dot",
+		&ProductId::for_test("myapp.dot"),
 		subtree.secret.to_bytes().to_vec(),
 	));
 	let Err(bulletin_error) = bulletin_result else {
@@ -6370,21 +6988,27 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 	);
 	install_pairing_session(&host, session.clone());
 	cache_test_product_subtree(&host, &session, "other.dot");
-	let stale_epoch = pairing_host.current_session_lifecycle_epoch();
+	let stale_epoch = pairing_host.session().current_session_lifecycle_epoch();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let first =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
-			.unwrap();
-	let other =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, "other.dot")
-			.unwrap();
+	let first = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&ProductId::for_test("myapp.dot"),
+	)
+	.unwrap();
+	let other = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&ProductId::for_test("other.dot"),
+	)
+	.unwrap();
 
-	for (product_id, subtree) in [("myapp.dot", &first), ("other.dot", &other)] {
+	for (product_id, subtree) in
+		[(ProductId::for_test("myapp.dot"), &first), (ProductId::for_test("other.dot"), &other)]
+	{
 		futures::executor::block_on(pairing_host.remember_auto_signing_key_for_tests(
 			&session,
 			stale_epoch,
-			product_id,
+			product_id.as_str(),
 			subtree.public.to_bytes(),
 			subtree.secret.to_bytes(),
 			[0x42; 32],
@@ -6393,21 +7017,24 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
 			&session,
 			stale_epoch,
-			product_id,
+			&product_id,
 			subtree.secret.to_bytes().to_vec(),
 		))
 		.unwrap();
 		futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
 			&session,
 			stale_epoch,
-			product_id,
+			&product_id,
 			subtree.secret.to_bytes().to_vec(),
 		))
 		.unwrap();
 	}
 
-	futures::executor::block_on(pairing_host.clear_product_state("myapp.dot")).unwrap();
-	let current_epoch = pairing_host.current_session_lifecycle_epoch();
+	futures::executor::block_on(
+		pairing_host.clear_product_state(&ProductId::for_test("myapp.dot")),
+	)
+	.unwrap();
+	let current_epoch = pairing_host.session().current_session_lifecycle_epoch();
 	assert_ne!(current_epoch, stale_epoch);
 	assert_eq!(pairing_host.capability_cache_sizes_for_tests(), (1, 1, 1, 1));
 	assert!(
@@ -6426,7 +7053,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		futures::executor::block_on(pairing_host.cached_statement_store_allowance_key(
 			&session,
 			current_epoch,
-			"myapp.dot",
+			&ProductId::for_test("myapp.dot"),
 		))
 		.unwrap()
 		.is_none()
@@ -6435,7 +7062,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		futures::executor::block_on(pairing_host.cached_statement_store_allowance_key(
 			&session,
 			current_epoch,
-			"other.dot",
+			&ProductId::for_test("other.dot"),
 		))
 		.unwrap()
 		.is_some()
@@ -6444,7 +7071,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		futures::executor::block_on(pairing_host.cached_bulletin_allowance_key(
 			&session,
 			current_epoch,
-			"myapp.dot",
+			&ProductId::for_test("myapp.dot"),
 		))
 		.unwrap()
 		.is_none()
@@ -6453,7 +7080,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		futures::executor::block_on(pairing_host.cached_bulletin_allowance_key(
 			&session,
 			current_epoch,
-			"other.dot",
+			&ProductId::for_test("other.dot"),
 		))
 		.unwrap()
 		.is_some()
@@ -6474,7 +7101,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
 			&session,
 			stale_epoch,
-			"myapp.dot",
+			&ProductId::for_test("myapp.dot"),
 			first.secret.to_bytes().to_vec(),
 		)),
 		Err(AuthorityError::Disconnected)
@@ -6499,12 +7126,14 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
 		test_spawner(),
 	);
 	install_pairing_session(&host, session.clone());
-	let lifecycle_epoch = pairing_host.current_session_lifecycle_epoch();
+	let lifecycle_epoch = pairing_host.session().current_session_lifecycle_epoch();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
-			.unwrap();
+	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&ProductId::for_test("myapp.dot"),
+	)
+	.unwrap();
 	futures::executor::block_on(pairing_host.remember_auto_signing_key_for_tests(
 		&session,
 		lifecycle_epoch,
@@ -6517,22 +7146,22 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
 	futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
 		&session,
 		lifecycle_epoch,
-		"myapp.dot",
+		&ProductId::for_test("myapp.dot"),
 		subtree.secret.to_bytes().to_vec(),
 	))
 	.unwrap();
 	futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
 		&session,
 		lifecycle_epoch,
-		"myapp.dot",
+		&ProductId::for_test("myapp.dot"),
 		subtree.secret.to_bytes().to_vec(),
 	))
 	.unwrap();
 	assert_eq!(pairing_host.capability_cache_sizes_for_tests(), (1, 1, 1, 1));
 
-	futures::executor::block_on(pairing_host.reset_session_state());
+	futures::executor::block_on(pairing_host.session().reset_session_state());
 
-	assert!(pairing_host.session_state().current().is_none());
+	assert!(pairing_host.session().session_state().current().is_none());
 	assert_eq!(pairing_host.capability_cache_sizes_for_tests(), (0, 0, 0, 0));
 	assert!(platform.local_storage.lock().expect("local storage mutex poisoned").is_empty());
 	assert!(
@@ -6554,23 +7183,25 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
 	);
 	install_pairing_session(&host, session.clone());
 	request_auto_signing(&host, "auto-replace");
-	let lifecycle_epoch = pairing_host.current_session_lifecycle_epoch();
+	let lifecycle_epoch = pairing_host.session().current_session_lifecycle_epoch();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
-			.unwrap();
+	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&ProductId::for_test("myapp.dot"),
+	)
+	.unwrap();
 	futures::executor::block_on(pairing_host.cache_statement_store_allowance_key(
 		&session,
 		lifecycle_epoch,
-		"myapp.dot",
+		&ProductId::for_test("myapp.dot"),
 		subtree.secret.to_bytes().to_vec(),
 	))
 	.unwrap();
 	futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
 		&session,
 		lifecycle_epoch,
-		"myapp.dot",
+		&ProductId::for_test("myapp.dot"),
 		subtree.secret.to_bytes().to_vec(),
 	))
 	.unwrap();
@@ -6578,7 +7209,9 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
 	let mut replacement = session;
 	replacement.public_key = [0x44; 32];
 	replacement.sso.as_mut().expect("fixture has SSO identity").identity_account_id = [0x55; 32];
-	futures::executor::block_on(pairing_host.set_connected_session_for_tests(replacement.clone()));
+	futures::executor::block_on(
+		pairing_host.session().set_connected_session_for_tests(replacement.clone()),
+	);
 
 	assert_eq!(host.test_session_state().current(), Some(replacement.clone()));
 	assert!(
@@ -6643,9 +7276,11 @@ fn auto_signing_rejects_and_erases_legacy_unscoped_secret() {
 	let session = sso_session_info();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
-	let subtree =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, "myapp.dot")
-			.unwrap();
+	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&ProductId::for_test("myapp.dot"),
+	)
+	.unwrap();
 	let platform = Arc::new(StubPlatform::default());
 	let legacy_key = CoreStorageKey::AutoSigningKey { product_id: "myapp.dot".to_string() };
 	platform
@@ -6685,7 +7320,7 @@ fn external_session_activation_is_memory_only_and_rejects_trailing_bytes() {
 	let session = sso_session_info();
 	let blob = crate::host_logic::session::encode_persisted_session(&session);
 
-	futures::executor::block_on(pairing_host.activate_external_session(&blob))
+	futures::executor::block_on(pairing_host.session().activate_external_session(&blob))
 		.expect("valid external session activates");
 
 	assert_eq!(host.test_session_state().current(), Some(session.clone()));
@@ -6698,14 +7333,16 @@ fn external_session_activation_is_memory_only_and_rejects_trailing_bytes() {
 		"external activation must not copy the blob into core storage"
 	);
 
-	let invalid = futures::executor::block_on(pairing_host.activate_external_session(&[0xff]))
-		.expect_err("invalid bytes are rejected");
+	let invalid =
+		futures::executor::block_on(pairing_host.session().activate_external_session(&[0xff]))
+			.expect_err("invalid bytes are rejected");
 	assert!(invalid.starts_with("invalid session blob:"));
 
 	let mut trailing = blob;
 	trailing.push(0);
-	let error = futures::executor::block_on(pairing_host.activate_external_session(&trailing))
-		.expect_err("trailing bytes are rejected");
+	let error =
+		futures::executor::block_on(pairing_host.session().activate_external_session(&trailing))
+			.expect_err("trailing bytes are rejected");
 	assert_eq!(error, "invalid session blob: trailing bytes");
 	assert_eq!(
 		host.test_session_state().current(),
@@ -6720,7 +7357,7 @@ fn external_session_activation_reports_its_outcome_when_the_blob_is_corrupt() {
 	let (_host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	futures::executor::block_on(pairing_host.activate_external_session(&[0xff]))
+	futures::executor::block_on(pairing_host.session().activate_external_session(&[0xff]))
 		.expect_err("invalid bytes are rejected");
 
 	// The decode fails before any transition can run, so without an
@@ -6739,7 +7376,7 @@ fn resetting_session_state_reports_its_outcome_when_nothing_was_active() {
 	let (_host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	futures::executor::block_on(pairing_host.reset_session_state());
+	futures::executor::block_on(pairing_host.session().reset_session_state());
 
 	// Clearing an already-signed-out state changes nothing, so without an
 	// explicit announcement this is the silent case a host cannot tell
@@ -6764,12 +7401,12 @@ fn external_session_activation_replaces_and_fences_the_previous_session() {
 	replacement.sso.as_mut().expect("fixture has SSO").identity_account_id = [0x55; 32];
 
 	futures::executor::block_on(
-		pairing_host.activate_external_session(
+		pairing_host.session().activate_external_session(
 			&crate::host_logic::session::encode_persisted_session(&first),
 		),
 	)
 	.expect("first external session activates");
-	futures::executor::block_on(pairing_host.activate_external_session(
+	futures::executor::block_on(pairing_host.session().activate_external_session(
 		&crate::host_logic::session::encode_persisted_session(&replacement),
 	))
 	.expect("replacement external session activates");
@@ -6786,7 +7423,10 @@ fn store_notification_during_external_activation_restores_persisted_session() {
 	});
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 	wait_until(
 		|| host.test_session_state().current() == Some(persisted.clone()),
 		"initial persisted session was not restored",
@@ -6796,15 +7436,19 @@ fn store_notification_during_external_activation_restores_persisted_session() {
 	stale_external.public_key = [0x44; 32];
 	let stale_blob = crate::host_logic::session::encode_persisted_session(&stale_external);
 	let (activation_entered, resume_activation) =
-		pairing_host.pause_external_session_activation_for_tests();
+		pairing_host.session().pause_external_session_activation_for_tests();
 	let activation = std::thread::spawn({
 		let pairing_host = pairing_host.clone();
-		move || futures::executor::block_on(pairing_host.activate_external_session(&stale_blob))
+		move || {
+			futures::executor::block_on(
+				pairing_host.session().activate_external_session(&stale_blob),
+			)
+		}
 	});
 	futures::executor::block_on(activation_entered)
 		.expect("external activation reached the installation fence");
 
-	pairing_host.notify_session_store_changed();
+	pairing_host.session().notify_session_store_changed();
 	resume_activation.send(()).expect("external activation remains in flight");
 	activation
 		.join()
@@ -6826,10 +7470,14 @@ fn disconnect_during_external_activation_prevents_stale_reinstallation() {
 	);
 	let stale_blob = crate::host_logic::session::encode_persisted_session(&sso_session_info());
 	let (activation_entered, resume_activation) =
-		pairing_host.pause_external_session_activation_for_tests();
+		pairing_host.session().pause_external_session_activation_for_tests();
 	let activation = std::thread::spawn({
 		let pairing_host = pairing_host.clone();
-		move || futures::executor::block_on(pairing_host.activate_external_session(&stale_blob))
+		move || {
+			futures::executor::block_on(
+				pairing_host.session().activate_external_session(&stale_blob),
+			)
+		}
 	});
 	futures::executor::block_on(activation_entered)
 		.expect("external activation reached the installation fence");
@@ -6857,7 +7505,7 @@ fn stored_session_activation_resolves_after_connected_installation() {
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	futures::executor::block_on(pairing_host.activate_stored_session())
+	futures::executor::block_on(pairing_host.session().activate_stored_session())
 		.expect("valid stored session activates");
 
 	assert_eq!(host.test_session_state().current(), Some(stored.clone()));
@@ -6879,7 +7527,7 @@ fn stored_session_activation_rejects_invalid_blob_and_disconnects() {
 		ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
 	install_pairing_session(&host, sso_session_info());
 
-	let error = futures::executor::block_on(pairing_host.activate_stored_session())
+	let error = futures::executor::block_on(pairing_host.session().activate_stored_session())
 		.expect_err("invalid stored session is rejected");
 
 	assert!(error.starts_with("invalid stored auth session:"));
@@ -6900,7 +7548,7 @@ fn activating_an_untagged_stored_session_restores_it_and_rewrites_the_slot() {
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	futures::executor::block_on(pairing_host.activate_stored_session())
+	futures::executor::block_on(pairing_host.session().activate_stored_session())
 		.expect("an untagged stored session activates");
 
 	assert_eq!(host.test_session_state().current(), Some(stored.clone()));
@@ -6930,7 +7578,10 @@ fn session_store_sync_restores_valid_blob_from_tick() {
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 	wait_until(
 		|| host.test_session_state().current() == Some(stored.clone()),
 		"session store sync did not restore valid blob",
@@ -6957,7 +7608,10 @@ fn session_store_sync_announces_a_signed_out_boot() {
 	let (_host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 
 	wait_until(
 		|| !platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty(),
@@ -6979,13 +7633,16 @@ fn session_store_sync_announces_a_restored_boot_once() {
 	let (_host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 
 	wait_until(
 		|| !platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty(),
 		"boot reconcile did not report the restored session",
 	);
-	futures::executor::block_on(pairing_host.activate_stored_session())
+	futures::executor::block_on(pairing_host.session().activate_stored_session())
 		.expect("valid stored session activates");
 	assert_eq!(
 		*platform.auth_states.lock().expect("auth state list mutex poisoned"),
@@ -7003,15 +7660,18 @@ fn session_store_sync_stays_silent_on_an_unchanged_tick() {
 	let (_host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 	wait_until(
 		|| !platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty(),
 		"boot reconcile did not report the restored session",
 	);
 
-	pairing_host.notify_session_store_changed();
+	pairing_host.session().notify_session_store_changed();
 	wait_until(
-		|| pairing_host.session_store_change_ticks_for_tests() == 1,
+		|| pairing_host.session().session_store_change_ticks_for_tests() == 1,
 		"session store sync did not process the change tick",
 	);
 
@@ -7038,7 +7698,10 @@ fn session_store_sync_replaces_valid_blob_and_broadcasts_connected() {
 	let mut statuses = host.test_session_state().subscribe();
 	let _ = futures::executor::block_on(statuses.next());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 
 	assert_eq!(
 		futures::executor::block_on(statuses.next()).unwrap(),
@@ -7056,7 +7719,10 @@ fn session_store_sync_clears_invalid_blob() {
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
 	install_pairing_session(&host, sso_session_info());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 	wait_until(
 		|| host.test_session_state().current().is_none(),
 		"session store sync did not clear invalid blob",
@@ -7088,7 +7754,10 @@ fn session_store_sync_clears_unreadable_blob() {
 	);
 	install_pairing_session(&host, sso_session_info());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 	wait_until(
 		|| *session_clears.lock().unwrap() == 1,
 		"session store sync did not clear unreadable blob",
@@ -7113,7 +7782,10 @@ fn session_store_sync_clears_once_on_initial_persistent_read_error() {
 	);
 	install_pairing_session(&host, sso_session_info());
 
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 
 	wait_until(|| *session_clears.lock().unwrap() == 1, "clear_stored_session was never called");
 	assert_eq!(*session_clears.lock().unwrap(), 1);
@@ -7213,7 +7885,10 @@ fn disconnect_emits_disconnected_auth_state_after_store_sync_connected() {
 	});
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
-	pairing_host.clone().start_session_store_sync_for_tests(test_spawner());
+	pairing_host
+		.session()
+		.clone()
+		.start_session_store_sync_for_tests(test_spawner());
 	wait_until(
 		|| platform.auth_states.lock().expect("auth state list mutex poisoned").len() == 1,
 		"session store sync did not emit connected auth state",
@@ -7283,7 +7958,7 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host.clone(),
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -7294,10 +7969,10 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
 		&CallContext::default(),
 		&session,
 		crate::host_internal::sso_messages::ProductRequest {
-			calling_product_id: "dim2.dot".to_string(),
+			calling_product_id: ProductId::for_test("dim2.dot"),
 			payload: v01::HostAccountCreateProofRequest {
 				key_handle: v01::ProductAccountId {
-					dot_ns_identifier: "peopl.dot".to_string(),
+					dot_ns_identifier: ProductId::for_test("peopl.dot"),
 					derivation_index: v01::DerivationIndex::Index(0),
 				},
 				context: v01::ProductProofContext {
@@ -7320,10 +7995,10 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
 		&CallContext::default(),
 		&session,
 		crate::host_internal::sso_messages::ProductRequest {
-			calling_product_id: "dim2.dot".to_string(),
+			calling_product_id: ProductId::for_test("dim2.dot"),
 			payload: v01::HostAccountRingVrfSignRequest {
 				key_handle: v01::ProductAccountId {
-					dot_ns_identifier: "peopl.dot".to_string(),
+					dot_ns_identifier: ProductId::for_test("peopl.dot"),
 					derivation_index: v01::DerivationIndex::Index(0),
 				},
 				message: b"sign me".to_vec(),
@@ -7367,7 +8042,7 @@ fn the_pairing_authority_admits_a_context_only_its_product_granted() {
 			services,
 			adapters,
 			pairing_host.clone(),
-			pairing_host.clone(),
+			pairing_host.session().clone(),
 			product,
 		);
 		install_pairing_session(&host, session_info());
@@ -7380,10 +8055,10 @@ fn the_pairing_authority_admits_a_context_only_its_product_granted() {
 			&cx,
 			&session,
 			crate::host_internal::sso_messages::ProductRequest {
-				calling_product_id: "dim2next.dot".to_string(),
+				calling_product_id: ProductId::for_test("dim2next.dot"),
 				payload: v01::HostAccountCreateProofRequest {
 					key_handle: v01::ProductAccountId {
-						dot_ns_identifier: "peopl.dot".to_string(),
+						dot_ns_identifier: ProductId::for_test("peopl.dot"),
 						derivation_index: v01::DerivationIndex::Index(0),
 					},
 					context: v01::ProductProofContext {
@@ -7436,7 +8111,7 @@ fn a_grant_lookup_obeys_the_callers_deadline() {
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
@@ -7592,7 +8267,10 @@ impl crate::platform::ScannerPlatform for StubScannerPlatform {
 		product: &crate::platform::ProductContext,
 		request: &truapi::latest::HostScannerScanRequest,
 	) -> Result<HostScan, truapi::latest::GenericError> {
-		self.asked.lock().unwrap().push((product.product_id.clone(), request.clone()));
+		self.asked
+			.lock()
+			.unwrap()
+			.push((product.product_id.to_string(), request.clone()));
 		if self.park {
 			let _abandoned = SetOnDrop(self.abandoned.clone());
 			futures::future::pending::<()>().await;
@@ -7632,7 +8310,7 @@ fn scanner_host_for(
 		services,
 		adapters,
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	)
 }
@@ -7850,11 +8528,11 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_pairing_for_tests(platform, host_config, product, test_spawner());
 	install_pairing_session(&host, session.clone());
-	let lifecycle_epoch = pairing_host.current_session_lifecycle_epoch();
+	let lifecycle_epoch = pairing_host.session().current_session_lifecycle_epoch();
 	futures::executor::block_on(pairing_host.cache_bulletin_allowance_key(
 		&session,
 		lifecycle_epoch,
-		"myapp.dot",
+		&ProductId::for_test("myapp.dot"),
 		[0x42; 64].to_vec(),
 	))
 	.expect("the wallet's allowance is cached");
@@ -7912,7 +8590,7 @@ fn payment_host(
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(services),
 		pairing_host.clone(),
-		pairing_host,
+		pairing_host.session().clone(),
 		product,
 	);
 	if with_session {
@@ -7937,7 +8615,7 @@ impl crate::platform::TopUpPlatform for RecordingTopUpPlatform {
 		self.started
 			.lock()
 			.expect("started mutex poisoned")
-			.push((product.product_id.clone(), request));
+			.push((product.product_id.to_string(), request));
 		Ok(())
 	}
 
@@ -7955,7 +8633,7 @@ impl crate::platform::TopUpPlatform for RecordingTopUpPlatform {
 		self.followed
 			.lock()
 			.expect("followed mutex poisoned")
-			.push((product.product_id.clone(), id));
+			.push((product.product_id.to_string(), id));
 		Box::pin(futures::stream::iter([
 			Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claiming),
 			Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true }),
@@ -8104,7 +8782,7 @@ impl crate::platform::PaymentPlatform for RecordingPaymentPlatform {
 		self.requested
 			.lock()
 			.expect("requested mutex poisoned")
-			.push((product.product_id.clone(), request));
+			.push((product.product_id.to_string(), request));
 		Ok(())
 	}
 
@@ -8122,7 +8800,7 @@ impl crate::platform::PaymentPlatform for RecordingPaymentPlatform {
 		self.followed
 			.lock()
 			.expect("followed mutex poisoned")
-			.push((product.product_id.clone(), id));
+			.push((product.product_id.to_string(), id));
 		Box::pin(futures::stream::iter([
 			Ok(v01::HostPaymentStatusSubscribeItem::Processing),
 			Ok(v01::HostPaymentStatusSubscribeItem::ClaimedPartially { actual_claimed: 600 }),
@@ -8261,8 +8939,8 @@ impl crate::platform::BalancePlatform for RecordingBalancePlatform {
 		self.asked
 			.lock()
 			.expect("asked mutex poisoned")
-			.push((product.product_id.clone(), purse));
-		let shared = if product.product_id == "private.dot" {
+			.push((product.product_id.to_string(), purse));
+		let shared = if product.product_id.as_str() == "private.dot" {
 			Err(v01::HostPaymentBalanceSubscribeError::PermissionDenied)
 		} else {
 			Ok(v01::HostPaymentBalanceSubscribeItem { available: 4_000_000 })
@@ -8360,6 +9038,102 @@ fn the_balance_needs_the_users_permission_before_the_host_is_asked() {
 			))),
 			0,
 			vec![v01::RemotePermissionRequest { permission: v01::RemotePermission::BalanceAccess }],
+		)
+	);
+}
+
+/// A balance view whose pushes the test drives.
+struct PushedBalancePlatform(
+	Mutex<
+		Option<
+			futures::channel::mpsc::UnboundedReceiver<
+				Result<v01::HostPaymentBalanceSubscribeItem, v01::HostPaymentBalanceSubscribeError>,
+			>,
+		>,
+	>,
+);
+
+impl crate::platform::BalancePlatform for PushedBalancePlatform {
+	fn subscribe_balance(
+		&self,
+		_product: &crate::platform::ProductContext,
+		_purse: Option<u32>,
+	) -> futures::stream::BoxStream<
+		'static,
+		Result<v01::HostPaymentBalanceSubscribeItem, v01::HostPaymentBalanceSubscribeError>,
+	> {
+		self.0
+			.lock()
+			.expect("pushes mutex poisoned")
+			.take()
+			.expect("one subscription")
+			.boxed()
+	}
+}
+
+// A host pushes a purse's balance to every product following it, so the core
+// checks the product's balance access again before each push: once the user
+// revokes it, the stream ends with PermissionDenied and later balances never
+// reach the product.
+#[test]
+fn a_revoked_balance_access_ends_the_balance_stream() {
+	let services = payment_services();
+	let (push, pushes) = futures::channel::mpsc::unbounded();
+	assert!(
+		services
+			.install_balance_platform(Arc::new(PushedBalancePlatform(Mutex::new(Some(pushes)))))
+	);
+	let host = payment_host(&services, "wallet.dot", true);
+	let balance_access = || {
+		PermissionAuthorizationRequest::Remote(v01::RemotePermissionRequest {
+			permission: v01::RemotePermission::BalanceAccess,
+		})
+	};
+	futures::executor::block_on(host.connection.set_permission_authorization_status(
+		balance_access(),
+		PermissionAuthorizationStatus::Authorized,
+	))
+	.expect("grant stored");
+	let mut balances = futures::executor::block_on(truapi::api::Payment::balance_subscribe(
+		&host,
+		&CallContext::default(),
+		truapi::versioned::payment::HostPaymentBalanceSubscribeRequest::V1(
+			v01::HostPaymentBalanceSubscribeRequest { purse: None },
+		),
+	));
+	let mut next = || {
+		futures::executor::block_on(balances.next()).map(|item| {
+			item.map(|truapi::versioned::payment::HostPaymentBalanceSubscribeItem::V1(item)| {
+				item.available
+			})
+		})
+	};
+
+	push.unbounded_send(Ok(v01::HostPaymentBalanceSubscribeItem { available: 7 }))
+		.expect("pushed");
+	let while_granted = next();
+	futures::executor::block_on(host.connection.set_permission_authorization_status(
+		balance_access(),
+		PermissionAuthorizationStatus::Denied,
+	))
+	.expect("revocation stored");
+	push.unbounded_send(Ok(v01::HostPaymentBalanceSubscribeItem { available: 8 }))
+		.expect("pushed");
+	push.unbounded_send(Ok(v01::HostPaymentBalanceSubscribeItem { available: 9 }))
+		.expect("pushed");
+	let after_revoking = next();
+	let after_the_end = next();
+
+	assert_eq!(
+		(while_granted, after_revoking, after_the_end),
+		(
+			Some(Ok(7)),
+			Some(Err(CallError::Domain(
+				truapi::versioned::payment::HostPaymentBalanceSubscribeError::V1(
+					v01::HostPaymentBalanceSubscribeError::PermissionDenied,
+				),
+			))),
+			None,
 		)
 	);
 }

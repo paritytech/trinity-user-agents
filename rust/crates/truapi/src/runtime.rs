@@ -19,6 +19,7 @@ mod capabilities;
 mod chat;
 pub mod contacts;
 mod dotns_lookup;
+mod funding;
 mod host_session;
 mod identity;
 pub mod login_failure;
@@ -32,10 +33,10 @@ mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
 pub mod services;
 mod signing_host;
-/// Pairing flow for wallet login.
-pub mod sso_pairing;
 /// SSO remote request/response messaging over the statement store.
 pub mod sso_remote;
+mod sso_request_service;
+mod sso_responder_service;
 pub mod sso_service;
 /// Statement Store and Bulletin allowance allocation.
 pub mod statement_allowance;
@@ -69,15 +70,14 @@ use futures::{FutureExt, StreamExt, pin_mut};
 #[cfg(test)]
 use pairing_host::PairingHost;
 pub use pairing_host::PairingHost as PairingHostRole;
+use payment_id::host_funding_intent;
 use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
-pub use signing_host::{
-	AnnouncedPairing, DevicePairingObserver, LocalActivation, MAX_PAIRING_METADATA_CHARS,
-	PairedSsoPeer, PairingProposal, PairingProposalMetadata, ResponderExit,
-	SigningHost as SigningHostRole, SigningHostSsoService, disconnect_paired_host,
-	establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
-	respond_to_pairing, resume_pairing,
+pub use signing_host::{LocalActivation, SigningHost as SigningHostRole, SigningHostSsoService};
+pub use sso_responder_service::{
+	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
+	PairingProposal, PairingProposalMetadata, ResponderExit, SsoResponderService,
 };
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
 pub use vrf::ring_vrf_member;
@@ -86,9 +86,9 @@ pub use vrf::ring_vrf_member;
 use crate::platform::{
 	AccountAccessReview, ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision, Platform,
-	ProductContext, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
-	normalize_chat_identifier, normalize_product_identifier, validate_chat_icon,
-	validate_chat_message_content, validate_chat_name,
+	ProductContext, ProductId, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
+	normalize_chat_identifier, validate_chat_icon, validate_chat_message_content,
+	validate_chat_name,
 };
 pub use signing_host::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
@@ -96,10 +96,10 @@ pub use signing_host::TrackedStatementRenewalTarget;
 use tracing::{instrument, warn};
 use truapi::{
 	CallContext, CallError, CancellationReason, Subscription,
-	api::{Chat, Contacts, Pocket, Renderer},
+	api::{Chat, Contacts, Funding, Pocket, Renderer},
 	latest, v01,
 	versioned::{
-		IntoLatest,
+		FromLatest, IntoLatest, Versioned,
 		chat::{
 			HostChatActionSubscribeError, HostChatActionSubscribeItem,
 			HostChatActionSubscribeRequest, HostChatCreateRoomError, HostChatCreateRoomRequest,
@@ -110,6 +110,11 @@ use truapi::{
 			HostChatSetRoomFooterResponse,
 		},
 		contacts::{HostContactsPickError, HostContactsPickRequest, HostContactsPickResponse},
+		funding::{
+			HostFundingError, HostFundingRequest, HostFundingResponse,
+			HostFundingStatusSubscribeError, HostFundingStatusSubscribeItem,
+			HostFundingStatusSubscribeRequest,
+		},
 		pocket::{
 			HostPocketListSubscribeError, HostPocketListSubscribeItem,
 			HostPocketListSubscribeRequest, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
@@ -169,6 +174,10 @@ const PREIMAGE_SUBMIT_TIMEOUT: Duration = Duration::from_secs(360);
 /// end-to-end submit deadline may reduce it further.
 const PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT: Duration =
 	RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT;
+/// Cap on waiting for an extended Bulletin authorization to reach this host's
+/// Bulletin node. The claim is on chain once the extension returns, so only
+/// propagation is left, and the submit keeps the rest of its deadline.
+const PREIMAGE_BULLETIN_AUTHORIZATION_WAIT: Duration = Duration::from_secs(18);
 
 const LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON: &str =
 	"Account can't be derived from product account id";
@@ -370,32 +379,29 @@ impl ProductConnection {
 		self.product.execution_kind
 	}
 
-	/// Canonical target whose manifest grants this caller the requested scope.
-	async fn cross_product_scope_target(&self, target: &str, scope: Granted) -> Option<String> {
-		let normalized = normalize_product_identifier(target).ok()?;
-		if normalized == self.product_id() {
-			return Some(normalized);
+	/// Whether this product holds `scope` over `target`: always over itself,
+	/// and over another product only as that product's manifest grants it.
+	async fn holds_cross_product_scope(&self, target: &ProductId, scope: Granted) -> bool {
+		if target == self.product_id() {
+			return true;
 		}
 		product_manifest::grants_scope(
 			&self.services,
 			&*self.platform,
-			&self.product_id(),
-			&normalized,
+			self.product_id(),
+			target,
 			scope,
 		)
 		.await
-		.then_some(normalized)
 	}
 
-	fn product_id(&self) -> String {
-		self.product.product_id.as_str().to_string()
+	fn product_id(&self) -> &ProductId {
+		&self.product.product_id
 	}
 
 	// Foreign reads must keep the authorized owner, not the calling product.
-	fn product_storage_key(&self, owner: &str, key: String) -> String {
-		ProductStorageKey::new(owner, key)
-			.expect("storage key owner was already normalized")
-			.encode()
+	fn product_storage_key(&self, owner: &ProductId, key: String) -> String {
+		ProductStorageKey::new(owner.clone(), key).encode()
 	}
 
 	fn follow_id(&self, id: &str) -> String {
@@ -461,31 +467,30 @@ impl ProductConnection {
 		}
 	}
 
-	async fn confirm_product_action(
+	async fn confirm_user_action_if_needed(
 		&self,
 		review: UserConfirmationReview,
 	) -> Result<bool, v01::GenericError> {
-		if crate::platform::has_trusted_remote_permissions(&self.product_id()) {
+		if self.product_id().has_trusted_remote_permissions() {
 			return Ok(true);
 		}
 		self.platform.confirm_user_action(review).await
 	}
 
-	/// Confirm a signature with `account`. When the account belongs to another
-	/// product, the user is asked once per kind and owning product for the rest
-	/// of this execution. Prompts open one at a time, and a signature the user
-	/// already approved never waits for one.
+	/// Confirm a signature with one of `owner`'s accounts. When the account
+	/// belongs to another product, the user is asked once per kind and owning
+	/// product for the rest of this execution. Prompts open one at a time, and a
+	/// signature the user already approved never waits for one.
 	async fn confirm_signature(
 		&self,
 		kind: CrossProductSignatureKind,
-		account: &v01::ProductAccountId,
+		owner: &ProductId,
 		review: impl FnOnce() -> UserConfirmationReview,
 	) -> Result<bool, v01::GenericError> {
-		if account.dot_ns_identifier == self.product_id() {
-			return self.confirm_product_action(review()).await;
+		if owner == self.product_id() {
+			return self.confirm_user_action_if_needed(review()).await;
 		}
-		let approval =
-			cross_product_signature_key(&self.product_id(), &account.dot_ns_identifier, kind);
+		let approval = cross_product_signature_key(self.product_id(), owner, kind);
 		let permissions = &self.temporary_permissions;
 		if permissions.authorize(&approval, false) {
 			return Ok(true);
@@ -494,7 +499,7 @@ impl ProductConnection {
 		if permissions.authorize(&approval, false) {
 			return Ok(true);
 		}
-		let approved = self.confirm_product_action(review()).await?;
+		let approved = self.confirm_user_action_if_needed(review()).await?;
 		if approved {
 			permissions.grant(approval);
 		}
@@ -510,7 +515,6 @@ impl ProductConnection {
 	async fn identity_disclosure_authorization(
 		&self,
 	) -> Result<PermissionAuthorizationStatus, String> {
-		let product_id = self.product_id();
 		let request = PermissionAuthorizationRequest::IdentityDisclosure;
 		let service = self.permissions_service();
 		let cached = service
@@ -525,7 +529,7 @@ impl ProductConnection {
 		let decision = match self
 			.platform
 			.confirm_permission(UserConfirmationReview::IdentityDisclosure(
-				IdentityDisclosureReview { product_id: product_id.clone() },
+				IdentityDisclosureReview { product_id: self.product_id().clone() },
 			))
 			.await
 		{
@@ -756,8 +760,7 @@ impl ProductRuntimeHost {
 		Self::new_pairing_for_tests(
 			platform,
 			Self::compat_host_config(),
-			ProductContext::new("unknown.dot".to_string())
-				.expect("compat product context is valid"),
+			ProductContext::new(ProductId::for_test("unknown.dot")),
 			spawner,
 		)
 		.0
@@ -772,8 +775,7 @@ impl ProductRuntimeHost {
 		Self::new_pairing_for_tests(
 			platform,
 			host_config,
-			ProductContext::new("unknown.dot".to_string())
-				.expect("compat product context is valid"),
+			ProductContext::new(ProductId::for_test("unknown.dot")),
 			spawner,
 		)
 	}
@@ -804,7 +806,7 @@ impl ProductRuntimeHost {
 			chat_platform: None,
 			permission_status: None,
 			temporary_permissions: Arc::default(),
-			session_state: pairing_host.session_state(),
+			session_state: pairing_host.session().session_state(),
 			product,
 			core_instance,
 			chain,
@@ -818,7 +820,7 @@ impl ProductRuntimeHost {
 		let host = Self {
 			accounts: ProductAccounts::new(pairing_host.clone(), connection.product.clone()),
 			connection,
-			host_session: pairing_host.clone(),
+			host_session: pairing_host.session().clone(),
 		};
 		(host, pairing_host)
 	}
@@ -834,7 +836,7 @@ impl ProductRuntimeHost {
 	pub fn test_cache_product_subtree(
 		&self,
 		session: &SessionInfo,
-		product_id: &str,
+		product_id: &ProductId,
 		public_key: [u8; 32],
 	) {
 		self.accounts.cache_product_subtree_for_test(session, product_id, public_key);
@@ -847,77 +849,56 @@ impl ProductRuntimeHost {
 		self.host_session.disconnect().await;
 	}
 
-	/// Resolve the canonical account owner this product may access.
-	pub async fn authorized_product_account(
-		&self,
-		dot_ns_identifier: &str,
-		cx: &CallContext,
-	) -> Option<String> {
-		let product_id = self.connection.product_id();
-		if crate::platform::is_localhost_product_identifier(&product_id) {
-			return normalize_product_identifier(dot_ns_identifier).ok();
+	/// Whether this product may use `owner`'s accounts.
+	pub async fn may_use_product_account(&self, owner: &ProductId, cx: &CallContext) -> bool {
+		if self.connection.product_id().is_localhost() {
+			return true;
 		}
 		let cx = remote_authority_context(cx);
-		self.bounded_cross_product_scope_target(dot_ns_identifier, Granted::Context, &cx)
-			.await
+		self.holds_cross_product_scope_within(owner, Granted::Context, &cx).await
 	}
 
-	/// Resolve the grant within the caller's deadline and cancellation.
-	pub async fn bounded_cross_product_scope_target(
+	/// [`Self::holds_cross_product_scope`], answering `false` if the caller's
+	/// deadline passes or the call is cancelled first.
+	pub async fn holds_cross_product_scope_within(
 		&self,
-		target: &str,
+		target: &ProductId,
 		scope: Granted,
 		cx: &CallContext,
-	) -> Option<String> {
-		let lookup = self.connection.cross_product_scope_target(target, scope).fuse();
+	) -> bool {
+		let lookup = self.connection.holds_cross_product_scope(target, scope).fuse();
 		let cancelled = cx.cancel().cancelled().fuse();
 		pin_mut!(lookup, cancelled);
 		let Some(budget) = cx.timeout() else {
 			return futures::select! {
 				resolved = lookup => resolved,
-				_ = cancelled => None,
+				_ = cancelled => false,
 			};
 		};
 		let deadline = futures_timer::Delay::new(budget).fuse();
 		pin_mut!(deadline);
 		futures::select! {
 			resolved = lookup => resolved,
-			_ = cancelled => None,
-			() = deadline => None,
+			_ = cancelled => false,
+			() = deadline => false,
 		}
-	}
-
-	fn normalize_product_account_id(
-		product_account_id: latest::ProductAccountId,
-	) -> Result<latest::ProductAccountId, ()> {
-		Ok(latest::ProductAccountId {
-			dot_ns_identifier: normalize_product_identifier(&product_account_id.dot_ns_identifier)
-				.map_err(|_| ())?,
-			derivation_index: product_account_id.derivation_index,
-		})
 	}
 
 	async fn product_account_public_key(
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_account_id: &latest::ProductAccountId,
+		owner: &ProductId,
+		derivation_index: &latest::DerivationIndex,
 	) -> Result<[u8; 32], AuthorityError> {
 		let cx = remote_authority_context(cx);
 		let subtree = remote_authority_call(
 			&cx,
-			self.accounts.product_subtree_public_key(
-				session,
-				&cx,
-				product_account_id.dot_ns_identifier.clone(),
-			),
+			self.accounts.product_subtree_public_key(session, &cx, owner),
 		)
 		.await?;
-		derive_product_public_key(
-			subtree,
-			derivation_index_bytes(&product_account_id.derivation_index),
-		)
-		.map_err(|err| AuthorityError::Unknown { reason: err.to_string() })
+		derive_product_public_key(subtree, derivation_index_bytes(derivation_index))
+			.map_err(|err| AuthorityError::Unknown { reason: err.to_string() })
 	}
 
 	async fn legacy_slot_zero_public_key(
@@ -928,10 +909,8 @@ impl ProductRuntimeHost {
 		self.product_account_public_key(
 			cx,
 			session,
-			&v01::ProductAccountId {
-				dot_ns_identifier: self.connection.product_id(),
-				derivation_index: v01::DerivationIndex::Index(0),
-			},
+			self.connection.product_id(),
+			&v01::DerivationIndex::Index(0),
 		)
 		.await
 		.map_err(|err| err.to_string())
@@ -1066,17 +1045,17 @@ impl ProductRuntimeHost {
 
 async fn account_access_authorization(
 	platform: &dyn Platform,
-	requesting_product_id: &str,
-	target_product_id: &str,
+	requesting_product_id: &ProductId,
+	target_product_id: &ProductId,
 ) -> Result<PermissionAuthorizationStatus, AccountAccessAuthorizationError> {
 	if requesting_product_id == target_product_id ||
-		crate::platform::normalizes_to_trusted_remote_permissions(requesting_product_id)
+		requesting_product_id.has_trusted_remote_permissions()
 	{
 		return Ok(PermissionAuthorizationStatus::Authorized);
 	}
 
-	let target = crate::host_internal::product_manifest::bare_product_label(target_product_id);
-	let caller = crate::host_internal::product_manifest::bare_product_label(requesting_product_id);
+	let target = target_product_id.bare_label();
+	let caller = requesting_product_id.bare_label();
 	let cached = crate::host_internal::permissions::account_access_status(platform, caller, target)
 		.await
 		.map_err(AccountAccessAuthorizationError::PermissionStorage)?;
@@ -1086,8 +1065,8 @@ async fn account_access_authorization(
 
 	let decision = platform
 		.confirm_permission(UserConfirmationReview::AccountAccess(AccountAccessReview {
-			requesting_product_id: requesting_product_id.to_string(),
-			target_product_id: target_product_id.to_string(),
+			requesting_product_id: requesting_product_id.clone(),
+			target_product_id: target_product_id.clone(),
 		}))
 		.await
 		.map_err(AccountAccessAuthorizationError::Confirmation)?;
@@ -1499,6 +1478,95 @@ impl Renderer for ProductRuntimeHost {
 			return Subscription::interrupted(CallError::Denied);
 		}
 		self.connection.renderer.subscribe()
+	}
+}
+
+#[truapi::async_trait]
+impl Funding for ProductRuntimeHost {
+	#[instrument(skip_all, fields(runtime.method = "funding.request"))]
+	async fn request(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingRequest,
+	) -> Result<HostFundingResponse, CallError<HostFundingError>> {
+		let version = request.version();
+		let latest::HostFundingRequest { id, direction, amount } = request.into_latest();
+		let domain = |error| CallError::Domain(HostFundingError::from_latest(error, version));
+		// A capability the host does not serve is a framework answer; a
+		// missing session is one the product handles.
+		if self.connection.services.funding().platform().is_none() {
+			return Err(CallError::Unsupported);
+		}
+		if self.accounts.current_session().is_none() {
+			return Err(domain(latest::HostFundingError::NotConnected));
+		}
+		self.connection
+			.services
+			.open_funding(
+				Some(&self.connection.product),
+				host_funding_intent(&self.connection.product, id),
+				direction,
+				amount,
+			)
+			.await
+			.map_err(|error| match error {
+				funding::OpenFundingError::Unsupported => CallError::Unsupported,
+				funding::OpenFundingError::Dismissed => domain(latest::HostFundingError::Rejected),
+				funding::OpenFundingError::InvalidAmount => {
+					domain(latest::HostFundingError::InvalidAmount)
+				},
+				funding::OpenFundingError::AlreadyExists => {
+					domain(latest::HostFundingError::AlreadyExists)
+				},
+				funding::OpenFundingError::Stopped => {
+					CallError::HostFailure { reason: error.to_string() }
+				},
+				funding::OpenFundingError::Present(error) => {
+					CallError::HostFailure { reason: error.reason }
+				},
+				funding::OpenFundingError::Session(error) => {
+					CallError::HostFailure { reason: error.to_string() }
+				},
+			})?;
+		Ok(HostFundingResponse::from_latest((), version))
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "funding.status_subscribe"))]
+	async fn status_subscribe(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingStatusSubscribeRequest,
+	) -> Subscription<HostFundingStatusSubscribeItem, CallError<HostFundingStatusSubscribeError>> {
+		let version = request.version();
+		let latest::HostFundingStatusSubscribeRequest { id } = request.into_latest();
+		let registry = self.connection.services.funding();
+		if registry.platform().is_none() {
+			return Subscription::interrupted(CallError::Unsupported);
+		}
+		if let Err(error) = self.require_session() {
+			return Subscription::interrupted(error);
+		}
+		let intent = host_funding_intent(&self.connection.product, id);
+		if let Err(error) = registry.load(&self.connection.services).await {
+			return Subscription::interrupted(CallError::HostFailure { reason: error.to_string() });
+		}
+		// Another product's session reads as absent, so ids reveal nothing.
+		let owned = registry
+			.owner(&intent)
+			.is_some_and(|owner| owner.as_ref() == Some(&self.connection.product.product_id));
+		match owned.then(|| registry.subscribe(&intent)).flatten() {
+			Some(stream) => {
+				Subscription::new(Box::pin(stream.map(move |item| {
+					Ok(HostFundingStatusSubscribeItem::from_latest(item, version))
+				})))
+			},
+			None => Subscription::interrupted(CallError::Domain(
+				HostFundingStatusSubscribeError::from_latest(
+					latest::HostFundingStatusSubscribeError::NotFound,
+					version,
+				),
+			)),
+		}
 	}
 }
 

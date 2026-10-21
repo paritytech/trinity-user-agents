@@ -37,8 +37,8 @@ pub use crate::{
 };
 pub use callbacks::{
 	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-	NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks, NativePocketRemoval,
-	NativeScannerCallbacks, NativeTopUpCallbacks,
+	NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
+	NativePocketRemoval, NativeScannerCallbacks, NativeTopUpCallbacks,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
 pub use errors::{
@@ -59,9 +59,9 @@ use crate::SigningHostRuntime;
 use crate::{PairingProposal, host_logic::dotns};
 
 /// Classify a navigation input exactly like the core's internal navigate host
-/// call: dotNS first, then `localhost`, then normalized external, with
-/// everything else rejected. Pure and stateless; hosts call it on every
-/// webview-internal navigation.
+/// call: the Pocket deeplink first, then dotNS, then `localhost`, then
+/// normalized external, with everything else rejected. Pure and stateless;
+/// hosts call it on every webview-internal navigation.
 #[uniffi::export]
 pub fn parse_navigate(input: String) -> NavigateDecision {
 	dotns::parse_navigate(&input)
@@ -295,7 +295,7 @@ pub fn screen_pocket_card_title(title: String) -> Result<String, NativeChatField
 /// normalize, so an unknown spelling is never read as trusted.
 #[uniffi::export]
 pub fn has_trusted_remote_permissions(product_id: String) -> bool {
-	crate::platform::normalizes_to_trusted_remote_permissions(&product_id)
+	crate::platform::ProductId::normalizes_to_trusted_remote_permissions(&product_id)
 }
 
 /// Set the live log level (`off`/`error`/`warn`/`info`/`debug`/`trace`) for
