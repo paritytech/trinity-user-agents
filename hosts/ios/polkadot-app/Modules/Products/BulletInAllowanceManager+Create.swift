@@ -39,7 +39,7 @@ extension BulletInAllowanceManager {
             wallet: wallet,
             keyResolver: keyResolver,
             chainRegistry: chainRegistry,
-            storageRequestFactory: storageRequestFactory
+            networkSuffixProvider: tldProvider
         )
 
         let extrinsicFacade = ExtrinsicSubmissionMonitorFacade(
@@ -56,23 +56,24 @@ extension BulletInAllowanceManager {
         }
 
         let chainTimeProvider = ChainTimeProvider(
-            chainId: AppConfig.Chains.bulletInChain,
+            chainId: AppConfig.Chains.peopleChain,
             chainRegistry: chainRegistry,
             storageRequestFactory: storageRequestFactory
         )
 
         let infoProvider = BulletInSlotInfoProvider(
             bulletInChainId: AppConfig.Chains.bulletInChain,
-            peopleChainId: AppConfig.Chains.usernameChain,
+            peopleChainId: AppConfig.Chains.peopleChain,
             chainRegistry: chainRegistry,
             keyResolver: keyResolver,
             operationQueue: operationQueue,
             chainTimeProvider: chainTimeProvider,
-            resourcesParameters: ResourcesParametersFacade.shared
+            resourcesParameters: ResourcesParametersFacade.shared,
+            networkSuffixProvider: tldProvider
         )
 
         let allocator = BulletinSlotAllocator(
-            submissionChainId: AppConfig.Chains.usernameChain,
+            submissionChainId: AppConfig.Chains.peopleChain,
             slotInfoProvider: infoProvider,
             originFactory: originFactory,
             submitter: SlotAssignmentSubmitter(monitorFactory: monitorFactory)
@@ -82,6 +83,7 @@ extension BulletInAllowanceManager {
             infoProvider: infoProvider,
             allocator: allocator,
             backgroundExecutor: ConnectionRetainingExecutor(provider: chainRegistry),
+            issueDiagnostics: .make(flow: "bulletin-allowance", reporter: IssueReportingFacade.shared),
             logger: Logger.shared
         )
     }

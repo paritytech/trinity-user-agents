@@ -43,7 +43,7 @@ import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import java.math.BigInteger
-import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.days
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
@@ -130,15 +130,19 @@ class CoinagePaymentProcessingExtensionTest {
         coVerify(exactly = 1) { context.markMessageProcessed(message.chatId, message.id) }
     }
 
-    /** The claim is allowed to retry for six hours after the message was sent, and no longer. */
+    /**
+     * A payment whose coins never land would otherwise keep a claim and its chain connection alive forever,
+     * across every restart. The deadline counts from the message, so reopening the app cannot push it back.
+     */
     @Test
-    fun `a claim is given six hours from when the payment was sent`() = runTest {
+    fun `a claim waits a week from the payment for coins to appear`() = runTest {
         givenClaimReports(CoinageTransferDetection.Claimed(FULL, finalized = true))
+        val message = incomingPayment()
 
-        startWork(incomingPayment())
+        startWork(message)
 
-        val expected = Instant.fromEpochMilliseconds(SENT_AT) + 6.hours
-        coVerify { claimReceivedCoinsUseCase.claim(any(), any(), expected) }
+        val sentAt = Instant.fromEpochMilliseconds(message.timestamp)
+        coVerify { claimReceivedCoinsUseCase.claim(any(), any(), sentAt + 7.days) }
     }
 
     /** The group is the message's own, so a retry rejoins the claims an earlier attempt registered. */

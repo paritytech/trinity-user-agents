@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/paritytech/trinity-user-agents/rust/crates/trinity-stack/schema/trinity-stack.v1.schema.json",
+  "title": "Trinity stack descriptor, $v 1",
+  "description": "Shape of a $v 1 descriptor. Rules that span fields (unique roles, exactly one Relay, forkedAt on every chain of a fork, private-range http) are checked by readers, not by this schema; the conformance vectors cover them. So are three rules JSON Schema cannot express: integers are written without a fraction or exponent (42, never 42.0), strings and names hold no Unicode noncharacters, and an http or ws URL names its private address in canonical form.",
+  "type": "object",
+  "required": ["$v", "sequence", "generation", "id", "name", "network", "tld", "chains", "services"],
+  "properties": {
+    "$v": { "const": 1 },
+    "sequence": { "$ref": "#/$defs/time" },
+    "generation": { "type": "string", "minLength": 1 },
+    "id": { "type": "string" },
+    "name": { "type": "string" },
+    "network": { "type": "string" },
+    "tld": { "type": "string" },
+    "expiresAt": { "$ref": "#/$defs/time" },
+    "validUntil": { "$ref": "#/$defs/time" },
+    "fork": {
+      "type": "object",
+      "required": ["of", "at"],
+      "properties": {
+        "of": {
+          "type": "object",
+          "required": ["url"],
+          "properties": { "url": { "$ref": "#/$defs/webUrl" }, "key": { "$ref": "#/$defs/hash" } }
+        },
+        "at": { "$ref": "#/$defs/time" }
+      }
+    },
+    "chains": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/chain" } },
+    "services": { "type": "array", "items": { "$ref": "#/$defs/service" } },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["role", "chain", "pallet", "id"],
+        "properties": {
+          "role": { "type": "string" },
+          "chain": { "type": "string" },
+          "pallet": { "type": "string" },
+          "id": { "$ref": "#/$defs/integer" }
+        }
+      }
+    },
+    "contracts": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "pattern": "^0x[0-9a-f]{40}$" }
+    },
+    "coinage": {
+      "type": "object",
+      "required": ["chain", "instance"],
+      "properties": { "chain": { "type": "string" }, "instance": { "$ref": "#/$defs/integer" } }
+    }
+  },
+  "$defs": {
+    "integer": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+    "hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
+    "time": { "description": "Unix seconds", "type": "integer", "minimum": 0, "maximum": 4294967295 },
+    "webUrl": { "type": "string", "pattern": "^(https|wss|http|ws)://" },
+    "specFile": {
+      "type": "object",
+      "required": ["url", "sha256"],
+      "properties": { "url": { "$ref": "#/$defs/webUrl" }, "sha256": { "$ref": "#/$defs/hash" } }
+    },
+    "chain": {
+      "type": "object",
+      "required": ["role", "genesisHash", "rpc"],
+      "properties": {
+        "role": { "type": "string" },
+        "genesisHash": { "$ref": "#/$defs/hash" },
+        "paraId": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "rpc": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/webUrl" } },
+        "statementStore": { "type": "boolean" },
+        "lightSpec": { "$ref": "#/$defs/specFile" },
+        "fullSpec": { "$ref": "#/$defs/specFile" },
+        "forkedAt": {
+          "type": "object",
+          "required": ["number", "hash"],
+          "properties": { "number": { "$ref": "#/$defs/integer" }, "hash": { "$ref": "#/$defs/hash" } }
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": { "kind": { "type": "string" } },
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": ["dub", "turn", "stun", "ipfs-gateway", "hop", "eth-rpc", "storage-provider", "faucet"]
+          }
+        }
+      },
+      "then": {
+        "required": ["urls"],
+        "properties": { "urls": { "type": "array", "minItems": 1, "items": { "type": "string" } } },
+        "allOf": [
+          {
+            "if": { "properties": { "kind": { "const": "eth-rpc" } } },
+            "then": { "required": ["chainId"], "properties": { "chainId": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 } } },
+            "else": { "not": { "required": ["chainId"] } }
+          },
+          {
+            "if": { "properties": { "kind": { "const": "stun" } } },
+            "then": { "properties": { "urls": { "items": { "pattern": "^stun:" } } } },
+            "else": { "properties": { "urls": { "items": { "$ref": "#/$defs/webUrl" } } } }
+          }
+        ]
+      }
+    }
+  }
+}

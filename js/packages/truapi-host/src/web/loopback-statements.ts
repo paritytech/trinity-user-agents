@@ -7,7 +7,7 @@
 // accepted here is not registered anywhere, so a real store would refuse what
 // this one takes.
 
-import { SignedStatement } from "@parity/truapi";
+import { scale, StatementProof } from "@parity/truapi";
 
 /** A live `statement_subscribeStatement`, and what it asked for. */
 interface Subscription {
@@ -33,6 +33,53 @@ function bytes(value: string): Uint8Array {
 }
 
 /**
+ * One field of a statement, as the statement store encodes it.
+ *
+ * The store takes a SCALE vector of tagged fields, not a struct: the protocol's
+ * own `SignedStatement` is a different encoding of the same information and
+ * decoding one as the other yields nothing. Topics are separate fields rather
+ * than a list, which is why there can be at most four.
+ *
+ * Upstream: `substrate/primitives/statement-store/src/lib.rs`.
+ */
+const StatementField = scale.TaggedUnion({
+  Proof: StatementProof,
+  DecryptionKey: scale.Hex(32),
+  Expiry: scale.u64,
+  Channel: scale.Hex(32),
+  Topic1: scale.Hex(32),
+  Topic2: scale.Hex(32),
+  Topic3: scale.Hex(32),
+  Topic4: scale.Hex(32),
+  Data: scale.Hex(),
+});
+
+/** A statement on the wire: the fields it carries, in encoding order. */
+const StatementFields = scale.Vector(StatementField);
+
+/** The field tags that carry a topic, in the order they encode. */
+export const TOPIC_FIELD_TAGS: readonly string[] = [
+  "Topic1",
+  "Topic2",
+  "Topic3",
+  "Topic4",
+];
+
+/** The same tags, typed for indexing when encoding. */
+const TOPIC_TAGS = ["Topic1", "Topic2", "Topic3", "Topic4"] as const;
+
+/** Fields of a statement, or `undefined` when it will not decode. */
+export function decodeStatement(
+  encoded: string,
+): ReturnType<typeof StatementFields.dec> | undefined {
+  try {
+    return StatementFields.dec(bytes(encoded));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Topics of a submitted statement, or `undefined` when it will not decode.
  *
  * An undecodable statement is still delivered, to everything: a suite chasing
@@ -40,13 +87,71 @@ function bytes(value: string): Uint8Array {
  * product never submitted.
  */
 function topicsOf(encoded: string): string[] | undefined {
-  try {
-    return SignedStatement.dec(bytes(encoded)).topics.map((topic) =>
-      typeof topic === "string" ? topic.toLowerCase() : hex(topic),
+  const fields = decodeStatement(encoded);
+  if (!fields) return undefined;
+  return fields
+    .filter((field) => (TOPIC_TAGS as readonly string[]).includes(field.tag))
+    .map((field) => String(field.value).toLowerCase());
+}
+
+/** One statement the store retained, and where it came from. */
+export interface RetainedStatement {
+  /** The statement as submitted, `0x` hex. */
+  encoded: string;
+  /** True when the product submitted it, false when a test injected it. */
+  fromProduct: boolean;
+  /** When the store took it, as epoch milliseconds. */
+  timestamp: number;
+}
+
+/** A statement to inject, in the decoded shape a suite writes. */
+export interface StatementInput {
+  /** Up to four `0x`-hex topics; an empty list matches a bare subscription. */
+  topics: string[];
+  /** `0x`-hex payload. */
+  data?: string;
+}
+
+/**
+ * A zero Sr25519 proof, carried because the codec requires one.
+ *
+ * Nothing in the page verifies it, which is of a piece with the rest of this
+ * store: a statement accepted here is registered nowhere, and a real store
+ * would refuse it. A suite reading `proof` off an injected statement is seeing
+ * this placeholder, not a signature over the payload.
+ */
+const UNVERIFIED_PROOF = {
+  tag: "Sr25519" as const,
+  value: {
+    signature: `0x${"00".repeat(64)}` as `0x${string}`,
+    signer: `0x${"00".repeat(32)}` as `0x${string}`,
+  },
+};
+
+/** Encode `input` the way a product's submission arrives. */
+export function encodeStatement(input: StatementInput): string {
+  if (input.topics.length > TOPIC_TAGS.length) {
+    // The store has four topic fields and no fifth, so a statement carrying
+    // more cannot be encoded at all. Refused here rather than silently losing
+    // the ones past the fourth, which a suite would read as a filter that
+    // failed to match.
+    throw new Error(
+      `testHost injectStatement: a statement carries at most ` +
+        `${TOPIC_TAGS.length} topics, and this one has ${input.topics.length}.`,
     );
-  } catch {
-    return undefined;
   }
+  return hex(
+    StatementFields.enc([
+      { tag: "Proof", value: UNVERIFIED_PROOF },
+      ...input.topics.map((topic, index) => ({
+        tag: TOPIC_TAGS[index]!,
+        value: topic as `0x${string}`,
+      })),
+      ...(input.data === undefined
+        ? []
+        : [{ tag: "Data" as const, value: input.data as `0x${string}` }]),
+    ] as Parameters<typeof StatementFields.enc>[0]),
+  );
 }
 
 /** Read the filter the core sent, defaulting to "everything". */
@@ -85,38 +190,55 @@ export interface LoopbackStatements {
   handle(request: string, respond: (frame: string) => void): boolean;
   /** Forget the subscriptions one connection owns. */
   release(respond: (frame: string) => void): void;
-  /** Statements submitted so far, as `0x` hex, in order. */
-  submitted(): string[];
-  /** Deliver `statement` as if it had been submitted by someone else. */
-  inject(statement: string): number;
-  /** Drop the record of what was submitted. */
+  /** Every statement the store retained, in order. */
+  statements(): RetainedStatement[];
+  /** Statements the product submitted, in order. */
+  submitted(): RetainedStatement[];
+  /**
+   * Retain `statement` and deliver it as if someone else had submitted it.
+   *
+   * Retained, not just delivered, so a subscription opened afterwards is
+   * replayed it: a suite that injects before its product subscribes would
+   * otherwise see nothing, with no way to tell that from a dropped delivery.
+   */
+  inject(statement: StatementInput | string): RetainedStatement;
+  /**
+   * Drop every retained statement.
+   *
+   * Live subscriptions stay open and keep receiving; one opened afterwards
+   * starts from empty.
+   */
   clear(): void;
 }
 
 /** Build the store. One per mock host, shared across its connections. */
 export function createLoopbackStatements(): LoopbackStatements {
   const subscriptions = new Set<Subscription>();
-  const submissions: string[] = [];
+  const retained: RetainedStatement[] = [];
   let nextId = 1;
+
+  const notify = (subscription: Subscription, encoded: string) => {
+    subscription.notify(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: SUBSCRIBE,
+        params: {
+          subscription: subscription.id,
+          result: {
+            event: "newStatements",
+            data: { statements: [encoded], remaining: 0 },
+          },
+        },
+      }),
+    );
+  };
 
   const deliver = (encoded: string) => {
     const topics = topicsOf(encoded);
     let delivered = 0;
     for (const subscription of subscriptions) {
       if (!matches(subscription, topics)) continue;
-      subscription.notify(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          method: SUBSCRIBE,
-          params: {
-            subscription: subscription.id,
-            result: {
-              event: "newStatements",
-              data: { statements: [encoded], remaining: 0 },
-            },
-          },
-        }),
-      );
+      notify(subscription, encoded);
       delivered += 1;
     }
     return delivered;
@@ -136,7 +258,7 @@ export function createLoopbackStatements(): LoopbackStatements {
       switch (frame.method) {
         case SUBMIT: {
           const encoded = String((frame.params ?? [])[0] ?? "");
-          submissions.push(encoded);
+          retained.push({ encoded, fromProduct: true, timestamp: Date.now() });
           // The core accepts only `new`/`known`, and reads `.status` off an
           // object; a bare string is rejected as "not accepted".
           reply({ status: "new" });
@@ -145,12 +267,24 @@ export function createLoopbackStatements(): LoopbackStatements {
         }
         case SUBSCRIBE: {
           const id = `loopback-sub-${nextId++}`;
-          subscriptions.add({
+          const subscription = {
             id,
             ...parseFilter((frame.params ?? [])[0]),
             notify: respond,
-          });
+          };
+          subscriptions.add(subscription);
           reply(id);
+          // Injections only: a store hands a new subscriber what someone else
+          // published, never that subscriber's own backlog. Replayed after the
+          // id is answered, because the core keys an incoming notification by
+          // the subscription it has not been told about yet and would drop
+          // what arrived first.
+          for (const statement of retained) {
+            if (statement.fromProduct) continue;
+            if (matches(subscription, topicsOf(statement.encoded))) {
+              notify(subscription, statement.encoded);
+            }
+          }
           return true;
         }
         case UNSUBSCRIBE: {
@@ -170,16 +304,24 @@ export function createLoopbackStatements(): LoopbackStatements {
         if (subscription.notify === respond) subscriptions.delete(subscription);
       }
     },
-    submitted: () => [...submissions],
+    statements: () => [...retained],
+    // Narrowed by provenance rather than kept in a second list: `submitted()`
+    // answers "did the product publish this", which an injection must not.
+    submitted: () => retained.filter((statement) => statement.fromProduct),
     inject: (statement) => {
-      // Not recorded as a submission: `submitted()` is how a suite sees what
-      // the product sent, and an injection is the host standing in for someone
-      // else. `MockHost.getInjectedStatements` keeps the injection record.
-      const encoded = statement.startsWith("0x") ? statement : `0x${statement}`;
-      return deliver(encoded);
+      const encoded =
+        typeof statement === "string"
+          ? statement.startsWith("0x")
+            ? statement
+            : `0x${statement}`
+          : encodeStatement(statement);
+      const entry = { encoded, fromProduct: false, timestamp: Date.now() };
+      retained.push(entry);
+      deliver(encoded);
+      return entry;
     },
     clear: () => {
-      submissions.length = 0;
+      retained.length = 0;
     },
   };
 }

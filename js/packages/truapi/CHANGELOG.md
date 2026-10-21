@@ -1,5 +1,195 @@
 # @parity/truapi
 
+## 0.26.0
+
+### Major Changes
+
+- 98e4550: New `BalanceAccess` remote permission. `payment.balanceSubscribe` asks for it on the first subscription and
+  answers `PermissionDenied` when the user refuses; a payment request refused for a short balance reaches a product
+  without it as `Rejected`.
+- 98e4550: `payment.request` takes a caller-chosen 32-byte `id` and answers with nothing, adding `AlreadyExists` and
+  `InvalidAmount` for a zero amount; `payment.statusSubscribe` follows that `id` and reports `ClaimedPartially`. Hosts
+  serve both through `PaymentPlatform` (`set_payment_callbacks` and `notify_payment_status` natively); without one they
+  answer `Unsupported`. The host receives the id hashed with the calling product, so ids never collide across products.
+- 98e4550: `payment.topUp` takes a caller-chosen 32-byte `id`, answers `InvalidSource`, `AlreadyExists`, `SourceBusy`,
+  `InvalidAmount` or `Unknown`, and is followed with the new `payment.topUpStatusSubscribe`. The core requires a
+  session, refuses a zero amount, validates the source keys, and hands the top-up to the host's `TopUpPlatform`,
+  installed with `set_top_up_platform`; without one, both methods answer `Unsupported`. The host receives the id hashed
+  with the calling product, so ids never collide across products.
+- 8c6f4c9: `preimage.submit` raises no per-upload confirmation. The `PreimageSubmit` permission authorizes it:
+  `AllowAlways` covers every upload, and `AllowOnce` covers a single upload. Allocating or renewing the Bulletin
+  allowance may still ask the paired wallet. `UserConfirmationReview` has no `PreimageSubmit` variant and
+  `PreimageSubmitReview` is not exported, so hosts that match on either remove that case; the remaining review variants
+  keep their wire discriminants.
+- 7472b77: `development_createAccountProof` is not exported, and signing and pairing hosts derive every ring-VRF proof
+  context from its product id. A `raw:` product id has no special meaning: its context is derived like any other
+  product's, so a proof can no longer be bound to 32 caller-chosen bytes.
+
+### Minor Changes
+
+- 5ee4351: The CLI host takes `HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS` and `HOST_CLI_BULLETIN_WS` to point a
+  network preset at a fork of that network. They must be `ws://` or `wss://` URLs and cannot be combined with
+  `TRUAPI_LIGHT_CLIENT=1`. `truapi-host attest` attests a given mnemonic's identity, waits for its ring membership, and
+  prints `{address, publicKey, liteUsername}` as JSON; against a fork it also needs `HOST_CLI_IDENTITY_BACKEND_BASE`.
+- 5ee4351: The CLI host can run against a local network. `HOST_CLI_LOCAL_NETWORK_CONFIG` names a JSON file that routes
+  every chain role (People, Asset Hub, Bulletin) and the identity backend of the selected preset to loopback endpoints,
+  keeping the preset's product namespace. An invalid file is an error, never a fall back to the live chain.
+  `truapi-host local-network-check` prints the resolved routing without contacting a chain. It cannot be combined with
+  `TRUAPI_LIGHT_CLIENT=1`, nor with the `HOST_CLI_*_WS` chain URL overrides, which are for forks that keep the preset's
+  genesis hashes. `truapi-host attest` resolves the network the same way as the other commands.
+- ddb729f: The CLI host shows each navigation the core accepted in the terminal, and with `TRUAPI_NAVIGATIONS_LOG` set
+  it appends one JSON line (`{"url", "at"}`) per navigation to that file before `navigate_to` returns, so a script
+  driving a product can see where it navigated.
+- 82db857: The CLI gains `truapi-host stack`, for Trinity stack descriptors: `keygen` writes a signing key, `publish`
+  renders a model to `.well-known/trinity-stack.json` and keeps `sequence` in a state file, `verify` checks a link, URL
+  or file and reports whether it is signed, stale or expired, `bundle` writes the signed copy a host build ships and
+  refuses an expired one or one that would lower `sequence`, and `link` prints a pointer's link and QR code.
+- 073b4f2: When a product signs with another product's account, the user is asked once for each kind of signature and
+  each owning product, rather than for every signature. The approval lasts until the calling product is closed. This
+  applies to payload, watermarked raw, transaction and statement proof signatures. If the user declines, the next
+  signature asks again. Transactions that name contacts and unwatermarked raw bytes still ask every time. Only one of
+  these prompts is open at a time, and a signature the user already approved does not wait for it.
+- 7bf5a3e: Durable transactions can be scheduled before they are signed. A domain registers a `SubmissionPolicy`; a
+  scheduled transaction waits in the ledger until the core's submission executor asks that policy to build it, then is
+  broadcast and followed like a presigned one. A presigned transaction may name a policy too. When a transaction with a
+  policy is proven failed, the policy decides whether it is built again instead of failing. `durable_work_changed(true)`
+  also covers transactions waiting to be built, so the host keeps recovery running until they are. No domain schedules
+  transactions yet.
+- eb035fe: Add `Funding` (trait 22): `request({ id, direction, amount? })` opens a session under a caller-chosen id and
+  shows the host's funding overlay, and `statusSubscribe({ id })` lets the product that opened it watch it to
+  completion, also after a reload. Rust embedders install `FundingPlatform` with `set_funding_platform` and open
+  sessions of their own with `open_funding`.
+- 28fa81c: A wallet-local session reads its usernames from the dotNS contracts on Asset Hub, the same lookup a paired
+  session uses. Activation does not wait for it: the session starts under the lite username the host passes, if any, and
+  when the dotNS record holds a name, the record's lite and full usernames replace it and the core reports them through
+  `authStateChanged`. Hosts no longer need to read usernames from the People chain.
+- 743f0ba: Add the `Motion` device permission. Products request it through `requestDevicePermission("Motion")` or the
+  standard `DeviceMotionEvent.requestPermission()`, and the iOS host answers WebKit's motion request from the product's
+  saved, one-use, or prompted decision. A host built before this release cannot decode `Motion` and rejects the request
+  with a malformed-frame error, so products should treat that error as motion being unsupported.
+- 98e4550: `payment.balanceSubscribe` streams the user's spendable balance from the host's new `BalancePlatform`
+  (`set_balance_callbacks` and `notify_balance` natively): the host answers the current balance or `PermissionDenied`,
+  then pushes each change. The core requires a session; without a balance view the call is `Unsupported`.
+
+### Patch Changes
+
+- 10a36af: Anchor Bulletin preimage transaction mortality to finalized blocks so discarded forks do not invalidate
+  signatures. Keep nonce lookup and dry-run validation at the best block.
+- 19f5b48: Keep capability logic on latest protocol payloads and return responses, subscription items, and domain errors
+  in the requested version. Local storage reads preserve V1 and V2 at the handler boundary.
+- 9a172e1: Stop a product execution's chain close invalidating connects on the shared event bus. The close is offered to
+  both buses and only the one holding the connection reacts, so a routine miss is no longer recorded as a close that
+  raced a connect.
+- 9064140: Each product runtime holds its own chain connection, so a node's four-follow budget per connection is spent
+  per product rather than shared across all of them. A product runtime's connections are torn down when it ends.
+- eb57f87: A chain-head call or follow that fails because the chain connection closed, the follow was closed, or the
+  product's connections were released reports that cause in its `HostFailure` reason, after the method name, instead of
+  the method name alone.
+- a8623e2: The CLI host ends a chain connection's response stream when its WebSocket closes, so the runtime opens a
+  fresh connection for the next request rather than queueing it on the closed socket.
+- 8b58680: A paired session resolves its dotNS username again for accounts onboarded more than a week ago. Pending
+  gateway claims count however old they are, because the PoP controller no longer expires them.
+- 28fa81c: A session whose identity account holds only dotNS labels the PoP controller did not issue, such as a publicly
+  registered name, resolves its username from the root key. Those labels are not usernames, so they no longer end the
+  lookup with an empty result.
+- eb035fe: A `test-host` hook settles a funding session with no chain behind it, and `scripts/battery.sh --funding-host`
+  drives funding requests and statuses against a scripted CLI funding host.
+- eb035fe: `funding_sessions` lists the core's funding sessions for the host's history, ended sessions are handed over
+  until `acknowledge_funding_session`, and `cancel_funding` cancels an open one (Rust and native API).
+- eb035fe: Native hosts drive funding through `NativeTrUApiHostRuntime`: `set_funding_callbacks` installs the overlay,
+  and `open_funding` and `funding_session` open and read sessions. Amounts cross the FFI as decimal strings.
+- eb035fe: The core models funding sessions and persists them, live and a bounded settled tail, in the new
+  `FundingSessions` core storage slot.
+- def1bb9: `payment.balanceSubscribe` checks the product's `BalanceAccess` again before passing on each balance, so
+  revoking the grant ends the stream with `PermissionDenied`. The new `AlreadyExists` and `InvalidAmount` errors follow
+  the existing variants, so `HostPaymentError` keeps the indexes it had before. The test host says why it cannot serve
+  payments: the payment platforms are served only by native and Rust hosts.
+- 6864e42: Allow `polkadotapp://` links through `system.navigateTo`, preserving payment parameters and requiring
+  `OpenUrl` permission. Reject external `polkadot:` and `dot:` links.
+- 93fee0a: `truapi-host` trims and lowercases the `productName` of a local product config before storing its grants, so
+  `Peopl.Paseo` grants the same as `peopl.paseo`. The name must be a full product id: a bare label such as `peopl`, or a
+  name such as `example.com`, stops the CLI at startup with an error, before any config is stored.
+
+  Reading the cross-product signature permission for a target that is not a valid product id returns "not determined",
+  and setting it returns an error.
+
+- 93fee0a: A product id must be a name dotNS can register, or `localhost[:port]`. Each label is lowercase ASCII letters,
+  digits and hyphens, does not start or end with a hyphen, and is at most 63 bytes, as the dotNS registrar requires. Any
+  case is accepted and lowercased. An id such as `tést.dot`, `my_app.dot`, or one carrying an invisible character is
+  refused wherever the runtime parses a product id.
+- 822e310: Preserve the requested protocol version for all runtime responses, subscription items, and domain errors,
+  including chat message failures and subscription interruptions, through one shared conversion boundary.
+- 6ce480f: Trusted products (`peopl`, `dim2` and `stash`) get device permissions, such as notifications, without a
+  prompt: the core does not call `device_permission` for them. They still need the OS grant. Stored device decisions do
+  not apply to them, so per-product device toggles in the host have no effect.
+
+## 0.25.0
+
+### Minor Changes
+
+- c75de1b: `chat.postMessage` takes an optional `alt`, one line describing the message that a host shows where it lists
+  the message without drawing it, such as the chat list preview of a custom card.
+- fd7926a: Add `chat.setRoomFooter`, which sets what a room the product created shows below its messages: the text
+  input, or nothing for a room the product drives through actions alone. A host keeps the footer until the product sets
+  another. A room the product did not create answers `UnknownRoom`, and a host that predates the method answers
+  `Unsupported`. A host serving chat now implements `setChatRoomFooter`, and native hosts implement
+  `ChatHostBridge.setRoomFooter`. Neither needs to check the room, because the core answers `UnknownRoom` before asking
+  the host.
+- 9fece5c: Native signing hosts follow presigned transactions to a verdict in the core. The core database gains a
+  `durable_tx` ledger: a domain registers presigned mortal extrinsics, the core broadcasts them once committed, watches
+  them, and decides every one it no longer watches from the chain, including those a previous process left live.
+  `HostCallbacks` gains the required `durable_work_changed(pending)`, which the Swift and Kotlin `HostBridge` default to
+  a no-op; while it reports `true` the host keeps a background task running that awaits `runDurableRecovery()`. No
+  domain registers transactions yet.
+- 1c4a63e: Adds the `expandedCard` service. `setFaceShown` lets a Pocket card's widget move the face above it out of the
+  way and back. Only a Widget execution may call it, and a host without expanded cards answers `Unsupported`.
+- 84282d0: Serve `scanner.scan`. A host supplies the optional `scanner` callbacks to draw its viewfinder, and the core
+  checks each request and each answer. The mock test host serves a scanner when created with a `scanner` answer, and
+  `setScanAnswer` changes the next one. `contacts.pick` now stops waiting when the product cancels.
+
+## 0.24.0
+
+### Minor Changes
+
+- 711d030: Restore or provision explicitly selected CLI sessions, retry unfinished setup, preserve imported account
+  identity when switching sessions, and reject derived username bases with fewer than six lowercase ASCII letters before
+  onboarding. Use `--session` to select the newest local session for a username base or an exact session by full
+  username. The separate username-prefix option is removed.
+- 96c002c: Give native signing hosts a core-owned SQLite database. `HostRuntimeConfig.database_directory`
+  (`databaseDirectory` in Swift and Kotlin) is required and names an existing, writable directory kept out of backups.
+  The runtime opens `core.sqlite3` there at startup and refuses to start when it cannot. `coreDatabaseStatus()` reports
+  the SQLite version, schema version and path.
+- 2c7efee: Add the `game` service: `remindNextGame` holds one reminder for the calling product's next game, and
+  `cancelNextGame` drops it. Only the game product, `dim2`, is served; any other product gets `Unsupported`. A host that
+  fails to hold the reminder answers with a host failure carrying its reason. The game product needs no per-product
+  consent: the host asks the OS for what the reminder needs, ringing an alarm where it can and delivering a notification
+  otherwise.
+- d8c83f5: Add the `scanner` service. `scan` asks the host to open its own QR and barcode viewfinder and returns the
+  scanned code's text and format. No host serves it yet, so the runtime answers `Unsupported`.
+
+### Patch Changes
+
+- 1481c42: The core has shared chain capabilities for host services: `ChainHeads` (finalized and best heads, head
+  events), `BlockBackend` (block hash by number, block number, extrinsic hashes, dispatch outcome), `TxValidator` and
+  `TxSubmitter`, implemented directly by the runtime's chain connections (`ChainRuntime`). Block reads and validation go
+  through a subxt client on the legacy JSON-RPC methods, so they reach blocks a chainHead follow no longer pins, and
+  validation runs against the best block as the transaction pool does. Submission goes through the existing chainHead
+  client. A node answer that cannot prove absence, such as a pruned body, is an error rather than "not found", and a
+  closed connection is reported as unavailable. Both clients on a connection share one chain config, so runtime metadata
+  is downloaded once per spec version.
+- aa6ae62: The CLI host looks preimages up on the network's Bulletin node by CID (`bitswap_v1_get`) instead of an
+  in-process map that nothing wrote to, so a product can retrieve a blob another host submitted. A miss is polled until
+  the blob lands, a request the node can never answer ends the lookup with an error, and every value is checked against
+  its key.
+- 3281e17: The local signing host caches a product's statement-store allowance key for the current allowance period,
+  including a key allocated by an explicit resource allocation request, so proofs after it in a period skip the on-chain
+  slot scan. The key is looked up again when the period changes, the local session is cleared or replaced, the product's
+  state is cleared, or the statement store still rejects a statement signed with it for having no allowance after the
+  submit retries. Statement submissions retry a `noAllowance` rejection up to 10 times, 2 seconds apart, as the native
+  iOS and Android hosts do.
+- 3281e17: Statement-store allowance lookups read a period's slot row in one request per collection, and read the People
+  and LitePeople rows at the same time, instead of one request per slot.
+
 ## 0.23.0
 
 ### Patch Changes

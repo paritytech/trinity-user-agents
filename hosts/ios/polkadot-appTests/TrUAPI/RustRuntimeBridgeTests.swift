@@ -1,28 +1,29 @@
 import Foundation
 import Testing
+import DesignSystem
 import ChainRegistry
 import Products
 import SubstrateSdk
 import Keystore_iOS
+import StructuredConcurrency
 import TrUAPIHost
 
 // Scoped import: the TrUAPIHost module also declares a *type* named TrUAPIHost,
 // so `TrUAPIHost.ProductAccountId` cannot disambiguate from Products'.
 import struct TrUAPIHost.ProductAccountId
 import UIKitExt
+import StructuredConcurrencyTestSupport
 @testable import polkadot_app
 
 // MARK: - Helpers
 
 private let testProduct = ProductExecutionConfig(productId: "test.product", executionKind: .app)
 
-private func makeRegistryPool(chainRegistry: ChainRegistryProtocol) -> TrUAPIChainConnectionPool {
-    TrUAPIChainConnectionPool(
-        engineResolver: { genesisHash in
-            chainRegistry.getChainByGenesis(for: genesisHash.toHex()).flatMap { chain in
-                chainRegistry.getConnection(for: chain.chainId)
-            }
-        },
+private func makeRegistryPool(chainRegistry: ChainRegistryProtocol) -> TrUAPIV2SpecConnectionPool {
+    TrUAPIV2SpecConnectionPool(
+        chainRegistry: chainRegistry,
+        applicationHandler: MockApplicationHandler(),
+        dateProvider: MockDateProvider(),
         logger: Logger.shared
     )
 }
@@ -66,8 +67,8 @@ private struct StubHostProvider: ProductHostProviding {
         nil
     }
 
-    func resolvePage(destination _: String) async throws -> ProductPage? {
-        nil
+    func resolvePage(destination: String) async throws -> ProductPage {
+        throw ProductPageResolutionError.destinationNotOnNetwork(destination: destination, tld: "")
     }
 }
 
@@ -79,13 +80,18 @@ private func makeBridge(
     permissionGuard: MockPermissionGuard = MockPermissionGuard(),
     osPermissionAsker: MockOSPermissionAsker = MockOSPermissionAsker(),
     notificationScheduler: MockNotificationScheduler = MockNotificationScheduler(),
+    gameReminders: MockGameReminderScheduler? = nil,
+    reminderPermissionAsker: MockReminderPermissionAsker = MockReminderPermissionAsker(),
     chainRegistry: MockChainRegistry = MockChainRegistry(),
     confirmationPresenter: MockConfirmationPresenter = MockConfirmationPresenter(),
     preimageCache: TrUAPIPreimageCache = TrUAPIPreimageCache { _ in nil },
     productStorageFails: Bool = false,
-    hostProvider: ProductHostProviding = StubHostProvider()
+    hostProvider: ProductHostProviding = StubHostProvider(),
+    themeManager: MockThemeManager = MockThemeManager(),
+    cardFace: (any ExpandedCardFaceShowing)? = nil,
+    router: MockNavigationRouter? = nil
 ) -> RustProductExecutionBridge {
-    let router = MockNavigationRouter()
+    let router = router ?? MockNavigationRouter()
     let pool = makeRegistryPool(chainRegistry: chainRegistry)
     let productStorage: TrUAPILocalStoring = productStorageFails
         ? FailingProductStorage()
@@ -98,6 +104,8 @@ private func makeBridge(
         permissionGuard: permissionGuard,
         osPermissionAsker: osPermissionAsker,
         notificationScheduler: notificationScheduler,
+        gameReminders: gameReminders ?? MockGameReminderScheduler(),
+        reminderPermissionAsker: reminderPermissionAsker,
         navigationRouter: router,
         chainRegistry: chainRegistry,
         chainConnections: pool,
@@ -106,8 +114,9 @@ private func makeBridge(
         confirmationPresenter: confirmationPresenter,
         preimageCache: preimageCache,
         hostProvider: hostProvider,
+        themeManager: themeManager,
         logger: Logger.shared
-    ))
+    ), cardFace: cardFace)
 }
 
 // MARK: - Tests
@@ -116,6 +125,25 @@ private func makeBridge(
 /// does not run tests on the main thread by default.
 @MainActor
 struct RustRuntimeBridgeTests {
+    // MARK: navigateTo
+
+    /// The core hands over a Pocket link as `polkadotapp://pocket/...`, which names
+    /// no product. Opened as a product page it would go nowhere, so it has to
+    /// reach the router's app-link path, which takes it to the Pocket.
+    @Test func navigateToHandsAPocketLinkToTheAppLinkPath() async throws {
+        let router = MockNavigationRouter()
+        let bridge = makeBridge(
+            hostProvider: ProductHostFactory(tldProvider: StubDotNsTldProvider(tld: "dot")),
+            router: router
+        )
+        let link = "polkadotapp://pocket/add?product=game.dot&card=loyalty"
+
+        try await bridge.navigateTo(url: link)
+
+        #expect(router.navigatedPage == nil)
+        #expect(router.openedURL == URL(string: link))
+    }
+
     // MARK: devicePermission
 
     /// `devicePermission(.camera)` routes to
@@ -151,11 +179,12 @@ struct RustRuntimeBridgeTests {
                 osAsker.statusToReturn = status
                 let guard_ = MockPermissionGuard()
                 let bridge = makeBridge(permissionGuard: guard_, osPermissionAsker: osAsker)
-                let expected: DevicePermissionStatus = switch status {
-                case .allowed: .granted
-                case .denied: .denied
-                case .notDetermined: .notDetermined
-                }
+                let expected: DevicePermissionStatus =
+                    switch status {
+                    case .allowed: .granted
+                    case .denied: .denied
+                    case .notDetermined: .notDetermined
+                    }
 
                 #expect(try await bridge.devicePermissionStatus(request: request) == expected)
                 #expect(osAsker.checkedCapabilities == [request.deviceCapabilityType])
@@ -172,6 +201,7 @@ struct RustRuntimeBridgeTests {
         (.location, .notDetermined),
         (.clipboard, .notApplicable),
         (.biometrics, .notApplicable),
+        (.motion, .notApplicable),
     ])
     func devicePermissionStatusWithoutOSQuery(
         request: HostDevicePermissionRequest,
@@ -183,6 +213,51 @@ struct RustRuntimeBridgeTests {
         #expect(try await bridge.devicePermissionStatus(request: request) == expected)
         #expect(osAsker.checkedCapabilities.isEmpty)
         #expect(osAsker.requestedCapabilities.isEmpty)
+    }
+
+    // MARK: gameReminders
+
+    @Test(arguments: [
+        (true, false, true, [MockReminderPermissionAsker.Ask.alarm]),
+        (true, true, true, [.alarm]),
+        (false, true, false, [.alarm, .notifications]),
+    ])
+    func scheduleReminderPrefersAnAlarmOverANotification(
+        alarmAllowed: Bool,
+        notificationsAllowed: Bool,
+        ringsAlarm: Bool,
+        asked: [MockReminderPermissionAsker.Ask]
+    ) async throws {
+        let gameReminders = MockGameReminderScheduler()
+        let asker = MockReminderPermissionAsker()
+        asker.alarmAllowed = alarmAllowed
+        asker.notificationsAllowed = notificationsAllowed
+        let bridge = makeBridge(productId: "game.dot", gameReminders: gameReminders, reminderPermissionAsker: asker)
+
+        try await bridge.scheduleReminder(startsAt: 2_000_000_000_000)
+
+        #expect(asker.asked == asked)
+        #expect(gameReminders.scheduled == [
+            .init(
+                productId: "game.dot",
+                startsAt: Date(timeIntervalSince1970: 2_000_000_000),
+                ringAlarm: ringsAlarm,
+                addCalendarEvent: true
+            )
+        ])
+    }
+
+    @Test func scheduleReminderRejectsWhenTheOSAllowsNeitherAlarmsNorNotifications() async {
+        let gameReminders = MockGameReminderScheduler()
+        let bridge = makeBridge(gameReminders: gameReminders)
+
+        await #expect {
+            try await bridge.scheduleReminder(startsAt: 2_000_000_000_000)
+        } throws: { error in
+            guard case HostRejection.Rejected = error else { return false }
+            return true
+        }
+        #expect(gameReminders.scheduled.isEmpty)
     }
 
     // MARK: remotePermission
@@ -197,11 +272,12 @@ struct RustRuntimeBridgeTests {
 
         let result = try await bridge.remotePermission(product: testProduct, request: .remote(domains: ["a.io"]))
 
-        let expected: TrUAPIPermissionDecision = switch decision {
-        case .allowOnce: .allowOnce
-        case .allowAlways: .allowAlways
-        case .deny: .deny
-        }
+        let expected: TrUAPIPermissionDecision =
+            switch decision {
+            case .allowOnce: .allowOnce
+            case .allowAlways: .allowAlways
+            case .deny: .deny
+            }
         #expect(result == expected)
         #expect(guard_.requestedBatchedPermissions == [.networkAccess(domain: "a.io")])
     }
@@ -489,20 +565,21 @@ struct RustRuntimeBridgeTests {
             routerFacade: ProductRoutersFacade.worker()
         )
 
-        for review in [
-            UserConfirmationReview.preimageSubmit(PreimageSubmitReview(size: 1_024)),
-            .productSubtree(ProductSubtreeReview(productId: "test.product"))
-        ] {
-            #expect(await presenter.confirm(review: review, from: "test.product") == false)
-        }
+        let review = UserConfirmationReview.productSubtree(ProductSubtreeReview(productId: "test.product"))
+        #expect(await presenter.confirm(review: review, from: "test.product") == false)
     }
 
-    // MARK: currentTheme
+    // MARK: setExpandedCardFaceShown
 
-    @Test func currentThemeReturnsDark() throws {
-        let bridge = makeBridge()
-        let theme = try bridge.currentTheme()
-        #expect(theme == .dark)
+    /// The page's request reaches the card's face and its answer comes back.
+    /// Called through `HostBridge` because the core does: an override whose
+    /// signature drifts would lose to the default and answer `.unsupported`.
+    @Test func expandedCardFaceReachesTheCardsFace() async throws {
+        let face = StubCardFace()
+        let bridge: HostBridge = makeBridge(cardFace: face)
+
+        #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .userMoving)
+        #expect(face.requests == [false])
     }
 
     // MARK: attach
@@ -540,6 +617,8 @@ struct RustRuntimeBridgeTests {
             permissionGuard: MockPermissionGuard(),
             osPermissionAsker: MockOSPermissionAsker(),
             notificationScheduler: MockNotificationScheduler(),
+            gameReminders: MockGameReminderScheduler(),
+            reminderPermissionAsker: MockReminderPermissionAsker(),
             navigationRouter: MockNavigationRouter(),
             chainRegistry: chainRegistry,
             chainConnections: pool,
@@ -551,6 +630,7 @@ struct RustRuntimeBridgeTests {
             confirmationPresenter: MockConfirmationPresenter(),
             preimageCache: TrUAPIPreimageCache { _ in nil },
             hostProvider: StubHostProvider(),
+            themeManager: MockThemeManager(),
             logger: Logger.shared
         ))
 
@@ -575,6 +655,46 @@ struct RustRuntimeBridgeTests {
         #expect(execution.chainResponses.first?.0 == 7)
         #expect(execution.chainResponses.first?.1 == "{\"ok\":true}")
         #expect(execution.chainClosed == [7])
+    }
+
+    @Test func currentThemeBeforeAttachIsDefaultDark() throws {
+        let bridge = makeBridge()
+
+        let current = try bridge.currentTheme()
+        #expect(current == HostThemeSubscribeItem(name: ThemeName.default, variant: ThemeVariant.dark))
+    }
+
+    @Test func attachReportsManagerThemeAndNotifiesExecution() async throws {
+        let themeManager = MockThemeManager(selection: .berlinDay)
+        let bridge = makeBridge(themeManager: themeManager)
+        let execution = MockProductExecution()
+        bridge.attach(execution)
+
+        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
+
+        let expected = HostThemeSubscribeItem(
+            name: ThemeName.custom(themeManager.theme.id),
+            variant: ThemeVariant.light
+        )
+        let current = try bridge.currentTheme()
+        #expect(current == expected)
+        #expect(execution.themeChanges == [expected])
+    }
+
+    @Test func themeChangeNotifiesAttachedExecution() async throws {
+        let themeManager = MockThemeManager(selection: .berlinNight)
+        let bridge = makeBridge(themeManager: themeManager)
+        let execution = MockProductExecution()
+        bridge.attach(execution)
+        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
+
+        themeManager.select(.app(.berlinDay))
+        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
+
+        let current = try bridge.currentTheme()
+        #expect(execution.themeChanges.map(\.variant) == [ThemeVariant.dark, ThemeVariant.light])
+        #expect(execution.themeChanges.last?.name == ThemeName.custom(themeManager.theme.id))
+        #expect(current.variant == ThemeVariant.light)
     }
 
     /// Core storage keys (`Data`) are hex-encoded for the underlying store;

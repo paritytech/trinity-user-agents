@@ -8,31 +8,25 @@
 //!
 //! Per-target backend matrix:
 //!
-//! - `ws` feature — `ChainSource::RpcNode`, a remote JSON-RPC node over
-//!   WebSocket. On native targets it runs on a jsonrpsee transport and needs
-//!   an ambient tokio runtime; on `wasm32` the same API is served by the
-//!   browser's `WebSocket`.
-//! - `smoldot` feature — `ChainSource::LightClient`, an embedded
-//!   [smoldot](https://github.com/paritytech/smoldot) light client. On native
-//!   targets it runs on smoldot's default platform (OS threads, TCP + plain
-//!   WebSocket dialing), which declines `wss`, so those bootnodes are reached
-//!   through the loopback TLS tunnels in `wss_tunnel`; on `wasm32` it runs on a
-//!   vendored browser platform (JS event loop, browser `WebSocket`, which
-//!   speaks TLS itself).
-//!   `EmbeddedChainProvider::lifecycle` reports its sync progress per chain.
-//! - `networks` feature — a bundled catalog so `connect(genesis_hash)`
-//!   resolves the whole network (relay wiring + statement placement included)
-//!   from the genesis hash alone, with no prior registration.
-//! - `js` feature — a JavaScript-facing API (the `js` module) on `wasm32`, so web
-//!   hosts can consume the provider directly without a Rust caller.
+//! - `ws` feature — `ChainSource::RpcNode`, a remote JSON-RPC node over WebSocket. On native
+//!   targets it runs on a jsonrpsee transport and needs an ambient tokio runtime; on `wasm32` the
+//!   same API is served by the browser's `WebSocket`.
+//! - `smoldot` feature — `ChainSource::LightClient`, an embedded [smoldot](https://github.com/paritytech/smoldot)
+//!   light client. On native targets it runs on smoldot's default platform (OS threads, TCP + plain
+//!   WebSocket dialing), which declines `wss`, so those bootnodes are reached through the loopback
+//!   TLS tunnels in `wss_tunnel`; on `wasm32` it runs on a vendored browser platform (JS event
+//!   loop, browser `WebSocket`, which speaks TLS itself). `EmbeddedChainProvider::lifecycle`
+//!   reports its sync progress per chain.
+//! - `networks` feature — a bundled catalog so `connect(genesis_hash)` resolves the whole network
+//!   (relay wiring + statement placement included) from the genesis hash alone, with no prior
+//!   registration.
+//! - `js` feature — a JavaScript-facing API (the `js` module) on `wasm32`, so web hosts can consume
+//!   the provider directly without a Rust caller.
 
 // The `uniffi` feature pulls in UniFFI's generated scaffolding, which contains
 // `unsafe` extern-"C" glue; scope the allowance to that feature so every other
 // build keeps the crate's no-unsafe guarantee (see `[lints] unsafe_code`).
-#![cfg_attr(
-    all(feature = "uniffi", not(target_arch = "wasm32")),
-    allow(unsafe_code)
-)]
+#![cfg_attr(all(feature = "uniffi", not(target_arch = "wasm32")), allow(unsafe_code))]
 
 // Without a backend feature the crate carries only the `platform` interfaces,
 // which is how truapi depends on it.

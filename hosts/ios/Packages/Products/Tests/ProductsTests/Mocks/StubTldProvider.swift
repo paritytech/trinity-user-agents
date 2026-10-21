@@ -10,6 +10,8 @@ struct StubTldProvider: DotNsTldProviding {
     func resolveTld() async throws -> String { tld }
 
     func refresh() {}
+
+    func reset() {}
 }
 
 /// Stands in for a network whose TLD cannot be read.
@@ -21,4 +23,6 @@ struct FailingTldProvider: DotNsTldProviding {
     func resolveTld() async throws -> String { throw Unreachable() }
 
     func refresh() {}
+
+    func reset() {}
 }

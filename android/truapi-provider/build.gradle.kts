@@ -113,21 +113,21 @@ publishing {
                         "catalog, addressed by genesis hash. Bundles " +
                         "libtruapi_provider.so, so no Rust toolchain is required."
                 )
-                url.set("https://github.com/paritytech/host-rust-core")
+                url.set("https://github.com/paritytech/trinity-user-agents")
                 licenses {
                     license {
                         name.set("MIT")
-                        url.set("https://github.com/paritytech/host-rust-core/blob/main/LICENSE")
+                        url.set("https://github.com/paritytech/trinity-user-agents/blob/main/LICENSE")
                     }
                     license {
                         name.set("Apache-2.0")
-                        url.set("https://github.com/paritytech/host-rust-core/blob/main/LICENSE-APACHE")
+                        url.set("https://github.com/paritytech/trinity-user-agents/blob/main/LICENSE-APACHE")
                     }
                 }
                 scm {
-                    connection.set("scm:git:https://github.com/paritytech/host-rust-core.git")
-                    developerConnection.set("scm:git:ssh://git@github.com/paritytech/host-rust-core.git")
-                    url.set("https://github.com/paritytech/host-rust-core")
+                    connection.set("scm:git:https://github.com/paritytech/trinity-user-agents.git")
+                    developerConnection.set("scm:git:ssh://git@github.com/paritytech/trinity-user-agents.git")
+                    url.set("https://github.com/paritytech/trinity-user-agents")
                 }
                 developers {
                     developer {

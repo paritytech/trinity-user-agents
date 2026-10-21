@@ -70,15 +70,6 @@ struct HostPlacedChatPinningTests {
         #expect(peer.isPinnedToTop)
     }
 
-    /// The native extension keeps its pin on the builds that still have it. It is a chat identity
-    /// of its own, not the product's, which is why the two can coexist and why only the build
-    /// default keeps them apart.
-    @Test("The native DIM2 extension stays pinned")
-    func nativeExtensionStaysPinned() {
-        #expect(Chat.Peer.chatExtension(DIM2ChatExtension.identifier, roomId: nil).isPinnedToTop)
-        #expect(!HostPlacedProducts.contains(productId: DIM2ChatExtension.identifier))
-    }
-
     @Test("An ordinary product's bot is not pinned")
     func ordinaryProductIsNotPinned() {
         #expect(!Chat.Peer.chatExtension("coinflip.paseo", roomId: nil).isPinnedToTop)

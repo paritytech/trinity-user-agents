@@ -73,7 +73,7 @@ jobs:
             # Trim whitespace around comma-separated targets.
             target="${target#"${target%%[![:space:]]*}"}"
             target="${target%"${target##*[![:space:]]}"}"
-            if [[ ! "${target}" =~ ^(@parity/truapi|@parity/truapi-host|@parity/truapi-provider|@parity/truapi-debugger|@parity/ios-host|@parity/android-host)[[:space:]]+([^[:space:]]+)$ ]]; then
+            if [[ ! "${target}" =~ ^(@parity/truapi|@parity/truapi-host|@parity/truapi-provider|@parity/truapi-debugger|@parity/trinity-stack|@parity/ios-host|@parity/android-host)[[:space:]]+([^[:space:]]+)$ ]]; then
               echo "::error::Unsupported release target '${target}' in subject: ${subject}"
               exit 1
             fi
@@ -96,6 +96,7 @@ jobs:
               @parity/truapi-host) path="js/packages/truapi-host" ;;
               @parity/truapi-provider) path="js/packages/truapi-provider" ;;
               @parity/truapi-debugger) path="js/packages/truapi-debugger" ;;
+              @parity/trinity-stack) path="js/packages/trinity-stack" ;;
               @parity/ios-host)
                 if [[ ! "${declared_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
                   echo "::error::Invalid iOS host version '${declared_version}'."
@@ -243,7 +244,7 @@ jobs:
         run: npm ci
 
       - name: Install wasm-pack
-        if: steps.version.outputs.proceed == 'true' && (contains(steps.version.outputs.packages, '@parity/truapi-host|') || contains(steps.version.outputs.packages, '@parity/truapi-provider|'))
+        if: steps.version.outputs.proceed == 'true' && (contains(steps.version.outputs.packages, '@parity/truapi-host|') || contains(steps.version.outputs.packages, '@parity/truapi-provider|') || contains(steps.version.outputs.packages, '@parity/trinity-stack|'))
         run: cargo install wasm-pack --version 0.14.0 --locked
 
       - name: Build packages
@@ -265,6 +266,10 @@ jobs:
           # and `dist/` is the gitignored wasm-pack output.
           if grep -q '^@parity/truapi-provider|' <<< "${STEPS_VERSION_OUTPUTS_PACKAGES}"; then
             npm run build --prefix js/packages/truapi-provider
+          fi
+          # Ships dist/ and wasm/, both gitignored build outputs.
+          if grep -q '^@parity/trinity-stack|' <<< "${STEPS_VERSION_OUTPUTS_PACKAGES}"; then
+            npm run build --prefix js/packages/trinity-stack
           fi
         env:
           STEPS_VERSION_OUTPUTS_PACKAGES: ${{ steps.version.outputs.packages }}

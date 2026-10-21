@@ -2,7 +2,10 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models
 
 import androidx.compose.runtime.Immutable
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageCoinTrace
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageScene
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.ImmutableMap
 
 @Immutable
 data class CoinageUiState(
@@ -16,11 +19,13 @@ data class CoinageUiState(
      */
     val shareLogsEnabled: Boolean,
     val detailsVisible: Boolean,
-    val keyVisible: Boolean
+    /** The coin picked out of the spread grid, if any. Always null while the coins are collapsed. */
+    val focusedCoin: String?
 ) {
     /**
-     * The last two figures partition [totalBalance] exactly, and [composition] is a picture of the same
-     * two — so the numbers and the bar are read off one classification and cannot contradict each other.
+     * The two figures partition [totalBalance] exactly, and [coins] is a picture of the same two — one coin
+     * per holding, in the same two runs — so the numbers and the strip are read off one classification and
+     * cannot contradict each other.
      */
     @Immutable
     data class TokensState(
@@ -29,8 +34,10 @@ data class CoinageUiState(
         val readyBalance: TokenAmountModel,
         /** Everything else: gaining privacy, in flight, or due to be recycled before it can be used. */
         val clearingBalance: TokenAmountModel,
-        val composition: CoinageCompositionUiModel,
-        val holdings: ImmutableList<CoinageHoldingUiModel>,
+        /** Already in display order: Clearing first, then largest denomination, then least fungible. */
+        val coins: ImmutableList<CoinageScene.Coin>,
+        /** What a picked coin says about itself, keyed by coin id. */
+        val traces: ImmutableMap<String, CoinageCoinTrace>,
         val breakdown: CoinageBalanceBreakdownUiModel
     )
 }

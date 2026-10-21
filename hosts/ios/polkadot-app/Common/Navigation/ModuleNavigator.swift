@@ -5,7 +5,16 @@ import Products
 protocol ModuleNavigating: AnyObject {
     func openChat(_ model: ChatOpenModel)
     func presentModally(_ viewController: UIViewController)
+    func presentFullScreen(_ viewController: UIViewController)
+    /// Leaves the screen it opens from in the window, for a presentation the
+    /// delegate animates over it.
+    func presentOverFullScreen(
+        _ viewController: UIViewController,
+        animatedBy transitioningDelegate: UIViewControllerTransitioningDelegate
+    )
     func openProduct(page: ProductPage)
+    func presentProduct(page: ProductPage)
+    func openPocket()
     func openScanPanel()
 }
 
@@ -24,11 +33,68 @@ extension ModuleNavigator: ModuleNavigating {
         UIWindow.topWindow?.topmostViewController?.present(navigationController, animated: true)
     }
 
+    func presentFullScreen(_ viewController: UIViewController) {
+        let navigationController = AppNavigationController(rootViewController: viewController)
+        navigationController.modalPresentationStyle = .fullScreen
+        UIWindow.topWindow?.topmostViewController?.present(navigationController, animated: true)
+    }
+
+    func presentOverFullScreen(
+        _ viewController: UIViewController,
+        animatedBy transitioningDelegate: UIViewControllerTransitioningDelegate
+    ) {
+        let navigationController = AppNavigationController(rootViewController: viewController)
+        navigationController.modalPresentationStyle = .overFullScreen
+        navigationController.modalPresentationCapturesStatusBarAppearance = true
+        navigationController.view.accessibilityViewIsModal = true
+        navigationController.transitioningDelegate = transitioningDelegate
+
+        UIWindow.topWindow?.topmostViewController?.present(navigationController, animated: true)
+    }
+
     func openChat(_ model: ChatOpenModel) {
         guard let view = UIApplication.shared.mainTabBarController else {
             return
         }
 
+        PresentedPageDismissal.dismissingPresented(on: view, unless: Self.isPinnedPresentation) { [weak view] in
+            guard let view else {
+                return
+            }
+            Self.showChat(model, in: view)
+        }
+    }
+
+    func openProduct(page: ProductPage) {
+        UIApplication.shared.mainTabBarController?.openProduct(page: page)
+    }
+
+    func presentProduct(page: ProductPage) {
+        UIApplication.shared.mainTabBarController?.presentProduct(page: page)
+    }
+
+    func openPocket() {
+        guard let view = UIApplication.shared.mainTabBarController else {
+            return
+        }
+
+        // A card is a modal over the tabs, so the Pocket would be selected unseen.
+        view.presentedViewController?.dismiss(animated: true)
+        view.select(tab: .wallet)
+    }
+
+    func openScanPanel() {
+        UIApplication.shared.mainTabBarController?.openScanPanel()
+    }
+}
+
+@MainActor
+private extension ModuleNavigator {
+    static func isPinnedPresentation(_ controller: UIViewController) -> Bool {
+        controller is any LocalAuthViewProtocol
+    }
+
+    static func showChat(_ model: ChatOpenModel, in view: MainTabBarViewController) {
         view.select(tab: .chat)
         let tabNavigation = view.view(for: .chat) as? UINavigationController
 
@@ -60,17 +126,5 @@ extension ModuleNavigator: ModuleNavigating {
             return
         }
         tabNavigation.viewControllers = [rootViewController, topViewController]
-    }
-
-    func openProduct(page: ProductPage) {
-        guard let tabBar = UIWindow.keyWindow?.rootViewController as? MainTabBarViewController else {
-            return
-        }
-
-        tabBar.openProduct(page: page)
-    }
-
-    func openScanPanel() {
-        UIApplication.shared.mainTabBarController?.openScanPanel()
     }
 }

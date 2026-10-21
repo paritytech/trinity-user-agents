@@ -78,10 +78,7 @@ final class SettingsWireframe: SettingsWireframeProtocol {
     ) {
         guard let view else { return }
 
-        let controller = ThemeSelectionViewFactory.createView { [weak view] in
-            view?.controller.navigationController?.popViewController(animated: true)
-            onFinish()
-        }
+        let controller = ThemeSelectionViewFactory.createView(onComplete: onFinish)
 
         controller.hidesBottomBarWhenPushed = true
 

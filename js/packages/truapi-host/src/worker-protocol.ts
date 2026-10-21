@@ -114,6 +114,18 @@ export type MainToWorker =
       /** Answer allocation as granted without performing it. */
       granted: boolean;
     }
+  | {
+      kind: "setSubmitPreimagesLocally";
+      requestId: number;
+      /** Keep preimage submissions in the core instead of the Bulletin chain. */
+      local: boolean;
+    }
+  | {
+      kind: "setWithheldResources";
+      requestId: number;
+      /** Resource tags answered as refused, replacing any earlier set. */
+      tags: string[];
+    }
   | { kind: "resetSessionState"; requestId: number }
   | {
       kind: "getPermissionAuthorizationStatus";

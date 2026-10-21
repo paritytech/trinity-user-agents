@@ -8,6 +8,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
+import dagger.multibindings.Multibinds
 import io.paritytech.polkadotapp.common.BuildConfig
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
@@ -21,8 +22,10 @@ import io.paritytech.polkadotapp.feature_products_api.domain.ProductAccountIdPro
 import io.paritytech.polkadotapp.feature_products_api.domain.ProductRequestAccountResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.AccountsProtocol
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.MembersRingLocator
+import io.paritytech.polkadotapp.feature_products_api.domain.browser.DevServerAddresses
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
 import io.paritytech.polkadotapp.feature_products_api.domain.deriveEntropy.DeriveEntropyUseCase
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardFaceOnOpen
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollection
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFaceSource
 import io.paritytech.polkadotapp.feature_products_api.domain.product.ProductContentWarmUp
@@ -30,6 +33,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRunt
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.PreimageSubmitSponsoring
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.StatementStoreSubmissionSponsoring
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.TransactionSponsoring
+import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserFragmentClass
 import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.ProductDeepLinkGate
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_impl.data.config.RemoteConfigFundingDomainProvider
@@ -66,6 +70,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol.r
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.external.ProductExternalExtensionProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.menu.ProductChatMenuInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.menu.RealProductChatMenuInteractor
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductMessageRenderObserver
+import io.paritytech.polkadotapp.feature_products_impl.domain.browser.DevServers
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.RealProductSessionController
 import io.paritytech.polkadotapp.feature_products_impl.domain.deriveEntropy.RealDeriveEntropyUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
@@ -107,15 +113,16 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.OkHttpRemot
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketFaceStreams
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PrefsDebugPocketCards
+import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketCardFaceOnOpen
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketCollection
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketFaceSource
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RemoteFaceSource
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductContentWarmUp
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.ProductBotManagementInteractor
@@ -143,6 +150,7 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.Poc
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.ProductWorkerInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.TopUpResumeInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserFragment
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.RuntimeSelectingSpaHost
 import io.paritytech.polkadotapp.feature_scan_api.domain.ScanContentParser
 import okhttp3.Call
@@ -153,6 +161,9 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 internal interface ProductsModule {
+    @Multibinds
+    fun messageRenderObservers(): Set<ProductMessageRenderObserver>
+
     @Binds
     @Singleton
     fun bindWidgetSerializer(impl: ScaleWidgetSerializer): JsWidgetSerializer
@@ -164,6 +175,9 @@ internal interface ProductsModule {
     @Binds
     @Singleton
     fun bindProductSessionController(impl: RealProductSessionController): ProductSessionController
+
+    @Binds
+    fun bindDevServerAddresses(impl: DevServers): DevServerAddresses
 
     @Binds
     @Singleton
@@ -204,10 +218,13 @@ internal interface ProductsModule {
     fun bindPocketFaceSource(impl: RealPocketFaceSource): PocketFaceSource
 
     @Binds
+    fun bindPocketCardFaceOnOpen(impl: RealPocketCardFaceOnOpen): PocketCardFaceOnOpen
+
+    @Binds
     fun bindPocketFaceStreams(impl: TrUAPIPocketFaceStreams): PocketFaceStreams
 
     @Binds
-    fun bindPocketImageResolver(impl: RealPocketImageResolver): PocketImageResolver
+    fun bindProductImageResolver(impl: RealProductImageResolver): ProductImageResolver
 
     @Binds
     @Singleton
@@ -401,6 +418,10 @@ internal interface ProductsModule {
                 .build()
 
         private const val CHAIN_SOCKET_PING_SECONDS = 30L
+
+        @Provides
+        @SpaBrowserFragmentClass
+        fun provideSpaBrowserFragmentClass(): String = SpaBrowserFragment::class.java.name
 
         /** `OkHttpClient` is a `Call.Factory`; naming the interface keeps the face source testable. */
         @Provides

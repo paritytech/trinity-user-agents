@@ -1,8 +1,14 @@
 import Foundation
 import Products
+import UIKit
 import UIKitExt
 
+@MainActor
 protocol SPAViewProtocol: ControllerBackedProtocol {
+    /// The page's own scroll view, which a screen around it can hang a header
+    /// in so the header rides the page rather than pinning above it.
+    var pageScrollView: UIScrollView { get }
+
     func navigate(to url: URL)
     func navigate(to page: ProductPage)
     func updateTitle(_ title: String)
@@ -21,6 +27,7 @@ protocol SPAPresenterProtocol: AnyObject {
     func didTapClose()
     func didTapRetry()
     func didInterceptNavigation(to url: URL)
+    func didRequestDeeplink(_ url: URL)
     func didUpdateWebViewTitle(_ title: String)
     func hasChatEntry() -> Bool
     func didTapOpenChat()
@@ -46,6 +53,7 @@ protocol SPAInteractorOutputProtocol: AnyObject {
 @MainActor
 protocol SPAWireframeProtocol: AlertPresentable, ErrorPresentable {
     func showProductSPA(from view: ControllerBackedProtocol?, productHost: ProductHost)
+    func openDeeplink(_ url: URL)
     func showMoreActions(
         from view: ControllerBackedProtocol?,
         actions: [SPAMoreAction],

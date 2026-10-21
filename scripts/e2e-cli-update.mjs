@@ -262,7 +262,7 @@ async function main() {
     check(
       "a local build shows how to get the prebuilt release",
       local.stderr.includes(
-        "curl -fsSL https://raw.githubusercontent.com/paritytech/host-rust-core/main/scripts/truapi-host-installer.sh | bash",
+        "curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash",
       ),
       true,
     );

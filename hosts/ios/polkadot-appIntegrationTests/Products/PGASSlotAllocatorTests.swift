@@ -41,7 +41,12 @@ final class PGASSlotAllocatorTests: XCTestCase {
         let originFactory = PGasOriginFactory(
             keyResolver: keyResolver,
             chainRegistry: chainRegistry,
-            storageRequestFactory: storageRequestFactory
+            storageRequestFactory: storageRequestFactory,
+            networkSuffixProvider: ChainNetworkSuffixProvider(
+                chainId: AppConfig.Chains.assethubChain,
+                chainRegistry: chainRegistry,
+                storageRequestFactory: storageRequestFactory
+            )
         )
 
         let facade = ExtrinsicSubmissionMonitorFacade(
@@ -65,6 +70,11 @@ final class PGASSlotAllocatorTests: XCTestCase {
             peopleChainId: KnownChainId.previewNetPeople,
             chainRegistry: chainRegistry,
             storageRequestFactory: storageRequestFactory,
+            networkSuffixProvider: ChainNetworkSuffixProvider(
+                chainId: chain.chainId,
+                chainRegistry: chainRegistry,
+                storageRequestFactory: storageRequestFactory
+            ),
             keyResolver: keyResolver,
             chainTimeProvider: chainTimeProvider
         )

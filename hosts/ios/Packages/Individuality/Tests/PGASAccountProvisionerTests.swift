@@ -1,6 +1,8 @@
 import BigInt
-import Clocks
 import Foundation
+import IssueMonitoring
+import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 import SubstrateSdk
 import Testing
 @testable import Individuality
@@ -12,7 +14,7 @@ struct PGASAccountProvisionerTests {
 
     private static let claimTimeout: Duration = .seconds(120)
 
-    private let clock = TestClock<Duration>()
+    private let clock = ManualClock()
     private let allowance: FakeAllowanceManager
     private let balances = FakeBalanceProvider()
     private let provisioner: PGASAccountProvisioner
@@ -23,6 +25,7 @@ struct PGASAccountProvisionerTests {
         provisioner = PGASAccountProvisioner(
             allowanceManager: allowance,
             balanceProvider: balances,
+            issueDiagnostics: .make(flow: "pgas-allowance", reporter: NoopIssueReporter()),
             claimTimeout: Self.claimTimeout,
             clock: clock
         )
@@ -92,16 +95,10 @@ struct PGASAccountProvisionerTests {
         let attempt = Task { [provisioner] in
             try await provisioner.ensureCovers(account: Self.account, required: Self.required)
         }
-        await settle()
-        await clock.advance(by: Self.claimTimeout)
+        defer { attempt.cancel() }
+        try await withTimeout(.hangGuard) { [clock] in await clock.resumeSleep(for: Self.claimTimeout) }
 
         await #expect(throws: PGASClaimTimeoutError.self) { try await attempt.value }
-    }
-
-    private func settle() async {
-        for _ in 0 ..< 20 {
-            await Task.yield()
-        }
     }
 }
 

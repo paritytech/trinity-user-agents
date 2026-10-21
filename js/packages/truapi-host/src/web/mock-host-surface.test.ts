@@ -62,10 +62,13 @@ const JS_ONLY: Record<string, string> = {
   getIsAuthenticated: "host-api-test-sdk reader over the auth-state log",
   getConnectionStatus: "host-api-test-sdk alias over the chain status",
   getSigningLog: "host-api-test-sdk shape over the confirmation reviews",
+  getProductStorageValue:
+    "host-api-test-sdk reader over `getProductStorage`, decoded as UTF-8",
   setPermissionBehavior:
     "host-api-test-sdk name for the policy Rust sets through MockConfig",
   statements: "loopback statement store, refused on both sides",
   getSubmittedStatements: "loopback statement store, refused on both sides",
+  getStatements: "loopback statement store, refused on both sides",
   getInjectedStatements: "loopback statement store, refused on both sides",
   injectStatement: "loopback statement store, refused on both sides",
   clearStatements: "loopback statement store, refused on both sides",
@@ -101,7 +104,7 @@ function rustControlSurface(): string[] {
   expect(end).toBeGreaterThan(start);
   const block = source.slice(start, end);
 
-  return [...block.matchAll(/\n    pub (?:async )?fn ([a-z0-9_]+)/g)]
+  return [...block.matchAll(/\n[\t ]+pub (?:async )?fn ([a-z0-9_]+)/g)]
     .map((match) => match[1]!)
     .filter((name) => name !== "new" && name !== "with_config");
 }
@@ -205,7 +208,7 @@ describe("mock host surface agreement", () => {
     ].map(([, variant, key]) => ({ variant, key }));
 
     // A regex that matched nothing would make this pass forever.
-    expect(arms.length).toBe(14);
+    expect(arms.length).toBe(16);
     expect(arms.filter(({ variant, key }) => variant !== key)).toEqual([]);
   });
 

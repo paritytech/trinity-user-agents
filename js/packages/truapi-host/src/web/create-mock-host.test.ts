@@ -12,6 +12,7 @@ import {
   mockRuntimeConfig,
 } from "./create-mock-host.js";
 import { createWebWorkerPairingHostRuntime } from "./index.js";
+import { encodeStatement } from "./loopback-statements.js";
 
 const PRODUCT: ProductContext = { productId: "mock.dot", executionKind: "App" };
 
@@ -85,9 +86,9 @@ describe("createMockHost callbacks", () => {
       devicePermissions: "allow-all",
       remotePermissions: "deny-all",
     });
-    expect(await callbacks.permissions.devicePermission(PRODUCT, "Notifications")).toBe(
-      "AllowAlways",
-    );
+    expect(
+      await callbacks.permissions.devicePermission(PRODUCT, "Notifications"),
+    ).toBe("AllowAlways");
     expect(
       await callbacks.permissions.remotePermission(PRODUCT, {
         permission: { tag: "WebRtc" },
@@ -216,9 +217,9 @@ describe("createMockHost callbacks", () => {
       devicePermissions: "deny-all",
       remotePermissions: "allow-all",
     });
-    expect(await callbacks.permissions.devicePermission(PRODUCT, "Notifications")).toBe(
-      "Deny",
-    );
+    expect(
+      await callbacks.permissions.devicePermission(PRODUCT, "Notifications"),
+    ).toBe("Deny");
     expect(
       await callbacks.permissions.remotePermission(PRODUCT, {
         permission: { tag: "WebRtc" },
@@ -355,7 +356,8 @@ describe("createMockHost control surface", () => {
 
   it("answers permissions per capability, overriding the policy", async () => {
     const host = createMockHost({ devicePermissions: "deny-all" });
-    const ask = () => host.callbacks.permissions.devicePermission(PRODUCT, "Camera");
+    const ask = () =>
+      host.callbacks.permissions.devicePermission(PRODUCT, "Camera");
 
     expect(await ask()).toBe("Deny");
     host.grantPermission("Camera");
@@ -373,13 +375,13 @@ describe("createMockHost control surface", () => {
   it("denies whatever was not explicitly granted when enforcing", async () => {
     const host = createMockHost();
     host.setEnforcePermissions(true);
-    expect(await host.callbacks.permissions.devicePermission(PRODUCT, "Camera")).toBe(
-      "Deny",
-    );
+    expect(
+      await host.callbacks.permissions.devicePermission(PRODUCT, "Camera"),
+    ).toBe("Deny");
     host.grantPermission("Camera");
-    expect(await host.callbacks.permissions.devicePermission(PRODUCT, "Camera")).toBe(
-      "AllowAlways",
-    );
+    expect(
+      await host.callbacks.permissions.devicePermission(PRODUCT, "Camera"),
+    ).toBe("AllowAlways");
   });
 
   it("records the surface, key and answer of every permission prompt", async () => {
@@ -387,7 +389,16 @@ describe("createMockHost control surface", () => {
     host.revokePermission("Camera");
     await host.callbacks.permissions.devicePermission(PRODUCT, "Camera");
     expect(host.getPermissionLog()).toEqual([
-      { tag: "Camera", value: "Camera", approved: false, kind: "device" },
+      {
+        tag: "Camera",
+        value: "Camera",
+        approved: false,
+        kind: "device",
+        // The lifetime, not just the boolean: a suite asserting a denial was
+        // durable rather than one-shot has nothing else to read.
+        decision: "Deny",
+        timestamp: expect.any(Number),
+      },
     ]);
   });
 
@@ -398,7 +409,7 @@ describe("createMockHost control surface", () => {
     // deliberate limit.
     expect(
       () => (host.payment as unknown as { setBalance: unknown }).setBalance,
-    ).toThrow(/no host implements them/);
+    ).toThrow(/bridge cannot carry the payment platforms/);
     expect(
       () => (host.coinPayment as unknown as { transfer: unknown }).transfer,
     ).toThrow(/no host implements them/);
@@ -425,9 +436,9 @@ describe("createMockHost control surface", () => {
     expect(host.getGrantedPermissions()).toEqual([]);
     expect(host.getPreimages()).toEqual([]);
     expect(host.getTheme()).toBe("Dark");
-    expect(await host.callbacks.permissions.devicePermission(PRODUCT, "Camera")).toBe(
-      "AllowAlways",
-    );
+    expect(
+      await host.callbacks.permissions.devicePermission(PRODUCT, "Camera"),
+    ).toBe("AllowAlways");
   });
 });
 
@@ -469,9 +480,9 @@ describe("createMockHost TestHostAPI parity", () => {
   it("setPermissionBehavior switches the fallback for both prompts", async () => {
     const host = createMockHost();
     host.setPermissionBehavior("deny-all");
-    expect(await host.callbacks.permissions.devicePermission(PRODUCT, "Camera")).toBe(
-      "Deny",
-    );
+    expect(
+      await host.callbacks.permissions.devicePermission(PRODUCT, "Camera"),
+    ).toBe("Deny");
     expect(
       await host.callbacks.permissions.remotePermission(PRODUCT, {
         permission: { tag: "ChainSubmit" },
@@ -479,9 +490,9 @@ describe("createMockHost TestHostAPI parity", () => {
     ).toBe("Deny");
     // An explicit grant still wins over the policy.
     host.grantPermission("Camera");
-    expect(await host.callbacks.permissions.devicePermission(PRODUCT, "Camera")).toBe(
-      "AllowAlways",
-    );
+    expect(
+      await host.callbacks.permissions.devicePermission(PRODUCT, "Camera"),
+    ).toBe("AllowAlways");
   });
 
   it("getConnectionStatus and dispose track and release state", async () => {
@@ -621,7 +632,9 @@ describe("createMockHost TestHostAPI parity", () => {
     expect(
       await Promise.race([
         ended.then((result) => (result.done ? "ended" : "yielded")),
-        new Promise<"parked">((resolve) => setTimeout(() => resolve("parked"), 50)),
+        new Promise<"parked">((resolve) =>
+          setTimeout(() => resolve("parked"), 50),
+        ),
       ]),
     ).toBe("ended");
   });
@@ -715,9 +728,9 @@ describe("createMockHost TestHostAPI parity", () => {
     host.reset();
 
     expect(host.getOpenOperations()).toEqual([]);
-    expect(await host.callbacks.permissions.devicePermission(PRODUCT, "Camera")).toBe(
-      "AllowAlways",
-    );
+    expect(
+      await host.callbacks.permissions.devicePermission(PRODUCT, "Camera"),
+    ).toBe("AllowAlways");
   });
 
   it("setTheme reaches a subscription that has not been read yet", async () => {
@@ -973,7 +986,11 @@ describe("statement injection through the chain connection", () => {
     });
     await reader.next();
 
-    expect(host.injectStatement(new Uint8Array([1, 2, 3]))).toBe(1);
+    // The entry the store now holds, which is what a suite asserts on; the
+    // delivery itself is the envelope compared below.
+    const injected = host.injectStatement(new Uint8Array([1, 2, 3]));
+    expect(injected.fromProduct).toBe(false);
+    expect(injected.timestamp).toBeGreaterThan(0);
 
     // Compared whole: the core reads `result.data.statements`, and asserting
     // the fields one by one would not catch an envelope carrying extra keys.
@@ -990,11 +1007,24 @@ describe("statement injection through the chain connection", () => {
     });
   });
 
-  it("reaches nothing before the product subscribes", async () => {
-    const { host } = await connected();
-    // No subscribe reply seen, so there is no id to address: reporting a
-    // delivery here would let a suite think the product got something.
-    expect(host.injectStatement("0xab")).toBe(0);
+  it("retains a statement injected before the product subscribes", async () => {
+    const { host, conn } = await connected();
+    const reader = conn.responses()[Symbol.asyncIterator]();
+    // No subscribe reply seen yet, so there is no id to address and nothing can
+    // be delivered. The statement is still retained, so a suite that injected
+    // early has something to read back rather than a silent loss.
+    host.injectStatement("0xab");
+    expect(host.getStatements().map((entry) => entry.fromProduct)).toEqual([
+      false,
+    ]);
+
+    // Nothing was addressed to the product: a delivery here would let a suite
+    // think it received something.
+    const raced = await Promise.race([
+      reader.next().then(() => "delivered"),
+      Promise.resolve("nothing"),
+    ]);
+    expect(raced).toBe("nothing");
   });
 
   it("records what was injected and clears it", async () => {
@@ -1030,7 +1060,12 @@ describe("reading back submitted statements", () => {
         params: [hex],
       });
 
-    conn.send(submit("0xaabb", 1));
+    // Real statements, so the entries decode and the assertion below can tell
+    // them apart by topic rather than only by how many there are.
+    const first = encodeStatement({ topics: [`0x${"11".repeat(32)}`] });
+    const second = encodeStatement({ topics: [`0x${"22".repeat(32)}`] });
+
+    conn.send(submit(first, 1));
     // Other chain traffic must not be mistaken for a submission.
     conn.send(
       JSON.stringify({
@@ -1050,13 +1085,54 @@ describe("reading back submitted statements", () => {
         params: ["z9VCGBlbLFl58Rp4"],
       }),
     );
-    conn.send(submit("0xccdd", 4));
+    conn.send(submit(second, 4));
 
-    expect(host.getSubmittedStatements()).toEqual(["0xaabb", "0xccdd"]);
+    // Two, not three: the unsubscribe carries a STRING first param and is what
+    // a filter that forgot to check the method would report as a submission.
+    expect(host.getSubmittedStatements().map((entry) => entry.topics)).toEqual([
+      [`0x${"11".repeat(32)}`],
+      [`0x${"22".repeat(32)}`],
+    ]);
+    expect(
+      host.getSubmittedStatements().every((entry) => entry.fromProduct),
+    ).toBe(true);
   });
 
   it("is empty when the product has submitted nothing", async () => {
     const host = createMockHost();
     expect(host.getSubmittedStatements()).toEqual([]);
+  });
+
+  it("drops what the chain path retained when the statements are cleared", async () => {
+    // `getStatements` and `getSubmittedStatements` read the chain path's own
+    // list whenever the loopback store is off. A clear that leaves it carries
+    // one case's statements into the next, which reads as a product that
+    // submitted something it never did.
+    const original = globalThis.WebSocket;
+    (globalThis as { WebSocket: unknown }).WebSocket = class {
+      constructor(public url: string) {}
+      addEventListener() {}
+      send() {}
+      close() {}
+    };
+    const host = createMockHost({
+      chainProxies: [{ rpcUrl: "ws://chain.test" }],
+    });
+    const conn = await host.callbacks.chain.connect(new Uint8Array(32));
+    (globalThis as { WebSocket: unknown }).WebSocket = original;
+
+    conn.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: "truapi:1",
+        method: "statement_submit",
+        params: [encodeStatement({ topics: [`0x${"33".repeat(32)}`] })],
+      }),
+    );
+    expect(host.getSubmittedStatements()).toHaveLength(1);
+
+    host.clearStatements();
+    expect(host.getSubmittedStatements()).toEqual([]);
+    expect(host.getStatements()).toEqual([]);
   });
 });

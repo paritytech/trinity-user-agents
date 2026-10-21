@@ -64,6 +64,14 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
         rootView.viewModel.onViewCollectibles = { [weak presenter] in
             presenter?.showCollectibles()
         }
+
+        rootView.viewModel.onOpenPocketCard = { [weak presenter] card in
+            presenter?.showPocketCard(card)
+        }
+
+        rootView.viewModel.onRemovePocketCard = { [weak presenter] card in
+            presenter?.removePocketCard(card)
+        }
     }
 
     private func setShareButton() {
@@ -101,6 +109,48 @@ extension WalletMainViewController: WalletMainViewProtocol {
         rootView.viewModel.isCollectiblesAvailable = isCollectiblesAvailable
     }
 
+    func didReceive(pocketCards: [PocketCardViewModel]) {
+        rootView.viewModel.pocketCards = pocketCards
+    }
+
+    /// Nil once the card is gone or the Wallet is not what closing the card
+    /// returns to.
+    func frame(of key: PocketCardKey) -> CGRect? {
+        guard
+            UIApplication.shared.mainTabBarController?.container.selectedController === navigationController,
+            navigationController?.topViewController === self,
+            rootView.viewModel.pocketCards.contains(where: { $0.key == key })
+        else { return nil }
+
+        return rootView.viewModel.pocketCardFrames[key]
+    }
+
+    func setOpenCard(_ key: PocketCardKey?) {
+        rootView.viewModel.openPocketCard = key
+    }
+
+    func moveOpenCard(by offset: CGSize, clearingPocket: Bool, animated: Bool) {
+        let viewModel = rootView.viewModel
+        withTransaction(Transaction(animation: animated ? PocketCardFlightTiming.animation : nil)) {
+            viewModel.openPocketCardOffset = offset
+            viewModel.isPocketCleared = clearingPocket
+        }
+
+        // The navigation bar itself must stay opaque: at no alpha it leaves the safe area and the Pocket jumps up.
+        let chromeAlpha: CGFloat = clearingPocket ? 0 : 1
+        let fadeChrome = { [weak self] in
+            self?.titleView?.alpha = chromeAlpha
+            UIApplication.shared.mainTabBarController?.setChromeAlpha(chromeAlpha)
+        }
+        if animated {
+            let animator = PocketCardFlightTiming.makeAnimator()
+            animator.addAnimations(fadeChrome)
+            animator.startAnimation()
+        } else {
+            fadeChrome()
+        }
+    }
+
     @objc
     func didTapShare() {
         identityDetailsScene.share()
@@ -118,7 +168,7 @@ extension WalletMainViewController: WalletMainViewProtocol {
         rootView.viewModel.expandedSection = .assetDetails
         setOverlayCloseButton()
         resetRightButton()
-        setTitleCenter(String(localized: .walletMainBalanceCard(PaymentAssetBranding.shared.current.symbol)))
+        setTitleCenter(PaymentAssetBranding.shared.current.symbol)
     }
 
     private func showIdentityDetailsOverlay() {
@@ -149,8 +199,11 @@ extension WalletMainViewController: WalletMainViewProtocol {
             navigationItem.title = title
             return
         }
-        titleLabel.text = title
         titleLabel.typography = .titleLarge
+        titleLabel.attributedText = title.map {
+            CashLogo.styled($0, symbol: PaymentAssetBranding.shared.current.symbol, font: UIFont.app(.titleLarge))
+        }
+        titleLabel.accessibilityLabel = title
         titleLabel.sizeToFit()
         navigationItem.titleView = titleLabel
     }

@@ -99,6 +99,12 @@ export interface TestHostPageOptions {
    */
   allowances?: "granted" | "chain";
   /**
+   * Resource tags answered as refused, whatever `allowances` would otherwise
+   * say. Applied before the product loads, because a product asks for its
+   * resources on connect and a later call would land after that.
+   */
+  withheldResources?: string[];
+  /**
    * Core log level (`off`/`error`/`warn`/`info`/`debug`/`trace`).
    *
    * The core logs why a call failed before mapping it to a protocol answer,
@@ -261,6 +267,9 @@ export async function startTestHost(
     if ((options.allowances ?? "granted") === "granted") {
       await workerRuntime.setGrantAllowancesUnchecked?.(true);
     }
+    if (options.withheldResources?.length) {
+      await workerRuntime.setWithheldResources?.(options.withheldResources);
+    }
     runtime = workerRuntime;
   } else {
     const glue = (await import(/* @vite-ignore */ wasmUrl)) as {
@@ -273,9 +282,8 @@ export async function startTestHost(
     };
     await glue.default();
     if (options.logLevel) glue.setLogLevel?.(options.logLevel);
-    const { createWasmRawCallbacks } = await import(
-      "../generated/host-callbacks-adapter.js"
-    );
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
     directRuntime = new glue.WasmSigningHostRuntime(
       {
         // A raw bridge callback rather than a generated host callback, so it
@@ -292,6 +300,9 @@ export async function startTestHost(
     if ((options.allowances ?? "granted") === "granted") {
       directRuntime.setGrantAllowancesUnchecked?.(true);
     }
+    if (options.withheldResources?.length) {
+      directRuntime.setWithheldResources?.(options.withheldResources);
+    }
     const direct = directRuntime;
     runtime = {
       activateLocalSession(secret, liteUsername) {
@@ -307,7 +318,9 @@ export async function startTestHost(
     };
   }
 
-  let roster: DevAccount[] = (options.accounts ?? ["alice"]).map(resolveAccount);
+  let roster: DevAccount[] = (options.accounts ?? ["alice"]).map(
+    resolveAccount,
+  );
   let active: DevAccount | undefined;
 
   const activate = async (account: DevAccount) => {
@@ -341,7 +354,9 @@ export async function startTestHost(
     onPort(port) {
       void (async () => {
         if (workerRuntime) {
-          const provider = await workerRuntime.createProvider({ productId: hostProduct });
+          const provider = await workerRuntime.createProvider({
+            productId: hostProduct,
+          });
           const unsubscribe = provider.subscribe((frame) => {
             port.postMessage(frame);
           });
@@ -374,9 +389,8 @@ export async function startTestHost(
           // than inside the provider.
           publishChatAction = core.publishChatAction
             ? async (action) => {
-                const { HostChatActionSubscribeItem } = await import(
-                  "@parity/truapi"
-                );
+                const { HostChatActionSubscribeItem } =
+                  await import("@parity/truapi");
                 core.publishChatAction!(
                   HostChatActionSubscribeItem.enc(action as never),
                 );
@@ -481,6 +495,7 @@ interface DirectSigningRuntime {
     productId: string,
     timeoutMs?: number,
   ): Promise<Uint8Array | undefined>;
+  setWithheldResources?(tags: string[]): void;
   activateLocalSession(secret: Uint8Array): Promise<void>;
   activateLocalSessionWithIdentity?(
     secret: Uint8Array,
@@ -495,7 +510,10 @@ interface DirectSigningRuntime {
 
 /** The worker-backed signing runtime: hands back a wire provider. */
 interface WorkerSigningRuntime {
-  activateLocalSession(secret: Uint8Array, liteUsername?: string): Promise<void>;
+  activateLocalSession(
+    secret: Uint8Array,
+    liteUsername?: string,
+  ): Promise<void>;
   disconnectSession(): Promise<void>;
   setLogLevel?(level: string): void;
   setGrantAllowancesUnchecked?(granted: boolean): Promise<void>;
@@ -503,6 +521,7 @@ interface WorkerSigningRuntime {
     productId: string,
     timeoutMs?: number,
   ): Promise<Uint8Array | undefined>;
+  setWithheldResources?(tags: string[]): Promise<void>;
   createProvider(product: { productId: string }): Promise<{
     postMessage(frame: Uint8Array): void;
     subscribe(listener: (frame: Uint8Array) => void): () => void;

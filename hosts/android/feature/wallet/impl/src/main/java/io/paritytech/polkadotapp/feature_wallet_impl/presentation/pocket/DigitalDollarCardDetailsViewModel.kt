@@ -15,13 +15,14 @@ import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmo
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.DigitalDollarCardDetailsInteractor
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.CoinageHoldingsInfo
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.mapper.clearing
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.mapper.toCompositionUiModel
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.mapper.toUiModels
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageBreakdownFactory
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.clearing
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.BalanceRestoreUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageBalanceBreakdownUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.DigitalDollarCardDetailsUiState
+import kotlinx.collections.immutable.toImmutableList
+import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -38,33 +39,41 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
     private val tokenAmountMapper: TokenAmountMapper
 ) : BaseViewModel() {
     private val fundInProgress = MutableStateFlow(false)
+    private val fundingSheetInProgress = MutableStateFlow(false)
 
     /**
-     * Owned here rather than remembered in the card, so an expanded key or details list outlives the
-     * holdings updating underneath it.
+     * Owned here rather than remembered in the card, so the spread grid outlives the holdings updating
+     * underneath it.
      */
     private val detailsVisible = MutableStateFlow(false)
-    private val keyVisible = MutableStateFlow(false)
+
+    /** The coin picked out of the grid by a tap, if any. */
+    private val focusedCoin = MutableStateFlow<String?>(null)
+
+    private val coinsState = combine(detailsVisible, focusedCoin) { expanded, focused ->
+        if (expanded) focused else null
+    }
 
     private val holdingsFlow: Flow<Result<CoinageHoldingsInfo>> = interactor.observeHoldings()
-
-    private val cardToggles = combine(detailsVisible, keyVisible, ::Pair)
 
     val coinageState: StateFlow<LoadingState<CoinageUiState>> = combine(
         holdingsFlow,
         fundInProgress,
         interactor.observeActionsEnabled(),
-        cardToggles
-    ) { holdingsResult, inProgress, actionsEnabled, toggles ->
+        detailsVisible,
+        coinsState
+    ) { holdingsResult, inProgress, actionsEnabled, expanded, focused ->
+        val asset = interactor.asset()
+
         holdingsResult.map { holdings ->
             CoinageUiState(
-                tokensState = holdings.toTokensState(interactor.asset()),
+                tokensState = holdings.toTokensState(asset),
                 autoFundAvailable = interactor.autoFundAvailable(),
                 fundInProgress = inProgress,
                 actionsEnabled = actionsEnabled,
                 shareLogsEnabled = BuildConfig.TESTNET_FUND_ENABLED,
-                detailsVisible = toggles.first,
-                keyVisible = toggles.second
+                detailsVisible = expanded,
+                focusedCoin = focused
             )
         }
     }
@@ -86,15 +95,12 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
         )
 
     fun onGetCashClick() = launchUnit {
+        if (fundingSheetInProgress.value) return@launchUnit
+        fundingSheetInProgress.enable()
         interactor.getFundingConfig()
             .onSuccess { router.openSpaSheet(it.onrampUrl) }
             .onFailure { showPresentationError(GetCashUnavailablePresentationError(it)) }
-    }
-
-    fun onWithdrawClick() = launchUnit {
-        interactor.getFundingConfig()
-            .onSuccess { router.openSpaSheet(it.offrampUrl) }
-            .onFailure { showPresentationError(WithdrawUnavailablePresentationError(it)) }
+        fundingSheetInProgress.disable()
     }
 
     fun onSendClick() {
@@ -117,12 +123,30 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
         interactor.markBackupCompleted()
     }
 
-    fun onDetailsToggled() {
-        detailsVisible.value = !detailsVisible.value
+    /**
+     * Collapsed, any tap on the coins unfurls them: they are too small and too close to pick one out of.
+     * Spread out, a coin picks it, and the picked coin or empty ground puts it back. Nothing among the coins
+     * closes the grid — a finger aimed at a coin must not collapse it.
+     */
+    fun onCoinTapped(id: String?) {
+        if (!detailsVisible.value) {
+            detailsVisible.value = true
+            return
+        }
+
+        focusedCoin.value = id.takeIf { it != focusedCoin.value }
     }
 
-    fun onKeyToggled() {
-        keyVisible.value = !keyVisible.value
+    fun onCoinsFlickedDown() {
+        detailsVisible.value = true
+    }
+
+    /** The grid closes from the card's own heading, where a finger cannot miss a coin and close it instead. */
+    fun onHeadingClicked() {
+        if (!detailsVisible.value) return
+
+        focusedCoin.value = null
+        detailsVisible.value = false
     }
 
     fun onShareLogsClick() = launchUnit {
@@ -134,8 +158,10 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
         totalBalance = tokenAmountMapper.mapFrom(asset.withAmount(balance.total)),
         readyBalance = tokenAmountMapper.mapFrom(asset.withAmount(balance.availablePrivate)),
         clearingBalance = tokenAmountMapper.mapFrom(asset.withAmount(balance.clearing)),
-        composition = balance.toCompositionUiModel(),
-        holdings = holdings.toUiModels(asset, tokenAmountMapper),
+        coins = CoinageBreakdownFactory.coins(holdings).toImmutableList(),
+        traces = CoinageBreakdownFactory.traces(holdings) { value ->
+            tokenAmountMapper.mapFrom(asset.withAmount(value))
+        }.toImmutableMap(),
         breakdown = CoinageBalanceBreakdownUiModel(
             availablePrivate = tokenAmountMapper.mapFrom(asset.withAmount(balance.availablePrivate)),
             gainingPrivacy = tokenAmountMapper.mapFrom(asset.withAmount(balance.gainingPrivacy.amount)),

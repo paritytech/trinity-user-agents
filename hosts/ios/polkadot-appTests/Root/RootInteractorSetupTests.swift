@@ -27,7 +27,7 @@ struct RootInteractorSetupTests {
         let spy = RootSetupOutputSpy()
         let chainRegistry = MockChainRegistry()
         chainRegistry.chainsOnSubscribe = [
-            makeChain(id: AppConfig.Chains.usernameChain),
+            makeChain(id: AppConfig.Chains.peopleChain),
             makeChain(id: AppConfig.Chains.bulletInChain),
             makeChain(id: AppConfig.Chains.assethubChain)
         ]
@@ -53,7 +53,7 @@ struct RootInteractorSetupTests {
         let spy = RootSetupOutputSpy()
         let chainRegistry = MockChainRegistry()
         chainRegistry.chainsOnSubscribe = [
-            makeChain(id: AppConfig.Chains.usernameChain),
+            makeChain(id: AppConfig.Chains.peopleChain),
             makeChain(id: AppConfig.Chains.bulletInChain),
             makeChain(id: AppConfig.Chains.assethubChain)
         ]
@@ -144,7 +144,7 @@ struct RootInteractorSetupTests {
         let spy = RootSetupOutputSpy()
         let chainRegistry = MockChainRegistry()
         chainRegistry.chainsOnSubscribe = [
-            makeChain(id: AppConfig.Chains.usernameChain),
+            makeChain(id: AppConfig.Chains.peopleChain),
             makeChain(id: AppConfig.Chains.bulletInChain),
             makeChain(id: AppConfig.Chains.assethubChain)
         ]
@@ -203,7 +203,7 @@ struct RootInteractorSetupTests {
         let spy = RootSetupOutputSpy()
         let chainRegistry = MockChainRegistry()
         chainRegistry.chainsOnSubscribe = [
-            makeChain(id: AppConfig.Chains.usernameChain),
+            makeChain(id: AppConfig.Chains.peopleChain),
             makeChain(id: AppConfig.Chains.bulletInChain),
             makeChain(id: AppConfig.Chains.assethubChain)
         ]
@@ -260,7 +260,7 @@ struct RootInteractorSetupTests {
         let spy = RootSetupOutputSpy()
         let chainRegistry = MockChainRegistry()
         chainRegistry.chainsOnSubscribe = [
-            makeChain(id: AppConfig.Chains.usernameChain),
+            makeChain(id: AppConfig.Chains.peopleChain),
             makeChain(id: AppConfig.Chains.bulletInChain),
             makeChain(id: AppConfig.Chains.assethubChain)
         ]
@@ -297,7 +297,7 @@ struct RootInteractorSetupTests {
         let spy = RootSetupOutputSpy()
         let chainRegistry = MockChainRegistry()
         chainRegistry.chainsOnSubscribe = [
-            makeChain(id: AppConfig.Chains.usernameChain),
+            makeChain(id: AppConfig.Chains.peopleChain),
             makeChain(id: AppConfig.Chains.bulletInChain),
             makeChain(id: AppConfig.Chains.assethubChain)
         ]
@@ -387,7 +387,7 @@ struct RootInteractorSetupTests {
         let spy = RootSetupOutputSpy()
         let chainRegistry = MockChainRegistry()
         chainRegistry.chainsOnSubscribe = [
-            makeChain(id: AppConfig.Chains.usernameChain),
+            makeChain(id: AppConfig.Chains.peopleChain),
             makeChain(id: AppConfig.Chains.bulletInChain),
             makeChain(id: AppConfig.Chains.assethubChain)
         ]
@@ -421,7 +421,6 @@ private extension RootInteractorSetupTests {
             RemoteAppConfig(
                 identityBackendUrl: URL(string: "https://example.com"),
                 ipfsGatewayUrl: URL(string: "https://ipfs.example.com"),
-                gameDashboardUrl: URL(string: "https://game.example.com"),
                 dotNsResolver: "resolver.example.com",
                 dotNsNameRegistry: nil,
                 coinageInstanceId: 1,

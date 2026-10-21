@@ -1,7 +1,8 @@
-import Clocks
 import DurableTransactions
 import DurableTransactionsTestSupport
 import Foundation
+import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 import Testing
 @testable import Coinage
 
@@ -11,7 +12,7 @@ struct CoinageInstallationRegistrarTests {
     private static let expectedRegistrationTime: Duration = .seconds(30)
     private static let target = InstallationRegistrationTarget(contract: TestContracts.contract, installation: .test)
 
-    private let clock = TestClock<Duration>()
+    private let clock = ManualClock()
     private let engine = FakeRegistrationEngine()
     private let submitter: FakeRegistrationSubmitter
     private let config = StubDataStoreConfig()
@@ -41,7 +42,7 @@ struct CoinageInstallationRegistrarTests {
         engine.set([.registration(Self.target, status: .finalizedSuccess)], group: Self.target.registrationGroup)
 
         registrar.start()
-        try await settle(until: { await (try? status()) == .completed })
+        try await reaches(.completed)
 
         #expect(submitter.attempts.isEmpty)
     }
@@ -49,8 +50,8 @@ struct CoinageInstallationRegistrarTests {
     @Test("nothing registered yet submits exactly one attempt for this installation")
     func firstAttempt() async throws {
         registrar.start()
-        try await settle(until: { submitter.attempts.count == 1 })
-        await settle()
+        try await attempts(1)
+        try await subscriptions(2)
 
         #expect(submitter.attempts == [Self.target])
     }
@@ -61,9 +62,10 @@ struct CoinageInstallationRegistrarTests {
         engine.set([live], group: Self.target.registrationGroup)
 
         registrar.start()
-        await settle()
+        try await subscriptions(1)
         engine.set([live.changing(status: .pendingSuccess)], group: Self.target.registrationGroup)
-        await settle()
+        engine.set([live.changing(status: .finalizedSuccess)], group: Self.target.registrationGroup)
+        try await reaches(.completed)
 
         #expect(submitter.attempts.isEmpty)
     }
@@ -73,13 +75,13 @@ struct CoinageInstallationRegistrarTests {
         submitter.holdAttempts()
 
         registrar.start()
-        try await settle(until: { submitter.attempts.count == 1 })
-        engine.reEmit(group: Self.target.registrationGroup)
-        await settle()
-        engine.reEmit(group: Self.target.registrationGroup)
-        await settle()
+        try await attempts(1)
         submitter.openGate()
-        await settle()
+        try await subscriptions(2)
+        engine.reEmit(group: Self.target.registrationGroup)
+        engine.reEmit(group: Self.target.registrationGroup)
+        finalizeCurrentAttempts()
+        try await reaches(.completed)
 
         #expect(submitter.attempts.count == 1)
     }
@@ -90,10 +92,11 @@ struct CoinageInstallationRegistrarTests {
 
         registrar.start()
         registrar.start()
-        try await settle(until: { submitter.attempts.count == 1 })
-        await settle()
+        try await attempts(1)
         submitter.openGate()
-        await settle()
+        try await subscriptions(2)
+        finalizeCurrentAttempts()
+        try await reaches(.completed)
 
         #expect(submitter.attempts.count == 1)
     }
@@ -106,7 +109,8 @@ struct CoinageInstallationRegistrarTests {
         )
 
         registrar.start()
-        try await settle(until: { submitter.attempts.count == 1 })
+        try await attempts(1)
+        try await subscriptions(2)
 
         #expect(submitter.attempts.count == 1)
     }
@@ -114,50 +118,48 @@ struct CoinageInstallationRegistrarTests {
     @Test("an attempt that fails on chain is followed by exactly one more after a backoff")
     func failureOnChain() async throws {
         registrar.start()
-        try await settle(until: { submitter.attempts.count == 1 })
+        try await attempts(1)
+        try await subscriptions(2)
 
-        engine.set(
-            engine.current(Self.target.registrationGroup).map { $0.changing(status: .failure) },
-            group: Self.target.registrationGroup
-        )
-        await settle()
+        failCurrentAttempts()
+        try await sleeping(Self.initialBackoff)
         #expect(submitter.attempts.count == 1)
 
-        await clock.advance(by: Self.initialBackoff + .milliseconds(1))
-        try await settle(until: { submitter.attempts.count == 2 })
-
-        await clock.advance(by: Self.maxBackoff)
-        await settle()
+        try await resume(Self.initialBackoff)
+        try await attempts(2)
+        try await subscriptions(3)
         #expect(submitter.attempts.count == 2)
     }
 
     @Test("the backoff doubles after each failed attempt")
     func backoffDoubles() async throws {
         registrar.start()
-        try await settle(until: { submitter.attempts.count == 1 })
+        try await attempts(1)
+        try await subscriptions(2)
 
         failCurrentAttempts()
-        await clock.advance(by: Self.initialBackoff + .milliseconds(1))
-        try await settle(until: { submitter.attempts.count == 2 })
+        try await resume(Self.initialBackoff)
+        try await attempts(2)
+        try await subscriptions(3)
 
         failCurrentAttempts()
-        await clock.advance(by: Self.initialBackoff + .milliseconds(1))
-        await settle()
+        try await sleeping(Self.initialBackoff * 2)
         #expect(submitter.attempts.count == 2)
 
-        await clock.advance(by: Self.initialBackoff)
-        try await settle(until: { submitter.attempts.count == 3 })
+        try await resume(Self.initialBackoff * 2)
+        try await attempts(3)
     }
 
     @Test("each attempt runs under its own background assertion, not the whole run")
     func assertionPerAttempt() async throws {
         registrar.start()
-        try await settle(until: { submitter.attempts.count == 1 })
+        try await attempts(1)
         #expect(backgroundExecutor.executions == 1)
 
+        try await subscriptions(2)
         failCurrentAttempts()
-        await clock.advance(by: Self.initialBackoff + .milliseconds(1))
-        try await settle(until: { submitter.attempts.count == 2 })
+        try await resume(Self.initialBackoff)
+        try await attempts(2)
 
         #expect(backgroundExecutor.executions == 2)
     }
@@ -167,20 +169,21 @@ struct CoinageInstallationRegistrarTests {
         backgroundExecutor.expireNextExecutions(1)
 
         registrar.start()
-        try await settle(until: { backgroundExecutor.executions == 1 })
+        try await sleeping(Self.initialBackoff)
+        #expect(backgroundExecutor.executions == 1)
         #expect(submitter.attempts.isEmpty)
 
-        await clock.advance(by: Self.initialBackoff + .milliseconds(1))
-        try await settle(until: { submitter.attempts.count == 1 })
+        try await resume(Self.initialBackoff)
+        try await attempts(1)
+        try await subscriptions(3)
 
         // Two attempts have been made, so the next wait is the doubled backoff, not the initial one.
         failCurrentAttempts()
-        await clock.advance(by: Self.initialBackoff + .milliseconds(1))
-        await settle()
+        try await sleeping(Self.initialBackoff * 2)
         #expect(submitter.attempts.count == 1)
 
-        await clock.advance(by: Self.initialBackoff)
-        try await settle(until: { submitter.attempts.count == 2 })
+        try await resume(Self.initialBackoff * 2)
+        try await attempts(2)
     }
 
     @Test("an attempt that could not be submitted is retried")
@@ -188,10 +191,10 @@ struct CoinageInstallationRegistrarTests {
         submitter.failNextAttempts(1)
 
         registrar.start()
-        try await settle(until: { submitter.attempts.count == 1 })
+        try await attempts(1)
 
-        await clock.advance(by: Self.initialBackoff + .milliseconds(1))
-        try await settle(until: { submitter.attempts.count == 2 })
+        try await resume(Self.initialBackoff)
+        try await attempts(2)
     }
 
     @Test("a changed contract starts a registration of its own")
@@ -200,7 +203,7 @@ struct CoinageInstallationRegistrarTests {
         config.contract = TestContracts.otherContract
 
         registrar.start()
-        try await settle(until: { submitter.attempts.count == 1 })
+        try await attempts(1)
 
         #expect(submitter.attempts == [
             InstallationRegistrationTarget(contract: TestContracts.otherContract, installation: .test)
@@ -213,12 +216,12 @@ struct CoinageInstallationRegistrarTests {
         config.contract = nil
 
         registrar.start()
-        await settle()
+        try await sleeping(Self.initialBackoff)
         #expect(submitter.attempts.isEmpty)
 
         config.contract = TestContracts.contract
-        await clock.advance(by: Self.initialBackoff + .milliseconds(1))
-        try await settle(until: { submitter.attempts.count == 1 })
+        try await resume(Self.initialBackoff)
+        try await attempts(1)
 
         #expect(submitter.attempts == [Self.target])
     }
@@ -228,23 +231,19 @@ struct CoinageInstallationRegistrarTests {
         config.contract = nil
 
         registrar.start()
-        await settle()
-        await clock.advance(by: Self.expectedRegistrationTime + .milliseconds(1))
-        try await settle(until: { await (try? status()) == .delayed })
+        try await resume(Self.expectedRegistrationTime)
+        try await reaches(.delayed)
     }
 
     @Test("a registration not final within the expected time reads as delayed")
     func delayed() async throws {
         engine.set([.registration(Self.target, status: .pending)], group: Self.target.registrationGroup)
         registrar.start()
-        await settle()
-
-        await clock.advance(by: Self.expectedRegistrationTime - .milliseconds(1))
-        await settle()
+        try await sleeping(Self.expectedRegistrationTime)
         #expect(try await status() == .registering)
 
-        await clock.advance(by: .milliseconds(2))
-        try await settle(until: { await (try? status()) == .delayed })
+        try await resume(Self.expectedRegistrationTime)
+        try await reaches(.delayed)
     }
 
     @Test("finality ends the run and clears the warning")
@@ -252,18 +251,17 @@ struct CoinageInstallationRegistrarTests {
         let live = DurableTxEntry.registration(Self.target, status: .pending)
         engine.set([live], group: Self.target.registrationGroup)
         registrar.start()
-        await settle()
-        await clock.advance(by: Self.expectedRegistrationTime + .milliseconds(1))
-        try await settle(until: { await (try? status()) == .delayed })
+        try await resume(Self.expectedRegistrationTime)
+        try await reaches(.delayed)
 
         engine.set([live.changing(status: .finalizedSuccess)], group: Self.target.registrationGroup)
-        try await settle(until: { await (try? status()) == .completed })
+        try await reaches(.completed)
     }
 
     @Test("recovery is started so attempts left by a previous process get decided")
     func recoveryStarted() async throws {
         registrar.start()
-        try await settle(until: { submitter.attempts.count == 1 })
+        try await attempts(1)
 
         #expect(engine.recoveryStarts == 1)
     }
@@ -277,10 +275,33 @@ private extension CoinageInstallationRegistrarTests {
         return nil
     }
 
-    /// Lets the registrar's tasks run; every sleep is on the test clock, so this spends no wall time.
-    func settle() async {
-        for _ in 0 ..< 20 {
-            await Task.yield()
+    func attempts(_ count: Int) async throws {
+        let submitter = submitter
+        try await withTimeout(.hangGuard) { await submitter.waitForAttempts(count) }
+    }
+
+    func subscriptions(_ count: Int) async throws {
+        let engine = engine
+        try await withTimeout(.hangGuard) { await engine.waitForSubscriptions(count) }
+    }
+
+    func sleeping(_ duration: Duration) async throws {
+        let clock = clock
+        try await withTimeout(.hangGuard) { await clock.waitForSleep(for: duration) }
+    }
+
+    func resume(_ duration: Duration) async throws {
+        let clock = clock
+        try await withTimeout(.hangGuard) { await clock.resumeSleep(for: duration) }
+    }
+
+    func reaches(_ expected: CoinageAccountBackupStatus) async throws {
+        let registrar = registrar
+        try await withTimeout(.hangGuard) {
+            for try await value in registrar.subscribeStatus() where value == expected {
+                return
+            }
+            throw StreamEnded()
         }
     }
 
@@ -291,13 +312,12 @@ private extension CoinageInstallationRegistrarTests {
         )
     }
 
-    func settle(until condition: @escaping @Sendable () async -> Bool) async throws {
-        for _ in 0 ..< 200 {
-            await settle()
-            if await condition() { return }
-        }
-        throw Stalled()
+    func finalizeCurrentAttempts() {
+        engine.set(
+            engine.current(Self.target.registrationGroup).map { $0.changing(status: .finalizedSuccess) },
+            group: Self.target.registrationGroup
+        )
     }
 
-    struct Stalled: Error {}
+    struct StreamEnded: Error {}
 }

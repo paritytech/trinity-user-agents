@@ -1,24 +1,28 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket
 
-import android.content.Context
+import android.net.Uri
 import android.webkit.WebView
 import androidx.lifecycle.viewModelScope
-import io.paritytech.polkadotapp.common.presentation.sharing.SharingManager
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.unmockkStatic
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
-import io.paritytech.polkadotapp.feature_videogame_api.domain.collectibles.CollectiblesUrlResolver
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
+import io.paritytech.polkadotapp.feature_wallet_impl.domain.collectibles.CollectiblesUrlResolver
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.PocketInteractor
-import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.PocketRank
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketScreenState
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
@@ -40,6 +44,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -48,21 +53,27 @@ import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
 import org.mockito.stubbing.Answer
+import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 
 class PocketViewModelTest {
     // Every flow the screen combines answers empty unless a test says otherwise, so each test names
-    // only the source it is about. observeRank is answered here rather than stubbed because its
-    // context parameter cannot be named from a call site that does not have one.
+    // only the source it is about.
     private val quietFlows = Answer { invocation ->
         when {
-            invocation.method.name == "observeRank" -> flowOf(PocketRank.Basic)
             invocation.method.name == "warmUpProduct" -> Result.success(Unit)
+            invocation.method.name == "faceShownOnOpen" -> true
             invocation.method.returnType == Flow::class.java -> emptyFlow<Any>()
             else -> null
         }
     }
 
     private val interactor: PocketInteractor = mock(PocketInteractor::class.java, quietFlows)
+    private val router: PocketRouter = mock(PocketRouter::class.java)
+
+    private var collectiblesPage: Uri? = null
+    private val collectiblesUrlResolver = mockk<CollectiblesUrlResolver> {
+        coEvery { resolveUrl() } answers { collectiblesPage }
+    }
 
     // SpaHost.createSession carries context parameters, which cannot be named from a call site that
     // has none, so the mock answers it by name.
@@ -75,6 +86,8 @@ class PocketViewModelTest {
     // and to lose that wait on a loaded machine.
     private val testDispatcher = StandardTestDispatcher()
     private val dispatchers = TestCoroutineDispatchers(testDispatcher)
+
+    private val cardOpenRequests = PocketCardOpenRequests()
 
     private class FakeSpaHostSession : SpaHostSession {
         override val webView = MutableStateFlow<WebView?>(null)
@@ -93,13 +106,11 @@ class PocketViewModelTest {
         interactor = interactor,
         tokenAmountMapper = mock(TokenAmountMapper::class.java),
         tokenAmountFormatter = mock(TokenAmountFormatter::class.java),
-        router = mock(PocketRouter::class.java),
-        collectiblesUrlResolver = mock(CollectiblesUrlResolver::class.java),
-        idShareImageRenderer = mock(IdShareImageRenderer::class.java),
-        sharingManager = mock(SharingManager::class.java),
+        router = router,
+        collectiblesUrlResolver = collectiblesUrlResolver,
         dispatchers = dispatchers,
+        cardOpenRequests = cardOpenRequests,
         spaHost = spaHost,
-        context = mock(Context::class.java),
     ).also { created += it }
 
     /** The cards the screen holds once everything the view model started has run. */
@@ -111,17 +122,18 @@ class PocketViewModelTest {
 
     @Before
     fun setUp() {
+        // a product card's page is hosted at its launch URL, which android.net.Uri encodes
+        mockkStatic(Uri::class)
+        every { Uri.encode(any()) } answers { firstArg() }
         Dispatchers.setMain(testDispatcher)
-        whenever(interactor.observeUsername()).thenReturn(flowOf("alicent"))
-        whenever(interactor.observeAddress()).thenReturn(flowOf("15oF4u"))
         whenever(interactor.observeBackupProgress()).thenReturn(flowOf(BackupProgress.Unknown))
-        whenever(interactor.observeAccountBackupPending()).thenReturn(flowOf(false))
     }
 
     @After
     fun tearDown() {
         created.forEach { it.viewModelScope.cancel() }
         Dispatchers.resetMain()
+        unmockkStatic(Uri::class)
     }
 
     private fun productCard(cardId: String) = PocketCard(
@@ -137,25 +149,38 @@ class PocketViewModelTest {
     )
 
     // The collection is stored, decoded and served by a product's worker, so it has failure modes
-    // the balance and identity cards do not share. Before the product cards joined this screen
-    // nothing product-side could empty it; that must stay true.
+    // the balance card does not share, and none of them may take the balance card off the screen.
     @Test
-    fun `a failing product collection costs the product cards alone, not the native ones`() = runTest(testDispatcher) {
+    fun `a failing product collection costs the product cards alone, not the balance card`() = runTest(testDispatcher) {
         whenever(interactor.observeProductCards()).thenReturn(flow { throw IllegalStateException("unreadable") })
 
         val cards = settledCards(createViewModel())
 
-        assertEquals(listOf("digital_dollar_card", "id_card"), cards.map { it.id })
+        assertEquals(listOf("digital_dollar_card"), cards.map { it.id })
+    }
+
+    // The collectibles page reads the collection over the host's chain connection, which it gets only
+    // when it is opened as a product.
+    @Test
+    fun `viewing collectibles opens the collectibles page as a product`() = runTest(testDispatcher) {
+        val stashUrl = "https://stash.paseo/"
+        collectiblesPage = mock(Uri::class.java).also { whenever(it.toString()).thenReturn(stashUrl) }
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+
+        viewModel.openCollectibles()
+
+        verify(router).openSpaSheet(stashUrl)
     }
 
     @Test
-    fun `product cards follow the native ones once the collection loads`() = runTest(testDispatcher) {
+    fun `product cards follow the balance card once the collection loads`() = runTest(testDispatcher) {
         whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(productCard("loyalty"))))
 
         val cards = settledCards(createViewModel())
 
         assertEquals(
-            listOf("digital_dollar_card", "id_card", "product_card:game.dot:loyalty"),
+            listOf("digital_dollar_card", "product_card:game.dot:loyalty"),
             cards.map { it.id },
         )
         assertEquals("loyalty", cards.filterIsInstance<PocketCardUiModel.ProductCard>().single().title)
@@ -185,7 +210,7 @@ class PocketViewModelTest {
         advanceUntilIdle()
 
         assertTrue("the card came back selected", viewModel.state.value is PocketScreenState.List)
-        assertNull(viewModel.expandedProductSession.value)
+        assertNull(viewModel.shownProduct.value)
     }
 
     /**
@@ -256,5 +281,189 @@ class PocketViewModelTest {
 
         assertEquals(face, viewModel.bindingsOf(uiCard).face.value)
         listCopy.cancel()
+    }
+
+    // A link can name a card before the Pocket tab has ever been shown, and a tab shown for the first
+    // time has no product cards until the collection loads. Looked for only once, the card would be
+    // missed, and the link would land on the list rather than on the card it named.
+    @Test
+    fun `a card a link asked for opens once the collection that holds it loads`() = runTest(testDispatcher) {
+        val card = productCard("loyalty")
+        val collection = MutableStateFlow(emptyList<PocketCard>())
+        whenever(interactor.observeProductCards()).thenReturn(collection)
+        cardOpenRequests.request(card.key)
+
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+        assertTrue(viewModel.state.value is PocketScreenState.List)
+
+        collection.value = listOf(card)
+        advanceUntilIdle()
+
+        val opened = viewModel.state.value as PocketScreenState.CardDetails
+        assertEquals("product_card:game.dot:loyalty", opened.selectedCard.id)
+        assertNull(cardOpenRequests.requested.value)
+    }
+
+    // A request outlives the screen that answers it, since it is held for a tab that may not exist
+    // yet. Left standing once answered, it would open the card again on every change to the
+    // collection, after the user had already closed it.
+    @Test
+    fun `a card a link opened stays closed once the user closes it`() = runTest(testDispatcher) {
+        val card = productCard("loyalty")
+        val collection = MutableStateFlow(listOf(card))
+        whenever(interactor.observeProductCards()).thenReturn(collection)
+        cardOpenRequests.request(card.key)
+
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+        assertTrue(viewModel.state.value is PocketScreenState.CardDetails)
+
+        viewModel.dismissCard()
+        collection.value = listOf(card, productCard("stamps"))
+        advanceUntilIdle()
+
+        assertTrue("the card reopened with no link", viewModel.state.value is PocketScreenState.List)
+    }
+
+    // A tap always starts from the list; a link can arrive with another card open. Switched to
+    // straight away, the new card was drawn over the open card's page until it settled, and that
+    // page could still fold the new card's face.
+    @Test
+    fun `a link to another card closes the open one's page first`() = runTest(testDispatcher) {
+        val open = productCard("loyalty")
+        val linked = productCard("stamps")
+        whenever(interactor.observeProductCards()).thenReturn(MutableStateFlow(listOf(open, linked)))
+
+        val viewModel = createViewModel()
+        val openCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().first()
+        viewModel.selectCard(openCard)
+        viewModel.hostExpandedProduct(openCard)
+        advanceUntilIdle()
+        assertNotNull(viewModel.shownProduct.value)
+
+        cardOpenRequests.request(linked.key)
+        advanceUntilIdle()
+
+        val shown = viewModel.state.value as PocketScreenState.CardDetails
+        assertEquals("product_card:game.dot:stamps", shown.selectedCard.id)
+        assertNull("the open card's page stayed under the linked one", viewModel.shownProduct.value)
+    }
+
+    // Closing a card a link opened goes back to the list, not to whatever was up when the link came.
+    @Test
+    fun `a card a link opens closes back to the list`() = runTest(testDispatcher) {
+        val held = productCard("loyalty")
+        val linked = productCard("stamps")
+        whenever(interactor.observeProductCards()).thenReturn(MutableStateFlow(listOf(held, linked)))
+
+        val viewModel = createViewModel()
+        val heldCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().first()
+        viewModel.requestRemoval(heldCard)
+        viewModel.showCollectiblesSketchbook()
+        advanceUntilIdle()
+
+        cardOpenRequests.request(linked.key)
+        advanceUntilIdle()
+        assertTrue(viewModel.state.value is PocketScreenState.CardDetails)
+
+        viewModel.dismissCard()
+        advanceUntilIdle()
+
+        val list = viewModel.state.value as PocketScreenState.List
+        assertNull("the removal dialog came back", list.removalCandidate)
+    }
+
+    // The card is on screen while its lookup runs, so what the screen shows first has to be
+    // "not known yet" rather than a guess: a guessed face would flash shown before folding away.
+    @Test
+    fun `a card published with its face away reports it once opened, and nothing once dismissed`() = runTest(testDispatcher) {
+        val card = productCard("loyalty")
+        whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(card)))
+        whenever(interactor.faceShownOnOpen(card.key)).thenReturn(false)
+
+        val viewModel = createViewModel()
+        val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+        assertNull(viewModel.openingFaceShown.value)
+
+        viewModel.selectCard(uiCard)
+        advanceUntilIdle()
+        assertEquals(false, viewModel.openingFaceShown.value)
+
+        viewModel.dismissCard()
+        assertNull(viewModel.openingFaceShown.value)
+    }
+
+    // A card whose product has not answered yet must not inherit the previous card's answer: it would
+    // fold a face the new card publishes as shown.
+    @Test
+    fun `selecting another card forgets the previous card's opening face until its own answer arrives`() =
+        runTest(testDispatcher) {
+            val away = productCard("away")
+            val pending = productCard("pending")
+            whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(away, pending)))
+            whenever(interactor.faceShownOnOpen(away.key)).thenReturn(false)
+            whenever(interactor.faceShownOnOpen(pending.key)).thenAnswer { COROUTINE_SUSPENDED }
+
+            val viewModel = createViewModel()
+            val cards = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>()
+            viewModel.selectCard(cards.single { it.title == away.title })
+            advanceUntilIdle()
+            assertEquals(false, viewModel.openingFaceShown.value)
+
+            viewModel.selectCard(cards.single { it.title == pending.title })
+            advanceUntilIdle()
+
+            assertNull(viewModel.openingFaceShown.value)
+        }
+
+    // The card being left is still drawn while it fades out, and it reports itself settled again when
+    // the next card's opening face arrives. Hosting its product then would put it under the next card.
+    @Test
+    fun `a card that is no longer selected does not get its product hosted`() = runTest(testDispatcher) {
+        val left = productCard("left")
+        val next = productCard("next")
+        whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(left, next)))
+
+        val viewModel = createViewModel()
+        val cards = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>()
+        val leftCard = cards.single { it.title == left.title }
+        viewModel.selectCard(leftCard)
+        viewModel.dismissCard()
+        viewModel.selectCard(cards.single { it.title == next.title })
+
+        viewModel.hostExpandedProduct(leftCard)
+
+        assertNull(viewModel.shownProduct.value)
+    }
+
+    // A card opened again rides up with its product rather than over an empty space.
+    @Test
+    fun `a card opened again gets its held product at the tap`() = runTest(testDispatcher) {
+        whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(productCard("loyalty"))))
+        val viewModel = createViewModel()
+        val card = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+        viewModel.selectCard(card)
+        viewModel.hostExpandedProduct(card)
+        viewModel.dismissCard()
+
+        viewModel.selectCard(card)
+
+        assertNotNull(viewModel.shownProduct.value)
+    }
+
+    // Building a WebView while the card is still moving starves the animation.
+    @Test
+    fun `a card opened for the first time gets its product only once it settles`() = runTest(testDispatcher) {
+        whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(productCard("loyalty"))))
+        val viewModel = createViewModel()
+        val card = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+
+        viewModel.selectCard(card)
+        advanceUntilIdle()
+        assertNull(viewModel.shownProduct.value)
+
+        viewModel.hostExpandedProduct(card)
+        assertNotNull(viewModel.shownProduct.value)
     }
 }

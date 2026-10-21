@@ -18,14 +18,24 @@ final class FakeRegistrationSubmitter: InstallationRegistrationSubmitting, @unch
     )
     private let gate: AsyncStream<Void>.Continuation
     private let gateStream: AsyncStream<Void>
+    private let attemptCount: AsyncStream<Int>.Continuation
+    private let attemptCountStream: AsyncStream<Int>
     private var gated = false
 
     init(engine: FakeRegistrationEngine) {
         self.engine = engine
         (gateStream, gate) = AsyncStream<Void>.makeStream()
+        (attemptCountStream, attemptCount) = AsyncStream<Int>.makeStream()
     }
 
     var attempts: [InstallationRegistrationTarget] { state.withLock { $0.attempts } }
+
+    func waitForAttempts(_ count: Int) async {
+        guard attempts.count < count else { return }
+        for await total in attemptCountStream where total >= count {
+            return
+        }
+    }
 
     func failNextAttempts(_ count: Int) {
         state.withLock { $0.failNext = count }
@@ -42,7 +52,10 @@ final class FakeRegistrationSubmitter: InstallationRegistrationSubmitting, @unch
     }
 
     func submitAttempt(target: InstallationRegistrationTarget) async throws -> DurableTxId {
-        state.withLock { $0.attempts.append(target) }
+        state.withLock {
+            $0.attempts.append(target)
+            attemptCount.yield($0.attempts.count)
+        }
 
         if gated {
             for await _ in gateStream {

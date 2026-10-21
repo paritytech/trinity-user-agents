@@ -57,11 +57,16 @@ final class SPAFlowStateProvider: SPAFlowStateProviding {
         let productResolver = ProductResolver(
             dotNsResolver: resolver,
             hostProvider: hostProvider,
-            logger: Logger.shared
+            logger: Logger.shared,
+            screening: .core
         )
 
         let created = SPAFlowState(
             dotNsResolver: resolver,
+            productImages: ProductImageSources(
+                dotNsResolver: resolver,
+                ipfsGatewayBaseUrl: config.ipfsGatewayBaseUrl
+            ),
             hostProvider: hostProvider,
             productResolver: productResolver,
             iconViewModelFactory: ProductIconViewModelFactory(
