@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.sentry.SentryEvent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
@@ -17,7 +18,7 @@ class HostWebViewCreatedTelemetryTest {
 
     @Test
     fun reportsTheBootstrapSessionId() {
-        var captured: HostWebViewCreatedEvent? = null
+        var captured: SentryEvent? = null
         val reporter = HostWebViewCreatedTelemetry.createForTest(
             packageName = "com.example.nightly",
             metadata = { metadata },
@@ -26,7 +27,7 @@ class HostWebViewCreatedTelemetryTest {
 
         reporter.report("bootstrap-session-42")
 
-        assertEquals("bootstrap-session-42", captured?.sessionId)
+        assertEquals("bootstrap-session-42", captured?.getTag("host.session_id"))
     }
 
     @Test
@@ -47,7 +48,7 @@ class HostWebViewCreatedTelemetryTest {
 
     @Test
     fun eventBuildAndMonotonicTimeRemainNumeric() {
-        var captured: HostWebViewCreatedEvent? = null
+        var captured: SentryEvent? = null
         val reporter = HostWebViewCreatedTelemetry.createForTest(
             packageName = "com.example.debug",
             metadata = { metadata },
@@ -56,8 +57,11 @@ class HostWebViewCreatedTelemetryTest {
 
         reporter.report("session")
 
-        assertEquals(123L, captured?.appBuild)
-        assertEquals(456L, captured?.monotonicMs)
+        assertEquals(HostWebViewCreatedTelemetry.EVENT_NAME, captured?.message?.formatted)
+        assertEquals(123L, captured?.getExtra("host.app_build"))
+        assertEquals(456L, captured?.getExtra("event.monotonic_ms"))
+        assertTrue(captured?.getExtra("host.app_build") is Long)
+        assertTrue(captured?.getExtra("event.monotonic_ms") is Long)
     }
 
     @Test

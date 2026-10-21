@@ -4,7 +4,9 @@ import android.content.Context
 import android.os.SystemClock
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.sentry.Sentry
+import io.sentry.SentryEvent
 import io.sentry.SentryLevel
+import io.sentry.protocol.Message
 import timber.log.Timber
 import uniffi.truapi.truapiHostVersion
 import java.util.UUID
@@ -19,10 +21,10 @@ internal data class HostWebViewCreatedEvent(
     val monotonicMs: Long,
 )
 
-internal class HostWebViewCreatedTelemetry private constructor(
+class HostWebViewCreatedTelemetry private constructor(
     private val packageName: String,
     private val metadata: () -> HostWebViewCreatedEvent,
-    private val capture: (HostWebViewCreatedEvent) -> Unit,
+    private val capture: (SentryEvent) -> Unit,
 ) {
     @Inject
     constructor(@ApplicationContext context: Context) : this(
@@ -38,13 +40,13 @@ internal class HostWebViewCreatedTelemetry private constructor(
                 monotonicMs = SystemClock.elapsedRealtime(),
             )
         },
-        capture = ::captureHostWebViewCreatedInSentry,
+        capture = { Sentry.captureEvent(it) },
     )
 
     fun report(sessionId: String) {
         if (!shouldInstallHostTelemetry(packageName)) return
 
-        runCatching { capture(metadata().copy(sessionId = sessionId)) }
+        runCatching { capture(metadata().copy(sessionId = sessionId).toSentryEvent()) }
             .onFailure { Timber.w(it, "Failed to capture native host WebView event") }
     }
 
@@ -54,7 +56,7 @@ internal class HostWebViewCreatedTelemetry private constructor(
         internal fun createForTest(
             packageName: String,
             metadata: () -> HostWebViewCreatedEvent,
-            capture: (HostWebViewCreatedEvent) -> Unit,
+            capture: (SentryEvent) -> Unit,
         ) = HostWebViewCreatedTelemetry(packageName, metadata, capture)
 
         internal fun newSessionId(): String = UUID.randomUUID().toString()
@@ -68,14 +70,14 @@ internal class HostWebViewCreatedTelemetry private constructor(
     }
 }
 
-private fun captureHostWebViewCreatedInSentry(event: HostWebViewCreatedEvent) {
-    Sentry.captureMessage(HostWebViewCreatedTelemetry.EVENT_NAME, SentryLevel.INFO) { scope ->
-        scope.setTag("host.session_id", event.sessionId)
-        scope.setTag("host.app_variant", event.appVariant)
-        scope.setTag("host.native_app_version", event.nativeAppVersion)
-        scope.setTag("host.platform", "android")
-        scope.setTag("truapi.host_version", event.hostVersion)
-        scope.setExtra("host.app_build", event.appBuild)
-        scope.setExtra("event.monotonic_ms", event.monotonicMs)
-    }
+private fun HostWebViewCreatedEvent.toSentryEvent() = SentryEvent().apply {
+    message = Message().apply { formatted = HostWebViewCreatedTelemetry.EVENT_NAME }
+    level = SentryLevel.INFO
+    setTag("host.session_id", sessionId)
+    setTag("host.app_variant", appVariant)
+    setTag("host.native_app_version", nativeAppVersion)
+    setTag("host.platform", "android")
+    setTag("truapi.host_version", hostVersion)
+    setExtra("host.app_build", appBuild)
+    setExtra("event.monotonic_ms", monotonicMs)
 }
