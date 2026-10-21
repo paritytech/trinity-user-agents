@@ -10,6 +10,7 @@ protocol ModuleNavigating: AnyObject {
         transitioningDelegate: UIViewControllerTransitioningDelegate?
     )
     func openProduct(page: ProductPage)
+    func presentProduct(page: ProductPage)
     func openPocket()
     func openScanPanel()
 }
@@ -55,6 +56,10 @@ extension ModuleNavigator: ModuleNavigating {
 
     func openProduct(page: ProductPage) {
         UIApplication.shared.mainTabBarController?.openProduct(page: page)
+    }
+
+    func presentProduct(page: ProductPage) {
+        UIApplication.shared.mainTabBarController?.presentProduct(page: page)
     }
 
     func openPocket() {

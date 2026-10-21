@@ -51,9 +51,6 @@ enum MainTabBarViewFactory {
             browserCoordinator: browserCoordinator,
             productGamePills: RootDependencyLocator.getDependency()
         )
-        #if !FEATURE_PRODUCTS
-            interactor.settingsAttentionObserver = SettingsBackupAttentionObserver()
-        #endif
 
         let qrHandler = WalletQRScanResultHandler(
             dsfinvkRouter: W3sDsfinvkRouter.createDefault(coinageService: serviceCoordinator.coinageService)
@@ -163,20 +160,16 @@ enum MainTabBarViewFactory {
             coinageService: serviceCoordinator.coinageService,
             moduleNavigator: moduleNavigator
         )
-        #if FEATURE_PRODUCTS
-            let productHandlers: [URLHandlingServiceProtocol] = [
-                PocketOpenService.makeDefault(
-                    flowState: flowState.flowState,
-                    moduleNavigator: moduleNavigator
-                ),
-                ProductSPAOpenService(
-                    moduleNavigator: moduleNavigator,
-                    hostProvider: hostProvider
-                )
-            ]
-        #else
-            let productHandlers: [URLHandlingServiceProtocol] = []
-        #endif
+        let productHandlers: [URLHandlingServiceProtocol] = [
+            PocketOpenService.makeDefault(
+                flowState: flowState.flowState,
+                moduleNavigator: moduleNavigator
+            ),
+            ProductSPAOpenService(
+                moduleNavigator: moduleNavigator,
+                hostProvider: hostProvider
+            )
+        ]
 
         let historyStorage = W3sPaymentHistoryCoreDataStore(storageFacade: UserDataStorageFacade.shared)
 

@@ -35,8 +35,6 @@ final class TabBarBarViewModel {
     var onShelfChipCloseRequested: ((UUID) -> Void)?
     var onShelfSettingsTapped: (() -> Void)?
     var onShelfConnectionStatusTapped: (() -> Void)?
-    /// What the shelf lists in builds without products, where it opens from the Network item.
-    var chainStatusRows: [ChainConnectionStatusViewModel] = []
 
     var selectionPlacement: TabBarSelectionPlacement {
         TabBarSelectionPolicy.placement(

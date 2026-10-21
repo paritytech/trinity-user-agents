@@ -36,18 +36,12 @@ final class MainTabBarViewController: UIViewController {
     var productGamePill: ProductGamePillViewModel?
 
     /// The live scan panel. Nil while the centre control has no content.
-    #if FEATURE_INPUT
-        private weak var scanPanel: ScanPanelViewController?
-    #else
-        private weak var scanPanel: ScanPanelPlainViewController?
-    #endif
+    private weak var scanPanel: ScanPanelViewController?
 
-    #if FEATURE_INPUT
-        /// Set while a swipe on the centre button carries the panel toward Search, before it lands.
-        private var isSearchSwipePending = false
-        /// Set while the landing focuses search, so the bar's hide plays no feedback.
-        private var isFocusingFromSwipe = false
-    #endif
+    /// Set while a swipe on the centre button carries the panel toward Search, before it lands.
+    private var isSearchSwipePending = false
+    /// Set while the landing focuses search, so the bar's hide plays no feedback.
+    private var isFocusingFromSwipe = false
 
     init(
         presenter: MainTabBarPresenterProtocol,
@@ -79,36 +73,27 @@ final class MainTabBarViewController: UIViewController {
 
         chromeController.statusStripAnchorProvider = { [weak self] in self?.chainStatusAnchorGuide }
         chromeController.makeCenterContent = { [weak self] in self?.makeScanPanel() }
-        #if FEATURE_INPUT
-            chromeController.contentHeightForCenterPanel = { [weak self] in
-                guard let self else {
-                    return .fits(ScanPanelViewLayout.declaredHeight)
-                }
-                return isSearchSwipePending
-                    ? .fill
-                    : scanPanel?.declaredContentHeight() ?? .fits(ScanPanelViewLayout.declaredHeight)
+        chromeController.contentHeightForCenterPanel = { [weak self] in
+            guard let self else {
+                return .fits(ScanPanelViewLayout.declaredHeight)
             }
-            chromeController.onCenterPanelWillClose = { [weak self] in
-                self?.cancelSearchSwipe()
-                self?.scanPanel?.prepareForClose()
-            }
-            chromeController.onCenterPanelSwipeOpenBegan = { [weak self] in self?.beginSearchSwipe() }
-            chromeController.onCenterPanelSwipeOpenLanding = { [weak self] in self?.landSearchSwipe() }
-        #else
-            chromeController.contentHeightForCenterPanel = {
-                .fits(ScanPanelPlainViewLayout.declaredHeight)
-            }
-            chromeController.onCenterPanelWillClose = { [weak self] in self?.scanPanel?.setCaptureActive(false) }
-        #endif
+            return isSearchSwipePending
+                ? .fill
+                : scanPanel?.declaredContentHeight() ?? .fits(ScanPanelViewLayout.declaredHeight)
+        }
+        chromeController.onCenterPanelWillClose = { [weak self] in
+            self?.cancelSearchSwipe()
+            self?.scanPanel?.prepareForClose()
+        }
+        chromeController.onCenterPanelSwipeOpenBegan = { [weak self] in self?.beginSearchSwipe() }
+        chromeController.onCenterPanelSwipeOpenLanding = { [weak self] in self?.landSearchSwipe() }
 
         // Close does not stop capture: the panel's teardown releases the camera, and an explicit stop
         // here can race the preview layer's session attach.
         chromeController.onCenterPanelDidChangeOpen = { [weak self] isOpen in
-            #if FEATURE_INPUT
-                if !isOpen {
-                    self?.cancelSearchSwipe()
-                }
-            #endif
+            if !isOpen {
+                self?.cancelSearchSwipe()
+            }
             guard isOpen else { return }
             self?.scanPanel?.setCaptureActive(true)
         }
@@ -302,12 +287,6 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
         refreshChrome()
     }
 
-    #if !FEATURE_PRODUCTS
-        func setAttention(_ isVisible: Bool, for tab: TabBarItem) {
-            chromeController.setAttention(isVisible, for: tab)
-        }
-    #endif
-
     func setLabels(visible: Bool) {
         chromeController.setLabels(visible: visible)
     }
@@ -323,7 +302,6 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
 
     func showChainStatus(_ models: [ChainConnectionStatusViewModel]) {
         statusBarHost.rootView = ChainConnectionStatusBarView(models: models)
-        chromeController.setChainStatus(models)
         let width = max(1, ChainConnectionStatusBarView.ringsWidth(count: models.count))
         chainStatusAnchorWidth?.update(offset: width)
     }
@@ -346,56 +324,47 @@ extension MainTabBarViewController {
         scanPanel = controller
         controller?.setCaptureActive(false)
 
-        #if FEATURE_INPUT
-            // Opening the chat selects its tab, and tab selection already closes the panel, so this
-            // path does not close it again.
-            controller?.onChatFound = { [weak self] model in
-                self?.presenter.didFindChat(model)
+        // Opening the chat selects its tab, and tab selection already closes the panel, so this
+        // path does not close it again.
+        controller?.onChatFound = { [weak self] model in
+            self?.presenter.didFindChat(model)
+        }
+        controller?.onContentHeightChanged = { [weak self] in
+            self?.chromeController.refreshCenterContentHeight()
+        }
+        controller?.onSearchFocusChanged = { [weak self] focused in
+            guard let self else {
+                return
             }
-            controller?.onContentHeightChanged = { [weak self] in
-                self?.chromeController.refreshCenterContentHeight()
-            }
-            controller?.onSearchFocusChanged = { [weak self] focused in
-                guard let self else {
-                    return
-                }
-                chromeController.setBarHidden(focused, playsFeedback: !isFocusingFromSwipe)
-            }
-            if isSearchSwipePending {
-                controller?.setSearchPending(true)
-            }
-        #else
-            controller?.onSearchTap = { [weak self] in
-                self?.chromeController.setPanel(nil)
-                self?.presenter.didRequestContactSearch()
-            }
-        #endif
+            chromeController.setBarHidden(focused, playsFeedback: !isFocusingFromSwipe)
+        }
+        if isSearchSwipePending {
+            controller?.setSearchPending(true)
+        }
         return controller
     }
 }
 
-#if FEATURE_INPUT
-    private extension MainTabBarViewController {
-        func beginSearchSwipe() {
-            isSearchSwipePending = true
-            scanPanel?.setSearchPending(true)
-            chromeController.refreshCenterContentHeight()
-        }
-
-        func landSearchSwipe() {
-            isSearchSwipePending = false
-            isFocusingFromSwipe = true
-            scanPanel?.focusSearch()
-            isFocusingFromSwipe = false
-        }
-
-        /// Drops a swipe that did not land, and returns the scan panel to the Scan state's layout.
-        func cancelSearchSwipe() {
-            isSearchSwipePending = false
-            scanPanel?.setSearchPending(false)
-        }
+private extension MainTabBarViewController {
+    func beginSearchSwipe() {
+        isSearchSwipePending = true
+        scanPanel?.setSearchPending(true)
+        chromeController.refreshCenterContentHeight()
     }
-#endif
+
+    func landSearchSwipe() {
+        isSearchSwipePending = false
+        isFocusingFromSwipe = true
+        scanPanel?.focusSearch()
+        isFocusingFromSwipe = false
+    }
+
+    /// Drops a swipe that did not land, and returns the scan panel to the Scan state's layout.
+    func cancelSearchSwipe() {
+        isSearchSwipePending = false
+        scanPanel?.setSearchPending(false)
+    }
+}
 
 extension MainTabBarViewController: TopmostChildProviding {
     var topmostChild: UIViewController? {

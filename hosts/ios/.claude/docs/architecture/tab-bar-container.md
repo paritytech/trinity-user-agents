@@ -53,7 +53,7 @@ MainTabBarViewController            container, status strip, widget and inset la
 | Slot-to-tab index mapping | `polkadot-app/Modules/MainTabBar/Chrome/TabBarSlotMap.swift` |
 | Tab items | `TabBarItem` in `polkadot-app/Modules/MainTabBar/MainTabBarProtocols.swift` |
 | Center panel height declaration | `polkadot-app/Modules/MainTabBar/Chrome/TabBarCenterContentHeight.swift` (`.fits(CGFloat)` or `.fill`) |
-| Center panel content (scanner) | `polkadot-app/Modules/MainTabBar/ScanPanelViewController.swift`, `ScanPanelPlainViewController.swift` (chosen by `FEATURE_INPUT`) |
+| Center panel content (scanner) | `polkadot-app/Modules/MainTabBar/ScanPanelViewController.swift` |
 | Onboarding tips | `polkadot-app/Modules/MainTabBar/Chrome/TabBarTipController.swift`, `polkadot-app/Modules/MainTabBar/Tips/` |
 | Floating widgets | `polkadot-app/Modules/MainTabBar/TabBarWidgetController.swift`, `MainTabBarFloatingWidgetStackView.swift` |
 | Bar, center control, shelf container | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarContainer.swift`, `DSTabBarCenterControl.swift` |
@@ -107,7 +107,7 @@ Every width, height and radius is read from one progress value. The shape is val
 
 Scan and Search change the layout with the same open motion. A Scan ↔ Search change while open does not close the panel.
 
-**Gestures.** A tap opens the Scan state. An upward swipe on the button opens the panel into the Search state when the host provides the swipe callbacks (`FEATURE_INPUT` builds). Otherwise it opens the Scan state. A downward drag or a tap closes it. A flick decides the end of a drag. Without a flick, the halfway point decides. Content drags from the open panel never open the Search state.
+**Gestures.** A tap opens the Scan state. An upward swipe on the button opens the panel into the Search state. A downward drag or a tap closes it. A flick decides the end of a drag. Without a flick, the halfway point decides. Content drags from the open panel never open the Search state.
 
 **Settling.** The control reports open or closed to the chrome (`onSettled`) when its own settle completes. It never reports during a drag. A UIKit-driven move through `TabBarBarViewModel.setCenterPanelOpen` reports at the end of its animation. A drag past open stretches the panel. A drag past closed clamps at closed. Both commit only on release and settle. A cancelled drag settles to the nearer end. A grab during a settle starts from the on-screen progress.
 
@@ -127,7 +127,7 @@ The chrome takes the width from `DSTabBarStyle.rowWidth(inAvailableWidth:)` of i
 **Swipe into Search.** This flow opens the Search state from a swipe on the center button.
 
 1. `DSTabBarCenterControl` takes two optional callbacks. `onSwipeOpenBegan` fires once per drag. It fires when a drag on the button that began short of fully open moves up past the tap slop. Content drags from the open panel never fire it. The package does not know what the callback means.
-2. `TabBarBottomChromeController` forwards both callbacks from the model. It passes nil when the app sets no handler, so the plain arm keeps opening the Scan state.
+2. `TabBarBottomChromeController` forwards both callbacks from the model. It passes nil when the app sets no handler.
 3. `MainTabBarViewController` holds `isSearchSwipePending`. The scan panel controller may not exist yet when the swipe begins. The panel declares `.fill`, so the travel runs to the filled panel's top.
 4. `ScanPanelViewController.setSearchPending(_:)` shows the Search state layout without focus and keeps the camera off. The bar keeps the Scan state look.
 5. `onSwipeOpenLanding` fires when the release settles open, partway through the settle. It fires at once under Reduce Motion. The chrome commits `.content(.scan)` first. `currentKeyboardLift` then sees the open scan panel when the keyboard frame changes. The host then calls `focusSearch()`, which runs the normal focus path.
@@ -136,7 +136,7 @@ The chrome takes the width from `DSTabBarStyle.rowWidth(inAvailableWidth:)` of i
 
 **Keyboard.** The keyboard lift has one owner, `TabBarFoldController.keyboardLift`, which the fold transform carries. `TabBarBottomChromeController` recomputes it on each keyboard frame change, using the keyboard's own duration and curve. It also recomputes on every panel open and close. While the scan panel is open, the chrome lifts until the keyboard covers the center button's foot by `keyboardButtonOverlap`. Any other keyboard, or a closed panel, leaves the chrome at rest. The lift reduces `availablePanelHeight` by the same amount.
 
-**Search field and list.** The scan panel's field (`DSSearchRowView`), its scan button and the plain arm's `SearchContactFieldButton` share the field material, `DSTabBarFieldMaterialView`. The field switches its icon position between the Scan state and the Search state (`setSearchFocused`). The results list is shared with the full-screen Search Contact screen. Colours are DesignSystem theme tokens that follow all five themes. `DSTabBarFieldMaterialView` and `DSSearchRowView` re-apply their resolved colours when `DSThemeTrait` changes. `DSTabBarStyle.Palette` keeps only the values with no token: the glass stroke, the glass wash, the open fill and the dim wash. Search type uses DS typography tokens, so the bar has no type style of its own. `DSSearchAvatar` shows the contact's image, otherwise `DSLetterAvatar` at `.s40`. The shared `DSAvatar` stays untouched.
+**Search field and list.** The scan panel's field (`DSSearchRowView`), and its scan button share the field material, `DSTabBarFieldMaterialView`. The field switches its icon position between the Scan state and the Search state (`setSearchFocused`). The results list is shared with the full-screen Search Contact screen. Colours are DesignSystem theme tokens that follow all five themes. `DSTabBarFieldMaterialView` and `DSSearchRowView` re-apply their resolved colours when `DSThemeTrait` changes. `DSTabBarStyle.Palette` keeps only the values with no token: the glass stroke, the glass wash, the open fill and the dim wash. Search type uses DS typography tokens, so the bar has no type style of its own. `DSSearchAvatar` shows the contact's image, otherwise `DSLetterAvatar` at `.s40`. The shared `DSAvatar` stays untouched.
 
 ## Closing and Capture
 
@@ -214,8 +214,6 @@ The three states are `shown`, `folded` and `hidden`.
 1. A tab root is always `shown`. A tab root never folds.
 2. A per-screen user override (`folded` or `shown`) wins.
 3. Otherwise the derived state applies.
-
-Without `FEATURE_PRODUCTS`, every screen other than a tab root is `hidden`.
 
 The derived state comes from `TabBarHiddenPolicy.deriveFoldState(in:showing:)`. It is `hidden` when the target opts out. It is `folded` when any controller above the root, up to the target, sets `hidesBottomBarWhenPushed`. The root is excluded, so a tab root that sets the flag does not fold.
 

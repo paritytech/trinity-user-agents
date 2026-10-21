@@ -5,7 +5,7 @@ import SwiftUI
 import UIKit
 
 /// The bar row: four fixed slots around the centre hole, with the centre control in the hole and the
-/// shelf growing above it: open products, or the chain connection list in builds without products.
+/// shelf growing above it with open products.
 struct TabBarBarView: View {
     @Bindable var model: TabBarBarViewModel
 
@@ -38,19 +38,15 @@ struct TabBarBarView: View {
                 )
             },
             shelf: {
-                #if FEATURE_PRODUCTS
-                    TabBarShelfView(
-                        chips: model.shelfChips,
-                        mountedChipId: model.mountedChipId,
-                        pillProductId: pillProductId,
-                        onChipTapped: { model.onShelfChipTapped?($0) },
-                        onChipCloseRequested: { model.onShelfChipCloseRequested?($0) },
-                        onConnectionStatusTapped: { model.onShelfConnectionStatusTapped?() },
-                        onSettingsTapped: { model.onShelfSettingsTapped?() }
-                    )
-                #else
-                    ConnectionStatusPanelView(rows: model.chainStatusRows)
-                #endif
+                TabBarShelfView(
+                    chips: model.shelfChips,
+                    mountedChipId: model.mountedChipId,
+                    pillProductId: pillProductId,
+                    onChipTapped: { model.onShelfChipTapped?($0) },
+                    onChipCloseRequested: { model.onShelfChipCloseRequested?($0) },
+                    onConnectionStatusTapped: { model.onShelfConnectionStatusTapped?() },
+                    onSettingsTapped: { model.onShelfSettingsTapped?() }
+                )
             }
         )
         // The bar sits at the bottom of a host sized once to the room above it.
@@ -77,7 +73,6 @@ struct TabBarBarView: View {
 
 private struct TabBarSlotView: View {
     private static let iconSize: CGFloat = 28
-    private static let attentionDotSize: CGFloat = 8
 
     let item: TabBarBarItem
     let isSelected: Bool
@@ -125,13 +120,6 @@ private struct TabBarSlotView: View {
                 .scaledToFit()
                 .foregroundStyle(iconColor)
                 .frame(width: Self.iconSize, height: Self.iconSize)
-                .overlay(alignment: .topTrailing) {
-                    if item.showsAttention {
-                        Circle()
-                            .fill(Color.bgStatusWarning)
-                            .frame(width: Self.attentionDotSize, height: Self.attentionDotSize)
-                    }
-                }
         case let .tabsGlyph(count):
             TabsGlyph(count: count, color: UIColor(iconColor))
                 .frame(width: Self.iconSize, height: Self.iconSize)

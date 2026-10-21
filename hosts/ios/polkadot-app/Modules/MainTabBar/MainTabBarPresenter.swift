@@ -8,17 +8,10 @@ final class MainTabBarPresenter {
     let interactor: MainTabBarInteractorInputProtocol
 
     /// The four visible slots, left to right. The centre control is not a slot.
-    #if FEATURE_PRODUCTS
-        let slots: [TabBarSlot] = [.tab(.chat), .tab(.wallet), .tab(.browse), .action(.spaTabs)]
-    #else
-        let slots: [TabBarSlot] = [.tab(.chat), .tab(.wallet), .tab(.settings), .action(.connectionStatus)]
-    #endif
+    let slots: [TabBarSlot] = [.tab(.chat), .tab(.wallet), .tab(.browse), .action(.spaTabs)]
 
     private let chipViewModelFactory: SPATabChipViewModelFactory
     private let connectionStatusViewModel = ConnectionStatusSheetViewModel()
-    #if !FEATURE_PRODUCTS
-        private var isSettingsAttentionVisible = false
-    #endif
 
     init(
         interactor: MainTabBarInteractorInputProtocol,
@@ -38,9 +31,6 @@ extension MainTabBarPresenter: MainTabBarPresenterProtocol {
 
     func configureViews() {
         view?.show(slots: slots, selecting: .chat)
-        #if !FEATURE_PRODUCTS
-            view?.setAttention(isSettingsAttentionVisible, for: .settings)
-        #endif
     }
 
     func didRequestConnectionStatus() {
@@ -51,28 +41,12 @@ extension MainTabBarPresenter: MainTabBarPresenterProtocol {
         wireframe.showSettings(from: view)
     }
 
-    #if FEATURE_INPUT
-        func didFindChat(_ model: ChatOpenModel) {
-            wireframe.openChat(model)
-        }
-    #else
-        func didRequestContactSearch() {
-            wireframe.showSearchContact(from: view)
-        }
-    #endif
+    func didFindChat(_ model: ChatOpenModel) {
+        wireframe.openChat(model)
+    }
 }
 
 extension MainTabBarPresenter: MainTabBarInteractorOutputProtocol {
-    #if !FEATURE_PRODUCTS
-        func didUpdateSettingsAttention(isVisible: Bool) {
-            guard isSettingsAttentionVisible != isVisible else {
-                return
-            }
-            isSettingsAttentionVisible = isVisible
-            view?.setAttention(isVisible, for: .settings)
-        }
-    #endif
-
     func didReceiveWidget(
         configuration: any HashableContentConfiguration,
         for extensionId: ChatExtension.Id

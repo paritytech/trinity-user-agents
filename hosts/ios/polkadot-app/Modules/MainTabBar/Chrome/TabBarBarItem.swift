@@ -13,22 +13,19 @@ struct TabBarBarItem: Equatable {
     let accessibilityLabel: String
     let accessibilityID: AccessibilityID.Tab?
     let accessibilityValue: String?
-    let showsAttention: Bool
 
     init(
         content: Content,
         title: String?,
         accessibilityLabel: String,
         accessibilityID: AccessibilityID.Tab? = nil,
-        accessibilityValue: String? = nil,
-        showsAttention: Bool = false
+        accessibilityValue: String? = nil
     ) {
         self.content = content
         self.title = title
         self.accessibilityLabel = accessibilityLabel
         self.accessibilityID = accessibilityID
         self.accessibilityValue = accessibilityValue
-        self.showsAttention = showsAttention
     }
 
     init(
@@ -36,16 +33,14 @@ struct TabBarBarItem: Equatable {
         title: String?,
         accessibilityLabel: String,
         accessibilityID: AccessibilityID.Tab? = nil,
-        accessibilityValue: String? = nil,
-        showsAttention: Bool = false
+        accessibilityValue: String? = nil
     ) {
         self.init(
             content: .icon(icon),
             title: title,
             accessibilityLabel: accessibilityLabel,
             accessibilityID: accessibilityID,
-            accessibilityValue: accessibilityValue,
-            showsAttention: showsAttention
+            accessibilityValue: accessibilityValue
         )
     }
 }
