@@ -291,7 +291,7 @@ jobs:
               --base "${RELEASE_BRANCH}" \
               --head "${manifest_branch}" \
               --title "build(ios): publish host XCFramework ${IOS_VERSION}" \
-              --body "Updates Package.swift with the published @parity/ios-host@${IOS_VERSION} XCFramework URL and verified checksum." \
+              --body "Updates Package.swift with the published @parity/ios-host@${IOS_VERSION} XCFramework URL and verified checksum, and keeps TrUAPIHost.version aligned." \
               --reviewer paritytech/host-sdk-team
           else
             echo "Manifest PR #${pr_number} is already open."
