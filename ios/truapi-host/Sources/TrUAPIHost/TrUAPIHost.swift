@@ -965,8 +965,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     }
 
     /// Report a later status of `productId`'s top-up `id` to the products
-    /// following it. A terminal status ends their streams. Throws when
-    /// `productId` is not a product id.
+    /// following it. A terminal status ends their streams.
     public func notifyTopUpStatus(productId: String, id: Data, status: HostPaymentTopUpStatusSubscribeItem) throws {
         try inner.notifyTopUpStatus(productId: productId, id: id, status: status)
     }
@@ -982,8 +981,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     }
 
     /// Report a later status of `productId`'s payment `id` to the products
-    /// following it. A terminal status ends their streams. Throws when
-    /// `productId` is not a product id.
+    /// following it. A terminal status ends their streams.
     public func notifyPaymentStatus(productId: String, id: Data, status: HostPaymentStatusSubscribeItem) throws {
         try inner.notifyPaymentStatus(productId: productId, id: id, status: status)
     }
