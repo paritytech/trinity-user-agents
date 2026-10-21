@@ -113,7 +113,7 @@ jobs:
           CI_KEYSTORE_KEY_ALIAS: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
           CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
         with:
-          api-level: 30
+          api-level: 34
           arch: x86_64
           target: google_apis
           profile: pixel_5
