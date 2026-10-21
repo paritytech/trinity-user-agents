@@ -7,6 +7,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.FakeChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotMessage
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsEngine.HostCallException
@@ -117,6 +118,17 @@ class ProductChatHostBridgeTest {
         assertTrue(thrown is HostRejection)
         assertTrue(thrown!!.message!!.contains("Product messaging is not supported"))
         assertFalse(thrown.message!!.contains("may still"))
+    }
+
+    // The core sends an absent icon as an empty string, which must not hide the room's manifest icon.
+    @Test
+    fun `a room registered without an icon keeps its default icon`() = runTest {
+        var registered: CreateProductRoomRequest? = null
+        val api = FakeChatMessaging(onCreateRoom = { registered = it; Result.success(CreateProductRoomResult(CreateRoomStatus.New)) })
+
+        bridge(api).createRoom(ROOM, "Jollity", icon = "")
+
+        assertEquals(null, registered?.icon)
     }
 
     @Test

@@ -19,24 +19,24 @@ class ChatDisplayGeneratorTest {
 
     // The worker's own icon for its room wins over the one its manifest declares.
     @Test
-    fun `a room draws the inline icon its worker registered`() {
+    fun `a room draws the icon its worker registered`() {
         val display = generator.applyRoomMetadata(RoomMetadata(name = null, icon = PNG_ICON), manifestIconDisplay)
 
         assertEquals(PNG_ICON, (display.avatar as ChatAvatar.Url).url)
     }
 
-    // The core admits an inline icon by its media type alone, so bytes that fail to decode must leave the
-    // room's letter rather than an empty circle.
+    // A room icon can name bytes that are not an image, so it must leave the room's letter beneath it rather
+    // than an empty circle.
     @Test
-    fun `an inline room icon is drawn over the room's letter`() {
+    fun `a room icon is drawn over the room's letter`() {
         val display = generator.applyRoomMetadata(RoomMetadata(name = null, icon = PNG_ICON), manifestIconDisplay)
 
         assertSame((manifestIconDisplay.avatar as ChatAvatar.Url).placeholder, (display.avatar as ChatAvatar.Url).placeholder)
     }
 
-    // A chat with no manifest icon defaults to its letter, which an inline icon keeps beneath it.
+    // A chat with no manifest icon defaults to its letter, which a room icon keeps beneath it.
     @Test
-    fun `an inline room icon over a letter default keeps that letter`() {
+    fun `a room icon over a letter default keeps that letter`() {
         val letter = ChatAvatar.Account("Jollity", byteArrayOf(1))
 
         val display = generator.applyRoomMetadata(RoomMetadata(name = null, icon = PNG_ICON), ChatDisplay("Jollity", letter))
@@ -44,11 +44,13 @@ class ChatDisplayGeneratorTest {
         assertSame(letter, (display.avatar as ChatAvatar.Url).placeholder)
     }
 
-    // Drawing a remote room icon would have the app fetch whatever URL the product chose.
+    // Which room icons are acceptable is decided where a product registers them, so the chat draws any it is given.
     @Test
-    fun `a room with a remote icon shows the manifest icon`() {
-        val roomMetadata = RoomMetadata(name = null, icon = "https://example.com/icon.png")
+    fun `a room draws a remote icon too`() {
+        val remoteIcon = "https://example.com/icon.png"
 
-        assertSame(manifestIconDisplay.avatar, generator.applyRoomMetadata(roomMetadata, manifestIconDisplay).avatar)
+        val display = generator.applyRoomMetadata(RoomMetadata(name = null, icon = remoteIcon), manifestIconDisplay)
+
+        assertEquals(remoteIcon, (display.avatar as ChatAvatar.Url).url)
     }
 }

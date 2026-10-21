@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.chatDisplay
 
-import io.paritytech.polkadotapp.common.data.image.fetchers.isInlineImageUri
 import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.username.FallbackUsernameGenerator
@@ -29,14 +28,10 @@ class ChatDisplayGenerator @Inject constructor(
         return ChatDisplay(username, avatar)
     }
 
-    /**
-     * A room icon is drawn only when inline, so a room never makes the app fetch a URL its product chose.
-     * It is drawn over the default letter, which stays if the inline bytes are not an image.
-     */
+    /** A room icon is drawn over the default letter, which stays if the icon cannot be loaded. */
     fun applyRoomMetadata(roomMetadata: RoomMetadata, defaultDisplay: ChatDisplay): ChatDisplay {
         val name = roomMetadata.name ?: defaultDisplay.name
         val avatar = roomMetadata.icon
-            ?.takeIf { it.isInlineImageUri() }
             ?.let { ChatAvatar.Url(it, placeholder = defaultDisplay.avatar.letter()) }
             ?: defaultDisplay.avatar
 
