@@ -37,7 +37,7 @@ use crate::{
 	},
 	platform::{
 		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, Platform,
-		ProductContext,
+		ProductContext, ProductId,
 	},
 	unix_time::current_unix_millis,
 };
@@ -136,7 +136,7 @@ impl FundingRegistry {
 
 	/// Who opened session `intent`, held in full or in the pack: `None` when
 	/// no such session is held, `Some(None)` when the host opened it.
-	pub fn owner(&self, intent: &str) -> Option<Option<String>> {
+	pub fn owner(&self, intent: &str) -> Option<Option<ProductId>> {
 		if let Some(session) = self.lock_sessions().get(intent) {
 			return Some(session.owner_product_id.clone());
 		}
@@ -776,7 +776,7 @@ mod tests {
 	fn session(intent: &str, opened_at_ms: u64) -> FundingSession {
 		FundingSession::new(
 			intent.to_string(),
-			Some("wallet.dot".to_string()),
+			Some(ProductId::for_test("wallet.dot")),
 			FundingDirection::In,
 			Some(100),
 			opened_at_ms,
@@ -1047,7 +1047,7 @@ mod tests {
 			(
 				None,
 				vec![HostFundingStatusSubscribeItem::Delivered { credited: 1 }],
-				Some(Some("wallet.dot".to_string())),
+				Some(Some(ProductId::for_test("wallet.dot"))),
 				true,
 				(0..=RECORDED_PER_OWNER as u64)
 					.rev()

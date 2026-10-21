@@ -32,8 +32,9 @@ use truapi::{
 		AuthState, ChainProvider, CoreStorage, CoreStorageKey, CreateTransactionReview,
 		DevicePermissionStatus, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
 		PermissionDecision, PermissionStatusHost, Permissions, PreimageHost, ProductContext,
-		ProductOperations, ProductStorage, ProductStorageKey, ProviderError, SessionUiInfo,
-		SignPayloadReview, SignRawReview, ThemeHost, UserConfirmation, UserConfirmationReview,
+		ProductId, ProductOperations, ProductStorage, ProductStorageKey, ProviderError,
+		SessionUiInfo, SignPayloadReview, SignRawReview, ThemeHost, UserConfirmation,
+		UserConfirmationReview,
 	},
 	v01,
 };
@@ -96,7 +97,7 @@ pub struct CliPlatform {
 	chain: WsChainProvider,
 	/// Chain roles this host serves, answered by `Features::supported_chains`.
 	chains: truapi::platform::HostChainSet,
-	product_storage: Mutex<HashMap<String, HashMap<String, Vec<u8>>>>,
+	product_storage: Mutex<HashMap<ProductId, HashMap<String, Vec<u8>>>>,
 	core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
 	/// Device-scoped core slots, kept outside the per-user namespaces that
 	/// [`Self::switch_pairing_user_storage`] swaps. Peers address this install
@@ -217,7 +218,7 @@ impl CliPlatform {
 
 	fn persist_product_storage(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		values: &HashMap<String, Vec<u8>>,
 	) -> Result<(), String> {
 		let Some(directory) = self
@@ -437,7 +438,7 @@ impl ProductStorage for CliPlatform {
 		let scoped = ProductStorageKey::decode(&key)
 			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })?;
 		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
-		let values = storage.entry(scoped.product_id().to_string()).or_default();
+		let values = storage.entry(scoped.product_id().clone()).or_default();
 		values.insert(scoped.key().to_string(), value);
 		self.persist_product_storage(scoped.product_id(), values)
 			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })
@@ -447,7 +448,7 @@ impl ProductStorage for CliPlatform {
 		let scoped = ProductStorageKey::decode(&key)
 			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })?;
 		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
-		let values = storage.entry(scoped.product_id().to_string()).or_default();
+		let values = storage.entry(scoped.product_id().clone()).or_default();
 		values.remove(scoped.key());
 		self.persist_product_storage(scoped.product_id(), values)
 			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })
@@ -801,7 +802,7 @@ impl UserConfirmation for CliPlatform {
 
 /// Names the product that asked, for the reviews that carry one. A relayed
 /// request carries no caller, and saying so is more use than naming nobody.
-fn asking(calling_product_id: Option<&str>) -> String {
+fn asking(calling_product_id: Option<&ProductId>) -> String {
 	match calling_product_id {
 		Some(product_id) => format!("Product {product_id}"),
 		None => "A paired host".to_string(),
@@ -817,7 +818,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "sign payload",
             format!(
                 "{} requested a SCALE payload signature for the {} account.",
-                asking(calling_product_id.as_deref()),
+                asking(calling_product_id.as_ref()),
                 request.account.dot_ns_identifier,
             ),
         ),
@@ -833,7 +834,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "sign raw data",
             format!(
                 "{} requested a raw-data signature for the {} account. The payload is hidden here.",
-                asking(calling_product_id.as_deref()),
+                asking(calling_product_id.as_ref()),
                 request.account.dot_ns_identifier,
             ),
         ),
@@ -861,7 +862,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "sign statement proof",
             format!(
                 "{} requested a Statement Store proof signature for the {} account over a {}-byte payload.",
-                asking(review.calling_product_id.as_deref()),
+                asking(review.calling_product_id.as_ref()),
                 review.account.dot_ns_identifier,
                 review.payload.len()
             ),
@@ -873,7 +874,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "create transaction",
             format!(
                 "{} requested a transaction from the {} account.",
-                asking(calling_product_id.as_deref()),
+                asking(calling_product_id.as_ref()),
                 payload.signer.dot_ns_identifier,
             ),
         ),
@@ -969,8 +970,8 @@ struct ProductStorageDocument {
 	values: HashMap<String, String>,
 }
 
-fn load_product_storage(directory: &Path) -> HashMap<String, HashMap<String, Vec<u8>>> {
-	let mut products = HashMap::<String, HashMap<String, Vec<u8>>>::new();
+fn load_product_storage(directory: &Path) -> HashMap<ProductId, HashMap<String, Vec<u8>>> {
+	let mut products = HashMap::<ProductId, HashMap<String, Vec<u8>>>::new();
 
 	let entries = match fs::read_dir(directory) {
 		Ok(entries) => Some(entries),
@@ -1009,62 +1010,55 @@ fn load_product_storage(directory: &Path) -> HashMap<String, HashMap<String, Vec
 	products
 }
 
-fn load_product_storage_file(path: &Path) -> Option<(String, HashMap<String, Vec<u8>>)> {
-	let text = match fs::read_to_string(path) {
-		Ok(text) => text,
-		Err(error) => {
+fn load_product_storage_file(path: &Path) -> Option<(ProductId, HashMap<String, Vec<u8>>)> {
+	let text = fs::read_to_string(path)
+		.inspect_err(|error| {
 			tracing::warn!(path = %path.display(), %error, "could not read product storage");
-			return None;
-		},
-	};
-	let document = match serde_json::from_str::<ProductStorageDocument>(&text) {
-		Ok(document) if document.version == 1 => document,
-		Ok(document) => {
-			tracing::warn!(
-				path = %path.display(),
-				version = document.version,
-				"unsupported product storage version"
-			);
-			return None;
-		},
-		Err(error) => {
+		})
+		.ok()?;
+	let document = serde_json::from_str::<ProductStorageDocument>(&text)
+		.inspect_err(|error| {
 			tracing::warn!(path = %path.display(), %error, "could not decode product storage");
-			return None;
-		},
-	};
-	let normalized = match ProductStorageKey::new(&document.product_id, "") {
-		Ok(scoped) => scoped.product_id().to_string(),
-		Err(error) => {
+		})
+		.ok()?;
+	if document.version != 1 {
+		tracing::warn!(
+			path = %path.display(),
+			version = document.version,
+			"unsupported product storage version"
+		);
+		return None;
+	}
+	let normalized = document
+		.product_id
+		.parse::<ProductId>()
+		.inspect_err(|error| {
 			tracing::warn!(
 				path = %path.display(),
 				%error,
 				"product storage contains an invalid product id"
 			);
-			return None;
-		},
-	};
+		})
+		.ok()?;
 	let values = document
 		.values
 		.into_iter()
 		.map(|(key, value)| hex::decode(value).map(|bytes| (key, bytes)))
-		.collect::<Result<HashMap<_, _>, _>>();
-	let values = match values {
-		Ok(values) => values,
-		Err(error) => {
+		.collect::<Result<HashMap<_, _>, _>>()
+		.inspect_err(|error| {
 			tracing::warn!(
 				path = %path.display(),
 				%error,
 				"product storage contains an invalid value"
 			);
-			return None;
-		},
-	};
+		})
+		.ok()?;
 	Some((normalized, values))
 }
 
 fn save_product_storage(
 	directory: &Path,
-	product_id: &str,
+	product_id: &ProductId,
 	values: &HashMap<String, Vec<u8>>,
 ) -> Result<(), String> {
 	fs::create_dir_all(directory).map_err(|error| {
@@ -1079,8 +1073,9 @@ fn save_product_storage(
 	atomic_write(&product_storage_path(directory, product_id), text.as_bytes())
 }
 
-fn product_storage_path(directory: &Path, product_id: &str) -> PathBuf {
+fn product_storage_path(directory: &Path, product_id: &ProductId) -> PathBuf {
 	let mut slug = product_id
+		.as_str()
 		.chars()
 		.map(|character| {
 			if character.is_ascii_alphanumeric() || matches!(character, '.' | '-') {
@@ -1095,7 +1090,7 @@ fn product_storage_path(directory: &Path, product_id: &str) -> PathBuf {
 	if slug.is_empty() {
 		slug.push_str("product");
 	}
-	let digest = Sha256::digest(product_id.as_bytes());
+	let digest = Sha256::digest(product_id.as_str().as_bytes());
 	directory.join(format!("{slug}--{}.json", hex::encode(digest)))
 }
 
@@ -1508,8 +1503,7 @@ mod tests {
 		// writes a session before it knows the username. Product KV is the state
 		// the comment there promises stays with its own user, so that is what
 		// isolation is asserted on.
-		let alice_key =
-			ProductStorageKey::new("demo-product.dot", "secret").expect("product storage key");
+		let alice_key = ProductStorageKey::new(ProductId::for_test("demo-product.dot"), "secret");
 		platform
 			.write(alice_key.encode(), b"alice-only".to_vec())
 			.await
@@ -1670,8 +1664,7 @@ mod tests {
 			ApprovalPolicy::AutoAccept,
 			None,
 		);
-		let product_key =
-			ProductStorageKey::new("product.dot", "theme").expect("product storage key");
+		let product_key = ProductStorageKey::new(ProductId::for_test("product.dot"), "theme");
 
 		platform.switch_pairing_user_storage("alice.dot").expect("select alice");
 		futures::executor::block_on(platform.write(product_key.encode(), b"dark".to_vec()))
@@ -1766,11 +1759,10 @@ mod tests {
 	fn product_storage_written_before_the_username_carries_into_the_resolved_user() {
 		let temporary = tempdir().expect("create pairing storage root");
 		let network_dir = temporary.path().join("testnet");
-		let product_key =
-			ProductStorageKey::new("product.dot", "theme").expect("product storage key");
+		let product_key = ProductStorageKey::new(ProductId::for_test("product.dot"), "theme");
 		save_product_storage(
 			&network_dir.join("pairing-host/storage"),
-			"product.dot",
+			&ProductId::for_test("product.dot"),
 			&HashMap::from([("theme".to_string(), b"dark".to_vec())]),
 		)
 		.expect("write bootstrap pairing product storage");
@@ -1794,7 +1786,7 @@ mod tests {
 		assert_eq!(
 			load_product_storage(&network_dir.join("alice.dot_pairing_host/storage")),
 			HashMap::from([(
-				"product.dot".to_string(),
+				ProductId::for_test("product.dot"),
 				HashMap::from([("theme".to_string(), b"dark".to_vec())]),
 			)])
 		);
@@ -1806,9 +1798,9 @@ mod tests {
 	fn statement_proof_approval_names_both_products_without_dumping_payload() {
 		let review = UserConfirmationReview::StatementStoreProductSign(
 			truapi::platform::StatementStoreProductSignReview {
-				calling_product_id: Some("dim2next.paseo".to_string()),
+				calling_product_id: Some(ProductId::for_test("dim2next.paseo")),
 				account: api::ProductAccountId {
-					dot_ns_identifier: "dim2.paseo".to_string(),
+					dot_ns_identifier: ProductId::for_test("dim2.paseo"),
 					derivation_index: api::DerivationIndex::Index(0),
 				},
 				payload: vec![0x42; 128],
@@ -1829,10 +1821,10 @@ mod tests {
 	#[test]
 	fn vrf_approval_names_both_products_without_dumping_transcript_values() {
 		let review = UserConfirmationReview::SignVrf(truapi::platform::SignVrfReview {
-			calling_product_id: "caller.dot".to_string(),
+			calling_product_id: ProductId::for_test("caller.dot"),
 			request: truapi::v01::HostAccountSignVrfRequest {
 				account: truapi::v01::ProductAccountId {
-					dot_ns_identifier: "target.dot".to_string(),
+					dot_ns_identifier: ProductId::for_test("target.dot"),
 					derivation_index: truapi::v01::DerivationIndex::Raw([7; 32]),
 				},
 				transcript_label: b"lottery".to_vec(),
@@ -1884,9 +1876,8 @@ mod tests {
 	#[test]
 	fn product_storage_uses_safe_per_product_files() {
 		let temporary = tempdir().expect("create product storage root");
-		let first = ProductStorageKey::new("first.dot", "theme").expect("first product key");
-		let localhost =
-			ProductStorageKey::new("localhost:3000", "theme").expect("localhost product key");
+		let first = ProductStorageKey::new(ProductId::for_test("first.dot"), "theme");
+		let localhost = ProductStorageKey::new(ProductId::for_test("localhost:3000"), "theme");
 		let platform = CliPlatform::new(
 			test_network(),
 			Some(test_storage_paths(temporary.path(), "test")),
@@ -1940,7 +1931,8 @@ mod tests {
 	#[test]
 	fn product_storage_is_isolated_by_session_then_product() {
 		let temporary = tempdir().expect("create session storage root");
-		let key = ProductStorageKey::new("same.dot", "value").expect("product key");
+		let same_product = ProductId::for_test("same.dot");
+		let key = ProductStorageKey::new(same_product.clone(), "value");
 		let first = CliPlatform::new(
 			test_network(),
 			Some(test_storage_paths(temporary.path(), "first")),
@@ -1960,9 +1952,9 @@ mod tests {
 		});
 
 		let first_path =
-			product_storage_path(&temporary.path().join("storage").join("first"), "same.dot");
+			product_storage_path(&temporary.path().join("storage").join("first"), &same_product);
 		let second_path =
-			product_storage_path(&temporary.path().join("storage").join("second"), "same.dot");
+			product_storage_path(&temporary.path().join("storage").join("second"), &same_product);
 		assert!(first_path.is_file());
 		assert!(second_path.is_file());
 		assert_ne!(
