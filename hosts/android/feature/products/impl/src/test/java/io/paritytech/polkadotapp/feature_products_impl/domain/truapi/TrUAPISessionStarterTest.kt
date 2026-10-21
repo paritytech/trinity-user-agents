@@ -31,7 +31,7 @@ class TrUAPISessionStarterTest {
     private val bridge = mock<ProductTrUAPIHostBridge>()
     private val runtime = mock<TrUAPIHostRuntime>()
     private val chains = mock<TrUAPIChains>()
-    private val navigation = mock<NavigationPolicy>()
+    private val navigation = NavigationPolicy.DeeplinkNavigation { }
     private val provider = mock<BrowserWebViewProvider>()
     private val bootstrapInstaller = mock<TrUAPIBootstrapInstaller>()
     private val telemetry = mock<HostWebViewCreatedTelemetry>()
