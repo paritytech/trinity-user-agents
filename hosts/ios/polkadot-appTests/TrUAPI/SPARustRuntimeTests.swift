@@ -3,6 +3,7 @@ import Testing
 import AsyncExtensions
 import Products
 import TrUAPIHost
+import WebKit
 @testable import polkadot_app
 
 // MARK: - Helpers
@@ -44,14 +45,15 @@ private func makeRuntime(
     chainConnections: MockChainConnections = MockChainConnections(),
     configuration: SPAConfiguration,
     dotNsResolver: DotNsResolverProtocol = StubDotNsResolver(),
-    productResolver: ProductResolving = StubProductResolver()
+    productResolver: ProductResolving = StubProductResolver(),
+    schemeHandlerProxy: SchemeHandlerProxy = SchemeHandlerProxy()
 ) -> SPARustRuntime {
     SPARustRuntime(
         executionModel: makeExecutionModel(execution: execution, chainConnections: chainConnections),
         configuration: configuration,
         dotNsResolver: dotNsResolver,
         productResolver: productResolver,
-        schemeHandlerProxy: SchemeHandlerProxy(),
+        schemeHandlerProxy: schemeHandlerProxy,
         logger: Logger.shared
     )
 }
@@ -132,6 +134,29 @@ struct SPARustRuntimeTests {
         #expect(url.path == "/")
         #expect(engine.initializedScripts[0]
             .content == #"window.__truapi_localhost = { url: "ws://127.0.0.1:0/?t=test" };"#)
+
+        await runtime.dispose()
+    }
+
+    @Test @MainActor func dotNsStartServesTheResolvedBuildThroughTheProxy() async throws {
+        let contentDirectory = FileManager.default.temporaryDirectory.appending(component: UUID().uuidString)
+        try FileManager.default.createDirectory(at: contentDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: contentDirectory) }
+        let indexHTML = Data("<html>build</html>".utf8)
+        try indexHTML.write(to: contentDirectory.appending(component: ProductBundle.indexHTML))
+
+        let configuration = try makeConfiguration(contentSource: .dotNs)
+        let resolver = StubDotNsResolver()
+        resolver.contentURL = contentDirectory
+        let proxy = SchemeHandlerProxy()
+        let runtime = makeRuntime(configuration: configuration, dotNsResolver: resolver, schemeHandlerProxy: proxy)
+
+        let url = try await runtime.start(with: MockJSEngine())
+        let task = StubSchemeTask(request: URLRequest(url: url))
+        proxy.webView(WKWebView(), start: task)
+
+        #expect(url.path == "/")
+        #expect(task.servedData == indexHTML)
 
         await runtime.dispose()
     }
