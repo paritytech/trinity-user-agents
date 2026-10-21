@@ -33,6 +33,9 @@ on:
       download_url:
         description: "Direct download for the published bundle."
         value: ${{ jobs.build_simulator.outputs.download_url }}
+      sha:
+        description: "Commit the bundle was built from."
+        value: ${{ jobs.build_simulator.outputs.sha }}
     secrets:
       GOOGLE_SERVICE_INFO_RELEASE_BASE64:
         required: true
@@ -40,7 +43,7 @@ on:
         required: true
       SENTRY_AUTH_TOKEN:
         required: true
-      SENTRY_DSN:
+      SENTRY_DSN_IOS:
         required: true
   workflow_dispatch:
     inputs:
@@ -67,6 +70,7 @@ jobs:
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       download_url: ${{ steps.tag.outputs.download_url }}
+      sha: ${{ steps.tag.outputs.sha }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -91,7 +95,7 @@ jobs:
       - name: Configure secrets
         uses: ./hosts/ios/.github/actions/configure-secrets
         with:
-          sentry_dsn: ${{ secrets.SENTRY_DSN }}
+          sentry_dsn: ${{ secrets.SENTRY_DSN_IOS }}
           meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
 
       - name: Build simulator .app

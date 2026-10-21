@@ -29,12 +29,87 @@ pub enum Network {
 
 /// Env var overriding the identity backend base URL for every command. The URL
 /// includes `/api/v1`, for instance a local backend at
-/// `http://localhost:8080/api/v1`. Chain endpoints stay on the preset.
+/// `http://localhost:8080/api/v1`.
 pub const IDENTITY_BACKEND_BASE_ENV: &str = "HOST_CLI_IDENTITY_BACKEND_BASE";
 
+/// Env vars overriding one chain's WebSocket URL, for a fork of the preset's
+/// network. The genesis hashes stay the preset's, which a fork keeps.
+pub const PEOPLE_WS_ENV: &str = "HOST_CLI_PEOPLE_WS";
+pub const ASSET_HUB_WS_ENV: &str = "HOST_CLI_ASSET_HUB_WS";
+pub const BULLETIN_WS_ENV: &str = "HOST_CLI_BULLETIN_WS";
+
+/// Chain URL overrides; `None` keeps the preset's URL.
+#[derive(Debug, Default)]
+struct ChainOverrides {
+	people_ws: Option<String>,
+	asset_hub_ws: Option<String>,
+	bulletin_ws: Option<String>,
+}
+
+impl ChainOverrides {
+	fn from_env() -> anyhow::Result<Self> {
+		Self::parse(
+			[PEOPLE_WS_ENV, ASSET_HUB_WS_ENV, BULLETIN_WS_ENV].map(|name| std::env::var(name).ok()),
+		)
+	}
+
+	/// Blank values keep the preset. Anything else must be a `ws` or `wss` URL.
+	fn parse([people_ws, asset_hub_ws, bulletin_ws]: [Option<String>; 3]) -> anyhow::Result<Self> {
+		let url = |name: &str, value: Option<String>| -> anyhow::Result<Option<String>> {
+			let Some(value) = value.map(|value| value.trim().to_string()).filter(|v| !v.is_empty())
+			else {
+				return Ok(None);
+			};
+			let url = reqwest::Url::parse(&value)
+				.map_err(|err| anyhow::anyhow!("{name} is not a URL ({err}): {value}"))?;
+			anyhow::ensure!(
+				matches!(url.scheme(), "ws" | "wss"),
+				"{name} must be a ws:// or wss:// URL: {value}"
+			);
+			Ok(Some(value))
+		};
+		Ok(Self {
+			people_ws: url(PEOPLE_WS_ENV, people_ws)?,
+			asset_hub_ws: url(ASSET_HUB_WS_ENV, asset_hub_ws)?,
+			bulletin_ws: url(BULLETIN_WS_ENV, bulletin_ws)?,
+		})
+	}
+
+	/// The env vars behind the overrides that are set.
+	fn set_names(&self) -> Vec<&'static str> {
+		[
+			(PEOPLE_WS_ENV, &self.people_ws),
+			(ASSET_HUB_WS_ENV, &self.asset_hub_ws),
+			(BULLETIN_WS_ENV, &self.bulletin_ws),
+		]
+		.into_iter()
+		.filter_map(|(name, value)| value.is_some().then_some(name))
+		.collect()
+	}
+}
+
 impl Network {
-	/// Preset resolved with any environment overrides applied.
+	/// CLI resolution: the preset with the backend and chain URL overrides, or
+	/// the opt-in disposable local-network configuration, which cannot be
+	/// combined with the chain URL overrides.
+	pub fn cli_config(self) -> anyhow::Result<NetworkConfig> {
+		let overrides = ChainOverrides::from_env()?;
+		let set = overrides.set_names();
+		refuse_light_client(&set, std::env::var(crate::local_network::LIGHT_CLIENT_ENV).ok())?;
+		crate::local_network::resolve(
+			apply_chain_overrides(self.with_backend_override(), overrides),
+			&set,
+		)
+	}
+
+	/// [`Self::cli_config`] without the local-network file, for tests.
+	#[cfg(test)]
 	pub fn config(self) -> NetworkConfig {
+		let overrides = ChainOverrides::from_env().expect("valid chain URL overrides");
+		apply_chain_overrides(self.with_backend_override(), overrides)
+	}
+
+	fn with_backend_override(self) -> NetworkConfig {
 		apply_backend_override(self.preset(), std::env::var(IDENTITY_BACKEND_BASE_ENV).ok())
 	}
 
@@ -87,6 +162,22 @@ impl Network {
 	}
 }
 
+/// A fork keeps the live genesis hashes, so the light client would find them in
+/// its catalog and sync the live chains instead.
+fn refuse_light_client(
+	chain_overrides: &[&str],
+	light_client: Option<String>,
+) -> anyhow::Result<()> {
+	anyhow::ensure!(
+		chain_overrides.is_empty() || light_client.as_deref() != Some("1"),
+		"{} and {}=1 cannot be used together: the light client syncs the live chains \
+         by genesis hash; unset one of them",
+		chain_overrides.join(", "),
+		crate::local_network::LIGHT_CLIENT_ENV
+	);
+	Ok(())
+}
+
 /// Replaces the preset's identity backend base with `base` when it carries a
 /// non-empty URL. Trailing slashes are stripped so path joins stay clean. The
 /// override string is leaked; the CLI reads it a handful of times per process.
@@ -97,6 +188,38 @@ fn apply_backend_override(mut config: NetworkConfig, base: Option<String>) -> Ne
 			config.identity_backend_base = Some(Box::leak(trimmed.to_string().into_boxed_str()));
 		}
 	}
+	config
+}
+
+/// Points each overridden role at its new URL, in both the preset field and the
+/// genesis-keyed routing table, so the two cannot disagree. Overridden values
+/// are leaked like the backend override.
+fn apply_chain_overrides(mut config: NetworkConfig, overrides: ChainOverrides) -> NetworkConfig {
+	let leak = |value: Option<String>| value.map(|url| &*Box::leak(url.into_boxed_str()));
+	let routes = [
+		(leak(overrides.people_ws), config.people_genesis),
+		(leak(overrides.asset_hub_ws), config.asset_hub_genesis),
+		(leak(overrides.bulletin_ws), config.bulletin_genesis),
+	];
+	if routes.iter().all(|(url, _)| url.is_none()) {
+		return config;
+	}
+	let [(people, _), (asset_hub, _), (bulletin, _)] = routes;
+	config.people_ws = people.unwrap_or(config.people_ws);
+	config.asset_hub_ws = asset_hub.unwrap_or(config.asset_hub_ws);
+	config.bulletin_ws = bulletin.unwrap_or(config.bulletin_ws);
+	let endpoints: Vec<ChainEndpoint> = config
+		.live_chain_endpoints
+		.iter()
+		.map(|endpoint| {
+			let ws = routes
+				.iter()
+				.find_map(|(url, genesis)| (*genesis == endpoint.genesis).then_some(*url).flatten())
+				.unwrap_or(endpoint.ws);
+			ChainEndpoint { ws, ..*endpoint }
+		})
+		.collect();
+	config.live_chain_endpoints = Box::leak(endpoints.into_boxed_slice());
 	config
 }
 
@@ -725,5 +848,71 @@ mod tests {
 			preset.identity_backend_base,
 			"a blank override keeps the preset"
 		);
+	}
+
+	#[test]
+	fn no_chain_override_keeps_the_preset() {
+		for network in Network::value_variants() {
+			let preset = network.preset();
+			let overrides =
+				ChainOverrides::parse([None, Some(String::new()), Some("  ".to_string())]).unwrap();
+			assert!(overrides.set_names().is_empty());
+			let resolved = apply_chain_overrides(preset, overrides);
+			assert_eq!(resolved.people_ws, preset.people_ws);
+			assert_eq!(resolved.asset_hub_ws, preset.asset_hub_ws);
+			assert_eq!(resolved.bulletin_ws, preset.bulletin_ws);
+			assert!(std::ptr::eq(resolved.live_chain_endpoints, preset.live_chain_endpoints));
+		}
+	}
+
+	#[test]
+	fn chain_overrides_are_refused_with_the_light_client() {
+		let error = refuse_light_client(&[PEOPLE_WS_ENV], Some("1".to_string())).unwrap_err();
+		assert!(error.to_string().contains(PEOPLE_WS_ENV), "{error}");
+		assert!(refuse_light_client(&[], Some("1".to_string())).is_ok());
+		assert!(refuse_light_client(&[PEOPLE_WS_ENV], None).is_ok());
+	}
+
+	#[test]
+	fn chain_overrides_must_be_websocket_urls() {
+		for value in ["127.0.0.1:10010", "http://127.0.0.1:10010"] {
+			let error = ChainOverrides::parse([None, None, Some(value.to_string())])
+				.expect_err("a non-ws override is refused up front");
+			assert!(error.to_string().contains(BULLETIN_WS_ENV), "{error}");
+		}
+	}
+
+	#[test]
+	fn chain_overrides_move_the_field_and_the_route_together() {
+		let preset = Network::Previewnet.preset();
+		let overrides = ChainOverrides::parse([
+			Some(" ws://127.0.0.1:10010 ".to_string()),
+			Some(" ".to_string()),
+			None,
+		])
+		.unwrap();
+		assert_eq!(overrides.set_names(), [PEOPLE_WS_ENV]);
+		let overridden = apply_chain_overrides(preset, overrides);
+
+		assert_eq!(overridden.people_ws, "ws://127.0.0.1:10010");
+		assert_eq!(
+			overridden.asset_hub_ws, preset.asset_hub_ws,
+			"a blank override keeps the preset"
+		);
+		assert_eq!(overridden.bulletin_ws, preset.bulletin_ws);
+		assert_eq!(overridden.people_genesis, preset.people_genesis, "a fork keeps the genesis");
+		for endpoint in overridden.live_chain_endpoints {
+			let expected = if endpoint.genesis == preset.people_genesis {
+				"ws://127.0.0.1:10010"
+			} else {
+				preset
+					.live_chain_endpoints
+					.iter()
+					.find(|original| original.genesis == endpoint.genesis)
+					.expect("every route survives the override")
+					.ws
+			};
+			assert_eq!(endpoint.ws, expected);
+		}
 	}
 }

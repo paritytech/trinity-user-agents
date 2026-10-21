@@ -1164,9 +1164,11 @@ fn save_string_map(path: &Path, values: &HashMap<String, Vec<u8>>) -> Result<(),
 }
 
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
-	let parent = path
-		.parent()
-		.ok_or_else(|| format!("storage path has no parent: {}", path.display()))?;
+	let parent = match path.parent() {
+		Some(parent) if parent.as_os_str().is_empty() => Path::new("."),
+		Some(parent) => parent,
+		None => return Err(format!("storage path has no parent: {}", path.display())),
+	};
 	fs::create_dir_all(parent).map_err(|error| format!("create storage dir: {error}"))?;
 	let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("storage.json");
 	let temporary_id = NEXT_STORAGE_TEMP_ID.fetch_add(1, Ordering::Relaxed);

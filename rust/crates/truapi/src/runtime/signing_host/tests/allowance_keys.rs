@@ -10,6 +10,7 @@ use truapi::{
 };
 
 use crate::{
+	host_internal::sso_messages::OnExistingAllowancePolicy,
 	host_logic::{
 		product_account::{derive_full_person_ring_vrf_entropy, derive_sr25519_hard_path},
 		statement_store::SUBMIT_STATEMENT_METHOD,
@@ -123,6 +124,64 @@ fn remembered(signing_host: &SigningHostRole, product_id: &str, period: u32) -> 
 		.statement_allowance_key(state.activation_generation, product_id, period)
 		.expect("the generation is current")
 		.map(|key| key.secret)
+}
+
+/// An existing statement-store allowance must be served without resolving a
+/// ring or submitting anything. The cache and the scan are covered on their
+/// own; this pins the composition, so removing the early return fails here
+/// rather than passing quietly.
+#[test]
+fn an_existing_allowance_is_served_without_touching_the_ring() {
+	let allowance =
+		derive_sr25519_hard_path(&ENTROPY, &["allowance", "statement-store", PRODUCT_ID])
+			.expect("allowance derivation succeeds");
+	let platform = chain_with_allocated_slot();
+	let signing_host = active_signing_host(platform.clone());
+
+	// Bounded, because the failure mode of losing the early return is a
+	// wait on a chain read the stub deliberately does not answer — an
+	// unbounded test would hang instead of reporting. The bound is generous
+	// because it is catching a hang, not asserting latency.
+	let allocation = futures::executor::block_on(async {
+		let session = signing_host.current_session().unwrap();
+		futures::select! {
+			result = super::super::allowance::allocate_statement_store_allowance(
+				&signing_host.services,
+				&signing_host,
+				&session,
+				PRODUCT_ID,
+				OnExistingAllowancePolicy::Ignore,
+			)
+			.fuse() => result,
+			_ = futures_timer::Delay::new(std::time::Duration::from_secs(30)).fuse() => {
+				panic!("allocation blocked on a chain read it should not have made")
+			}
+		}
+	})
+	.expect("an existing allowance is returned");
+
+	assert_eq!(allocation.secret, allowance.secret.to_bytes().to_vec());
+
+	let sent = platform.sent_rpc.lock().expect("rpc list mutex poisoned");
+	let methods: Vec<String> = sent
+		.iter()
+		.filter_map(|request| {
+			let value: serde_json::Value = serde_json::from_str(request).ok()?;
+			value.get("method")?.as_str().map(ToString::to_string)
+		})
+		.collect();
+
+	// `find_including_rings` opens with `chain_getFinalizedHead`, so none of
+	// these means no ring was resolved.
+	assert_eq!(
+		methods.iter().filter(|method| *method == "chain_getFinalizedHead").count(),
+		0,
+		"a ring was resolved for an allowance already in place: {methods:?}"
+	);
+	assert!(
+		!methods.iter().any(|method| method.starts_with("author_submit")),
+		"an extrinsic was submitted for an allowance already in place: {methods:?}"
+	);
 }
 
 #[test]
@@ -332,5 +391,135 @@ fn another_rejection_keeps_the_key() {
 		remembered(&signing_host, PRODUCT_ID, PERIOD),
 		Some(SECRET),
 		"a rejection that says nothing about the allowance must not evict the key"
+	);
+}
+
+fn sent_methods(platform: &StubPlatform) -> Vec<String> {
+	platform
+		.sent_rpc
+		.lock()
+		.expect("rpc list mutex poisoned")
+		.iter()
+		.map(|request| {
+			let request: serde_json::Value = serde_json::from_str(request).unwrap();
+			request["method"].as_str().unwrap().to_string()
+		})
+		.collect()
+}
+
+/// A Bulletin `Authorizations` entry for one transaction with `remaining` bytes left.
+fn bulletin_authorization(remaining: u64) -> String {
+	let entry = (0u32, 1u32, 0u64, 0u64, remaining, 100u32).encode();
+	format!(r#""0x{}""#, hex::encode(entry))
+}
+
+/// A payload the authorization cannot hold is extended before it is signed,
+/// rather than signed, rejected by the chain and signed again.
+#[test]
+fn a_preimage_larger_than_the_bulletin_authorization_extends_it_before_submitting() {
+	let header = r#"{"number":"0x1"}"#.to_string();
+	let platform = Arc::new(StubPlatform {
+		remote_permission_decisions: std::sync::Mutex::new(
+			[crate::platform::PermissionDecision::AllowAlways].into(),
+		),
+		rpc_method_responses: vec![
+			("state_getStorage", bulletin_authorization(4)),
+			("state_getStorage", bulletin_authorization(4)),
+			("state_getStorage", bulletin_authorization(4)),
+			("chain_getHeader", header.clone()),
+			("chain_getHeader", header.clone()),
+			("chain_getHeader", header),
+		],
+		// The People chain is unreachable, so the extension itself fails.
+		unreachable_genesis: Some([0; 32]),
+		..Default::default()
+	});
+	let (services, signing_host) = signing_runtime_with_platform(platform.clone());
+	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+		.expect("activation succeeds");
+	let runtime = product_runtime(services, signing_host);
+
+	let cx = CallContext::default();
+	let submitted = futures::executor::block_on(async {
+		futures::select! {
+			result = truapi::api::Preimage::submit(
+				&runtime,
+				&cx,
+				truapi::versioned::preimage::RemotePreimageSubmitRequest::V1(
+					b"longer than four bytes".to_vec(),
+				),
+			).fuse() => result.is_ok(),
+			() = futures_timer::Delay::new(std::time::Duration::from_secs(5)).fuse() => {
+				panic!("the submission waited on an unscripted chain read")
+			},
+		}
+	});
+	assert_eq!(
+		(submitted, sent_methods(&platform)),
+		(
+			false,
+			["state_getStorage", "chain_getHeader"]
+				.repeat(3)
+				.iter()
+				.map(|method| method.to_string())
+				.collect()
+		),
+	);
+}
+
+/// A payload the authorization already holds goes straight to the submit,
+/// without asking for more.
+#[test]
+fn a_preimage_the_bulletin_authorization_holds_is_submitted_without_extending_it() {
+	let header = r#"{"number":"0x1"}"#.to_string();
+	let platform = Arc::new(StubPlatform {
+		remote_permission_decisions: std::sync::Mutex::new(
+			[crate::platform::PermissionDecision::AllowAlways].into(),
+		),
+		rpc_method_responses: vec![
+			("state_getStorage", bulletin_authorization(64)),
+			("state_getStorage", bulletin_authorization(64)),
+			("chain_getHeader", header.clone()),
+			("chain_getHeader", header),
+			("chainHead_v1_follow", "null".to_string()),
+		],
+		unreachable_genesis: Some([0; 32]),
+		..Default::default()
+	});
+	let (services, signing_host) = signing_runtime_with_platform(platform.clone());
+	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+		.expect("activation succeeds");
+	let runtime = product_runtime(services, signing_host);
+
+	let cx = CallContext::default();
+	let submitted = futures::executor::block_on(async {
+		futures::select! {
+			result = truapi::api::Preimage::submit(
+				&runtime,
+				&cx,
+				truapi::versioned::preimage::RemotePreimageSubmitRequest::V1(b"fits".to_vec()),
+			).fuse() => result.is_ok(),
+			() = futures_timer::Delay::new(std::time::Duration::from_secs(5)).fuse() => {
+				panic!("the submission waited on an unscripted chain read")
+			},
+		}
+	});
+
+	// The scripted Bulletin node drops the follow subscription, so the submit
+	// itself fails; the two authorization reads before it are what matter.
+	assert_eq!(
+		(submitted, sent_methods(&platform)),
+		(
+			false,
+			[
+				"state_getStorage",
+				"chain_getHeader",
+				"state_getStorage",
+				"chain_getHeader",
+				"chainHead_v1_follow",
+			]
+			.map(String::from)
+			.to_vec()
+		),
 	);
 }
