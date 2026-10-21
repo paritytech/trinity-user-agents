@@ -65,7 +65,9 @@ env:
 jobs:
   build_simulator:
     name: Build & publish simulator .app
-    runs-on: macos-26
+    # The Parity pool, out of the hosted macOS queue. The install action pins
+    # the Xcode the app builds with, so the machine's default does not matter.
+    runs-on: parity-macos
     timeout-minutes: 60
     outputs:
       tag: ${{ steps.tag.outputs.tag }}

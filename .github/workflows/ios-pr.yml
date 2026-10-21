@@ -8,7 +8,10 @@ name: iOS CI
 # so this affects only what the list shows.
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}${{ github.event.action == 'labeled' && github.event.label.name != 'ios-simulator-build' && format('-{0}', github.run_id) || '' }}
-  cancel-in-progress: true
+  # A push to main runs to the end, so each one publishes the reusable core and
+  # the record of the bindings its tests passed against. Pull requests cancel
+  # superseded runs.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
   # Only what the iOS app is built from. The app itself, the crates its bindings
@@ -536,7 +539,10 @@ jobs:
     # nothing that build and test do not already cover, so it has nothing to
     # gain from finishing first. It runs alongside them, so a slower job here
     # does not hold up the result.
-    runs-on: macos-26
+    # The Parity pool, out of the hosted macOS queue. A pull request from a fork
+    # stays on a hosted runner, because the Parity machines are persistent and
+    # shared.
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'macos-26' || 'parity-macos' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0

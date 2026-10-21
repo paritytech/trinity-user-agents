@@ -198,7 +198,10 @@ jobs:
       group: host-playground-e2e-ios-${{ inputs.release_tag || github.event.pull_request.number || github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     continue-on-error: ${{ inputs.release_tag != '' }}
-    runs-on: macos-26
+    # The Parity pool, out of the hosted macOS queue. A pull request from a fork
+    # stays on a hosted runner, because the Parity machines are persistent and
+    # shared.
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'macos-26' || 'parity-macos' }}
     timeout-minutes: 150
     env:
       IOS_BUNDLE_ID: "io.parity.polkadotapp"
