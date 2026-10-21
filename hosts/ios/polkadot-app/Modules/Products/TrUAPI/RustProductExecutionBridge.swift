@@ -28,7 +28,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         let chainRegistry: ChainRegistryProtocol
         let chainConnections: TrUAPIChainConnecting
         let productStorage: TrUAPILocalStoring
-        let coreStorage: TrUAPILocalStoring
+        let coreStorage: HostCoreStorageBackend
         let confirmationPresenter: TrUAPIConfirmationPresenting
         let preimageCache: TrUAPIPreimageLookuping
         let hostProvider: ProductHostProviding
@@ -51,7 +51,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         self.dependencies = dependencies
         self.cardFace = cardFace
         storage = ProductStorageBackend(storage: dependencies.productStorage)
-        coreStorage = CoreStorageBackend(storage: dependencies.coreStorage)
+        coreStorage = dependencies.coreStorage
     }
 
     /// Attach the opened execution so callbacks can notify it in place.

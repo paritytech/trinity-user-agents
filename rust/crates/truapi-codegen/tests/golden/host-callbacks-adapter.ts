@@ -32,6 +32,7 @@ import type { GenericError } from "@parity/truapi";
 import {
   AuthState,
   CoreStorageKey,
+  CoreStorageKeys,
   DevicePermissionStatus,
   HostChainSet,
   HostContactLookup,
@@ -75,6 +76,7 @@ export interface RawCallbacks {
   ): (() => void) | void;
   contacts?(lookup: Uint8Array): Promise<Uint8Array>;
   pickContact?(product: Uint8Array): Promise<Uint8Array>;
+  coreStorageKeys(): Promise<Uint8Array>;
   readCoreStorage(key: Uint8Array): Promise<Uint8Array | null | undefined>;
   writeCoreStorage(key: Uint8Array, value: Uint8Array): Promise<void>;
   clearCoreStorage(key: Uint8Array): Promise<void>;
@@ -190,6 +192,8 @@ export function createWasmRawCallbacks(
             ),
         }
       : {}),
+    coreStorageKeys: async () =>
+      CoreStorageKeys.enc(await callbacks.coreStorage.coreStorageKeys()),
     readCoreStorage: async (key) =>
       await callbacks.coreStorage.readCoreStorage(CoreStorageKey.dec(key)),
     writeCoreStorage: async (key, value) =>

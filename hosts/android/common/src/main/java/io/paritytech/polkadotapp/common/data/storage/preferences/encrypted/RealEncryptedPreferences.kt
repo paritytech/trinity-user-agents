@@ -18,6 +18,22 @@ internal class RealEncryptedPreferences @Inject constructor(
         preferences.putString(field, encryptionUtil.encrypt(value))
     }
 
+    override fun putEncryptedStringCommitted(field: String, value: String) {
+        val ciphertext = encryptionUtil.encryptOrThrow(value)
+        val editor = preferences.edit()
+        editor.putString(field, ciphertext)
+        check(editor.commit()) { "Encrypted preference write was not committed" }
+    }
+
+    override fun getDecryptedStringOrThrow(field: String): String? =
+        preferences.getString(field)?.let(encryptionUtil::decryptOrThrow)
+
+    override fun removeKeyCommitted(field: String) {
+        val editor = preferences.edit()
+        editor.remove(field)
+        check(editor.commit()) { "Encrypted preference removal was not committed" }
+    }
+
     override fun getDecryptedString(field: String): String? {
         val encryptedString = preferences.getString(field)
         return encryptedString?.let { encryptionUtil.decrypt(it) }

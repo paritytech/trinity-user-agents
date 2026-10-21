@@ -2,12 +2,15 @@
 
 mod channel;
 mod pairing;
+#[cfg(test)]
+mod tests;
 
 use super::{
 	HostSession,
 	auth_state::AuthStateMachine,
 	authority::{AuthoritySession, authority_session},
 	connected_session_ui_info,
+	host_grants::GrantBarrier,
 	identity::resolve_session_identity_with_chain,
 	services::RuntimeServices,
 	sso_remote::{SSO_PEER_DISCONNECT_REASON, SessionDisconnects, SsoSessionKey},
@@ -36,22 +39,36 @@ use truapi::{
 	latest::{HostRequestLoginError, HostRequestLoginResponse},
 };
 
-/// Keeps account material for the paired session and hears when that session changes.
+/// Keeps grants for the paired session and hears when that session changes.
 #[async_trait::async_trait]
 pub trait PairedSessionOwner: Send + Sync {
-	/// `previous` is no longer selected: drop what is cached in memory for it.
+	/// Hold back the owner's durable writes across a session change.
+	async fn write_barrier(&self) -> GrantBarrier;
+
+	/// `previous` is no longer selected: `revoked` when it was cleared, not replaced.
 	///
-	/// Runs while the session channel stops, so it must not call back into the service.
-	fn session_ended(&self, previous: Option<&SessionInfo>);
+	/// Runs while session selection is locked, so it must not call back into the service.
+	fn session_ended(&self, previous: Option<&SessionInfo>, revoked: bool);
 
-	/// Drop what is stored for `previous`, which a disconnect has cleared.
-	async fn session_cleared(&self, previous: Option<&SessionInfo>);
+	/// Drop grants loaded before a pending revocation; whether one is pending.
+	fn begin_cleanup(&self, barrier: &GrantBarrier) -> bool;
 
-	/// Reconcile kept material with `next` before it replaces `previous`.
-	async fn prepare_session(&self, previous: Option<&SessionInfo>, next: &SessionInfo);
+	/// Finish pending durable revocation; failures stay pending.
+	async fn finish_cleanup(&self, barrier: &GrantBarrier) -> Result<(), String>;
 
-	/// Drop what is kept for every paired session.
-	async fn session_reset(&self);
+	/// Reconcile kept grants with `next` before it is published.
+	async fn prepare_session(
+		&self,
+		barrier: &GrantBarrier,
+		previous: Option<&SessionInfo>,
+		next: &SessionInfo,
+	);
+}
+
+/// The owner and its write barrier, held across one session change.
+struct OwnerHold {
+	owner: Arc<dyn PairedSessionOwner>,
+	barrier: GrantBarrier,
 }
 
 struct LoginInFlight {
@@ -85,23 +102,17 @@ impl Drop for LoginInFlightOwner<'_> {
 }
 
 #[derive(Default)]
-struct SessionLifecycle {
-	epoch: u64,
+struct Selection {
+	login_generation: u64,
+	session_epoch: u64,
 	external_session_active: bool,
+	pending_auth_deletion: bool,
 }
 
-impl SessionLifecycle {
-	fn advance(&mut self) -> u64 {
-		self.epoch = self.epoch.checked_add(1).expect("session lifecycle epoch exhausted");
-		self.external_session_active = false;
-		self.epoch
-	}
-
-	fn advance_preserving_source(&mut self) -> u64 {
-		let external_session_active = self.external_session_active;
-		let epoch = self.advance();
-		self.external_session_active = external_session_active;
-		epoch
+impl Selection {
+	fn advance_epoch(&mut self) -> u64 {
+		self.session_epoch = self.session_epoch.checked_add(1).expect("session epoch exhausted");
+		self.session_epoch
 	}
 }
 
@@ -115,17 +126,17 @@ enum StoredSessionActivationError {
 	Read(String),
 	#[display("stored auth session changed during activation")]
 	Changed,
+	#[display("failed to clear previous session: {_0}")]
+	Cleanup(String),
 }
 
-/// State carried across the reconciles of one session store sync task.
 #[derive(Default)]
 struct SessionStoreSync {
-	// Storage clears can notify this subscription; clear at most once per read-error streak.
+	// Storage clears can notify this subscription; avoid repeating a failing clear.
 	cleared_after_read_error: bool,
 }
 
 impl SessionStoreSync {
-	/// Re-read the persisted auth session and reconcile the in-memory one.
 	async fn reconcile(&mut self, service: &SsoRequestService) {
 		self.cleared_after_read_error = matches!(
 			service.reconcile_stored_session(!self.cleared_after_read_error, true).await,
@@ -144,18 +155,14 @@ pub struct SsoRequestService {
 	auth_state: AuthStateMachine,
 	statement_store: StatementStoreRpc,
 	session_disconnects: Arc<SessionDisconnects>,
-	/// `message_id` of the request the session's request channel carries,
-	/// the only one a `Cancel` may name without replacing another request.
 	newest_request: Mutex<Option<String>>,
 	disconnect_monitor: Mutex<Option<SsoDisconnectMonitor>>,
 	login_in_flight: Mutex<Option<LoginInFlight>>,
-	login_generation: Mutex<u64>,
-	session_store_activation: futures::lock::Mutex<()>,
-	session_lifecycle: Mutex<SessionLifecycle>,
+	selection: Mutex<Selection>,
 	owner: Weak<dyn PairedSessionOwner>,
+	session_store_activation: futures::lock::Mutex<()>,
 	#[cfg(test)]
 	external_session_activation_pause: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
-	/// Change notifications the sync task has finished reconciling.
 	#[cfg(test)]
 	session_store_change_ticks: AtomicUsize,
 	weak_self: Weak<SsoRequestService>,
@@ -163,7 +170,7 @@ pub struct SsoRequestService {
 }
 
 impl SsoRequestService {
-	/// Select paired sessions for `owner`, which keeps their account material.
+	/// Select paired sessions for `owner`, which keeps their grants.
 	pub fn new(
 		services: Arc<RuntimeServices>,
 		host_config: PairingHostConfig,
@@ -183,10 +190,9 @@ impl SsoRequestService {
 			newest_request: Mutex::new(None),
 			disconnect_monitor: Mutex::new(None),
 			login_in_flight: Mutex::new(None),
-			login_generation: Mutex::new(0),
-			session_store_activation: futures::lock::Mutex::new(()),
-			session_lifecycle: Mutex::new(SessionLifecycle::default()),
+			selection: Mutex::new(Selection::default()),
 			owner,
+			session_store_activation: futures::lock::Mutex::new(()),
 			#[cfg(test)]
 			external_session_activation_pause: Mutex::new(None),
 			#[cfg(test)]
@@ -196,33 +202,27 @@ impl SsoRequestService {
 		})
 	}
 
-	/// Signal that the persisted auth session may have changed; the sync task
-	/// re-reads it.
+	/// Invalidate stale work and request a persisted-session reread.
 	pub fn notify_session_store_changed(&self) {
 		self.advance_session_lifecycle();
 		self.session_store_changes.notify();
 	}
 
 	fn advance_session_lifecycle(&self) -> u64 {
-		let mut lifecycle =
-			self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
-		lifecycle.advance()
+		let mut selection = self.selection.lock().expect("session selection mutex poisoned");
+		selection.external_session_active = false;
+		selection.advance_epoch()
 	}
 
-	/// Epoch of the session selection; every session change advances it.
-	pub fn current_session_lifecycle_epoch(&self) -> u64 {
-		self.session_lifecycle.lock().expect("session lifecycle mutex poisoned").epoch
+	fn session_epoch(&self) -> u64 {
+		self.selection.lock().expect("session selection mutex poisoned").session_epoch
 	}
 
-	/// Whether no session change happened since `epoch` was read.
-	pub fn is_session_lifecycle_current(&self, epoch: u64) -> bool {
-		self.current_session_lifecycle_epoch() == epoch
-	}
-
-	/// Test hook for [`Self::start_session_store_sync`].
-	#[cfg(test)]
-	pub fn start_session_store_sync_for_tests(self: Arc<Self>, spawner: Spawner) {
-		self.start_session_store_sync(spawner);
+	/// The owner's barrier, or nothing to order once the owner is gone.
+	async fn hold_owner(&self) -> Option<OwnerHold> {
+		let owner = self.owner.upgrade()?;
+		let barrier = owner.write_barrier().await;
+		Some(OwnerHold { owner, barrier })
 	}
 
 	/// `message_id` of the request the session's request channel carries.
@@ -235,12 +235,6 @@ impl SsoRequestService {
 	#[cfg(test)]
 	pub fn session_store_change_ticks_for_tests(&self) -> usize {
 		self.session_store_change_ticks.load(Ordering::SeqCst)
-	}
-
-	/// Test alias for [`Self::start_remote_monitor_for_current_session`].
-	#[cfg(test)]
-	pub fn start_session_supervision_for_current_session(&self) {
-		self.start_remote_monitor_for_current_session();
 	}
 
 	/// Pause replacement before the guarded installation for race tests.
@@ -279,14 +273,11 @@ impl SsoRequestService {
 	#[cfg(test)]
 	pub fn start_remote_monitor_for_current_session(&self) {
 		if let Some(session) = self.session_state.current() {
-			self.start_disconnect_monitor(&session);
+			channel::start_disconnect_monitor(self, &session);
 		}
 	}
 
-	/// Validate, resolve, and install an externally persisted canonical
-	/// session blob without copying it into core storage. Reports the resulting
-	/// auth state to the host, including when the blob failed to decode and the
-	/// active session was therefore left alone.
+	/// Install an external canonical session without copying it into storage.
 	pub async fn activate_external_session(&self, blob: &[u8]) -> Result<(), String> {
 		let installed = self.install_external_session(blob).await;
 		self.auth_state.announce_current();
@@ -296,6 +287,7 @@ impl SsoRequestService {
 	async fn install_external_session(&self, blob: &[u8]) -> Result<(), String> {
 		let _activation = self.session_store_activation.lock().await;
 		let session = crate::host_logic::session::decode_persisted_session(blob)?;
+		self.invalidate_login_attempts();
 		let activation_epoch = self.advance_session_lifecycle();
 		let resolved = resolve_session_identity_with_chain(
 			&self.chain,
@@ -305,7 +297,7 @@ impl SsoRequestService {
 		.await;
 		#[cfg(test)]
 		self.wait_at_external_session_activation_pause().await;
-		self.set_connected_session_if_current(resolved, activation_epoch, true).await;
+		self.set_connected_session_if_current(resolved, activation_epoch, true).await?;
 		Ok(())
 	}
 
@@ -326,31 +318,38 @@ impl SsoRequestService {
 	) -> Result<(), StoredSessionActivationError> {
 		let _activation = self.session_store_activation.lock().await;
 		if preserve_external_session &&
-			self.session_lifecycle
+			self.selection
 				.lock()
-				.expect("session lifecycle mutex poisoned")
+				.expect("session selection mutex poisoned")
 				.external_session_active
 		{
 			return Ok(());
 		}
-		let blob = match self.platform.read_core_storage(CoreStorageKey::AuthSession).await {
+		let (activation_epoch, read) = {
+			let hold = self.hold_owner().await;
+			self.drain_session_deletions(hold.as_ref())
+				.await
+				.map_err(StoredSessionActivationError::Cleanup)?;
+			let epoch = self.advance_session_lifecycle();
+			let read = self.platform.read_core_storage(CoreStorageKey::AuthSession).await;
+			(epoch, read)
+		};
+		let blob = match read {
 			Ok(Some(blob)) => blob,
 			Ok(None) => {
-				self.clear_disconnected_session(false).await;
+				self.clear_disconnected_session(false, Some(activation_epoch)).await;
 				return Err(StoredSessionActivationError::Missing);
 			},
 			Err(error) => {
-				self.clear_disconnected_session(false).await;
-				if clear_after_read_error {
-					let _ = self.platform.clear_core_storage(CoreStorageKey::AuthSession).await;
-				}
+				self.clear_disconnected_session(clear_after_read_error, Some(activation_epoch))
+					.await;
 				return Err(StoredSessionActivationError::Read(error.reason));
 			},
 		};
 		let session = match crate::host_logic::session::decode_persisted_session(&blob) {
 			Ok(session) => session,
 			Err(error) => {
-				self.clear_disconnected_session(true).await;
+				self.clear_disconnected_session(true, Some(activation_epoch)).await;
 				return Err(StoredSessionActivationError::Invalid(error));
 			},
 		};
@@ -360,43 +359,58 @@ impl SsoRequestService {
 			session,
 		)
 		.await;
-
-		// Identity resolution can await chain I/O. Re-read the slot before
-		// installation so an older activation cannot overwrite or expose a
-		// session replaced while that lookup was in flight.
-		let latest = match self.platform.read_core_storage(CoreStorageKey::AuthSession).await {
-			Ok(latest) => latest,
-			Err(error) => {
-				self.clear_disconnected_session(false).await;
-				if clear_after_read_error {
-					let _ = self.platform.clear_core_storage(CoreStorageKey::AuthSession).await;
-				}
-				return Err(StoredSessionActivationError::Read(error.reason));
-			},
-		};
-		if latest.as_deref() != Some(blob.as_slice()) {
-			self.clear_disconnected_session(false).await;
+		let hold = self.hold_owner().await;
+		self.drain_session_deletions(hold.as_ref())
+			.await
+			.map_err(StoredSessionActivationError::Cleanup)?;
+		if self.session_epoch() != activation_epoch {
 			return Err(StoredSessionActivationError::Changed);
 		}
-
+		let latest = self.platform.read_core_storage(CoreStorageKey::AuthSession).await;
+		let error = match latest {
+			Ok(latest) if latest.as_deref() == Some(blob.as_slice()) => None,
+			Ok(_) => Some((false, StoredSessionActivationError::Changed)),
+			Err(error) => {
+				Some((clear_after_read_error, StoredSessionActivationError::Read(error.reason)))
+			},
+		};
+		if let Some((clear_auth, error)) = error {
+			if self.begin_session_clear(clear_auth, Some(activation_epoch), None) &&
+				let Err(reason) = self.drain_session_deletions(hold.as_ref()).await
+			{
+				warn!(%reason, "session cleanup remains pending");
+			}
+			return Err(error);
+		}
+		self.prepare_session_installation(hold.as_ref(), &resolved)
+			.await
+			.map_err(StoredSessionActivationError::Cleanup)?;
+		if self.session_epoch() != activation_epoch {
+			return Err(StoredSessionActivationError::Changed);
+		}
 		let resolved_blob = encode_persisted_session(&resolved);
-		if resolved_blob != blob {
+		if !self.install_session_if_current(resolved, activation_epoch, false, None) {
+			return Err(StoredSessionActivationError::Changed);
+		}
+		if resolved_blob != blob && self.session_epoch() == activation_epoch {
 			let _ = self
 				.platform
 				.write_core_storage(CoreStorageKey::AuthSession, resolved_blob)
 				.await;
 		}
-		self.set_connected_session(resolved).await;
+		if let Err(reason) = self.drain_session_deletions(hold.as_ref()).await {
+			warn!(%reason, "session cleanup remains pending");
+		}
 		Ok(())
 	}
 
 	/// Reconcile at boot and after storage notifications, reporting auth state.
 	#[instrument(skip_all, fields(runtime.method = "session_store.sync"))]
 	pub fn start_session_store_sync(self: Arc<Self>, spawner: Spawner) {
-		let pairing_host = Arc::downgrade(&self);
+		let service = Arc::downgrade(&self);
 		drop(self);
 		spawner(Box::pin(async move {
-			let Some(booting) = pairing_host.upgrade() else {
+			let Some(booting) = service.upgrade() else {
 				return;
 			};
 			let mut ticks = booting.session_store_changes.subscribe();
@@ -405,14 +419,74 @@ impl SsoRequestService {
 			booting.auth_state.announce_current();
 			drop(booting);
 			while ticks.next().await.is_some() {
-				let Some(pairing_host) = pairing_host.upgrade() else {
+				let Some(service) = service.upgrade() else {
 					break;
 				};
-				sync.reconcile(&pairing_host).await;
+				sync.reconcile(&service).await;
 				#[cfg(test)]
-				pairing_host.session_store_change_ticks.fetch_add(1, Ordering::SeqCst);
+				service.session_store_change_ticks.fetch_add(1, Ordering::SeqCst);
 			}
 		}));
+	}
+
+	async fn commit_login_session(
+		&self,
+		session: &SessionInfo,
+		generation: u64,
+	) -> Result<bool, truapi::latest::GenericError> {
+		let hold = self.hold_owner().await;
+		if !self.is_current_login_attempt(generation) {
+			return Ok(false);
+		}
+		self.prepare_session_installation(hold.as_ref(), session)
+			.await
+			.map_err(|reason| truapi::latest::GenericError { reason })?;
+		let mut epoch = {
+			let mut selection = self.selection.lock().expect("session selection mutex poisoned");
+			if selection.login_generation != generation {
+				return Ok(false);
+			}
+			selection.pending_auth_deletion = true;
+			selection.external_session_active = false;
+			selection.advance_epoch()
+		};
+		let blob = encode_persisted_session(session);
+		self.platform
+			.write_core_storage(CoreStorageKey::AuthSession, blob.clone())
+			.await?;
+		while self.is_current_login_attempt(generation) {
+			let latest_epoch = self.session_epoch();
+			if latest_epoch != epoch {
+				let latest = self.platform.read_core_storage(CoreStorageKey::AuthSession).await?;
+				let mut selection =
+					self.selection.lock().expect("session selection mutex poisoned");
+				if selection.login_generation != generation {
+					break;
+				}
+				if selection.session_epoch != latest_epoch {
+					continue;
+				}
+				if latest.as_deref() != Some(blob.as_slice()) {
+					selection.pending_auth_deletion = false;
+					return Ok(false);
+				}
+				epoch = latest_epoch;
+			}
+			if self.install_session_if_current(session.clone(), epoch, false, Some(generation)) {
+				return Ok(true);
+			}
+		}
+		self.drain_session_deletions(hold.as_ref())
+			.await
+			.map_err(|reason| truapi::latest::GenericError { reason })?;
+		Ok(false)
+	}
+
+	async fn discard_login_session(&self) {
+		let hold = self.hold_owner().await;
+		if let Err(reason) = self.drain_session_deletions(hold.as_ref()).await {
+			warn!(%reason, "cancelled login cleanup remains pending");
+		}
 	}
 
 	/// Discard pairing bootstrap material so the next login generates a new
@@ -435,15 +509,10 @@ impl SsoRequestService {
 			})
 	}
 
-	/// Clear the canonical local session and all session capabilities without
-	/// sending a peer-disconnect statement. Reports the resulting auth state to
-	/// the host, including when there was no session to clear.
+	/// Clear the paired session and capabilities without notifying the peer.
 	pub async fn reset_session_state(&self) {
 		self.cancel_login();
-		self.clear_disconnected_session(true).await;
-		if let Some(owner) = self.owner.upgrade() {
-			owner.session_reset().await;
-		}
+		self.clear_disconnected_session(true, None).await;
 		self.auth_state.announce_current();
 	}
 
@@ -455,18 +524,22 @@ impl SsoRequestService {
 	}
 
 	fn begin_login_attempt(&self) -> u64 {
-		let mut generation = self.login_generation.lock().expect("login generation mutex poisoned");
-		*generation = generation.wrapping_add(1);
-		*generation
+		let mut selection = self.selection.lock().expect("session selection mutex poisoned");
+		selection.login_generation = selection.login_generation.wrapping_add(1);
+		selection.login_generation
 	}
 
 	fn invalidate_login_attempts(&self) {
-		let mut generation = self.login_generation.lock().expect("login generation mutex poisoned");
-		*generation = generation.wrapping_add(1);
+		let mut selection = self.selection.lock().expect("session selection mutex poisoned");
+		selection.login_generation = selection.login_generation.wrapping_add(1);
 	}
 
 	fn is_current_login_attempt(&self, generation: u64) -> bool {
-		*self.login_generation.lock().expect("login generation mutex poisoned") == generation
+		self.selection
+			.lock()
+			.expect("session selection mutex poisoned")
+			.login_generation ==
+			generation
 	}
 
 	fn login_waiter(&self) -> Option<oneshot::Receiver<Result<(), String>>> {
@@ -494,29 +567,91 @@ impl SsoRequestService {
 		}
 	}
 
-	#[instrument(skip_all, fields(runtime.method = "session_store.clear_disconnected"))]
-	async fn clear_disconnected_session(&self, clear_auth_session: bool) {
-		let previous = {
-			let mut lifecycle =
-				self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
-			lifecycle.advance();
-			let previous = self.session_state.current();
-			self.session_state.clear_session();
-			previous
-		};
-		self.stop_session_channel(previous.as_ref());
-		if clear_auth_session {
-			let _ = self.platform.clear_core_storage(CoreStorageKey::AuthSession).await;
+	fn begin_session_clear(
+		&self,
+		clear_auth_session: bool,
+		expected_epoch: Option<u64>,
+		expected_peer: Option<SsoSessionKey>,
+	) -> bool {
+		let mut selection = self.selection.lock().expect("session selection mutex poisoned");
+		if expected_epoch.is_some_and(|epoch| selection.session_epoch != epoch) ||
+			expected_peer.is_some_and(|key| !self.current_sso_session_matches(key))
+		{
+			return false;
 		}
+		let previous = self.session_state.current();
+		selection.advance_epoch();
 		if let Some(owner) = self.owner.upgrade() {
-			owner.session_cleared(previous.as_ref()).await;
+			owner.session_ended(previous.as_ref(), true);
 		}
-		self.auth_state.store_disconnected();
+		selection.pending_auth_deletion |= clear_auth_session;
+		selection.external_session_active = false;
+		self.session_state.clear_session();
+		let monitor = channel::detach_session_channel(self);
+		drop(selection);
+		channel::stop_session_channel(self, previous.as_ref(), monitor);
+		true
 	}
 
-	async fn set_connected_session(&self, session: SessionInfo) {
-		let activation_epoch = self.advance_session_lifecycle();
-		self.set_connected_session_if_current(session, activation_epoch, false).await;
+	async fn drain_session_deletions(&self, hold: Option<&OwnerHold>) -> Result<(), String> {
+		let pending_auth_deletion = self
+			.selection
+			.lock()
+			.expect("session selection mutex poisoned")
+			.pending_auth_deletion;
+		let pending_grants = hold.is_some_and(|hold| hold.owner.begin_cleanup(&hold.barrier));
+		if !pending_auth_deletion && !pending_grants {
+			return Ok(());
+		}
+		self.auth_state.store_disconnected();
+		let auth_result = if pending_auth_deletion {
+			self.platform
+				.clear_core_storage(CoreStorageKey::AuthSession)
+				.await
+				.map(|()| {
+					self.selection
+						.lock()
+						.expect("session selection mutex poisoned")
+						.pending_auth_deletion = false
+				})
+				.map_err(|error| error.reason)
+		} else {
+			Ok(())
+		};
+		let grants_result = match hold {
+			Some(hold) => hold.owner.finish_cleanup(&hold.barrier).await,
+			None => Ok(()),
+		};
+		auth_result.and(grants_result)
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "session_store.clear_disconnected"))]
+	async fn clear_disconnected_session(
+		&self,
+		clear_auth_session: bool,
+		expected_epoch: Option<u64>,
+	) {
+		if !self.begin_session_clear(clear_auth_session, expected_epoch, None) {
+			return;
+		}
+		let hold = self.hold_owner().await;
+		if let Err(reason) = self.drain_session_deletions(hold.as_ref()).await {
+			warn!(%reason, "session cleanup remains pending");
+		}
+	}
+
+	async fn prepare_session_installation(
+		&self,
+		hold: Option<&OwnerHold>,
+		session: &SessionInfo,
+	) -> Result<(), String> {
+		self.drain_session_deletions(hold).await?;
+		if let Some(hold) = hold {
+			hold.owner
+				.prepare_session(&hold.barrier, self.session_state.current().as_ref(), session)
+				.await;
+		}
+		Ok(())
 	}
 
 	async fn set_connected_session_if_current(
@@ -524,29 +659,52 @@ impl SsoRequestService {
 		session: SessionInfo,
 		activation_epoch: u64,
 		external_session: bool,
+	) -> Result<bool, String> {
+		let hold = self.hold_owner().await;
+		if self.session_epoch() != activation_epoch {
+			return Ok(false);
+		}
+		self.prepare_session_installation(hold.as_ref(), &session).await?;
+		Ok(self.install_session_if_current(session, activation_epoch, external_session, None))
+	}
+
+	fn install_session_if_current(
+		&self,
+		session: SessionInfo,
+		activation_epoch: u64,
+		external_session: bool,
+		expected_login_generation: Option<u64>,
 	) -> bool {
-		if !self.is_session_lifecycle_current(activation_epoch) {
-			return false;
-		}
-		let previous = self.session_state.current();
-		if let Some(owner) = self.owner.upgrade() {
-			owner.prepare_session(previous.as_ref(), &session).await;
-		}
-		let previous = {
-			let mut lifecycle =
-				self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
-			if lifecycle.epoch != activation_epoch {
+		let detached = {
+			let mut selection = self.selection.lock().expect("session selection mutex poisoned");
+			if expected_login_generation
+				.is_some_and(|expected| expected != selection.login_generation)
+			{
 				return false;
 			}
+			if selection.session_epoch != activation_epoch {
+				return false;
+			}
+			if expected_login_generation.is_none() {
+				selection.login_generation = selection.login_generation.wrapping_add(1);
+			}
 			let previous = self.session_state.current();
+			let detached = (previous.as_ref() != Some(&session)).then(|| {
+				if let Some(owner) = self.owner.upgrade() {
+					owner.session_ended(previous.as_ref(), false);
+				}
+				let monitor = channel::detach_session_channel(self);
+				(previous, monitor)
+			});
+			selection.pending_auth_deletion = false;
 			self.session_state.set_session(session.clone());
-			lifecycle.external_session_active = external_session;
-			previous
+			selection.external_session_active = external_session;
+			detached
 		};
-		if previous.as_ref() != Some(&session) {
-			self.stop_session_channel(previous.as_ref());
+		if let Some((previous, monitor)) = detached {
+			channel::stop_session_channel(self, previous.as_ref(), monitor);
 		}
-		self.start_disconnect_monitor(&session);
+		channel::start_disconnect_monitor(self, &session);
 		vrf::prefetch(&self.spawner);
 		self.auth_state.connected(&connected_session_ui_info(&session));
 		true
@@ -555,56 +713,34 @@ impl SsoRequestService {
 	/// Install a selected session through the real lifecycle.
 	#[cfg(test)]
 	pub async fn set_connected_session_for_tests(&self, session: SessionInfo) {
-		self.set_connected_session(session).await;
+		let epoch = self.advance_session_lifecycle();
+		self.set_connected_session_if_current(session, epoch, false)
+			.await
+			.expect("test session installs");
 	}
 
-	/// Single funnel for peer-initiated disconnects. Every detection source
-	/// (monitor task, request-path error) must route here: it wakes in-flight
-	/// waiters for `key`, then clears the session when `key` is still current,
-	/// so stale notifications for replaced sessions only wake their own
-	/// waiters.
+	// Stale peer notifications wake only their own waiters.
 	async fn handle_signing_host_disconnected(&self, key: SsoSessionKey) {
 		self.session_disconnects.notify_key(key, SSO_PEER_DISCONNECT_REASON);
-		if !self.current_sso_session_matches(key) {
+		if !self.begin_session_clear(true, None, Some(key)) {
 			return;
 		}
-
-		self.clear_disconnected_session(true).await;
+		let hold = self.hold_owner().await;
+		if let Err(reason) = self.drain_session_deletions(hold.as_ref()).await {
+			warn!(%reason, "session cleanup remains pending");
+		}
 	}
 
-	/// Advance the selection epoch without changing the session or where it
-	/// came from, so work started under the old epoch cannot finish; returns
-	/// the session selected at that moment.
-	pub fn advance_session_lifecycle_preserving_source(&self) -> Option<SessionInfo> {
-		let mut lifecycle =
-			self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
-		lifecycle.advance_preserving_source();
-		self.session_state.current()
-	}
-
-	/// Run `keep` while `session` is still selected at `lifecycle_epoch`, so no
-	/// session change can interleave; `None` when it is no longer selected.
-	pub fn while_session_current<T>(
-		&self,
-		session: &SessionInfo,
-		lifecycle_epoch: u64,
-		keep: impl FnOnce() -> T,
-	) -> Option<T> {
-		let lifecycle = self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
-		let selected = lifecycle.epoch == lifecycle_epoch &&
-			session.sso.as_ref().is_some_and(|sso| {
-				self.current_sso_session_matches(SsoSessionKey::from_session(sso))
-			});
-		selected.then(keep)
-	}
-
-	/// Whether the selected session's SSO channel is `key`.
-	pub fn current_sso_session_matches(&self, key: SsoSessionKey) -> bool {
+	fn current_sso_session_matches(&self, key: SsoSessionKey) -> bool {
 		key.matches(&self.session_state)
 	}
 
+	/// Resolve missing identity information for the selected session.
 	async fn refresh_current_session_identity(&self) -> Option<AuthoritySession> {
-		let current = self.session_state.current()?;
+		let (current, epoch) = {
+			let selection = self.selection.lock().expect("session selection mutex poisoned");
+			(self.session_state.current()?, selection.session_epoch)
+		};
 		if current.has_username() || self.host_config.asset_hub_chain_genesis_hash == [0; 32] {
 			return Some(authority_session(&current));
 		}
@@ -619,11 +755,20 @@ impl SsoRequestService {
 			return self.current_session();
 		}
 
-		if !self.session_state.replace_session_if_current(&current, resolved.clone()) {
+		let hold = self.hold_owner().await;
+		if let Err(reason) = self.drain_session_deletions(hold.as_ref()).await {
+			warn!(%reason, "session cleanup remains pending");
 			return self.current_session();
 		}
+		{
+			let selection = self.selection.lock().expect("session selection mutex poisoned");
+			if selection.session_epoch != epoch ||
+				!self.session_state.replace_session_if_current(&current, resolved.clone())
+			{
+				return self.current_session();
+			}
+		}
 		self.auth_state.connected(&connected_session_ui_info(&resolved));
-
 		if let Err(err) = self
 			.platform
 			.write_core_storage(CoreStorageKey::AuthSession, encode_persisted_session(&resolved))
@@ -631,31 +776,10 @@ impl SsoRequestService {
 		{
 			warn!(reason = %err.reason, "refreshed session identity persist failed");
 		}
-
-		match self.session_state.current() {
-			Some(live) if live != resolved => {
-				if let Err(err) = self
-					.platform
-					.write_core_storage(
-						CoreStorageKey::AuthSession,
-						encode_persisted_session(&live),
-					)
-					.await
-				{
-					warn!(reason = %err.reason, "live session identity persist repair failed");
-				}
-				Some(authority_session(&live))
-			},
-			None => {
-				if let Err(err) =
-					self.platform.clear_core_storage(CoreStorageKey::AuthSession).await
-				{
-					warn!(reason = %err.reason, "cleared session identity persist repair failed");
-				}
-				None
-			},
-			_ => Some(authority_session(&resolved)),
+		if let Err(reason) = self.drain_session_deletions(hold.as_ref()).await {
+			warn!(%reason, "session cleanup remains pending");
 		}
+		self.current_session()
 	}
 }
 
@@ -700,7 +824,7 @@ impl HostSession for SsoRequestService {
 
 		let mut login_owner = LoginInFlightOwner::new(self);
 		let login_generation = self.begin_login_attempt();
-		let outcome = match SsoPairingFlow::new(self).request_session().await {
+		let outcome = match SsoPairingFlow::new(self, login_generation).request_session().await {
 			Ok(outcome) => outcome,
 			Err(err) => {
 				login_owner.finish(Err(login_error_reason(&err)));
@@ -716,13 +840,7 @@ impl HostSession for SsoRequestService {
 					Ok(api::HostRequestLoginResponse::Rejected)
 				}
 			},
-			SsoPairingOutcome::Success(session) => {
-				if !self.is_current_login_attempt(login_generation) {
-					let _ = self.platform.clear_core_storage(CoreStorageKey::AuthSession).await;
-					login_owner.finish(Ok(()));
-					return Ok(api::HostRequestLoginResponse::Rejected);
-				}
-				self.set_connected_session(*session).await;
+			SsoPairingOutcome::Success => {
 				login_owner.finish(Ok(()));
 				Ok(api::HostRequestLoginResponse::Success)
 			},
@@ -734,12 +852,12 @@ impl HostSession for SsoRequestService {
 	async fn disconnect(&self) {
 		self.cancel_login();
 		let session = self.session_state.current();
-		self.clear_disconnected_session(true).await;
+		self.clear_disconnected_session(true, None).await;
 		if let Some(session) = session {
 			let weak_self = self.weak_self.clone();
 			(self.spawner)(Box::pin(async move {
 				if let Some(host) = weak_self.upgrade() {
-					let _ = host.submit_disconnected_message(&session).await;
+					let _ = channel::submit_disconnected_message(&host, &session).await;
 				}
 			}));
 		}

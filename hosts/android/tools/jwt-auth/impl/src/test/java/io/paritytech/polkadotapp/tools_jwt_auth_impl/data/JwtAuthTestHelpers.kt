@@ -27,6 +27,9 @@ internal class FakeTimeProvider(initialNowSeconds: Long = 0L) : TimeProvider {
 
 internal fun createFakeTokenStore(): JWTTokenStore {
     val prefs = object : io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences {
+        override fun putEncryptedStringCommitted(field: String, value: String) = putEncryptedString(field, value)
+        override fun getDecryptedStringOrThrow(field: String): String? = getDecryptedString(field)
+        override fun removeKeyCommitted(field: String) = removeKey(field)
         private val storage = mutableMapOf<String, String>()
         override fun putEncryptedString(field: String, value: String) { storage[field] = value }
         override fun getDecryptedString(field: String): String? = storage[field]

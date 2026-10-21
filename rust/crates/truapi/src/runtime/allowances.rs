@@ -7,36 +7,59 @@ use truapi::latest::GenericError;
 use super::{authority::AuthorityError, sso_remote::SsoSessionKey};
 use crate::host_logic::session::{SessionInfo, SsoSessionInfo};
 
-/// Chain resource an allowance key grants access to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Encode, Decode)]
-pub enum AllowanceResource {
-	/// Bulletin-chain transaction storage.
-	Bulletin,
-	/// People-chain statement store.
-	StatementStore,
+pub use crate::platform::AllowanceResource;
+
+/// Canonical wallet and optional paired channel owning in-memory grants.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct GrantScope {
+	root_public_key: [u8; 32],
+	channel: Option<SsoSessionKey>,
+}
+
+impl GrantScope {
+	/// Use session identity directly, without interpreting an authority token.
+	pub fn from_session(session: &SessionInfo) -> Self {
+		Self {
+			root_public_key: session.public_key,
+			channel: session.sso.as_ref().map(SsoSessionKey::from_session),
+		}
+	}
+
+	/// Whether this owner remains selected by the canonical session.
+	pub fn matches(self, state: &crate::host_logic::session::SessionState) -> bool {
+		state
+			.current()
+			.as_ref()
+			.is_some_and(|session| Self::from_session(session) == self)
+	}
 }
 
 /// Memory-cache key: `(session, product_id, resource)`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AllowanceCacheKey {
-	session: SsoSessionKey,
+	session: GrantScope,
 	product_id: String,
 	resource: AllowanceResource,
 }
 
 impl AllowanceCacheKey {
-	/// Cache key for the session's SSO pair; fails when the session has none.
-	pub fn new(
-		session: &SessionInfo,
-		product_id: &str,
-		resource: AllowanceResource,
-	) -> Result<Self, AuthorityError> {
-		Ok(Self { session: sso_cache_key(session)?, product_id: product_id.to_string(), resource })
+	/// Key for the wallet and authenticated channel that received this grant.
+	pub fn new(session: &SessionInfo, product_id: &str, resource: AllowanceResource) -> Self {
+		Self {
+			session: GrantScope::from_session(session),
+			product_id: product_id.to_string(),
+			resource,
+		}
 	}
 
 	/// Whether this key belongs to the given SSO session.
-	pub fn is_for_session(&self, session: SsoSessionKey) -> bool {
+	pub fn is_for_session(&self, session: GrantScope) -> bool {
 		self.session == session
+	}
+
+	/// Whether this grant belongs to a wallet being removed.
+	pub fn is_for_owner(&self, owner: [u8; 32]) -> bool {
+		self.session.root_public_key == owner
 	}
 
 	/// Whether this key belongs to the given product.
@@ -183,11 +206,6 @@ fn storage_key(session: &SessionInfo) -> Result<CoreStorageKey, AuthorityError> 
 	})
 }
 
-fn sso_cache_key(session: &SessionInfo) -> Result<SsoSessionKey, AuthorityError> {
-	let sso = session.sso.as_ref().ok_or(AuthorityError::Disconnected)?;
-	Ok(SsoSessionKey::from_session(sso))
-}
-
 pub fn session_storage_id(session: &SsoSessionInfo) -> String {
 	let mut bytes = Vec::with_capacity(64);
 	bytes.extend_from_slice(&session.session_id_own);
@@ -197,6 +215,21 @@ pub fn session_storage_id(session: &SsoSessionInfo) -> String {
 
 fn storage_error(err: GenericError) -> AuthorityError {
 	AuthorityError::Unknown { reason: format!("allowance storage failed: {}", err.reason) }
+}
+
+/// Allowance period clock, using web-time on browsers to avoid SystemTime panics.
+pub fn current_unix_secs() -> Result<u64, AuthorityError> {
+	#[cfg(not(target_arch = "wasm32"))]
+	use std::time::{SystemTime, UNIX_EPOCH};
+	#[cfg(target_arch = "wasm32")]
+	use web_time::{SystemTime, UNIX_EPOCH};
+
+	SystemTime::now()
+		.duration_since(UNIX_EPOCH)
+		.map(|duration| duration.as_secs())
+		.map_err(|_| AuthorityError::Unavailable {
+			reason: "system clock before UNIX epoch".to_string(),
+		})
 }
 
 #[cfg(test)]

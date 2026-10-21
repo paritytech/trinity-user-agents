@@ -47,11 +47,11 @@ use crate::{
 		dotns::{NavigateDecision, parse_navigate},
 		features::feature_supported,
 	},
-	runtime::{PERMISSION_DENIED_REASON, ProductRuntimeHost},
+	runtime::{AccountHolder, PERMISSION_DENIED_REASON, ProductRuntimeHost},
 };
 
 #[truapi::async_trait]
-impl System for ProductRuntimeHost {
+impl<H: AccountHolder> System for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "system.feature_supported"))]
 	async fn feature_supported(
 		&self,
@@ -158,7 +158,7 @@ impl System for ProductRuntimeHost {
 }
 
 #[truapi::async_trait]
-impl Permissions for ProductRuntimeHost {
+impl<H: AccountHolder> Permissions for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "permissions.authorize_device_permission"))]
 	async fn authorize_device_permission(
 		&self,
@@ -249,7 +249,7 @@ impl Permissions for ProductRuntimeHost {
 }
 
 #[truapi::async_trait]
-impl LocalStorage for ProductRuntimeHost {
+impl<H: AccountHolder> LocalStorage for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "local_storage.read"))]
 	async fn read(
 		&self,
@@ -373,7 +373,7 @@ impl LocalStorage for ProductRuntimeHost {
 }
 
 #[truapi::async_trait]
-impl Worker for ProductRuntimeHost {
+impl<H: AccountHolder> Worker for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "worker.begin_operation"))]
 	async fn begin_operation(
 		&self,
@@ -415,7 +415,7 @@ impl Worker for ProductRuntimeHost {
 }
 
 #[truapi::async_trait]
-impl Theme for ProductRuntimeHost {
+impl<H: AccountHolder> Theme for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "theme.subscribe"))]
 	async fn subscribe(
 		&self,
@@ -436,7 +436,7 @@ impl Theme for ProductRuntimeHost {
 }
 
 #[truapi::async_trait]
-impl Locale for ProductRuntimeHost {
+impl<H: AccountHolder> Locale for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "locale.subscribe"))]
 	async fn subscribe(
 		&self,
@@ -460,7 +460,7 @@ impl Locale for ProductRuntimeHost {
 // cancellation while the core preserves the typed TrUAPI wire shape.
 
 #[truapi::async_trait]
-impl Notifications for ProductRuntimeHost {
+impl<H: AccountHolder> Notifications for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "notifications.send_push_notification"))]
 	async fn send_push_notification(
 		&self,

@@ -317,6 +317,9 @@ impl HostCallbacks for EventCallbacks {
 	fn auth_state_changed(&self, state: AuthState) {
 		self.auth_states.lock().expect("auth state mutex poisoned").push(state);
 	}
+	async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
+		Ok(self.core_storage.lock().unwrap().keys().cloned().collect())
+	}
 	async fn core_storage_read(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
 		Ok(self.core_storage.lock().unwrap().get(&key).cloned())
 	}
@@ -1838,6 +1841,9 @@ fn start_ws_bridge_twice_returns_already_running() {
 			Ok(PermissionDecision::Deny)
 		}
 		fn auth_state_changed(&self, _state: AuthState) {}
+		async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
+			Ok(Vec::new())
+		}
 		async fn core_storage_read(&self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
 			Ok(None)
 		}
@@ -1999,6 +2005,9 @@ fn pending_permission_decision_does_not_stall_bridge() {
 			Ok(PermissionDecision::Deny)
 		}
 		fn auth_state_changed(&self, _state: AuthState) {}
+		async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
+			Ok(Vec::new())
+		}
 		async fn core_storage_read(&self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection> {
 			Ok(None)
 		}
@@ -2429,10 +2438,116 @@ pub fn native_host_runtime_no_session() -> Arc<NativeTrUApiHostRuntime> {
 }
 
 #[test]
-fn handle_sso_request_rejects_undecodable_bytes() {
-	let runtime = native_host_runtime_no_session();
-	let result = futures::executor::block_on(runtime.handle_sso_request(vec![0xFF, 0xFF, 0xFF]));
-	assert!(result.is_err(), "garbage bytes must be a decode error");
+fn native_sso_binding_verifies_transport_and_retains_its_activation() {
+	use crate::{
+		host_internal::sso_messages::{
+			ProductSubtreeRequest, RemoteMessage, RemoteMessageData, Response, v1,
+		},
+		host_logic::{
+			product_account::{derive_identity_keypair, derive_product_subtree_keypair},
+			sso::pairing::derive_x25519_keypair_from_entropy,
+		},
+	};
+	use parity_scale_codec::Encode;
+
+	let entropy = [7; 32];
+	let statement = derive_identity_keypair(&entropy, "paseo").unwrap().public.to_bytes();
+	let (_, encryption) = derive_x25519_keypair_from_entropy(&entropy, b"sso");
+	assert!(
+		native_host_runtime_no_session()
+			.open_sso_service(statement, encryption)
+			.is_err()
+	);
+	for replacement in [vec![8; 32], entropy.to_vec()] {
+		let runtime = NativeTrUApiHostRuntime::with_runtime_config(
+			Arc::new(EventCallbacks::new()),
+			native_host_runtime_config(),
+		)
+		.unwrap();
+		assert_eq!(
+			(
+				runtime.open_sso_service([0; 32], encryption).is_err(),
+				runtime.open_sso_service(statement, [0; 32]).is_err(),
+			),
+			(true, true),
+		);
+		let service = runtime.open_sso_service(statement, encryption).unwrap();
+		let request = RemoteMessage::request(
+			"subtree".to_string(),
+			ProductSubtreeRequest { product_id: "browse.dot".to_string() },
+		)
+		.encode();
+		let response = |payload| SsoRequestOutcome::Response {
+			message: RemoteMessage {
+				message_id: "subtree:response".to_string(),
+				data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(Response {
+					responding_to: "subtree".to_string(),
+					payload,
+				})),
+			}
+			.encode(),
+		};
+		let public_key = derive_product_subtree_keypair(
+			&crate::host_logic::product_account::derive_root_keypair_from_entropy(&entropy)
+				.unwrap(),
+			"browse.dot",
+		)
+		.unwrap()
+		.public
+		.to_bytes();
+		assert_eq!(
+			futures::executor::block_on(service.handle_sso_request(request.clone())).unwrap(),
+			response(Ok(public_key))
+		);
+		let other_peer = runtime.open_sso_service(statement, encryption).unwrap();
+		let cancel = RemoteMessage {
+			message_id: "cancel".to_string(),
+			data: RemoteMessageData::V1(v1::RemoteMessage::Cancel(
+				crate::host_internal::sso_messages::Withdrawal {
+					message_id: "subtree".to_string(),
+				},
+			)),
+		}
+		.encode();
+		assert_eq!(service.handle_sso_control(cancel).unwrap(), Some(SsoRequestOutcome::Ignored));
+		assert_eq!(
+			futures::executor::block_on(other_peer.handle_sso_request(request.clone())).unwrap(),
+			response(Ok(public_key))
+		);
+		assert_eq!(
+			futures::executor::block_on(service.handle_sso_request(request.clone())).unwrap(),
+			SsoRequestOutcome::Ignored
+		);
+		assert_eq!(service.handle_sso_control(request.clone()).unwrap(), None);
+		assert!(futures::executor::block_on(service.handle_sso_request(vec![0xff; 3])).is_err());
+		assert!(service.handle_sso_control(vec![0xff; 3]).is_err());
+		let response_variant = RemoteMessage {
+			message_id: "response".to_string(),
+			data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(Response {
+				responding_to: "subtree".to_string(),
+				payload: Ok(public_key),
+			})),
+		}
+		.encode();
+		assert_eq!(
+			futures::executor::block_on(service.handle_sso_request(response_variant)).unwrap(),
+			SsoRequestOutcome::Ignored
+		);
+		let disconnected = RemoteMessage {
+			message_id: "disconnect".to_string(),
+			data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
+		}
+		.encode();
+		assert_eq!(
+			futures::executor::block_on(service.handle_sso_request(disconnected)).unwrap(),
+			SsoRequestOutcome::Disconnected
+		);
+		runtime.activate_local_session(replacement, None).unwrap();
+		assert_eq!(
+			futures::executor::block_on(service.handle_sso_request(request)).unwrap(),
+			response(Err("signing host session is not active".to_string()))
+		);
+	}
 }
 
 #[test]

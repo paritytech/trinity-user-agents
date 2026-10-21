@@ -15,7 +15,7 @@ use super::from_latest_error;
 use crate::{
 	host_logic::scanner::{accepts, validate_request},
 	platform::{HostScan, ProductExecutionKind},
-	runtime::{ProductRuntimeHost, until_cancelled},
+	runtime::{AccountHolder, ProductRuntimeHost, until_cancelled},
 };
 
 fn unknown(reason: impl ToString) -> CallError<latest::HostScannerScanError> {
@@ -23,7 +23,7 @@ fn unknown(reason: impl ToString) -> CallError<latest::HostScannerScanError> {
 }
 
 #[truapi::async_trait]
-impl Scanner for ProductRuntimeHost {
+impl<H: AccountHolder> Scanner for ProductRuntimeHost<H> {
 	/// Checked in this order so a host without a scanner, or a request the
 	/// product could not make, never opens a viewfinder.
 	#[instrument(skip_all, fields(runtime.method = "scanner.scan"))]

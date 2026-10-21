@@ -118,6 +118,10 @@ class JWTTokenStoreTest {
 }
 
 private class FakeEncryptedPreferences : EncryptedPreferences {
+    override fun putEncryptedStringCommitted(field: String, value: String) = putEncryptedString(field, value)
+    override fun getDecryptedStringOrThrow(field: String): String? = getDecryptedString(field)
+    override fun removeKeyCommitted(field: String) = removeKey(field)
+
     private val storage = mutableMapOf<String, String>()
 
     override fun putEncryptedString(field: String, value: String) {
