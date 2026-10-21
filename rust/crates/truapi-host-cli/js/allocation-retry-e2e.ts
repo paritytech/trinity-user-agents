@@ -92,6 +92,8 @@ await sleep(LATE_SETTLE_MS);
 console.log("step 3: the product retries");
 const registeredBefore = signerCount(REGISTERED);
 const reusedBefore = signerCount(REUSED);
+// The same call as step 2, as a product would make it. Only the pairing
+// host's record of the unanswered step 2 makes it ask for the existing slot.
 const retry = await allocate();
 // The signing host logs before it answers, and the log is piped through tee.
 await sleep(1_000);
