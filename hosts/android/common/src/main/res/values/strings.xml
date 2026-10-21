@@ -245,6 +245,13 @@
 
     <string name="settings_backup_not_backed_up">Not backed up.\nSet up a backup to stay protected</string>
 
+    <string name="settings_payments_backup">Payments backup</string>
+    <string name="settings_payments_backup_in_progress">In progress</string>
+    <string name="settings_payments_backup_delayed">Delayed</string>
+    <string name="settings_payments_backup_done">Done</string>
+
+    <string name="payments_setup_notice_message">We\'re still setting up payments. You can keep using them, but settlement will be delayed until setup is finished.</string>
+
     <string name="settings_backup_recovery_phrase_warning_title">View Private Key</string>
     <string name="settings_backup_recovery_phrase_warning_recommendation_1">Never share your recovery phrase or enter it into other apps or websites.</string>
     <string name="settings_backup_recovery_phrase_warning_recommendation_2">Anyone who has your recovery phrase can access your account.</string>
@@ -740,7 +747,6 @@
     <string name="asset_details_transfer_button">Transfer</string>
     <string name="asset_details_actions_disabled">Actions will be available after you finish updating your balance</string>
     <string name="asset_details_backup_in_progress">Updating balance</string>
-    <string name="pocket_digital_dollar_account_backup_pending">Account backup is still in progress…</string>
     <string name="asset_details_backup_in_progress_subsequent">Continue updating balance</string>
     <string name="asset_details_balance_restored">Balance restored</string>
     <string name="asset_details_balance_restored_description">If it differs from the previous value, press Update until correct</string>
