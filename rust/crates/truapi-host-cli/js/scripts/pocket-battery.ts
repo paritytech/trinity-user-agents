@@ -2,7 +2,7 @@
 // Pocket protocol check against a real host, over the real wire.
 //
 // Run via:
-//   scripts/battery.sh --pocket-host
+//   e2e/cli/battery.sh --pocket-host
 //
 // which starts a signing host with `--execution-kind worker` and a seeded card
 // set, so the product connection opens as a Worker execution and the CLI's

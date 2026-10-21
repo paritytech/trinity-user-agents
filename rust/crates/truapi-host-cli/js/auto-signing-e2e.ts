@@ -3,7 +3,7 @@
 // without consulting the host's confirmation prompt.
 //
 // The host CLI appends one `<approved|denied> <action>` line per decided
-// confirmation to `TRUAPI_APPROVALS_LOG` (`scripts/battery.sh` exports it, and
+// confirmation to `TRUAPI_APPROVALS_LOG` (`e2e/cli/battery.sh` exports it, and
 // in the paired phase both host processes inherit and share the file). A line
 // is written before the confirmation resolves, so any prompt a product call
 // consulted is on disk by the time the call returns: an empty `sign_vrf`

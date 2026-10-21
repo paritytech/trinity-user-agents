@@ -20,7 +20,7 @@
 // against a derived keypair.
 //
 // The runner serves one product per host process, so
-// `scripts/cross-product-signing-e2e.sh` invokes this once per phase with
+// `e2e/cli/cross-product-signing.sh` invokes this once per phase with
 // `E2E_PHASE` set, pointing every run at the same `--base-path` so the key
 // parked in one is there for the next.
 //

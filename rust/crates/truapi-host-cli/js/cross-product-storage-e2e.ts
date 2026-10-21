@@ -10,7 +10,7 @@
 // on Asset Hub before refusing, so the `read-missing` phase does reach the
 // network.
 //
-// The runner serves one product per host process, so `scripts/cross-product-storage-e2e.sh`
+// The runner serves one product per host process, so `e2e/cli/cross-product-storage.sh`
 // invokes this once per phase with `E2E_PHASE` set, pointing every run at the
 // same `--base-path` so the storage written in one is there for the next.
 //
