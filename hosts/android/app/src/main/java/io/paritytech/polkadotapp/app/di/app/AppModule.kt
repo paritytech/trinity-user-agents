@@ -19,7 +19,7 @@ import javax.inject.Singleton
 
 @Module
 @InstallIn(SingletonComponent::class)
-interface AppModule {
+internal interface AppModule {
     @Binds
     fun bindIssueReportApi(impl: RealIssueReportApi): IssueReportApi
 
