@@ -3,7 +3,7 @@
 # `@parity/truapi` client. The end-to-end check for paritytech/platform-bugs#82.
 #
 # Each run requests the Notifications permission and sends a notification,
-# first as a blessed product and then as an ordinary one. The blessed run must
+# first as a trusted product and then as an ordinary one. The trusted run must
 # raise no device permission prompt; the ordinary run raises exactly one.
 #
 # This builds `truapi-host` from the checkout, so it always tests the code in
@@ -13,9 +13,9 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
-script="rust/crates/truapi-host-cli/js/blessed-device-permission-e2e.ts"
+script="rust/crates/truapi-host-cli/js/trusted-device-permission-e2e.ts"
 network="${E2E_NETWORK:-paseo-next-v2}"
-blessed_product="${E2E_BLESSED_PRODUCT:-peopl.paseo}"
+trusted_product="${E2E_TRUSTED_PRODUCT:-peopl.paseo}"
 ordinary_product="${E2E_PRODUCT:-truapi-playground.dot}"
 
 # A mnemonic bypasses account auto-management, which would otherwise register a
@@ -31,11 +31,11 @@ cargo build -q -p truapi-host-cli
 host="target/debug/truapi-host"
 
 notify_as() {
-  local product="$1" blessed="$2"
+  local product="$1" trusted="$2"
   # A fresh transcript, so only this run's prompts are counted.
   rm -f "$TRUAPI_APPROVALS_LOG"
   echo "==> sending a notification as $product"
-  E2E_BLESSED="$blessed" "$host" signing-host \
+  E2E_TRUSTED="$trusted" "$host" signing-host \
     --network "$network" \
     --base-path "$state" \
     --product-id "$product" \
@@ -43,7 +43,7 @@ notify_as() {
     --script "$script"
 }
 
-notify_as "$blessed_product" 1
+notify_as "$trusted_product" 1
 notify_as "$ordinary_product" 0
 
-echo "==> blessed device permission e2e passed"
+echo "==> trusted device permission e2e passed"

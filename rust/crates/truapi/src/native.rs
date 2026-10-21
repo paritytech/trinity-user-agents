@@ -288,7 +288,7 @@ pub fn screen_pocket_card_title(title: String) -> Result<String, NativeChatField
 /// Whether `product_id` is a first-party product the host grants every
 /// [`truapi::latest::RemotePermission`] without prompting.
 ///
-/// Blessed products bypass recorded permissions and permission prompts. Device
+/// Trusted products bypass recorded permissions and permission prompts. Device
 /// permissions still need the OS grant. Hosts mediating product network access
 /// can use this check before storage.
 ///

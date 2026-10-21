@@ -753,6 +753,7 @@ mod tests {
 			atomic::{AtomicUsize, Ordering},
 		},
 	};
+	use strum::VariantArray;
 	use truapi::{latest::RemotePermission, v01, v01::GenericError};
 
 	static PRODUCT: LazyLock<ProductContext> = LazyLock::new(|| {
@@ -1730,21 +1731,6 @@ mod tests {
 		]
 	}
 
-	fn every_device_permission() -> [HostDevicePermissionRequest; 10] {
-		[
-			HostDevicePermissionRequest::Notifications,
-			HostDevicePermissionRequest::Camera,
-			HostDevicePermissionRequest::Microphone,
-			HostDevicePermissionRequest::Bluetooth,
-			HostDevicePermissionRequest::NFC,
-			HostDevicePermissionRequest::Location,
-			HostDevicePermissionRequest::Clipboard,
-			HostDevicePermissionRequest::OpenUrl,
-			HostDevicePermissionRequest::Biometrics,
-			HostDevicePermissionRequest::Motion,
-		]
-	}
-
 	#[test]
 	fn a_trusted_product_holds_every_remote_permission_without_prompting() {
 		let storage = MemStorage::default();
@@ -1945,7 +1931,7 @@ mod tests {
 		let prompt = ScriptedPrompt::new(vec![], vec![]);
 		let service = trusted_service(&storage, &prompt);
 
-		for permission in every_device_permission() {
+		for &permission in HostDevicePermissionRequest::VARIANTS {
 			assert_eq!(
 				[
 					futures::executor::block_on(service.check_or_prompt_device(permission))

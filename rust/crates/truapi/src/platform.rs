@@ -316,7 +316,7 @@ pub fn has_dotns_tld(normalized: &str) -> bool {
 	normalized.rsplit_once('.').is_some_and(|(_, tld)| DOTNS_TLDS.contains(&tld))
 }
 
-/// Blessed product labels across every network in [`DOTNS_TLDS`].
+/// Trusted product labels across every network in [`DOTNS_TLDS`].
 ///
 /// These products bypass recorded permissions and permission prompts. Device
 /// permissions still need the OS grant.
