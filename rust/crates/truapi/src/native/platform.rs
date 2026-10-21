@@ -5,9 +5,10 @@ use std::sync::{
 
 use crate::platform::{
 	AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus, Features,
-	JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision, Permissions,
-	PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage, ProviderError,
-	ThemeHost, UserConfirmation, UserConfirmationReview, async_trait,
+	InstallationId, InstallationIdProvider, JsonRpcConnection, LocaleHost, Navigation,
+	Notifications, PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId,
+	ProductOperations, ProductStorage, ProviderError, ThemeHost, UserConfirmation,
+	UserConfirmationReview, async_trait,
 };
 use futures::{
 	channel::mpsc,
@@ -107,6 +108,14 @@ impl crate::durable::DurableWorkObserver for CallbackPlatform {
 impl DevicePairingObserver for CallbackPlatform {
 	fn device_paired(&self, device: PairedSsoPeer) {
 		self.callbacks.device_paired(device);
+	}
+}
+
+#[async_trait]
+impl InstallationIdProvider for CallbackPlatform {
+	async fn current_installation(&self) -> Result<InstallationId, v01::GenericError> {
+		let id = self.callbacks.current_installation().await?;
+		InstallationId::try_from(id)
 	}
 }
 

@@ -13,8 +13,6 @@ use std::{
 #[cfg(not(target_arch = "wasm32"))]
 use crate::durable::{DurableTxEngine, DurableWorkObserver};
 #[cfg(not(target_arch = "wasm32"))]
-use crate::nft_purse::NftPurses;
-#[cfg(not(target_arch = "wasm32"))]
 use crate::store::{Db, DbError};
 use crate::{
 	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
@@ -30,6 +28,8 @@ use crate::{
 	},
 	subscription::Spawner,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::{nft::NftLedger, nft_purse::NftPurses};
 use async_trait::async_trait;
 use truapi::latest;
 
@@ -92,6 +92,9 @@ pub struct RuntimeServices {
 	/// Durable transaction engine over the core database, installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
 	durable_engine: OnceLock<Arc<DurableTxEngine>>,
+	/// Layer 1 of NFT purses over the core database, installed with it.
+	#[cfg(not(target_arch = "wasm32"))]
+	nft_ledger: OnceLock<NftLedger>,
 	/// Host observer told whether durable work is pending. Unset leaves
 	/// recovery to whoever calls it.
 	#[cfg(not(target_arch = "wasm32"))]
@@ -176,6 +179,8 @@ impl RuntimeServices {
 			core_db: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			durable_engine: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			nft_ledger: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			durable_work_observer: OnceLock::new(),
 			asset_hub_chain_genesis_hash,
@@ -391,10 +396,17 @@ impl RuntimeServices {
 		self.durable_engine.get().cloned()
 	}
 
-	/// NFT purses over the core database, once it is installed.
+	/// Install Layer 1 of NFT purses. Set-once, like the database it runs on.
+	/// Returns whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_nft_ledger(&self, ledger: NftLedger) -> bool {
+		self.nft_ledger.set(ledger).is_ok()
+	}
+
+	/// NFT purses, once their ledger is installed.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn nft_purses(&self) -> Option<NftPurses> {
-		self.core_db.get().cloned().map(NftPurses::new)
+		self.nft_ledger.get().cloned().map(NftPurses::new)
 	}
 
 	/// Install the host's durable work observer. Returns whether this call

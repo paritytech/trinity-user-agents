@@ -11,7 +11,7 @@ use truapi::latest::{
 use crate::{
 	nft::{CreatePurseError, NftLedger, PurseId, PurseRecord, PurseTag},
 	platform::{ProductId, ProductIdError},
-	store::{Db, DbError},
+	store::DbError,
 };
 
 /// Who owns a purse, with a product's id validated and normalized.
@@ -71,9 +71,9 @@ pub struct NftPurses {
 }
 
 impl NftPurses {
-	/// The RFC calls over the core database.
-	pub fn new(db: Db) -> Self {
-		Self { ledger: NftLedger::new(db) }
+	/// The RFC calls over `ledger`.
+	pub fn new(ledger: NftLedger) -> Self {
+		Self { ledger }
 	}
 
 	/// Creates a purse owned by the product `caller`.
@@ -116,14 +116,14 @@ mod tests {
 	use tempfile::TempDir;
 
 	use super::*;
-	use crate::store::open_temporary_core_db;
+	use crate::{nft::test_ledger, store::open_temporary_core_db};
 
 	const PRODUCT: &str = "tickets.dot";
 
 	/// The purse calls, with the directory that keeps their database alive.
 	fn purses() -> (TempDir, NftPurses) {
 		let (dir, db) = open_temporary_core_db();
-		(dir, NftPurses::new(db))
+		(dir, NftPurses::new(test_ledger(db)))
 	}
 
 	fn product_id(id: &str) -> ProductId {
@@ -208,7 +208,7 @@ mod tests {
 	#[test]
 	fn creating_past_the_last_id_is_refused() {
 		let (_dir, db) = open_temporary_core_db();
-		let purses = NftPurses::new(db.clone());
+		let purses = NftPurses::new(test_ledger(db.clone()));
 		let last = PurseId::MAIN.0 - 1;
 		block_on(db.write(move |tx| {
 			tx.execute("INSERT INTO nft_purse (id, name, tag) VALUES (?1, 'last', x'')", [last])?;

@@ -8,7 +8,10 @@ use truapi::{
 };
 
 use super::*;
-use crate::{nft::PurseId, store::open_temporary_core_db};
+use crate::{
+	nft::{PurseId, test_ledger},
+	store::open_temporary_core_db,
+};
 
 const PRODUCT: &str = "tickets.dot";
 
@@ -20,7 +23,8 @@ fn nft_host(
 ) -> (tempfile::TempDir, ProductRuntimeHost) {
 	let services = payment_services_over(platform);
 	let (dir, db) = open_temporary_core_db();
-	assert!(services.install_core_db(db));
+	assert!(services.install_core_db(db.clone()));
+	assert!(services.install_nft_ledger(test_ledger(db)));
 	(dir, payment_host(&services, PRODUCT, with_session))
 }
 

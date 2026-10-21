@@ -28,9 +28,10 @@ use crate::{
 use crate::platform::{
 	AccountAccessReview, AuthPresenter, AuthState, ChainProvider,
 	CoreStorage as PlatformCoreStorage, CoreStorageKey, CreateTransactionReview,
-	Features as PlatformFeatures, HostInfo, JsonRpcConnection, LocaleHost,
-	Navigation as PlatformNavigation, Notifications as PlatformNotifications, PairingHostConfig,
-	Permissions as PlatformPermissions, PlatformInfo, PreimageHost, ProductContext, ProductId,
+	Features as PlatformFeatures, HostInfo, InstallationId, InstallationIdProvider,
+	JsonRpcConnection, LocaleHost, Navigation as PlatformNavigation,
+	Notifications as PlatformNotifications, PairingHostConfig, Permissions as PlatformPermissions,
+	PlatformInfo, PreimageHost, ProductContext, ProductId,
 	ProductOperations as PlatformProductOperations, ProductStorage as PlatformProductStorage,
 	ProductSubtreeReview, ProviderError, ResourceAllocationReview, SignPayloadReview,
 	SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
@@ -1128,6 +1129,16 @@ impl PlatformCoreStorage for StubPlatform {
 /// Stable string key used by the stub core-storage map.
 pub fn core_storage_test_key(key: CoreStorageKey) -> String {
 	format!("core:{}", hex::encode(key.encode()))
+}
+
+/// The installation every [`StubPlatform`] hands out.
+pub const STUB_INSTALLATION: InstallationId = InstallationId([0x1d; 32]);
+
+#[crate::platform::async_trait]
+impl InstallationIdProvider for StubPlatform {
+	async fn current_installation(&self) -> Result<InstallationId, v01::GenericError> {
+		Ok(STUB_INSTALLATION)
+	}
 }
 
 #[crate::platform::async_trait]

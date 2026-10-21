@@ -303,6 +303,9 @@ extension ServiceCoordinator {
             settingsManager: SettingsManager.shared,
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationRouterFacade: ProductRoutersFacade.sso(),
+            currentInstallation: CoinageCurrentInstallationCoreDataRepository(
+                storageFacade: UserDataStorageFacade.shared
+            ),
             logger: logger
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)

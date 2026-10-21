@@ -1,5 +1,6 @@
 import Foundation
 import TrUAPIHost
+import Coinage
 import ChainRegistry
 import SubstrateSdk
 
@@ -20,6 +21,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     private let chainConnections: TrUAPIChainConnecting
     private let confirmationPresenter: TrUAPIConfirmationPresenting
     private let workerManager: (any TrUAPIWorkerManaging)?
+    private let currentInstallation: any CoinageCurrentInstallationRepositoryProtocol
     private let logger: LoggerProtocol
     private weak var runtime: TrUAPIHostRuntime?
 
@@ -29,12 +31,14 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         chainConnections: TrUAPIChainConnecting,
         confirmationPresenter: TrUAPIConfirmationPresenting,
         workerManager: (any TrUAPIWorkerManaging)? = nil,
+        currentInstallation: any CoinageCurrentInstallationRepositoryProtocol,
         logger: LoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
         self.chainConnections = chainConnections
         self.confirmationPresenter = confirmationPresenter
         self.workerManager = workerManager
+        self.currentInstallation = currentInstallation
         self.logger = logger
         self.coreStorage = CoreStorageBackend(storage: coreStorage)
         storage = EmptyHostStorageBackend()
@@ -117,6 +121,12 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
             CoreDurableRecoveryTask.shared.runInForeground()
             CoreDurableRecoveryTask.shared.schedule()
         }
+    }
+
+    // TODO: wait for the installation backup through a native provider, as Android's
+    // CurrentInstallationProvider.awaitBackedUp from polkadot-android-community#246 does.
+    func currentInstallation() async throws -> Data {
+        try await currentInstallation.getOrCreateCurrent { try CoinageInstallationId.random() }.value
     }
 
     func supportedChains() throws -> HostChainSet {

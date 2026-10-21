@@ -114,11 +114,11 @@ impl NativeTrUApiHostRuntime {
 			"a freshly built runtime installs its durable work observer once"
 		);
 		assert!(
-			runtime.set_device_pairing_observer(platform),
+			runtime.set_device_pairing_observer(platform.clone()),
 			"a freshly built runtime installs its device pairing observer once"
 		);
 		assert!(
-			runtime.set_core_db(core_db),
+			runtime.set_core_db(core_db, platform),
 			"a freshly built runtime installs its core database once"
 		);
 		if let Some(secret) = runtime_config.local_session_secret {

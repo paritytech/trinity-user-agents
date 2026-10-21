@@ -60,6 +60,7 @@ class TrUAPIHostRuntimeProviderTest {
         contactsBridge = mockk { every { contactRemovals() } returns emptyFlow() },
         paymentPlatforms = mockk(relaxed = true),
         scannerBridge = mockk(),
+        currentInstallation = mockk(),
         workerSupervisor = { mockk(relaxed = true) },
         dispatchers = testDispatchers(),
     )

@@ -1,7 +1,6 @@
-//! Purse records and the ledger that stores them.
+//! Purse records.
 
-use super::dao;
-use crate::store::{Db, DbError};
+use crate::store::DbError;
 
 /// A purse's id. Ids are allocated in order from 0 and never reused, because
 /// each one becomes part of its items' key derivation and recovery walks them
@@ -43,33 +42,4 @@ pub enum CreatePurseError {
 	/// The database failed.
 	#[error(transparent)]
 	Db(#[from] DbError),
-}
-
-/// Layer 1's store of purses.
-#[derive(Clone)]
-pub struct NftLedger {
-	db: Db,
-}
-
-impl NftLedger {
-	/// A ledger over the core database.
-	pub fn new(db: Db) -> Self {
-		Self { db }
-	}
-
-	/// Records a purse under the next free id, one past the largest below
-	/// [`PurseId::MAIN`], in one write.
-	pub async fn create_purse(
-		&self,
-		name: String,
-		tag: PurseTag,
-	) -> Result<PurseId, CreatePurseError> {
-		let created = self.db.write(move |tx| dao::insert_purse(tx, &name, &tag)).await?;
-		created.ok_or(CreatePurseError::IdsExhausted)
-	}
-
-	/// Every purse carrying `tag`, by id.
-	pub async fn purses_tagged(&self, tag: PurseTag) -> Result<Vec<PurseRecord>, DbError> {
-		self.db.read(move |conn| dao::purses_tagged(conn, &tag)).await
-	}
 }

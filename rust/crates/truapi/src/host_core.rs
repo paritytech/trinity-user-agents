@@ -917,18 +917,38 @@ impl SigningHostRuntime {
 	/// Also starts the durable transaction engine over it, which builds
 	/// scheduled transactions and reports pending work to the observer
 	/// installed with [`Self::set_durable_work_observer`]; install that
-	/// first.
+	/// first. NFT purses run on it too, allocating item keys under the
+	/// installation `installation` hands out.
 	#[cfg(not(target_arch = "wasm32"))]
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_core_db"))]
-	pub fn set_core_db(&self, db: crate::store::Db) -> bool {
+	pub fn set_core_db(
+		&self,
+		db: crate::store::Db,
+		installation: Arc<dyn crate::platform::InstallationIdProvider>,
+	) -> bool {
 		if !self.services.install_core_db(db.clone()) {
 			return false;
 		}
-		let engine = durable_engine(&self.services, db);
+		let engine = durable_engine(&self.services, db.clone());
 		self.services.install_durable_engine(engine.clone());
 		forward_durable_work(&self.services, &engine);
 		engine.ensure_submissions_started();
+		self.services.install_nft_ledger(self.nft_ledger(db, installation));
 		true
+	}
+
+	/// Layer 1 of NFT purses over `db`, deriving with the signing host.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn nft_ledger(
+		&self,
+		db: crate::store::Db,
+		installation: Arc<dyn crate::platform::InstallationIdProvider>,
+	) -> crate::nft::NftLedger {
+		crate::nft::NftLedger::new(crate::nft::NftLedgerDeps {
+			db,
+			installation,
+			keys: self.signing_host.clone(),
+		})
 	}
 
 	/// Install the host observer told whether durable transactions are
@@ -3667,8 +3687,8 @@ mod tests {
 			"paseo".to_string(),
 		)
 		.expect("signing host config is valid");
-		let runtime =
-			SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, test_spawner());
+		let platform = Arc::new(StubPlatform::default());
+		let runtime = SigningHostRuntime::new(platform.clone(), config, test_spawner());
 		let db_config = DbConfig {
 			location: DbLocation::Memory,
 			migrations: || rusqlite_migration::Migrations::new(Vec::new()),
@@ -3678,8 +3698,8 @@ mod tests {
 		assert!(matches!(runtime.services.core_db(), Err(DbError::NotConfigured)));
 		let installed = block_on(Db::open(db_config.clone())).expect("database opens");
 		let other = block_on(Db::open(db_config)).expect("database opens");
-		assert!(runtime.set_core_db(installed));
-		assert!(!runtime.set_core_db(other));
+		assert!(runtime.set_core_db(installed, platform.clone()));
+		assert!(!runtime.set_core_db(other, platform));
 
 		let db = runtime.services.core_db().expect("installed database is served");
 		let answer: i64 =
