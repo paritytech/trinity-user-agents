@@ -583,16 +583,15 @@ jobs:
   # Kotlin bindings, and compiles the app code that pattern matches over the
   # generated types, which is where a removed or renamed variant surfaces.
   #
-  # Scoped to :feature:products:impl and what it depends on. That is where every
-  # consumer of the generated types lives, and it configures from environment
-  # placeholders, where the app module would need values this repository does
-  # not hold.
+  # It also runs every unit test in the tree, the app module's and each library
+  # module's, since nothing else here does: the workflows under
+  # hosts/android/.github are never read.
   host-android-bindings:
     name: Android host app (compile and unit tests)
     needs: changes
     if: needs.changes.outputs.host_android == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -608,28 +607,55 @@ jobs:
         with:
           save_cache: "true"
 
+      # The app module applies the Google Services plugin, which needs a
+      # configuration naming the debug package before it configures. The unit
+      # tests never reach Firebase, so a placeholder with no real project is
+      # enough, and it keeps the gate independent of the real configuration.
+      - name: Write a placeholder Google configuration
+        working-directory: hosts/android
+        run: |
+          cat > app/google-services.json <<'JSON'
+          {
+            "project_info": {"project_number": "0", "project_id": "ci", "storage_bucket": "ci.appspot.com"},
+            "client": [{
+              "client_info": {
+                "mobilesdk_app_id": "1:0:android:0000000000000000",
+                "android_client_info": {"package_name": "io.parity.polkadotapp.debug"}
+              },
+              "oauth_client": [],
+              "api_key": [{"current_key": "ci"}],
+              "services": {"appinvite_service": {"other_platform_oauth_client": []}}
+            }],
+            "configuration_version": "1"
+          }
+          JSON
+
       # No truapi.dir: the core resolves two levels up, which is one of the
       # properties this job keeps true.
       #
-      # The target is the module that consumes the bindings, not the module that
-      # produces them. Generated bindings cannot disagree with the library they
-      # were generated from, so compiling them proves nothing; the signal is in
-      # the app code that pattern matches over core types. Compiling this module
-      # builds :bindings:truapi-host on the way, so both are covered.
+      # Compiling the modules that consume the bindings is the bindings check.
+      # Generated bindings cannot disagree with the library they were generated
+      # from, so compiling them alone proves nothing; the signal is in the app
+      # code that pattern matches over core types, and these test tasks compile
+      # all of it, building :bindings:truapi-host on the way.
+      #
+      # testGpDebugUnitTest is the app module, the only one with flavours, and
+      # testDebugUnitTest is every library module. The products module also runs
+      # its release variant, whose build configuration differs.
       #
       # These values are configuration rather than credentials, and the app tree
       # reads each of them from the environment when it is absent from
-      # local.properties. Placeholders are enough to configure the module, and
+      # local.properties. Placeholders are enough to configure every module, and
       # keep the gate independent of secrets this repository does not hold.
-      - name: Compile Android consumers and instrumentation, run product unit tests
+      - name: Compile the app and instrumentation, run every unit test
         working-directory: hosts/android
         env:
           # The real id, because it is the one the Google configuration is
-          # built for. Inert in this job, which compiles a library module and
-          # never applies the Google Services plugin.
+          # built for.
           APPLICATION_ID: io.parity.polkadotapp
           IOS_BUNDLE_ID: io.parity.polkadotapp
           APPLICATION_NAME: Polkadot
+          CONTACT_EMAIL: ci@example.invalid
           CURRENCY_SYMBOL: DOT
           FIAT_SYMBOL: "$"
           FIRESTORE_DATABASE_ID: ci
@@ -643,7 +669,9 @@ jobs:
           SENTRY_PROJECT: ci
           TERMS_OF_USE_URL: https://example.invalid/terms
         run: >-
-          ./gradlew --configure-on-demand
+          ./gradlew --continue
+          testGpDebugUnitTest
+          testDebugUnitTest
           :feature:products:impl:testReleaseUnitTest
           :bindings:truapi-host:compileDebugAndroidTestKotlin
 
