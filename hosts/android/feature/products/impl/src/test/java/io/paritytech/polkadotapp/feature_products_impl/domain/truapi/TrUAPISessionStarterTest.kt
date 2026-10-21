@@ -100,7 +100,7 @@ class TrUAPISessionStarterTest {
             installer
         }
         whenever(provider.addWebViewSetup(any())).thenAnswer { invocation ->
-            webViewSetups += invocation.getArgument(0)
+            webViewSetups += invocation.getArgument<(WebView) -> Unit>(0)
             Unit
         }
         whenever(provider.loadInitialContent()).thenReturn(Unit)
