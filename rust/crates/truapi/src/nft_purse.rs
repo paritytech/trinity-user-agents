@@ -4,12 +4,15 @@
 //! needs; the capability handler asks for it, because the prompt belongs to the
 //! product connection.
 
+use std::num::NonZeroU32;
+
 use truapi::latest::{
-	NFT_PURSE_MAX_NAME_BYTES, NftPurseId, NftPurseOwner, NftPursePurse, RemotePermission,
+	NFT_PURSE_MAX_NAME_BYTES, NftPurseId, NftPurseItemKey, NftPurseOwner, NftPursePurse,
+	RemotePermission,
 };
 
 use crate::{
-	nft::{CreatePurseError, NftLedger, PurseId, PurseRecord, PurseTag},
+	nft::{AllocateItemsError, CreatePurseError, NftLedger, PurseId, PurseRecord, PurseTag},
 	platform::{ProductId, ProductIdError},
 	store::DbError,
 };
@@ -42,6 +45,15 @@ impl PurseOwner {
 		}
 	}
 
+	/// The owner `tag` names, or `None` when it names no product.
+	fn from_tag(tag: &PurseTag) -> Option<Self> {
+		if tag.0.is_empty() {
+			return Some(Self::Root);
+		}
+		let id = std::str::from_utf8(&tag.0).ok()?;
+		id.parse().ok().map(Self::Product)
+	}
+
 	fn to_wire(&self) -> NftPurseOwner {
 		match self {
 			Self::Root => NftPurseOwner::Root,
@@ -62,6 +74,38 @@ pub enum CreateProductPurseError {
 	/// Layer 1 refused or failed.
 	#[error(transparent)]
 	Ledger(#[from] CreatePurseError),
+}
+
+/// Why a purse's owner could not be read.
+#[derive(Debug, thiserror::Error)]
+pub enum OwnerLookupError {
+	/// The stored tag names no product, so the purse has no known owner.
+	#[error("purse {purse:?} has tag {tag:?}, expected empty or a product id")]
+	UnreadableTag {
+		/// The purse.
+		purse: PurseId,
+		/// Its stored tag.
+		tag: Vec<u8>,
+	},
+	/// The database failed.
+	#[error(transparent)]
+	Db(#[from] DbError),
+}
+
+/// Most keys one `create_items` call allocates (RFC).
+pub const MAX_ITEMS_PER_CALL: u32 = 1000;
+
+/// A number of items one `create_items` call may allocate, in
+/// `1..=`[`MAX_ITEMS_PER_CALL`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ItemCount(NonZeroU32);
+
+impl ItemCount {
+	/// `count`, or `None` when the RFC does not allow it.
+	pub fn new(count: u32) -> Option<Self> {
+		let count = NonZeroU32::new(count).filter(|count| count.get() <= MAX_ITEMS_PER_CALL)?;
+		Some(Self(count))
+	}
 }
 
 /// The RFC's purse calls, shared by every product.
@@ -88,6 +132,26 @@ impl NftPurses {
 		let owner = PurseOwner::Product(caller.clone());
 		let created = self.ledger.create_purse(name, owner.tag()).await?;
 		Ok(created)
+	}
+
+	/// Who owns `purse`, or `None` when no purse has that id.
+	pub async fn owner_of(&self, purse: PurseId) -> Result<Option<PurseOwner>, OwnerLookupError> {
+		let Some(record) = self.ledger.purse(purse).await? else {
+			return Ok(None);
+		};
+		let unreadable = || OwnerLookupError::UnreadableTag { purse, tag: record.tag.0.clone() };
+		PurseOwner::from_tag(&record.tag).ok_or_else(unreadable).map(Some)
+	}
+
+	/// Allocates `count` keys in `purse`. The caller checks [`read_grant`] on
+	/// [`Self::owner_of`] first.
+	pub async fn create_items(
+		&self,
+		purse: PurseId,
+		count: ItemCount,
+	) -> Result<Vec<NftPurseItemKey>, AllocateItemsError> {
+		let keys = self.ledger.allocate_items(purse, count.0).await?;
+		Ok(keys.into_iter().map(|key| NftPurseItemKey(key.0)).collect())
 	}
 
 	/// The purses `owner` holds, by id. The caller checks [`read_grant`] first.
@@ -238,5 +302,34 @@ mod tests {
 				owner: NftPurseOwner::Product("other.dot".to_owned())
 			})
 		);
+	}
+
+	/// The owner decides which grant a call needs, so it must read back as
+	/// exactly the one the purse was created for.
+	#[test]
+	fn a_purse_reads_back_the_owner_it_was_created_for() {
+		let (_dir, purses) = purses();
+		let created = create(&purses, PRODUCT, "Tickets");
+		let owners = [created, PurseId::MAIN, PurseId(7)]
+			.map(|purse| block_on(purses.owner_of(purse)).expect("owner is read"));
+		assert_eq!(owners, [Some(product(PRODUCT)), Some(PurseOwner::Root), None]);
+	}
+
+	/// A tag that names no product must not be read as Root, which would
+	/// ask for the wrong grant.
+	#[test]
+	fn a_tag_naming_no_product_is_an_error() {
+		let (_dir, db) = open_temporary_core_db();
+		let purses = NftPurses::new(test_ledger(db.clone()));
+		block_on(db.write(|tx| {
+			tx.execute("INSERT INTO nft_purse (id, name, tag) VALUES (0, 'odd', x'ff')", [])?;
+			Ok(())
+		}))
+		.expect("odd purse is written");
+		let read = block_on(purses.owner_of(PurseId(0)));
+		assert!(matches!(
+			read,
+			Err(OwnerLookupError::UnreadableTag { purse: PurseId(0), tag }) if tag == [0xff]
+		));
 	}
 }

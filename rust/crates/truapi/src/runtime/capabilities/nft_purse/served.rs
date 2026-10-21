@@ -8,17 +8,21 @@ use truapi::{
 	versioned::{
 		FromLatest, IntoLatest, Versioned,
 		nft_purse::{
-			HostNftPurseCreatePurseError, HostNftPurseCreatePurseRequest,
-			HostNftPurseCreatePurseResponse, HostNftPurseListPursesError,
-			HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
+			HostNftPurseCreateItemsError, HostNftPurseCreateItemsRequest,
+			HostNftPurseCreateItemsResponse, HostNftPurseCreatePurseError,
+			HostNftPurseCreatePurseRequest, HostNftPurseCreatePurseResponse,
+			HostNftPurseListPursesError, HostNftPurseListPursesRequest,
+			HostNftPurseListPursesResponse,
 		},
 	},
 };
 
 use super::super::from_latest_error;
 use crate::{
-	nft::CreatePurseError,
-	nft_purse::{self, CreateProductPurseError, NftPurses, PurseOwner},
+	nft::{AllocateItemsError, CreatePurseError, PurseId},
+	nft_purse::{
+		self, CreateProductPurseError, ItemCount, NftPurses, OwnerLookupError, PurseOwner,
+	},
 	runtime::{ProductConnection, ProductRuntimeHost},
 	store::DbError,
 };
@@ -42,6 +46,19 @@ impl NftPurse for ProductRuntimeHost {
 		self.create_nft_purse(request.into_latest())
 			.await
 			.map(|response| HostNftPurseCreatePurseResponse::from_latest(response, version))
+			.map_err(|error| from_latest_error(error, version))
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.create_items"))]
+	async fn create_items(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseCreateItemsRequest,
+	) -> Result<HostNftPurseCreateItemsResponse, CallError<HostNftPurseCreateItemsError>> {
+		let version = request.version();
+		self.create_nft_items(request.into_latest())
+			.await
+			.map(|response| HostNftPurseCreateItemsResponse::from_latest(response, version))
 			.map_err(|error| from_latest_error(error, version))
 	}
 
@@ -91,6 +108,77 @@ impl ProductRuntimeHost {
 		let listed = purses.list_purses(&owner).await.map_err(host_failure)?;
 		Ok(latest::HostNftPurseListPursesResponse { purses: listed })
 	}
+
+	async fn create_nft_items(
+		&self,
+		request: latest::HostNftPurseCreateItemsRequest,
+	) -> Result<
+		latest::HostNftPurseCreateItemsResponse,
+		CallError<latest::HostNftPurseCreateItemsError>,
+	> {
+		self.require_session()?;
+		let purses = self.connection.nft_purses()?;
+		let latest::HostNftPurseCreateItemsRequest { purse, count } = request;
+		let out_of_range = CallError::Domain(latest::HostNftPurseCreateItemsError::CountOutOfRange);
+		let count = ItemCount::new(count).ok_or(out_of_range)?;
+		let purse = PurseId(purse.0);
+		let refusals = PurseRefusals {
+			denied: latest::HostNftPurseCreateItemsError::Denied,
+			other: latest::HostNftPurseCreateItemsError::Other,
+		};
+		self.require_purse_access(&purses, purse, refusals).await?;
+		let items = purses.create_items(purse, count).await.map_err(create_items_failure)?;
+		Ok(latest::HostNftPurseCreateItemsResponse { items })
+	}
+
+	/// Checks that the caller may use `purse`, asking the user for a grant
+	/// when another owner holds it. An unknown purse is refused before anyone
+	/// is asked.
+	async fn require_purse_access<E>(
+		&self,
+		purses: &NftPurses,
+		purse: PurseId,
+		refusals: PurseRefusals<E>,
+	) -> Result<(), CallError<E>> {
+		let owner = purses.owner_of(purse).await.map_err(owner_lookup_failure)?;
+		let unknown = || CallError::Domain((refusals.other)(unknown_purse(purse)));
+		let owner = owner.ok_or_else(unknown)?;
+		let caller = &self.connection.product.product_id;
+		let Some(grant) = nft_purse::read_grant(caller, &owner) else {
+			return Ok(());
+		};
+		self.connection.require_remote_permission(grant, refusals.denied).await
+	}
+}
+
+/// How one call's error type says a purse was refused.
+struct PurseRefusals<E> {
+	/// The user did not grant access.
+	denied: E,
+	/// Any other refusal, such as an unknown purse.
+	other: fn(latest::GenericError) -> E,
+}
+
+fn unknown_purse(purse: PurseId) -> latest::GenericError {
+	latest::GenericError { reason: format!("purse {} does not exist", purse.0) }
+}
+
+/// Running out of indices is the product's error. Everything else is the
+/// host's.
+fn create_items_failure(
+	error: AllocateItemsError,
+) -> CallError<latest::HostNftPurseCreateItemsError> {
+	match error {
+		AllocateItemsError::UnknownPurse(_) | AllocateItemsError::IndicesExhausted { .. } => {
+			let refusal = latest::GenericError { reason: error.to_string() };
+			CallError::Domain(latest::HostNftPurseCreateItemsError::Other(refusal))
+		},
+		error => CallError::HostFailure { reason: error.to_string() },
+	}
+}
+
+fn owner_lookup_failure<E>(error: OwnerLookupError) -> CallError<E> {
+	CallError::HostFailure { reason: error.to_string() }
 }
 
 /// A name over the limit or no free id is the product's error. A database

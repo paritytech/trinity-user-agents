@@ -1,9 +1,11 @@
 use truapi::{
 	api::NftPurse,
 	versioned::nft_purse::{
-		HostNftPurseCreateItemsRequest, HostNftPurseCreatePurseError,
+		HostNftPurseCreateItemsError, HostNftPurseCreateItemsRequest,
+		HostNftPurseCreateItemsResponse, HostNftPurseCreatePurseError,
 		HostNftPurseCreatePurseRequest, HostNftPurseCreatePurseResponse,
 		HostNftPurseListPursesError, HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
+		HostNftPurseQueryPurseRequest,
 	},
 };
 
@@ -46,6 +48,29 @@ fn list(
 	futures::executor::block_on(
 		host.list_purses(&CallContext::default(), HostNftPurseListPursesRequest::V1(request)),
 	)
+}
+
+fn create_items(
+	host: &ProductRuntimeHost,
+	purse: u32,
+	count: u32,
+) -> Result<HostNftPurseCreateItemsResponse, CallError<HostNftPurseCreateItemsError>> {
+	let request = v01::HostNftPurseCreateItemsRequest { purse: v01::NftPurseId(purse), count };
+	futures::executor::block_on(
+		host.create_items(&CallContext::default(), HostNftPurseCreateItemsRequest::V1(request)),
+	)
+}
+
+fn created_count(
+	created: Result<HostNftPurseCreateItemsResponse, CallError<HostNftPurseCreateItemsError>>,
+) -> Result<usize, CallError<HostNftPurseCreateItemsError>> {
+	created.map(|HostNftPurseCreateItemsResponse::V1(response)| response.items.len())
+}
+
+fn create_items_refusal(
+	error: v01::NftPurseCreateItemsError,
+) -> CallError<HostNftPurseCreateItemsError> {
+	CallError::Domain(HostNftPurseCreateItemsError::V1(error))
 }
 
 fn listed(purses: Vec<v01::NftPursePurse>) -> HostNftPurseListPursesResponse {
@@ -143,6 +168,7 @@ fn purses_need_a_paired_session() {
 		list(&host, v01::NftPurseOwner::Product(PRODUCT.to_owned())),
 		Err(CallError::Denied)
 	);
+	assert_eq!(create_items(&host, PurseId::MAIN.0, 1), Err(CallError::Denied));
 }
 
 // The empty product id shares Root's empty tag, so naming it must fail before
@@ -168,15 +194,68 @@ fn a_host_without_a_core_database_does_not_serve_purses() {
 	assert_eq!(create(&host, "Tickets"), Err(CallError::Unsupported));
 }
 
+// The RFC bounds one call to 1..=1000 keys, and an out-of-range count is the
+// product's mistake, refused before the user could be asked anything.
+#[test]
+fn create_items_takes_between_1_and_1000_keys() {
+	let platform = Arc::new(StubPlatform::default());
+	let (_dir, host) = nft_host(platform.clone(), true);
+	create(&host, "Tickets").expect("purse is created");
+
+	let counts = [0, 1, 1000, 1001].map(|count| created_count(create_items(&host, 0, count)));
+
+	let out_of_range = create_items_refusal(v01::NftPurseCreateItemsError::CountOutOfRange);
+	assert_eq!(counts, [Err(out_of_range.clone()), Ok(1), Ok(1000), Err(out_of_range)]);
+	assert_eq!(requested_permissions(&platform), vec![]);
+}
+
+// Keys in Root's purses receive the user's own NFTs, so creating them needs
+// the same grant as reading those purses.
+#[test]
+fn creating_items_in_roots_purse_without_the_users_grant_is_denied() {
+	let platform = Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() });
+	let (_dir, host) = nft_host(platform.clone(), true);
+
+	let refused = create_items(&host, PurseId::MAIN.0, 1);
+
+	assert_eq!(refused, Err(create_items_refusal(v01::NftPurseCreateItemsError::Denied)));
+	let read_root = v01::RemotePermission::NftPurseRead { owner: v01::NftPurseOwner::Root };
+	assert_eq!(
+		requested_permissions(&platform),
+		vec![v01::RemotePermissionRequest { permission: read_root }]
+	);
+}
+
+#[test]
+fn creating_items_in_roots_purse_with_the_users_grant_returns_the_keys() {
+	let (_dir, host) = nft_host(Arc::new(StubPlatform::default()), true);
+
+	assert_eq!(created_count(create_items(&host, PurseId::MAIN.0, 3)), Ok(3));
+}
+
+// The user is never asked about a purse that does not exist.
+#[test]
+fn creating_items_in_an_unknown_purse_is_refused_without_a_prompt() {
+	let platform = Arc::new(StubPlatform::default());
+	let (_dir, host) = nft_host(platform.clone(), true);
+
+	let refused = create_items(&host, 7, 1);
+
+	let unknown = v01::GenericError { reason: "purse 7 does not exist".to_owned() };
+	let expected = create_items_refusal(v01::NftPurseCreateItemsError::Other(unknown));
+	assert_eq!((refused, requested_permissions(&platform)), (Err(expected), vec![]));
+}
+
 // Methods of later stages stay unavailable, so products can feature-detect them.
 #[test]
 fn methods_of_later_stages_are_unavailable() {
 	let (_dir, host) = nft_host(Arc::new(StubPlatform::default()), true);
-	let request = v01::HostNftPurseCreateItemsRequest { purse: v01::NftPurseId(0), count: 1 };
+	let request =
+		v01::HostNftPurseQueryPurseRequest { purse: v01::NftPurseId(0), page: 0, page_size: 1 };
 
-	let created = futures::executor::block_on(
-		host.create_items(&CallContext::default(), HostNftPurseCreateItemsRequest::V1(request)),
+	let queried = futures::executor::block_on(
+		host.query_purse(&CallContext::default(), HostNftPurseQueryPurseRequest::V1(request)),
 	);
 
-	assert_eq!(created, Err(CallError::unavailable()));
+	assert_eq!(queried, Err(CallError::unavailable()));
 }

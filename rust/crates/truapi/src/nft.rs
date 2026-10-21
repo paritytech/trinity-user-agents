@@ -12,6 +12,7 @@ mod purse;
 #[cfg(test)]
 pub mod testing;
 
+pub use item::AllocateItemsError;
 pub use keys::{ItemKey, ItemKeyDeriver, ItemSlot, item_keys_from_entropy};
 pub use ledger::{NftLedger, NftLedgerDeps};
 pub use purse::{CreatePurseError, PurseId, PurseRecord, PurseTag};
