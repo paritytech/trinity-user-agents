@@ -96,7 +96,8 @@ class TrUAPISessionStarterTest {
         whenever(chainDirectory.resolve()).thenReturn(chains)
         whenever(bootstrapInstaller.installerFor(any(), any())).thenAnswer { invocation ->
             installerSessionId = invocation.getArgument(1)
-            { _: String -> { _: WebView -> Unit } }
+            val installer: (String) -> (WebView) -> Unit = { { Unit } }
+            installer
         }
         whenever(provider.addWebViewSetup(any())).thenAnswer { invocation ->
             webViewSetups += invocation.getArgument(0)
