@@ -7,7 +7,7 @@ use futures::stream::BoxStream;
 use super::{
 	dao,
 	holding::{HeldItem, record_in},
-	item::{AllocateItemsError, Allocation, allocate_in},
+	item::{AllocateItemsError, Allocation, ItemPage, ItemsPage, allocate_in},
 	keys::{ItemKey, ItemKeyDeriver},
 	purse::{CreatePurseError, PurseId, PurseRecord, PurseTag},
 };
@@ -79,6 +79,22 @@ impl NftLedger {
 		let allocation = Allocation { purse, installation, count };
 		let keys = self.keys.clone();
 		self.db.write(move |tx| allocate_in(tx, allocation, keys.as_ref())).await?
+	}
+
+	/// One page of `purse`'s Available items, ordered by slot. An item is
+	/// Available when its key holds an NFT at the best block; no operation
+	/// can hold one yet.
+	pub async fn available_items(
+		&self,
+		purse: PurseId,
+		page: ItemPage,
+	) -> Result<ItemsPage, DbError> {
+		let size = u64::from(page.size.get());
+		let offset = u64::from(page.index) * size;
+		let read =
+			move |conn: &rusqlite::Connection| dao::available_items(conn, purse, size + 1, offset);
+		let overread = self.db.read(read).await?;
+		Ok(ItemsPage::from_overread(overread, page.size.get() as usize))
 	}
 
 	/// Every item key, now and after each allocation.

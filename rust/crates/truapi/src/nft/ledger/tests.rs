@@ -157,6 +157,53 @@ fn allocating_past_the_last_index_is_refused() {
 	));
 }
 
+/// Records that each of `keys` holds an NFT whose instance is its position.
+fn hold(ledger: &NftLedger, keys: &[ItemKey]) {
+	let held = |(instance, key): (usize, &ItemKey)| {
+		let instance = u64::try_from(instance).expect("a test position fits u64");
+		(*key, Some(HeldItem { collection: 1, item: 1, instance }))
+	};
+	let holdings = keys.iter().enumerate().map(held).collect();
+	let at = HashAndNumber { hash: [3; 32].into(), number: 3 };
+	block_on(ledger.record_holdings(at, holdings)).expect("holdings are recorded");
+}
+
+fn page(ledger: &NftLedger, index: u32, size: u32) -> ItemsPage {
+	let size = NonZeroU32::new(size).expect("size is positive");
+	block_on(ledger.available_items(PurseId(0), ItemPage { index, size })).expect("page reads")
+}
+
+/// Products page through a purse one call at a time, so pages must not
+/// overlap or skip, and the last one says nothing follows.
+#[test]
+fn available_items_page_in_slot_order() {
+	let (_dir, ledger) = ledger_with_purse(fixed_deps);
+	let keys = allocate(&ledger, 5).expect("allocates");
+	hold(&ledger, &keys);
+
+	let pages =
+		[page(&ledger, 0, 2), page(&ledger, 1, 2), page(&ledger, 2, 2), page(&ledger, 3, 2)];
+
+	let expected = [
+		ItemsPage { items: keys[0..2].to_vec(), has_next: true },
+		ItemsPage { items: keys[2..4].to_vec(), has_next: true },
+		ItemsPage { items: keys[4..5].to_vec(), has_next: false },
+		ItemsPage { items: vec![], has_next: false },
+	];
+	assert_eq!(pages, expected);
+}
+
+/// Only a key that holds an NFT is spendable; one that never received or
+/// already gave one away is left out.
+#[test]
+fn keys_holding_nothing_are_not_available() {
+	let (_dir, ledger) = ledger_with_purse(fixed_deps);
+	let keys = allocate(&ledger, 3).expect("allocates");
+	hold(&ledger, &keys[1..2]);
+
+	assert_eq!(page(&ledger, 0, 10), ItemsPage { items: vec![keys[1]], has_next: false });
+}
+
 /// A deriver with no session.
 struct SignedOut;
 

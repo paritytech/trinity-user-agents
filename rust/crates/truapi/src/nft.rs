@@ -15,7 +15,7 @@ mod scarcity;
 pub mod testing;
 
 pub use holding::HeldItem;
-pub use item::AllocateItemsError;
+pub use item::{AllocateItemsError, ItemPage};
 pub use keys::{ItemKey, ItemKeyDeriver, ItemSlot, item_keys_from_entropy};
 pub use ledger::{NftLedger, NftLedgerDeps};
 pub use purse::{CreatePurseError, PurseId, PurseRecord, PurseTag};

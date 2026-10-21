@@ -7,12 +7,15 @@
 use std::num::NonZeroU32;
 
 use truapi::latest::{
-	NFT_PURSE_MAX_NAME_BYTES, NftPurseId, NftPurseItemKey, NftPurseOwner, NftPursePurse,
-	RemotePermission,
+	NFT_PURSE_MAX_NAME_BYTES, NftPurseId, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
+	NftPursePurse, RemotePermission,
 };
 
 use crate::{
-	nft::{AllocateItemsError, CreatePurseError, NftLedger, PurseId, PurseRecord, PurseTag},
+	nft::{
+		AllocateItemsError, CreatePurseError, ItemKey, ItemPage, NftLedger, PurseId, PurseRecord,
+		PurseTag,
+	},
 	platform::{ProductId, ProductIdError},
 	store::DbError,
 };
@@ -108,6 +111,21 @@ impl ItemCount {
 	}
 }
 
+/// Largest page `query_purse` returns (RFC).
+pub const MAX_PAGE_SIZE: u32 = 100;
+
+/// A page size `query_purse` accepts, in `1..=`[`MAX_PAGE_SIZE`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PageSize(NonZeroU32);
+
+impl PageSize {
+	/// `size`, or `None` when the RFC does not allow it.
+	pub fn new(size: u32) -> Option<Self> {
+		let size = NonZeroU32::new(size).filter(|size| size.get() <= MAX_PAGE_SIZE)?;
+		Some(Self(size))
+	}
+}
+
 /// The RFC's purse calls, shared by every product.
 #[derive(Clone)]
 pub struct NftPurses {
@@ -151,7 +169,21 @@ impl NftPurses {
 		count: ItemCount,
 	) -> Result<Vec<NftPurseItemKey>, AllocateItemsError> {
 		let keys = self.ledger.allocate_items(purse, count.0).await?;
-		Ok(keys.into_iter().map(|key| NftPurseItemKey(key.0)).collect())
+		Ok(keys.into_iter().map(item_key).collect())
+	}
+
+	/// Page `page` of `purse`'s spendable items. The caller checks
+	/// [`read_grant`] on [`Self::owner_of`] first.
+	pub async fn query_purse(
+		&self,
+		purse: PurseId,
+		page: u32,
+		size: PageSize,
+	) -> Result<NftPurseInfoPage, DbError> {
+		let page = ItemPage { index: page, size: size.0 };
+		let read = self.ledger.available_items(purse, page).await?;
+		let items = read.items.into_iter().map(item_key).collect();
+		Ok(NftPurseInfoPage { has_next: read.has_next, items })
 	}
 
 	/// The purses `owner` holds, by id. The caller checks [`read_grant`] first.
@@ -168,6 +200,10 @@ pub fn read_grant(caller: &ProductId, owner: &PurseOwner) -> Option<RemotePermis
 		return None;
 	}
 	Some(RemotePermission::NftPurseRead { owner: owner.to_wire() })
+}
+
+fn item_key(key: ItemKey) -> NftPurseItemKey {
+	NftPurseItemKey(key.0)
 }
 
 fn listed_purse(record: PurseRecord) -> NftPursePurse {

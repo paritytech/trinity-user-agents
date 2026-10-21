@@ -90,6 +90,26 @@ pub fn insert_items(
 	Ok(())
 }
 
+const AVAILABLE_ITEMS: &str = "SELECT item.key FROM nft_item AS item
+	JOIN nft_holding AS holding ON holding.key = item.key
+	WHERE item.purse = :purse
+	ORDER BY item.installation, item.idx
+	LIMIT :limit OFFSET :offset";
+
+/// Up to `limit` keys of `purse` that hold an NFT, skipping the first
+/// `offset`, ordered by slot.
+pub fn available_items(
+	conn: &Connection,
+	purse: PurseId,
+	limit: u64,
+	offset: u64,
+) -> Result<Vec<ItemKey>, DbError> {
+	let mut statement = conn.prepare_cached(AVAILABLE_ITEMS)?;
+	let params = named_params! { ":purse": purse.0, ":limit": limit, ":offset": offset };
+	let rows = statement.query_map(params, |row| Ok(ItemKey(row.get("key")?)))?;
+	Ok(rows.collect::<Result<_, _>>()?)
+}
+
 const ITEM_KEYS: &str = "SELECT key FROM nft_item";
 
 /// Every item key, now and after each change.

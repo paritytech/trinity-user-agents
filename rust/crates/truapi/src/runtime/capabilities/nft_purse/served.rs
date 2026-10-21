@@ -12,7 +12,8 @@ use truapi::{
 			HostNftPurseCreateItemsResponse, HostNftPurseCreatePurseError,
 			HostNftPurseCreatePurseRequest, HostNftPurseCreatePurseResponse,
 			HostNftPurseListPursesError, HostNftPurseListPursesRequest,
-			HostNftPurseListPursesResponse,
+			HostNftPurseListPursesResponse, HostNftPurseQueryPurseError,
+			HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
 		},
 	},
 };
@@ -21,7 +22,7 @@ use super::super::from_latest_error;
 use crate::{
 	nft::{AllocateItemsError, CreatePurseError, PurseId},
 	nft_purse::{
-		self, CreateProductPurseError, ItemCount, NftPurses, OwnerLookupError, PurseOwner,
+		self, CreateProductPurseError, ItemCount, NftPurses, OwnerLookupError, PageSize, PurseOwner,
 	},
 	runtime::{ProductConnection, ProductRuntimeHost},
 	store::DbError,
@@ -59,6 +60,19 @@ impl NftPurse for ProductRuntimeHost {
 		self.create_nft_items(request.into_latest())
 			.await
 			.map(|response| HostNftPurseCreateItemsResponse::from_latest(response, version))
+			.map_err(|error| from_latest_error(error, version))
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.query_purse"))]
+	async fn query_purse(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseQueryPurseRequest,
+	) -> Result<HostNftPurseQueryPurseResponse, CallError<HostNftPurseQueryPurseError>> {
+		let version = request.version();
+		self.query_nft_purse(request.into_latest())
+			.await
+			.map(|response| HostNftPurseQueryPurseResponse::from_latest(response, version))
 			.map_err(|error| from_latest_error(error, version))
 	}
 
@@ -129,6 +143,29 @@ impl ProductRuntimeHost {
 		self.require_purse_access(&purses, purse, refusals).await?;
 		let items = purses.create_items(purse, count).await.map_err(create_items_failure)?;
 		Ok(latest::HostNftPurseCreateItemsResponse { items })
+	}
+
+	async fn query_nft_purse(
+		&self,
+		request: latest::HostNftPurseQueryPurseRequest,
+	) -> Result<
+		latest::HostNftPurseQueryPurseResponse,
+		CallError<latest::HostNftPurseQueryPurseError>,
+	> {
+		self.require_session()?;
+		let purses = self.connection.nft_purses()?;
+		let latest::HostNftPurseQueryPurseRequest { purse, page, page_size } = request;
+		let out_of_bounds =
+			CallError::Domain(latest::HostNftPurseQueryPurseError::PageSizeOutOfBounds);
+		let size = PageSize::new(page_size).ok_or(out_of_bounds)?;
+		let purse = PurseId(purse.0);
+		let refusals = PurseRefusals {
+			denied: latest::HostNftPurseQueryPurseError::Denied,
+			other: latest::HostNftPurseQueryPurseError::Other,
+		};
+		self.require_purse_access(&purses, purse, refusals).await?;
+		let page = purses.query_purse(purse, page, size).await.map_err(host_failure)?;
+		Ok(latest::HostNftPurseQueryPurseResponse { page })
 	}
 
 	/// Checks that the caller may use `purse`, asking the user for a grant

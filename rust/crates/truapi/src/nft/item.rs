@@ -39,6 +39,34 @@ pub enum AllocateItemsError {
 	Db(#[from] DbError),
 }
 
+/// A page of a purse's items, already checked against its bounds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ItemPage {
+	/// Zero-based page index.
+	pub index: u32,
+	/// Items per page.
+	pub size: NonZeroU32,
+}
+
+/// One page of items, and whether a later page holds more.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ItemsPage {
+	/// The items, ordered by slot.
+	pub items: Vec<ItemKey>,
+	/// Whether a later page holds more.
+	pub has_next: bool,
+}
+
+impl ItemsPage {
+	/// The page of `size` items in `overread`, which holds one item more
+	/// when a later page follows.
+	pub fn from_overread(mut overread: Vec<ItemKey>, size: usize) -> Self {
+		let has_next = overread.len() > size;
+		overread.truncate(size);
+		Self { items: overread, has_next }
+	}
+}
+
 /// `count` new items of `purse` under `installation`.
 pub struct Allocation {
 	/// The purse they go into.
