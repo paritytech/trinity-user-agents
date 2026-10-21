@@ -1,4 +1,5 @@
 import com.android.build.gradle.internal.cxx.configure.gradleLocalProperties
+import io.sentry.android.gradle.extensions.InstrumentationFeature
 
 plugins {
     id("polkadotapp.android.application")
@@ -217,4 +218,15 @@ sentry {
     // Sentry only runs on debug/nightly; skip release so the plugin
     // doesn't try to process a variant that has no DSN/auth token
     ignoredBuildTypes.set(setOf("release"))
+
+    tracingInstrumentation {
+        // Automatic OkHttp spans include full URLs. Keep the remaining instrumentation enabled.
+        features.set(
+            setOf(
+                InstrumentationFeature.DATABASE,
+                InstrumentationFeature.FILE_IO,
+                InstrumentationFeature.COMPOSE
+            )
+        )
+    }
 }
