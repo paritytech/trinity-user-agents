@@ -883,7 +883,7 @@
     <string name="notification_channel_name_video_game">Weekly game</string>
     <string name="notification_channel_description_video_game">Notifications about upcoming weekly games</string>
     <string name="notification_channel_name_video_game_alarm">Weekly game urgent</string>
-    <string name="notification_channel_description_video_game_alarm">Urgent notifications when games are about to start</string>
+    <string name="notification_channel_description_video_game_alarm">Urgent notifications when games start</string>
 
     <string name="notification_channel_name_calls">Calls</string>
     <string name="notification_channel_description_calls">Notifications about incoming calls</string>
