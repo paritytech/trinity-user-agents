@@ -29,7 +29,7 @@ enum PocketCardOpening {
         else { return }
 
         let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
-        navigator.presentFullScreen(screen, transitioningDelegate: screen)
+        navigator.presentOverTabs(screen, transitioningDelegate: screen)
         product.surface.claim(screen)
 
         Task { [weak screen] in

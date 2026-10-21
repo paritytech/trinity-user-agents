@@ -9,6 +9,10 @@ protocol ModuleNavigating: AnyObject {
         _ viewController: UIViewController,
         transitioningDelegate: UIViewControllerTransitioningDelegate?
     )
+    func presentOverTabs(
+        _ viewController: UIViewController,
+        transitioningDelegate: UIViewControllerTransitioningDelegate?
+    )
     func openProduct(page: ProductPage)
     func presentProduct(page: ProductPage)
     func openPocket()
@@ -39,6 +43,20 @@ extension ModuleNavigator: ModuleNavigating {
         navigationController.transitioningDelegate = transitioningDelegate
 
         UIWindow.topWindow?.topmostViewController?.present(navigationController, animated: true)
+    }
+
+    func presentOverTabs(
+        _ viewController: UIViewController,
+        transitioningDelegate: UIViewControllerTransitioningDelegate?
+    ) {
+        guard let view = UIApplication.shared.mainTabBarController else {
+            presentFullScreen(viewController, transitioningDelegate: transitioningDelegate)
+            return
+        }
+
+        let navigationController = AppNavigationController(rootViewController: viewController)
+        navigationController.transitioningDelegate = transitioningDelegate
+        view.presentOverContent(navigationController)
     }
 
     func openChat(_ model: ChatOpenModel) {
