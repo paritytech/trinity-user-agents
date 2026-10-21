@@ -56,19 +56,27 @@ internal fun HostProcessStartEvent.sentryFields() = HostProcessSentryFields(
 internal fun appVariant(flavor: String, buildType: String): String =
     "$flavor${buildType.replaceFirstChar { it.titlecase() }}"
 
-internal inline fun captureHostProcessStartedIfEnabled(
+internal fun interface HostProcessStartCapture {
+    fun capture(event: HostProcessStartEvent)
+}
+
+internal fun interface HostProcessInitializerCapture {
+    fun capture(): Result<Unit>
+}
+
+internal fun captureHostProcessStartedIfEnabled(
     enabled: Boolean,
-    capture: () -> Result<Unit>,
-): Result<Unit> = if (enabled) capture() else Result.success(Unit)
+    capture: HostProcessInitializerCapture,
+): Result<Unit> = if (enabled) capture.capture() else Result.success(Unit)
 
 internal class HostProcessTelemetry(
     private val appLaunchId: UUID,
     private val processStartElapsedRealtime: () -> Duration,
     private val metadata: () -> HostProcessMetadata,
-    private val capture: (HostProcessStartEvent) -> Unit,
+    private val capture: HostProcessStartCapture,
 ) {
     fun captureProcessStarted(): Result<Unit> = runCatching {
-        capture(
+        capture.capture(
             HostProcessStartEvent(
                 name = PROCESS_STARTED_EVENT,
                 appLaunchId = appLaunchId,
@@ -85,24 +93,27 @@ internal class HostProcessTelemetry(
 
 internal class AndroidHostProcessTelemetryInitializer @Inject constructor() : AppInitializer {
     context(scope: ComputationalScope)
-    override fun initialize(): Result<Unit> = captureHostProcessStartedIfEnabled(
-        enabled = FeatureOption.HOST_PROCESS_TELEMETRY.isEnabled,
-    ) {
-        HostProcessTelemetry(
-            appLaunchId = UUID.randomUUID(),
-            processStartElapsedRealtime = { Process.getStartElapsedRealtime().milliseconds },
-            metadata = {
-                HostProcessMetadata(
-                    appVersion = BuildConfig.VERSION_NAME,
-                    appBuild = BuildConfig.VERSION_CODE.toLong(),
-                    appVariant = appVariant(BuildConfig.FLAVOR, BuildConfig.BUILD_TYPE),
-                    platform = "android",
-                    osVersion = Build.VERSION.RELEASE,
-                    truapiHostVersion = TrUAPIBuildConfig.TRUAPI_HOST_VERSION,
-                )
-            },
-            capture = ::captureWithSentry,
-        ).captureProcessStarted()
+    override fun initialize(): Result<Unit> {
+        // AppInitializerPipeline owns failure logging and continues with the remaining initializers.
+        return captureHostProcessStartedIfEnabled(
+            enabled = FeatureOption.HOST_PROCESS_TELEMETRY.isEnabled,
+        ) {
+            HostProcessTelemetry(
+                appLaunchId = UUID.randomUUID(),
+                processStartElapsedRealtime = { Process.getStartElapsedRealtime().milliseconds },
+                metadata = {
+                    HostProcessMetadata(
+                        appVersion = BuildConfig.VERSION_NAME,
+                        appBuild = BuildConfig.VERSION_CODE.toLong(),
+                        appVariant = appVariant(BuildConfig.FLAVOR, BuildConfig.BUILD_TYPE),
+                        platform = "android",
+                        osVersion = Build.VERSION.RELEASE,
+                        truapiHostVersion = TrUAPIBuildConfig.TRUAPI_HOST_VERSION,
+                    )
+                },
+                capture = ::captureWithSentry,
+            ).captureProcessStarted()
+        }
     }
 
     private fun captureWithSentry(event: HostProcessStartEvent) {
