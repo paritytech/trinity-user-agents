@@ -6,8 +6,11 @@ import coil.fetch.FetchResult
 import coil.fetch.Fetcher
 import coil.request.Options
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.Executables
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductIcon
@@ -19,6 +22,7 @@ import io.paritytech.polkadotapp.tools_ipfs_api.IpfsContentLookup
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 private const val CID = "QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco"
@@ -32,7 +36,10 @@ class ProductIconFetcherTest {
     }
     private val options: Options = mockk()
     private val imageLoader: ImageLoader = mockk()
-    private val factory = ProductIconFetcher.Factory(resolveProduct, ipfsContentLookup)
+    private val dotNsTldProvider: DotNsTldProvider = mockk {
+        coEvery { getTld() } returns Result.success(requireNotNull(DotNsTld.parse("paseo")))
+    }
+    private val factory = ProductIconFetcher.Factory(dotNsTldProvider, resolveProduct, ipfsContentLookup)
 
     // Jollity is placed by the host before anything resolves it, so its chat names only the product
     // and the icon is found when the row is drawn.
@@ -51,6 +58,15 @@ class ProductIconFetcherTest {
         withManifestIcon(icon = null)
 
         factory.create(uriOf(productId.productIconUri()), options, imageLoader)?.fetch()
+    }
+
+    // Anything can build an image model, so a name that is not a product of this network is never resolved.
+    @Test
+    fun `a name outside this network's products is not resolved`() = runTest {
+        val loaded = runCatching { factory.create(uriOf("product-icon:evil.dot"), options, imageLoader)?.fetch() }
+
+        assertTrue(loaded.exceptionOrNull() is IllegalArgumentException)
+        coVerify(exactly = 0) { resolveProduct.resolve(any()) }
     }
 
     @Test
