@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::platform::{
-	CreateTransactionReview, ResourceAllocationReview, SignPayloadReview, SignRawReview,
+	CreateTransactionReview, ProductId, ResourceAllocationReview, SignPayloadReview, SignRawReview,
 	UserConfirmationReview,
 };
 use futures::{FutureExt, pin_mut};
@@ -12,7 +12,7 @@ use truapi::latest as api;
 
 use super::{
 	SigningHost,
-	sso_responder::{
+	allowance::{
 		AllowanceAllocationError, allocate_bulletin_allowance, allocate_smart_contract_allowance,
 		allocate_statement_store_allowance,
 	},
@@ -230,7 +230,7 @@ impl SigningHostSsoService {
 	async fn allocate(
 		&self,
 		session: &AuthoritySession,
-		calling_product_id: &str,
+		calling_product_id: &ProductId,
 		resource: api::AllocatableResource,
 		on_existing: OnExistingAllowancePolicy,
 	) -> Result<SsoAllocationOutcome, AllowanceAllocationError> {
@@ -398,13 +398,13 @@ impl SigningHostSsoService {
 				calling_product_id: request.calling_product_id.clone(),
 				resources: request.resources.clone(),
 			});
-			match self.prompt(cx, review).await {
-				Some(Ok(true)) => {},
-				Some(Ok(false)) => {
-					return Ok(vec![SsoAllocationOutcome::Rejected; request.resources.len()]);
-				},
-				Some(Err(err)) => return Err(format!("confirmation failed: {}", err.reason)),
-				None => return Err(WITHDRAWN.to_string()),
+			let confirmed = self
+				.prompt(cx, review)
+				.await
+				.ok_or_else(|| WITHDRAWN.to_string())?
+				.map_err(|err| format!("confirmation failed: {}", err.reason))?;
+			if !confirmed {
+				return Ok(vec![SsoAllocationOutcome::Rejected; request.resources.len()]);
 			}
 
 			self.signing_host
@@ -506,7 +506,7 @@ impl SigningHostSsoService {
 			.sign_vrf_request(
 				&cx.call,
 				&cx.session,
-				request.calling_product_id,
+				&request.calling_product_id,
 				request.payload,
 				false,
 			)
@@ -521,7 +521,7 @@ impl SigningHostSsoService {
 		request: ProductSubtreeRequest,
 	) -> ProductSubtreeResponse {
 		self.signing_host
-			.product_subtree_public_key(&cx.call, &cx.session, request.product_id)
+			.product_subtree_public_key(&cx.call, &cx.session, &request.product_id)
 			.await
 			.map_err(|err| err.to_string())
 	}

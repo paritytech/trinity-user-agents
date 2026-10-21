@@ -295,7 +295,10 @@ jobs:
 
       # Actions has no per-job paths filter, so compute every gate once here and
       # have each gated job read an output. On pull_request the checkout is the
-      # merge commit, so HEAD^1 is the base. Other events always run every gate.
+      # merge commit, so HEAD^1 is the base. In the merge queue the base is the
+      # main commit the group was built on, so the diff covers every pull request
+      # queued ahead in the same group. A push or a dispatch runs every gate, so
+      # each commit that lands on main is still checked in full.
       #
       # Neither binding set is committed, so a UniFFI surface change leaves no
       # ios/ or android/ diff to key on. Each list therefore names every input
@@ -312,10 +315,20 @@ jobs:
         id: filter
         env:
           EVENT_NAME: ${{ github.event_name }}
+          MERGE_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
           set -euo pipefail
 
-          if [ "$EVENT_NAME" != "pull_request" ]; then
+          case "$EVENT_NAME" in
+            pull_request) base="HEAD^1" ;;
+            merge_group)
+              git fetch --no-tags --depth=1 origin "$MERGE_BASE"
+              base="$MERGE_BASE"
+              ;;
+            *) base="" ;;
+          esac
+
+          if [ -z "$base" ]; then
             {
               echo "sdk_swift=true"
               echo "sdk_kotlin=true"
@@ -327,7 +340,7 @@ jobs:
             exit 0
           fi
 
-          changed="$(git diff --name-only HEAD^1 HEAD)"
+          changed="$(git diff --name-only "$base" HEAD)"
           gate() {
             if grep -qE "$2" <<<"$changed"; then
               echo "$1=true" >> "$GITHUB_OUTPUT"
@@ -356,23 +369,27 @@ jobs:
           # survive. `@parity/truapi` is here because the runner inlines it from
           # source, and bundling it is a step no other job performs. A release
           # is the wrong place to find out one of them moved.
-          gate cli_package '^(rust/crates/(truapi-host-cli|truapi|truapi-codegen|truapi-macros)/|js/container/|js/packages/truapi/(src/|package\.json$|tsconfig[^/]*\.json$)|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|package\.json$|package-lock\.json$|scripts/(codegen\.sh|build-cli-runner\.ts|cli-runner-package\.test\.ts)$|\.github/workflows/(ci|cli-package|release-cli)\.yml$)'
+          gate cli_package '^(rust/crates/(truapi-host-cli|truapi|truapi-codegen|truapi-macros|trinity-stack)/|js/container/|js/packages/truapi/(src/|package\.json$|tsconfig[^/]*\.json$)|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|package\.json$|package-lock\.json$|scripts/(codegen\.sh|build-cli-runner\.ts|cli-runner-package\.test\.ts)$|\.github/workflows/(ci|cli-package|release-cli)\.yml$)'
 
           # Include generators, dependency pins and package build configuration:
           # these can change a published artifact without touching its sources.
-          gate needs_changeset '^(rust/crates/truapi(-server|-provider|-macros|-host-cli|-codegen)?/|js/packages/[^/]+/(src/|scripts/|package\.json$|tsconfig[^/]*\.json$)|Cargo\.(toml|lock)$|package(-lock)?\.json$|rust-toolchain(\.toml)?$|nightly-toolchain$|\.cargo/|Makefile$|scripts/(codegen\.sh|bundle-truapi-dts\.mjs|regen-explorer-versions\.mjs)$)'
+          gate needs_changeset '^(rust/crates/(truapi(-server|-provider|-macros|-host-cli|-codegen)?|trinity-stack)/|js/packages/[^/]+/(src/|scripts/|package\.json$|tsconfig[^/]*\.json$)|Cargo\.(toml|lock)$|package(-lock)?\.json$|rust-toolchain(\.toml)?$|nightly-toolchain$|\.cargo/|Makefile$|scripts/(codegen\.sh|bundle-truapi-dts\.mjs|regen-explorer-versions\.mjs)$)'
 
           # Deleting, editing or renaming an old changeset does not declare a
           # new change. README.md is Changesets' documentation, not a release.
-          changed="$(git diff --name-only --find-renames --diff-filter=A HEAD^1 HEAD -- .changeset/)"
+          changed="$(git diff --name-only --find-renames --diff-filter=A "$base" HEAD -- .changeset/)"
           changed="$(sed '\|^\.changeset/README\.md$|d' <<<"$changed")"
           gate adds_changeset '^\.changeset/[^/]+\.md$'
 
   ios-swift:
     name: iOS package (Swift + WebKit)
     needs: [changes, codegen]
-    if: needs.changes.outputs.sdk_swift == 'true'
-    runs-on: macos-15
+    # Never for a pull request from a fork, because the Parity machines are
+    # persistent and shared. The merge queue runs it once the change is approved.
+    if: needs.changes.outputs.sdk_swift == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    # The Parity pool, where the core builds already run, rather than the hosted
+    # macOS queue that can hold a merge past the queue's timeout.
+    runs-on: parity-macos-large
     timeout-minutes: 30
     env:
       # Resolving the package resolves both binary targets, whichever scheme builds.
@@ -382,6 +399,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # The Xcode the app builds with, so the package is checked with the same
+      # compiler on any machine; hosts/ios/.github/actions/install pins it.
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: "26.4.1"
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -439,6 +462,9 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Checkout keeps local tags in a reused workspace, and a tag left by an
+          # earlier run with different contents makes tag-release.sh refuse.
+          git tag -d 0.0.0-ci 2>/dev/null || true
           ./ios/truapi-host/scripts/tag-release.sh 0.0.0-ci
 
       - name: Check the tag carries every generated file
@@ -661,7 +687,7 @@ jobs:
           SENTRY_ORG: ci
           SENTRY_PROJECT: ci
           TERMS_OF_USE_URL: https://example.invalid/terms
-        run: ./gradlew detekt --no-daemon
+        run: ./gradlew :config:detekt:rules:test detekt --no-daemon
 
   # The provider ships as its own AAR, so its bindings compile on a path the
   # host gate never touches. `make provider-android-check` generates first and
@@ -880,6 +906,49 @@ jobs:
       - name: Test
         run: npm test --prefix js/packages/truapi-debugger
 
+  ts-trinity-stack:
+    name: "@parity/trinity-stack"
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - uses: ./.github/actions/rust-cache
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --version 0.14.0 --locked
+
+      - name: Install
+        run: npm ci --ignore-scripts
+
+      - name: Check formatting
+        run: npm run format:check --prefix js/packages/trinity-stack
+
+      - name: Build
+        run: npm run build --prefix js/packages/trinity-stack
+
+      - name: Typecheck tests
+        run: npm run typecheck:tests --prefix js/packages/trinity-stack
+
+      # Runs the crate's conformance vectors against the wasm build.
+      - name: Test
+        run: npm test --prefix js/packages/trinity-stack
+
   bundle-size:
     name: Bundle size
     timeout-minutes: 30
@@ -933,6 +1002,7 @@ jobs:
         run: |
           npm run build:wasm --prefix js/packages/truapi-host -- --web-only
           npm run build --prefix js/packages/truapi-provider
+          npm run build --prefix js/packages/trinity-stack
 
       # What the truapi-* packages ship to products. The test host behind
       # truapi-host's `./testing` subpath is left out.
@@ -943,6 +1013,7 @@ jobs:
             truapi-host      js/packages/truapi-host/dist  !wasm/testing/ !testing/ !testing.js !web/create-mock-host.js
             truapi-provider  js/packages/truapi-provider/dist
             truapi           js/packages/truapi/dist
+            trinity-stack    js/packages/trinity-stack  !node_modules/ !src/ !scripts/
 
   playground:
     name: Playground (build + lint + unit)
@@ -1331,6 +1402,7 @@ jobs:
         ts-host,
         host-wasm,
         ts-debugger,
+        ts-trinity-stack,
         bundle-size,
         playground,
         explorer,
@@ -1377,7 +1449,7 @@ jobs:
             android-bindings provider-android-bindings host-android-bindings
             host-android-detekt
             cli-package ts-client
-            ts-host host-wasm ts-debugger bundle-size playground explorer e2e workflow-lint
+            ts-host host-wasm ts-debugger ts-trinity-stack bundle-size playground explorer e2e workflow-lint
             release-guard changeset-guard
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SHA: ${{ github.event.pull_request.head.sha || github.sha }}

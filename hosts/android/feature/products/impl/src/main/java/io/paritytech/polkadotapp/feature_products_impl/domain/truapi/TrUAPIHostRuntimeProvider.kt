@@ -5,9 +5,7 @@ import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
-import uniffi.truapi.HostRuntimeConfig
 import io.parity.truapi.HostStorage
-import uniffi.truapi.ProductExecutionConfig
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.WebSocketChainProvider
 import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
@@ -41,15 +39,17 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import timber.log.Timber
-import uniffi.truapi.HostDevicePermissionRequest
-import uniffi.truapi.HostFeatureSupportedRequest
-import uniffi.truapi.RemotePermission
 import uniffi.truapi.AuthState
 import uniffi.truapi.HostChainSet
-import uniffi.truapi.PermissionDecision
-import uniffi.truapi.UserConfirmationReview
-import uniffi.truapi.HostNavigateToException
+import uniffi.truapi.HostDevicePermissionRequest
+import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostLocalStorageReadException
+import uniffi.truapi.HostNavigateToException
+import uniffi.truapi.HostRuntimeConfig
+import uniffi.truapi.PermissionDecision
+import uniffi.truapi.ProductExecutionConfig
+import uniffi.truapi.RemotePermission
+import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.WorkerTransition
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
@@ -74,6 +74,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
     private val contactsBridge: AppContactsHostBridge,
+    private val paymentPlatforms: TrUAPIPaymentPlatforms,
     private val scannerBridge: TrUAPIProductScans,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
@@ -121,8 +122,9 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
     private fun wire(runtime: TrUAPIHostRuntime) {
         // Before any product execution opens, so a product never sees the
-        // window where the host lists no contacts.
+        // window where the host lists no contacts or answers payments Unsupported.
         runtime.setContacts(contactsBridge)
+        paymentPlatforms.install(runtime)
         runtime.setScanner(scannerBridge)
         observeContactRemovals(runtime)
         chainProvider.attach(

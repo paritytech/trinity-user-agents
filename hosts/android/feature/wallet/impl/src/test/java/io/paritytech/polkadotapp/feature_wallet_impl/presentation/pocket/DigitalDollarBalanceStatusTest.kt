@@ -31,20 +31,6 @@ class DigitalDollarBalanceStatusTest {
     }
 
     @Test
-    fun `syncing outranks a pending account backup`() {
-        val card = cardOf(balance = 30, ready = 20, syncInProgress = true, accountBackupPending = true)
-
-        assertEquals(DigitalDollarBalanceStatus.Syncing, card.balanceStatus)
-    }
-
-    @Test
-    fun `a pending account backup outranks the ready line`() {
-        val card = cardOf(balance = 30, ready = 20, accountBackupPending = true)
-
-        assertEquals(DigitalDollarBalanceStatus.AccountBackupPending, card.balanceStatus)
-    }
-
-    @Test
     fun `amounts still loading show only the total`() {
         val card = cardOf(amounts = LoadingState.Loading)
 
@@ -55,21 +41,17 @@ class DigitalDollarBalanceStatusTest {
         balance: Int,
         ready: Int,
         syncInProgress: Boolean = false,
-        accountBackupPending: Boolean = false,
     ) = cardOf(
         amounts = LoadingState.Loaded(amountsOf(TokenAmountModel.mock(balance), TokenAmountModel.mock(ready))),
         syncInProgress = syncInProgress,
-        accountBackupPending = accountBackupPending,
     )
 
     private fun cardOf(
         amounts: LoadingState<PocketCardUiModel.DigitalDollar.Amounts>,
         syncInProgress: Boolean = false,
-        accountBackupPending: Boolean = false,
     ) = PocketCardUiModel.DigitalDollar(
         amounts = amounts,
         syncInProgress = syncInProgress,
-        accountBackupPending = accountBackupPending,
     )
 
     private fun amountsOf(balance: TokenAmountModel, ready: TokenAmountModel) =

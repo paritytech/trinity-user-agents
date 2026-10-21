@@ -326,20 +326,18 @@ extension ServiceCoordinator {
         // would let any chat service failing take every live card face with it,
         // silently.
         var pocket: ProductPocketService?
-        #if FEATURE_PRODUCTS
-            if let service = ProductPocketService.make() {
-                RootDependencyLocator.setDependency(service)
-                service.start(
-                    runtimeProvider: truapiRuntimeProvider,
-                    flowState: spaFlowState,
-                    productFileProvider: productFileProvider,
-                    chainRegistry: ChainRegistryFacade.sharedRegistry,
-                    gameReminders: gameReminders,
-                    themeManager: MainActor.assumeIsolated { ThemeManager.shared }
-                )
-                pocket = service
-            }
-        #endif
+        if let service = ProductPocketService.make() {
+            RootDependencyLocator.setDependency(service)
+            service.start(
+                runtimeProvider: truapiRuntimeProvider,
+                flowState: spaFlowState,
+                productFileProvider: productFileProvider,
+                chainRegistry: ChainRegistryFacade.sharedRegistry,
+                gameReminders: gameReminders,
+                themeManager: MainActor.assumeIsolated { ThemeManager.shared }
+            )
+            pocket = service
+        }
 
         guard
             let signInHostCoordinator = createSignInHostCoordinator(
@@ -381,6 +379,7 @@ extension ServiceCoordinator {
         let audioSessionManager = AudioSessionManager()
 
         let paymentsSupport = PaymentsSupport(coinageService: coinageServices.coinageService)
+        truapiRuntimeProvider.attach(paymentsSupport: paymentsSupport, hostProvider: spaFlowState.hostProvider)
 
         let truApiDependencies = TruApiDependenciesLocator()
         truApiDependencies.setDependency(allowanceSupport)
@@ -563,7 +562,7 @@ private extension ServiceCoordinator {
             serviceFactory: ChatRequestServiceFactory(
                 remoteContactResolver: CompoundRemoteContactResolver(
                     resolvers: [
-                        remoteAccountOperation(chatChainId: AppConfig.Chains.usernameChain)
+                        remoteAccountOperation(chatChainId: AppConfig.Chains.assethubChain)
                     ],
                     logger: Logger.shared
                 ),

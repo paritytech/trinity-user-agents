@@ -50,7 +50,7 @@ class ProductsMessageRendererDescriptionTest {
             )
         }
 
-        return ProductsMessageRenderer(context, product, RecordingWorker(), resolveProduct).formatNotificationContent(message)
+        return ProductsMessageRenderer(context, product, RecordingWorker(), mockk(), resolveProduct).formatNotificationContent(message)
     }
 
     private fun custom(alt: String?) = ChatMessage.Content.Custom(
