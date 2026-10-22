@@ -200,7 +200,8 @@ fn an_absent_entry_decodes_to_its_default_or_to_none_without_one() {
 		decode_value_or_default(&upgrade, None, &bulletin_fixture_metadata(), test_block(1))
 			.unwrap();
 
-	assert_eq!((number, upgrade.is_none()), (Some(0), true));
+	assert_eq!(number, Some(0));
+	assert!(upgrade.is_none());
 }
 
 #[test]
@@ -411,7 +412,8 @@ fn a_kept_watch_that_cannot_open_says_why_and_opens_again_after_the_delay() {
 	let read = block_on(reopened).expect("an item").expect("a read");
 
 	assert!(matches!(failed, Err(StorageWatchError::Chain(_))), "{failed:?}");
-	assert_eq!((pending, sleeps_before_reopening), (true, 1));
+	assert!(pending);
+	assert_eq!(sleeps_before_reopening, 1);
 	assert_eq!(read, DecodedEntryChanges { at: test_block(2), changed: vec![((), Some(7))] });
 }
 
@@ -430,5 +432,6 @@ fn a_kept_watch_of_an_entry_the_runtime_lacks_ends_with_why() {
 	let ended = block_on(async { futures::poll!(changes.next()) }).is_ready();
 
 	assert!(matches!(first, Some(Err(StorageWatchError::Incompatible { .. }))), "{first:?}");
-	assert_eq!((ended, timer.sleeps()), (true, 0));
+	assert!(ended);
+	assert_eq!(timer.sleeps(), 0);
 }
