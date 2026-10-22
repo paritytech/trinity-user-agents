@@ -8,6 +8,7 @@ extension WidgetImageResolver {
     /// Kingfisher's cache, and logs a source that cannot be located or loaded.
     static func cached(
         logger: any LoggerProtocol & Sendable = Logger.shared,
+        options: @escaping @Sendable (CustomMessageWidgetNode.ImageSource) -> KingfisherOptionsInfo = { _ in [] },
         locate: @escaping @Sendable (CustomMessageWidgetNode.ImageSource) async -> URL?
     ) -> WidgetImageResolver {
         WidgetImageResolver { source in
@@ -16,7 +17,7 @@ extension WidgetImageResolver {
                 return nil
             }
             do {
-                return try await KingfisherManager.shared.retrieveImage(with: url).image
+                return try await KingfisherManager.shared.retrieveImage(with: url, options: options(source)).image
             } catch {
                 guard !Task.isCancelled else { return nil }
                 logger.error("Widget image \(source) failed to load from \(url): \(error)")

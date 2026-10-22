@@ -1,0 +1,7 @@
+# Host apps define their own `ProductId`, and a second `ProductId` in the
+# bindings makes the name ambiguous wherever an app imports both.
+[bindings.swift.rename]
+ProductId = "TrUApiProductId"
+
+[bindings.kotlin.rename]
+ProductId = "TrUApiProductId"

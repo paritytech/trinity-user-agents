@@ -23,7 +23,7 @@ neither.
 
 A face is drawn through the [Unified Renderer](https://github.com/paritytech/trinity-user-agents/pull/633)'s
 `PocketCard` context. The collection itself is one `Pocket` trait with two methods, a Pocket section in the Worker
-manifest, and a deeplink grammar that names a target modality. An opened card adds one `ExpandedCard` trait, through
+manifest, and a host-owned deeplink that names the Pocket. An opened card adds one `ExpandedCard` trait, through
 which the Widget moves the face out of the way and back.
 
 Tracking issue: [#563](https://github.com/paritytech/trinity-user-agents/issues/563).
@@ -118,28 +118,30 @@ The preview is a static file in the CID-pinned archive, so the host can show a c
 same property the [funding modality](https://github.com/paritytech/trinity-user-agents/pull/339) relies on for its rail list.
 It is the face the user approves; the live face may differ once the worker streams.
 
-**Deeplinks name a modality.** A product URL is `polkadot://<product_id>.<tld>/<path>` and today always opens the App.
-The first path segment `-` is reserved for host-handled targets and cannot be an App route:
+**Deeplinks name the Pocket.** A Pocket link is one of the app's own routes, beside `pair` and `pay`, with the product
+as a parameter. Its host, `pocket`, has no TLD, so no dotNS product can take it, and a product URL
+`polkadot://<product_id>.<tld>/<path>` always opens the App, whatever its path:
 
 ```text
-polkadot://<product_id>.<tld>/<path>                     App, unchanged
-polkadot://<product_id>.<tld>/-/pocket                   Open the Pocket
-polkadot://<product_id>.<tld>/-/pocket/add?card=<id>     Offer to add a published card
-polkadot://<product_id>.<tld>/-/pocket/open?card=<id>    Expand a card that is present
+polkadotapp://pocket                                                Open the Pocket
+polkadotapp://pocket/add?product=<product_id>.<tld>&card=<id>       Offer to add a published card
+polkadotapp://pocket/open?product=<product_id>.<tld>&card=<id>      Expand a card that is present
 ```
 
-`/-/pocket` with no action opens the Pocket itself, for a product that sends the user to the collection without naming a
-card. Arguments are ignored. Expanding a card opens the Pocket on that card, the same view a tap on it gives (see
-[Expanded card](#expanded-card)).
+`polkadotapp://pocket` with no action opens the Pocket itself, for a product that sends the user to the collection
+without naming a card. Arguments are ignored. Expanding a card opens the Pocket on that card, the same view a tap on it
+gives (see [Expanded card](#expanded-card)).
 
-A host without the named modality, or one that does not know the action, opens the App instead. Products reach a
-deeplink from their own web UI through `system.navigate_to`, which already lets `polkadot:` through without a grant, so
-an "Add to Pocket" button is one call.
+The same link works from a product, a QR code or a web page. A link that names an action the host does not serve, or
+names no product or no card, is refused with a message. Products reach a Pocket link from their own web UI through
+`system.navigate_to`, which lets it through without the `OpenUrl` grant other `polkadotapp://` links need, so an "Add to
+Pocket" button is one call. The `product` need not be the caller: the dialog shows the card, and approving it is the
+user's consent.
 
 ```text
 User                Host                             Product worker
  |                   |                                     |
- |  polkadot://game.dot/-/pocket/add?card=loyalty
+ |  polkadotapp://pocket/add?product=game.dot&card=loyalty
  |------------------>|
  |                   | resolve worker manifest, find card
  |                   | `loyalty`, fetch its preview from the archive
@@ -297,9 +299,12 @@ that made it, so no request names a card. An App or Worker caller is `Denied`, a
 - **Pocket declares no rendering method of its own.** A `card_render` and `action_subscribe` pair keyed by `card_id` was
   considered and dropped: a face is a body like any other, and a pair per surface costs four wire ids each and gives a
   product one handler per surface to register.
-- **`-` as the reserved segment** is borrowed from GitLab's `/-/` namespace. Any App route starting with `/-/` is
-  unreachable once a host implements this. A query parameter was rejected because Apps tend to ignore unknown
-  parameters, so an unsupported target would silently open the App with no signal that anything was asked for.
+- **The Pocket link is the host's own URL.** The host recognizes it by its host, `pocket`, without reading any
+  product's paths, and the same link works from a product, a QR code or a web page. A reserved path under the
+  product's name, such as `/-/pocket`, would take that path from every App. A query parameter on the product's URL was
+  rejected because Apps tend to ignore unknown parameters, so an unsupported target would silently open the App with no
+  signal that anything was asked for. The cost: a host without a Pocket has no App to fall back to, so it refuses the
+  link.
 
 ## Considerations
 

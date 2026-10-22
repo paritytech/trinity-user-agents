@@ -17,7 +17,7 @@ pub use driver::{
 
 use crate::{
 	host_logic::product_account::derive_root_keypair_from_entropy,
-	platform::{CoreStorage, CoreStorageKey, normalize_product_identifier},
+	platform::{CoreStorage, CoreStorageKey, ProductId},
 };
 use futures::lock::Mutex;
 use parity_scale_codec::{Decode, Encode};
@@ -32,7 +32,7 @@ pub enum StatementRenewalTarget {
 	/// `//allowance//statement-store//{product_id}` from the active root entropy.
 	ProductStatementAllowance {
 		/// Product the allowance account belongs to.
-		product_id: String,
+		product_id: ProductId,
 	},
 	/// `//wallet//sso` from the active root entropy.
 	WalletSso,
@@ -54,21 +54,6 @@ pub struct TrackedStatementRenewalTarget {
 	/// Root public key that promised a raw account id. A recipe carries none
 	/// and resolves under whichever identity is active.
 	pub owner: Option<[u8; 32]>,
-}
-
-impl StatementRenewalTarget {
-	/// Match the product identifier used by account derivation.
-	fn normalized(self) -> Result<Self, String> {
-		match self {
-			Self::ProductStatementAllowance { product_id } => {
-				let normalized = normalize_product_identifier(&product_id).map_err(|_| {
-					format!("product_id {product_id} is not a valid product identifier")
-				})?;
-				Ok(Self::ProductStatementAllowance { product_id: normalized })
-			},
-			target @ (Self::WalletSso | Self::Account { .. }) => Ok(target),
-		}
-	}
 }
 
 impl TrackedStatementRenewalTarget {
@@ -184,10 +169,6 @@ pub async fn track(
 	signing_host: &SigningHost,
 	targets: Vec<StatementRenewalTarget>,
 ) -> Result<(), String> {
-	let targets = targets
-		.into_iter()
-		.map(StatementRenewalTarget::normalized)
-		.collect::<Result<Vec<_>, _>>()?;
 	let entropy = signing_host.root_entropy().map_err(|err| err.to_string())?;
 	track_targets(
 		signing_host.platform.as_ref(),

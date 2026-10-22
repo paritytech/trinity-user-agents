@@ -19,7 +19,7 @@ use truapi::{
 use crate::host_logic::session::SessionInfo;
 use crate::{
 	host_internal::sso_messages::{ProductRequest, RingVrfError},
-	platform::ProductContext,
+	platform::{ProductContext, ProductId},
 };
 
 use super::authority::{
@@ -51,7 +51,7 @@ impl ProductAccounts {
 	pub fn cache_product_subtree_for_test(
 		&self,
 		session: &SessionInfo,
-		product_id: &str,
+		product_id: &ProductId,
 		public_key: [u8; 32],
 	) {
 		self.authority.cache_product_subtree_for_test(session, product_id, public_key);
@@ -62,7 +62,7 @@ impl ProductAccounts {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
-		product_id: String,
+		product_id: &ProductId,
 	) -> Result<[u8; 32], AuthorityError> {
 		self.authority.product_subtree_public_key(cx, session, product_id).await
 	}
@@ -71,7 +71,7 @@ impl ProductAccounts {
 	pub async fn subtree_resolution_reaches_account_holder(
 		&self,
 		session: &AuthoritySession,
-		product_id: &str,
+		product_id: &ProductId,
 	) -> bool {
 		self.authority
 			.subtree_resolution_reaches_account_holder(session, product_id)
@@ -96,9 +96,7 @@ impl ProductAccounts {
 		cx: &CallContext,
 		request: HostAccountSignVrfRequest,
 	) -> Result<VrfSignature, AuthorityError> {
-		self.authority
-			.sign_vrf(cx, session, self.product.product_id.clone(), request)
-			.await
+		self.authority.sign_vrf(cx, session, &self.product.product_id, request).await
 	}
 
 	/// Sign a SCALE transaction payload for a product account.
@@ -196,7 +194,7 @@ impl ProductAccounts {
 		request: HostRequestResourceAllocationRequest,
 	) -> Result<HostRequestResourceAllocationResponse, AuthorityError> {
 		self.authority
-			.allocate_resources(cx, session, self.product.product_id.clone(), request)
+			.allocate_resources(cx, session, &self.product.product_id, request)
 			.await
 	}
 
@@ -207,7 +205,7 @@ impl ProductAccounts {
 		session: &AuthoritySession,
 	) -> Result<StatementStoreAllowanceKey, AuthorityError> {
 		self.authority
-			.statement_store_allowance_key(cx, session, self.product.product_id.clone())
+			.statement_store_allowance_key(cx, session, &self.product.product_id)
 			.await
 	}
 
@@ -230,7 +228,7 @@ impl ProductAccounts {
 		session: &AuthoritySession,
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
 		self.authority
-			.bulletin_allowance_key(cx, session, self.product.product_id.clone())
+			.bulletin_allowance_key(cx, session, &self.product.product_id)
 			.await
 	}
 
@@ -241,7 +239,7 @@ impl ProductAccounts {
 		session: &AuthoritySession,
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
 		self.authority
-			.refresh_bulletin_allowance_key(cx, session, self.product.product_id.clone())
+			.refresh_bulletin_allowance_key(cx, session, &self.product.product_id)
 			.await
 	}
 

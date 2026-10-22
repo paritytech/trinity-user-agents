@@ -1,6 +1,7 @@
 import UIKit
 import PolkadotUI
 import SwiftUI
+import DesignSystem
 
 final class DepositViewController: UIHostingController<DepositViewLayout> {
     let presenter: DepositPresenterProtocol
@@ -28,7 +29,7 @@ final class DepositViewController: UIHostingController<DepositViewLayout> {
 private extension DepositViewController {
     func updateDoneState(_ shouldDisable: Bool) {
         navigationItem.rightBarButtonItem?.isEnabled = !shouldDisable
-        navigationItem.rightBarButtonItem?.tintColor = shouldDisable ? .textAndIconsDisabled : .white100
+        navigationItem.rightBarButtonItem?.tintColor = shouldDisable ? .textAndIconsDisabled : .fgStaticWhite
     }
 }
 
