@@ -171,30 +171,23 @@ function pairKey(traitId: number, methodId: number): string {
 }
 
 /**
- * The `V1` protocol errors this build knows, each with its SCALE index, as
- * Rust's `ProtocolErrorV1` declares them.
- */
-const PROTOCOL_ERRORS_V1 = {
-  UnsupportedMessage: [0, S.Struct({ traitId: S.u8, methodId: S.u8 })],
-  UnsupportedVersion: [
-    1,
-    S.Struct({ traitId: S.u8, methodId: S.u8, newestVersion: S.u8 }),
-  ],
-} as const;
-
-/**
  * `VersionedProtocolError`, the payload on the reserved `(255, 255)` address,
- * followed by whatever bytes it leaves unread.
+ * as Rust declares it, followed by whatever bytes it leaves unread.
  */
 const PROTOCOL_ERROR = S.Tuple(
   S.indexedTaggedUnion({
-    V1: [0, S.indexedTaggedUnion(PROTOCOL_ERRORS_V1)],
+    V1: [
+      0,
+      S.indexedTaggedUnion({
+        UnsupportedMessage: [0, S.Struct({ traitId: S.u8, methodId: S.u8 })],
+        UnsupportedVersion: [
+          1,
+          S.Struct({ traitId: S.u8, methodId: S.u8, newestVersion: S.u8 }),
+        ],
+      }),
+    ],
   }),
   S.Bytes(Infinity),
-);
-
-const KNOWN_PROTOCOL_ERRORS_V1 = new Set<number>(
-  Object.values(PROTOCOL_ERRORS_V1).map(([index]) => index),
 );
 
 /**
@@ -218,18 +211,13 @@ function decodeProtocolError(
   if (payload.length === 0) {
     throw new Error("Malformed protocol error payload: empty");
   }
-  if (
-    payload[0] !== 0 ||
-    (payload.length > 1 && !KNOWN_PROTOCOL_ERRORS_V1.has(payload[1]))
-  ) {
-    // A version or variant from a later protocol. Its length is unknowable
-    // here, so the remaining bytes are not validated.
-    return undefined;
-  }
   let decoded: ReturnType<typeof PROTOCOL_ERROR.dec>;
   try {
     decoded = PROTOCOL_ERROR.dec(payload);
   } catch (cause) {
+    // A version or error this build does not know comes from a newer peer.
+    // Its length is unknowable here, so the remaining bytes are not validated.
+    if (cause instanceof S.UnknownDiscriminantError) return undefined;
     throw new Error("Malformed protocol error payload: truncated", { cause });
   }
   const [error, unread] = decoded;

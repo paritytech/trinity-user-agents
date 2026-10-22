@@ -598,28 +598,35 @@ describe("generated client transport", () => {
         // report anything new without killing the connection, freezing the
         // channel at whatever shape shipped first. An unknown variant settles
         // the correlated call and leaves the transport usable.
-        const fixture = providerFixture();
-        const transport = createTransport(fixture.provider);
+        for (const payload of [
+            // A version this build does not know, with a payload whose length
+            // it cannot know either.
+            new Uint8Array([7, 0xaa, 0xbb]),
+            // A `V1` error this build does not know.
+            new Uint8Array([0, 9, 0xaa]),
+        ]) {
+            const fixture = providerFixture();
+            const transport = createTransport(fixture.provider);
 
-        const first = transport.request<undefined, CallErrorValue<never>>({
-            ids: { trait: 200, method: 194, kind: "request" },
-            payload: new Uint8Array(),
-            decodeResponse: () => ({ success: true, value: undefined }),
-        });
-        // Variant 7 with a payload whose length this build cannot know.
-        fixture.receive(protocolError("p:1", new Uint8Array([7, 0xaa, 0xbb])));
+            const first = transport.request<undefined, CallErrorValue<never>>({
+                ids: { trait: 200, method: 194, kind: "request" },
+                payload: new Uint8Array(),
+                decodeResponse: () => ({ success: true, value: undefined }),
+            });
+            fixture.receive(protocolError("p:1", payload));
 
-        expect((await first)._unsafeUnwrapErr()).toEqual({ tag: "Unsupported" });
+            expect((await first)._unsafeUnwrapErr()).toEqual({ tag: "Unsupported" });
 
-        // The transport is still alive: a second call goes out and completes.
-        const second = transport.request<undefined, CallErrorValue<never>>({
-            ids: W.LOCAL_STORAGE_READ,
-            payload: new Uint8Array(),
-            decodeResponse: () => ({ success: true, value: undefined }),
-        });
-        expect(fixture.sent).toHaveLength(2);
-        fixture.receive(wireFrame("p:2", W.LOCAL_STORAGE_READ, MESSAGE_TYPE_RESPONSE));
-        expect((await second)._unsafeUnwrap()).toBeUndefined();
+            // The transport is still alive: a second call goes out and completes.
+            const second = transport.request<undefined, CallErrorValue<never>>({
+                ids: W.LOCAL_STORAGE_READ,
+                payload: new Uint8Array(),
+                decodeResponse: () => ({ success: true, value: undefined }),
+            });
+            expect(fixture.sent).toHaveLength(2);
+            fixture.receive(wireFrame("p:2", W.LOCAL_STORAGE_READ, MESSAGE_TYPE_RESPONSE));
+            expect((await second)._unsafeUnwrap()).toBeUndefined();
+        }
     });
 
     it("rejects an unknown host-initiated message without starting an error loop", () => {
