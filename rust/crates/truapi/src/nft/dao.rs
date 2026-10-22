@@ -1,5 +1,6 @@
 //! Queries over the NFT tables, one SQL constant and one function each.
 
+use futures::stream::BoxStream;
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, named_params};
 
 use super::{
@@ -7,8 +8,6 @@ use super::{
 	keys::{ItemKey, ItemSlot},
 	purse::{PurseId, PurseRecord, PurseTag},
 };
-use futures::stream::BoxStream;
-
 use crate::{
 	installation::InstallationId,
 	store::{Db, DbError},

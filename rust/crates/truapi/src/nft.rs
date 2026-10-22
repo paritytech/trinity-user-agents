@@ -15,10 +15,10 @@ mod scarcity;
 mod testing;
 
 pub use holding::HeldItem;
-pub use item::{AllocateItemsError, ItemPage};
+pub use item::{AllocateItemsError, PageRequest};
 pub use keys::{ItemKey, ItemKeyDeriver, ItemSlot, item_keys_from_entropy};
 pub use ledger::{NftLedger, NftLedgerDeps};
-pub use purse::{CreatePurseError, PurseId, PurseRecord, PurseTag};
+pub use purse::{CreatePurseError, PurseId, PurseRecord, PurseTag, UnknownPurse};
 pub use scarcity::{HoldingTracker, HoldingTrackerDeps};
 #[cfg(test)]
-pub use testing::{TEST_INSTALLATION, test_ledger};
+pub use testing::{TEST_INSTALLATION, insert_item_row, test_ledger};

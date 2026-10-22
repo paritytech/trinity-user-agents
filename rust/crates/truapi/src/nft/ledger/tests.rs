@@ -9,9 +9,11 @@ use crate::{
 	host_logic::product_account::derive_sr25519_hard_path,
 	installation::InstallationId,
 	nft::{
-		ItemSlot, item_keys_from_entropy,
+		ItemSlot, UnknownPurse, item_keys_from_entropy,
 		keys::ItemIndex,
-		testing::{FixedInstallation, TEST_ENTROPY, TEST_INSTALLATION, test_ledger_deps},
+		testing::{
+			FixedInstallation, TEST_ENTROPY, TEST_INSTALLATION, insert_item_row, test_ledger_deps,
+		},
 	},
 	platform::async_trait,
 	runtime::AuthorityError,
@@ -52,7 +54,9 @@ fn item_keys_follow_the_hard_path_nft_purse_installation_index() {
 		.expect("path derives");
 	let [_, _, _, by_slot] = expected_keys(0..4)[..] else { panic!("four keys") };
 	let pinned = "d837c9c558b3d5c58df68608ba64f5db6a546271368c1c386efee373b33f4636";
-	assert_eq!((hex::encode(by_slot.0), by_slot.0), (pinned.to_owned(), by_path.public.to_bytes()));
+	let by_slot_hex = hex::encode(by_slot.0);
+	let by_path_key = by_path.public.to_bytes();
+	assert_eq!((by_slot_hex, by_slot.0), (pinned.to_owned(), by_path_key));
 }
 
 /// Recovery scans indices from 0, so a purse's indices must have no gap.
@@ -95,7 +99,8 @@ fn another_installation_starts_its_own_indices() {
 	});
 	let allocated = allocate(&other_ledger, 1).expect("second installation allocates");
 	let slot = ItemSlot { purse: PurseId(0), installation: other, index: ItemIndex(0) };
-	assert_eq!(allocated, item_keys_from_entropy(&TEST_ENTROPY, &[slot]).expect("derives"));
+	let expected = item_keys_from_entropy(&TEST_ENTROPY, &[slot]).expect("derives");
+	assert_eq!(allocated, expected);
 }
 
 /// Items of a purse that does not exist would never be listed or tracked
@@ -105,7 +110,7 @@ fn allocating_in_an_unknown_purse_is_refused() {
 	let (_dir, ledger) = ledger_with_purse(test_ledger_deps);
 	let count = NonZeroU32::new(1).expect("count is positive");
 	let refused = block_on(ledger.allocate_items(PurseId(7), count));
-	assert!(matches!(refused, Err(AllocateItemsError::UnknownPurse(PurseId(7)))));
+	assert!(matches!(refused, Err(AllocateItemsError::UnknownPurse(UnknownPurse(PurseId(7))))));
 }
 
 /// A failed derivation, as without a session, must not use up indices.
@@ -152,14 +157,7 @@ fn allocating_past_the_last_index_is_refused() {
 	let (_dir, ledger) = ledger_with_purse(test_ledger_deps);
 	let last_key = ItemKey([9; 32]);
 	let last = u32::MAX - 1;
-	block_on(ledger.db.write(move |tx| {
-		tx.execute(
-			"INSERT INTO nft_item (key, purse, installation, idx) VALUES (?1, 0, ?2, ?3)",
-			rusqlite::params![last_key.0, TEST_INSTALLATION.0, last],
-		)?;
-		Ok(())
-	}))
-	.expect("last index is taken");
+	insert_item_row(&ledger.db, last_key, last);
 	let refused = allocate(&ledger, 2);
 	assert!(matches!(
 		refused,
@@ -177,9 +175,10 @@ fn hold(ledger: &NftLedger, keys: &[ItemKey]) {
 	block_on(ledger.record_holdings(holdings)).expect("holdings are recorded");
 }
 
-fn page(ledger: &NftLedger, index: u32, size: u32) -> ItemsPage {
+fn page(ledger: &NftLedger, index: u32, size: u32) -> ItemPage {
 	let size = NonZeroU32::new(size).expect("size is positive");
-	block_on(ledger.available_items(PurseId(0), ItemPage { index, size })).expect("page reads")
+	let request = PageRequest { index, size };
+	block_on(ledger.available_items(PurseId(0), request)).expect("page reads")
 }
 
 /// Products page through a purse one call at a time, so pages must not
@@ -194,10 +193,10 @@ fn available_items_page_in_slot_order() {
 		[page(&ledger, 0, 2), page(&ledger, 1, 2), page(&ledger, 2, 2), page(&ledger, 3, 2)];
 
 	let expected = [
-		ItemsPage { items: keys[0..2].to_vec(), has_next: true },
-		ItemsPage { items: keys[2..4].to_vec(), has_next: true },
-		ItemsPage { items: keys[4..5].to_vec(), has_next: false },
-		ItemsPage { items: vec![], has_next: false },
+		ItemPage { items: keys[0..2].to_vec(), has_next: true },
+		ItemPage { items: keys[2..4].to_vec(), has_next: true },
+		ItemPage { items: keys[4..5].to_vec(), has_next: false },
+		ItemPage { items: vec![], has_next: false },
 	];
 	assert_eq!(pages, expected);
 }
@@ -210,7 +209,7 @@ fn keys_holding_nothing_are_not_available() {
 	let keys = allocate(&ledger, 3).expect("allocates");
 	hold(&ledger, &keys[1..2]);
 
-	assert_eq!(page(&ledger, 0, 10), ItemsPage { items: vec![keys[1]], has_next: false });
+	assert_eq!(page(&ledger, 0, 10), ItemPage { items: vec![keys[1]], has_next: false });
 }
 
 /// A deriver with no session.

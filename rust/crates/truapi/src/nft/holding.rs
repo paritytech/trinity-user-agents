@@ -5,10 +5,10 @@ use rusqlite::Transaction;
 use super::{dao, keys::ItemKey};
 use crate::store::DbError;
 
-/// The NFT an item key holds, as far as a purse needs to know: which NFT it
-/// is, and the three levels its metadata, such as its image, is looked up
-/// at: the instance's own, then its item's, then its collection's. Any NFT
-/// pallet names these three.
+/// The NFT an item key holds, with what a purse needs to know about it. It
+/// says which NFT this is and where its metadata, such as its image, is
+/// looked up. The instance's own metadata comes first, then its item's, then
+/// its collection's. Any NFT pallet names these three levels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HeldItem {
 	/// Collection the NFT belongs to.

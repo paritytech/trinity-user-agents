@@ -15,12 +15,9 @@ use truapi::{
 };
 
 use crate::{
-	nft::{AllocateItemsError, CreatePurseError, PurseId},
-	nft_purse::{
-		self, CreateProductPurseError, ItemCount, NftPurses, OwnerLookupError, PageSize, PurseOwner,
-	},
+	nft::{AllocateItemsError, CreatePurseError, PurseId, UnknownPurse},
+	nft_purse::{self, CreateProductPurseError, ItemCount, NftPurses, PageSize, PurseOwner},
 	runtime::{ProductConnection, ProductRuntimeHost, versioning::version},
-	store::DbError,
 };
 
 impl ProductConnection {
@@ -147,7 +144,7 @@ impl ProductRuntimeHost {
 		purse: PurseId,
 		refusals: PurseRefusals<E>,
 	) -> Result<(), CallError<E>> {
-		let owner = purses.owner_of(purse).await.map_err(owner_lookup_failure)?;
+		let owner = purses.owner_of(purse).await.map_err(host_failure)?;
 		let owner = owner.ok_or_else(|| refusals.unknown_purse(purse))?;
 		let Some(grant) = nft_purse::read_grant(self.connection.product_id(), &owner) else {
 			return Ok(());
@@ -167,7 +164,7 @@ struct PurseRefusals<E> {
 impl<E> PurseRefusals<E> {
 	/// The refusal of a purse that does not exist.
 	fn unknown_purse(&self, purse: PurseId) -> CallError<E> {
-		let reason = latest::GenericError { reason: format!("purse {} does not exist", purse.0) };
+		let reason = latest::GenericError { reason: UnknownPurse(purse).to_string() };
 		CallError::Domain((self.other)(reason))
 	}
 }
@@ -192,12 +189,8 @@ fn create_items_failure(
 			let refusal = latest::GenericError { reason: error.to_string() };
 			CallError::Domain(latest::HostNftPurseCreateItemsError::Other(refusal))
 		},
-		error => CallError::HostFailure { reason: error.to_string() },
+		error => host_failure(error),
 	}
-}
-
-fn owner_lookup_failure<E>(error: OwnerLookupError) -> CallError<E> {
-	CallError::HostFailure { reason: error.to_string() }
 }
 
 /// A name over the limit or no free id is the product's error. A database
@@ -209,6 +202,6 @@ fn create_purse_failure(error: CreateProductPurseError) -> CallError<latest::Gen
 	CallError::Domain(latest::GenericError { reason: error.to_string() })
 }
 
-fn host_failure<E>(error: DbError) -> CallError<E> {
+fn host_failure<E>(error: impl core::fmt::Display) -> CallError<E> {
 	CallError::HostFailure { reason: error.to_string() }
 }

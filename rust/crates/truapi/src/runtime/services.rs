@@ -95,7 +95,8 @@ pub struct RuntimeServices {
 	/// Durable transaction engine over the core database, installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
 	durable_engine: OnceLock<Arc<DurableTxEngine>>,
-	/// Layer 1 of NFT purses over the core database, installed with it.
+	/// The NFT ledger (purse records and item keys) over the core database,
+	/// installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
 	nft_ledger: OnceLock<NftLedger>,
 	/// Keeps the ledger's holdings in step with the chain, installed with it.
@@ -404,7 +405,7 @@ impl RuntimeServices {
 		self.durable_engine.get().cloned()
 	}
 
-	/// Install Layer 1 of NFT purses. Set-once, like the database it runs on.
+	/// Install the NFT ledger. Set-once, like the database it runs on.
 	/// Returns whether this call installed it.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn install_nft_ledger(&self, ledger: NftLedger) -> bool {

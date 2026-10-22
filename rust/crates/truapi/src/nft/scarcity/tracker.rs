@@ -1,8 +1,8 @@
 //! Keeps the ledger's holdings equal to `Scarcity::NftsByOwner` at the best
 //! block, for every item key.
 
-use core::fmt::Display;
-use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
+use core::{fmt::Display, future::Future, time::Duration};
+use std::{collections::HashSet, sync::Arc};
 
 use futures::{
 	FutureExt, StreamExt,
@@ -133,13 +133,7 @@ impl Tracking {
 	async fn open_until_watching(self, batch: Vec<ItemKey>) -> BoxStream<'static, WatchedRead> {
 		let open = || self.open_watch(&batch);
 		let opened = self.retry_while(REOPEN_DELAY, "holdings unwatched", open, can_open_later);
-		match opened.await {
-			Ok(changes) => changes,
-			Err(error) => {
-				tracing::error!(%error, "holdings cannot be watched on this runtime");
-				stream::empty().boxed()
-			},
-		}
+		opened.await.unwrap_or_else(unwatchable)
 	}
 
 	async fn open_watch(
@@ -184,6 +178,12 @@ impl Tracking {
 			self.timer.sleep(delay).await;
 		}
 	}
+}
+
+/// No changes, after logging that the runtime cannot serve the watch.
+fn unwatchable(error: StorageWatchError) -> BoxStream<'static, WatchedRead> {
+	tracing::error!(%error, "holdings cannot be watched on this runtime");
+	stream::empty().boxed()
 }
 
 /// Whether opening a watch that failed with `error` can succeed later.

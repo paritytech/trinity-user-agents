@@ -37,10 +37,10 @@ pub use storage_watch::{
 pub use tx_submitter::{TxSubmitter, WatchEvent};
 pub use tx_validator::TxValidator;
 
-/// The scripted node the chain tests run against, shared with other tests
-/// that need a chain.
 #[cfg(all(test, not(target_arch = "wasm32")))]
-pub mod tests;
+mod tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub use tests::{Node, serve};
 
 /// An encoded extrinsic, ready to submit.
 #[derive(Clone, Debug, PartialEq, Eq)]

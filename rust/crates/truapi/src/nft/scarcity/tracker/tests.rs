@@ -18,13 +18,10 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::{
-	chain::{
-		DecodableAtBlock, HashAndNumber, RawStorageChanges,
-		tests::{Node, serve},
-	},
+	chain::{DecodableAtBlock, HashAndNumber, Node, RawStorageChanges, serve},
 	chain_runtime::{ChainRuntime, RuntimeFailure},
 	durable::ManualTimer,
-	nft::{PurseId, PurseTag, test_ledger},
+	nft::{PurseId, PurseTag, insert_item_row, test_ledger},
 	store::{Db, open_temporary_core_db},
 	test_support::test_spawner,
 };
@@ -71,7 +68,8 @@ fn asset_hub_metadata() -> ArcMetadata {
 	let prefixed =
 		frame_metadata::RuntimeMetadataPrefixed::decode(&mut &ASSET_HUB_METADATA_BYTES[..])
 			.expect("the Asset Hub fixture decodes");
-	ArcMetadata::from(subxt::Metadata::try_from(prefixed).expect("the fixture is subxt metadata"))
+	let metadata = subxt::Metadata::try_from(prefixed).expect("the fixture is subxt metadata");
+	ArcMetadata::from(metadata)
 }
 
 /// A watch the tracker opened: the raw keys it asked for, and the channel a
@@ -206,18 +204,12 @@ fn wait_until(what: &str, reached: impl Fn() -> bool) {
 
 /// Records `key` as an item key of purse 0.
 fn insert_item_key(db: &Db, key: [u8; 32], index: u32) {
-	block_on(db.write(move |tx| {
-		tx.execute(
-			"INSERT INTO nft_item (key, purse, installation, idx) VALUES (?1, 0, ?2, ?3)",
-			rusqlite::params![key, [0x1du8; 32], index],
-		)?;
-		Ok(())
-	}))
-	.expect("item key is written");
+	insert_item_row(db, ItemKey(key), index);
 }
 
 fn block(number: u64) -> HashAndNumber {
-	HashAndNumber { hash: H256::repeat_byte(u8::try_from(number).unwrap()), number }
+	let byte = u8::try_from(number).expect("a test block number fits a byte");
+	HashAndNumber { hash: H256::repeat_byte(byte), number }
 }
 
 /// The raw changes a node reports at block `number`, by key position.
@@ -243,11 +235,8 @@ impl TrackerFixture {
 
 	/// Waits until the holding rows are `expected`, or fails the test.
 	fn await_holdings(&self, expected: Vec<([u8; 32], HeldItem)>) {
-		let started = Instant::now();
-		while self.holdings() != expected {
-			assert!(started.elapsed() < WRITE_TIMEOUT, "holdings stayed {:?}", self.holdings());
-			std::thread::sleep(Duration::from_millis(10));
-		}
+		let what = format!("held {expected:?}");
+		wait_until(&what, || self.holdings() == expected);
 	}
 }
 
@@ -263,7 +252,8 @@ fn holding_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<([u8; 32], HeldItem)
 impl OpenedWatch {
 	/// Reports `changed`, by key position, at block `number`.
 	fn report(&self, number: u64, changed: Vec<(usize, Option<Vec<u8>>)>) {
-		self.changes.unbounded_send(Ok(raw_changes_at(number, changed))).unwrap();
+		let changes = raw_changes_at(number, changed);
+		self.changes.unbounded_send(Ok(changes)).expect("the tracker listens");
 	}
 }
 
@@ -319,7 +309,7 @@ fn a_change_that_keeps_the_nft_keeps_the_holding() {
 fn new_item_keys_are_watched_by_a_watch_of_their_own() {
 	let mut fixture = tracker_after(|db| insert_item_key(db, holder(), 0));
 	let first = fixture.next_watch();
-	let count = std::num::NonZeroU32::new(1).unwrap();
+	let count = core::num::NonZeroU32::new(1).expect("count is positive");
 
 	let allocated = block_on(fixture.ledger.allocate_items(PurseId(0), count)).expect("allocates");
 	let second = fixture.next_watch();

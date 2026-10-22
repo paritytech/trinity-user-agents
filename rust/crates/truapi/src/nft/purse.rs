@@ -8,6 +8,11 @@ use crate::store::DbError;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PurseId(pub u32);
 
+/// No purse has this id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("purse {} does not exist", .0.0)]
+pub struct UnknownPurse(pub PurseId);
+
 impl PurseId {
 	/// The purse every user has. No product owns it.
 	pub const MAIN: Self = Self(u32::MAX);

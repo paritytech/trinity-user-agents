@@ -231,9 +231,9 @@ missing or unwritable directory stops it from starting. Keep the directory out
 of device backups: it holds durable-transaction state that must not be restored
 onto another device. The required `HostRuntimeConfig.database_directory` sets
 it on iOS and Android, `SigningHostRuntime::set_core_db` on any other embedder
-(with the `InstallationIdProvider` NFT purse item keys are derived under),
-and `core_database_status()` reports the SQLite version, schema version and
-path. Web hosts do not compile the store.
+(which also takes the `InstallationIdProvider` whose id NFT purse item keys
+are derived under), and `core_database_status()` reports the SQLite version,
+schema version and path. Web hosts do not compile the store.
 
 ### Durable transactions
 

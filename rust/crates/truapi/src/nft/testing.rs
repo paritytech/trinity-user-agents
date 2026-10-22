@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use futures::executor::block_on;
 use truapi::latest::GenericError;
 
 use super::{
@@ -54,4 +55,17 @@ impl ItemKeyDeriver for FixedEntropy {
 		item_keys_from_entropy(&self.0, slots)
 			.map_err(|error| AuthorityError::Unavailable { reason: error.to_string() })
 	}
+}
+
+/// Records `key` at `index` of purse 0 under [`TEST_INSTALLATION`], as an
+/// allocation would, without deriving it.
+pub fn insert_item_row(db: &Db, key: ItemKey, index: u32) {
+	let insert = move |tx: &rusqlite::Transaction<'_>| {
+		tx.execute(
+			"INSERT INTO nft_item (key, purse, installation, idx) VALUES (?1, 0, ?2, ?3)",
+			rusqlite::params![key.0, TEST_INSTALLATION.0, index],
+		)?;
+		Ok(())
+	};
+	block_on(db.write(insert)).expect("item row is written");
 }

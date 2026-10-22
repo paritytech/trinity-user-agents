@@ -1,13 +1,14 @@
 //! The ledger, Layer 1's entry point over purses and their items.
 
-use std::{num::NonZeroU32, sync::Arc};
+use core::num::NonZeroU32;
+use std::sync::Arc;
 
 use futures::stream::BoxStream;
 
 use super::{
 	dao,
 	holding::{HeldItem, record_holdings_in},
-	item::{AllocateItemsError, Allocation, ItemPage, ItemsPage, allocate_items_in},
+	item::{AllocateItemsError, Allocation, ItemPage, PageRequest, allocate_items_in},
 	keys::{ItemKey, ItemKeyDeriver},
 	purse::{CreatePurseError, PurseId, PurseRecord, PurseTag},
 };
@@ -88,14 +89,15 @@ impl NftLedger {
 	pub async fn available_items(
 		&self,
 		purse: PurseId,
-		page: ItemPage,
-	) -> Result<ItemsPage, DbError> {
+		page: PageRequest,
+	) -> Result<ItemPage, DbError> {
 		let size = u64::from(page.size.get());
 		let offset = u64::from(page.index) * size;
-		let read =
+		let read_page =
 			move |conn: &rusqlite::Connection| dao::available_items(conn, purse, size + 1, offset);
-		let overread = self.db.read(read).await?;
-		Ok(ItemsPage::from_overread(overread, page.size.get() as usize))
+		let overread = self.db.read(read_page).await?;
+		let page_size = page.size.get() as usize;
+		Ok(ItemPage::from_overread(overread, page_size))
 	}
 
 	/// Every item key, now and after each allocation.

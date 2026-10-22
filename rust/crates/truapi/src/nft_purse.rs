@@ -4,7 +4,7 @@
 //! needs; the capability handler asks for it, because the prompt belongs to the
 //! product connection.
 
-use std::num::NonZeroU32;
+use core::num::NonZeroU32;
 
 use truapi::latest::{
 	NFT_PURSE_MAX_NAME_BYTES, NftPurseId, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
@@ -13,8 +13,8 @@ use truapi::latest::{
 
 use crate::{
 	nft::{
-		AllocateItemsError, CreatePurseError, ItemKey, ItemPage, NftLedger, PurseId, PurseRecord,
-		PurseTag,
+		AllocateItemsError, CreatePurseError, ItemKey, NftLedger, PageRequest, PurseId,
+		PurseRecord, PurseTag,
 	},
 	platform::{ProductId, ProductIdError},
 	store::DbError,
@@ -53,7 +53,7 @@ impl PurseOwner {
 		if tag.0.is_empty() {
 			return Some(Self::Root);
 		}
-		let id = std::str::from_utf8(&tag.0).ok()?;
+		let id = core::str::from_utf8(&tag.0).ok()?;
 		id.parse().ok().map(Self::Product)
 	}
 
@@ -106,7 +106,7 @@ pub const MAX_PAGE_SIZE: u32 = 100;
 pub struct CountUpTo<const MAX: u32>(NonZeroU32);
 
 impl<const MAX: u32> CountUpTo<MAX> {
-	/// `count`, or `None` when the RFC does not allow it.
+	/// Returns `count` when it is between 1 and `MAX`, and `None` otherwise.
 	pub fn new(count: u32) -> Option<Self> {
 		let count = NonZeroU32::new(count).filter(|count| count.get() <= MAX)?;
 		Some(Self(count))
@@ -173,10 +173,10 @@ impl NftPurses {
 		page: u32,
 		size: PageSize,
 	) -> Result<NftPurseInfoPage, DbError> {
-		let page = ItemPage { index: page, size: size.0 };
-		let read = self.ledger.available_items(purse, page).await?;
-		let items = read.items.into_iter().map(item_key).collect();
-		Ok(NftPurseInfoPage { has_next: read.has_next, items })
+		let page = PageRequest { index: page, size: size.0 };
+		let available = self.ledger.available_items(purse, page).await?;
+		let items = available.items.into_iter().map(item_key).collect();
+		Ok(NftPurseInfoPage { has_next: available.has_next, items })
 	}
 
 	/// The purses `owner` holds, by id. The caller checks [`read_grant`] first.

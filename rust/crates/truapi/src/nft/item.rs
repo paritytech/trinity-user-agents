@@ -1,6 +1,6 @@
 //! Allocating item keys inside one write.
 
-use std::num::NonZeroU32;
+use core::num::NonZeroU32;
 
 use rusqlite::Transaction;
 use truapi::latest::GenericError;
@@ -8,7 +8,7 @@ use truapi::latest::GenericError;
 use super::{
 	dao,
 	keys::{ItemIndex, ItemKey, ItemKeyDeriver, ItemSlot},
-	purse::PurseId,
+	purse::{PurseId, UnknownPurse},
 };
 use crate::{installation::InstallationId, runtime::AuthorityError, store::DbError};
 
@@ -16,8 +16,8 @@ use crate::{installation::InstallationId, runtime::AuthorityError, store::DbErro
 #[derive(Debug, thiserror::Error)]
 pub enum AllocateItemsError {
 	/// No purse has this id.
-	#[error("purse {0:?} does not exist")]
-	UnknownPurse(PurseId),
+	#[error(transparent)]
+	UnknownPurse(#[from] UnknownPurse),
 	/// The purse's indices under this installation would pass `u32::MAX`.
 	#[error("purse {purse:?} has {next} items under this installation, cannot add {count}")]
 	IndicesExhausted {
@@ -47,9 +47,10 @@ pub enum AllocateItemsError {
 	Db(#[from] DbError),
 }
 
-/// A page of a purse's items, already checked against its bounds.
+/// Which page of a purse's items to read. Its size is already checked
+/// against the bounds a call allows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ItemPage {
+pub struct PageRequest {
 	/// Zero-based page index.
 	pub index: u32,
 	/// Items per page.
@@ -58,14 +59,14 @@ pub struct ItemPage {
 
 /// One page of items, and whether a later page holds more.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ItemsPage {
+pub struct ItemPage {
 	/// The items, ordered by slot.
 	pub items: Vec<ItemKey>,
 	/// Whether a later page holds more.
 	pub has_next: bool,
 }
 
-impl ItemsPage {
+impl ItemPage {
 	/// The page of `size` items in `overread`, which holds one item more
 	/// when a later page follows.
 	pub fn from_overread(mut overread: Vec<ItemKey>, size: usize) -> Self {
@@ -81,12 +82,12 @@ pub struct Allocation {
 	pub purse: PurseId,
 	/// The installation they are derived under.
 	pub installation: InstallationId,
-	/// How many.
+	/// The number of items to allocate.
 	pub count: NonZeroU32,
 }
 
 impl Allocation {
-	/// Its slots, from index `next` on.
+	/// Returns the slots of this allocation, starting at index `next`.
 	fn slots_from(&self, next: u32) -> Result<Vec<ItemSlot>, AllocateItemsError> {
 		let count = self.count.get();
 		let exhausted = AllocateItemsError::IndicesExhausted { purse: self.purse, next, count };
@@ -140,7 +141,7 @@ fn free_slots(
 	allocation: &Allocation,
 ) -> Result<Result<Vec<ItemSlot>, AllocateItemsError>, DbError> {
 	if dao::purse(tx, allocation.purse)?.is_none() {
-		return Ok(Err(AllocateItemsError::UnknownPurse(allocation.purse)));
+		return Ok(Err(UnknownPurse(allocation.purse).into()));
 	}
 	let next = dao::next_item_index(tx, allocation.purse, &allocation.installation)?;
 	Ok(allocation.slots_from(next))

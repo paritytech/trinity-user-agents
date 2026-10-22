@@ -18,6 +18,9 @@ use crate::{
 
 const PRODUCT: &str = "tickets.dot";
 
+/// The id of the first purse a test creates, its "Tickets" purse.
+const TICKETS: u32 = 0;
+
 /// A product host over a fresh core database, with the directory that keeps
 /// the database alive.
 fn nft_host(
@@ -62,10 +65,9 @@ fn create_items(
 	)
 }
 
-fn created_count(
-	created: Result<HostNftPurseCreateItemsResponse, CallError<HostNftPurseCreateItemsError>>,
-) -> Result<usize, CallError<HostNftPurseCreateItemsError>> {
-	created.map(|HostNftPurseCreateItemsResponse::V1(response)| response.items.len())
+fn item_count(created: HostNftPurseCreateItemsResponse) -> usize {
+	let HostNftPurseCreateItemsResponse::V1(response) = created;
+	response.items.len()
 }
 
 fn create_items_refusal(
@@ -225,7 +227,8 @@ fn create_items_takes_between_1_and_1000_keys() {
 	let (_dir, host) = nft_host(platform.clone(), true);
 	create(&host, "Tickets").expect("purse is created");
 
-	let counts = [0, 1, 1000, 1001].map(|count| created_count(create_items(&host, 0, count)));
+	let counts =
+		[0, 1, 1000, 1001].map(|count| create_items(&host, TICKETS, count).map(item_count));
 
 	let out_of_range = create_items_refusal(v01::NftPurseCreateItemsError::CountOutOfRange);
 	assert_eq!(counts, [Err(out_of_range.clone()), Ok(1), Ok(1000), Err(out_of_range)]);
@@ -253,7 +256,9 @@ fn creating_items_in_roots_purse_without_the_users_grant_is_denied() {
 fn creating_items_in_roots_purse_with_the_users_grant_returns_the_keys() {
 	let (_dir, host) = nft_host(Arc::new(StubPlatform::default()), true);
 
-	assert_eq!(created_count(create_items(&host, PurseId::MAIN.0, 3)), Ok(3));
+	let created = create_items(&host, PurseId::MAIN.0, 3).map(item_count);
+
+	assert_eq!(created, Ok(3));
 }
 
 // The user is never asked about a purse that does not exist.
@@ -277,7 +282,7 @@ fn query_purse_takes_pages_of_1_to_100_items() {
 	let (_dir, host) = nft_host(platform.clone(), true);
 	create(&host, "Tickets").expect("purse is created");
 
-	let pages = [0, 1, 100, 101].map(|size| query(&host, 0, size));
+	let pages = [0, 1, 100, 101].map(|size| query(&host, TICKETS, size));
 
 	let out_of_bounds = query_refusal(v01::NftPurseQueryPurseError::PageSizeOutOfBounds);
 	assert_eq!(
@@ -293,9 +298,9 @@ fn query_purse_takes_pages_of_1_to_100_items() {
 fn created_keys_that_hold_nothing_are_not_listed() {
 	let (_dir, host) = nft_host(Arc::new(StubPlatform::default()), true);
 	create(&host, "Tickets").expect("purse is created");
-	create_items(&host, 0, 3).expect("keys are created");
+	create_items(&host, TICKETS, 3).expect("keys are created");
 
-	assert_eq!(query(&host, 0, 10), Ok(empty_page()));
+	assert_eq!(query(&host, TICKETS, 10), Ok(empty_page()));
 }
 
 #[test]

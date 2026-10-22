@@ -917,8 +917,8 @@ impl SigningHostRuntime {
 	/// Also starts the durable transaction engine over it, which builds
 	/// scheduled transactions and reports pending work to the observer
 	/// installed with [`Self::set_durable_work_observer`]; install that
-	/// first. NFT purses run on it too, allocating item keys under the
-	/// installation `installation` hands out.
+	/// first. NFT purses also run on it, deriving item keys under the
+	/// installation id that `installation` returns.
 	#[cfg(not(target_arch = "wasm32"))]
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_core_db"))]
 	pub fn set_core_db(
@@ -939,7 +939,8 @@ impl SigningHostRuntime {
 		true
 	}
 
-	/// Layer 1 of NFT purses over `db`, deriving with the signing host.
+	/// The NFT ledger (purse records and item keys) over `db`, deriving keys
+	/// with the signing host.
 	#[cfg(not(target_arch = "wasm32"))]
 	fn build_nft_ledger(
 		&self,

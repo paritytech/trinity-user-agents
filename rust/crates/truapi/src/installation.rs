@@ -1,11 +1,11 @@
-//! The app installation item keys are derived under, and the host's
-//! provider of it.
+//! The id of this app installation, which NFT item keys are derived under,
+//! and the trait the host provides it through.
 
 use async_trait::async_trait;
 use truapi::latest::GenericError;
 
-/// The app installation keys are derived under. Recovery finds it because
-/// the host registers it before handing it out.
+/// The id of this app installation, which keys are derived under. Recovery
+/// can find it because the host registers it before handing it out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct InstallationId(pub [u8; 32]);
 
