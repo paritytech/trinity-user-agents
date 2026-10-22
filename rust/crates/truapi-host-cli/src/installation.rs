@@ -2,7 +2,10 @@
 //! in its state directory, created on first use. The CLI registers it
 //! nowhere, so recovery cannot find keys derived under it.
 
-use std::{io::ErrorKind, path::PathBuf};
+use std::{
+	io::{ErrorKind, Write},
+	path::{Path, PathBuf},
+};
 
 use truapi::{
 	installation::{InstallationId, InstallationIdProvider},
@@ -30,14 +33,29 @@ impl CliInstallation {
 		}
 	}
 
-	/// Writes a fresh random id and returns it.
-	fn create(&self) -> Result<InstallationId, GenericError> {
-		let mut bytes = [0u8; 32];
-		getrandom::getrandom(&mut bytes)
-			.map_err(|error| GenericError { reason: format!("no randomness: {error}") })?;
-		std::fs::write(&self.path, bytes)
-			.map_err(|error| file_error("writing", &self.path, error))?;
-		Ok(InstallationId(bytes))
+	/// Stores a fresh random id and returns it, or returns the one another
+	/// call stored first.
+	fn create_unless_stored(&self) -> Result<InstallationId, GenericError> {
+		let fresh = random_installation()?;
+		match self.write_new(&fresh) {
+			Ok(()) => Ok(fresh),
+			Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+				let vanished = || file_error("reading", &self.path, ErrorKind::NotFound.into());
+				self.read_stored()?.ok_or_else(vanished)
+			},
+			Err(error) => Err(file_error("writing", &self.path, error)),
+		}
+	}
+
+	/// Puts `id` in the file whole, through a temporary file beside it. Fails
+	/// with `AlreadyExists` when the file is already there.
+	fn write_new(&self, id: &InstallationId) -> std::io::Result<()> {
+		let directory = self.path.parent().unwrap_or(Path::new("."));
+		let mut file = tempfile::NamedTempFile::new_in(directory)?;
+		file.write_all(&id.0)?;
+		file.as_file().sync_all()?;
+		file.persist_noclobber(&self.path).map_err(|failed| failed.error)?;
+		Ok(())
 	}
 }
 
@@ -46,12 +64,48 @@ impl InstallationIdProvider for CliInstallation {
 	async fn current_installation(&self) -> Result<InstallationId, GenericError> {
 		match self.read_stored()? {
 			Some(id) => Ok(id),
-			None => self.create(),
+			None => self.create_unless_stored(),
 		}
 	}
 }
 
+fn random_installation() -> Result<InstallationId, GenericError> {
+	let mut bytes = [0u8; 32];
+	getrandom::getrandom(&mut bytes)
+		.map_err(|error| GenericError { reason: format!("no randomness: {error}") })?;
+	Ok(InstallationId(bytes))
+}
+
 /// A failed file operation, naming the file.
-fn file_error(action: &str, path: &std::path::Path, error: std::io::Error) -> GenericError {
+fn file_error(action: &str, path: &Path, error: std::io::Error) -> GenericError {
 	GenericError { reason: format!("{action} installation file {}: {error}", path.display()) }
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	/// Keys are derived under the installation, so a CLI that picked a new id
+	/// on a later call or a later run would allocate under a second one.
+	#[tokio::test]
+	async fn the_first_id_stays_the_installation() {
+		let directory = tempfile::tempdir().expect("temporary directory");
+		let path = directory.path().join("installation");
+		let first = CliInstallation::new(path.clone()).current_installation().await;
+		let again = CliInstallation::new(path.clone()).current_installation().await;
+
+		assert_eq!(first.expect("created").0, again.expect("read back").0);
+	}
+
+	/// A second first call must not replace the id the first one stored.
+	#[test]
+	fn a_racing_first_call_keeps_the_stored_id() {
+		let directory = tempfile::tempdir().expect("temporary directory");
+		let installation = CliInstallation::new(directory.path().join("installation"));
+		let stored = installation.create_unless_stored().expect("created");
+
+		let raced = installation.create_unless_stored().expect("kept");
+
+		assert_eq!(raced.0, stored.0);
+	}
 }
