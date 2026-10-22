@@ -206,7 +206,7 @@ jobs:
     steps:
       # A pull request's checkout is its merge commit, so its first parent is
       # the base and the diff to it is exactly what the pull request changes.
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 2
 
@@ -299,7 +299,7 @@ jobs:
       key: ${{ steps.key.outputs.key }}
       run-id: ${{ steps.find.outputs.run-id }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Everything the bootstrap reads: the crates and their lockfile, the
       # toolchain pins, codegen and its npm manifests, the TypeScript client and
@@ -355,8 +355,13 @@ jobs:
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}
 
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: env.REUSE != 'true'
+
+      - uses: ./.github/actions/mac-preflight
+        if: env.REUSE != 'true'
+        with:
+          simulator: "false"
 
       # The xcframework targets iOS, so this needs the SDK.
       - name: Setup iOS Environment
@@ -426,7 +431,11 @@ jobs:
     timeout-minutes: 30
     runs-on: parity-macos
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/mac-preflight
+        with:
+          simulator: "false"
 
       - name: Setup iOS Environment
         uses: ./hosts/ios/.github/actions/install
@@ -560,7 +569,9 @@ jobs:
     runs-on: parity-macos
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/mac-preflight
 
       - name: Setup iOS Environment
         uses: ./hosts/ios/.github/actions/install
@@ -701,7 +712,9 @@ jobs:
     timeout-minutes: 30
     runs-on: parity-macos-large
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/mac-preflight
 
       - name: Setup iOS Environment
         uses: ./hosts/ios/.github/actions/install
