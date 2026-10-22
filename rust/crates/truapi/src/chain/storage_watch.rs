@@ -10,13 +10,14 @@
 //! changes and changes back meanwhile is never reported. A consumer that needs
 //! every transition reads events instead.
 
+use core::{future::ready, time::Duration};
 use std::sync::Arc;
 
-use futures::stream::{BoxStream, StreamExt};
+use futures::stream::{self, BoxStream, StreamExt};
 use subxt::{Metadata, storage::Address, utils::H256};
 
 use super::HashAndNumber;
-use crate::chain_runtime::RuntimeFailure;
+use crate::{chain_runtime::RuntimeFailure, time::Timer};
 
 mod codec;
 mod diff;
@@ -85,9 +86,21 @@ pub enum StorageWatchError {
 	},
 }
 
+impl StorageWatchError {
+	/// Whether the same watch would fail the same way again: the runtime
+	/// does not declare the entry, or a key does not fit it.
+	pub fn is_permanent(&self) -> bool {
+		matches!(self, Self::Incompatible { .. } | Self::KeyEncoding { .. })
+	}
+}
+
 /// Changes to a watched entry, item by item.
 type DecodedEntryChangeStream<K, V> =
 	BoxStream<'static, Result<DecodedEntryChanges<K, V>, StorageWatchError>>;
+
+/// How long `keep_watching_entry` waits before opening a watch again after
+/// opening it failed.
+const REOPEN_DELAY: Duration = Duration::from_secs(5);
 
 impl dyn WatchedStorage {
 	/// Watches `keys` of the entry `address` names on `genesis`, at `head`.
@@ -113,6 +126,61 @@ impl dyn WatchedStorage {
 		let decoder = EntryChangesDecoder { address, keys };
 		Ok(changes.map(move |raw| decoder.decode_raw_changes(raw?)).boxed())
 	}
+
+	/// [`Self::watch_entry_changes`] for as long as the stream is held. A
+	/// watch that cannot be opened is an `Err` item, and is opened again
+	/// after [`REOPEN_DELAY`] on `timer`. A permanent failure, as
+	/// [`StorageWatchError::is_permanent`] names it, is the last item.
+	pub fn keep_watching_entry<A>(
+		self: Arc<Self>,
+		timer: Arc<dyn Timer>,
+		genesis: H256,
+		head: WatchedHead,
+		address: A,
+		keys: Vec<A::KeyParts>,
+	) -> DecodedEntryChangeStream<A::KeyParts, A::Value>
+	where
+		A: Address + Clone + Send + 'static,
+		A::KeyParts: Clone + Send + 'static,
+		A::Value: Send + 'static,
+	{
+		let open =
+			move || self.clone().watch_entry_changes(genesis, head, address.clone(), keys.clone());
+		let attempts = stream::unfold(false, move |reopening| {
+			let (opening, timer) = (open(), timer.clone());
+			async move {
+				if reopening {
+					timer.sleep(REOPEN_DELAY).await;
+				}
+				Some((opening.await, true))
+			}
+		});
+		let changes = attempts.flat_map(|opened| opened.unwrap_or_else(failed_to_open));
+		end_after(changes.boxed(), |change| {
+			change.as_ref().is_err_and(StorageWatchError::is_permanent)
+		})
+	}
+}
+
+/// A watch that could not be opened, as its one item.
+fn failed_to_open<T: Send + 'static>(
+	error: StorageWatchError,
+) -> BoxStream<'static, Result<T, StorageWatchError>> {
+	stream::once(ready(Err(error))).boxed()
+}
+
+/// `items` up to and including the first that `is_last` picks.
+pub fn end_after<T: Send + 'static>(
+	items: BoxStream<'static, T>,
+	is_last: impl Fn(&T) -> bool + Send + 'static,
+) -> BoxStream<'static, T> {
+	stream::unfold(Some((items, is_last)), |state| async move {
+		let (mut items, is_last) = state?;
+		let item = items.next().await?;
+		let rest = (!is_last(&item)).then_some((items, is_last));
+		Some((item, rest))
+	})
+	.boxed()
 }
 
 /// Turns raw changes of one entry back into the caller's keys and values.

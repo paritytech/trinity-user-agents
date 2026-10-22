@@ -20,10 +20,10 @@ use super::*;
 use crate::{
 	chain::{DecodableAtBlock, HashAndNumber, Node, RawStorageChanges, serve},
 	chain_runtime::{ChainRuntime, RuntimeFailure},
-	durable::ManualTimer,
 	nft::{PurseId, PurseTag, insert_item_row, test_ledger},
 	store::{Db, open_temporary_core_db},
 	test_support::test_spawner,
+	time::ManualTimer,
 };
 
 const GENESIS: H256 = H256([0xab; 32]);

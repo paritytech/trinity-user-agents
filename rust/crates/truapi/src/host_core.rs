@@ -1280,7 +1280,10 @@ fn durable_engine(
 	services: &RuntimeServices,
 	db: crate::store::Db,
 ) -> Arc<crate::durable::DurableTxEngine> {
-	use crate::durable::{DurableDeps, DurableRegistry, DurableTxEngine, RealTimer};
+	use crate::{
+		durable::{DurableDeps, DurableRegistry, DurableTxEngine},
+		time::RealTimer,
+	};
 
 	let chain = Arc::new(services.chain.clone());
 	DurableTxEngine::new(DurableDeps {
@@ -1310,7 +1313,7 @@ fn start_holding_tracker(services: &RuntimeServices, ledger: crate::nft::NftLedg
 		storage: Arc::new(services.chain.clone()),
 		genesis: genesis.into(),
 		spawner: services.spawner.clone(),
-		timer: Arc::new(crate::durable::RealTimer),
+		timer: Arc::new(crate::time::RealTimer),
 	});
 	tracker.ensure_started();
 	services.install_holding_tracker(tracker);

@@ -770,6 +770,8 @@ mod session_usernames;
 #[cfg(feature = "runtime")]
 pub mod subscription;
 #[cfg(feature = "runtime")]
+pub mod time;
+#[cfg(feature = "runtime")]
 pub mod transport;
 #[cfg(feature = "runtime")]
 mod truapi_core;

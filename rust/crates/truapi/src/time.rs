@@ -21,3 +21,9 @@ impl Timer for RealTimer {
 		Box::pin(futures_timer::Delay::new(duration))
 	}
 }
+
+#[cfg(test)]
+mod manual;
+
+#[cfg(test)]
+pub use manual::ManualTimer;

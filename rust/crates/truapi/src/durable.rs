@@ -17,7 +17,6 @@ mod oracle;
 mod ownership;
 mod policy;
 mod search;
-mod time;
 
 #[cfg(test)]
 mod testing;
@@ -36,6 +35,3 @@ pub use oracle::{
 	Unobservable,
 };
 pub use policy::{PolicyError, Preparation, SubmissionPolicy};
-#[cfg(test)]
-pub use testing::ManualTimer;
-pub use time::{RealTimer, Timer};

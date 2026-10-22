@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{
+	Arc, Mutex,
+	atomic::{AtomicUsize, Ordering},
+};
 
 use futures::{
 	StreamExt,
@@ -17,8 +20,8 @@ use subxt::{
 };
 
 use super::{
-	DecodableAtBlock, DecodedEntryChanges, RawStorageChanges, StorageSnapshot, StorageWatchError,
-	WatchedHead, WatchedStorage,
+	DecodableAtBlock, DecodedEntryChanges, REOPEN_DELAY, RawStorageChanges, StorageSnapshot,
+	StorageWatchError, WatchedHead, WatchedStorage,
 	codec::{decode_value_or_default, encode_storage_keys},
 	diffed,
 };
@@ -29,6 +32,7 @@ use crate::{
 	},
 	chain_runtime::{ChainRuntime, RuntimeFailure},
 	host_internal::extrinsic::tests::{bulletin_chain_state, bulletin_metadata},
+	time::ManualTimer,
 };
 
 const GENESIS: H256 = H256([0xab; 32]);
@@ -237,14 +241,25 @@ struct ScriptedWatchedStorage {
 	chain: ChainRuntime,
 	changes: Mutex<Option<UnboundedReceiver<Result<RawStorageChanges, RuntimeFailure>>>>,
 	requested: Mutex<Option<(WatchedHead, Vec<Vec<u8>>)>>,
+	/// How many more watches fail to open, as if the chain were unreachable.
+	unreachable_opens: AtomicUsize,
 }
 
 impl ScriptedWatchedStorage {
 	fn new() -> (Arc<Self>, UnboundedSender<Result<RawStorageChanges, RuntimeFailure>>) {
+		Self::unreachable_for(0)
+	}
+
+	/// A fake whose first `opens` watches fail to open.
+	fn unreachable_for(
+		opens: usize,
+	) -> (Arc<Self>, UnboundedSender<Result<RawStorageChanges, RuntimeFailure>>) {
 		let (sender, receiver) = unbounded();
 		let (_node, _provider, chain) = serve(Node::new(3, 5));
 		let changes = Mutex::new(Some(receiver));
-		let fake = Arc::new(Self { chain, changes, requested: Mutex::new(None) });
+		let unreachable_opens = AtomicUsize::new(opens);
+		let fake =
+			Arc::new(Self { chain, changes, requested: Mutex::new(None), unreachable_opens });
 		(fake, sender)
 	}
 }
@@ -255,6 +270,15 @@ impl WatchedStorage for ScriptedWatchedStorage {
 		&self,
 		genesis: H256,
 	) -> Result<OnlineClientAtBlock<SubstrateConfig>, RuntimeFailure> {
+		let unreachable =
+			self.unreachable_opens
+				.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1));
+		if unreachable.is_ok() {
+			return Err(RuntimeFailure::host_failure(
+				"test",
+				"the chain is unreachable".to_owned(),
+			));
+		}
 		self.chain.client_at_finalized_head(genesis).await
 	}
 
@@ -362,4 +386,49 @@ fn metadata_without_the_watched_entry_fails_the_watch_before_it_starts() {
 
 	assert!(matches!(watch, Err(StorageWatchError::Incompatible { .. })));
 	assert_eq!(*fake.requested.lock().unwrap(), None);
+}
+
+/// A consumer that keeps watching must not lose its keys to an unreachable
+/// chain, nor retry it without pause: the watch reports why it could not
+/// open, and opens again only once the delay has passed.
+#[test]
+fn a_kept_watch_that_cannot_open_says_why_and_opens_again_after_the_delay() {
+	let (fake, sender) = ScriptedWatchedStorage::unreachable_for(1);
+	let storage: Arc<dyn WatchedStorage> = fake;
+	let timer = Arc::new(ManualTimer::default());
+	let address = dynamic::<(), u32>("System", "Number");
+	let mut changes =
+		storage.keep_watching_entry(timer.clone(), GENESIS, WatchedHead::Best, address, vec![()]);
+	let failed = block_on(changes.next()).expect("an item");
+	let mut reopened = changes.next();
+	let pending = block_on(async { futures::poll!(&mut reopened) }).is_pending();
+	let sleeps_before_reopening = timer.sleeps();
+
+	timer.advance(REOPEN_DELAY);
+	sender
+		.unbounded_send(scripted_raw_changes_at(2, &[(0, Some(&7u32.encode()))]))
+		.unwrap();
+	let read = block_on(reopened).expect("an item").expect("a read");
+
+	assert!(matches!(failed, Err(StorageWatchError::Chain(_))), "{failed:?}");
+	assert_eq!((pending, sleeps_before_reopening), (true, 1));
+	assert_eq!(read, DecodedEntryChanges { at: test_block(2), changed: vec![((), Some(7))] });
+}
+
+/// A runtime that does not declare the entry fails every attempt the same
+/// way, so the watch says why once and ends instead of retrying forever.
+#[test]
+fn a_kept_watch_of_an_entry_the_runtime_lacks_ends_with_why() {
+	let (fake, _sender) = ScriptedWatchedStorage::new();
+	let storage: Arc<dyn WatchedStorage> = fake;
+	let timer = Arc::new(ManualTimer::default());
+	let address = dynamic::<(), u32>("NoSuchPallet", "Number");
+
+	let mut changes =
+		storage.keep_watching_entry(timer.clone(), GENESIS, WatchedHead::Best, address, vec![()]);
+	let first = block_on(changes.next());
+	let ended = block_on(async { futures::poll!(changes.next()) }).is_ready();
+
+	assert!(matches!(first, Some(Err(StorageWatchError::Incompatible { .. }))), "{first:?}");
+	assert_eq!((ended, timer.sleeps()), (true, 0));
 }
