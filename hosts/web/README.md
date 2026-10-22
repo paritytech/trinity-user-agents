@@ -302,7 +302,8 @@ not TrUAPI, and is meant to show the boundary a native host could copy.
   either changed: leaving the conversation, a new session, or a restarted source.
 - **The providers.** `src/nova-chat-provider.ts` wraps the host's Nova engine ([Chat](#chat)) without changing it,
   including starting a chat by username and message requests. `src/product-room-provider.ts` reads the rooms product
-  workers keep through TrUAPI Chat ([Product chats](#product-chats)), one provider per product.
+  workers keep through TrUAPI Chat ([Product chats](#product-chats)), one provider per product. `src/draft-chat.ts` is
+  the draft worker-owned chat ([below](#draft-worker-owned-chat)).
 
 ### Chat
 
@@ -381,6 +382,38 @@ calls reach the core as frames, which the inspector's **TrUAPI** view decodes.
 - **Not served yet.** Input surfaces of a worker, worker demand from the core (a worker runs whenever its wallet is
   signed in), bot registration, and the core's `beginOperation` lifetime hints. Pocket is served for the pinned Humanity
   card only; see [Humanity](#humanity).
+
+### Draft worker-owned chat
+
+**Draft, not TrUAPI.** A test fixture for the Chat Extension v2 RFC draft (RFC 0002 in `paritytech/trinity-user-agents`,
+PR 13, closed unmerged; tracking issue 487), where a product's worker is the source of its conversations and the host
+only draws them. Nothing here is a protocol any host or product ships.
+
+- **Turning it on.** **Workers** on the Chat screen has a **Draft worker-owned chat** switch, kept per network and
+  wallet (`truapi-web-signing-host:network:<id>:chat-draft-enabled:<wallet>:v1`). It is off by default. **Restart the
+  worker** stops it and starts a fresh one.
+- **What runs.** `src/draft-chat-source.ts`, in an ordinary Web Worker (`src/draft-chat-worker.ts`), with three made-up
+  conversations: a direct chat with 120 messages, a group of three people with a poll card, and a chat with unread
+  messages. It keeps them in memory and plays the network: a message goes from pending to sent to delivered, the peer in
+  a direct chat reads it and answers, and a message with `[fail]` in it fails once and can be retried. A restart loses
+  what was sent, because the worker owns that state. The host keeps only the last conversation list, to show before the
+  worker answers (`truapi-web-signing-host:network:<id>:chat-draft:<wallet>:v1`).
+- **The channel.** The host and the worker exchange requests and correlated replies over `postMessage`: `hello`, `page`,
+  `participants`, `send`, `retry`, `seen`, `render`, `stopRender` and `action`. The worker pushes the conversation list,
+  added or changed messages, and render trees. These are not TrUAPI frames, so they do not reach the core or the
+  inspector.
+- **Where it departs from the RFC draft**, because the screen could not be drawn otherwise:
+  - `hello` names the user's own participant id, so the screen knows which messages are the user's;
+  - a participant carries its id, so a `participants` reply can be matched to message senders;
+  - a status change is the same message id sent again on the feed, as the draft has no status update;
+  - `seen` names the newest message seen, not one call per message;
+  - `Custom` messages are drawn by the worker as `RendererNode` trees, the shipped `Renderer` model, not the draft's
+    `SerializedCustomChatMessage`;
+  - every call from the host to the worker is a request with a correlated reply, which the draft's subscription-only
+    transport does not describe.
+- **Not covered.** Message edits, deletion, reactions, replies, attachments, participant lists, toolbar and message
+  actions, and starting a conversation (the intended Contacts invitation is not settled). Delivery while the tab is
+  closed: the worker runs only while the tab is open and the wallet is signed in.
 
 ### Differences from the native hosts
 
@@ -620,7 +653,8 @@ opens, so the light client reaches no chain. It checks that:
   held product when the wallet changes;
 - Chat does not run or store anything for the public development phrase;
 - Chat starts at sign-in while another screen is in front, with no chain connection, derives the same identity account
-  and chat key as the core, has no on or off controls, and stops at sign-out;
+  and chat key as the core, has no on or off controls, lists the draft worker-owned chat once it is turned on, and stops
+  at sign-out;
 - Pocket is drawn by the host as the native two cards, and gives the digital dollar no amount;
 - a product worker, built from `browser/chat-worker.ts` and served from a stood-in Asset Hub and gateway, runs from its
   manifest, creates a room, posts text and a custom card, draws an image from its archive in the card, redraws the card
@@ -635,12 +669,17 @@ opens, so the light client reaches no chain. It checks that:
   Widget, not its app, and opens it again as the Widget after a wallet switch; and one with neither opens nothing and
   says why.
 
-Two narrower browser tests use no wallet. `browser/inspector-dock.spec.ts` loads the host page with every request
+Three narrower browser tests use no wallet. `browser/inspector-dock.spec.ts` loads the host page with every request
 outside loopback refused, and checks that on a wide window the inspector is docked under a Phone-sized product across
 the width the menu leaves, for both inspector views, that its top edge sets its height, and that a narrow window keeps
 it a bottom sheet. `browser/chat-diagnostics.spec.ts` mounts the inspector's Chat view alone on made-up events, and runs
 a chat exchange between two synthetic wallets over an in-memory JSON-RPC statement store to check each payload layer,
-the copies, the capture levels, and that no key or secret shows.
+the copies, the capture levels, and that no key or secret shows. `browser/chat-screen.spec.ts` mounts the Chat screen
+alone over the Nova and product room providers with stand-ins behind them and the draft provider with its worker,
+synthetic data only and every request outside this host refused, and checks one list across providers, paging on scroll,
+sender names and the user's own messages, status changes, a retried message staying one message, custom cards from both
+kinds of worker, the draft worker answering while another room is open, unread cleared only for messages on screen, a
+worker restart and a new session. Set `CHAT_SCREENSHOTS` to a directory to keep screenshots.
 
 The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
 `dist/` from the host you will use, as described in [Static build](#static-build-and-github-pages).
@@ -669,13 +708,14 @@ and layout on narrow screens.
   `src/chat-transport-view.ts` an event's payload layers.
 - `src/chat-provider.ts`: the interface between the Chat screen and its chats. `src/chat-inbox.ts`: the session's
   providers. `src/conversation-view.ts`: one conversation, for any provider. `src/nova-chat-provider.ts`,
-  `src/product-room-provider.ts`: the Nova and product room providers.
+  `src/product-room-provider.ts`: the Nova and product room providers. `src/draft-chat.ts`, `src/draft-chat-source.ts`,
+  `src/draft-chat-worker.ts`: the draft worker-owned chat and its synthetic worker.
 - `src/worker-manifest.ts`, `src/product-workers.ts`: finding a product's worker and running it. `src/product-chat.ts`:
   the host side of TrUAPI Chat. `src/product-render.ts`: the cards a worker draws.
 - `src/archive/`: CAR, UnixFS and CID verification and unpacking.
 - `src/sandbox/`, `sandbox-plugin.ts`: the loader, the service worker, the mount paths and the archive cache. The plugin
   bundles them as static files, which the build emits and the dev server also answers.
-- `browser/`: the browser smoke test, the inspector dock and Chat view tests, and their fixtures.
+- `browser/`: the browser smoke test, the inspector dock, Chat view and Chat screen tests, and their fixtures.
 
 ## Not supported
 

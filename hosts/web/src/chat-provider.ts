@@ -16,9 +16,10 @@ import type { RenderHooks } from "./product-render.js";
  * nudges: after one, the screen reads the provider again, unless the event
  * carries the changed message.
  *
- * This is the web host's own seam, not TrUAPI. Two providers implement it:
- * the host's Nova chat engine and the rooms product workers keep through
- * TrUAPI Chat.
+ * This is the web host's own seam, not TrUAPI. Three providers implement it:
+ * the host's Nova chat engine, the rooms product workers keep through TrUAPI
+ * Chat, and a draft worker-owned source shaped after the Chat Extension v2
+ * RFC draft.
  */
 export interface ChatProvider {
   /** Unique on the screen, such as `nova` or `product:<productId>`. */

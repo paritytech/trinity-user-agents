@@ -36,6 +36,13 @@ export interface WorkersPanel {
   onChange(listener: () => void): () => void;
 }
 
+/** The switch for the draft worker-owned chat. */
+export interface DraftSwitch {
+  enabled(): boolean;
+  setEnabled(on: boolean): void;
+  restart(): void;
+}
+
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   className: string,
@@ -83,6 +90,7 @@ export class ChatScreen {
     private readonly root: HTMLElement,
     private readonly inbox: ChatInboxView,
     private readonly workers: WorkersPanel,
+    private readonly draft: DraftSwitch | null,
     private readonly onActivity: (pendingRequests: number) => void,
   ) {
     root.dataset.chatEngine = "off";
@@ -513,7 +521,7 @@ export class ChatScreen {
     return [bar, form];
   }
 
-  /** The workers added for this wallet, their state, and the form to add one. */
+  /** The workers for this wallet, their state, the form to add one, and the draft chat switch. */
   private drawWorkers(): HTMLElement[] {
     const bar = el("header", "chat-bar chat-bar-small");
     bar.append(this.back(), el("h2", "chat-title chat-title-small", "Workers"));
@@ -580,6 +588,34 @@ export class ChatScreen {
         "A worker runs while this wallet is signed in and this tab is open. It is the product's own code, on this host's origin.",
       ),
     );
+    if (this.draft !== null) body.append(this.drawDraftSwitch(this.draft));
     return [bar, body];
+  }
+
+  private drawDraftSwitch(draft: DraftSwitch): HTMLElement {
+    const section = el("section", "chat-section draft-switch");
+    const label = el("label", "draft-switch-label");
+    const box = el("input", "");
+    box.type = "checkbox";
+    box.checked = draft.enabled();
+    box.dataset.action = "draft-chat";
+    box.addEventListener("change", () => draft.setEnabled(box.checked));
+    label.append(box, el("span", "chat-row-title", "Draft worker-owned chat"));
+    section.append(
+      label,
+      el(
+        "p",
+        "chat-identity-line",
+        "Runs a synthetic chat worker in this tab, with made-up people and messages. It owns its history and delivery, and the host asks it for pages over a draft channel shaped after the Chat Extension v2 RFC draft. Not TrUAPI, and not shipped by any host.",
+      ),
+    );
+    if (draft.enabled()) {
+      const restart = button("chat-link", "Restart the worker", () =>
+        draft.restart(),
+      );
+      restart.dataset.action = "draft-restart";
+      section.append(restart);
+    }
+    return section;
   }
 }

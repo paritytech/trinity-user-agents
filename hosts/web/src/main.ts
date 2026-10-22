@@ -84,6 +84,7 @@ import { bulletinImageUrl } from "./product-render.js";
 import { resolveWidget } from "./widget.js";
 import { ChatScreen } from "./chat-screen.js";
 import { ChatInbox } from "./chat-inbox.js";
+import { startDraftWorker } from "./draft-chat.js";
 import { ProductChat, productChatKey } from "./product-chat.js";
 import { ProductWorkers } from "./product-workers.js";
 import { resolveWorker } from "./worker-manifest.js";
@@ -206,7 +207,7 @@ const pocketFaces = new PocketFaces({
   storage: localStorage,
   log,
 });
-/** The chat providers of the signed-in session: Nova and product rooms. */
+/** The chat providers of the signed-in session: Nova, product rooms, and the draft worker chat. */
 const chatInbox = new ChatInbox({
   storage: localStorage,
   diagnostics: chatDiagnostics,
@@ -221,12 +222,18 @@ const chatInbox = new ChatInbox({
     log,
   },
   workerNames: () => productWorkers.names(),
+  draftWorker: startDraftWorker,
   log,
 });
 const chatScreen = new ChatScreen(
   element("chat-screen"),
   chatInbox,
   productWorkers,
+  {
+    enabled: () => chatInbox.draftEnabled(),
+    setEnabled: (on) => chatInbox.setDraftEnabled(on),
+    restart: () => chatInbox.restartDraft(),
+  },
   (pendingRequests) => {
     if (chatBadge === null) return;
     chatBadge.hidden = pendingRequests === 0;
