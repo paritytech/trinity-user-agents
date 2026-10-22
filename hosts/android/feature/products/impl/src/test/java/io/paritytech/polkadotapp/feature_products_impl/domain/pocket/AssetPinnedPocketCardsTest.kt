@@ -95,6 +95,17 @@ class AssetPinnedPocketCardsTest {
         }
     }
 
+    // Both apps ship the same placeholder, so updating one copy and not the other draws a different card on each.
+    @Test
+    fun `the iOS app ships the same placeholder face and images`() {
+        val iosFaces = File("../../../../ios/polkadot-app/Modules/Products/Pocket/Faces")
+
+        File("src/main/assets/pocket").listFiles().orEmpty().forEach { android ->
+            val ios = File(iosFaces, "pocket-${android.name}")
+            assertTrue("$ios differs from ${android.name}", ios.isFile && ios.readBytes().contentEquals(android.readBytes()))
+        }
+    }
+
     // Listing the app's assets reads the APK, on whichever thread resolves the first image.
     @Test
     fun `another product's image does not list the app's assets`() {
