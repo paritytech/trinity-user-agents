@@ -1,11 +1,11 @@
 //! Keeps the ledger's holdings equal to `Scarcity::NftsByOwner` at the best
 //! block, for every item key.
 
-use core::{fmt::Display, time::Duration};
+use core::fmt::Display;
 use std::{collections::HashSet, sync::Arc};
 
 use futures::{StreamExt, future::ready, stream::BoxStream};
-use subxt::utils::H256;
+use subxt::utils::{AccountId32, H256};
 
 use super::chain::{ScarcityNft, nfts_by_owner};
 use crate::{
@@ -16,11 +16,8 @@ use crate::{
 	time::Timer,
 };
 
-/// How long a failed holdings write waits before trying again.
-const REWRITE_DELAY: Duration = Duration::from_secs(1);
-
 /// What one watch reports for the keys it covers.
-type HoldingChanges = DecodedEntryChanges<([u8; 32],), ScarcityNft>;
+type HoldingChanges = DecodedEntryChanges<(AccountId32,), ScarcityNft>;
 
 /// What the holding tracker runs on.
 pub struct HoldingTrackerDeps {
@@ -88,7 +85,7 @@ impl Tracking {
 	/// keys that changed. A failure is logged and skipped, because the watch
 	/// opens again or reports the same keys again.
 	fn watch_batch(&self, batch: Vec<ItemKey>) -> BoxStream<'static, HoldingChanges> {
-		let owners = batch.iter().map(|key| (key.0,)).collect();
+		let owners = batch.iter().map(|key| (AccountId32(key.0),)).collect();
 		let storage = self.storage.clone();
 		let timer = self.timer.clone();
 		storage
@@ -97,19 +94,15 @@ impl Tracking {
 			.boxed()
 	}
 
-	/// Stores what `changes` reports, trying again after [`REWRITE_DELAY`]
-	/// while the write fails: the watch reports a key only when its value
-	/// changes, so a lost write would leave it stale.
+	/// Stores what `changes` reports. A failed write is logged.
 	async fn record(&self, changes: HoldingChanges) {
 		let holdings: Vec<_> = changes
 			.changed
 			.into_iter()
 			.map(|((owner,), nft)| holding_of(owner, nft))
 			.collect();
-		while let Err(error) = self.ledger.record_holdings(holdings.clone()).await {
-			tracing::warn!(%error, "holdings unrecorded");
-			self.timer.sleep(REWRITE_DELAY).await;
-		}
+		let recorded = self.ledger.record_holdings(holdings).await;
+		ok_or_warn(recorded, "holdings unrecorded");
 	}
 }
 
@@ -123,8 +116,8 @@ fn find_new_keys(watched: &HashSet<ItemKey>, keys: Vec<ItemKey>) -> Vec<ItemKey>
 	keys.into_iter().filter(|key| !watched.contains(key)).collect()
 }
 
-fn holding_of(owner: [u8; 32], nft: Option<ScarcityNft>) -> (ItemKey, Option<HeldItem>) {
-	(ItemKey(owner), nft.map(HeldItem::from))
+fn holding_of(owner: AccountId32, nft: Option<ScarcityNft>) -> (ItemKey, Option<HeldItem>) {
+	(ItemKey(owner.0), nft.map(HeldItem::from))
 }
 
 #[cfg(test)]

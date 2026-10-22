@@ -3,12 +3,13 @@
 use subxt::{
 	ext::scale_decode::DecodeAsType,
 	storage::{DynamicAddress, dynamic},
+	utils::AccountId32,
 };
 
 use crate::nft::HeldItem;
 
 /// The `Scarcity::NftsByOwner` entry, naming what each account holds.
-pub fn nfts_by_owner() -> DynamicAddress<([u8; 32],), ScarcityNft> {
+pub fn nfts_by_owner() -> DynamicAddress<(AccountId32,), ScarcityNft> {
 	dynamic("Scarcity", "NftsByOwner")
 }
 

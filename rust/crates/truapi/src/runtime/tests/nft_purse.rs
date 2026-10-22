@@ -219,12 +219,10 @@ fn a_host_without_a_core_database_does_not_serve_purses() {
 	assert_eq!(create(&host, "Tickets"), Err(CallError::Unsupported));
 }
 
-// The RFC bounds one call to 1..=1000 keys, and an out-of-range count is the
-// product's mistake, refused before the user could be asked anything.
+// The RFC bounds one call to 1..=1000 keys.
 #[test]
 fn create_items_takes_between_1_and_1000_keys() {
-	let platform = Arc::new(StubPlatform::default());
-	let (_dir, host) = nft_host(platform.clone(), true);
+	let (_dir, host) = nft_host(Arc::new(StubPlatform::default()), true);
 	create(&host, "Tickets").expect("purse is created");
 
 	let counts =
@@ -232,6 +230,17 @@ fn create_items_takes_between_1_and_1000_keys() {
 
 	let out_of_range = create_items_refusal(v01::NftPurseCreateItemsError::CountOutOfRange);
 	assert_eq!(counts, [Err(out_of_range.clone()), Ok(1), Ok(1000), Err(out_of_range)]);
+}
+
+// An out-of-range count is the product's mistake, so it is refused before
+// the user is asked for Root's purse, which a valid count would prompt for.
+#[test]
+fn an_out_of_range_count_is_refused_without_a_prompt() {
+	let platform = Arc::new(StubPlatform::default());
+	let (_dir, host) = nft_host(platform.clone(), true);
+
+	let _ = create_items(&host, PurseId::MAIN.0, 1001);
+
 	assert_eq!(requested_permissions(&platform), vec![]);
 }
 
@@ -275,12 +284,10 @@ fn creating_items_in_an_unknown_purse_is_refused_without_a_prompt() {
 	assert_eq!(requested_permissions(&platform), vec![]);
 }
 
-// The RFC bounds a page to 1..=100 items, and an out-of-range size is the
-// product's mistake, refused before the user could be asked anything.
+// The RFC bounds a page to 1..=100 items.
 #[test]
 fn query_purse_takes_pages_of_1_to_100_items() {
-	let platform = Arc::new(StubPlatform::default());
-	let (_dir, host) = nft_host(platform.clone(), true);
+	let (_dir, host) = nft_host(Arc::new(StubPlatform::default()), true);
 	create(&host, "Tickets").expect("purse is created");
 
 	let pages = [0, 1, 100, 101].map(|size| query(&host, TICKETS, size));
@@ -290,6 +297,18 @@ fn query_purse_takes_pages_of_1_to_100_items() {
 		pages,
 		[Err(out_of_bounds.clone()), Ok(empty_page()), Ok(empty_page()), Err(out_of_bounds)]
 	);
+}
+
+// An out-of-range page size is the product's mistake, so it is refused
+// before the user is asked for Root's purse, which a valid size would prompt
+// for.
+#[test]
+fn an_out_of_range_page_size_is_refused_without_a_prompt() {
+	let platform = Arc::new(StubPlatform::default());
+	let (_dir, host) = nft_host(platform.clone(), true);
+
+	let _ = query(&host, PurseId::MAIN.0, 101);
+
 	assert_eq!(requested_permissions(&platform), vec![]);
 }
 

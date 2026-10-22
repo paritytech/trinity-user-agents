@@ -21,7 +21,7 @@ pub struct HeldItem {
 
 /// Stores what each key holds in `tx`: a row for a key that holds
 /// something, none for a key that holds nothing.
-pub fn record_holdings_in(
+pub fn record_holdings(
 	tx: &Transaction<'_>,
 	holdings: &[(ItemKey, Option<HeldItem>)],
 ) -> Result<(), DbError> {

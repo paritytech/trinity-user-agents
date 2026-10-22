@@ -87,7 +87,7 @@ pub fn insert_items(tx: &Transaction<'_>, items: &[(ItemSlot, ItemKey)]) -> Resu
 const AVAILABLE_ITEMS: &str = "SELECT item.key FROM nft_item AS item
 	JOIN nft_holding AS holding ON holding.key = item.key
 	WHERE item.purse = :purse
-	ORDER BY item.installation, item.idx
+	ORDER BY item.idx
 	LIMIT :limit OFFSET :offset";
 
 /// Up to `limit` keys of `purse` that hold an NFT, skipping the first

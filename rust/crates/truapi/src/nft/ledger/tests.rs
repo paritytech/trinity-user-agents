@@ -132,7 +132,7 @@ fn an_unavailable_installation_is_reported() {
 		..test_ledger_deps(db)
 	});
 	let refused = allocate(&ledger, 1);
-	assert!(matches!(refused, Err(AllocateItemsError::Installation(_))));
+	assert!(matches!(refused, Err(AllocateItemsError::InstallationUnavailable(_))));
 }
 
 /// A deriver that answers fewer keys than slots must not leave slots
@@ -144,7 +144,10 @@ fn a_short_derivation_writes_nothing() {
 		..test_ledger_deps(db)
 	});
 	let refused = allocate(&ledger, 2);
-	assert!(matches!(refused, Err(AllocateItemsError::DerivedKeyCount { slots: 2, derived: 1 })));
+	let reason = "derived 1 keys for 2 slots".to_owned();
+	assert!(
+		matches!(refused, Err(AllocateItemsError::Derive(AuthorityError::Unavailable { reason: r })) if r == reason)
+	);
 	let whole = NftLedger::new(test_ledger_deps(ledger.db.clone()));
 	assert_eq!(allocate(&whole, 1).expect("allocates"), expected_keys(0..1));
 }

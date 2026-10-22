@@ -7,7 +7,7 @@ use futures::stream::BoxStream;
 
 use super::{
 	dao,
-	holding::{HeldItem, record_holdings_in},
+	holding::{HeldItem, record_holdings},
 	item::{AllocateItemsError, Allocation, ItemPage, PageRequest, allocate_items_in},
 	keys::{ItemKey, ItemKeyDeriver},
 	purse::{CreatePurseError, PurseId, PurseRecord, PurseTag},
@@ -75,7 +75,7 @@ impl NftLedger {
 			.installation
 			.current_installation()
 			.await
-			.map_err(AllocateItemsError::Installation)?;
+			.map_err(AllocateItemsError::InstallationUnavailable)?;
 		let allocation = Allocation { purse, installation, count };
 		let keys = self.keys.clone();
 		self.db
@@ -110,7 +110,7 @@ impl NftLedger {
 		&self,
 		holdings: Vec<(ItemKey, Option<HeldItem>)>,
 	) -> Result<(), DbError> {
-		self.db.write(move |tx| record_holdings_in(tx, &holdings)).await
+		self.db.write(move |tx| record_holdings(tx, &holdings)).await
 	}
 }
 

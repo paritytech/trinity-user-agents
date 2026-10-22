@@ -30,18 +30,10 @@ pub enum AllocateItemsError {
 	},
 	/// The current installation could not be obtained.
 	#[error("current installation unavailable: {}", .0.reason)]
-	Installation(GenericError),
+	InstallationUnavailable(GenericError),
 	/// Deriving a key failed, for example without a session.
 	#[error(transparent)]
 	Derive(#[from] AuthorityError),
-	/// The deriver answered a different number of keys than it was asked for.
-	#[error("derived {derived} keys for {slots} slots")]
-	DerivedKeyCount {
-		/// How many slots it was asked for.
-		slots: usize,
-		/// How many keys it gave.
-		derived: usize,
-	},
 	/// The database failed.
 	#[error(transparent)]
 	Db(#[from] DbError),
@@ -127,10 +119,8 @@ fn derive_at(
 ) -> Result<Vec<(ItemSlot, ItemKey)>, AllocateItemsError> {
 	let derived = keys.derive_item_keys(&slots)?;
 	if derived.len() != slots.len() {
-		return Err(AllocateItemsError::DerivedKeyCount {
-			slots: slots.len(),
-			derived: derived.len(),
-		});
+		let reason = format!("derived {} keys for {} slots", derived.len(), slots.len());
+		return Err(AuthorityError::Unavailable { reason }.into());
 	}
 	Ok(slots.into_iter().zip(derived).collect())
 }
