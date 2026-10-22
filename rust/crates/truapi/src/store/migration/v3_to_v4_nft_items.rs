@@ -20,9 +20,7 @@ pub fn create_nft_items() -> M<'static> {
 			key BLOB PRIMARY KEY REFERENCES nft_item(key),
 			collection INTEGER NOT NULL,
 			item INTEGER NOT NULL,
-			instance INTEGER NOT NULL,
-			seen_number INTEGER NOT NULL,
-			seen_hash BLOB NOT NULL CHECK (length(seen_hash) = 32)
+			instance INTEGER NOT NULL
 		);",
 	)
 }

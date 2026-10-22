@@ -10,7 +10,6 @@ use super::{
 use futures::stream::BoxStream;
 
 use crate::{
-	chain::HashAndNumber,
 	installation::InstallationId,
 	store::{Db, DbError},
 };
@@ -118,27 +117,18 @@ pub fn observe_item_keys(db: &Db) -> BoxStream<'static, Result<Vec<ItemKey>, DbE
 }
 
 const UPSERT_HOLDING: &str = "INSERT INTO nft_holding
-	(key, collection, item, instance, seen_number, seen_hash)
-	VALUES (:key, :collection, :item, :instance, :seen_number, :seen_hash)
+	(key, collection, item, instance) VALUES (:key, :collection, :item, :instance)
 	ON CONFLICT (key) DO UPDATE SET collection = excluded.collection, item = excluded.item,
-		instance = excluded.instance, seen_number = excluded.seen_number,
-		seen_hash = excluded.seen_hash";
+		instance = excluded.instance";
 
-/// Records that `key` holds `held` at `at`. The instance is stored as the
+/// Records that `key` holds `held`. The instance is stored as the
 /// bit pattern of an `i64`, since SQLite integers are signed.
-pub fn upsert_holding(
-	tx: &Transaction<'_>,
-	key: &ItemKey,
-	held: &HeldItem,
-	at: &HashAndNumber,
-) -> Result<(), DbError> {
+pub fn upsert_holding(tx: &Transaction<'_>, key: &ItemKey, held: &HeldItem) -> Result<(), DbError> {
 	tx.prepare_cached(UPSERT_HOLDING)?.execute(named_params! {
 		":key": key.0,
 		":collection": held.collection,
 		":item": held.item,
 		":instance": held.instance as i64,
-		":seen_number": at.number,
-		":seen_hash": at.hash.0,
 	})?;
 	Ok(())
 }

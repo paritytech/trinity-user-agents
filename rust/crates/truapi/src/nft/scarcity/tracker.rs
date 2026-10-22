@@ -156,11 +156,10 @@ impl Tracking {
 	/// while the write fails: the watch reports a key only when its value
 	/// changes, so a lost write would leave it stale.
 	async fn record(&self, changes: HoldingChanges) {
-		let DecodedEntryChanges { at, changed } = changes;
 		let holdings: Vec<_> =
-			changed.into_iter().map(|((owner,), nft)| held_by(owner, nft)).collect();
+			changes.changed.into_iter().map(|((owner,), nft)| held_by(owner, nft)).collect();
 		loop {
-			let recorded = self.ledger.record_holdings(at, holdings.clone()).await;
+			let recorded = self.ledger.record_holdings(holdings.clone()).await;
 			let recorded =
 				recorded.inspect_err(|error| tracing::warn!(%error, "holdings unrecorded"));
 			if recorded.is_ok() {

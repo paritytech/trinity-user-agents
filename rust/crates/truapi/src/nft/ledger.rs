@@ -12,7 +12,6 @@ use super::{
 	purse::{CreatePurseError, PurseId, PurseRecord, PurseTag},
 };
 use crate::{
-	chain::HashAndNumber,
 	installation::InstallationIdProvider,
 	store::{Db, DbError},
 };
@@ -102,14 +101,12 @@ impl NftLedger {
 		dao::observe_item_keys(&self.db)
 	}
 
-	/// Stores what each key holds at `at`, in one write. Called by the
-	/// tracker.
+	/// Stores what each key holds, in one write. Called by the tracker.
 	pub async fn record_holdings(
 		&self,
-		at: HashAndNumber,
 		holdings: Vec<(ItemKey, Option<HeldItem>)>,
 	) -> Result<(), DbError> {
-		self.db.write(move |tx| record_in(tx, at, &holdings)).await
+		self.db.write(move |tx| record_in(tx, &holdings)).await
 	}
 }
 

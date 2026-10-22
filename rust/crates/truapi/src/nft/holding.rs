@@ -3,7 +3,7 @@
 use rusqlite::Transaction;
 
 use super::{dao, keys::ItemKey};
-use crate::{chain::HashAndNumber, store::DbError};
+use crate::store::DbError;
 
 /// The NFT an item key holds, as far as a purse needs to know: which NFT it
 /// is, and the three levels its metadata, such as its image, is looked up
@@ -19,16 +19,15 @@ pub struct HeldItem {
 	pub instance: u64,
 }
 
-/// Stores what each key holds at `at` in `tx`: a row for a key that holds
+/// Stores what each key holds in `tx`: a row for a key that holds
 /// something, none for a key that holds nothing.
 pub fn record_in(
 	tx: &Transaction<'_>,
-	at: HashAndNumber,
 	holdings: &[(ItemKey, Option<HeldItem>)],
 ) -> Result<(), DbError> {
 	for (key, held) in holdings {
 		match held {
-			Some(held) => dao::upsert_holding(tx, key, held, &at)?,
+			Some(held) => dao::upsert_holding(tx, key, held)?,
 			None => dao::delete_holding(tx, key)?,
 		}
 	}

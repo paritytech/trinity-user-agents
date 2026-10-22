@@ -39,6 +39,9 @@ const HOLDER_STORAGE_KEY_HEX: &str = concat!(
 	"fa7c14003d2bb71865069df160fb638e3cd4dac2d6ca394e4fc7fade1bc95644",
 );
 
+/// An item key that holds nothing on the live chain, sorting before `HOLDER`.
+const OTHER_KEY: [u8; 32] = [0x01; 32];
+
 fn holder() -> [u8; 32] {
 	let bytes = hex::decode(HOLDER_HEX).expect("the holder is hex");
 	bytes.try_into().expect("the holder is 32 bytes")
@@ -165,19 +168,18 @@ impl TrackerFixture {
 		block_on(self.opened.next()).expect("the tracker opens a watch")
 	}
 
-	/// Every holding row: key, item and the block it was seen at.
-	fn holdings(&self) -> Vec<([u8; 32], HeldItem, u64)> {
+	/// Every holding row, by key.
+	fn holdings(&self) -> Vec<([u8; 32], HeldItem)> {
 		let read = self.db.read(|conn| {
-			let mut statement = conn.prepare(
-				"SELECT key, collection, item, instance, seen_number FROM nft_holding ORDER BY key",
-			)?;
+			let mut statement = conn
+				.prepare("SELECT key, collection, item, instance FROM nft_holding ORDER BY key")?;
 			let rows = statement.query_map([], |row| {
 				let held = HeldItem {
 					collection: row.get("collection")?,
 					item: row.get("item")?,
 					instance: row.get::<_, i64>("instance")? as u64,
 				};
-				Ok((row.get("key")?, held, row.get("seen_number")?))
+				Ok((row.get("key")?, held))
 			})?;
 			Ok(rows.collect::<Result<Vec<_>, _>>()?)
 		});
@@ -185,7 +187,7 @@ impl TrackerFixture {
 	}
 
 	/// Waits until the holding rows are `expected`, or fails the test.
-	fn await_holdings(&self, expected: Vec<([u8; 32], HeldItem, u64)>) {
+	fn await_holdings(&self, expected: Vec<([u8; 32], HeldItem)>) {
 		let started = Instant::now();
 		while self.holdings() != expected {
 			assert!(started.elapsed() < WRITE_TIMEOUT, "holdings stayed {:?}", self.holdings());
@@ -206,7 +208,7 @@ fn a_captured_holding_is_watched_under_its_storage_key_and_cached() {
 		.unbounded_send(Ok(raw_changes_at(5, vec![(0, Some(HOLDER_NFT.to_vec()))])))
 		.unwrap();
 
-	fixture.await_holdings(vec![(holder(), HOLDER_ITEM, 5)]);
+	fixture.await_holdings(vec![(holder(), HOLDER_ITEM)]);
 	let storage_key = hex::decode(HOLDER_STORAGE_KEY_HEX).expect("the key is hex");
 	assert_eq!(watch.keys, vec![storage_key]);
 }
@@ -219,31 +221,31 @@ fn an_nft_moved_away_removes_the_holding() {
 		.changes
 		.unbounded_send(Ok(raw_changes_at(5, vec![(0, Some(HOLDER_NFT.to_vec()))])))
 		.unwrap();
-	fixture.await_holdings(vec![(holder(), HOLDER_ITEM, 5)]);
+	fixture.await_holdings(vec![(holder(), HOLDER_ITEM)]);
 
 	watch.changes.unbounded_send(Ok(raw_changes_at(6, vec![(0, None)]))).unwrap();
 
 	fixture.await_holdings(vec![]);
 }
 
-/// A failed dispatch bumps the nonce without moving the NFT, so the
-/// holding stays and only the block it was seen at moves on.
+/// A failed dispatch bumps the nonce without moving the NFT, so the key
+/// keeps its holding. The second key's report rides in the same change, so
+/// seeing it written proves the bumped value was written too.
 #[test]
-fn a_change_that_keeps_the_nft_only_moves_the_block_it_was_seen_at() {
-	let mut fixture = tracker_after(|db| insert_item_key(db, holder(), 0));
+fn a_change_that_keeps_the_nft_keeps_the_holding() {
+	let mut fixture = tracker_after(|db| {
+		insert_item_key(db, holder(), 0);
+		insert_item_key(db, OTHER_KEY, 1);
+	});
 	let watch = fixture.next_watch();
 	let mut bumped = HOLDER_NFT.to_vec();
 	bumped[32] = 1;
-	watch
-		.changes
-		.unbounded_send(Ok(raw_changes_at(5, vec![(0, Some(HOLDER_NFT.to_vec()))])))
-		.unwrap();
-	watch
-		.changes
-		.unbounded_send(Ok(raw_changes_at(6, vec![(0, Some(bumped))])))
-		.unwrap();
+	let first = raw_changes_at(5, vec![(0, Some(HOLDER_NFT.to_vec())), (1, None)]);
+	watch.changes.unbounded_send(Ok(first)).unwrap();
+	let both = vec![(0, Some(bumped.clone())), (1, Some(bumped))];
+	watch.changes.unbounded_send(Ok(raw_changes_at(6, both))).unwrap();
 
-	fixture.await_holdings(vec![(holder(), HOLDER_ITEM, 6)]);
+	fixture.await_holdings(vec![(OTHER_KEY, HOLDER_ITEM), (holder(), HOLDER_ITEM)]);
 }
 
 /// Keys allocated after the tracker started must be watched too, and only
@@ -270,8 +272,8 @@ fn the_first_report_replaces_holdings_left_from_an_earlier_run() {
 		insert_item_key(db, holder(), 0);
 		block_on(db.write(|tx| {
 			tx.execute(
-				"INSERT INTO nft_holding VALUES (?1, 1, 1, 1, 1, ?2)",
-				rusqlite::params![holder(), [1u8; 32]],
+				"INSERT INTO nft_holding VALUES (?1, 1, 1, 1)",
+				rusqlite::params![holder()],
 			)?;
 			Ok(())
 		}))

@@ -165,8 +165,7 @@ fn hold(ledger: &NftLedger, keys: &[ItemKey]) {
 		(*key, Some(HeldItem { collection: 1, item: 1, instance }))
 	};
 	let holdings = keys.iter().enumerate().map(held).collect();
-	let at = HashAndNumber { hash: [3; 32].into(), number: 3 };
-	block_on(ledger.record_holdings(at, holdings)).expect("holdings are recorded");
+	block_on(ledger.record_holdings(holdings)).expect("holdings are recorded");
 }
 
 fn page(ledger: &NftLedger, index: u32, size: u32) -> ItemsPage {
