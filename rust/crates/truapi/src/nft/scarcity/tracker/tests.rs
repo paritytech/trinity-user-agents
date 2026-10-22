@@ -265,8 +265,8 @@ fn new_item_keys_are_watched_by_a_watch_of_their_own() {
 	let watched_owners = |watch: &OpenedWatch| -> Vec<Vec<u8>> {
 		watch.keys.iter().map(|key| key[key.len() - 32..].to_vec()).collect()
 	};
-	let expected = (vec![holder().to_vec()], vec![allocated[0].0.to_vec()]);
-	assert_eq!((watched_owners(&first), watched_owners(&second)), expected);
+	assert_eq!(watched_owners(&first), vec![holder().to_vec()]);
+	assert_eq!(watched_owners(&second), vec![allocated[0].0.to_vec()]);
 }
 
 /// The cache survives a restart while the chain moves on, so the first

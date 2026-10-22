@@ -271,7 +271,8 @@ fn creating_items_in_an_unknown_purse_is_refused_without_a_prompt() {
 
 	let unknown = v01::GenericError { reason: "purse 7 does not exist".to_owned() };
 	let expected = create_items_refusal(v01::NftPurseCreateItemsError::Other(unknown));
-	assert_eq!((refused, requested_permissions(&platform)), (Err(expected), vec![]));
+	assert_eq!(refused, Err(expected));
+	assert_eq!(requested_permissions(&platform), vec![]);
 }
 
 // The RFC bounds a page to 1..=100 items, and an out-of-range size is the
@@ -327,7 +328,8 @@ fn querying_an_unknown_purse_is_refused_without_a_prompt() {
 
 	let unknown = v01::GenericError { reason: "purse 7 does not exist".to_owned() };
 	let expected = query_refusal(v01::NftPurseQueryPurseError::Other(unknown));
-	assert_eq!((refused, requested_permissions(&platform)), (Err(expected), vec![]));
+	assert_eq!(refused, Err(expected));
+	assert_eq!(requested_permissions(&platform), vec![]);
 }
 
 // Methods of later stages stay unavailable, so products can feature-detect them.

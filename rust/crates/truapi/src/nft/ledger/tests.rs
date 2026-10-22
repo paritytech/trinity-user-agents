@@ -54,9 +54,8 @@ fn item_keys_follow_the_hard_path_nft_purse_installation_index() {
 		.expect("path derives");
 	let [_, _, _, by_slot] = expected_keys(0..4)[..] else { panic!("four keys") };
 	let pinned = "d837c9c558b3d5c58df68608ba64f5db6a546271368c1c386efee373b33f4636";
-	let by_slot_hex = hex::encode(by_slot.0);
-	let by_path_key = by_path.public.to_bytes();
-	assert_eq!((by_slot_hex, by_slot.0), (pinned.to_owned(), by_path_key));
+	assert_eq!(hex::encode(by_slot.0), pinned);
+	assert_eq!(by_slot.0, by_path.public.to_bytes());
 }
 
 /// Recovery scans indices from 0, so a purse's indices must have no gap.

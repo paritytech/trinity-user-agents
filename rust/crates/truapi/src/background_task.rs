@@ -58,9 +58,7 @@ mod tests {
 		drop(task);
 		let _ = release.send(());
 
-		assert_eq!(
-			(block_on(finished).is_err(), ran_past_the_wait.load(Ordering::SeqCst)),
-			(true, false)
-		);
+		assert!(block_on(finished).is_err());
+		assert!(!ran_past_the_wait.load(Ordering::SeqCst));
 	}
 }
