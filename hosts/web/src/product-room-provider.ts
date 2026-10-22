@@ -58,12 +58,29 @@ const ICON = /^(?:https:\/\/|data:image\/(?:png|jpeg|gif|webp);base64,)/;
 const errorText = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-const previewOf = (message: ProductMessage | undefined, fallback: string) =>
-  message === undefined
-    ? fallback
-    : message.content.tag === "Text"
-      ? message.content.text
-      : (message.content.alt ?? fallback);
+function previewOf(
+  message: ProductMessage | undefined,
+  fallback: string,
+): string {
+  const content = message?.content;
+  switch (content?.tag) {
+    case undefined:
+      return fallback;
+    case "Text":
+      return content.text;
+    case "RichText":
+      return content.text ?? "Media";
+    case "Actions":
+      return (
+        content.text ??
+        content.actions.map((action) => action.title).join(" · ")
+      );
+    case "File":
+      return content.fileName;
+    case "Custom":
+      return content.alt ?? fallback;
+  }
+}
 
 export class ProductRoomProvider implements ChatProvider {
   readonly id: string;
@@ -170,15 +187,16 @@ export class ProductRoomProvider implements ChatProvider {
         ? { id: USER_PEER, label: "You", self: true }
         : { id: this.productId, label: room.name, self: false },
       status: out ? "sent" : "received",
-      content:
-        content.tag === "Text"
-          ? { tag: "Text", text: content.text }
-          : {
-              tag: "Custom",
-              messageType: content.messageType,
-              payload: content.payload,
-              alt: content.alt,
-            },
+      content,
+      ...(message.reactions === undefined || message.reactions.length === 0
+        ? {}
+        : {
+            reactions: message.reactions.map((emoji) => ({
+              emoji,
+              count: 1,
+              self: false,
+            })),
+          }),
     };
   }
 
@@ -210,6 +228,22 @@ export class ProductRoomProvider implements ChatProvider {
           `${this.productId}: message not delivered: ${errorText(error)}`,
         ),
       );
+  }
+
+  /** A press on a button the host drew for an `Actions` message, as `ActionTriggered`. */
+  async triggerAction(
+    roomId: string,
+    messageId: string,
+    actionId: string,
+  ): Promise<void> {
+    const channel = this.channel;
+    if (channel?.publishChatAction === undefined)
+      throw new Error("The product's worker is not running.");
+    await channel.publishChatAction({
+      roomId,
+      peer: USER_PEER,
+      payload: { tag: "ActionTriggered", value: { messageId, actionId } },
+    });
   }
 
   renderCustom(

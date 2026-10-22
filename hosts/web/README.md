@@ -365,10 +365,20 @@ calls reach the core as frames, which the inspector's **TrUAPI** view decodes.
 - **Default workers.** `ProductWorkers` takes a `defaults` list per network: workers the host adds for every wallet,
   before any the user adds, as the native app places a game's room by default. They run like any other worker and have
   no **Remove**. This host lists none, so no live worker starts without the user adding it.
-- **Rooms and messages.** The host serves TrUAPI Chat (`src/product-chat.ts`): a worker creates rooms, posts `Text` and
-  `Custom` messages and sets each room's footer. `registerBot` is refused, as the iOS host refuses it. Other message
-  kinds (rich text, actions, files, reactions) are refused with a reason. Rooms and the last 200 messages of each are
-  kept per network and wallet in `localStorage` (`truapi-web-signing-host:network:<id>:product-chat:<wallet>:v1`).
+- **Rooms and messages.** The host serves TrUAPI Chat (`src/product-chat.ts`): a worker creates rooms, posts every
+  message kind the contract has, and sets each room's footer. `registerBot` is refused, as the iOS host refuses it.
+  Rooms and the last 200 messages of each are kept per network and wallet in `localStorage`
+  (`truapi-web-signing-host:network:<id>:product-chat:<wallet>:v1`). The core screens what a worker sends before it
+  reaches the host; the host only stores and draws it. The iOS and Android hosts refuse every kind other than `Text` and
+  `Custom`.
+- **Rich text, files and buttons.** Rich text is its text and its media, each shown as an image when it is an `https`
+  URL or an inline raster image. A file is its name, type, size and caption as the product gave them, unchecked, and a
+  link that opens in a new tab with no referrer; only an `https` file is a link, and the host fetches none of it. An
+  `Actions` message shows its buttons, in a column or a grid as it asks, and a press goes to the worker as an
+  `ActionTriggered` chat action naming the message and the button, from the peer `native`.
+- **Reactions.** A `Reaction` places the product's emoji on one of the room's messages and `ReactionRemoved` takes it
+  off; it is not a message of its own. The product learns only its own messages' ids, so those are the ones it can react
+  to, and a reaction naming any other id is refused. The user cannot react: the room has no picker for it.
 - **Custom messages.** A custom message is drawn by asking the worker to render it (`RenderContext::ChatMessage`); each
   tree the worker sends replaces the card. `src/product-render.ts` draws the tree as DOM: text as text, never markup,
   sizes clamped, colors and type from the host's `--pr-*` tokens, which Chat and Pocket set to the same dark values.
@@ -686,8 +696,10 @@ opens, so the light client reaches no chain. It checks that:
   `Dismissed`; and a wallet with no contacts gets `NoContacts` with no picker drawn;
 - a product worker, built from `browser/chat-worker.ts` and served from a stood-in Asset Hub and gateway, runs from its
   manifest, creates a room, posts text and a custom card, draws an image from its archive in the card, redraws the card
-  when its button is pressed, answers what the user types, makes no request outside this host, shows in the inspector,
-  stops at sign-out, is not seen by another wallet, and starts again when its wallet signs back in;
+  when its button is pressed, posts rich text with an inline image, a file link and buttons that all pass the core's
+  screening, shows the text as text, the file as a link with no referrer, its own reaction and not the one it removed,
+  answers a press on its button for that message, answers what the user types, makes no request outside this host, shows
+  in the inspector, stops at sign-out, is not seen by another wallet, and starts again when its wallet signs back in;
 - the Humanity card, with every socket closed and every request outside this host, the stood-in Asset Hub and the
   gateway refused: a worker built from `browser/pocket-worker.ts` starts only once Pocket is shown, draws the face after
   it boots, and gets the face's button press; a press on the card opens the Widget built from
@@ -706,8 +718,9 @@ the copies, the capture levels, and that no key or secret shows. `browser/chat-s
 alone over the Nova and product room providers with stand-ins behind them and the draft provider with its worker,
 synthetic data only and every request outside this host refused, and checks one list across providers, paging on scroll,
 sender names and the user's own messages, status changes, a retried message staying one message, custom cards from both
-kinds of worker, the draft worker answering while another room is open, unread cleared only for messages on screen, a
-worker restart and a new session. Set `CHAT_SCREENSHOTS` to a directory to keep screenshots.
+kinds of worker, a product room's buttons, reaction and non-`https` file, the draft worker answering while another room
+is open, unread cleared only for messages on screen, a worker restart and a new session. Set `CHAT_SCREENSHOTS` to a
+directory to keep screenshots.
 
 The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
 `dist/` from the host you will use, as described in [Static build](#static-build-and-github-pages).

@@ -222,4 +222,52 @@ describe("product room provider", () => {
     });
     expect(provider.composer("lobby")).toEqual({ kind: "none" });
   });
+
+  test("a button press goes to the worker as ActionTriggered for that message", async () => {
+    const { chat, provider, fake } = await setup();
+    const { messageId } = await chat.platform.postChatMessage(worker, {
+      roomId: "lobby",
+      payload: {
+        tag: "Actions",
+        value: {
+          actions: [{ actionId: "yes", title: "Yes" }],
+          layout: "Column",
+        },
+      },
+    });
+    const [, , buttons] = (await provider.timeline("lobby")).messages;
+    expect(buttons.content).toEqual({
+      tag: "Actions",
+      text: null,
+      actions: [{ actionId: "yes", title: "Yes" }],
+      layout: "Column",
+    });
+    expect(provider.conversations()[0].preview).toBe("Yes");
+    await provider.triggerAction("lobby", messageId, "yes");
+    expect(fake.chatActions).toEqual([
+      {
+        roomId: "lobby",
+        peer: USER_PEER,
+        payload: {
+          tag: "ActionTriggered",
+          value: { messageId, actionId: "yes" },
+        },
+      },
+    ]);
+  });
+
+  test("shows the product's reactions on its message, one per emoji, not as the user's", async () => {
+    const { chat, provider } = await setup();
+    const [welcome] = (await provider.timeline("lobby")).messages;
+    await chat.platform.postChatMessage(worker, {
+      roomId: "lobby",
+      payload: {
+        tag: "Reaction",
+        value: { messageId: welcome.id, emoji: "👍" },
+      },
+    });
+    const [again] = (await provider.timeline("lobby")).messages;
+    expect(again.reactions).toEqual([{ emoji: "👍", count: 1, self: false }]);
+    expect(welcome.reactions).toBeUndefined();
+  });
 });

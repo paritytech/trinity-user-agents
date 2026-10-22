@@ -829,6 +829,44 @@ describe("product worker chat", () => {
         await card.locator("button", { hasText: "bump" }).click();
         await card.locator(".pr-text", { hasText: "count 1" }).waitFor();
 
+        // Rich text is text with its inline image, never markup.
+        const rich = page.locator(".chat-bubble", { hasText: "rich" });
+        expect(await rich.locator(".chat-bubble-text").innerText()).toBe(
+          "<i>rich</i> text",
+        );
+        expect(await rich.locator("i").count()).toBe(0);
+        await page.waitForFunction(() => {
+          const image =
+            document.querySelector<HTMLImageElement>("img.chat-media");
+          return image?.complete === true && image.naturalWidth === 1;
+        });
+        // A file is a link that opens in a new tab with no referrer; nothing is fetched.
+        const file = page.locator("a.chat-file");
+        expect(await file.getAttribute("href")).toBe(
+          "https://files.invalid/rules.pdf",
+        );
+        expect(await file.getAttribute("target")).toBe("_blank");
+        expect(await file.getAttribute("rel")).toBe("noopener noreferrer");
+        expect(await file.innerText()).toBe(
+          "rules.pdf\napplication/pdf · 1.5 KB\nThe rules",
+        );
+        // The worker's reactions sit on its first message: 👍 stays, 🎉 was removed.
+        const hello = page.locator(".chat-message", {
+          hasText: "hello from the fixture",
+        });
+        expect(await hello.locator(".chat-reaction").allInnerTexts()).toEqual([
+          "👍",
+        ]);
+        // A button press reaches the worker for that message, and it answers.
+        await page
+          .locator('.chat-actions[data-layout="Grid"] .chat-action', {
+            hasText: "Yes",
+          })
+          .click();
+        await page
+          .locator(".chat-bubble-text", { hasText: "chose: yes" })
+          .waitFor();
+
         // The room has a text input: what the user types reaches the worker.
         await page.fill(".chat-composer-input", "hi there");
         await page.press(".chat-composer-input", "Enter");
@@ -854,6 +892,11 @@ describe("product worker chat", () => {
           messages: ["hi there"],
           errors: [],
         });
+        const { buttons, triggered } = seen as {
+          buttons: string;
+          triggered: string[];
+        };
+        expect(triggered).toEqual([`${buttons}:yes`]);
         expect(outside).toEqual([]);
 
         // The worker's frames are TrUAPI frames, so the inspector decodes them.
