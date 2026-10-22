@@ -9,6 +9,7 @@ import * as T from "./generated/types.js";
 import * as W from "./generated/wire-table.js";
 import {
     encodeWireMessage,
+    MESSAGE_TYPE_CANCEL,
     MESSAGE_TYPE_INTERRUPT,
     MESSAGE_TYPE_RECEIVE,
     MESSAGE_TYPE_REQUEST,

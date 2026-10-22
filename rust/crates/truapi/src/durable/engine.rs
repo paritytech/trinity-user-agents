@@ -1,13 +1,11 @@
 //! [`DurableTxEngine`]: registration, status reads and the work that settles
 //! every registered transaction.
 
-mod executor;
 mod pass;
 mod recovery;
 mod registration;
 mod reporting;
 mod tracker;
-mod verdict;
 mod wake;
 
 use std::sync::Arc;
@@ -18,7 +16,9 @@ use subxt::utils::H256;
 
 use super::{
 	dao,
-	model::{DomainId, DurableTxId, DurableTxState, DurableTxStatus, GroupId},
+	model::{
+		DomainId, DurableTxEntry, DurableTxId, DurableTxState, DurableTxStatus, GroupId, Verdict,
+	},
 	oracle::DurableRegistry,
 	ownership::Ownership,
 	time::Timer,
@@ -28,11 +28,10 @@ use crate::{
 	store::{Db, DbError},
 	subscription::Spawner,
 };
-use executor::SubmissionExecutor;
 use wake::WakeSignal;
 
 pub use recovery::RecoveryError;
-pub use registration::{DurableRequest, DurableSubmission, EmptyRequest, RegistrationError};
+pub use registration::{DurableRequest, EmptyRequest, RegistrationError};
 pub use reporting::DurableWorkObserver;
 
 /// What the engine runs on.
@@ -60,8 +59,7 @@ pub struct DurableDeps {
 /// Registration writes ledger rows and hands each extrinsic to a submission
 /// watch once they are committed. Whatever no watch owns, including everything
 /// a previous process left live, is decided by recovery passes from the chain.
-/// Rows left for a policy to build are built by the submission executor. The
-/// engine never signs or deletes anything itself.
+/// The engine never builds, signs or deletes anything.
 pub struct DurableTxEngine {
 	db: Db,
 	registry: DurableRegistry,
@@ -78,7 +76,6 @@ pub struct DurableTxEngine {
 	host_wakes: WakeSignal,
 	pass_lock: futures::lock::Mutex<()>,
 	reporter: Mutex<Option<AbortHandle>>,
-	executor: Arc<SubmissionExecutor>,
 }
 
 impl DurableTxEngine {
@@ -98,7 +95,6 @@ impl DurableTxEngine {
 			host_wakes: WakeSignal::default(),
 			pass_lock: futures::lock::Mutex::new(()),
 			reporter: Mutex::new(None),
-			executor: Arc::default(),
 		})
 	}
 
@@ -134,6 +130,17 @@ impl DurableTxEngine {
 		dao::observe_group(&self.db, domain.clone(), group.clone())
 	}
 
+	/// Writes `verdict` only while `observed` is still the row's status and
+	/// attempt. Returns whether it wrote.
+	async fn write_verdict(
+		&self,
+		observed: &DurableTxEntry,
+		verdict: Verdict,
+	) -> Result<bool, DbError> {
+		let (observed, verdict) = (observed.clone(), verdict);
+		self.db.write(move |tx| dao::compare_and_set(tx, &observed, &verdict)).await
+	}
+
 	/// Genesis hash of the chain `domain` lives on.
 	fn chain_of(&self, domain: &DomainId) -> Option<H256> {
 		self.registry.oracle(domain).map(|oracle| oracle.chain())
@@ -147,7 +154,7 @@ mod tests {
 	use super::*;
 	use crate::{
 		chain::MortalExtrinsic,
-		durable::testing::{FakeChain, extrinsic, test_engine, without_plan},
+		durable::testing::{FakeChain, extrinsic, test_engine},
 	};
 
 	fn domain() -> DomainId {
@@ -155,8 +162,7 @@ mod tests {
 	}
 
 	fn request(extrinsics: Vec<MortalExtrinsic>) -> DurableRequest {
-		DurableRequest::presigned(domain(), Some(GroupId::new("op")), without_plan(extrinsics))
-			.unwrap()
+		DurableRequest::presigned(domain(), Some(GroupId::new("op")), extrinsics).unwrap()
 	}
 
 	#[test]

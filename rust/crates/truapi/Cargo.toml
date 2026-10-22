@@ -2,32 +2,52 @@
 name = "truapi"
 version = "0.26.0"
 edition.workspace = true
-license.workspace = true
+license = "MIT AND AGPL-3.0-only"
 description = "TrUAPI trait and type definitions, and the runtime hosts embed"
 
-[dependencies]
-async-trait = { version = "0.1", optional = true }
-derive_more = { version = "2", default-features = false, features = ["display"] }
-futures = { version = "0.3", optional = true }
-hex = { version = "0.4", default-features = false, features = ["alloc"] }
-parity-scale-codec = { version = "3", default-features = false, features = ["derive"] }
-truapi-macros = { path = "../truapi-macros" }
-uniffi = { workspace = true, optional = true }
-zeroize = { version = "1", default-features = false, features = ["alloc"] }
+[lib]
+crate-type = ["rlib"]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = [
+    "-Oz",
+    "--one-caller-inline-max-function-size",
+    "0",
+    "--enable-bulk-memory",
+    "--enable-nontrapping-float-to-int",
+    "--enable-reference-types",
+    "--enable-sign-ext",
+    "--strip-debug",
+    "--strip-dwarf",
+    "--strip-producers",
+]
+
+[package.metadata.wasm-pack.profile.release.wasm-bindgen]
+debug-js-glue = false
+demangle-name-section = false
+dwarf-debug-info = false
 
 [features]
-default = ["runtime"]
-# Async host traits, cancellation, and subscription primitives.
-runtime = [
+default = ["runtime", "wasm-signing-host"]
+# Async API traits and their std-backed call and subscription primitives.
+# Codegen enables this without compiling the host implementation.
+host-api = [
     "dep:async-trait",
     "dep:futures",
+    "derive_more/std",
+    "hex/std",
     "parity-scale-codec/std",
 ]
 # The host runtime: dispatcher, frames, host logic, native and WASM surfaces.
 # With no features the crate contains only no_std protocol payloads and envelopes.
 runtime = [
     "host-api",
+    # `Size` is a SCALE `Compact`, which reads and writes as a plain JSON number
+    # only with codec's own serde support.
+    "parity-scale-codec/serde",
     "dep:truapi-provider",
+    "dep:truapi-coinage",
+    "dep:truapi-chat-v2",
     "dep:futures-timer",
     "dep:scale-decode",
     "dep:frame-metadata",
@@ -43,7 +63,6 @@ runtime = [
     "dep:schnorrkel",
     "dep:ed25519-dalek",
     "dep:substrate-bip39",
-    "dep:zeroize",
     "dep:getrandom",
     "dep:hkdf",
     "dep:hpke",
@@ -80,6 +99,7 @@ runtime = [
     "dep:rusqlite",
     "dep:async-sqlite",
     "dep:rusqlite_migration",
+    "dep:itertools",
 ]
 wasm-signing-host = ["runtime"]
 # Test-host-only shortcuts a shipping host must not carry, such as answering
@@ -97,6 +117,8 @@ hex = { workspace = true, default-features = false, features = ["alloc"] }
 parity-scale-codec = { workspace = true, default-features = false, features = ["derive"] }
 
 truapi-provider = { path = "../truapi-provider", default-features = false, optional = true }
+truapi-coinage = { path = "../truapi-coinage", optional = true }
+truapi-chat-v2 = { path = "../truapi-chat-v2", default-features = false, optional = true }
 futures-timer = { workspace = true, optional = true }
 scale-decode = { workspace = true, features = ["derive"], optional = true }
 # Metadata decoding backs allowance registration, which both the native and the
@@ -114,13 +136,13 @@ sp-crypto-hashing = { workspace = true, optional = true }
 schnorrkel = { workspace = true, features = ["alloc", "getrandom"], optional = true }
 ed25519-dalek = { workspace = true, optional = true }
 substrate-bip39 = { workspace = true, optional = true }
-zeroize = { workspace = true, features = ["alloc", "derive"], optional = true }
+zeroize = { workspace = true, default-features = false, features = ["alloc", "derive"] }
 getrandom = { workspace = true, features = ["js"], optional = true }
 hkdf = { workspace = true, optional = true }
 hpke = { workspace = true, features = ["alloc", "x25519"], optional = true }
 rand_core = { workspace = true, features = ["getrandom"], optional = true }
 chacha20poly1305 = { workspace = true, features = ["alloc"], optional = true }
-x25519-dalek = { workspace = true, features = ["static_secrets"], optional = true }
+x25519-dalek = { workspace = true, features = ["static_secrets", "zeroize"], optional = true }
 sha2 = { workspace = true, optional = true }
 merlin = { workspace = true, optional = true }
 parking_lot = { workspace = true, optional = true }
@@ -131,6 +153,7 @@ tracing-subscriber = { workspace = true, features = ["registry", "std"], optiona
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # The browser core loads `truapi-verifiable` as a separate WASM module instead.
+futures = { workspace = true, features = ["thread-pool"], optional = true }
 verifiable = { git = "https://github.com/paritytech/verifiable.git", rev = "19b03deb89b8dea484b143afc8bbe048a74bc1ff", optional = true }
 truapi-verifiable = { path = "../truapi-verifiable", optional = true }
 rand = { workspace = true, optional = true }
@@ -147,9 +170,10 @@ rcgen = { version = "0.14", default-features = false, features = ["crypto", "rin
 ring = { version = "0.17", optional = true }
 rustls = { version = "0.23", default-features = false, features = ["std", "ring"], optional = true }
 x509-parser = { version = "0.17", optional = true }
-rusqlite = { workspace = true, features = ["bundled"], optional = true }
+rusqlite = { workspace = true, features = ["bundled", "fallible_uint", "hooks"], optional = true }
 async-sqlite = { workspace = true, features = ["bundled"], optional = true }
 rusqlite_migration = { workspace = true, optional = true }
+itertools = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 futures-timer = { workspace = true, features = ["wasm-bindgen"], optional = true }
@@ -165,6 +189,7 @@ web-sys = { workspace = true, features = ["console"], optional = true }
 
 [dev-dependencies]
 scale-info = { workspace = true, features = ["std"] }
+strum = { workspace = true }
 
 [[test]]
 name = "device_permission_revalidation"

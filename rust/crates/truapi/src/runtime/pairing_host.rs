@@ -3,6 +3,8 @@
 mod media;
 mod sso_channel;
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
 	collections::HashMap,
 	sync::{Arc, Mutex, Weak},
@@ -12,74 +14,101 @@ use truapi::latest::{
 	HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
 };
 
+use futures::channel::oneshot;
 use parity_scale_codec::{Decode, Encode};
 use schnorrkel::SecretKey;
+use sso_channel::SsoDisconnectMonitor;
 use zeroize::Zeroize;
 
 use super::{
-	HostSession,
 	allowances::{self, AllowanceCacheKey, AllowanceResource},
+	auth_state::AuthStateMachine,
 	authority::{
 		AuthorityError, AuthoritySession, AutoSigningGrant, AutoSigningKey, BulletinAllowanceKey,
-		CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
-		SignRawAuthorityRequest, StatementStoreAllowanceKey, authority_session,
-		require_current_session,
+		CreateTransactionAuthorityRequest, PaymentTopUpAuthorityError, ProductAuthority,
+		ProductDeviceChatAuthorityError, ProductDeviceChatAuthorityRequest,
+		SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
+		authority_session, require_current_session,
 	},
+	connected_session_ui_info,
+	identity::resolve_session_identity_with_chain,
 	product_subtree,
 	services::RuntimeServices,
-	sso_remote::{SsoSessionKey, sso_message_id},
-	sso_request_service::{PairedSessionOwner, SsoRequestService},
+	sso_pairing::{SsoPairingFlow, SsoPairingOutcome},
+	sso_remote::{SSO_PEER_DISCONNECT_REASON, SessionDisconnects, SsoSessionKey, sso_message_id},
+	statement_store_rpc::StatementStoreRpc,
 };
 use crate::{
 	chain_runtime::ChainRuntime,
 	host_internal::{
 		extrinsic::build_local_transaction,
-		sso_messages::{ProductRequest, RingVrfError},
+		sso_messages::{PaymentTopUpRequest, ProductRequest, RingVrfError},
 		transaction::sign_extrinsic_payload,
 	},
 	host_logic::{
 		entropy::derive_product_entropy_from_source,
+		media_protocol::UnsignedAdvertisement,
 		product_account::{
 			SR25519_SIGNING_CONTEXT, derivation_index_bytes,
 			derive_product_keypair_from_subtree_secret, derive_ring_vrf_entropy_from_domain,
 		},
 		raw_signing::raw_payload_bytes,
-		session::{SessionInfo, SessionState},
+		session::{SessionInfo, SessionState, encode_persisted_session},
+		session_store::SessionStoreChangeNotifier,
 	},
 	runtime::vrf,
+	session_usernames::SessionUsernames,
 	subscription::Spawner,
 };
-use super::statement_store_rpc::StatementStoreRpc;
-use crate::chain_runtime::ChainRuntime;
-use crate::host_internal::extrinsic::build_local_transaction;
-use crate::host_internal::sso_messages::{PaymentTopUpRequest, ProductRequest, RingVrfError};
-use crate::host_internal::transaction::sign_extrinsic_payload;
-use crate::host_logic::entropy::derive_product_entropy_from_source;
-use crate::host_logic::media_protocol::UnsignedAdvertisement;
-use crate::host_logic::product_account::{
-    SR25519_SIGNING_CONTEXT, derivation_index_bytes, derive_product_keypair_from_subtree_secret,
-    derive_ring_vrf_entropy_from_domain,
-};
-use crate::host_logic::raw_signing::raw_payload_bytes;
-use crate::host_logic::session::{SessionInfo, SessionState, encode_persisted_session};
-use crate::host_logic::session_store::SessionStoreChangeNotifier;
-use crate::runtime::vrf;
-use crate::session_usernames::SessionUsernames;
-use crate::subscription::Spawner;
 
 use crate::platform::{
-	CoreStorageKey, PairingHostConfig, Platform, ProductId, SignVrfReview, UserConfirmationReview,
+	CoreStorageKey, PairingHostConfig, Platform, ProductContext, SignVrfReview,
+	UserConfirmationReview, normalize_product_identifier,
 };
-use tracing::warn;
-use truapi::{CallContext, latest};
+use futures::StreamExt;
+use tracing::{instrument, warn};
+use truapi::{
+	CallContext, CallError, latest,
+	versioned::account::{HostRequestLoginError, HostRequestLoginResponse},
+};
 use zeroize::Zeroizing;
 
 use super::{
-	ring_vrf_registry::{RingVrfRegistryStore, apply_ring_vrf_disclosure, validate_owner_listing},
+	ring_vrf_registry::{RingVrfRegistryStore, validate_owner_listing},
 	signing_host::ring_vrf::{
-		ChainRingResolver, MemberCandidate, RingResolver, context_bytes, create_proof,
+		ChainRingResolver, MemberCandidate, RingResolver, create_proof, development_context_bytes,
 	},
 };
+
+struct LoginInFlight {
+	waiters: Vec<oneshot::Sender<Result<(), String>>>,
+}
+
+struct LoginInFlightOwner<'a> {
+	host: &'a PairingHost,
+	active: bool,
+}
+
+impl<'a> LoginInFlightOwner<'a> {
+	fn new(host: &'a PairingHost) -> Self {
+		Self { host, active: true }
+	}
+
+	fn finish(&mut self, result: Result<(), String>) {
+		if self.active {
+			self.active = false;
+			self.host.finish_login_in_flight(result);
+		}
+	}
+}
+
+impl Drop for LoginInFlightOwner<'_> {
+	fn drop(&mut self) {
+		if self.active {
+			self.host.finish_login_in_flight(Err("login request aborted".to_string()));
+		}
+	}
+}
 
 #[derive(Clone, PartialEq, Eq, Hash, Encode, Decode)]
 struct AutoSigningOwner {
@@ -101,14 +130,14 @@ struct PersistedAutoSigningKey {
 	#[zeroize(skip)]
 	owner: AutoSigningOwner,
 	#[zeroize(skip)]
-	product_id: ProductId,
+	product_id: String,
 	#[zeroize(skip)]
 	expected_product_subtree_public_key: [u8; 32],
 	secret: [u8; 64],
 	ring_vrf_domain_entropy: [u8; 32],
 }
 
-type AutoSigningCacheKey = (AutoSigningOwner, ProductId);
+type AutoSigningCacheKey = (AutoSigningOwner, String);
 
 fn decode_auto_signing_keys(blob: &[u8]) -> Result<Vec<PersistedAutoSigningKey>, AuthorityError> {
 	let mut input = blob;
@@ -145,6 +174,58 @@ fn validate_auto_signing_key(
 	Ok(AutoSigningKey::from_parts(*secret, *ring_vrf_domain_entropy))
 }
 
+#[derive(Default)]
+struct SessionLifecycle {
+	epoch: u64,
+	external_session_active: bool,
+}
+
+impl SessionLifecycle {
+	fn advance(&mut self) -> u64 {
+		self.epoch = self.epoch.checked_add(1).expect("session lifecycle epoch exhausted");
+		self.external_session_active = false;
+		self.epoch
+	}
+
+	fn advance_preserving_source(&mut self) -> u64 {
+		let external_session_active = self.external_session_active;
+		let epoch = self.advance();
+		self.external_session_active = external_session_active;
+		epoch
+	}
+}
+
+#[derive(Debug, derive_more::Display)]
+enum StoredSessionActivationError {
+	#[display("stored auth session is absent")]
+	Missing,
+	#[display("invalid stored auth session: {_0}")]
+	Invalid(String),
+	#[display("failed to read stored auth session: {_0}")]
+	Read(String),
+	#[display("stored auth session changed during activation")]
+	Changed,
+}
+
+/// State carried across the reconciles of one session store sync task.
+#[derive(Default)]
+struct SessionStoreSync {
+	// Storage clears can notify this subscription; clear at most once per read-error streak.
+	cleared_after_read_error: bool,
+}
+
+impl SessionStoreSync {
+	/// Re-read the persisted auth session and reconcile the in-memory one.
+	async fn reconcile(&mut self, pairing_host: &PairingHost) {
+		self.cleared_after_read_error = matches!(
+			pairing_host
+				.reconcile_stored_session(!self.cleared_after_read_error, true)
+				.await,
+			Err(StoredSessionActivationError::Read(_))
+		);
+	}
+}
+
 /// Remote account authority for a pairing host.
 pub struct PairingHost {
 	/// Shared runtime services. Held, not just borrowed at construction, so
@@ -154,28 +235,47 @@ pub struct PairingHost {
 	services: Arc<RuntimeServices>,
 	/// Host platform backing all syscalls.
 	pub platform: Arc<dyn Platform>,
-	/// Shared chain runtime, used to assemble granted transactions locally.
+	/// Pairing configuration supplied by the embedding host.
+	pub host_config: PairingHostConfig,
+	/// Shared chain runtime, used to resolve session identity.
 	pub chain: ChainRuntime,
-	/// The paired session, selected and served by [`SsoRequestService`].
-	session: Arc<SsoRequestService>,
 	/// Active inter-host session with a signing host.
 	session_state: Arc<SessionState>,
+	session_store_changes: Arc<SessionStoreChangeNotifier>,
+	/// Core-owned auth-state machine emitting to the host.
+	pub auth_state: AuthStateMachine,
+	/// People-chain statement store RPC client.
+	pub statement_store: StatementStoreRpc,
+	session_disconnects: Arc<SessionDisconnects>,
+	/// `message_id` of the request the session's request channel carries,
+	/// the only one a `Cancel` may name without replacing another request.
+	newest_request: Mutex<Option<String>>,
+	disconnect_monitor: Mutex<Option<SsoDisconnectMonitor>>,
+	login_in_flight: Mutex<Option<LoginInFlight>>,
+	login_generation: Mutex<u64>,
 	statement_store_allowances: Mutex<HashMap<AllowanceCacheKey, StatementStoreAllowanceKey>>,
 	bulletin_allowances: Mutex<HashMap<AllowanceCacheKey, BulletinAllowanceKey>>,
-	product_subtrees: Mutex<HashMap<(SsoSessionKey, ProductId), [u8; 32]>>,
+	product_subtrees: Mutex<HashMap<(SsoSessionKey, String), [u8; 32]>>,
 	auto_signing_keys: Mutex<HashMap<AutoSigningCacheKey, AutoSigningKey>>,
 	ring_resolver: Arc<dyn RingResolver>,
 	ring_vrf_registry: Arc<RingVrfRegistryStore>,
 	/// Orders session-secret cache/storage writes against teardown and activation.
 	session_secret_storage: futures::lock::Mutex<()>,
+	session_store_activation: futures::lock::Mutex<()>,
+	session_lifecycle: Mutex<SessionLifecycle>,
 	/// Keep preimage submissions in the core instead of sending them to the
 	/// Bulletin chain. A test host whose wallet answers allowances in-page
 	/// holds no on-chain authorization to submit with.
 	#[cfg(feature = "test-host")]
 	submit_preimages_locally: core::sync::atomic::AtomicBool,
-	/// Self-reference captured by spawned registration mirrors.
+	#[cfg(test)]
+	external_session_activation_pause: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
+	/// Change notifications the sync task has finished reconciling.
+	#[cfg(test)]
+	session_store_change_ticks: AtomicUsize,
+	/// Self-reference captured by the spawned disconnect-monitor task.
 	weak_self: Weak<PairingHost>,
-	/// Task spawner for background work.
+	/// Task spawner for background monitors.
 	pub spawner: Spawner,
 }
 
@@ -378,17 +478,20 @@ impl PairingHost {
 
 	async fn install_external_session(&self, blob: &[u8]) -> Result<(), String> {
 		let _activation = self.session_store_activation.lock().await;
-		let session = crate::host_logic::session::decode_persisted_session(blob)?;
+		let mut session = crate::host_logic::session::decode_persisted_session(blob)?;
 		let activation_epoch = self.advance_session_lifecycle();
-		let resolved = resolve_session_identity_with_chain(
+		if let Err(reason) = resolve_session_identity_with_chain(
 			&self.chain,
 			self.host_config.asset_hub_chain_genesis_hash,
-			session,
+			&mut session,
 		)
-		.await;
+		.await
+		{
+			warn!(%reason, "external session identity lookup unavailable");
+		}
 		#[cfg(test)]
 		self.wait_at_external_session_activation_pause().await;
-		self.set_connected_session_if_current(resolved, activation_epoch, true).await;
+		self.set_connected_session_if_current(session, activation_epoch, true).await;
 		Ok(())
 	}
 
@@ -430,19 +533,22 @@ impl PairingHost {
 				return Err(StoredSessionActivationError::Read(error.reason));
 			},
 		};
-		let session = match crate::host_logic::session::decode_persisted_session(&blob) {
+		let mut resolved = match crate::host_logic::session::decode_persisted_session(&blob) {
 			Ok(session) => session,
 			Err(error) => {
 				self.clear_disconnected_session(true).await;
 				return Err(StoredSessionActivationError::Invalid(error));
 			},
 		};
-		let resolved = resolve_session_identity_with_chain(
+		if let Err(reason) = resolve_session_identity_with_chain(
 			&self.chain,
 			self.host_config.asset_hub_chain_genesis_hash,
-			session,
+			&mut resolved,
 		)
-		.await;
+		.await
+		{
+			warn!(%reason, "stored session identity lookup unavailable");
+		}
 
 		// Identity resolution can await chain I/O. Re-read the slot before
 		// installation so an older activation cannot overwrite or expose a
@@ -724,6 +830,7 @@ impl PairingHost {
 			lifecycle.advance();
 			let previous = self.session_state.current();
 			self.session_state.clear_session();
+			self.services.contacts_session_changed();
 			previous
 		};
 		self.stop_session_channel(previous.as_ref());
@@ -795,6 +902,7 @@ impl PairingHost {
 			}
 			let previous = self.session_state.current();
 			self.session_state.set_session(session.clone());
+			self.services.contacts_session_changed();
 			lifecycle.external_session_active = external_session;
 			previous
 		};
@@ -1069,24 +1177,27 @@ impl PairingHost {
 		require_current_session(&self.session_state, session)
 	}
 
-	async fn refresh_current_session_identity(&self) -> Option<AuthoritySession> {
-		let current = self.session_state.current()?;
-		if current.has_username() || self.host_config.asset_hub_chain_genesis_hash == [0; 32] {
-			return Some(authority_session(&current));
+	async fn refresh_current_session_identity(&self) -> Result<Option<AuthoritySession>, String> {
+		let Some(current) = self.session_state.current() else {
+			return Ok(None);
+		};
+		if current.has_username() {
+			return Ok(Some(authority_session(&current)));
 		}
 
-		let resolved = resolve_session_identity_with_chain(
+		let mut resolved = current.clone();
+		resolve_session_identity_with_chain(
 			&self.chain,
 			self.host_config.asset_hub_chain_genesis_hash,
-			current.clone(),
+			&mut resolved,
 		)
-		.await;
+		.await?;
 		if !resolved.has_username() || resolved == current {
-			return self.current_session();
+			return Ok(self.current_session());
 		}
 
 		if !self.session_state.replace_session_if_current(&current, resolved.clone()) {
-			return self.current_session();
+			return Ok(self.current_session());
 		}
 		self.auth_state.connected(&connected_session_ui_info(&resolved));
 
@@ -1098,7 +1209,7 @@ impl PairingHost {
 			warn!(reason = %err.reason, "refreshed session identity persist failed");
 		}
 
-		match self.session_state.current() {
+		Ok(match self.session_state.current() {
 			Some(live) if live != resolved => {
 				if let Err(err) = self
 					.platform
@@ -1121,7 +1232,7 @@ impl PairingHost {
 				None
 			},
 			_ => Some(authority_session(&resolved)),
-		}
+		})
 	}
 
 	/// Persist and memory-cache a freshly allocated statement-store allowance
@@ -1756,7 +1867,7 @@ impl PairingHost {
 		.await?;
 		Ok((
 			latest::ProductAccountId {
-				dot_ns_identifier: access.owner.clone(),
+				dot_ns_identifier: access.owner.parse().expect("normalized product owner"),
 				derivation_index: handle.derivation_index.clone(),
 			},
 			access,
@@ -2120,7 +2231,9 @@ impl PairingHost {
 		let private_session = self.current_private_session(session)?;
 		let handle = latest::ProductAccountId {
 			dot_ns_identifier: normalize_product_identifier(&request.calling_product_id)
-				.map_err(|error| RingVrfError::Unknown { reason: error.to_string() })?,
+				.map_err(|error| RingVrfError::Unknown { reason: error.to_string() })?
+				.parse()
+				.expect("normalized calling product id"),
 			derivation_index: request.payload.index.clone(),
 		};
 		if let Some(auto_signing) = self
@@ -2213,6 +2326,18 @@ impl PairingHost {
 		self.remote_ring_vrf_sign(cx, &private_session, request).await
 	}
 
+	async fn product_device_chat(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		request: ProductDeviceChatAuthorityRequest,
+	) -> Result<latest::HostProductDeviceChatResponse, ProductDeviceChatAuthorityError> {
+		let private_session = self
+			.current_private_session(session)
+			.map_err(|_| ProductDeviceChatAuthorityError::Disconnected)?;
+		self.remote_product_device_chat(cx, &private_session, request).await
+	}
+
 	async fn allocate_resources(
 		&self,
 		cx: &CallContext,
@@ -2274,7 +2399,8 @@ impl PairingHost {
 				reason: "pairing host: exact statement proof signing needs an AutoSigning \
                          capability; the current SSO raw-signing protocol cannot carry it"
 					.to_string(),
-			})?;
+			});
+		};
 		Ok(keypair
 			.secret
 			.sign_simple(SR25519_SIGNING_CONTEXT, &payload, &keypair.public)
@@ -2284,7 +2410,7 @@ impl PairingHost {
 	fn derive_entropy(
 		&self,
 		session: &AuthoritySession,
-		product_id: &ProductId,
+		product_id: &str,
 		context: &[u8],
 	) -> Result<[u8; 32], AuthorityError> {
 		let session = self.current_private_session(session)?;
@@ -2312,64 +2438,27 @@ impl PairingHost {
 	}
 }
 
-#[async_trait::async_trait]
-impl PairedSessionOwner for PairingHost {
-	fn session_ended(&self, previous: Option<&SessionInfo>) {
-		self.clear_statement_store_allowance_keys(previous);
-		self.clear_bulletin_allowance_keys(previous);
-		self.clear_product_subtrees(previous);
-	}
-
-	async fn session_cleared(&self, previous: Option<&SessionInfo>) {
-		let _storage_guard = self.session_secret_storage.lock().await;
-		if let Some(session) = previous {
-			self.clear_statement_store_allowance_keys(Some(session));
-			self.clear_bulletin_allowance_keys(Some(session));
-			if let Err(reason) =
-				allowances::clear_session_allowance_keys(&*self.platform, session).await
-			{
-				warn!(%reason, "allowance capability clear failed during disconnect");
-			}
-			self.clear_stored_product_subtrees(session).await;
-		}
-		self.clear_product_subtrees(previous);
-		if let Err(reason) = self.clear_auto_signing_keys_under_storage_guard().await {
-			warn!(%reason, "AutoSigning capability clear failed during disconnect");
+fn apply_ring_vrf_disclosure(
+	entries: &mut [latest::RegisteredRingVrfKey],
+	disclosure: latest::RingVrfKeyDisclosure,
+) {
+	if disclosure == latest::RingVrfKeyDisclosure::Anonymized {
+		for entry in entries {
+			entry.public_key = None;
 		}
 	}
+}
 
-	async fn prepare_session(&self, previous: Option<&SessionInfo>, next: &SessionInfo) {
-		let identity_replaced = previous.is_some_and(|previous| {
-			AutoSigningOwner::from_session(previous) != AutoSigningOwner::from_session(next)
-		});
-		if identity_replaced {
-			if let Err(reason) = self.clear_auto_signing_keys().await {
-				warn!(%reason, "AutoSigning capability clear failed during identity replacement");
-			}
-		} else if previous.is_none() {
-			if let Err(reason) = self.clear_auto_signing_keys_for_other_owner(next).await {
-				warn!(%reason, "AutoSigning capability owner reconciliation failed");
-			}
-		} else {
-			let _storage_guard = self.session_secret_storage.lock().await;
-		}
-		if let Some(previous) = previous.filter(|previous| *previous != next) {
-			let _storage_guard = self.session_secret_storage.lock().await;
-			self.clear_statement_store_allowance_keys(Some(previous));
-			self.clear_bulletin_allowance_keys(Some(previous));
-			if let Err(reason) =
-				allowances::clear_session_allowance_keys(&*self.platform, previous).await
-			{
-				warn!(%reason, "allowance capability clear failed during session replacement");
-			}
-		}
-	}
-
-	async fn session_reset(&self) {
-		let _storage_guard = self.session_secret_storage.lock().await;
-		self.clear_statement_store_allowance_keys(None);
-		self.clear_bulletin_allowance_keys(None);
-		self.clear_product_subtrees(None);
+fn login_error_reason(err: &CallError<HostRequestLoginError>) -> String {
+	match err {
+		CallError::Domain(HostRequestLoginError::V1(latest::HostRequestLoginError::Unknown {
+			reason,
+		})) |
+		CallError::HostFailure { reason } => reason.clone(),
+		CallError::Unsupported => "login unsupported".to_string(),
+		CallError::Denied => "login denied".to_string(),
+		CallError::MalformedFrame { reason } => reason.clone(),
+		CallError::Cancelled => "login cancelled".to_string(),
 	}
 }
 
@@ -2384,25 +2473,44 @@ impl ProductAuthority for PairingHost {
 		self.submit_preimages_locally.load(core::sync::atomic::Ordering::Relaxed)
 	}
 
+	fn session_state(&self) -> Arc<SessionState> {
+		PairingHost::session_state(self)
+	}
+
 	#[cfg(test)]
 	fn cache_product_subtree_for_test(
 		&self,
 		session: &SessionInfo,
-		product_id: &ProductId,
+		product_id: &str,
 		public_key: [u8; 32],
 	) {
 		let sso = session.sso.as_ref().expect("test session must contain SSO");
 		self.product_subtrees
 			.lock()
 			.expect("product subtree cache mutex poisoned")
-			.insert((SsoSessionKey::from_session(sso), product_id.clone()), public_key);
+			.insert((SsoSessionKey::from_session(sso), product_id.to_string()), public_key);
+	}
+
+	async fn request_login(
+		&self,
+		product: &ProductContext,
+	) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
+		PairingHost::request_login(self, product).await
+	}
+
+	async fn disconnect(&self) {
+		PairingHost::disconnect(self).await;
+	}
+
+	async fn refresh_session_identity(&self) -> Result<Option<AuthoritySession>, String> {
+		self.refresh_current_session_identity().await
 	}
 
 	async fn product_subtree_public_key(
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_id: &ProductId,
+		product_id: String,
 	) -> Result<[u8; 32], AuthorityError> {
 		PairingHost::product_subtree_public_key(self, cx, session, product_id).await
 	}
@@ -2410,20 +2518,25 @@ impl ProductAuthority for PairingHost {
 	async fn subtree_resolution_reaches_account_holder(
 		&self,
 		session: &AuthoritySession,
-		product_id: &ProductId,
+		product_id: &str,
 	) -> bool {
 		PairingHost::subtree_reaches_account_holder(self, session, product_id).await
 	}
 
-    async fn refresh_session_identity(&self) -> Result<Option<AuthoritySession>, String> {
-        self.refresh_current_session_identity().await
-    }
+	async fn auto_signing_status(
+		&self,
+		session: &AuthoritySession,
+		calling_product_id: &str,
+		account: &latest::ProductAccountId,
+	) -> Result<AutoSigningGrant, AuthorityError> {
+		PairingHost::auto_signing_status(self, session, calling_product_id, account).await
+	}
 
 	async fn sign_vrf(
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: &ProductId,
+		calling_product_id: String,
 		request: latest::HostAccountSignVrfRequest,
 	) -> Result<latest::VrfSignature, AuthorityError> {
 		PairingHost::sign_vrf(self, cx, session, calling_product_id, request).await
@@ -2433,7 +2546,7 @@ impl ProductAuthority for PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: Option<&ProductId>,
+		calling_product_id: Option<&str>,
 		request: SignPayloadAuthorityRequest,
 	) -> Result<latest::HostSignPayloadResponse, AuthorityError> {
 		PairingHost::sign_payload(self, cx, session, calling_product_id, request).await
@@ -2443,7 +2556,7 @@ impl ProductAuthority for PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: Option<&ProductId>,
+		calling_product_id: Option<&str>,
 		request: SignRawAuthorityRequest,
 		watermarked: bool,
 	) -> Result<latest::HostSignPayloadResponse, AuthorityError> {
@@ -2454,7 +2567,7 @@ impl ProductAuthority for PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: Option<&ProductId>,
+		calling_product_id: Option<&str>,
 		request: CreateTransactionAuthorityRequest,
 	) -> Result<latest::HostCreateTransactionResponse, AuthorityError> {
 		PairingHost::create_transaction(self, cx, session, calling_product_id, request).await
@@ -2505,11 +2618,34 @@ impl ProductAuthority for PairingHost {
 		PairingHost::ring_vrf_sign(self, cx, session, request).await
 	}
 
+	async fn product_device_chat(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		request: ProductDeviceChatAuthorityRequest,
+	) -> Result<latest::HostProductDeviceChatResponse, ProductDeviceChatAuthorityError> {
+		PairingHost::product_device_chat(self, cx, session, request).await
+	}
+
+	async fn payment_top_up(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		mut request: PaymentTopUpRequest,
+	) -> Result<(), PaymentTopUpAuthorityError> {
+		let current = require_current_session(&self.session_state, session)?;
+		request.calling_product_id = normalize_product_identifier(&request.calling_product_id)
+			.map_err(|_| {
+				PaymentTopUpAuthorityError::Domain(latest::HostPaymentTopUpError::InvalidSource)
+			})?;
+		self.remote_payment_top_up(cx, &current, request).await
+	}
+
 	async fn allocate_resources(
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_id: &ProductId,
+		product_id: String,
 		request: latest::HostRequestResourceAllocationRequest,
 	) -> Result<latest::HostRequestResourceAllocationResponse, AuthorityError> {
 		PairingHost::allocate_resources(self, cx, session, product_id, request).await
@@ -2519,7 +2655,7 @@ impl ProductAuthority for PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_id: &ProductId,
+		product_id: String,
 	) -> Result<StatementStoreAllowanceKey, AuthorityError> {
 		PairingHost::statement_store_allowance_key(self, cx, session, product_id).await
 	}
@@ -2528,7 +2664,7 @@ impl ProductAuthority for PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_id: &ProductId,
+		product_id: String,
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
 		PairingHost::bulletin_allowance_key(self, cx, session, product_id).await
 	}
@@ -2537,7 +2673,7 @@ impl ProductAuthority for PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_id: &ProductId,
+		product_id: String,
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
 		PairingHost::refresh_bulletin_allowance_key(self, cx, session, product_id).await
 	}
@@ -2546,7 +2682,7 @@ impl ProductAuthority for PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: Option<&ProductId>,
+		calling_product_id: Option<&str>,
 		account: latest::ProductAccountId,
 		payload: Vec<u8>,
 	) -> Result<[u8; 64], AuthorityError> {
@@ -2561,90 +2697,35 @@ impl ProductAuthority for PairingHost {
 		.await
 	}
 
+	async fn certify_media_endpoint(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		unsigned: UnsignedAdvertisement,
+	) -> Result<[u8; 64], AuthorityError> {
+		self.certify_paired_media_endpoint(cx, session, unsigned).await
+	}
+
+	fn sign_media_statement(
+		&self,
+		session: &AuthoritySession,
+		payload: Vec<u8>,
+		topics: Vec<[u8; 32]>,
+		expires_at: u64,
+	) -> Result<Vec<u8>, AuthorityError> {
+		self.sign_paired_media_statement(session, payload, topics, expires_at)
+	}
+
 	fn derive_entropy(
 		&self,
 		session: &AuthoritySession,
-		product_id: &ProductId,
+		product_id: &str,
 		context: &[u8],
 	) -> Result<[u8; 32], AuthorityError> {
 		PairingHost::derive_entropy(self, session, product_id, context)
 	}
 
-    async fn statement_store_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<StatementStoreAllowanceKey, AuthorityError> {
-        PairingHost::statement_store_allowance_key(self, cx, session, product_id).await
-    }
-
-    async fn bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        PairingHost::bulletin_allowance_key(self, cx, session, product_id).await
-    }
-
-    async fn refresh_bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError> {
-        PairingHost::refresh_bulletin_allowance_key(self, cx, session, product_id).await
-    }
-
-    async fn sign_statement_store_product_payload(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
-        account: v01::ProductAccountId,
-        payload: Vec<u8>,
-    ) -> Result<[u8; 64], AuthorityError> {
-        PairingHost::sign_statement_store_product_payload(
-            self,
-            cx,
-            session,
-            calling_product_id,
-            account,
-            payload,
-        )
-        .await
-    }
-
-    async fn certify_media_endpoint(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        unsigned: UnsignedAdvertisement,
-    ) -> Result<[u8; 64], AuthorityError> {
-        self.certify_paired_media_endpoint(cx, session, unsigned).await
-    }
-
-    fn sign_media_statement(
-        &self,
-        session: &AuthoritySession,
-        payload: Vec<u8>,
-        topics: Vec<[u8; 32]>,
-        expires_at: u64,
-    ) -> Result<Vec<u8>, AuthorityError> {
-        self.sign_paired_media_statement(session, payload, topics, expires_at)
-    }
-
-    fn derive_entropy(
-        &self,
-        session: &AuthoritySession,
-        product_id: &str,
-        context: &[u8],
-    ) -> Result<[u8; 32], AuthorityError> {
-        PairingHost::derive_entropy(self, session, product_id, context)
-    }
-
-    fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError> {
-        PairingHost::contacts_handle_key(self, session)
-    }
+	fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError> {
+		PairingHost::contacts_handle_key(self, session)
+	}
 }

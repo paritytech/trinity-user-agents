@@ -25,6 +25,7 @@ clap = "4"
 console_error_panic_hook = "0.1"
 convert_case = "0.6"
 crossterm = "0.29"
+curve25519-dalek = { version = "4", default-features = false }
 derive_more = { version = "2", default-features = false }
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc"] }
 flate2 = "1"
@@ -50,8 +51,9 @@ log = "0.4"
 merlin = "3"
 nanoid = "0.4"
 parking_lot = "0.12"
-parity-scale-codec = "3"
+parity-scale-codec = { version = "3", default-features = false }
 pin-project = "1"
+polkavm-host-runtime = { git = "https://github.com/paritytech/polkavm-host-runtime.git", rev = "959ad63f7312a2f4598b9f718ccc2516927cbbff", version = "=0.3.2-rc.9" }
 proc-macro2 = "1"
 qrcode = { version = "0.14.1", default-features = false }
 quote = "1"
@@ -91,6 +93,7 @@ tokio-stream = "0.1"
 tokio-tungstenite = "0.24"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false }
+truapi-provider = { path = "rust/crates/truapi-provider", default-features = false }
 trybuild = "1"
 tsify = { version = "0.5", default-features = false, features = ["js"] }
 unicode-normalization = "0.1"

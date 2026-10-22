@@ -71,16 +71,15 @@ impl AssetHubReader {
 		account_id_value("DotnsGateway.LiteLabelOwner", value)
 	}
 
-    /// Usernames of `account` as recorded by the dotNS contracts.
-    pub async fn dotns_identity(&mut self, account: &[u8; 32]) -> Result<DotnsIdentity> {
-        let controller = self.pop_controller().await?;
-        let labels = resolve_labels(self, &controller, account)
-            .await
-            .map_err(anyhow::Error::msg)?;
-        classify_labels(self, &controller, account, labels)
-            .await
-            .map_err(anyhow::Error::msg)
-    }
+	/// Usernames of `account` as recorded by the dotNS contracts.
+	pub async fn dotns_identity(&mut self, account: &[u8; 32]) -> Result<DotnsIdentity> {
+		let controller = self.pop_controller().await?;
+		let labels =
+			resolve_labels(self, &controller, account).await.map_err(anyhow::Error::msg)?;
+		classify_labels(self, &controller, account, labels)
+			.await
+			.map_err(anyhow::Error::msg)
+	}
 
 	/// Whether the registrar would still mint `label` under the network TLD.
 	/// `false` once the name is registered, whichever flow minted it.

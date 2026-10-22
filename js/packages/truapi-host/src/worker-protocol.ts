@@ -91,7 +91,6 @@ export type MainToWorker =
       kind: "init";
       logLevel: LogLevel;
       hostConfig: unknown;
-      runtimeKind?: "pairing" | "signing";
       /**
        * Optional capabilities the main-thread host serves. The worker proxies
        * only these, so the core sees the same capability set on both sides of
@@ -149,6 +148,19 @@ export type MainToWorker =
       /** Answer allocation as granted without performing it. */
       granted: boolean;
     }
+  | {
+      kind: "setSubmitPreimagesLocally";
+      requestId: number;
+      /** Keep preimage submissions in the core instead of the Bulletin chain. */
+      local: boolean;
+    }
+  | {
+      kind: "setWithheldResources";
+      requestId: number;
+      /** Resource tags answered as refused, replacing any earlier set. */
+      tags: string[];
+    }
+  | { kind: "resetSessionState"; requestId: number }
   | {
       kind: "activateLocalSessionWithIdentity";
       requestId: number;

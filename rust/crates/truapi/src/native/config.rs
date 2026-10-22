@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use crate::platform::{
-	HostInfo, PlatformInfo, ProductContext, ProductExecutionKind, ProductId,
-	RuntimeConfigValidationError, SigningHostConfig,
+	HostInfo, PlatformInfo, ProductContext, ProductExecutionKind, RuntimeConfigValidationError,
+	SigningHostConfig,
 };
 use truapi::latest::HostPlatform;
 
@@ -51,13 +51,17 @@ pub struct HostRuntimeConfig {
 	/// Optional lite username attached to the local signing-host session.
 	#[uniffi(default)]
 	pub local_session_lite_username: Option<String>,
+	/// Trusted Coinage asset instance from the wallet's network configuration.
+	/// Required for instance-scoped Coinage runtimes; omit only for legacy use.
+	#[uniffi(default)]
+	pub coinage_instance_id: Option<u32>,
 }
 
 /// Trusted identity attached by a native host to one executable connection.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct ProductExecutionConfig {
 	/// Canonical product identifier used for policy, storage, and derivation.
-	pub product_id: ProductId,
+	pub product_id: String,
 	/// Trusted executable kind selected before product code starts.
 	pub execution_kind: ProductExecutionKind,
 }
@@ -139,7 +143,7 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 			genesis_hash("bulletin_chain_genesis_hash", &config.bulletin_chain_genesis_hash)?;
 		let asset_hub_chain_genesis_hash =
 			genesis_hash("asset_hub_chain_genesis_hash", &config.asset_hub_chain_genesis_hash)?;
-		let signing = SigningHostConfig::new(
+		let mut signing = SigningHostConfig::new(
 			HostInfo {
 				name: config.host_name,
 				icon: config.host_icon,
@@ -152,6 +156,7 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 			asset_hub_chain_genesis_hash,
 			config.network_suffix,
 		)?;
+		signing.coinage_instance_id = config.coinage_instance_id;
 		Ok(Self {
 			signing,
 			local_session_secret: config.local_session_secret,
@@ -167,8 +172,11 @@ impl From<&ProductContext> for ProductExecutionConfig {
 	}
 }
 
-impl From<ProductExecutionConfig> for ProductContext {
-	fn from(config: ProductExecutionConfig) -> Self {
+impl TryFrom<ProductExecutionConfig> for ProductContext {
+	type Error = NativeRuntimeConfigError;
+
+	fn try_from(config: ProductExecutionConfig) -> Result<Self, Self::Error> {
 		ProductContext::new_with_execution(config.product_id, config.execution_kind)
+			.map_err(NativeRuntimeConfigError::from)
 	}
 }

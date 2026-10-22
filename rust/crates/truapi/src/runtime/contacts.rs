@@ -14,10 +14,12 @@
 //! Keyed on the session's root entropy source, which no product can reach, so
 //! the mapping cannot be recovered by hashing candidate accounts.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
+use std::{
+	collections::{HashMap, HashSet},
+	sync::{
+		Arc, Mutex,
+		atomic::{AtomicBool, Ordering},
+	},
 };
 
 use parity_scale_codec::Encode;
@@ -29,135 +31,135 @@ const MAX_CONTACTS: usize = 256;
 
 /// Bound and deduplicate product-supplied selections without changing order.
 pub fn selected_handles(selected: Vec<crate::latest::ContactHandle>) -> Option<Vec<[u8; 32]>> {
-    if selected.len() > MAX_CONTACTS {
-        return None;
-    }
-    let mut seen = HashSet::with_capacity(selected.len());
-    Some(
-        selected
-            .into_iter()
-            .map(|handle| handle.bytes)
-            .filter(|handle| seen.insert(*handle))
-            .collect(),
-    )
+	if selected.len() > MAX_CONTACTS {
+		return None;
+	}
+	let mut seen = HashSet::with_capacity(selected.len());
+	Some(
+		selected
+			.into_iter()
+			.map(|handle| handle.bytes)
+			.filter(|handle| seen.insert(*handle))
+			.collect(),
+	)
 }
 
 /// Bound and deduplicate accounts a host picker confirmed.
 pub fn selected_accounts(mut accounts: Vec<[u8; 32]>) -> Option<Vec<[u8; 32]>> {
-    if accounts.len() > MAX_CONTACTS {
-        return None;
-    }
-    let mut seen = HashSet::with_capacity(accounts.len());
-    accounts.retain(|account| seen.insert(*account));
-    Some(accounts)
+	if accounts.len() > MAX_CONTACTS {
+		return None;
+	}
+	let mut seen = HashSet::with_capacity(accounts.len());
+	accounts.retain(|account| seen.insert(*account));
+	Some(accounts)
 }
 
 /// Validate only product-controlled geometry, never contact availability.
 pub fn valid_label_placement(request: &crate::latest::HostContactsPlaceLabelsRequest) -> bool {
-    const MAX_SIDE: u32 = 16384;
-    if !(1..=MAX_SIDE).contains(&request.surface_width)
-        || !(1..=MAX_SIDE).contains(&request.surface_height)
-        || request.slots.len() > MAX_CONTACTS
-    {
-        return false;
-    }
-    let mut seen = HashSet::with_capacity(request.slots.len());
-    request.slots.iter().all(|slot| {
-        seen.insert(slot.slot)
-            && (1..=MAX_SIDE).contains(&slot.rect.width)
-            && (1..=MAX_SIDE).contains(&slot.rect.height)
-            && slot.clip.width <= MAX_SIDE
-            && slot.clip.height <= MAX_SIDE
-    })
+	const MAX_SIDE: u32 = 16384;
+	if !(1..=MAX_SIDE).contains(&request.surface_width) ||
+		!(1..=MAX_SIDE).contains(&request.surface_height) ||
+		request.slots.len() > MAX_CONTACTS
+	{
+		return false;
+	}
+	let mut seen = HashSet::with_capacity(request.slots.len());
+	request.slots.iter().all(|slot| {
+		seen.insert(slot.slot) &&
+			(1..=MAX_SIDE).contains(&slot.rect.width) &&
+			(1..=MAX_SIDE).contains(&slot.rect.height) &&
+			slot.clip.width <= MAX_SIDE &&
+			slot.clip.height <= MAX_SIDE
+	})
 }
 
 /// Connection-owned label layer, serialized so delayed draws cannot overtake clears.
 pub struct ContactLabelPlacement {
-    platform: Arc<dyn crate::platform::ContactsPlatform>,
-    product: crate::platform::ProductContext,
-    /// Last submitted width, height and directory generation, held across lookup and draw.
-    pub surface: futures::lock::Mutex<Option<(u32, u32, u64)>>,
-    closed: AtomicBool,
+	platform: Arc<dyn crate::platform::ContactsPlatform>,
+	product: crate::platform::ProductContext,
+	/// Last submitted width, height and directory generation, held across lookup and draw.
+	pub surface: futures::lock::Mutex<Option<(u32, u32, u64)>>,
+	closed: AtomicBool,
 }
 
 impl ContactLabelPlacement {
-    /// Whether teardown has started for this connection.
-    pub fn is_closed(&self) -> bool {
-        self.closed.load(Ordering::Acquire)
-    }
+	/// Whether teardown has started for this connection.
+	pub fn is_closed(&self) -> bool {
+		self.closed.load(Ordering::Acquire)
+	}
 
-    async fn clear(&self, invalidated_before: Option<u64>) {
-        let mut surface = self.surface.lock().await;
-        if let (Some((_, _, generation)), Some(invalidated_before)) = (*surface, invalidated_before)
-            && generation >= invalidated_before
-        {
-            return;
-        }
-        if let Some((surface_width, surface_height, _)) = surface.take() {
-            let _ = self
-                .platform
-                .place_contact_labels(
-                    &self.product,
-                    crate::platform::PlacedContactLabels {
-                        surface_width,
-                        surface_height,
-                        labels: Vec::new(),
-                    },
-                )
-                .await;
-        }
-    }
+	async fn clear(&self, invalidated_before: Option<u64>) {
+		let mut surface = self.surface.lock().await;
+		if let (Some((_, _, generation)), Some(invalidated_before)) = (*surface, invalidated_before) &&
+			generation >= invalidated_before
+		{
+			return;
+		}
+		if let Some((surface_width, surface_height, _)) = surface.take() {
+			let _ = self
+				.platform
+				.place_contact_labels(
+					&self.product,
+					crate::platform::PlacedContactLabels {
+						surface_width,
+						surface_height,
+						labels: Vec::new(),
+					},
+				)
+				.await;
+		}
+	}
 }
 
 /// Host-owned labels belonging to live product connections.
 #[derive(Default)]
 pub struct ContactLabelPlacements {
-    by_runtime: parking_lot::Mutex<HashMap<u64, Arc<ContactLabelPlacement>>>,
+	by_runtime: parking_lot::Mutex<HashMap<u64, Arc<ContactLabelPlacement>>>,
 }
 
 impl ContactLabelPlacements {
-    /// Acquire the connection's serial label layer.
-    pub fn for_runtime(
-        &self,
-        runtime: u64,
-        platform: Arc<dyn crate::platform::ContactsPlatform>,
-        product: &crate::platform::ProductContext,
-    ) -> Arc<ContactLabelPlacement> {
-        self.by_runtime
-            .lock()
-            .entry(runtime)
-            .or_insert_with(|| {
-                Arc::new(ContactLabelPlacement {
-                    platform,
-                    product: product.clone(),
-                    surface: Default::default(),
-                    closed: AtomicBool::new(false),
-                })
-            })
-            .clone()
-    }
+	/// Acquire the connection's serial label layer.
+	pub fn for_runtime(
+		&self,
+		runtime: u64,
+		platform: Arc<dyn crate::platform::ContactsPlatform>,
+		product: &crate::platform::ProductContext,
+	) -> Arc<ContactLabelPlacement> {
+		self.by_runtime
+			.lock()
+			.entry(runtime)
+			.or_insert_with(|| {
+				Arc::new(ContactLabelPlacement {
+					platform,
+					product: product.clone(),
+					surface: Default::default(),
+					closed: AtomicBool::new(false),
+				})
+			})
+			.clone()
+	}
 
-    /// Prevent late draws and clear a connection's labels during teardown.
-    pub fn release(&self, runtime: u64, spawner: &crate::subscription::Spawner) {
-        let Some(placement) = self.by_runtime.lock().remove(&runtime) else {
-            return;
-        };
-        placement.closed.store(true, Ordering::Release);
-        spawner(Box::pin(async move { placement.clear(None).await }));
-    }
+	/// Prevent late draws and clear a connection's labels during teardown.
+	pub fn release(&self, runtime: u64, spawner: &crate::subscription::Spawner) {
+		let Some(placement) = self.by_runtime.lock().remove(&runtime) else {
+			return;
+		};
+		placement.closed.store(true, Ordering::Release);
+		spawner(Box::pin(async move { placement.clear(None).await }));
+	}
 
-    /// Clear labels from the preceding wallet session, without erasing newer draws.
-    pub fn session_changed(&self, generation: u64, spawner: &crate::subscription::Spawner) {
-        let placements: Vec<_> = self.by_runtime.lock().values().cloned().collect();
-        if placements.is_empty() {
-            return;
-        }
-        spawner(Box::pin(async move {
-            for placement in placements {
-                placement.clear(Some(generation)).await;
-            }
-        }));
-    }
+	/// Clear labels from the preceding wallet session, without erasing newer draws.
+	pub fn session_changed(&self, generation: u64, spawner: &crate::subscription::Spawner) {
+		let placements: Vec<_> = self.by_runtime.lock().values().cloned().collect();
+		if placements.is_empty() {
+			return;
+		}
+		spawner(Box::pin(async move {
+			for placement in placements {
+				placement.clear(Some(generation)).await;
+			}
+		}));
+	}
 }
 
 /// Domain separator for the contact-handle key.
@@ -490,17 +492,15 @@ mod tests {
 		assert!(!cache.has_undeclared_handle(&[0x04, 0x00], &[]));
 	}
 
-    #[test]
-    fn a_picked_outcome_carries_nothing_but_a_handle() {
-        // Encoded width pins the payload: one discriminant plus 32 bytes leaves
-        // no room for a name, an account, or a count to ride along.
-        let picked = truapi::latest::ContactPickOutcome::Picked {
-            handle: truapi::latest::ContactHandle {
-                bytes: contact_handle(&key(), &ALICE),
-            },
-        };
-        assert_eq!(picked.encode().len(), 33);
-    }
+	#[test]
+	fn a_picked_outcome_carries_nothing_but_a_handle() {
+		// Encoded width pins the payload: one discriminant plus 32 bytes leaves
+		// no room for a name, an account, or a count to ride along.
+		let picked = truapi::latest::ContactPickOutcome::Picked {
+			handle: truapi::latest::ContactHandle { bytes: contact_handle(&key(), &ALICE) },
+		};
+		assert_eq!(picked.encode().len(), 33);
+	}
 
 	#[test]
 	fn the_outcomes_that_disclose_nothing_encode_to_one_byte() {

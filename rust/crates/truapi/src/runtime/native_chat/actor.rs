@@ -475,7 +475,7 @@ impl NativeChatActor {
 			identity_account_id,
 			identity_chat_public_key: wire::x25519_public_key(&root_secret),
 			product_account: ProductAccountId {
-				dot_ns_identifier: product.to_owned(),
+				dot_ns_identifier: product.parse().expect("validated native chat product id"),
 				derivation_index: DerivationIndex::Raw(index),
 			},
 			account_id: signer.public.to_bytes(),

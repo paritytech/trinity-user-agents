@@ -1,5 +1,7 @@
 //! Normalized product identifiers.
 
+use alloc::string::{String, ToString};
+
 use core::str::FromStr;
 
 use parity_scale_codec::{Decode, Encode};
@@ -195,6 +197,31 @@ impl ProductId {
 impl From<ProductId> for String {
 	fn from(product_id: ProductId) -> Self {
 		product_id.0
+	}
+}
+impl core::ops::Deref for ProductId {
+	type Target = str;
+
+	fn deref(&self) -> &Self::Target {
+		self.as_str()
+	}
+}
+
+impl AsRef<str> for ProductId {
+	fn as_ref(&self) -> &str {
+		self.as_str()
+	}
+}
+
+impl PartialEq<String> for ProductId {
+	fn eq(&self, other: &String) -> bool {
+		self.as_str() == other
+	}
+}
+
+impl PartialEq<ProductId> for String {
+	fn eq(&self, other: &ProductId) -> bool {
+		self == other.as_str()
 	}
 }
 

@@ -1,6 +1,6 @@
 //! Retained allowance scopes and paired-session storage encoding.
 
-use crate::platform::{CoreStorage, CoreStorageKey, ProductId};
+use crate::platform::{CoreStorage, CoreStorageKey};
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::GenericError;
 
@@ -20,7 +20,7 @@ pub enum AllowanceResource {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AllowanceCacheKey {
 	session: SsoSessionKey,
-	product_id: ProductId,
+	product_id: String,
 	resource: AllowanceResource,
 }
 
@@ -28,10 +28,10 @@ impl AllowanceCacheKey {
 	/// Cache key for the session's SSO pair; fails when the session has none.
 	pub fn new(
 		session: &SessionInfo,
-		product_id: &ProductId,
+		product_id: &str,
 		resource: AllowanceResource,
 	) -> Result<Self, AuthorityError> {
-		Ok(Self { session: sso_cache_key(session)?, product_id: product_id.clone(), resource })
+		Ok(Self { session: sso_cache_key(session)?, product_id: product_id.to_string(), resource })
 	}
 
 	/// Whether this key belongs to the given SSO session.
@@ -40,14 +40,14 @@ impl AllowanceCacheKey {
 	}
 
 	/// Whether this key belongs to the given product.
-	pub fn is_for_product(&self, product_id: &ProductId) -> bool {
-		&self.product_id == product_id
+	pub fn is_for_product(&self, product_id: &str) -> bool {
+		self.product_id == product_id
 	}
 }
 
 #[derive(Clone, PartialEq, Eq, Encode, Decode)]
 struct StoredAllowanceEntry {
-	product_id: ProductId,
+	product_id: String,
 	resource: AllowanceResource,
 	slot_account_key: Vec<u8>,
 }
@@ -56,13 +56,13 @@ struct StoredAllowanceEntry {
 pub async fn read_allowance_key(
 	storage: &(impl CoreStorage + ?Sized),
 	session: &SessionInfo,
-	product_id: &ProductId,
+	product_id: &str,
 	resource: AllowanceResource,
 ) -> Result<Option<Vec<u8>>, AuthorityError> {
 	let entries = read_entries(storage, session).await?;
 	Ok(entries
 		.into_iter()
-		.find(|entry| &entry.product_id == product_id && entry.resource == resource)
+		.find(|entry| entry.product_id == product_id && entry.resource == resource)
 		.map(|entry| entry.slot_account_key))
 }
 
@@ -71,14 +71,14 @@ pub async fn read_allowance_key(
 pub async fn write_allowance_key(
 	storage: &(impl CoreStorage + ?Sized),
 	session: &SessionInfo,
-	product_id: &ProductId,
+	product_id: &str,
 	resource: AllowanceResource,
 	slot_account_key: Vec<u8>,
 ) -> Result<(), AuthorityError> {
 	let mut entries = read_entries(storage, session).await?;
-	entries.retain(|entry| !(&entry.product_id == product_id && entry.resource == resource));
+	entries.retain(|entry| !(entry.product_id == product_id && entry.resource == resource));
 	entries.push(StoredAllowanceEntry {
-		product_id: product_id.clone(),
+		product_id: product_id.to_string(),
 		resource,
 		slot_account_key,
 	});
@@ -93,12 +93,12 @@ pub async fn write_allowance_key(
 pub async fn remove_allowance_key(
 	storage: &(impl CoreStorage + ?Sized),
 	session: &SessionInfo,
-	product_id: &ProductId,
+	product_id: &str,
 	resource: AllowanceResource,
 ) -> Result<(), AuthorityError> {
 	let mut entries = read_entries(storage, session).await?;
 	let before = entries.len();
-	entries.retain(|entry| !(&entry.product_id == product_id && entry.resource == resource));
+	entries.retain(|entry| !(entry.product_id == product_id && entry.resource == resource));
 	if entries.len() == before {
 		return Ok(());
 	}
@@ -113,7 +113,7 @@ pub async fn remove_allowance_key(
 pub async fn clear_product_allowance_keys(
 	storage: &(impl CoreStorage + ?Sized),
 	session: &SessionInfo,
-	product_id: &ProductId,
+	product_id: &str,
 ) -> Result<(), AuthorityError> {
 	let key = storage_key(session)?;
 	let Some(blob) = storage.read_core_storage(key.clone()).await.map_err(storage_error)? else {
@@ -126,7 +126,7 @@ pub async fn clear_product_allowance_keys(
 		},
 	};
 	let before = entries.len();
-	entries.retain(|entry| &entry.product_id != product_id);
+	entries.retain(|entry| entry.product_id != product_id);
 	if entries.len() == before {
 		return Ok(());
 	}
@@ -206,11 +206,11 @@ mod tests {
 
 	use crate::test_support::sso_session_info;
 
-    #[derive(Default)]
-    struct MemStorage {
-        inner: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
-        changes: parking_lot::Mutex<Vec<CoreStorageKey>>,
-    }
+	#[derive(Default)]
+	struct MemStorage {
+		inner: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+		changes: parking_lot::Mutex<Vec<CoreStorageKey>>,
+	}
 
 	#[crate::platform::async_trait]
 	impl CoreStorage for MemStorage {
@@ -230,44 +230,33 @@ mod tests {
 			Ok(())
 		}
 
-        async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {
-            self.inner
-                .lock()
-                .expect("storage mutex poisoned")
-                .remove(&key.encode());
-            Ok(())
-        }
+		async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {
+			self.inner.lock().expect("storage mutex poisoned").remove(&key.encode());
+			Ok(())
+		}
 
-        async fn compare_exchange_core_storage(
-            &self, key: CoreStorageKey, expected: Option<Vec<u8>>,
-            replacement: Vec<u8>, notify_on_success: bool,
-        ) -> Result<bool, GenericError> {
-            let encoded = key.encode();
-            let mut storage = self.inner.lock().expect("storage mutex poisoned");
-            if storage.get(&encoded) != expected.as_ref() {
-                return Ok(false);
-            }
-            storage.insert(encoded, replacement);
-            if notify_on_success {
-                self.core_storage_changed(key);
-            }
-            Ok(true)
-        }
+		async fn compare_exchange_core_storage(
+			&self,
+			key: CoreStorageKey,
+			expected: Option<Vec<u8>>,
+			replacement: Vec<u8>,
+			notify_on_success: bool,
+		) -> Result<bool, GenericError> {
+			let encoded = key.encode();
+			let mut storage = self.inner.lock().expect("storage mutex poisoned");
+			if storage.get(&encoded) != expected.as_ref() {
+				return Ok(false);
+			}
+			storage.insert(encoded, replacement);
+			if notify_on_success {
+				self.core_storage_changed(key);
+			}
+			Ok(true)
+		}
 
-        fn core_storage_changed(&self, key: CoreStorageKey) {
-            self.changes.lock().push(key);
-        }
-    }
-
-	#[test]
-	fn entries_stored_with_string_ids_read_and_write_unchanged() {
-		// Installs already hold entries keyed by the id string, so the stored
-		// format must stay that string.
-		let stored =
-			vec![("dotli.dot".to_string(), AllowanceResource::StatementStore, vec![2u8; 64])]
-				.encode();
-		let entries = decode_entries(&stored).expect("string-keyed entries decode");
-		assert_eq!(encode_entries(entries), stored);
+		fn core_storage_changed(&self, key: CoreStorageKey) {
+			self.changes.lock().push(key);
+		}
 	}
 
 	#[test]
@@ -279,7 +268,7 @@ mod tests {
 			write_allowance_key(
 				&storage,
 				&session,
-				&ProductId::for_test("dotli.dot"),
+				"dotli.localhost",
 				AllowanceResource::Bulletin,
 				vec![1; 64],
 			)
@@ -288,7 +277,7 @@ mod tests {
 			write_allowance_key(
 				&storage,
 				&session,
-				&ProductId::for_test("dotli.dot"),
+				"dotli.localhost",
 				AllowanceResource::StatementStore,
 				vec![2; 64],
 			)
@@ -299,7 +288,7 @@ mod tests {
 				read_allowance_key(
 					&storage,
 					&session,
-					&ProductId::for_test("dotli.dot"),
+					"dotli.localhost",
 					AllowanceResource::Bulletin
 				)
 				.await
@@ -310,7 +299,7 @@ mod tests {
 				read_allowance_key(
 					&storage,
 					&session,
-					&ProductId::for_test("dotli.dot"),
+					"dotli.localhost",
 					AllowanceResource::StatementStore
 				)
 				.await
@@ -321,7 +310,7 @@ mod tests {
 				read_allowance_key(
 					&storage,
 					&session,
-					&ProductId::for_test("other.dot"),
+					"other.localhost",
 					AllowanceResource::Bulletin
 				)
 				.await
@@ -340,7 +329,7 @@ mod tests {
 			write_allowance_key(
 				&storage,
 				&session,
-				&ProductId::for_test("dotli.dot"),
+				"dotli.localhost",
 				AllowanceResource::Bulletin,
 				vec![1; 64],
 			)
@@ -351,7 +340,7 @@ mod tests {
 				read_allowance_key(
 					&storage,
 					&session,
-					&ProductId::for_test("dotli.dot"),
+					"dotli.localhost",
 					AllowanceResource::Bulletin
 				)
 				.await

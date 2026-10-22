@@ -2,7 +2,7 @@
 name = "truapi-polkavm-host"
 version = "0.2.0"
 edition.workspace = true
-description = "Optional composition of the TrUAPI server and PolkaVM host runtime"
+description = "Optional composition of the TrUAPI runtime and PolkaVM host runtime"
 license = "MIT"
 repository = "https://github.com/paritytech/host-rust-core"
 publish = false
@@ -11,8 +11,8 @@ publish = false
 crate-type = ["rlib"]
 
 [dependencies]
-polkavm-host-runtime = { git = "https://github.com/paritytech/polkavm-host-runtime.git", rev = "e60a6135be6e00c72c90ca4abe23d2002f4eb962", version = "=0.3.0", features = ["ffi", "native-gpu"] }
-truapi-server = { path = "../truapi-server" }
+polkavm-host-runtime = { workspace = true, features = ["ffi", "native-gpu"] }
+truapi = { path = "../truapi" }
 
 [lints]
 workspace = true

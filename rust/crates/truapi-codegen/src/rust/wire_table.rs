@@ -98,24 +98,29 @@ pub fn generate_wire_table(api: &ApiDefinition, schema_hash: &str) -> Result<Str
 /// `#[wire_trait(id = N)]` annotation; 255 is reserved for protocol errors
 /// (that one is caught as a collision against the seeded reservation, not
 /// here).
-fn trait_wire_id(trait_def: &TraitDef) -> Result<u8> {
+pub(super) fn trait_wire_id(trait_def: &TraitDef) -> Result<u8> {
 	trait_def.wire_trait_id.ok_or_else(|| {
 		anyhow::anyhow!("trait `{}` is missing #[wire_trait(id = N)] annotation", trait_def.name)
 	})
 }
 
-pub(super) fn infer_id(
-    explicit: Option<u8>,
-    anchor: u8,
-    offset: u8,
-    method_name: &str,
-) -> Result<u8> {
-    if let Some(id) = explicit {
-        return Ok(id);
-    }
-    anchor
-        .checked_add(offset)
-        .ok_or_else(|| anyhow::anyhow!("wire id overflow on `{method_name}` (base {anchor})"))
+pub(super) fn method_wire_id(trait_def: &TraitDef, method: &MethodDef) -> Result<u8> {
+	method.wire.id.ok_or_else(|| {
+		anyhow::anyhow!(
+			"method `{}::{}` is missing #[wire(id = N)] annotation",
+			trait_def.name,
+			method.name
+		)
+	})
+}
+
+fn method_entry(trait_def: &TraitDef, trait_id: u8, method: &MethodDef) -> Result<MethodEntry> {
+	let method_id = method_wire_id(trait_def, method)?;
+	let ids = MethodIds { trait_id, method_id };
+	match method.kind {
+		MethodKind::Request => Ok(MethodEntry::Request(ids)),
+		MethodKind::Subscription => Ok(MethodEntry::Subscription(ids)),
+	}
 }
 
 fn insert_entry(

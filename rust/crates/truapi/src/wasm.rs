@@ -23,15 +23,18 @@ use std::{
 };
 
 use crate::platform::{
-    ChainProvider, ChatPlatform, ContactsPlatform, HopProvider, HostInfo, JsonRpcConnection,
-    MediaPlatform, PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform, ProductContext,
-    ProductExecutionKind, ProviderError, RuntimeConfigValidationError,
+	ChainProvider, ChatPlatform, ContactsPlatform, GamePlatform, HopProvider, HostInfo,
+	JsonRpcConnection, MediaPlatform, PairingHostConfig, PermissionStatusHost, PlatformInfo,
+	PocketPlatform, ProductContext, ProductExecutionKind, ProfilePlatform, ProviderError,
+	RuntimeConfigValidationError, ScannerPlatform,
 };
 #[cfg(feature = "wasm-signing-host")]
 use crate::platform::{CoinageWalletHost, IdentityBackendHost, SigningHostConfig};
-use futures::channel::mpsc;
-use futures::future::{AbortHandle, Abortable};
-use futures::stream::{self, BoxStream, Stream, StreamExt};
+use futures::{
+	channel::mpsc,
+	future::{AbortHandle, Abortable},
+	stream::{self, BoxStream, Stream, StreamExt},
+};
 use js_sys::{Array, Function, Reflect, Uint8Array};
 use parity_scale_codec::{Decode, Encode};
 use send_wrapper::SendWrapper;
@@ -134,138 +137,111 @@ impl ChainProvider for WasmPlatform {
 		&self,
 		genesis_hash: [u8; 32],
 	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
-		let chain_connect = self.bridge.chain_connect.clone();
-		let chain_connect = SendWrapper::new(chain_connect);
-		SendWrapper::new(async move {
-			let (response_tx, response_rx) = mpsc::unbounded::<String>();
-			let on_response = Closure::wrap(Box::new(move |json: JsValue| {
-				// The host must hand back JSON-RPC frames as strings. Drop (and
-				// log) non-string values rather than forwarding an empty frame
-				// that would desync request/response correlation.
-				match json.as_string() {
-					Some(s) => {
-						let _ = response_tx.unbounded_send(s);
-					},
-					None => web_sys::console::error_1(&JsValue::from_str(
-						"chainConnect onResponse expected a JSON string; dropping non-string value",
-					)),
-				}
-			}) as Box<dyn FnMut(JsValue)>);
+		connect_js_rpc(self.bridge.chain_connect.clone(), genesis_hash, None).await
+	}
+}
 
-			let genesis_arg = JsValue::from_str(&format!("0x{}", hex::encode(genesis_hash)));
-			let returned = chain_connect
-				.call2(&JsValue::NULL, &genesis_arg, on_response.as_ref().unchecked_ref())
-				.map_err(|err| host_error(js_to_string(err)))?;
-			let resolved = await_optional_promise(returned).await.map_err(host_error)?;
-			if resolved.is_null() || resolved.is_undefined() {
-				return Err(host_error("chainConnect returned no connection".into()));
-			}
-			let send_fn = Reflect::get(&resolved, &JsValue::from_str("send"))
-				.map_err(|_| host_error("chainConnect must return { send, close }".into()))?
-				.dyn_into::<Function>()
-				.map_err(|_| host_error("chainConnect.send must be a function".into()))?;
-			let close_fn = Reflect::get(&resolved, &JsValue::from_str("close"))
-				.map_err(|_| host_error("chainConnect.close must be a function".into()))?
-				.dyn_into::<Function>()
-				.map_err(|_| host_error("chainConnect.close must be a function".into()))?;
+#[crate::platform::async_trait]
+impl HopProvider for WasmPlatform {
+	async fn allowed_hop_endpoints(
+		&self,
+		bulletin_genesis_hash: [u8; 32],
+	) -> Result<Vec<String>, v01::GenericError> {
+		let encoded = invoke_bytes_return(
+			&self.bridge.allowed_hop_endpoints,
+			vec![Uint8Array::from(bulletin_genesis_hash.as_slice()).into()],
+		)
+		.await
+		.map_err(generic)?;
+		decode_bytes(encoded, "encoded HOP endpoint list did not decode").map_err(generic)
+	}
 
-    async fn connect_hop(
-        &self,
-        bulletin_genesis_hash: [u8; 32],
-        endpoint: String,
-    ) -> Result<Box<dyn JsonRpcConnection>, v01::GenericError> {
-        let allowed = self.allowed_hop_endpoints(bulletin_genesis_hash).await?;
-        crate::platform::ensure_allowed_hop_endpoint(&endpoint, &allowed)?;
-        connect_js_rpc(
-            self.bridge.hop_connect.clone(),
-            bulletin_genesis_hash,
-            Some(endpoint),
-        )
-        .await
-        .map_err(|error| generic(error.to_string()))
-    }
+	async fn connect_hop(
+		&self,
+		bulletin_genesis_hash: [u8; 32],
+		endpoint: String,
+	) -> Result<Box<dyn JsonRpcConnection>, v01::GenericError> {
+		let allowed = self.allowed_hop_endpoints(bulletin_genesis_hash).await?;
+		crate::platform::ensure_allowed_hop_endpoint(&endpoint, &allowed)?;
+		connect_js_rpc(self.bridge.hop_connect.clone(), bulletin_genesis_hash, Some(endpoint))
+			.await
+			.map_err(|error| generic(error.to_string()))
+	}
 }
 
 /// Keep callback closures alive until an asynchronous host open settles, even
 /// when its Rust caller is cancelled. A late connection is closed, not leaked.
 fn connect_js_rpc(
-    connect: Function,
-    genesis_hash: [u8; 32],
-    endpoint: Option<String>,
+	connect: Function,
+	genesis_hash: [u8; 32],
+	endpoint: Option<String>,
 ) -> impl Future<Output = Result<Box<dyn JsonRpcConnection>, ProviderError>> + Send {
-    SendWrapper::new(async move {
-        let (result_tx, result_rx) = futures::channel::oneshot::channel();
-        wasm_bindgen_futures::spawn_local(async move {
-            let result = open_js_rpc(connect, genesis_hash, endpoint).await;
-            if let Err(Ok(connection)) = result_tx.send(result) {
-                connection.close();
-            }
-        });
-        result_rx
-            .await
-            .map_err(|_| host_error("JSON-RPC connection open cancelled".into()))?
-    })
+	SendWrapper::new(async move {
+		let (result_tx, result_rx) = futures::channel::oneshot::channel();
+		wasm_bindgen_futures::spawn_local(async move {
+			let result = open_js_rpc(connect, genesis_hash, endpoint).await;
+			if let Err(Ok(connection)) = result_tx.send(result) {
+				connection.close();
+			}
+		});
+		result_rx
+			.await
+			.map_err(|_| host_error("JSON-RPC connection open cancelled".into()))?
+	})
 }
 
 async fn open_js_rpc(
-    connect: Function,
-    genesis_hash: [u8; 32],
-    endpoint: Option<String>,
+	connect: Function,
+	genesis_hash: [u8; 32],
+	endpoint: Option<String>,
 ) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
-    let private_rpc = endpoint.is_some();
-    let (response_tx, response_rx) = mpsc::unbounded::<String>();
-    let on_response_tx = response_tx.clone();
-    let on_response = Closure::wrap(Box::new(move |json: JsValue| match json.as_string() {
-        Some(json) => {
-            let _ = on_response_tx.unbounded_send(json);
-        }
-        None => web_sys::console::error_1(&JsValue::from_str(
-            "JSON-RPC onResponse expected a JSON string; dropping non-string value",
-        )),
-    }) as Box<dyn FnMut(JsValue)>);
-    let on_closed_tx = response_tx.clone();
-    let on_closed = Closure::wrap(Box::new(move || {
-        on_closed_tx.close_channel();
-    }) as Box<dyn FnMut()>);
-    let mut args = vec![JsValue::from_str(&format!(
-        "0x{}",
-        hex::encode(genesis_hash)
-    ))];
-    if let Some(endpoint) = endpoint {
-        args.push(JsValue::from_str(&endpoint));
-    }
-    args.push(on_response.as_ref().clone());
-    args.push(on_closed.as_ref().clone());
-    let returned = call_js_function(&connect, &args).map_err(host_error)?;
-    let resolved = await_optional_promise(returned).await.map_err(host_error)?;
-    if resolved.is_null() || resolved.is_undefined() {
-        return Err(host_error(
-            "JSON-RPC provider returned no connection".into(),
-        ));
-    }
-    let close_fn = Reflect::get(&resolved, &JsValue::from_str("close"))
-        .map_err(|_| host_error("JSON-RPC connection must return { send, close }".into()))?
-        .dyn_into::<Function>()
-        .map_err(|_| host_error("JSON-RPC connection.close must be a function".into()))?;
-    let send_fn = Reflect::get(&resolved, &JsValue::from_str("send"))
-        .ok()
-        .and_then(|send| send.dyn_into::<Function>().ok());
-    let Some(send_fn) = send_fn else {
-        let _ = close_fn.call0(&JsValue::NULL);
-        return Err(host_error(
-            "JSON-RPC connection.send must be a function".into(),
-        ));
-    };
-    Ok(Box::new(JsCallbackJsonRpcConnection {
-        send_fn: SendWrapper::new(send_fn),
-        close_fn: SendWrapper::new(close_fn),
-        closed: AtomicBool::new(false),
-        private_rpc,
-        _on_response: SendWrapper::new(on_response),
-        _on_closed: SendWrapper::new(on_closed),
-        response_tx,
-        response_rx: std::sync::Mutex::new(Some(response_rx)),
-    }))
+	let private_rpc = endpoint.is_some();
+	let (response_tx, response_rx) = mpsc::unbounded::<String>();
+	let on_response_tx = response_tx.clone();
+	let on_response = Closure::wrap(Box::new(move |json: JsValue| match json.as_string() {
+		Some(json) => {
+			let _ = on_response_tx.unbounded_send(json);
+		},
+		None => web_sys::console::error_1(&JsValue::from_str(
+			"JSON-RPC onResponse expected a JSON string; dropping non-string value",
+		)),
+	}) as Box<dyn FnMut(JsValue)>);
+	let on_closed_tx = response_tx.clone();
+	let on_closed = Closure::wrap(Box::new(move || {
+		on_closed_tx.close_channel();
+	}) as Box<dyn FnMut()>);
+	let mut args = vec![JsValue::from_str(&format!("0x{}", hex::encode(genesis_hash)))];
+	if let Some(endpoint) = endpoint {
+		args.push(JsValue::from_str(&endpoint));
+	}
+	args.push(on_response.as_ref().clone());
+	args.push(on_closed.as_ref().clone());
+	let returned = call_js_function(&connect, &args).map_err(host_error)?;
+	let resolved = await_optional_promise(returned).await.map_err(host_error)?;
+	if resolved.is_null() || resolved.is_undefined() {
+		return Err(host_error("JSON-RPC provider returned no connection".into()));
+	}
+	let close_fn = Reflect::get(&resolved, &JsValue::from_str("close"))
+		.map_err(|_| host_error("JSON-RPC connection must return { send, close }".into()))?
+		.dyn_into::<Function>()
+		.map_err(|_| host_error("JSON-RPC connection.close must be a function".into()))?;
+	let send_fn = Reflect::get(&resolved, &JsValue::from_str("send"))
+		.ok()
+		.and_then(|send| send.dyn_into::<Function>().ok());
+	let Some(send_fn) = send_fn else {
+		let _ = close_fn.call0(&JsValue::NULL);
+		return Err(host_error("JSON-RPC connection.send must be a function".into()));
+	};
+	Ok(Box::new(JsCallbackJsonRpcConnection {
+		send_fn: SendWrapper::new(send_fn),
+		close_fn: SendWrapper::new(close_fn),
+		closed: AtomicBool::new(false),
+		private_rpc,
+		_on_response: SendWrapper::new(on_response),
+		_on_closed: SendWrapper::new(on_closed),
+		response_tx,
+		response_rx: std::sync::Mutex::new(Some(response_rx)),
+	}))
 }
 
 // Account, signing, and statement-store flows live in the Rust core itself.
@@ -296,9 +272,9 @@ impl<T> Drop for JsSubscriptionStream<T> {
 }
 
 fn invoke_js_subscription_args<T>(
-    fn_: &Function,
-    args: &[JsValue],
-    parse_item: fn(JsValue) -> Result<T, String>,
+	fn_: &Function,
+	args: &[JsValue],
+	parse_item: fn(JsValue) -> Result<T, String>,
 ) -> BoxStream<'static, Result<T, v01::GenericError>>
 where
 	T: Send + 'static,
@@ -313,13 +289,13 @@ where
 		let _ = tx.unbounded_send(Err(parse_generic_error(value)));
 	}) as Box<dyn FnMut(JsValue)>);
 
-    let arguments = Array::new();
-    for arg in args {
-        arguments.push(arg);
-    }
-    arguments.push(send_item.as_ref());
-    arguments.push(send_error.as_ref());
-    let call_result = fn_.apply(&JsValue::NULL, &arguments);
+	let arguments = Array::new();
+	for arg in args {
+		arguments.push(arg);
+	}
+	arguments.push(send_item.as_ref());
+	arguments.push(send_error.as_ref());
+	let call_result = fn_.apply(&JsValue::NULL, &arguments);
 
 	let dispose = match call_result {
 		Ok(value) if value.is_null() || value.is_undefined() => None,
@@ -347,158 +323,176 @@ where
 }
 
 struct JsMediaQueue<T> {
-    items: std::collections::VecDeque<T>,
-    terminal: Option<v01::GenericError>,
-    closed: bool,
+	items: std::collections::VecDeque<T>,
+	terminal: Option<v01::GenericError>,
+	closed: bool,
 }
 
 struct JsMediaSubscriptionStream<T> {
-    queue: Arc<std::sync::Mutex<JsMediaQueue<T>>>,
-    waker: Arc<futures::task::AtomicWaker>,
-    _send_item: SendWrapper<Closure<dyn FnMut(JsValue)>>,
-    _send_error: SendWrapper<Closure<dyn FnMut(JsValue)>>,
-    dispose: Option<SendWrapper<Function>>,
+	queue: Arc<std::sync::Mutex<JsMediaQueue<T>>>,
+	waker: Arc<futures::task::AtomicWaker>,
+	_send_item: SendWrapper<Closure<dyn FnMut(JsValue)>>,
+	_send_error: SendWrapper<Closure<dyn FnMut(JsValue)>>,
+	dispose: Option<SendWrapper<Function>>,
 }
 
 impl<T> JsMediaSubscriptionStream<T> {
-    fn close(&mut self) {
-        {
-            let mut queue = self.queue.lock().unwrap_or_else(|p| p.into_inner());
-            queue.closed = true;
-            queue.items.clear();
-        }
-        if let Some(dispose) = self.dispose.take() {
-            let _ = dispose.call0(&JsValue::NULL);
-        }
-    }
+	fn close(&mut self) {
+		{
+			let mut queue = self.queue.lock().unwrap_or_else(|p| p.into_inner());
+			queue.closed = true;
+			queue.items.clear();
+		}
+		if let Some(dispose) = self.dispose.take() {
+			let _ = dispose.call0(&JsValue::NULL);
+		}
+	}
 }
 
 impl<T> Stream for JsMediaSubscriptionStream<T> {
-    type Item = Result<T, v01::GenericError>;
+	type Item = Result<T, v01::GenericError>;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.waker.register(cx.waker());
-        let mut queue = self.queue.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(error) = queue.terminal.take() {
-            drop(queue);
-            self.close();
-            return Poll::Ready(Some(Err(error)));
-        }
-        if let Some(item) = queue.items.pop_front() {
-            return Poll::Ready(Some(Ok(item)));
-        }
-        if queue.closed { Poll::Ready(None) } else { Poll::Pending }
-    }
+	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+		self.waker.register(cx.waker());
+		let mut queue = self.queue.lock().unwrap_or_else(|p| p.into_inner());
+		if let Some(error) = queue.terminal.take() {
+			drop(queue);
+			self.close();
+			return Poll::Ready(Some(Err(error)));
+		}
+		if let Some(item) = queue.items.pop_front() {
+			return Poll::Ready(Some(Ok(item)));
+		}
+		if queue.closed { Poll::Ready(None) } else { Poll::Pending }
+	}
 }
 
 impl<T> Drop for JsMediaSubscriptionStream<T> {
-    fn drop(&mut self) {
-        self.close();
-    }
+	fn drop(&mut self) {
+		self.close();
+	}
 }
 
 /// Host-private Media streams have bounded buffering and finite diagnostics.
 /// The generated adapter supplies positional SCALE/native arguments, including
 /// the trusted product and runtime identity; none become product frames.
 fn invoke_js_media_subscription<T>(
-    fn_: &Function,
-    args: &[JsValue],
-    parse_item: fn(JsValue) -> Result<T, String>,
+	fn_: &Function,
+	args: &[JsValue],
+	parse_item: fn(JsValue) -> Result<T, String>,
 ) -> BoxStream<'static, Result<T, v01::GenericError>>
 where
-    T: Send + 'static,
+	T: Send + 'static,
 {
-    let queue = Arc::new(std::sync::Mutex::new(JsMediaQueue {
-        items: std::collections::VecDeque::new(),
-        terminal: None,
-        closed: false,
-    }));
-    let waker = Arc::new(futures::task::AtomicWaker::new());
-    let item_queue = queue.clone();
-    let item_waker = waker.clone();
-    let send_item = Closure::wrap(Box::new(move |value: JsValue| {
-        let mut queue = item_queue.lock().unwrap_or_else(|p| p.into_inner());
-        if queue.closed { return; }
-        let item = if queue.items.len() >= 128 {
-            Err("media event overflow")
-        } else {
-            parse_item(value).map_err(|_| "media backend failure")
-        };
-        match item {
-            Ok(item) => queue.items.push_back(item),
-            Err(reason) => {
-                queue.items.clear();
-                queue.closed = true;
-                queue.terminal = Some(generic(reason.to_string()));
-            }
-        }
-        drop(queue);
-        item_waker.wake();
-    }) as Box<dyn FnMut(JsValue)>);
-    let error_queue = queue.clone();
-    let error_waker = waker.clone();
-    let send_error = Closure::wrap(Box::new(move |value: JsValue| {
-        let mut queue = error_queue.lock().unwrap_or_else(|p| p.into_inner());
-        if queue.closed { return; }
-        // Preserve only the bridge's finite overflow signal, never arbitrary
-        // host exception text that could include SDP/candidates.
-        let reason = if parse_generic_error(value).reason == "media event overflow" {
-            "media event overflow"
-        } else {
-            "media backend failure"
-        };
-        queue.items.clear();
-        queue.closed = true;
-        queue.terminal = Some(generic(reason.to_string()));
-        drop(queue);
-        error_waker.wake();
-    }) as Box<dyn FnMut(JsValue)>);
-    let arguments = Array::new();
-    for arg in args { arguments.push(arg); }
-    arguments.push(send_item.as_ref());
-    arguments.push(send_error.as_ref());
-    let dispose = match fn_.apply(&JsValue::NULL, &arguments) {
-        Ok(value) => match value.dyn_into::<Function>() {
-            Ok(dispose) => Some(SendWrapper::new(dispose)),
-            Err(_) => {
-                let mut queue = queue.lock().unwrap_or_else(|p| p.into_inner());
-                queue.items.clear();
-                queue.closed = true;
-                queue.terminal = Some(generic("media backend failure".to_string()));
-                None
-            }
-        },
-        Err(_) => {
-            let mut queue = queue.lock().unwrap_or_else(|p| p.into_inner());
-            queue.items.clear();
-            queue.closed = true;
-            queue.terminal = Some(generic("media backend failure".to_string()));
-            None
-        }
-    };
-    Box::pin(JsMediaSubscriptionStream {
-        queue, waker,
-        _send_item: SendWrapper::new(send_item),
-        _send_error: SendWrapper::new(send_error),
-        dispose,
-    })
+	let queue = Arc::new(std::sync::Mutex::new(JsMediaQueue {
+		items: std::collections::VecDeque::new(),
+		terminal: None,
+		closed: false,
+	}));
+	let waker = Arc::new(futures::task::AtomicWaker::new());
+	let item_queue = queue.clone();
+	let item_waker = waker.clone();
+	let send_item = Closure::wrap(Box::new(move |value: JsValue| {
+		let mut queue = item_queue.lock().unwrap_or_else(|p| p.into_inner());
+		if queue.closed {
+			return;
+		}
+		let item = if queue.items.len() >= 128 {
+			Err("media event overflow")
+		} else {
+			parse_item(value).map_err(|_| "media backend failure")
+		};
+		match item {
+			Ok(item) => queue.items.push_back(item),
+			Err(reason) => {
+				queue.items.clear();
+				queue.closed = true;
+				queue.terminal = Some(generic(reason.to_string()));
+			},
+		}
+		drop(queue);
+		item_waker.wake();
+	}) as Box<dyn FnMut(JsValue)>);
+	let error_queue = queue.clone();
+	let error_waker = waker.clone();
+	let send_error = Closure::wrap(Box::new(move |value: JsValue| {
+		let mut queue = error_queue.lock().unwrap_or_else(|p| p.into_inner());
+		if queue.closed {
+			return;
+		}
+		// Preserve only the bridge's finite overflow signal, never arbitrary
+		// host exception text that could include SDP/candidates.
+		let reason = if parse_generic_error(value).reason == "media event overflow" {
+			"media event overflow"
+		} else {
+			"media backend failure"
+		};
+		queue.items.clear();
+		queue.closed = true;
+		queue.terminal = Some(generic(reason.to_string()));
+		drop(queue);
+		error_waker.wake();
+	}) as Box<dyn FnMut(JsValue)>);
+	let arguments = Array::new();
+	for arg in args {
+		arguments.push(arg);
+	}
+	arguments.push(send_item.as_ref());
+	arguments.push(send_error.as_ref());
+	let dispose = match fn_.apply(&JsValue::NULL, &arguments) {
+		Ok(value) => match value.dyn_into::<Function>() {
+			Ok(dispose) => Some(SendWrapper::new(dispose)),
+			Err(_) => {
+				let mut queue = queue.lock().unwrap_or_else(|p| p.into_inner());
+				queue.items.clear();
+				queue.closed = true;
+				queue.terminal = Some(generic("media backend failure".to_string()));
+				None
+			},
+		},
+		Err(_) => {
+			let mut queue = queue.lock().unwrap_or_else(|p| p.into_inner());
+			queue.items.clear();
+			queue.closed = true;
+			queue.terminal = Some(generic("media backend failure".to_string()));
+			None
+		},
+	};
+	Box::pin(JsMediaSubscriptionStream {
+		queue,
+		waker,
+		_send_item: SendWrapper::new(send_item),
+		_send_error: SendWrapper::new(send_error),
+		dispose,
+	})
 }
 
 struct JsCallbackJsonRpcConnection {
 	send_fn: SendWrapper<Function>,
 	close_fn: SendWrapper<Function>,
 	closed: AtomicBool,
+	private_rpc: bool,
 	/// Closure must outlive the connection so JS keeps a live ref to the
 	/// response sink. Dropped together with the rest of the struct.
 	_on_response: SendWrapper<Closure<dyn FnMut(JsValue)>>,
+	_on_closed: SendWrapper<Closure<dyn FnMut()>>,
+	response_tx: mpsc::UnboundedSender<String>,
 	response_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<String>>>,
 }
 
 impl JsonRpcConnection for JsCallbackJsonRpcConnection {
 	fn send(&self, request: String) {
+		if self.closed.load(Ordering::Acquire) || self.response_tx.is_closed() {
+			return;
+		}
 		let arg = JsValue::from_str(&request);
 		if let Err(err) = self.send_fn.call1(&JsValue::NULL, &arg) {
-			web_sys::console::error_1(&err);
+			if self.private_rpc {
+				web_sys::console::error_1(&JsValue::from_str("HOP send failed"));
+			} else {
+				web_sys::console::error_1(&err);
+			}
+			self.close();
 		}
 	}
 
@@ -522,6 +516,7 @@ impl JsonRpcConnection for JsCallbackJsonRpcConnection {
 		if self.closed.swap(true, Ordering::AcqRel) {
 			return;
 		}
+		self.response_tx.close_channel();
 		let _ = self.close_fn.call0(&JsValue::NULL);
 	}
 }
@@ -634,6 +629,24 @@ fn invoke_optional_bytes_return(
 	})
 }
 
+fn invoke_optional_string_return(
+	fn_: &Function,
+	args: Vec<JsValue>,
+) -> impl Future<Output = Result<Option<String>, String>> + Send {
+	let fn_ = fn_.clone();
+	SendWrapper::new(async move {
+		let returned = call_js_function(&fn_, &args)?;
+		let resolved = await_optional_promise(returned).await?;
+		if resolved.is_null() || resolved.is_undefined() {
+			return Ok(None);
+		}
+		resolved
+			.as_string()
+			.map(Some)
+			.ok_or_else(|| "callback must resolve to string, null or undefined".to_string())
+	})
+}
+
 fn decode_bytes<T: Decode>(bytes: Vec<u8>, message: &str) -> Result<T, String> {
 	T::decode(&mut bytes.as_slice()).map_err(|_| message.to_string())
 }
@@ -692,9 +705,9 @@ fn noop_function() -> Function {
 }
 
 fn absent_optional_callback() -> Function {
-    Closure::<dyn Fn() -> JsValue>::new(|| JsValue::UNDEFINED)
-        .into_js_value()
-        .unchecked_into()
+	Closure::<dyn Fn() -> JsValue>::new(|| JsValue::UNDEFINED)
+		.into_js_value()
+		.unchecked_into()
 }
 
 /// Stand-in for a callback of an optional capability the host left out. The
@@ -788,7 +801,7 @@ fn signing_host_config_from_js(value: &JsValue) -> Result<SigningHostConfig, JsV
 	let network_suffix =
 		get_required_string_at(value, "networkSuffix", "runtimeConfig.networkSuffix")?;
 
-	SigningHostConfig::new(
+	let mut config = SigningHostConfig::new(
 		HostInfo {
 			name: get_required_string_at(&host, "name", "runtimeConfig.host.name")?,
 			icon: get_optional_string_at(&host, "icon", "runtimeConfig.host.icon")?,
@@ -816,7 +829,10 @@ fn signing_host_config_from_js(value: &JsValue) -> Result<SigningHostConfig, JsV
 		get_required_bytes32_at(&asset_hub, "genesisHash", "runtimeConfig.assetHub.genesisHash")?,
 		network_suffix,
 	)
-	.map_err(runtime_config_validation_to_js)
+	.map_err(runtime_config_validation_to_js)?;
+	config.coinage_instance_id =
+		get_optional_u32_at(value, "coinageInstanceId", "runtimeConfig.coinageInstanceId")?;
+	Ok(config)
 }
 
 fn product_context_from_js(value: &JsValue) -> Result<ProductContext, JsValue> {
@@ -837,14 +853,13 @@ fn product_context_from_js(value: &JsValue) -> Result<ProductContext, JsValue> {
 				)));
 			},
 		};
-	let product_id = product_id
-		.parse::<ProductId>()
-		.map_err(|error| runtime_config_validation_to_js(error.into()))?;
-	Ok(ProductContext::new_with_execution(product_id, execution_kind))
+	ProductContext::new_with_execution(product_id, execution_kind)
+		.map_err(runtime_config_validation_to_js)
 }
 
 fn runtime_config_field_to_js(field: &str) -> &str {
 	match field {
+		"product_id" => "productId",
 		"host_info.name" => "host.name",
 		"pairing_deeplink_scheme" => "pairing.deeplinkScheme",
 		"people_chain_genesis_hash" => "people.genesisHash",
@@ -870,27 +885,21 @@ fn runtime_config_validation_to_js(err: RuntimeConfigValidationError) -> JsValue
 		RuntimeConfigValidationError::InvalidDeeplinkScheme { scheme } => JsValue::from_str(
 			&format!("runtimeConfig.pairing.deeplinkScheme must not include ://, got {scheme:?}"),
 		),
-		RuntimeConfigValidationError::InvalidProductId(ProductIdError::Empty) => {
-			JsValue::from_str("runtimeConfig.productId must not be empty")
-		},
-		RuntimeConfigValidationError::InvalidProductId(ProductIdError::Invalid { product_id }) => {
+		RuntimeConfigValidationError::InvalidProductId { product_id } => {
 			JsValue::from_str(&format!(
 				"runtimeConfig.productId must be a dotNS or localhost product identifier, got {product_id:?}"
 			))
 		},
-		// By length, never by value: an id that trips this is unbounded in
-		// size, and this string reaches the product's console.
-		RuntimeConfigValidationError::InvalidProductId(ProductIdError::TooLong {
-			limit,
-			actual,
-		}) => JsValue::from_str(&format!(
-			"runtimeConfig.productId must be at most {limit} bytes, got {actual}"
-		)),
 		RuntimeConfigValidationError::InvalidNetworkSuffix { network_suffix } => {
 			JsValue::from_str(&format!(
 				"runtimeConfig.networkSuffix must be a supported dotNS TLD, got {network_suffix:?}"
 			))
 		},
+		// By length, never by value: an id that trips this is unbounded in
+		// size, and this string reaches the product's console.
+		RuntimeConfigValidationError::ProductIdTooLong { limit, actual } => JsValue::from_str(
+			&format!("runtimeConfig.productId must be at most {limit} bytes, got {actual}"),
+		),
 	}
 }
 
@@ -933,6 +942,21 @@ fn get_optional_string_at(
 		.as_string()
 		.map(Some)
 		.ok_or_else(|| JsValue::from_str(&format!("{path} must be a string")))
+}
+
+#[cfg(feature = "wasm-signing-host")]
+fn get_optional_u32_at(value: &JsValue, name: &str, path: &str) -> Result<Option<u32>, JsValue> {
+	let property = Reflect::get(value, &JsValue::from_str(name))?;
+	if property.is_null() || property.is_undefined() {
+		return Ok(None);
+	}
+	property
+		.as_f64()
+		.filter(|number| {
+			number.is_finite() && number.fract() == 0.0 && (0.0..=u32::MAX as f64).contains(number)
+		})
+		.map(|number| Some(number as u32))
+		.ok_or_else(|| JsValue::from_str(&format!("{path} must be an unsigned 32-bit integer")))
 }
 
 fn get_required_string_at(value: &JsValue, name: &str, path: &str) -> Result<String, JsValue> {
@@ -1025,14 +1049,6 @@ fn generic_error_to_js(err: v01::GenericError) -> JsValue {
 	JsValue::from_str(&err.reason)
 }
 
-/// Parse a product id the host passed, rejecting with the reason the way the
-/// runtime's own errors do.
-fn product_id_from_js(product_id: &str) -> Result<ProductId, JsValue> {
-	product_id
-		.parse::<ProductId>()
-		.map_err(|error| JsValue::from_str(&error.to_string()))
-}
-
 struct WasmCoreInner {
 	core: ProductRuntime,
 	dispose_fn: SendWrapper<Function>,
@@ -1041,84 +1057,101 @@ struct WasmCoreInner {
 }
 
 struct WasmPlatformAdapters {
-    platform: Arc<WasmPlatform>,
-    chat_platform: Option<Arc<dyn ChatPlatform>>,
-    contacts_platform: Option<Arc<dyn ContactsPlatform>>,
-    status_host: Option<Arc<dyn PermissionStatusHost>>,
-    pocket_platform: Option<Arc<dyn PocketPlatform>>,
-    #[cfg(feature = "wasm-signing-host")]
-    identity_backend_host: Option<Arc<dyn IdentityBackendHost>>,
-    #[cfg(feature = "wasm-signing-host")]
-    native_wallet: Option<Arc<dyn CoinageWalletHost>>,
-    media_platform: Option<Arc<dyn MediaPlatform>>,
+	platform: Arc<WasmPlatform>,
+	chat_platform: Option<Arc<dyn ChatPlatform>>,
+	contacts_platform: Option<Arc<dyn ContactsPlatform>>,
+	status_host: Option<Arc<dyn PermissionStatusHost>>,
+	pocket_platform: Option<Arc<dyn PocketPlatform>>,
+	profile_platform: Option<Arc<dyn ProfilePlatform>>,
+	#[cfg(feature = "wasm-signing-host")]
+	identity_backend_host: Option<Arc<dyn IdentityBackendHost>>,
+	#[cfg(feature = "wasm-signing-host")]
+	native_wallet: Option<Arc<dyn CoinageWalletHost>>,
+	media_platform: Option<Arc<dyn MediaPlatform>>,
+	game_platform: Option<Arc<dyn GamePlatform>>,
+	scanner_platform: Option<Arc<dyn ScannerPlatform>>,
 }
 
 /// Build the platform and the optional capability adapters supplied by the host.
 fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
-    let has_chat = bridge.has_chat();
-    let has_contacts = bridge.has_contacts();
-    let has_permission_status = bridge.has_permission_status();
-    let has_pocket = bridge.has_pocket();
-    #[cfg(feature = "wasm-signing-host")]
-    let has_identity_backend = bridge.has_identity_backend();
-    #[cfg(feature = "wasm-signing-host")]
-    let has_native_wallet = bridge.has_coinage_wallet();
-    let has_media = bridge.has_media();
-    let platform = Arc::new(WasmPlatform::new(bridge));
-    let chat = has_chat.then(|| platform.clone() as Arc<dyn ChatPlatform>);
-    let contacts = has_contacts.then(|| platform.clone() as Arc<dyn ContactsPlatform>);
-    let status = has_permission_status.then(|| platform.clone() as Arc<dyn PermissionStatusHost>);
-    let pocket = has_pocket.then(|| platform.clone() as Arc<dyn PocketPlatform>);
-    #[cfg(feature = "wasm-signing-host")]
-    let identity_backend =
-        has_identity_backend.then(|| platform.clone() as Arc<dyn IdentityBackendHost>);
-    #[cfg(feature = "wasm-signing-host")]
-    let native_wallet = has_native_wallet.then(|| platform.clone() as Arc<dyn CoinageWalletHost>);
-    let media = has_media.then(|| platform.clone() as Arc<dyn MediaPlatform>);
-    WasmPlatformAdapters {
-        platform,
-        chat_platform: chat,
-        contacts_platform: contacts,
-        status_host: status,
-        pocket_platform: pocket,
-        #[cfg(feature = "wasm-signing-host")]
-        identity_backend_host: identity_backend,
-        #[cfg(feature = "wasm-signing-host")]
-        native_wallet,
-        media_platform: media,
-    }
+	let has_chat = bridge.has_chat();
+	let has_contacts = bridge.has_contacts();
+	let has_permission_status = bridge.has_permission_status();
+	let has_pocket = bridge.has_pocket();
+	let has_profile = bridge.has_profile();
+	#[cfg(feature = "wasm-signing-host")]
+	let has_identity_backend = bridge.has_identity_backend();
+	#[cfg(feature = "wasm-signing-host")]
+	let has_native_wallet = bridge.has_coinage_wallet();
+	let has_media = bridge.has_media();
+	let has_game = bridge.has_game();
+	let has_scanner = bridge.has_scanner();
+	let platform = Arc::new(WasmPlatform::new(bridge));
+	let chat = has_chat.then(|| platform.clone() as Arc<dyn ChatPlatform>);
+	let contacts = has_contacts.then(|| platform.clone() as Arc<dyn ContactsPlatform>);
+	let status = has_permission_status.then(|| platform.clone() as Arc<dyn PermissionStatusHost>);
+	let pocket = has_pocket.then(|| platform.clone() as Arc<dyn PocketPlatform>);
+	let profile = has_profile.then(|| platform.clone() as Arc<dyn ProfilePlatform>);
+	#[cfg(feature = "wasm-signing-host")]
+	let identity_backend =
+		has_identity_backend.then(|| platform.clone() as Arc<dyn IdentityBackendHost>);
+	#[cfg(feature = "wasm-signing-host")]
+	let native_wallet = has_native_wallet.then(|| platform.clone() as Arc<dyn CoinageWalletHost>);
+	let media = has_media.then(|| platform.clone() as Arc<dyn MediaPlatform>);
+	let game = has_game.then(|| platform.clone() as Arc<dyn GamePlatform>);
+	let scanner = has_scanner.then(|| platform.clone() as Arc<dyn ScannerPlatform>);
+	WasmPlatformAdapters {
+		platform,
+		chat_platform: chat,
+		contacts_platform: contacts,
+		status_host: status,
+		pocket_platform: pocket,
+		profile_platform: profile,
+		#[cfg(feature = "wasm-signing-host")]
+		identity_backend_host: identity_backend,
+		#[cfg(feature = "wasm-signing-host")]
+		native_wallet,
+		media_platform: media,
+		game_platform: game,
+		scanner_platform: scanner,
+	}
 }
 
 fn connection_adapters_from_js(
-    callbacks: Option<&JsValue>,
+	callbacks: Option<&JsValue>,
 ) -> Result<Option<crate::host_core::ConnectionAdapters>, JsValue> {
-    let Some(callbacks) = callbacks.filter(|value| !value.is_null() && !value.is_undefined())
-    else {
-        return Ok(None);
-    };
-    let WasmPlatformAdapters {
-        platform,
-        chat_platform,
-        contacts_platform,
-        status_host,
-        pocket_platform,
-        game_platform,
-        scanner_platform,
-    } = wasm_platform(Arc::new(JsBridge::from_js(callbacks)?));
-    Ok(Some(crate::host_core::ConnectionAdapters {
-        platform,
-        chat_platform,
-        contacts_platform,
-        permission_status: status_host,
-        // One-use grants belong to this execution, not the shared host.
-        permission_grants: Arc::default(),
-        pocket_platform,
-        game_platform,
-        scanner_platform,
-        expanded_card: None,
-        chat: Arc::new(crate::runtime::ActionChannel::chat()),
-        renderer: Arc::new(crate::runtime::ActionChannel::renderer()),
-    }))
+	let Some(callbacks) = callbacks.filter(|value| !value.is_null() && !value.is_undefined())
+	else {
+		return Ok(None);
+	};
+	let WasmPlatformAdapters {
+		platform,
+		chat_platform,
+		contacts_platform,
+		status_host,
+		pocket_platform,
+		profile_platform,
+		media_platform,
+		game_platform,
+		scanner_platform,
+		..
+	} = wasm_platform(Arc::new(JsBridge::from_js(callbacks)?));
+	Ok(Some(crate::host_core::ConnectionAdapters {
+		platform,
+		chat_platform,
+		contacts_platform,
+		permission_status: status_host,
+		// One-use grants belong to this execution, not the shared host.
+		permission_grants: Arc::default(),
+		pocket_platform,
+		profile_platform,
+		media_platform,
+		game_platform,
+		scanner_platform,
+		expanded_card: None,
+		chat: Arc::new(crate::runtime::ActionChannel::chat()),
+		renderer: Arc::new(crate::runtime::ActionChannel::renderer()),
+	}))
 }
 
 /// Reports every worker demand transition to the host's
@@ -1128,14 +1161,14 @@ struct WasmWorkerDemand {
 }
 
 impl crate::host_logic::worker::WorkerDemandObserver for WasmWorkerDemand {
-	fn worker_demand_changed(&self, product_id: &ProductId, transition: WorkerTransition) {
+	fn worker_demand_changed(&self, product_id: &str, transition: WorkerTransition) {
 		let name = match transition {
 			WorkerTransition::Start => "Start",
 			WorkerTransition::Stop => "Stop",
 		};
 		let _ = self.changed.call2(
 			&JsValue::NULL,
-			&JsValue::from_str(product_id.as_str()),
+			&JsValue::from_str(product_id),
 			&JsValue::from_str(name),
 		);
 	}
@@ -1158,7 +1191,7 @@ fn install_worker_demand_observer(
 }
 
 fn receiving_error_to_js(error: crate::latest::HostNotificationReceivingError) -> JsValue {
-    js_sys::Error::new(&format!("background receiving: {error:?}")).into()
+	js_sys::Error::new(&format!("background receiving: {error:?}")).into()
 }
 
 /// JS-callable handle to a long-lived pairing-host runtime shared by product
@@ -1170,171 +1203,263 @@ pub struct WasmPairingHostRuntime {
 
 #[wasm_bindgen]
 impl WasmPairingHostRuntime {
-    /// All durable registrations as SCALE `Vec<ReceivingRegistration>`.
-    #[wasm_bindgen(js_name = receivingPending)]
-    pub async fn receiving_pending(&self) -> Result<Vec<u8>, JsValue> {
-        self.runtime.receiving().pending().await.map(|value| value.encode()).map_err(receiving_error_to_js)
-    }
+	/// All durable registrations as SCALE `Vec<ReceivingRegistration>`.
+	#[wasm_bindgen(js_name = receivingPending)]
+	pub async fn receiving_pending(&self) -> Result<Vec<u8>, JsValue> {
+		self.runtime
+			.receiving()
+			.pending()
+			.await
+			.map(|value| value.encode())
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Acknowledge the exact durable local revision synchronized by transport.
-    #[wasm_bindgen(js_name = receivingSynchronized)]
-    pub async fn receiving_synchronized(&self, product_id: String, revision: u64) -> Result<bool, JsValue> {
-        self.runtime.receiving().synchronized(&product_id, revision).await.map_err(receiving_error_to_js)
-    }
+	/// Acknowledge the exact durable local revision synchronized by transport.
+	#[wasm_bindgen(js_name = receivingSynchronized)]
+	pub async fn receiving_synchronized(
+		&self,
+		product_id: String,
+		revision: u64,
+	) -> Result<bool, JsValue> {
+		self.runtime
+			.receiving()
+			.synchronized(&product_id, revision)
+			.await
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Verify source chain/channel/topics and all candidates; returns SCALE `Vec<ReceivingEvent>`.
-    #[wasm_bindgen(js_name = receivingIngest)]
-    pub async fn receiving_ingest(
-        &self, product_id: String, revision: u64, watch_id: String,
-        actual_genesis: String, actual_channel: String, actual_topics: Vec<String>, frame: Vec<u8>,
-    ) -> Result<Vec<u8>, JsValue> {
-        self.runtime.receiving().ingest(&product_id, revision, watch_id, actual_genesis, actual_channel, actual_topics, frame)
-            .await.map(|value| value.encode()).map_err(receiving_error_to_js)
-    }
+	/// Verify source chain/channel/topics and all candidates; returns SCALE `Vec<ReceivingEvent>`.
+	#[wasm_bindgen(js_name = receivingIngest)]
+	pub async fn receiving_ingest(
+		&self,
+		product_id: String,
+		revision: u64,
+		watch_id: String,
+		actual_genesis: String,
+		actual_channel: String,
+		actual_topics: Vec<String>,
+		frame: Vec<u8>,
+	) -> Result<Vec<u8>, JsValue> {
+		self.runtime
+			.receiving()
+			.ingest(
+				&product_id,
+				revision,
+				watch_id,
+				actual_genesis,
+				actual_channel,
+				actual_topics,
+				frame,
+			)
+			.await
+			.map(|value| value.encode())
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Authenticate a raw SCALE statement; returns SCALE `Vec<ReceivingEvent>`.
-    #[wasm_bindgen(js_name = receivingIngestStatement)]
-    pub async fn receiving_ingest_statement(
-        &self, product_id: String, revision: u64, watch_id: String,
-        actual_genesis: String, statement: Vec<u8>,
-    ) -> Result<Vec<u8>, JsValue> {
-        self.runtime.receiving().ingest_statement(&product_id, revision, watch_id, actual_genesis, statement)
-            .await.map(|value| value.encode()).map_err(receiving_error_to_js)
-    }
+	/// Authenticate a raw SCALE statement; returns SCALE `Vec<ReceivingEvent>`.
+	#[wasm_bindgen(js_name = receivingIngestStatement)]
+	pub async fn receiving_ingest_statement(
+		&self,
+		product_id: String,
+		revision: u64,
+		watch_id: String,
+		actual_genesis: String,
+		statement: Vec<u8>,
+	) -> Result<Vec<u8>, JsValue> {
+		self.runtime
+			.receiving()
+			.ingest_statement(&product_id, revision, watch_id, actual_genesis, statement)
+			.await
+			.map(|value| value.encode())
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Reserve display after grace and revalidation; returns SCALE `Option<ReceivingEvent>`.
-    #[wasm_bindgen(js_name = receivingPrepareDisplay)]
-    pub async fn receiving_prepare_display(&self, product_id: String, revision: u64, event_id: String) -> Result<Vec<u8>, JsValue> {
-        self.runtime.receiving().prepare_display(&product_id, revision, event_id)
-            .await.map(|value| value.encode()).map_err(receiving_error_to_js)
-    }
+	/// Reserve display after grace and revalidation; returns SCALE `Option<ReceivingEvent>`.
+	#[wasm_bindgen(js_name = receivingPrepareDisplay)]
+	pub async fn receiving_prepare_display(
+		&self,
+		product_id: String,
+		revision: u64,
+		event_id: String,
+	) -> Result<Vec<u8>, JsValue> {
+		self.runtime
+			.receiving()
+			.prepare_display(&product_id, revision, event_id)
+			.await
+			.map(|value| value.encode())
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Validate a click without enqueueing activation; returns SCALE `Option<ReceivingEvent>`.
-    #[wasm_bindgen(js_name = receivingValidateActivation)]
-    pub async fn receiving_validate_activation(&self, product_id: String, revision: u64, event_id: String) -> Result<Vec<u8>, JsValue> {
-        self.runtime.receiving().validate_activation(&product_id, revision, event_id)
-            .await.map(|value| value.encode()).map_err(receiving_error_to_js)
-    }
+	/// Validate a click without enqueueing activation; returns SCALE `Option<ReceivingEvent>`.
+	#[wasm_bindgen(js_name = receivingValidateActivation)]
+	pub async fn receiving_validate_activation(
+		&self,
+		product_id: String,
+		revision: u64,
+		event_id: String,
+	) -> Result<Vec<u8>, JsValue> {
+		self.runtime
+			.receiving()
+			.validate_activation(&product_id, revision, event_id)
+			.await
+			.map(|value| value.encode())
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Confirm actual platform display, not ingestion or transport acknowledgement.
-    #[wasm_bindgen(js_name = receivingConfirmDisplay)]
-    pub async fn receiving_confirm_display(&self, product_id: String, revision: u64, event_id: String) -> Result<(), JsValue> {
-        self.runtime.receiving().confirm_display(&product_id, revision, event_id).await.map_err(receiving_error_to_js)
-    }
+	/// Confirm actual platform display, not ingestion or transport acknowledgement.
+	#[wasm_bindgen(js_name = receivingConfirmDisplay)]
+	pub async fn receiving_confirm_display(
+		&self,
+		product_id: String,
+		revision: u64,
+		event_id: String,
+	) -> Result<(), JsValue> {
+		self.runtime
+			.receiving()
+			.confirm_display(&product_id, revision, event_id)
+			.await
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Clear a reservation only after explicit platform display failure.
-    #[wasm_bindgen(js_name = receivingCancelDisplay)]
-    pub async fn receiving_cancel_display(&self, product_id: String, revision: u64, event_id: String) -> Result<(), JsValue> {
-        self.runtime.receiving().cancel_display(&product_id, revision, event_id).await.map_err(receiving_error_to_js)
-    }
+	/// Clear a reservation only after explicit platform display failure.
+	#[wasm_bindgen(js_name = receivingCancelDisplay)]
+	pub async fn receiving_cancel_display(
+		&self,
+		product_id: String,
+		revision: u64,
+		event_id: String,
+	) -> Result<(), JsValue> {
+		self.runtime
+			.receiving()
+			.cancel_display(&product_id, revision, event_id)
+			.await
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Resolve a click under current authority; returns SCALE `Option<ReceivingEvent>`.
-    #[wasm_bindgen(js_name = receivingActivate)]
-    pub async fn receiving_activate(&self, product_id: String, revision: u64, event_id: String) -> Result<Vec<u8>, JsValue> {
-        self.runtime.receiving().activate(&product_id, revision, event_id)
-            .await.map(|value| value.encode()).map_err(receiving_error_to_js)
-    }
+	/// Resolve a click under current authority; returns SCALE `Option<ReceivingEvent>`.
+	#[wasm_bindgen(js_name = receivingActivate)]
+	pub async fn receiving_activate(
+		&self,
+		product_id: String,
+		revision: u64,
+		event_id: String,
+	) -> Result<Vec<u8>, JsValue> {
+		self.runtime
+			.receiving()
+			.activate(&product_id, revision, event_id)
+			.await
+			.map(|value| value.encode())
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Revoke locally without waiting for remote transport.
-    #[wasm_bindgen(js_name = receivingRevoke)]
-    pub async fn receiving_revoke(&self, product_id: String) -> Result<(), JsValue> {
-        self.runtime.receiving().revoke(&product_id).await.map_err(receiving_error_to_js)
-    }
+	/// Revoke locally without waiting for remote transport.
+	#[wasm_bindgen(js_name = receivingRevoke)]
+	pub async fn receiving_revoke(&self, product_id: String) -> Result<(), JsValue> {
+		self.runtime
+			.receiving()
+			.revoke(&product_id)
+			.await
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Queue synchronization after durable provider-token rotation.
-    #[wasm_bindgen(js_name = receivingMarkTransportChanged)]
-    pub async fn receiving_mark_transport_changed(&self, product_id: String) -> Result<(), JsValue> {
-        self.runtime.receiving().mark_transport_changed(&product_id).await.map_err(receiving_error_to_js)
-    }
+	/// Queue synchronization after durable provider-token rotation.
+	#[wasm_bindgen(js_name = receivingMarkTransportChanged)]
+	pub async fn receiving_mark_transport_changed(
+		&self,
+		product_id: String,
+	) -> Result<(), JsValue> {
+		self.runtime
+			.receiving()
+			.mark_transport_changed(&product_id)
+			.await
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Build a shared runtime from host-level platform callbacks and host config.
-    #[wasm_bindgen(constructor)]
-    pub fn new(
-        callbacks: JsValue,
-        host_config: JsValue,
-    ) -> Result<WasmPairingHostRuntime, JsValue> {
-        console_error_panic_hook::set_once();
-        crate::logging::init();
-        let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
-        let WasmPlatformAdapters {
-            platform,
-            chat_platform,
-            contacts_platform,
-            status_host,
-            pocket_platform,
-            media_platform,
-            ..
-        } = wasm_platform(bridge);
-        let spawner: Spawner = Arc::new(|fut| {
-            wasm_bindgen_futures::spawn_local(fut);
-        });
-        let host_config = pairing_host_config_from_js(&host_config)?;
-        let runtime = PairingHostRuntime::with_platforms(
-            platform,
-            host_config,
-            spawner,
-            chat_platform,
-            contacts_platform,
-        );
-        if let Some(status_host) = status_host {
-            runtime.set_permission_status_host(status_host);
-        }
-        if let Some(pocket_platform) = pocket_platform {
-            runtime.set_pocket_platform(pocket_platform);
-        }
-        if let Some(media_platform) = media_platform {
-            runtime.set_media_platform(media_platform);
-        }
-        install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
-        Ok(Self {
-            runtime: Rc::new(runtime),
-        })
-    }
+	/// Keep preimage submissions in the core instead of the Bulletin chain.
+	///
+	/// For a test host whose wallet answers allowances in-page: the Bulletin
+	/// allowance it hands out was never authorized on chain, so a real `store`
+	/// would be refused at dry-run. The product gets the content key back and
+	/// reads the value from the core's lookup cache, as after a landed
+	/// submission. A refused Bulletin allowance still refuses the submission.
+	#[cfg(feature = "test-host")]
+	#[wasm_bindgen(js_name = setSubmitPreimagesLocally)]
+	pub fn set_submit_preimages_locally(&self, local: bool) {
+		self.runtime.set_submit_preimages_locally(local);
+	}
 
-    /// Build one product-scoped runtime from this pairing host runtime.
-    /// Optional platform callbacks are execution-local; shared authority stays here.
-    #[wasm_bindgen(js_name = productRuntime)]
-    pub fn product_runtime(
-        &self,
-        product: JsValue,
-        core_callbacks: JsValue,
-        platform_callbacks: Option<JsValue>,
-    ) -> Result<WasmProductRuntime, JsValue> {
-        let product = product_context_from_js(&product)?;
-        let channel = CoreChannel::from_js(&core_callbacks)?;
-        let debug_emit = get_optional_function(&core_callbacks, "debugEmit")?;
-        let channel_id = product.product_id.clone();
-        let sink = Arc::new(WasmFrameSink {
-            emit_frame: SendWrapper::new(channel.emit_frame),
-        });
-        let runtime = match connection_adapters_from_js(platform_callbacks.as_ref())? {
-            Some(adapters) => self.runtime.product_runtime_with(product, adapters, sink),
-            None => self.runtime.product_runtime(product, sink),
-        };
-        if let Some(debug_emit) = debug_emit {
-            runtime.set_debug_sink(
-                ChannelId(channel_id),
-                Arc::new(WasmDebugSink {
-                    emit: SendWrapper::new(debug_emit),
-                }),
-            );
-        }
-        Ok(WasmProductRuntime::from_parts(runtime, channel.dispose))
-    }
+	/// Build a shared runtime from host-level platform callbacks and host config.
+	#[wasm_bindgen(constructor)]
+	pub fn new(
+		callbacks: JsValue,
+		host_config: JsValue,
+	) -> Result<WasmPairingHostRuntime, JsValue> {
+		console_error_panic_hook::set_once();
+		crate::logging::init();
+		let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
+		let WasmPlatformAdapters {
+			platform,
+			chat_platform,
+			contacts_platform,
+			status_host,
+			pocket_platform,
+			profile_platform,
+			media_platform,
+			game_platform,
+			scanner_platform,
+			..
+		} = wasm_platform(bridge);
+		let spawner: Spawner = Arc::new(|fut| {
+			wasm_bindgen_futures::spawn_local(fut);
+		});
+		let host_config = pairing_host_config_from_js(&host_config)?;
+		let runtime = PairingHostRuntime::with_platforms(
+			platform,
+			host_config,
+			spawner,
+			chat_platform,
+			contacts_platform,
+		);
+		if let Some(status_host) = status_host {
+			runtime.set_permission_status_host(status_host);
+		}
+		if let Some(pocket_platform) = pocket_platform {
+			runtime.set_pocket_platform(pocket_platform);
+		}
+		if let Some(profile_platform) = profile_platform {
+			runtime.set_profile_platform(profile_platform);
+		}
+		if let Some(media_platform) = media_platform {
+			runtime.set_media_platform(media_platform);
+		}
+		if let Some(game_platform) = game_platform {
+			runtime.set_game_platform(game_platform);
+		}
+		if let Some(scanner_platform) = scanner_platform {
+			runtime.set_scanner_platform(scanner_platform);
+		}
+		install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
+		Ok(Self { runtime: Rc::new(runtime) })
+	}
 
 	/// Build one product-scoped runtime from this pairing host runtime.
+	/// Optional platform callbacks are execution-local; shared authority stays here.
 	#[wasm_bindgen(js_name = productRuntime)]
 	pub fn product_runtime(
 		&self,
 		product: JsValue,
 		core_callbacks: JsValue,
+		platform_callbacks: Option<JsValue>,
 	) -> Result<WasmProductRuntime, JsValue> {
 		let product = product_context_from_js(&product)?;
 		let channel = CoreChannel::from_js(&core_callbacks)?;
 		let debug_emit = get_optional_function(&core_callbacks, "debugEmit")?;
-		let channel_id = product.product_id.to_string();
+		let channel_id = product.product_id.clone();
 		let sink = Arc::new(WasmFrameSink { emit_frame: SendWrapper::new(channel.emit_frame) });
-		let runtime = self.runtime.product_runtime(product, sink);
+		let runtime = match connection_adapters_from_js(platform_callbacks.as_ref())? {
+			Some(adapters) => self.runtime.product_runtime_with(product, adapters, sink),
+			None => self.runtime.product_runtime(product, sink),
+		};
 		if let Some(debug_emit) = debug_emit {
 			runtime.set_debug_sink(
 				ChannelId(channel_id),
@@ -1391,7 +1516,7 @@ impl WasmPairingHostRuntime {
 		timeout_ms: Option<u32>,
 	) -> Result<Option<Vec<u8>>, JsValue> {
 		self.runtime
-			.product_subtree_public_key(&product_id_from_js(&product_id)?, timeout_ms)
+			.product_subtree_public_key(&product_id, timeout_ms)
 			.await
 			.map(|key| key.map(|key| key.to_vec()))
 			.map_err(generic_error_to_js)
@@ -1416,47 +1541,32 @@ impl WasmPairingHostRuntime {
 		self.runtime.notify_session_store_changed();
 	}
 
-    /// Pairing hosts cannot expose the signing host's private Chat roster.
-    #[wasm_bindgen(js_name = getNativeChatContacts)]
-    pub async fn get_native_chat_contacts(&self) -> Result<JsValue, JsValue> {
-        Err(JsValue::from_str(
-            "native Chat contacts are unsupported on a pairing host",
-        ))
-    }
+	/// Notify the runtime that the host's contacts changed, so cached contact
+	/// handles are dropped and the next resolution reads the list.
+	#[wasm_bindgen(js_name = notifyContactsChanged)]
+	pub fn notify_contacts_changed(&self) {
+		self.runtime.notify_contacts_changed();
+	}
 
-    /// Resolve the current Calling slot as a SCALE-encoded
-    /// `PermissionAuthorizationRequest`, without prompting or opening Media.
-    #[wasm_bindgen(js_name = callingPermissionAuthorizationRequest)]
-    pub async fn calling_permission_authorization_request(
-        &self,
-        product_id: String,
-    ) -> Result<Vec<u8>, JsValue> {
-        self.runtime
-            .calling_permission_authorization_request(&product_id)
-            .await
-            .map(|request| request.encode())
-            .map_err(generic_error_to_js)
-    }
+	/// Pairing hosts cannot expose the signing host's private Chat roster.
+	#[wasm_bindgen(js_name = getNativeChatContacts)]
+	pub async fn get_native_chat_contacts(&self) -> Result<JsValue, JsValue> {
+		Err(JsValue::from_str("native Chat contacts are unsupported on a pairing host"))
+	}
 
-    /// Read a permission authorization status for a product.
-    ///
-    /// A device capability resolves the host application's OS gate as well as
-    /// storage, so an OS refusal reads as `Denied` whatever is stored. Remote,
-    /// identity-disclosure and account-access decisions have no OS gate.
-    #[wasm_bindgen(js_name = permissionAuthorizationStatus)]
-    pub async fn permission_authorization_status(
-        &self,
-        product_id: String,
-        payload: Vec<u8>,
-    ) -> Result<JsValue, JsValue> {
-        let request = decode_permission_authorization_request(&payload)?;
-        let status = self
-            .runtime
-            .permission_authorization_status(&product_id, request)
-            .await
-            .map_err(generic_error_to_js)?;
-        Ok(permission_authorization_status_to_js(status))
-    }
+	/// Resolve the current Calling slot as a SCALE-encoded
+	/// `PermissionAuthorizationRequest`, without prompting or opening Media.
+	#[wasm_bindgen(js_name = callingPermissionAuthorizationRequest)]
+	pub async fn calling_permission_authorization_request(
+		&self,
+		product_id: String,
+	) -> Result<Vec<u8>, JsValue> {
+		self.runtime
+			.calling_permission_authorization_request(&product_id)
+			.await
+			.map(|request| request.encode())
+			.map_err(generic_error_to_js)
+	}
 
 	/// Read a permission authorization status for a product.
 	///
@@ -1472,7 +1582,7 @@ impl WasmPairingHostRuntime {
 		let request = decode_permission_authorization_request(&payload)?;
 		let status = self
 			.runtime
-			.permission_authorization_status(&product_id_from_js(&product_id)?, request)
+			.permission_authorization_status(&product_id, request)
 			.await
 			.map_err(generic_error_to_js)?;
 		Ok(permission_authorization_status_to_js(status))
@@ -1492,7 +1602,7 @@ impl WasmPairingHostRuntime {
 		let requests = decode_permission_authorization_requests(&payloads)?;
 		let statuses = self
 			.runtime
-			.permission_authorization_statuses(&product_id_from_js(&product_id)?, requests)
+			.permission_authorization_statuses(&product_id, requests)
 			.await
 			.map_err(generic_error_to_js)?;
 		let values = Array::new();
@@ -1502,34 +1612,40 @@ impl WasmPairingHostRuntime {
 		Ok(values)
 	}
 
-    /// Re-read a product's stored authorization after another core changes it.
-    #[wasm_bindgen(js_name = refreshPermissionAuthorization)]
-    pub async fn refresh_permission_authorization(
-        &self,
-        product_id: String,
-        payload: Vec<u8>,
-    ) -> Result<(), JsValue> {
-        let request = decode_permission_authorization_request(&payload)?;
-        self.runtime.refresh_permission_authorization(&product_id, request)
-            .await.map_err(generic_error_to_js)
-    }
+	/// Update a stored permission authorization status for a product.
+	#[wasm_bindgen(js_name = setPermissionAuthorizationStatus)]
+	pub async fn set_permission_authorization_status(
+		&self,
+		product_id: String,
+		payload: Vec<u8>,
+		status: String,
+	) -> Result<(), JsValue> {
+		let request = decode_permission_authorization_request(&payload)?;
+		let status = permission_authorization_status_from_js(&status)?;
+		self.runtime
+			.set_permission_authorization_status(&product_id, request, status)
+			.await
+			.map_err(generic_error_to_js)
+	}
 
-    /// Clear one product's durable and in-memory capability state.
-    #[wasm_bindgen(js_name = clearProductState)]
-    pub async fn clear_product_state(&self, product_id: String) -> Result<(), JsValue> {
-        self.runtime
-            .clear_product_state(&product_id)
-            .await
-            .map_err(generic_error_to_js)
-    }
+	/// Re-read a product's stored authorization after another core changes it.
+	#[wasm_bindgen(js_name = refreshPermissionAuthorization)]
+	pub async fn refresh_permission_authorization(
+		&self,
+		product_id: String,
+		payload: Vec<u8>,
+	) -> Result<(), JsValue> {
+		let request = decode_permission_authorization_request(&payload)?;
+		self.runtime
+			.refresh_permission_authorization(&product_id, request)
+			.await
+			.map_err(generic_error_to_js)
+	}
 
 	/// Clear one product's durable and in-memory capability state.
 	#[wasm_bindgen(js_name = clearProductState)]
 	pub async fn clear_product_state(&self, product_id: String) -> Result<(), JsValue> {
-		self.runtime
-			.clear_product_state(&product_id_from_js(&product_id)?)
-			.await
-			.map_err(generic_error_to_js)
+		self.runtime.clear_product_state(&product_id).await.map_err(generic_error_to_js)
 	}
 
 	/// Clear canonical paired-session state without notifying the peer.
@@ -1540,72 +1656,51 @@ impl WasmPairingHostRuntime {
 
 	/// Take one reference on the product's worker for a modality holder. The
 	/// first one reports `"Start"` to the host's `workerDemandChanged`
-	/// callback. Pair every call with one `releaseWorker`. An id that is not a
-	/// product id is logged and dropped.
+	/// callback. Pair every call with one `releaseWorker`.
 	#[wasm_bindgen(js_name = acquireWorker)]
 	pub fn acquire_worker(&self, product_id: String) {
-		match product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
-			Err(error) => {
-				tracing::warn!(%error, "worker reference for an id that is not a product id")
-			},
-		}
+		self.runtime.worker_ledger().acquire(&product_id);
 	}
 
 	/// Release one reference. The last one reports `"Stop"`, after which the
-	/// host may stop the worker; releasing with none held is a no-op, and so
-	/// is an id that is not a product id.
+	/// host may stop the worker; releasing with none held is a no-op.
 	#[wasm_bindgen(js_name = releaseWorker)]
 	pub fn release_worker(&self, product_id: String) {
-		match product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().release(&product_id),
-			Err(error) => {
-				tracing::warn!(%error, "worker reference for an id that is not a product id")
-			},
-		}
+		self.runtime.worker_ledger().release(&product_id);
 	}
 }
 
 /// Whether `productId` is a first-party product the host grants every
 /// `RemotePermission` without prompting.
 ///
-/// Trusted products bypass recorded permissions and permission prompts. Device
-/// permissions still need the OS grant. Hosts mediating product network access
-/// can use this check before storage.
+/// Blessed products bypass recorded permissions. Only device permissions require
+/// consent. Hosts mediating product network access can use this check before storage.
 ///
 /// Normalizes before matching, and answers `false` for an id that does not
 /// normalize, so an unknown spelling is never read as trusted.
 #[wasm_bindgen(js_name = hasTrustedRemotePermissions)]
 pub fn has_trusted_remote_permissions_for_wasm(product_id: String) -> bool {
-	crate::platform::ProductId::normalizes_to_trusted_remote_permissions(&product_id)
+	crate::platform::normalizes_to_trusted_remote_permissions(&product_id)
 }
 
 /// Strictly decode a SCALE-encoded core-storage key for host storage policy.
 #[wasm_bindgen(js_name = describeCoreStorageKey)]
 pub fn describe_core_storage_key_for_wasm(encoded: Vec<u8>) -> Result<JsValue, JsValue> {
-    let description = crate::platform::describe_core_storage_key(&encoded)
-        .map_err(|error| JsValue::from_str(&error.to_string()))?;
-    let value = js_sys::Object::new();
-    Reflect::set(
-        &value,
-        &JsValue::from_str("kind"),
-        &JsValue::from_str(description.kind),
-    )?;
-    if let Some(product_id) = description.product_id {
-        Reflect::set(
-            &value,
-            &JsValue::from_str("productId"),
-            &JsValue::from_str(&product_id),
-        )?;
-    }
-    if let Some(request) = description.permission_request {
-        Reflect::set(
-            &value,
-            &JsValue::from_str("permissionRequest"),
-            &Uint8Array::from(request.encode().as_slice()),
-        )?;
-    }
-    Ok(value.into())
+	let description = crate::platform::describe_core_storage_key(&encoded)
+		.map_err(|error| JsValue::from_str(&error.to_string()))?;
+	let value = js_sys::Object::new();
+	Reflect::set(&value, &JsValue::from_str("kind"), &JsValue::from_str(description.kind))?;
+	if let Some(product_id) = description.product_id {
+		Reflect::set(&value, &JsValue::from_str("productId"), &JsValue::from_str(&product_id))?;
+	}
+	if let Some(request) = description.permission_request {
+		Reflect::set(
+			&value,
+			&JsValue::from_str("permissionRequest"),
+			&Uint8Array::from(request.encode().as_slice()),
+		)?;
+	}
+	Ok(value.into())
 }
 
 #[cfg(feature = "wasm-signing-host")]
@@ -1618,172 +1713,206 @@ pub struct WasmSigningHostRuntime {
 #[cfg(feature = "wasm-signing-host")]
 #[wasm_bindgen]
 impl WasmSigningHostRuntime {
-    /// All durable registrations as SCALE `Vec<ReceivingRegistration>`.
-    #[wasm_bindgen(js_name = receivingPending)]
-    pub async fn receiving_pending(&self) -> Result<Vec<u8>, JsValue> {
-        self.runtime.receiving().pending().await.map(|value| value.encode()).map_err(receiving_error_to_js)
-    }
+	/// All durable registrations as SCALE `Vec<ReceivingRegistration>`.
+	#[wasm_bindgen(js_name = receivingPending)]
+	pub async fn receiving_pending(&self) -> Result<Vec<u8>, JsValue> {
+		self.runtime
+			.receiving()
+			.pending()
+			.await
+			.map(|value| value.encode())
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Acknowledge the exact durable local revision synchronized by transport.
-    #[wasm_bindgen(js_name = receivingSynchronized)]
-    pub async fn receiving_synchronized(&self, product_id: String, revision: u64) -> Result<bool, JsValue> {
-        self.runtime.receiving().synchronized(&product_id, revision).await.map_err(receiving_error_to_js)
-    }
+	/// Acknowledge the exact durable local revision synchronized by transport.
+	#[wasm_bindgen(js_name = receivingSynchronized)]
+	pub async fn receiving_synchronized(
+		&self,
+		product_id: String,
+		revision: u64,
+	) -> Result<bool, JsValue> {
+		self.runtime
+			.receiving()
+			.synchronized(&product_id, revision)
+			.await
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Verify source chain/channel/topics and all candidates; returns SCALE `Vec<ReceivingEvent>`.
-    #[wasm_bindgen(js_name = receivingIngest)]
-    pub async fn receiving_ingest(
-        &self, product_id: String, revision: u64, watch_id: String,
-        actual_genesis: String, actual_channel: String, actual_topics: Vec<String>, frame: Vec<u8>,
-    ) -> Result<Vec<u8>, JsValue> {
-        self.runtime.receiving().ingest(&product_id, revision, watch_id, actual_genesis, actual_channel, actual_topics, frame)
-            .await.map(|value| value.encode()).map_err(receiving_error_to_js)
-    }
+	/// Verify source chain/channel/topics and all candidates; returns SCALE `Vec<ReceivingEvent>`.
+	#[wasm_bindgen(js_name = receivingIngest)]
+	pub async fn receiving_ingest(
+		&self,
+		product_id: String,
+		revision: u64,
+		watch_id: String,
+		actual_genesis: String,
+		actual_channel: String,
+		actual_topics: Vec<String>,
+		frame: Vec<u8>,
+	) -> Result<Vec<u8>, JsValue> {
+		self.runtime
+			.receiving()
+			.ingest(
+				&product_id,
+				revision,
+				watch_id,
+				actual_genesis,
+				actual_channel,
+				actual_topics,
+				frame,
+			)
+			.await
+			.map(|value| value.encode())
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Authenticate a raw SCALE statement; returns SCALE `Vec<ReceivingEvent>`.
-    #[wasm_bindgen(js_name = receivingIngestStatement)]
-    pub async fn receiving_ingest_statement(
-        &self, product_id: String, revision: u64, watch_id: String,
-        actual_genesis: String, statement: Vec<u8>,
-    ) -> Result<Vec<u8>, JsValue> {
-        self.runtime.receiving().ingest_statement(&product_id, revision, watch_id, actual_genesis, statement)
-            .await.map(|value| value.encode()).map_err(receiving_error_to_js)
-    }
+	/// Authenticate a raw SCALE statement; returns SCALE `Vec<ReceivingEvent>`.
+	#[wasm_bindgen(js_name = receivingIngestStatement)]
+	pub async fn receiving_ingest_statement(
+		&self,
+		product_id: String,
+		revision: u64,
+		watch_id: String,
+		actual_genesis: String,
+		statement: Vec<u8>,
+	) -> Result<Vec<u8>, JsValue> {
+		self.runtime
+			.receiving()
+			.ingest_statement(&product_id, revision, watch_id, actual_genesis, statement)
+			.await
+			.map(|value| value.encode())
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Reserve display after grace and revalidation; returns SCALE `Option<ReceivingEvent>`.
-    #[wasm_bindgen(js_name = receivingPrepareDisplay)]
-    pub async fn receiving_prepare_display(&self, product_id: String, revision: u64, event_id: String) -> Result<Vec<u8>, JsValue> {
-        self.runtime.receiving().prepare_display(&product_id, revision, event_id)
-            .await.map(|value| value.encode()).map_err(receiving_error_to_js)
-    }
+	/// Reserve display after grace and revalidation; returns SCALE `Option<ReceivingEvent>`.
+	#[wasm_bindgen(js_name = receivingPrepareDisplay)]
+	pub async fn receiving_prepare_display(
+		&self,
+		product_id: String,
+		revision: u64,
+		event_id: String,
+	) -> Result<Vec<u8>, JsValue> {
+		self.runtime
+			.receiving()
+			.prepare_display(&product_id, revision, event_id)
+			.await
+			.map(|value| value.encode())
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Validate a click without enqueueing activation; returns SCALE `Option<ReceivingEvent>`.
-    #[wasm_bindgen(js_name = receivingValidateActivation)]
-    pub async fn receiving_validate_activation(&self, product_id: String, revision: u64, event_id: String) -> Result<Vec<u8>, JsValue> {
-        self.runtime.receiving().validate_activation(&product_id, revision, event_id)
-            .await.map(|value| value.encode()).map_err(receiving_error_to_js)
-    }
+	/// Validate a click without enqueueing activation; returns SCALE `Option<ReceivingEvent>`.
+	#[wasm_bindgen(js_name = receivingValidateActivation)]
+	pub async fn receiving_validate_activation(
+		&self,
+		product_id: String,
+		revision: u64,
+		event_id: String,
+	) -> Result<Vec<u8>, JsValue> {
+		self.runtime
+			.receiving()
+			.validate_activation(&product_id, revision, event_id)
+			.await
+			.map(|value| value.encode())
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Confirm actual platform display, not ingestion or transport acknowledgement.
-    #[wasm_bindgen(js_name = receivingConfirmDisplay)]
-    pub async fn receiving_confirm_display(&self, product_id: String, revision: u64, event_id: String) -> Result<(), JsValue> {
-        self.runtime.receiving().confirm_display(&product_id, revision, event_id).await.map_err(receiving_error_to_js)
-    }
+	/// Confirm actual platform display, not ingestion or transport acknowledgement.
+	#[wasm_bindgen(js_name = receivingConfirmDisplay)]
+	pub async fn receiving_confirm_display(
+		&self,
+		product_id: String,
+		revision: u64,
+		event_id: String,
+	) -> Result<(), JsValue> {
+		self.runtime
+			.receiving()
+			.confirm_display(&product_id, revision, event_id)
+			.await
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Clear a reservation only after explicit platform display failure.
-    #[wasm_bindgen(js_name = receivingCancelDisplay)]
-    pub async fn receiving_cancel_display(&self, product_id: String, revision: u64, event_id: String) -> Result<(), JsValue> {
-        self.runtime.receiving().cancel_display(&product_id, revision, event_id).await.map_err(receiving_error_to_js)
-    }
+	/// Clear a reservation only after explicit platform display failure.
+	#[wasm_bindgen(js_name = receivingCancelDisplay)]
+	pub async fn receiving_cancel_display(
+		&self,
+		product_id: String,
+		revision: u64,
+		event_id: String,
+	) -> Result<(), JsValue> {
+		self.runtime
+			.receiving()
+			.cancel_display(&product_id, revision, event_id)
+			.await
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Resolve a click under current authority; returns SCALE `Option<ReceivingEvent>`.
-    #[wasm_bindgen(js_name = receivingActivate)]
-    pub async fn receiving_activate(&self, product_id: String, revision: u64, event_id: String) -> Result<Vec<u8>, JsValue> {
-        self.runtime.receiving().activate(&product_id, revision, event_id)
-            .await.map(|value| value.encode()).map_err(receiving_error_to_js)
-    }
+	/// Resolve a click under current authority; returns SCALE `Option<ReceivingEvent>`.
+	#[wasm_bindgen(js_name = receivingActivate)]
+	pub async fn receiving_activate(
+		&self,
+		product_id: String,
+		revision: u64,
+		event_id: String,
+	) -> Result<Vec<u8>, JsValue> {
+		self.runtime
+			.receiving()
+			.activate(&product_id, revision, event_id)
+			.await
+			.map(|value| value.encode())
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Revoke locally without waiting for remote transport.
-    #[wasm_bindgen(js_name = receivingRevoke)]
-    pub async fn receiving_revoke(&self, product_id: String) -> Result<(), JsValue> {
-        self.runtime.receiving().revoke(&product_id).await.map_err(receiving_error_to_js)
-    }
+	/// Revoke locally without waiting for remote transport.
+	#[wasm_bindgen(js_name = receivingRevoke)]
+	pub async fn receiving_revoke(&self, product_id: String) -> Result<(), JsValue> {
+		self.runtime
+			.receiving()
+			.revoke(&product_id)
+			.await
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Queue synchronization after durable provider-token rotation.
-    #[wasm_bindgen(js_name = receivingMarkTransportChanged)]
-    pub async fn receiving_mark_transport_changed(&self, product_id: String) -> Result<(), JsValue> {
-        self.runtime.receiving().mark_transport_changed(&product_id).await.map_err(receiving_error_to_js)
-    }
+	/// Queue synchronization after durable provider-token rotation.
+	#[wasm_bindgen(js_name = receivingMarkTransportChanged)]
+	pub async fn receiving_mark_transport_changed(
+		&self,
+		product_id: String,
+	) -> Result<(), JsValue> {
+		self.runtime
+			.receiving()
+			.mark_transport_changed(&product_id)
+			.await
+			.map_err(receiving_error_to_js)
+	}
 
-    /// Answer resource allocation as granted without performing it.
-    ///
-    /// A test host serves suites that exercise allowance-dependent product
-    /// paths without an on-chain personhood identity. Nothing is allocated, so
-    /// a green run says the product handles a grant, not that a host would
-    /// have given one.
-    #[cfg(feature = "test-host")]
-    #[wasm_bindgen(js_name = setGrantAllowancesUnchecked)]
-    pub fn set_grant_allowances_unchecked(&self, granted: bool) {
-        self.runtime.set_grant_allowances_unchecked(granted);
-    }
+	/// Answer resource allocation as granted without performing it.
+	///
+	/// A test host serves suites that exercise allowance-dependent product
+	/// paths without an on-chain personhood identity. Nothing is allocated, so
+	/// a green run says the product handles a grant, not that a host would
+	/// have given one.
+	///
+	/// Preimage submissions then stay in the core: the Bulletin allowance was
+	/// never authorized on chain, so a real `store` would be refused. The
+	/// product gets the content key back and reads the value from the core's
+	/// lookup cache, as after a landed submission.
+	#[cfg(feature = "test-host")]
+	#[wasm_bindgen(js_name = setGrantAllowancesUnchecked)]
+	pub fn set_grant_allowances_unchecked(&self, granted: bool) {
+		self.runtime.set_grant_allowances_unchecked(granted);
+	}
 
-    /// Answer these resource tags as refused, replacing any earlier set.
-    ///
-    /// A suite proving its product survives a refused resource needs that one
-    /// withheld while the rest stay granted. The tag is the
-    /// `AllocatableResource` variant name, so `SmartContractAllowance`
-    /// withholds every derivation index.
-    #[cfg(feature = "test-host")]
-    #[wasm_bindgen(js_name = setWithheldResources)]
-    pub fn set_withheld_resources(&self, tags: Vec<String>) {
-        self.runtime.set_withheld_resources(tags);
-    }
-
-    /// Build a shared signing runtime from host callbacks and host config.
-    #[wasm_bindgen(constructor)]
-    pub fn new(
-        callbacks: JsValue,
-        host_config: JsValue,
-    ) -> Result<WasmSigningHostRuntime, JsValue> {
-        console_error_panic_hook::set_once();
-        crate::logging::init();
-        let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
-        let WasmPlatformAdapters {
-            platform,
-            chat_platform,
-            contacts_platform,
-            status_host,
-            pocket_platform,
-            identity_backend_host,
-            native_wallet,
-            media_platform,
-        } = wasm_platform(bridge);
-        let spawner: Spawner = Arc::new(|fut| {
-            wasm_bindgen_futures::spawn_local(fut);
-        });
-        let host_config = signing_host_config_from_js(&host_config)?;
-        let runtime = SigningHostRuntime::with_platforms(
-            platform,
-            host_config,
-            spawner,
-            chat_platform,
-            contacts_platform,
-        );
-        if let Some(status_host) = status_host {
-            runtime.set_permission_status_host(status_host);
-        }
-        if let Some(pocket_platform) = pocket_platform {
-            runtime.set_pocket_platform(pocket_platform);
-        }
-        if let Some(media_platform) = media_platform {
-            runtime.set_media_platform(media_platform);
-        }
-        install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
-        Ok(Self {
-            runtime: Rc::new(runtime),
-        })
-    }
-
-    /// Build one product-scoped runtime from this signing host.
-    /// Optional platform callbacks are execution-local; shared authority stays here.
-    #[wasm_bindgen(js_name = productRuntime)]
-    pub fn product_runtime(
-        &self,
-        product: JsValue,
-        core_callbacks: JsValue,
-        platform_callbacks: Option<JsValue>,
-    ) -> Result<WasmProductRuntime, JsValue> {
-        let product = product_context_from_js(&product)?;
-        let channel = CoreChannel::from_js(&core_callbacks)?;
-        let sink = Arc::new(WasmFrameSink {
-            emit_frame: SendWrapper::new(channel.emit_frame),
-        });
-        let runtime = match connection_adapters_from_js(platform_callbacks.as_ref())? {
-            Some(adapters) => self.runtime.product_runtime_with(product, adapters, sink),
-            None => self.runtime.product_runtime(product, sink),
-        };
-        Ok(WasmProductRuntime::from_parts(runtime, channel.dispose))
-    }
+	/// Answer these resource tags as refused, replacing any earlier set.
+	///
+	/// A suite proving its product survives a refused resource needs that one
+	/// withheld while the rest stay granted. The tag is the
+	/// `AllocatableResource` variant name, so `SmartContractAllowance`
+	/// withholds every derivation index.
+	#[cfg(feature = "test-host")]
+	#[wasm_bindgen(js_name = setWithheldResources)]
+	pub fn set_withheld_resources(&self, tags: Vec<String>) {
+		self.runtime.set_withheld_resources(tags);
+	}
 
 	/// Keep preimage submissions in the core instead of the Bulletin chain.
 	///
@@ -1813,6 +1942,10 @@ impl WasmSigningHostRuntime {
 			contacts_platform,
 			status_host,
 			pocket_platform,
+			profile_platform,
+			identity_backend_host,
+			native_wallet,
+			media_platform,
 			game_platform,
 			scanner_platform,
 		} = wasm_platform(bridge);
@@ -1826,12 +1959,22 @@ impl WasmSigningHostRuntime {
 			spawner,
 			chat_platform,
 			contacts_platform,
+			native_wallet,
 		);
+		if let Some(identity_backend_host) = identity_backend_host {
+			runtime.set_identity_backend_host(identity_backend_host);
+		}
 		if let Some(status_host) = status_host {
 			runtime.set_permission_status_host(status_host);
 		}
 		if let Some(pocket_platform) = pocket_platform {
 			runtime.set_pocket_platform(pocket_platform);
+		}
+		if let Some(profile_platform) = profile_platform {
+			runtime.set_profile_platform(profile_platform);
+		}
+		if let Some(media_platform) = media_platform {
+			runtime.set_media_platform(media_platform);
 		}
 		if let Some(game_platform) = game_platform {
 			runtime.set_game_platform(game_platform);
@@ -1844,16 +1987,21 @@ impl WasmSigningHostRuntime {
 	}
 
 	/// Build one product-scoped runtime from this signing host.
+	/// Optional platform callbacks are execution-local; shared authority stays here.
 	#[wasm_bindgen(js_name = productRuntime)]
 	pub fn product_runtime(
 		&self,
 		product: JsValue,
 		core_callbacks: JsValue,
+		platform_callbacks: Option<JsValue>,
 	) -> Result<WasmProductRuntime, JsValue> {
 		let product = product_context_from_js(&product)?;
 		let channel = CoreChannel::from_js(&core_callbacks)?;
 		let sink = Arc::new(WasmFrameSink { emit_frame: SendWrapper::new(channel.emit_frame) });
-		let runtime = self.runtime.product_runtime(product, sink);
+		let runtime = match connection_adapters_from_js(platform_callbacks.as_ref())? {
+			Some(adapters) => self.runtime.product_runtime_with(product, adapters, sink),
+			None => self.runtime.product_runtime(product, sink),
+		};
 		Ok(WasmProductRuntime::from_parts(runtime, channel.dispose))
 	}
 
@@ -1863,34 +2011,196 @@ impl WasmSigningHostRuntime {
 		self.runtime.disconnect_session().await;
 	}
 
+	/// Tell the runtime that the host's contact list changed, so cached
+	/// handles are dropped and the next resolution reads the list.
+	#[wasm_bindgen(js_name = notifyContactsChanged)]
+	pub fn notify_contacts_changed(&self) {
+		self.runtime.notify_contacts_changed();
+	}
+
+	/// Read the active local session's X25519 chat identity private key.
+	#[wasm_bindgen(js_name = sessionChatIdentityKey)]
+	pub fn session_chat_identity_key(&self) -> Option<Vec<u8>> {
+		self.runtime.session_chat_identity_key().map(|key| key.to_vec())
+	}
+
+	/// Read this browser's X25519 encryption secret, generating and persisting
+	/// it on first read.
+	#[wasm_bindgen(js_name = deviceEncryptionKey)]
+	pub async fn device_encryption_key(&self) -> Result<Vec<u8>, JsValue> {
+		self.runtime
+			.device_encryption_key()
+			.await
+			.map(|key| key.to_vec())
+			.map_err(generic_error_to_js)
+	}
+
+	/// Resolve a product's hard-subtree public key from the active local
+	/// signing session.
+	#[wasm_bindgen(js_name = productSubtreePublicKey)]
+	pub async fn product_subtree_public_key(
+		&self,
+		product_id: String,
+		timeout_ms: Option<u32>,
+	) -> Result<Option<Vec<u8>>, JsValue> {
+		self.runtime
+			.product_subtree_public_key(&product_id, timeout_ms)
+			.await
+			.map(|key| key.map(|key| key.to_vec()))
+			.map_err(generic_error_to_js)
+	}
+
+	/// Resolve the current Calling slot as a SCALE-encoded
+	/// `PermissionAuthorizationRequest`, without prompting or opening Media.
+	#[wasm_bindgen(js_name = callingPermissionAuthorizationRequest)]
+	pub async fn calling_permission_authorization_request(
+		&self,
+		product_id: String,
+	) -> Result<Vec<u8>, JsValue> {
+		self.runtime
+			.calling_permission_authorization_request(&product_id)
+			.await
+			.map(|request| request.encode())
+			.map_err(generic_error_to_js)
+	}
+
+	/// Re-read a product's stored authorization after another core changes it.
+	#[wasm_bindgen(js_name = refreshPermissionAuthorization)]
+	pub async fn refresh_permission_authorization(
+		&self,
+		product_id: String,
+		payload: Vec<u8>,
+	) -> Result<(), JsValue> {
+		let request = decode_permission_authorization_request(&payload)?;
+		self.runtime
+			.refresh_permission_authorization(&product_id, request)
+			.await
+			.map_err(generic_error_to_js)
+	}
+
 	/// Activate a wallet-local session from raw BIP-39 entropy.
 	#[wasm_bindgen(js_name = activateLocalSession)]
 	pub async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), JsValue> {
 		self.runtime.activate_local_session(secret).await.map_err(generic_error_to_js)
 	}
 
-    /// Resolve the current Calling slot as a SCALE-encoded
-    /// `PermissionAuthorizationRequest`, without prompting or opening Media.
-    #[wasm_bindgen(js_name = callingPermissionAuthorizationRequest)]
-    pub async fn calling_permission_authorization_request(
-        &self,
-        product_id: String,
-    ) -> Result<Vec<u8>, JsValue> {
-        self.runtime
-            .calling_permission_authorization_request(&product_id)
-            .await
-            .map(|request| request.encode())
-            .map_err(generic_error_to_js)
-    }
+	/// Activate a wallet-local session and attach known identity metadata.
+	#[wasm_bindgen(js_name = activateLocalSessionWithIdentity)]
+	pub async fn activate_local_session_with_identity(
+		&self,
+		secret: Vec<u8>,
+		lite_username: Option<String>,
+	) -> Result<(), JsValue> {
+		self.runtime
+			.activate_local_session_with_identity(secret, lite_username)
+			.await
+			.map_err(generic_error_to_js)
+	}
 
-    /// Activate a wallet-local session from raw BIP-39 entropy.
-    #[wasm_bindgen(js_name = activateLocalSession)]
-    pub async fn activate_local_session(&self, secret: Vec<u8>) -> Result<(), JsValue> {
-        self.runtime
-            .activate_local_session(secret)
-            .await
-            .map_err(generic_error_to_js)
-    }
+	/// Capture an opaque activation fence and its UID account.
+	#[wasm_bindgen(js_name = localIdentityContext)]
+	pub fn local_identity_context(&self) -> Result<JsValue, JsValue> {
+		let context = self.runtime.local_identity_context().map_err(generic_error_to_js)?;
+		let json = serde_json::to_string(&context)
+			.map_err(|error| JsValue::from_str(&error.to_string()))?;
+		js_sys::JSON::parse(&json)
+	}
+
+	/// Return the UID public key followed by its native sr25519 backend-auth proof.
+	#[wasm_bindgen(js_name = localIdentityAuthProof)]
+	pub fn local_identity_auth_proof(
+		&self,
+		activation_id: String,
+		challenge: Vec<u8>,
+	) -> Result<Vec<u8>, JsValue> {
+		self.runtime
+			.local_identity_auth_proof(&activation_id, &challenge)
+			.map_err(generic_error_to_js)
+	}
+
+	/// Build registration JSON without exporting entropy or implementing proofs in JavaScript.
+	#[wasm_bindgen(js_name = localLiteRegistrationBody)]
+	pub async fn local_lite_registration_body(
+		&self,
+		activation_id: String,
+		username_base: String,
+		verifier: Vec<u8>,
+	) -> Result<String, JsValue> {
+		let verifier = verifier
+			.as_slice()
+			.try_into()
+			.map_err(|_| JsValue::from_str("attester must be 32 bytes"))?;
+		self.runtime
+			.local_lite_registration_body(&activation_id, &username_base, verifier)
+			.await
+			.map_err(generic_error_to_js)
+	}
+
+	/// Install freshly verified dotNS metadata only for the captured local activation.
+	#[wasm_bindgen(js_name = refreshLocalIdentity)]
+	pub async fn refresh_local_identity(&self, activation_id: String) -> Result<JsValue, JsValue> {
+		let identity = self
+			.runtime
+			.refresh_local_identity_for(&activation_id)
+			.await
+			.map_err(generic_error_to_js)?;
+		let json = serde_json::to_string(&identity)
+			.map_err(|error| JsValue::from_str(&error.to_string()))?;
+		js_sys::JSON::parse(&json)
+	}
+
+	/// Read finalized allowance state for this activation; never allocate or sign.
+	#[wasm_bindgen(js_name = getWalletAllowanceSnapshot)]
+	pub async fn get_wallet_allowance_snapshot(
+		&self,
+		activation_id: String,
+		product_ids: Vec<String>,
+	) -> Result<JsValue, JsValue> {
+		let snapshot = self
+			.runtime
+			.get_wallet_allowance_snapshot(&activation_id, product_ids)
+			.await
+			.map_err(generic_error_to_js)?;
+		let json = serde_json::to_string(&snapshot)
+			.map_err(|error| JsValue::from_str(&error.to_string()))?;
+		js_sys::JSON::parse(&json)
+	}
+
+	/// Read the active signing wallet's trusted native Chat directory for host UI.
+	#[wasm_bindgen(js_name = getNativeChatContacts)]
+	pub async fn get_native_chat_contacts(&self) -> Result<JsValue, JsValue> {
+		let snapshot =
+			self.runtime.get_native_chat_contacts().await.map_err(generic_error_to_js)?;
+		let json = serde_json::to_string(&snapshot)
+			.map_err(|error| JsValue::from_str(&error.to_string()))?;
+		js_sys::JSON::parse(&json)
+	}
+
+	/// Revoke one product's grants from the current local activation.
+	#[wasm_bindgen(js_name = clearProductState)]
+	pub async fn clear_product_state(&self, product_id: String) -> Result<(), JsValue> {
+		self.runtime.clear_product_state(&product_id).await.map_err(generic_error_to_js)
+	}
+
+	/// Read a permission authorization status for a product.
+	///
+	/// A device capability resolves the host application's OS gate as well as
+	/// storage, so an OS refusal reads as `Denied` whatever is stored. Remote,
+	/// identity-disclosure and account-access decisions have no OS gate.
+	#[wasm_bindgen(js_name = permissionAuthorizationStatus)]
+	pub async fn permission_authorization_status(
+		&self,
+		product_id: String,
+		payload: Vec<u8>,
+	) -> Result<JsValue, JsValue> {
+		let request = decode_permission_authorization_request(&payload)?;
+		let status = self
+			.runtime
+			.permission_authorization_status(&product_id, request)
+			.await
+			.map_err(generic_error_to_js)?;
+		Ok(permission_authorization_status_to_js(status))
+	}
 
 	/// Read permission authorization statuses for a product.
 	///
@@ -1906,7 +2216,7 @@ impl WasmSigningHostRuntime {
 		let requests = decode_permission_authorization_requests(&payloads)?;
 		let statuses = self
 			.runtime
-			.permission_authorization_statuses(&product_id_from_js(&product_id)?, requests)
+			.permission_authorization_statuses(&product_id, requests)
 			.await
 			.map_err(generic_error_to_js)?;
 		let values = Array::new();
@@ -1927,105 +2237,44 @@ impl WasmSigningHostRuntime {
 		let request = decode_permission_authorization_request(&payload)?;
 		let status = permission_authorization_status_from_js(&status)?;
 		self.runtime
-			.set_permission_authorization_status(&product_id_from_js(&product_id)?, request, status)
+			.set_permission_authorization_status(&product_id, request, status)
 			.await
 			.map_err(generic_error_to_js)
 	}
 
 	/// Take one reference on the product's worker for a modality holder. The
 	/// first one reports `"Start"` to the host's `workerDemandChanged`
-	/// callback. Pair every call with one `releaseWorker`. An id that is not a
-	/// product id is logged and dropped.
+	/// callback. Pair every call with one `releaseWorker`.
 	#[wasm_bindgen(js_name = acquireWorker)]
 	pub fn acquire_worker(&self, product_id: String) {
-		match product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
-			Err(error) => {
-				tracing::warn!(%error, "worker reference for an id that is not a product id")
-			},
-		}
+		self.runtime.worker_ledger().acquire(&product_id);
 	}
 
 	/// Release one reference. The last one reports `"Stop"`, after which the
-	/// host may stop the worker; releasing with none held is a no-op, and so
-	/// is an id that is not a product id.
+	/// host may stop the worker; releasing with none held is a no-op.
 	#[wasm_bindgen(js_name = releaseWorker)]
 	pub fn release_worker(&self, product_id: String) {
-		match product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().release(&product_id),
-			Err(error) => {
-				tracing::warn!(%error, "worker reference for an id that is not a product id")
-			},
-		}
+		self.runtime.worker_ledger().release(&product_id);
 	}
 }
 
-    /// Install freshly verified dotNS metadata only for the captured local activation.
-    #[wasm_bindgen(js_name = refreshLocalIdentity)]
-    pub async fn refresh_local_identity(&self, activation_id: String) -> Result<JsValue, JsValue> {
-        let identity = self
-            .runtime
-            .refresh_local_identity_for(&activation_id)
-            .await
-            .map_err(generic_error_to_js)?;
-        let json = serde_json::to_string(&identity)
-            .map_err(|error| JsValue::from_str(&error.to_string()))?;
-        js_sys::JSON::parse(&json)
-    }
-
-    /// Read finalized allowance state for this activation; never allocate or sign.
-    #[wasm_bindgen(js_name = getWalletAllowanceSnapshot)]
-    pub async fn get_wallet_allowance_snapshot(
-        &self,
-        activation_id: String,
-        product_ids: Vec<String>,
-    ) -> Result<JsValue, JsValue> {
-        let snapshot = self
-            .runtime
-            .get_wallet_allowance_snapshot(&activation_id, product_ids)
-            .await
-            .map_err(generic_error_to_js)?;
-        let json = serde_json::to_string(&snapshot)
-            .map_err(|error| JsValue::from_str(&error.to_string()))?;
-        js_sys::JSON::parse(&json)
-    }
-
-    /// Read the active signing wallet's trusted native Chat directory for host UI.
-    #[wasm_bindgen(js_name = getNativeChatContacts)]
-    pub async fn get_native_chat_contacts(&self) -> Result<JsValue, JsValue> {
-        let snapshot = self
-            .runtime
-            .get_native_chat_contacts()
-            .await
-            .map_err(generic_error_to_js)?;
-        let json = serde_json::to_string(&snapshot)
-            .map_err(|error| JsValue::from_str(&error.to_string()))?;
-        js_sys::JSON::parse(&json)
-    }
-
-    /// Revoke one product's grants from the current local activation.
-    #[wasm_bindgen(js_name = clearProductState)]
-    pub async fn clear_product_state(&self, product_id: String) -> Result<(), JsValue> {
-        self.runtime
-            .clear_product_state(&product_id)
-            .await
-            .map_err(generic_error_to_js)
-    }
-
-    /// Take one reference on the product's worker for a modality holder. The
-    /// first one reports `"Start"` to the host's `workerDemandChanged`
-    /// callback. Pair every call with one `releaseWorker`.
-    #[wasm_bindgen(js_name = acquireWorker)]
-    pub fn acquire_worker(&self, product_id: String) {
-        self.runtime.worker_ledger().acquire(&product_id);
-    }
-
-    /// Release one reference. The last one reports `"Stop"`, after which the
-    /// host may stop the worker; releasing with none held is a no-op.
-    #[wasm_bindgen(js_name = releaseWorker)]
-    pub fn release_worker(&self, product_id: String) {
-        self.runtime.worker_ledger().release(&product_id);
-    }
+/// Derive a product's hard-subtree public key from a session's root entropy.
+///
+/// Pure: no runtime and no session, so a test harness can work out the address
+/// a product will be given before it starts a host. The entropy is the same 32
+/// bytes `activateLocalSession` takes.
+#[wasm_bindgen(js_name = deriveProductSubtreePublicKey)]
+pub fn derive_product_subtree_public_key(
+	root_entropy: Vec<u8>,
+	product_id: String,
+) -> Result<Vec<u8>, JsValue> {
+	let root = crate::host_logic::product_account::derive_root_keypair_from_entropy(&root_entropy)
+		.map_err(|err| JsValue::from_str(&err.to_string()))?;
+	let product_id = crate::platform::normalize_product_identifier(&product_id)
+		.map_err(|err| JsValue::from_str(&err.to_string()))?;
+	crate::host_logic::product_account::derive_product_subtree_keypair(&root, &product_id)
+		.map(|keypair| keypair.public.to_bytes().to_vec())
+		.map_err(|err| JsValue::from_str(&err.to_string()))
 }
 
 /// Soft-derive a product account public key from a product's hard-subtree key
@@ -2105,56 +2354,67 @@ impl WasmProductRuntime {
 
 #[wasm_bindgen]
 impl WasmProductRuntime {
-    /// Build the core from a JS callbacks object. The object must define
-    /// every host capability the [`crate::platform::Platform`] trait set
-    /// requires (camelCase property names; see the source for the full
-    /// list).
-    #[wasm_bindgen(constructor)]
-    pub fn new(callbacks: JsValue, runtime_config: JsValue) -> Result<WasmProductRuntime, JsValue> {
-        // Surface Rust panics to the browser console. A panic mid-dispatch
-        // aborts the call as a wasm trap; the host should treat a thrown error
-        // from `receiveFrame` as a fatal-instance signal and rebuild the
-        // core rather than continue using it.
-        console_error_panic_hook::set_once();
-        crate::logging::init();
-        let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
-        let channel = CoreChannel::from_js(&callbacks)?;
-        let frame_sink = Arc::new(WasmFrameSink {
-            emit_frame: SendWrapper::new(channel.emit_frame),
-        });
-        let WasmPlatformAdapters {
-            platform,
-            chat_platform,
-            contacts_platform,
-            status_host,
-            pocket_platform,
-            media_platform,
-            ..
-        } = wasm_platform(bridge);
-        let spawner: Spawner = Arc::new(|fut| {
-            wasm_bindgen_futures::spawn_local(fut);
-        });
-        let (host_config, product) = runtime_config_from_js(&runtime_config)?;
-        // The optional adapters install on the host runtime the product hangs
-        // off, not on the product runtime itself.
-        let pairing =
-            PairingHostRuntime::with_chat_platform(platform, host_config, spawner, chat_platform);
-        if let Some(status_host) = status_host {
-            pairing.set_permission_status_host(status_host);
-        }
-        if let Some(pocket_platform) = pocket_platform {
-            pairing.set_pocket_platform(pocket_platform);
-        }
-        if let Some(contacts_platform) = contacts_platform {
-            pairing.set_contacts_platform(contacts_platform);
-        }
-        if let Some(media_platform) = media_platform {
-            pairing.set_media_platform(media_platform);
-        }
-        install_worker_demand_observer(pairing.worker_ledger(), &callbacks)?;
-        let core = pairing.product_runtime(product, frame_sink);
-        Ok(Self::from_parts(core, channel.dispose))
-    }
+	/// Build the core from a JS callbacks object. The object must define
+	/// every host capability the [`crate::platform::Platform`] trait set
+	/// requires (camelCase property names; see the source for the full
+	/// list).
+	#[wasm_bindgen(constructor)]
+	pub fn new(callbacks: JsValue, runtime_config: JsValue) -> Result<WasmProductRuntime, JsValue> {
+		// Surface Rust panics to the browser console. A panic mid-dispatch
+		// aborts the call as a wasm trap; the host should treat a thrown error
+		// from `receiveFrame` as a fatal-instance signal and rebuild the
+		// core rather than continue using it.
+		console_error_panic_hook::set_once();
+		crate::logging::init();
+		let bridge = Arc::new(JsBridge::from_js(&callbacks)?);
+		let channel = CoreChannel::from_js(&callbacks)?;
+		let frame_sink =
+			Arc::new(WasmFrameSink { emit_frame: SendWrapper::new(channel.emit_frame) });
+		let WasmPlatformAdapters {
+			platform,
+			chat_platform,
+			contacts_platform,
+			status_host,
+			pocket_platform,
+			profile_platform,
+			media_platform,
+			game_platform,
+			scanner_platform,
+			..
+		} = wasm_platform(bridge);
+		let spawner: Spawner = Arc::new(|fut| {
+			wasm_bindgen_futures::spawn_local(fut);
+		});
+		let (host_config, product) = runtime_config_from_js(&runtime_config)?;
+		// The optional adapters install on the host runtime the product hangs
+		// off, not on the product runtime itself.
+		let pairing =
+			PairingHostRuntime::with_chat_platform(platform, host_config, spawner, chat_platform);
+		if let Some(status_host) = status_host {
+			pairing.set_permission_status_host(status_host);
+		}
+		if let Some(pocket_platform) = pocket_platform {
+			pairing.set_pocket_platform(pocket_platform);
+		}
+		if let Some(profile_platform) = profile_platform {
+			pairing.set_profile_platform(profile_platform);
+		}
+		if let Some(game_platform) = game_platform {
+			pairing.set_game_platform(game_platform);
+		}
+		if let Some(scanner_platform) = scanner_platform {
+			pairing.set_scanner_platform(scanner_platform);
+		}
+		if let Some(contacts_platform) = contacts_platform {
+			pairing.set_contacts_platform(contacts_platform);
+		}
+		if let Some(media_platform) = media_platform {
+			pairing.set_media_platform(media_platform);
+		}
+		install_worker_demand_observer(pairing.worker_ledger(), &callbacks)?;
+		let core = pairing.product_runtime(product, frame_sink);
+		Ok(Self::from_parts(core, channel.dispose))
+	}
 
 	/// Notify the runtime that the host's contacts changed, so cached contact
 	/// handles are dropped and the next resolution asks the host.
@@ -2163,57 +2423,57 @@ impl WasmProductRuntime {
 		self.inner.core.notify_contacts_changed();
 	}
 
-    /// Trusted connection identity; bind host adapters before dispatching frames.
-    #[wasm_bindgen(getter, js_name = runtimeId)]
-    pub fn runtime_id(&self) -> u64 {
-        self.inner.core.runtime_id()
-    }
+	/// Trusted connection identity; bind host adapters before dispatching frames.
+	#[wasm_bindgen(getter, js_name = runtimeId)]
+	pub fn runtime_id(&self) -> u64 {
+		self.inner.core.runtime_id()
+	}
 
-    /// Push a SCALE-encoded protocol frame into the dispatcher. Responses
-    /// (and subscription items) flow back through the `emitFrame`
-    /// callback.
-    #[wasm_bindgen(js_name = receiveFrame)]
-    pub async fn receive_frame(&self, frame: Vec<u8>) -> Result<(), JsValue> {
-        self.inner
-            .core
-            .receive_frame(frame)
-            .await
-            .map_err(|err| JsValue::from_str(&err.to_string()))
-    }
+	/// Push a SCALE-encoded protocol frame into the dispatcher. Responses
+	/// (and subscription items) flow back through the `emitFrame`
+	/// callback.
+	#[wasm_bindgen(js_name = receiveFrame)]
+	pub async fn receive_frame(&self, frame: Vec<u8>) -> Result<(), JsValue> {
+		self.inner
+			.core
+			.receive_frame(frame)
+			.await
+			.map_err(|err| JsValue::from_str(&err.to_string()))
+	}
 
-    /// Resolve this connection's current Calling slot as a SCALE-encoded
-    /// `PermissionAuthorizationRequest`, without prompting or opening Media.
-    #[wasm_bindgen(js_name = callingPermissionAuthorizationRequest)]
-    pub async fn calling_permission_authorization_request(&self) -> Result<Vec<u8>, JsValue> {
-        self.inner
-            .core
-            .calling_permission_authorization_request()
-            .await
-            .map(|request| request.encode())
-            .map_err(generic_error_to_js)
-    }
+	/// Resolve this connection's current Calling slot as a SCALE-encoded
+	/// `PermissionAuthorizationRequest`, without prompting or opening Media.
+	#[wasm_bindgen(js_name = callingPermissionAuthorizationRequest)]
+	pub async fn calling_permission_authorization_request(&self) -> Result<Vec<u8>, JsValue> {
+		self.inner
+			.core
+			.calling_permission_authorization_request()
+			.await
+			.map(|request| request.encode())
+			.map_err(generic_error_to_js)
+	}
 
-    /// Read a permission authorization status without prompting.
-    ///
-    /// A device capability resolves the host application's OS gate as well as
-    /// storage, so an OS refusal reads as `Denied` whatever is stored. Remote,
-    /// identity-disclosure and account-access decisions have no OS gate.
-    ///
-    /// `payload` is a SCALE-encoded `PermissionAuthorizationRequest`.
-    #[wasm_bindgen(js_name = permissionAuthorizationStatus)]
-    pub async fn permission_authorization_status(
-        &self,
-        payload: Vec<u8>,
-    ) -> Result<JsValue, JsValue> {
-        let request = decode_permission_authorization_request(&payload)?;
-        let status = self
-            .inner
-            .core
-            .permission_authorization_status(request)
-            .await
-            .map_err(generic_error_to_js)?;
-        Ok(permission_authorization_status_to_js(status))
-    }
+	/// Read a permission authorization status without prompting.
+	///
+	/// A device capability resolves the host application's OS gate as well as
+	/// storage, so an OS refusal reads as `Denied` whatever is stored. Remote,
+	/// identity-disclosure and account-access decisions have no OS gate.
+	///
+	/// `payload` is a SCALE-encoded `PermissionAuthorizationRequest`.
+	#[wasm_bindgen(js_name = permissionAuthorizationStatus)]
+	pub async fn permission_authorization_status(
+		&self,
+		payload: Vec<u8>,
+	) -> Result<JsValue, JsValue> {
+		let request = decode_permission_authorization_request(&payload)?;
+		let status = self
+			.inner
+			.core
+			.permission_authorization_status(request)
+			.await
+			.map_err(generic_error_to_js)?;
+		Ok(permission_authorization_status_to_js(status))
+	}
 
 	/// Read permission authorization statuses without prompting.
 	///
@@ -2242,44 +2502,44 @@ impl WasmProductRuntime {
 		Ok(values)
 	}
 
-    /// Update a stored permission authorization status. Passing
-    /// `"NotDetermined"` resets the decision so the next product request
-    /// prompts again.
-    #[wasm_bindgen(js_name = setPermissionAuthorizationStatus)]
-    pub async fn set_permission_authorization_status(
-        &self,
-        payload: Vec<u8>,
-        status: String,
-    ) -> Result<(), JsValue> {
-        let request = decode_permission_authorization_request(&payload)?;
-        let status = permission_authorization_status_from_js(&status)?;
-        self.inner
-            .core
-            .set_permission_authorization_status(request, status)
-            .await
-            .map_err(generic_error_to_js)
-    }
+	/// Update a stored permission authorization status. Passing
+	/// `"NotDetermined"` resets the decision so the next product request
+	/// prompts again.
+	#[wasm_bindgen(js_name = setPermissionAuthorizationStatus)]
+	pub async fn set_permission_authorization_status(
+		&self,
+		payload: Vec<u8>,
+		status: String,
+	) -> Result<(), JsValue> {
+		let request = decode_permission_authorization_request(&payload)?;
+		let status = permission_authorization_status_from_js(&status)?;
+		self.inner
+			.core
+			.set_permission_authorization_status(request, status)
+			.await
+			.map_err(generic_error_to_js)
+	}
 
-    /// Re-read stored authorization without prompting, OS queries or writes.
-    #[wasm_bindgen(js_name = refreshPermissionAuthorization)]
-    pub async fn refresh_permission_authorization(
-        &self,
-        payload: Vec<u8>,
-    ) -> Result<(), JsValue> {
-        let request = decode_permission_authorization_request(&payload)?;
-        self.inner.core.refresh_permission_authorization(request)
-            .await.map_err(generic_error_to_js)
-    }
+	/// Re-read stored authorization without prompting, OS queries or writes.
+	#[wasm_bindgen(js_name = refreshPermissionAuthorization)]
+	pub async fn refresh_permission_authorization(&self, payload: Vec<u8>) -> Result<(), JsValue> {
+		let request = decode_permission_authorization_request(&payload)?;
+		self.inner
+			.core
+			.refresh_permission_authorization(request)
+			.await
+			.map_err(generic_error_to_js)
+	}
 
-    /// Tear down the bridge. Invokes the JS-side `dispose` callback so the
-    /// host can drop its end of the wiring.
-    pub fn dispose(&self) -> Result<(), JsValue> {
-        if self.inner.disposed.get() {
-            return Ok(());
-        }
-        if self.inner.disposing.replace(true) {
-            return Ok(());
-        }
+	/// Tear down the bridge. Invokes the JS-side `dispose` callback so the
+	/// host can drop its end of the wiring.
+	pub fn dispose(&self) -> Result<(), JsValue> {
+		if self.inner.disposed.get() {
+			return Ok(());
+		}
+		if self.inner.disposing.replace(true) {
+			return Ok(());
+		}
 
 		self.inner.core.dispose();
 

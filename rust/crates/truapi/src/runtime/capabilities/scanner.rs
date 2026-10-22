@@ -15,7 +15,7 @@ use super::from_latest_error;
 use crate::{
 	host_logic::scanner::{accepts, validate_request},
 	platform::{HostScan, ProductExecutionKind},
-	runtime::{ProductRuntimeHost, until_cancelled, versioning::version},
+	runtime::{ProductRuntimeHost, until_cancelled},
 };
 
 fn unknown(reason: impl ToString) -> CallError<latest::HostScannerScanError> {
@@ -40,7 +40,11 @@ impl Scanner for ProductRuntimeHost {
 			} else {
 				None
 			};
-			let platform = self.scanner_platform.as_ref().or(shared.as_ref()).ok_or(CallError::Unsupported)?;
+			let platform = self
+				.scanner_platform
+				.as_ref()
+				.or(shared.as_ref())
+				.ok_or(CallError::Unsupported)?;
 			validate_request(&request).map_err(|reason| {
 				CallError::Domain(latest::HostScannerScanError::InvalidRequest { reason })
 			})?;

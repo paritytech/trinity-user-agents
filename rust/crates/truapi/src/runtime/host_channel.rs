@@ -7,8 +7,10 @@
 
 use parity_scale_codec::{Decode, DecodeAll, Encode};
 
-use crate::platform::{CoreStorage, CoreStorageKey};
-use crate::runtime::profile::ProfileOwner;
+use crate::{
+	platform::{CoreStorage, CoreStorageKey},
+	runtime::profile::ProfileOwner,
+};
 
 /// A contact roster is bounded; so is what the host keeps for it.
 const MAX_PEERS: usize = 4096;
@@ -17,69 +19,59 @@ const VERSION: u8 = 1;
 /// One peer's half of a host channel.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub(crate) struct HostChannelPeer {
-    /// The peer's authenticated root identity, as the Chat roster names it.
-    pub(crate) peer_identity: [u8; 32],
-    /// The peer's pairwise X25519 public key for this wallet.
-    pub(crate) channel_public_key: [u8; 32],
+	/// The peer's authenticated root identity, as the Chat roster names it.
+	pub(crate) peer_identity: [u8; 32],
+	/// The peer's pairwise X25519 public key for this wallet.
+	pub(crate) channel_public_key: [u8; 32],
 }
 
 fn key(owner: ProfileOwner) -> CoreStorageKey {
-    CoreStorageKey::HostChannelPeers {
-        root_public_key: owner.root_public_key,
-        genesis_hash: owner.genesis_hash,
-    }
+	CoreStorageKey::HostChannelPeers {
+		root_public_key: owner.root_public_key,
+		genesis_hash: owner.genesis_hash,
+	}
 }
 
 fn storage_error(error: impl core::fmt::Debug) -> String {
-    format!("host channel storage failed: {error:?}")
+	format!("host channel storage failed: {error:?}")
 }
 
 /// Every peer this wallet holds a channel key for.
 pub(crate) async fn read_peers(
-    storage: &(impl CoreStorage + ?Sized),
-    owner: ProfileOwner,
+	storage: &(impl CoreStorage + ?Sized),
+	owner: ProfileOwner,
 ) -> Result<Vec<HostChannelPeer>, String> {
-    let Some(raw) = storage
-        .read_core_storage(key(owner))
-        .await
-        .map_err(storage_error)?
-    else {
-        return Ok(Vec::new());
-    };
-    let (version, peers) = <(u8, Vec<HostChannelPeer>)>::decode_all(&mut raw.as_slice())
-        .map_err(|error| format!("stored host channel peers are unreadable: {error}"))?;
-    if version != VERSION || peers.len() > MAX_PEERS {
-        return Err("invalid host channel peers".into());
-    }
-    Ok(peers)
+	let Some(raw) = storage.read_core_storage(key(owner)).await.map_err(storage_error)? else {
+		return Ok(Vec::new());
+	};
+	let (version, peers) = <(u8, Vec<HostChannelPeer>)>::decode_all(&mut raw.as_slice())
+		.map_err(|error| format!("stored host channel peers are unreadable: {error}"))?;
+	if version != VERSION || peers.len() > MAX_PEERS {
+		return Err("invalid host channel peers".into());
+	}
+	Ok(peers)
 }
 
 /// Record the key `peer_identity` sent, replacing an earlier one. `true`
 /// when the stored key changed.
 pub(crate) async fn upsert_peer(
-    storage: &(impl CoreStorage + ?Sized),
-    owner: ProfileOwner,
-    peer_identity: [u8; 32],
-    channel_public_key: [u8; 32],
+	storage: &(impl CoreStorage + ?Sized),
+	owner: ProfileOwner,
+	peer_identity: [u8; 32],
+	channel_public_key: [u8; 32],
 ) -> Result<bool, String> {
-    let mut peers = read_peers(storage, owner).await?;
-    match peers
-        .iter()
-        .position(|peer| peer.peer_identity == peer_identity)
-    {
-        Some(index) if peers[index].channel_public_key == channel_public_key => return Ok(false),
-        Some(index) => peers[index].channel_public_key = channel_public_key,
-        None if peers.len() >= MAX_PEERS => return Err("too many host channel peers".into()),
-        None => peers.push(HostChannelPeer {
-            peer_identity,
-            channel_public_key,
-        }),
-    }
-    storage
-        .write_core_storage(key(owner), (VERSION, peers).encode())
-        .await
-        .map_err(storage_error)?;
-    Ok(true)
+	let mut peers = read_peers(storage, owner).await?;
+	match peers.iter().position(|peer| peer.peer_identity == peer_identity) {
+		Some(index) if peers[index].channel_public_key == channel_public_key => return Ok(false),
+		Some(index) => peers[index].channel_public_key = channel_public_key,
+		None if peers.len() >= MAX_PEERS => return Err("too many host channel peers".into()),
+		None => peers.push(HostChannelPeer { peer_identity, channel_public_key }),
+	}
+	storage
+		.write_core_storage(key(owner), (VERSION, peers).encode())
+		.await
+		.map_err(storage_error)?;
+	Ok(true)
 }
 
 // ---- the channel itself: send on a disclosure change, receive in the background ----
@@ -89,18 +81,22 @@ use std::collections::HashMap;
 use futures::{FutureExt, StreamExt, future::AbortHandle};
 use futures_timer::Delay;
 
-use crate::host_logic::host_channel::{
-    ChannelKey, KIND_PROFILE_REFERENCE, Pair, ProfileReference,
+use crate::{
+	host_logic::{
+		host_channel::{ChannelKey, KIND_PROFILE_REFERENCE, Pair, ProfileReference},
+		product_account::derive_identity_keypair,
+		statement_store::{
+			decode_signed_statement, parse_new_statements_result, sign_statement_fields,
+			statement_fields_from_v01,
+		},
+	},
+	runtime::{
+		native_chat::NativeChatContext,
+		profile::{read_disclosure_state, record_personal_received_reference},
+		statement_store_rpc,
+	},
+	unix_time::current_unix_secs,
 };
-use crate::host_logic::product_account::derive_identity_keypair;
-use crate::host_logic::statement_store::{
-    decode_signed_statement, parse_new_statements_result, sign_statement_fields,
-    statement_fields_from_v01,
-};
-use crate::runtime::native_chat::NativeChatContext;
-use crate::runtime::profile::{read_disclosure_state, record_personal_received_reference};
-use crate::runtime::statement_store_rpc;
-use crate::unix_time::current_unix_secs;
 use truapi::latest::Statement;
 
 /// How long a host message is offered on the store, like a Chat frame.
@@ -113,26 +109,23 @@ const RETRY: core::time::Duration = core::time::Duration::from_secs(30);
 const MAX_TOPICS: usize = 128;
 
 fn owner_of(context: &NativeChatContext) -> ProfileOwner {
-    ProfileOwner {
-        root_public_key: context.session.public_key,
-        genesis_hash: context.genesis_hash,
-    }
+	ProfileOwner { root_public_key: context.session.public_key, genesis_hash: context.genesis_hash }
 }
 
 /// Every stored peer with the pair this wallet shares with it. A peer whose
 /// key does not pair is skipped.
 async fn pairs(context: &NativeChatContext) -> Result<Vec<([u8; 32], Pair)>, String> {
-    let owner = owner_of(context);
-    Ok(read_peers(&*context.services.platform, owner)
-        .await?
-        .into_iter()
-        .filter_map(|peer| {
-            ChannelKey::derive(&context.entropy, &context.genesis_hash, &peer.peer_identity)
-                .pair(&peer.channel_public_key)
-                .ok()
-                .map(|pair| (peer.peer_identity, pair))
-        })
-        .collect())
+	let owner = owner_of(context);
+	Ok(read_peers(&*context.services.platform, owner)
+		.await?
+		.into_iter()
+		.filter_map(|peer| {
+			ChannelKey::derive(&context.entropy, &context.genesis_hash, &peer.peer_identity)
+				.pair(&peer.channel_public_key)
+				.ok()
+				.map(|pair| (peer.peer_identity, pair))
+		})
+		.collect())
 }
 
 /// The signed statements that carry the current disclosure to every
@@ -141,110 +134,106 @@ async fn pairs(context: &NativeChatContext) -> Result<Vec<([u8; 32], Pair)>, Str
 /// is the revision, so a receiver keeps the newest whatever order it opens
 /// them in. Pure apart from reading storage; `publish` submits them.
 pub(crate) async fn build(
-    context: &NativeChatContext,
-    only: Option<[u8; 32]>,
+	context: &NativeChatContext,
+	only: Option<[u8; 32]>,
 ) -> Result<Vec<([u8; 32], Vec<u8>)>, String> {
-    context
-        .require_current()
-        .map_err(|_| "session changed".to_string())?;
-    let owner = owner_of(context);
-    let (revision, disclosure) = read_disclosure_state(&*context.services.platform, owner).await?;
-    if revision == 0 {
-        // Nothing was ever disclosed; there is nothing to send or withdraw.
-        return Ok(Vec::new());
-    }
-    let signer = derive_identity_keypair(&context.entropy, &context.network_suffix)
-        .map_err(|error| format!("host channel signer: {error}"))?;
-    let secret = zeroize::Zeroizing::new(signer.secret.to_bytes());
-    let public = signer.public.to_bytes();
-    let mut statements = Vec::new();
-    for (peer, pair) in pairs(context).await? {
-        if only.is_some_and(|only| only != peer) {
-            continue;
-        }
-        let granted = disclosure.as_ref().filter(|disclosure| {
-            disclosure.grants(
-                crate::runtime::profile::ProfileScope::Personal,
-                &disclosure.product_id,
-                &peer,
-            )
-        });
-        let message = ProfileReference {
-            revision,
-            discloser_product_id: disclosure
-                .as_ref()
-                .map(|disclosure| disclosure.product_id.clone())
-                .unwrap_or_default(),
-            reference: granted.map(|disclosure| disclosure.reference.clone()),
-        }
-        .into_message();
-        let sealed = pair.seal(&message).map_err(|error| error.to_string())?;
-        let now = current_unix_secs();
-        let expiry = now
-            .saturating_add(LIFETIME_SECS)
-            .saturating_mul(1u64 << 32)
-            | (revision & 0xffff_ffff);
-        let fields = statement_fields_from_v01(Statement {
-            proof: None,
-            decryption_key: None,
-            expiry: Some(expiry),
-            channel: Some(pair.channel(KIND_PROFILE_REFERENCE).map_err(|error| error.to_string())?),
-            topics: vec![pair.topic()],
-            data: Some(sealed),
-        })?;
-        let signed = sign_statement_fields(*secret, public, fields)?;
-        statements.push((peer, signed.encode()));
-    }
-    Ok(statements)
+	context.require_current().map_err(|_| "session changed".to_string())?;
+	let owner = owner_of(context);
+	let (revision, disclosure) = read_disclosure_state(&*context.services.platform, owner).await?;
+	if revision == 0 {
+		// Nothing was ever disclosed; there is nothing to send or withdraw.
+		return Ok(Vec::new());
+	}
+	let signer = derive_identity_keypair(&context.entropy, &context.network_suffix)
+		.map_err(|error| format!("host channel signer: {error}"))?;
+	let secret = zeroize::Zeroizing::new(signer.secret.to_bytes());
+	let public = signer.public.to_bytes();
+	let mut statements = Vec::new();
+	for (peer, pair) in pairs(context).await? {
+		if only.is_some_and(|only| only != peer) {
+			continue;
+		}
+		let granted = disclosure.as_ref().filter(|disclosure| {
+			disclosure.grants(
+				crate::runtime::profile::ProfileScope::Personal,
+				&disclosure.product_id,
+				&peer,
+			)
+		});
+		let message = ProfileReference {
+			revision,
+			discloser_product_id: disclosure
+				.as_ref()
+				.map(|disclosure| disclosure.product_id.clone())
+				.unwrap_or_default(),
+			reference: granted.map(|disclosure| disclosure.reference.clone()),
+		}
+		.into_message();
+		let sealed = pair.seal(&message).map_err(|error| error.to_string())?;
+		let now = current_unix_secs();
+		let expiry =
+			now.saturating_add(LIFETIME_SECS).saturating_mul(1u64 << 32) | (revision & 0xffff_ffff);
+		let fields = statement_fields_from_v01(Statement {
+			proof: None,
+			decryption_key: None,
+			expiry: Some(expiry),
+			channel: Some(pair.channel(KIND_PROFILE_REFERENCE).map_err(|error| error.to_string())?),
+			topics: vec![pair.topic()],
+			data: Some(sealed),
+		})?;
+		let signed = sign_statement_fields(*secret, public, fields)?;
+		statements.push((peer, signed.encode()));
+	}
+	Ok(statements)
 }
 
 /// Submit what `build` returns. Returns how many were sent; the first
 /// refusal stops the rest, which the next change or bootstrap resends.
 pub(crate) async fn publish(
-    context: &NativeChatContext,
-    only: Option<[u8; 32]>,
+	context: &NativeChatContext,
+	only: Option<[u8; 32]>,
 ) -> Result<usize, String> {
-    let mut sent = 0;
-    for (_, statement) in build(context, only).await? {
-        context
-            .services
-            .statement_store
-            .submit(statement, "host channel")
-            .await
-            .map_err(|error| format!("host channel submit: {error:?}"))?;
-        sent += 1;
-    }
-    Ok(sent)
+	let mut sent = 0;
+	for (_, statement) in build(context, only).await? {
+		context
+			.services
+			.statement_store
+			.submit(statement, "host channel")
+			.await
+			.map_err(|error| format!("host channel submit: {error:?}"))?;
+		sent += 1;
+	}
+	Ok(sent)
 }
 
 /// A running receiver for one wallet on one network.
 pub(crate) struct Receiver {
-    session: Vec<u8>,
-    abort: AbortHandle,
+	session: Vec<u8>,
+	abort: AbortHandle,
 }
 
 impl Drop for Receiver {
-    fn drop(&mut self) {
-        self.abort.abort();
-    }
+	fn drop(&mut self) {
+		self.abort.abort();
+	}
 }
 
 impl Receiver {
-    /// Whether this receiver serves `context`'s session.
-    pub(crate) fn serves(&self, context: &NativeChatContext) -> bool {
-        self.session == context.session.validation_id
-    }
+	/// Whether this receiver serves `context`'s session.
+	pub(crate) fn serves(&self, context: &NativeChatContext) -> bool {
+		self.session == context.session.validation_id
+	}
 
-    /// Start receiving for `context`; the task ends when the session does.
-    pub(crate) fn start(context: NativeChatContext) -> Self {
-        let (abort, registration) = AbortHandle::new_pair();
-        let session = context.session.validation_id.clone();
-        let spawner = context.services.spawner.clone();
-        spawner(Box::pin(async move {
-            let _ = futures::future::Abortable::new(receive(context), registration).await;
-        }));
-        Self { session, abort }
-    }
+	/// Start receiving for `context`; the task ends when the session does.
+	pub(crate) fn start(context: NativeChatContext) -> Self {
+		let (abort, registration) = AbortHandle::new_pair();
+		let session = context.session.validation_id.clone();
+		let spawner = context.services.spawner.clone();
+		spawner(Box::pin(async move {
+			let _ = futures::future::Abortable::new(receive(context), registration).await;
+		}));
+		Self { session, abort }
+	}
 }
 
 /// Watch every bootstrapped peer's topic, open what arrives, and record it
@@ -334,9 +323,9 @@ async fn receive(context: NativeChatContext) {
 }
 
 async fn handle_page(
-    context: &NativeChatContext,
-    by_topic: &HashMap<[u8; 32], ([u8; 32], Pair)>,
-    value: &serde_json::Value,
+	context: &NativeChatContext,
+	by_topic: &HashMap<[u8; 32], ([u8; 32], Pair)>,
+	value: &serde_json::Value,
 ) {
 	let page = match parse_new_statements_result("host-channel".to_string(), value) {
 		Ok(page) => page,
@@ -416,8 +405,8 @@ mod tests {
 	use std::sync::Arc;
 	use truapi::latest::HostPlatform;
 
-    const GENESIS: [u8; 32] = [2; 32];
-    const REFERENCE: &str = "seity-contacts:v1:aa";
+	const GENESIS: [u8; 32] = [2; 32];
+	const REFERENCE: &str = "seity-contacts:v1:aa";
 
 	#[test]
 	fn persisted_peer_keys_keep_their_slot_after_receiving_and_upload_policies() {
@@ -482,59 +471,59 @@ mod tests {
 		Host { context, platform, identity }
 	}
 
-    /// Both hosts hold each other's bootstrap.
-    async fn bootstrapped(a: &Host, b: &Host) {
-        let a_key = ChannelKey::derive(&a.context.entropy, &GENESIS, &b.identity).public();
-        let b_key = ChannelKey::derive(&b.context.entropy, &GENESIS, &a.identity).public();
-        upsert_peer(a.platform.as_ref(), owner_of(&a.context), b.identity, b_key)
-            .await
-            .unwrap();
-        upsert_peer(b.platform.as_ref(), owner_of(&b.context), a.identity, a_key)
-            .await
-            .unwrap();
-    }
+	/// Both hosts hold each other's bootstrap.
+	async fn bootstrapped(a: &Host, b: &Host) {
+		let a_key = ChannelKey::derive(&a.context.entropy, &GENESIS, &b.identity).public();
+		let b_key = ChannelKey::derive(&b.context.entropy, &GENESIS, &a.identity).public();
+		upsert_peer(a.platform.as_ref(), owner_of(&a.context), b.identity, b_key)
+			.await
+			.unwrap();
+		upsert_peer(b.platform.as_ref(), owner_of(&b.context), a.identity, a_key)
+			.await
+			.unwrap();
+	}
 
-    async fn disclose(host: &Host, reference: &str, contacts: Vec<[u8; 32]>) {
-        write_disclosure(
-            host.platform.as_ref(),
-            owner_of(&host.context),
-            &Disclosure {
-                product_id: "seity.dot".into(),
-                reference: reference.into(),
-                revision: 0,
-                all_chat_apps: false,
-                app_products: Vec::new(),
-                contacts,
-            },
-        )
-        .await
-        .unwrap();
-    }
+	async fn disclose(host: &Host, reference: &str, contacts: Vec<[u8; 32]>) {
+		write_disclosure(
+			host.platform.as_ref(),
+			owner_of(&host.context),
+			&Disclosure {
+				product_id: "seity.dot".into(),
+				reference: reference.into(),
+				revision: 0,
+				all_chat_apps: false,
+				app_products: Vec::new(),
+				contacts,
+			},
+		)
+		.await
+		.unwrap();
+	}
 
-    fn page(statements: &[Vec<u8>]) -> serde_json::Value {
-        serde_json::json!({
-            "event": "newStatements",
-            "data": {
-                "statements": statements.iter().map(|s| format!("0x{}", hex::encode(s))).collect::<Vec<_>>(),
-            }
-        })
-    }
+	fn page(statements: &[Vec<u8>]) -> serde_json::Value {
+		serde_json::json!({
+			"event": "newStatements",
+			"data": {
+				"statements": statements.iter().map(|s| format!("0x{}", hex::encode(s))).collect::<Vec<_>>(),
+			}
+		})
+	}
 
-    async fn held(host: &Host, peer: [u8; 32]) -> Option<Option<String>> {
-        received_reference(host.platform.as_ref(), owner_of(&host.context), "any.dot", &peer)
-            .await
-            .unwrap()
-            .map(|held| held.reference)
-    }
+	async fn held(host: &Host, peer: [u8; 32]) -> Option<Option<String>> {
+		received_reference(host.platform.as_ref(), owner_of(&host.context), "any.dot", &peer)
+			.await
+			.unwrap()
+			.map(|held| held.reference)
+	}
 
-    async fn by_topic(host: &Host) -> HashMap<[u8; 32], ([u8; 32], Pair)> {
-        pairs(&host.context)
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|(peer, pair)| (pair.topic(), (peer, pair)))
-            .collect()
-    }
+	async fn by_topic(host: &Host) -> HashMap<[u8; 32], ([u8; 32], Pair)> {
+		pairs(&host.context)
+			.await
+			.unwrap()
+			.into_iter()
+			.map(|(peer, pair)| (pair.topic(), (peer, pair)))
+			.collect()
+	}
 
 	/// Drive real RPC tasks to quiescence, without threads, sleeps or polling deadlines.
 	#[derive(Default)]
@@ -602,12 +591,18 @@ mod tests {
 			host.context.genesis_hash,
 		);
 		let context = sender.context.clone();
-		assert_eq!(executor.complete(async move { publish(&context, Some(only)).await }).unwrap(), 1);
+		assert_eq!(
+			executor.complete(async move { publish(&context, Some(only)).await }).unwrap(),
+			1
+		);
 		let requests = sender.platform.sent_rpc.lock().unwrap();
 		assert_eq!(requests.len(), 1, "only direct host-channel publication is allowed");
 		let request: serde_json::Value = serde_json::from_str(&requests[0]).unwrap();
 		assert_eq!(request["method"], "statement_submit");
-		assert_eq!(*sender.platform.chain_connects.lock().unwrap(), vec![host.context.genesis_hash]);
+		assert_eq!(
+			*sender.platform.chain_connects.lock().unwrap(),
+			vec![host.context.genesis_hash]
+		);
 		hex::decode(request["params"][0].as_str().unwrap().strip_prefix("0x").unwrap()).unwrap()
 	}
 
@@ -626,7 +621,8 @@ mod tests {
 		let expected_topics = block_on(by_topic(&receiver_host));
 		assert!(!expected_topics.is_empty(), "persisted bootstrap must survive reopening");
 		assert_eq!(
-			block_on(read_peers(receiver_host.platform.as_ref(), owner_of(&receiver_host.context))).unwrap(),
+			block_on(read_peers(receiver_host.platform.as_ref(), owner_of(&receiver_host.context)))
+				.unwrap(),
 			block_on(read_peers(host.platform.as_ref(), owner_of(&host.context))).unwrap(),
 		);
 		let receiver = Receiver::start(receiver_host.context.clone());
@@ -637,10 +633,16 @@ mod tests {
 			let request: serde_json::Value = serde_json::from_str(&requests[0]).unwrap();
 			assert_eq!(request["method"], "statement_subscribeStatement");
 			let mut watched: Vec<String> = request["params"][0]["matchAny"]
-				.as_array().unwrap().iter().map(|value| value.as_str().unwrap().to_owned()).collect();
+				.as_array()
+				.unwrap()
+				.iter()
+				.map(|value| value.as_str().unwrap().to_owned())
+				.collect();
 			watched.sort_unstable();
-			let mut expected: Vec<String> = expected_topics.keys()
-				.map(|topic| format!("0x{}", hex::encode(topic))).collect();
+			let mut expected: Vec<String> = expected_topics
+				.keys()
+				.map(|topic| format!("0x{}", hex::encode(topic)))
+				.collect();
 			expected.sort_unstable();
 			assert_eq!(watched, expected);
 		}
@@ -655,8 +657,13 @@ mod tests {
 
 	fn assert_direct_reference(host: &Host, peer: [u8; 32], expected: Option<&str>) {
 		let received = block_on(received_reference(
-			host.platform.as_ref(), owner_of(&host.context), "any.dot", &peer,
-		)).unwrap().expect("the direct receiver recorded a reference or durable withdrawal");
+			host.platform.as_ref(),
+			owner_of(&host.context),
+			"any.dot",
+			&peer,
+		))
+		.unwrap()
+		.expect("the direct receiver recorded a reference or durable withdrawal");
 		assert_eq!(received.peer_identity, peer);
 		assert_eq!(received.discloser_product_id, "seity.dot");
 		assert_eq!(received.reference.as_deref(), expected);
@@ -700,9 +707,13 @@ mod tests {
 			channel: statement.channel,
 			topics: vec![topic],
 			data: statement.data,
-		}).unwrap();
-		let signer = derive_identity_keypair(&host.context.entropy, &host.context.network_suffix).unwrap();
-		sign_statement_fields(signer.secret.to_bytes(), signer.public.to_bytes(), fields).unwrap().encode()
+		})
+		.unwrap();
+		let signer =
+			derive_identity_keypair(&host.context.entropy, &host.context.network_suffix).unwrap();
+		sign_statement_fields(signer.secret.to_bytes(), signer.public.to_bytes(), fields)
+			.unwrap()
+			.encode()
 	}
 
 	#[test]
@@ -732,20 +743,27 @@ mod tests {
 		let original = published(&alice, bob.identity);
 		let executor = RpcExecutor::default();
 		let other_network = reopen(&bob, &executor, vec![], [0x77; 32]);
-		assert!(block_on(read_peers(
-			other_network.platform.as_ref(), owner_of(&other_network.context),
-		)).unwrap().is_empty(), "another network must not inherit the bootstrap roster");
+		assert!(
+			block_on(
+				read_peers(other_network.platform.as_ref(), owner_of(&other_network.context),)
+			)
+			.unwrap()
+			.is_empty(),
+			"another network must not inherit the bootstrap roster"
+		);
 
 		// Even copying the public bootstrap key cannot reuse a pair across networks.
 		let peers = block_on(read_peers(bob.platform.as_ref(), owner_of(&bob.context))).unwrap();
 		block_on(upsert_peer(
-			other_network.platform.as_ref(), owner_of(&other_network.context),
-			alice.identity, peers[0].channel_public_key,
-		)).unwrap();
+			other_network.platform.as_ref(),
+			owner_of(&other_network.context),
+			alice.identity,
+			peers[0].channel_public_key,
+		))
+		.unwrap();
 		let topic = *block_on(by_topic(&other_network)).keys().next().unwrap();
-		let other_network = receive_after_reopen(
-			&other_network, vec![retarget(&alice, &original, topic)],
-		);
+		let other_network =
+			receive_after_reopen(&other_network, vec![retarget(&alice, &original, topic)]);
 		assert_eq!(block_on(held(&other_network, alice.identity)), None);
 		let bob = receive_after_reopen(&bob, vec![original]);
 		assert_direct_reference(&bob, alice.identity, Some(REFERENCE));
@@ -762,96 +780,99 @@ mod tests {
 			// Carol is picked but never bootstrapped: nothing can reach her.
 			disclose(&alice, REFERENCE, vec![bob.identity, carol.identity]).await;
 
-            let first = build(&alice.context, None).await.unwrap();
-            assert_eq!(first.len(), 1, "one statement, for the one bootstrapped peer");
-            assert_eq!(first[0].0, bob.identity);
-            let statement = decode_signed_statement(&first[0].1).unwrap();
-            let pair = ChannelKey::derive(&bob.context.entropy, &GENESIS, &alice.identity)
-                .pair(&ChannelKey::derive(&alice.context.entropy, &GENESIS, &bob.identity).public())
-                .unwrap();
-            assert_eq!(statement.topics, vec![pair.topic()]);
-            assert_eq!(statement.channel, Some(pair.channel(KIND_PROFILE_REFERENCE).unwrap()));
+			let first = build(&alice.context, None).await.unwrap();
+			assert_eq!(first.len(), 1, "one statement, for the one bootstrapped peer");
+			assert_eq!(first[0].0, bob.identity);
+			let statement = decode_signed_statement(&first[0].1).unwrap();
+			let pair = ChannelKey::derive(&bob.context.entropy, &GENESIS, &alice.identity)
+				.pair(&ChannelKey::derive(&alice.context.entropy, &GENESIS, &bob.identity).public())
+				.unwrap();
+			assert_eq!(statement.topics, vec![pair.topic()]);
+			assert_eq!(statement.channel, Some(pair.channel(KIND_PROFILE_REFERENCE).unwrap()));
 
-            // Bob opens it and holds the reference; Carol's host holds nothing.
-            let topics = by_topic(&bob).await;
-            handle_page(&bob.context, &topics, &page(&[first[0].1.clone()])).await;
-            assert_eq!(held(&bob, alice.identity).await, Some(Some(REFERENCE.into())));
-            assert_eq!(held(&carol, alice.identity).await, None);
+			// Bob opens it and holds the reference; Carol's host holds nothing.
+			let topics = by_topic(&bob).await;
+			handle_page(&bob.context, &topics, &page(&[first[0].1.clone()])).await;
+			assert_eq!(held(&bob, alice.identity).await, Some(Some(REFERENCE.into())));
+			assert_eq!(held(&carol, alice.identity).await, None);
 
-            // A newer disclosure replaces it; replaying the older one changes nothing.
-            disclose(&alice, "seity-contacts:v1:bb", vec![bob.identity]).await;
-            let second = build(&alice.context, None).await.unwrap();
-            handle_page(&bob.context, &topics, &page(&[second[0].1.clone()])).await;
-            assert_eq!(held(&bob, alice.identity).await, Some(Some("seity-contacts:v1:bb".into())));
-            handle_page(&bob.context, &topics, &page(&[first[0].1.clone()])).await;
-            assert_eq!(held(&bob, alice.identity).await, Some(Some("seity-contacts:v1:bb".into())));
+			// A newer disclosure replaces it; replaying the older one changes nothing.
+			disclose(&alice, "seity-contacts:v1:bb", vec![bob.identity]).await;
+			let second = build(&alice.context, None).await.unwrap();
+			handle_page(&bob.context, &topics, &page(&[second[0].1.clone()])).await;
+			assert_eq!(held(&bob, alice.identity).await, Some(Some("seity-contacts:v1:bb".into())));
+			handle_page(&bob.context, &topics, &page(&[first[0].1.clone()])).await;
+			assert_eq!(held(&bob, alice.identity).await, Some(Some("seity-contacts:v1:bb".into())));
 
-            // Unpicking Bob sends him a withdrawal.
-            disclose(&alice, "seity-contacts:v1:bb", vec![]).await;
-            let third = build(&alice.context, None).await.unwrap();
-            assert_eq!(third.len(), 1);
-            handle_page(&bob.context, &topics, &page(&[third[0].1.clone()])).await;
-            assert_eq!(held(&bob, alice.identity).await, Some(None));
-        });
-    }
+			// Unpicking Bob sends him a withdrawal.
+			disclose(&alice, "seity-contacts:v1:bb", vec![]).await;
+			let third = build(&alice.context, None).await.unwrap();
+			assert_eq!(third.len(), 1);
+			handle_page(&bob.context, &topics, &page(&[third[0].1.clone()])).await;
+			assert_eq!(held(&bob, alice.identity).await, Some(None));
+		});
+	}
 
-    #[test]
-    fn what_the_pair_did_not_seal_is_dropped() {
-        block_on(async {
-            let alice = host(0x0a);
-            let bob = host(0x0b);
-            let mallory = host(0x0d);
-            bootstrapped(&alice, &bob).await;
-            bootstrapped(&mallory, &bob).await;
-            disclose(&alice, REFERENCE, vec![bob.identity]).await;
-            let topics = by_topic(&bob).await;
+	#[test]
+	fn what_the_pair_did_not_seal_is_dropped() {
+		block_on(async {
+			let alice = host(0x0a);
+			let bob = host(0x0b);
+			let mallory = host(0x0d);
+			bootstrapped(&alice, &bob).await;
+			bootstrapped(&mallory, &bob).await;
+			disclose(&alice, REFERENCE, vec![bob.identity]).await;
+			let topics = by_topic(&bob).await;
 
-            // Tampered ciphertext on the right topic.
-            let (_, statement) = build(&alice.context, None).await.unwrap().remove(0);
-            let mut tampered = decode_signed_statement(&statement).unwrap();
-            let data = tampered.data.as_mut().unwrap();
-            let last = data.len() - 1;
-            data[last] ^= 1;
-            let fields = statement_fields_from_v01(Statement {
-                proof: None,
-                decryption_key: None,
-                expiry: tampered.expiry,
-                channel: tampered.channel,
-                topics: tampered.topics.clone(),
-                data: tampered.data.clone(),
-            })
-            .unwrap();
-            let signer = derive_identity_keypair(&mallory.context.entropy, "test").unwrap();
-            let resigned =
-                sign_statement_fields(signer.secret.to_bytes(), signer.public.to_bytes(), fields)
-                    .unwrap()
-                    .encode();
-            handle_page(&bob.context, &topics, &page(&[resigned])).await;
-            assert_eq!(held(&bob, alice.identity).await, None);
+			// Tampered ciphertext on the right topic.
+			let (_, statement) = build(&alice.context, None).await.unwrap().remove(0);
+			let mut tampered = decode_signed_statement(&statement).unwrap();
+			let data = tampered.data.as_mut().unwrap();
+			let last = data.len() - 1;
+			data[last] ^= 1;
+			let fields = statement_fields_from_v01(Statement {
+				proof: None,
+				decryption_key: None,
+				expiry: tampered.expiry,
+				channel: tampered.channel,
+				topics: tampered.topics.clone(),
+				data: tampered.data.clone(),
+			})
+			.unwrap();
+			let signer = derive_identity_keypair(&mallory.context.entropy, "test").unwrap();
+			let resigned =
+				sign_statement_fields(signer.secret.to_bytes(), signer.public.to_bytes(), fields)
+					.unwrap()
+					.encode();
+			handle_page(&bob.context, &topics, &page(&[resigned])).await;
+			assert_eq!(held(&bob, alice.identity).await, None);
 
-            // Mallory's own valid share lands under Mallory, never under Alice.
-            disclose(&mallory, "seity-contacts:v1:ee", vec![bob.identity]).await;
-            let (_, from_mallory) = build(&mallory.context, None).await.unwrap().remove(0);
-            handle_page(&bob.context, &topics, &page(&[from_mallory])).await;
-            assert_eq!(held(&bob, alice.identity).await, None);
-            assert_eq!(held(&bob, mallory.identity).await, Some(Some("seity-contacts:v1:ee".into())));
-        });
-    }
+			// Mallory's own valid share lands under Mallory, never under Alice.
+			disclose(&mallory, "seity-contacts:v1:ee", vec![bob.identity]).await;
+			let (_, from_mallory) = build(&mallory.context, None).await.unwrap().remove(0);
+			handle_page(&bob.context, &topics, &page(&[from_mallory])).await;
+			assert_eq!(held(&bob, alice.identity).await, None);
+			assert_eq!(
+				held(&bob, mallory.identity).await,
+				Some(Some("seity-contacts:v1:ee".into()))
+			);
+		});
+	}
 
-    #[test]
-    fn only_targets_one_peer_and_nothing_is_built_before_a_disclosure() {
-        block_on(async {
-            let alice = host(0x0a);
-            let bob = host(0x0b);
-            let dave = host(0x0e);
-            bootstrapped(&alice, &bob).await;
-            bootstrapped(&alice, &dave).await;
-            assert!(build(&alice.context, None).await.unwrap().is_empty());
-            disclose(&alice, REFERENCE, vec![bob.identity, dave.identity]).await;
-            assert_eq!(build(&alice.context, None).await.unwrap().len(), 2);
-            let only = build(&alice.context, Some(dave.identity)).await.unwrap();
-            assert_eq!(only.len(), 1);
-            assert_eq!(only[0].0, dave.identity);
-        });
-    }
+	#[test]
+	fn only_targets_one_peer_and_nothing_is_built_before_a_disclosure() {
+		block_on(async {
+			let alice = host(0x0a);
+			let bob = host(0x0b);
+			let dave = host(0x0e);
+			bootstrapped(&alice, &bob).await;
+			bootstrapped(&alice, &dave).await;
+			assert!(build(&alice.context, None).await.unwrap().is_empty());
+			disclose(&alice, REFERENCE, vec![bob.identity, dave.identity]).await;
+			assert_eq!(build(&alice.context, None).await.unwrap().len(), 2);
+			let only = build(&alice.context, Some(dave.identity)).await.unwrap();
+			assert_eq!(only.len(), 1);
+			assert_eq!(only[0].0, dave.identity);
+		});
+	}
 }

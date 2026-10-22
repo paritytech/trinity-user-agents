@@ -54,6 +54,15 @@ impl crate::session_usernames::SessionUsernames for SessionInfo {
 	fn has_username(&self) -> bool {
 		non_empty_username(&self.full_username) || non_empty_username(&self.lite_username)
 	}
+
+	fn apply_usernames(&mut self, lite_username: Option<String>, full_username: Option<String>) {
+		if non_empty_username(&full_username) {
+			self.full_username = full_username;
+		}
+		if non_empty_username(&lite_username) {
+			self.lite_username = lite_username;
+		}
+	}
 }
 
 fn non_empty_username(value: &Option<String>) -> bool {
@@ -328,31 +337,31 @@ impl SessionState {
 		self.inner.lock().expect("session-state mutex poisoned").current.clone()
 	}
 
-    /// Read the active root without cloning session secrets or pairing state.
-    pub fn current_public_key(&self) -> Option<[u8; 32]> {
-        self.inner
-            .lock()
-            .expect("session-state mutex poisoned")
-            .current
-            .as_ref()
-            .map(|session| session.public_key)
-    }
+	/// Read the active root without cloning session secrets or pairing state.
+	pub fn current_public_key(&self) -> Option<[u8; 32]> {
+		self.inner
+			.lock()
+			.expect("session-state mutex poisoned")
+			.current
+			.as_ref()
+			.map(|session| session.public_key)
+	}
 
-    /// Stream of connection-status events. The first item emitted is the
-    /// current state (so subscribers don't have to read it separately);
-    /// subsequent items reflect every `set_session` / `clear_session`
-    /// transition.
-    pub fn subscribe(&self) -> BoxStream<'static, VersionedItem> {
-        let (tx, rx) = mpsc::unbounded();
-        let mut inner = self.inner.lock().expect("session-state mutex poisoned");
-        let initial = match inner.current {
-            Some(_) => HostAccountConnectionStatusSubscribeItem::Connected,
-            None => HostAccountConnectionStatusSubscribeItem::Disconnected,
-        };
-        inner.subscribers.push(tx);
-        let initial_item = VersionedItem::V1(initial);
-        Box::pin(stream::once(async move { initial_item }).chain(rx))
-    }
+	/// Stream of connection-status events. The first item emitted is the
+	/// current state (so subscribers don't have to read it separately);
+	/// subsequent items reflect every `set_session` / `clear_session`
+	/// transition.
+	pub fn subscribe(&self) -> BoxStream<'static, VersionedItem> {
+		let (tx, rx) = mpsc::unbounded();
+		let mut inner = self.inner.lock().expect("session-state mutex poisoned");
+		let initial = match inner.current {
+			Some(_) => HostAccountConnectionStatusSubscribeItem::Connected,
+			None => HostAccountConnectionStatusSubscribeItem::Disconnected,
+		};
+		inner.subscribers.push(tx);
+		let initial_item = VersionedItem::V1(initial);
+		Box::pin(stream::once(async move { initial_item }).chain(rx))
+	}
 }
 
 /// Broadcast one connection-status transition and prune dropped subscribers.
@@ -583,14 +592,21 @@ mod tests {
 	}
 
 	#[test]
-	fn has_username_ignores_empty_usernames() {
+	fn session_username_helpers_check_and_apply_non_empty_values() {
 		let mut session = info(0x42);
-		session.lite_username = Some(String::new());
+		session.lite_username = None;
 		session.full_username = None;
+
 		assert!(!session.has_username());
 
-		session.full_username = Some("Alice Smith".to_string());
+		session.apply_usernames(Some(String::new()), Some("Alice Smith".to_string()));
 		assert!(session.has_username());
+		assert_eq!(session.full_username.as_deref(), Some("Alice Smith"));
+		assert_eq!(session.lite_username, None);
+
+		session.apply_usernames(Some("alice".to_string()), Some(String::new()));
+		assert_eq!(session.full_username.as_deref(), Some("Alice Smith"));
+		assert_eq!(session.lite_username.as_deref(), Some("alice"));
 	}
 
 	#[test]

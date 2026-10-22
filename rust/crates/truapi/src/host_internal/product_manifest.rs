@@ -9,8 +9,6 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-use crate::platform::ProductId;
-
 /// Manifest schema version this core parses.
 const SUPPORTED_SCHEMA_VERSION: u32 = 1;
 
@@ -73,20 +71,39 @@ impl RootManifest {
 
 	/// Whether this product grants `caller` the `wanted` scope.
 	///
-	/// `caller` is looked up by its bare label, the shape of a `trustedProducts`
-	/// key. A key written with a suffix names a product that does not resolve,
-	/// so it grants nothing.
-	pub fn grants(&self, caller: &ProductId, wanted: Granted) -> bool {
+	/// `caller` is a bare product label with no TLD suffix, matching the shape
+	/// of a `trustedProducts` key. A key written with a suffix names a product
+	/// that does not resolve, so it grants nothing.
+	pub fn grants(&self, caller: &str, wanted: Granted) -> bool {
 		// A value this core does not recognise is not a scope anyone can be
 		// granted. Without this an unrecognised entry in the manifest would
 		// satisfy a query for one, which is the opposite of ignoring it.
 		if wanted == Granted::Unrecognised {
 			return false;
 		}
-		self.trusted_products.get(caller.bare_label()).is_some_and(|granted| {
+		self.trusted_products.get(caller).is_some_and(|granted| {
 			granted.iter().any(|value| *value == Granted::All || *value == wanted)
 		})
 	}
+}
+
+/// The segment above the TLD of a normalized product identifier, which is the
+/// bare label a `trustedProducts` key is written with.
+///
+/// A product's executables are published beneath its own name, so
+/// `app.dim2.dot` and `worker.dim2.dot` both yield `dim2` and carry the grants
+/// published for it — they are that product, not neighbours of it. Reading the
+/// first segment instead would look for a key named after the executable, and
+/// reading everything below the TLD would make each executable its own product.
+///
+/// A subname under a different domain resolves to that domain: `dim2.attacker.dot`
+/// yields `attacker`, so it collects nothing published for `dim2`.
+///
+/// A localhost development identifier has no TLD and is returned unchanged.
+pub fn bare_product_label(product_id: &str) -> &str {
+	product_id.rsplit_once('.').map_or(product_id, |(above_tld, _tld)| {
+		above_tld.rsplit_once('.').map_or(above_tld, |(_prefix, label)| label)
+	})
 }
 
 #[cfg(test)]
@@ -100,22 +117,22 @@ mod tests {
 	#[test]
 	fn a_named_scope_is_granted_only_to_the_product_named() {
 		let root = manifest(r#"{"dim2":["storage"]}"#);
-		assert!(root.grants(&ProductId::for_test("dim2.dot"), Granted::Storage));
-		assert!(!root.grants(&ProductId::for_test("stash.dot"), Granted::Storage));
+		assert!(root.grants("dim2", Granted::Storage));
+		assert!(!root.grants("stash", Granted::Storage));
 	}
 
 	#[test]
 	fn scopes_are_independent() {
 		// `storage` must leave account interactions prompting as usual.
 		let root = manifest(r#"{"dim2":["storage"]}"#);
-		assert!(!root.grants(&ProductId::for_test("dim2.dot"), Granted::Context));
+		assert!(!root.grants("dim2", Granted::Context));
 	}
 
 	#[test]
 	fn all_satisfies_every_narrower_scope() {
 		let root = manifest(r#"{"dim2":["all"]}"#);
-		assert!(root.grants(&ProductId::for_test("dim2.dot"), Granted::Storage));
-		assert!(root.grants(&ProductId::for_test("dim2.dot"), Granted::Context));
+		assert!(root.grants("dim2", Granted::Storage));
+		assert!(root.grants("dim2", Granted::Context));
 	}
 
 	#[test]
@@ -123,15 +140,15 @@ mod tests {
 		// The RFC forbids failing validation over a value defined after this
 		// core was built.
 		let root = manifest(r#"{"dim2":["storage-write","storage"]}"#);
-		assert!(root.grants(&ProductId::for_test("dim2.dot"), Granted::Storage));
-		assert!(!root.grants(&ProductId::for_test("dim2.dot"), Granted::Context));
+		assert!(root.grants("dim2", Granted::Storage));
+		assert!(!root.grants("dim2", Granted::Context));
 	}
 
 	#[test]
 	fn an_entry_of_only_unrecognised_grants_grants_nothing() {
 		let root = manifest(r#"{"dim2":["storage-write"]}"#);
-		assert!(!root.grants(&ProductId::for_test("dim2.dot"), Granted::Storage));
-		assert!(!root.grants(&ProductId::for_test("dim2.dot"), Granted::Context));
+		assert!(!root.grants("dim2", Granted::Storage));
+		assert!(!root.grants("dim2", Granted::Context));
 	}
 
 	#[test]
@@ -140,10 +157,10 @@ mod tests {
 		// it asking for `Unrecognised`. A manifest full of values this core does
 		// not know must still answer no.
 		let root = manifest(r#"{"dim2":["storage-write"]}"#);
-		assert!(!root.grants(&ProductId::for_test("dim2.dot"), Granted::Unrecognised));
+		assert!(!root.grants("dim2", Granted::Unrecognised));
 
 		let wildcard = manifest(r#"{"dim2":["all"]}"#);
-		assert!(!wildcard.grants(&ProductId::for_test("dim2.dot"), Granted::Unrecognised));
+		assert!(!wildcard.grants("dim2", Granted::Unrecognised));
 	}
 
 	#[test]
@@ -165,7 +182,7 @@ mod tests {
 		// It names `dim2.dot.<tld>`, which does not exist, so the caller `dim2`
 		// matches nothing.
 		let root = manifest(r#"{"dim2.dot":["storage"]}"#);
-		assert!(!root.grants(&ProductId::for_test("dim2.dot"), Granted::Storage));
+		assert!(!root.grants("dim2", Granted::Storage));
 	}
 
 	#[test]
@@ -174,7 +191,7 @@ mod tests {
 			r#"{"$v":1,"displayName":"D","description":"d","icon":{"cid":"c","format":"png"}}"#,
 		)
 		.expect("manifest without trustedProducts parses");
-		assert!(!root.grants(&ProductId::for_test("dim2.dot"), Granted::Storage));
+		assert!(!root.grants("dim2", Granted::Storage));
 	}
 
 	#[test]
@@ -188,18 +205,34 @@ mod tests {
 	}
 
 	#[test]
+	fn the_bare_label_drops_the_tld() {
+		assert_eq!(bare_product_label("dim2.dot"), "dim2");
+		assert_eq!(bare_product_label("dim2.paseo"), "dim2");
+		assert_eq!(bare_product_label("localhost"), "localhost");
+	}
+
+	#[test]
+	fn an_executable_carries_the_label_of_the_product_it_belongs_to() {
+		assert_eq!(bare_product_label("app.dim2.dot"), "dim2");
+		assert_eq!(bare_product_label("widget.dim2.dot"), "dim2");
+		assert_eq!(bare_product_label("worker.dim2.paseo"), "dim2");
+		assert_eq!(bare_product_label("funding.dim2.dot"), "dim2");
+	}
+
+	#[test]
 	fn an_executable_inherits_the_grants_published_for_its_product() {
 		let manifest = RootManifest::parse(r#"{"$v":1,"trustedProducts":{"dim2":["storage"]}}"#)
 			.expect("parses");
-		assert!(manifest.grants(&ProductId::for_test("dim2.dot"), Granted::Storage));
-		assert!(manifest.grants(&ProductId::for_test("app.dim2.dot"), Granted::Storage));
-		assert!(manifest.grants(&ProductId::for_test("worker.dim2.dot"), Granted::Storage));
+		assert!(manifest.grants(bare_product_label("dim2.dot"), Granted::Storage));
+		assert!(manifest.grants(bare_product_label("app.dim2.dot"), Granted::Storage));
+		assert!(manifest.grants(bare_product_label("worker.dim2.dot"), Granted::Storage));
 	}
 
 	#[test]
 	fn a_subname_of_another_domain_collects_nothing_published_for_its_first_segment() {
+		assert_eq!(bare_product_label("dim2.attacker.dot"), "attacker");
 		let manifest = RootManifest::parse(r#"{"$v":1,"trustedProducts":{"dim2":["storage"]}}"#)
 			.expect("parses");
-		assert!(!manifest.grants(&ProductId::for_test("dim2.attacker.dot"), Granted::Storage));
+		assert!(!manifest.grants(bare_product_label("dim2.attacker.dot"), Granted::Storage));
 	}
 }

@@ -10,14 +10,14 @@ use crate::{
 /// Compound callback results with inline SCALE codecs shared by both bridges.
 /// Byte vectors themselves remain unencoded byte payloads.
 pub(crate) fn is_scale_vector_result(ty: &TypeRef) -> bool {
-    matches!(
-        ty,
-        TypeRef::Vec(inner)
-            if matches!(inner.as_ref(), TypeRef::Array(element, _)
-                if matches!(element.as_ref(), TypeRef::Primitive(name) if name == "u8"))
-                || matches!(inner.as_ref(), TypeRef::Primitive(name) if name == "str")
-                || matches!(inner.as_ref(), TypeRef::Named { args, .. } if args.is_empty())
-    )
+	matches!(
+		ty,
+		TypeRef::Vec(inner)
+			if matches!(inner.as_ref(), TypeRef::Array(element, _)
+				if matches!(element.as_ref(), TypeRef::Primitive(name) if name == "u8"))
+				|| matches!(inner.as_ref(), TypeRef::Primitive(name) if name == "str")
+				|| matches!(inner.as_ref(), TypeRef::Named { args, .. } if args.is_empty())
+	)
 }
 
 /// Traits the platform surface actually composes: the super trait's
@@ -34,12 +34,12 @@ pub fn composed_traits(definition: &PlatformDefinition) -> Vec<&PlatformTrait> {
 /// Capability trait names a host may omit, taken from the `OptionalPlatform`
 /// super-trait. A host that supplies none of a trait's callbacks is not
 /// broken: the core applies the capability's absence behavior.
-pub(crate) fn optional_trait_names(definition: &PlatformDefinition) -> BTreeSet<String> {
-    definition
-        .optional_super_trait
-        .as_ref()
-        .map(|s| s.composes.iter().cloned().collect())
-        .unwrap_or_default()
+pub fn optional_trait_names(definition: &PlatformDefinition) -> BTreeSet<String> {
+	definition
+		.optional_super_trait
+		.as_ref()
+		.map(|s| s.composes.iter().cloned().collect())
+		.unwrap_or_default()
 }
 
 /// JS-side callback name for a platform method (camelCase of the Rust name).
@@ -74,20 +74,16 @@ pub fn raw_callback_wire_name(
 	method: &PlatformMethod,
 	platform_trait_names: &BTreeSet<String>,
 ) -> String {
-    // The public Rust method spells out its capability; the established raw
-    // connection bridge uses the same namespace-first shape as chainConnect.
-    if trait_def.name == "HopProvider" && method.name == "connect_hop" {
-        return "hopConnect".to_string();
-    }
-    let raw = raw_callback_name(method);
-    if trait_object_return_name(method, platform_trait_names).is_some() {
-        return format!(
-            "{}{}",
-            callback_namespace(&trait_def.name),
-            upper_first(&raw)
-        );
-    }
-    raw
+	// The public Rust method spells out its capability; the established raw
+	// connection bridge uses the same namespace-first shape as chainConnect.
+	if trait_def.name == "HopProvider" && method.name == "connect_hop" {
+		return "hopConnect".to_string();
+	}
+	let raw = raw_callback_name(method);
+	if trait_object_return_name(method, platform_trait_names).is_some() {
+		return format!("{}{}", callback_namespace(&trait_def.name), upper_first(&raw));
+	}
+	raw
 }
 
 /// Field name holding the callback in the generated Rust bridge struct.
@@ -207,42 +203,42 @@ pub fn snake_case(name: &str) -> String {
 /// Collect local types reachable from callback payloads, including transitive
 /// field references, for the Rust WASM and TypeScript host bridges.
 pub fn collect_local_bridge_payload_types(definition: &PlatformDefinition) -> BTreeSet<&str> {
-    let local: BTreeSet<&str> = definition.types.iter().map(|ty| ty.name.as_str()).collect();
-    let mut out = BTreeSet::new();
-    if local.contains("ReceivingRegistration") {
-        out.insert("ReceivingRegistration");
-    }
-    for trait_def in &definition.traits {
-        for method in &trait_def.methods {
-            for param in &method.params {
-                collect_local_from_type(&param.type_ref, &local, &mut out);
-            }
-            match &method.return_shape.inner {
-                PlatformInner::Result { ok, .. } | PlatformInner::Plain(ok) => {
-                    collect_local_from_type(ok, &local, &mut out);
-                }
-                PlatformInner::Stream(item) => {
-                    collect_local_from_type(stream_item(item), &local, &mut out)
-                }
-                PlatformInner::Unit | PlatformInner::TraitObject(_) => {}
-            }
-        }
-    }
-    let mut changed = true;
-    while changed {
-        changed = false;
-        let referenced = definition
-            .types
-            .iter()
-            .filter(|ty| out.contains(ty.name.as_str()))
-            .collect::<Vec<_>>();
-        for type_def in referenced {
-            let before = out.len();
-            collect_local_from_type_def(type_def, &local, &mut out);
-            changed |= out.len() != before;
-        }
-    }
-    out
+	let local: BTreeSet<&str> = definition.types.iter().map(|ty| ty.name.as_str()).collect();
+	let mut out = BTreeSet::new();
+	if local.contains("ReceivingRegistration") {
+		out.insert("ReceivingRegistration");
+	}
+	for trait_def in &definition.traits {
+		for method in &trait_def.methods {
+			for param in &method.params {
+				collect_local_from_type(&param.type_ref, &local, &mut out);
+			}
+			match &method.return_shape.inner {
+				PlatformInner::Result { ok, .. } | PlatformInner::Plain(ok) => {
+					collect_local_from_type(ok, &local, &mut out);
+				},
+				PlatformInner::Stream(item) => {
+					collect_local_from_type(stream_item(item), &local, &mut out)
+				},
+				PlatformInner::Unit | PlatformInner::TraitObject(_) => {},
+			}
+		}
+	}
+	let mut changed = true;
+	while changed {
+		changed = false;
+		let referenced = definition
+			.types
+			.iter()
+			.filter(|ty| out.contains(ty.name.as_str()))
+			.collect::<Vec<_>>();
+		for type_def in referenced {
+			let before = out.len();
+			collect_local_from_type_def(type_def, &local, &mut out);
+			changed |= out.len() != before;
+		}
+	}
+	out
 }
 
 fn collect_local_from_type_def<'a>(

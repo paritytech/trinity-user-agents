@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "841ea8fac7e2a0bc";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "a72c149bbae24af5";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -196,6 +196,30 @@ impl RequestMethod for AccountRingVrfSign {
 	type Request = truapi::versioned::account::HostAccountRingVrfSignRequest;
 	type Response = truapi::versioned::account::HostAccountRingVrfSignResponse;
 	type Error = truapi::versioned::account::HostAccountRingVrfSignError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `account_product_device_chat` method marker.
+pub struct AccountProductDeviceChat;
+impl AccountProductDeviceChat {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Account",
+		method: "product_device_chat",
+		wire_name: "account_product_device_chat",
+		request_type: "truapi::versioned::account::HostProductDeviceChatRequest",
+		response_type: "truapi::versioned::account::HostProductDeviceChatResponse",
+		error_type: Some("truapi::versioned::account::HostProductDeviceChatError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 2, method_id: 12 }),
+	};
+}
+impl RequestMethod for AccountProductDeviceChat {
+	type Request = truapi::versioned::account::HostProductDeviceChatRequest;
+	type Response = truapi::versioned::account::HostProductDeviceChatResponse;
+	type Error = truapi::versioned::account::HostProductDeviceChatError;
 	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
@@ -751,35 +775,6 @@ impl RequestMethod for ChatSetRoomFooter {
 	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
-/// `chat_custom_message_render` method marker.
-pub struct ChatCustomMessageRender;
-impl ChatCustomMessageRender {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Chat",
-        method: "custom_message_render",
-        wire_name: "chat_custom_message_render",
-        request_type: "truapi::versioned::chat::ProductChatCustomMessageRenderRequest",
-        response_type: "truapi::versioned::chat::ProductChatCustomMessageRenderItem",
-        error_type: None,
-        kind: MethodKind::Subscription,
-        direction: Direction::HostToProduct,
-        required_execution: Some(ExecutionKind::Worker),
-        sensitive: false,
-        wire: MethodWire::Subscription(SubscriptionFrameIds {
-            start_id: 52,
-            stop_id: 53,
-            interrupt_id: 54,
-            receive_id: 55,
-        }),
-    };
-}
-impl HostSubscriptionMethod for ChatCustomMessageRender {
-    type Request = truapi::versioned::chat::ProductChatCustomMessageRenderRequest;
-    type Item = truapi::versioned::chat::ProductChatCustomMessageRenderItem;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
-}
-
 /// `coin_payment_create_purse` method marker.
 pub struct CoinPaymentCreatePurse;
 impl CoinPaymentCreatePurse {
@@ -1023,55 +1018,49 @@ impl RequestMethod for ContactsPick {
 /// `contacts_pick_many` method marker.
 pub struct ContactsPickMany;
 impl ContactsPickMany {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Contacts",
-        method: "pick_many",
-        wire_name: "contacts_pick_many",
-        request_type: "truapi::versioned::contacts::HostContactsPickManyRequest",
-        response_type: "truapi::versioned::contacts::HostContactsPickManyResponse",
-        error_type: Some("truapi::versioned::contacts::HostContactsPickManyError"),
-        kind: MethodKind::Request,
-        direction: Direction::ProductToHost,
-        required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 20,
-            method_id: 1,
-        }),
-    };
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Contacts",
+		method: "pick_many",
+		wire_name: "contacts_pick_many",
+		request_type: "truapi::versioned::contacts::HostContactsPickManyRequest",
+		response_type: "truapi::versioned::contacts::HostContactsPickManyResponse",
+		error_type: Some("truapi::versioned::contacts::HostContactsPickManyError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 20, method_id: 1 }),
+	};
 }
 impl RequestMethod for ContactsPickMany {
-    type Request = truapi::versioned::contacts::HostContactsPickManyRequest;
-    type Response = truapi::versioned::contacts::HostContactsPickManyResponse;
-    type Error = truapi::versioned::contacts::HostContactsPickManyError;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+	type Request = truapi::versioned::contacts::HostContactsPickManyRequest;
+	type Response = truapi::versioned::contacts::HostContactsPickManyResponse;
+	type Error = truapi::versioned::contacts::HostContactsPickManyError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `contacts_place_labels` method marker.
 pub struct ContactsPlaceLabels;
 impl ContactsPlaceLabels {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Contacts",
-        method: "place_labels",
-        wire_name: "contacts_place_labels",
-        request_type: "truapi::versioned::contacts::HostContactsPlaceLabelsRequest",
-        response_type: "truapi::versioned::contacts::HostContactsPlaceLabelsResponse",
-        error_type: Some("truapi::versioned::contacts::HostContactsPlaceLabelsError"),
-        kind: MethodKind::Request,
-        direction: Direction::ProductToHost,
-        required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 20,
-            method_id: 2,
-        }),
-    };
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Contacts",
+		method: "place_labels",
+		wire_name: "contacts_place_labels",
+		request_type: "truapi::versioned::contacts::HostContactsPlaceLabelsRequest",
+		response_type: "truapi::versioned::contacts::HostContactsPlaceLabelsResponse",
+		error_type: Some("truapi::versioned::contacts::HostContactsPlaceLabelsError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 20, method_id: 2 }),
+	};
 }
 impl RequestMethod for ContactsPlaceLabels {
-    type Request = truapi::versioned::contacts::HostContactsPlaceLabelsRequest;
-    type Response = truapi::versioned::contacts::HostContactsPlaceLabelsResponse;
-    type Error = truapi::versioned::contacts::HostContactsPlaceLabelsError;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+	type Request = truapi::versioned::contacts::HostContactsPlaceLabelsRequest;
+	type Response = truapi::versioned::contacts::HostContactsPlaceLabelsResponse;
+	type Error = truapi::versioned::contacts::HostContactsPlaceLabelsError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `entropy_derive` method marker.
@@ -1098,6 +1087,174 @@ impl RequestMethod for EntropyDerive {
 	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
+/// `jam_peer_transport_dial` method marker.
+pub struct JamPeerTransportDial;
+impl JamPeerTransportDial {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "JamPeerTransport",
+		method: "dial",
+		wire_name: "jam_peer_transport_dial",
+		request_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportDialRequest",
+		response_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportDialResponse",
+		error_type: Some("truapi::versioned::jam_peer_transport::HostJamPeerTransportDialError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 111, method_id: 0 }),
+	};
+}
+impl RequestMethod for JamPeerTransportDial {
+	type Request = truapi::versioned::jam_peer_transport::HostJamPeerTransportDialRequest;
+	type Response = truapi::versioned::jam_peer_transport::HostJamPeerTransportDialResponse;
+	type Error = truapi::versioned::jam_peer_transport::HostJamPeerTransportDialError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `jam_peer_transport_open` method marker.
+pub struct JamPeerTransportOpen;
+impl JamPeerTransportOpen {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "JamPeerTransport",
+		method: "open",
+		wire_name: "jam_peer_transport_open",
+		request_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportOpenRequest",
+		response_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportOpenResponse",
+		error_type: Some("truapi::versioned::jam_peer_transport::HostJamPeerTransportOpenError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 111, method_id: 1 }),
+	};
+}
+impl RequestMethod for JamPeerTransportOpen {
+	type Request = truapi::versioned::jam_peer_transport::HostJamPeerTransportOpenRequest;
+	type Response = truapi::versioned::jam_peer_transport::HostJamPeerTransportOpenResponse;
+	type Error = truapi::versioned::jam_peer_transport::HostJamPeerTransportOpenError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `jam_peer_transport_send` method marker.
+pub struct JamPeerTransportSend;
+impl JamPeerTransportSend {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "JamPeerTransport",
+		method: "send",
+		wire_name: "jam_peer_transport_send",
+		request_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportSendRequest",
+		response_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportSendResponse",
+		error_type: Some("truapi::versioned::jam_peer_transport::HostJamPeerTransportSendError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 111, method_id: 2 }),
+	};
+}
+impl RequestMethod for JamPeerTransportSend {
+	type Request = truapi::versioned::jam_peer_transport::HostJamPeerTransportSendRequest;
+	type Response = truapi::versioned::jam_peer_transport::HostJamPeerTransportSendResponse;
+	type Error = truapi::versioned::jam_peer_transport::HostJamPeerTransportSendError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `jam_peer_transport_recv` method marker.
+pub struct JamPeerTransportRecv;
+impl JamPeerTransportRecv {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "JamPeerTransport",
+		method: "recv",
+		wire_name: "jam_peer_transport_recv",
+		request_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportRecvRequest",
+		response_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportRecvResponse",
+		error_type: Some("truapi::versioned::jam_peer_transport::HostJamPeerTransportRecvError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 111, method_id: 3 }),
+	};
+}
+impl RequestMethod for JamPeerTransportRecv {
+	type Request = truapi::versioned::jam_peer_transport::HostJamPeerTransportRecvRequest;
+	type Response = truapi::versioned::jam_peer_transport::HostJamPeerTransportRecvResponse;
+	type Error = truapi::versioned::jam_peer_transport::HostJamPeerTransportRecvError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `jam_peer_transport_reset` method marker.
+pub struct JamPeerTransportReset;
+impl JamPeerTransportReset {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "JamPeerTransport",
+		method: "reset",
+		wire_name: "jam_peer_transport_reset",
+		request_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportResetRequest",
+		response_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportResetResponse",
+		error_type: Some("truapi::versioned::jam_peer_transport::HostJamPeerTransportResetError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 111, method_id: 4 }),
+	};
+}
+impl RequestMethod for JamPeerTransportReset {
+	type Request = truapi::versioned::jam_peer_transport::HostJamPeerTransportResetRequest;
+	type Response = truapi::versioned::jam_peer_transport::HostJamPeerTransportResetResponse;
+	type Error = truapi::versioned::jam_peer_transport::HostJamPeerTransportResetError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `jam_peer_transport_close` method marker.
+pub struct JamPeerTransportClose;
+impl JamPeerTransportClose {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "JamPeerTransport",
+		method: "close",
+		wire_name: "jam_peer_transport_close",
+		request_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportCloseRequest",
+		response_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportCloseResponse",
+		error_type: Some("truapi::versioned::jam_peer_transport::HostJamPeerTransportCloseError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 111, method_id: 5 }),
+	};
+}
+impl RequestMethod for JamPeerTransportClose {
+	type Request = truapi::versioned::jam_peer_transport::HostJamPeerTransportCloseRequest;
+	type Response = truapi::versioned::jam_peer_transport::HostJamPeerTransportCloseResponse;
+	type Error = truapi::versioned::jam_peer_transport::HostJamPeerTransportCloseError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `jam_peer_transport_events` method marker.
+pub struct JamPeerTransportEvents;
+impl JamPeerTransportEvents {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "JamPeerTransport",
+		method: "events",
+		wire_name: "jam_peer_transport_events",
+		request_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportEventsRequest",
+		response_type: "truapi::versioned::jam_peer_transport::HostJamPeerTransportEventsResponse",
+		error_type: Some("truapi::versioned::jam_peer_transport::HostJamPeerTransportEventsError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 111, method_id: 6 }),
+	};
+}
+impl RequestMethod for JamPeerTransportEvents {
+	type Request = truapi::versioned::jam_peer_transport::HostJamPeerTransportEventsRequest;
+	type Response = truapi::versioned::jam_peer_transport::HostJamPeerTransportEventsResponse;
+	type Error = truapi::versioned::jam_peer_transport::HostJamPeerTransportEventsError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
 /// `expanded_card_set_face_shown` method marker.
 pub struct ExpandedCardSetFaceShown;
 impl ExpandedCardSetFaceShown {
@@ -1119,6 +1276,54 @@ impl RequestMethod for ExpandedCardSetFaceShown {
 	type Request = truapi::versioned::expanded_card::HostExpandedCardSetFaceShownRequest;
 	type Response = truapi::versioned::expanded_card::HostExpandedCardSetFaceShownResponse;
 	type Error = truapi::versioned::expanded_card::HostExpandedCardSetFaceShownError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `funding_request` method marker.
+pub struct FundingRequest;
+impl FundingRequest {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Funding",
+		method: "request",
+		wire_name: "funding_request",
+		request_type: "truapi::versioned::funding::HostFundingRequest",
+		response_type: "truapi::versioned::funding::HostFundingResponse",
+		error_type: Some("truapi::versioned::funding::HostFundingError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 22, method_id: 0 }),
+	};
+}
+impl RequestMethod for FundingRequest {
+	type Request = truapi::versioned::funding::HostFundingRequest;
+	type Response = truapi::versioned::funding::HostFundingResponse;
+	type Error = truapi::versioned::funding::HostFundingError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `funding_status_subscribe` method marker.
+pub struct FundingStatusSubscribe;
+impl FundingStatusSubscribe {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Funding",
+		method: "status_subscribe",
+		wire_name: "funding_status_subscribe",
+		request_type: "truapi::versioned::funding::HostFundingStatusSubscribeRequest",
+		response_type: "truapi::versioned::funding::HostFundingStatusSubscribeItem",
+		error_type: Some("truapi::versioned::funding::HostFundingStatusSubscribeError"),
+		kind: MethodKind::Subscription,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Subscription(MethodIds { trait_id: 22, method_id: 1 }),
+	};
+}
+impl SubscriptionMethod for FundingStatusSubscribe {
+	type Request = truapi::versioned::funding::HostFundingStatusSubscribeRequest;
+	type Error = truapi::versioned::funding::HostFundingStatusSubscribeError;
+	type Item = truapi::versioned::funding::HostFundingStatusSubscribeItem;
 	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
@@ -1317,298 +1522,265 @@ impl RequestMethod for LocaleLocalizeTimestamps {
 /// `media_get_capabilities` method marker.
 pub struct MediaGetCapabilities;
 impl MediaGetCapabilities {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Media",
-        method: "get_capabilities",
-        wire_name: "media_get_capabilities",
-        request_type: "truapi::versioned::media::HostMediaGetCapabilitiesRequest",
-        response_type: "truapi::versioned::media::HostMediaGetCapabilitiesResponse",
-        error_type: Some("truapi::versioned::media::HostMediaGetCapabilitiesError"),
-        kind: MethodKind::Request,
-        direction: Direction::ProductToHost,
-        required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 218,
-            method_id: 0,
-        }),
-    };
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Media",
+		method: "get_capabilities",
+		wire_name: "media_get_capabilities",
+		request_type: "truapi::versioned::media::HostMediaGetCapabilitiesRequest",
+		response_type: "truapi::versioned::media::HostMediaGetCapabilitiesResponse",
+		error_type: Some("truapi::versioned::media::HostMediaGetCapabilitiesError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 218, method_id: 0 }),
+	};
 }
 impl RequestMethod for MediaGetCapabilities {
-    type Request = truapi::versioned::media::HostMediaGetCapabilitiesRequest;
-    type Response = truapi::versioned::media::HostMediaGetCapabilitiesResponse;
-    type Error = truapi::versioned::media::HostMediaGetCapabilitiesError;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+	type Request = truapi::versioned::media::HostMediaGetCapabilitiesRequest;
+	type Response = truapi::versioned::media::HostMediaGetCapabilitiesResponse;
+	type Error = truapi::versioned::media::HostMediaGetCapabilitiesError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `media_session_subscribe` method marker.
 pub struct MediaSessionSubscribe;
 impl MediaSessionSubscribe {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Media",
-        method: "session_subscribe",
-        wire_name: "media_session_subscribe",
-        request_type: "truapi::versioned::media::HostMediaSessionSubscribeRequest",
-        response_type: "truapi::versioned::media::HostMediaSessionSubscribeItem",
-        error_type: Some("truapi::versioned::media::HostMediaSessionSubscribeError"),
-        kind: MethodKind::Subscription,
-        direction: Direction::ProductToHost,
-        required_execution: None,
-        wire: MethodWire::Subscription(MethodIds {
-            trait_id: 218,
-            method_id: 1,
-        }),
-    };
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Media",
+		method: "session_subscribe",
+		wire_name: "media_session_subscribe",
+		request_type: "truapi::versioned::media::HostMediaSessionSubscribeRequest",
+		response_type: "truapi::versioned::media::HostMediaSessionSubscribeItem",
+		error_type: Some("truapi::versioned::media::HostMediaSessionSubscribeError"),
+		kind: MethodKind::Subscription,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Subscription(MethodIds { trait_id: 218, method_id: 1 }),
+	};
 }
 impl SubscriptionMethod for MediaSessionSubscribe {
-    type Request = truapi::versioned::media::HostMediaSessionSubscribeRequest;
-    type Error = truapi::versioned::media::HostMediaSessionSubscribeError;
-    type Item = truapi::versioned::media::HostMediaSessionSubscribeItem;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+	type Request = truapi::versioned::media::HostMediaSessionSubscribeRequest;
+	type Error = truapi::versioned::media::HostMediaSessionSubscribeError;
+	type Item = truapi::versioned::media::HostMediaSessionSubscribeItem;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `media_create_session` method marker.
 pub struct MediaCreateSession;
 impl MediaCreateSession {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Media",
-        method: "create_session",
-        wire_name: "media_create_session",
-        request_type: "truapi::versioned::media::HostMediaCreateSessionRequest",
-        response_type: "truapi::versioned::media::HostMediaCreateSessionResponse",
-        error_type: Some("truapi::versioned::media::HostMediaCreateSessionError"),
-        kind: MethodKind::Request,
-        direction: Direction::ProductToHost,
-        required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 218,
-            method_id: 2,
-        }),
-    };
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Media",
+		method: "create_session",
+		wire_name: "media_create_session",
+		request_type: "truapi::versioned::media::HostMediaCreateSessionRequest",
+		response_type: "truapi::versioned::media::HostMediaCreateSessionResponse",
+		error_type: Some("truapi::versioned::media::HostMediaCreateSessionError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 218, method_id: 2 }),
+	};
 }
 impl RequestMethod for MediaCreateSession {
-    type Request = truapi::versioned::media::HostMediaCreateSessionRequest;
-    type Response = truapi::versioned::media::HostMediaCreateSessionResponse;
-    type Error = truapi::versioned::media::HostMediaCreateSessionError;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+	type Request = truapi::versioned::media::HostMediaCreateSessionRequest;
+	type Response = truapi::versioned::media::HostMediaCreateSessionResponse;
+	type Error = truapi::versioned::media::HostMediaCreateSessionError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `media_add_participant` method marker.
 pub struct MediaAddParticipant;
 impl MediaAddParticipant {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Media",
-        method: "add_participant",
-        wire_name: "media_add_participant",
-        request_type: "truapi::versioned::media::HostMediaAddParticipantRequest",
-        response_type: "truapi::versioned::media::HostMediaAddParticipantResponse",
-        error_type: Some("truapi::versioned::media::HostMediaAddParticipantError"),
-        kind: MethodKind::Request,
-        direction: Direction::ProductToHost,
-        required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 218,
-            method_id: 3,
-        }),
-    };
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Media",
+		method: "add_participant",
+		wire_name: "media_add_participant",
+		request_type: "truapi::versioned::media::HostMediaAddParticipantRequest",
+		response_type: "truapi::versioned::media::HostMediaAddParticipantResponse",
+		error_type: Some("truapi::versioned::media::HostMediaAddParticipantError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 218, method_id: 3 }),
+	};
 }
 impl RequestMethod for MediaAddParticipant {
-    type Request = truapi::versioned::media::HostMediaAddParticipantRequest;
-    type Response = truapi::versioned::media::HostMediaAddParticipantResponse;
-    type Error = truapi::versioned::media::HostMediaAddParticipantError;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+	type Request = truapi::versioned::media::HostMediaAddParticipantRequest;
+	type Response = truapi::versioned::media::HostMediaAddParticipantResponse;
+	type Error = truapi::versioned::media::HostMediaAddParticipantError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `media_respond_incoming` method marker.
 pub struct MediaRespondIncoming;
 impl MediaRespondIncoming {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Media",
-        method: "respond_incoming",
-        wire_name: "media_respond_incoming",
-        request_type: "truapi::versioned::media::HostMediaRespondIncomingRequest",
-        response_type: "truapi::versioned::media::HostMediaRespondIncomingResponse",
-        error_type: Some("truapi::versioned::media::HostMediaRespondIncomingError"),
-        kind: MethodKind::Request,
-        direction: Direction::ProductToHost,
-        required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 218,
-            method_id: 4,
-        }),
-    };
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Media",
+		method: "respond_incoming",
+		wire_name: "media_respond_incoming",
+		request_type: "truapi::versioned::media::HostMediaRespondIncomingRequest",
+		response_type: "truapi::versioned::media::HostMediaRespondIncomingResponse",
+		error_type: Some("truapi::versioned::media::HostMediaRespondIncomingError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 218, method_id: 4 }),
+	};
 }
 impl RequestMethod for MediaRespondIncoming {
-    type Request = truapi::versioned::media::HostMediaRespondIncomingRequest;
-    type Response = truapi::versioned::media::HostMediaRespondIncomingResponse;
-    type Error = truapi::versioned::media::HostMediaRespondIncomingError;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+	type Request = truapi::versioned::media::HostMediaRespondIncomingRequest;
+	type Response = truapi::versioned::media::HostMediaRespondIncomingResponse;
+	type Error = truapi::versioned::media::HostMediaRespondIncomingError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `media_remove_participant` method marker.
 pub struct MediaRemoveParticipant;
 impl MediaRemoveParticipant {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Media",
-        method: "remove_participant",
-        wire_name: "media_remove_participant",
-        request_type: "truapi::versioned::media::HostMediaRemoveParticipantRequest",
-        response_type: "truapi::versioned::media::HostMediaRemoveParticipantResponse",
-        error_type: Some("truapi::versioned::media::HostMediaRemoveParticipantError"),
-        kind: MethodKind::Request,
-        direction: Direction::ProductToHost,
-        required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 218,
-            method_id: 5,
-        }),
-    };
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Media",
+		method: "remove_participant",
+		wire_name: "media_remove_participant",
+		request_type: "truapi::versioned::media::HostMediaRemoveParticipantRequest",
+		response_type: "truapi::versioned::media::HostMediaRemoveParticipantResponse",
+		error_type: Some("truapi::versioned::media::HostMediaRemoveParticipantError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 218, method_id: 5 }),
+	};
 }
 impl RequestMethod for MediaRemoveParticipant {
-    type Request = truapi::versioned::media::HostMediaRemoveParticipantRequest;
-    type Response = truapi::versioned::media::HostMediaRemoveParticipantResponse;
-    type Error = truapi::versioned::media::HostMediaRemoveParticipantError;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+	type Request = truapi::versioned::media::HostMediaRemoveParticipantRequest;
+	type Response = truapi::versioned::media::HostMediaRemoveParticipantResponse;
+	type Error = truapi::versioned::media::HostMediaRemoveParticipantError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `media_set_local_tracks` method marker.
 pub struct MediaSetLocalTracks;
 impl MediaSetLocalTracks {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Media",
-        method: "set_local_tracks",
-        wire_name: "media_set_local_tracks",
-        request_type: "truapi::versioned::media::HostMediaSetLocalTracksRequest",
-        response_type: "truapi::versioned::media::HostMediaSetLocalTracksResponse",
-        error_type: Some("truapi::versioned::media::HostMediaSetLocalTracksError"),
-        kind: MethodKind::Request,
-        direction: Direction::ProductToHost,
-        required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 218,
-            method_id: 6,
-        }),
-    };
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Media",
+		method: "set_local_tracks",
+		wire_name: "media_set_local_tracks",
+		request_type: "truapi::versioned::media::HostMediaSetLocalTracksRequest",
+		response_type: "truapi::versioned::media::HostMediaSetLocalTracksResponse",
+		error_type: Some("truapi::versioned::media::HostMediaSetLocalTracksError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 218, method_id: 6 }),
+	};
 }
 impl RequestMethod for MediaSetLocalTracks {
-    type Request = truapi::versioned::media::HostMediaSetLocalTracksRequest;
-    type Response = truapi::versioned::media::HostMediaSetLocalTracksResponse;
-    type Error = truapi::versioned::media::HostMediaSetLocalTracksError;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+	type Request = truapi::versioned::media::HostMediaSetLocalTracksRequest;
+	type Response = truapi::versioned::media::HostMediaSetLocalTracksResponse;
+	type Error = truapi::versioned::media::HostMediaSetLocalTracksError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `media_set_surfaces` method marker.
 pub struct MediaSetSurfaces;
 impl MediaSetSurfaces {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Media",
-        method: "set_surfaces",
-        wire_name: "media_set_surfaces",
-        request_type: "truapi::versioned::media::HostMediaSetSurfacesRequest",
-        response_type: "truapi::versioned::media::HostMediaSetSurfacesResponse",
-        error_type: Some("truapi::versioned::media::HostMediaSetSurfacesError"),
-        kind: MethodKind::Request,
-        direction: Direction::ProductToHost,
-        required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 218,
-            method_id: 7,
-        }),
-    };
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Media",
+		method: "set_surfaces",
+		wire_name: "media_set_surfaces",
+		request_type: "truapi::versioned::media::HostMediaSetSurfacesRequest",
+		response_type: "truapi::versioned::media::HostMediaSetSurfacesResponse",
+		error_type: Some("truapi::versioned::media::HostMediaSetSurfacesError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 218, method_id: 7 }),
+	};
 }
 impl RequestMethod for MediaSetSurfaces {
-    type Request = truapi::versioned::media::HostMediaSetSurfacesRequest;
-    type Response = truapi::versioned::media::HostMediaSetSurfacesResponse;
-    type Error = truapi::versioned::media::HostMediaSetSurfacesError;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+	type Request = truapi::versioned::media::HostMediaSetSurfacesRequest;
+	type Response = truapi::versioned::media::HostMediaSetSurfacesResponse;
+	type Error = truapi::versioned::media::HostMediaSetSurfacesError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `media_end_session` method marker.
 pub struct MediaEndSession;
 impl MediaEndSession {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Media",
-        method: "end_session",
-        wire_name: "media_end_session",
-        request_type: "truapi::versioned::media::HostMediaEndSessionRequest",
-        response_type: "truapi::versioned::media::HostMediaEndSessionResponse",
-        error_type: Some("truapi::versioned::media::HostMediaEndSessionError"),
-        kind: MethodKind::Request,
-        direction: Direction::ProductToHost,
-        required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 218,
-            method_id: 8,
-        }),
-    };
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Media",
+		method: "end_session",
+		wire_name: "media_end_session",
+		request_type: "truapi::versioned::media::HostMediaEndSessionRequest",
+		response_type: "truapi::versioned::media::HostMediaEndSessionResponse",
+		error_type: Some("truapi::versioned::media::HostMediaEndSessionError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 218, method_id: 8 }),
+	};
 }
 impl RequestMethod for MediaEndSession {
-    type Request = truapi::versioned::media::HostMediaEndSessionRequest;
-    type Response = truapi::versioned::media::HostMediaEndSessionResponse;
-    type Error = truapi::versioned::media::HostMediaEndSessionError;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+	type Request = truapi::versioned::media::HostMediaEndSessionRequest;
+	type Response = truapi::versioned::media::HostMediaEndSessionResponse;
+	type Error = truapi::versioned::media::HostMediaEndSessionError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `media_get_operation` method marker.
 pub struct MediaGetOperation;
 impl MediaGetOperation {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Media",
-        method: "get_operation",
-        wire_name: "media_get_operation",
-        request_type: "truapi::versioned::media::HostMediaGetOperationRequest",
-        response_type: "truapi::versioned::media::HostMediaGetOperationResponse",
-        error_type: Some("truapi::versioned::media::HostMediaGetOperationError"),
-        kind: MethodKind::Request,
-        direction: Direction::ProductToHost,
-        required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 218,
-            method_id: 9,
-        }),
-    };
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Media",
+		method: "get_operation",
+		wire_name: "media_get_operation",
+		request_type: "truapi::versioned::media::HostMediaGetOperationRequest",
+		response_type: "truapi::versioned::media::HostMediaGetOperationResponse",
+		error_type: Some("truapi::versioned::media::HostMediaGetOperationError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 218, method_id: 9 }),
+	};
 }
 impl RequestMethod for MediaGetOperation {
-    type Request = truapi::versioned::media::HostMediaGetOperationRequest;
-    type Response = truapi::versioned::media::HostMediaGetOperationResponse;
-    type Error = truapi::versioned::media::HostMediaGetOperationError;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+	type Request = truapi::versioned::media::HostMediaGetOperationRequest;
+	type Response = truapi::versioned::media::HostMediaGetOperationResponse;
+	type Error = truapi::versioned::media::HostMediaGetOperationError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `media_cancel_operation` method marker.
 pub struct MediaCancelOperation;
 impl MediaCancelOperation {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Media",
-        method: "cancel_operation",
-        wire_name: "media_cancel_operation",
-        request_type: "truapi::versioned::media::HostMediaCancelOperationRequest",
-        response_type: "truapi::versioned::media::HostMediaCancelOperationResponse",
-        error_type: Some("truapi::versioned::media::HostMediaCancelOperationError"),
-        kind: MethodKind::Request,
-        direction: Direction::ProductToHost,
-        required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 218,
-            method_id: 10,
-        }),
-    };
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Media",
+		method: "cancel_operation",
+		wire_name: "media_cancel_operation",
+		request_type: "truapi::versioned::media::HostMediaCancelOperationRequest",
+		response_type: "truapi::versioned::media::HostMediaCancelOperationResponse",
+		error_type: Some("truapi::versioned::media::HostMediaCancelOperationError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 218, method_id: 10 }),
+	};
 }
 impl RequestMethod for MediaCancelOperation {
-    type Request = truapi::versioned::media::HostMediaCancelOperationRequest;
-    type Response = truapi::versioned::media::HostMediaCancelOperationResponse;
-    type Error = truapi::versioned::media::HostMediaCancelOperationError;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+	type Request = truapi::versioned::media::HostMediaCancelOperationRequest;
+	type Response = truapi::versioned::media::HostMediaCancelOperationResponse;
+	type Error = truapi::versioned::media::HostMediaCancelOperationError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `notifications_send_push_notification` method marker.
@@ -1656,6 +1828,202 @@ impl RequestMethod for NotificationsCancelPushNotification {
 	type Request = truapi::versioned::notifications::HostPushNotificationCancelRequest;
 	type Response = truapi::versioned::notifications::HostPushNotificationCancelResponse;
 	type Error = truapi::versioned::notifications::HostPushNotificationCancelError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_receiver_status` method marker.
+pub struct NotificationsReceiverStatus;
+impl NotificationsReceiverStatus {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Notifications",
+		method: "receiver_status",
+		wire_name: "notifications_receiver_status",
+		request_type: "truapi::versioned::notifications::HostNotificationReceiverStatusRequest",
+		response_type: "truapi::versioned::notifications::HostNotificationReceiverStatusResponse",
+		error_type: Some("truapi::versioned::notifications::HostNotificationReceivingError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 8, method_id: 2 }),
+	};
+}
+impl RequestMethod for NotificationsReceiverStatus {
+	type Request = truapi::versioned::notifications::HostNotificationReceiverStatusRequest;
+	type Response = truapi::versioned::notifications::HostNotificationReceiverStatusResponse;
+	type Error = truapi::versioned::notifications::HostNotificationReceivingError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_replace_receiver` method marker.
+pub struct NotificationsReplaceReceiver;
+impl NotificationsReplaceReceiver {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Notifications",
+		method: "replace_receiver",
+		wire_name: "notifications_replace_receiver",
+		request_type: "truapi::versioned::notifications::HostNotificationReplaceReceiverRequest",
+		response_type: "truapi::versioned::notifications::HostNotificationReplaceReceiverResponse",
+		error_type: Some("truapi::versioned::notifications::HostNotificationReceivingError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 8, method_id: 3 }),
+	};
+}
+impl RequestMethod for NotificationsReplaceReceiver {
+	type Request = truapi::versioned::notifications::HostNotificationReplaceReceiverRequest;
+	type Response = truapi::versioned::notifications::HostNotificationReplaceReceiverResponse;
+	type Error = truapi::versioned::notifications::HostNotificationReceivingError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_disable_receiver` method marker.
+pub struct NotificationsDisableReceiver;
+impl NotificationsDisableReceiver {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Notifications",
+		method: "disable_receiver",
+		wire_name: "notifications_disable_receiver",
+		request_type: "truapi::versioned::notifications::HostNotificationDisableReceiverRequest",
+		response_type: "truapi::versioned::notifications::HostNotificationDisableReceiverResponse",
+		error_type: Some("truapi::versioned::notifications::HostNotificationReceivingError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 8, method_id: 4 }),
+	};
+}
+impl RequestMethod for NotificationsDisableReceiver {
+	type Request = truapi::versioned::notifications::HostNotificationDisableReceiverRequest;
+	type Response = truapi::versioned::notifications::HostNotificationDisableReceiverResponse;
+	type Error = truapi::versioned::notifications::HostNotificationReceivingError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_record_receipt` method marker.
+pub struct NotificationsRecordReceipt;
+impl NotificationsRecordReceipt {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Notifications",
+		method: "record_receipt",
+		wire_name: "notifications_record_receipt",
+		request_type: "truapi::versioned::notifications::HostNotificationRecordReceiptRequest",
+		response_type: "truapi::versioned::notifications::HostNotificationRecordReceiptResponse",
+		error_type: Some("truapi::versioned::notifications::HostNotificationReceivingError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 8, method_id: 5 }),
+	};
+}
+impl RequestMethod for NotificationsRecordReceipt {
+	type Request = truapi::versioned::notifications::HostNotificationRecordReceiptRequest;
+	type Response = truapi::versioned::notifications::HostNotificationRecordReceiptResponse;
+	type Error = truapi::versioned::notifications::HostNotificationReceivingError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_receiver_events` method marker.
+pub struct NotificationsReceiverEvents;
+impl NotificationsReceiverEvents {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Notifications",
+		method: "receiver_events",
+		wire_name: "notifications_receiver_events",
+		request_type: "truapi::versioned::notifications::HostNotificationReceiverEventsRequest",
+		response_type: "truapi::versioned::notifications::HostNotificationReceiverEventsResponse",
+		error_type: Some("truapi::versioned::notifications::HostNotificationReceivingError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 8, method_id: 6 }),
+	};
+}
+impl RequestMethod for NotificationsReceiverEvents {
+	type Request = truapi::versioned::notifications::HostNotificationReceiverEventsRequest;
+	type Response = truapi::versioned::notifications::HostNotificationReceiverEventsResponse;
+	type Error = truapi::versioned::notifications::HostNotificationReceivingError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_acknowledge_receiver_event` method marker.
+pub struct NotificationsAcknowledgeReceiverEvent;
+impl NotificationsAcknowledgeReceiverEvent {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Notifications",
+		method: "acknowledge_receiver_event",
+		wire_name: "notifications_acknowledge_receiver_event",
+		request_type: "truapi::versioned::notifications::HostNotificationAcknowledgeReceiverEventRequest",
+		response_type: "truapi::versioned::notifications::HostNotificationAcknowledgeReceiverEventResponse",
+		error_type: Some("truapi::versioned::notifications::HostNotificationReceivingError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 8, method_id: 7 }),
+	};
+}
+impl RequestMethod for NotificationsAcknowledgeReceiverEvent {
+	type Request =
+		truapi::versioned::notifications::HostNotificationAcknowledgeReceiverEventRequest;
+	type Response =
+		truapi::versioned::notifications::HostNotificationAcknowledgeReceiverEventResponse;
+	type Error = truapi::versioned::notifications::HostNotificationReceivingError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_activation_events` method marker.
+pub struct NotificationsActivationEvents;
+impl NotificationsActivationEvents {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Notifications",
+		method: "activation_events",
+		wire_name: "notifications_activation_events",
+		request_type: "truapi::versioned::notifications::NotificationActivationEventsRequest",
+		response_type: "truapi::versioned::notifications::NotificationActivationEventsResponse",
+		error_type: Some("truapi::versioned::notifications::NotificationActivationEventsError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 8, method_id: 8 }),
+	};
+}
+impl RequestMethod for NotificationsActivationEvents {
+	type Request = truapi::versioned::notifications::NotificationActivationEventsRequest;
+	type Response = truapi::versioned::notifications::NotificationActivationEventsResponse;
+	type Error = truapi::versioned::notifications::NotificationActivationEventsError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `notifications_acknowledge_activation` method marker.
+pub struct NotificationsAcknowledgeActivation;
+impl NotificationsAcknowledgeActivation {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Notifications",
+		method: "acknowledge_activation",
+		wire_name: "notifications_acknowledge_activation",
+		request_type: "truapi::versioned::notifications::NotificationActivationAcknowledgeRequest",
+		response_type: "truapi::versioned::notifications::NotificationActivationAcknowledgeResponse",
+		error_type: Some(
+			"truapi::versioned::notifications::NotificationActivationAcknowledgeError",
+		),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 8, method_id: 9 }),
+	};
+}
+impl RequestMethod for NotificationsAcknowledgeActivation {
+	type Request = truapi::versioned::notifications::NotificationActivationAcknowledgeRequest;
+	type Response = truapi::versioned::notifications::NotificationActivationAcknowledgeResponse;
+	type Error = truapi::versioned::notifications::NotificationActivationAcknowledgeError;
 	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
@@ -1752,6 +2120,30 @@ impl RequestMethod for PaymentTopUp {
 	type Request = truapi::versioned::payment::HostPaymentTopUpRequest;
 	type Response = truapi::versioned::payment::HostPaymentTopUpResponse;
 	type Error = truapi::versioned::payment::HostPaymentTopUpError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `payment_top_up_status_subscribe` method marker.
+pub struct PaymentTopUpStatusSubscribe;
+impl PaymentTopUpStatusSubscribe {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Payment",
+		method: "top_up_status_subscribe",
+		wire_name: "payment_top_up_status_subscribe",
+		request_type: "truapi::versioned::payment::HostPaymentTopUpStatusSubscribeRequest",
+		response_type: "truapi::versioned::payment::HostPaymentTopUpStatusSubscribeItem",
+		error_type: Some("truapi::versioned::payment::HostPaymentTopUpStatusSubscribeError"),
+		kind: MethodKind::Subscription,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Subscription(MethodIds { trait_id: 9, method_id: 4 }),
+	};
+}
+impl SubscriptionMethod for PaymentTopUpStatusSubscribe {
+	type Request = truapi::versioned::payment::HostPaymentTopUpStatusSubscribeRequest;
+	type Error = truapi::versioned::payment::HostPaymentTopUpStatusSubscribeError;
+	type Item = truapi::versioned::payment::HostPaymentTopUpStatusSubscribeItem;
 	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
@@ -1950,190 +2342,169 @@ impl RequestMethod for PreimageSubmit {
 /// `profile_present` method marker.
 pub struct ProfilePresent;
 impl ProfilePresent {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Profile",
-        method: "present",
-        wire_name: "profile_present",
-        request_type: "truapi::versioned::profile::HostProfilePresentRequest",
-        response_type: "truapi::versioned::profile::HostProfilePresentResponse",
-        error_type: Some("truapi::versioned::profile::HostProfilePresentError"),
-        kind: MethodKind::Request,
-        direction: Direction::ProductToHost,
-        required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 69,
-            method_id: 0,
-        }),
-    };
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Profile",
+		method: "present",
+		wire_name: "profile_present",
+		request_type: "truapi::versioned::profile::HostProfilePresentRequest",
+		response_type: "truapi::versioned::profile::HostProfilePresentResponse",
+		error_type: Some("truapi::versioned::profile::HostProfilePresentError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 69, method_id: 0 }),
+	};
 }
 impl RequestMethod for ProfilePresent {
-    type Request = truapi::versioned::profile::HostProfilePresentRequest;
-    type Response = truapi::versioned::profile::HostProfilePresentResponse;
-    type Error = truapi::versioned::profile::HostProfilePresentError;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+	type Request = truapi::versioned::profile::HostProfilePresentRequest;
+	type Response = truapi::versioned::profile::HostProfilePresentResponse;
+	type Error = truapi::versioned::profile::HostProfilePresentError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `profile_disclose` method marker.
 pub struct ProfileDisclose;
 impl ProfileDisclose {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Profile",
-        method: "disclose",
-        wire_name: "profile_disclose",
-        request_type: "truapi::versioned::profile::HostProfileDiscloseRequest",
-        response_type: "truapi::versioned::profile::HostProfileDiscloseResponse",
-        error_type: Some("truapi::versioned::profile::HostProfileDiscloseError"),
-        kind: MethodKind::Request,
-        direction: Direction::ProductToHost,
-        required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 69,
-            method_id: 1,
-        }),
-    };
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Profile",
+		method: "disclose",
+		wire_name: "profile_disclose",
+		request_type: "truapi::versioned::profile::HostProfileDiscloseRequest",
+		response_type: "truapi::versioned::profile::HostProfileDiscloseResponse",
+		error_type: Some("truapi::versioned::profile::HostProfileDiscloseError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 69, method_id: 1 }),
+	};
 }
 impl RequestMethod for ProfileDisclose {
-    type Request = truapi::versioned::profile::HostProfileDiscloseRequest;
-    type Response = truapi::versioned::profile::HostProfileDiscloseResponse;
-    type Error = truapi::versioned::profile::HostProfileDiscloseError;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+	type Request = truapi::versioned::profile::HostProfileDiscloseRequest;
+	type Response = truapi::versioned::profile::HostProfileDiscloseResponse;
+	type Error = truapi::versioned::profile::HostProfileDiscloseError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `profile_retract` method marker.
 pub struct ProfileRetract;
 impl ProfileRetract {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Profile",
-        method: "retract",
-        wire_name: "profile_retract",
-        request_type: "truapi::versioned::profile::HostProfileRetractRequest",
-        response_type: "truapi::versioned::profile::HostProfileRetractResponse",
-        error_type: Some("truapi::versioned::profile::HostProfileRetractError"),
-        kind: MethodKind::Request,
-        direction: Direction::ProductToHost,
-        required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 69,
-            method_id: 2,
-        }),
-    };
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Profile",
+		method: "retract",
+		wire_name: "profile_retract",
+		request_type: "truapi::versioned::profile::HostProfileRetractRequest",
+		response_type: "truapi::versioned::profile::HostProfileRetractResponse",
+		error_type: Some("truapi::versioned::profile::HostProfileRetractError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 69, method_id: 2 }),
+	};
 }
 impl RequestMethod for ProfileRetract {
-    type Request = truapi::versioned::profile::HostProfileRetractRequest;
-    type Response = truapi::versioned::profile::HostProfileRetractResponse;
-    type Error = truapi::versioned::profile::HostProfileRetractError;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+	type Request = truapi::versioned::profile::HostProfileRetractRequest;
+	type Response = truapi::versioned::profile::HostProfileRetractResponse;
+	type Error = truapi::versioned::profile::HostProfileRetractError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `profile_present_contact` method marker.
 pub struct ProfilePresentContact;
 impl ProfilePresentContact {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Profile",
-        method: "present_contact",
-        wire_name: "profile_present_contact",
-        request_type: "truapi::versioned::profile::HostProfilePresentContactRequest",
-        response_type: "truapi::versioned::profile::HostProfilePresentContactResponse",
-        error_type: Some("truapi::versioned::profile::HostProfilePresentContactError"),
-        kind: MethodKind::Request,
-        direction: Direction::ProductToHost,
-        required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 69,
-            method_id: 3,
-        }),
-    };
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Profile",
+		method: "present_contact",
+		wire_name: "profile_present_contact",
+		request_type: "truapi::versioned::profile::HostProfilePresentContactRequest",
+		response_type: "truapi::versioned::profile::HostProfilePresentContactResponse",
+		error_type: Some("truapi::versioned::profile::HostProfilePresentContactError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 69, method_id: 3 }),
+	};
 }
 impl RequestMethod for ProfilePresentContact {
-    type Request = truapi::versioned::profile::HostProfilePresentContactRequest;
-    type Response = truapi::versioned::profile::HostProfilePresentContactResponse;
-    type Error = truapi::versioned::profile::HostProfilePresentContactError;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+	type Request = truapi::versioned::profile::HostProfilePresentContactRequest;
+	type Response = truapi::versioned::profile::HostProfilePresentContactResponse;
+	type Error = truapi::versioned::profile::HostProfilePresentContactError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `profile_place_contact_avatars` method marker.
 pub struct ProfilePlaceContactAvatars;
 impl ProfilePlaceContactAvatars {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Profile",
-        method: "place_contact_avatars",
-        wire_name: "profile_place_contact_avatars",
-        request_type: "truapi::versioned::profile::HostProfilePlaceContactAvatarsRequest",
-        response_type: "truapi::versioned::profile::HostProfilePlaceContactAvatarsResponse",
-        error_type: Some("truapi::versioned::profile::HostProfilePlaceContactAvatarsError"),
-        kind: MethodKind::Request,
-        direction: Direction::ProductToHost,
-        required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 69,
-            method_id: 4,
-        }),
-    };
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Profile",
+		method: "place_contact_avatars",
+		wire_name: "profile_place_contact_avatars",
+		request_type: "truapi::versioned::profile::HostProfilePlaceContactAvatarsRequest",
+		response_type: "truapi::versioned::profile::HostProfilePlaceContactAvatarsResponse",
+		error_type: Some("truapi::versioned::profile::HostProfilePlaceContactAvatarsError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 69, method_id: 4 }),
+	};
 }
 impl RequestMethod for ProfilePlaceContactAvatars {
-    type Request = truapi::versioned::profile::HostProfilePlaceContactAvatarsRequest;
-    type Response = truapi::versioned::profile::HostProfilePlaceContactAvatarsResponse;
-    type Error = truapi::versioned::profile::HostProfilePlaceContactAvatarsError;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+	type Request = truapi::versioned::profile::HostProfilePlaceContactAvatarsRequest;
+	type Response = truapi::versioned::profile::HostProfilePlaceContactAvatarsResponse;
+	type Error = truapi::versioned::profile::HostProfilePlaceContactAvatarsError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `profile_own_status` method marker.
 pub struct ProfileOwnStatus;
 impl ProfileOwnStatus {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Profile",
-        method: "own_status",
-        wire_name: "profile_own_status",
-        request_type: "truapi::versioned::profile::HostProfileOwnStatusRequest",
-        response_type: "truapi::versioned::profile::HostProfileOwnStatusResponse",
-        error_type: Some("truapi::versioned::profile::HostProfileOwnStatusError"),
-        kind: MethodKind::Request,
-        direction: Direction::ProductToHost,
-        required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 69,
-            method_id: 5,
-        }),
-    };
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Profile",
+		method: "own_status",
+		wire_name: "profile_own_status",
+		request_type: "truapi::versioned::profile::HostProfileOwnStatusRequest",
+		response_type: "truapi::versioned::profile::HostProfileOwnStatusResponse",
+		error_type: Some("truapi::versioned::profile::HostProfileOwnStatusError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 69, method_id: 5 }),
+	};
 }
 impl RequestMethod for ProfileOwnStatus {
-    type Request = truapi::versioned::profile::HostProfileOwnStatusRequest;
-    type Response = truapi::versioned::profile::HostProfileOwnStatusResponse;
-    type Error = truapi::versioned::profile::HostProfileOwnStatusError;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+	type Request = truapi::versioned::profile::HostProfileOwnStatusRequest;
+	type Response = truapi::versioned::profile::HostProfileOwnStatusResponse;
+	type Error = truapi::versioned::profile::HostProfileOwnStatusError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `profile_present_own` method marker.
 pub struct ProfilePresentOwn;
 impl ProfilePresentOwn {
-    /// Canonical metadata and frame ids for this method.
-    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
-        service: "Profile",
-        method: "present_own",
-        wire_name: "profile_present_own",
-        request_type: "truapi::versioned::profile::HostProfilePresentOwnRequest",
-        response_type: "truapi::versioned::profile::HostProfilePresentOwnResponse",
-        error_type: Some("truapi::versioned::profile::HostProfilePresentOwnError"),
-        kind: MethodKind::Request,
-        direction: Direction::ProductToHost,
-        required_execution: None,
-        wire: MethodWire::Request(MethodIds {
-            trait_id: 69,
-            method_id: 6,
-        }),
-    };
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "Profile",
+		method: "present_own",
+		wire_name: "profile_present_own",
+		request_type: "truapi::versioned::profile::HostProfilePresentOwnRequest",
+		response_type: "truapi::versioned::profile::HostProfilePresentOwnResponse",
+		error_type: Some("truapi::versioned::profile::HostProfilePresentOwnError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 69, method_id: 6 }),
+	};
 }
 impl RequestMethod for ProfilePresentOwn {
-    type Request = truapi::versioned::profile::HostProfilePresentOwnRequest;
-    type Response = truapi::versioned::profile::HostProfilePresentOwnResponse;
-    type Error = truapi::versioned::profile::HostProfilePresentOwnError;
-    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+	type Request = truapi::versioned::profile::HostProfilePresentOwnRequest;
+	type Response = truapi::versioned::profile::HostProfilePresentOwnResponse;
+	type Error = truapi::versioned::profile::HostProfilePresentOwnError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
 /// `renderer_render` method marker.
@@ -2730,6 +3101,7 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
 	AccountRegisterRingVrfKey::DESCRIPTOR,
 	AccountListRingVrfKeys::DESCRIPTOR,
 	AccountRingVrfSign::DESCRIPTOR,
+	AccountProductDeviceChat::DESCRIPTOR,
 	AccountGetLegacyAccounts::DESCRIPTOR,
 	AccountGetUserId::DESCRIPTOR,
 	AccountRequestLogin::DESCRIPTOR,
@@ -2757,7 +3129,18 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
 	CoinPaymentRefund::DESCRIPTOR,
 	CoinPaymentListenForPayment::DESCRIPTOR,
 	ContactsPick::DESCRIPTOR,
+	ContactsPickMany::DESCRIPTOR,
+	ContactsPlaceLabels::DESCRIPTOR,
 	EntropyDerive::DESCRIPTOR,
+	JamPeerTransportDial::DESCRIPTOR,
+	JamPeerTransportOpen::DESCRIPTOR,
+	JamPeerTransportSend::DESCRIPTOR,
+	JamPeerTransportRecv::DESCRIPTOR,
+	JamPeerTransportReset::DESCRIPTOR,
+	JamPeerTransportClose::DESCRIPTOR,
+	JamPeerTransportEvents::DESCRIPTOR,
+	FundingRequest::DESCRIPTOR,
+	FundingStatusSubscribe::DESCRIPTOR,
 	GameRemindNextGame::DESCRIPTOR,
 	GameCancelNextGame::DESCRIPTOR,
 	LocalStorageRead::DESCRIPTOR,
@@ -2766,18 +3149,45 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
 	LocalStorageSubscribe::DESCRIPTOR,
 	LocaleSubscribe::DESCRIPTOR,
 	LocaleLocalizeTimestamps::DESCRIPTOR,
+	MediaGetCapabilities::DESCRIPTOR,
+	MediaSessionSubscribe::DESCRIPTOR,
+	MediaCreateSession::DESCRIPTOR,
+	MediaAddParticipant::DESCRIPTOR,
+	MediaRespondIncoming::DESCRIPTOR,
+	MediaRemoveParticipant::DESCRIPTOR,
+	MediaSetLocalTracks::DESCRIPTOR,
+	MediaSetSurfaces::DESCRIPTOR,
+	MediaEndSession::DESCRIPTOR,
+	MediaGetOperation::DESCRIPTOR,
+	MediaCancelOperation::DESCRIPTOR,
 	NotificationsSendPushNotification::DESCRIPTOR,
 	NotificationsCancelPushNotification::DESCRIPTOR,
+	NotificationsReceiverStatus::DESCRIPTOR,
+	NotificationsReplaceReceiver::DESCRIPTOR,
+	NotificationsDisableReceiver::DESCRIPTOR,
+	NotificationsRecordReceipt::DESCRIPTOR,
+	NotificationsReceiverEvents::DESCRIPTOR,
+	NotificationsAcknowledgeReceiverEvent::DESCRIPTOR,
+	NotificationsActivationEvents::DESCRIPTOR,
+	NotificationsAcknowledgeActivation::DESCRIPTOR,
 	PaymentBalanceSubscribe::DESCRIPTOR,
 	PaymentRequest::DESCRIPTOR,
 	PaymentStatusSubscribe::DESCRIPTOR,
 	PaymentTopUp::DESCRIPTOR,
+	PaymentTopUpStatusSubscribe::DESCRIPTOR,
 	PermissionsRequestDevicePermission::DESCRIPTOR,
 	PermissionsRequestRemotePermission::DESCRIPTOR,
 	PermissionsAuthorizeRemotePermission::DESCRIPTOR,
 	PermissionsAuthorizeDevicePermission::DESCRIPTOR,
 	PreimageLookupSubscribe::DESCRIPTOR,
 	PreimageSubmit::DESCRIPTOR,
+	ProfilePresent::DESCRIPTOR,
+	ProfileDisclose::DESCRIPTOR,
+	ProfileRetract::DESCRIPTOR,
+	ProfilePresentContact::DESCRIPTOR,
+	ProfilePlaceContactAvatars::DESCRIPTOR,
+	ProfileOwnStatus::DESCRIPTOR,
+	ProfilePresentOwn::DESCRIPTOR,
 	ResourceAllocationRequest::DESCRIPTOR,
 	ScannerScan::DESCRIPTOR,
 	SigningCreateTransaction::DESCRIPTOR,
@@ -2810,6 +3220,7 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
 	AccountRegisterRingVrfKey::DESCRIPTOR,
 	AccountListRingVrfKeys::DESCRIPTOR,
 	AccountRingVrfSign::DESCRIPTOR,
+	AccountProductDeviceChat::DESCRIPTOR,
 	AccountGetLegacyAccounts::DESCRIPTOR,
 	AccountGetUserId::DESCRIPTOR,
 	AccountRequestLogin::DESCRIPTOR,
@@ -2837,8 +3248,19 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
 	CoinPaymentRefund::DESCRIPTOR,
 	CoinPaymentListenForPayment::DESCRIPTOR,
 	ContactsPick::DESCRIPTOR,
+	ContactsPickMany::DESCRIPTOR,
+	ContactsPlaceLabels::DESCRIPTOR,
 	EntropyDerive::DESCRIPTOR,
+	JamPeerTransportDial::DESCRIPTOR,
+	JamPeerTransportOpen::DESCRIPTOR,
+	JamPeerTransportSend::DESCRIPTOR,
+	JamPeerTransportRecv::DESCRIPTOR,
+	JamPeerTransportReset::DESCRIPTOR,
+	JamPeerTransportClose::DESCRIPTOR,
+	JamPeerTransportEvents::DESCRIPTOR,
 	ExpandedCardSetFaceShown::DESCRIPTOR,
+	FundingRequest::DESCRIPTOR,
+	FundingStatusSubscribe::DESCRIPTOR,
 	GameRemindNextGame::DESCRIPTOR,
 	GameCancelNextGame::DESCRIPTOR,
 	LocalStorageRead::DESCRIPTOR,
@@ -2847,18 +3269,45 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
 	LocalStorageSubscribe::DESCRIPTOR,
 	LocaleSubscribe::DESCRIPTOR,
 	LocaleLocalizeTimestamps::DESCRIPTOR,
+	MediaGetCapabilities::DESCRIPTOR,
+	MediaSessionSubscribe::DESCRIPTOR,
+	MediaCreateSession::DESCRIPTOR,
+	MediaAddParticipant::DESCRIPTOR,
+	MediaRespondIncoming::DESCRIPTOR,
+	MediaRemoveParticipant::DESCRIPTOR,
+	MediaSetLocalTracks::DESCRIPTOR,
+	MediaSetSurfaces::DESCRIPTOR,
+	MediaEndSession::DESCRIPTOR,
+	MediaGetOperation::DESCRIPTOR,
+	MediaCancelOperation::DESCRIPTOR,
 	NotificationsSendPushNotification::DESCRIPTOR,
 	NotificationsCancelPushNotification::DESCRIPTOR,
+	NotificationsReceiverStatus::DESCRIPTOR,
+	NotificationsReplaceReceiver::DESCRIPTOR,
+	NotificationsDisableReceiver::DESCRIPTOR,
+	NotificationsRecordReceipt::DESCRIPTOR,
+	NotificationsReceiverEvents::DESCRIPTOR,
+	NotificationsAcknowledgeReceiverEvent::DESCRIPTOR,
+	NotificationsActivationEvents::DESCRIPTOR,
+	NotificationsAcknowledgeActivation::DESCRIPTOR,
 	PaymentBalanceSubscribe::DESCRIPTOR,
 	PaymentRequest::DESCRIPTOR,
 	PaymentStatusSubscribe::DESCRIPTOR,
 	PaymentTopUp::DESCRIPTOR,
+	PaymentTopUpStatusSubscribe::DESCRIPTOR,
 	PermissionsRequestDevicePermission::DESCRIPTOR,
 	PermissionsRequestRemotePermission::DESCRIPTOR,
 	PermissionsAuthorizeRemotePermission::DESCRIPTOR,
 	PermissionsAuthorizeDevicePermission::DESCRIPTOR,
 	PreimageLookupSubscribe::DESCRIPTOR,
 	PreimageSubmit::DESCRIPTOR,
+	ProfilePresent::DESCRIPTOR,
+	ProfileDisclose::DESCRIPTOR,
+	ProfileRetract::DESCRIPTOR,
+	ProfilePresentContact::DESCRIPTOR,
+	ProfilePlaceContactAvatars::DESCRIPTOR,
+	ProfileOwnStatus::DESCRIPTOR,
+	ProfilePresentOwn::DESCRIPTOR,
 	ResourceAllocationRequest::DESCRIPTOR,
 	ScannerScan::DESCRIPTOR,
 	SigningCreateTransaction::DESCRIPTOR,
@@ -2891,6 +3340,7 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
 	AccountRegisterRingVrfKey::DESCRIPTOR,
 	AccountListRingVrfKeys::DESCRIPTOR,
 	AccountRingVrfSign::DESCRIPTOR,
+	AccountProductDeviceChat::DESCRIPTOR,
 	AccountGetLegacyAccounts::DESCRIPTOR,
 	AccountGetUserId::DESCRIPTOR,
 	AccountRequestLogin::DESCRIPTOR,
@@ -2924,7 +3374,18 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
 	CoinPaymentRefund::DESCRIPTOR,
 	CoinPaymentListenForPayment::DESCRIPTOR,
 	ContactsPick::DESCRIPTOR,
+	ContactsPickMany::DESCRIPTOR,
+	ContactsPlaceLabels::DESCRIPTOR,
 	EntropyDerive::DESCRIPTOR,
+	JamPeerTransportDial::DESCRIPTOR,
+	JamPeerTransportOpen::DESCRIPTOR,
+	JamPeerTransportSend::DESCRIPTOR,
+	JamPeerTransportRecv::DESCRIPTOR,
+	JamPeerTransportReset::DESCRIPTOR,
+	JamPeerTransportClose::DESCRIPTOR,
+	JamPeerTransportEvents::DESCRIPTOR,
+	FundingRequest::DESCRIPTOR,
+	FundingStatusSubscribe::DESCRIPTOR,
 	GameRemindNextGame::DESCRIPTOR,
 	GameCancelNextGame::DESCRIPTOR,
 	LocalStorageRead::DESCRIPTOR,
@@ -2933,12 +3394,32 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
 	LocalStorageSubscribe::DESCRIPTOR,
 	LocaleSubscribe::DESCRIPTOR,
 	LocaleLocalizeTimestamps::DESCRIPTOR,
+	MediaGetCapabilities::DESCRIPTOR,
+	MediaSessionSubscribe::DESCRIPTOR,
+	MediaCreateSession::DESCRIPTOR,
+	MediaAddParticipant::DESCRIPTOR,
+	MediaRespondIncoming::DESCRIPTOR,
+	MediaRemoveParticipant::DESCRIPTOR,
+	MediaSetLocalTracks::DESCRIPTOR,
+	MediaSetSurfaces::DESCRIPTOR,
+	MediaEndSession::DESCRIPTOR,
+	MediaGetOperation::DESCRIPTOR,
+	MediaCancelOperation::DESCRIPTOR,
 	NotificationsSendPushNotification::DESCRIPTOR,
 	NotificationsCancelPushNotification::DESCRIPTOR,
+	NotificationsReceiverStatus::DESCRIPTOR,
+	NotificationsReplaceReceiver::DESCRIPTOR,
+	NotificationsDisableReceiver::DESCRIPTOR,
+	NotificationsRecordReceipt::DESCRIPTOR,
+	NotificationsReceiverEvents::DESCRIPTOR,
+	NotificationsAcknowledgeReceiverEvent::DESCRIPTOR,
+	NotificationsActivationEvents::DESCRIPTOR,
+	NotificationsAcknowledgeActivation::DESCRIPTOR,
 	PaymentBalanceSubscribe::DESCRIPTOR,
 	PaymentRequest::DESCRIPTOR,
 	PaymentStatusSubscribe::DESCRIPTOR,
 	PaymentTopUp::DESCRIPTOR,
+	PaymentTopUpStatusSubscribe::DESCRIPTOR,
 	PermissionsRequestDevicePermission::DESCRIPTOR,
 	PermissionsRequestRemotePermission::DESCRIPTOR,
 	PermissionsAuthorizeRemotePermission::DESCRIPTOR,
@@ -2947,6 +3428,13 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
 	PocketRemoveCard::DESCRIPTOR,
 	PreimageLookupSubscribe::DESCRIPTOR,
 	PreimageSubmit::DESCRIPTOR,
+	ProfilePresent::DESCRIPTOR,
+	ProfileDisclose::DESCRIPTOR,
+	ProfileRetract::DESCRIPTOR,
+	ProfilePresentContact::DESCRIPTOR,
+	ProfilePlaceContactAvatars::DESCRIPTOR,
+	ProfileOwnStatus::DESCRIPTOR,
+	ProfilePresentOwn::DESCRIPTOR,
 	RendererRender::DESCRIPTOR,
 	RendererActionSubscribe::DESCRIPTOR,
 	ResourceAllocationRequest::DESCRIPTOR,

@@ -40,16 +40,17 @@ use super::from_latest_error;
 use crate::{
 	host_logic::features::{chain_info, supported_chains},
 	runtime::{
-		AUTHORITY_CANCEL_UNWIND_GRACE, PERMISSION_DENIED_REASON, ProductConnection,
-		ProductRuntimeHost, runtime_failure_to_call_error, versioning::version,
+		AUTHORITY_CANCEL_UNWIND_GRACE, PERMISSION_DENIED_REASON, ProductRuntimeHost,
+		runtime_failure_to_call_error,
 	},
 };
 
-impl ProductConnection {
+impl ProductRuntimeHost {
 	/// Stop a broadcast whose call was withdrawn, bounded so a stalled stop
 	/// cannot hold back the withdrawn call's answer.
 	async fn stop_withdrawn_broadcast(&self, genesis_hash: Vec<u8>, operation_id: String) {
 		let stop = self
+			.services
 			.chain
 			.remote_chain_transaction_stop(latest::RemoteChainTransactionStopRequest {
 				genesis_hash,

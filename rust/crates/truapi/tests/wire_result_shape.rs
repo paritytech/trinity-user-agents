@@ -29,7 +29,7 @@ use std::{
 
 use parity_scale_codec::{Decode, Encode};
 
-use truapi::{CallError, v01};
+use truapi::{CallError, v01, versioned::account};
 
 use truapi::{
 	TrUApiCore,
@@ -84,45 +84,7 @@ impl Transport for RecordingTransport {
 	}
 }
 
-/// Transport stub that records every frame sent through it, for asserting
-/// what the core emits during a dispatch.
-#[derive(Default)]
-struct RecordingTransport {
-	/// Frames captured in send order.
-	sent: Mutex<Vec<ProtocolMessage>>,
-	recorded: Condvar,
-}
-
-impl RecordingTransport {
-	/// Wait until at least `count` frames have been recorded, or `timeout`
-	/// elapses. A subscription's frames are produced by the spawner, so a
-	/// dispatch that starts one returns before they are sent.
-	fn wait_for(&self, count: usize, timeout: Duration) {
-		let deadline = Instant::now() + timeout;
-		let mut sent = self.sent.lock().unwrap();
-		while sent.len() < count {
-			let now = Instant::now();
-			if now >= deadline {
-				break;
-			}
-			let (guard, _) = self.recorded.wait_timeout(sent, deadline - now).unwrap();
-			sent = guard;
-		}
-	}
-}
-
-impl Transport for RecordingTransport {
-	fn send(&self, message: ProtocolMessage) {
-		self.sent.lock().unwrap().push(message);
-		self.recorded.notify_all();
-	}
-	fn on_message(
-		&self,
-		_handler: Box<dyn Fn(ProtocolMessage) + Send + Sync>,
-	) -> Box<dyn FnOnce()> {
-		Box::new(|| {})
-	}
-}
+const PAYMENTS_NOT_IMPLEMENTED: &str = "Payments are not supported in dot.li";
 
 fn dispatch(core: &TrUApiCore, frame: ProtocolMessage) -> ProtocolMessage {
 	let encoded = frame.encode();
@@ -132,72 +94,69 @@ fn dispatch(core: &TrUApiCore, frame: ProtocolMessage) -> ProtocolMessage {
 }
 
 #[test]
-fn feature_supported_ok_response_uses_ok_discriminant() {
-    let core = make_core();
-    let request = v01::HostFeatureSupportedRequest::Chain {
-        genesis_hash: vec![0u8; 32],
-    };
+fn notification_activation_rejects_foreign_scope_fields() {
+	use truapi::versioned::notifications::{
+		NotificationActivationAcknowledgeError, NotificationActivationAcknowledgeRequest,
+		NotificationActivationAcknowledgeResponse, NotificationActivationEventsError,
+		NotificationActivationEventsRequest, NotificationActivationEventsResponse,
+	};
 
-    let core = make_core();
-    let requests = [
-        (8, NotificationActivationEventsRequest::V1.encode()),
-        (
-            9,
-            NotificationActivationAcknowledgeRequest::V1(
-                v01::NotificationActivationAcknowledgeRequest { sequence: 42 },
-            )
-            .encode(),
-        ),
-    ];
-    for (method_id, request) in requests {
-        for foreign_scope in [false, true] {
-            let mut value = request.clone();
-            if foreign_scope {
-                (
-                    "another-product.paseo",
-                    "another-account",
-                    "another-environment",
-                )
-                    .encode_to(&mut value);
-            }
-            let response = dispatch(
-                &core,
-                ProtocolMessage {
-                    request_id: format!("activation:{method_id}:{foreign_scope}"),
-                    payload: Payload {
-                        trait_id: 8,
-                        method_id,
-                        message_type: MESSAGE_TYPE_REQUEST,
-                        value,
-                    },
-                },
-            );
-            assert_eq!(response.payload.message_type, MESSAGE_TYPE_RESPONSE);
-            if method_id == 8 {
-                let result = Result::<
-                    NotificationActivationEventsResponse,
-                    CallError<NotificationActivationEventsError>,
-                >::decode(&mut &response.payload.value[..])
-                .unwrap();
-                if foreign_scope {
-                    assert!(matches!(result, Err(CallError::MalformedFrame { .. })));
-                } else {
-                    assert!(matches!(result, Err(CallError::Domain(_))));
-                }
-            } else {
-                let result = Result::<
-                    NotificationActivationAcknowledgeResponse,
-                    CallError<NotificationActivationAcknowledgeError>,
-                >::decode(&mut &response.payload.value[..])
-                .unwrap();
-                if foreign_scope {
-                    assert!(matches!(result, Err(CallError::MalformedFrame { .. })));
-                } else {
-                    assert!(matches!(result, Err(CallError::Domain(_))));
-                }
-            }
-        }
-    }
+	let core = make_core();
+	let requests = [
+		(8, NotificationActivationEventsRequest::V1.encode()),
+		(
+			9,
+			NotificationActivationAcknowledgeRequest::V1(
+				v01::NotificationActivationAcknowledgeRequest { sequence: 42 },
+			)
+			.encode(),
+		),
+	];
+	for (method_id, request) in requests {
+		for foreign_scope in [false, true] {
+			let mut value = request.clone();
+			if foreign_scope {
+				("another-product.paseo", "another-account", "another-environment")
+					.encode_to(&mut value);
+			}
+			let response = dispatch(
+				&core,
+				ProtocolMessage {
+					request_id: format!("activation:{method_id}:{foreign_scope}"),
+					payload: Payload {
+						trait_id: 8,
+						method_id,
+						message_type: MESSAGE_TYPE_REQUEST,
+						value,
+					},
+				},
+			);
+			assert_eq!(response.payload.message_type, MESSAGE_TYPE_RESPONSE);
+			if method_id == 8 {
+				let result = Result::<
+					NotificationActivationEventsResponse,
+					CallError<NotificationActivationEventsError>,
+				>::decode(&mut &response.payload.value[..])
+				.unwrap();
+				if foreign_scope {
+					assert!(matches!(result, Err(CallError::MalformedFrame { .. })));
+				} else {
+					assert!(matches!(result, Err(CallError::Domain(_))));
+				}
+			} else {
+				let result = Result::<
+					NotificationActivationAcknowledgeResponse,
+					CallError<NotificationActivationAcknowledgeError>,
+				>::decode(&mut &response.payload.value[..])
+				.unwrap();
+				if foreign_scope {
+					assert!(matches!(result, Err(CallError::MalformedFrame { .. })));
+				} else {
+					assert!(matches!(result, Err(CallError::Domain(_))));
+				}
+			}
+		}
+	}
 }
 
 #[test]
@@ -341,6 +300,33 @@ fn versioned_interrupt_err_payload<Wrapper: Encode>(wrapped_error: Wrapper) -> V
 	expected
 }
 
+fn assert_request_returns_domain_error<Wrapper: Encode>(
+	core: &TrUApiCore,
+	request_id: &str,
+	method: &str,
+	value: Vec<u8>,
+	wrapped_error: Wrapper,
+) {
+	let ids = request_ids(method).expect("known request method");
+	let response = dispatch(
+		core,
+		ProtocolMessage {
+			request_id: request_id.into(),
+			payload: Payload {
+				trait_id: ids.trait_id,
+				method_id: ids.method_id,
+				message_type: MESSAGE_TYPE_REQUEST,
+				value,
+			},
+		},
+	);
+	assert_eq!(response.request_id, request_id);
+	assert_eq!(response.payload.trait_id, ids.trait_id);
+	assert_eq!(response.payload.method_id, ids.method_id);
+	assert_eq!(response.payload.message_type, MESSAGE_TYPE_RESPONSE);
+	assert_eq!(response.payload.value, versioned_result_err_payload(wrapped_error));
+}
+
 fn assert_subscription_start_interrupts_error<Wrapper: Encode>(
 	core: &TrUApiCore,
 	request_id: &str,
@@ -379,7 +365,7 @@ fn foreign_account_proof_encodes_a_domain_refusal() {
 	let core = make_core();
 	let request = v01::HostAccountCreateProofRequest {
 		key_handle: v01::ProductAccountId {
-			dot_ns_identifier: "peopl.dot".parse().expect("valid product id"),
+			dot_ns_identifier: "peopl.dot".parse().expect("valid product ID"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 		context: v01::ProductProofContext {
@@ -436,95 +422,48 @@ fn foreign_account_proof_encodes_a_domain_refusal() {
 	assert_eq!(response.payload.value, expected);
 }
 
-/// A host with no payment engine answers `Unsupported`, so a product can tell
-/// "this host never pays" from a payment that failed.
 #[test]
-fn payment_request_reports_unsupported_without_a_host_engine() {
+fn deferred_payment_requests_return_dotli_not_implemented_errors() {
 	let core = make_core();
 	let request =
-		v01::HostPaymentRequest { from: None, amount: 1, destination: [0u8; 32], id: [7; 32] };
-	let ids = request_ids("payment_request").expect("known request method");
-	let frame = ProtocolMessage {
-		request_id: "p:payment".into(),
-		payload: Payload {
-			trait_id: ids.trait_id,
-			method_id: ids.method_id,
-			message_type: MESSAGE_TYPE_REQUEST,
-			value: truapi::versioned::payment::HostPaymentRequest::V1(request).encode(),
-		},
-	};
-	let response = dispatch(&core, frame);
-	assert_eq!(response.payload.value, vec![0x01u8, 0x02u8]);
-}
+		v01::HostPaymentRequest { from: None, amount: 1, destination: [0u8; 32], id: [1; 32] };
 
-/// Following a payment on a host with no payment engine interrupts with
-/// `Unsupported`, as requesting one answers.
-#[test]
-fn payment_status_subscription_interrupts_unsupported_without_a_host_engine() {
-	let core = make_core();
-	let status = v01::HostPaymentStatusSubscribeRequest { id: [7; 32] };
-	let ids = subscription_ids("payment_status_subscribe").expect("known subscription method");
-	let transport = Arc::new(RecordingTransport::default());
-	futures::executor::block_on(
-		core.dispatch(
-			ProtocolMessage {
-				request_id: "p:status".into(),
-				payload: Payload {
-					trait_id: ids.trait_id,
-					method_id: ids.method_id,
-					message_type: MESSAGE_TYPE_START,
-					value: truapi::versioned::payment::HostPaymentStatusSubscribeRequest::V1(
-						status,
-					)
-					.encode(),
-				},
-			},
-			transport.clone(),
-		),
-	);
-	transport.wait_for(1, std::time::Duration::from_secs(5));
-
-	let sent = transport.sent.lock().unwrap();
-	assert_eq!(
-		(sent[0].payload.message_type, sent[0].payload.value.clone()),
-		// [Result::Err=0x01][CallError::Unsupported=0x02], as for a request.
-		(MESSAGE_TYPE_INTERRUPT, vec![0x01u8, 0x02u8])
+	assert_request_returns_domain_error(
+		&core,
+		"p:payment",
+		"payment_request",
+		truapi::versioned::payment::HostPaymentRequest::V1(request).encode(),
+		truapi::versioned::payment::HostPaymentError::V1(v01::HostPaymentError::Unknown {
+			reason: PAYMENTS_NOT_IMPLEMENTED.to_string(),
+		}),
 	);
 }
 
-/// Following the balance on a host with no balance view interrupts with
-/// `Unsupported`, so a product can tell "this host never shares a balance"
-/// from a user who declined.
 #[test]
-fn payment_balance_subscription_interrupts_unsupported_without_a_host_view() {
+fn deferred_payment_subscriptions_interrupt_dotli_not_implemented_errors() {
 	let core = make_core();
 	let balance = v01::HostPaymentBalanceSubscribeRequest { purse: None };
-	let ids = subscription_ids("payment_balance_subscribe").expect("known subscription method");
-	let transport = Arc::new(RecordingTransport::default());
-	futures::executor::block_on(
-		core.dispatch(
-			ProtocolMessage {
-				request_id: "p:balance".into(),
-				payload: Payload {
-					trait_id: ids.trait_id,
-					method_id: ids.method_id,
-					message_type: MESSAGE_TYPE_START,
-					value: truapi::versioned::payment::HostPaymentBalanceSubscribeRequest::V1(
-						balance,
-					)
-					.encode(),
-				},
-			},
-			transport.clone(),
+	assert_subscription_start_interrupts_error(
+		&core,
+		"p:balance",
+		"payment_balance_subscribe",
+		truapi::versioned::payment::HostPaymentBalanceSubscribeRequest::V1(balance).encode(),
+		truapi::versioned::payment::HostPaymentBalanceSubscribeError::V1(
+			v01::HostPaymentBalanceSubscribeError::PermissionDenied,
 		),
 	);
-	transport.wait_for(1, std::time::Duration::from_secs(5));
 
-	let sent = transport.sent.lock().unwrap();
-	assert_eq!(
-		(sent[0].payload.message_type, sent[0].payload.value.clone()),
-		// [Result::Err=0x01][CallError::Unsupported=0x02]
-		(MESSAGE_TYPE_INTERRUPT, vec![0x01u8, 0x02u8])
+	let status = v01::HostPaymentStatusSubscribeRequest { id: [2; 32] };
+	assert_subscription_start_interrupts_error(
+		&core,
+		"p:status",
+		"payment_status_subscribe",
+		truapi::versioned::payment::HostPaymentStatusSubscribeRequest::V1(status).encode(),
+		truapi::versioned::payment::HostPaymentStatusSubscribeError::V1(
+			v01::HostPaymentStatusSubscribeError::Unknown {
+				reason: PAYMENTS_NOT_IMPLEMENTED.to_string(),
+			},
+		),
 	);
 }
 
@@ -587,6 +526,103 @@ fn malformed_result_subscription_start_interrupts_with_malformed_frame() {
 	}
 }
 
+#[test]
+fn product_device_chat_initialize_reaches_authorization_at_method_twelve() {
+	let core = make_core();
+	let request = account::HostProductDeviceChatRequest::V2(
+		truapi::latest::HostProductDeviceChatRequest::Initialize,
+	);
+	let response = dispatch(
+		&core,
+		ProtocolMessage {
+			request_id: "p:product-device-chat".into(),
+			payload: Payload {
+				trait_id: 2,
+				method_id: 12,
+				message_type: MESSAGE_TYPE_REQUEST,
+				value: request.encode(),
+			},
+		},
+	);
+	assert_eq!(response.request_id, "p:product-device-chat");
+	assert_eq!(response.payload.trait_id, 2);
+	assert_eq!(response.payload.method_id, 12);
+	assert_eq!(response.payload.message_type, MESSAGE_TYPE_RESPONSE);
+	assert_eq!(
+		response.payload.value,
+		versioned_result_err_payload(account::HostProductDeviceChatError::V1(
+			truapi::v02::HostProductDeviceChatError::NotConnected,
+		)),
+	);
+}
+
+#[test]
+fn retired_high_level_chat_cannot_dispatch_at_method_twelve() {
+	let core = make_core();
+	let request = account::HostProductDeviceChatRequest::V1(
+		truapi::v02::HostProductDeviceChatRequest::Initialize,
+	);
+	let response = dispatch(
+		&core,
+		ProtocolMessage {
+			request_id: "p:retired-high-level-chat".into(),
+			payload: Payload {
+				trait_id: 2,
+				method_id: 12,
+				message_type: MESSAGE_TYPE_REQUEST,
+				value: request.encode(),
+			},
+		},
+	);
+	let result = Result::<
+		account::HostProductDeviceChatResponse,
+		CallError<account::HostProductDeviceChatError>,
+	>::decode(&mut response.payload.value.as_slice())
+	.expect("retired request remains decodable");
+	assert!(matches!(result, Err(CallError::HostFailure { .. })));
+}
+
+#[test]
+fn retired_raw_chat_method_cannot_dispatch() {
+	let core = make_core();
+	// The retired V1 Identity request was [V1, Identity, ProductAccountId].
+	// Keep a valid historical payload so rejection cannot be a decode failure.
+	let mut raw_identity = vec![0, 4];
+	v01::ProductAccountId {
+		dot_ns_identifier: "chat.dot".parse().expect("valid product ID"),
+		derivation_index: v01::DerivationIndex::Index(0),
+	}
+	.encode_to(&mut raw_identity);
+	let response = dispatch(
+		&core,
+		ProtocolMessage {
+			request_id: "p:retired-chat".into(),
+			payload: Payload {
+				trait_id: 2,
+				method_id: 11,
+				message_type: MESSAGE_TYPE_REQUEST,
+				value: raw_identity,
+			},
+		},
+	);
+	assert_eq!(
+		response,
+		ProtocolMessage {
+			request_id: "p:retired-chat".into(),
+			payload: Payload {
+				trait_id: PROTOCOL_ERROR_TRAIT_ID,
+				method_id: PROTOCOL_ERROR_METHOD_ID,
+				message_type: MESSAGE_TYPE_RESPONSE,
+				value: VersionedProtocolError::V1(ProtocolErrorV1::UnsupportedMessage {
+					trait_id: 2,
+					method_id: 11,
+				})
+				.encode(),
+			},
+		},
+	);
+}
+
 /// A chain follow that cannot reach its provider must end with the failure,
 /// not with `Ok(())`. A clean end reaches the product as `complete`, which
 /// reads as a chain that simply stopped having blocks to report.
@@ -632,13 +668,13 @@ fn a_chain_follow_that_cannot_start_interrupts_with_the_failure() {
 }
 
 fn make_core() -> TrUApiCore {
-    let (host_config, product) = test_runtime_config();
-    TrUApiCore::from_platform_with_config(
-        Arc::new(WireShapePlatform::default()),
-        host_config,
-        product,
-        test_spawner(),
-    )
+	let (host_config, product) = test_runtime_config();
+	TrUApiCore::from_platform_with_config(
+		Arc::new(WireShapePlatform::default()),
+		host_config,
+		product,
+		test_spawner(),
+	)
 }
 
 /// Untrusted product input that is not a decodable frame must be dropped
@@ -787,32 +823,5 @@ fn coin_payment_request_reports_unsupported_on_the_wire() {
 	assert_eq!(response.payload.message_type, MESSAGE_TYPE_RESPONSE);
 	// [Result::Err=0x01][CallError::Unsupported=0x02], and nothing more:
 	// `Unsupported` carries no domain payload, so no wrapper tag follows.
-	assert_eq!(response.payload.value, vec![0x01u8, 0x02u8]);
-}
-
-/// A host with no top-up engine answers `Unsupported`, so a product can tell
-/// "this host never tops up" from a top-up that failed.
-#[test]
-fn top_up_reports_unsupported_without_a_host_engine() {
-	let core = make_core();
-	let request = v01::HostPaymentTopUpRequest {
-		into: None,
-		amount: 1,
-		source: v01::PaymentTopUpSource::ProductAccount {
-			derivation_index: v01::DerivationIndex::Index(0),
-		},
-		id: [7; 32],
-	};
-	let ids = request_ids("payment_top_up").expect("known request method");
-	let frame = ProtocolMessage {
-		request_id: "p:top-up".into(),
-		payload: Payload {
-			trait_id: ids.trait_id,
-			method_id: ids.method_id,
-			message_type: MESSAGE_TYPE_REQUEST,
-			value: truapi::versioned::payment::HostPaymentTopUpRequest::V1(request).encode(),
-		},
-	};
-	let response = dispatch(&core, frame);
 	assert_eq!(response.payload.value, vec![0x01u8, 0x02u8]);
 }

@@ -2,9 +2,6 @@
 //!
 //! Payment returns typed domain errors; CoinPayment returns Unsupported.
 
-use std::sync::Arc;
-
-use futures::{StreamExt, stream::BoxStream};
 use tracing::instrument;
 use truapi::{
 	CallContext, CallError, Subscription,
@@ -32,14 +29,21 @@ use truapi::{
 			HostPaymentBalanceSubscribeRequest, HostPaymentError, HostPaymentRequest,
 			HostPaymentResponse, HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem,
 			HostPaymentStatusSubscribeRequest, HostPaymentTopUpError, HostPaymentTopUpRequest,
-			HostPaymentTopUpResponse, HostPaymentTopUpStatusSubscribeError,
-			HostPaymentTopUpStatusSubscribeItem, HostPaymentTopUpStatusSubscribeRequest,
+			HostPaymentTopUpResponse,
 		},
 	},
 };
 
 use super::from_latest_error;
-use crate::runtime::{PAYMENTS_NOT_IMPLEMENTED, ProductRuntimeHost};
+use crate::{
+	host_internal::sso_messages::PaymentTopUpRequest,
+	platform::normalize_product_identifier,
+	runtime::{
+		PAYMENTS_NOT_IMPLEMENTED, ProductRuntimeHost,
+		authority::{AuthorityError, PaymentTopUpAuthorityError},
+		remote_authority_call, remote_authority_context,
+	},
+};
 
 #[truapi::async_trait]
 impl CoinPayment for ProductRuntimeHost {
@@ -199,14 +203,35 @@ impl Payment for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "payment.top_up"))]
 	async fn top_up(
 		&self,
-		_cx: &CallContext,
+		cx: &CallContext,
 		request: HostPaymentTopUpRequest,
 	) -> Result<HostPaymentTopUpResponse, CallError<HostPaymentTopUpError>> {
 		let version = request.version();
-		let _request = request.into_latest();
-		Err(CallError::Domain(HostPaymentTopUpError::from_latest(
-			latest::HostPaymentTopUpError::Unknown { reason: PAYMENTS_NOT_IMPLEMENTED.to_string() },
-			version,
-		)))
+		// Install the secret guard before any rejection or suspension point.
+		// Keep the versioned payload inside its zeroizing SSO envelope.
+		let mut request =
+			PaymentTopUpRequest { calling_product_id: self.product_id(), payload: request };
+		let result = async {
+			request.calling_product_id = normalize_product_identifier(&request.calling_product_id)
+				.map_err(|_| CallError::Domain(latest::HostPaymentTopUpError::InvalidSource))?;
+			let session = self
+				.authority
+				.current_session()
+				.ok_or_else(|| payment_top_up_error(AuthorityError::Disconnected.into()))?;
+			let cx = remote_authority_context(cx);
+			remote_authority_call(&cx, self.authority.payment_top_up(&cx, &session, request))
+				.await
+				.map_err(payment_top_up_error)
+		}
+		.await;
+		result
+			.map(|response| HostPaymentTopUpResponse::from_latest(response, version))
+			.map_err(|error| from_latest_error::<HostPaymentTopUpError>(error, version))
 	}
+}
+
+fn payment_top_up_error(
+	error: PaymentTopUpAuthorityError,
+) -> CallError<latest::HostPaymentTopUpError> {
+	CallError::Domain(error.into())
 }

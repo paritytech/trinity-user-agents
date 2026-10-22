@@ -41,13 +41,13 @@ struct Cli {
 	#[arg(long)]
 	client_version: Option<ProtocolVersionArg>,
 
-    /// Wire codec version for generated handshake calls.
-    ///
-    /// Defaults to the Host's authoritative `truapi::WIRE_CODEC_VERSION`.
-    /// Override only for intentional historical generation; normal client and
-    /// Host generation must use the same constant.
-    #[arg(long, default_value_t = truapi::WIRE_CODEC_VERSION)]
-    codec_version: u8,
+	/// Wire codec version for generated handshake calls.
+	///
+	/// Defaults to the Host's authoritative `truapi::WIRE_CODEC_VERSION`.
+	/// Override only for intentional historical generation; normal client and
+	/// Host generation must use the same constant.
+	#[arg(long, default_value_t = truapi::WIRE_CODEC_VERSION)]
+	codec_version: u8,
 
 	/// Output directory for generated playground metadata (optional).
 	#[arg(long)]
@@ -64,17 +64,18 @@ struct Cli {
 	#[arg(long)]
 	rust_output: Option<PathBuf>,
 
-    /// Output file for the generated no-std Rust client catalog (optional).
-    #[arg(long)]
-    rust_client_output: Option<PathBuf>,
+	/// Output file for the generated no-std Rust client catalog (optional).
+	#[arg(long)]
+	rust_client_output: Option<PathBuf>,
 
-    /// Path to rustdoc JSON for the `truapi-platform` crate (optional).
-    ///
-    /// When provided together with `--platform-ts-output`, walks the
-    /// platform crate's capability traits and emits the typed TS
-    /// `HostCallbacks` surface plus the WASM raw callback adapter.
-    #[arg(long)]
-    platform_input: Option<String>,
+	/// Path to rustdoc JSON for a crate with a `platform` module; repeat for
+	/// each such crate (`truapi`, `truapi-provider`).
+	///
+	/// When provided together with `--platform-ts-output`, walks the
+	/// `platform` modules' capability traits and emits the typed TS
+	/// `HostCallbacks` surface plus the WASM raw callback adapter.
+	#[arg(long)]
+	platform_input: Vec<String>,
 
 	/// Output directory for the generated typed `HostCallbacks` TypeScript
 	/// surface (optional). Only honored when `--platform-input` is also set.
@@ -132,99 +133,102 @@ impl FromStr for ProtocolVersionArg {
 }
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
-    let input = &cli.input;
-    let json = std::fs::read_to_string(&cli.input)
-        .with_context(|| format!("reading rustdoc JSON from {input}"))?;
-    let krate = rustdoc::parse(&json).with_context(|| format!("parsing {input}"))?;
-    let api = rustdoc::extract_api(&krate)
-        .with_context(|| format!("extracting API definition from {input}"))?;
-    let output = &cli.output;
-    let client_version = cli
-        .client_version
-        .map(|v| v.number())
-        .unwrap_or_else(|| ts::latest_wire_version(&api));
-    ts::generate(&api, output, client_version, cli.codec_version)
-        .with_context(|| format!("writing TypeScript client to {output}"))?;
-    let codec_version = cli.codec_version;
-    println!(
-        "Generated TypeScript client for TrUAPI V{client_version} codec {codec_version} in {output}",
-    );
-    if let Some(path) = &cli.playground_output {
-        ts::generate_playground_services(&api, path, client_version, cli.strip_examples)
-            .with_context(|| format!("writing playground metadata to {path}"))?;
-        println!("Generated playground metadata in {path}");
-    }
-    if let Some(path) = &cli.client_examples_output {
-        ts::generate_client_examples(&api, path, client_version)
-            .with_context(|| format!("writing client examples to {path}"))?;
-        println!("Generated client examples in {path}");
-    }
-    if let Some(path) = &cli.rust_output {
-        // The Rust routing table (wire_table.rs) is version-*unfiltered* - the
-        // native host can route any method the crate defines - so its stamp hashes
-        // the full/latest table, not the client-pinned subset. Otherwise a
-        // `--client-version`-pinned build would route a newer #[wire(sensitive)]
-        // frame under an older hash that a same-pinned debugger would accept and
-        // decode. At the default (latest) client version this equals the TS hash.
-        let schema_hash =
-            ts::wire_schema_hash(&api, ts::latest_wire_version(&api), cli.codec_version)
-                .context("computing wire schema hash")?;
-        rust::generate(&api, path, &schema_hash)
-            .with_context(|| format!("writing Rust dispatcher to {}", path.display()))?;
-        println!("Wrote Rust dispatcher to {}", path.display());
-    }
-    if let Some(path) = &cli.rust_client_output {
-        let schema_hash =
-            ts::wire_schema_hash(&api, ts::latest_wire_version(&api), cli.codec_version)
-                .context("computing Rust client wire schema hash")?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating {}", parent.display()))?;
-        }
-        let client = rust::generate_client(&api, &schema_hash)
-            .context("generating no-std Rust client catalog")?;
-        std::fs::write(path, client)
-            .with_context(|| format!("writing Rust client catalog to {}", path.display()))?;
-        println!("Wrote Rust client catalog to {}", path.display());
-    }
-    if let Some(input) = &cli.platform_input {
-        if cli.platform_wasm_adapter_output.is_some() && cli.platform_ts_output.is_none() {
-            anyhow::bail!("--platform-wasm-adapter-output requires --platform-ts-output");
-        }
-        let json = std::fs::read_to_string(input)
-            .with_context(|| format!("reading platform rustdoc JSON from {input}"))?;
-        let krate =
-            rustdoc::parse(&json).with_context(|| format!("parsing platform rustdoc {input}"))?;
-        let definition = platform::extract(&krate)
-            .with_context(|| format!("extracting platform definition from {input}"))?;
-        if let Some(output) = &cli.platform_ts_output {
-            let codec_types = api
-                .types
-                .iter()
-                .filter(|t| !matches!(t.kind, rustdoc::TypeDefKind::Alias(_)))
-                .map(|t| t.name.clone())
-                .collect();
-            let adapter_output = cli
-                .platform_wasm_adapter_output
-                .as_deref()
-                .unwrap_or(output.as_str());
-            ts::generate_host_callbacks(&definition, &codec_types, output, adapter_output)
-                .with_context(|| format!("writing host callbacks TS to {output}"))?;
-            println!("Generated typed HostCallbacks TS surface in {output}");
-            println!("Generated WASM HostCallbacks adapter in {adapter_output}");
-        }
-        if let Some(output) = &cli.platform_rust_output {
-            rust::generate_wasm_bridge_file(&definition, &api, output)
-                .with_context(|| format!("writing Rust WASM bridge to {}", output.display()))?;
-            println!("Generated Rust WASM bridge in {}", output.display());
-        }
-    } else if cli.platform_ts_output.is_some()
-        || cli.platform_wasm_adapter_output.is_some()
-        || cli.platform_rust_output.is_some()
-    {
-        anyhow::bail!(
-            "--platform-input is required for platform output; \
+	let cli = Cli::parse();
+	let input = &cli.input;
+	let json = std::fs::read_to_string(&cli.input)
+		.with_context(|| format!("reading rustdoc JSON from {input}"))?;
+	let krate = rustdoc::parse(&json).with_context(|| format!("parsing {input}"))?;
+	let api = rustdoc::extract_api(&krate)
+		.with_context(|| format!("extracting API definition from {input}"))?;
+	let output = &cli.output;
+	let client_version = cli
+		.client_version
+		.map(|v| v.number())
+		.unwrap_or_else(|| ts::latest_wire_version(&api));
+	ts::generate(&api, output, client_version, cli.codec_version)
+		.with_context(|| format!("writing TypeScript client to {output}"))?;
+	let codec_version = cli.codec_version;
+	println!(
+		"Generated TypeScript client for TrUAPI V{client_version} codec {codec_version} in {output}",
+	);
+	if let Some(path) = &cli.playground_output {
+		ts::generate_playground_services(&api, path, client_version, cli.strip_examples)
+			.with_context(|| format!("writing playground metadata to {path}"))?;
+		println!("Generated playground metadata in {path}");
+	}
+	if let Some(path) = &cli.client_examples_output {
+		ts::generate_client_examples(&api, path, client_version)
+			.with_context(|| format!("writing client examples to {path}"))?;
+		println!("Generated client examples in {path}");
+	}
+	if let Some(path) = &cli.rust_output {
+		// The Rust routing table (wire_table.rs) is version-*unfiltered* - the
+		// native host can route any method the crate defines - so its stamp hashes
+		// the full/latest table, not the client-pinned subset. Otherwise a
+		// `--client-version`-pinned build would route a newer method's frame
+		// under an older hash that a same-pinned debugger would accept and
+		// decode. At the default (latest) client version this equals the TS hash.
+		let schema_hash =
+			ts::wire_schema_hash(&api, ts::latest_wire_version(&api), cli.codec_version)
+				.context("computing wire schema hash")?;
+		rust::generate(&api, path, &schema_hash)
+			.with_context(|| format!("writing Rust dispatcher to {}", path.display()))?;
+		println!("Wrote Rust dispatcher to {}", path.display());
+	}
+	if let Some(path) = &cli.rust_client_output {
+		let schema_hash =
+			ts::wire_schema_hash(&api, ts::latest_wire_version(&api), cli.codec_version)
+				.context("computing Rust client wire schema hash")?;
+		if let Some(parent) = path.parent() {
+			std::fs::create_dir_all(parent)
+				.with_context(|| format!("creating {}", parent.display()))?;
+		}
+		let client = rust::generate_client(&api, &schema_hash)
+			.context("generating no-std Rust client catalog")?;
+		std::fs::write(path, client)
+			.with_context(|| format!("writing Rust client catalog to {}", path.display()))?;
+		println!("Wrote Rust client catalog to {}", path.display());
+	}
+	if !cli.platform_input.is_empty() {
+		if cli.platform_wasm_adapter_output.is_some() && cli.platform_ts_output.is_none() {
+			anyhow::bail!("--platform-wasm-adapter-output requires --platform-ts-output");
+		}
+		let krates = cli
+			.platform_input
+			.iter()
+			.map(|input| {
+				let json = std::fs::read_to_string(input)
+					.with_context(|| format!("reading platform rustdoc JSON from {input}"))?;
+				rustdoc::parse(&json).with_context(|| format!("parsing platform rustdoc {input}"))
+			})
+			.collect::<Result<Vec<_>>>()?;
+		let definition =
+			platform::extract_all(&krates).context("extracting platform definition")?;
+		if let Some(output) = &cli.platform_ts_output {
+			let codec_types = api
+				.types
+				.iter()
+				.filter(|t| !matches!(t.kind, rustdoc::TypeDefKind::Alias(_)))
+				.map(|t| t.name.clone())
+				.collect();
+			let adapter_output =
+				cli.platform_wasm_adapter_output.as_deref().unwrap_or(output.as_str());
+			ts::generate_host_callbacks(&definition, &codec_types, output, adapter_output)
+				.with_context(|| format!("writing host callbacks TS to {output}"))?;
+			println!("Generated typed HostCallbacks TS surface in {output}");
+			println!("Generated WASM HostCallbacks adapter in {adapter_output}");
+		}
+		if let Some(output) = &cli.platform_rust_output {
+			rust::generate_wasm_bridge_file(&definition, &api, output)
+				.with_context(|| format!("writing Rust WASM bridge to {}", output.display()))?;
+			println!("Generated Rust WASM bridge in {}", output.display());
+		}
+	} else if cli.platform_ts_output.is_some() ||
+		cli.platform_wasm_adapter_output.is_some() ||
+		cli.platform_rust_output.is_some()
+	{
+		anyhow::bail!(
+			"--platform-input is required for platform output; \
              --platform-wasm-adapter-output additionally requires --platform-ts-output"
 		);
 	}

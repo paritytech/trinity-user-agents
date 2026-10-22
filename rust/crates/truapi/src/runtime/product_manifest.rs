@@ -10,7 +10,9 @@
 
 use core::{future::Future, time::Duration};
 
-use crate::platform::{CoreStorageKey, PermissionAuthorizationStatus, Platform, ProductId};
+use crate::platform::{
+	CoreStorageKey, PermissionAuthorizationStatus, Platform, normalize_product_identifier,
+};
 use parity_scale_codec::{Decode, Encode};
 use tracing::{info, instrument, warn};
 use truapi::v01;
@@ -20,7 +22,7 @@ use crate::{
 	dotns_views::{call_bytes32_string, network_tld, protocol_component, tld_node},
 	host_internal::{
 		permissions::account_access_status,
-		product_manifest::{Granted, RootManifest},
+		product_manifest::{Granted, RootManifest, bare_product_label},
 		sso_messages::RingVrfError,
 	},
 	host_logic::dotns_gateway::{
@@ -50,7 +52,7 @@ const MANIFEST_RECORD_KEY: &str = "manifest";
 pub async fn fetch_root_manifest(
 	chain: &ChainRuntime,
 	asset_hub_chain_genesis_hash: [u8; 32],
-	product_id: &ProductId,
+	product_id: &str,
 ) -> Result<Option<String>, String> {
 	let mut lookup = DotnsLookup::pinned_to_best_block(
 		chain,
@@ -64,7 +66,7 @@ pub async fn fetch_root_manifest(
 	};
 
 	let tld = network_tld(&mut lookup, &protocol_registry).await?;
-	let node = namehash_under(&tld_node(&tld), product_id.bare_label());
+	let node = namehash_under(&tld_node(&tld), bare_product_label(product_id));
 
 	let registry = protocol_component(&mut lookup, &protocol_registry, "registry").await?;
 	let resolver_output = lookup
@@ -127,7 +129,7 @@ mod tests {
 
 	/// The node a product id resolves to on a network serving `tld`.
 	fn node_on(tld: &str, product_id: &str) -> [u8; 32] {
-		namehash_under(&tld_node(tld), ProductId::for_test(product_id).bare_label())
+		namehash_under(&tld_node(tld), bare_product_label(product_id))
 	}
 
 	#[test]
@@ -139,7 +141,7 @@ mod tests {
 			"096b436ee9a398429fe33ad4b359bad4398dd74b412ec1dd043c93dfbf581874"
 		);
 		assert_eq!(
-			hex::encode(node_on(".paseo", "browse.paseo")),
+			hex::encode(node_on(".paseo", "browse")),
 			"1850561ffded63ac23dac8fd5e793fca1f349729ed6ade91c45f44a9f7b6b781"
 		);
 	}
@@ -148,7 +150,7 @@ mod tests {
 	fn the_tld_an_identifier_carries_does_not_change_the_node_it_resolves_to() {
 		// A product id minted on `.dot` has to resolve against a `.paseo`
 		// deployment; the suffix it was written with names no node of its own.
-		let expected = namehash_under(&tld_node(".paseo"), "dim2");
+		let expected = node_on(".paseo", "dim2");
 		assert_eq!(node_on(".paseo", "dim2.dot"), expected);
 		assert_eq!(node_on(".paseo", "dim2.paseo"), expected);
 	}
@@ -200,7 +202,7 @@ pub struct CachedManifest {
 /// Encode a root manifest the way the core caches it, for a host that seeds a
 /// grant instead of resolving one.
 ///
-/// Write the bytes under [`CoreStorageKey::product_manifest`] for the product the
+/// Write the bytes under [`CoreStorageKey::ProductManifest`] for the product the
 /// manifest belongs to. The core reads that entry before it consults the Asset
 /// Hub, so a seeded manifest answers a grant on a host with no dotNS access at
 /// all — which is what makes a cross-product flow reachable locally, before
@@ -226,7 +228,7 @@ pub fn encode_cached_root_manifest(json: Option<&str>, fetched_at_secs: u64) -> 
 /// to parse alike, and whoever debugs it goes to fix a manifest that is already
 /// correct.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RefusedBecause {
+pub enum RefusedBecause {
 	/// The published manifest does not name this caller for this scope.
 	NotGranted,
 	/// The user has already refused this pair.
@@ -261,31 +263,38 @@ impl RefusedBecause {
 pub async fn grants_scope(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
-	caller_id: &ProductId,
-	target: &ProductId,
+	caller_id: &str,
+	target: &str,
 	scope: Granted,
 ) -> bool {
 	scope_grant(services, platform, caller_id, target, scope).await.is_ok()
 }
 
 /// Published access subject to this host's stored account-access refusals.
-async fn scope_grant(
+pub async fn scope_grant(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
-	caller_id: &ProductId,
-	target: &ProductId,
+	caller_id: &str,
+	target: &str,
 	scope: Granted,
 ) -> Result<(), RefusedBecause> {
 	// Incoming SSO has no caller deadline, so manifest resolution has its own ceiling.
-	let json = with_ceiling(MANIFEST_RESOLUTION_CEILING, root_manifest(services, platform, target))
-		.await
-		.flatten()
-		.ok_or(RefusedBecause::ManifestUnavailable)?;
-	let manifest = RootManifest::parse(&json).map_err(|_| RefusedBecause::ManifestMalformed)?;
-	if !manifest.grants(caller_id, scope) {
+	let Some(json) =
+		with_ceiling(MANIFEST_RESOLUTION_CEILING, root_manifest(services, platform, target))
+			.await
+			.flatten()
+	else {
+		return Err(RefusedBecause::ManifestUnavailable);
+	};
+	let Ok(manifest) = RootManifest::parse(&json) else {
+		return Err(RefusedBecause::ManifestMalformed);
+	};
+	if !manifest.grants(bare_product_label(caller_id), scope) {
 		return Err(RefusedBecause::NotGranted);
 	}
-	if scope == Granted::Context && !caller_id.has_trusted_remote_permissions() {
+	if scope == Granted::Context &&
+		!crate::platform::normalizes_to_trusted_remote_permissions(caller_id)
+	{
 		match stored_account_decision(platform, caller_id, target).await {
 			StoredDecision::Denied => return Err(RefusedBecause::UserDenied),
 			StoredDecision::Unreadable => return Err(RefusedBecause::DecisionUnreadable),
@@ -313,8 +322,8 @@ enum StoredDecision {
 /// actually made, not to a grant lookup.
 async fn stored_account_decision(
 	platform: &dyn Platform,
-	caller_id: &ProductId,
-	target: &ProductId,
+	caller_id: &str,
+	target: &str,
 ) -> StoredDecision {
 	// Checked under both the product-scoped key this release writes and the
 	// full-id key earlier releases wrote.
@@ -326,13 +335,15 @@ async fn stored_account_decision(
 	// which is the one case this override exists for.
 	//
 	// The product-scoped key uses the bare label on BOTH sides. The grant it
-	// overrides is resolved by `ProductId::bare_label` for the target as well as
+	// overrides is resolved by `bare_product_label` for the target as well as
 	// the caller, so filing the refusal against the full target would let
 	// `app.peopl.dot` carry a grant the user refused for `peopl.dot`.
-	let candidates =
-		[(caller_id.bare_label(), target.bare_label()), (caller_id.as_str(), target.as_str())];
+	let candidates = [
+		(bare_product_label(caller_id).to_string(), bare_product_label(target).to_string()),
+		(caller_id.to_string(), target.to_string()),
+	];
 	for (caller, target) in candidates {
-		match account_access_status(platform, caller, target).await {
+		match account_access_status(platform, &caller, &target).await {
 			Ok(PermissionAuthorizationStatus::Denied) => return StoredDecision::Denied,
 			Ok(
 				PermissionAuthorizationStatus::NotDetermined |
@@ -472,10 +483,10 @@ fn on_one_network(left: &str, right: &str) -> bool {
 /// untouched, so a caller that re-derives it compares a peer's spelling against
 /// a normalized owner.
 pub struct AuthorizedAccess {
-	/// The caller the gate authorized.
-	pub caller: ProductId,
-	/// The owner of the key.
-	pub owner: ProductId,
+	/// The caller the gate authorized, normalized.
+	pub caller: String,
+	/// The owner of the key, normalized.
+	pub owner: String,
 }
 
 /// Own-key or published access, honoring stored account-access refusals.
@@ -483,10 +494,29 @@ pub struct AuthorizedAccess {
 pub async fn ring_vrf_key_access_granted(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
-	caller: ProductId,
+	calling_product_id: &str,
 	handle: &v01::ProductAccountId,
 ) -> Result<AuthorizedAccess, RingVrfError> {
-	let owner = handle.dot_ns_identifier.clone();
+	// A caller id that does not normalize names no product, so it holds no key
+	// and no manifest can grant it. It takes the same refusal as a product that
+	// granted nothing rather than an error carrying the string back: on the wire
+	// path this field is peer-supplied, and one refusal for every reason is the
+	// whole design of this seam.
+	let Ok(caller) = normalize_product_identifier(calling_product_id) else {
+		return Err(RingVrfError::NotAllowlisted);
+	};
+	// The handle is normalized here, not only at the frontend. The frontend
+	// does it before delegating, but `sso_responder` hands a wire request
+	// straight to the authority unnormalized, so without this the two doors
+	// disagree: an owner naming its own key `PEOPL.DOT` over the wire is
+	// refused where the same request from a local product runtime succeeds.
+	//
+	// A handle that does not normalize names no product, so it owns no key and
+	// no manifest can grant it: it takes the same refusal as a product that
+	// granted nothing, rather than a distinguishable error.
+	let Ok(owner) = normalize_product_identifier(&handle.dot_ns_identifier) else {
+		return Err(RingVrfError::NotAllowlisted);
+	};
 	if caller == owner {
 		return Ok(AuthorizedAccess { caller, owner });
 	}
@@ -508,6 +538,23 @@ pub async fn ring_vrf_key_access_granted(
 	Err(RingVrfError::NotAllowlisted)
 }
 
+/// Cache key for a product's root manifest.
+///
+/// Keyed by the bare label, which is what the document is actually resolved by:
+/// `fetch_root_manifest` walks `bare_product_label(product_id)` under the host's
+/// TLD, so `peopl.dot`, `app.peopl.dot` and `worker.peopl.dot` are one dotNS
+/// node holding one document. Keying by the full id instead gave each spelling
+/// its own entry, so a caller naming subnames drove a fresh chain resolution and
+/// a fresh durable write per spelling for a document already held, with nothing
+/// bounding how many. The host resolves only against its own network, so the
+/// label alone identifies the node.
+///
+/// Anything seeding this cache must key it the same way or the entry is written
+/// where nothing reads it.
+pub fn manifest_cache_key(product_id: &str) -> CoreStorageKey {
+	CoreStorageKey::ProductManifest { product_id: bare_product_label(product_id).to_string() }
+}
+
 /// `target`'s root manifest JSON, from cache when it is younger than
 /// [`MANIFEST_TTL_SECS`] and from dotNS otherwise.
 ///
@@ -527,9 +574,9 @@ pub async fn ring_vrf_key_access_granted(
 async fn root_manifest(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
-	target: &ProductId,
+	target: &str,
 ) -> Option<String> {
-	let key = CoreStorageKey::product_manifest(target);
+	let key = manifest_cache_key(target);
 	let now = current_unix_secs();
 	// `fetched_at_secs <= now` is part of the freshness test, not an assumption.
 	// Without it a `saturating_sub` on a future stamp yields 0, which is below
@@ -546,10 +593,13 @@ async fn root_manifest(
 	}
 
 	let genesis_hash = services.asset_hub_chain_genesis_hash()?;
-	let json = fetch_root_manifest(&services.chain, genesis_hash, target)
-		.await
-		.inspect_err(|reason| warn!(%target, %reason, "root manifest lookup failed"))
-		.ok()?;
+	let json = match fetch_root_manifest(&services.chain, genesis_hash, target).await {
+		Ok(json) => json,
+		Err(reason) => {
+			warn!(%target, %reason, "root manifest lookup failed");
+			return None;
+		},
+	};
 	let _ = platform
 		.write_core_storage(
 			key,

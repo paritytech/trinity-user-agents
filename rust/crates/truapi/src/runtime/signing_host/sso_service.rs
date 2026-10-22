@@ -3,10 +3,10 @@
 use std::sync::Arc;
 
 use crate::platform::{
-    CreateTransactionReview, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
-    ProductContext, ProductExecutionKind,
-    ResourceAllocationReview, SignPayloadReview, SignRawReview, StatementStoreProductSignReview,
-    UserConfirmationReview, normalize_product_identifier,
+	CreateTransactionReview, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
+	ProductContext, ProductExecutionKind, ResourceAllocationReview, SignPayloadReview,
+	SignRawReview, StatementStoreProductSignReview, UserConfirmationReview,
+	normalize_product_identifier,
 };
 use futures::{FutureExt, pin_mut};
 use tracing::warn;
@@ -14,37 +14,45 @@ use truapi::latest as api;
 
 use super::{
 	SigningHost,
-	allowance::{
-		AllowanceAllocationError, allocate_bulletin_allowance, allocate_smart_contract_allowance,
+	sso_responder::{
+		AllowanceAllocationError, allocate_bulletin_allowance,
+		allocate_product_statement_store_allowance, allocate_smart_contract_allowance,
 		allocate_statement_store_allowance,
 	},
 };
-use crate::host_internal::permissions::{ChatAuthorityConsent, PermissionsService};
-use crate::host_internal::sso_messages::{
-    CreateAccountProofResponse, CreateTransactionLegacyPayload, CreateTransactionPayload,
-    CreateTransactionRequest, CreateTransactionResponse, CreateTransactionWithLegacyAccountRequest,
-    GetAccountAliasResponse, ListRingVrfKeysResponse, OnExistingAllowancePolicy, PaymentTopUpError,
-    PaymentTopUpRequest, PaymentTopUpResponse, ProductDeviceChatResponse, ProductRequest,
-    ProductSubtreeRequest, ProductSubtreeResponse, RegisterRingVrfKeyResponse, RemoteMessage,
-    ResourceAllocationRequest, ResourceAllocationResponse, RingVrfSignResponse,
-    SignRawWithLegacyAccountRequest, SignRawWithLegacyAccountResponse, SignRequest, SignResponse,
-    SignVrfResponse, SsoAllocatedResource, SsoAllocationOutcome, SsoProductDeviceChatOperation,
-    StatementStoreProductSignRequest, StatementStoreProductSignResponse,
-    MediaEndpointCertificationError, MediaEndpointCertificationRequest,
-    MediaEndpointCertificationResponse,
+use crate::{
+	host_internal::{
+		permissions::{ChatAuthorityConsent, PermissionsService},
+		sso_messages::{
+			CreateAccountProofResponse, CreateTransactionLegacyPayload, CreateTransactionPayload,
+			CreateTransactionRequest, CreateTransactionResponse,
+			CreateTransactionWithLegacyAccountRequest, GetAccountAliasResponse,
+			ListRingVrfKeysResponse, MediaEndpointCertificationError,
+			MediaEndpointCertificationRequest, MediaEndpointCertificationResponse,
+			OnExistingAllowancePolicy, PaymentTopUpError, PaymentTopUpRequest,
+			PaymentTopUpResponse, ProductDeviceChatResponse, ProductRequest, ProductSubtreeRequest,
+			ProductSubtreeResponse, RegisterRingVrfKeyResponse, RemoteMessage,
+			ResourceAllocationRequest, ResourceAllocationResponse, RingVrfSignResponse,
+			SignRawWithLegacyAccountRequest, SignRawWithLegacyAccountResponse, SignRequest,
+			SignResponse, SignVrfResponse, SsoAllocatedResource, SsoAllocationOutcome,
+			SsoProductDeviceChatOperation, StatementStoreProductSignRequest,
+			StatementStoreProductSignResponse,
+		},
+		sso_wire::ResponseOutcome,
+	},
+	host_logic::{
+		product_account::{derive_ring_vrf_domain_entropy, product_public_key_to_address},
+		statement_store::validate_unsigned_statement_signing_payload,
+	},
+	runtime::{
+		authority::{
+			AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest, ProductAuthority,
+			ProductDeviceChatAuthorityRequest, SignPayloadAuthorityRequest,
+			SignRawAuthorityRequest, chat_requires_preimage_submit,
+		},
+		sso_service::{Dispatch, SsoReply, SsoRequestContext},
+	},
 };
-use crate::host_internal::sso_wire::ResponseOutcome;
-use crate::host_logic::statement_store::validate_unsigned_statement_signing_payload;
-use crate::host_logic::product_account::{
-    derive_ring_vrf_domain_entropy, product_public_key_to_address,
-};
-use crate::runtime::authority::{
-    AuthoritySession, CreateTransactionAuthorityRequest, ProductAuthority,
-    ProductDeviceChatAuthorityRequest, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
-    chat_requires_preimage_submit,
-    AuthorityError,
-};
-use crate::runtime::sso_service::{Dispatch, SsoReply, SsoRequestContext};
 
 /// Handler error once the pairing host has withdrawn the request; never
 /// posted, because a withdrawn request has no response.
@@ -235,7 +243,7 @@ impl SigningHostSsoService {
 	async fn allocate(
 		&self,
 		session: &AuthoritySession,
-		calling_product_id: &ProductId,
+		calling_product_id: &str,
 		resource: api::AllocatableResource,
 		on_existing: OnExistingAllowancePolicy,
 	) -> Result<SsoAllocationOutcome, AllowanceAllocationError> {
@@ -297,6 +305,22 @@ impl SigningHostSsoService {
 					product_root_private_key,
 					ring_vrf_domain_entropy,
 				}))
+			},
+			api::AllocatableResource::ProductStatementStoreAllowance(index) => {
+				allocate_product_statement_store_allowance(
+					services,
+					signing_host,
+					session,
+					calling_product_id,
+					&index,
+					on_existing,
+				)
+				.await
+				.map(|()| {
+					SsoAllocationOutcome::Allocated(
+						SsoAllocatedResource::ProductStatementStoreAllowance,
+					)
+				})
 			},
 		}
 	}
@@ -373,6 +397,37 @@ fn resource_allocation_outcome(
 
 #[truapi_macros::sso_service]
 impl SigningHostSsoService {
+	/// Incoming funding uses only supplied secrets, not any outgoing-spend grant.
+	async fn payment_top_up(
+		&self,
+		cx: &SsoRequestContext,
+		request: PaymentTopUpRequest,
+	) -> PaymentTopUpResponse {
+		self.signing_host
+			.payment_top_up(&cx.call, &cx.session, request)
+			.await
+			.map_err(|error| PaymentTopUpError(error.into()))
+	}
+
+	/// Consent-free private certification; no generic raw-signing or Chat path.
+	async fn media_endpoint_certification(
+		&self,
+		cx: &SsoRequestContext,
+		request: MediaEndpointCertificationRequest,
+	) -> MediaEndpointCertificationResponse {
+		self.signing_host
+			.certify_encoded_media_endpoint(
+				&cx.session,
+				&request.product_id,
+				&request.unsigned_advertisement,
+			)
+			.map_err(|error| match error {
+				AuthorityError::Disconnected => MediaEndpointCertificationError::Disconnected,
+				AuthorityError::Rejected => MediaEndpointCertificationError::Rejected,
+				_ => MediaEndpointCertificationError::Unavailable,
+			})
+	}
+
 	/// Sign a payload or raw bytes with a product account.
 	async fn sign(&self, cx: &SsoRequestContext, request: SignRequest) -> SignResponse {
 		let payload = self.serve_sign(cx, request).await;
@@ -382,33 +437,14 @@ impl SigningHostSsoService {
 		payload
 	}
 
-    /// Consent-free private certification; no generic raw-signing or Chat path.
-    async fn media_endpoint_certification(
-        &self,
-        cx: &SsoRequestContext,
-        request: MediaEndpointCertificationRequest,
-    ) -> MediaEndpointCertificationResponse {
-        self.signing_host
-            .certify_encoded_media_endpoint(
-                &cx.session,
-                &request.product_id,
-                &request.unsigned_advertisement,
-            )
-            .map_err(|error| match error {
-                AuthorityError::Disconnected => MediaEndpointCertificationError::Disconnected,
-                AuthorityError::Rejected => MediaEndpointCertificationError::Rejected,
-                _ => MediaEndpointCertificationError::Unavailable,
-            })
-    }
-
-    /// Sign a payload or raw bytes with a product account.
-    async fn sign(&self, cx: &SsoRequestContext, request: SignRequest) -> SignResponse {
-        let payload = self.serve_sign(cx, request).await;
-        if let Err(reason) = &payload {
-            warn!(%reason, "sign request failed");
-        }
-        payload
-    }
+	/// Derive a contextual alias for a registered ring-VRF key.
+	async fn get_account_alias(
+		&self,
+		cx: &SsoRequestContext,
+		request: ProductRequest<api::HostAccountGetAliasRequest>,
+	) -> GetAccountAliasResponse {
+		self.signing_host.account_alias(&cx.call, &cx.session, request).await
+	}
 
 	/// Allocate SSO-backed resources for a product.
 	async fn resource_allocation(
@@ -422,22 +458,22 @@ impl SigningHostSsoService {
 				calling_product_id: request.calling_product_id.clone(),
 				resources: request.resources.clone(),
 			});
-			let confirmed = self
-				.prompt(cx, review)
-				.await
-				.ok_or_else(|| WITHDRAWN.to_string())?
-				.map_err(|err| format!("confirmation failed: {}", err.reason))?;
-			if !confirmed {
-				return Ok(vec![SsoAllocationOutcome::Rejected; request.resources.len()]);
+			match self.prompt(cx, review).await {
+				Some(Ok(true)) => {},
+				Some(Ok(false)) => {
+					return Ok(vec![SsoAllocationOutcome::Rejected; request.resources.len()]);
+				},
+				Some(Err(err)) => return Err(format!("confirmation failed: {}", err.reason)),
+				None => return Err(WITHDRAWN.to_string()),
 			}
 
 			self.signing_host
-				.require_current_session(&cx.session)
+				.require_current_product_session(&cx.session, &request.calling_product_id)
 				.map_err(|err| err.to_string())?;
 			let mut outcomes = Vec::with_capacity(request.resources.len());
 			for resource in request.resources {
 				self.signing_host
-					.require_current_session(&cx.session)
+					.require_current_product_session(&cx.session, &request.calling_product_id)
 					.map_err(|err| err.to_string())?;
 				if cx.call.cancel().is_cancelled() {
 					return Err(WITHDRAWN.to_string());
@@ -451,7 +487,7 @@ impl SigningHostSsoService {
 					)
 					.await;
 				self.signing_host
-					.require_current_session(&cx.session)
+					.require_current_product_session(&cx.session, &request.calling_product_id)
 					.map_err(|err| err.to_string())?;
 				outcomes.push(outcome.unwrap_or_else(|err| {
 					let reason = err.to_string();
@@ -469,43 +505,21 @@ impl SigningHostSsoService {
 		allocation_reply(payload, failures)
 	}
 
-            self.signing_host
-                .require_current_product_session(&cx.session, &request.calling_product_id)
-                .map_err(|err| err.to_string())?;
-            let mut outcomes = Vec::with_capacity(request.resources.len());
-            for resource in request.resources {
-                self.signing_host
-                    .require_current_product_session(&cx.session, &request.calling_product_id)
-                    .map_err(|err| err.to_string())?;
-                if cx.call.cancel().is_cancelled() {
-                    return Err(WITHDRAWN.to_string());
-                }
-                let outcome = self
-                    .allocate(
-                        &cx.session,
-                        &request.calling_product_id,
-                        resource,
-                        request.on_existing,
-                    )
-                    .await;
-                self.signing_host
-                    .require_current_product_session(&cx.session, &request.calling_product_id)
-                    .map_err(|err| err.to_string())?;
-                outcomes.push(outcome.unwrap_or_else(|err| {
-                    let reason = err.to_string();
-                    warn!(%reason, "resource allocation item failed");
-                    failures.push(reason);
-                    SsoAllocationOutcome::NotAvailable
-                }));
-            }
-            Ok(outcomes)
-        }
-        .await;
-        if let Err(reason) = &payload {
-            warn!(%reason, "resource allocation request failed");
-        }
-        allocation_reply(payload, failures)
-    }
+	/// Build a signed transaction for a product account.
+	async fn create_transaction(
+		&self,
+		cx: &SsoRequestContext,
+		request: CreateTransactionRequest,
+	) -> CreateTransactionResponse {
+		let CreateTransactionPayload::V1(payload) = request.payload;
+		let payload = payload.into_product_payload();
+		self.serve_create_transaction(
+			cx,
+			CreateTransactionReview::Product { calling_product_id: None, payload: payload.clone() },
+			CreateTransactionAuthorityRequest::Product(payload),
+		)
+		.await
+	}
 
 	/// Build a signed transaction for the wallet's identity account.
 	async fn create_transaction_with_legacy_account(
@@ -552,7 +566,7 @@ impl SigningHostSsoService {
 			.sign_vrf_request(
 				&cx.call,
 				&cx.session,
-				&request.calling_product_id,
+				request.calling_product_id,
 				request.payload,
 				false,
 			)
@@ -567,7 +581,7 @@ impl SigningHostSsoService {
 		request: ProductSubtreeRequest,
 	) -> ProductSubtreeResponse {
 		self.signing_host
-			.product_subtree_public_key(&cx.call, &cx.session, &request.product_id)
+			.product_subtree_public_key(&cx.call, &cx.session, request.product_id)
 			.await
 			.map_err(|err| err.to_string())
 	}
@@ -590,153 +604,134 @@ impl SigningHostSsoService {
 		self.signing_host.list_ring_vrf_keys(&cx.call, &cx.session, request).await
 	}
 
-    /// List registered ring-VRF keys.
-    async fn list_ring_vrf_keys(
-        &self,
-        cx: &SsoRequestContext,
-        request: ProductRequest<api::HostAccountListRingVrfKeysRequest>,
-    ) -> ListRingVrfKeysResponse {
-        self.signing_host
-            .list_ring_vrf_keys(&cx.call, &cx.session, request)
-            .await
-    }
+	/// Sign bytes directly with a registered ring-VRF key.
+	async fn ring_vrf_sign(
+		&self,
+		cx: &SsoRequestContext,
+		request: ProductRequest<api::HostAccountRingVrfSignRequest>,
+	) -> RingVrfSignResponse {
+		self.signing_host.ring_vrf_sign(&cx.call, &cx.session, request).await
+	}
+	/// Sign a canonical unsigned Statement Store payload with a product account.
+	async fn statement_store_product_sign(
+		&self,
+		cx: &SsoRequestContext,
+		request: StatementStoreProductSignRequest,
+	) -> StatementStoreProductSignResponse {
+		let calling_product_id = normalize_product_identifier(&request.calling_product_id)
+			.map_err(|_| "invalid calling product identifier".to_string())?;
+		let mut account = request.account;
+		let account_product_id = normalize_product_identifier(&account.dot_ns_identifier)
+			.map_err(|_| "invalid product account identifier".to_string())?;
+		if account_product_id != calling_product_id {
+			return Err("product account does not belong to the calling product".to_string());
+		}
+		account.dot_ns_identifier =
+			calling_product_id.parse().expect("normalized calling product id");
+		validate_unsigned_statement_signing_payload(&request.payload)
+			.map_err(|error| error.to_string())?;
+		self.confirm(
+			cx,
+			UserConfirmationReview::StatementStoreProductSign(StatementStoreProductSignReview {
+				calling_product_id: Some(calling_product_id.clone()),
+				account: account.clone(),
+				payload: request.payload.clone(),
+			}),
+		)
+		.await?;
+		self.signing_host
+			.sign_statement_store_product_payload(
+				&cx.call,
+				&cx.session,
+				Some(calling_product_id.as_str()),
+				account,
+				request.payload,
+			)
+			.await
+			.map_err(|error| error.to_string())
+	}
 
-    /// Sign bytes directly with a registered ring-VRF key.
-    async fn ring_vrf_sign(
-        &self,
-        cx: &SsoRequestContext,
-        request: ProductRequest<api::HostAccountRingVrfSignRequest>,
-    ) -> RingVrfSignResponse {
-        self.signing_host
-            .ring_vrf_sign(&cx.call, &cx.session, request)
-            .await
-    }
-    /// Sign a canonical unsigned Statement Store payload with a product account.
-    async fn statement_store_product_sign(
-        &self,
-        cx: &SsoRequestContext,
-        request: StatementStoreProductSignRequest,
-    ) -> StatementStoreProductSignResponse {
-        let calling_product_id = normalize_product_identifier(&request.calling_product_id)
-            .map_err(|_| "invalid calling product identifier".to_string())?;
-        let mut account = request.account;
-        let account_product_id = normalize_product_identifier(&account.dot_ns_identifier)
-            .map_err(|_| "invalid product account identifier".to_string())?;
-        if account_product_id != calling_product_id {
-            return Err("product account does not belong to the calling product".to_string());
-        }
-        account.dot_ns_identifier = calling_product_id.clone();
-        validate_unsigned_statement_signing_payload(&request.payload)
-            .map_err(|error| error.to_string())?;
-        self.confirm(
-            cx,
-            UserConfirmationReview::StatementStoreProductSign(StatementStoreProductSignReview {
-                calling_product_id: Some(calling_product_id.clone()),
-                account: account.clone(),
-                payload: request.payload.clone(),
-            }),
-        )
-        .await?;
-        self.signing_host
-            .sign_statement_store_product_payload(
-                &cx.call,
-                &cx.session,
-                Some(calling_product_id.as_str()),
-                account,
-                request.payload,
-            )
-            .await
-            .map_err(|error| error.to_string())
-    }
+	/// Execute the same narrow Chat authority operations as local products.
+	async fn product_device_chat(
+		&self,
+		cx: &SsoRequestContext,
+		request: ProductRequest<SsoProductDeviceChatOperation>,
+	) -> ProductDeviceChatResponse {
+		use truapi::versioned::account::{
+			HostProductDeviceChatError as WireError, HostProductDeviceChatResponse as WireResponse,
+		};
 
-    /// Execute the same narrow Chat authority operations as local products.
-    async fn product_device_chat(
-        &self,
-        cx: &SsoRequestContext,
-        request: ProductRequest<SsoProductDeviceChatOperation>,
-    ) -> ProductDeviceChatResponse {
-        use truapi::versioned::account::{
-            HostProductDeviceChatError as WireError, HostProductDeviceChatResponse as WireResponse,
-        };
-
-        self.signing_host
-            .require_current_product_session(&cx.session, &request.calling_product_id)
-            .map_err(|_| WireError::V1(api::HostProductDeviceChatError::NotConnected))?;
-        let calling_product_id = normalize_product_identifier(&request.calling_product_id)
-            .map_err(|_| WireError::V1(api::HostProductDeviceChatError::InvalidRequest))?;
-        let operation = match request.payload {
-            SsoProductDeviceChatOperation::V3(operation) => operation,
-            SsoProductDeviceChatOperation::V2(_) => {
-                return Err(WireError::V1(
-                    api::HostProductDeviceChatError::InvalidRequest,
-                ));
-            }
-        };
-        // Upstream `PermissionsService` takes the validated product context; the
-        // SSO chat path carries only the calling product's id, and Chat is
-        // served by the worker execution kind.
-        let calling_product = ProductContext::new_with_execution(
-            calling_product_id.clone(),
-            ProductExecutionKind::Worker,
-        )
-        .map_err(|_| WireError::V1(api::HostProductDeviceChatError::InvalidRequest))?;
-        let permissions = PermissionsService::new(
-            self.signing_host.platform.as_ref(),
-            self.signing_host.platform.as_ref(),
-            &calling_product,
-        );
-        let storage_unavailable =
-            |_| WireError::V1(api::HostProductDeviceChatError::StorageUnavailable);
-        // A session-only grant lives with the signing session, since each SSO
-        // request builds its own permissions service.
-        let consent = if permissions
-            .authorization_status(&PermissionAuthorizationRequest::ChatAuthority)
-            .await
-            .map_err(storage_unavailable)?
-            == PermissionAuthorizationStatus::NotDetermined
-            && self
-                .signing_host
-                .chat_session_granted(&cx.session, &calling_product_id)
-        {
-            ChatAuthorityConsent::Session
-        } else {
-            permissions
-                .check_or_prompt_chat_authority()
-                .await
-                .map_err(storage_unavailable)?
-        };
-        if consent == ChatAuthorityConsent::Refused {
-            return Err(WireError::V1(
-                api::HostProductDeviceChatError::AccessNotGranted,
-            ));
-        }
-        if chat_requires_preimage_submit(&operation)
-            && permissions
-                .check_or_prompt_remote(api::RemotePermissionRequest {
-                    permission: api::RemotePermission::PreimageSubmit,
-                })
-                .await
-                .map_err(|_| WireError::V1(api::HostProductDeviceChatError::StorageUnavailable))?
-                != PermissionAuthorizationStatus::Authorized
-        {
-            return Err(WireError::V1(
-                api::HostProductDeviceChatError::AccessNotGranted,
-            ));
-        }
-        self.signing_host
-            .product_device_chat(
-                &cx.call,
-                &cx.session,
-                ProductDeviceChatAuthorityRequest {
-                    calling_product_id,
-                    operation,
-                    session_consent: consent == ChatAuthorityConsent::Session,
-                },
-            )
-            .await
-            .map(WireResponse::V2)
-            .map_err(|error| WireError::V1(error.into()))
-    }
+		self.signing_host
+			.require_current_product_session(&cx.session, &request.calling_product_id)
+			.map_err(|_| WireError::V1(api::HostProductDeviceChatError::NotConnected))?;
+		let calling_product_id = normalize_product_identifier(&request.calling_product_id)
+			.map_err(|_| WireError::V1(api::HostProductDeviceChatError::InvalidRequest))?;
+		let operation = match request.payload {
+			SsoProductDeviceChatOperation::V3(operation) => operation,
+			SsoProductDeviceChatOperation::V2(_) => {
+				return Err(WireError::V1(api::HostProductDeviceChatError::InvalidRequest));
+			},
+		};
+		// Upstream `PermissionsService` takes the validated product context; the
+		// SSO chat path carries only the calling product's id, and Chat is
+		// served by the worker execution kind.
+		let calling_product = ProductContext::new_with_execution(
+			calling_product_id.clone(),
+			ProductExecutionKind::Worker,
+		)
+		.map_err(|_| WireError::V1(api::HostProductDeviceChatError::InvalidRequest))?;
+		let permissions = PermissionsService::new(
+			self.signing_host.platform.as_ref(),
+			self.signing_host.platform.as_ref(),
+			&calling_product,
+		);
+		let storage_unavailable =
+			|_| WireError::V1(api::HostProductDeviceChatError::StorageUnavailable);
+		// A session-only grant lives with the signing session, since each SSO
+		// request builds its own permissions service.
+		let consent = if permissions
+			.authorization_status(&PermissionAuthorizationRequest::ChatAuthority)
+			.await
+			.map_err(storage_unavailable)? ==
+			PermissionAuthorizationStatus::NotDetermined &&
+			self.signing_host.chat_session_granted(&cx.session, &calling_product_id)
+		{
+			ChatAuthorityConsent::Session
+		} else {
+			permissions
+				.check_or_prompt_chat_authority()
+				.await
+				.map_err(storage_unavailable)?
+		};
+		if consent == ChatAuthorityConsent::Refused {
+			return Err(WireError::V1(api::HostProductDeviceChatError::AccessNotGranted));
+		}
+		if chat_requires_preimage_submit(&operation) &&
+			permissions
+				.check_or_prompt_remote(api::RemotePermissionRequest {
+					permission: api::RemotePermission::PreimageSubmit,
+				})
+				.await
+				.map_err(|_| {
+					WireError::V1(api::HostProductDeviceChatError::StorageUnavailable)
+				})? != PermissionAuthorizationStatus::Authorized
+		{
+			return Err(WireError::V1(api::HostProductDeviceChatError::AccessNotGranted));
+		}
+		self.signing_host
+			.product_device_chat(
+				&cx.call,
+				&cx.session,
+				ProductDeviceChatAuthorityRequest {
+					calling_product_id,
+					operation,
+					session_consent: consent == ChatAuthorityConsent::Session,
+				},
+			)
+			.await
+			.map(WireResponse::V2)
+			.map_err(|error| WireError::V1(error.into()))
+	}
 }
 
 #[cfg(test)]

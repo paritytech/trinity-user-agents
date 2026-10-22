@@ -25,41 +25,44 @@ mod media;
 mod platform;
 mod renderer;
 mod runtime;
-mod subscribers;
 mod ws_bridge;
 
 pub use crate::{
 	host_internal::sso_messages::SsoRequestOutcome,
 	host_logic::{
-		dev_server::{DevServerError, DevServerProduct},
 		dotns::{NavigateDecision, PocketDeeplinkAction},
 		scanner::{ScanFilter, ScanVerdict},
 	},
 };
 pub use callbacks::{
-	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-	NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
-	NativePocketRemoval, NativeScannerCallbacks, NativeTopUpCallbacks,
+	HostCallbacks, NativeChatCallbacks, NativeCoinageCallbackResult, NativeCoinageCallbacks,
+	NativeContactsCallbacks, NativeGameCallbacks, NativePocketCallbacks, NativePocketRemoval,
+	NativeScannerCallbacks,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
-pub use errors::{HostRejection, NativeCoreDatabaseError};
+pub use errors::{
+	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
+};
 pub use media::{NativeMediaCallbacks, NativeMediaError, NativeMediaEventSink};
 pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
-    NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
-    PermissionAuthorizationEntry,
+	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
+	PermissionAuthorizationEntry,
 };
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
-use crate::PairingProposal;
+use parity_scale_codec::{DecodeLimit, Encode};
+use serde::Deserialize;
+use truapi::latest;
+
 #[cfg(doc)]
 use crate::SigningHostRuntime;
-use crate::host_logic::dotns;
+use crate::{PairingProposal, host_logic::dotns};
 
 /// Classify a navigation input exactly like the core's internal navigate host
-/// call: the Pocket deeplink first, then dotNS, then `localhost`, then
-/// normalized external, with everything else rejected. Pure and stateless;
-/// hosts call it on every webview-internal navigation.
+/// call: dotNS first, then `localhost`, then normalized external, with
+/// everything else rejected. Pure and stateless; hosts call it on every
+/// webview-internal navigation.
 #[uniffi::export]
 pub fn parse_navigate(input: String) -> NavigateDecision {
 	dotns::parse_navigate(&input)
@@ -68,29 +71,33 @@ pub fn parse_navigate(input: String) -> NavigateDecision {
 /// Strictly decoded storage metadata for host-private namespace routing.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct NativeCoreStorageKeyDescription {
-    /// Stable core storage slot kind.
-    pub kind: String,
-    /// Product owning this slot, absent for wallet-owned state.
-    pub product_id: Option<String>,
-    /// Scoped authorization represented by this slot, absent for other storage.
-    pub permission_request: Option<crate::platform::PermissionAuthorizationRequest>,
+	/// Stable core storage slot kind.
+	pub kind: String,
+	/// Product owning this slot, absent for wallet-owned state.
+	pub product_id: Option<String>,
+	/// Scoped authorization represented by this slot, absent for other storage.
+	pub permission_request: Option<crate::platform::PermissionAuthorizationRequest>,
 }
 
 /// Describe exactly one encoded storage key without duplicating SCALE in hosts.
 #[uniffi::export]
 pub fn native_describe_core_storage_key(
-    encoded: Vec<u8>,
+	encoded: Vec<u8>,
 ) -> Result<NativeCoreStorageKeyDescription, HostRejection> {
-    let description = crate::platform::describe_core_storage_key(&encoded).map_err(|error| {
-        HostRejection::Rejected {
-            reason: error.to_string(),
-        }
-    })?;
-    Ok(NativeCoreStorageKeyDescription {
-        kind: description.kind.to_owned(),
-        product_id: description.product_id,
-        permission_request: description.permission_request,
-    })
+	let description = crate::platform::describe_core_storage_key(&encoded)
+		.map_err(|error| HostRejection::Rejected { reason: error.to_string() })?;
+	Ok(NativeCoreStorageKeyDescription {
+		kind: description.kind.to_owned(),
+		product_id: description.product_id,
+		permission_request: description.permission_request,
+	})
+}
+
+/// The `@parity/truapi-host` release this core was built from, which the
+/// native host packages share.
+#[uniffi::export]
+pub fn truapi_host_version() -> String {
+	env!("CARGO_PKG_VERSION").to_string()
 }
 
 /// The bridge script a host injects into a product's web view, for the `port`
@@ -299,15 +306,14 @@ pub fn screen_pocket_card_title(title: String) -> Result<String, NativeChatField
 /// Whether `product_id` is a first-party product the host grants every
 /// [`truapi::latest::RemotePermission`] without prompting.
 ///
-/// Trusted products bypass recorded permissions and permission prompts. Device
-/// permissions still need the OS grant. Hosts mediating product network access
-/// can use this check before storage.
+/// Blessed products bypass recorded permissions. Only device permissions require
+/// consent. Hosts mediating product network access can use this check before storage.
 ///
 /// Normalizes before matching, and answers `false` for an id that does not
 /// normalize, so an unknown spelling is never read as trusted.
 #[uniffi::export]
 pub fn has_trusted_remote_permissions(product_id: String) -> bool {
-	crate::platform::ProductId::normalizes_to_trusted_remote_permissions(&product_id)
+	crate::platform::normalizes_to_trusted_remote_permissions(&product_id)
 }
 
 /// Set the live log level (`off`/`error`/`warn`/`info`/`debug`/`trace`) for

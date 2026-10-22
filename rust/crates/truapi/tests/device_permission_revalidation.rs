@@ -57,18 +57,18 @@ impl PermissionStatusHost for FixedStatus {
 /// Drive one camera request through the dispatcher and return what the product
 /// is told. `status` is installed on the host runtime when present.
 fn request_camera(status: Option<Arc<dyn PermissionStatusHost>>) -> bool {
-    let (host_config, product) = test_runtime_config();
-    let runtime = PairingHostRuntime::new(
-        Arc::new(WireShapePlatform::default()),
-        host_config,
-        test_spawner(),
-    );
-    if let Some(status) = status {
-        assert!(
-            runtime.set_permission_status_host(status),
-            "the adapter must install on a fresh runtime",
-        );
-    }
+	let (host_config, product) = test_runtime_config();
+	let runtime = PairingHostRuntime::new(
+		Arc::new(WireShapePlatform::default()),
+		host_config,
+		test_spawner(),
+	);
+	if let Some(status) = status {
+		assert!(
+			runtime.set_permission_status_host(status),
+			"the adapter must install on a fresh runtime",
+		);
+	}
 
 	let sink = Arc::new(RecordingSink::default());
 	let product_runtime = runtime.product_runtime(product, sink.clone());
@@ -142,15 +142,15 @@ fn an_os_status_of_not_applicable_leaves_the_prompt_deciding() {
 /// toggle that was never what blocked them.
 #[test]
 fn a_status_read_and_a_request_agree_once_the_os_refuses() {
-    let (host_config, product) = test_runtime_config();
-    let runtime = PairingHostRuntime::new(
-        Arc::new(WireShapePlatform::default()),
-        host_config,
-        test_spawner(),
-    );
-    assert!(
-        runtime.set_permission_status_host(Arc::new(FixedStatus(DevicePermissionStatus::Denied)))
-    );
+	let (host_config, product) = test_runtime_config();
+	let runtime = PairingHostRuntime::new(
+		Arc::new(WireShapePlatform::default()),
+		host_config,
+		test_spawner(),
+	);
+	assert!(
+		runtime.set_permission_status_host(Arc::new(FixedStatus(DevicePermissionStatus::Denied)))
+	);
 
 	let admin = runtime.product_admin(product);
 	let read = futures::executor::block_on(admin.permission_authorization_status(
@@ -165,15 +165,15 @@ fn a_status_read_and_a_request_agree_once_the_os_refuses() {
 /// touched by the status adapter.
 #[test]
 fn a_status_read_of_a_remote_permission_ignores_the_os_gate() {
-    let (host_config, product) = test_runtime_config();
-    let runtime = PairingHostRuntime::new(
-        Arc::new(WireShapePlatform::default()),
-        host_config,
-        test_spawner(),
-    );
-    assert!(
-        runtime.set_permission_status_host(Arc::new(FixedStatus(DevicePermissionStatus::Denied)))
-    );
+	let (host_config, product) = test_runtime_config();
+	let runtime = PairingHostRuntime::new(
+		Arc::new(WireShapePlatform::default()),
+		host_config,
+		test_spawner(),
+	);
+	assert!(
+		runtime.set_permission_status_host(Arc::new(FixedStatus(DevicePermissionStatus::Denied)))
+	);
 
 	let admin = runtime.product_admin(product);
 	let read = futures::executor::block_on(

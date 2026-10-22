@@ -1,19 +1,24 @@
 //! Unified [`Account`] trait.
 
-use crate::versioned::account::{
-    HostAccountConnectionStatusSubscribeItem, HostAccountCreateProofError,
-    HostAccountCreateProofRequest, HostAccountCreateProofResponse, HostAccountGetAliasError,
-    HostAccountGetAliasRequest, HostAccountGetAliasResponse, HostAccountGetError,
-    HostAccountGetRequest, HostAccountGetResponse, HostAccountListRingVrfKeysError,
-    HostAccountListRingVrfKeysRequest, HostAccountListRingVrfKeysResponse,
-    HostAccountRegisterRingVrfKeyError, HostAccountRegisterRingVrfKeyRequest,
-    HostAccountRegisterRingVrfKeyResponse, HostAccountRingVrfSignError,
-    HostAccountRingVrfSignRequest, HostAccountRingVrfSignResponse, HostAccountSignVrfError,
-    HostAccountSignVrfRequest, HostAccountSignVrfResponse, HostGetLegacyAccountsError,
-    HostGetLegacyAccountsRequest, HostGetLegacyAccountsResponse, HostGetUserIdError,
-    HostGetUserIdRequest, HostGetUserIdResponse, HostProductDeviceChatError,
-    HostProductDeviceChatRequest, HostProductDeviceChatResponse, HostRequestLoginError,
-    HostRequestLoginRequest, HostRequestLoginResponse,
+use crate::{
+	CallContext, CallError, Subscription,
+	versioned::account::{
+		HostAccountConnectionStatusSubscribeError, HostAccountConnectionStatusSubscribeItem,
+		HostAccountConnectionStatusSubscribeRequest, HostAccountCreateProofError,
+		HostAccountCreateProofRequest, HostAccountCreateProofResponse, HostAccountGetAliasError,
+		HostAccountGetAliasRequest, HostAccountGetAliasResponse, HostAccountGetError,
+		HostAccountGetRequest, HostAccountGetResponse, HostAccountListRingVrfKeysError,
+		HostAccountListRingVrfKeysRequest, HostAccountListRingVrfKeysResponse,
+		HostAccountRegisterRingVrfKeyError, HostAccountRegisterRingVrfKeyRequest,
+		HostAccountRegisterRingVrfKeyResponse, HostAccountRingVrfSignError,
+		HostAccountRingVrfSignRequest, HostAccountRingVrfSignResponse, HostAccountSignVrfError,
+		HostAccountSignVrfRequest, HostAccountSignVrfResponse, HostGetLegacyAccountsError,
+		HostGetLegacyAccountsRequest, HostGetLegacyAccountsResponse, HostGetUserIdError,
+		HostGetUserIdRequest, HostGetUserIdResponse, HostProductDeviceChatError,
+		HostProductDeviceChatRequest, HostProductDeviceChatResponse, HostRequestLoginError,
+		HostRequestLoginRequest, HostRequestLoginResponse,
+	},
+	wire, wire_trait,
 };
 
 /// Account lookup, aliasing, and proof generation.
@@ -290,59 +295,59 @@ pub trait Account: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-    /// Use a non-exportable Host Chat device for native cryptographic operations
-    /// and reviewed main-purse payments. The product owns native lifecycle frames,
-    /// subscriptions, delivery, retries, history, and acknowledgments.
-    ///
-    /// `Bind` resolves the peer independently. `Prepare` validates native plaintext
-    /// and returns signed ciphertext for product submission. `Open` authenticates
-    /// complete external statements and rejects reflected local output; it is not
-    /// an arbitrary decryption primitive. Incoming plaintext can contain incoming
-    /// bearer coin keys: persist the import intent securely and use generic payment
-    /// top-up before acknowledging. Wallet/device keys and outgoing main-purse
-    /// coin secrets never leave the Host.
-    ///
-    /// `Initialize` also advances private file transfers. Persist any legacy
-    /// migration view and ordinary prepared statements before `CommitMigration`.
-    /// `ContinueOpen` retrieves the next bounded page of an authenticated batch.
-    /// `ContinueState` retrieves remaining pages of a stable public state snapshot;
-    /// persist every page before committing its migration.
-    ///
-    /// Method 11 (the former raw-crypto interface) and method 12's former V1 actor
-    /// operations are retired, not forwarded. This boundary uses V2 payloads.
-    ///
-    /// ```ts
-    /// const result = await truapi.account.deviceChat({ tag: "Initialize" });
-    /// assert(result.isOk(), "deviceChat failed:", result);
-    /// console.log("Host-owned Chat device:", result.value.device);
-    /// ```
-    #[wire(id = 12)]
-    async fn product_device_chat(
-        &self,
-        _cx: &CallContext,
-        _request: HostProductDeviceChatRequest,
-    ) -> Result<HostProductDeviceChatResponse, CallError<HostProductDeviceChatError>> {
-        Err(CallError::unavailable())
-    }
+	/// Use a non-exportable Host Chat device for native cryptographic operations
+	/// and reviewed main-purse payments. The product owns native lifecycle frames,
+	/// subscriptions, delivery, retries, history, and acknowledgments.
+	///
+	/// `Bind` resolves the peer independently. `Prepare` validates native plaintext
+	/// and returns signed ciphertext for product submission. `Open` authenticates
+	/// complete external statements and rejects reflected local output; it is not
+	/// an arbitrary decryption primitive. Incoming plaintext can contain incoming
+	/// bearer coin keys: persist the import intent securely and use generic payment
+	/// top-up before acknowledging. Wallet/device keys and outgoing main-purse
+	/// coin secrets never leave the Host.
+	///
+	/// `Initialize` also advances private file transfers. Persist any legacy
+	/// migration view and ordinary prepared statements before `CommitMigration`.
+	/// `ContinueOpen` retrieves the next bounded page of an authenticated batch.
+	/// `ContinueState` retrieves remaining pages of a stable public state snapshot;
+	/// persist every page before committing its migration.
+	///
+	/// Method 11 (the former raw-crypto interface) and method 12's former V1 actor
+	/// operations are retired, not forwarded. This boundary uses V2 payloads.
+	///
+	/// ```ts
+	/// const result = await truapi.account.deviceChat({ tag: "Initialize" });
+	/// assert(result.isOk(), "deviceChat failed:", result);
+	/// console.log("Host-owned Chat device:", result.value.device);
+	/// ```
+	#[wire(id = 12)]
+	async fn product_device_chat(
+		&self,
+		_cx: &CallContext,
+		_request: HostProductDeviceChatRequest,
+	) -> Result<HostProductDeviceChatResponse, CallError<HostProductDeviceChatError>> {
+		Err(CallError::unavailable())
+	}
 
-    /// List non-product accounts the user owns.
-    ///
-    /// Current hosts do not expose non-product accounts, so the list is empty.
-    ///
-    /// ```ts
-    /// const result = await truapi.account.getLegacyAccounts();
-    /// assert(result.isOk(), "getLegacyAccounts failed:", result);
-    /// assert(result.value.accounts.length === 0, "unexpected legacy accounts:", result.value);
-    /// console.log("legacy accounts:", result.value.accounts);
-    /// ```
-    #[wire(request_id = 28)]
-    async fn get_legacy_accounts(
-        &self,
-        _cx: &CallContext,
-        _request: HostGetLegacyAccountsRequest,
-    ) -> Result<HostGetLegacyAccountsResponse, CallError<HostGetLegacyAccountsError>> {
-        Err(CallError::unavailable())
-    }
+	/// List non-product accounts the user owns.
+	///
+	/// Current hosts do not expose non-product accounts, so the list is empty.
+	///
+	/// ```ts
+	/// const result = await truapi.account.getLegacyAccounts();
+	/// assert(result.isOk(), "getLegacyAccounts failed:", result);
+	/// assert(result.value.accounts.length === 0, "unexpected legacy accounts:", result.value);
+	/// console.log("legacy accounts:", result.value.accounts);
+	/// ```
+	#[wire(id = 4)]
+	async fn get_legacy_accounts(
+		&self,
+		_cx: &CallContext,
+		_request: HostGetLegacyAccountsRequest,
+	) -> Result<HostGetLegacyAccountsResponse, CallError<HostGetLegacyAccountsError>> {
+		Err(CallError::unavailable())
+	}
 
 	/// Fetch the user's primary identity.
 	///

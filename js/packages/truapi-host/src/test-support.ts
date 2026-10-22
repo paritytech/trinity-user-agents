@@ -32,6 +32,16 @@ export function makeHostCallbacks(
     notifications: {
       pushNotification: async () => ({ id: 0 }),
       cancelNotification: async () => {},
+      receiverAuthority: async () => undefined,
+      receiverConsent: async () => { throw new Error("background receiving unsupported"); },
+      receiverChanged: async () => { throw new Error("background receiving unsupported"); },
+      receiverCommand: async () => undefined,
+      activationEvents: async () => {
+        throw new Error("notification activation is unsupported");
+      },
+      acknowledgeActivation: async () => {
+        throw new Error("notification activation is unsupported");
+      },
     },
     permissions: {
       devicePermission: async () => "Deny",
@@ -210,6 +220,27 @@ export function makeHostCallbacks(
               throw new Error("identity backend unavailable");
             },
             ...overrides.identityBackend,
+          },
+        }
+      : {}),
+    // And for Game: the default fixture is a host that holds no reminders,
+    // so Game calls are answered `Unsupported`.
+    ...(overrides.game
+      ? {
+          game: {
+            scheduleGameReminder: async () => {},
+            cancelGameReminder: async () => {},
+            ...overrides.game,
+          },
+        }
+      : {}),
+    // And for the scanner: the default fixture is a host with no viewfinder,
+    // so scans are answered `Unsupported`, as on a web host.
+    ...(overrides.scanner
+      ? {
+          scanner: {
+            scanCode: async () => ({ tag: "Dismissed" as const }),
+            ...overrides.scanner,
           },
         }
       : {}),

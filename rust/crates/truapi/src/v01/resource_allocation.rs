@@ -13,18 +13,18 @@ use super::account::DerivationIndex;
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum AllocatableResource {
-    /// Statement Store slot allowance for the product's own allowance account.
-    StatementStoreAllowance,
-    /// Bulletin chain slot allowance for the product's own allowance account.
-    BulletinAllowance,
-    /// Pre-warmed PGAS balance for the product account selected by this
-    /// derivation index.
-    SmartContractAllowance(DerivationIndex),
-    /// Permission to sign on the product's behalf without per-call user prompts.
-    AutoSigning,
-    /// Current UTC-day Statement Store allowance whose target is the product
-    /// account selected by this derivation index.
-    ProductStatementStoreAllowance(DerivationIndex),
+	/// Statement Store slot allowance for the product's own allowance account.
+	StatementStoreAllowance,
+	/// Bulletin chain slot allowance for the product's own allowance account.
+	BulletinAllowance,
+	/// Pre-warmed PGAS balance for the product account selected by this
+	/// derivation index.
+	SmartContractAllowance(DerivationIndex),
+	/// Permission to sign on the product's behalf without per-call user prompts.
+	AutoSigning,
+	/// Current UTC-day Statement Store allowance whose target is the product
+	/// account selected by this derivation index.
+	ProductStatementStoreAllowance(DerivationIndex),
 }
 
 /// Outcome of allocating a single resource (RFC 0010).

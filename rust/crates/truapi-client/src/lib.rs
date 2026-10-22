@@ -2,15 +2,13 @@
 
 //! Transport-neutral TrUAPI client codecs and generated method catalog.
 //!
-//! The crate owns no executor or transport. A product runtime sends the encoded
-//! frames through its native transport, then decodes returned frames with the
-//! same generated method marker.
+//! Frames contain a SCALE request id, a `(trait, method)` address, a message
+//! type byte, and the leg's inline SCALE payload. This crate owns no transport.
 
 extern crate alloc;
 
-use alloc::string::String;
-use alloc::vec::Vec;
-use parity_scale_codec::{Decode, Encode, Error as CodecError, Input};
+use alloc::{string::String, vec::Vec};
+use parity_scale_codec::{Decode, Encode};
 use truapi::CallError;
 
 mod generated;
@@ -19,744 +17,602 @@ pub use generated::*;
 /// Product executable kinds used by TrUAPI authorization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionKind {
-    /// Full application surface.
-    App,
-    /// Embedded widget surface.
-    Widget,
-    /// Background product worker.
-    Worker,
+	/// Full application surface.
+	App,
+	/// Embedded widget surface.
+	Widget,
+	/// Background product worker.
+	Worker,
 }
 
 /// Direction in which a method's initial frame travels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
-    /// Product starts the call and the host serves it.
-    ProductToHost,
-    /// Host starts the call and the product serves it.
-    HostToProduct,
+	/// Product starts the call and the host serves it.
+	ProductToHost,
+	/// Host starts the call and the product serves it.
+	HostToProduct,
 }
 
 /// Wire interaction shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MethodKind {
-    /// One request followed by one response.
-    Request,
-    /// Start/receive stream with no typed start failure.
-    Subscription,
-    /// Start/receive stream with a typed start failure.
-    ResultSubscription,
+	/// One request followed by one response.
+	Request,
+	/// Items followed by a normal or failed interruption.
+	Subscription,
 }
 
-/// Request/response discriminants.
+/// The address shared by every leg of one method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RequestFrameIds {
-    /// Request frame discriminant.
-    pub request_id: u8,
-    /// Response frame discriminant.
-    pub response_id: u8,
+pub struct MethodIds {
+	/// Trait discriminant.
+	pub trait_id: u8,
+	/// Method discriminant within the trait.
+	pub method_id: u8,
 }
 
-/// Subscription discriminants.
+/// Which leg of an exchange a frame carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SubscriptionFrameIds {
-    /// Subscription start discriminant.
-    pub start_id: u8,
-    /// Subscription stop discriminant.
-    pub stop_id: u8,
-    /// Server-side interruption discriminant.
-    pub interrupt_id: u8,
-    /// Subscription item discriminant.
-    pub receive_id: u8,
+#[repr(u8)]
+pub enum MessageType {
+	/// Request, or subscription start.
+	Request = 0,
+	/// Response, or subscription item.
+	Response = 1,
+	/// Subscription completion carrying `Result<(), CallError<E>>`.
+	Interrupt = 2,
+	/// Subscription cancellation with no payload.
+	Stop = 3,
 }
 
-/// Wire ids for one method.
+/// Wire ids and interaction shape for one method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MethodWire {
-    /// Request/response pair.
-    Request(RequestFrameIds),
-    /// Subscription quartet.
-    Subscription(SubscriptionFrameIds),
+	/// Request/response method.
+	Request(MethodIds),
+	/// Subscription method.
+	Subscription(MethodIds),
 }
 
 /// Generated metadata for one canonical method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MethodDescriptor {
-    /// Canonical service trait name.
-    pub service: &'static str,
-    /// Rust method name.
-    pub method: &'static str,
-    /// Globally unique wire method name.
-    pub wire_name: &'static str,
-    /// Rust type of the versioned request envelope.
-    pub request_type: &'static str,
-    /// Rust type of the versioned success or stream-item envelope.
-    pub response_type: &'static str,
-    /// Rust type of the versioned domain-error envelope, when the method has one.
-    pub error_type: Option<&'static str>,
-    /// Interaction shape.
-    pub kind: MethodKind,
-    /// Initial-frame direction.
-    pub direction: Direction,
-    /// Required executable kind, or `None` when every kind may call it.
-    pub required_execution: Option<ExecutionKind>,
-    /// Whether diagnostics must redact this method's payload.
-    pub sensitive: bool,
-    /// Canonical frame discriminants.
-    pub wire: MethodWire,
+	/// Canonical service trait name.
+	pub service: &'static str,
+	/// Rust method name.
+	pub method: &'static str,
+	/// Globally unique wire method name.
+	pub wire_name: &'static str,
+	/// Rust type of the request envelope.
+	pub request_type: &'static str,
+	/// Rust type of the success or stream-item envelope.
+	pub response_type: &'static str,
+	/// Rust type of the domain error.
+	pub error_type: Option<&'static str>,
+	/// Interaction shape.
+	pub kind: MethodKind,
+	/// Initial-frame direction.
+	pub direction: Direction,
+	/// Required executable kind, or `None` for every kind.
+	pub required_execution: Option<ExecutionKind>,
+	/// Canonical address and shape.
+	pub wire: MethodWire,
 }
 
 /// Generated marker for a product-initiated request method.
 pub trait RequestMethod {
-    /// Versioned request envelope.
-    type Request: Encode;
-    /// Versioned success envelope.
-    type Response: Decode;
-    /// Versioned domain-error envelope.
-    type Error: Decode;
-    /// Whether the success value is a versioned wrapper reconstructed from the outer version byte.
-    const RESPONSE_VERSIONED: bool;
-    /// Canonical method metadata.
-    const DESCRIPTOR: MethodDescriptor;
+	/// Request envelope.
+	type Request: Encode;
+	/// Success envelope.
+	type Response: Decode;
+	/// Domain-error envelope.
+	type Error: Decode;
+	/// Canonical method metadata.
+	const DESCRIPTOR: MethodDescriptor;
 }
 
 /// Generated marker for a product-initiated subscription.
 pub trait SubscriptionMethod {
-    /// Versioned start request, or unit for an empty payload.
-    type Request: Encode;
-    /// Versioned stream item.
-    type Item: Decode;
-    /// Canonical method metadata.
-    const DESCRIPTOR: MethodDescriptor;
-}
-
-/// Generated marker for a product-initiated subscription with typed start errors.
-pub trait ResultSubscriptionMethod {
-    /// Versioned start request.
-    type Request: Encode;
-    /// Versioned stream item.
-    type Item: Decode;
-    /// Versioned domain-error envelope.
-    type Error: Decode;
-    /// Canonical method metadata.
-    const DESCRIPTOR: MethodDescriptor;
+	/// Start request, or unit for an empty payload.
+	type Request: Encode;
+	/// Stream item.
+	type Item: Decode;
+	/// Domain error carried by the interrupt leg.
+	type Error: Decode;
+	/// Canonical method metadata.
+	const DESCRIPTOR: MethodDescriptor;
 }
 
 /// Generated marker for a host-initiated subscription served by a product.
 pub trait HostSubscriptionMethod {
-    /// Versioned host request.
-    type Request: Decode;
-    /// Versioned product stream item.
-    type Item: Encode;
-    /// Canonical method metadata.
-    const DESCRIPTOR: MethodDescriptor;
+	/// Host request.
+	type Request: Decode;
+	/// Product stream item.
+	type Item: Encode;
+	/// Domain error carried by the interrupt leg.
+	type Error: Encode;
+	/// Canonical method metadata.
+	const DESCRIPTOR: MethodDescriptor;
 }
 
-/// Decoded frame value paired with its transport request id.
+/// Decoded value paired with its transport request id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decoded<T> {
-    /// Request id from the frame envelope.
-    pub request_id: String,
-    /// Decoded typed payload.
-    pub value: T,
+	/// Request id from the envelope.
+	pub request_id: String,
+	/// Typed payload.
+	pub value: T,
 }
 
-/// Typed domain outcome carried by a product-initiated request response.
+/// Typed outcome carried by a request response.
 pub type RequestOutcome<M> =
-    Result<<M as RequestMethod>::Response, CallError<<M as RequestMethod>::Error>>;
-
-/// Result of decoding one product-initiated request response frame.
+	Result<<M as RequestMethod>::Response, CallError<<M as RequestMethod>::Error>>;
+/// Result of decoding a request response.
 pub type DecodedResponse<M> = Result<Decoded<RequestOutcome<M>>, DecodeError>;
+/// Typed completion carried by a subscription interruption.
+pub type SubscriptionOutcome<M> = Result<(), CallError<<M as SubscriptionMethod>::Error>>;
 
-/// Structural failure while decoding a TrUAPI frame.
+/// Reserved method-independent protocol error address.
+pub const PROTOCOL_ERROR_IDS: MethodIds = MethodIds { trait_id: 255, method_id: 255 };
+
+/// A recognized protocol failure from a peer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProtocolError {
+	/// The peer cannot route this method address.
+	UnsupportedMessage(MethodIds),
+}
+
+/// Structural or protocol failure while decoding a frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DecodeError {
-    /// The frame or payload is not valid SCALE for the expected type.
-    Malformed,
-    /// The payload contains bytes after the expected value.
-    TrailingBytes,
-    /// The frame carries a discriminant other than the method leg expected.
-    UnexpectedDiscriminant {
-        /// Expected wire discriminant.
-        expected: u8,
-        /// Actual wire discriminant.
-        actual: u8,
-    },
-    /// A versioned response contains neither the success nor failure tag.
-    UnexpectedResultDiscriminant(u8),
-    /// The generated descriptor has a wire shape incompatible with the operation.
-    WrongMethodKind,
+	/// Invalid SCALE or a truncated envelope.
+	Malformed,
+	/// Bytes remain after the expected payload.
+	TrailingBytes,
+	/// The frame belongs to another method.
+	UnexpectedMethod {
+		/// Expected method address.
+		expected: MethodIds,
+		/// Actual method address.
+		actual: MethodIds,
+	},
+	/// The frame belongs to another leg of the exchange.
+	UnexpectedMessageType {
+		/// Expected leg.
+		expected: MessageType,
+		/// Actual message-type byte.
+		actual: u8,
+	},
+	/// A descriptor has a shape incompatible with the operation.
+	WrongMethodKind,
+	/// A correlated protocol failure. An unknown future version or variant is
+	/// retained as `None` rather than mistaken for malformed known data.
+	Protocol {
+		/// Request id of the call that failed.
+		request_id: String,
+		/// Recognized failure, if supported by this build.
+		error: Option<ProtocolError>,
+	},
 }
 
-/// Encodes a product-initiated request frame without an intermediate payload allocation.
+/// Encodes a request without an intermediate payload allocation.
 pub fn encode_request<M: RequestMethod>(request_id: &str, request: &M::Request) -> Vec<u8> {
-    encode_value_frame(
-        request_id,
-        generated_request_ids(M::DESCRIPTOR),
-        MessageType::Request,
-        request,
-    )
+	encode_value_frame(
+		request_id,
+		generated_request_ids(M::DESCRIPTOR),
+		MessageType::Request,
+		request,
+	)
 }
 
-/// Decodes a product-initiated request's response frame.
+/// Decodes a response's `Result<Response, CallError<Error>>` payload.
 pub fn decode_response<M: RequestMethod>(frame: &[u8]) -> DecodedResponse<M> {
-    decode_value_frame(
-        frame,
-        generated_request_ids(M::DESCRIPTOR),
-        MessageType::Response,
-    )
+	decode_value_frame(frame, generated_request_ids(M::DESCRIPTOR), MessageType::Response)
 }
 
 /// Encodes a subscription start.
 pub fn encode_subscription_start<M: SubscriptionMethod>(
-    request_id: &str,
-    request: &M::Request,
+	request_id: &str,
+	request: &M::Request,
 ) -> Vec<u8> {
-    encode_value_frame(
-        request_id,
-        generated_subscription_ids(M::DESCRIPTOR),
-        MessageType::Request,
-        request,
-    )
+	encode_value_frame(
+		request_id,
+		generated_subscription_ids(M::DESCRIPTOR),
+		MessageType::Request,
+		request,
+	)
 }
 
 /// Encodes subscription cancellation; rejects request descriptors.
 pub fn encode_subscription_stop(
-    request_id: &str,
-    descriptor: MethodDescriptor,
+	request_id: &str,
+	descriptor: MethodDescriptor,
 ) -> Result<Vec<u8>, DecodeError> {
-    Ok(encode_value_frame(
-        request_id,
-        subscription_ids(descriptor)?,
-        MessageType::Stop,
-        &(),
-    ))
+	Ok(encode_value_frame(request_id, subscription_ids(descriptor)?, MessageType::Stop, &()))
 }
 
 /// Decodes a subscription item.
 pub fn decode_subscription_item<M: SubscriptionMethod>(
-    frame: &[u8],
+	frame: &[u8],
 ) -> Result<Decoded<M::Item>, DecodeError> {
-    decode_value_frame(
-        frame,
-        generated_subscription_ids(M::DESCRIPTOR),
-        MessageType::Response,
-    )
+	decode_value_frame(frame, generated_subscription_ids(M::DESCRIPTOR), MessageType::Response)
 }
 
 /// Decodes normal completion (`Ok(())`) or a typed subscription failure.
 pub fn decode_subscription_interrupt<M: SubscriptionMethod>(
-    frame: &[u8],
+	frame: &[u8],
 ) -> Result<Decoded<SubscriptionOutcome<M>>, DecodeError> {
-    decode_value_frame(
-        frame,
-        generated_subscription_ids(M::DESCRIPTOR),
-        MessageType::Interrupt,
-    )
+	decode_value_frame(frame, generated_subscription_ids(M::DESCRIPTOR), MessageType::Interrupt)
 }
 
 /// Whether a frame interrupts this subscription; rejects request descriptors.
 pub fn is_subscription_interrupt(
-    frame: &[u8],
-    descriptor: MethodDescriptor,
+	frame: &[u8],
+	descriptor: MethodDescriptor,
 ) -> Result<bool, DecodeError> {
-    let ids = subscription_ids(descriptor)?;
-    Ok(encode_empty_frame(request_id, ids.stop_id))
-}
-
-/// Decodes a regular subscription item frame.
-pub fn decode_subscription_item<M: SubscriptionMethod>(
-    frame: &[u8],
-) -> Result<Decoded<M::Item>, DecodeError> {
-    decode_stream_item::<M::Item>(frame, generated_subscription_ids(M::DESCRIPTOR).receive_id)
-}
-
-/// Decodes a result-subscription item frame.
-pub fn decode_result_subscription_item<M: ResultSubscriptionMethod>(
-    frame: &[u8],
-) -> Result<Decoded<M::Item>, DecodeError> {
-    decode_stream_item::<M::Item>(frame, generated_subscription_ids(M::DESCRIPTOR).receive_id)
-}
-
-/// Decodes a typed result-subscription interruption.
-pub fn decode_result_subscription_interrupt<M: ResultSubscriptionMethod>(
-    frame: &[u8],
-) -> Result<Decoded<CallError<M::Error>>, DecodeError> {
-    let ids = generated_subscription_ids(M::DESCRIPTOR);
-    let frame = decode_frame(frame)?;
-    expect_discriminant(ids.interrupt_id, frame.discriminant)?;
-    let (_, payload) = frame.payload.split_first().ok_or(DecodeError::Malformed)?;
-    Ok(Decoded {
-        request_id: frame.request_id,
-        value: decode_exact(payload)?,
-    })
+	let ids = subscription_ids(descriptor)?;
+	let frame = decode_frame(frame)?;
+	Ok(frame.ids == ids && frame.message_type == MessageType::Interrupt as u8)
 }
 
 /// Decodes a host-initiated start for a product worker.
 pub fn decode_host_subscription_start<M: HostSubscriptionMethod>(
-    frame: &[u8],
+	frame: &[u8],
 ) -> Result<Decoded<M::Request>, DecodeError> {
-    decode_value_frame(
-        frame,
-        generated_subscription_ids(M::DESCRIPTOR),
-        MessageType::Request,
-    )
+	decode_value_frame(frame, generated_subscription_ids(M::DESCRIPTOR), MessageType::Request)
 }
 
 /// Encodes a product-served subscription item.
 pub fn encode_host_subscription_item<M: HostSubscriptionMethod>(
-    request_id: &str,
-    item: &M::Item,
+	request_id: &str,
+	item: &M::Item,
 ) -> Vec<u8> {
-    encode_value_frame(
-        request_id,
-        generated_subscription_ids(M::DESCRIPTOR),
-        MessageType::Response,
-        item,
-    )
+	encode_value_frame(
+		request_id,
+		generated_subscription_ids(M::DESCRIPTOR),
+		MessageType::Response,
+		item,
+	)
 }
 
 /// Encodes normal or failed termination of a product-served subscription.
 pub fn encode_host_subscription_interrupt<M: HostSubscriptionMethod>(
-    request_id: &str,
-    outcome: &Result<(), CallError<M::Error>>,
+	request_id: &str,
+	outcome: &Result<(), CallError<M::Error>>,
 ) -> Vec<u8> {
-    encode_value_frame(
-        request_id,
-        generated_subscription_ids(M::DESCRIPTOR),
-        MessageType::Interrupt,
-        outcome,
-    )
+	encode_value_frame(
+		request_id,
+		generated_subscription_ids(M::DESCRIPTOR),
+		MessageType::Interrupt,
+		outcome,
+	)
 }
 
 /// Whether a host frame cancels this product-served subscription.
 pub fn is_host_subscription_stop<M: HostSubscriptionMethod>(
-    frame: &[u8],
+	frame: &[u8],
 ) -> Result<bool, DecodeError> {
-    let frame = decode_frame(frame)?;
-    expect_discriminant(ids.start_id, frame.discriminant)?;
-    Ok(Decoded {
-        request_id: frame.request_id,
-        value: decode_exact(frame.payload)?,
-    })
+	let frame = decode_frame(frame)?;
+	let matches = frame.ids == generated_subscription_ids(M::DESCRIPTOR) &&
+		frame.message_type == MessageType::Stop as u8;
+	if matches {
+		decode_exact::<()>(frame.payload)?;
+	}
+	Ok(matches)
 }
 
-/// Encodes one product-served item for a host-initiated subscription.
-pub fn encode_host_subscription_item<M: HostSubscriptionMethod>(
-    request_id: &str,
-    item: &M::Item,
-) -> Vec<u8> {
-    let ids = generated_subscription_ids(M::DESCRIPTOR);
-    encode_value_frame(request_id, ids.receive_id, item)
+fn generated_request_ids(descriptor: MethodDescriptor) -> MethodIds {
+	match descriptor.wire {
+		MethodWire::Request(ids) => ids,
+		MethodWire::Subscription(_) => {
+			panic!("generated request descriptor must use request wire ids")
+		},
+	}
 }
 
-/// Encodes product-side termination of a host-initiated subscription.
-pub fn encode_host_subscription_interrupt<M: HostSubscriptionMethod>(request_id: &str) -> Vec<u8> {
-    let ids = generated_subscription_ids(M::DESCRIPTOR);
-    encode_empty_frame(request_id, ids.interrupt_id)
-}
-
-/// Returns whether a host frame stops a product-served subscription.
-pub fn is_host_subscription_stop<M: HostSubscriptionMethod>(
-    frame: &[u8],
-) -> Result<bool, DecodeError> {
-    let ids = generated_subscription_ids(M::DESCRIPTOR);
-    Ok(decode_frame(frame)?.discriminant == ids.stop_id)
-}
-
-fn request_ids(descriptor: MethodDescriptor) -> Result<RequestFrameIds, DecodeError> {
-    match descriptor.wire {
-        MethodWire::Request(ids) => ids,
-        MethodWire::Subscription(_) => {
-            panic!("generated request descriptor must use request wire ids")
-        }
-    }
-}
-
-fn subscription_ids(descriptor: MethodDescriptor) -> Result<SubscriptionFrameIds, DecodeError> {
-    match descriptor.wire {
-        MethodWire::Subscription(ids) => Ok(ids),
-        MethodWire::Request(_) => Err(DecodeError::WrongMethodKind),
-    }
+fn subscription_ids(descriptor: MethodDescriptor) -> Result<MethodIds, DecodeError> {
+	match descriptor.wire {
+		MethodWire::Subscription(ids) => Ok(ids),
+		MethodWire::Request(_) => Err(DecodeError::WrongMethodKind),
+	}
 }
 
 fn generated_subscription_ids(descriptor: MethodDescriptor) -> MethodIds {
-    subscription_ids(descriptor)
-        .expect("generated subscription descriptor must use subscription wire ids")
+	subscription_ids(descriptor)
+		.expect("generated subscription descriptor must use subscription wire ids")
 }
 
 fn encode_value_frame<T: Encode + ?Sized>(
-    request_id: &str,
-    ids: MethodIds,
-    message_type: MessageType,
-    value: &T,
+	request_id: &str,
+	ids: MethodIds,
+	message_type: MessageType,
+	value: &T,
 ) -> Vec<u8> {
-    let mut frame = Vec::new();
-    request_id.encode_to(&mut frame);
-    frame.push(discriminant);
-    value.encode_to(&mut frame);
-    frame
-}
-
-fn encode_empty_frame(request_id: &str, discriminant: u8) -> Vec<u8> {
-    let mut frame = Vec::new();
-    request_id.encode_to(&mut frame);
-    frame.push(discriminant);
-    frame
+	let mut frame = Vec::new();
+	request_id.encode_to(&mut frame);
+	frame.extend_from_slice(&[ids.trait_id, ids.method_id, message_type as u8]);
+	value.encode_to(&mut frame);
+	frame
 }
 
 struct BorrowedFrame<'a> {
-    request_id: String,
-    discriminant: u8,
-    payload: &'a [u8],
+	request_id: String,
+	ids: MethodIds,
+	message_type: u8,
+	payload: &'a [u8],
 }
 
 fn decode_frame(mut frame: &[u8]) -> Result<BorrowedFrame<'_>, DecodeError> {
-    let request_id = String::decode(&mut frame).map_err(|_| DecodeError::Malformed)?;
-    let [trait_id, method_id, message_type, payload @ ..] = frame else {
-        return Err(DecodeError::Malformed);
-    };
-    let ids = MethodIds {
-        trait_id: *trait_id,
-        method_id: *method_id,
-    };
-    if ids == PROTOCOL_ERROR_IDS {
-        if *message_type != MessageType::Response as u8 {
-            return Err(DecodeError::UnexpectedMessageType {
-                expected: MessageType::Response,
-                actual: *message_type,
-            });
-        }
-        let error = match (payload.first(), payload.get(1)) {
-            (None, _) => return Err(DecodeError::Malformed),
-            (Some(version), _) if *version != 0 => None,
-            (Some(_), Some(variant)) if *variant != 0 => None,
-            _ => {
-                let (version, variant, trait_id, method_id): (u8, u8, u8, u8) =
-                    decode_exact(payload)?;
-                debug_assert_eq!((version, variant), (0, 0));
-                Some(ProtocolError::UnsupportedMessage(MethodIds {
-                    trait_id,
-                    method_id,
-                }))
-            }
-        };
-        return Err(DecodeError::Protocol { request_id, error });
-    }
-    Ok(BorrowedFrame {
-        request_id,
-        ids,
-        message_type: *message_type,
-        payload,
-    })
+	let request_id = String::decode(&mut frame).map_err(|_| DecodeError::Malformed)?;
+	let [trait_id, method_id, message_type, payload @ ..] = frame else {
+		return Err(DecodeError::Malformed);
+	};
+	let ids = MethodIds { trait_id: *trait_id, method_id: *method_id };
+	if ids == PROTOCOL_ERROR_IDS {
+		if *message_type != MessageType::Response as u8 {
+			return Err(DecodeError::UnexpectedMessageType {
+				expected: MessageType::Response,
+				actual: *message_type,
+			});
+		}
+		let error = match (payload.first(), payload.get(1)) {
+			(None, _) => return Err(DecodeError::Malformed),
+			(Some(version), _) if *version != 0 => None,
+			(Some(_), Some(variant)) if *variant != 0 => None,
+			_ => {
+				let (version, variant, trait_id, method_id): (u8, u8, u8, u8) =
+					decode_exact(payload)?;
+				debug_assert_eq!((version, variant), (0, 0));
+				Some(ProtocolError::UnsupportedMessage(MethodIds { trait_id, method_id }))
+			},
+		};
+		return Err(DecodeError::Protocol { request_id, error });
+	}
+	Ok(BorrowedFrame { request_id, ids, message_type: *message_type, payload })
 }
 
 fn decode_value_frame<T: Decode>(
-    frame: &[u8],
-    ids: MethodIds,
-    message_type: MessageType,
+	frame: &[u8],
+	ids: MethodIds,
+	message_type: MessageType,
 ) -> Result<Decoded<T>, DecodeError> {
-    let frame = decode_frame(frame)?;
-    if frame.ids != ids {
-        return Err(DecodeError::UnexpectedMethod {
-            expected: ids,
-            actual: frame.ids,
-        });
-    }
-    if frame.message_type != message_type as u8 {
-        return Err(DecodeError::UnexpectedMessageType {
-            expected: message_type,
-            actual: frame.message_type,
-        });
-    }
-    Ok(Decoded {
-        request_id: frame.request_id,
-        value: decode_exact(frame.payload)?,
-    })
+	let frame = decode_frame(frame)?;
+	if frame.ids != ids {
+		return Err(DecodeError::UnexpectedMethod { expected: ids, actual: frame.ids });
+	}
+	if frame.message_type != message_type as u8 {
+		return Err(DecodeError::UnexpectedMessageType {
+			expected: message_type,
+			actual: frame.message_type,
+		});
+	}
+	Ok(Decoded { request_id: frame.request_id, value: decode_exact(frame.payload)? })
 }
 
 fn decode_exact<T: Decode>(mut payload: &[u8]) -> Result<T, DecodeError> {
-    let value = T::decode(&mut payload).map_err(|_| DecodeError::Malformed)?;
-    if payload.is_empty() {
-        Ok(value)
-    } else {
-        Err(DecodeError::TrailingBytes)
-    }
+	let value = T::decode(&mut payload).map_err(|_| DecodeError::Malformed)?;
+	if payload.is_empty() { Ok(value) } else { Err(DecodeError::TrailingBytes) }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use alloc::vec;
-    use parity_scale_codec::Encode;
-    use truapi::v01;
-    use truapi::versioned::system::{HostHandshakeRequest, HostHandshakeResponse};
+	use super::*;
+	use alloc::vec;
+	use truapi::{
+		v01,
+		versioned::system::{HostHandshakeRequest, HostHandshakeResponse},
+	};
 
-    #[test]
-    fn catalogs_partition_worker_only_chat() {
-        assert_eq!(APP_METHODS, WIDGET_METHODS);
-        assert_eq!(
-            WORKER_METHODS.len(),
-            APP_METHODS.len() + WORKER_ONLY_METHODS.len()
-        );
-        assert!(
-            APP_METHODS
-                .iter()
-                .all(|method| WORKER_METHODS.contains(method))
-        );
-        assert!(
-            WORKER_ONLY_METHODS
-                .iter()
-                .all(|method| WORKER_METHODS.contains(method) && !APP_METHODS.contains(method))
-        );
-        assert!(WORKER_ONLY_METHODS.iter().all(|method| {
-            method.service == "Chat" && method.required_execution == Some(ExecutionKind::Worker)
-        }));
-    }
+	#[test]
+	fn request_and_response_use_canonical_envelopes() {
+		let request = HostHandshakeRequest::V1(v01::HostHandshakeRequest { codec_version: 2 });
+		assert_eq!(
+			encode_request::<SystemHandshake>("p:1", &request),
+			[12, b'p', b':', b'1', 1, 0, 0, 0, 2]
+		);
+		let decoded = decode_response::<SystemHandshake>(&[12, b'p', b':', b'1', 1, 0, 1, 0, 0])
+			.expect("response frame");
+		assert_eq!(decoded.request_id, "p:1");
+		assert_eq!(decoded.value, Ok(HostHandshakeResponse::V1));
+	}
 
-    #[test]
-    fn request_and_response_use_canonical_envelopes() {
-        let request = HostHandshakeRequest::V1(v01::HostHandshakeRequest { codec_version: 2 });
-        assert_eq!(
-            encode_request::<SystemHandshake>("p:1", &request),
-            [12, b'p', b':', b'1', 1, 0, 0, 0, 2]
-        );
-        let decoded = decode_response::<SystemHandshake>(&[12, b'p', b':', b'1', 1, 0, 1, 0, 0])
-            .expect("response frame");
-        assert_eq!(decoded.request_id, "p:1");
-        assert_eq!(decoded.value, Ok(HostHandshakeResponse::V1));
-    }
+	#[test]
+	fn response_domain_error_preserves_versioned_payload() {
+		let error = CallError::Domain(truapi::versioned::system::HostHandshakeError::V1(
+			v01::HostHandshakeError::UnsupportedProtocolVersion,
+		));
+		let mut frame = vec![12, b'p', b':', b'1', 1, 0, 1, 1];
+		error.encode_to(&mut frame);
+		assert_eq!(
+			decode_response::<SystemHandshake>(&frame).expect("error frame").value,
+			Err(error)
+		);
+	}
 
-    #[test]
-    fn response_domain_error_preserves_versioned_payload() {
-        let error = CallError::Domain(truapi::versioned::system::HostHandshakeError::V1(
-            v01::HostHandshakeError::UnsupportedProtocolVersion,
-        ));
-        let mut frame = vec![12, b'p', b':', b'1', 1, 0, 1, 1];
-        error.encode_to(&mut frame);
-        assert_eq!(
-            decode_response::<SystemHandshake>(&frame)
-                .expect("error frame")
-                .value,
-            Err(error)
-        );
-    }
+	#[test]
+	fn native_chat_uses_method_twelve_with_v2_envelopes() {
+		use truapi::{latest as dto, versioned::account};
 
-    #[test]
-    fn native_chat_uses_method_twelve_with_v2_envelopes() {
-        use truapi::{latest as dto, versioned::account};
+		let request = account::HostProductDeviceChatRequest::V2(
+			dto::HostProductDeviceChatRequest::Initialize,
+		);
+		assert_eq!(
+			encode_request::<AccountProductDeviceChat>("p:1", &request),
+			[12, b'p', b':', b'1', 2, 12, 0, 1, 0],
+		);
+		let denomination_request = account::HostProductDeviceChatRequest::V2(
+			dto::HostProductDeviceChatRequest::PaymentDenomination,
+		);
+		assert_eq!(
+			encode_request::<AccountProductDeviceChat>("p:1", &denomination_request),
+			[12, b'p', b':', b'1', 2, 12, 0, 1, 12],
+		);
 
-        let request = account::HostProductDeviceChatRequest::V2(
-            dto::HostProductDeviceChatRequest::Initialize,
-        );
-        assert_eq!(
-            encode_request::<AccountProductDeviceChat>("p:1", &request),
-            [12, b'p', b':', b'1', 2, 12, 0, 1, 0],
-        );
-        let denomination_request = account::HostProductDeviceChatRequest::V2(
-            dto::HostProductDeviceChatRequest::PaymentDenomination,
-        );
-        assert_eq!(
-            encode_request::<AccountProductDeviceChat>("p:1", &denomination_request),
-            [12, b'p', b':', b'1', 2, 12, 0, 1, 12],
-        );
+		let response =
+			account::HostProductDeviceChatResponse::V2(dto::HostProductDeviceChatResponse {
+				device: dto::HostNativeChatDevice {
+					identity_account_id: [1; 32],
+					identity_chat_public_key: [2; 32],
+					product_account: v01::ProductAccountId {
+						dot_ns_identifier: "chat.dot".parse().expect("valid product ID"),
+						derivation_index: v01::DerivationIndex::Index(0),
+					},
+					account_id: [3; 32],
+					chat_public_key: [4; 32],
+				},
+				peers: vec![],
+				binding: None,
+				opened: vec![],
+				prepared: vec![],
+				payments: vec![],
+				rich_messages: vec![],
+				migration: None,
+				migration_id: None,
+				open_page: None,
+				migration_invitations: vec![],
+				state_page: None,
+				coinage_cents_unit: None,
+			});
+		let mut frame = vec![12, b'p', b':', b'1', 2, 12, 1, 0];
+		response.encode_to(&mut frame);
+		assert_eq!(frame[8], 1, "response envelope is V2");
+		assert_eq!(
+			decode_response::<AccountProductDeviceChat>(&frame),
+			Ok(Decoded { request_id: "p:1".into(), value: Ok(response) }),
+		);
 
-        let response =
-            account::HostProductDeviceChatResponse::V2(dto::HostProductDeviceChatResponse {
-                device: dto::HostNativeChatDevice {
-                    identity_account_id: [1; 32],
-                    identity_chat_public_key: [2; 32],
-                    product_account: v01::ProductAccountId {
-                        dot_ns_identifier: "chat.dot".into(),
-                        derivation_index: v01::DerivationIndex::Index(0),
-                    },
-                    account_id: [3; 32],
-                    chat_public_key: [4; 32],
-                },
-                peers: vec![],
-                binding: None,
-                opened: vec![],
-                prepared: vec![],
-                payments: vec![],
-                rich_messages: vec![],
-                migration: None,
-                migration_id: None,
-                open_page: None,
-                migration_invitations: vec![],
-                state_page: None,
-                coinage_cents_unit: None,
-            });
-        let mut frame = vec![12, b'p', b':', b'1', 2, 12, 1, 0];
-        response.encode_to(&mut frame);
-        assert_eq!(frame[8], 1, "response envelope is V2");
-        assert_eq!(
-            decode_response::<AccountProductDeviceChat>(&frame),
-            Ok(Decoded {
-                request_id: "p:1".into(),
-                value: Ok(response),
-            }),
-        );
+		frame[5] = 11;
+		assert_eq!(
+			decode_response::<AccountProductDeviceChat>(&frame),
+			Err(DecodeError::UnexpectedMethod {
+				expected: MethodIds { trait_id: 2, method_id: 12 },
+				actual: MethodIds { trait_id: 2, method_id: 11 },
+			}),
+		);
+	}
 
-        frame[5] = 11;
-        assert_eq!(
-            decode_response::<AccountProductDeviceChat>(&frame),
-            Err(DecodeError::UnexpectedMethod {
-                expected: MethodIds {
-                    trait_id: 2,
-                    method_id: 12,
-                },
-                actual: MethodIds {
-                    trait_id: 2,
-                    method_id: 11,
-                },
-            }),
-        );
-    }
+	#[test]
+	fn worker_serves_unified_renderer() {
+		use truapi::versioned::renderer::{
+			ProductRendererRenderItem, ProductRendererRenderRequest,
+		};
+		let request = ProductRendererRenderRequest::V1(v01::ProductRendererRenderRequest {
+			context: v01::RenderContext::PocketCard { card_id: "loyalty".into() },
+			payload: vec![1, 2, 3],
+		});
+		let ids = generated_subscription_ids(RendererRender::DESCRIPTOR);
+		let start = encode_value_frame("host:4", ids, MessageType::Request, &request);
+		let decoded =
+			decode_host_subscription_start::<RendererRender>(&start).expect("start frame");
+		assert_eq!(decoded.request_id, "host:4");
+		assert_eq!(decoded.value, request);
+		let item = ProductRendererRenderItem::V1(v01::RendererNode::Nil);
+		let rendered = encode_host_subscription_item::<RendererRender>("host:4", &item);
+		assert_eq!(
+			decode_value_frame::<ProductRendererRenderItem>(&rendered, ids, MessageType::Response)
+				.expect("item frame")
+				.value,
+			item
+		);
+		let stop = encode_value_frame("host:4", ids, MessageType::Stop, &());
+		assert_eq!(is_host_subscription_stop::<RendererRender>(&stop), Ok(true));
+		let interrupt = encode_host_subscription_interrupt::<RendererRender>("host:4", &Ok(()));
+		assert_eq!(
+			decode_value_frame::<Result<(), CallError<v01::GenericError>>>(
+				&interrupt,
+				ids,
+				MessageType::Interrupt
+			)
+			.expect("interrupt")
+			.value,
+			Ok(())
+		);
+	}
 
-    #[test]
-    fn worker_serves_unified_renderer() {
-        use truapi::versioned::renderer::{
-            ProductRendererRenderItem, ProductRendererRenderRequest,
-        };
-        let request = ProductRendererRenderRequest::V1(v01::ProductRendererRenderRequest {
-            context: v01::RenderContext::PocketCard {
-                card_id: "loyalty".into(),
-            },
-            payload: vec![1, 2, 3],
-        });
-        let ids = generated_subscription_ids(RendererRender::DESCRIPTOR);
-        let start = encode_value_frame("host:4", ids, MessageType::Request, &request);
-        let decoded =
-            decode_host_subscription_start::<RendererRender>(&start).expect("start frame");
-        assert_eq!(decoded.request_id, "host:4");
-        assert_eq!(decoded.value, request);
-        let item = ProductRendererRenderItem::V1(v01::RendererNode::Nil);
-        let rendered = encode_host_subscription_item::<RendererRender>("host:4", &item);
-        assert_eq!(
-            decode_value_frame::<ProductRendererRenderItem>(&rendered, ids, MessageType::Response)
-                .expect("item frame")
-                .value,
-            item
-        );
-        let stop = encode_value_frame("host:4", ids, MessageType::Stop, &());
-        assert_eq!(is_host_subscription_stop::<RendererRender>(&stop), Ok(true));
-        let interrupt = encode_host_subscription_interrupt::<RendererRender>("host:4", &Ok(()));
-        assert_eq!(
-            decode_value_frame::<Result<(), CallError<v01::GenericError>>>(
-                &interrupt,
-                ids,
-                MessageType::Interrupt
-            )
-            .expect("interrupt")
-            .value,
-            Ok(())
-        );
-    }
+	#[test]
+	fn subscription_completion_and_failure_are_typed_and_strict() {
+		type Method = AccountConnectionStatusSubscribe;
+		let ids = generated_subscription_ids(Method::DESCRIPTOR);
+		let complete = encode_value_frame(
+			"p:1",
+			ids,
+			MessageType::Interrupt,
+			&Ok::<(), CallError<v01::GenericError>>(()),
+		);
+		assert_eq!(
+			decode_subscription_interrupt::<Method>(&complete).expect("completion").value,
+			Ok(())
+		);
+		let failed = encode_value_frame(
+			"p:1",
+			ids,
+			MessageType::Interrupt,
+			&Err::<(), _>(CallError::<v01::GenericError>::Denied),
+		);
+		assert_eq!(
+			decode_subscription_interrupt::<Method>(&failed).expect("failure").value,
+			Err(CallError::Denied)
+		);
+		let mut trailing = complete;
+		trailing.push(0);
+		assert_eq!(
+			decode_subscription_interrupt::<Method>(&trailing),
+			Err(DecodeError::TrailingBytes)
+		);
+		let empty = encode_value_frame("p:1", ids, MessageType::Interrupt, &());
+		assert_eq!(decode_subscription_interrupt::<Method>(&empty), Err(DecodeError::Malformed));
+	}
 
-    #[test]
-    fn subscription_completion_and_failure_are_typed_and_strict() {
-        type Method = AccountConnectionStatusSubscribe;
-        let ids = generated_subscription_ids(Method::DESCRIPTOR);
-        let complete = encode_value_frame(
-            "p:1",
-            ids,
-            MessageType::Interrupt,
-            &Ok::<(), CallError<v01::GenericError>>(()),
-        );
-        assert_eq!(
-            decode_subscription_interrupt::<Method>(&complete)
-                .expect("completion")
-                .value,
-            Ok(())
-        );
-        let failed = encode_value_frame(
-            "p:1",
-            ids,
-            MessageType::Interrupt,
-            &Err::<(), _>(CallError::<v01::GenericError>::Denied),
-        );
-        assert_eq!(
-            decode_subscription_interrupt::<Method>(&failed)
-                .expect("failure")
-                .value,
-            Err(CallError::Denied)
-        );
-        let mut trailing = complete;
-        trailing.push(0);
-        assert_eq!(
-            decode_subscription_interrupt::<Method>(&trailing),
-            Err(DecodeError::TrailingBytes)
-        );
-        let empty = encode_value_frame("p:1", ids, MessageType::Interrupt, &());
-        assert_eq!(
-            decode_subscription_interrupt::<Method>(&empty),
-            Err(DecodeError::Malformed)
-        );
-    }
+	#[test]
+	fn frame_address_and_leg_both_must_match() {
+		let ids = generated_request_ids(SystemHandshake::DESCRIPTOR);
+		let other = MethodIds { trait_id: ids.trait_id + 1, method_id: ids.method_id };
+		let wrong_method = encode_value_frame(
+			"p:1",
+			other,
+			MessageType::Response,
+			&Ok::<_, CallError<()>>(HostHandshakeResponse::V1),
+		);
+		assert_eq!(
+			decode_response::<SystemHandshake>(&wrong_method),
+			Err(DecodeError::UnexpectedMethod { expected: ids, actual: other })
+		);
+		let wrong_leg = encode_value_frame("p:1", ids, MessageType::Request, &());
+		assert_eq!(
+			decode_response::<SystemHandshake>(&wrong_leg),
+			Err(DecodeError::UnexpectedMessageType { expected: MessageType::Response, actual: 0 })
+		);
+		assert_eq!(
+			encode_subscription_stop("p:1", SystemHandshake::DESCRIPTOR),
+			Err(DecodeError::WrongMethodKind)
+		);
+	}
 
-    #[test]
-    fn frame_address_and_leg_both_must_match() {
-        let ids = generated_request_ids(SystemHandshake::DESCRIPTOR);
-        let other = MethodIds {
-            trait_id: ids.trait_id + 1,
-            method_id: ids.method_id,
-        };
-        let wrong_method = encode_value_frame(
-            "p:1",
-            other,
-            MessageType::Response,
-            &Ok::<_, CallError<()>>(HostHandshakeResponse::V1),
-        );
-        assert_eq!(
-            decode_response::<SystemHandshake>(&wrong_method),
-            Err(DecodeError::UnexpectedMethod {
-                expected: ids,
-                actual: other
-            })
-        );
-        let wrong_leg = encode_value_frame("p:1", ids, MessageType::Request, &());
-        assert_eq!(
-            decode_response::<SystemHandshake>(&wrong_leg),
-            Err(DecodeError::UnexpectedMessageType {
-                expected: MessageType::Response,
-                actual: 0
-            })
-        );
-        assert_eq!(
-            encode_subscription_stop("p:1", SystemHandshake::DESCRIPTOR),
-            Err(DecodeError::WrongMethodKind)
-        );
-    }
-
-    #[test]
-    fn protocol_failures_keep_correlation_and_accept_future_variants() {
-        let known = [12, b'p', b':', b'1', 255, 255, 1, 0, 0, 4, 7];
-        assert_eq!(
-            decode_response::<SystemHandshake>(&known),
-            Err(DecodeError::Protocol {
-                request_id: "p:1".into(),
-                error: Some(ProtocolError::UnsupportedMessage(MethodIds {
-                    trait_id: 4,
-                    method_id: 7
-                }))
-            })
-        );
-        let future = [12, b'p', b':', b'1', 255, 255, 1, 0, 1, 42];
-        assert_eq!(
-            decode_response::<SystemHandshake>(&future),
-            Err(DecodeError::Protocol {
-                request_id: "p:1".into(),
-                error: None
-            })
-        );
-        assert_eq!(
-            decode_response::<SystemHandshake>(&known[..known.len() - 1]),
-            Err(DecodeError::Malformed)
-        );
-        let mut trailing = known.to_vec();
-        trailing.push(0);
-        assert_eq!(
-            decode_response::<SystemHandshake>(&trailing),
-            Err(DecodeError::TrailingBytes)
-        );
-    }
+	#[test]
+	fn protocol_failures_keep_correlation_and_accept_future_variants() {
+		let known = [12, b'p', b':', b'1', 255, 255, 1, 0, 0, 4, 7];
+		assert_eq!(
+			decode_response::<SystemHandshake>(&known),
+			Err(DecodeError::Protocol {
+				request_id: "p:1".into(),
+				error: Some(ProtocolError::UnsupportedMessage(MethodIds {
+					trait_id: 4,
+					method_id: 7
+				}))
+			})
+		);
+		let future = [12, b'p', b':', b'1', 255, 255, 1, 0, 1, 42];
+		assert_eq!(
+			decode_response::<SystemHandshake>(&future),
+			Err(DecodeError::Protocol { request_id: "p:1".into(), error: None })
+		);
+		assert_eq!(
+			decode_response::<SystemHandshake>(&known[..known.len() - 1]),
+			Err(DecodeError::Malformed)
+		);
+		let mut trailing = known.to_vec();
+		trailing.push(0);
+		assert_eq!(decode_response::<SystemHandshake>(&trailing), Err(DecodeError::TrailingBytes));
+	}
 }

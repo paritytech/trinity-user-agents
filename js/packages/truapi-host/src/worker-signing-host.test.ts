@@ -117,8 +117,8 @@ suite("worker serving a signing host", () => {
 
   it("refuses a pairing-only request by name", async () => {
     const { runtime } = await signingHost();
-    await expect(runtime.getSessionChatIdentityKey()).rejects.toThrow(
-      "getSessionChatIdentityKey needs a pairing host; this runtime is a signing host",
+    await expect(runtime.getDeviceStatementKey()).rejects.toThrow(
+      "getDeviceStatementKey needs a pairing host; this runtime is a signing host",
     );
   });
 });

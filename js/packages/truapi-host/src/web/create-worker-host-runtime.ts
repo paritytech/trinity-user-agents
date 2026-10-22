@@ -34,6 +34,7 @@ import type { RawCallbacks } from "../generated/host-callbacks-adapter.js";
 import { isLoopbackWsUrl } from "../worker-protocol.js";
 import type {
   CallbackName,
+  HostRole,
   LocalIdentity,
   LocalIdentityProgress,
   MainToWorker,
@@ -47,6 +48,7 @@ import {
 import { bytesToHex, Vector } from "@parity/truapi/scale";
 import { startRawSubscription } from "../generated/worker-callbacks.js";
 import { errorMessage, toError } from "../error.js";
+import { createBrowserNativeChatFilesHost } from "./native-chat-files.js";
 import {
   validateAllowanceProductIds,
   type WalletAllowanceSnapshot,
@@ -114,6 +116,13 @@ export interface WorkerPairingHostRuntime {
     secret: Uint8Array,
     liteUsername?: string,
   ): Promise<void>;
+  /**
+   * Answer resource allocation as granted without performing it.
+   *
+   * Test hosts only, on a core built with `test-host`. No allowance is
+   * allocated, so preimage submissions also stay in the core: the Bulletin
+   * allowance was never authorized on chain to submit with.
+   */
   setGrantAllowancesUnchecked(granted: boolean): Promise<void>;
   /**
    * Keep preimage submissions in the core instead of the Bulletin chain.
@@ -261,7 +270,6 @@ interface RuntimeState {
     }
   >;
   subscriptionDisposers: Map<number, () => void>;
-  chainConnections: Map<number, RpcConnectionEntry>;
   chatFileExports: Set<string>;
   disposeNativeChatFiles: () => void;
   /**
@@ -415,8 +423,9 @@ export type DebuggerEnablement = {
 function buildTimeDebuggerUrl(): string | null {
   let raw: unknown;
   try {
-    dev =
-      (import.meta as unknown as { env: { DEV?: boolean } }).env.DEV === true;
+    raw = (
+      import.meta as unknown as { env: { VITE_TRUAPI_DEBUGGER_URL?: unknown } }
+    ).env.VITE_TRUAPI_DEBUGGER_URL;
   } catch {
     return null;
   }
@@ -544,9 +553,9 @@ function reportDebuggerEnablement(e: DebuggerEnablement): void {
     return;
   }
   const origin = globalThis.location?.origin ?? "(unknown origin)";
-  if (e.reason === "enabled") {
+  if (e.reason === "enabled-from-option") {
     console.info(
-      `[truapi] wire debugger: dialling ${e.url} (origin ${origin})`,
+      `[truapi] wire debugger: dialling ${e.url} from the host's option (origin ${origin})`,
     );
     return;
   }
@@ -659,8 +668,9 @@ function handleCallbackRequest(
   },
 ): void {
   if (state.disposed) return;
+  const hostWalletCallback = COINAGE_WALLET_CALLBACKS[msg.name] === true;
   const callbacks =
-    msg.coreId === undefined
+    msg.coreId === undefined || hostWalletCallback
       ? state.rawCallbacks
       : state.coreCallbacks.get(msg.coreId);
   const fn =
@@ -684,7 +694,11 @@ function handleCallbackRequest(
   Promise.resolve()
     .then(() => {
       if (state.disposed) throw new Error("Host runtime is unavailable");
-      if (msg.coreId !== undefined && !state.coreCallbacks.has(msg.coreId))
+      if (
+        !hostWalletCallback &&
+        msg.coreId !== undefined &&
+        !state.coreCallbacks.has(msg.coreId)
+      )
         throw new Error("Product callbacks are unavailable");
       return fn(...msg.args);
     })
@@ -1443,7 +1457,35 @@ interface CreateWebWorkerHostRuntimeOptions {
    * constructing the runtime each get a full interval. Defaults to 30s.
    */
   initTimeoutMs?: number;
-  runtimeKind?: "pairing" | "signing";
+  /**
+   * Dev-only: a loopback `ws://` wire debugger to stream tapped frames to.
+   *
+   * Omit to take what the build was compiled with
+   * (`VITE_TRUAPI_DEBUGGER_URL`); pass `null` or `""` to refuse it even when the
+   * build carries one. Ignored outside a dev build. Resolved once, at creation,
+   * and not changeable from the page.
+   */
+  debugger?: string | null;
+  /**
+   * Dev-only: whether to show the built-in indicator while a dial is live.
+   *
+   * Defaults to `true`. Pass `false` only when this host renders its own visible
+   * signal - the point is that a tap streaming frames off this host is never
+   * invisible, not that this particular badge is used.
+   */
+  debuggerIndicator?: boolean;
+  /**
+   * Host role the worker constructs. Omitted means `"pairing"`.
+   *
+   * `"signing"` requires a worker loading the `testing` WASM bundle, the only
+   * one built with a signing host in it.
+   */
+  role?: HostRole;
+  /**
+   * How long `dispose()` waits for open `worker.beginOperation` holds before
+   * tearing down anyway. Defaults to 30s.
+   */
+  operationGraceMs?: number;
 }
 
 export interface CreateWebWorkerPairingHostRuntimeOptions extends CreateWebWorkerHostRuntimeOptions {
@@ -1787,7 +1829,7 @@ function createWebWorkerHostRuntime(
           kind: "init",
           logLevel: devLogLevelOverride ?? options.logLevel ?? "off",
           hostConfig: options.hostConfig,
-          runtimeKind: options.runtimeKind,
+          role: options.role,
           capabilities: {
             chat: host.chat !== undefined,
             permissionStatus: host.permissionStatus !== undefined,
@@ -1795,13 +1837,15 @@ function createWebWorkerHostRuntime(
             profile: host.profile !== undefined,
             identityBackend: host.identityBackend !== undefined,
             coinageWallet: callbacks.nativeCoinage !== undefined,
+            game: host.game !== undefined,
             contacts: host.contacts !== undefined,
             media:
               typeof host.media?.mediaBackendCapabilities === "function" &&
               typeof host.media?.mediaBackendEvents === "function" &&
               typeof host.media?.mediaBackendCommand === "function",
+            scanner: host.scanner !== undefined,
           },
-          debuggerUrl: debuggerEnablement.url,
+          debuggerUrl: debuggerDial,
         } satisfies MainToWorker);
       } else if (msg.kind === "ready") {
         state.coreWireSchemaHash = msg.schema;
@@ -1938,6 +1982,7 @@ function buildRuntime(
                     contacts: callbacks.contacts !== undefined,
                     permissionStatus: callbacks.permissionStatus !== undefined,
                     pocket: callbacks.pocket !== undefined,
+                    profile: callbacks.profile !== undefined,
                     identityBackend: callbacks.identityBackend !== undefined,
                     coinageWallet:
                       state.rawCallbacks.nativeCoinage !== undefined,
@@ -1948,6 +1993,7 @@ function buildRuntime(
                         "function" &&
                       typeof callbacks.media?.mediaBackendCommand ===
                         "function",
+                    game: callbacks.game !== undefined,
                   },
                 }),
           } satisfies MainToWorker);
@@ -2091,18 +2137,26 @@ function buildRuntime(
       );
     },
     setSubmitPreimagesLocally(local: boolean): Promise<void> {
-      return sendSessionActivationRequest(state, (requestId) => ({
-        kind: "setSubmitPreimagesLocally",
-        requestId,
-        local,
-      }));
+      return sendSessionActivationRequest(
+        state,
+        (requestId) => ({
+          kind: "setSubmitPreimagesLocally",
+          requestId,
+          local,
+        }),
+        false,
+      );
     },
     setWithheldResources(tags: string[]): Promise<void> {
-      return sendSessionActivationRequest(state, (requestId) => ({
-        kind: "setWithheldResources",
-        requestId,
-        tags,
-      }));
+      return sendSessionActivationRequest(
+        state,
+        (requestId) => ({
+          kind: "setWithheldResources",
+          requestId,
+          tags,
+        }),
+        false,
+      );
     },
     resetSessionState(): Promise<void> {
       return sendSessionActivationRequest(state, (requestId) => ({
@@ -2287,9 +2341,7 @@ function reportRenderFailure(
   cause: unknown,
 ): void {
   try {
-    sink.onError(
-      cause instanceof Error ? cause : new Error(errorMessage(cause)),
-    );
+    sink.onError?.(toError(cause));
   } catch (err) {
     console.warn("[truapi worker] render onError threw:", err);
   }

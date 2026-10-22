@@ -17,7 +17,7 @@ use truapi::{
 use super::from_latest_error;
 use crate::{
 	platform::{ExpandedCardFaceOutcome, ProductExecutionKind},
-	runtime::{ProductRuntimeHost, versioning::version},
+	runtime::ProductRuntimeHost,
 };
 
 #[truapi::async_trait]

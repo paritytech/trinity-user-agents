@@ -9,6 +9,10 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- refresh the integrated JAM peer transport, native Chat/Seity, Media, and
+  browser-receiving host stack to the TrUAPI 0.26 protocol, including validated
+  product identifiers, Funding, and caller-scoped payment operation IDs
+
 - isolate the optional PolkaVM runtime in `truapi-polkavm-host`; keep the base
   server and browser asset distribution independent, and pin cooperative update
   deadlines, multi-touch input, and image clipboard output (#540)

@@ -4,21 +4,29 @@
 //! and signing hosts. Pairing state, signing state, active sessions, and role
 //! controls live on the concrete role objects.
 
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, Weak};
-
-use crate::chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure};
-use crate::host_logic::worker::WorkerLedger;
-use crate::platform::{
-    CoinageWalletHost, HostInfo, JsonRpcConnection, PermissionAuthorizationRequest,
-    PermissionStatusHost, Platform,
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::{
+	collections::VecDeque,
+	sync::{Arc, Mutex, OnceLock, Weak},
 };
-use crate::runtime::bulletin_rpc::BulletinRpc;
-use crate::runtime::signing_host::DevicePairingObserver;
-use crate::runtime::media::MediaService;
-use crate::runtime::statement_store_rpc::StatementStoreRpc;
-use crate::subscription::Spawner;
+
+#[cfg(not(target_arch = "wasm32"))]
+use crate::durable::{DurableTxEngine, DurableWorkObserver};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::store::{Db, DbError};
+use crate::{
+	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
+	host_logic::worker::WorkerLedger,
+	platform::{
+		CoinageWalletHost, HostInfo, JsonRpcConnection, PermissionAuthorizationRequest,
+		PermissionStatusHost, Platform,
+	},
+	runtime::{
+		bulletin_rpc::BulletinRpc, media::MediaService, signing_host::DevicePairingObserver,
+		statement_store_rpc::StatementStoreRpc,
+	},
+	subscription::Spawner,
+};
 use async_trait::async_trait;
 use truapi::latest;
 
@@ -32,91 +40,114 @@ const STATEMENT_CACHE_MAX_ENTRIES: usize = 64;
 
 /// Infrastructure shared by all product runtimes created from one host role.
 pub struct RuntimeServices {
-    /// Host platform backing all syscalls.
-    pub platform: Arc<dyn Platform>,
-    /// Permission decisions and prompt cancellation shared by every execution.
-    pub(crate) permissions: Arc<crate::host_internal::permissions::PermissionAuthority>,
-    /// Host identity reported to products via `System::host_info`.
-    pub host_info: HostInfo,
-    /// Host chat adapter, when the host serves the Chat capability. `None`
-    /// makes every product chat call resolve as `Unsupported`.
-    pub chat_platform: Option<Arc<dyn crate::platform::ChatPlatform>>,
-    /// Native wallet custody, fixed at construction. Absence uses Rust; an
-    /// injected service remains the owner even while unavailable.
-    pub(crate) native_wallet: Option<Arc<dyn CoinageWalletHost>>,
-    /// Host adapter reporting live OS permission state, installed once at
-    /// startup by a host that can read it. Unset leaves device grants
-    /// resolving from stored state alone.
-    permission_status: OnceLock<Arc<dyn PermissionStatusHost>>,
-    /// Host Pocket adapter, installed once at startup by a host with a Pocket
-    /// surface. Unset leaves every product Pocket call `Unsupported`.
-    /// Host profile presenter, installed once at startup by a host that can
-    /// render profiles. Unset leaves every product Profile call `Unsupported`.
-    profile_platform: OnceLock<Arc<dyn crate::platform::ProfilePlatform>>,
-    /// Where each live product connection draws contact avatars, so they can
-    /// be redrawn when what a contact shared changes.
-    pub(crate) contact_avatars: crate::runtime::profile::avatars::ContactAvatarPlacements,
-    /// Serializes profile audience updates, relay publication and received grants.
-    pub(crate) profile_state_gate: futures::lock::Mutex<()>,
-    /// Optional native authenticated username index; only supplies candidates.
-    identity_backend: OnceLock<Arc<dyn crate::platform::IdentityBackendHost>>,
-    pocket_platform: OnceLock<Arc<dyn crate::platform::PocketPlatform>>,
-    /// Host contacts adapter, installed once at startup by a host with a
-    /// contact picker. Unset leaves every product contacts call `Unsupported`.
-    contacts_platform: OnceLock<Arc<dyn crate::platform::ContactsPlatform>>,
-    /// Contact handles already resolved, shared by every product runtime of
-    /// this host and emptied when the host says its contacts changed.
-    pub contact_handles: Arc<crate::runtime::contacts::ContactHandleCache>,
-    /// Connection-owned label layers, cleared on session change and teardown.
-    pub contact_labels: crate::runtime::contacts::ContactLabelPlacements,
-    /// Host observer told when a device finishes pairing with this signing
-    /// host. Unset leaves a paired device unannounced.
-    device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
-    /// Core-owned database, installed once at startup by a host that
-    /// configured one. Unset makes every durable consumer report
-    /// [`DbError::NotConfigured`].
-    #[cfg(not(target_arch = "wasm32"))]
-    core_db: OnceLock<Db>,
-    /// Complete optional capture/RTC/compositor backend; absent is Unsupported.
-    media_platform: OnceLock<Arc<dyn crate::platform::MediaPlatform>>,
-    /// Serializes Media's final authorization/commit with administrative revocation.
-    /// Never held while presenting consent UI.
-    pub(crate) media_permission_gate: futures::lock::Mutex<()>,
-    /// Invalidates outstanding consent on every permission mutation, including
-    /// an undetermined-to-undetermined administrative reset.
-    media_permission_revision: AtomicU64,
-    /// Live product Media services, without retaining product runtimes.
-    media: Mutex<Vec<Weak<MediaService>>>,
-    /// Asset Hub the dotNS contracts are deployed on. All-zero says this host
-    /// has none, which leaves every manifest unresolvable.
-    asset_hub_chain_genesis_hash: [u8; 32],
-    /// Reference counts per product worker.
-    pub worker_ledger: WorkerLedger,
-    /// Shared chainHead-v1 runtime behind the Chain surface.
-    pub chain: ChainRuntime,
-    /// Configured People chain for native Chat identity and main-purse Coinage.
-    pub(crate) people_chain_genesis_hash: [u8; 32],
-    /// People-chain statement store RPC client.
-    pub statement_store: StatementStoreRpc,
-    /// In-core Bulletin submission over the configured Bulletin chain.
-    pub bulletin: BulletinRpc,
-    /// Serializes persisted upload quota and revocation across product executions.
-    pub(crate) automatic_preimage_gate: futures::lock::Mutex<()>,
-    /// Runtime metadata and chain state shared by allowance paths, per chain.
-    pub chain_context: crate::runtime::statement_allowance::ChainContextCache,
-    /// Values from confirmed in-core submissions, served to `lookup_subscribe`
-    /// until the host's content backend has them. Byte-bounded, oldest-first.
-    preimage_cache: Mutex<PreimageCache>,
-    /// Confirmed submissions served to new subscriptions until the remote
-    /// Statement Store reports them.
-    statement_cache: Mutex<StatementCache>,
-    /// Task spawner for background runtime work.
-    pub spawner: Spawner,
-    /// Serializes the read-or-create of the persisted device encryption key.
-    /// Concurrent first-time readers would otherwise each generate a secret and
-    /// persist it, leaving peers addressing an overwritten key.
-    device_encryption_key: futures::lock::Mutex<()>,
-    next_core_instance: AtomicU64,
+	/// Host platform backing all syscalls.
+	pub platform: Arc<dyn Platform>,
+	/// Durable receiving survives all product connections closing.
+	pub receiving: Arc<crate::runtime::receiving::ReceivingService>,
+	/// Permission decisions and prompt cancellation shared by every execution.
+	pub(crate) permissions: Arc<crate::host_internal::permissions::PermissionAuthority>,
+	/// Host identity reported to products via `System::host_info`.
+	pub host_info: HostInfo,
+	/// Host chat adapter, when the host serves the Chat capability. `None`
+	/// makes every product chat call resolve as `Unsupported`.
+	pub chat_platform: Option<Arc<dyn crate::platform::ChatPlatform>>,
+	/// Native wallet custody, fixed at construction. Absence uses Rust; an
+	/// injected service remains the owner even while unavailable.
+	pub(crate) native_wallet: Option<Arc<dyn CoinageWalletHost>>,
+	/// Host adapter reporting live OS permission state, installed once at
+	/// startup by a host that can read it. Unset leaves device grants
+	/// resolving from stored state alone.
+	permission_status: OnceLock<Arc<dyn PermissionStatusHost>>,
+	/// Host profile presenter, installed once at startup by a host that can
+	/// render profiles. Unset leaves every product Profile call `Unsupported`.
+	profile_platform: OnceLock<Arc<dyn crate::platform::ProfilePlatform>>,
+	/// Where each live product connection draws contact avatars, so they can
+	/// be redrawn when what a contact shared changes.
+	pub(crate) contact_avatars: crate::runtime::profile::avatars::ContactAvatarPlacements,
+	/// Serializes profile audience updates, relay publication and received grants.
+	pub(crate) profile_state_gate: futures::lock::Mutex<()>,
+	/// Optional native authenticated username index; only supplies candidates.
+	identity_backend: OnceLock<Arc<dyn crate::platform::IdentityBackendHost>>,
+	/// Host Pocket adapter, installed once at startup by a host with a Pocket
+	/// surface. Unset leaves every product Pocket call `Unsupported`.
+	pocket_platform: OnceLock<Arc<dyn crate::platform::PocketPlatform>>,
+	/// Host contacts adapter, installed once at startup by a host with a
+	/// contact picker. Unset leaves every product contacts call `Unsupported`.
+	contacts_platform: OnceLock<Arc<dyn crate::platform::ContactsPlatform>>,
+	/// Contact handles already resolved, shared by every product runtime of
+	/// this host and emptied when the host says its contacts changed.
+	pub contact_handles: Arc<crate::runtime::contacts::ContactHandleCache>,
+	/// Connection-owned label layers, cleared on session change and teardown.
+	pub contact_labels: crate::runtime::contacts::ContactLabelPlacements,
+	/// Host Game adapter, installed once at startup by a host that can hold
+	/// reminders. Unset leaves every product Game call `Unsupported`.
+	game_platform: OnceLock<Arc<dyn crate::platform::GamePlatform>>,
+	/// Host scanner, installed once at startup by a host that can draw a
+	/// viewfinder. Unset leaves every product scan `Unsupported`.
+	scanner_platform: OnceLock<Arc<dyn crate::platform::ScannerPlatform>>,
+	/// Whether a scan is open. Shared by every product runtime of this host,
+	/// because the device has one viewfinder.
+	scan_open: AtomicBool,
+	/// Host observer told when a device finishes pairing with this signing
+	/// host. Unset leaves a paired device unannounced.
+	device_pairing_observer: OnceLock<Arc<dyn DevicePairingObserver>>,
+	/// Core-owned database, installed once at startup by a host that
+	/// configured one. Unset makes every durable consumer report
+	/// [`DbError::NotConfigured`].
+	#[cfg(not(target_arch = "wasm32"))]
+	core_db: OnceLock<Db>,
+	/// Complete optional capture/RTC/compositor backend; absent is Unsupported.
+	media_platform: OnceLock<Arc<dyn crate::platform::MediaPlatform>>,
+	/// Serializes Media's final authorization/commit with administrative revocation.
+	/// Never held while presenting consent UI.
+	pub(crate) media_permission_gate: futures::lock::Mutex<()>,
+	/// Invalidates outstanding consent on every permission mutation, including
+	/// an undetermined-to-undetermined administrative reset.
+	media_permission_revision: AtomicU64,
+	/// Live product Media services, without retaining product runtimes.
+	media: Mutex<Vec<Weak<MediaService>>>,
+	/// Durable transaction engine over the core database, installed with it.
+	#[cfg(not(target_arch = "wasm32"))]
+	durable_engine: OnceLock<Arc<DurableTxEngine>>,
+	/// Host observer told whether durable work is pending. Unset leaves
+	/// recovery to whoever calls it.
+	#[cfg(not(target_arch = "wasm32"))]
+	durable_work_observer: OnceLock<Arc<dyn DurableWorkObserver>>,
+	/// Asset Hub the dotNS contracts are deployed on. All-zero says this host
+	/// has none, which leaves every manifest unresolvable.
+	asset_hub_chain_genesis_hash: [u8; 32],
+	/// Reference counts per product worker.
+	pub worker_ledger: WorkerLedger,
+	/// Shared chainHead-v1 runtime behind the Chain surface.
+	pub chain: ChainRuntime,
+	/// Configured People chain for native Chat identity and main-purse Coinage.
+	pub(crate) people_chain_genesis_hash: [u8; 32],
+	/// People-chain statement store RPC client.
+	pub statement_store: StatementStoreRpc,
+	/// In-core Bulletin submission over the configured Bulletin chain.
+	pub bulletin: BulletinRpc,
+	/// Serializes persisted upload quota and revocation across product executions.
+	pub(crate) automatic_preimage_gate: futures::lock::Mutex<()>,
+	/// Runtime metadata and chain state shared by allowance paths, per chain.
+	pub chain_context: crate::runtime::statement_allowance::ChainContextCache,
+	/// Values from confirmed in-core submissions, served to `lookup_subscribe`
+	/// until the host's content backend has them. Byte-bounded, oldest-first.
+	preimage_cache: Mutex<PreimageCache>,
+	/// Preimages a test host kept instead of submitting. Unbounded, unlike
+	/// `preimage_cache`: nothing else holds them, so evicting one would leave
+	/// its key unresolvable for the rest of the run.
+	#[cfg(feature = "test-host")]
+	local_preimages: Mutex<std::collections::HashMap<[u8; 32], Vec<u8>>>,
+	/// Confirmed submissions served to new subscriptions until the remote
+	/// Statement Store reports them.
+	statement_cache: Mutex<StatementCache>,
+	/// Task spawner for background runtime work.
+	pub spawner: Spawner,
+	/// Serializes the read-or-create of the persisted device encryption key.
+	/// Concurrent first-time readers would otherwise each generate a secret and
+	/// persist it, leaving peers addressing an overwritten key.
+	device_encryption_key: futures::lock::Mutex<()>,
+	next_core_instance: AtomicU64,
 }
 
 impl RuntimeServices {
@@ -136,33 +167,64 @@ impl RuntimeServices {
 		asset_hub_chain_genesis_hash: [u8; 32],
 		spawner: Spawner,
 	) -> Arc<Self> {
-		let chain_provider = Arc::new(HostChainProvider { platform: platform.clone() });
-		let chain = ChainRuntime::new(chain_provider, spawner.clone());
-		let statement_store = StatementStoreRpc::new(
-			platform.clone(),
-			chain.clone(),
-			people_chain_genesis_hash,
-			spawner.clone(),
-		);
-		let bulletin = BulletinRpc::new(chain.clone(), bulletin_chain_genesis_hash);
-		Arc::new(Self {
+		Self::with_chat_platform(
 			platform,
 			host_info,
-			chat_platform: None,
+			people_chain_genesis_hash,
+			bulletin_chain_genesis_hash,
+			asset_hub_chain_genesis_hash,
+			spawner,
+			None,
+			None,
+		)
+	}
+
+	/// Same as [`Self::new`], with optional Chat and native wallet dependencies.
+	#[allow(clippy::too_many_arguments)]
+	pub fn with_chat_platform(
+		platform: Arc<dyn Platform>,
+		host_info: HostInfo,
+		people_chain_genesis_hash: [u8; 32],
+		bulletin_chain_genesis_hash: [u8; 32],
+		asset_hub_chain_genesis_hash: [u8; 32],
+		spawner: Spawner,
+		chat_platform: Option<Arc<dyn crate::platform::ChatPlatform>>,
+		native_wallet: Option<Arc<dyn CoinageWalletHost>>,
+	) -> Arc<Self> {
+		let chain_provider = Arc::new(HostChainProvider { platform: platform.clone() });
+		let chain = ChainRuntime::new(chain_provider, spawner.clone());
+		let statement_store =
+			StatementStoreRpc::new(platform.clone(), people_chain_genesis_hash, spawner.clone());
+		let bulletin = BulletinRpc::new(chain.clone(), bulletin_chain_genesis_hash);
+		Arc::new(Self {
+			receiving: Arc::new(crate::runtime::receiving::ReceivingService::new(
+				platform.clone(),
+				spawner.clone(),
+			)),
+			platform,
+			permissions: Arc::default(),
+			host_info,
+			chat_platform,
+			native_wallet,
 			permission_status: OnceLock::new(),
 			pocket_platform: OnceLock::new(),
-			funding: Default::default(),
-			top_up_platform: OnceLock::new(),
-			payment_platform: OnceLock::new(),
-			balance_platform: OnceLock::new(),
+			profile_platform: OnceLock::new(),
+			contact_avatars: Default::default(),
+			profile_state_gate: Default::default(),
+			identity_backend: OnceLock::new(),
 			contacts_platform: OnceLock::new(),
 			contact_handles: Default::default(),
+			contact_labels: Default::default(),
 			game_platform: OnceLock::new(),
 			scanner_platform: OnceLock::new(),
 			scan_open: AtomicBool::new(false),
 			device_pairing_observer: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			core_db: OnceLock::new(),
+			media_platform: OnceLock::new(),
+			media_permission_gate: futures::lock::Mutex::new(()),
+			media_permission_revision: AtomicU64::new(0),
+			media: Mutex::new(Vec::new()),
 			#[cfg(not(target_arch = "wasm32"))]
 			durable_engine: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
@@ -170,8 +232,10 @@ impl RuntimeServices {
 			asset_hub_chain_genesis_hash,
 			worker_ledger: WorkerLedger::default(),
 			chain,
+			people_chain_genesis_hash,
 			statement_store,
 			bulletin,
+			automatic_preimage_gate: futures::lock::Mutex::new(()),
 			chain_context: crate::runtime::statement_allowance::ChainContextCache::default(),
 			preimage_cache: Mutex::new(PreimageCache::default()),
 			#[cfg(feature = "test-host")]
@@ -183,73 +247,25 @@ impl RuntimeServices {
 		})
 	}
 
-    /// Same as [`Self::new`], with optional Chat and native wallet dependencies.
-    #[allow(clippy::too_many_arguments)]
-    pub fn with_chat_platform(
-        platform: Arc<dyn Platform>,
-        host_info: HostInfo,
-        people_chain_genesis_hash: [u8; 32],
-        bulletin_chain_genesis_hash: [u8; 32],
-        asset_hub_chain_genesis_hash: [u8; 32],
-        spawner: Spawner,
-        chat_platform: Option<Arc<dyn crate::platform::ChatPlatform>>,
-        native_wallet: Option<Arc<dyn CoinageWalletHost>>,
-    ) -> Arc<Self> {
-        let chain_provider = Arc::new(HostChainProvider {
-            platform: platform.clone(),
-        });
-        let chain = ChainRuntime::new(chain_provider, spawner.clone());
-        let statement_store =
-            StatementStoreRpc::new(platform.clone(), people_chain_genesis_hash, spawner.clone());
-        let bulletin = BulletinRpc::new(chain.clone(), bulletin_chain_genesis_hash);
-        Arc::new(Self {
-            receiving: Arc::new(crate::runtime::receiving::ReceivingService::new(
-                platform.clone(),
-                spawner.clone(),
-            )),
-            platform,
-            permissions: Arc::default(),
-            host_info,
-            chat_platform,
-            native_wallet,
-            permission_status: OnceLock::new(),
-            pocket_platform: OnceLock::new(),
-            profile_platform: OnceLock::new(),
-            contact_avatars: Default::default(),
-            profile_state_gate: Default::default(),
-            identity_backend: OnceLock::new(),
-            contacts_platform: OnceLock::new(),
-            contact_handles: Default::default(),
-            contact_labels: Default::default(),
-            device_pairing_observer: OnceLock::new(),
-            #[cfg(not(target_arch = "wasm32"))]
-            core_db: OnceLock::new(),
-            media_platform: OnceLock::new(),
-            media_permission_gate: futures::lock::Mutex::new(()),
-            media_permission_revision: AtomicU64::new(0),
-            media: Mutex::new(Vec::new()),
-            asset_hub_chain_genesis_hash,
-            worker_ledger: WorkerLedger::default(),
-            chain,
-            people_chain_genesis_hash,
-            statement_store,
-            bulletin,
-            automatic_preimage_gate: futures::lock::Mutex::new(()),
-            chain_context: crate::runtime::statement_allowance::ChainContextCache::default(),
-            preimage_cache: Mutex::new(PreimageCache::default()),
-            statement_cache: Mutex::new(StatementCache::default()),
-            spawner,
-            device_encryption_key: futures::lock::Mutex::new(()),
-            next_core_instance: AtomicU64::new(1),
-        })
-    }
-
 	/// Install the host's live OS permission-status adapter.
 	///
 	/// Set-once, so a capability cannot be swapped out from under a running
 	/// product. Returns whether this call installed it.
 	pub fn install_permission_status_host(&self, host: Arc<dyn PermissionStatusHost>) -> bool {
 		self.permission_status.set(host).is_ok()
+	}
+
+	pub(crate) fn install_identity_backend_host(
+		&self,
+		host: Arc<dyn crate::platform::IdentityBackendHost>,
+	) -> bool {
+		self.identity_backend.set(host).is_ok()
+	}
+
+	pub(crate) fn identity_backend_host(
+		&self,
+	) -> Option<Arc<dyn crate::platform::IdentityBackendHost>> {
+		self.identity_backend.get().cloned()
 	}
 
 	/// The Asset Hub dotNS reads run against, when one is configured.
@@ -278,173 +294,86 @@ impl RuntimeServices {
 	/// Set-once, like every optional capability, so the card collection cannot
 	/// change hands under a running product. Returns whether this call
 	/// installed it.
-	pub fn install_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
+	pub fn install_pocket_platform(
+		&self,
+		platform: Arc<dyn crate::platform::PocketPlatform>,
+	) -> bool {
 		self.pocket_platform.set(platform).is_ok()
 	}
 
-	/// Funding sessions shared by every product runtime of this host.
-	pub fn funding(&self) -> &Arc<crate::runtime::funding::FundingRegistry> {
-		&self.funding
+	/// The host's Pocket adapter, when one is installed.
+	pub fn pocket_platform(&self) -> Option<Arc<dyn crate::platform::PocketPlatform>> {
+		self.pocket_platform.get().cloned()
 	}
 
-	/// Install the host's top-up engine. Set-once; returns whether this call
+	/// Install the host's profile presenter.
+	///
+	/// Set-once, like every optional capability. Returns whether this call
 	/// installed it.
-	pub fn install_top_up_platform(&self, platform: Arc<dyn TopUpPlatform>) -> bool {
-		self.top_up_platform.set(platform).is_ok()
+	pub(crate) fn install_profile_platform(
+		&self,
+		platform: Arc<dyn crate::platform::ProfilePlatform>,
+	) -> bool {
+		self.profile_platform.set(platform).is_ok()
 	}
 
-	/// The host's top-up engine, when one is installed.
-	pub fn top_up_platform(&self) -> Option<Arc<dyn TopUpPlatform>> {
-		self.top_up_platform.get().cloned()
+	/// The host's profile presenter, when one is installed.
+	pub(crate) fn profile_platform(&self) -> Option<Arc<dyn crate::platform::ProfilePlatform>> {
+		self.profile_platform.get().cloned()
 	}
-
-	/// Install the host's payment engine. Set-once; returns whether this
-	/// call installed it.
-	pub fn install_payment_platform(&self, platform: Arc<dyn PaymentPlatform>) -> bool {
-		self.payment_platform.set(platform).is_ok()
-	}
-
-	/// The host's payment engine, when one is installed.
-	pub fn payment_platform(&self) -> Option<Arc<dyn PaymentPlatform>> {
-		self.payment_platform.get().cloned()
-	}
-
-	/// Install the host's balance view. Set-once; returns whether this call
-	/// installed it.
-	pub fn install_balance_platform(&self, platform: Arc<dyn BalancePlatform>) -> bool {
-		self.balance_platform.set(platform).is_ok()
-	}
-
-	/// The host's balance view, when one is installed.
-	pub fn balance_platform(&self) -> Option<Arc<dyn BalancePlatform>> {
-		self.balance_platform.get().cloned()
-	}
-
-    /// Invalidate handle resolutions; host label layers refresh their live directory view.
-    pub fn invalidate_contacts(&self) {
-        self.contact_handles.clear();
-    }
-
-    /// Forget handles, labels and avatars belonging to the preceding wallet session.
-    pub fn contacts_session_changed(&self) {
-        self.invalidate_contacts();
-        self.contact_labels
-            .session_changed(self.contact_handles.generation(), &self.spawner);
-        self.contact_avatars
-            .session_changed(self.contact_handles.generation(), &self.spawner);
-    }
-
-    /// Install the host's device-pairing observer.
-    ///
-    /// Set-once, like every optional capability, so the surface that announces
-    /// a new device cannot change hands between two pairings. Returns whether
-    /// this call installed it.
-    pub fn install_device_pairing_observer(
-        &self,
-        observer: Arc<dyn DevicePairingObserver>,
-    ) -> bool {
-        self.device_pairing_observer.set(observer).is_ok()
-    }
 
 	/// Install the host's Game adapter.
 	///
 	/// Set-once, like every optional capability, so reminders cannot change
 	/// hands under a running product. Returns whether this call installed it.
-	pub fn install_game_platform(&self, platform: Arc<dyn GamePlatform>) -> bool {
+	pub fn install_game_platform(&self, platform: Arc<dyn crate::platform::GamePlatform>) -> bool {
 		self.game_platform.set(platform).is_ok()
 	}
 
 	/// The host's Game adapter, when one is installed.
-	pub fn game_platform(&self) -> Option<Arc<dyn GamePlatform>> {
+	pub fn game_platform(&self) -> Option<Arc<dyn crate::platform::GamePlatform>> {
 		self.game_platform.get().cloned()
 	}
 
 	/// Install the host's contacts adapter. Answers whether this call was the
 	/// one that installed it.
-	pub fn install_contacts_platform(&self, platform: Arc<dyn ContactsPlatform>) -> bool {
+	pub fn install_contacts_platform(
+		&self,
+		platform: Arc<dyn crate::platform::ContactsPlatform>,
+	) -> bool {
 		self.contacts_platform.set(platform).is_ok()
 	}
 
-    /// Install the complete Media backend once, before serving products.
-    pub(crate) fn install_media_platform(
-        &self,
-        platform: Arc<dyn crate::platform::MediaPlatform>,
-    ) -> bool {
-        self.media_platform.set(platform).is_ok()
-    }
+	/// The host's contacts adapter, when one is installed.
+	pub fn contacts_platform(&self) -> Option<Arc<dyn crate::platform::ContactsPlatform>> {
+		self.contacts_platform.get().cloned()
+	}
 
-    /// The complete host Media backend, when installed.
-    pub(crate) fn media_platform(&self) -> Option<Arc<dyn crate::platform::MediaPlatform>> {
-        self.media_platform.get().cloned()
-    }
+	/// Invalidate handle resolutions; host label layers refresh their live directory view.
+	pub fn invalidate_contacts(&self) {
+		self.contact_handles.clear();
+	}
 
-    pub(crate) fn register_media(&self, media: &Arc<MediaService>) {
-        let mut registry = self.media.lock().expect("media registry mutex poisoned");
-        registry.retain(|entry| entry.strong_count() != 0);
-        let media = Arc::downgrade(media);
-        if !registry.iter().any(|entry| entry.ptr_eq(&media)) {
-            registry.push(media);
-        }
-    }
-
-    pub(crate) fn media_permission_revision(&self) -> u64 {
-        self.media_permission_revision.load(Ordering::Acquire)
-    }
-
-    /// Reserve a fresh revision before a permission write while holding the
-    /// gate. Exhaustion fails closed rather than wrapping to an old prompt.
-    pub(crate) fn advance_media_permission_revision(&self) -> Result<(), latest::GenericError> {
-        self.media_permission_revision
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |revision| revision.checked_add(1))
-            .map(|_| ())
-            .map_err(|_| latest::GenericError {
-                reason: "Permission revision exhausted".into(),
-            })
-    }
-
-    /// Called after a successful administrative denial/reset, with the permission
-    /// gate still held. Each service synchronously fences matching resources
-    /// before arranging asynchronous backend cleanup.
-    pub(crate) fn notify_media_permission_revoked(
-        &self,
-        product_id: &str,
-        request: &PermissionAuthorizationRequest,
-    ) {
-        let media = {
-            let mut registry = self.media.lock().expect("media registry mutex poisoned");
-            registry.retain(|entry| entry.strong_count() != 0);
-            registry.iter().filter_map(Weak::upgrade).collect::<Vec<_>>()
-        };
-        // Cleanup may invoke the host's spawner. Do not hold the registry mutex
-        // across callbacks or destruction of the last strong runtime reference.
-        for media in media {
-            if media.product_id() == product_id {
-                media.permissions_revoked(request);
-            }
-        }
-    }
-
-    /// This device's persisted X25519 encryption secret, created on first use.
-    ///
-    /// The only supported way to reach the key: it bundles the serialization
-    /// guard with the read, so no caller can race another into generating a
-    /// second secret and overwriting the one peers were told to address.
-    pub async fn device_encryption_secret(&self) -> Result<[u8; 32], String> {
-        let _guard = self.device_encryption_key.lock().await;
-        crate::host_logic::device_key::read_or_create_device_encryption_secret(
-            self.platform.as_ref(),
-        )
-        .await
-    }
+	/// Forget handles, labels and avatars belonging to the preceding wallet session.
+	pub fn contacts_session_changed(&self) {
+		self.invalidate_contacts();
+		self.contact_labels
+			.session_changed(self.contact_handles.generation(), &self.spawner);
+		self.contact_avatars
+			.session_changed(self.contact_handles.generation(), &self.spawner);
+	}
 
 	/// Install the host's scanner. Answers whether this call was the one that
 	/// installed it.
-	pub fn install_scanner_platform(&self, platform: Arc<dyn ScannerPlatform>) -> bool {
+	pub fn install_scanner_platform(
+		&self,
+		platform: Arc<dyn crate::platform::ScannerPlatform>,
+	) -> bool {
 		self.scanner_platform.set(platform).is_ok()
 	}
 
 	/// The host's scanner, when one is installed.
-	pub fn scanner_platform(&self) -> Option<Arc<dyn ScannerPlatform>> {
+	pub fn scanner_platform(&self) -> Option<Arc<dyn crate::platform::ScannerPlatform>> {
 		self.scanner_platform.get().cloned()
 	}
 
@@ -487,6 +416,63 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub(crate) fn core_db(&self) -> Result<Db, DbError> {
 		self.core_db.get().cloned().ok_or(DbError::NotConfigured)
+	}
+
+	/// Install the complete Media backend once, before serving products.
+	pub(crate) fn install_media_platform(
+		&self,
+		platform: Arc<dyn crate::platform::MediaPlatform>,
+	) -> bool {
+		self.media_platform.set(platform).is_ok()
+	}
+
+	/// The complete host Media backend, when installed.
+	pub(crate) fn media_platform(&self) -> Option<Arc<dyn crate::platform::MediaPlatform>> {
+		self.media_platform.get().cloned()
+	}
+
+	pub(crate) fn register_media(&self, media: &Arc<MediaService>) {
+		let mut registry = self.media.lock().expect("media registry mutex poisoned");
+		registry.retain(|entry| entry.strong_count() != 0);
+		let media = Arc::downgrade(media);
+		if !registry.iter().any(|entry| entry.ptr_eq(&media)) {
+			registry.push(media);
+		}
+	}
+
+	pub(crate) fn media_permission_revision(&self) -> u64 {
+		self.media_permission_revision.load(Ordering::Acquire)
+	}
+
+	/// Reserve a fresh revision before a permission write while holding the
+	/// gate. Exhaustion fails closed rather than wrapping to an old prompt.
+	pub(crate) fn advance_media_permission_revision(&self) -> Result<(), latest::GenericError> {
+		self.media_permission_revision
+			.try_update(Ordering::AcqRel, Ordering::Acquire, |revision| revision.checked_add(1))
+			.map(|_| ())
+			.map_err(|_| latest::GenericError { reason: "Permission revision exhausted".into() })
+	}
+
+	/// Called after a successful administrative denial/reset, with the permission
+	/// gate still held. Each service synchronously fences matching resources
+	/// before arranging asynchronous backend cleanup.
+	pub(crate) fn notify_media_permission_revoked(
+		&self,
+		product_id: &str,
+		request: &PermissionAuthorizationRequest,
+	) {
+		let media = {
+			let mut registry = self.media.lock().expect("media registry mutex poisoned");
+			registry.retain(|entry| entry.strong_count() != 0);
+			registry.iter().filter_map(Weak::upgrade).collect::<Vec<_>>()
+		};
+		// Cleanup may invoke the host's spawner. Do not hold the registry mutex
+		// across callbacks or destruction of the last strong runtime reference.
+		for media in media {
+			if media.product_id() == product_id {
+				media.permissions_revoked(request);
+			}
+		}
 	}
 
 	/// Install the durable transaction engine. Set-once, like the database it

@@ -8,9 +8,12 @@
 //! is the runtime's job, not the actor's.
 
 use super::*;
-use crate::host_logic::host_channel::ChannelKey;
-use crate::runtime::chat_device::HostChannelBootstrapFrame;
-use crate::runtime::native_chat::background::require_authorized;
+use crate::{
+	host_logic::host_channel::ChannelKey,
+	runtime::{
+		chat_device::HostChannelBootstrapFrame, native_chat::background::require_authorized,
+	},
+};
 
 impl NativeChatActor {
 	/// Queue one bootstrap frame for every ready peer this session has not

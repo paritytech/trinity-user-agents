@@ -2,36 +2,45 @@
 //!
 //! Local and paired hosts use the same request and session types.
 
-use crate::platform::ProductId;
+use crate::platform::ProductContext;
 use async_trait::async_trait;
+use std::sync::Arc;
 use truapi::{
-	CallContext, CancellationReason,
+	CallContext, CallError, CancellationReason,
 	latest::{
 		HostAccountCreateProofRequest, HostAccountCreateProofResponse, HostAccountGetAliasRequest,
 		HostAccountGetAliasResponse, HostAccountListRingVrfKeysRequest,
 		HostAccountListRingVrfKeysResponse, HostAccountRegisterRingVrfKeyRequest,
 		HostAccountRegisterRingVrfKeyResponse, HostAccountRingVrfSignRequest,
 		HostAccountRingVrfSignResponse, HostAccountSignVrfError, HostAccountSignVrfRequest,
-		HostCreateTransactionResponse, HostRequestResourceAllocationRequest,
+		HostCreateTransactionResponse, HostProductDeviceChatError, HostProductDeviceChatRequest,
+		HostProductDeviceChatResponse, HostRequestResourceAllocationRequest,
 		HostRequestResourceAllocationResponse, HostSignPayloadRequest, HostSignPayloadResponse,
 		HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
 		HostSignRawWithLegacyAccountRequest, LegacyAccountTxPayload, ProductAccountId,
 		ProductAccountTxPayload, VrfSignature,
 	},
+	versioned::account::{HostRequestLoginError, HostRequestLoginResponse},
 };
 
-use crate::host_internal::extrinsic::LocalTransactionError;
-use crate::host_internal::sso_messages::{PaymentTopUpRequest, ProductRequest, RingVrfError};
-use crate::host_internal::transaction::ExtrinsicPayloadError;
-use crate::host_logic::media_protocol::{
-    CLOCK_SKEW, MAX_ADVERTISEMENT_LIFETIME, MAX_PACKET_BYTES, UnsignedAdvertisement,
+use crate::{
+	host_internal::{
+		extrinsic::LocalTransactionError,
+		sso_messages::{PaymentTopUpRequest, ProductRequest, RingVrfError},
+		transaction::ExtrinsicPayloadError,
+	},
+	host_logic::{
+		media_protocol::{
+			CLOCK_SKEW, MAX_ADVERTISEMENT_LIFETIME, MAX_PACKET_BYTES, UnsignedAdvertisement,
+		},
+		raw_signing::RawPayloadError,
+		session::{SessionInfo, SessionState},
+		statement_store::{
+			StatementField, statement_fields_from_v01, statement_public_key_from_secret,
+		},
+	},
+	unix_time::current_unix_secs,
 };
-use crate::host_logic::raw_signing::RawPayloadError;
-use crate::host_logic::session::{SessionInfo, SessionState};
-use crate::host_logic::statement_store::{
-    StatementField, statement_fields_from_v01, statement_public_key_from_secret,
-};
-use crate::unix_time::current_unix_secs;
 
 /// Core-only Bulletin key, zeroized on drop and redacted in diagnostics.
 #[derive(Clone, zeroize::Zeroize, zeroize::ZeroizeOnDrop, derive_more::Debug)]
@@ -249,122 +258,124 @@ pub enum SignRawAuthorityRequest {
 /// Transaction-creation request selected by the product API entrypoint.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CreateTransactionAuthorityRequest {
-    /// Create a transaction with a product-derived account.
-    Product(ProductAccountTxPayload),
-    /// Create a transaction through the legacy-account API using the product slot-zero account.
-    LegacyAccount {
-        /// Product slot-zero account that backs the validated legacy signer.
-        product_account: ProductAccountId,
-        /// Original legacy-account transaction request.
-        request: LegacyAccountTxPayload,
-    },
-    /// Create a transaction with the active wallet's identity account.
-    IdentityAccount(LegacyAccountTxPayload),
+	/// Create a transaction with a product-derived account.
+	Product(ProductAccountTxPayload),
+	/// Create a transaction through the legacy-account API using the product slot-zero account.
+	LegacyAccount {
+		/// Product slot-zero account that backs the validated legacy signer.
+		product_account: ProductAccountId,
+		/// Original legacy-account transaction request.
+		request: LegacyAccountTxPayload,
+	},
+	/// Create a transaction with the active wallet's identity account.
+	IdentityAccount(LegacyAccountTxPayload),
 }
 
 /// Host-owned Chat operation after the caller's capability authorization.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProductDeviceChatAuthorityRequest {
-    /// Product whose capability authorization was checked by the host.
-    pub calling_product_id: String,
-    /// Authorized wallet-local Chat operation.
-    pub operation: HostProductDeviceChatRequest,
-    /// The user allowed Chat for this session only. The authority honours
-    /// that grant for the product until its session ends; nothing is stored.
-    pub session_consent: bool,
+	/// Product whose capability authorization was checked by the host.
+	pub calling_product_id: String,
+	/// Authorized wallet-local Chat operation.
+	pub operation: HostProductDeviceChatRequest,
+	/// The user allowed Chat for this session only. The authority honours
+	/// that grant for the product until its session ends; nothing is stored.
+	pub session_consent: bool,
 }
 
 /// Only trusted attachment preparation uploads preimages; products submit Chat statements.
 pub(crate) fn chat_requires_preimage_submit(operation: &HostProductDeviceChatRequest) -> bool {
-    match operation {
-        HostProductDeviceChatRequest::PrepareAttachments { .. } => true,
-        HostProductDeviceChatRequest::Initialize
-        | HostProductDeviceChatRequest::Bind { .. }
-        | HostProductDeviceChatRequest::Prepare { .. }
-        | HostProductDeviceChatRequest::Open { .. }
-        | HostProductDeviceChatRequest::SendPayment { .. }
-        | HostProductDeviceChatRequest::PaymentStatus { .. }
-        | HostProductDeviceChatRequest::ReconcilePayments
-        | HostProductDeviceChatRequest::OpenAttachment { .. }
-        | HostProductDeviceChatRequest::CommitMigration { .. }
-        | HostProductDeviceChatRequest::ContinueOpen { .. }
-        | HostProductDeviceChatRequest::ContinueState { .. }
-        | HostProductDeviceChatRequest::PaymentDenomination => false,
-    }
+	match operation {
+		HostProductDeviceChatRequest::PrepareAttachments { .. } => true,
+		HostProductDeviceChatRequest::Initialize |
+		HostProductDeviceChatRequest::Bind { .. } |
+		HostProductDeviceChatRequest::Prepare { .. } |
+		HostProductDeviceChatRequest::Open { .. } |
+		HostProductDeviceChatRequest::SendPayment { .. } |
+		HostProductDeviceChatRequest::PaymentStatus { .. } |
+		HostProductDeviceChatRequest::ReconcilePayments |
+		HostProductDeviceChatRequest::OpenAttachment { .. } |
+		HostProductDeviceChatRequest::CommitMigration { .. } |
+		HostProductDeviceChatRequest::ContinueOpen { .. } |
+		HostProductDeviceChatRequest::ContinueState { .. } |
+		HostProductDeviceChatRequest::PaymentDenomination => false,
+	}
 }
 
 /// A wallet-local Chat failure before conversion to its public protocol error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProductDeviceChatAuthorityError {
-    /// The wallet session is no longer connected.
-    Disconnected,
-    /// The user rejected the operation.
-    Rejected,
-    /// A host backend is unavailable; diagnostics remain host-owned.
-    Unavailable(String),
-    /// A typed Chat failure safe to return to the product.
-    Domain(HostProductDeviceChatError),
+	/// The wallet session is no longer connected.
+	Disconnected,
+	/// The user rejected the operation.
+	Rejected,
+	/// A host backend is unavailable; diagnostics remain host-owned.
+	Unavailable(String),
+	/// A typed Chat failure safe to return to the product.
+	Domain(HostProductDeviceChatError),
 }
 
 impl From<AuthorityError> for ProductDeviceChatAuthorityError {
-    fn from(error: AuthorityError) -> Self {
-        match error {
-            AuthorityError::Disconnected => Self::Disconnected,
-            AuthorityError::Rejected => Self::Rejected,
-            other => Self::Unavailable(other.to_string()),
-        }
-    }
+	fn from(error: AuthorityError) -> Self {
+		match error {
+			AuthorityError::Disconnected => Self::Disconnected,
+			AuthorityError::Rejected => Self::Rejected,
+			other => Self::Unavailable(other.to_string()),
+		}
+	}
 }
 
-impl From<ProductDeviceChatAuthorityError> for truapi::v02::HostProductDeviceChatError {
-    fn from(error: ProductDeviceChatAuthorityError) -> Self {
-        match error {
-            ProductDeviceChatAuthorityError::Disconnected => Self::NotConnected,
-            ProductDeviceChatAuthorityError::Rejected => Self::UserRejected,
-            ProductDeviceChatAuthorityError::Unavailable(_) => Self::NetworkUnavailable,
-            ProductDeviceChatAuthorityError::Domain(error) => error,
-        }
-    }
+impl From<ProductDeviceChatAuthorityError> for HostProductDeviceChatError {
+	fn from(error: ProductDeviceChatAuthorityError) -> Self {
+		match error {
+			ProductDeviceChatAuthorityError::Disconnected => Self::NotConnected,
+			ProductDeviceChatAuthorityError::Rejected => Self::UserRejected,
+			ProductDeviceChatAuthorityError::Unavailable(_) => Self::NetworkUnavailable,
+			ProductDeviceChatAuthorityError::Domain(error) => error,
+		}
+	}
 }
 
 /// Payment failures retain typed wallet results without exposing backend diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PaymentTopUpAuthorityError {
-    /// Session, consent, or backend authority failure.
-    Authority(AuthorityError),
-    /// A typed wallet top-up failure.
-    Domain(truapi::v01::HostPaymentTopUpError),
+	/// Session, consent, or backend authority failure.
+	Authority(AuthorityError),
+	/// A typed wallet top-up failure.
+	Domain(truapi::latest::HostPaymentTopUpError),
 }
 
 impl From<AuthorityError> for PaymentTopUpAuthorityError {
-    fn from(error: AuthorityError) -> Self {
-        Self::Authority(error)
-    }
+	fn from(error: AuthorityError) -> Self {
+		Self::Authority(error)
+	}
 }
 
-impl From<PaymentTopUpAuthorityError> for truapi::v01::HostPaymentTopUpError {
-    fn from(error: PaymentTopUpAuthorityError) -> Self {
-        match error {
-            PaymentTopUpAuthorityError::Domain(error) if !matches!(error, Self::Unknown { .. }) => {
-                error
-            }
-            PaymentTopUpAuthorityError::Authority(AuthorityError::Disconnected) => Self::Unknown {
-                reason: "Wallet session is not active".to_string(),
-            },
-            PaymentTopUpAuthorityError::Authority(AuthorityError::Cancelled(_)) => Self::Unknown {
-                reason: "Payment top-up cancelled".to_string(),
-            },
-            // Backend failures may contain supplied source keys; never echo them.
-            _ => Self::Unknown {
-                reason: "Payment top-up unavailable".to_string(),
-            },
-        }
-    }
+impl From<PaymentTopUpAuthorityError> for truapi::latest::HostPaymentTopUpError {
+	fn from(error: PaymentTopUpAuthorityError) -> Self {
+		match error {
+			PaymentTopUpAuthorityError::Domain(error) if !matches!(error, Self::Unknown { .. }) => {
+				error
+			},
+			PaymentTopUpAuthorityError::Authority(AuthorityError::Disconnected) => {
+				Self::Unknown { reason: "Wallet session is not active".to_string() }
+			},
+			PaymentTopUpAuthorityError::Authority(AuthorityError::Cancelled(_)) => {
+				Self::Unknown { reason: "Payment top-up cancelled".to_string() }
+			},
+			// Backend failures may contain supplied source keys; never echo them.
+			_ => Self::Unknown { reason: "Payment top-up unavailable".to_string() },
+		}
+	}
 }
 
 /// Whether blessed `calling_product_id` is using its own account, `owner`.
-pub fn is_blessed_owner(calling_product_id: &ProductId, owner: &ProductId) -> bool {
-	calling_product_id.has_trusted_remote_permissions() && owner == calling_product_id
+pub(crate) fn is_blessed_owner(calling_product_id: &str, owner: &str) -> bool {
+	use crate::platform::{has_trusted_remote_permissions, normalize_product_identifier};
+	normalize_product_identifier(calling_product_id).is_ok_and(|caller| {
+		has_trusted_remote_permissions(&caller) &&
+			normalize_product_identifier(owner).is_ok_and(|owner| owner == caller)
+	})
 }
 
 /// Whether this product account can sign without confirmation.
@@ -375,11 +386,11 @@ pub enum AutoSigningGrant {
 	/// User consent is required.
 	Absent,
 }
-
 /// Statement-store allowance signing material held by the authority layer.
-#[derive(Clone, PartialEq, Eq, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
+#[derive(Clone, PartialEq, Eq, zeroize::Zeroize, zeroize::ZeroizeOnDrop, derive_more::Debug)]
 pub struct StatementStoreAllowanceKey {
-	/// Secret used to sign allowance statements.
+	/// sr25519 secret used to sign allowance statements.
+	#[debug("\"<redacted>\"")]
 	pub secret: [u8; 64],
 	/// Public key derived from the secret.
 	pub public_key: [u8; 32],
@@ -408,38 +419,64 @@ pub trait ProductAuthority: Send + Sync {
 	/// Current account-authority session, if connected.
 	fn current_session(&self) -> Option<AuthoritySession>;
 
-    /// Whether a snapshot still authorizes work for this product, or for the
-    /// account itself when no product is supplied.
-    fn session_is_current(&self, session: &AuthoritySession, _product_id: Option<&str>) -> bool {
-        self.current_session().as_ref() == Some(session)
-    }
+	/// Whether a snapshot still authorizes work for this product, or for the
+	/// account itself when no product is supplied.
+	fn session_is_current(&self, session: &AuthoritySession, _product_id: Option<&str>) -> bool {
+		self.current_session().as_ref() == Some(session)
+	}
 
-    /// Shared session holder owned by this authority.
-    ///
-    /// Product runtimes use it for connection-status subscriptions. The
-    /// concrete authority keeps ownership of the actual session material.
-    fn session_state(&self) -> Arc<SessionState>;
+	/// Shared session holder owned by this authority.
+	///
+	/// Product runtimes use it for connection-status subscriptions. The
+	/// concrete authority keeps ownership of the actual session material.
+	fn session_state(&self) -> Arc<SessionState>;
+
+	/// Seed a product subtree for authority tests.
+	#[cfg(test)]
+	fn cache_product_subtree_for_test(
+		&self,
+		_session: &SessionInfo,
+		_product_id: &str,
+		_public_key: [u8; 32],
+	) {
+	}
+
+	/// Request account connection for the calling product.
+	async fn request_login(
+		&self,
+		product: &ProductContext,
+	) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>>;
+
+	/// Disconnect the current account-authority session.
+	async fn disconnect(&self);
+
+	/// Refresh identity fields for the current session if the authority can do
+	/// so without user interaction. Lookup failures must not be presented as
+	/// an authoritative absence of a username.
+	async fn refresh_session_identity(&self) -> Result<Option<AuthoritySession>, String> {
+		Ok(self.current_session())
+	}
 
 	/// Resolve the public key for a product's hard subtree.
 	async fn product_subtree_public_key(
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_id: &ProductId,
+		product_id: String,
 	) -> Result<[u8; 32], AuthorityError>;
 
 	/// Whether subtree resolution needs SSO and host consent.
 	async fn subtree_resolution_reaches_account_holder(
 		&self,
 		session: &AuthoritySession,
-		product_id: &ProductId,
+		product_id: &str,
 	) -> bool;
 
 	/// Whether this product account can sign without confirmation.
 	async fn auto_signing_status(
 		&self,
 		session: &AuthoritySession,
-		calling_product_id: &ProductId,
+		calling_product_id: &str,
 		account: &ProductAccountId,
 	) -> Result<AutoSigningGrant, AuthorityError>;
 
@@ -448,7 +485,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: &ProductId,
+		calling_product_id: String,
 		request: HostAccountSignVrfRequest,
 	) -> Result<VrfSignature, AuthorityError>;
 
@@ -459,7 +496,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: Option<&ProductId>,
+		calling_product_id: Option<&str>,
 		request: SignPayloadAuthorityRequest,
 	) -> Result<HostSignPayloadResponse, AuthorityError>;
 
@@ -470,7 +507,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: Option<&ProductId>,
+		calling_product_id: Option<&str>,
 		request: SignRawAuthorityRequest,
 		watermarked: bool,
 	) -> Result<HostSignPayloadResponse, AuthorityError>;
@@ -482,7 +519,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: Option<&ProductId>,
+		calling_product_id: Option<&str>,
 		request: CreateTransactionAuthorityRequest,
 	) -> Result<HostCreateTransactionResponse, AuthorityError>;
 
@@ -532,12 +569,54 @@ pub trait ProductAuthority: Send + Sync {
 		request: ProductRequest<HostAccountRingVrfSignRequest>,
 	) -> Result<HostAccountRingVrfSignResponse, RingVrfError>;
 
+	/// Whether the user allowed Chat for `product_id` for the rest of this
+	/// session. Authorities that do not keep session grants answer `false`.
+	fn chat_session_granted(&self, _session: &AuthoritySession, _product_id: &str) -> bool {
+		false
+	}
+
+	/// Execute an authorized operation on the Host-owned native Chat device.
+	async fn product_device_chat(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		request: ProductDeviceChatAuthorityRequest,
+	) -> Result<HostProductDeviceChatResponse, ProductDeviceChatAuthorityError>;
+
+	/// Credit caller-supplied incoming funding; no outgoing-spend or Chat grant.
+	async fn payment_top_up(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		request: PaymentTopUpRequest,
+	) -> Result<(), PaymentTopUpAuthorityError>;
+
+	/// The user's profile disclosure for `session`'s wallet was stored or
+	/// cleared. An authority that runs native Chat relays it through the
+	/// wallet's open Chats without delaying the caller. The default does
+	/// nothing: a paired host's Chat runs on the signing host, which relays
+	/// only the disclosure stored there.
+	fn profile_disclosure_changed(&self, _session: &AuthoritySession) {}
+
+	/// The name to show for `peer_identity`, a Chat contact of `product_id`
+	/// in `session`'s wallet: one the host verified itself, never one a
+	/// product supplied. `None` when the host knows none. The default knows
+	/// none: a paired host's Chat roster lives on the signing host.
+	async fn contact_username(
+		&self,
+		_session: &AuthoritySession,
+		_product_id: &str,
+		_peer_identity: [u8; 32],
+	) -> Option<String> {
+		None
+	}
+
 	/// Ask the account authority to allocate product-scoped resources.
 	async fn allocate_resources(
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_id: &ProductId,
+		product_id: String,
 		request: HostRequestResourceAllocationRequest,
 	) -> Result<HostRequestResourceAllocationResponse, AuthorityError>;
 
@@ -546,13 +625,12 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_id: &ProductId,
+		product_id: String,
 	) -> Result<StatementStoreAllowanceKey, AuthorityError>;
 
 	/// Forget the cached key only if it matches `public_key`, preserving any
 	/// replacement. Hosts without a local cache use the no-op default.
-	fn forget_statement_store_allowance_key(&self, _product_id: &ProductId, _public_key: [u8; 32]) {
-	}
+	fn forget_statement_store_allowance_key(&self, _product_id: &str, _public_key: [u8; 32]) {}
 
 	/// Whether a preimage submission is kept in the core instead of being sent
 	/// to the Bulletin chain.
@@ -565,38 +643,13 @@ pub trait ProductAuthority: Send + Sync {
 		false
 	}
 
-    /// Whether the user allowed Chat for `product_id` for the rest of this
-    /// session. Authorities that do not keep session grants answer `false`.
-    fn chat_session_granted(&self, _session: &AuthoritySession, _product_id: &str) -> bool {
-        false
-    }
-
-    /// Request account connection for the calling product.
-    async fn request_login(
-        &self,
-        product: &ProductContext,
-    ) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>>;
-
-    /// Disconnect the current account-authority session.
-    async fn disconnect(&self);
-
-    /// Refresh identity fields for the current session if the authority can do
-    /// so without user interaction. Lookup failures must not be presented as
-    /// an authoritative absence of a username.
-    async fn refresh_session_identity(&self) -> Result<Option<AuthoritySession>, String> {
-        Ok(self.current_session())
-    }
-
-    /// Return the public key of `//product//{product_id}`.
-    ///
-    /// Pairing hosts obtain this consent-free value from the Account Holder;
-    /// signing hosts derive it locally from root entropy.
-    async fn product_subtree_public_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        request: ProductDeviceChatAuthorityRequest,
-    ) -> Result<HostProductDeviceChatResponse, ProductDeviceChatAuthorityError>;
+	/// Return Bulletin allowance key material for the calling product.
+	async fn bulletin_allowance_key(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		product_id: String,
+	) -> Result<BulletinAllowanceKey, AuthorityError>;
 
 	/// Invalidate the cached Bulletin key and increase or recreate its allowance
 	/// after a submission is rejected for an exhausted or missing allowance.
@@ -604,7 +657,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_id: &ProductId,
+		product_id: String,
 	) -> Result<BulletinAllowanceKey, AuthorityError>;
 
 	/// Sign exact statement-store proof bytes with a product-derived account.
@@ -612,122 +665,73 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: Option<&ProductId>,
+		calling_product_id: Option<&str>,
 		account: ProductAccountId,
 		payload: Vec<u8>,
 	) -> Result<[u8; 64], AuthorityError>;
+
+	/// Certify a core-owned endpoint with the canonical product's Index(0) key.
+	/// This private domain is never reachable through product raw signing.
+	async fn certify_media_endpoint(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		unsigned: UnsignedAdvertisement,
+	) -> Result<[u8; 64], AuthorityError>;
+
+	/// Sign private Media transport with existing identity/session allowance.
+	/// `expires_at` is UTC seconds, not an encoded Statement Store expiry.
+	fn sign_media_statement(
+		&self,
+		session: &AuthoritySession,
+		payload: Vec<u8>,
+		topics: Vec<[u8; 32]>,
+		expires_at: u64,
+	) -> Result<Vec<u8>, AuthorityError>;
 
 	/// Derive product-scoped entropy for a connected session.
 	fn derive_entropy(
 		&self,
 		session: &AuthoritySession,
-		product_id: &ProductId,
+		product_id: &str,
 		context: &[u8],
 	) -> Result<[u8; 32], AuthorityError>;
 
-    /// Drop the product's cached statement-store allowance key if it is
-    /// `public_key`. Only the local signing host caches that key; the default
-    /// does nothing.
-    fn forget_statement_store_allowance_key(&self, _product_id: &str, _public_key: [u8; 32]) {}
-
-    /// Return Bulletin allowance key material for the calling product.
-    async fn bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError>;
-
-    /// Evict any cached Bulletin allowance key for the product and allocate a
-    /// fresh one, increasing the existing allowance.
-    ///
-    /// Called after a submission is rejected for an exhausted/missing
-    /// allowance, where reusing the cached key would loop forever.
-    async fn refresh_bulletin_allowance_key(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        product_id: String,
-    ) -> Result<BulletinAllowanceKey, AuthorityError>;
-
-    /// Sign exact statement-store proof bytes with a product-derived account.
-    async fn sign_statement_store_product_payload(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        calling_product_id: Option<&str>,
-        account: ProductAccountId,
-        payload: Vec<u8>,
-    ) -> Result<[u8; 64], AuthorityError>;
-
-    /// Certify a core-owned endpoint with the canonical product's Index(0) key.
-    /// This private domain is never reachable through product raw signing.
-    async fn certify_media_endpoint(
-        &self,
-        cx: &CallContext,
-        session: &AuthoritySession,
-        unsigned: UnsignedAdvertisement,
-    ) -> Result<[u8; 64], AuthorityError>;
-
-    /// Sign private Media transport with existing identity/session allowance.
-    /// `expires_at` is UTC seconds, not an encoded Statement Store expiry.
-    fn sign_media_statement(
-        &self,
-        session: &AuthoritySession,
-        payload: Vec<u8>,
-        topics: Vec<[u8; 32]>,
-        expires_at: u64,
-    ) -> Result<Vec<u8>, AuthorityError>;
-
-    /// Derive product-scoped entropy for a connected session.
-    fn derive_entropy(
-        &self,
-        session: &AuthoritySession,
-        product_id: &str,
-        context: &[u8],
-    ) -> Result<[u8; 32], AuthorityError>;
-
-    /// Key material for minting contact handles.
-    ///
-    /// Product-independent by construction, unlike [`Self::derive_entropy`]: one
-    /// contact must hash to the same handle in every product. Derived from the
-    /// session's root entropy source, which both roles hold and which no product
-    /// can reach — a handle keyed on anything public would be recoverable by
-    /// hashing candidate accounts.
-    fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError>;
+	/// Core-only root-derived key for stable contact handles across products.
+	fn contacts_handle_key(&self, session: &AuthoritySession) -> Result<[u8; 32], AuthorityError>;
 }
 
 /// Bound the private transport independently of the eventual network submit.
 /// No channel is set: multiple live packets on one inbox must not replace one another.
 pub(super) fn media_statement_fields(
-    payload: Vec<u8>,
-    topics: Vec<[u8; 32]>,
-    expires_at: u64,
+	payload: Vec<u8>,
+	topics: Vec<[u8; 32]>,
+	expires_at: u64,
 ) -> Result<Vec<StatementField>, AuthorityError> {
-    let now = current_unix_secs();
-    let latest = now
-        .checked_add(MAX_ADVERTISEMENT_LIFETIME)
-        .and_then(|time| time.checked_add(CLOCK_SKEW))
-        .ok_or(AuthorityError::Rejected)?;
-    if payload.is_empty()
-        || payload.len() > MAX_PACKET_BYTES
-        || topics.is_empty()
-        || topics.len() > 4
-        || expires_at <= now
-        || expires_at > latest
-        || expires_at > u32::MAX as u64
-    {
-        return Err(AuthorityError::Rejected);
-    }
-    statement_fields_from_v01(truapi::v01::Statement {
-        expiry: Some(expires_at << 32),
-        topics,
-        data: Some(payload),
-        proof: None,
-        decryption_key: None,
-        channel: None,
-    })
-    .map_err(|_| AuthorityError::Rejected)
+	let now = current_unix_secs();
+	let latest = now
+		.checked_add(MAX_ADVERTISEMENT_LIFETIME)
+		.and_then(|time| time.checked_add(CLOCK_SKEW))
+		.ok_or(AuthorityError::Rejected)?;
+	if payload.is_empty() ||
+		payload.len() > MAX_PACKET_BYTES ||
+		topics.is_empty() ||
+		topics.len() > 4 ||
+		expires_at <= now ||
+		expires_at > latest ||
+		expires_at > u32::MAX as u64
+	{
+		return Err(AuthorityError::Rejected);
+	}
+	statement_fields_from_v01(truapi::v01::Statement {
+		expiry: Some(expires_at << 32),
+		topics,
+		data: Some(payload),
+		proof: None,
+		decryption_key: None,
+		channel: None,
+	})
+	.map_err(|_| AuthorityError::Rejected)
 }
 
 /// Build the neutral authority-session snapshot for `session`.

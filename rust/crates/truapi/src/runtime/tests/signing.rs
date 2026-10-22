@@ -2,58 +2,45 @@ use super::*;
 
 #[test]
 fn signing_cancelled_during_permission_review_cannot_persist_a_late_grant() {
-    let (release, gate) = futures::channel::oneshot::channel();
-    let platform = Arc::new(StubPlatform {
-        remote_permission_gate: Mutex::new(Some(gate)),
-        ..Default::default()
-    });
-    let host = ProductRuntimeHost::new(
-        platform.clone(),
-        runtime_config("myapp.dot"),
-        test_spawner(),
-    );
-    install_pairing_session(&host, sso_session_info());
-    let cx = CallContext::with_parts(
-        "cancel-permission-review".to_string(),
-        truapi::CancellationToken::default(),
-    );
-    let mut call = Box::pin(host.sign_raw(
-        &cx,
-        HostSignRawRequest::V1(v01::HostSignRawRequest {
-            account: account_id("myapp.dot", 0),
-            payload: v01::RawPayload::Bytes {
-                bytes: b"cancel before signing consent".to_vec(),
-            },
-        }),
-    ));
-    assert!(call.as_mut().now_or_never().is_none());
-    cx.cancel().cancel();
-    assert!(matches!(
-        call.as_mut()
-            .now_or_never()
-            .expect("cancellation must stop waiting for permission"),
-        Err(CallError::Domain(HostSignRawError::V1(
-            v01::HostSignPayloadError::Unknown { .. }
-        )))
-    ));
-    assert!(
-        release.send(()).is_err(),
-        "the permission review must be withdrawn"
-    );
-    assert_eq!(
-        futures::executor::block_on(host.permission_authorization_status(
-            PermissionAuthorizationRequest::Remote(v01::RemotePermissionRequest {
-                permission: v01::RemotePermission::ChainSubmit,
-            }),
-        ))
-        .unwrap(),
-        PermissionAuthorizationStatus::NotDetermined,
-    );
-    assert!(platform.sign_raw_reviews.lock().unwrap().is_empty());
-    assert_eq!(
-        recorded_rpc_method_count(&platform.sent_rpc, "statement_submit"),
-        0,
-    );
+	let (release, gate) = futures::channel::oneshot::channel();
+	let platform = Arc::new(StubPlatform {
+		remote_permission_gate: Mutex::new(Some(gate)),
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+	install_pairing_session(&host, sso_session_info());
+	let cx = CallContext::with_parts(
+		"cancel-permission-review".to_string(),
+		truapi::CancellationToken::default(),
+	);
+	let mut call = Box::pin(host.sign_raw(
+		&cx,
+		HostSignRawRequest::V1(v01::HostSignRawRequest {
+			account: account_id("myapp.dot", 0),
+			payload: v01::RawPayload::Bytes { bytes: b"cancel before signing consent".to_vec() },
+		}),
+	));
+	assert!(call.as_mut().now_or_never().is_none());
+	cx.cancel().cancel();
+	assert!(matches!(
+		call.as_mut()
+			.now_or_never()
+			.expect("cancellation must stop waiting for permission"),
+		Err(CallError::Domain(HostSignRawError::V1(v01::HostSignPayloadError::Unknown { .. })))
+	));
+	assert!(release.send(()).is_err(), "the permission review must be withdrawn");
+	assert_eq!(
+		futures::executor::block_on(host.permission_authorization_status(
+			PermissionAuthorizationRequest::Remote(v01::RemotePermissionRequest {
+				permission: v01::RemotePermission::ChainSubmit,
+			}),
+		))
+		.unwrap(),
+		PermissionAuthorizationStatus::NotDetermined,
+	);
+	assert!(platform.sign_raw_reviews.lock().unwrap().is_empty());
+	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, "statement_submit"), 0,);
 }
 
 #[test]
@@ -171,7 +158,7 @@ fn sign_vrf_forwards_cross_product_mobile_sso_request_and_response() {
 			.lock()
 			.expect("VRF signing review list mutex poisoned"),
 		vec![crate::platform::SignVrfReview {
-			calling_product_id: ProductId::for_test("myapp.dot"),
+			calling_product_id: "myapp.dot".to_string(),
 			request: request.clone(),
 		}]
 	);
@@ -230,7 +217,7 @@ fn sign_vrf_rejects_declined_pairing_host_confirmation_before_mobile_sso() {
 			.lock()
 			.expect("VRF signing review list mutex poisoned"),
 		vec![crate::platform::SignVrfReview {
-			calling_product_id: ProductId::for_test("myapp.dot"),
+			calling_product_id: "myapp.dot".to_string(),
 			request,
 		}]
 	);
@@ -849,7 +836,7 @@ fn legacy_sign_raw_accepts_derived_ss58_then_returns_sso_response() {
 	assert_eq!(
 		request.account,
 		v01::ProductAccountId {
-			dot_ns_identifier: ProductId::for_test("myapp.dot"),
+			dot_ns_identifier: "myapp.dot".parse().expect("valid product ID"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		}
 	);
@@ -899,7 +886,7 @@ fn legacy_sign_raw_accepts_derived_hex_then_returns_sso_response() {
 	assert_eq!(
 		request.account,
 		v01::ProductAccountId {
-			dot_ns_identifier: ProductId::for_test("myapp.dot"),
+			dot_ns_identifier: "myapp.dot".parse().expect("valid product ID"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		}
 	);

@@ -117,5 +117,5 @@ pub fn sso_service(args: TokenStream, item: TokenStream) -> TokenStream {
 /// of maintaining a second list of response tags.
 #[proc_macro_attribute]
 pub fn sso_response_indices(args: TokenStream, item: TokenStream) -> TokenStream {
-    sso_response_indices::expand(args, item)
+	sso_response_indices::expand(args, item)
 }

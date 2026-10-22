@@ -1,4 +1,4 @@
-#![cfg_attr(not(feature = "runtime"), no_std)]
+#![cfg_attr(not(feature = "host-api"), no_std)]
 #![allow(
 	clippy::double_must_use,
 	reason = "async-trait generates must_use futures for async trait methods"
@@ -12,9 +12,9 @@
 //!
 //! Concrete wire types live in per-version modules. Versioned envelopes are in
 //! [`versioned`].
-//! Async API traits use the `async_trait` macro so their concise `async fn` methods
-//! still guarantee `Send` futures. Implementations must annotate their impl
-//! blocks with `#[truapi::async_trait]`.
+//! Async API traits (feature `host-api`) use the `async_trait` macro so their
+//! concise `async fn` methods still guarantee `Send` futures. Implementations
+//! must annotate their impl blocks with `#[truapi::async_trait]`.
 //!
 //! The runtime: hosts instantiate a role runtime around a `platform::Platform`
 //! implementation, then create product-scoped `ProductRuntime` endpoints that
@@ -27,35 +27,39 @@
 //! - `native_debug` (non-wasm32 only): a loopback WebSocket `DebugSink` that streams tapped frames
 //!   to the `@parity/truapi-debugger` app.
 
+// Runtime code, the generated dispatcher and the macros all name this crate
+// `truapi`, the way code outside it does.
+extern crate self as truapi;
+
 extern crate alloc;
 
 use alloc::string::String;
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 use alloc::{boxed::Box, format, vec::Vec};
 use core::convert::Infallible;
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 use core::fmt;
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 use core::future::Future;
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 use core::mem;
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 use core::pin::Pin;
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 use core::task::{Context, Poll, Waker};
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 use core::time::Duration;
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 use std::sync::{Arc, Mutex};
 
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 use futures::Stream;
 use parity_scale_codec::{Decode, Encode};
 
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 pub use async_trait::async_trait;
 
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 pub mod api;
 mod dotns_name;
 mod product_id;
@@ -105,80 +109,75 @@ uniffi::custom_type!(u128, String, {
 pub mod latest {
 	use crate::versioned::{self, Versioned};
 
-    pub use crate::v01::{
-        AllocatableResource, AllocationOutcome, Arrangement, AvatarRect, Background, BlendingMode,
-        BorderStyle, BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction,
-        ChatActionLayout, ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile,
-        ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
-        ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
-        ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect,
-        EffectProps, GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
-        HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
-        HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
-        HostAccountSignVrfError, HostAccountSignVrfRequest, HostJamPeerTransportCloseError,
-        HostJamPeerTransportCloseRequest, HostJamPeerTransportDialError,
-        HostJamPeerTransportDialRequest, HostJamPeerTransportDialResponse,
-        HostJamPeerTransportEventsError, HostJamPeerTransportEventsResponse,
-        HostJamPeerTransportOpenError, HostJamPeerTransportOpenRequest,
-        HostJamPeerTransportOpenResponse, HostJamPeerTransportRecvError,
-        HostJamPeerTransportRecvRequest, HostJamPeerTransportRecvResponse,
-        HostJamPeerTransportResetError, HostJamPeerTransportResetRequest,
-        HostJamPeerTransportSendError, HostJamPeerTransportSendRequest,
-        HostNotificationAcknowledgeReceiverEventRequest, HostNotificationDisableReceiverRequest,
-        HostNotificationReceiptResult, HostNotificationReceiverEventsRequest,
-        HostNotificationReceiverStatus, HostNotificationReceivingError,
-        HostNotificationRecordReceiptRequest, HostNotificationReplaceReceiverRequest, HostPlatform,
-        HostSignPayloadData, HostWorkerOperationError, ImageFit, ImageProps, ImageSource,
-        JAM_PEER_TRANSPORT_MAX_BUFFERED_BYTES_PER_CONNECTION, JAM_PEER_TRANSPORT_MAX_CONNECTIONS,
-        JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES, JAM_PEER_TRANSPORT_MAX_STREAMS_PER_CONNECTION,
-        JamPeerTransportEvent, Modifier, OperationStartedResult, PocketCard, ProductAccountId,
-        ProductProofContext, RawPayload, ReceivingEvent, ReceivingEventKind, ReceivingReceiptKind,
-        ReceivingWatch, RegisteredRingVrfKey, RemotePermission,
-        RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
-        RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
-        RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, RingLocation,
-        RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType,
-        Shape, SignedStatement, Size, Statement, StatementProof, StorageQueryItem,
-        StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
-        TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature,
-    };
-    pub use crate::v02::{
-        HostNativeChatAcknowledgment, HostNativeChatAttachment, HostNativeChatAttachmentKind,
-        HostNativeChatAttachmentMetadata, HostNativeChatAttachmentState, HostNativeChatDevice,
-        HostNativeChatInvitation, HostNativeChatMessages, HostNativeChatPayment,
-        HostNativeChatPaymentDirection, HostNativeChatPaymentFailure, HostNativeChatPaymentState,
-        HostNativeChatPeer, HostNativeChatPeerDevice, HostNativeChatRichMessage,
-        HostNativeChatRichMessageKind, OwnAvatarSlot, ProfileAudience, ProfileContact,
-    };
-    pub use crate::v03::{
-        ContactAvatarSlot, HostNativeChatBinding, HostNativeChatMigrationInvitation,
-        HostNativeChatOpenPage, HostNativeChatOpened, HostNativeChatPrepared, HostNativeChatRoute,
-        HostNativeChatStatePage,
-    };
+	pub use crate::product_id::{PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
 
-	pub use crate::v01::{
-		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
-		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
-		ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
-		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
-		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
-		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
-		Dimensions, Effect, EffectProps, GenericError, HorizontalAlignment,
-		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
-		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
-		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
-		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
-		HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
-		OperationStartedResult, PocketCard, ProductAccount, ProductAccountId, ProductProofContext,
-		RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
-		RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
-		RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
-		RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, ResourceAllocationError,
-		RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi,
-		RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
-		StatementProof, StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps,
-		TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
-		VrfSignature,
+	pub use crate::{
+		v01::{
+			AllocatableResource, AllocationOutcome, Arrangement, AvatarRect, Background,
+			BlendingMode, BorderStyle, BoxProps, ButtonProps, ButtonVariant, ChainIdentifier,
+			ChatAction, ChatActionLayout, ChatActions, ChatBotRegistrationStatus,
+			ChatCustomMessage, ChatFile, ChatMedia, ChatMessageContent, ChatReaction, ChatRichText,
+			ChatRoom, ChatRoomFooter, ChatRoomParticipation, ChatRoomRegistrationStatus,
+			CodeFormat, ColorToken, ColumnProps, ContactHandle, ContactPickOutcome,
+			ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect, EffectProps,
+			FundingDirection, FundingFailure, GenericError, HorizontalAlignment,
+			HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
+			HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
+			HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
+			HostJamPeerTransportCloseError, HostJamPeerTransportCloseRequest,
+			HostJamPeerTransportDialError, HostJamPeerTransportDialRequest,
+			HostJamPeerTransportDialResponse, HostJamPeerTransportEventsError,
+			HostJamPeerTransportEventsResponse, HostJamPeerTransportOpenError,
+			HostJamPeerTransportOpenRequest, HostJamPeerTransportOpenResponse,
+			HostJamPeerTransportRecvError, HostJamPeerTransportRecvRequest,
+			HostJamPeerTransportRecvResponse, HostJamPeerTransportResetError,
+			HostJamPeerTransportResetRequest, HostJamPeerTransportSendError,
+			HostJamPeerTransportSendRequest, HostNotificationAcknowledgeReceiverEventRequest,
+			HostNotificationDisableReceiverRequest, HostNotificationReceiptResult,
+			HostNotificationReceiverEventsRequest, HostNotificationReceiverStatus,
+			HostNotificationReceivingError, HostNotificationRecordReceiptRequest,
+			HostNotificationReplaceReceiverRequest, HostPlatform, HostSignPayloadData,
+			HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
+			ImageSource, JAM_PEER_TRANSPORT_MAX_BUFFERED_BYTES_PER_CONNECTION,
+			JAM_PEER_TRANSPORT_MAX_CONNECTIONS, JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES,
+			JAM_PEER_TRANSPORT_MAX_STREAMS_PER_CONNECTION, JamPeerTransportEvent, MediaAccount,
+			MediaAudioRoute, MediaCallOutcome, MediaCameraKind, MediaCapabilities, MediaEvent,
+			MediaFit, MediaIncomingDecision, MediaIncomingId, MediaIncomingOffer,
+			MediaIncomingResolution, MediaIncomingResponse, MediaLocalState, MediaLocalTracks,
+			MediaNetwork, MediaOperationFailure, MediaOperationId, MediaOperationKind,
+			MediaOperationResult, MediaOperationSnapshot, MediaOperationState, MediaParticipantId,
+			MediaParticipantSnapshot, MediaParticipantState, MediaPeer, MediaPictureKind,
+			MediaPictureSource, MediaPlacement, MediaRect, MediaRemoteState, MediaResource,
+			MediaRuntimeLimits, MediaSessionId, MediaSessionSnapshot, MediaSessionState,
+			MediaSurface, MediaTrackState, MediaViewport, Modifier, NotificationActivation,
+			NotificationActivationAcknowledgeRequest, NotificationActivations,
+			OperationStartedResult, PaymentTopUpSource, PocketCard, ProductAccount,
+			ProductAccountId, ProductProofContext, RawPayload, ReceivingEvent, ReceivingEventKind,
+			ReceivingReceiptKind, ReceivingWatch, RegisteredRingVrfKey,
+			RemoteChainTransactionStopRequest, RemotePermission,
+			RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
+			RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
+			RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode,
+			ResourceAllocationError, RingLocation, RingLocationJunction, RingVrfKeyDisclosure,
+			RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement,
+			Size, Statement, StatementProof, StorageQueryItem, StorageQueryType, StorageResultItem,
+			TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
+			TypographyStyle, VerticalAlignment, VrfSignature,
+		},
+		v02::{
+			HostNativeChatAcknowledgment, HostNativeChatAttachment, HostNativeChatAttachmentKind,
+			HostNativeChatAttachmentMetadata, HostNativeChatAttachmentState, HostNativeChatDevice,
+			HostNativeChatInvitation, HostNativeChatMessages, HostNativeChatPayment,
+			HostNativeChatPaymentDirection, HostNativeChatPaymentFailure,
+			HostNativeChatPaymentState, HostNativeChatPeer, HostNativeChatPeerDevice,
+			HostNativeChatRichMessage, HostNativeChatRichMessageKind, OwnAvatarSlot,
+			ProfileAudience, ProfileContact,
+		},
+		v03::{
+			ContactAvatarSlot, HostNativeChatBinding, HostNativeChatMigrationInvitation,
+			HostNativeChatOpenPage, HostNativeChatOpened, HostNativeChatPrepared,
+			HostNativeChatRoute, HostNativeChatStatePage,
+		},
 	};
 
 	/// Latest payload type of a versioned envelope.
@@ -253,16 +252,6 @@ pub mod latest {
 	/// Current preimage lookup result.
 	pub type RemotePreimageLookupSubscribeItem =
 		LatestOf<versioned::preimage::RemotePreimageLookupSubscribeItem>;
-	/// Payment balance subscription failure.
-	pub type HostPaymentBalanceSubscribeError =
-		LatestOf<versioned::payment::HostPaymentBalanceSubscribeError>;
-	/// Payment request failure.
-	pub type HostPaymentError = LatestOf<versioned::payment::HostPaymentError>;
-	/// Payment status subscription failure.
-	pub type HostPaymentStatusSubscribeError =
-		LatestOf<versioned::payment::HostPaymentStatusSubscribeError>;
-	/// Payment top-up failure.
-	pub type HostPaymentTopUpError = LatestOf<versioned::payment::HostPaymentTopUpError>;
 	/// Ring VRF proof creation result.
 	pub type HostAccountCreateProofResponse =
 		LatestOf<versioned::account::HostAccountCreateProofResponse>;
@@ -306,6 +295,24 @@ pub mod latest {
 	pub type HostContactsPickResponse = LatestOf<versioned::contacts::HostContactsPickResponse>;
 	/// Contact picker failure.
 	pub type HostContactsPickError = LatestOf<versioned::contacts::HostContactsPickError>;
+	/// Multi-contact picker request.
+	pub type HostContactsPickManyRequest =
+		LatestOf<versioned::contacts::HostContactsPickManyRequest>;
+	/// Multi-contact picker result.
+	pub type HostContactsPickManyResponse =
+		LatestOf<versioned::contacts::HostContactsPickManyResponse>;
+	/// Multi-contact picker failure.
+	pub type HostContactsPickManyError = LatestOf<versioned::contacts::HostContactsPickManyError>;
+	/// Host-owned contact name placement.
+	pub type HostContactsPlaceLabelsRequest =
+		LatestOf<versioned::contacts::HostContactsPlaceLabelsRequest>;
+	/// Contact label placement acknowledgment.
+	pub type HostContactsPlaceLabelsResponse =
+		LatestOf<versioned::contacts::HostContactsPlaceLabelsResponse>;
+	/// Contact label placement failure.
+	pub type HostContactsPlaceLabelsError =
+		LatestOf<versioned::contacts::HostContactsPlaceLabelsError>;
+	pub use crate::v01::{ContactLabelSlot, ContactPickManyOutcome};
 	/// Scanner request.
 	pub type HostScannerScanRequest = LatestOf<versioned::scanner::HostScannerScanRequest>;
 	/// Scanner outcome.
@@ -356,16 +363,182 @@ pub mod latest {
 	/// Local storage operation error.
 	pub type HostLocalStorageReadError =
 		LatestOf<versioned::local_storage::HostLocalStorageReadError>;
+	/// Sanitized shared Media domain error.
+	pub type HostMediaError = LatestOf<versioned::media::HostMediaError>;
+	/// Media discovery request.
+	pub type HostMediaGetCapabilitiesRequest =
+		LatestOf<versioned::media::HostMediaGetCapabilitiesRequest>;
+	/// Complete Media service capabilities.
+	pub type HostMediaGetCapabilitiesResponse =
+		LatestOf<versioned::media::HostMediaGetCapabilitiesResponse>;
+	/// Media discovery failure.
+	pub type HostMediaGetCapabilitiesError =
+		LatestOf<versioned::media::HostMediaGetCapabilitiesError>;
+	/// Passive runtime-wide Media subscription request.
+	pub type HostMediaSessionSubscribeRequest =
+		LatestOf<versioned::media::HostMediaSessionSubscribeRequest>;
+	/// Authoritative runtime-wide Media event.
+	pub type HostMediaSessionSubscribeItem =
+		LatestOf<versioned::media::HostMediaSessionSubscribeItem>;
+	/// Media subscription interruption.
+	pub type HostMediaSessionSubscribeError =
+		LatestOf<versioned::media::HostMediaSessionSubscribeError>;
+	/// Correlated Media session creation request.
+	pub type HostMediaCreateSessionRequest =
+		LatestOf<versioned::media::HostMediaCreateSessionRequest>;
+	/// Media session creation result.
+	pub type HostMediaCreateSessionResponse =
+		LatestOf<versioned::media::HostMediaCreateSessionResponse>;
+	/// Media session creation failure.
+	pub type HostMediaCreateSessionError = LatestOf<versioned::media::HostMediaCreateSessionError>;
+	/// Correlated remote endpoint invitation request.
+	pub type HostMediaAddParticipantRequest =
+		LatestOf<versioned::media::HostMediaAddParticipantRequest>;
+	/// Admitted Media participant.
+	pub type HostMediaAddParticipantResponse =
+		LatestOf<versioned::media::HostMediaAddParticipantResponse>;
+	/// Media participant admission failure.
+	pub type HostMediaAddParticipantError =
+		LatestOf<versioned::media::HostMediaAddParticipantError>;
+	/// Incoming Media offer decision.
+	pub type HostMediaRespondIncomingRequest =
+		LatestOf<versioned::media::HostMediaRespondIncomingRequest>;
+	/// Incoming Media decision result.
+	pub type HostMediaRespondIncomingResponse =
+		LatestOf<versioned::media::HostMediaRespondIncomingResponse>;
+	/// Incoming Media decision failure.
+	pub type HostMediaRespondIncomingError =
+		LatestOf<versioned::media::HostMediaRespondIncomingError>;
+	/// Idempotent Media participant removal request.
+	pub type HostMediaRemoveParticipantRequest =
+		LatestOf<versioned::media::HostMediaRemoveParticipantRequest>;
+	/// Media participant removal result.
+	pub type HostMediaRemoveParticipantResponse =
+		LatestOf<versioned::media::HostMediaRemoveParticipantResponse>;
+	/// Media participant removal failure.
+	pub type HostMediaRemoveParticipantError =
+		LatestOf<versioned::media::HostMediaRemoveParticipantError>;
+	/// Correlated complete capture-intent replacement request.
+	pub type HostMediaSetLocalTracksRequest =
+		LatestOf<versioned::media::HostMediaSetLocalTracksRequest>;
+	/// Authoritative session after capture-intent commitment.
+	pub type HostMediaSetLocalTracksResponse =
+		LatestOf<versioned::media::HostMediaSetLocalTracksResponse>;
+	/// Capture-intent replacement failure.
+	pub type HostMediaSetLocalTracksError =
+		LatestOf<versioned::media::HostMediaSetLocalTracksError>;
+	/// Atomic host-owned Media layout replacement request.
+	pub type HostMediaSetSurfacesRequest = LatestOf<versioned::media::HostMediaSetSurfacesRequest>;
+	/// Accepted Media layout revision.
+	pub type HostMediaSetSurfacesResponse =
+		LatestOf<versioned::media::HostMediaSetSurfacesResponse>;
+	/// Media layout replacement failure.
+	pub type HostMediaSetSurfacesError = LatestOf<versioned::media::HostMediaSetSurfacesError>;
+	/// Idempotent Media session teardown request.
+	pub type HostMediaEndSessionRequest = LatestOf<versioned::media::HostMediaEndSessionRequest>;
+	/// Media session teardown result.
+	pub type HostMediaEndSessionResponse = LatestOf<versioned::media::HostMediaEndSessionResponse>;
+	/// Media session teardown failure.
+	pub type HostMediaEndSessionError = LatestOf<versioned::media::HostMediaEndSessionError>;
+	/// Exact Media operation outcome query.
+	pub type HostMediaGetOperationRequest =
+		LatestOf<versioned::media::HostMediaGetOperationRequest>;
+	/// Authoritative Media operation outcome.
+	pub type HostMediaGetOperationResponse =
+		LatestOf<versioned::media::HostMediaGetOperationResponse>;
+	/// Media operation query failure.
+	pub type HostMediaGetOperationError = LatestOf<versioned::media::HostMediaGetOperationError>;
+	/// Authoritative cancellation or pre-admission tombstone request.
+	pub type HostMediaCancelOperationRequest =
+		LatestOf<versioned::media::HostMediaCancelOperationRequest>;
+	/// Media operation state after cancellation linearizes against commitment.
+	pub type HostMediaCancelOperationResponse =
+		LatestOf<versioned::media::HostMediaCancelOperationResponse>;
+	/// Media operation cancellation failure.
+	pub type HostMediaCancelOperationError =
+		LatestOf<versioned::media::HostMediaCancelOperationError>;
 	/// Locale the host currently presents its interface in.
 	pub type HostLocaleSubscribeItem = LatestOf<versioned::locale::HostLocaleSubscribeItem>;
+	/// Batched host-local calendar conversion request.
+	pub type HostLocaleLocalizeTimestampsRequest =
+		LatestOf<versioned::locale::HostLocaleLocalizeTimestampsRequest>;
+	/// Batched host-local calendar conversion result.
+	pub type HostLocaleLocalizeTimestampsResponse =
+		LatestOf<versioned::locale::HostLocaleLocalizeTimestampsResponse>;
+	pub use crate::v02::HostLocaleLocalizedTimestamp;
 	/// Navigation request error.
 	pub type HostNavigateToError = LatestOf<versioned::system::HostNavigateToError>;
+	/// Funding request.
+	pub type HostFundingRequest = LatestOf<versioned::funding::HostFundingRequest>;
+	/// Accepted funding intent.
+	pub type HostFundingResponse = LatestOf<versioned::funding::HostFundingResponse>;
+	/// Funding request failure.
+	pub type HostFundingError = LatestOf<versioned::funding::HostFundingError>;
+	/// Request to watch a funding session.
+	pub type HostFundingStatusSubscribeRequest =
+		LatestOf<versioned::funding::HostFundingStatusSubscribeRequest>;
+	/// Progress of a funding session.
+	pub type HostFundingStatusSubscribeItem =
+		LatestOf<versioned::funding::HostFundingStatusSubscribeItem>;
+	/// Failure watching a funding session.
+	pub type HostFundingStatusSubscribeError =
+		LatestOf<versioned::funding::HostFundingStatusSubscribeError>;
+	/// Payment balance subscription request.
+	pub type HostPaymentBalanceSubscribeRequest =
+		LatestOf<versioned::payment::HostPaymentBalanceSubscribeRequest>;
+	/// Payment balance subscription item.
+	pub type HostPaymentBalanceSubscribeItem =
+		LatestOf<versioned::payment::HostPaymentBalanceSubscribeItem>;
+	/// Payment balance subscription failure.
+	pub type HostPaymentBalanceSubscribeError =
+		LatestOf<versioned::payment::HostPaymentBalanceSubscribeError>;
+	/// Payment request.
+	pub type HostPaymentRequest = LatestOf<versioned::payment::HostPaymentRequest>;
+	/// Payment request failure.
+	pub type HostPaymentError = LatestOf<versioned::payment::HostPaymentError>;
+	/// Payment status subscription request.
+	pub type HostPaymentStatusSubscribeRequest =
+		LatestOf<versioned::payment::HostPaymentStatusSubscribeRequest>;
+	/// Progress of a payment.
+	pub type HostPaymentStatusSubscribeItem =
+		LatestOf<versioned::payment::HostPaymentStatusSubscribeItem>;
+	/// Failure following a payment.
+	pub type HostPaymentStatusSubscribeError =
+		LatestOf<versioned::payment::HostPaymentStatusSubscribeError>;
+	/// Payment top-up request.
+	pub type HostPaymentTopUpRequest = LatestOf<versioned::payment::HostPaymentTopUpRequest>;
+	/// Payment top-up failure.
+	pub type HostPaymentTopUpError = LatestOf<versioned::payment::HostPaymentTopUpError>;
+	/// Payment top-up status subscription request.
+	pub type HostPaymentTopUpStatusSubscribeRequest =
+		LatestOf<versioned::payment::HostPaymentTopUpStatusSubscribeRequest>;
+	/// Progress of a payment top-up.
+	pub type HostPaymentTopUpStatusSubscribeItem =
+		LatestOf<versioned::payment::HostPaymentTopUpStatusSubscribeItem>;
+	/// Failure following a payment top-up.
+	pub type HostPaymentTopUpStatusSubscribeError =
+		LatestOf<versioned::payment::HostPaymentTopUpStatusSubscribeError>;
 	/// The calling product's Pocket cards.
 	pub type HostPocketListSubscribeItem = LatestOf<versioned::pocket::HostPocketListSubscribeItem>;
 	/// Pocket card removal request.
 	pub type HostPocketRemoveCardRequest = LatestOf<versioned::pocket::HostPocketRemoveCardRequest>;
 	/// Pocket card removal failure.
 	pub type HostPocketRemoveCardError = LatestOf<versioned::pocket::HostPocketRemoveCardError>;
+	/// Profile presentation request.
+	pub type HostProfilePresentRequest = LatestOf<versioned::profile::HostProfilePresentRequest>;
+	/// Profile presentation failure.
+	pub type HostProfilePresentError = LatestOf<versioned::profile::HostProfilePresentError>;
+	/// Contact avatar placement failure.
+	pub type HostProfilePlaceContactAvatarsError =
+		LatestOf<versioned::profile::HostProfilePlaceContactAvatarsError>;
+	/// Profile disclosure request with explicit audiences.
+	pub type HostProfileDiscloseRequest = LatestOf<versioned::profile::HostProfileDiscloseRequest>;
+	/// Contact profile presentation selector.
+	pub type HostProfilePresentContactRequest =
+		LatestOf<versioned::profile::HostProfilePresentContactRequest>;
+	/// Contact and own avatar geometry.
+	pub type HostProfilePlaceContactAvatarsRequest =
+		LatestOf<versioned::profile::HostProfilePlaceContactAvatarsRequest>;
 	/// Request to show or hide the face above the calling Widget.
 	pub type HostExpandedCardSetFaceShownRequest =
 		LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownRequest>;
@@ -393,6 +566,14 @@ pub mod latest {
 	/// Per-resource allocation outcomes.
 	pub type HostRequestResourceAllocationResponse =
 		LatestOf<versioned::resource_allocation::HostRequestResourceAllocationResponse>;
+	/// Native Chat cryptographic request using non-exportable Host keys.
+	pub type HostProductDeviceChatRequest =
+		LatestOf<versioned::account::HostProductDeviceChatRequest>;
+	/// Authenticated native plaintext, prepared ciphertext, and custody metadata.
+	pub type HostProductDeviceChatResponse =
+		LatestOf<versioned::account::HostProductDeviceChatResponse>;
+	/// Host-owned native Chat operation error.
+	pub type HostProductDeviceChatError = LatestOf<versioned::account::HostProductDeviceChatError>;
 	/// Extrinsic payload signing request for a product account.
 	pub type HostSignPayloadRequest = LatestOf<versioned::signing::HostSignPayloadRequest>;
 	/// Signing operation result.
@@ -503,20 +684,20 @@ pub type FrameworkOnlyError = CallError<Infallible>;
 /// when a runtime explicitly cancels it, or when an attached timeout elapses.
 /// Subscription runtimes can cancel this token when the peer sends `_stop` or
 /// disconnects.
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 #[derive(Clone, Default)]
 pub struct CancellationToken {
 	inner: Arc<CancellationInner>,
 }
 
 #[derive(Default)]
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 struct CancellationInner {
 	state: Mutex<CancellationState>,
 }
 
 #[derive(Default)]
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 struct CancellationState {
 	reason: Option<CancellationReason>,
 	next_id: u64,
@@ -524,7 +705,7 @@ struct CancellationState {
 }
 
 /// Cause attached to a cancelled call.
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum CancellationReason {
 	/// The caller or runtime explicitly cancelled the call.
@@ -539,7 +720,7 @@ pub enum CancellationReason {
 }
 
 /// Render a timeout as whole seconds when possible, milliseconds otherwise.
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 fn format_timeout(timeout: &Duration) -> String {
 	if timeout.subsec_millis() == 0 {
 		format!("{}s", timeout.as_secs())
@@ -549,13 +730,13 @@ fn format_timeout(timeout: &Duration) -> String {
 }
 
 /// Future resolved when a [`CancellationToken`] is cancelled.
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 pub struct CancellationFuture {
 	inner: Arc<CancellationInner>,
 	id: Option<u64>,
 }
 
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 impl fmt::Debug for CancellationToken {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		f.debug_struct("CancellationToken")
@@ -564,7 +745,7 @@ impl fmt::Debug for CancellationToken {
 	}
 }
 
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 impl CancellationToken {
 	/// Mark the token as cancelled.
 	pub fn cancel(&self) {
@@ -602,7 +783,7 @@ impl CancellationToken {
 	}
 }
 
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 impl Future for CancellationFuture {
 	type Output = CancellationReason;
 
@@ -632,7 +813,7 @@ impl Future for CancellationFuture {
 	}
 }
 
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 impl Drop for CancellationFuture {
 	fn drop(&mut self) {
 		let Some(id) = self.id.take() else {
@@ -647,7 +828,7 @@ impl Drop for CancellationFuture {
 }
 
 /// Ambient context passed to every trait method.
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 #[derive(Clone, Default)]
 pub struct CallContext {
 	request_id: String,
@@ -655,7 +836,7 @@ pub struct CallContext {
 	timeout: Option<Duration>,
 }
 
-#[cfg(feature = "runtime")]
+#[cfg(feature = "host-api")]
 impl CallContext {
 	/// Construct a context bound to the given `request_id` with a fresh cancellation token.
 	pub fn with_request_id(request_id: String) -> Self {
@@ -690,26 +871,35 @@ impl CallContext {
 
 /// Handle to an active subscription. Implements [`Stream`] to yield values
 /// pushed by the host. Drop to unsubscribe.
-#[cfg(feature = "runtime")]
-pub struct Subscription<T> {
-    inner: Pin<Box<dyn Stream<Item = T> + Send>>,
+///
+/// The stream yields `Ok(item)` for each value and at most one `Err`, which
+/// ends it: the runtime encodes that value as the `_interrupt` payload and
+/// polls no further. A stream that ends without an `Err` interrupts with
+/// `Ok(())`, which the peer reads as a normal completion.
+#[cfg(feature = "host-api")]
+pub struct Subscription<Item, Interrupt> {
+	inner: Pin<Box<dyn Stream<Item = Result<Item, Interrupt>> + Send>>,
 }
 
-#[cfg(feature = "runtime")]
-impl<T> Stream for Subscription<T> {
-    type Item = T;
+#[cfg(feature = "host-api")]
+impl<Item, Interrupt> Stream for Subscription<Item, Interrupt> {
+	type Item = Result<Item, Interrupt>;
 
 	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
 		self.inner.as_mut().poll_next(cx)
 	}
 }
 
-#[cfg(feature = "runtime")]
-impl<T> Subscription<T> {
-    /// Creates a new subscription from a boxed stream.
-    pub fn new(stream: Pin<Box<dyn Stream<Item = T> + Send>>) -> Self {
-        Self { inner: stream }
-    }
+#[cfg(feature = "host-api")]
+impl<Item, Interrupt> Subscription<Item, Interrupt> {
+	/// Creates a subscription from a stream of items and at most one
+	/// terminating interrupt.
+	pub fn new<S>(stream: S) -> Self
+	where
+		S: Stream<Item = Result<Item, Interrupt>> + Send + 'static,
+	{
+		Self { inner: Box::pin(stream) }
+	}
 
 	/// Creates a subscription that yields no items and ends with `interrupt`.
 	/// The default trait bodies of unimplemented methods interrupt with
@@ -724,95 +914,144 @@ impl<T> Subscription<T> {
 	}
 }
 
-/// Applies `#[cfg(feature = "runtime")]` to every item it wraps.
-macro_rules! runtime_items {
-    ($($item:item)*) => { $( #[cfg(feature = "runtime")] $item )* };
-}
+#[cfg(feature = "runtime")]
+pub mod bootstrap;
+#[cfg(feature = "runtime")]
+pub mod chain;
+#[cfg(feature = "runtime")]
+mod chain_runtime;
+#[cfg(feature = "runtime")]
+mod dispatcher;
+#[cfg(feature = "runtime")]
+mod dotns_views;
+#[cfg(feature = "runtime")]
+mod dynamic_vrf;
+#[cfg(feature = "runtime")]
+pub mod frame;
+#[cfg(feature = "runtime")]
+mod host_core;
+#[cfg(feature = "runtime")]
+mod host_internal;
+#[cfg(feature = "runtime")]
+pub mod host_logic;
+#[cfg(feature = "runtime")]
+mod host_rpc_client;
+#[cfg(feature = "runtime")]
+mod interrupt;
+#[cfg(feature = "runtime")]
+pub mod logging;
+#[cfg(feature = "runtime")]
+pub mod platform;
+#[cfg(feature = "runtime")]
+mod protocol_error;
+#[cfg(feature = "runtime")]
+mod runtime;
+#[cfg(feature = "runtime")]
+mod session_usernames;
+#[cfg(feature = "runtime")]
+pub mod subscription;
+#[cfg(feature = "runtime")]
+pub mod transport;
+#[cfg(feature = "runtime")]
+mod truapi_core;
 
-runtime_items! {
-    pub mod bootstrap;
-    mod chain_runtime;
-    mod truapi_core;
-    mod dispatcher;
-    mod dotns_views;
-    mod dynamic_vrf;
-    pub mod frame;
-    mod host_core;
-    mod host_internal;
-    pub mod host_logic;
-    mod host_rpc_client;
-    mod interrupt;
-    pub mod logging;
-    pub mod platform;
-    mod protocol_error;
-    mod runtime;
-    mod session_usernames;
-    pub mod subscription;
-    pub mod transport;
+#[cfg(feature = "runtime")]
+pub mod jam_peer_transport;
+#[cfg(feature = "runtime")]
+#[cfg(test)]
+mod test_support;
+#[cfg(feature = "runtime")]
+mod unix_time;
 
-    #[cfg(test)]
-    mod test_support;
-    mod unix_time;
+// Dispatch must keep serving deprecated APIs while clients migrate.
+#[cfg(feature = "runtime")]
+#[allow(deprecated)]
+pub mod generated;
 
-    // Dispatch must keep serving deprecated APIs while clients migrate.
-    #[allow(deprecated)]
-    pub mod generated;
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod native;
 
-    #[cfg(not(target_arch = "wasm32"))]
-    pub mod native;
+#[cfg(feature = "runtime")]
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
 
-    #[cfg(target_arch = "wasm32")]
-    pub mod wasm;
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod native_debug;
 
-    #[cfg(not(target_arch = "wasm32"))]
-    pub mod native_debug;
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod store;
 
-    pub use truapi_core::TrUApiCore;
-    pub use host_core::{
-        ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, PairingHostRuntime,
-        ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
-    };
-    pub use host_logic::session::{
-        ExternalPairedSession, SsoSessionInfo, decode_persisted_session, encode_external_paired_session,
-    };
-    pub use host_logic::worker::{WorkerLedger, WorkerTransition};
-    #[cfg(not(target_arch = "wasm32"))]
-    pub use native_debug::{DebugSinkError, WsDebugSink};
-    pub use platform::{
-        CoreStorageKeyDescription, CoreStorageKeyDescriptionError, HostIdentity, PairingHostConfig,
-        PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform, ProductContext,
-        SigningHostConfig, describe_core_storage_key,
-    };
-    #[cfg(any(test, not(target_arch = "wasm32")))]
-    pub use runtime::StatementRenewalTarget;
-    pub use runtime::contacts::contact_handle;
-    pub use runtime::login_failure::reports_exhausted_period;
-    pub use runtime::product_manifest::{encode_cached_root_manifest, manifest_cache_key};
-    pub use runtime::statement_allowance;
-    pub use runtime::{
-        AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-        PairingProposal, PairingProposalMetadata, ResponderExit,
-    };
-    pub use runtime::{
-        LocalIdentity, LocalIdentityContext, NativeChatContact, NativeChatContactsSnapshot,
-        WalletAllowanceSnapshot,
-    };
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod durable;
 
-    #[cfg(not(target_arch = "wasm32"))]
-    pub use native::{
-        NativeRendererObserver, NativeRendererSubscription, WsBridgeEndpoint, WsBridgeStartError,
-    };
+#[cfg(feature = "runtime")]
+pub use truapi_core::TrUApiCore;
 
-    #[cfg(all(target_arch = "wasm32", feature = "wasm-signing-host"))]
-    pub use wasm::WasmSigningHostRuntime;
-    #[cfg(target_arch = "wasm32")]
-    pub use wasm::{
-        WasmPairingHostRuntime, WasmProductRuntime, WasmRendererSubscription,
-        derive_product_account_public_key, describe_core_storage_key_for_wasm,
-        has_trusted_remote_permissions_for_wasm, product_account_address, set_log_level,
-        wire_schema_hash,
-    };
-}
+#[cfg(feature = "runtime")]
+pub use host_core::{
+	ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, PairingHostRuntime,
+	ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
+};
+#[cfg(feature = "runtime")]
+pub use host_internal::bulletin::{preimage_cid, preimage_key};
+#[cfg(feature = "runtime")]
+pub use host_logic::session::{
+	ExternalPairedSession, SsoSessionInfo, decode_persisted_session, encode_external_paired_session,
+};
+#[cfg(feature = "runtime")]
+pub use host_logic::worker::{WorkerLedger, WorkerTransition};
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub use native::{
+	NativeRendererObserver, NativeRendererSubscription, WsBridgeEndpoint, WsBridgeStartError,
+};
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub use native_debug::{DebugSinkError, WsDebugSink};
+#[cfg(feature = "runtime")]
+pub use platform::{
+	CoreStorageKeyDescription, CoreStorageKeyDescriptionError, HostIdentity, PairingHostConfig,
+	PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform, ProductContext,
+	SigningHostConfig, describe_core_storage_key,
+};
+#[cfg(feature = "runtime")]
+pub use runtime::StatementRenewalTarget;
+#[cfg(feature = "runtime")]
+pub use runtime::contacts::contact_handle;
+#[cfg(feature = "runtime")]
+pub use runtime::login_failure::reports_exhausted_period;
+#[cfg(feature = "runtime")]
+pub use runtime::product_manifest::{encode_cached_root_manifest, manifest_cache_key};
+#[cfg(feature = "runtime")]
+pub use runtime::statement_allowance;
+#[cfg(feature = "runtime")]
+pub use runtime::{
+	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
+	PairingProposal, PairingProposalMetadata, ResponderExit,
+};
+#[cfg(feature = "runtime")]
+pub use runtime::{
+	LocalIdentity, LocalIdentityContext, NativeChatContact, NativeChatContactsSnapshot,
+	WalletAllowanceSnapshot,
+};
+#[cfg(feature = "runtime")]
+pub use unix_time::current_unix_millis;
+
+#[cfg(feature = "runtime")]
+#[cfg(all(target_arch = "wasm32", feature = "wasm-signing-host"))]
+pub use wasm::WasmSigningHostRuntime;
+#[cfg(feature = "runtime")]
+#[cfg(target_arch = "wasm32")]
+pub use wasm::{
+	WasmPairingHostRuntime, WasmProductRuntime, WasmRendererSubscription,
+	derive_product_account_public_key, describe_core_storage_key_for_wasm,
+	has_trusted_remote_permissions_for_wasm, product_account_address, set_log_level,
+	wire_schema_hash,
+};
 
 #[cfg(all(test, feature = "host-api"))]
 mod tests {

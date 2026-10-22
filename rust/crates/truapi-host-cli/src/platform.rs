@@ -6,33 +6,46 @@
 //! Auth-state transitions are published on a channel so the CLI can print the
 //! pairing deeplink and observe connection status.
 
-use std::collections::HashMap;
-use std::fs;
-use std::io::{IsTerminal, Write};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, Weak};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+	collections::HashMap,
+	fs,
+	io::{IsTerminal, Write},
+	path::{Path, PathBuf},
+	sync::{
+		Arc, Mutex, Weak,
+		atomic::{AtomicU32, Ordering},
+	},
+	time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use async_trait::async_trait;
 use futures::stream::{self, BoxStream};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::Mutex as AsyncMutex;
-use truapi::latest as api;
-use truapi::v01;
-use truapi_platform::{
-    AuthState, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus, Features,
-    HopProvider, JsonRpcConnection, LocaleHost, NativeChatFileExportRequest,
-    NativeChatFilePickRequest, NativeChatFilesHost, NativeChatPickedFile, Navigation,
-    Notifications, PermissionStatusHost, Permissions, PreimageHost, ProductStorage,
-    ProductStorageKey, SessionUiInfo, SignRawReview, ThemeHost, UserConfirmation,
-    UserConfirmationReview,
+use tokio::{
+	io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+	sync::Mutex as AsyncMutex,
+};
+use truapi::{
+	latest as api,
+	platform::{
+		AuthState, ChainProvider, CoreStorage, CoreStorageKey, CreateTransactionReview,
+		DevicePermissionStatus, Features, HopProvider, JsonRpcConnection, LocaleHost,
+		NativeChatFileExportRequest, NativeChatFilePickRequest, NativeChatFilesHost,
+		NativeChatPickedFile, Navigation, Notifications, PermissionDecision, PermissionStatusHost,
+		Permissions, PreimageHost, ProductContext, ProductOperations, ProductStorage,
+		ProductStorageKey, ProviderError, SessionUiInfo, SignPayloadReview, SignRawReview,
+		ThemeHost, UserConfirmation, UserConfirmationReview,
+	},
+	v01,
 };
 
-use crate::chain::CliChainProvider;
-use crate::terminal_ui::{ApprovalKind, SystemEvent, UiHandle};
+use crate::{
+	bulletin_lookup::{BitswapRpc, BulletinLookup},
+	chain::CliChainProvider,
+	chat_files::{self, ChatFiles},
+	terminal_ui::{ApprovalKind, SystemEvent, UiHandle},
+};
 
 static NEXT_STORAGE_TEMP_ID: AtomicU32 = AtomicU32::new(0);
 static NEXT_OPERATION_ID: AtomicU32 = AtomicU32::new(1);
@@ -40,19 +53,19 @@ static CORE_STORAGE_OBSERVERS: Mutex<Vec<CoreStorageObserver>> = Mutex::new(Vec:
 
 #[derive(Clone, PartialEq, Eq)]
 enum CoreStorageNamespace {
-    File(PathBuf),
-    Memory(usize),
+	File(PathBuf),
+	Memory(usize),
 }
 
 #[derive(Clone)]
 pub struct CoreStorageChange {
-    pub key: CoreStorageKey,
-    namespace: CoreStorageNamespace,
+	pub key: CoreStorageKey,
+	namespace: CoreStorageNamespace,
 }
 
 struct CoreStorageObserver {
-    platform: Weak<CliPlatform>,
-    sender: tokio::sync::mpsc::UnboundedSender<CoreStorageChange>,
+	platform: Weak<CliPlatform>,
+	sender: tokio::sync::mpsc::UnboundedSender<CoreStorageChange>,
 }
 
 /// How the host answers confirmation prompts (the web/iOS "sign?" modals).
@@ -101,115 +114,112 @@ impl CliStoragePaths {
 
 /// Headless-host platform shared by both roles.
 pub struct CliPlatform {
-    chain: CliChainProvider,
-    /// Chain roles this host serves, answered by `Features::supported_chains`.
-    chains: truapi_platform::HostChainSet,
-    product_storage: Mutex<HashMap<String, HashMap<String, Vec<u8>>>>,
-    core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
-    core_storage_gate: Mutex<()>,
-    /// Device-scoped core slots, kept outside the per-user namespaces that
-    /// [`Self::switch_pairing_user_storage`] swaps. Peers address this install
-    /// by the key held here, so a user switch must not regenerate it.
-    device_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
-    product_storage_dir: Mutex<Option<PathBuf>>,
-    core_storage_path: Mutex<Option<PathBuf>>,
-    device_storage_path: Option<PathBuf>,
-    state_dir: Mutex<Option<PathBuf>>,
-    pairing_scope: Option<PairingStorageScope>,
-    preimages: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
-    chat_files: ChatFiles,
-    next_notification_id: AtomicU32,
-    scheduled_notifications:
-        Arc<Mutex<HashMap<api::NotificationId, api::HostPushNotificationRequest>>>,
-    approval: Mutex<ApprovalPolicy>,
-    /// Consulted-approval transcript (`TRUAPI_APPROVALS_LOG`): one
-    /// `<approved|denied> <action>` line per decided confirmation.
-    approvals_log: Option<PathBuf>,
-    ui: Option<UiHandle>,
-    /// Serializes interactive CLI prompts so concurrent confirmations don't
-    /// interleave on stdin.
-    prompt_lock: AsyncMutex<()>,
+	chain: CliChainProvider,
+	/// Chain roles this host serves, answered by `Features::supported_chains`.
+	chains: truapi::platform::HostChainSet,
+	product_storage: Mutex<HashMap<String, HashMap<String, Vec<u8>>>>,
+	core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+	core_storage_gate: Mutex<()>,
+	/// Device-scoped core slots, kept outside the per-user namespaces that
+	/// [`Self::switch_pairing_user_storage`] swaps. Peers address this install
+	/// by the key held here, so a user switch must not regenerate it.
+	device_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
+	product_storage_dir: Mutex<Option<PathBuf>>,
+	core_storage_path: Mutex<Option<PathBuf>>,
+	device_storage_path: Option<PathBuf>,
+	state_dir: Mutex<Option<PathBuf>>,
+	pairing_scope: Option<PairingStorageScope>,
+	bulletin: Arc<BulletinLookup<BitswapRpc>>,
+	chat_files: ChatFiles,
+	next_notification_id: AtomicU32,
+	scheduled_notifications: Arc<Mutex<HashMap<u32, api::HostPushNotificationRequest>>>,
+	approval: Mutex<ApprovalPolicy>,
+	/// Consulted-approval transcript (`TRUAPI_APPROVALS_LOG`): one
+	/// `<approved|denied> <action>` line per decided confirmation.
+	approvals_log: Option<PathBuf>,
+	ui: Option<UiHandle>,
+	/// Serializes interactive CLI prompts so concurrent confirmations don't
+	/// interleave on stdin.
+	prompt_lock: AsyncMutex<()>,
 }
 
 impl CliPlatform {
-    /// The URL a genesis routes to, so a test can assert a routing override
-    /// rather than assume it.
-    #[cfg(test)]
-    pub(crate) fn routed_url(&self, genesis_hash: &[u8; 32]) -> &str {
-        let CliChainProvider::Rpc(rpc) = &self.chain else {
-            panic!("routing is only asserted on the RPC provider");
-        };
-        rpc.routed_url(genesis_hash)
-    }
+	/// The URL a genesis routes to, so a test can assert a routing override
+	/// rather than assume it.
+	#[cfg(test)]
+	pub fn routed_url(&self, genesis_hash: &[u8; 32]) -> &str {
+		let CliChainProvider::Rpc(rpc) = &self.chain else {
+			panic!("routing is only asserted on the RPC provider");
+		};
+		rpc.routed_url(genesis_hash)
+	}
 
-    /// Build a platform whose chain provider connects to the network's People
-    /// chain and whose optional state directory backs product/core storage.
-    pub fn new(
-        network: crate::network::NetworkConfig,
-        storage: Option<CliStoragePaths>,
-        approval: ApprovalPolicy,
-        ui: Option<UiHandle>,
-    ) -> Arc<Self> {
-        let (product_storage_dir, core_storage_path) = storage
-            .as_ref()
-            .map(|paths| {
-                if let Err(err) = fs::create_dir_all(&paths.state_dir) {
-                    tracing::warn!(
-                        path = %paths.state_dir.display(),
-                        %err,
-                        "could not create CLI storage dir"
-                    );
-                }
-                (
-                    Some(paths.product_storage_dir.clone()),
-                    Some(paths.state_dir.join("core-storage.json")),
-                )
-            })
-            .unwrap_or((None, None));
-        let product_storage = product_storage_dir
-            .as_deref()
-            .map(load_product_storage)
-            .unwrap_or_default();
-        // Anchored to the role-level bootstrap directory rather than the active
-        // user's, so switching users keeps this install's device identity.
-        let device_storage_path = storage.as_ref().map(|paths| {
-            let directory = paths
-                .pairing_scope
-                .as_ref()
-                .map(|scope| scope.bootstrap_dir.clone())
-                .unwrap_or_else(|| paths.state_dir.clone());
-            if let Err(err) = fs::create_dir_all(&directory) {
-                tracing::warn!(
-                    path = %directory.display(),
-                    %err,
-                    "could not create CLI device storage dir"
-                );
-            }
-            directory.join("device-storage.json")
-        });
+	/// Build a platform whose chain provider connects to the network's People
+	/// chain and whose optional state directory backs product/core storage.
+	pub fn new(
+		network: crate::network::NetworkConfig,
+		storage: Option<CliStoragePaths>,
+		approval: ApprovalPolicy,
+		ui: Option<UiHandle>,
+	) -> Arc<Self> {
+		let (product_storage_dir, core_storage_path) = storage
+			.as_ref()
+			.map(|paths| {
+				if let Err(err) = fs::create_dir_all(&paths.state_dir) {
+					tracing::warn!(
+						path = %paths.state_dir.display(),
+						%err,
+						"could not create CLI storage dir"
+					);
+				}
+				(
+					Some(paths.product_storage_dir.clone()),
+					Some(paths.state_dir.join("core-storage.json")),
+				)
+			})
+			.unwrap_or((None, None));
+		let product_storage =
+			product_storage_dir.as_deref().map(load_product_storage).unwrap_or_default();
+		// Anchored to the role-level bootstrap directory rather than the active
+		// user's, so switching users keeps this install's device identity.
+		let device_storage_path = storage.as_ref().map(|paths| {
+			let directory = paths
+				.pairing_scope
+				.as_ref()
+				.map(|scope| scope.bootstrap_dir.clone())
+				.unwrap_or_else(|| paths.state_dir.clone());
+			if let Err(err) = fs::create_dir_all(&directory) {
+				tracing::warn!(
+					path = %directory.display(),
+					%err,
+					"could not create CLI device storage dir"
+				);
+			}
+			directory.join("device-storage.json")
+		});
 
-        Arc::new(Self {
-            chain: CliChainProvider::new(network),
-            chains: network.host_chain_set(),
-            product_storage: Mutex::new(product_storage),
-            core_storage: Mutex::new(HashMap::new()),
-            core_storage_gate: Mutex::new(()),
-            device_storage: Mutex::new(HashMap::new()),
-            product_storage_dir: Mutex::new(product_storage_dir),
-            core_storage_path: Mutex::new(core_storage_path),
-            device_storage_path,
-            state_dir: Mutex::new(storage.as_ref().map(|paths| paths.state_dir.clone())),
-            pairing_scope: storage.and_then(|paths| paths.pairing_scope),
-            preimages: Mutex::new(HashMap::new()),
-            chat_files: ChatFiles::default(),
-            next_notification_id: AtomicU32::new(1),
-            scheduled_notifications: Arc::new(Mutex::new(HashMap::new())),
-            approval: Mutex::new(approval),
-            approvals_log: std::env::var_os("TRUAPI_APPROVALS_LOG").map(PathBuf::from),
-            ui,
-            prompt_lock: AsyncMutex::new(()),
-        })
-    }
+		Arc::new(Self {
+			chain: CliChainProvider::new(network),
+			chains: network.host_chain_set(),
+			product_storage: Mutex::new(product_storage),
+			core_storage: Mutex::new(HashMap::new()),
+			core_storage_gate: Mutex::new(()),
+			device_storage: Mutex::new(HashMap::new()),
+			product_storage_dir: Mutex::new(product_storage_dir),
+			core_storage_path: Mutex::new(core_storage_path),
+			device_storage_path,
+			state_dir: Mutex::new(storage.as_ref().map(|paths| paths.state_dir.clone())),
+			pairing_scope: storage.and_then(|paths| paths.pairing_scope),
+			bulletin: Arc::new(BulletinLookup::new(BitswapRpc::new(network.bulletin_ws))),
+			chat_files: ChatFiles::default(),
+			next_notification_id: AtomicU32::new(1),
+			scheduled_notifications: Arc::new(Mutex::new(HashMap::new())),
+			approval: Mutex::new(approval),
+			approvals_log: std::env::var_os("TRUAPI_APPROVALS_LOG").map(PathBuf::from),
+			ui,
+			prompt_lock: AsyncMutex::new(()),
+		})
+	}
 
 	/// Return the policy used by future confirmation requests.
 	pub fn approval_policy(&self) -> ApprovalPolicy {
@@ -228,7 +238,7 @@ impl CliPlatform {
 
 	fn persist_product_storage(
 		&self,
-		product_id: &ProductId,
+		product_id: &str,
 		values: &HashMap<String, Vec<u8>>,
 	) -> Result<(), String> {
 		let Some(directory) = self
@@ -247,128 +257,110 @@ impl CliPlatform {
 		matches!(key, CoreStorageKey::DeviceEncryptionKey)
 	}
 
-    /// Serialize the whole physical map, including disk completion, across
-    /// independent platforms/processes. No await can drop the lock mid-write.
-    fn with_core_storage<R>(
-        &self,
-        key: &CoreStorageKey,
-        notify_on_change: bool,
-        operation: impl FnOnce(&mut HashMap<Vec<u8>, Vec<u8>>) -> (R, bool),
-    ) -> Result<R, String> {
-        let (result, notification) = {
-            let _gate = self
-                .core_storage_gate
-                .lock()
-                .map_err(|error| error.to_string())?;
-            let path_guard = self
-                .core_storage_path
-                .lock()
-                .map_err(|error| error.to_string())?;
-            let (store, path) = if Self::is_device_scoped(key) {
-                (&self.device_storage, self.device_storage_path.as_deref())
-            } else {
-                (&self.core_storage, path_guard.as_deref())
-            };
-            let mut memory = store.lock().map_err(|error| error.to_string())?;
-            if let Some(path) = path {
-                let _file_lock = lock_core_storage_file(path)?;
-                let mut current = read_hex_key_map(path)?;
-                let (result, changed) = operation(&mut current);
-                let notification = if changed && notify_on_change {
-                    Some(self.storage_namespace(Some(path))?)
-                } else {
-                    None
-                };
-                if changed {
-                    save_hex_key_map(path, &current)?;
-                }
-                *memory = current;
-                (result, notification)
-            } else {
-                let (result, changed) = operation(&mut memory);
-                let notification = (changed && notify_on_change)
-                    .then_some(CoreStorageNamespace::Memory(self as *const Self as usize));
-                (result, notification)
-            }
-        };
-        // Commit and enqueue are synchronous and cannot be split by cancellation.
-        // The captured physical namespace survives a concurrent user switch, and
-        // every storage/file lock is released before touching the observer list.
-        if let Some(namespace) = notification {
-            self.publish_core_storage_change(CoreStorageChange {
-                key: key.clone(),
-                namespace,
-            });
-        }
-        Ok(result)
-    }
+	/// Serialize the whole physical map, including disk completion, across
+	/// independent platforms/processes. No await can drop the lock mid-write.
+	fn with_core_storage<R>(
+		&self,
+		key: &CoreStorageKey,
+		notify_on_change: bool,
+		operation: impl FnOnce(&mut HashMap<Vec<u8>, Vec<u8>>) -> (R, bool),
+	) -> Result<R, String> {
+		let (result, notification) = {
+			let _gate = self.core_storage_gate.lock().map_err(|error| error.to_string())?;
+			let path_guard = self.core_storage_path.lock().map_err(|error| error.to_string())?;
+			let (store, path) = if Self::is_device_scoped(key) {
+				(&self.device_storage, self.device_storage_path.as_deref())
+			} else {
+				(&self.core_storage, path_guard.as_deref())
+			};
+			let mut memory = store.lock().map_err(|error| error.to_string())?;
+			if let Some(path) = path {
+				let _file_lock = lock_core_storage_file(path)?;
+				let mut current = read_hex_key_map(path)?;
+				let (result, changed) = operation(&mut current);
+				let notification = if changed && notify_on_change {
+					Some(self.storage_namespace(Some(path))?)
+				} else {
+					None
+				};
+				if changed {
+					save_hex_key_map(path, &current)?;
+				}
+				*memory = current;
+				(result, notification)
+			} else {
+				let (result, changed) = operation(&mut memory);
+				let notification = (changed && notify_on_change)
+					.then_some(CoreStorageNamespace::Memory(self as *const Self as usize));
+				(result, notification)
+			}
+		};
+		// Commit and enqueue are synchronous and cannot be split by cancellation.
+		// The captured physical namespace survives a concurrent user switch, and
+		// every storage/file lock is released before touching the observer list.
+		if let Some(namespace) = notification {
+			self.publish_core_storage_change(CoreStorageChange { key: key.clone(), namespace });
+		}
+		Ok(result)
+	}
 
-    fn storage_namespace(&self, path: Option<&Path>) -> Result<CoreStorageNamespace, String> {
-        let Some(path) = path else {
-            return Ok(CoreStorageNamespace::Memory(self as *const Self as usize));
-        };
-        let parent = path
-            .parent()
-            .ok_or_else(|| "Core storage path has no parent".to_string())?;
-        let name = path
-            .file_name()
-            .ok_or_else(|| "Core storage path has no filename".to_string())?;
-        fs::canonicalize(parent)
-            .map(|parent| CoreStorageNamespace::File(parent.join(name)))
-            .map_err(|error| format!("resolve core storage namespace: {error}"))
-    }
+	fn storage_namespace(&self, path: Option<&Path>) -> Result<CoreStorageNamespace, String> {
+		let Some(path) = path else {
+			return Ok(CoreStorageNamespace::Memory(self as *const Self as usize));
+		};
+		let parent = path.parent().ok_or_else(|| "Core storage path has no parent".to_string())?;
+		let name = path
+			.file_name()
+			.ok_or_else(|| "Core storage path has no filename".to_string())?;
+		fs::canonicalize(parent)
+			.map(|parent| CoreStorageNamespace::File(parent.join(name)))
+			.map_err(|error| format!("resolve core storage namespace: {error}"))
+	}
 
-    fn core_storage_namespace(&self, key: &CoreStorageKey) -> Result<CoreStorageNamespace, String> {
-        if Self::is_device_scoped(key) {
-            return self.storage_namespace(self.device_storage_path.as_deref());
-        }
-        let path = self
-            .core_storage_path
-            .lock()
-            .map_err(|error| error.to_string())?;
-        self.storage_namespace(path.as_deref())
-    }
+	fn core_storage_namespace(&self, key: &CoreStorageKey) -> Result<CoreStorageNamespace, String> {
+		if Self::is_device_scoped(key) {
+			return self.storage_namespace(self.device_storage_path.as_deref());
+		}
+		let path = self.core_storage_path.lock().map_err(|error| error.to_string())?;
+		self.storage_namespace(path.as_deref())
+	}
 
-    pub fn matches_core_storage_change(&self, change: &CoreStorageChange) -> Result<bool, String> {
-        self.core_storage_namespace(&change.key)
-            .map(|namespace| namespace == change.namespace)
-    }
+	pub fn matches_core_storage_change(&self, change: &CoreStorageChange) -> Result<bool, String> {
+		self.core_storage_namespace(&change.key)
+			.map(|namespace| namespace == change.namespace)
+	}
 
-    fn publish_core_storage_change(&self, change: CoreStorageChange) {
-        CORE_STORAGE_OBSERVERS
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .retain(|observer| {
-                let Some(platform) = observer.platform.upgrade() else {
-                    return false;
-                };
-                if observer.sender.is_closed() {
-                    return false;
-                }
-                // Namespace failures are delivered too: the deferred consumer reports
-                // them and refreshes fail-closed, rather than losing an invalidation.
-                if platform.matches_core_storage_change(&change) != Ok(false) {
-                    return observer.sender.send(change.clone()).is_ok();
-                }
-                true
-            });
-    }
+	fn publish_core_storage_change(&self, change: CoreStorageChange) {
+		CORE_STORAGE_OBSERVERS.lock().unwrap_or_else(|error| error.into_inner()).retain(
+			|observer| {
+				let Some(platform) = observer.platform.upgrade() else {
+					return false;
+				};
+				if observer.sender.is_closed() {
+					return false;
+				}
+				// Namespace failures are delivered too: the deferred consumer reports
+				// them and refreshes fail-closed, rather than losing an invalidation.
+				if platform.matches_core_storage_change(&change) != Ok(false) {
+					return observer.sender.send(change.clone()).is_ok();
+				}
+				true
+			},
+		);
+	}
 
-    /// Reliable host-private invalidations shared by every live platform in the
-    /// same physical namespace. Raw writes and unsuccessful CAS never emit.
-    pub fn subscribe_core_storage_changes(
-        self: &Arc<Self>,
-    ) -> tokio::sync::mpsc::UnboundedReceiver<CoreStorageChange> {
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-        CORE_STORAGE_OBSERVERS
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .push(CoreStorageObserver {
-                platform: Arc::downgrade(self),
-                sender,
-            });
-        receiver
-    }
+	/// Reliable host-private invalidations shared by every live platform in the
+	/// same physical namespace. Raw writes and unsuccessful CAS never emit.
+	pub fn subscribe_core_storage_changes(
+		self: &Arc<Self>,
+	) -> tokio::sync::mpsc::UnboundedReceiver<CoreStorageChange> {
+		let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+		CORE_STORAGE_OBSERVERS
+			.lock()
+			.unwrap_or_else(|error| error.into_inner())
+			.push(CoreStorageObserver { platform: Arc::downgrade(self), sender });
+		receiver
+	}
 
 	/// Current identity-owned state directory (or the pairing bootstrap before
 	/// a user has connected).
@@ -376,40 +368,31 @@ impl CliPlatform {
 		self.state_dir.lock().expect("state path mutex poisoned").clone()
 	}
 
-    fn chat_file_scope(&self) -> Result<PathBuf, api::GenericError> {
-        self.state_dir()
-            .ok_or_else(|| chat_files::error("Durable Chat file storage is unavailable"))
-    }
+	fn chat_file_scope(&self) -> Result<PathBuf, api::GenericError> {
+		self.state_dir()
+			.ok_or_else(|| chat_files::error("Durable Chat file storage is unavailable"))
+	}
 
-    fn check_chat_file_scope(&self, scope: &Path) -> Result<(), api::GenericError> {
-        if self.state_dir().as_deref() != Some(scope) {
-            return Err(chat_files::error(
-                "Chat file session changed during terminal selection",
-            ));
-        }
-        Ok(())
-    }
+	fn check_chat_file_scope(&self, scope: &Path) -> Result<(), api::GenericError> {
+		if self.state_dir().as_deref() != Some(scope) {
+			return Err(chat_files::error("Chat file session changed during terminal selection"));
+		}
+		Ok(())
+	}
 
-    fn switch_pairing_user_storage(&self, user_id: &str) -> Result<(), String> {
-        let Some(scope) = &self.pairing_scope else {
-            return Ok(());
-        };
-        let _gate = self
-            .core_storage_gate
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let user_id = pairing_storage_name(user_id);
-        let user_id = user_id.as_ref();
-        let target_state = scope.network_dir.join(format!("{user_id}_pairing_host"));
-        let current_state = self
-            .state_dir
-            .lock()
-            .expect("state path mutex poisoned")
-            .clone();
-        if current_state.as_ref() == Some(&target_state) {
-            persist_current_pairing_user(&scope.bootstrap_dir, user_id)?;
-            return Ok(());
-        }
+	fn switch_pairing_user_storage(&self, user_id: &str) -> Result<(), String> {
+		let Some(scope) = &self.pairing_scope else {
+			return Ok(());
+		};
+		let _gate = self.core_storage_gate.lock().map_err(|error| error.to_string())?;
+		let user_id = pairing_storage_name(user_id);
+		let user_id = user_id.as_ref();
+		let target_state = scope.network_dir.join(format!("{user_id}_pairing_host"));
+		let current_state = self.state_dir.lock().expect("state path mutex poisoned").clone();
+		if current_state.as_ref() == Some(&target_state) {
+			persist_current_pairing_user(&scope.bootstrap_dir, user_id)?;
+			return Ok(());
+		}
 
 		fs::create_dir_all(&target_state)
 			.map_err(|error| format!("create {}: {error}", target_state.display()))?;
@@ -417,239 +400,208 @@ impl CliPlatform {
 		let target_core_path = target_state.join("core-storage.json");
 		let migrating_bootstrap = current_state.as_ref() == Some(&scope.bootstrap_dir);
 
-        // A fresh login writes these values before its username is known.
-        // Carry only that pairing bootstrap across namespaces; permissions,
-        // allowances, and product KV remain isolated to their previous user.
-        let transient_keys = [
-            CoreStorageKey::AuthSession,
-            CoreStorageKey::PairingDeviceIdentity,
-            CoreStorageKey::LastProcessedPairingStatement,
-        ]
-        .map(|key| Self::core_key(&key));
-        let carried = {
-            // Keep the same path -> storage lock order used by persistence so
-            // an auth transition cannot deadlock with a concurrent core write.
-            let current_path = self
-                .core_storage_path
-                .lock()
-                .expect("core storage path mutex poisoned");
-            let mut current = self
-                .core_storage
-                .lock()
-                .expect("core storage mutex poisoned");
-            let _file_lock = current_path
-                .as_deref()
-                .map(lock_core_storage_file)
-                .transpose()?;
-            if let Some(path) = current_path.as_deref() {
-                *current = read_hex_key_map(path)?;
-            }
-            if migrating_bootstrap {
-                current.drain().collect::<Vec<_>>()
-            } else {
-                let carried = transient_keys
-                    .iter()
-                    .filter_map(|key| current.remove(key).map(|value| (key.clone(), value)))
-                    .collect::<Vec<_>>();
-                if let Some(path) = current_path.as_deref() {
-                    save_hex_key_map(path, &current)?;
-                }
-                carried
-            }
-        };
+		// A fresh login writes these values before its username is known.
+		// Carry only that pairing bootstrap across namespaces; permissions,
+		// allowances, and product KV remain isolated to their previous user.
+		let transient_keys = [
+			CoreStorageKey::AuthSession,
+			CoreStorageKey::PairingDeviceIdentity,
+			CoreStorageKey::LastProcessedPairingStatement,
+		]
+		.map(|key| Self::core_key(&key));
+		let carried = {
+			// Keep the same path -> storage lock order used by persistence so
+			// an auth transition cannot deadlock with a concurrent core write.
+			let current_path =
+				self.core_storage_path.lock().expect("core storage path mutex poisoned");
+			let mut current = self.core_storage.lock().expect("core storage mutex poisoned");
+			let _file_lock = current_path.as_deref().map(lock_core_storage_file).transpose()?;
+			if let Some(path) = current_path.as_deref() {
+				*current = read_hex_key_map(path)?;
+			}
+			if migrating_bootstrap {
+				current.drain().collect::<Vec<_>>()
+			} else {
+				let carried = transient_keys
+					.iter()
+					.filter_map(|key| current.remove(key).map(|value| (key.clone(), value)))
+					.collect::<Vec<_>>();
+				if let Some(path) = current_path.as_deref() {
+					save_hex_key_map(path, &current)?;
+				}
+				carried
+			}
+		};
 
-        let _target_lock = lock_core_storage_file(&target_core_path)?;
-        let mut target_core = read_hex_key_map(&target_core_path)?;
-        target_core.extend(carried);
-        save_hex_key_map(&target_core_path, &target_core)?;
-        let mut target_products = load_product_storage(&target_product_dir);
-        if migrating_bootstrap {
-            target_products.extend(
-                self.product_storage
-                    .lock()
-                    .expect("product storage mutex poisoned")
-                    .clone(),
-            );
-            for (product_id, values) in &target_products {
-                save_product_storage(&target_product_dir, product_id, values)?;
-            }
-        }
-        {
-            let mut core_storage_path = self
-                .core_storage_path
-                .lock()
-                .expect("core storage path mutex poisoned");
-            let mut core_storage = self
-                .core_storage
-                .lock()
-                .expect("core storage mutex poisoned");
-            *core_storage = target_core;
-            *core_storage_path = Some(target_core_path);
-        }
-        *self
-            .product_storage
-            .lock()
-            .expect("product storage mutex poisoned") = target_products;
-        *self
-            .product_storage_dir
-            .lock()
-            .expect("product storage path mutex poisoned") = Some(target_product_dir);
-        *self.state_dir.lock().expect("state path mutex poisoned") = Some(target_state);
-        persist_current_pairing_user(&scope.bootstrap_dir, user_id)
-    }
+		let _target_lock = lock_core_storage_file(&target_core_path)?;
+		let mut target_core = read_hex_key_map(&target_core_path)?;
+		target_core.extend(carried);
+		save_hex_key_map(&target_core_path, &target_core)?;
+		let mut target_products = load_product_storage(&target_product_dir);
+		if migrating_bootstrap {
+			target_products.extend(
+				self.product_storage.lock().expect("product storage mutex poisoned").clone(),
+			);
+			for (product_id, values) in &target_products {
+				save_product_storage(&target_product_dir, product_id, values)?;
+			}
+		}
+		{
+			let mut core_storage_path =
+				self.core_storage_path.lock().expect("core storage path mutex poisoned");
+			let mut core_storage = self.core_storage.lock().expect("core storage mutex poisoned");
+			*core_storage = target_core;
+			*core_storage_path = Some(target_core_path);
+		}
+		*self.product_storage.lock().expect("product storage mutex poisoned") = target_products;
+		*self.product_storage_dir.lock().expect("product storage path mutex poisoned") =
+			Some(target_product_dir);
+		*self.state_dir.lock().expect("state path mutex poisoned") = Some(target_state);
+		persist_current_pairing_user(&scope.bootstrap_dir, user_id)
+	}
 
-    pub async fn decide(&self, action: &str, detail: String) -> bool {
-        self.decide_with(action, detail, ApprovalKind::Action).await != PermissionDecision::Deny
-    }
+	pub async fn decide(&self, action: &str, detail: String) -> bool {
+		self.decide_with(action, detail, ApprovalKind::Action).await != PermissionDecision::Deny
+	}
 
-    async fn decide_with(
-        &self,
-        action: &str,
-        detail: String,
-        kind: ApprovalKind,
-    ) -> PermissionDecision {
-        self.decide_with_policy(action, detail, kind, self.approval_policy())
-            .await
-    }
+	async fn decide_with(
+		&self,
+		action: &str,
+		detail: String,
+		kind: ApprovalKind,
+	) -> PermissionDecision {
+		self.decide_with_policy(action, detail, kind, self.approval_policy()).await
+	}
 
-    async fn decide_with_policy(
-        &self,
-        action: &str,
-        detail: String,
-        policy: ApprovalPolicy,
-    ) -> bool {
-        let approved = match policy {
-            ApprovalPolicy::AutoAccept => {
-                if let Some(ui) = &self.ui {
-                    ui.success(format!("Approved {action} automatically"), Some(detail));
-                } else {
-                    crate::terminal_ui::output_success(
-                        format!("Approved {action} automatically"),
-                        Some(detail),
-                    );
-                }
-                true
-            }
-            ApprovalPolicy::Prompt => {
-                let _guard = self.prompt_lock.lock().await;
-                if let Some(ui) = &self.ui {
-                    ui.confirm(action, detail).await
-                } else {
-                    prompt_yes_no(action, &detail).await
-                }
-            }
-        };
-        if let Some(path) = &self.approvals_log {
-            record_approval(path, approved, action);
-        }
-        approved
-    }
+	/// Decide under an explicitly supplied policy, so a review that must never
+	/// be auto-accepted (a main-purse Chat payment) can force the prompt.
+	async fn decide_with_policy(
+		&self,
+		action: &str,
+		detail: String,
+		kind: ApprovalKind,
+		policy: ApprovalPolicy,
+	) -> PermissionDecision {
+		let decision = match policy {
+			ApprovalPolicy::AutoAccept => {
+				if let Some(ui) = &self.ui {
+					ui.success(format!("Approved {action} automatically"), Some(detail));
+				} else {
+					crate::terminal_ui::output_success(
+						format!("Approved {action} automatically"),
+						Some(detail),
+					);
+				}
+				PermissionDecision::AllowAlways
+			},
+			ApprovalPolicy::Prompt => {
+				let _guard = self.prompt_lock.lock().await;
+				if let Some(ui) = &self.ui {
+					ui.decide(action, detail, kind).await
+				} else {
+					prompt_decision(action, &detail, kind).await
+				}
+			},
+		};
+		if let Some(path) = &self.approvals_log {
+			record_approval(path, decision != PermissionDecision::Deny, action);
+		}
+		decision
+	}
 }
 
 #[async_trait]
 impl NativeChatFilesHost for CliPlatform {
-    async fn pick_chat_files(
-        &self,
-        request: NativeChatFilePickRequest,
-    ) -> Result<Vec<NativeChatPickedFile>, api::GenericError> {
-        if request.max_files == 0 {
-            return Err(chat_files::error(
-                "Chat file selection requires a positive file limit",
-            ));
-        }
-        let root = self.chat_file_scope()?;
-        let ui = self.ui.as_ref().ok_or_else(|| {
-            chat_files::error("Chat file selection requires the interactive terminal UI")
-        })?;
-        // Never use auto-accept or a second stdin reader to choose local paths.
-        let _guard = self.prompt_lock.lock().await;
-        let detail = format!(
-            "Product {:?} requests attachments for {:?}. Select at most {} file(s).",
-            request.product_id,
-            request
-                .peer_username
-                .as_deref()
-                .unwrap_or("unnamed Chat peer"),
-            request.max_files,
-        );
-        let paths = ui
-            .chat_file_paths(detail, request.max_files, false)
-            .await
-            .map_err(|_| chat_files::error("Chat file terminal UI is unavailable"))?;
-        let Some(paths) = paths else {
-            return Ok(Vec::new());
-        };
-        self.check_chat_file_scope(&root)?;
-        ChatFiles::import(root, paths).await
-    }
+	async fn pick_chat_files(
+		&self,
+		request: NativeChatFilePickRequest,
+	) -> Result<Vec<NativeChatPickedFile>, api::GenericError> {
+		if request.max_files == 0 {
+			return Err(chat_files::error("Chat file selection requires a positive file limit"));
+		}
+		let root = self.chat_file_scope()?;
+		let ui = self.ui.as_ref().ok_or_else(|| {
+			chat_files::error("Chat file selection requires the interactive terminal UI")
+		})?;
+		// Never use auto-accept or a second stdin reader to choose local paths.
+		let _guard = self.prompt_lock.lock().await;
+		let detail = format!(
+			"Product {:?} requests attachments for {:?}. Select at most {} file(s).",
+			request.product_id,
+			request.peer_username.as_deref().unwrap_or("unnamed Chat peer"),
+			request.max_files,
+		);
+		let paths = ui
+			.chat_file_paths(detail, request.max_files, false)
+			.await
+			.map_err(|_| chat_files::error("Chat file terminal UI is unavailable"))?;
+		let Some(paths) = paths else {
+			return Ok(Vec::new());
+		};
+		self.check_chat_file_scope(&root)?;
+		ChatFiles::import(root, paths).await
+	}
 
-    async fn read_chat_file(
-        &self,
-        source_id: String,
-        offset: u64,
-        length: u32,
-    ) -> Result<Vec<u8>, api::GenericError> {
-        ChatFiles::read(self.chat_file_scope()?, source_id, offset, length).await
-    }
+	async fn read_chat_file(
+		&self,
+		source_id: String,
+		offset: u64,
+		length: u32,
+	) -> Result<Vec<u8>, api::GenericError> {
+		ChatFiles::read(self.chat_file_scope()?, source_id, offset, length).await
+	}
 
-    async fn release_chat_file(&self, source_id: String) -> Result<(), api::GenericError> {
-        ChatFiles::release(self.chat_file_scope()?, source_id).await
-    }
+	async fn release_chat_file(&self, source_id: String) -> Result<(), api::GenericError> {
+		ChatFiles::release(self.chat_file_scope()?, source_id).await
+	}
 
-    async fn begin_chat_file_export(
-        &self,
-        request: NativeChatFileExportRequest,
-    ) -> Result<Option<String>, api::GenericError> {
-        let root = self.chat_file_scope()?;
-        let ui = self.ui.as_ref().ok_or_else(|| {
-            chat_files::error("Chat file export requires the interactive terminal UI")
-        })?;
-        let _guard = self.prompt_lock.lock().await;
-        let detail = format!(
-            "Product {:?} requests export of a {}-byte attachment from {:?}.",
-            request.product_id,
-            request.metadata.size_bytes,
-            request
-                .peer_username
-                .as_deref()
-                .unwrap_or("unnamed Chat peer"),
-        );
-        let paths = ui
-            .chat_file_paths(detail, 1, true)
-            .await
-            .map_err(|_| chat_files::error("Chat file terminal UI is unavailable"))?;
-        let Some(destination) = paths.and_then(|paths| paths.into_iter().next()) else {
-            return Ok(None);
-        };
-        self.check_chat_file_scope(&root)?;
-        self.chat_files
-            .begin_export(root, destination, request.metadata.size_bytes)
-            .await
-            .map(Some)
-    }
+	async fn begin_chat_file_export(
+		&self,
+		request: NativeChatFileExportRequest,
+	) -> Result<Option<String>, api::GenericError> {
+		let root = self.chat_file_scope()?;
+		let ui = self.ui.as_ref().ok_or_else(|| {
+			chat_files::error("Chat file export requires the interactive terminal UI")
+		})?;
+		let _guard = self.prompt_lock.lock().await;
+		let detail = format!(
+			"Product {:?} requests export of a {}-byte attachment from {:?}.",
+			request.product_id,
+			request.metadata.size_bytes,
+			request.peer_username.as_deref().unwrap_or("unnamed Chat peer"),
+		);
+		let paths = ui
+			.chat_file_paths(detail, 1, true)
+			.await
+			.map_err(|_| chat_files::error("Chat file terminal UI is unavailable"))?;
+		let Some(destination) = paths.and_then(|paths| paths.into_iter().next()) else {
+			return Ok(None);
+		};
+		self.check_chat_file_scope(&root)?;
+		self.chat_files
+			.begin_export(root, destination, request.metadata.size_bytes)
+			.await
+			.map(Some)
+	}
 
-    async fn write_chat_file_export(
-        &self,
-        export_id: String,
-        offset: u64,
-        data: Vec<u8>,
-    ) -> Result<(), api::GenericError> {
-        self.chat_files
-            .write_export(self.chat_file_scope()?, export_id, offset, data)
-            .await
-    }
+	async fn write_chat_file_export(
+		&self,
+		export_id: String,
+		offset: u64,
+		data: Vec<u8>,
+	) -> Result<(), api::GenericError> {
+		self.chat_files
+			.write_export(self.chat_file_scope()?, export_id, offset, data)
+			.await
+	}
 
-    async fn finish_chat_file_export(&self, export_id: String) -> Result<(), api::GenericError> {
-        self.chat_files
-            .finish_export(self.chat_file_scope()?, export_id)
-            .await
-    }
+	async fn finish_chat_file_export(&self, export_id: String) -> Result<(), api::GenericError> {
+		self.chat_files.finish_export(self.chat_file_scope()?, export_id).await
+	}
 
-    async fn cancel_chat_file_export(&self, export_id: String) -> Result<(), api::GenericError> {
-        self.chat_files
-            .cancel_export(self.chat_file_scope()?, export_id)
-            .await
-    }
+	async fn cancel_chat_file_export(&self, export_id: String) -> Result<(), api::GenericError> {
+		self.chat_files.cancel_export(self.chat_file_scope()?, export_id).await
+	}
 }
 
 /// Append one `<approved|denied> <action>` line to the approvals transcript.
@@ -717,7 +669,7 @@ impl ProductStorage for CliPlatform {
 		let scoped = ProductStorageKey::decode(&key)
 			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })?;
 		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
-		let values = storage.entry(scoped.product_id().clone()).or_default();
+		let values = storage.entry(scoped.product_id().to_string()).or_default();
 		values.insert(scoped.key().to_string(), value);
 		self.persist_product_storage(scoped.product_id(), values)
 			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })
@@ -727,7 +679,7 @@ impl ProductStorage for CliPlatform {
 		let scoped = ProductStorageKey::decode(&key)
 			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })?;
 		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
-		let values = storage.entry(scoped.product_id().clone()).or_default();
+		let values = storage.entry(scoped.product_id().to_string()).or_default();
 		values.remove(scoped.key());
 		self.persist_product_storage(scoped.product_id(), values)
 			.map_err(|reason| v01::HostLocalStorageReadError::Unknown { reason })
@@ -776,62 +728,62 @@ impl ProductOperations for CliPlatform {
 
 #[async_trait]
 impl CoreStorage for CliPlatform {
-    async fn read_core_storage(
-        &self,
-        key: CoreStorageKey,
-    ) -> Result<Option<Vec<u8>>, api::GenericError> {
-        self.with_core_storage(&key, false, |storage| {
-            (storage.get(&Self::core_key(&key)).cloned(), false)
-        })
-        .map_err(|reason| api::GenericError { reason })
-    }
+	async fn read_core_storage(
+		&self,
+		key: CoreStorageKey,
+	) -> Result<Option<Vec<u8>>, api::GenericError> {
+		self.with_core_storage(&key, false, |storage| {
+			(storage.get(&Self::core_key(&key)).cloned(), false)
+		})
+		.map_err(|reason| api::GenericError { reason })
+	}
 
-    async fn write_core_storage(
-        &self,
-        key: CoreStorageKey,
-        value: Vec<u8>,
-    ) -> Result<(), api::GenericError> {
-        self.with_core_storage(&key, false, |storage| {
-            storage.insert(Self::core_key(&key), value);
-            ((), true)
-        })
-        .map_err(|reason| api::GenericError { reason })
-    }
+	async fn write_core_storage(
+		&self,
+		key: CoreStorageKey,
+		value: Vec<u8>,
+	) -> Result<(), api::GenericError> {
+		self.with_core_storage(&key, false, |storage| {
+			storage.insert(Self::core_key(&key), value);
+			((), true)
+		})
+		.map_err(|reason| api::GenericError { reason })
+	}
 
-    async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), api::GenericError> {
-        self.with_core_storage(&key, false, |storage| {
-            let changed = storage.remove(&Self::core_key(&key)).is_some();
-            ((), changed)
-        })
-        .map_err(|reason| api::GenericError { reason })
-    }
+	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), api::GenericError> {
+		self.with_core_storage(&key, false, |storage| {
+			let changed = storage.remove(&Self::core_key(&key)).is_some();
+			((), changed)
+		})
+		.map_err(|reason| api::GenericError { reason })
+	}
 
-    async fn compare_exchange_core_storage(
-        &self,
-        key: CoreStorageKey,
-        expected: Option<Vec<u8>>,
-        replacement: Vec<u8>,
-        notify_on_success: bool,
-    ) -> Result<bool, api::GenericError> {
-        self.with_core_storage(&key, notify_on_success, |storage| {
-            let key = Self::core_key(&key);
-            if storage.get(&key) != expected.as_ref() {
-                return (false, false);
-            }
-            storage.insert(key, replacement);
-            (true, true)
-        })
-        .map_err(|reason| api::GenericError { reason })
-    }
+	async fn compare_exchange_core_storage(
+		&self,
+		key: CoreStorageKey,
+		expected: Option<Vec<u8>>,
+		replacement: Vec<u8>,
+		notify_on_success: bool,
+	) -> Result<bool, api::GenericError> {
+		self.with_core_storage(&key, notify_on_success, |storage| {
+			let key = Self::core_key(&key);
+			if storage.get(&key) != expected.as_ref() {
+				return (false, false);
+			}
+			storage.insert(key, replacement);
+			(true, true)
+		})
+		.map_err(|reason| api::GenericError { reason })
+	}
 
-    fn core_storage_changed(&self, key: CoreStorageKey) {
-        match self.core_storage_namespace(&key) {
-            Ok(namespace) => self.publish_core_storage_change(CoreStorageChange { key, namespace }),
-            Err(reason) => {
-                tracing::warn!(%reason, "could not resolve core storage notification namespace")
-            }
-        }
-    }
+	fn core_storage_changed(&self, key: CoreStorageKey) {
+		match self.core_storage_namespace(&key) {
+			Ok(namespace) => self.publish_core_storage_change(CoreStorageChange { key, namespace }),
+			Err(reason) => {
+				tracing::warn!(%reason, "could not resolve core storage notification namespace")
+			},
+		}
+	}
 }
 
 #[async_trait]
@@ -846,58 +798,28 @@ impl ChainProvider for CliPlatform {
 
 #[async_trait]
 impl HopProvider for CliPlatform {
-    async fn allowed_hop_endpoints(
-        &self,
-        bulletin_genesis_hash: [u8; 32],
-    ) -> Result<Vec<String>, api::GenericError> {
-        self.chain
-            .allowed_hop_endpoints(bulletin_genesis_hash)
-            .await
-    }
+	async fn allowed_hop_endpoints(
+		&self,
+		bulletin_genesis_hash: [u8; 32],
+	) -> Result<Vec<String>, api::GenericError> {
+		self.chain.allowed_hop_endpoints(bulletin_genesis_hash).await
+	}
 
-    async fn connect_hop(
-        &self,
-        bulletin_genesis_hash: [u8; 32],
-        endpoint: String,
-    ) -> Result<Box<dyn JsonRpcConnection>, api::GenericError> {
-        self.chain
-            .connect_hop(bulletin_genesis_hash, endpoint)
-            .await
-    }
+	async fn connect_hop(
+		&self,
+		bulletin_genesis_hash: [u8; 32],
+		endpoint: String,
+	) -> Result<Box<dyn JsonRpcConnection>, api::GenericError> {
+		self.chain.connect_hop(bulletin_genesis_hash, endpoint).await
+	}
 }
 
 #[async_trait]
 impl Navigation for CliPlatform {
-	/// The core has already validated the URL, applied the open-URL
-	/// permission and normalized product destinations to `polkadot://`, so
-	/// this host only reports the request: it has no browser to open.
 	async fn navigate_to(&self, url: String) -> Result<(), api::HostNavigateToError> {
 		tracing::debug!(%url, "navigate_to");
-		if let Some(path) = &self.navigations_log {
-			let at =
-				SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
-			record_navigation(path, &url, at)
-				.map_err(|reason| api::HostNavigateToError::Unknown { reason })?;
-		}
-		emit_notification_event(self.ui.as_ref(), SystemEvent::NavigationRequested { url });
 		Ok(())
 	}
-}
-
-/// Append one `{"url":…,"at":…}` JSON line to the navigation transcript.
-///
-/// Written before `navigate_to` resolves, so by the time the product's call
-/// returns the request is on disk. A write failure fails the call rather than
-/// silently dropping the record a test would assert on.
-fn record_navigation(path: &Path, url: &str, at: u64) -> Result<(), String> {
-	let line = serde_json::to_string(&serde_json::json!({ "url": url, "at": at }))
-		.map_err(|err| err.to_string())?;
-	fs::OpenOptions::new()
-		.create(true)
-		.append(true)
-		.open(path)
-		.and_then(|mut file| writeln!(file, "{line}"))
-		.map_err(|err| format!("could not record navigation in {}: {err}", path.display()))
 }
 
 #[async_trait]
@@ -1101,33 +1023,41 @@ fn storage_user_id(info: &SessionUiInfo) -> Option<&str> {
 
 #[async_trait]
 impl UserConfirmation for CliPlatform {
-    async fn confirm_permission(
-        &self,
-        review: UserConfirmationReview,
-    ) -> Result<PermissionDecision, api::GenericError> {
-        let (action, detail) = approval_summary(&review);
-        let policy = if matches!(review, UserConfirmationReview::PreimageSubmit(_)) {
-            ApprovalPolicy::Prompt
-        } else {
-            self.approval_policy()
-        };
-        Ok(self
-            .decide_with_policy(action, detail, ApprovalKind::Permission, policy)
-            .await)
-    }
+	async fn confirm_permission(
+		&self,
+		review: UserConfirmationReview,
+	) -> Result<PermissionDecision, api::GenericError> {
+		let (action, detail) = approval_summary(&review);
+		let policy = if matches!(review, UserConfirmationReview::PreimageSubmit(_)) {
+			ApprovalPolicy::Prompt
+		} else {
+			self.approval_policy()
+		};
+		Ok(self.decide_with_policy(action, detail, ApprovalKind::Permission, policy).await)
+	}
 
-    async fn confirm_user_action(
-        &self,
-        review: UserConfirmationReview,
-    ) -> Result<bool, api::GenericError> {
-        let (action, detail) = approval_summary(&review);
-        let policy = if matches!(review, UserConfirmationReview::MainPurseChatPayment(_)) {
-            ApprovalPolicy::Prompt
-        } else {
-            self.approval_policy()
-        };
-        Ok(self.decide_with_policy(action, detail, policy).await)
-    }
+	async fn confirm_user_action(
+		&self,
+		review: UserConfirmationReview,
+	) -> Result<bool, api::GenericError> {
+		let (action, detail) = approval_summary(&review);
+		let policy = if matches!(review, UserConfirmationReview::MainPurseChatPayment(_)) {
+			ApprovalPolicy::Prompt
+		} else {
+			self.approval_policy()
+		};
+		Ok(self.decide_with_policy(action, detail, ApprovalKind::Action, policy).await !=
+			PermissionDecision::Deny)
+	}
+}
+
+/// Names the product that asked, for the reviews that carry one. A relayed
+/// request carries no caller, and saying so is more use than naming nobody.
+fn asking(calling_product_id: Option<&str>) -> String {
+	match calling_product_id {
+		Some(product_id) => format!("Product {product_id}"),
+		None => "A paired host".to_string(),
+	}
 }
 
 fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
@@ -1139,7 +1069,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "sign payload",
             format!(
                 "{} requested a SCALE payload signature for the {} account.",
-                asking(calling_product_id.as_ref()),
+                asking(calling_product_id.as_deref()),
                 request.account.dot_ns_identifier,
             ),
         ),
@@ -1155,7 +1085,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "sign raw data",
             format!(
                 "{} requested a raw-data signature for the {} account. The payload is hidden here.",
-                asking(calling_product_id.as_ref()),
+                asking(calling_product_id.as_deref()),
                 request.account.dot_ns_identifier,
             ),
         ),
@@ -1183,7 +1113,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "sign statement proof",
             format!(
                 "{} requested a Statement Store proof signature for the {} account over a {}-byte payload.",
-                asking(review.calling_product_id.as_ref()),
+                asking(review.calling_product_id.as_deref()),
                 review.account.dot_ns_identifier,
                 review.payload.len()
             ),
@@ -1195,7 +1125,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "create transaction",
             format!(
                 "{} requested a transaction from the {} account.",
-                asking(calling_product_id.as_ref()),
+                asking(calling_product_id.as_deref()),
                 payload.signer.dot_ns_identifier,
             ),
         ),
@@ -1231,7 +1161,14 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
         ),
         UserConfirmationReview::PreimageSubmit(review) => (
             "submit preimage",
-            format!("A product requested submission of a {}-byte preimage.", review.size),
+            format!(
+                "Product {} requested a {}-byte upload for root 0x{} on Bulletin 0x{}. \
+                 Allow once, or explicitly allow automatic uploads of at most {} bytes, \
+                 {} times per rolling {} seconds. Revoke with --revoke-automatic-uploads {}.",
+                review.product_id, review.size, hex::encode(review.root_public_key),
+                hex::encode(review.genesis_hash), review.automatic_max_bytes,
+                review.automatic_max_uploads, review.automatic_window_seconds, review.product_id
+            ),
         ),
         UserConfirmationReview::AccountAccess(review) => (
             "access another product account",
@@ -1270,6 +1207,13 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
                 hex::encode(review.operation_id),
             ),
         ),
+        UserConfirmationReview::ProfileDisclosure(review) => (
+            "share your profile with your Chat contacts",
+            format!(
+                "Product {} requested permission to share a reference to your profile with every Chat contact. Contacts who receive it can read that profile.",
+                review.product_id
+            ),
+        ),
         UserConfirmationReview::Calling(review) => (
             "allow calling",
             format!(
@@ -1296,16 +1240,13 @@ impl ThemeHost for CliPlatform {
 }
 
 impl LocaleHost for CliPlatform {
-    fn subscribe_locale(
-        &self,
-    ) -> BoxStream<'static, Result<api::HostLocaleSubscribeItem, api::GenericError>> {
-        Box::pin(stream::once(async {
-            Ok(api::HostLocaleSubscribeItem {
-                language_tag: "en".to_string(),
-                time_zone: None,
-            })
-        }))
-    }
+	fn subscribe_locale(
+		&self,
+	) -> BoxStream<'static, Result<api::HostLocaleSubscribeItem, api::GenericError>> {
+		Box::pin(stream::once(async {
+			Ok(api::HostLocaleSubscribeItem { language_tag: "en".to_string(), time_zone: None })
+		}))
+	}
 }
 
 impl PreimageHost for CliPlatform {
@@ -1330,8 +1271,8 @@ struct ProductStorageDocument {
 	values: HashMap<String, String>,
 }
 
-fn load_product_storage(directory: &Path) -> HashMap<ProductId, HashMap<String, Vec<u8>>> {
-	let mut products = HashMap::<ProductId, HashMap<String, Vec<u8>>>::new();
+fn load_product_storage(directory: &Path) -> HashMap<String, HashMap<String, Vec<u8>>> {
+	let mut products = HashMap::<String, HashMap<String, Vec<u8>>>::new();
 
 	let entries = match fs::read_dir(directory) {
 		Ok(entries) => Some(entries),
@@ -1370,55 +1311,62 @@ fn load_product_storage(directory: &Path) -> HashMap<ProductId, HashMap<String, 
 	products
 }
 
-fn load_product_storage_file(path: &Path) -> Option<(ProductId, HashMap<String, Vec<u8>>)> {
-	let text = fs::read_to_string(path)
-		.inspect_err(|error| {
+fn load_product_storage_file(path: &Path) -> Option<(String, HashMap<String, Vec<u8>>)> {
+	let text = match fs::read_to_string(path) {
+		Ok(text) => text,
+		Err(error) => {
 			tracing::warn!(path = %path.display(), %error, "could not read product storage");
-		})
-		.ok()?;
-	let document = serde_json::from_str::<ProductStorageDocument>(&text)
-		.inspect_err(|error| {
+			return None;
+		},
+	};
+	let document = match serde_json::from_str::<ProductStorageDocument>(&text) {
+		Ok(document) if document.version == 1 => document,
+		Ok(document) => {
+			tracing::warn!(
+				path = %path.display(),
+				version = document.version,
+				"unsupported product storage version"
+			);
+			return None;
+		},
+		Err(error) => {
 			tracing::warn!(path = %path.display(), %error, "could not decode product storage");
-		})
-		.ok()?;
-	if document.version != 1 {
-		tracing::warn!(
-			path = %path.display(),
-			version = document.version,
-			"unsupported product storage version"
-		);
-		return None;
-	}
-	let normalized = document
-		.product_id
-		.parse::<ProductId>()
-		.inspect_err(|error| {
+			return None;
+		},
+	};
+	let normalized = match ProductStorageKey::new(&document.product_id, "") {
+		Ok(scoped) => scoped.product_id().to_string(),
+		Err(error) => {
 			tracing::warn!(
 				path = %path.display(),
 				%error,
 				"product storage contains an invalid product id"
 			);
-		})
-		.ok()?;
+			return None;
+		},
+	};
 	let values = document
 		.values
 		.into_iter()
 		.map(|(key, value)| hex::decode(value).map(|bytes| (key, bytes)))
-		.collect::<Result<HashMap<_, _>, _>>()
-		.inspect_err(|error| {
+		.collect::<Result<HashMap<_, _>, _>>();
+	let values = match values {
+		Ok(values) => values,
+		Err(error) => {
 			tracing::warn!(
 				path = %path.display(),
 				%error,
 				"product storage contains an invalid value"
 			);
-		})
-		.ok()?;
+			return None;
+		},
+	};
 	Some((normalized, values))
 }
 
 fn save_product_storage(
 	directory: &Path,
-	product_id: &ProductId,
+	product_id: &str,
 	values: &HashMap<String, Vec<u8>>,
 ) -> Result<(), String> {
 	fs::create_dir_all(directory).map_err(|error| {
@@ -1433,9 +1381,8 @@ fn save_product_storage(
 	atomic_write(&product_storage_path(directory, product_id), text.as_bytes())
 }
 
-fn product_storage_path(directory: &Path, product_id: &ProductId) -> PathBuf {
+fn product_storage_path(directory: &Path, product_id: &str) -> PathBuf {
 	let mut slug = product_id
-		.as_str()
 		.chars()
 		.map(|character| {
 			if character.is_ascii_alphanumeric() || matches!(character, '.' | '-') {
@@ -1450,7 +1397,7 @@ fn product_storage_path(directory: &Path, product_id: &ProductId) -> PathBuf {
 	if slug.is_empty() {
 		slug.push_str("product");
 	}
-	let digest = Sha256::digest(product_id.as_str().as_bytes());
+	let digest = Sha256::digest(product_id.as_bytes());
 	directory.join(format!("{slug}--{}.json", hex::encode(digest)))
 }
 
@@ -1477,11 +1424,9 @@ fn save_string_map(path: &Path, values: &HashMap<String, Vec<u8>>) -> Result<(),
 }
 
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
-	let parent = match path.parent() {
-		Some(parent) if parent.as_os_str().is_empty() => Path::new("."),
-		Some(parent) => parent,
-		None => return Err(format!("storage path has no parent: {}", path.display())),
-	};
+	let parent = path
+		.parent()
+		.ok_or_else(|| format!("storage path has no parent: {}", path.display()))?;
 	fs::create_dir_all(parent).map_err(|error| format!("create storage dir: {error}"))?;
 	let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("storage.json");
 	let temporary_id = NEXT_STORAGE_TEMP_ID.fetch_add(1, Ordering::Relaxed);
@@ -1508,37 +1453,33 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
 
 /// Lock a stable sidecar inode: atomic rename replaces the data inode itself.
 fn lock_core_storage_file(path: &Path) -> Result<fs::File, String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| "Core storage path has no parent".to_string())?;
-    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(path.with_extension("lock"))
-        .map_err(|error| error.to_string())?;
-    fs2::FileExt::lock_exclusive(&file).map_err(|error| error.to_string())?;
-    Ok(file)
+	let parent = path.parent().ok_or_else(|| "Core storage path has no parent".to_string())?;
+	fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+	let file = fs::OpenOptions::new()
+		.create(true)
+		.truncate(false)
+		.read(true)
+		.write(true)
+		.open(path.with_extension("lock"))
+		.map_err(|error| error.to_string())?;
+	fs2::FileExt::lock_exclusive(&file).map_err(|error| error.to_string())?;
+	Ok(file)
 }
 
 /// Missing is empty; malformed or unavailable policy storage is an error,
 /// never a reason to discard permission generations and accept stale consent.
 fn read_hex_key_map(path: &Path) -> Result<HashMap<Vec<u8>, Vec<u8>>, String> {
-    let values = match read_string_map(path) {
-        Ok(values) => values,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
-        Err(error) => return Err(format!("read {}: {error}", path.display())),
-    };
-    values
-        .into_iter()
-        .map(|(key, value)| {
-            hex::decode(key)
-                .map(|key| (key, value))
-                .map_err(|error| error.to_string())
-        })
-        .collect()
+	let values = match read_string_map(path) {
+		Ok(values) => values,
+		Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
+		Err(error) => return Err(format!("read {}: {error}", path.display())),
+	};
+	values
+		.into_iter()
+		.map(|(key, value)| {
+			hex::decode(key).map(|key| (key, value)).map_err(|error| error.to_string())
+		})
+		.collect()
 }
 
 /// Directory-safe name for one paired identity's storage namespace.
@@ -1691,65 +1632,6 @@ mod tests {
 		);
 	}
 
-	#[test]
-	fn record_navigation_appends_one_json_line_per_request() {
-		let dir = tempdir().expect("tempdir");
-		let path = dir.path().join("navigations.log");
-		record_navigation(&path, "polkadot://dim2.dot/recover", 1).expect("first");
-		record_navigation(&path, "https://example.com/a?b=\"c\"", 2).expect("second");
-		let text = std::fs::read_to_string(&path).expect("navigation transcript");
-		let lines: Vec<serde_json::Value> = text
-			.lines()
-			.map(|line| serde_json::from_str(line).expect("json line"))
-			.collect();
-		assert_eq!(
-			lines,
-			vec![
-				serde_json::json!({ "url": "polkadot://dim2.dot/recover", "at": 1 }),
-				serde_json::json!({ "url": "https://example.com/a?b=\"c\"", "at": 2 }),
-			]
-		);
-	}
-
-        assert_eq!(platform.approval_policy(), ApprovalPolicy::Prompt);
-        platform.set_approval_policy(ApprovalPolicy::AutoAccept);
-        assert_eq!(platform.approval_policy(), ApprovalPolicy::AutoAccept);
-        assert_eq!(
-            platform
-                .decide_with(
-                    "test action",
-                    "test detail".to_string(),
-                    ApprovalKind::Action,
-                )
-                .await,
-            PermissionDecision::AllowAlways,
-        );
-
-	#[tokio::test]
-	async fn navigate_to_records_the_url_it_was_handed() {
-		let dir = tempdir().expect("tempdir");
-		let path = dir.path().join("navigations.log");
-		let mut platform = CliPlatform::new(test_network(), None, ApprovalPolicy::Prompt, None);
-		Arc::get_mut(&mut platform).expect("sole owner").navigations_log = Some(path.clone());
-		platform
-			.navigate_to("polkadot://dim2.dot/recover".to_string())
-			.await
-			.expect("navigate_to");
-		let text = std::fs::read_to_string(&path).expect("navigation transcript");
-		let line: serde_json::Value = serde_json::from_str(text.trim_end()).expect("one json line");
-		assert_eq!(line["url"], "polkadot://dim2.dot/recover");
-		assert!(line["at"].as_u64().expect("unix ms") > 1_700_000_000_000);
-	}
-
-	#[tokio::test]
-	async fn navigate_to_without_a_transcript_still_succeeds() {
-		let platform = CliPlatform::new(test_network(), None, ApprovalPolicy::Prompt, None);
-		platform
-			.navigate_to("polkadot://dim2.dot".to_string())
-			.await
-			.expect("navigate_to");
-	}
-
 	#[tokio::test]
 	async fn approval_policy_changes_apply_to_future_confirmations() {
 		let platform = CliPlatform::new(test_network(), None, ApprovalPolicy::Prompt, None);
@@ -1757,7 +1639,12 @@ mod tests {
 		assert_eq!(platform.approval_policy(), ApprovalPolicy::Prompt);
 		platform.set_approval_policy(ApprovalPolicy::AutoAccept);
 		assert_eq!(platform.approval_policy(), ApprovalPolicy::AutoAccept);
-		assert!(platform.decide("test action", "test detail".to_string()).await);
+		assert_eq!(
+			platform
+				.decide_with("test action", "test detail".to_string(), ApprovalKind::Action,)
+				.await,
+			PermissionDecision::AllowAlways,
+		);
 
 		platform.set_approval_policy(ApprovalPolicy::Prompt);
 		assert_eq!(platform.approval_policy(), ApprovalPolicy::Prompt);
@@ -1849,17 +1736,29 @@ mod tests {
 		let alice_dir = platform.state_dir().expect("alice state dir");
 		assert!(alice_dir.ends_with("alice_pairing_host"));
 
-    /// Unreadable permission generations must never become an empty store or
-    /// be overwritten by an unrelated write, clear, or compare-exchange.
-    #[tokio::test]
-    async fn cli_platform_preserves_unreadable_core_storage() {
-        use truapi::platform::CoreStorage;
+		// Alice's product KV. `switch_pairing_user_storage` intentionally carries
+		// the transient pairing keys (AuthSession, PairingDeviceIdentity,
+		// LastProcessedPairingStatement) across namespaces, because the core
+		// writes a session before it knows the username. Product KV is the state
+		// the comment there promises stays with its own user, so that is what
+		// isolation is asserted on.
+		let alice_key =
+			ProductStorageKey::new("demo-product.dot", "secret").expect("product storage key");
+		platform
+			.write(alice_key.encode(), b"alice-only".to_vec())
+			.await
+			.expect("alice product write");
 
 		// No lite username, so storage_user_id falls back to full_username.
 		platform.auth_state_changed(connect(None, Some("Tarik Gul")));
 
-        let original = r#"{"values":{"00":"cafebabe","01":"deadbeef","ff":"zzzz"}}"#;
-        std::fs::write(&core_path, original).expect("seed core storage");
+		let after = platform.state_dir().expect("state dir after");
+		assert_ne!(
+			after,
+			alice_dir,
+			"second identity is serving out of alice's storage at {}",
+			after.display()
+		);
 
 		// The isolation that matters: alice's product KV is not visible.
 		assert_eq!(
@@ -1869,241 +1768,117 @@ mod tests {
 		);
 	}
 
-        assert!(
-            platform
-                .read_core_storage(CoreStorageKey::AuthSession)
-                .await
-                .is_err()
-        );
-        assert!(
-            platform
-                .write_core_storage(CoreStorageKey::AuthSession, vec![0x42])
-                .await
-                .is_err()
-        );
-        assert!(
-            platform
-                .clear_core_storage(CoreStorageKey::AuthSession)
-                .await
-                .is_err()
-        );
-        assert!(
-            platform
-                .compare_exchange_core_storage(CoreStorageKey::AuthSession, None, vec![0x42], true,)
-                .await
-                .is_err()
-        );
-        assert_eq!(
-            std::fs::read_to_string(&core_path).expect("read original"),
-            original
-        );
-    }
+	/// Unreadable permission generations must never become an empty store or
+	/// be overwritten by an unrelated write, clear, or compare-exchange.
+	#[tokio::test]
+	async fn cli_platform_preserves_unreadable_core_storage() {
+		use truapi::platform::CoreStorage;
 
-    #[test]
-    fn independent_file_stores_compare_exchange_one_shared_slot() {
-        let dir = tempdir().expect("tempdir");
-        let platforms = [0, 1].map(|_| {
-            CliPlatform::new(
-                test_network(),
-                Some(CliStoragePaths::new(
-                    dir.path().join("state"),
-                    dir.path().join("products"),
-                )),
-                ApprovalPolicy::AutoAccept,
-                None,
-            )
-            .expect("read device key as bob"),
-            Some(vec![7; 32])
-        );
+		let dir = tempdir().expect("tempdir");
+		let state_dir = dir.path().join("state");
+		let product_dir = dir.path().join("products");
+		std::fs::create_dir_all(&state_dir).expect("state dir");
+		let core_path = state_dir.join("core-storage.json");
 
-        // A user-scoped slot stays isolated, so the routing is not simply
-        // making every slot global.
-        futures::executor::block_on(
-            platform.write_core_storage(CoreStorageKey::AutoSigningKeys, vec![1, 2, 3]),
-        )
-        .expect("write bob auto-signing keys");
-        platform
-            .switch_pairing_user_storage("alice.dot")
-            .expect("restore alice");
-        assert_eq!(
-            futures::executor::block_on(
-                platform.read_core_storage(CoreStorageKey::AutoSigningKeys)
-            )
-            .expect("read alice auto-signing keys"),
-            None
-        );
+		let original = r#"{"values":{"00":"cafebabe","01":"deadbeef","ff":"zzzz"}}"#;
+		std::fs::write(&core_path, original).expect("seed core storage");
 
-        // It also survives a fresh process reading the same directories.
-        let restarted = CliPlatform::new(
-            test_network(),
-            Some(CliStoragePaths::pairing(network_dir)),
-            ApprovalPolicy::AutoAccept,
-            None,
-        );
-        assert_eq!(
-            futures::executor::block_on(
-                restarted.read_core_storage(CoreStorageKey::DeviceEncryptionKey)
-            )
-            .expect("read device key after restart"),
-            Some(vec![7; 32])
-        );
-    }
+		let platform = CliPlatform::new(
+			test_network(),
+			Some(CliStoragePaths::new(state_dir, product_dir)),
+			ApprovalPolicy::AutoAccept,
+			None,
+		);
 
-    /// A pairing login writes product KV before its username is known, so the
-    /// bootstrap directory's products must follow the first resolved user
-    /// instead of being stranded outside every identity namespace.
-    #[test]
-    fn product_storage_written_before_the_username_carries_into_the_resolved_user() {
-        let temporary = tempdir().expect("create pairing storage root");
-        let network_dir = temporary.path().join("testnet");
-        let product_key =
-            ProductStorageKey::new("product.dot", "theme").expect("product storage key");
-        save_product_storage(
-            &network_dir.join("pairing-host/storage"),
-            "product.dot",
-            &HashMap::from([("theme".to_string(), b"dark".to_vec())]),
-        )
-        .expect("write bootstrap pairing product storage");
-        let platform = CliPlatform::new(
-            test_network(),
-            Some(CliStoragePaths::pairing(network_dir.clone())),
-            ApprovalPolicy::AutoAccept,
-            None,
-        );
+		assert!(platform.read_core_storage(CoreStorageKey::AuthSession).await.is_err());
+		assert!(
+			platform
+				.write_core_storage(CoreStorageKey::AuthSession, vec![0x42])
+				.await
+				.is_err()
+		);
+		assert!(platform.clear_core_storage(CoreStorageKey::AuthSession).await.is_err());
+		assert!(
+			platform
+				.compare_exchange_core_storage(CoreStorageKey::AuthSession, None, vec![0x42], true,)
+				.await
+				.is_err()
+		);
+		assert_eq!(std::fs::read_to_string(&core_path).expect("read original"), original);
+	}
 
-        platform
-            .switch_pairing_user_storage("alice.dot")
-            .expect("resolve the bootstrap storage owner");
-
-        assert_eq!(
-            futures::executor::block_on(platform.read(product_key.encode()))
-                .expect("read carried product value"),
-            Some(b"dark".to_vec())
-        );
-        // Persisted, not merely carried in memory: a restart must find it too.
-        assert_eq!(
-            load_product_storage(&network_dir.join("alice.dot_pairing_host/storage")),
-            HashMap::from([(
-                "product.dot".to_string(),
-                HashMap::from([("theme".to_string(), b"dark".to_vec())]),
-            )])
-        );
-    }
-
-    /// Both products by name, because a signature made with an account the
-    /// caller does not own is the thing the user has to be able to see.
-    #[test]
-    fn statement_proof_approval_names_both_products_without_dumping_payload() {
-        let review = UserConfirmationReview::StatementStoreProductSign(
-            truapi::platform::StatementStoreProductSignReview {
-                calling_product_id: Some("dim2next.paseo".to_string()),
-                account: api::ProductAccountId {
-                    dot_ns_identifier: "dim2.paseo".to_string(),
-                    derivation_index: api::DerivationIndex::Index(0),
-                },
-                payload: vec![0x42; 128],
-            },
-        );
-
-        let (action, detail) = approval_summary(&review);
-
-        assert_eq!(action, "sign statement proof");
-        assert_eq!(
-            detail,
-            "Product dim2next.paseo requested a Statement Store proof signature for the \
-             dim2.paseo account over a 128-byte payload."
-        );
-        assert!(!detail.contains("[66"));
-    }
-
-    #[test]
-    fn vrf_approval_names_both_products_without_dumping_transcript_values() {
-        let review = UserConfirmationReview::SignVrf(truapi::platform::SignVrfReview {
-            calling_product_id: "caller.dot".to_string(),
-            request: truapi::v01::HostAccountSignVrfRequest {
-                account: truapi::v01::ProductAccountId {
-                    dot_ns_identifier: "target.dot".to_string(),
-                    derivation_index: truapi::v01::DerivationIndex::Raw([7; 32]),
-                },
-                transcript_label: b"lottery".to_vec(),
-                items: vec![truapi::v01::VrfTranscriptItem {
-                    label: b"round".to_vec(),
-                    value: vec![0x42; 128],
-                }],
-            },
-        });
-        let mut changes = platforms
-            .each_ref()
-            .map(|platform| platform.subscribe_core_storage_changes());
-        let start = Arc::new(std::sync::Barrier::new(2));
-        let workers = platforms.each_ref().map(|platform| {
-            let platform = platform.clone();
-            let start = start.clone();
-            std::thread::spawn(move || {
-                start.wait();
-                futures::executor::block_on(platform.compare_exchange_core_storage(
-                    CoreStorageKey::AuthSession,
-                    None,
-                    vec![1],
-                    true,
-                ))
-                .expect("compare exchange")
-            })
-        });
-        let results = workers.map(|worker| worker.join().expect("storage thread"));
-        assert_eq!(results.into_iter().filter(|won| *won).count(), 1);
-        for receiver in &mut changes {
-            assert_eq!(
-                receiver.try_recv().unwrap().key,
-                CoreStorageKey::AuthSession
-            );
-        }
-        futures::executor::block_on(async {
-            platforms[0]
-                .write_core_storage(CoreStorageKey::AuthSession, Vec::new())
-                .await
-                .unwrap();
-            assert!(!platforms[1].compare_exchange_core_storage(
-                CoreStorageKey::AuthSession, None, vec![2], true,
-            ).await.unwrap());
-            assert!(
-                platforms[1]
-                    .compare_exchange_core_storage(
-                        CoreStorageKey::AuthSession,
-                        Some(Vec::new()),
-                        vec![3],
-                        false,
-                    )
-                    .await
-                    .unwrap()
-            );
-            assert_eq!(
-                platforms[0]
-                    .read_core_storage(CoreStorageKey::AuthSession)
-                    .await
-                    .unwrap(),
-                Some(vec![3]),
-            );
-            platforms[0]
-                .clear_core_storage(CoreStorageKey::AuthSession)
-                .await
-                .unwrap();
-            assert!(platforms[1].compare_exchange_core_storage(
-                CoreStorageKey::AuthSession, None, vec![4], true,
-            ).await.unwrap());
-            for receiver in &mut changes {
-                assert_eq!(
-                    receiver.try_recv().unwrap().key,
-                    CoreStorageKey::AuthSession
-                );
-            }
-            assert!(
-                changes
-                    .iter_mut()
-                    .all(|receiver| receiver.try_recv().is_err())
-            );
-        });
-    }
+	#[test]
+	fn independent_file_stores_compare_exchange_one_shared_slot() {
+		let dir = tempdir().expect("tempdir");
+		let platforms = [0, 1].map(|_| {
+			CliPlatform::new(
+				test_network(),
+				Some(CliStoragePaths::new(dir.path().join("state"), dir.path().join("products"))),
+				ApprovalPolicy::AutoAccept,
+				None,
+			)
+		});
+		let mut changes =
+			platforms.each_ref().map(|platform| platform.subscribe_core_storage_changes());
+		let start = Arc::new(std::sync::Barrier::new(2));
+		let workers = platforms.each_ref().map(|platform| {
+			let platform = platform.clone();
+			let start = start.clone();
+			std::thread::spawn(move || {
+				start.wait();
+				futures::executor::block_on(platform.compare_exchange_core_storage(
+					CoreStorageKey::AuthSession,
+					None,
+					vec![1],
+					true,
+				))
+				.expect("compare exchange")
+			})
+		});
+		let results = workers.map(|worker| worker.join().expect("storage thread"));
+		assert_eq!(results.into_iter().filter(|won| *won).count(), 1);
+		for receiver in &mut changes {
+			assert_eq!(receiver.try_recv().unwrap().key, CoreStorageKey::AuthSession);
+		}
+		futures::executor::block_on(async {
+			platforms[0]
+				.write_core_storage(CoreStorageKey::AuthSession, Vec::new())
+				.await
+				.unwrap();
+			assert!(
+				!platforms[1]
+					.compare_exchange_core_storage(CoreStorageKey::AuthSession, None, vec![2], true,)
+					.await
+					.unwrap()
+			);
+			assert!(
+				platforms[1]
+					.compare_exchange_core_storage(
+						CoreStorageKey::AuthSession,
+						Some(Vec::new()),
+						vec![3],
+						false,
+					)
+					.await
+					.unwrap()
+			);
+			assert_eq!(
+				platforms[0].read_core_storage(CoreStorageKey::AuthSession).await.unwrap(),
+				Some(vec![3]),
+			);
+			platforms[0].clear_core_storage(CoreStorageKey::AuthSession).await.unwrap();
+			assert!(
+				platforms[1]
+					.compare_exchange_core_storage(CoreStorageKey::AuthSession, None, vec![4], true,)
+					.await
+					.unwrap()
+			);
+			for receiver in &mut changes {
+				assert_eq!(receiver.try_recv().unwrap().key, CoreStorageKey::AuthSession);
+			}
+			assert!(changes.iter_mut().all(|receiver| receiver.try_recv().is_err()));
+		});
+	}
 
 	fn test_storage_paths(root: &Path, session: &str) -> CliStoragePaths {
 		CliStoragePaths::new(root.to_path_buf(), root.join("storage").join(session))
@@ -2136,7 +1911,8 @@ mod tests {
 			ApprovalPolicy::AutoAccept,
 			None,
 		);
-		let product_key = ProductStorageKey::new(ProductId::for_test("product.dot"), "theme");
+		let product_key =
+			ProductStorageKey::new("product.dot", "theme").expect("product storage key");
 
 		platform.switch_pairing_user_storage("alice.dot").expect("select alice");
 		futures::executor::block_on(platform.write(product_key.encode(), b"dark".to_vec()))
@@ -2231,10 +2007,11 @@ mod tests {
 	fn product_storage_written_before_the_username_carries_into_the_resolved_user() {
 		let temporary = tempdir().expect("create pairing storage root");
 		let network_dir = temporary.path().join("testnet");
-		let product_key = ProductStorageKey::new(ProductId::for_test("product.dot"), "theme");
+		let product_key =
+			ProductStorageKey::new("product.dot", "theme").expect("product storage key");
 		save_product_storage(
 			&network_dir.join("pairing-host/storage"),
-			&ProductId::for_test("product.dot"),
+			"product.dot",
 			&HashMap::from([("theme".to_string(), b"dark".to_vec())]),
 		)
 		.expect("write bootstrap pairing product storage");
@@ -2258,23 +2035,11 @@ mod tests {
 		assert_eq!(
 			load_product_storage(&network_dir.join("alice.dot_pairing_host/storage")),
 			HashMap::from([(
-				ProductId::for_test("product.dot"),
+				"product.dot".to_string(),
 				HashMap::from([("theme".to_string(), b"dark".to_vec())]),
 			)])
 		);
 	}
-
-    #[test]
-    fn approval_summaries_are_concise_and_do_not_dump_payloads() {
-        let review =
-            UserConfirmationReview::PreimageSubmit(truapi::platform::PreimageSubmitReview {
-                size: 4_096,
-            });
-        let (action, detail) = approval_summary(&review);
-        assert_eq!(action, "submit preimage");
-        assert_eq!(detail, "A product requested submission of a 4096-byte preimage.");
-        assert!(!detail.contains("["));
-    }
 
 	/// Both products by name, because a signature made with an account the
 	/// caller does not own is the thing the user has to be able to see.
@@ -2282,9 +2047,9 @@ mod tests {
 	fn statement_proof_approval_names_both_products_without_dumping_payload() {
 		let review = UserConfirmationReview::StatementStoreProductSign(
 			truapi::platform::StatementStoreProductSignReview {
-				calling_product_id: Some(ProductId::for_test("dim2next.paseo")),
+				calling_product_id: Some("dim2next.paseo".to_string()),
 				account: api::ProductAccountId {
-					dot_ns_identifier: ProductId::for_test("dim2.paseo"),
+					dot_ns_identifier: "dim2.paseo".parse().expect("valid product ID"),
 					derivation_index: api::DerivationIndex::Index(0),
 				},
 				payload: vec![0x42; 128],
@@ -2305,10 +2070,10 @@ mod tests {
 	#[test]
 	fn vrf_approval_names_both_products_without_dumping_transcript_values() {
 		let review = UserConfirmationReview::SignVrf(truapi::platform::SignVrfReview {
-			calling_product_id: ProductId::for_test("caller.dot"),
+			calling_product_id: "caller.dot".to_string(),
 			request: truapi::v01::HostAccountSignVrfRequest {
 				account: truapi::v01::ProductAccountId {
-					dot_ns_identifier: ProductId::for_test("target.dot"),
+					dot_ns_identifier: "target.dot".parse().expect("valid product ID"),
 					derivation_index: truapi::v01::DerivationIndex::Raw([7; 32]),
 				},
 				transcript_label: b"lottery".to_vec(),
@@ -2360,8 +2125,9 @@ mod tests {
 	#[test]
 	fn product_storage_uses_safe_per_product_files() {
 		let temporary = tempdir().expect("create product storage root");
-		let first = ProductStorageKey::new(ProductId::for_test("first.dot"), "theme");
-		let localhost = ProductStorageKey::new(ProductId::for_test("localhost:3000"), "theme");
+		let first = ProductStorageKey::new("first.dot", "theme").expect("first product key");
+		let localhost =
+			ProductStorageKey::new("localhost:3000", "theme").expect("localhost product key");
 		let platform = CliPlatform::new(
 			test_network(),
 			Some(test_storage_paths(temporary.path(), "test")),
@@ -2415,8 +2181,7 @@ mod tests {
 	#[test]
 	fn product_storage_is_isolated_by_session_then_product() {
 		let temporary = tempdir().expect("create session storage root");
-		let same_product = ProductId::for_test("same.dot");
-		let key = ProductStorageKey::new(same_product.clone(), "value");
+		let key = ProductStorageKey::new("same.dot", "value").expect("product key");
 		let first = CliPlatform::new(
 			test_network(),
 			Some(test_storage_paths(temporary.path(), "first")),
@@ -2436,9 +2201,9 @@ mod tests {
 		});
 
 		let first_path =
-			product_storage_path(&temporary.path().join("storage").join("first"), &same_product);
+			product_storage_path(&temporary.path().join("storage").join("first"), "same.dot");
 		let second_path =
-			product_storage_path(&temporary.path().join("storage").join("second"), &same_product);
+			product_storage_path(&temporary.path().join("storage").join("second"), "same.dot");
 		assert!(first_path.is_file());
 		assert!(second_path.is_file());
 		assert_ne!(

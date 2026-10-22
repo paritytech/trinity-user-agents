@@ -1,12 +1,12 @@
-//! Optional composition of the TrUAPI server and PolkaVM host runtime.
+//! Optional composition of the TrUAPI runtime and PolkaVM host runtime.
 //!
-//! The base [`truapi_server`] remains independent of PolkaVM. Native hosts that
+//! The base [`truapi`] crate remains independent of PolkaVM. Native hosts that
 //! need both surfaces link this crate, which pins one reviewed runtime revision.
 
 /// The pinned PolkaVM host runtime API.
 pub use polkavm_host_runtime;
-/// The PolkaVM-independent TrUAPI server API.
-pub use truapi_server;
+/// The PolkaVM-independent TrUAPI runtime API.
+pub use truapi;
 
 /// Version of this optional composition crate.
 pub const TRUAPI_POLKAVM_HOST_VERSION: &str = env!("CARGO_PKG_VERSION");

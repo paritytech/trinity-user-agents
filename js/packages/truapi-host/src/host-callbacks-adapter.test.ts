@@ -18,6 +18,7 @@ import {
 } from "@parity/truapi";
 import type {
   GenericError,
+  HostSignPayloadData,
   HostThemeSubscribeItem as HostThemeSubscribeItemValue,
   ThemeVariant,
 } from "@parity/truapi";
@@ -25,6 +26,7 @@ import type {
 import { createWasmRawCallbacks } from "./generated/host-callbacks-adapter.js";
 import { profileHostAdapter } from "./adapter-support.js";
 import {
+  AuthState,
   CoreStorageKey,
   NativeChatFilePickRequest,
   NativeChatFileExportRequest,
@@ -48,6 +50,34 @@ import { createNotificationReceiverCallbacks } from "./runtime.js";
 // `Uint8Array`. Primitives, strings and byte blobs pass through unchanged.
 
 const GENESIS = `0x${"11".repeat(32)}` as `0x${string}`;
+const PRODUCT_ACCOUNT = {
+  dotNsIdentifier: "playground.dot",
+  derivationIndex: { tag: "Index" as const, value: 0 },
+};
+const PROOF_CONTEXT = {
+  productId: "playground.dot",
+  suffix: { tag: "Index" as const, value: 0 },
+};
+const RING_LOCATION = {
+  chainId: GENESIS,
+  junctions: [{ tag: "PalletInstance" as const, value: 67 }],
+};
+const SIGN_PAYLOAD: HostSignPayloadData = {
+  blockHash: GENESIS,
+  blockNumber: "0x01",
+  era: "0x00",
+  genesisHash: GENESIS,
+  method: "0x0102",
+  nonce: "0x00",
+  specVersion: "0x01",
+  tip: "0x00",
+  transactionVersion: "0x01",
+  signedExtensions: [],
+  version: 4,
+  assetId: undefined,
+  metadataHash: undefined,
+  mode: undefined,
+};
 
 it("keeps receiving state at its native SCALE slot rather than another host capability's slot", () => {
   expect(CoreStorageKey.enc({ tag: "NotificationReceiving" })).toEqual(
@@ -548,7 +578,10 @@ describe("createWasmRawCallbacks", () => {
                   review.value.resources[0]?.tag === "StatementStoreAllowance"
                 );
               case "PreimageSubmit":
-                calls.push(["confirmUserAction:PreimageSubmit", review.value.size]);
+                calls.push([
+                  "confirmUserAction:PreimageSubmit",
+                  review.value.size,
+                ]);
                 return review.value.size === 42n;
               default:
                 return false;
@@ -694,7 +727,15 @@ describe("createWasmRawCallbacks", () => {
       await raw.confirmUserAction?.(
         UserConfirmationReview.enc({
           tag: "PreimageSubmit",
-          value: { size: 42n },
+          value: {
+            size: 42n,
+            productId: "playground.dot",
+            rootPublicKey: GENESIS,
+            genesisHash: GENESIS,
+            automaticMaxBytes: 262144n,
+            automaticMaxUploads: 4,
+            automaticWindowSeconds: 3600,
+          },
         }),
       ),
     ).toBe(true);
@@ -1033,7 +1074,10 @@ describe("createWasmRawCallbacks", () => {
         async presentProfile() {
           throw new Error("Contact presentation must not use the fallback");
         },
-        async presentContactProfile(presentationProduct: ProductContext, contact: PresentedContactProfile) {
+        async presentContactProfile(
+          presentationProduct: ProductContext,
+          contact: PresentedContactProfile,
+        ) {
           expect(presentationProduct).toEqual(ProductContext.dec(product));
           this.presentations.push(contact);
         },
@@ -1042,21 +1086,31 @@ describe("createWasmRawCallbacks", () => {
         ...makeHostCallbacks(),
         profile: host as never,
       });
-      await raw.presentContactProfile!(product, PresentedContactProfile.enc(presented));
+      await raw.presentContactProfile!(
+        product,
+        PresentedContactProfile.enc(presented),
+      );
       await raw.presentContactProfile!(
         product,
         PresentedContactProfile.enc({ ...presented, shared: undefined }),
       );
-      await expect(raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)))
-        .resolves.toBeUndefined();
-      expect(host.presentations).toEqual([presented, { ...presented, shared: undefined }]);
+      await expect(
+        raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)),
+      ).resolves.toBeUndefined();
+      expect(host.presentations).toEqual([
+        presented,
+        { ...presented, shared: undefined },
+      ]);
     });
 
     it("preserves placement and its receiver when only contact presentation is missing", async () => {
       const host = {
         placements: [] as PlacedAvatars[],
         async presentProfile() {},
-        async placeContactAvatars(placementProduct: ProductContext, placement: PlacedAvatars) {
+        async placeContactAvatars(
+          placementProduct: ProductContext,
+          placement: PlacedAvatars,
+        ) {
           expect(placementProduct).toEqual(ProductContext.dec(product));
           this.placements.push(placement);
         },
@@ -1075,15 +1129,18 @@ describe("createWasmRawCallbacks", () => {
         failure,
         async presentProfile() {},
         async presentContactProfile() {},
-        async placeContactAvatars() { throw this.failure; },
+        async placeContactAvatars() {
+          throw this.failure;
+        },
       };
       expect(profileHostAdapter(host)).toBe(host);
       const raw = createWasmRawCallbacks({
         ...makeHostCallbacks(),
         profile: host,
       });
-      await expect(raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)))
-        .rejects.toBe(failure);
+      await expect(
+        raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)),
+      ).rejects.toBe(failure);
     });
 
     it("preserves shared profiles without fabricating a reference for empty feedback on older hosts", async () => {
@@ -1113,8 +1170,9 @@ describe("createWasmRawCallbacks", () => {
         ),
       ).rejects.toThrow("Contact profile feedback is unavailable");
       expect(references).toEqual([presented.shared.reference]);
-      await expect(raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)))
-        .resolves.toBeUndefined();
+      await expect(
+        raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)),
+      ).resolves.toBeUndefined();
     });
   });
 });

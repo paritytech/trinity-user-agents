@@ -4,7 +4,7 @@
 use std::time::Instant;
 
 use futures::StreamExt;
-use tracing::{info, instrument, warn};
+use tracing::{instrument, warn};
 use truapi::{
 	CallContext, CallError, Subscription,
 	api::Preimage,
@@ -25,73 +25,12 @@ use super::from_latest_error;
 use crate::{
 	host_internal::bulletin::preimage_key,
 	runtime::{
-		AuthoritySession, BulletinAllowanceKey, PERMISSION_DENIED_REASON,
-		PREIMAGE_BULLETIN_AUTHORIZATION_WAIT, PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+		PERMISSION_DENIED_REASON, PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
 		PREIMAGE_SUBMIT_TIMEOUT, ProductRuntimeHost, bulletin_allowance_error_reason,
 		bulletin_rpc::BulletinSubmitError, preimage_submit_error, remote_authority_call,
-        remote_authority_context_until, until_cancelled,
+		remote_authority_context_until, until_cancelled,
 	},
 };
-use subxt::tx::Signer;
-
-impl ProductRuntimeHost {
-	/// Extend the product's Bulletin authorization before signing a payload it
-	/// cannot hold, so the chain never rejects a submission the host could see coming.
-	async fn bulletin_allowance_for(
-		&self,
-		cx: &CallContext,
-		deadline: Instant,
-		session: &AuthoritySession,
-		allowance: BulletinAllowanceKey,
-		size: u64,
-	) -> Result<BulletinAllowanceKey, String> {
-		let rpc = RpcClient::new(
-			self.connection
-				.services
-				.bulletin
-				.client("Bulletin authorization")
-				.await
-				.map_err(|error| error.to_string())?,
-		);
-		let target = allowance_signer(&allowance)?.account_id().0;
-		let current = fetch_bulletin_allowance(&rpc, &target)
-			.await
-			.map_err(|error| error.to_string())?;
-		if current.is_some_and(|info| info.can_store(size)) {
-			info!(
-				product = %self.connection.product_id(),
-				size,
-				"Bulletin authorization sufficient for the preimage"
-			);
-			return Ok(allowance);
-		}
-		info!(
-			product = %self.connection.product_id(),
-			size,
-			?current,
-			"extending Bulletin authorization before submitting the preimage"
-		);
-		let authority_cx = remote_authority_context_until(
-			cx,
-			PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-			deadline,
-		);
-		let allowance = remote_authority_call(
-			&authority_cx,
-			self.accounts.refresh_bulletin_allowance_key(&authority_cx, session),
-		)
-		.await
-		.map_err(bulletin_allowance_error_reason)?;
-		let replacement = allowance_signer(&allowance)?.account_id().0;
-		let baseline = (replacement == target).then_some(current).flatten();
-		let timeout = PREIMAGE_BULLETIN_AUTHORIZATION_WAIT
-			.min(deadline.saturating_duration_since(Instant::now()));
-		wait_bulletin_authorization(&rpc, &replacement, baseline, size, timeout)
-			.await
-			.map_err(|error| error.to_string())?;
-		Ok(allowance)
-	}
-}
 
 #[truapi::async_trait]
 impl Preimage for ProductRuntimeHost {
@@ -145,7 +84,7 @@ impl Preimage for ProductRuntimeHost {
 					if !matches {
 						warn!(
 							"preimage lookup returned a value whose hash does not match the \
-	                         requested key; downgrading to a miss"
+                         requested key; downgrading to a miss"
 						);
 					}
 					matches
@@ -182,22 +121,11 @@ impl Preimage for ProductRuntimeHost {
 				},
 			)
 			.await?;
-            let confirmed = until_cancelled(
-                cx,
-                self.confirm_product_action(UserConfirmationReview::PreimageSubmit(
-                    PreimageSubmitReview {
-                        size: value.len() as u64,
-                    },
-                )),
-            )
-            .await
-            .map_err(|err| preimage_submit_error(err.to_string()))?
-            .map_err(|err| preimage_submit_error(err.reason))?;
-            if !confirmed {
-                return Err(preimage_submit_error(
-                    "User rejected preimage submission".to_string(),
-                ));
-            }
+			let approval =
+				until_cancelled(cx, self.approve_preimage_upload(&session, value.len() as u64))
+					.await
+					.map_err(|err| preimage_submit_error(err.to_string()))?
+					.map_err(|err| preimage_submit_error(err.reason))?;
 			let submission_deadline = Instant::now() + PREIMAGE_SUBMIT_TIMEOUT;
 			let authority_cx = remote_authority_context_until(
 				cx,
@@ -211,6 +139,9 @@ impl Preimage for ProductRuntimeHost {
 			)
 			.await
 			.map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
+			self.validate_upload_approval(&session, &approval)
+				.await
+				.map_err(|err| preimage_submit_error(err.reason))?;
 
 			#[cfg(feature = "test-host")]
 			if self.authority.submits_preimages_locally() {
@@ -240,6 +171,9 @@ impl Preimage for ProductRuntimeHost {
 					)
 					.await
 					.map_err(|err| preimage_submit_error(bulletin_allowance_error_reason(err)))?;
+					self.validate_upload_approval(&session, &approval)
+						.await
+						.map_err(|err| preimage_submit_error(err.reason))?;
 					bulletin
 						.submit_preimage(cx, submission_deadline, &allowance, &value)
 						.await

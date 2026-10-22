@@ -24,46 +24,46 @@ pub enum Network {
 
 /// Env var overriding the identity backend base URL for every command. The URL
 /// includes `/api/v1`, for instance a local backend at
-/// `http://localhost:8080/api/v1`.
+/// `http://localhost:8080/api/v1`. Chain endpoints stay on the preset.
 pub const IDENTITY_BACKEND_BASE_ENV: &str = "HOST_CLI_IDENTITY_BACKEND_BASE";
 
-/// Env vars overriding one chain's WebSocket URL, for a fork of the preset's
-/// network. The genesis hashes stay the preset's, which a fork keeps.
-pub const PEOPLE_WS_ENV: &str = "HOST_CLI_PEOPLE_WS";
-pub const ASSET_HUB_WS_ENV: &str = "HOST_CLI_ASSET_HUB_WS";
-pub const BULLETIN_WS_ENV: &str = "HOST_CLI_BULLETIN_WS";
+impl Network {
+	/// Preset resolved with any environment overrides applied.
+	pub fn config(self) -> NetworkConfig {
+		apply_backend_override(self.preset(), std::env::var(IDENTITY_BACKEND_BASE_ENV).ok())
+	}
 
-    /// The unmodified preset values.
-    fn preset(self) -> NetworkConfig {
-        match self {
-            Self::PaseoNextV2 => NetworkConfig {
-                id: "paseo-next-v2",
-                network_suffix: "paseo",
-                identity_backend_base: "https://identity.dotspark.app/api/v1",
-                people_ws: PASEO_PEOPLE.ws,
-                bulletin_ws: PASEO_BULLETIN.ws,
-                asset_hub_ws: PASEO_ASSET_HUB.ws,
-                people_genesis: PASEO_PEOPLE.genesis,
-                bulletin_genesis: PASEO_BULLETIN.genesis,
-                asset_hub_genesis: PASEO_ASSET_HUB.genesis,
-                live_chain_endpoints: PASEO_NEXT_V2_CHAIN_ENDPOINTS,
-                hop_endpoints: PASEO_HOP_ENDPOINTS,
-            },
-            Self::Previewnet => NetworkConfig {
-                id: "previewnet",
-                network_suffix: "testnet",
-                identity_backend_base: "https://identity-previewnet.dotspark.app/api/v1",
-                people_ws: PREVIEWNET_PEOPLE.ws,
-                bulletin_ws: PREVIEWNET_BULLETIN.ws,
-                asset_hub_ws: PREVIEWNET_ASSET_HUB.ws,
-                people_genesis: PREVIEWNET_PEOPLE.genesis,
-                bulletin_genesis: PREVIEWNET_BULLETIN.genesis,
-                asset_hub_genesis: PREVIEWNET_ASSET_HUB.genesis,
-                live_chain_endpoints: PREVIEWNET_CHAIN_ENDPOINTS,
-                hop_endpoints: PREVIEWNET_HOP_ENDPOINTS,
-            },
-        }
-    }
+	/// The unmodified preset values.
+	fn preset(self) -> NetworkConfig {
+		match self {
+			Self::PaseoNextV2 => NetworkConfig {
+				id: "paseo-next-v2",
+				network_suffix: "paseo",
+				identity_backend_base: "https://identity.dotspark.app/api/v1",
+				people_ws: PASEO_PEOPLE.ws,
+				bulletin_ws: PASEO_BULLETIN.ws,
+				asset_hub_ws: PASEO_ASSET_HUB.ws,
+				people_genesis: PASEO_PEOPLE.genesis,
+				bulletin_genesis: PASEO_BULLETIN.genesis,
+				asset_hub_genesis: PASEO_ASSET_HUB.genesis,
+				live_chain_endpoints: PASEO_NEXT_V2_CHAIN_ENDPOINTS,
+				hop_endpoints: PASEO_HOP_ENDPOINTS,
+			},
+			Self::Previewnet => NetworkConfig {
+				id: "previewnet",
+				network_suffix: "testnet",
+				identity_backend_base: "https://identity-previewnet.dotspark.app/api/v1",
+				people_ws: PREVIEWNET_PEOPLE.ws,
+				bulletin_ws: PREVIEWNET_BULLETIN.ws,
+				asset_hub_ws: PREVIEWNET_ASSET_HUB.ws,
+				people_genesis: PREVIEWNET_PEOPLE.genesis,
+				bulletin_genesis: PREVIEWNET_BULLETIN.genesis,
+				asset_hub_genesis: PREVIEWNET_ASSET_HUB.genesis,
+				live_chain_endpoints: PREVIEWNET_CHAIN_ENDPOINTS,
+				hop_endpoints: PREVIEWNET_HOP_ENDPOINTS,
+			},
+		}
+	}
 }
 
 /// Replaces the preset's identity backend base with `base` when it carries a
@@ -76,38 +76,6 @@ fn apply_backend_override(mut config: NetworkConfig, base: Option<String>) -> Ne
 			config.identity_backend_base = Box::leak(trimmed.to_string().into_boxed_str());
 		}
 	}
-	config
-}
-
-/// Points each overridden role at its new URL, in both the preset field and the
-/// genesis-keyed routing table, so the two cannot disagree. Overridden values
-/// are leaked like the backend override.
-fn apply_chain_overrides(mut config: NetworkConfig, overrides: ChainOverrides) -> NetworkConfig {
-	let leak = |value: Option<String>| value.map(|url| &*Box::leak(url.into_boxed_str()));
-	let routes = [
-		(leak(overrides.people_ws), config.people_genesis),
-		(leak(overrides.asset_hub_ws), config.asset_hub_genesis),
-		(leak(overrides.bulletin_ws), config.bulletin_genesis),
-	];
-	if routes.iter().all(|(url, _)| url.is_none()) {
-		return config;
-	}
-	let [(people, _), (asset_hub, _), (bulletin, _)] = routes;
-	config.people_ws = people.unwrap_or(config.people_ws);
-	config.asset_hub_ws = asset_hub.unwrap_or(config.asset_hub_ws);
-	config.bulletin_ws = bulletin.unwrap_or(config.bulletin_ws);
-	let endpoints: Vec<ChainEndpoint> = config
-		.live_chain_endpoints
-		.iter()
-		.map(|endpoint| {
-			let ws = routes
-				.iter()
-				.find_map(|(url, genesis)| (*genesis == endpoint.genesis).then_some(*url).flatten())
-				.unwrap_or(endpoint.ws);
-			ChainEndpoint { ws, ..*endpoint }
-		})
-		.collect();
-	config.live_chain_endpoints = Box::leak(endpoints.into_boxed_slice());
 	config
 }
 
@@ -175,30 +143,30 @@ const PREVIEWNET_CHAIN_ENDPOINTS: &[ChainEndpoint] =
 // remote_config.json (chains_v2) at d504259b60b88ca42f70a8378186a714887ef19f.
 // Do not infer a HOP endpoint from a chain RPC URL.
 const PASEO_HOP_ENDPOINTS: &[HopEndpoint] = &[
-    HopEndpoint {
-        bulletin_genesis: PASEO_BULLETIN.genesis,
-        ws: "wss://paseo-hop-next-0.polkadot.io",
-    },
-    HopEndpoint {
-        bulletin_genesis: PASEO_BULLETIN.genesis,
-        ws: "wss://paseo-hop-next-1.polkadot.io",
-    },
+	HopEndpoint {
+		bulletin_genesis: PASEO_BULLETIN.genesis,
+		ws: "wss://paseo-hop-next-0.polkadot.io",
+	},
+	HopEndpoint {
+		bulletin_genesis: PASEO_BULLETIN.genesis,
+		ws: "wss://paseo-hop-next-1.polkadot.io",
+	},
 ];
 
 // This trusted snapshot identifies a newer Previewnet Bulletin than the CLI's
 // existing chain preset. Keep the exact pair: the provider fails closed until
 // the selected Bulletin identity matches, rather than silently changing chains.
 const PREVIEWNET_HOP_ENDPOINTS: &[HopEndpoint] = &[HopEndpoint {
-    bulletin_genesis: hex_literal_genesis(
-        "1144acd27f0e5b2c88da7dc12c111e396983dec036ccfb42da5bbb0dd7104e89",
-    ),
-    ws: "wss://previewnet.substrate.dev/bulletin",
+	bulletin_genesis: hex_literal_genesis(
+		"1144acd27f0e5b2c88da7dc12c111e396983dec036ccfb42da5bbb0dd7104e89",
+	),
+	ws: "wss://previewnet.substrate.dev/bulletin",
 }];
 
 #[derive(Debug, Clone, Copy)]
 pub struct HopEndpoint {
-    pub bulletin_genesis: [u8; 32],
-    pub ws: &'static str,
+	pub bulletin_genesis: [u8; 32],
+	pub ws: &'static str,
 }
 
 /// Resolved RPC/backend/genesis values for one network preset.
@@ -227,6 +195,7 @@ pub struct NetworkConfig {
 	/// the chain does not report sends Asset Hub traffic to the fallback chain.
 	pub asset_hub_genesis: [u8; 32],
 	pub live_chain_endpoints: &'static [ChainEndpoint],
+	pub hop_endpoints: &'static [HopEndpoint],
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -358,42 +327,34 @@ mod tests {
 		}
 	}
 
-    /// `TRUAPI_LIGHT_CLIENT=1` finds each chain in the provider's bundled catalog by
-    /// the preset's genesis hash, so a network reset applied to only one of the two
-    /// copies leaves the light client unable to connect.
-    #[test]
-    fn every_preset_matches_the_light_client_catalog() {
-        for network in Network::value_variants() {
-            let config = network.config();
-            let (_, catalog) = truapi_provider::EmbeddedChainProviderBuilder::new()
-                .add_network(config.id)
-                .unwrap_or_else(|error| panic!("{} is not in the catalog: {error:?}", config.id));
-            assert_eq!(
-                (catalog.people, catalog.assethub, catalog.bulletin),
-                (
-                    config.people_genesis,
-                    config.asset_hub_genesis,
-                    config.bulletin_genesis
-                ),
-                "{} genesis hashes differ from the light-client catalog",
-                config.id
-            );
-        }
-    }
+	/// `TRUAPI_LIGHT_CLIENT=1` finds each chain in the provider's bundled catalog by
+	/// the preset's genesis hash, so a network reset applied to only one of the two
+	/// copies leaves the light client unable to connect.
+	#[test]
+	fn every_preset_matches_the_light_client_catalog() {
+		for network in Network::value_variants() {
+			let config = network.config();
+			let (_, catalog) = truapi_provider::EmbeddedChainProviderBuilder::new()
+				.add_network(config.id)
+				.unwrap_or_else(|error| panic!("{} is not in the catalog: {error:?}", config.id));
+			assert_eq!(
+				(catalog.people, catalog.assethub, catalog.bulletin),
+				(config.people_genesis, config.asset_hub_genesis, config.bulletin_genesis),
+				"{} genesis hashes differ from the light-client catalog",
+				config.id
+			);
+		}
+	}
 
-    /// Anchors the served set itself. Every other test that reads it iterates, so
-    /// all of them pass on an empty set; this is what notices a dropped role, and it
-    /// covers each preset rather than only the default.
-    #[test]
-    fn every_preset_serves_exactly_the_expected_roles() {
-        for network in Network::value_variants() {
-            let config = network.config();
-            let served: Vec<ChainIdentifier> = config
-                .host_chain_set()
-                .chains
-                .iter()
-                .map(|entry| entry.identifier)
-                .collect();
+	/// Anchors the served set itself. Every other test that reads it iterates, so
+	/// all of them pass on an empty set; this is what notices a dropped role, and it
+	/// covers each preset rather than only the default.
+	#[test]
+	fn every_preset_serves_exactly_the_expected_roles() {
+		for network in Network::value_variants() {
+			let config = network.config();
+			let served: Vec<ChainIdentifier> =
+				config.host_chain_set().chains.iter().map(|entry| entry.identifier).collect();
 
 			assert_eq!(
 				served,
@@ -643,71 +604,5 @@ mod tests {
 			preset.identity_backend_base,
 			"a blank override keeps the preset"
 		);
-	}
-
-	#[test]
-	fn no_chain_override_keeps_the_preset() {
-		for network in Network::value_variants() {
-			let preset = network.preset();
-			let overrides =
-				ChainOverrides::parse([None, Some(String::new()), Some("  ".to_string())]).unwrap();
-			assert!(overrides.set_names().is_empty());
-			let resolved = apply_chain_overrides(preset, overrides);
-			assert_eq!(resolved.people_ws, preset.people_ws);
-			assert_eq!(resolved.asset_hub_ws, preset.asset_hub_ws);
-			assert_eq!(resolved.bulletin_ws, preset.bulletin_ws);
-			assert!(std::ptr::eq(resolved.live_chain_endpoints, preset.live_chain_endpoints));
-		}
-	}
-
-	#[test]
-	fn chain_overrides_are_refused_with_the_light_client() {
-		let error = refuse_light_client(&[PEOPLE_WS_ENV], Some("1".to_string())).unwrap_err();
-		assert!(error.to_string().contains(PEOPLE_WS_ENV), "{error}");
-		assert!(refuse_light_client(&[], Some("1".to_string())).is_ok());
-		assert!(refuse_light_client(&[PEOPLE_WS_ENV], None).is_ok());
-	}
-
-	#[test]
-	fn chain_overrides_must_be_websocket_urls() {
-		for value in ["127.0.0.1:10010", "http://127.0.0.1:10010"] {
-			let error = ChainOverrides::parse([None, None, Some(value.to_string())])
-				.expect_err("a non-ws override is refused up front");
-			assert!(error.to_string().contains(BULLETIN_WS_ENV), "{error}");
-		}
-	}
-
-	#[test]
-	fn chain_overrides_move_the_field_and_the_route_together() {
-		let preset = Network::Previewnet.preset();
-		let overrides = ChainOverrides::parse([
-			Some(" ws://127.0.0.1:10010 ".to_string()),
-			Some(" ".to_string()),
-			None,
-		])
-		.unwrap();
-		assert_eq!(overrides.set_names(), [PEOPLE_WS_ENV]);
-		let overridden = apply_chain_overrides(preset, overrides);
-
-		assert_eq!(overridden.people_ws, "ws://127.0.0.1:10010");
-		assert_eq!(
-			overridden.asset_hub_ws, preset.asset_hub_ws,
-			"a blank override keeps the preset"
-		);
-		assert_eq!(overridden.bulletin_ws, preset.bulletin_ws);
-		assert_eq!(overridden.people_genesis, preset.people_genesis, "a fork keeps the genesis");
-		for endpoint in overridden.live_chain_endpoints {
-			let expected = if endpoint.genesis == preset.people_genesis {
-				"ws://127.0.0.1:10010"
-			} else {
-				preset
-					.live_chain_endpoints
-					.iter()
-					.find(|original| original.genesis == endpoint.genesis)
-					.expect("every route survives the override")
-					.ws
-			};
-			assert_eq!(endpoint.ws, expected);
-		}
 	}
 }

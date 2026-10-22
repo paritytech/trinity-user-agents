@@ -13,8 +13,10 @@
 
 use alloc::string::ToString;
 
-use crate::versioned::{FromLatest, IntoLatest};
-use crate::{v01, v02};
+use crate::{
+	v01, v02,
+	versioned::{FromLatest, IntoLatest},
+};
 
 truapi_macros::versioned_type! {
 	pub enum HostLocalStorageReadRequest {

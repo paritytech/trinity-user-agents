@@ -42,6 +42,7 @@ pub mod coin_payment;
 pub mod contacts;
 pub mod entropy;
 pub mod expanded_card;
+pub mod funding;
 pub mod game;
 pub mod jam_peer_transport;
 pub mod local_storage;
@@ -76,21 +77,21 @@ mod tests {
 		b: Vec<u8>,
 	}
 
-    truapi_macros::versioned_type! {
-        enum MultiVersionProbe {
-            V1 => ProbeV1,
-            V2 => ProbeV2,
-        }
-        enum RetiredPrefixProbe {
-            V3 => ProbeV1,
-        }
-    }
+	truapi_macros::versioned_type! {
+		enum MultiVersionProbe {
+			V1 => ProbeV1,
+			V2 => ProbeV2,
+		}
+		enum RetiredPrefixProbe {
+			V3 => ProbeV1,
+		}
+	}
 
-    // SCALE indices are anchored to protocol versions, not the set of retained
-    // variants: V1 -> 0, V2 -> 1, even after an older prefix is retired.
-    #[test]
-    fn multi_version_codec_indices_are_positional() {
-        use super::Versioned;
+	// SCALE indices are anchored to protocol versions, not the set of retained
+	// variants: V1 -> 0, V2 -> 1, even after an older prefix is retired.
+	#[test]
+	fn multi_version_codec_indices_are_positional() {
+		use super::Versioned;
 
 		let v1 = MultiVersionProbe::V1(ProbeV1 { a: 7 });
 		let v2 = MultiVersionProbe::V2(ProbeV2 { b: b"hello".to_vec() });
@@ -102,30 +103,30 @@ mod tests {
 		assert_eq!(MultiVersionProbe::LATEST, 2);
 	}
 
-    #[test]
-    fn retired_prefix_keeps_wire_tag_and_rejects_old_envelopes() {
-        use super::{FromLatest, IntoLatest, Versioned};
-        let payload = ProbeV1 { a: 7 };
-        let envelope = RetiredPrefixProbe::from_latest(payload.clone(), 3);
-        let encoded = envelope.encode();
-        assert_eq!(encoded, vec![2, 7, 0, 0, 0]);
-        assert_eq!(RetiredPrefixProbe::LATEST, 3);
-        let decoded = RetiredPrefixProbe::decode(&mut &encoded[..]).unwrap();
-        assert_eq!(decoded.version(), 3);
-        assert_eq!(decoded.into_latest(), payload);
-        for retired in [0, 1] {
-            let bytes = [retired, 7, 0, 0, 0];
-            assert!(RetiredPrefixProbe::decode(&mut &bytes[..]).is_err());
-        }
-    }
+	#[test]
+	fn retired_prefix_keeps_wire_tag_and_rejects_old_envelopes() {
+		use super::{FromLatest, IntoLatest, Versioned};
+		let payload = ProbeV1 { a: 7 };
+		let envelope = RetiredPrefixProbe::from_latest(payload.clone(), 3);
+		let encoded = envelope.encode();
+		assert_eq!(encoded, vec![2, 7, 0, 0, 0]);
+		assert_eq!(RetiredPrefixProbe::LATEST, 3);
+		let decoded = RetiredPrefixProbe::decode(&mut &encoded[..]).unwrap();
+		assert_eq!(decoded.version(), 3);
+		assert_eq!(decoded.into_latest(), payload);
+		for retired in [0, 1] {
+			let bytes = [retired, 7, 0, 0, 0];
+			assert!(RetiredPrefixProbe::decode(&mut &bytes[..]).is_err());
+		}
+	}
 
-    #[test]
-    fn v1_discriminant_is_zero() {
-        let v1 = super::permissions::HostDevicePermissionRequest::V1(
-            crate::v01::HostDevicePermissionRequest::Camera,
-        );
-        assert_eq!(v1.encode()[0], 0, "V1 must encode discriminant 0");
-    }
+	#[test]
+	fn v1_discriminant_is_zero() {
+		let v1 = super::permissions::HostDevicePermissionRequest::V1(
+			crate::v01::HostDevicePermissionRequest::Camera,
+		);
+		assert_eq!(v1.encode()[0], 0, "V1 must encode discriminant 0");
+	}
 
 	#[test]
 	fn device_permission_discriminants_are_append_only() {

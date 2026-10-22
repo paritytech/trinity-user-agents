@@ -1,5 +1,7 @@
 use crate::platform::{
-	AuthState, DevicePermissionStatus, PermissionDecision, ProductId, UserConfirmationReview,
+	AuthState, DevicePermissionStatus, NativeChatFileExportRequest, NativeChatFilePickRequest,
+	NativeChatPickedFile, NativeCoinageRequest, NativeCoinageResponse, PermissionDecision,
+	UserConfirmationReview,
 };
 use truapi::v01;
 
@@ -7,10 +9,29 @@ use crate::{PairedSsoPeer, host_logic::worker::WorkerTransition};
 
 #[cfg(doc)]
 use super::NativeTrUApiHostRuntime;
-use super::config::ProductExecutionConfig;
-use super::errors::HostRejection;
+use super::{config::ProductExecutionConfig, errors::HostRejection};
 #[cfg(doc)]
 use crate::platform::CoreStorageKey;
+
+/// Host-private native Coinage response. It may contain bearer memo material.
+#[derive(Clone, uniffi::Record)]
+pub struct NativeCoinageCallbackResult {
+	/// Typed result, including private memo material when preparing a payment.
+	pub response: NativeCoinageResponse,
+}
+
+/// Optional process-wide native custody, installed only at runtime construction.
+/// Absence selects built-in Rust custody. A registered wallet's failure or
+/// unavailability never changes that dependency or permits fallback.
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeCoinageCallbacks: Send + Sync {
+	/// Host-private wallet operation; bearer material must never reach a product.
+	async fn native_coinage(
+		&self,
+		request: NativeCoinageRequest,
+	) -> Result<NativeCoinageCallbackResult, HostRejection>;
+}
 
 /// Callback surface that iOS and Android implement.
 ///
@@ -49,38 +70,48 @@ pub trait HostCallbacks: Send + Sync {
 	/// Cancel a notification by id.
 	fn cancel_notification(&self, id: u32) -> Result<(), HostRejection>;
 
-    /// Runtime callbacks return current host scope, including while products are closed.
-    /// Per-execution callbacks return the immutable verified artifact/account scope
-    /// captured at execution creation, never the latest replacement scope.
-    async fn receiver_authority(
-        &self,
-        product_id: String,
-    ) -> Result<Option<crate::platform::ReceivingAuthority>, HostRejection>;
+	/// Runtime callbacks return current host scope, including while products are closed.
+	/// Per-execution callbacks return the immutable verified artifact/account scope
+	/// captured at execution creation, never the latest replacement scope.
+	async fn receiver_authority(
+		&self,
+		product_id: String,
+	) -> Result<Option<crate::platform::ReceivingAuthority>, HostRejection>;
 
-    /// Request consent distinct from OS notification permission.
-    async fn receiver_consent(
-        &self,
-        authority: crate::platform::ReceivingAuthority,
-        watches: Vec<crate::latest::ReceivingWatch>,
-    ) -> Result<bool, HostRejection>;
+	/// Request consent distinct from OS notification permission.
+	async fn receiver_consent(
+		&self,
+		authority: crate::platform::ReceivingAuthority,
+		watches: Vec<crate::latest::ReceivingWatch>,
+	) -> Result<bool, HostRejection>;
 
-    /// Wake asynchronous transport synchronization without awaiting network I/O.
-    async fn receiver_changed(&self) -> Result<(), HostRejection>;
+	/// Wake asynchronous transport synchronization without awaiting network I/O.
+	async fn receiver_changed(&self) -> Result<(), HostRejection>;
 
-    /// Optionally forward a trusted product receiving command to its sole owner.
-    /// `None` uses the native resident engine; failure must not select another owner.
-    async fn receiver_command(
-        &self, product_id: String, action: u8, payload: Vec<u8>,
-    ) -> Result<Option<Vec<u8>>, HostRejection>;
+	/// Optionally forward a trusted product receiving command to its sole owner.
+	/// `None` uses the native resident engine; failure must not select another owner.
+	async fn receiver_command(
+		&self,
+		product_id: String,
+		action: u8,
+		payload: Vec<u8>,
+	) -> Result<Option<Vec<u8>>, HostRejection>;
 
-    /// Prompt the user for a device-level permission (camera, mic, ...)
-    /// `product` requested; the host preserves whether approval applies once
-    /// or always.
-    async fn device_permission(
-        &self,
-        product: ProductExecutionConfig,
-        request: v01::HostDevicePermissionRequest,
-    ) -> Result<PermissionDecision, HostRejection>;
+	/// Non-consuming, ordered activation batch for this execution's trusted scope.
+	/// Independent of receiving enrollment and OS permission prompts.
+	async fn activation_events(&self) -> Result<Vec<v01::NotificationActivation>, HostRejection>;
+
+	/// Acknowledge exactly one sequence in the same trusted execution scope.
+	async fn acknowledge_activation(&self, sequence: u64) -> Result<(), HostRejection>;
+
+	/// Prompt the user for a device-level permission (camera, mic, ...)
+	/// `product` requested; the host preserves whether approval applies once
+	/// or always.
+	async fn device_permission(
+		&self,
+		product: ProductExecutionConfig,
+		request: v01::HostDevicePermissionRequest,
+	) -> Result<PermissionDecision, HostRejection>;
 
 	/// Report the OS status of a device capability without prompting.
 	///
@@ -133,42 +164,60 @@ pub trait HostCallbacks: Send + Sync {
 	/// SCALE-encoded [`CoreStorageKey`].
 	async fn core_storage_write(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), HostRejection>;
 
-    /// Atomically compare exact decoded bytes (absent is distinct from empty)
-    /// and replace the slot. Serialize with every write and clear to the same
-    /// physical storage namespace, across runtime/callback instances, through
-    /// durable persistence completion; release storage gates before awaiting
-    /// errors or refresh work.
-    /// On successful persistence with `notify_on_success`, enqueue
-    /// `core_storage_changed` before completion even if the caller is cancelled.
-    /// There must be no cancellation point between persistence and enqueue.
-    async fn compare_exchange_core_storage(
-        &self,
-        key: Vec<u8>,
-        expected: Option<Vec<u8>>,
-        replacement: Vec<u8>,
-        notify_on_success: bool,
-    ) -> Result<bool, HostRejection>;
+	/// Clear a core-owned host-private storage slot. `key` is a SCALE-encoded
+	/// [`CoreStorageKey`].
+	async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection>;
 
-    /// Queue a deferred stored-policy refresh for all core groups sharing this
-    /// store and exact product, including the writer. Return immediately without
-    /// waiting for or reentering a core.
-    fn core_storage_changed(&self, key: Vec<u8>);
+	/// Atomically compare exact decoded bytes (absent is distinct from empty)
+	/// and replace the slot. Serialize with every write and clear to the same
+	/// physical storage namespace, across runtime/callback instances, through
+	/// durable persistence completion; release storage gates before awaiting
+	/// errors or refresh work.
+	/// On successful persistence with `notify_on_success`, enqueue
+	/// `core_storage_changed` before completion even if the caller is cancelled.
+	/// There must be no cancellation point between persistence and enqueue.
+	async fn compare_exchange_core_storage(
+		&self,
+		key: Vec<u8>,
+		expected: Option<Vec<u8>>,
+		replacement: Vec<u8>,
+		notify_on_success: bool,
+	) -> Result<bool, HostRejection>;
 
-    /// Enumerate encoded keys in the existing core store. Hosts must report
-    /// unavailable enumeration as an error, never as an empty permission list.
-    async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection>;
+	/// Queue a deferred stored-policy refresh for all core groups sharing this
+	/// store and exact product, including the writer. Return immediately without
+	/// waiting for or reentering a core.
+	/// For a permission authorization key, the durable deferred job also emits
+	/// `permission_authorizations_changed` on the process bridge, even when its
+	/// requester has gone away or refreshing a core fails.
+	fn core_storage_changed(&self, key: Vec<u8>);
 
-    /// A canonical decision changed. Refresh permission settings and invalidate
-    /// legacy one-use decisions for this product. Called on the process bridge.
-    fn permission_authorizations_changed(&self, product_id: String);
+	/// Enumerate encoded keys in the existing core store. Hosts must report
+	/// unavailable enumeration as an error, never as an empty permission list.
+	async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection>;
 
-    /// Open a JSON-RPC connection for a chain. Return a host-assigned
-    /// connection id, or `None` when unsupported.
-    fn chain_connect(&self, genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection>;
+	/// A canonical decision changed. Refresh permission settings and invalidate
+	/// legacy one-use decisions for this product. Called on the process bridge.
+	fn permission_authorizations_changed(&self, product_id: String);
 
 	/// Open a JSON-RPC connection for a chain. Return a host-assigned
 	/// connection id, or `None` when unsupported.
 	fn chain_connect(&self, genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection>;
+
+	/// Current trusted HOP WSS URLs for the configured Bulletin chain.
+	/// An embedding with no HOP configuration returns an empty allowlist.
+	async fn allowed_hop_endpoints(
+		&self,
+		bulletin_genesis_hash: Vec<u8>,
+	) -> Result<Vec<String>, HostRejection>;
+
+	/// Open only an exact endpoint from the current trusted Bulletin allowlist.
+	/// HOP ids share the chain send/close and response/closed event namespace.
+	fn hop_connect(
+		&self,
+		bulletin_genesis_hash: Vec<u8>,
+		endpoint: String,
+	) -> Result<Option<u32>, HostRejection>;
 
 	/// Send one JSON-RPC request over a previously opened chain connection.
 	fn chain_send(&self, connection_id: u32, request: String) -> Result<(), HostRejection>;
@@ -182,6 +231,43 @@ pub trait HostCallbacks: Send + Sync {
 		review: UserConfirmationReview,
 	) -> Result<bool, HostRejection>;
 
+	/// Trusted file selection into durable immutable Host custody.
+	async fn pick_chat_files(
+		&self,
+		request: NativeChatFilePickRequest,
+	) -> Result<Vec<NativeChatPickedFile>, HostRejection>;
+
+	/// Exact bounded read from a Host-private immutable source.
+	async fn read_chat_file(
+		&self,
+		source_id: String,
+		offset: u64,
+		length: u32,
+	) -> Result<Vec<u8>, HostRejection>;
+
+	/// Idempotently release a durable private source.
+	async fn release_chat_file(&self, source_id: String) -> Result<(), HostRejection>;
+
+	/// Trusted export consent; `None` means user cancellation.
+	async fn begin_chat_file_export(
+		&self,
+		request: NativeChatFileExportRequest,
+	) -> Result<Option<String>, HostRejection>;
+
+	/// Contiguous bounded write into a partial private export.
+	async fn write_chat_file_export(
+		&self,
+		export_id: String,
+		offset: u64,
+		data: Vec<u8>,
+	) -> Result<(), HostRejection>;
+
+	/// Publish an exact-size export through safe native UI.
+	async fn finish_chat_file_export(&self, export_id: String) -> Result<(), HostRejection>;
+
+	/// Idempotently discard a partial export, never a completed user export.
+	async fn cancel_chat_file_export(&self, export_id: String) -> Result<(), HostRejection>;
+
 	/// Preserve the lifetime of consent for identity and account disclosures.
 	async fn confirm_permission(
 		&self,
@@ -192,19 +278,28 @@ pub trait HostCallbacks: Send + Sync {
 	/// current item in its subscription stream.
 	async fn lookup_preimage(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection>;
 
-    /// Locale the host currently presents its interface in. The native shim
-    /// emits this as the current item in its subscription stream.
-    fn current_locale(&self) -> Result<crate::latest::HostLocaleSubscribeItem, HostRejection>;
+	/// Exact-name AccountId32 candidates from the host's configured,
+	/// authenticated native username service. Every item must contain 32 bytes;
+	/// the core verifies finalized dotNS ownership and the canonical People key.
+	async fn identity_username_candidates(
+		&self,
+		username: String,
+		people_chain_genesis_hash: Vec<u8>,
+	) -> Result<Vec<Vec<u8>>, HostRejection>;
 
-    /// Convert UTC timestamps with the host's calendar and time-zone database.
-    async fn localize_timestamps(
-        &self,
-        request: crate::latest::HostLocaleLocalizeTimestampsRequest,
-    ) -> Result<crate::latest::HostLocaleLocalizeTimestampsResponse, HostRejection>;
+	/// Current host theme, named variant included. The native shim emits this
+	/// as the current item in its subscription stream.
+	fn current_theme(&self) -> Result<v01::HostThemeSubscribeItem, HostRejection>;
 
 	/// Locale the host currently presents its interface in. The native shim
 	/// emits this as the current item in its subscription stream.
-	fn current_locale(&self) -> Result<v01::HostLocaleSubscribeItem, HostRejection>;
+	fn current_locale(&self) -> Result<crate::latest::HostLocaleSubscribeItem, HostRejection>;
+
+	/// Convert UTC timestamps with the host's calendar and time-zone database.
+	async fn localize_timestamps(
+		&self,
+		request: crate::latest::HostLocaleLocalizeTimestampsRequest,
+	) -> Result<crate::latest::HostLocaleLocalizeTimestampsResponse, HostRejection>;
 
 	/// Answer a feature-support query.
 	async fn feature_supported(
@@ -232,7 +327,7 @@ pub trait HostCallbacks: Send + Sync {
 	/// [`NativeTrUApiHostRuntime::release_worker`], often the caller's own
 	/// thread and re-entrantly: hand the transition off rather than blocking
 	/// on another thread from inside it.
-	fn worker_demand_changed(&self, product_id: ProductId, transition: WorkerTransition);
+	fn worker_demand_changed(&self, product_id: String, transition: WorkerTransition);
 
 	/// A device finished pairing with this signing host.
 	///
@@ -275,12 +370,12 @@ pub trait HostCallbacks: Send + Sync {
 	/// until it ends.
 	async fn begin_operation(
 		&self,
-		product_id: ProductId,
+		product_id: String,
 		label: String,
 	) -> Result<u32, HostRejection>;
 	/// End a pending operation. Idempotent: an unknown or already-ended id
 	/// succeeds, so a retry after an ambiguous failure is safe.
-	async fn end_operation(&self, product_id: ProductId, id: u32) -> Result<(), HostRejection>;
+	async fn end_operation(&self, product_id: String, id: u32) -> Result<(), HostRejection>;
 }
 
 /// Native Chat storage and UI adapter. Hosts that support the Chat modality
@@ -410,25 +505,40 @@ pub trait NativeContactsCallbacks: Send + Sync {
 		lookup: crate::platform::HostContactLookup,
 	) -> Result<crate::platform::HostContactMatches, HostRejection>;
 
-    /// Present the picker on behalf of `product_id` and report what the user
-    /// did. A host with no contacts answers `NoContacts`
-    /// instead of drawing an empty overlay.
-    async fn pick_contact(
-        &self,
-        product_id: String,
-    ) -> Result<crate::platform::HostContactPick, HostRejection>;
+	/// Present the picker on behalf of `product_id` and report what the user
+	/// did. A host with no contacts answers `NoContacts`
+	/// instead of drawing an empty overlay.
+	async fn pick_contact(
+		&self,
+		product_id: String,
+	) -> Result<crate::platform::HostContactPick, HostRejection>;
 
-    /// Edit the complete selected audience in host-owned UI.
-    async fn pick_contacts(
-        &self,
-        product_id: String,
-        selection: crate::platform::ContactSelection,
-    ) -> Result<crate::platform::HostContactsPick, HostRejection>;
+	/// Edit the complete selected audience in host-owned UI.
+	async fn pick_contacts(
+		&self,
+		product_id: String,
+		selection: crate::platform::ContactSelection,
+	) -> Result<crate::platform::HostContactsPick, HostRejection>;
 
-    /// Replace the names drawn over a product surface without returning names.
-    async fn place_contact_labels(
-        &self,
-        product_id: String,
-        placed: crate::platform::PlacedContactLabels,
-    ) -> Result<(), crate::latest::HostContactsPlaceLabelsError>;
+	/// Replace the names drawn over a product surface without returning names.
+	async fn place_contact_labels(
+		&self,
+		product_id: String,
+		placed: crate::platform::PlacedContactLabels,
+	) -> Result<(), crate::latest::HostContactsPlaceLabelsError>;
+}
+
+/// Native form of [`crate::platform::ScannerPlatform`], whose rules it follows.
+/// Installed with [`NativeTrUApiHostRuntime::set_scanner_callbacks`].
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeScannerCallbacks: Send + Sync {
+	/// Open the viewfinder on behalf of `product_id`'s execution of
+	/// `execution_kind` and report how it ended.
+	async fn scan_code(
+		&self,
+		product_id: String,
+		execution_kind: crate::platform::ProductExecutionKind,
+		request: truapi::latest::HostScannerScanRequest,
+	) -> Result<crate::platform::HostScan, HostRejection>;
 }

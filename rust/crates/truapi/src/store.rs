@@ -5,7 +5,6 @@
 //! never blocks the runtime's executor. [`Db::observe`] turns a query into a
 //! stream that follows every commit.
 
-mod migration;
 mod observe;
 
 use std::{
@@ -15,9 +14,8 @@ use std::{
 
 use async_sqlite::{JournalMode, Pool, PoolBuilder};
 use rusqlite::{OpenFlags, TransactionBehavior};
-use rusqlite_migration::Migrations;
+use rusqlite_migration::{M, Migrations};
 
-pub use migration::core_migrations;
 pub use observe::ObservedStatement;
 use observe::{Invalidation, authorize_for_change_tracking, track_changes};
 
@@ -48,6 +46,31 @@ pub const CORE_DB_FILE: &str = "core.sqlite3";
 
 /// Read-only connections opened for the core database.
 const CORE_DB_READERS: usize = 2;
+
+/// Schema of the core database, one migration per change, in order.
+pub fn core_migrations() -> Migrations<'static> {
+	Migrations::new(vec![M::up(
+        "CREATE TABLE durable_tx (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            domain TEXT NOT NULL,
+            group_id TEXT,
+            tx_hash BLOB,
+            birth_number INTEGER,
+            birth_hash BLOB,
+            period INTEGER,
+            success_number INTEGER,
+            success_hash BLOB,
+            scanned_number INTEGER,
+            status TEXT NOT NULL CHECK (status IN
+                ('PENDING_SUBMISSION', 'PENDING', 'PENDING_SUCCESS', 'FINALIZED_SUCCESS', 'FAILURE')),
+            failure_kind TEXT CHECK (failure_kind IN ('EXPIRED', 'DISPATCH_FAILED', 'REJECTED')),
+            policy_id TEXT,
+            policy_params BLOB
+        );
+        CREATE INDEX durable_tx_group ON durable_tx(domain, group_id);
+        CREATE INDEX durable_tx_status ON durable_tx(domain, status);",
+    )])
+}
 
 /// The core database configuration for a host-provided directory.
 pub fn core_db_config(directory: &Path) -> DbConfig {

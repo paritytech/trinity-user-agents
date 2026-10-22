@@ -29,13 +29,13 @@ fn ensure_upcoming(starts_at: u64) -> Result<(), CallError<latest::HostRemindNex
 	}
 }
 
-impl ProductConnection {
+impl ProductRuntimeHost {
 	/// The host's Game adapter, for the game product only. Any other product,
 	/// or a host without an adapter, gets `Unsupported` before anything else
 	/// runs. Serving one product is why the API asks for no per-product
 	/// consent: the host asks the OS for whatever the reminder needs.
 	fn game_platform<E>(&self) -> Result<Arc<dyn GamePlatform>, CallError<E>> {
-		if !self.product.product_id.is_game_product() {
+		if !self.product.is_game_product() {
 			return Err(CallError::Unsupported);
 		}
 		self.game_platform.clone().ok_or(CallError::Unsupported)

@@ -10,6 +10,9 @@
 
 use std::{
 	collections::BTreeMap,
+	fs::OpenOptions,
+	io::Write,
+	path::PathBuf,
 	sync::{Arc, Mutex},
 };
 
@@ -23,11 +26,9 @@ use truapi::{
 		GenericError, HostPocketListSubscribeItem, HostPocketRemoveCardError,
 		HostPocketRemoveCardRequest,
 	},
-	platform::{PocketPlatform, ProductContext, ProductId, async_trait},
+	platform::{PocketPlatform, ProductContext, async_trait},
 	v01,
 };
-
-use crate::transcript::Transcript;
 
 /// Cards and list subscribers for one product.
 #[derive(Default)]
@@ -45,8 +46,8 @@ struct ProductCards {
 /// and remove the other's cards after a `/product` switch.
 pub struct CliPocketHost {
 	seed: BTreeMap<String, bool>,
-	products: Mutex<BTreeMap<ProductId, ProductCards>>,
-	transcript: Transcript,
+	products: Mutex<BTreeMap<String, ProductCards>>,
+	transcript: Option<PathBuf>,
 }
 
 /// Parse `loyalty,humanity:privileged` into card ids and their pinned flags.
@@ -67,15 +68,24 @@ impl CliPocketHost {
 	/// has no Pocket surface at all.
 	pub fn from_env() -> Option<Arc<Self>> {
 		let spec = std::env::var("TRUAPI_POCKET_CARDS").ok()?;
-		Some(Self::new(parse_cards(&spec), Transcript::from_env("TRUAPI_POCKET_LOG", "pocket")))
+		Some(Self::new(
+			parse_cards(&spec),
+			std::env::var_os("TRUAPI_POCKET_LOG").map(PathBuf::from),
+		))
 	}
 
-	/// Build a Pocket host holding `cards`, recording to `transcript`.
-	fn new(cards: BTreeMap<String, bool>, transcript: Transcript) -> Arc<Self> {
+	/// Build a Pocket host holding `cards`. The transcript is truncated at
+	/// startup so a run never reads an earlier run's removals as its own.
+	fn new(cards: BTreeMap<String, bool>, transcript: Option<PathBuf>) -> Arc<Self> {
+		if let Some(path) = transcript.as_ref() &&
+			let Err(error) = std::fs::write(path, b"")
+		{
+			tracing::warn!(?path, %error, "pocket transcript could not be truncated");
+		}
 		Arc::new(Self { seed: cards, products: Mutex::new(BTreeMap::new()), transcript })
 	}
 
-	fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<ProductId, ProductCards>> {
+	fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, ProductCards>> {
 		self.products.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 	}
 
@@ -83,7 +93,7 @@ impl CliPocketHost {
 	/// from the same spec and diverges from there.
 	fn entry<'a>(
 		&self,
-		products: &'a mut BTreeMap<ProductId, ProductCards>,
+		products: &'a mut BTreeMap<String, ProductCards>,
 		product: &ProductContext,
 	) -> &'a mut ProductCards {
 		products
@@ -113,6 +123,25 @@ impl CliPocketHost {
 			.subscribers
 			.retain(|subscriber| subscriber.unbounded_send(item.clone()).is_ok());
 	}
+
+	/// Append one line to the transcript, if one is configured.
+	///
+	/// The line and its terminator go out in a single write: several writes
+	/// would let a concurrent connection's line land in the middle of this
+	/// one.
+	fn record(&self, line: serde_json::Value) {
+		let Some(path) = self.transcript.as_ref() else {
+			return;
+		};
+		let appended = OpenOptions::new()
+			.create(true)
+			.append(true)
+			.open(path)
+			.and_then(|mut file| file.write_all(format!("{line}\n").as_bytes()));
+		if let Err(error) = appended {
+			tracing::warn!(?path, %error, "pocket transcript could not be appended to");
+		}
+	}
 }
 
 #[async_trait]
@@ -141,7 +170,7 @@ impl PocketPlatform for CliPocketHost {
 		match state.cards.get(&request.card_id) {
 			Some(true) => {
 				drop(products);
-				self.transcript.record(serde_json::json!({
+				self.record(serde_json::json!({
 					"kind": "remove_refused",
 					"cardId": request.card_id,
 				}));
@@ -150,7 +179,7 @@ impl PocketPlatform for CliPocketHost {
 			// A card this host does not hold is already removed.
 			None => {
 				drop(products);
-				self.transcript.record(serde_json::json!({
+				self.record(serde_json::json!({
 					"kind": "remove_absent",
 					"cardId": request.card_id,
 				}));
@@ -160,7 +189,7 @@ impl PocketPlatform for CliPocketHost {
 				state.cards.remove(&request.card_id);
 				Self::republish(state);
 				drop(products);
-				self.transcript.record(serde_json::json!({
+				self.record(serde_json::json!({
 					"kind": "removed",
 					"cardId": request.card_id,
 				}));
@@ -176,11 +205,11 @@ mod tests {
 	use std::fs::read_to_string;
 
 	fn product() -> ProductContext {
-		ProductContext::new(ProductId::for_test("pocket.dot"))
+		ProductContext::new("pocket.dot".to_string()).expect("valid product id")
 	}
 
 	fn other_product() -> ProductContext {
-		ProductContext::new(ProductId::for_test("other.dot"))
+		ProductContext::new("other.dot".to_string()).expect("valid product id")
 	}
 
 	/// A card id is product-local, so one product must not see or remove
@@ -188,10 +217,7 @@ mod tests {
 	/// `/product` switch reuses the same host.
 	#[test]
 	fn one_product_cannot_see_or_remove_another_products_cards() {
-		let host = CliPocketHost::new(
-			BTreeMap::from([("loyalty".to_string(), false)]),
-			Transcript::new(None, "pocket"),
-		);
+		let host = CliPocketHost::new(BTreeMap::from([("loyalty".to_string(), false)]), None);
 		let mine = product();
 		let theirs = other_product();
 
@@ -214,10 +240,7 @@ mod tests {
 
 	fn host(spec: &str) -> (Arc<CliPocketHost>, tempfile::NamedTempFile) {
 		let transcript = tempfile::NamedTempFile::new().expect("a temp transcript");
-		let host = CliPocketHost::new(
-			parse_cards(spec),
-			Transcript::new(Some(transcript.path().to_path_buf()), "pocket"),
-		);
+		let host = CliPocketHost::new(parse_cards(spec), Some(transcript.path().to_path_buf()));
 		(host, transcript)
 	}
 
