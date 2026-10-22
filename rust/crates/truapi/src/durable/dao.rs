@@ -264,6 +264,19 @@ pub fn group(
 		.collect::<rusqlite::Result<_>>()?)
 }
 
+const GROUP_EXISTS: &str =
+	"SELECT EXISTS (SELECT 1 FROM durable_tx WHERE domain = :domain AND group_id = :group_id)";
+
+/// Whether any transaction of `domain` belongs to `group`.
+pub fn group_exists(
+	conn: &Connection,
+	domain: &DomainId,
+	group: &GroupId,
+) -> Result<bool, DbError> {
+	let params = named_params! { ":domain": domain.as_str(), ":group_id": group.as_str() };
+	Ok(conn.prepare_cached(GROUP_EXISTS)?.query_row(params, |row| row.get(0))?)
+}
+
 /// [`group`], re-read after every commit that changes it.
 pub fn observe_group(
 	db: &Db,

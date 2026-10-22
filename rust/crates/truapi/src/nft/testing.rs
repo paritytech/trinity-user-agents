@@ -1,15 +1,26 @@
 //! A ledger for tests, over a fixed installation and fixed entropy.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use futures::executor::block_on;
 use truapi::latest::GenericError;
 
 use super::{
-	keys::{ItemKey, ItemKeyDeriver, ItemSlot, item_keys_from_entropy},
+	keys::{
+		ItemKey, ItemKeyDeriver, ItemSigner, ItemSlot, item_keys_from_entropy,
+		item_signer_from_entropy,
+	},
 	ledger::{NftLedger, NftLedgerDeps},
+	operation::nft_domain,
+	scarcity::MOVE_POLICY,
 };
 use crate::{
+	durable::{
+		DurableRegistry, DurableTxEngine, DurableTxEntry, DurableTxId, PolicyError, PolicyId,
+		PolicyParams, Preparation, ScheduledDurableTx, SubmissionPolicy, Unobservable,
+		VerdictFailureKind, engine_on,
+	},
+	host_internal::extrinsic::Sr25519Signer,
 	installation::{InstallationId, InstallationIdProvider},
 	platform::async_trait,
 	runtime::AuthorityError,
@@ -28,12 +39,45 @@ pub fn test_ledger(db: Db) -> NftLedger {
 	NftLedger::new(test_ledger_deps(db))
 }
 
-/// What [`test_ledger`] runs on, for tests that replace one part.
+/// What [`test_ledger`] runs on, for tests that replace one part. Moves are
+/// registered with an engine that never builds them.
 pub fn test_ledger_deps(db: Db) -> NftLedgerDeps {
 	NftLedgerDeps {
-		db,
+		db: db.clone(),
 		installation: Arc::new(FixedInstallation(TEST_INSTALLATION)),
 		keys: Arc::new(FixedEntropy(TEST_ENTROPY.to_vec())),
+		durable: unbuilt_moves_engine(db),
+	}
+}
+
+/// An engine over `db` that serves the NFT domain, whose moves stay waiting
+/// to be built.
+pub fn unbuilt_moves_engine(db: Db) -> Arc<DurableTxEngine> {
+	let oracle = Arc::new(Unobservable(subxt::utils::H256::zero()));
+	let registry = DurableRegistry::new()
+		.with_domain(nft_domain(), oracle)
+		.with_policy(Arc::new(NeverBuilds));
+	engine_on(db, registry)
+}
+
+/// A move policy that leaves every move waiting.
+struct NeverBuilds;
+
+#[async_trait]
+impl SubmissionPolicy for NeverBuilds {
+	fn id(&self) -> PolicyId {
+		PolicyId::new(MOVE_POLICY)
+	}
+
+	fn can_retry(&self, _: &DurableTxEntry, _: &PolicyParams, _: VerdictFailureKind) -> bool {
+		false
+	}
+
+	async fn prepare(
+		&self,
+		_: &[ScheduledDurableTx],
+	) -> Result<HashMap<DurableTxId, Preparation>, PolicyError> {
+		Ok(HashMap::new())
 	}
 }
 
@@ -53,6 +97,13 @@ pub struct FixedEntropy(pub Vec<u8>);
 impl ItemKeyDeriver for FixedEntropy {
 	fn derive_item_keys(&self, slots: &[ItemSlot]) -> Result<Vec<ItemKey>, AuthorityError> {
 		item_keys_from_entropy(&self.0, slots)
+			.map_err(|error| AuthorityError::Unavailable { reason: error.to_string() })
+	}
+}
+
+impl ItemSigner for FixedEntropy {
+	fn item_signer(&self, slot: ItemSlot) -> Result<Sr25519Signer, AuthorityError> {
+		item_signer_from_entropy(&self.0, slot)
 			.map_err(|error| AuthorityError::Unavailable { reason: error.to_string() })
 	}
 }

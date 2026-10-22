@@ -4,7 +4,7 @@
 use futures::stream::BoxStream;
 use subxt::{ArcMetadata, client::OnlineClientAtBlock, config::SubstrateConfig, utils::H256};
 
-use super::WatchedHead;
+use super::{StorageSnapshot, WatchedHead};
 use std::sync::Arc;
 
 use crate::{chain::HashAndNumber, chain_runtime::RuntimeFailure, time::Timer};
@@ -32,7 +32,8 @@ impl<T> DecodableAtBlock<T> {
 /// value, `None` when absent.
 pub type RawStorageChanges = DecodableAtBlock<Vec<(usize, Option<Vec<u8>>)>>;
 
-/// Storage of a chain, watched by raw key.
+/// Storage of a chain by raw key: watched head after head, or read once at a
+/// block.
 #[async_trait::async_trait]
 pub trait WatchedStorage: Send + Sync {
 	/// A client at the current finalized head, used to encode the watched
@@ -51,6 +52,15 @@ pub trait WatchedStorage: Send + Sync {
 		head: WatchedHead,
 		keys: Vec<Vec<u8>>,
 	) -> Result<BoxStream<'static, Result<RawStorageChanges, RuntimeFailure>>, RuntimeFailure>;
+
+	/// Every one of `keys` at the block `at`, read in one request. A key the
+	/// node leaves out is an error, never an absent value.
+	async fn read_raw_keys_at(
+		&self,
+		genesis: H256,
+		at: H256,
+		keys: Vec<Vec<u8>>,
+	) -> Result<StorageSnapshot, RuntimeFailure>;
 
 	/// The clock a watch waits on between attempts to start.
 	fn timer(&self) -> Arc<dyn Timer>;

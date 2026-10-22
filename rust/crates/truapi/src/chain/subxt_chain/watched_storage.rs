@@ -25,11 +25,11 @@ use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
 use subxt::{client::OnlineClientAtBlock, config::SubstrateConfig, utils::H256};
 use subxt_rpcs::methods::legacy::StorageChangeSet;
 
-use super::finalized_block;
+use super::{finalized_block, numbered};
 use crate::{
 	chain::{
 		ChainHeads, HashAndNumber, HeadEvent, RawStorageChanges, WatchedHead, WatchedStorage,
-		storage_watch::diffed,
+		storage_watch::{StorageSnapshot, diffed},
 	},
 	chain_runtime::{ChainRuntime, RuntimeFailure},
 	time::{RealTimer, Timer},
@@ -41,6 +41,7 @@ use reader::WatchedKeysReader;
 
 const CLIENT_AT_FINALIZED_HEAD: &str = "storage_client_at_finalized_head";
 const STORAGE_WATCH: &str = "storage_watch";
+const READ_KEYS_AT: &str = "storage_read_keys_at";
 
 /// How long to wait before opening a subscription again after opening it
 /// failed.
@@ -73,6 +74,18 @@ impl WatchedStorage for ChainRuntime {
 			WatchedHead::Best => best_changes(reader).await,
 			WatchedHead::Finalized => self.finalized_changes(genesis, reader).await,
 		}
+	}
+
+	async fn read_raw_keys_at(
+		&self,
+		genesis: H256,
+		at: H256,
+		keys: Vec<Vec<u8>>,
+	) -> Result<StorageSnapshot, RuntimeFailure> {
+		let legacy = self.legacy(genesis).await?;
+		let at = numbered(&legacy, at, READ_KEYS_AT).await?;
+		let reader = Arc::new(WatchedKeysReader::new(self.clone(), genesis, keys));
+		reader.read_snapshot_at(at).await
 	}
 
 	fn timer(&self) -> Arc<dyn Timer> {

@@ -5,13 +5,28 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, named_params};
 
 use super::{
 	holding::HeldItem,
-	keys::{ItemKey, ItemSlot},
+	keys::{ItemIndex, ItemKey, ItemSlot},
 	purse::{PurseId, PurseRecord, PurseTag},
 };
 use crate::{
+	durable::DurableTxId,
 	installation::InstallationId,
 	store::{Db, DbError},
 };
+
+/// Where an item key stands for a purse that would spend it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyStanding {
+	/// It is not in the purse, or it holds no NFT.
+	NotHeld,
+	/// It holds an NFT but is handed off or the input of a live transaction.
+	Spent,
+	/// It holds `instance` and nothing spends it.
+	Idle {
+		/// The instance it holds.
+		instance: u64,
+	},
+}
 
 const NEXT_PURSE_ID: &str = "SELECT COALESCE(MAX(id) + 1, 0) FROM nft_purse WHERE id < :main";
 
@@ -84,14 +99,32 @@ pub fn insert_items(tx: &Transaction<'_>, items: &[(ItemSlot, ItemKey)]) -> Resu
 	Ok(())
 }
 
-const AVAILABLE_ITEMS: &str = "SELECT item.key FROM nft_item AS item
-	JOIN nft_holding AS holding ON holding.key = item.key
-	WHERE item.purse = :purse
-	ORDER BY item.idx
-	LIMIT :limit OFFSET :offset";
+/// Whether the key of `item` is spent: handed off, or the input of a live
+/// transaction. An input of a failed transaction no longer counts.
+macro_rules! spent {
+	() => {
+		concat!(
+			"EXISTS (SELECT 1 FROM nft_consumption AS spent
+			LEFT JOIN durable_tx AS tx ON tx.id = spent.tx
+			WHERE spent.key = item.key
+			AND (spent.kind = 'HANDOFF' OR tx.status IN ",
+			live_statuses!(),
+			"))"
+		)
+	};
+}
 
-/// Up to `limit` keys of `purse` that hold an NFT, skipping the first
-/// `offset`, ordered by slot.
+const AVAILABLE_ITEMS: &str = concat!(
+	"SELECT item.key FROM nft_item AS item
+	JOIN nft_holding AS holding ON holding.key = item.key
+	WHERE item.purse = :purse AND NOT ",
+	spent!(),
+	" ORDER BY item.idx
+	LIMIT :limit OFFSET :offset"
+);
+
+/// Up to `limit` keys of `purse` that hold an NFT and are not spent,
+/// skipping the first `offset`, ordered by slot.
 pub fn available_items(
 	conn: &Connection,
 	purse: PurseId,
@@ -102,6 +135,64 @@ pub fn available_items(
 	let params = named_params! { ":purse": purse.0, ":limit": limit, ":offset": offset };
 	let rows = statement.query_map(params, |row| Ok(ItemKey(row.get("key")?)))?;
 	Ok(rows.collect::<Result<_, _>>()?)
+}
+
+const KEY_STANDING: &str = concat!(
+	"SELECT holding.instance AS instance, ",
+	spent!(),
+	" AS spent FROM nft_item AS item
+	JOIN nft_holding AS holding ON holding.key = item.key
+	WHERE item.key = :key AND item.purse = :purse"
+);
+
+/// Whether `key` holds an NFT in `purse`, and whether it is spent.
+pub fn key_standing(
+	conn: &Connection,
+	purse: PurseId,
+	key: &ItemKey,
+) -> Result<KeyStanding, DbError> {
+	let mut statement = conn.prepare_cached(KEY_STANDING)?;
+	let params = named_params! { ":key": key.0, ":purse": purse.0 };
+	let standing = statement.query_row(params, key_standing_from_row).optional()?;
+	Ok(standing.unwrap_or(KeyStanding::NotHeld))
+}
+
+const INSERT_INPUT: &str =
+	"INSERT INTO nft_consumption (key, kind, tx) VALUES (:key, 'INPUT', :tx)";
+
+/// Records that each transaction spends its key.
+pub fn insert_inputs(
+	tx: &Transaction<'_>,
+	inputs: &[(ItemKey, DurableTxId)],
+) -> Result<(), DbError> {
+	let mut statement = tx.prepare_cached(INSERT_INPUT)?;
+	for (key, spender) in inputs {
+		statement.execute(named_params! { ":key": key.0, ":tx": spender.0 })?;
+	}
+	Ok(())
+}
+
+const INPUT_OF: &str = "SELECT item.key, item.purse, item.installation, item.idx
+	FROM nft_consumption AS spent JOIN nft_item AS item ON item.key = spent.key
+	WHERE spent.tx = :tx";
+
+/// The key `spender` spends and its slot, if it spends one.
+pub fn input_of(
+	conn: &Connection,
+	spender: DurableTxId,
+) -> Result<Option<(ItemKey, ItemSlot)>, DbError> {
+	let mut statement = conn.prepare_cached(INPUT_OF)?;
+	let input = statement.query_row(named_params! { ":tx": spender.0 }, input_from_row);
+	Ok(input.optional()?)
+}
+
+const PURSE_OF: &str = "SELECT purse FROM nft_item WHERE key = :key";
+
+/// The purse `key` belongs to, if it is one of ours.
+pub fn purse_of(conn: &Connection, key: &ItemKey) -> Result<Option<PurseId>, DbError> {
+	let mut statement = conn.prepare_cached(PURSE_OF)?;
+	let purse = statement.query_row(named_params! { ":key": key.0 }, |row| row.get("purse"));
+	Ok(purse.optional()?.map(PurseId))
 }
 
 const ITEM_KEYS: &str = "SELECT key FROM nft_item";
@@ -134,6 +225,23 @@ const DELETE_HOLDING: &str = "DELETE FROM nft_holding WHERE key = :key";
 pub fn delete_holding(tx: &Transaction<'_>, key: &ItemKey) -> Result<(), DbError> {
 	tx.prepare_cached(DELETE_HOLDING)?.execute(named_params! { ":key": key.0 })?;
 	Ok(())
+}
+
+fn key_standing_from_row(row: &Row<'_>) -> rusqlite::Result<KeyStanding> {
+	if row.get("spent")? {
+		return Ok(KeyStanding::Spent);
+	}
+	let instance: i64 = row.get("instance")?;
+	Ok(KeyStanding::Idle { instance: instance as u64 })
+}
+
+fn input_from_row(row: &Row<'_>) -> rusqlite::Result<(ItemKey, ItemSlot)> {
+	let slot = ItemSlot {
+		purse: PurseId(row.get("purse")?),
+		installation: InstallationId(row.get("installation")?),
+		index: ItemIndex(row.get("idx")?),
+	};
+	Ok((ItemKey(row.get("key")?), slot))
 }
 
 fn purse_record(row: &Row<'_>) -> rusqlite::Result<PurseRecord> {

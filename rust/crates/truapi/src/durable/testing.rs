@@ -451,3 +451,19 @@ pub fn counting_spawner() -> (crate::subscription::Spawner, Arc<AtomicUsize>) {
 	});
 	(spawner, finished)
 }
+
+/// An engine over `db` serving the domains of `registry`, on a chain that
+/// never moves and with time that only the test moves.
+pub fn engine_on(db: Db, registry: DurableRegistry) -> Arc<DurableTxEngine> {
+	let chain = FakeChain::new(130, 140);
+	DurableTxEngine::new(DurableDeps {
+		db,
+		registry,
+		heads: chain.clone(),
+		blocks: chain.clone(),
+		validator: chain.clone(),
+		submitter: chain,
+		timer: Arc::new(ManualTimer::default()),
+		spawner: crate::test_support::test_spawner(),
+	})
+}

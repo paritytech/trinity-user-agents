@@ -103,6 +103,34 @@ type DecodedEntryChangeStream<K, V> =
 const RETRY_DELAY: Duration = Duration::from_secs(5);
 
 impl dyn WatchedStorage {
+	/// The value of each of `keys` of the entry `address` names, at the
+	/// block `at` of `genesis`, read in one request. An absent entry without
+	/// a default is `None`.
+	pub async fn read_entries_at<A>(
+		&self,
+		genesis: H256,
+		at: H256,
+		address: &A,
+		keys: &[A::KeyParts],
+	) -> Result<Vec<Option<A::Value>>, StorageWatchError>
+	where
+		A: Address,
+		A::KeyParts: Clone,
+	{
+		let client = self.client_at_finalized_head(genesis).await?;
+		let encoded = codec::encode_storage_keys(address, keys, &client)?;
+		let snapshot = self.read_raw_keys_at(genesis, at, encoded).await?;
+		let decode = |bytes: &Option<Vec<u8>>| {
+			codec::decode_value_or_default(
+				address,
+				bytes.as_deref(),
+				&snapshot.metadata,
+				snapshot.at,
+			)
+		};
+		snapshot.value.iter().map(decode).collect()
+	}
+
 	/// Starts one watch of `keys` of the entry `address` names on `genesis`,
 	/// at `head`, or returns why it cannot start: the chain is unreachable, or
 	/// the runtime has no such entry. The first item has every key, and later

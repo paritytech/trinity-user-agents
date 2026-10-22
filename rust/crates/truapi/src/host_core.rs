@@ -943,23 +943,28 @@ impl SigningHostRuntime {
 			tracing::warn!("no core database set, durable transactions and NFT purses are off");
 			return;
 		};
-		if !start_durable_engine(&self.services, db.clone()) {
+		let signer = self.signing_host.clone();
+		let Some(engine) = start_durable_engine(&self.services, db.clone(), signer) else {
 			return;
-		}
-		self.start_nft_purses(db);
+		};
+		self.start_nft_purses(db, engine);
 	}
 
-	/// Installs the NFT ledger over `db` and starts tracking its holdings,
-	/// when an installation provider is set.
+	/// Installs the NFT ledger over `db` and `durable` and starts tracking
+	/// its holdings, when an installation provider is set.
 	#[cfg(not(target_arch = "wasm32"))]
-	fn start_nft_purses(&self, db: crate::store::Db) {
+	fn start_nft_purses(
+		&self,
+		db: crate::store::Db,
+		durable: Arc<crate::durable::DurableTxEngine>,
+	) {
 		let Some(installation) = self.services.installation_provider() else {
 			tracing::warn!("no installation provider set, NFT purses are off");
 			return;
 		};
 		let keys = self.signing_host.clone();
-		let ledger =
-			crate::nft::NftLedger::new(crate::nft::NftLedgerDeps { db, installation, keys });
+		let deps = crate::nft::NftLedgerDeps { db, installation, keys, durable };
+		let ledger = crate::nft::NftLedger::new(deps);
 		self.services.install_nft_ledger(ledger.clone());
 		start_holding_tracker(&self.services, ledger);
 	}
@@ -1284,35 +1289,42 @@ impl SigningHostRuntime {
 }
 
 /// Installs the durable transaction engine over `db`, reports its pending
-/// work and starts its submissions. False when an engine is already
+/// work and starts its submissions. `None` when an engine is already
 /// installed.
 #[cfg(not(target_arch = "wasm32"))]
-fn start_durable_engine(services: &Arc<RuntimeServices>, db: crate::store::Db) -> bool {
-	let engine = durable_engine(services, db);
+fn start_durable_engine(
+	services: &Arc<RuntimeServices>,
+	db: crate::store::Db,
+	signer: Arc<SigningHostRole>,
+) -> Option<Arc<crate::durable::DurableTxEngine>> {
+	let engine = durable_engine(services, db, signer);
 	if !services.install_durable_engine(engine.clone()) {
-		return false;
+		return None;
 	}
 	forward_durable_work(services, &engine);
 	engine.ensure_submissions_started();
-	true
+	Some(engine)
 }
 
 /// The durable transaction engine over `db`, reading and submitting through
-/// the runtime's chain connections.
+/// the runtime's chain connections. It serves NFT moves when an Asset Hub
+/// genesis is configured.
 #[cfg(not(target_arch = "wasm32"))]
 fn durable_engine(
 	services: &RuntimeServices,
 	db: crate::store::Db,
+	signer: Arc<SigningHostRole>,
 ) -> Arc<crate::durable::DurableTxEngine> {
 	use crate::{
-		durable::{DurableDeps, DurableRegistry, DurableTxEngine},
+		durable::{DurableDeps, DurableTxEngine},
 		time::RealTimer,
 	};
 
 	let chain = Arc::new(services.chain.clone());
+	let registry = durable_registry(services, db.clone(), signer);
 	DurableTxEngine::new(DurableDeps {
 		db,
-		registry: DurableRegistry::new(),
+		registry,
 		heads: chain.clone(),
 		blocks: chain.clone(),
 		validator: chain.clone(),
@@ -1320,6 +1332,26 @@ fn durable_engine(
 		timer: Arc::new(RealTimer),
 		spawner: services.spawner.clone(),
 	})
+}
+
+/// The domains and policies the durable engine serves: NFT moves, on the
+/// Asset Hub that runs the Scarcity pallet.
+#[cfg(not(target_arch = "wasm32"))]
+fn durable_registry(
+	services: &RuntimeServices,
+	db: crate::store::Db,
+	signer: Arc<SigningHostRole>,
+) -> crate::durable::DurableRegistry {
+	use crate::nft::{ScarcityMovesDeps, with_scarcity_moves};
+
+	let registry = crate::durable::DurableRegistry::new();
+	let Some(genesis) = services.asset_hub_chain_genesis_hash() else {
+		tracing::warn!("no Asset Hub genesis configured, NFT moves are off");
+		return registry;
+	};
+	let storage = Arc::new(services.chain.clone());
+	let deps = ScarcityMovesDeps { db, storage, genesis: genesis.into(), signer };
+	with_scarcity_moves(registry, deps)
 }
 
 /// Starts tracking what NFT item keys hold on Asset Hub, which runs the

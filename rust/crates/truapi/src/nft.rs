@@ -9,6 +9,7 @@ mod holding;
 mod item;
 mod keys;
 mod ledger;
+mod operation;
 mod purse;
 mod scarcity;
 #[cfg(test)]
@@ -16,9 +17,11 @@ mod testing;
 
 pub use holding::HeldItem;
 pub use item::{AllocateItemsError, PageRequest};
-pub use keys::{ItemKey, ItemKeyDeriver, ItemSlot, item_keys_from_entropy};
+pub use keys::{
+	ItemKey, ItemKeyDeriver, ItemSigner, ItemSlot, item_keys_from_entropy, item_signer_from_entropy,
+};
 pub use ledger::{NftLedger, NftLedgerDeps};
 pub use purse::{CreatePurseError, PurseId, PurseRecord, PurseTag, UnknownPurse};
-pub use scarcity::{HoldingTracker, HoldingTrackerDeps};
+pub use scarcity::{HoldingTracker, HoldingTrackerDeps, ScarcityMovesDeps, with_scarcity_moves};
 #[cfg(test)]
 pub use testing::{TEST_INSTALLATION, insert_item_row, test_ledger};

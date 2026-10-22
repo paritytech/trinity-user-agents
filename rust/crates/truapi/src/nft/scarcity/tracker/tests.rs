@@ -9,15 +9,18 @@ use futures::{
 	executor::block_on,
 	stream::BoxStream,
 };
-use parity_scale_codec::Decode;
-use subxt::{ArcMetadata, client::OnlineClientAtBlock, config::SubstrateConfig, utils::H256};
+use subxt::{client::OnlineClientAtBlock, config::SubstrateConfig, utils::H256};
 use tempfile::TempDir;
 
 use super::*;
 use crate::{
-	chain::{DecodableAtBlock, HashAndNumber, Node, RawStorageChanges, serve},
+	chain::{DecodableAtBlock, HashAndNumber, Node, RawStorageChanges, StorageSnapshot, serve},
 	chain_runtime::{ChainRuntime, RuntimeFailure},
-	nft::{PurseId, PurseTag, insert_item_row, test_ledger},
+	nft::{
+		PurseId, PurseTag, insert_item_row,
+		scarcity::testing::{ASSET_HUB_METADATA_BYTES, asset_hub_metadata},
+		test_ledger,
+	},
 	store::{Db, open_temporary_core_db},
 	test_support::test_spawner,
 	time::{ManualTimer, Timer},
@@ -53,17 +56,6 @@ const HOLDER_ITEM: HeldItem = HeldItem { collection: 27, item: 13, instance: 330
 
 /// How long a test waits for the tracker to write what it was told.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
-
-const ASSET_HUB_METADATA_BYTES: &[u8] =
-	include_bytes!("../../../../tests/fixtures/paseo-next-asset-hub-3004000-metadata.scale");
-
-fn asset_hub_metadata() -> ArcMetadata {
-	let prefixed =
-		frame_metadata::RuntimeMetadataPrefixed::decode(&mut &ASSET_HUB_METADATA_BYTES[..])
-			.expect("the Asset Hub fixture decodes");
-	let metadata = subxt::Metadata::try_from(prefixed).expect("the fixture is subxt metadata");
-	ArcMetadata::from(metadata)
-}
 
 /// A watch the tracker opened: the raw keys it asked for, and the channel a
 /// test reports their changes on.
@@ -111,6 +103,15 @@ impl WatchedStorage for ScriptedChain {
 			.unbounded_send(opened)
 			.expect("the test listens for watches");
 		Ok(reported.boxed())
+	}
+
+	async fn read_raw_keys_at(
+		&self,
+		_genesis: H256,
+		_at: H256,
+		_keys: Vec<Vec<u8>>,
+	) -> Result<StorageSnapshot, RuntimeFailure> {
+		Err(RuntimeFailure::host_failure("test", "this fake only watches"))
 	}
 
 	fn timer(&self) -> Arc<dyn Timer> {

@@ -299,6 +299,14 @@ impl WatchedStorage for ScriptedWatchedStorage {
 		Ok(receiver.boxed())
 	}
 
+	async fn read_raw_keys_at(
+		&self,
+		_genesis: H256,
+		_at: H256,
+		_keys: Vec<Vec<u8>>,
+	) -> Result<StorageSnapshot, RuntimeFailure> {
+		Err(RuntimeFailure::host_failure("test", "this fake only watches"))
+	}
 	fn timer(&self) -> Arc<dyn Timer> {
 		self.timer.clone()
 	}

@@ -21,7 +21,10 @@ mod search;
 
 #[cfg(test)]
 mod testing;
+#[cfg(test)]
+pub use testing::engine_on;
 
+pub use dao::group_exists;
 pub use engine::{
 	DurableDeps, DurableRequest, DurableSubmission, DurableTxEngine, DurableWorkObserver,
 	EmptyRequest, RecoveryError, RegistrationError,
