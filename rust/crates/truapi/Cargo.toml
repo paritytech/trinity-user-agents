@@ -88,10 +88,11 @@ wasm-signing-host = ["runtime"]
 # resource allocation as granted without allocating anything.
 test-host = ["runtime"]
 # In-memory `MockPlatform` for tests and host simulators.
-mock = ["runtime"]
+mock = ["runtime", "dep:strum"]
 
 [dependencies]
 truapi-macros = { path = "../truapi-macros" }
+strum = { workspace = true, optional = true }
 async-trait = { workspace = true }
 derive_more = { workspace = true, features = ["debug", "display", "error", "from"] }
 futures = { workspace = true }

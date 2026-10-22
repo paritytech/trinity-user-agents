@@ -923,44 +923,6 @@ pub mod mock_genesis {
 	}
 }
 
-/// Decision key for a device permission: the SCALE variant tag.
-///
-/// The `Display` impls render prose for a person to read, so they are the
-/// wrong thing to store a grant under. The generated TypeScript mock keys on
-/// these same tags, which is what lets one suite drive both mocks.
-fn device_permission_key(request: &latest::HostDevicePermissionRequest) -> &'static str {
-	use latest::HostDevicePermissionRequest as Request;
-	match request {
-		Request::Notifications => "Notifications",
-		Request::Camera => "Camera",
-		Request::Microphone => "Microphone",
-		Request::Bluetooth => "Bluetooth",
-		Request::NFC => "NFC",
-		Request::Location => "Location",
-		Request::Clipboard => "Clipboard",
-		Request::OpenUrl => "OpenUrl",
-		Request::Biometrics => "Biometrics",
-		Request::Motion => "Motion",
-	}
-}
-
-/// Decision key for a remote permission: the SCALE variant tag.
-///
-/// `Remote` renders its domain list through `Display`, so keying on that form
-/// would make the key depend on what the product asked for and leave the
-/// permission impossible to grant ahead of the request.
-fn remote_permission_key(permission: &latest::RemotePermission) -> &'static str {
-	use latest::RemotePermission as Permission;
-	match permission {
-		Permission::Remote { .. } => "Remote",
-		Permission::WebRtc => "WebRtc",
-		Permission::ChainSubmit => "ChainSubmit",
-		Permission::PreimageSubmit => "PreimageSubmit",
-		Permission::StatementSubmit => "StatementSubmit",
-		Permission::BalanceAccess => "BalanceAccess",
-	}
-}
-
 /// A mock policy is two-valued, so a grant is durable and a refusal is durable.
 /// `AllowOnce` is a host answer the mock has no knob to ask for.
 fn decision(granted: bool) -> PermissionDecision {
@@ -977,9 +939,12 @@ impl Permissions for MockPlatform {
 		if let Some(reason) = &self.config.faults.permission_error {
 			return Err(latest::GenericError { reason: reason.clone() });
 		}
+		// Keyed by variant name, not the prose `Display`, so a grant can be set
+		// ahead of the request. The generated TypeScript mock uses the same keys.
+		let key: &'static str = (&request).into();
 		Ok(decision(self.decide_permission(
 			PermissionKind::Device,
-			device_permission_key(&request).to_string(),
+			key.to_string(),
 			self.config.device_permissions,
 		)))
 	}
@@ -992,9 +957,10 @@ impl Permissions for MockPlatform {
 		if let Some(reason) = &self.config.faults.permission_error {
 			return Err(latest::GenericError { reason: reason.clone() });
 		}
+		let key: &'static str = (&request.permission).into();
 		Ok(decision(self.decide_permission(
 			PermissionKind::Remote,
-			remote_permission_key(&request.permission).to_string(),
+			key.to_string(),
 			self.config.remote_permissions,
 		)))
 	}
