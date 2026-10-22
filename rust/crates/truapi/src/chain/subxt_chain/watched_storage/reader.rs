@@ -6,7 +6,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use futures::stream::{StreamExt, TryStreamExt};
 use parking_lot::Mutex;
-use subxt::{ArcMetadata, ext::frame_decode::storage::encode_storage_key_prefix, utils::H256};
+use subxt::{
+	ArcMetadata, client::OnlineClientAtBlock, config::SubstrateConfig,
+	ext::frame_decode::storage::encode_storage_key_prefix, utils::H256,
+};
 use subxt_rpcs::{client::RpcSubscription, methods::legacy::StorageChangeSet, rpc_params};
 
 use super::{RawChangeStream, STORAGE_WATCH, all_keys_answered_or_err, group_values_by_key};
@@ -270,16 +273,25 @@ fn separate_runtime_upgrade_and_watched(
 	UpgradeAndWatched { last_upgrade, watched }
 }
 
+/// A client at the block `at`, under the runtime that produced it.
+pub async fn client_at_block(
+	legacy: &LegacyConnection,
+	at: HashAndNumber,
+	method: &'static str,
+) -> Result<OnlineClientAtBlock<SubstrateConfig>, RuntimeFailure> {
+	legacy
+		.client
+		.at_block_hash_and_number(at.hash, at.number)
+		.await
+		.map_err(|error| failure(method, error))
+}
+
 /// Metadata of the runtime that produced `at`.
-pub async fn fetch_metadata_at_block(
+async fn fetch_metadata_at_block(
 	legacy: &LegacyConnection,
 	at: HashAndNumber,
 	method: &'static str,
 ) -> Result<ArcMetadata, RuntimeFailure> {
-	let client = legacy
-		.client
-		.at_block_hash_and_number(at.hash, at.number)
-		.await
-		.map_err(|error| failure(method, error))?;
+	let client = client_at_block(legacy, at, method).await?;
 	Ok(client.metadata())
 }

@@ -22,7 +22,7 @@ use core::{
 use std::{collections::HashMap, sync::Arc};
 
 use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
-use subxt::{ArcMetadata, utils::H256};
+use subxt::{client::OnlineClientAtBlock, config::SubstrateConfig, utils::H256};
 use subxt_rpcs::methods::legacy::StorageChangeSet;
 
 use super::finalized_block;
@@ -38,7 +38,7 @@ mod reader;
 
 use reader::WatchedKeysReader;
 
-const METADATA_AT_FINALIZED_HEAD: &str = "storage_metadata_at_finalized_head";
+const CLIENT_AT_FINALIZED_HEAD: &str = "storage_client_at_finalized_head";
 const STORAGE_WATCH: &str = "storage_watch";
 
 /// How long to wait before opening a subscription again after opening it
@@ -52,13 +52,13 @@ type RawChangeStream = BoxStream<'static, Result<RawStorageChanges, RuntimeFailu
 
 #[async_trait::async_trait]
 impl WatchedStorage for ChainRuntime {
-	async fn metadata_at_finalized_head(
+	async fn client_at_finalized_head(
 		&self,
 		genesis: H256,
-	) -> Result<ArcMetadata, RuntimeFailure> {
+	) -> Result<OnlineClientAtBlock<SubstrateConfig>, RuntimeFailure> {
 		let legacy = self.legacy(genesis).await?;
-		let finalized = finalized_block(&legacy, METADATA_AT_FINALIZED_HEAD).await?;
-		reader::fetch_metadata_at_block(&legacy, finalized, METADATA_AT_FINALIZED_HEAD).await
+		let finalized = finalized_block(&legacy, CLIENT_AT_FINALIZED_HEAD).await?;
+		reader::client_at_block(&legacy, finalized, CLIENT_AT_FINALIZED_HEAD).await
 	}
 
 	async fn watch_raw_key_changes(

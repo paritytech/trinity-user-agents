@@ -2,7 +2,7 @@
 //! another.
 
 use futures::stream::BoxStream;
-use subxt::{ArcMetadata, utils::H256};
+use subxt::{ArcMetadata, client::OnlineClientAtBlock, config::SubstrateConfig, utils::H256};
 
 use super::WatchedHead;
 use crate::{chain::HashAndNumber, chain_runtime::RuntimeFailure};
@@ -33,12 +33,12 @@ pub type RawStorageChanges = DecodableAtBlock<Vec<(usize, Option<Vec<u8>>)>>;
 /// Storage of a chain, watched by raw key.
 #[async_trait::async_trait]
 pub trait WatchedStorage: Send + Sync {
-	/// Metadata of the runtime at the current finalized head, for encoding
-	/// keys before a watch starts.
-	async fn metadata_at_finalized_head(
+	/// A client at the current finalized head, used to encode the watched
+	/// keys before the watch starts.
+	async fn client_at_finalized_head(
 		&self,
 		genesis: H256,
-	) -> Result<ArcMetadata, RuntimeFailure>;
+	) -> Result<OnlineClientAtBlock<SubstrateConfig>, RuntimeFailure>;
 
 	/// Changes to `keys` at `head`. The first item holds every key; each later
 	/// one holds the keys whose value changed since the item before. A failed

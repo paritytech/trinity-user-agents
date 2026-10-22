@@ -1,14 +1,16 @@
-//! Encoding the keys and decoding the values of a subxt storage address
-//! against runtime metadata.
+//! Encoding the keys and decoding the values of a subxt storage address.
+//!
+//! Keys are encoded by subxt itself. Values are decoded here with frame-decode,
+//! the same way subxt's `StorageValue::decode` does, because subxt does not let
+//! callers build a `StorageValue` from bytes they read themselves.
 
 use derive_more::Display;
 use subxt::{
 	Metadata,
+	client::{ClientAtBlock, OfflineClientAtBlockT},
+	config::Config,
 	ext::{
-		frame_decode::storage::{
-			IntoEncodableValues, StorageInfo, StorageTypeInfo, decode_storage_value_with_info,
-			encode_storage_key_with_info,
-		},
+		frame_decode::storage::{StorageInfo, StorageTypeInfo, decode_storage_value_with_info},
 		scale_decode::IntoVisitor,
 	},
 	storage::Address,
@@ -33,20 +35,32 @@ impl StorageEntryName {
 	}
 }
 
-/// The full storage key of each of `keys`, under `address`.
-pub fn encode_storage_keys<A>(
+/// The full storage key of each of `keys`, under `address`, encoded by
+/// subxt with the runtime of `client`.
+pub fn encode_storage_keys<A, T, Client>(
 	address: &A,
 	keys: &[A::KeyParts],
-	metadata: &Metadata,
+	client: &ClientAtBlock<T, Client>,
 ) -> Result<Vec<Vec<u8>>, StorageWatchError>
 where
 	A: Address,
 	A::KeyParts: Clone,
+	T: Config,
+	Client: OfflineClientAtBlockT<T>,
 {
-	let info = entry_type_info(address, metadata)?;
+	let storage = client.storage();
+	let entry = storage
+		.entry(address)
+		.map_err(|error| incompatible_entry(address, error.to_string()))?;
 	keys.iter()
 		.enumerate()
-		.map(|(index, parts)| encode_storage_key(address, index, parts.clone(), &info, metadata))
+		.map(|(index, parts)| {
+			entry.fetch_key(parts.clone()).map_err(|error| StorageWatchError::KeyEncoding {
+				entry: StorageEntryName::of_address(address),
+				index,
+				reason: error.to_string(),
+			})
+		})
 		.collect()
 }
 
@@ -70,31 +84,12 @@ fn entry_type_info<'metadata>(
 ) -> Result<StorageInfo<'metadata, u32>, StorageWatchError> {
 	metadata
 		.storage_info(address.pallet_name(), address.entry_name())
-		.map_err(|error| StorageWatchError::Incompatible {
-			entry: StorageEntryName::of_address(address),
-			reason: error.to_string(),
-		})
+		.map_err(|error| incompatible_entry(address, error.to_string()))
 }
 
-fn encode_storage_key<A: Address>(
-	address: &A,
-	index: usize,
-	parts: A::KeyParts,
-	info: &StorageInfo<'_, u32>,
-	metadata: &Metadata,
-) -> Result<Vec<u8>, StorageWatchError> {
-	let key_error = |reason: String| StorageWatchError::KeyEncoding {
-		entry: StorageEntryName::of_address(address),
-		index,
-		reason,
-	};
-	let given = parts.num_encodable_values();
-	if given != info.keys.len() {
-		return Err(key_error(format!("expected {} key parts, got {given}", info.keys.len())));
-	}
-	let (pallet, entry) = (address.pallet_name(), address.entry_name());
-	encode_storage_key_with_info(pallet, entry, parts, info, metadata.types())
-		.map_err(|error| key_error(error.to_string()))
+/// The error for an `address` that the runtime metadata does not describe.
+fn incompatible_entry(address: &impl Address, reason: String) -> StorageWatchError {
+	StorageWatchError::Incompatible { entry: StorageEntryName::of_address(address), reason }
 }
 
 fn decode_value_strict<A: Address>(

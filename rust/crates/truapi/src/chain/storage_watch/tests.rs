@@ -8,7 +8,13 @@ use futures::{
 };
 use parity_scale_codec::Encode;
 use sp_crypto_hashing::{blake2_128, twox_64, twox_128};
-use subxt::{ArcMetadata, storage::dynamic, utils::H256};
+use subxt::{
+	ArcMetadata,
+	client::{OfflineClientAtBlock, OnlineClientAtBlock},
+	config::SubstrateConfig,
+	storage::dynamic,
+	utils::H256,
+};
 
 use super::{
 	DecodableAtBlock, DecodedEntryChanges, RawStorageChanges, StorageSnapshot, StorageWatchError,
@@ -17,14 +23,23 @@ use super::{
 	diffed,
 };
 use crate::{
-	chain::HashAndNumber, chain_runtime::RuntimeFailure,
-	host_internal::extrinsic::tests::bulletin_metadata,
+	chain::{
+		HashAndNumber,
+		tests::{Node, serve},
+	},
+	chain_runtime::{ChainRuntime, RuntimeFailure},
+	host_internal::extrinsic::tests::{bulletin_chain_state, bulletin_metadata},
 };
 
 const GENESIS: H256 = H256([0xab; 32]);
 
 fn bulletin_fixture_metadata() -> ArcMetadata {
 	ArcMetadata::from(bulletin_metadata())
+}
+
+/// An offline client over the bulletin fixture, for encoding keys.
+fn bulletin_fixture_client() -> OfflineClientAtBlock<SubstrateConfig> {
+	bulletin_chain_state().client_at(0).unwrap()
 }
 
 fn test_block(number: u64) -> HashAndNumber {
@@ -139,8 +154,7 @@ fn keys_encode_as_the_chain_stores_them() {
 	let account = [7u8; 32];
 	let address = dynamic::<([u8; 32],), ()>("System", "Account");
 
-	let encoded =
-		encode_storage_keys(&address, &[(account,)], &bulletin_fixture_metadata()).unwrap();
+	let encoded = encode_storage_keys(&address, &[(account,)], &bulletin_fixture_client()).unwrap();
 
 	let expected =
 		[&twox_128(b"System")[..], &twox_128(b"Account"), &blake2_128(&account), &account].concat();
@@ -151,19 +165,18 @@ fn keys_encode_as_the_chain_stores_them() {
 fn a_key_with_the_wrong_number_of_parts_names_its_position() {
 	let address = dynamic::<(u32, u32), ()>("System", "BlockHash");
 
-	let error = encode_storage_keys(&address, &[(1, 2)], &bulletin_fixture_metadata()).unwrap_err();
+	let error = encode_storage_keys(&address, &[(1, 2)], &bulletin_fixture_client()).unwrap_err();
 
-	assert_eq!(
-		error.to_string(),
-		"key 0 of System.BlockHash did not encode: expected 1 key parts, got 2"
-	);
+	let message = error.to_string();
+	assert!(message.starts_with("key 0 of System.BlockHash did not encode: "), "{message}");
+	assert!(message.contains("expected 1 key parts but got 2"), "{message}");
 }
 
 #[test]
 fn an_entry_missing_from_the_metadata_is_incompatible() {
 	let address = dynamic::<(u32,), ()>("System", "NoSuchEntry");
 
-	let error = encode_storage_keys(&address, &[(1,)], &bulletin_fixture_metadata()).unwrap_err();
+	let error = encode_storage_keys(&address, &[(1,)], &bulletin_fixture_client()).unwrap_err();
 
 	assert!(matches!(error, StorageWatchError::Incompatible { .. }), "{error}");
 }
@@ -217,8 +230,11 @@ fn bytes_left_over_after_the_value_are_an_error() {
 	assert!(error.to_string().ends_with("did not decode: 1 of 5 bytes left over"), "{error}");
 }
 
-/// Changes a test scripts by hand, and the keys the watch asked for.
+/// Changes a test scripts by hand, and the keys the watch asked for. The
+/// client for encoding keys comes from a scripted node serving the bulletin
+/// runtime.
 struct ScriptedWatchedStorage {
+	chain: ChainRuntime,
 	changes: Mutex<Option<UnboundedReceiver<Result<RawStorageChanges, RuntimeFailure>>>>,
 	requested: Mutex<Option<(WatchedHead, Vec<Vec<u8>>)>>,
 }
@@ -226,19 +242,20 @@ struct ScriptedWatchedStorage {
 impl ScriptedWatchedStorage {
 	fn new() -> (Arc<Self>, UnboundedSender<Result<RawStorageChanges, RuntimeFailure>>) {
 		let (sender, receiver) = unbounded();
-		let fake =
-			Arc::new(Self { changes: Mutex::new(Some(receiver)), requested: Mutex::new(None) });
+		let (_node, _provider, chain) = serve(Node::new(3, 5));
+		let changes = Mutex::new(Some(receiver));
+		let fake = Arc::new(Self { chain, changes, requested: Mutex::new(None) });
 		(fake, sender)
 	}
 }
 
 #[async_trait::async_trait]
 impl WatchedStorage for ScriptedWatchedStorage {
-	async fn metadata_at_finalized_head(
+	async fn client_at_finalized_head(
 		&self,
-		_genesis: H256,
-	) -> Result<ArcMetadata, RuntimeFailure> {
-		Ok(bulletin_fixture_metadata())
+		genesis: H256,
+	) -> Result<OnlineClientAtBlock<SubstrateConfig>, RuntimeFailure> {
+		self.chain.client_at_finalized_head(genesis).await
 	}
 
 	async fn watch_raw_key_changes(
