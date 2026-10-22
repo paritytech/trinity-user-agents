@@ -15,9 +15,7 @@ use crate::frame::{ProtocolErrorV1, VersionedProtocolError};
 /// frozen at whatever shape shipped first. A caller that gets `None` should
 /// settle the correlated call as an unspecified protocol failure and carry on.
 ///
-/// A payload this build does recognise stays strict: a truncated or over-long
-/// `V1(UnsupportedMessage)` or `V1(UnsupportedVersion)` is corruption, not a
-/// newer peer, and still fails.
+/// A known error that is truncated or has extra bytes is rejected as corrupt.
 pub fn decode_protocol_error_payload(
 	payload: &[u8],
 ) -> Result<Option<VersionedProtocolError>, CodecError> {
