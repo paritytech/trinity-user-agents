@@ -1,0 +1,71 @@
+name: "Announce a nightly"
+description: >-
+  Posts a nightly announcement to every CI Matrix room through the relay's
+  release endpoint, which renders it. The message links to the changelog
+  rather than listing what merged.
+inputs:
+  platform:
+    description: "Platform named in the heading, such as iOS."
+    required: true
+  changelog:
+    description: "Where the changelog is, as [label](url), or a sentence when there is no link."
+    required: true
+  release_info:
+    description: "Text shown under the heading, newlines preserved."
+    required: false
+    default: ""
+  download_links:
+    description: "One entry per line, [label](url), a bare URL or a sentence."
+    required: true
+  relay_url:
+    description: "Base URL of the notification relay."
+    required: true
+  relay_token:
+    description: "API token the relay expects in the Authorization header."
+    required: true
+  room_ids:
+    description: "Comma separated Matrix room ids."
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Post to each room
+      shell: bash
+      env:
+        PLATFORM: ${{ inputs.platform }}
+        CHANGELOG: ${{ inputs.changelog }}
+        RELEASE_INFO: ${{ inputs.release_info }}
+        DOWNLOAD_LINKS: ${{ inputs.download_links }}
+        RELAY_URL: ${{ inputs.relay_url }}
+        RELAY_TOKEN: ${{ inputs.relay_token }}
+        ROOM_IDS: ${{ inputs.room_ids }}
+      run: |
+        set -euo pipefail
+        # jq builds the body, so a quote in any field cannot break it.
+        body="$(jq -n \
+          --arg platform "$PLATFORM" \
+          --arg changelog "$CHANGELOG" \
+          --arg release_info "$RELEASE_INFO" \
+          --arg download_links "$DOWNLOAD_LINKS" \
+          '{platform: $platform, changelog: $changelog, release_info: $release_info,
+            download_links: $download_links, download_links_format: "list"}')"
+        failed=0
+        IFS=',' read -ra rooms <<< "$ROOM_IDS"
+        for room in "${rooms[@]}"; do
+          room="$(printf '%s' "$room" | tr -d '[:space:]')"
+          [ -n "$room" ] || continue
+          encoded="$(jq -rn --arg r "$room" '$r|@uri')"
+          # --retry covers 429 and 5xx and honours the Retry-After the relay
+          # passes back from the homeserver.
+          if ! printf '%s' "$body" | curl --fail-with-body --silent --show-error \
+              --retry 6 --retry-delay 20 --max-time 60 \
+              -H "Authorization: $RELAY_TOKEN" -H "Content-Type: application/json" \
+              --data-binary @- "${RELAY_URL%/}/matrix/release/$encoded"; then
+            # The relay's error body ends without a newline, and an annotation
+            # only registers at the start of a line.
+            echo
+            echo "::error::The relay did not deliver the announcement to one of the rooms"
+            failed=1
+          fi
+        done
+        exit "$failed"

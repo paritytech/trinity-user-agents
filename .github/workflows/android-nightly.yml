@@ -513,22 +513,23 @@ jobs:
     permissions:
       contents: read
     steps:
+      # The action below is held in this repository, so it has to be on disk.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions/announce-nightly
+
       - name: Send nightly release notification
-        uses: novasamatech/github-actions/send-release-notification@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5
+        uses: ./.github/actions/announce-nightly
         with:
           platform: Android
           # The changelog lives on the prerelease, whose notes list what merged
-          # since the previous Android nightly. The template renders this under
-          # its merged pull requests heading, as the one entry.
-          pr_list: |
-            - [Changelog for ${{ needs.nightly.outputs.tag }}](${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.nightly.outputs.tag }})
+          # since the previous Android nightly.
+          changelog: "[Changelog for ${{ needs.nightly.outputs.tag }}](${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.nightly.outputs.tag }})"
           # What App Distribution shows a tester: the versionName the APK was
           # built with, and the build id that is its versionCode.
           release_info: |
             Nightly: ${{ needs.nightly.outputs.version_name }} (${{ needs.nightly.outputs.build_id }})
-          # One entry per line, because the second is a sentence rather than a
-          # link and reads badly joined onto the first.
-          download_links_format: list
           # The asset is public, so the link is built here rather than held in a
           # secret the way the iOS one is. App Distribution has no fetchable URL,
           # only the tester app, so it gets a sentence instead of a link.
@@ -538,6 +539,6 @@ jobs:
               && format('[Vanilla APK, without Google Play services]({0}/{1}/releases/download/{2}/app-vanilla-nightly.apk)', github.server_url, github.repository, needs.nightly.outputs.tag)
               || 'No vanilla APK tonight: its build failed.' }}
             Also distributed to Firebase App Distribution (${{ vars.ANDROID_FIREBASE_GROUP }}).
-          bot_url: ${{ secrets.NOTIFICATION_BOT_URL }}
-          bot_api_token: ${{ secrets.NOTIFICATION_BOT_TOKEN }}
-          matrix_room_ids: ${{ secrets.CI_MATRIX_ROOM_IDS }}
+          relay_url: ${{ secrets.NOTIFICATION_BOT_URL }}
+          relay_token: ${{ secrets.NOTIFICATION_BOT_TOKEN }}
+          room_ids: ${{ secrets.CI_MATRIX_ROOM_IDS }}
