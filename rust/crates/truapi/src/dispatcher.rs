@@ -66,10 +66,9 @@ pub struct SubscriptionEntry {
 	handler: SubscriptionHandler,
 }
 
-/// The protocol error answering a request in a version newer than
-/// `newest_version`, the newest its handler decodes. A request payload is its
-/// versioned wrapper, so its first byte is the variant index, one less than the
-/// version.
+/// Returns the error to send back when `payload` is in a version newer than
+/// `newest_version`. The first byte of a request is its version, starting at
+/// 0 for `V1`.
 fn unsupported_version(
 	ids: MethodIds,
 	newest_version: u8,
