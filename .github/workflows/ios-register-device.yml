@@ -27,6 +27,7 @@ jobs:
       - uses: ./.github/actions/mac-preflight
         with:
           simulator: "false"
+          min_free_gb: "5"
 
       # Registering a device mutates signing state at Apple and spends one of a
       # limited number of device slots.

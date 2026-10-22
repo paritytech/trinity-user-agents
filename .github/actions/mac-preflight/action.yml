@@ -67,18 +67,26 @@ runs:
         # A wedged CoreSimulator service hangs simctl rather than failing it,
         # so the call runs under a deadline.
         if [ "$CHECK_SIMULATOR" = true ]; then
-          if ! python3 - <<'PY'
+          simctl_status=0
+          python3 - <<'PY' || simctl_status=$?
         import subprocess, sys
         try:
             subprocess.run(["xcrun", "simctl", "list", "devices", "available"],
                            check=True, capture_output=True, timeout=90)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        except subprocess.TimeoutExpired:
+            sys.exit(2)
+        except subprocess.CalledProcessError as error:
+            print(error.stderr.decode(errors="replace") or error, file=sys.stderr)
+            sys.exit(1)
+        except OSError as error:
             print(error, file=sys.stderr)
             sys.exit(1)
         PY
-          then
-            unhealthy "the simulator service did not answer within 90 seconds"
-          fi
+          case "$simctl_status" in
+            0) ;;
+            2) unhealthy "the simulator service did not answer within 90 seconds" ;;
+            *) unhealthy "simctl could not list the simulators" ;;
+          esac
         fi
 
         echo "${RUNNER_NAME} is healthy: github.com reachable, ${free_gb} GB free"

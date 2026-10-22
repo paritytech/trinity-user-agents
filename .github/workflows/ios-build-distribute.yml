@@ -163,10 +163,6 @@ jobs:
           ref: ${{ inputs.release_branch }}
           fetch-depth: 0
 
-      - uses: ./.github/actions/mac-preflight
-        with:
-          simulator: "false"
-
       - name: Prepare TestFlight release notes
         id: release_notes
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
@@ -320,20 +316,20 @@ jobs:
             summary="$(xcrun xcresulttool get test-results summary --path "$result")"
             echo "$summary"
             {
-              echo "### Unit test results"
+              echo "### Unit test results for this failed build"
               echo '```json'
               echo "$summary"
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "No result bundle: the run failed before or after the tests"
+            echo "No result bundle: the run failed before the tests"
           fi
 
       - name: Upload test results
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: nightly-test-results-${{ github.run_id }}-${{ github.run_attempt }}
+          name: test-results-${{ inputs.build_configuration }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: hosts/ios/fastlane/test_output/
           if-no-files-found: ignore
           retention-days: 7

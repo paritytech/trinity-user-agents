@@ -24,6 +24,7 @@ jobs:
       - uses: ./.github/actions/mac-preflight
         with:
           simulator: "false"
+          min_free_gb: "5"
 
       # The daily run is started by nobody, so there is no one to check.
       # Narrower than write access: see the action for why, and
