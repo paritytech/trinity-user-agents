@@ -7,7 +7,8 @@ The iOS app runs on the simulator and the Android app on the emulator from a loc
 | | Local build | Needs CI |
 |---|---|---|
 | iOS simulator | Yes, ad hoc signed, no provisioning profile | |
-| Android emulator or phone (sideloaded) | Yes, signed with your own dev key | |
+| Android emulator or phone (sideloaded) | Yes, signed with your own dev key, up to Google sign-in | |
+| Android onboarding | | `android-device-build`, which signs with the develop key |
 | iPhone | | `ios-device-build`, once your device is registered |
 | Replace a tester's installed app | | The develop keystore |
 | TestFlight, Firebase App Distribution, Play Store, GitHub releases | | The App Store Connect key, match, the Firebase credential, the release keystore |
@@ -77,11 +78,25 @@ A cold build takes about 3 minutes on an M-series Mac and an incremental one und
 
 **Debug is the configuration to build.** It uses the `.develop` bundle id that the dev plist is registered for, and the simulator's attestation path, so onboarding completes without a device.
 
+**Onboard on a fresh simulator.** The app keeps its account in the simulator's keychain, which survives uninstalling the app, so a simulator that has run any build of `io.parity.polkadotapp.develop` opens straight into that old account. Create a new one with `xcrun simctl create "Local build" "iPhone 17 Pro"`, or erase one with `xcrun simctl erase <udid>`.
+
 Rerun `make ios-bootstrap` after changing the `truapi` or `truapi-provider` crates.
 
 ## Android emulator
 
 Prerequisites (`hosts/android/README.md`): JDK 21, the Android SDK with compileSdk 36 and NDK r29, Rust with the four Android targets and `cargo-ndk`, Node.js, and Python 3.
+
+A local APK runs up to claiming a username, which is enough for work that does not need an account. Claiming one opens Google sign-in, and Google completes it only for an APK whose signing certificate is registered in the dev Firebase project; your own key is not. To onboard, add the `android-device-build` label to your pull request and install the APK from the `android-preview-pr-<number>` artifact the run uploads. That build runs on a Linux runner, so it does not queue behind the macOS jobs.
+
+Either APK needs an emulator with Google Play: Play Integrity attests the device before a username is claimed, and a `google_apis` image without the Play Store fails with "Google Play services aren't available on this device". An API 35 Play Store image works:
+
+```bash
+sdkmanager "system-images;android-35;google_apis_playstore;arm64-v8a"
+avdmanager create avd -n play35 -k "system-images;android-35;google_apis_playstore;arm64-v8a" -d pixel_6
+emulator -avd play35
+```
+
+Onboarding the CI APK also needs a Google account signed in on the emulator.
 
 ```bash
 cd hosts/android
