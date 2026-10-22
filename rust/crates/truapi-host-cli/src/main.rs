@@ -1811,7 +1811,9 @@ fn build_signing_runtime(
 	funding_host::CliFundingHost::install_from_env(&runtime);
 	runtime.set_game_platform(Arc::new(game::CliGameHost));
 	runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
-	runtime.set_core_db(core_db, installation);
+	runtime.set_core_db(core_db);
+	runtime.set_installation_provider(installation);
+	runtime.start_core_services();
 	runtime.start_statement_allowance_renewal();
 	Ok((runtime, platform))
 }
