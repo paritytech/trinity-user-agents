@@ -734,6 +734,8 @@ impl<Item, Interrupt> Subscription<Item, Interrupt> {
 }
 
 #[cfg(feature = "runtime")]
+pub mod background_task;
+#[cfg(feature = "runtime")]
 pub mod bootstrap;
 #[cfg(feature = "runtime")]
 pub mod chain;

@@ -101,7 +101,7 @@ pub struct RuntimeServices {
 	nft_ledger: OnceLock<NftLedger>,
 	/// Keeps the ledger's holdings in step with the chain, installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
-	holding_tracker: OnceLock<Arc<HoldingTracker>>,
+	holding_tracker: OnceLock<HoldingTracker>,
 	/// Host observer told whether durable work is pending. Unset leaves
 	/// recovery to whoever calls it.
 	#[cfg(not(target_arch = "wasm32"))]
@@ -415,7 +415,7 @@ impl RuntimeServices {
 	/// Install the tracker of NFT holdings, which runs for as long as the
 	/// services live. Set-once; returns whether this call installed it.
 	#[cfg(not(target_arch = "wasm32"))]
-	pub fn install_holding_tracker(&self, tracker: Arc<HoldingTracker>) -> bool {
+	pub fn install_holding_tracker(&self, tracker: HoldingTracker) -> bool {
 		self.holding_tracker.set(tracker).is_ok()
 	}
 

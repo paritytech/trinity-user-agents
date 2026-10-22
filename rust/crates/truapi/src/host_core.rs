@@ -1308,14 +1308,13 @@ fn start_holding_tracker(services: &RuntimeServices, ledger: crate::nft::NftLedg
 		tracing::warn!("no Asset Hub genesis configured, NFT holdings are not tracked");
 		return;
 	};
-	let tracker = HoldingTracker::new(HoldingTrackerDeps {
+	let tracker = HoldingTracker::start(HoldingTrackerDeps {
 		ledger,
 		storage: Arc::new(services.chain.clone()),
 		genesis: genesis.into(),
 		spawner: services.spawner.clone(),
 		timer: Arc::new(crate::time::RealTimer),
 	});
-	tracker.ensure_started();
 	services.install_holding_tracker(tracker);
 }
 

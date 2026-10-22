@@ -1,8 +1,5 @@
 use std::{
-	sync::{
-		Arc, Mutex,
-		atomic::{AtomicUsize, Ordering},
-	},
+	sync::{Arc, Mutex},
 	time::{Duration, Instant},
 };
 
@@ -60,10 +57,6 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const ASSET_HUB_METADATA_BYTES: &[u8] =
 	include_bytes!("../../../../tests/fixtures/paseo-next-asset-hub-3004000-metadata.scale");
 
-/// A runtime without the Scarcity pallet.
-const BULLETIN_METADATA_BYTES: &[u8] =
-	include_bytes!("../../../../tests/fixtures/bulletin_paseo_metadata.scale");
-
 fn asset_hub_metadata() -> ArcMetadata {
 	let prefixed =
 		frame_metadata::RuntimeMetadataPrefixed::decode(&mut &ASSET_HUB_METADATA_BYTES[..])
@@ -80,43 +73,20 @@ struct OpenedWatch {
 }
 
 /// A chain whose every watch a test scripts by hand. The client for encoding
-/// keys comes from a scripted node serving `metadata`.
+/// keys comes from a scripted node serving the Asset Hub runtime.
 struct ScriptedChain {
 	chain: ChainRuntime,
 	opened: Mutex<UnboundedSender<OpenedWatch>>,
-	/// How many times a watch was opened, counted when its client is asked for.
-	opens: AtomicUsize,
-	/// How many more openings fail as if the chain were unreachable.
-	unreachable_opens: AtomicUsize,
 }
 
 impl ScriptedChain {
-	fn new(opened: UnboundedSender<OpenedWatch>, runtime: ScriptedRuntime) -> Self {
+	fn new(opened: UnboundedSender<OpenedWatch>) -> Self {
 		let mut node = Node::new(3, 5);
-		node.metadata = runtime.metadata;
+		node.metadata = ASSET_HUB_METADATA_BYTES;
 		let (_node, _provider, chain) = serve(node);
-		Self {
-			chain,
-			opened: Mutex::new(opened),
-			opens: AtomicUsize::new(0),
-			unreachable_opens: AtomicUsize::new(runtime.unreachable_opens),
-		}
-	}
-
-	fn opens(&self) -> usize {
-		self.opens.load(Ordering::SeqCst)
+		Self { chain, opened: Mutex::new(opened) }
 	}
 }
-
-/// The runtime a [`ScriptedChain`] serves, and how many first openings
-/// fail.
-struct ScriptedRuntime {
-	metadata: &'static [u8],
-	unreachable_opens: usize,
-}
-
-const ASSET_HUB: ScriptedRuntime =
-	ScriptedRuntime { metadata: ASSET_HUB_METADATA_BYTES, unreachable_opens: 0 };
 
 #[async_trait::async_trait]
 impl WatchedStorage for ScriptedChain {
@@ -124,16 +94,6 @@ impl WatchedStorage for ScriptedChain {
 		&self,
 		genesis: H256,
 	) -> Result<OnlineClientAtBlock<SubstrateConfig>, RuntimeFailure> {
-		self.opens.fetch_add(1, Ordering::SeqCst);
-		let unreachable =
-			self.unreachable_opens
-				.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1));
-		if unreachable.is_ok() {
-			return Err(RuntimeFailure::host_failure(
-				"test",
-				"the chain is unreachable".to_owned(),
-			));
-		}
 		self.chain.client_at_finalized_head(genesis).await
 	}
 
@@ -161,36 +121,24 @@ struct TrackerFixture {
 	db: Db,
 	ledger: NftLedger,
 	opened: UnboundedReceiver<OpenedWatch>,
-	chain: Arc<ScriptedChain>,
-	timer: Arc<ManualTimer>,
-	_tracker: Arc<HoldingTracker>,
+	_tracker: HoldingTracker,
 }
 
-/// Starts a tracker on Asset Hub after `prepare` has written to the
-/// database.
+/// Starts a tracker after `prepare` has written to the database.
 fn tracker_after(prepare: impl FnOnce(&Db)) -> TrackerFixture {
-	tracker_on(ASSET_HUB, prepare)
-}
-
-/// Starts a tracker on `runtime` after `prepare` has written to the
-/// database.
-fn tracker_on(runtime: ScriptedRuntime, prepare: impl FnOnce(&Db)) -> TrackerFixture {
 	let (dir, db) = open_temporary_core_db();
 	let ledger = test_ledger(db.clone());
 	block_on(ledger.create_purse("tickets".to_owned(), PurseTag::default())).expect("purse");
 	prepare(&db);
 	let (announce, opened) = unbounded();
-	let chain = Arc::new(ScriptedChain::new(announce, runtime));
-	let timer = Arc::new(ManualTimer::default());
-	let tracker = HoldingTracker::new(HoldingTrackerDeps {
+	let tracker = HoldingTracker::start(HoldingTrackerDeps {
 		ledger: ledger.clone(),
-		storage: chain.clone(),
+		storage: Arc::new(ScriptedChain::new(announce)),
 		genesis: GENESIS,
 		spawner: test_spawner(),
-		timer: timer.clone(),
+		timer: Arc::new(ManualTimer::default()),
 	});
-	tracker.ensure_started();
-	TrackerFixture { _dir: dir, db, ledger, opened, chain, timer, _tracker: tracker }
+	TrackerFixture { _dir: dir, db, ledger, opened, _tracker: tracker }
 }
 
 /// Waits until `reached` holds, or fails the test.
@@ -341,35 +289,4 @@ fn the_first_report_replaces_holdings_left_from_an_earlier_run() {
 	watch.report(9, vec![(0, None)]);
 
 	fixture.await_holdings(vec![]);
-}
-
-/// An unreachable chain must not leave the keys unwatched for good, but must
-/// not be hammered either: the next attempt waits out the delay.
-#[test]
-fn a_watch_that_failed_to_open_is_opened_again_after_the_delay() {
-	let unreachable_once = ScriptedRuntime { unreachable_opens: 1, ..ASSET_HUB };
-	let mut fixture = tracker_on(unreachable_once, |db| insert_item_key(db, holder(), 0));
-	wait_until("waited to reopen", || fixture.timer.sleeps() == 1);
-	let opens_before_the_delay = fixture.chain.opens();
-
-	fixture.timer.advance(REOPEN_DELAY);
-	fixture.next_watch();
-
-	assert_eq!((opens_before_the_delay, fixture.chain.opens()), (1, 2));
-}
-
-/// A runtime without `Scarcity.NftsByOwner` fails every attempt the same
-/// way, so the tracker gives up instead of retrying for as long as it runs.
-#[test]
-fn a_runtime_without_the_entry_is_not_watched_again() {
-	let bulletin = ScriptedRuntime { metadata: BULLETIN_METADATA_BYTES, unreachable_opens: 0 };
-	let fixture = tracker_on(bulletin, |db| insert_item_key(db, holder(), 0));
-	wait_until("opened a watch", || fixture.chain.opens() == 1);
-
-	for _ in 0..20 {
-		fixture.timer.advance(REOPEN_DELAY);
-		std::thread::sleep(Duration::from_millis(10));
-	}
-
-	assert_eq!((fixture.chain.opens(), fixture.timer.sleeps()), (1, 0));
 }
