@@ -36,4 +36,6 @@ pub use oracle::{
 	Unobservable,
 };
 pub use policy::{PolicyError, Preparation, SubmissionPolicy};
+#[cfg(test)]
+pub use testing::ManualTimer;
 pub use time::{RealTimer, Timer};

@@ -1309,6 +1309,7 @@ fn start_holding_tracker(services: &RuntimeServices, ledger: crate::nft::NftLedg
 		storage: Arc::new(services.chain.clone()),
 		genesis: genesis.into(),
 		spawner: services.spawner.clone(),
+		timer: Arc::new(crate::durable::RealTimer),
 	});
 	tracker.ensure_started();
 	services.install_holding_tracker(tracker);

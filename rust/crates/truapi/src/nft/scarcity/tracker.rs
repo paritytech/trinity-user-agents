@@ -15,6 +15,7 @@ use subxt::utils::H256;
 use super::chain::{ScarcityNft, nfts_by_owner};
 use crate::{
 	chain::{DecodedEntryChanges, StorageWatchError, WatchedHead, WatchedStorage},
+	durable::Timer,
 	nft::{HeldItem, ItemKey, NftLedger},
 	subscription::Spawner,
 };
@@ -41,6 +42,8 @@ pub struct HoldingTrackerDeps {
 	pub genesis: H256,
 	/// Runs the tracking task.
 	pub spawner: Spawner,
+	/// Waits between attempts.
+	pub timer: Arc<dyn Timer>,
 }
 
 /// Keeps the ledger's holdings equal to `NftsByOwner` at the best block, for
@@ -55,8 +58,8 @@ pub struct HoldingTracker {
 impl HoldingTracker {
 	/// A tracker that is not running yet.
 	pub fn new(deps: HoldingTrackerDeps) -> Arc<Self> {
-		let HoldingTrackerDeps { ledger, storage, genesis, spawner } = deps;
-		let tracking = Tracking { ledger, storage, genesis };
+		let HoldingTrackerDeps { ledger, storage, genesis, spawner, timer } = deps;
+		let tracking = Tracking { ledger, storage, genesis, timer };
 		Arc::new(Self { tracking, spawner, task: Mutex::new(None) })
 	}
 
@@ -88,6 +91,7 @@ struct Tracking {
 	ledger: NftLedger,
 	storage: Arc<dyn WatchedStorage>,
 	genesis: H256,
+	timer: Arc<dyn Timer>,
 }
 
 impl Tracking {
@@ -128,7 +132,8 @@ impl Tracking {
 	/// a key does not fit it, since trying again would fail the same way.
 	async fn open_until_watching(self, batch: Vec<ItemKey>) -> BoxStream<'static, WatchedRead> {
 		let open = || self.open_watch(&batch);
-		match retry_while(REOPEN_DELAY, "holdings unwatched", open, can_open_later).await {
+		let opened = self.retry_while(REOPEN_DELAY, "holdings unwatched", open, can_open_later);
+		match opened.await {
 			Ok(changes) => changes,
 			Err(error) => {
 				tracing::error!(%error, "holdings cannot be watched on this runtime");
@@ -159,30 +164,31 @@ impl Tracking {
 			.collect();
 		let write = || self.ledger.record_holdings(holdings.clone());
 		let always = |_: &_| true;
-		let _ = retry_while(REWRITE_DELAY, "holdings unrecorded", write, always).await;
+		let _ = self.retry_while(REWRITE_DELAY, "holdings unrecorded", write, always).await;
+	}
+
+	/// What `attempt` gives, trying again after `delay` while it fails with
+	/// an error `retriable` accepts. Each failure is logged as `failed`.
+	async fn retry_while<T, E: Display, Attempt: Future<Output = Result<T, E>>>(
+		&self,
+		delay: Duration,
+		failed: &'static str,
+		attempt: impl Fn() -> Attempt,
+		retriable: impl Fn(&E) -> bool,
+	) -> Result<T, E> {
+		loop {
+			match attempt().await {
+				Err(error) if retriable(&error) => tracing::warn!(%error, "{failed}"),
+				outcome => return outcome,
+			}
+			self.timer.sleep(delay).await;
+		}
 	}
 }
 
 /// Whether opening a watch that failed with `error` can succeed later.
 fn can_open_later(error: &StorageWatchError) -> bool {
 	!matches!(error, StorageWatchError::Incompatible { .. } | StorageWatchError::KeyEncoding { .. })
-}
-
-/// What `attempt` gives, trying again after `delay` while it fails with an
-/// error `retriable` accepts. Each failure is logged as `failed`.
-async fn retry_while<T, E: Display, Attempt: Future<Output = Result<T, E>>>(
-	delay: Duration,
-	failed: &'static str,
-	attempt: impl Fn() -> Attempt,
-	retriable: impl Fn(&E) -> bool,
-) -> Result<T, E> {
-	loop {
-		match attempt().await {
-			Err(error) if retriable(&error) => tracing::warn!(%error, "{failed}"),
-			outcome => return outcome,
-		}
-		futures_timer::Delay::new(delay).await;
-	}
 }
 
 /// `read`'s value, or `None` after logging its error as `failed`.

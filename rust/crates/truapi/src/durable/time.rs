@@ -1,4 +1,4 @@
-//! [`Timer`]: every wait the engine makes, so tests control time.
+//! [`Timer`]: waits that tests can control.
 
 use core::time::Duration;
 
