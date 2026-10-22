@@ -1,0 +1,400 @@
+/*
+ * The inspector's Chat view. The shell, list rows, drill-down and summary
+ * strip come from the TrUAPI inspector's shared rules, which the view injects
+ * scoped to `.chat-diagnostics`. These rules only adapt them: the dark root,
+ * resets against the host page's form controls, and what Chat adds.
+ */
+.chat-diagnostics {
+  --list-w: 400px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  container-type: inline-size;
+  overflow: hidden;
+  background: #0a0a0a;
+  color: #e0e0e0;
+  font:
+    12px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color-scheme: dark;
+}
+
+.chat-diagnostics [hidden] {
+  display: none !important;
+}
+
+.chat-diagnostics button,
+.chat-diagnostics input,
+.chat-diagnostics select {
+  width: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  transition: none;
+}
+
+.chat-diagnostics button:active:not(:disabled) {
+  transform: none;
+}
+
+.chat-diagnostics button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.chat-diagnostics :focus-visible {
+  outline: 1px solid #4ade80;
+  outline-offset: 1px;
+}
+
+.chat-diagnostics .cdv-unseen {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Top bar */
+
+.chat-diagnostics .ins-top {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.chat-diagnostics .ins-channels {
+  min-width: 0;
+}
+
+.chat-diagnostics .ins-chan.cdv-problems.active {
+  border-color: #f87171;
+  background: #f87171;
+}
+
+.chat-diagnostics .ins-chan.cdv-problems .dot {
+  background: #f87171;
+}
+
+.chat-diagnostics .ins-chan.cdv-problems.active .dot {
+  background: #0a0a0a;
+}
+
+.chat-diagnostics .cdv-related {
+  font-size: 11px;
+}
+
+.chat-diagnostics .cdv-tools {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.chat-diagnostics .cdv-follow:not(.active) {
+  border-color: rgba(251, 191, 36, 0.5);
+  color: #fbbf24;
+}
+
+.chat-diagnostics .cdv-follow:not(.active) .dot {
+  border-radius: 1px;
+  background: #fbbf24;
+  box-shadow: none;
+}
+
+/* Summary strip: account pills filter the list. */
+
+.chat-diagnostics .ins-method[aria-pressed="true"] {
+  border-color: rgba(74, 222, 128, 0.6);
+  color: #d1fae5;
+}
+
+/* Event list */
+
+.chat-diagnostics .cdv-op {
+  gap: 7px;
+  padding: 3px 10px;
+}
+
+.chat-diagnostics .cdv-op .td-op-method {
+  direction: ltr;
+  color: #d4d4d4;
+}
+
+.chat-diagnostics .cdv-op-type {
+  flex: none;
+  width: 64px;
+  overflow: hidden;
+  color: #6b7280;
+  font-size: 10.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.chat-diagnostics .cdv-op[data-outcome="error"] .td-op-method {
+  color: #fca5a5;
+}
+
+.chat-diagnostics .cdv-dir-in {
+  color: #4ade80;
+}
+
+.chat-diagnostics .cdv-dir-out {
+  color: #fbbf24;
+}
+
+.chat-diagnostics .cdv-dir-read {
+  color: #c084fc;
+}
+
+.chat-diagnostics .cdv-dir-engine {
+  color: #6b7280;
+}
+
+/* Outcome badges, in the debugger's badge palette. */
+
+.chat-diagnostics .cdv-badge-ok {
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.12);
+  border-color: rgba(74, 222, 128, 0.3);
+}
+
+.chat-diagnostics .cdv-badge-warning {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
+  border-color: rgba(251, 191, 36, 0.3);
+}
+
+.chat-diagnostics .cdv-badge-error {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.3);
+}
+
+/* Detail pane */
+
+.chat-diagnostics .td-frame-role {
+  min-width: 72px;
+}
+
+.chat-diagnostics .cdv-fields {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 14px;
+  margin: 0 0 10px;
+  padding: 0 8px;
+  font-size: 11.5px;
+}
+
+.chat-diagnostics .cdv-fields dt {
+  color: #6b7280;
+}
+
+.chat-diagnostics .cdv-fields dd {
+  margin: 0;
+  color: #d4d4d4;
+  overflow-wrap: anywhere;
+}
+
+.chat-diagnostics .cdv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 0 8px;
+}
+
+.chat-diagnostics .cdv-actions .ins-method {
+  cursor: pointer;
+}
+
+.chat-diagnostics .cdv-detail .td-detail-pre {
+  max-height: 220px;
+  overflow: auto;
+}
+
+/* Transport layers */
+
+.chat-diagnostics .cdv-badge-repeat {
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.3);
+}
+
+.chat-diagnostics .cdv-capture.cdv-capturing {
+  border-color: rgba(74, 222, 128, 0.5);
+  color: #4ade80;
+}
+
+.chat-diagnostics .cdv-transport {
+  margin: 0 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+}
+
+.chat-diagnostics .cdv-transport-title {
+  margin: 0;
+  padding: 5px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+  color: #94a3b8;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.chat-diagnostics .cdv-layer-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px 0;
+}
+
+.chat-diagnostics .cdv-layer,
+.chat-diagnostics .cdv-transport > .cdv-layer-note,
+.chat-diagnostics .cdv-transport > .cdv-gap,
+.chat-diagnostics .cdv-transport > .cdv-block {
+  padding: 6px 8px 8px;
+}
+
+.chat-diagnostics .cdv-layer-note,
+.chat-diagnostics .cdv-gap {
+  margin: 0 0 6px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.chat-diagnostics .cdv-layer-public {
+  color: #4ade80;
+}
+
+.chat-diagnostics .cdv-layer-sensitive {
+  color: #fbbf24;
+}
+
+.chat-diagnostics .cdv-layer-derived {
+  color: #c084fc;
+}
+
+.chat-diagnostics .cdv-gap {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.chat-diagnostics .cdv-block {
+  margin: 0 0 8px;
+}
+
+.chat-diagnostics .cdv-block-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin-bottom: 4px;
+}
+
+.chat-diagnostics .cdv-block-title {
+  color: #e0e0e0;
+  font-size: 11px;
+}
+
+.chat-diagnostics .cdv-block-note {
+  flex: 1;
+  min-width: 0;
+  color: #6b7280;
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+}
+
+.chat-diagnostics .cdv-block .ins-method {
+  cursor: pointer;
+}
+
+.chat-diagnostics .cdv-bytes {
+  max-height: 260px;
+  overflow: auto;
+  word-break: break-all;
+}
+
+.chat-diagnostics .ins-status .cdv-capture-decrypted {
+  color: #fbbf24;
+}
+
+/* Status line */
+
+.chat-diagnostics .ins-status {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+
+.chat-diagnostics .cdv-paused {
+  color: #fbbf24;
+}
+
+.chat-diagnostics .cdv-newer {
+  color: #fbbf24;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.chat-diagnostics .ins-stat {
+  white-space: nowrap;
+}
+
+/* Narrow panels and phones: the list sits over the detail, as in the TrUAPI view. */
+@container (max-width: 700px) {
+  .chat-diagnostics .ins-title {
+    display: none;
+  }
+
+  .chat-diagnostics .ins-filter {
+    flex: 1 1 120px;
+    width: auto;
+    min-width: 120px;
+  }
+
+  .chat-diagnostics .ins-channels {
+    order: 3;
+    flex: 1 0 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .chat-diagnostics .cdv-tools {
+    margin-left: 0;
+  }
+
+  .chat-diagnostics .ins-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 38%) minmax(0, 1fr);
+  }
+
+  .chat-diagnostics .ins-list {
+    border-bottom: 1px solid rgb(255 255 255 / 0.12);
+  }
+
+  .chat-diagnostics .ins-split {
+    display: none;
+  }
+
+  .chat-diagnostics .cdv-op-type {
+    display: none;
+  }
+}
+
+@media (pointer: coarse) {
+  .chat-diagnostics .cdv-op {
+    padding-block: 7px;
+  }
+
+  .chat-diagnostics .ins-chan,
+  .chat-diagnostics .ins-method {
+    min-height: 28px;
+  }
+}

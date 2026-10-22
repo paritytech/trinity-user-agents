@@ -1,0 +1,2391 @@
+/*
+ * A development tool: one accent, system fonts (nothing is fetched from a
+ * third party), 1px rules instead of cards.
+ */
+:root {
+  color-scheme: light dark;
+  --bg: #f4f4f5;
+  --surface: #ffffff;
+  --text: #18181b;
+  --muted: #5f5f68;
+  --border: #d4d4d8;
+  --accent: #e6007a;
+  --warning: #b42318;
+  --hairline: rgb(0 0 0 / 0.08);
+  --fill: rgb(0 0 0 / 0.035);
+  --menu-width: 320px;
+  --appbar-height: 48px;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--sans);
+  font-size: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101012;
+    --surface: #18181b;
+    --text: #ececef;
+    --muted: #9b9ba5;
+    --border: #2f2f36;
+    --warning: #f97066;
+    --hairline: rgb(255 255 255 / 0.08);
+    --fill: rgb(255 255 255 / 0.045);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  --menu-col: var(--menu-width);
+  margin: 0;
+  height: 100dvh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--menu-col);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "appbar appbar"
+    "stage menu"
+    "inspector menu";
+  background: var(--bg);
+  color: var(--text);
+}
+
+body[data-menu="closed"] {
+  --menu-col: 0px;
+}
+
+body[data-menu="closed"] .menu,
+body[data-inspector="closed"] .inspector {
+  display: none;
+}
+
+h1,
+h2 {
+  margin: 0;
+}
+
+h1 {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+h2 {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+button {
+  cursor: pointer;
+  transition: transform 80ms ease-out;
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+label {
+  display: block;
+  margin: 10px 0 4px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+}
+
+textarea {
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.top {
+  grid-area: appbar;
+  min-width: 0;
+}
+
+/* The bar is dark in both themes, like the address bar of a browser. */
+.appbar {
+  --bar-bg: #1b1b1f;
+  --bar-text: #f1f1f4;
+  --bar-muted: #9b9ba6;
+  --bar-border: #34343b;
+  --bar-field: #26262b;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--appbar-height);
+  padding: 6px 10px;
+  padding-top: max(6px, env(safe-area-inset-top));
+  background: var(--bar-bg);
+  color: var(--bar-text);
+  border-bottom: 1px solid var(--bar-border);
+}
+
+.appbar button,
+.appbar select {
+  background: transparent;
+  border-color: transparent;
+  color: var(--bar-text);
+}
+
+.appbar button:hover:not(:disabled) {
+  background: var(--bar-field);
+}
+
+.brand {
+  display: inline-flex;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+}
+
+.brand svg {
+  width: 22px;
+  height: 22px;
+  fill: var(--bar-text);
+}
+
+.address {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 720px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 38px;
+  padding: 0 4px 0 14px;
+  background: var(--bar-field);
+  border: 1px solid var(--bar-border);
+  border-radius: 999px;
+}
+
+.address:focus-within {
+  border-color: var(--accent);
+}
+
+.address[data-dirty="true"] {
+  border-style: dashed;
+}
+
+.address-field {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  align-items: center;
+}
+
+/* The dimmed TLD sits after a copy of the typed text that takes the same room,
+   so it follows the caret's end without measuring and without touching the field. */
+.address-hint {
+  grid-area: 1 / 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: pre;
+  pointer-events: none;
+  font: inherit;
+}
+
+.address-hint #address-hint-typed {
+  visibility: hidden;
+}
+
+.address-hint #address-hint-suffix {
+  color: var(--bar-muted);
+}
+
+.address input {
+  grid-area: 1 / 1;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--bar-text);
+  text-overflow: ellipsis;
+}
+
+.address input:focus-visible {
+  outline: none;
+}
+
+.address input::placeholder {
+  color: var(--bar-muted);
+}
+
+.address-recents {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: min(50dvh, 320px);
+  margin: 0;
+  padding: 4px;
+  overflow: auto;
+  list-style: none;
+  background: var(--bar-bg);
+  border: 1px solid var(--bar-border);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+}
+
+.address-recents li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: var(--bar-text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.address-recents li:hover,
+.address-recents li[aria-selected="true"] {
+  background: var(--bar-field);
+}
+
+.address-recents .recent-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.address-recents .recent-id {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--bar-muted);
+  font-size: 11.5px;
+}
+
+.address-id {
+  flex: none;
+  max-width: 38%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--bar-muted);
+  font-size: 12px;
+}
+
+.address-go {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.address-go svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.address[data-dirty="true"] .address-go:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* Hidden, not disabled: a disabled default button would block Enter. */
+.address:not([data-dirty="true"]) .address-go {
+  visibility: hidden;
+}
+
+.appbar :focus-visible {
+  outline-color: var(--accent);
+}
+
+.viewport-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.viewport-control select {
+  width: auto;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--bar-muted);
+  border-color: var(--bar-border);
+}
+
+.viewport-control select option {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.viewport-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--bar-muted);
+  font-size: 12px;
+}
+
+.viewport-custom[hidden] {
+  display: none;
+}
+
+.viewport-custom input {
+  width: 6ch;
+  padding: 3px 4px;
+  border-color: var(--bar-border);
+  color: var(--bar-text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.viewport-custom input::-webkit-outer-spin-button,
+.viewport-custom input::-webkit-inner-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
+.viewport-scale {
+  min-width: 3ch;
+  color: var(--bar-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.badge {
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--hairline);
+  color: var(--muted);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.icon-button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0 8px;
+}
+
+.icon-button svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.icon-button[aria-expanded="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.panel-close {
+  display: none;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.menu {
+  grid-area: menu;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 14px 16px 24px;
+  overflow: auto;
+  background: var(--bg);
+  border-left: 1px solid var(--hairline);
+  font-size: 12.5px;
+}
+
+.menu > section,
+.menu > .fold {
+  margin: 0;
+  padding: 14px 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.menu > .panel-head {
+  padding-bottom: 10px;
+}
+
+.menu > #core-status {
+  margin-bottom: 12px;
+}
+
+.menu > .fold > summary {
+  padding: 0;
+}
+
+.menu section > button,
+.menu form > button {
+  margin-top: 10px;
+}
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 10px 0 0;
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.check input {
+  width: auto;
+  margin-top: 2px;
+}
+
+.field-row {
+  display: flex;
+  gap: 8px;
+}
+
+.field-row button {
+  flex: none;
+}
+
+.effective {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.effective[data-state="needs-id"] {
+  color: var(--warning);
+}
+
+.effective[data-source="entered"] {
+  color: var(--accent);
+}
+
+.status {
+  white-space: pre-line;
+  color: var(--muted);
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+#core-status {
+  margin: 0;
+}
+
+.session {
+  margin: 0 0 4px;
+  overflow-wrap: anywhere;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.note {
+  color: var(--muted);
+  font-size: 11.5px;
+  margin: 6px 0 0;
+}
+
+.warning {
+  color: var(--warning);
+}
+
+.fold {
+  margin-top: 12px;
+  border-top: 1px solid var(--hairline);
+  padding-top: 8px;
+}
+
+.fold > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+.fold > summary:hover {
+  color: var(--text);
+}
+
+.fold[open] > summary {
+  margin-bottom: 6px;
+}
+
+.quiet {
+  margin-top: 8px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 11.5px;
+  text-decoration: underline;
+  text-decoration-color: var(--hairline);
+  text-underline-offset: 3px;
+}
+
+.quiet:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.create-link {
+  display: inline-block;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 11.5px;
+  text-decoration: underline;
+  text-decoration-color: var(--hairline);
+  text-underline-offset: 3px;
+}
+
+.create-link:hover {
+  color: var(--text);
+  text-decoration-color: currentColor;
+}
+
+.menu [hidden] {
+  display: none !important;
+}
+
+.subhead {
+  margin: 14px 0 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.fold[hidden] {
+  display: none;
+}
+
+.section-fold {
+  margin-top: 0;
+}
+
+.versions {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.versions div {
+  display: grid;
+  grid-template-columns: minmax(6.5rem, 38%) minmax(0, 1fr);
+  gap: 0 12px;
+}
+
+.versions dt {
+  color: var(--muted);
+}
+
+.versions dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+/* A value that copies on click looks like the text it replaces. */
+.versions button.copyable {
+  display: inline;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: copy;
+  min-height: 0;
+}
+
+.versions button.copyable:hover {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.versions button.copyable[data-copy="done"] {
+  color: var(--accent);
+}
+
+.versions button.copyable[data-copy="failed"] {
+  color: var(--warning);
+}
+
+.versions .detail {
+  display: block;
+  color: var(--muted);
+}
+
+.versions [data-state="unknown"] {
+  color: var(--muted);
+}
+
+.versions-warning {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--warning);
+  border-radius: 6px;
+  color: var(--warning);
+  font-size: 11.5px;
+}
+
+.versions [data-state="warning"] {
+  color: var(--warning);
+}
+
+.log {
+  height: 160px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.log li {
+  padding: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.stage {
+  grid-area: stage;
+  position: relative;
+  display: flex;
+  padding: 12px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.viewport-area {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* A custom rectangle is anchored top-left, so its corner handle follows the pointer. */
+.viewport-area[data-custom="true"] {
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+
+.viewport-handle {
+  position: absolute;
+  z-index: 2;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: linear-gradient(
+    135deg,
+    transparent 50%,
+    var(--accent) 50% 58%,
+    transparent 58% 72%,
+    var(--accent) 72% 80%,
+    transparent 80%
+  );
+  cursor: nwse-resize;
+  touch-action: none;
+  opacity: 0.8;
+}
+
+.viewport-handle[hidden] {
+  display: none;
+}
+
+.viewport-handle:hover,
+.viewport-handle:focus-visible {
+  opacity: 1;
+}
+
+.product-frame {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  flex: none;
+  transform-origin: center;
+}
+
+/* Every open product's frame sits here; only the one in front is shown. */
+.product-slot {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+/*
+ * The host's own Pocket screen, laid out as the native Pocket is: a large
+ * title over two cards that overlap. The values come from the Android
+ * implementation (CardSizes: 234dp high, 170dp overlap; shapes.large: 24dp;
+ * PocketCardColors) and from the Berlin Night tokens, which the cards use in
+ * every theme. The fonts are bundled, so nothing is fetched.
+ */
+@font-face {
+  font-family: "Manrope";
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("./assets/fonts/manrope-variable-latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./assets/fonts/inter-variable-latin.woff2") format("woff2");
+}
+
+body[data-surface="pocket"] .stage-empty {
+  display: none;
+}
+
+.pocket-screen {
+  --pocket-bg: #0b0c0f;
+  --pocket-primary: #f4f4f5;
+  --pocket-secondary: #8c8f98;
+  --pocket-title-font: "Manrope", system-ui, -apple-system, sans-serif;
+  --pocket-body-font: "Inter", system-ui, -apple-system, sans-serif;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow-y: auto;
+  background: var(--pocket-bg);
+  color: var(--pocket-primary);
+  font-family: var(--pocket-body-font);
+}
+
+.pocket-screen[hidden] {
+  display: none;
+}
+
+/* PolkadotTopBar, large: 64dp high, the title at 32/40 bold. */
+.pocket-bar {
+  display: flex;
+  align-items: center;
+  min-height: 64px;
+  padding: 0 4px 0 16px;
+}
+
+.pocket-title {
+  margin: 0;
+  font: 700 32px/40px var(--pocket-title-font);
+  letter-spacing: -0.5px;
+  text-transform: none;
+  color: var(--pocket-primary);
+}
+
+/* contentPadding = 16dp, spacedBy(-170dp): 234 - 170 leaves 64 of each card showing. */
+.pocket-list {
+  padding: 16px;
+}
+
+.pocket-slot {
+  position: relative;
+}
+
+.pocket-slot + .pocket-slot {
+  margin-top: -170px;
+}
+
+.pocket-card {
+  position: relative;
+  isolation: isolate;
+  height: 234px;
+  overflow: hidden;
+  border-radius: 24px;
+  background-color: #000;
+}
+
+/* PocketCardColors.DigitalDollarCardBackground is black; the grain is the dark texture over the whole card. */
+.pocket-grain {
+  position: absolute;
+  inset: 0;
+  background: url("./assets/pocket/img_texture_grain_dark.png") center / cover;
+}
+
+/*
+ * The digital dollar: a hairline radial border (primary fading out from the
+ * top-left corner), the artwork, a radial highlight, then the grain at 30%.
+ */
+.pocket-dollar {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(#000, #000) padding-box,
+    radial-gradient(900px 900px at 0 0, #f4f4f5 0%, rgba(244, 244, 245, 0) 100%)
+      border-box;
+}
+
+/*
+ * The artwork masks the shine: the native card draws it at 20% and lays a dim
+ * and a shine gradient over it along a 151.367 degree axis. Tilt moves them
+ * on a phone; here they rest where a flat phone leaves them.
+ */
+.pocket-dollar-art {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(
+      151.367deg,
+      rgba(255, 255, 255, 0) 0%,
+      rgba(255, 255, 255, 0.18) 18%,
+      rgba(255, 255, 255, 0.5) 30%,
+      rgba(255, 255, 255, 0.18) 42%,
+      rgba(255, 255, 255, 0) 60%
+    ),
+    linear-gradient(
+      151.367deg,
+      rgba(0, 0, 0, 0.7) 0%,
+      rgba(0, 0, 0, 0.35) 18%,
+      rgba(0, 0, 0, 0) 30%,
+      rgba(0, 0, 0, 0.35) 55%,
+      rgba(0, 0, 0, 0.7) 100%
+    );
+  -webkit-mask: url("./assets/pocket/img_digital_dollar_card.webp") right
+    center / auto 100% no-repeat;
+  mask: url("./assets/pocket/img_digital_dollar_card.webp") right center / auto
+    100% no-repeat;
+}
+
+/* The artwork itself, drawn at the native 20%. */
+.pocket-dollar-art::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: url("./assets/pocket/img_digital_dollar_card.webp") right center /
+    auto 100% no-repeat;
+  opacity: 0.2;
+}
+
+.pocket-dollar-highlight {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    700px 700px at 0 0,
+    rgba(244, 244, 245, 0.35) 0%,
+    rgba(244, 244, 245, 0.1) 50%,
+    rgba(244, 244, 245, 0) 100%
+  );
+}
+
+.pocket-dollar-grain {
+  opacity: 0.3;
+}
+
+/* horizontal = 24dp, vertical = 16dp: the logo at the start, the amount at the end. */
+.pocket-dollar-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 16px 24px;
+}
+
+.pocket-logo {
+  flex: none;
+  height: 36px;
+  width: auto;
+  aspect-ratio: 100 / 110;
+}
+
+/* headline.medium: 28/36 bold. Unavailable is quieter than a figure and says so on hover. */
+.pocket-amount {
+  font: 700 28px/36px var(--pocket-title-font);
+  color: #fff;
+  white-space: nowrap;
+}
+
+.pocket-amount[data-state="unavailable"] {
+  font: 600 16px/24px var(--pocket-title-font);
+  color: var(--pocket-secondary);
+  padding-top: 6px;
+  cursor: help;
+}
+
+/* A product card: black, a hairline border in the secondary colour, the product's face inside. */
+.pocket-product {
+  border: 1px solid var(--pocket-secondary);
+}
+
+/* Humanity's bundled face: a column with 16dp all round, the title on top, the subtitle at the bottom. */
+.pocket-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 16px;
+}
+
+.pocket-face-title {
+  font: 600 16px/24px var(--pocket-title-font);
+  color: var(--pocket-primary);
+}
+
+.pocket-face-subtitle {
+  font: 400 14px/20px var(--pocket-body-font);
+  color: var(--pocket-secondary);
+}
+
+/* A card its product backs opens on a press, and its live face covers the bundled one. */
+.pocket-product[role="button"] {
+  cursor: pointer;
+}
+
+.pocket-product:focus-visible {
+  outline: 2px solid var(--pocket-primary);
+  outline-offset: 2px;
+}
+
+.pocket-face[hidden] {
+  display: none;
+}
+
+.pocket-live {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+/* The face fills the card, as the native card frame sizes it. */
+.pocket-live > .pr-root {
+  height: 100%;
+}
+
+.pocket-live > .pr-root > * {
+  flex: 1 0 auto;
+  box-sizing: border-box;
+}
+
+.pocket-status {
+  margin: 0;
+  padding: 0 20px 16px;
+  font: 400 14px/20px var(--pocket-body-font);
+  color: var(--pocket-secondary);
+}
+
+.pocket-status:empty {
+  display: none;
+}
+
+/*
+ * The Chat screen, laid out like the Polkadot app's chat list and feed: the
+ * large "Chats" title, 20 px bubbles with a 6 px inner corner, incoming on the
+ * nested surface and outgoing on the inverted one. It shares Pocket's dark
+ * tokens and bundled fonts.
+ */
+body[data-surface="chat"] .stage-empty {
+  display: none;
+}
+
+.chat-screen {
+  --chat-bg: #0b0c0f;
+  --chat-surface: #17181c;
+  --chat-surface-raised: #22232a;
+  --chat-line: #2a2b33;
+  --chat-primary: #f4f4f5;
+  --chat-secondary: #8c8f98;
+  --chat-accent: #e6007a;
+  --chat-warning: #ffd37f;
+  --chat-danger: #ff8f8f;
+  --chat-tertiary: #5d606a;
+  --chat-success: #4ade80;
+  --chat-title-font: "Manrope", system-ui, -apple-system, sans-serif;
+  --chat-body-font: "Inter", system-ui, -apple-system, sans-serif;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--chat-bg);
+  color: var(--chat-primary);
+  font: 400 15px/20px var(--chat-body-font);
+}
+
+.chat-screen[hidden] {
+  display: none;
+}
+
+.chat-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  padding: 0 8px 0 16px;
+}
+
+.chat-bar-small {
+  min-height: 56px;
+  padding-left: 4px;
+  border-bottom: 1px solid var(--chat-line);
+}
+
+.chat-title {
+  flex: 1;
+  margin: 0;
+  font: 700 32px/40px var(--chat-title-font);
+  letter-spacing: -0.5px;
+  text-transform: none;
+  color: var(--chat-primary);
+}
+
+.chat-title-small {
+  font-size: 20px;
+  line-height: 28px;
+  letter-spacing: -0.2px;
+}
+
+.chat-icon-button {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--chat-primary);
+  font: 300 28px/1 var(--chat-title-font);
+  cursor: pointer;
+}
+
+.chat-icon-button:hover {
+  background: var(--chat-surface-raised);
+}
+
+.chat-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 16px 16px;
+}
+
+.chat-identity {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: var(--chat-surface);
+}
+
+.chat-identity p {
+  margin: 0;
+}
+
+.chat-identity-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--chat-secondary);
+}
+
+.chat-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--chat-secondary);
+}
+
+.chat-identity[data-status="listening"] .chat-dot {
+  background: #4ade80;
+}
+
+.chat-identity[data-status="failed"] .chat-dot {
+  background: var(--chat-danger);
+}
+
+.chat-identity-who {
+  margin-top: 4px !important;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.chat-note {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--chat-warning);
+}
+
+.chat-error {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--chat-danger);
+  overflow-wrap: anywhere;
+}
+
+.chat-section {
+  margin-bottom: 16px;
+}
+
+.chat-section-title {
+  margin: 0 0 8px;
+  font: 600 13px/18px var(--chat-body-font);
+  color: var(--chat-secondary);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.chat-request {
+  padding: 12px;
+  border-radius: 20px;
+  background: var(--chat-surface);
+}
+
+.chat-request + .chat-request {
+  margin-top: 8px;
+}
+
+.chat-request-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.chat-pill {
+  min-height: 36px;
+  padding: 0 16px;
+  border: 1px solid var(--chat-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--chat-primary);
+  font: 600 14px/1 var(--chat-body-font);
+  cursor: pointer;
+}
+
+.chat-pill-primary {
+  border-color: var(--chat-primary);
+  background: var(--chat-primary);
+  color: #0b0c0f;
+}
+
+.chat-pill:disabled,
+.chat-send:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.chat-list {
+  margin: 0 -16px;
+  padding: 0;
+  list-style: none;
+}
+
+.chat-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.chat-row-button {
+  width: 100%;
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-row-button:hover {
+  background: var(--chat-surface);
+}
+
+.chat-row-text {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.chat-row-title {
+  font: 600 16px/22px var(--chat-title-font);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-row-preview {
+  font-size: 14px;
+  color: var(--chat-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-row-time {
+  flex: none;
+  align-self: flex-start;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--chat-secondary);
+}
+
+.chat-avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--avatar) 28%, #0b0c0f);
+  color: var(--avatar);
+  font: 700 20px/1 var(--chat-title-font);
+}
+
+.chat-avatar-large {
+  width: 52px;
+  height: 52px;
+}
+
+.chat-avatar-small {
+  width: 36px;
+  height: 36px;
+  font-size: 15px;
+}
+
+.chat-empty {
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.chat-empty p {
+  margin: 0;
+}
+
+.chat-empty-title {
+  font: 700 20px/28px var(--chat-title-font);
+}
+
+.chat-empty-body {
+  margin-top: 6px !important;
+  color: var(--chat-secondary);
+}
+
+.chat-skipped {
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--chat-secondary);
+}
+
+.chat-skipped p {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.chat-form {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 16px;
+}
+
+.chat-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--chat-secondary);
+}
+
+.chat-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 14px;
+  border: 1px solid var(--chat-line);
+  border-radius: 14px;
+  background: var(--chat-surface);
+  color: var(--chat-primary);
+  font: inherit;
+}
+
+.chat-input:focus {
+  outline: none;
+  border-color: var(--chat-secondary);
+}
+
+.chat-textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.chat-form .chat-pill-primary {
+  justify-self: end;
+  margin-top: 8px;
+}
+
+.chat-thread {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 12px 8px;
+}
+
+.chat-message {
+  display: flex;
+  flex-direction: column;
+  max-width: 78%;
+}
+
+.chat-message-in {
+  align-self: flex-start;
+}
+
+.chat-message-out {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.chat-message + .chat-message {
+  margin-top: 2px;
+}
+
+.chat-bubble {
+  display: grid;
+  gap: 2px;
+  padding: 8px 12px 6px;
+  border-radius: 20px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.chat-message-in .chat-bubble {
+  border-bottom-left-radius: 6px;
+  background: var(--chat-surface-raised);
+}
+
+.chat-message-out .chat-bubble {
+  border-bottom-right-radius: 6px;
+  background: var(--chat-primary);
+  color: #0b0c0f;
+}
+
+.chat-message[data-status="failed"] .chat-bubble {
+  opacity: 0.6;
+}
+
+.chat-bubble-label {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.6;
+}
+
+.chat-bubble-meta {
+  justify-self: end;
+  font-size: 11px;
+  line-height: 14px;
+  opacity: 0.55;
+}
+
+.chat-system {
+  align-self: center;
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--chat-surface);
+  font-size: 12px;
+  color: var(--chat-secondary);
+  text-align: center;
+}
+
+.chat-failed {
+  margin: 4px 4px 0;
+  font-size: 12px;
+  color: var(--chat-danger);
+}
+
+.chat-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--chat-primary);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.chat-footer {
+  flex: none;
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--chat-line);
+}
+
+.chat-waiting {
+  margin: 4px 0;
+  text-align: center;
+  font-size: 14px;
+  color: var(--chat-secondary);
+}
+
+.chat-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.chat-composer-input {
+  flex: 1;
+  min-height: 40px;
+  max-height: 120px;
+  resize: none;
+  border-radius: 20px;
+}
+
+.chat-send {
+  flex: none;
+  height: 40px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 20px;
+  background: var(--chat-primary);
+  color: #0b0c0f;
+  font: 600 14px/1 var(--chat-body-font);
+  cursor: pointer;
+}
+
+/* Product chats: rooms a product's worker keeps, and the cards it draws. */
+.product-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.product-avatar {
+  object-fit: cover;
+  background: var(--chat-surface-raised);
+}
+
+.product-card-row {
+  max-width: 88%;
+}
+
+.product-card {
+  display: grid;
+  gap: 4px;
+  min-width: 180px;
+  padding: 10px 12px;
+  border-radius: 20px 20px 20px 6px;
+  background: var(--chat-surface-raised);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.product-card-alt {
+  font-weight: 600;
+}
+
+.product-card-note {
+  font-size: 12px;
+  color: var(--chat-secondary);
+}
+
+.product-card[data-state="fallback"] .product-card-note {
+  color: var(--chat-warning);
+}
+
+.product-worker-form {
+  flex: none;
+  padding: 0 0 16px;
+}
+
+.product-worker-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.product-worker {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--chat-line);
+}
+
+.product-worker .chat-row-preview {
+  grid-column: 1;
+  white-space: normal;
+}
+
+.product-worker .chat-link {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+
+.product-worker[data-state="failed"] .chat-row-preview {
+  color: var(--chat-danger);
+}
+
+/*
+ * What a product's renderer tree draws: host tokens only. Each host screen
+ * that draws trees sets the --pr-* tokens; Chat and Pocket both use the dark
+ * Berlin Night values, the theme the Pocket RFC fixes for card faces.
+ */
+.chat-screen {
+  --pr-bg: var(--chat-bg);
+  --pr-surface: var(--chat-surface);
+  --pr-surface-raised: var(--chat-surface-raised);
+  --pr-line: var(--chat-line);
+  --pr-primary: var(--chat-primary);
+  --pr-secondary: var(--chat-secondary);
+  --pr-tertiary: var(--chat-tertiary);
+  --pr-success: var(--chat-success);
+  --pr-danger: var(--chat-danger);
+  --pr-warning: var(--chat-warning);
+  --pr-title-font: var(--chat-title-font);
+  --pr-body-font: var(--chat-body-font);
+}
+
+.pocket-screen {
+  --pr-bg: var(--pocket-bg);
+  --pr-surface: #17181c;
+  --pr-surface-raised: #22232a;
+  --pr-line: #2a2b33;
+  --pr-primary: var(--pocket-primary);
+  --pr-secondary: var(--pocket-secondary);
+  --pr-tertiary: #5d606a;
+  --pr-success: #4ade80;
+  --pr-danger: #ff8f8f;
+  --pr-warning: #ffd37f;
+  --pr-title-font: var(--pocket-title-font);
+  --pr-body-font: var(--pocket-body-font);
+}
+
+.pr-root {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.pr-column,
+.pr-row {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pr-column {
+  flex-direction: column;
+}
+
+.pr-box {
+  display: grid;
+  min-width: 0;
+}
+
+.pr-box > * {
+  grid-area: 1 / 1;
+}
+
+.pr-spacer {
+  flex: 1 1 auto;
+}
+
+.pr-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.pr-type-headline {
+  font: 700 24px/32px var(--pr-title-font);
+}
+
+.pr-type-title {
+  font: 600 16px/22px var(--pr-title-font);
+}
+
+.pr-type-body-large {
+  font: 400 16px/22px var(--pr-body-font);
+}
+
+.pr-type-body {
+  font: 400 14px/20px var(--pr-body-font);
+}
+
+.pr-type-body-small {
+  font: 400 12px/16px var(--pr-body-font);
+}
+
+.pr-button {
+  min-height: 36px;
+  padding: 0 16px;
+  border: 1px solid var(--pr-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--pr-primary);
+  font: 600 14px/1 var(--pr-body-font);
+  cursor: pointer;
+}
+
+.pr-button-primary {
+  border-color: var(--pr-primary);
+  background: var(--pr-primary);
+  color: #0b0c0f;
+}
+
+.pr-button-text {
+  border-color: transparent;
+}
+
+.pr-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pr-field {
+  display: grid;
+  gap: 4px;
+}
+
+.pr-field-label {
+  font-size: 12px;
+  color: var(--pr-secondary);
+}
+
+.pr-input {
+  padding: 8px 12px;
+  border: 1px solid var(--pr-line);
+  border-radius: 12px;
+  background: var(--pr-surface);
+  color: var(--pr-primary);
+  font: inherit;
+}
+
+.pr-image {
+  display: block;
+  max-width: 100%;
+}
+
+.pr-effect-rainbow {
+  background: linear-gradient(
+    90deg,
+    #ff6b6b,
+    #ffd37f,
+    #4ade80,
+    #60a5fa,
+    #b98cff
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* The count of chat requests waiting, over the Chat button. */
+.dock-badge {
+  position: absolute;
+  top: 2px;
+  left: calc(50% + 6px);
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: var(--chat-accent, #e6007a);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+.dock-badge[hidden] {
+  display: none;
+}
+
+/*
+ * The host's own navigation, drawn inside the product rectangle as a phone
+ * host draws its tab bar, so a size chosen in the menu includes it.
+ */
+.dock {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
+  padding: 6px 8px max(6px, env(safe-area-inset-bottom));
+  background: #1b1b1f;
+  border-top: 1px solid #34343b;
+}
+
+.dock button {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  padding: 7px 4px 5px;
+  background: transparent;
+  color: #9b9ba6;
+  border: none;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+}
+
+.dock button:hover:not(:disabled) {
+  color: #f1f1f4;
+}
+
+.dock button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.dock button[aria-current="true"] {
+  color: #f1f1f4;
+  background: rgb(255 255 255 / 0.07);
+}
+
+.dock button[aria-current="true"]::before {
+  content: "";
+  position: absolute;
+  top: -7px;
+  width: 22px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.dock svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+/* A destination whose product is still running behind the one in front. */
+.dock button[data-live="true"]::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: calc(50% - 17px);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 0 2px #1b1b1f;
+}
+
+.product-frame.sized {
+  border: none;
+  border-radius: 0;
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.stage-empty {
+  position: absolute;
+  inset: 12px;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.stage-empty p {
+  margin: 0;
+}
+
+.stage-empty p:first-child {
+  font-weight: 600;
+}
+
+body[data-product="open"] .stage-empty,
+body[data-loading="on"] .stage-empty {
+  display: none;
+}
+
+.stage-loading {
+  position: absolute;
+  inset: 12px;
+  display: grid;
+  place-content: center;
+  pointer-events: none;
+}
+
+body[data-product="open"] .stage-loading {
+  place-content: start center;
+  padding-top: 8px;
+}
+
+.stage-loading-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 6px rgb(0 0 0 / 0.12);
+}
+
+.stage-loading-pill[hidden] {
+  display: none;
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.inspector {
+  grid-area: inspector;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: var(--inspector-h, min(42dvh, 440px));
+  min-height: 160px;
+  max-height: calc(100dvh - var(--appbar-height) - 120px);
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.inspector-resize {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 10px;
+  z-index: 1;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.inspector-resize::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  width: 36px;
+  height: 3px;
+  margin-left: -18px;
+  border-radius: 2px;
+  background: var(--border);
+  transition: background 120ms;
+}
+
+.inspector-resize:hover::after,
+.inspector-resize:focus-visible::after {
+  background: var(--accent);
+}
+
+.inspector .panel-head {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.inspector .panel-head .note {
+  flex: 1;
+  margin: 0;
+}
+
+.inspector-mount {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+/* The host's full-width form fields are for its menu; the inspector sizes its own. */
+.inspector-mount input,
+.inspector-mount select {
+  width: auto;
+}
+
+.inspector-mount > .td-inapp {
+  position: absolute;
+  inset: 0;
+  height: auto;
+}
+
+.inspector-mount[hidden] {
+  display: none;
+}
+
+.inspector-views {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--fill);
+}
+
+.inspector-views button {
+  padding: 3px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.inspector-views button[aria-selected="true"] {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 0 0 1px var(--hairline);
+}
+
+.chat-diagnostics {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-diagnostics[hidden] {
+  display: none;
+}
+
+.chat-diag-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.chat-diag-clear {
+  width: auto;
+  padding: 2px 8px;
+  font-size: 11.5px;
+}
+
+.chat-diag-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+  font: 11.5px/1.45 var(--mono);
+}
+
+.chat-diag-row {
+  display: grid;
+  grid-template-columns: auto 72px 1fr;
+  gap: 10px;
+  padding: 3px 10px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.chat-diag-row time {
+  color: var(--muted);
+}
+
+.chat-diag-type {
+  color: var(--muted);
+}
+
+.chat-diag-text {
+  overflow-wrap: anywhere;
+}
+
+.chat-diag-row[data-problem="true"] .chat-diag-type,
+.chat-diag-row[data-problem="true"] .chat-diag-text {
+  color: var(--warning);
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 15;
+  background: rgb(0 0 0 / 0.45);
+}
+
+.prompt {
+  width: min(560px, 90vw);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 20px;
+}
+
+.prompt::backdrop {
+  background: rgb(0 0 0 / 0.4);
+}
+
+.prompt h2 {
+  font-size: 16px;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text);
+}
+
+.prompt-subtitle {
+  color: var(--muted);
+}
+
+.prompt dt {
+  color: var(--muted);
+  margin-top: 10px;
+}
+
+.prompt dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.prompt pre {
+  margin: 2px 0 0;
+  max-height: 240px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 12px;
+}
+
+.prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.prompt {
+  max-height: 88dvh;
+  overflow: auto;
+}
+
+.prompt-actions {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 520px) {
+  .prompt {
+    width: 94vw;
+    padding: 16px;
+  }
+
+  .prompt-actions button {
+    flex: 1 1 auto;
+  }
+}
+
+/* Narrow screens: the panels cover the product instead of sitting beside it. */
+@media (max-width: 900px) {
+  body,
+  body[data-menu="closed"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas:
+      "appbar"
+      "stage";
+  }
+
+  .stage {
+    padding: 0;
+  }
+
+  .product-frame {
+    border: none;
+    border-radius: 0;
+  }
+
+  .stage-empty {
+    inset: 0;
+    padding: 0 24px;
+  }
+
+  .panel,
+  body[data-menu="closed"] .menu,
+  body[data-inspector="closed"] .inspector {
+    display: flex;
+    position: fixed;
+    z-index: 20;
+    visibility: hidden;
+    transition:
+      transform 220ms cubic-bezier(0.16, 1, 0.3, 1),
+      visibility 0s linear 220ms;
+  }
+
+  .menu {
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: min(88vw, 380px);
+    padding-top: max(16px, env(safe-area-inset-top));
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+    border-left: 1px solid var(--border);
+    transform: translateX(100%);
+  }
+
+  .inspector {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: var(--inspector-h, 72dvh);
+    padding-bottom: env(safe-area-inset-bottom);
+    border-radius: 14px 14px 0 0;
+    transform: translateY(100%);
+  }
+
+  body[data-menu="open"] .menu,
+  body[data-inspector="open"] .inspector {
+    visibility: visible;
+    transform: none;
+    transition-delay: 0s;
+  }
+
+  .panel-close {
+    display: inline-flex;
+  }
+
+  /* The inspector's list and detail sit side by side; stacked, both are usable. */
+  .inspector-mount .td-inapp .ins-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 38%) minmax(0, 1fr);
+  }
+
+  .inspector-mount .td-inapp .ins-split {
+    display: none;
+  }
+
+  .inspector-mount .td-inapp .ins-list {
+    border-bottom: 1px solid rgb(255 255 255 / 0.12);
+  }
+
+  .inspector-mount .td-inapp .ins-stat {
+    white-space: nowrap;
+  }
+
+  .log {
+    max-height: 200px;
+  }
+}
+
+@media (max-width: 900px) {
+  .viewport-control {
+    display: none;
+  }
+}
+
+@media (max-width: 700px) {
+  .address-id {
+    display: none;
+  }
+}
+
+@media (max-width: 380px) {
+  .brand {
+    display: none;
+  }
+}
+
+/*
+ * Quiet menu controls for a mouse. Touch is left to the block below, which keeps
+ * full-size targets and 16px text, so these are gated on a fine pointer.
+ */
+@media (pointer: fine) {
+  .menu button,
+  .menu input,
+  .menu select,
+  .menu textarea {
+    min-height: 28px;
+    padding: 4px 9px;
+    border-color: var(--hairline);
+    background: var(--fill);
+    font-size: 12.5px;
+  }
+
+  .menu textarea {
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .menu button:hover:not(:disabled) {
+    border-color: var(--border);
+  }
+
+  .menu button.primary {
+    border-color: var(--accent);
+    background: var(--accent);
+  }
+
+  .menu .check input {
+    min-height: 0;
+    padding: 0;
+  }
+
+  .menu .icon-button {
+    min-height: 0;
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .menu #account-status-refresh {
+    margin-top: 10px;
+  }
+}
+
+/* Touch: full-size targets, and 16px text so iOS does not zoom into fields. */
+@media (pointer: coarse) {
+  .address input {
+    min-height: 0;
+  }
+
+  .address-hint {
+    font-size: 16px;
+  }
+
+  .address {
+    min-height: 44px;
+  }
+
+  .address-go {
+    width: 36px;
+    height: 36px;
+    min-height: 0;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .check {
+    align-items: center;
+    min-height: 44px;
+  }
+
+  .check input {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    min-height: 0;
+    margin: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+
+  .panel,
+  button {
+    transition: none !important;
+  }
+}

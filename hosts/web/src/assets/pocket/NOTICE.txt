@@ -1,0 +1,11 @@
+img_digital_dollar_card.webp and img_texture_grain_dark.png are unmodified
+copies of the Polkadot Android app's drawables of the same names, from
+
+  https://github.com/paritytech/polkadot-android-community
+  commit 0b2214a8bfb09024d580a1f86a0a006009e06714
+  feature/wallet/impl/src/main/res/drawable-xxhdpi/
+
+That repository is licensed under the GNU General Public License version 3,
+whose text is in LICENSE-GPL-3.0.txt beside this file. These two files keep
+that licence. The MIT licence of the rest of this repository does not apply
+to them.
