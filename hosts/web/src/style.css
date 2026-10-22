@@ -1185,7 +1185,7 @@ body[data-surface="chat"] .stage-empty {
   background: var(--chat-secondary);
 }
 
-.chat-identity[data-status="listening"] .chat-dot {
+.chat-identity[data-status="ready"] .chat-dot {
   background: #4ade80;
 }
 
@@ -1545,13 +1545,55 @@ body[data-surface="chat"] .stage-empty {
   cursor: pointer;
 }
 
-/* Product chats: rooms a product's worker keeps, and the cards it draws. */
-.product-section-head {
+.chat-row-side {
+  flex: none;
+  align-self: stretch;
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
 }
 
+.chat-row-side .chat-row-time {
+  align-self: flex-end;
+}
+
+.chat-unread {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: var(--chat-accent);
+  color: #fff;
+  font: 600 12px/20px var(--chat-body-font);
+  text-align: center;
+}
+
+.chat-inbox-links {
+  margin: 16px 0 0;
+  font-size: 13px;
+  color: var(--chat-secondary);
+}
+
+.chat-earlier {
+  align-self: center;
+  margin: 4px 0 8px;
+  font-size: 12px;
+  color: var(--chat-secondary);
+}
+
+.chat-bubble-sender {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--chat-accent);
+}
+
+.product-card-row > .chat-bubble-sender {
+  margin: 0 0 4px 12px;
+}
+
+/* Product chats: the cards a product's worker draws. */
 .product-avatar {
   object-fit: cover;
   background: var(--chat-surface-raised);

@@ -279,6 +279,31 @@ personhood product draws. It is not a check of the wallet's personhood, and this
 - **Trust.** The worker and the Widget run on this host's origin, as any product opened by name does (see
   [Trust model](#trust-model)).
 
+### Chat providers
+
+The Chat screen draws one list of conversations and one conversation view, and reads every chat through one small
+interface, `ChatProvider` in `src/chat-provider.ts`. A provider owns its protocol, storage, delivery, retries and read
+receipts; the screen only says what the user did and draws what the provider reports. The interface is this host's own,
+not TrUAPI, and is meant to show the boundary a native host could copy.
+
+- **What a provider gives.** Its conversations as a list kept in memory (title, preview, last activity, and an unread
+  count when it keeps one), a conversation's history a page at a time (newest page first, oldest message first in a
+  page, with an opaque cursor for the page before), what goes below the messages (a text input, nothing, or why the user
+  cannot write), and events that say what changed. A message has a stable id, a sender with an id, a label and whether
+  it is the user's, a status, and `Text`, `System` or `Custom` content.
+- **What the screen gives back.** `send(conversation, text)`, `retry` of a failed message, and
+  `markRead(conversation, message)` for the newest message whose end was actually on screen while the page was visible.
+  Opening a conversation is not reading it. A provider without read state gets no `markRead` calls.
+- **Optional parts.** Requests to accept or decline, starting a conversation, an account of its own, and drawing
+  `Custom` messages. The screen shows each only for the providers that have it.
+- **Lifetime and stale replies.** `src/chat-inbox.ts` builds the providers when a session (wallet, network and identity)
+  starts, and disposes all of them when it ends or changes. They run whichever screen or conversation is in front. The
+  conversation view tags each read with its own token and the provider's epoch, and drops a reply that comes back after
+  either changed: leaving the conversation, a new session, or a restarted source.
+- **The providers.** `src/nova-chat-provider.ts` wraps the host's Nova engine ([Chat](#chat)) without changing it,
+  including starting a chat by username and message requests. `src/product-room-provider.ts` reads the rooms product
+  workers keep through TrUAPI Chat ([Product chats](#product-chats)), one provider per product.
+
 ### Chat
 
 Chat is an experimental, host-drawn screen. It is not a product and adds nothing to TrUAPI. It is written from reading
@@ -323,8 +348,8 @@ yet known to interoperate with the app in every respect.
 ### Product chats
 
 A product can chat through its worker executable, as a game product's weekly bot does. The Chat screen lists the rooms
-workers keep under **Product chats**, apart from the person-to-person conversations above. These rooms are TrUAPI Chat:
-the worker's calls reach the core as frames, which the inspector's **TrUAPI** view decodes.
+workers keep in the same list as the person-to-person conversations above. These rooms are TrUAPI Chat: the worker's
+calls reach the core as frames, which the inspector's **TrUAPI** view decodes.
 
 - **Adding a worker.** **Workers** on the Chat screen takes a product name, such as `myapp.paseo`. The host reads
   `worker.<name>`: its `executable` text record must be a worker manifest (`$v` 1, `kind` `worker`, an `entrypoint`
@@ -642,9 +667,11 @@ and layout on narrow screens.
   `capture.ts` keeps payloads when the user asks, `inspect.ts` decodes them, and `memory-rpc.ts` is the in-memory store
   tests use. `src/chat-screen.ts` draws the Chat screen, `src/chat-diagnostics-view.ts` the inspector's Chat tab and
   `src/chat-transport-view.ts` an event's payload layers.
+- `src/chat-provider.ts`: the interface between the Chat screen and its chats. `src/chat-inbox.ts`: the session's
+  providers. `src/conversation-view.ts`: one conversation, for any provider. `src/nova-chat-provider.ts`,
+  `src/product-room-provider.ts`: the Nova and product room providers.
 - `src/worker-manifest.ts`, `src/product-workers.ts`: finding a product's worker and running it. `src/product-chat.ts`:
-  the host side of TrUAPI Chat. `src/product-room-view.ts`, `src/product-render.ts`: a product room and the cards its
-  worker draws.
+  the host side of TrUAPI Chat. `src/product-render.ts`: the cards a worker draws.
 - `src/archive/`: CAR, UnixFS and CID verification and unpacking.
 - `src/sandbox/`, `sandbox-plugin.ts`: the loader, the service worker, the mount paths and the archive cache. The plugin
   bundles them as static files, which the build emits and the dev server also answers.
