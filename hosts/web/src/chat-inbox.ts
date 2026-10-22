@@ -1,5 +1,9 @@
 import type { ChatDiagnostics } from "./chat/diagnostics.js";
-import type { ChatProvider, ProviderEvent } from "./chat-provider.js";
+import type {
+  ChatContact,
+  ChatProvider,
+  ProviderEvent,
+} from "./chat-provider.js";
 import {
   DraftChatProvider,
   draftCacheKey,
@@ -91,6 +95,16 @@ export class ChatInbox implements ChatInboxView {
       ...this.products.values(),
       ...(this.draft === null ? [] : [this.draft]),
     ];
+  }
+
+  /** The session's contacts, from every provider that offers them, one entry per account. */
+  contacts(): ChatContact[] {
+    const byAccount = new Map<string, ChatContact>();
+    for (const provider of this.providers())
+      for (const contact of provider.contacts?.() ?? [])
+        if (!byAccount.has(contact.account.toLowerCase()))
+          byAccount.set(contact.account.toLowerCase(), contact);
+    return [...byAccount.values()];
   }
 
   /** Follow the signed-in session. A different wallet, network or identity ends every provider. */

@@ -2227,6 +2227,15 @@ body[data-product="open"] .stage-loading {
   overflow: auto;
 }
 
+.prompt-list {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.prompt-list button {
+  text-align: left;
+}
+
 .prompt-actions {
   flex-wrap: wrap;
 }

@@ -15,6 +15,7 @@ import {
 import {
   Listeners,
   pageBefore,
+  type ChatContact,
   type ChatMessage,
   type ChatProvider,
   type Composer,
@@ -315,6 +316,19 @@ export class NovaChatProvider implements ChatProvider {
     },
     decline: (requestId) => this.engine.decline(requestId),
   };
+
+  /**
+   * Accepted contacts. A request either side has not accepted yet is not a
+   * contact, as on the native hosts, and a declined one is gone.
+   */
+  contacts(): ChatContact[] {
+    return this.snapshot.contacts
+      .filter((contact) => contact.state === "active")
+      .map((contact) => ({
+        account: contact.account,
+        name: displayName(contact),
+      }));
+  }
 
   account(): ProviderAccount {
     const snapshot = this.snapshot;

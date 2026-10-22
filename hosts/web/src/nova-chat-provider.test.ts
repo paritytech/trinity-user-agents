@@ -231,6 +231,20 @@ describe("Nova chat provider", () => {
     expect(calls).toEqual([`send ${ADA} hello`, `retry ${ADA}`, "stop"]);
   });
 
+  test("offers accepted contacts to the picker, not requests still waiting", () => {
+    const snapshot = snapshotWith([
+      contact(ADA, "ada.01", [message("m1", "in", 1)]),
+      contact(
+        BOB,
+        null,
+        [message("r1", "out", 2, { kind: "request" })],
+        "requested",
+      ),
+    ]);
+    const provider = new NovaChatProvider(fakeEngine(snapshot).engine);
+    expect(provider.contacts()).toEqual([{ account: ADA, name: "ada.01" }]);
+  });
+
   test("stays off, with the reason, when the core reports no identity for the session", () => {
     const session = {
       walletId: "w1",
