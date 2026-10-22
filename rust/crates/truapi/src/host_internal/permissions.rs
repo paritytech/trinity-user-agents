@@ -30,10 +30,10 @@
 //! its set-shaped key is that domain's key, so it persists per-domain with no
 //! special case.
 //!
-//! Remote permissions, identity disclosure and account access have one exception.
-//! A product listed in [`crate::platform::REMOTE_PERMISSION_TRUSTED_LABELS`]
-//! is authorized without reading or writing permission records and never
-//! reaches the prompt callback. Device permissions are never covered.
+//! Products listed in [`crate::platform::REMOTE_PERMISSION_TRUSTED_LABELS`]
+//! get remote permissions, device permissions, identity disclosure and account
+//! access without a prompt or a stored record. Device permissions still need
+//! the OS grant.
 
 use std::{collections::HashSet, sync::Arc};
 
@@ -178,7 +178,7 @@ pub struct PermissionsService<'a, S: CoreStorage + ?Sized, P: Permissions + ?Siz
 	/// Live OS permission state, when the host serves that capability. Absent
 	/// leaves the stored decision governing on its own.
 	status: Option<&'a dyn PermissionStatusHost>,
-	/// Whether non-device permissions are granted without records or prompts.
+	/// Whether permissions are granted without a prompt or a stored record.
 	trusted_product: bool,
 	/// One-use grants remain local to the execution that requested them.
 	temporary_permissions: Arc<TemporaryPermissions>,
@@ -258,7 +258,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 	) -> Result<PermissionAuthorizationStatus, GenericError> {
 		let Some(domains) = requested_domains(request) else {
 			let key = CoreStorageKey::remote_permission_authorization(self.product_id(), request);
-			return self.cached_remote_authorization(&key, false).await;
+			return self.cached_authorization(&key, false).await;
 		};
 		match self.resolve_domains(domains).await?.0 {
 			BundleResolution::Authorized => Ok(PermissionAuthorizationStatus::Authorized),
@@ -356,6 +356,9 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		key: &CoreStorageKey,
 		consume: bool,
 	) -> Result<PermissionAuthorizationStatus, GenericError> {
+		if self.trusted_product {
+			return Ok(PermissionAuthorizationStatus::Authorized);
+		}
 		if let Some(stored) = peek_stored(self.storage, key.clone()).await? {
 			return Ok(stored.into());
 		}
@@ -364,17 +367,6 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		} else {
 			PermissionAuthorizationStatus::NotDetermined
 		})
-	}
-
-	async fn cached_remote_authorization(
-		&self,
-		key: &CoreStorageKey,
-		consume: bool,
-	) -> Result<PermissionAuthorizationStatus, GenericError> {
-		if self.trusted_product {
-			return Ok(PermissionAuthorizationStatus::Authorized);
-		}
-		self.cached_authorization(key, consume).await
 	}
 
 	/// Returns the current authorization status for a permission request
@@ -586,7 +578,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		let _guard = self.temporary_permissions.authorization.lock().await;
 		let Some(domains) = requested_domains(&request).map(<[String]>::to_vec) else {
 			let key = CoreStorageKey::remote_permission_authorization(self.product_id(), &request);
-			match self.cached_remote_authorization(&key, consume).await? {
+			match self.cached_authorization(&key, consume).await? {
 				PermissionAuthorizationStatus::NotDetermined => {},
 				decided => return Ok(decided),
 			}
@@ -762,6 +754,7 @@ mod tests {
 			atomic::{AtomicUsize, Ordering},
 		},
 	};
+	use strum::VariantArray;
 	use truapi::{latest::RemotePermission, v01, v01::GenericError};
 
 	static PRODUCT: LazyLock<ProductContext> =
@@ -1931,29 +1924,59 @@ mod tests {
 	}
 
 	#[test]
-	fn a_trusted_product_still_prompts_for_device_permissions() {
+	fn a_trusted_product_holds_every_device_permission_without_prompting() {
 		let storage = MemStorage::default();
-		let prompt = ScriptedPrompt::new(vec![false], vec![]);
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
 		let service = trusted_service(&storage, &prompt);
 
-		assert_eq!(
-			futures::executor::block_on(service.peek_device(&HostDevicePermissionRequest::Camera))
-				.unwrap(),
-			PermissionAuthorizationStatus::NotDetermined
-		);
-		assert_eq!(
-			futures::executor::block_on(
-				service.check_or_prompt_device(HostDevicePermissionRequest::Camera)
-			)
-			.unwrap(),
-			PermissionAuthorizationStatus::Denied,
-			"a trusted product's device answer is the user's, not the whitelist's"
-		);
-		assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 1);
+		for &permission in HostDevicePermissionRequest::VARIANTS {
+			assert_eq!(
+				[
+					futures::executor::block_on(service.check_or_prompt_device(permission))
+						.unwrap(),
+					futures::executor::block_on(service.authorize_device(permission)).unwrap(),
+				],
+				[PermissionAuthorizationStatus::Authorized; 2],
+				"{permission:?} must be granted to a trusted product without a prompt"
+			);
+		}
+		assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 0);
 	}
 
 	#[test]
-	fn a_trusted_product_reads_permission_storage_only_for_devices() {
+	fn a_trusted_product_is_denied_a_device_capability_the_os_refuses() {
+		let storage = MemStorage::default();
+		let prompt = ScriptedPrompt::new(vec![], vec![]);
+		let status = ScriptedStatus::per_capability(
+			vec![
+				(HostDevicePermissionRequest::Notifications, DevicePermissionStatus::Denied),
+				(HostDevicePermissionRequest::Camera, DevicePermissionStatus::NotDetermined),
+			],
+			DevicePermissionStatus::Granted,
+		);
+		let service = trusted_service(&storage, &prompt).with_status_host(Some(&status));
+		let request = |permission| {
+			futures::executor::block_on(service.check_or_prompt_device(permission)).unwrap()
+		};
+
+		assert_eq!(
+			[
+				request(HostDevicePermissionRequest::Notifications),
+				request(HostDevicePermissionRequest::Camera),
+				request(HostDevicePermissionRequest::Microphone),
+			],
+			[
+				PermissionAuthorizationStatus::Denied,
+				// The OS asks its own question where the capability is used.
+				PermissionAuthorizationStatus::Authorized,
+				PermissionAuthorizationStatus::Authorized,
+			],
+		);
+		assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 0);
+	}
+
+	#[test]
+	fn a_trusted_product_reads_no_permission_storage() {
 		let storage = FailingStorage;
 		let prompt = ScriptedPrompt::new(vec![], vec![]);
 		let service = PermissionsService::new(&storage, &prompt, &PEOPL);
@@ -1968,12 +1991,16 @@ mod tests {
 					target_product_id: "other.dot".to_string(),
 				}),
 				status(PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera)),
+				futures::executor::block_on(
+					service.check_or_prompt_device(HostDevicePermissionRequest::Notifications)
+				),
 			],
 			[
 				Ok(PermissionAuthorizationStatus::Authorized),
 				Ok(PermissionAuthorizationStatus::Authorized),
 				Ok(PermissionAuthorizationStatus::Authorized),
-				Err(GenericError { reason: "read failed".to_string() }),
+				Ok(PermissionAuthorizationStatus::Authorized),
+				Ok(PermissionAuthorizationStatus::Authorized),
 			],
 		);
 	}

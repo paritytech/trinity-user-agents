@@ -1,20 +1,22 @@
 import UIKit
 import PolkadotUI
 import Products
+import UIKitExt
 
 @MainActor
 final class MainTabBarWireframe: MainTabBarWireframeProtocol {
     private let serviceCoordinator: ServiceCoordinatorProtocol
-    private let scanResultHandler: WalletQRScanDelegate
+    private let tabFactory: TabFactoryProtocol
     private let moduleNavigator: ModuleNavigating
+    private weak var presentedSettings: UINavigationController?
 
     init(
         serviceCoordinator: ServiceCoordinatorProtocol,
-        scanResultHandler: WalletQRScanDelegate,
+        tabFactory: TabFactoryProtocol,
         moduleNavigator: ModuleNavigating
     ) {
         self.serviceCoordinator = serviceCoordinator
-        self.scanResultHandler = scanResultHandler
+        self.tabFactory = tabFactory
         self.moduleNavigator = moduleNavigator
     }
 
@@ -35,25 +37,22 @@ final class MainTabBarWireframe: MainTabBarWireframeProtocol {
         ProductOpener(navigator: moduleNavigator).open(productId: productId)
     }
 
-    #if FEATURE_INPUT
-        func openChat(_ model: ChatOpenModel) {
-            moduleNavigator.openChat(model)
-        }
-    #else
-        func showSearchContact(from view: MainTabBarViewProtocol?) {
-            guard let search = SearchContactViewFactory.createView(
-                onChatFound: { [moduleNavigator] model in
-                    moduleNavigator.openChat(model)
-                }
-            ) else {
-                return
-            }
+    func openChat(_ model: ChatOpenModel) {
+        moduleNavigator.openChat(model)
+    }
 
-            search.controller.modalPresentationStyle = .fullScreen
-            search.controller.modalTransitionStyle = .crossDissolve
-            view?.controller.present(search.controller, animated: true)
+    func showConnectionStatus(_ viewModel: ConnectionStatusSheetViewModel, from view: MainTabBarViewProtocol?) {
+        let sheet = ConnectionStatusSheetViewFactory.createView(viewModel: viewModel)
+        view?.controller.topmostPresented.present(sheet, animated: true)
+    }
+
+    func showSettings(from view: MainTabBarViewProtocol?) {
+        guard let settings = tabFactory.makeSettingsNavigation() else {
+            return
         }
-    #endif
+        presentedSettings = settings
+        view?.controller.topmostPresented.present(settings, animated: true)
+    }
 }
 
 private extension MainTabBarWireframe {
@@ -77,11 +76,8 @@ private extension MainTabBarWireframe {
     }
 
     func showDeviceDetails(_ device: Chat.LocalDevice, view: MainTabBarViewProtocol?) {
-        view?.select(tab: .settings)
-
         guard
-            let settingsNav = (view as? MainTabBarViewController)?.view(for: .settings) as? UINavigationController,
-            let settingsRoot = settingsNav.viewControllers.first,
+            let presenter = view?.controller.topmostPresented,
             let linkedDevicesView = LinkedDevicesViewFactory.createView(serviceCoordinator: serviceCoordinator),
             let detailsView = DeviceDetailsViewFactory.createView(
                 device: device,
@@ -91,9 +87,18 @@ private extension MainTabBarWireframe {
             return
         }
 
-        settingsNav.setViewControllers(
-            [settingsRoot, linkedDevicesView.controller, detailsView.controller],
-            animated: true
-        )
+        if let settings = presentedSettings, settings === presenter {
+            settings.pushViewController(linkedDevicesView.controller, animated: false)
+            settings.pushViewController(detailsView.controller, animated: true)
+            return
+        }
+
+        guard let settings = tabFactory.makeSettingsNavigation() else {
+            return
+        }
+        presentedSettings = settings
+        settings.pushViewController(linkedDevicesView.controller, animated: false)
+        settings.pushViewController(detailsView.controller, animated: false)
+        presenter.present(settings, animated: true)
     }
 }

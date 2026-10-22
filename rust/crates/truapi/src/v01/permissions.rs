@@ -17,6 +17,8 @@ use super::NftPurseOwner;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, Display)]
 #[allow(clippy::upper_case_acronyms)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(test, derive(strum::VariantArray))]
+#[cfg_attr(feature = "mock", derive(strum::IntoStaticStr))]
 pub enum HostDevicePermissionRequest {
 	/// Showing system notifications.
 	#[display("notifications")]
@@ -58,6 +60,7 @@ pub enum HostDevicePermissionRequest {
 /// yet granted.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(feature = "mock", derive(strum::IntoStaticStr))]
 pub enum RemotePermission {
 	/// Outbound HTTP/WebSocket access to a set of domains. External navigation
 	/// uses [`HostDevicePermissionRequest::OpenUrl`] instead.

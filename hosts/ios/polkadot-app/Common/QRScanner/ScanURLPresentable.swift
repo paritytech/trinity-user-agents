@@ -1,5 +1,6 @@
 import UIKit
 import UIKitExt
+import DesignSystem
 
 @MainActor
 protocol ScanURLPresentable {
@@ -29,7 +30,7 @@ extension ScanURLPresentable {
                 backgroundColor: nil,
                 shadow: nil,
                 shadowColor: nil,
-                tintColor: .white100,
+                tintColor: .fgStaticWhite,
                 backImage: nil,
                 backgroundEffect: nil,
                 titleAttributes: nil,
