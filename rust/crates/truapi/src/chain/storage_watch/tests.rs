@@ -20,7 +20,7 @@ use subxt::{
 };
 
 use super::{
-	DecodableAtBlock, DecodedEntryChanges, REOPEN_DELAY, RawStorageChanges, StorageSnapshot,
+	DecodableAtBlock, DecodedEntryChanges, RETRY_DELAY, RawStorageChanges, StorageSnapshot,
 	StorageWatchError, WatchedHead, WatchedStorage,
 	codec::{decode_value_or_default, encode_storage_keys},
 	diffed,
@@ -391,9 +391,9 @@ fn metadata_without_the_watched_entry_fails_the_watch_before_it_starts() {
 
 /// A consumer that keeps watching must not lose its keys to an unreachable
 /// chain, nor retry it without pause: the watch reports why it could not
-/// open, and opens again only once the delay has passed.
+/// start, and starts again only once the delay has passed.
 #[test]
-fn a_kept_watch_that_cannot_open_says_why_and_opens_again_after_the_delay() {
+fn a_kept_watch_that_cannot_start_says_why_and_starts_again_after_the_delay() {
 	let (fake, sender) = ScriptedWatchedStorage::unreachable_for(1);
 	let storage: Arc<dyn WatchedStorage> = fake;
 	let timer = Arc::new(ManualTimer::default());
@@ -401,19 +401,19 @@ fn a_kept_watch_that_cannot_open_says_why_and_opens_again_after_the_delay() {
 	let mut changes =
 		storage.keep_watching_entry(timer.clone(), GENESIS, WatchedHead::Best, address, vec![()]);
 	let failed = block_on(changes.next()).expect("an item");
-	let mut reopened = changes.next();
-	let pending = block_on(async { futures::poll!(&mut reopened) }).is_pending();
-	let sleeps_before_reopening = timer.sleeps();
+	let mut restarted = changes.next();
+	let pending = block_on(async { futures::poll!(&mut restarted) }).is_pending();
+	let sleeps_before_restarting = timer.sleeps();
 
-	timer.advance(REOPEN_DELAY);
+	timer.advance(RETRY_DELAY);
 	sender
 		.unbounded_send(scripted_raw_changes_at(2, &[(0, Some(&7u32.encode()))]))
 		.unwrap();
-	let read = block_on(reopened).expect("an item").expect("a read");
+	let read = block_on(restarted).expect("an item").expect("a read");
 
 	assert!(matches!(failed, Err(StorageWatchError::Chain(_))), "{failed:?}");
 	assert!(pending);
-	assert_eq!(sleeps_before_reopening, 1);
+	assert_eq!(sleeps_before_restarting, 1);
 	assert_eq!(read, DecodedEntryChanges { at: test_block(2), changed: vec![((), Some(7))] });
 }
 

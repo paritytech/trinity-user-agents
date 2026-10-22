@@ -98,9 +98,8 @@ impl StorageWatchError {
 type DecodedEntryChangeStream<K, V> =
 	BoxStream<'static, Result<DecodedEntryChanges<K, V>, StorageWatchError>>;
 
-/// How long `keep_watching_entry` waits before opening a watch again after
-/// opening it failed.
-const REOPEN_DELAY: Duration = Duration::from_secs(5);
+/// How long `keep_watching_entry` waits between attempts to watch.
+const RETRY_DELAY: Duration = Duration::from_secs(5);
 
 impl dyn WatchedStorage {
 	/// Watches `keys` of the entry `address` names on `genesis`, at `head`.
@@ -127,13 +126,13 @@ impl dyn WatchedStorage {
 		Ok(changes.map(move |raw| decoder.decode_raw_changes(raw?)).boxed())
 	}
 
-	/// Watches `keys` of `address` for as long as the stream is held, in
-	/// rounds. A round opens the watch with `watch_entry_changes` and passes
-	/// on its changes until they end; a round whose watch does not open
-	/// passes on only why. The first round starts at once, and every later
-	/// one five seconds on `timer` after the round before it ended. A
-	/// permanent failure, as [`StorageWatchError::is_permanent`] names it, is
-	/// the last item.
+	/// Watches `keys` of `address` for as long as the stream is held. Each
+	/// attempt starts a watch with `watch_entry_changes`, which fails when
+	/// the watch cannot start: the chain is unreachable, or the runtime has
+	/// no such entry. That failure is passed on as an `Err` item, and the
+	/// next attempt starts five seconds on `timer` after the last one failed
+	/// or its changes ended. A permanent failure, as
+	/// [`StorageWatchError::is_permanent`] names it, is the last item.
 	pub fn keep_watching_entry<A>(
 		self: Arc<Self>,
 		timer: Arc<dyn Timer>,
@@ -147,19 +146,17 @@ impl dyn WatchedStorage {
 		A::KeyParts: Clone + Send + 'static,
 		A::Value: Send + 'static,
 	{
-		let watch = EntryWatch { storage: self, genesis, head, address, keys };
-		let first_round = watch.clone().round(&timer, Duration::ZERO);
-		let later_rounds =
-			stream::repeat_with(move || watch.clone().round(&timer, REOPEN_DELAY)).flatten();
-		end_after(first_round.chain(later_rounds).boxed(), |change| {
-			change.as_ref().is_err_and(StorageWatchError::is_permanent)
-		})
+		let request = WatchRequest { storage: self, genesis, head, address, keys };
+		let first_attempt = request.clone().start_watch_immediately(&timer);
+		let retries =
+			stream::repeat_with(move || request.clone().start_watch_after(RETRY_DELAY, &timer))
+				.flatten();
+		stop_after_permanent_failure(first_attempt.chain(retries).boxed())
 	}
 }
 
-/// The watch of one entry's keys that `keep_watching_entry` opens in each
-/// round.
-struct EntryWatch<A: Address> {
+/// What `keep_watching_entry` watches, each time it starts a watch.
+struct WatchRequest<A: Address> {
 	storage: Arc<dyn WatchedStorage>,
 	genesis: H256,
 	head: WatchedHead,
@@ -167,33 +164,48 @@ struct EntryWatch<A: Address> {
 	keys: Vec<A::KeyParts>,
 }
 
-impl<A> EntryWatch<A>
+impl<A> WatchRequest<A>
 where
 	A: Address + Clone + Send + 'static,
 	A::KeyParts: Clone + Send + 'static,
 	A::Value: Send + 'static,
 {
-	/// Waits `delay`, opens the watch, then passes on its changes until they
-	/// end. A watch that does not open passes on only why.
-	fn round(
+	/// Starts the watch now; see [`Self::start_watch_after`].
+	fn start_watch_immediately(
 		self,
 		timer: &Arc<dyn Timer>,
-		delay: Duration,
 	) -> DecodedEntryChangeStream<A::KeyParts, A::Value> {
-		let wait = timer.sleep(delay);
-		let opened = async move {
-			wait.await;
-			self.storage
-				.watch_entry_changes(self.genesis, self.head, self.address, self.keys)
-				.await
+		self.start_watch_after(Duration::ZERO, timer)
+	}
+
+	/// Waits `delay`, starts the watch, and returns its changes until they
+	/// end. If the watch cannot start, returns a single `Err` saying why.
+	fn start_watch_after(
+		self,
+		delay: Duration,
+		timer: &Arc<dyn Timer>,
+	) -> DecodedEntryChangeStream<A::KeyParts, A::Value> {
+		let pause = timer.sleep(delay);
+		let started_watch = async move {
+			pause.await;
+			self.start_watch().await
 		};
-		stream::once(opened)
-			.flat_map(|opened| opened.unwrap_or_else(failed_to_open))
+		stream::once(started_watch)
+			.flat_map(|started_watch| started_watch.unwrap_or_else(single_error))
 			.boxed()
+	}
+
+	/// Starts the watch, or returns why it cannot start.
+	async fn start_watch(
+		self,
+	) -> Result<DecodedEntryChangeStream<A::KeyParts, A::Value>, StorageWatchError> {
+		self.storage
+			.watch_entry_changes(self.genesis, self.head, self.address, self.keys)
+			.await
 	}
 }
 
-impl<A: Address + Clone> Clone for EntryWatch<A>
+impl<A: Address + Clone> Clone for WatchRequest<A>
 where
 	A::KeyParts: Clone,
 {
@@ -209,15 +221,24 @@ where
 	}
 }
 
-/// A watch that could not be opened, as its one item.
-fn failed_to_open<T: Send + 'static>(
+/// A stream whose one item is `error`.
+fn single_error<T: Send + 'static>(
 	error: StorageWatchError,
 ) -> BoxStream<'static, Result<T, StorageWatchError>> {
 	stream::once(ready(Err(error))).boxed()
 }
 
-/// `items` up to and including the first that `is_last` picks.
-pub fn end_after<T: Send + 'static>(
+/// `changes` up to and including the first permanent failure, then nothing.
+fn stop_after_permanent_failure<T: Send + 'static>(
+	changes: BoxStream<'static, Result<T, StorageWatchError>>,
+) -> BoxStream<'static, Result<T, StorageWatchError>> {
+	take_until_inclusive(changes, |change| {
+		change.as_ref().is_err_and(StorageWatchError::is_permanent)
+	})
+}
+
+/// `items` up to and including the first one `is_last` picks, then nothing.
+pub fn take_until_inclusive<T: Send + 'static>(
 	items: BoxStream<'static, T>,
 	is_last: impl Fn(&T) -> bool + Send + 'static,
 ) -> BoxStream<'static, T> {

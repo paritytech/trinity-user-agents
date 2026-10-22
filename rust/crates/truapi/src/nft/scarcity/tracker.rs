@@ -83,7 +83,7 @@ impl Tracking {
 
 	/// What `batch` holds at each best block, first every key and then the
 	/// keys that changed. A failure is logged and skipped, because the watch
-	/// opens again or reports the same keys again.
+	/// starts again or reports the same keys again.
 	fn watch_batch(&self, batch: Vec<ItemKey>) -> BoxStream<'static, HoldingChanges> {
 		let owners = batch.iter().map(|key| (AccountId32(key.0),)).collect();
 		let storage = self.storage.clone();

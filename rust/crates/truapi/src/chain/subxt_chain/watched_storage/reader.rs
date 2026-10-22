@@ -16,7 +16,7 @@ use super::{RawChangeStream, STORAGE_WATCH, all_keys_answered_or_err, group_valu
 use crate::{
 	chain::{
 		DecodableAtBlock, HashAndNumber, RawStorageChanges,
-		storage_watch::{StorageSnapshot, end_after, value_hash},
+		storage_watch::{StorageSnapshot, take_until_inclusive, value_hash},
 		subxt_chain::{failure, numbered},
 	},
 	chain_runtime::{ChainRuntime, LegacyConnection, RuntimeFailure},
@@ -105,7 +105,7 @@ impl WatchedKeysReader {
 			.and_then(move |change_set| ready(finder.find_changed_keys(change_set)))
 			.try_filter_map(|changed| ready(Ok(changed)))
 			.and_then(move |changed| self.clone().report_changed_keys(legacy.clone(), changed));
-		Ok(end_after(changes.boxed(), Result::is_err))
+		Ok(stop_after_first_failure(changes.boxed()))
 	}
 
 	/// A `state_subscribeStorage` of every one of the reader's keys.
@@ -250,6 +250,11 @@ fn record_hashes(
 	for (position, hash) in changed {
 		hashes[*position] = *hash;
 	}
+}
+
+/// `changes` up to and including the first failure, then nothing.
+fn stop_after_first_failure(changes: RawChangeStream) -> RawChangeStream {
+	take_until_inclusive(changes, Result::is_err)
 }
 
 /// One notification's changes, with `System.LastRuntimeUpgrade` taken out.
