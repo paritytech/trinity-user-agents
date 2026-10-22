@@ -244,7 +244,7 @@ pub fn observe_status(
 }
 
 const GROUP: &str = concat!(
-	"SELECT id, ",
+	"SELECT id, tx_hash, policy_id, policy_params, ",
 	status_columns!(),
 	" FROM durable_tx WHERE domain = :domain AND group_id = :group_id ORDER BY id"
 );
@@ -303,8 +303,20 @@ pub fn live_domains(conn: &Connection) -> Result<Vec<DomainId>, DbError> {
 		.collect::<rusqlite::Result<_>>()?)
 }
 
-const HAS_LIVE: &str = "SELECT EXISTS (SELECT 1 FROM durable_tx
-    WHERE status IN ('PENDING_SUBMISSION', 'PENDING', 'PENDING_SUCCESS')) AS live";
+/// The statuses of a live transaction, as an SQL list: one still waiting to
+/// be built or awaiting a verdict. Other domains' queries use it to treat a
+/// transaction as live exactly as the ledger does.
+macro_rules! live_statuses {
+	() => {
+		"('PENDING_SUBMISSION', 'PENDING', 'PENDING_SUCCESS')"
+	};
+}
+
+const HAS_LIVE: &str = concat!(
+	"SELECT EXISTS (SELECT 1 FROM durable_tx WHERE status IN ",
+	live_statuses!(),
+	") AS live"
+);
 
 /// Whether any transaction is waiting to be built or awaits a verdict,
 /// re-read after every commit that changes it.
@@ -322,6 +334,7 @@ impl DurableTxEntry {
 			mortality: mortality_from_row(row)?,
 			status: status_from_row(row)?,
 			scanned_to: row.get("scanned_number")?,
+			plan: plan_from_row(row)?,
 		})
 	}
 }
@@ -377,8 +390,20 @@ impl SubmissionPlan {
 
 impl DurableTxState {
 	fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
-		Ok(Self { id: DurableTxId(row.get("id")?), status: status_from_row(row)? })
+		let tx_hash: Option<[u8; 32]> = row.get("tx_hash")?;
+		Ok(Self {
+			id: DurableTxId(row.get("id")?),
+			status: status_from_row(row)?,
+			tx_hash: tx_hash.map(H256),
+			plan: plan_from_row(row)?,
+		})
 	}
+}
+
+/// The row's plan, when a policy builds it.
+fn plan_from_row(row: &Row<'_>) -> rusqlite::Result<Option<SubmissionPlan>> {
+	let policy: Option<String> = row.get("policy_id")?;
+	policy.map(|_| SubmissionPlan::from_row(row)).transpose()
 }
 
 impl ToSql for PolicyParams {
@@ -470,7 +495,8 @@ mod tests {
 	use super::*;
 	use crate::{
 		durable::testing::{
-			block, extrinsic, insert_retryable, open_db, test_plan, test_policy_id,
+			block, extrinsic, insert_retryable, open_db, pending_presigned, test_plan,
+			test_policy_id,
 		},
 		test_support::wait_until,
 	};
@@ -523,6 +549,7 @@ mod tests {
 				mortality: extrinsic(7, 100, 64).mortality,
 				status: DurableTxStatus::Pending,
 				scanned_to: None,
+				plan: None,
 			})
 		);
 	}
@@ -673,8 +700,8 @@ mod tests {
 		assert_eq!(
 			read(&db, move |conn| group(conn, &domain(), &group_id)),
 			vec![
-				DurableTxState { id: first, status: DurableTxStatus::Pending },
-				DurableTxState { id: second, status: DurableTxStatus::Pending },
+				pending_presigned(first, 1),
+				pending_presigned(second, 2),
 			]
 		);
 	}
@@ -715,10 +742,7 @@ mod tests {
 		let mut status = observe_status(&db, id);
 
 		assert!(next(&mut live));
-		assert_eq!(
-			next(&mut grouped),
-			vec![DurableTxState { id, status: DurableTxStatus::Pending }]
-		);
+		assert_eq!(next(&mut grouped), vec![pending_presigned(id, 1)]);
 		assert_eq!(next(&mut status), Some(DurableTxStatus::Pending));
 	}
 
@@ -799,6 +823,7 @@ mod tests {
 				mortality: extrinsic(9, 110, 32).mortality,
 				status: DurableTxStatus::Pending,
 				scanned_to: None,
+				plan: Some(test_plan(vec![1])),
 			})
 		);
 		assert_eq!(pending_rows(&db), vec![]);

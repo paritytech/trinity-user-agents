@@ -31,7 +31,10 @@ use tempfile::TempDir;
 use super::{
 	engine::{DurableDeps, DurableTxEngine},
 	ladder::{PinnedView, SearchResult},
-	model::{DomainId, DurableTxEntry, DurableTxId, DurableTxStatus, HeadKind, SubmissionPlan},
+	model::{
+		DomainId, DurableTxEntry, DurableTxId, DurableTxState, DurableTxStatus, HeadKind,
+		SubmissionPlan,
+	},
 	oracle::{DurableRegistry, PassScope, Unobservable},
 };
 use crate::{
@@ -73,6 +76,13 @@ pub fn extrinsic(tag: u8, birth: u64, period: u64) -> MortalExtrinsic {
 	}
 }
 
+/// How a group lists the presigned row of `extrinsic(tag, ..)` while it is
+/// pending: with its hash and no plan.
+pub fn pending_presigned(id: DurableTxId, tag: u8) -> DurableTxState {
+	let tx_hash = Some(extrinsic(tag, 100, 64).extrinsic.hash());
+	DurableTxState { id, status: DurableTxStatus::Pending, tx_hash, plan: None }
+}
+
 /// A pending entry of the `test` domain, born at `birth` with `period`.
 pub fn entry(id: DurableTxId, birth: u64, period: u64) -> DurableTxEntry {
 	DurableTxEntry {
@@ -83,6 +93,7 @@ pub fn entry(id: DurableTxId, birth: u64, period: u64) -> DurableTxEntry {
 		mortality: Mortality::new(block(birth), period).unwrap(),
 		status: DurableTxStatus::Pending,
 		scanned_to: None,
+		plan: None,
 	}
 }
 

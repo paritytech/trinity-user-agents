@@ -807,6 +807,7 @@ pub mod store;
 
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
+#[macro_use]
 pub mod durable;
 
 #[cfg(feature = "runtime")]

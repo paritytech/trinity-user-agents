@@ -209,6 +209,9 @@ pub struct DurableTxEntry {
 	/// include the attempt. Only finalized blocks are searched, so no reorg
 	/// can undo it.
 	pub scanned_to: Option<u64>,
+	/// How it is rebuilt, when a policy rebuilds it. A domain's oracle reads
+	/// what the transaction does from its params.
+	pub plan: Option<SubmissionPlan>,
 }
 
 /// A transaction waiting for its policy to build an attempt.
@@ -227,13 +230,18 @@ pub struct ScheduledDurableTx {
 	pub attempts: u32,
 }
 
-/// A transaction's id and status, as a group lists them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A transaction as a group lists it: where it stands, its latest attempt,
+/// and how it is built.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DurableTxState {
 	/// Ledger id.
 	pub id: DurableTxId,
 	/// Where it stands.
 	pub status: DurableTxStatus,
+	/// Hash of the extrinsic of its latest attempt, `None` before the first.
+	pub tx_hash: Option<H256>,
+	/// How it is built, when a policy builds it.
+	pub plan: Option<SubmissionPlan>,
 }
 
 /// A decision about one transaction, written only against the status and

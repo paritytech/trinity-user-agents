@@ -9,6 +9,7 @@
 //! schedule a transaction for a [`SubmissionPolicy`] to build, and a policy
 //! builds again any failure it accepts to retry.
 
+#[macro_use]
 mod dao;
 mod engine;
 mod ladder;

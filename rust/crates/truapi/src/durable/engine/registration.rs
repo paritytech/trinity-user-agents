@@ -299,8 +299,8 @@ mod tests {
 		durable::{
 			model::{DurableTxState, DurableTxStatus, PolicyParams},
 			testing::{
-				FakeChain, ScheduledTxHarness, ScriptedPolicy, extrinsic, test_engine, test_plan,
-				without_plan,
+				FakeChain, ScheduledTxHarness, ScriptedPolicy, extrinsic, pending_presigned,
+				test_engine, test_plan, without_plan,
 			},
 		},
 		test_support::wait_until,
@@ -347,9 +347,7 @@ mod tests {
 		assert!(ids[0] < ids[1]);
 		assert_eq!(
 			block_on(engine.group(&domain(), &GroupId::new("op"))).unwrap(),
-			ids.iter()
-				.map(|id| DurableTxState { id: *id, status: DurableTxStatus::Pending })
-				.collect::<Vec<_>>()
+			vec![pending_presigned(ids[0], 1), pending_presigned(ids[1], 2)]
 		);
 		assert!(ids.iter().all(|id| engine.ownership.is_owned(*id)));
 	}
@@ -517,6 +515,8 @@ mod tests {
 		let waiting = |id: &DurableTxId| DurableTxState {
 			id: *id,
 			status: DurableTxStatus::PendingSubmission,
+			tx_hash: None,
+			plan: Some(test_plan(vec![1])),
 		};
 		assert_eq!(op_group(engine), ids.iter().map(waiting).collect::<Vec<_>>());
 		assert_eq!(harness.broadcast(), vec![]);
