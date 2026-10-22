@@ -10,13 +10,16 @@ use futures::{
 	stream::BoxStream,
 };
 use parity_scale_codec::Decode;
-use subxt::{ArcMetadata, utils::H256};
+use subxt::{ArcMetadata, client::OnlineClientAtBlock, config::SubstrateConfig, utils::H256};
 use tempfile::TempDir;
 
 use super::*;
 use crate::{
-	chain::{DecodableAtBlock, HashAndNumber, RawStorageChanges},
-	chain_runtime::RuntimeFailure,
+	chain::{
+		DecodableAtBlock, HashAndNumber, RawStorageChanges,
+		tests::{Node, serve},
+	},
+	chain_runtime::{ChainRuntime, RuntimeFailure},
 	nft::{PurseId, PurseTag, test_ledger},
 	store::{Db, open_temporary_core_db},
 	test_support::test_spawner,
@@ -50,11 +53,13 @@ const HOLDER_ITEM: HeldItem = HeldItem { collection: 27, item: 13, instance: 330
 /// How long a test waits for the tracker to write what it was told.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
+const ASSET_HUB_METADATA_BYTES: &[u8] =
+	include_bytes!("../../../../tests/fixtures/paseo-next-asset-hub-3004000-metadata.scale");
+
 fn asset_hub_metadata() -> ArcMetadata {
-	let bytes =
-		include_bytes!("../../../../tests/fixtures/paseo-next-asset-hub-3004000-metadata.scale");
-	let prefixed = frame_metadata::RuntimeMetadataPrefixed::decode(&mut &bytes[..])
-		.expect("the Asset Hub fixture decodes");
+	let prefixed =
+		frame_metadata::RuntimeMetadataPrefixed::decode(&mut &ASSET_HUB_METADATA_BYTES[..])
+			.expect("the Asset Hub fixture decodes");
 	ArcMetadata::from(subxt::Metadata::try_from(prefixed).expect("the fixture is subxt metadata"))
 }
 
@@ -65,18 +70,29 @@ struct OpenedWatch {
 	changes: UnboundedSender<Result<RawStorageChanges, RuntimeFailure>>,
 }
 
-/// A chain whose every watch a test scripts by hand.
+/// A chain whose every watch a test scripts by hand. The client for encoding
+/// keys comes from a scripted node serving the Asset Hub runtime.
 struct ScriptedChain {
+	chain: ChainRuntime,
 	opened: Mutex<UnboundedSender<OpenedWatch>>,
+}
+
+impl ScriptedChain {
+	fn new(opened: UnboundedSender<OpenedWatch>) -> Self {
+		let mut node = Node::new(3, 5);
+		node.metadata = ASSET_HUB_METADATA_BYTES;
+		let (_node, _provider, chain) = serve(node);
+		Self { chain, opened: Mutex::new(opened) }
+	}
 }
 
 #[async_trait::async_trait]
 impl WatchedStorage for ScriptedChain {
-	async fn metadata_at_finalized_head(
+	async fn client_at_finalized_head(
 		&self,
-		_genesis: H256,
-	) -> Result<ArcMetadata, RuntimeFailure> {
-		Ok(asset_hub_metadata())
+		genesis: H256,
+	) -> Result<OnlineClientAtBlock<SubstrateConfig>, RuntimeFailure> {
+		self.chain.client_at_finalized_head(genesis).await
 	}
 
 	async fn watch_raw_key_changes(
@@ -115,7 +131,7 @@ fn tracker_after(prepare: impl FnOnce(&Db)) -> TrackerFixture {
 	let (announce, opened) = unbounded();
 	let tracker = HoldingTracker::new(HoldingTrackerDeps {
 		ledger: ledger.clone(),
-		storage: Arc::new(ScriptedChain { opened: Mutex::new(announce) }),
+		storage: Arc::new(ScriptedChain::new(announce)),
 		genesis: GENESIS,
 		spawner: test_spawner(),
 	});
