@@ -127,10 +127,13 @@ impl dyn WatchedStorage {
 		Ok(changes.map(move |raw| decoder.decode_raw_changes(raw?)).boxed())
 	}
 
-	/// `watch_entry_changes` for as long as the stream is held. A watch that
-	/// cannot be opened is an `Err` item, and is opened again after five
-	/// seconds on `timer`. A permanent failure, as
-	/// [`StorageWatchError::is_permanent`] names it, is the last item.
+	/// Watches `keys` of `address` for as long as the stream is held, in
+	/// rounds. A round opens the watch with `watch_entry_changes` and passes
+	/// on its changes until they end; a round whose watch does not open
+	/// passes on only why. The first round starts at once, and every later
+	/// one five seconds on `timer` after the round before it ended. A
+	/// permanent failure, as [`StorageWatchError::is_permanent`] names it, is
+	/// the last item.
 	pub fn keep_watching_entry<A>(
 		self: Arc<Self>,
 		timer: Arc<dyn Timer>,
@@ -144,21 +147,65 @@ impl dyn WatchedStorage {
 		A::KeyParts: Clone + Send + 'static,
 		A::Value: Send + 'static,
 	{
-		let open =
-			move || self.clone().watch_entry_changes(genesis, head, address.clone(), keys.clone());
-		let attempts = stream::unfold(false, move |reopening| {
-			let (opening, timer) = (open(), timer.clone());
-			async move {
-				if reopening {
-					timer.sleep(REOPEN_DELAY).await;
-				}
-				Some((opening.await, true))
-			}
-		});
-		let changes = attempts.flat_map(|opened| opened.unwrap_or_else(failed_to_open));
-		end_after(changes.boxed(), |change| {
+		let watch = EntryWatch { storage: self, genesis, head, address, keys };
+		let first_round = watch.clone().round(&timer, Duration::ZERO);
+		let later_rounds =
+			stream::repeat_with(move || watch.clone().round(&timer, REOPEN_DELAY)).flatten();
+		end_after(first_round.chain(later_rounds).boxed(), |change| {
 			change.as_ref().is_err_and(StorageWatchError::is_permanent)
 		})
+	}
+}
+
+/// The watch of one entry's keys that `keep_watching_entry` opens in each
+/// round.
+struct EntryWatch<A: Address> {
+	storage: Arc<dyn WatchedStorage>,
+	genesis: H256,
+	head: WatchedHead,
+	address: A,
+	keys: Vec<A::KeyParts>,
+}
+
+impl<A> EntryWatch<A>
+where
+	A: Address + Clone + Send + 'static,
+	A::KeyParts: Clone + Send + 'static,
+	A::Value: Send + 'static,
+{
+	/// Waits `delay`, opens the watch, then passes on its changes until they
+	/// end. A watch that does not open passes on only why.
+	fn round(
+		self,
+		timer: &Arc<dyn Timer>,
+		delay: Duration,
+	) -> DecodedEntryChangeStream<A::KeyParts, A::Value> {
+		let wait = timer.sleep(delay);
+		let opened = async move {
+			wait.await;
+			self.storage
+				.watch_entry_changes(self.genesis, self.head, self.address, self.keys)
+				.await
+		};
+		stream::once(opened)
+			.flat_map(|opened| opened.unwrap_or_else(failed_to_open))
+			.boxed()
+	}
+}
+
+impl<A: Address + Clone> Clone for EntryWatch<A>
+where
+	A::KeyParts: Clone,
+{
+	fn clone(&self) -> Self {
+		let (address, keys) = (self.address.clone(), self.keys.clone());
+		Self {
+			storage: self.storage.clone(),
+			genesis: self.genesis,
+			head: self.head,
+			address,
+			keys,
+		}
 	}
 }
 
