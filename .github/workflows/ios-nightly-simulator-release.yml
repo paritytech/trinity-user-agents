@@ -168,7 +168,7 @@ jobs:
           echo "archive=hosts/ios/build_simulator/$ARCHIVE" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           # Without this the tag is created at the default branch, so a build of
@@ -204,7 +204,7 @@ jobs:
       - name: Confirm the published asset is present and not empty
         # Through github-script rather than `gh` and `jq`, which the self-hosted
         # macOS images do not ship.
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           TAG: ${{ steps.tag.outputs.tag }}
           ASSET: polkadot-app-simulator.app.zip
