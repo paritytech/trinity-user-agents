@@ -599,10 +599,9 @@ describe("generated client transport", () => {
         // channel at whatever shape shipped first. An unknown variant settles
         // the correlated call and leaves the transport usable.
         for (const payload of [
-            // A version this build does not know, with a payload whose length
-            // it cannot know either.
+            // An unknown version (byte 7), followed by bytes this build can't read.
             new Uint8Array([7, 0xaa, 0xbb]),
-            // A `V1` error this build does not know.
+            // A known version (V1) with an unknown error (byte 9).
             new Uint8Array([0, 9, 0xaa]),
         ]) {
             const fixture = providerFixture();
