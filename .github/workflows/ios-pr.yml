@@ -15,15 +15,17 @@ concurrency:
 
 on:
   # Only what the iOS app is built from. The app itself, the crates its bindings
-  # are generated from, the manifests pinning the toolchain, and this workflow
-  # with the action it calls. A change to docs, TypeScript or an unrelated crate
+  # are generated from and the crates they link, the TypeScript the container
+  # bundles, the manifests pinning the toolchain, and this workflow with the
+  # actions it calls. A change to docs, other TypeScript or an unrelated crate
   # cannot affect the app, and three macOS jobs is too much to spend finding
   # that out.
   #
   # The core crates are here because neither binding set is committed, so a
   # UniFFI surface change leaves no hosts/ios diff to key on. That is the same
-  # reasoning as the sdk_swift gate in ci.yml, which is the list to keep this in
-  # step with.
+  # reasoning as the sdk_swift gate in ci.yml. Keep this list in step with that
+  # gate and with ios-firebase-debug-distribution.yml, which builds the app
+  # from the same inputs.
   pull_request:
     # `labeled` so adding ios-simulator-build starts the jobs without a push.
     types: [opened, synchronize, reopened, labeled]
@@ -49,8 +51,13 @@ on:
       - "rust/crates/truapi-macros/**"
       - "rust/crates/truapi-provider/**"
       - "rust/crates/uniffi-bindgen-cli/**"
+      - "rust/crates/truapi-verifiable/**"
+      - "js/packages/truapi/**"
       - ".github/workflows/ios-pr.yml"
       - ".github/actions/bootstrap-ios-core/**"
+      - ".github/actions/find-main-artifact/**"
+      - ".github/actions/mac-preflight/**"
+      - ".github/actions/rust-cache/**"
       - ".github/actions/upsert-pr-comment/**"
       - ".github/actions/setup-swiftlint/**"
   # Also on the default branch, which is the only run that saves the in-tree
@@ -81,8 +88,13 @@ on:
       - "rust/crates/truapi-macros/**"
       - "rust/crates/truapi-provider/**"
       - "rust/crates/uniffi-bindgen-cli/**"
+      - "rust/crates/truapi-verifiable/**"
+      - "js/packages/truapi/**"
       - ".github/workflows/ios-pr.yml"
       - ".github/actions/bootstrap-ios-core/**"
+      - ".github/actions/find-main-artifact/**"
+      - ".github/actions/mac-preflight/**"
+      - ".github/actions/rust-cache/**"
       - ".github/actions/upsert-pr-comment/**"
       - ".github/actions/setup-swiftlint/**"
   # Kept alongside pull_request so a build can be reproduced on demand without
