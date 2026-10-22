@@ -11,6 +11,11 @@
 //! encoded inside any of these payloads.
 
 /// A versioned message envelope.
+///
+/// Its encoding starts with `version() - 1`, and versions run from 1 to
+/// [`LATEST`](Self::LATEST) with no gaps. The dispatcher reads that first byte
+/// to refuse a request newer than its handler knows. `versioned_type!` keeps
+/// this; a hand-written impl must too.
 pub trait Versioned: Sized {
 	/// The newest version's payload. Handlers operate exclusively on this.
 	type Latest;
@@ -82,7 +87,8 @@ mod tests {
 	}
 
 	// Multi-version envelopes assign positional SCALE codec indices (V1 -> 0,
-	// V2 -> 1) and 1-based version numbers.
+	// V2 -> 1) and 1-based version numbers. The dispatcher reads that first
+	// byte to refuse a request newer than its handler knows.
 	#[test]
 	fn multi_version_codec_indices_are_positional() {
 		use super::Versioned;

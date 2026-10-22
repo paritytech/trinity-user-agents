@@ -4,7 +4,7 @@
 //! For each method the emitter produces an `on_request` (or
 //! `on_subscription`) registration whose handler:
 //! 1. Receives the versioned request wrapper, which the framework has decoded from the wire bytes
-//!    (the wrapper's own variant tag carries its version — there is no outer envelope). The
+//!    (the wrapper's own variant tag carries its version, and there is no outer envelope). The
 //!    framework refuses a version newer than the wrapper's `Versioned::LATEST`, and answers bytes
 //!    that do not decode with `MalformedFrame`, before the handler runs.
 //! 2. Calls the host trait method (which receives the wrapper directly and matches `_::V1(inner)`

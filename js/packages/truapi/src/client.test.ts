@@ -431,10 +431,10 @@ describe("generated client transport", () => {
         // Nothing is sent again after a refusal.
         expect(fixture.sent).toHaveLength(2);
         // The newest version is how a developer tells an older app from a
-        // corrupt request.
-        expect(String(warnings[0]?.[0])).toContain(
-            "refused request p:1 for (200, 194): it accepts versions up to V1",
-        );
+        // corrupt request. The refusal that matched no call stays quiet.
+        expect(warnings.map((args) => String(args[0]))).toEqual([
+            "[truapi] the host refused request p:1 for (200, 194): it accepts versions up to V1",
+        ]);
     });
 
     it("does not settle a request from an unmatched or mismatched protocol error", async () => {

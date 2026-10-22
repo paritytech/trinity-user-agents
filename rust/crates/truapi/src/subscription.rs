@@ -158,6 +158,12 @@ impl SubscriptionManager {
 		ReservationToken { request_id, generation }
 	}
 
+	/// Whether `request_id` holds a slot, reserved or live.
+	#[cfg(test)]
+	pub fn holds(&self, request_id: &str) -> bool {
+		self.active.lock().unwrap().contains_key(request_id)
+	}
+
 	/// Drop a reservation whose `_start` handler failed before producing a
 	/// stream. No-op if the slot was superseded by a newer reservation.
 	pub fn cancel_reservation(&self, token: ReservationToken) {

@@ -14,7 +14,7 @@ use std::{
 
 use futures::future::{self, BoxFuture};
 use parity_scale_codec::{Decode, DecodeAll, Encode};
-use tracing::{debug, error, instrument};
+use tracing::{error, instrument};
 use truapi::{CancellationToken, versioned::Versioned};
 
 use crate::{
@@ -64,34 +64,6 @@ pub struct SubscriptionEntry {
 	ids: MethodIds,
 	newest_version: u8,
 	handler: SubscriptionHandler,
-}
-
-/// Returns the error to send back when `payload` is in a version newer than
-/// `newest_version`. The first byte of a request is its version, starting at
-/// 0 for `V1`.
-fn unsupported_version(
-	ids: MethodIds,
-	newest_version: u8,
-	payload: &[u8],
-) -> Option<VersionedProtocolError> {
-	let index = *payload.first()?;
-	if index < newest_version {
-		return None;
-	}
-	// The first byte is all a refusal reads, so a corrupt payload is refused
-	// too. An implausible version here tells the two apart.
-	debug!(
-		trait_id = ids.trait_id,
-		method_id = ids.method_id,
-		version = u16::from(index) + 1,
-		newest_version,
-		"refusing a request in a version this host does not know"
-	);
-	Some(VersionedProtocolError::V1(ProtocolErrorV1::UnsupportedVersion {
-		trait_id: ids.trait_id,
-		method_id: ids.method_id,
-		newest_version,
-	}))
 }
 
 /// Answer `request_id` on the reserved protocol-error address.
@@ -234,6 +206,37 @@ impl Dispatcher {
 		}
 	}
 
+	/// Returns the error to send back when `payload` is in a version newer than
+	/// `newest_version`. The first byte of a request is its version, starting
+	/// at 0 for `V1`.
+	fn unsupported_version(
+		&self,
+		ids: MethodIds,
+		newest_version: u8,
+		payload: &[u8],
+	) -> Option<VersionedProtocolError> {
+		let index = *payload.first()?;
+		if index < newest_version {
+			return None;
+		}
+		// The first byte is all a refusal reads, so a corrupt payload is
+		// refused too. An implausible version tells the two apart.
+		self.report_once((ids.trait_id, ids.method_id), || {
+			error!(
+				trait_id = ids.trait_id,
+				method_id = ids.method_id,
+				version = u16::from(index) + 1,
+				newest_version,
+				"refusing a request in a version this host does not know"
+			);
+		});
+		Some(VersionedProtocolError::V1(ProtocolErrorV1::UnsupportedVersion {
+			trait_id: ids.trait_id,
+			method_id: ids.method_id,
+			newest_version,
+		}))
+	}
+
 	/// Return whether this connection may access a service execution kind.
 	pub fn allows_execution(&self, required: crate::platform::ProductExecutionKind) -> bool {
 		self.execution.is_none_or(|actual| actual == required)
@@ -368,7 +371,7 @@ impl Dispatcher {
 				},
 				Reservation::AlreadyWithdrawn => encode_cancelled_response(),
 				Reservation::Start(cancel) => {
-					let outcome = match unsupported_version(
+					let outcome = match self.unsupported_version(
 						entry.ids,
 						entry.newest_version,
 						&message.payload.value,
@@ -430,7 +433,7 @@ impl Dispatcher {
 			// Refused the way a `Start` that fails to decode is: the reservation
 			// has already replaced any live subscription under this id.
 			if let Some(error) =
-				unsupported_version(entry.ids, entry.newest_version, &message.payload.value)
+				self.unsupported_version(entry.ids, entry.newest_version, &message.payload.value)
 			{
 				self.subscriptions.cancel_reservation(token);
 				send_protocol_error(transport.as_ref(), request_id, error);
@@ -652,7 +655,7 @@ mod tests {
 		let dispatcher = Dispatcher::new(test_spawner());
 		let transport = Arc::new(RecordingTransport::default());
 		let transport_dyn: Arc<dyn Transport> = transport.clone();
-		let frame = make_frame(250, 251, MESSAGE_TYPE_REQUEST, HostInfoRequest::V1.encode());
+		let frame = make_frame(250, 251, MESSAGE_TYPE_REQUEST, Vec::new());
 		futures::executor::block_on(dispatcher.dispatch(frame, transport_dyn));
 		// 250 != 251 on purpose: the reply must echo the pair in the order it
 		// arrived, and equal values would let a transposition pass.
@@ -773,6 +776,11 @@ mod tests {
 			]
 		);
 		assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 1);
+		assert_eq!(
+			*dispatcher.reported_violations.lock().expect("violation set"),
+			HashSet::from([(7, 200)]),
+			"a refusal is logged for its method, like any wire disagreement"
+		);
 	}
 
 	/// The dispatcher decodes a request before its handler sees it, so bytes
@@ -840,6 +848,7 @@ mod tests {
 			}]
 		);
 		assert!(!invoked.load(std::sync::atomic::Ordering::SeqCst));
+		assert!(!dispatcher.subscriptions.holds("p:1"), "a refused start keeps no slot");
 	}
 
 	/// A refusal is an answer like any other, so a `Cancel` that arrived first
@@ -1420,7 +1429,7 @@ mod tests {
 		let transport = Arc::new(RecordingTransport::default());
 		let transport_dyn: Arc<dyn Transport> = transport.clone();
 		for _ in 0..3 {
-			let frame = make_frame(250, 251, MESSAGE_TYPE_REQUEST, HostInfoRequest::V1.encode());
+			let frame = make_frame(250, 251, MESSAGE_TYPE_REQUEST, Vec::new());
 			futures::executor::block_on(dispatcher.dispatch(frame, transport_dyn.clone()));
 		}
 		assert_eq!(

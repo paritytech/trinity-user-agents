@@ -228,6 +228,25 @@ function decodeProtocolError(
 }
 
 /**
+ * Tell a developer the host refused a call's version. The call fails as
+ * unsupported either way; the newest version shows whether the app is older
+ * than the product or the request was corrupt.
+ */
+function reportRefusedVersion(
+  requestId: string,
+  {
+    traitId,
+    methodId,
+    newestVersion,
+  }: { traitId: number; methodId: number; newestVersion?: number },
+): void {
+  if (newestVersion === undefined) return;
+  console.warn(
+    `[truapi] the host refused request ${requestId} for (${traitId}, ${methodId}): it accepts versions up to V${newestVersion}`,
+  );
+}
+
+/**
  * Build a `TrUApiTransport` on top of a `WireProvider`, adding request/response
  * correlation and subscription start/receive/stop lifecycle handling.
  */
@@ -410,15 +429,6 @@ export function createTransport(
         return;
       }
 
-      if (unsupported.newestVersion !== undefined) {
-        // The call settles as unsupported either way. The version tells a
-        // developer whether the app is older than the product or the request
-        // was corrupt.
-        console.warn(
-          `[truapi] the host refused request ${requestId} for (${unsupported.traitId}, ${unsupported.methodId}): it accepts versions up to V${unsupported.newestVersion}`,
-        );
-      }
-
       // Match on the whole pair: a bare method id would alias across traits and
       // could resolve the wrong pending call.
       const request = pending.get(requestId);
@@ -426,6 +436,7 @@ export function createTransport(
         request?.ids.trait === unsupported.traitId &&
         request?.ids.method === unsupported.methodId
       ) {
+        reportRefusedVersion(requestId, unsupported);
         takePending(requestId)?.resolveUnsupported();
         return;
       }
@@ -435,6 +446,7 @@ export function createTransport(
         subscription?.ids.trait === unsupported.traitId &&
         subscription?.ids.method === unsupported.methodId
       ) {
+        reportRefusedVersion(requestId, unsupported);
         subscriptions.delete(requestId);
         subscription.onClose?.(
           new UnsupportedMessageError(

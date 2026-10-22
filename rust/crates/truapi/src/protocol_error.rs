@@ -1,5 +1,7 @@
 //! Tolerant decoding of the protocol-error frame payload.
 
+use std::sync::LazyLock;
+
 use parity_scale_codec::{Decode, Error as CodecError};
 use scale_info::{PortableRegistry, Registry, TypeDef, TypeInfo, meta_type};
 
@@ -22,7 +24,8 @@ pub fn decode_protocol_error_payload(
 	if payload.is_empty() {
 		return Err("protocol error payload is empty".into());
 	}
-	if !names_known_variants::<VersionedProtocolError>(payload) {
+	let (registry, type_id) = &*PROTOCOL_ERROR_TYPES;
+	if !indexes_are_known(registry, *type_id, payload) {
 		return Ok(None);
 	}
 	let mut input = payload;
@@ -33,11 +36,15 @@ pub fn decode_protocol_error_payload(
 	Ok(Some(error))
 }
 
-/// Whether `T` has the version and error that `payload` starts with.
-fn names_known_variants<T: TypeInfo + 'static>(payload: &[u8]) -> bool {
+/// [`VersionedProtocolError`]'s type information, built on first use.
+static PROTOCOL_ERROR_TYPES: LazyLock<(PortableRegistry, u32)> =
+	LazyLock::new(type_registry::<VersionedProtocolError>);
+
+/// `T`'s type information, and the id `T` is registered under.
+fn type_registry<T: TypeInfo + 'static>() -> (PortableRegistry, u32) {
 	let mut registry = Registry::new();
 	let type_id = registry.register_type(&meta_type::<T>()).id;
-	indexes_are_known(&PortableRegistry::from(registry), type_id, payload)
+	(registry.into(), type_id)
 }
 
 /// Whether `payload`'s first byte names a variant of the enum `type_id`, and,
@@ -93,8 +100,9 @@ mod tests {
 			// A version that does not exist.
 			vec![2, 0, 7],
 		];
+		let (registry, type_id) = type_registry::<Versioned>();
 		assert_eq!(
-			payloads.map(|payload| names_known_variants::<Versioned>(&payload)),
+			payloads.map(|payload| indexes_are_known(&registry, type_id, &payload)),
 			[true, true, true, false, false, false],
 		);
 	}
