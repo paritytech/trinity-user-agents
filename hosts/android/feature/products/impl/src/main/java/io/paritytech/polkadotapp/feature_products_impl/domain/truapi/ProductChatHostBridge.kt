@@ -23,7 +23,8 @@ class ProductChatHostBridge(
 ) : ChatHostBridge {
     override suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus {
         if (roomId.isEmpty()) throw HostRejection.Rejected("a chat room needs an id")
-        return chatMessaging.createRoom(CreateProductRoomRequest(ProductChatIdParameter(roomId), name, icon))
+        // The core hands over an absent icon as an empty string; the room then shows its default icon.
+        return chatMessaging.createRoom(CreateProductRoomRequest(ProductChatIdParameter(roomId), name, icon.ifBlank { null }))
             .orReject()
             .status
             .toCoreStatus()

@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.handlerGr
 
 import io.paritytech.polkadotapp.common.domain.model.hexToDataByteArray
 import io.paritytech.polkadotapp.common.utils.HexString
+import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotMessage
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductsBotApi
@@ -14,12 +15,14 @@ class ChatHostCalls(
 ) : HostCallHandlerGroup {
     override fun registerOn(bridge: ContainerBridge) {
         bridge.registerHandler<ChatCreateRoomParams, ChatCreateRoomResult>("chatCreateRoom") { params ->
-            val request = CreateProductRoomRequest(
-                chatIdParameter = ProductChatIdParameter(params.roomId),
-                name = params.name,
-                icon = params.icon,
-            )
-            botApi.createRoom(request).map { ChatCreateRoomResult(it.status.name) }
+            validateChatIcon(params.icon).flatMap { icon ->
+                val request = CreateProductRoomRequest(
+                    chatIdParameter = ProductChatIdParameter(params.roomId),
+                    name = params.name,
+                    icon = icon,
+                )
+                botApi.createRoom(request).map { ChatCreateRoomResult(it.status.name) }
+            }
         }
 
         bridge.registerHandler<ChatSendTextParams, ChatSendResult>("chatSendTextMessage") { params ->
