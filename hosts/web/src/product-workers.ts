@@ -55,6 +55,12 @@ export interface ProductWorkersDeps {
   storage: Storage;
   tap(channel: string): FrameTap | undefined;
   log(text: string): void;
+  /**
+   * Workers the host adds for every wallet on a network, before any the user
+   * adds, as the native app places a product's room by default. They run
+   * like any other worker and cannot be removed.
+   */
+  defaults?(network: NetworkConfig): readonly string[];
 }
 
 interface Running {
@@ -94,8 +100,24 @@ export class ProductWorkers {
     for (const listener of this.listeners) listener();
   }
 
-  /** The names added for the signed-in wallet, in the order they were added. */
+  /** The host's default workers, then the names added for the signed-in wallet, in the order they were added. */
   names(): string[] {
+    if (this.session === null) return [];
+    return [...new Set([...this.defaultNames(), ...this.savedNames()])];
+  }
+
+  /** Whether the host adds `name` by default, so the user cannot remove it. */
+  isDefault(name: string): boolean {
+    return this.defaultNames().includes(name);
+  }
+
+  private defaultNames(): readonly string[] {
+    return this.session === null
+      ? []
+      : (this.deps.defaults?.(this.session.network) ?? []);
+  }
+
+  private savedNames(): string[] {
     if (this.session === null) return [];
     try {
       const saved: unknown = JSON.parse(
@@ -179,7 +201,7 @@ export class ProductWorkers {
     const trimmed = name.trim().toLowerCase();
     if (trimmed === "") throw new Error("Enter a product name.");
     if (!this.names().includes(trimmed))
-      this.saveNames([...this.names(), trimmed]);
+      this.saveNames([...this.savedNames(), trimmed]);
     await this.settle(trimmed);
     const state = this.state(trimmed);
     if (state?.state === "failed") throw new Error(state.reason);
@@ -187,7 +209,7 @@ export class ProductWorkers {
 
   /** Take `name` off this wallet's list, and stop its worker unless Pocket still holds it. */
   remove(name: string): void {
-    this.saveNames(this.names().filter((entry) => entry !== name));
+    this.saveNames(this.savedNames().filter((entry) => entry !== name));
     void this.settle(name);
   }
 
