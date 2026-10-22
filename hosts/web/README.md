@@ -362,6 +362,9 @@ calls reach the core as frames, which the inspector's **TrUAPI** view decodes.
   tab is open, whichever screen is in front. Signing out, switching wallet or network, or a reload stops every worker
   and ends its frames and render streams; signing in starts the saved ones. **Remove** stops a worker and takes it off
   the list; the rooms it made stay.
+- **Default workers.** `ProductWorkers` takes a `defaults` list per network: workers the host adds for every wallet,
+  before any the user adds, as the native app places a game's room by default. They run like any other worker and have
+  no **Remove**. This host lists none, so no live worker starts without the user adding it.
 - **Rooms and messages.** The host serves TrUAPI Chat (`src/product-chat.ts`): a worker creates rooms, posts `Text` and
   `Custom` messages and sets each room's footer. `registerBot` is refused, as the iOS host refuses it. Other message
   kinds (rich text, actions, files, reactions) are refused with a reason. Rooms and the last 200 messages of each are

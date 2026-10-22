@@ -31,6 +31,7 @@ type View =
 export interface WorkersPanel {
   names(): string[];
   state(name: string): WorkerState | null;
+  isDefault(name: string): boolean;
   add(name: string): Promise<void>;
   remove(name: string): void;
   onChange(listener: () => void): () => void;
@@ -575,9 +576,18 @@ export class ChatScreen {
               : `Failed: ${state.reason}`;
       item.append(
         el("span", "chat-row-title", name),
-        el("span", "chat-row-preview", preview),
-        button("chat-link", "Remove", () => this.workers.remove(name)),
+        el(
+          "span",
+          "chat-row-preview",
+          this.workers.isDefault(name)
+            ? `${preview} · added by this host`
+            : preview,
+        ),
       );
+      if (!this.workers.isDefault(name))
+        item.append(
+          button("chat-link", "Remove", () => this.workers.remove(name)),
+        );
       list.append(item);
     }
     body.append(

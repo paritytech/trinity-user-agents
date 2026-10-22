@@ -257,6 +257,7 @@ export async function mountChatScreen(root: HTMLElement): Promise<ChatHarness> {
     {
       names: () => [QUIZ],
       state: () => null,
+      isDefault: () => false,
       add: async () => {},
       remove: () => {},
       onChange: () => () => {},
