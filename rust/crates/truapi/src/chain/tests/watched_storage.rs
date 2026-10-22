@@ -112,8 +112,8 @@ fn node_with_best_block_five() -> Node {
 	node
 }
 
-/// The next change within [`TIMEOUT`], past the errors reported while the
-/// watch reconnects.
+/// Waits up to [`TIMEOUT`] for the next change, skipping errors the watch
+/// reports while it reconnects.
 fn next_change_within_timeout(received: &ReceivedRawChanges) -> RawStorageChanges {
 	let deadline = std::time::Instant::now() + TIMEOUT;
 	loop {
@@ -125,12 +125,12 @@ fn next_change_within_timeout(received: &ReceivedRawChanges) -> RawStorageChange
 	}
 }
 
-/// Ends the first connection's responses, as a dropped socket does.
+/// Closes the first connection, as if its socket dropped.
 fn close_first_connection(provider: &ScriptedProvider) {
 	provider.sender.lock().unwrap().take();
 }
 
-/// Waits until `method` was sent twice, the second time on a new connection.
+/// Waits until `method` has been sent a second time, on the new connection.
 fn wait_for_second(provider: &ScriptedProvider, method: &str) {
 	let sent_twice =
 		|sent: &[String]| sent.iter().filter(|request| request.contains(method)).count() >= 2;
@@ -294,9 +294,10 @@ fn a_best_watch_whose_first_notification_leaves_a_key_out_is_an_error() {
 
 #[test]
 fn a_best_watch_carries_on_over_a_new_connection_reporting_only_what_changed() {
-	// A dropped socket closes its client for good, so the watch has to
-	// subscribe over a new one. The new subscription names every key again,
-	// and only the one that changed while it was away is a change.
+	// Once a socket drops, its client stays closed, so the watch has to
+	// subscribe on a new connection. The new subscription reports every key
+	// again, but only the key that changed while disconnected counts as a
+	// change.
 	let mut node = node_with_best_block_five();
 	store_values_at_block(&mut node, 5, &[(WATCHED, b"one"), (OTHER, b"two")]);
 	store_values_at_block(&mut node, 6, &[(WATCHED, b"one"), (OTHER, b"three")]);
@@ -314,8 +315,8 @@ fn a_best_watch_carries_on_over_a_new_connection_reporting_only_what_changed() {
 
 #[test]
 fn a_finalized_watch_reads_over_a_new_connection_after_the_old_one_closes() {
-	// The head subscriptions reconnect by themselves, so reads that stayed on
-	// the closed client would fail at every finalized head from then on.
+	// The head subscriptions reconnect on their own. If reads kept using the
+	// closed connection, every read after the drop would fail.
 	let mut node = Node::new(3, 7);
 	store_values_at_block(&mut node, 4, &[(WATCHED, b"one")]);
 	store_values_at_block(&mut node, 5, &[(WATCHED, b"two")]);

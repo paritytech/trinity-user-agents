@@ -28,8 +28,9 @@ struct ChangedKeysAtBlock {
 
 /// Reads the watched keys, keeping the metadata of the runtime it last saw.
 ///
-/// Each subscription and each snapshot read asks the chain for its
-/// connection, so a watch carries on over a new one after the old one closes.
+/// The reader gets the current connection from the chain for every
+/// subscription and every snapshot read. If the connection drops, the watch
+/// continues on a new one.
 pub struct WatchedKeysReader {
 	chain: ChainRuntime,
 	genesis: H256,
@@ -37,9 +38,9 @@ pub struct WatchedKeysReader {
 	keys: Vec<Vec<u8>>,
 	/// The position of each of `keys`, to place the keys a notification names.
 	position_by_key: HashMap<Vec<u8>, usize>,
-	/// The hash of each key's last reported value, `None` before the first
-	/// notification. Kept across subscriptions, so one opened again reports
-	/// only what changed meanwhile.
+	/// The hash of the last value reported for each key, or `None` before the
+	/// first notification. It is kept when a subscription is replaced, so the
+	/// new subscription reports only the keys whose values changed.
 	held_hashes: Mutex<Option<Vec<Option<[u8; 32]>>>>,
 	last_seen_runtime: Mutex<Option<LastSeenRuntime>>,
 }
@@ -85,10 +86,11 @@ impl WatchedKeysReader {
 		Ok(DecodableAtBlock { at, metadata, value: values })
 	}
 
-	/// A new `state_subscribeStorage` of the keys, as changes. The watch's
-	/// first notification must answer every key. A node also names keys a
-	/// block wrote with the value they already had; those are dropped here,
-	/// and so is a notification left with nothing.
+	/// Opens a `state_subscribeStorage` subscription for the keys and returns
+	/// their changes. The first notification of the watch must include every
+	/// key. A node also reports keys that a block wrote with an unchanged
+	/// value. Those keys are skipped, and so is a notification with no
+	/// changes left.
 	pub async fn subscribe_to_changes(self: Arc<Self>) -> Result<RawChangeStream, RuntimeFailure> {
 		let legacy = self.chain.legacy(self.genesis).await?;
 		let subscription = self.open_storage_subscription(&legacy).await?;
@@ -118,7 +120,8 @@ impl WatchedKeysReader {
 			.map_err(|error| failure(STORAGE_WATCH, error))
 	}
 
-	/// The keys `change_set` changed, whose values are held from then on.
+	/// Returns the keys whose values changed in `change_set` and remembers
+	/// their new values for the next comparison.
 	fn track_changed_keys(
 		&self,
 		change_set: StorageChangeSet<H256>,

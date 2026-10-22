@@ -41,8 +41,8 @@ pub struct ScriptedProvider {
 	/// First connection's response sender; dropping it ends that connection's
 	/// responses. Later connections each get their own.
 	pub sender: Arc<SenderSlot>,
-	/// Response senders of the connections after the first, in the order
-	/// they connected.
+	/// Response senders for every connection after the first, in the order
+	/// they were opened.
 	later_senders: Arc<Mutex<Vec<Arc<SenderSlot>>>>,
 	receiver: Arc<ReceiverSlot>,
 	/// How many times the core asked for a connection.
@@ -154,8 +154,9 @@ pub fn notification_sender(provider: &ScriptedProvider) -> fut_mpsc::UnboundedSe
 		.clone()
 }
 
-/// Sender of notifications on the `index`th connection after the first, or
-/// `None` before that connection is made.
+/// Returns a sender for pushing notifications to a connection opened after
+/// the first one. `index` 0 is the second connection. Returns `None` if that
+/// connection has not been opened yet.
 pub fn later_notification_sender(
 	provider: &ScriptedProvider,
 	index: usize,
