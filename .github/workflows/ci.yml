@@ -312,6 +312,10 @@ jobs:
       # queued ahead in the same group. A push or a dispatch runs every gate, so
       # each commit that lands on main is still checked in full.
       #
+      # These lists and .github/hosts.json describe the same inputs while the
+      # jobs below move onto the registry's gates; a path added here is added
+      # there too.
+      #
       # Neither binding set is committed, so a UniFFI surface change leaves no
       # ios/ or android/ diff to key on. Each list therefore names every input
       # its gated job actually reads: the crates the bindings are generated
@@ -401,19 +405,33 @@ jobs:
       # The host registry, evaluated on the same base as the gates above. A
       # host is gated on its own inputs and the shared core, so an edit to this
       # workflow alone runs no host. The step above has fetched the merge
-      # group's base.
+      # group's base. A push to main runs every suite, and diffs from the
+      # previous tip of main only so that each host's changed gate is real.
+      # The registry is checked here, on every run, so a change that removes a
+      # path it names fails before it can merge.
       - name: Evaluate the host registry
         id: hosts
         env:
           EVENT_NAME: ${{ github.event_name }}
           MERGE_BASE: ${{ github.event.merge_group.base_sha }}
+          BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
+          python3 scripts/ci-gates.py --check
           case "$EVENT_NAME" in
-            pull_request) python3 scripts/ci-gates.py --base HEAD^1 ;;
-            merge_group) python3 scripts/ci-gates.py --base "$MERGE_BASE" ;;
-            *) python3 scripts/ci-gates.py --all ;;
-          esac | tee -a "$GITHUB_OUTPUT"
+            pull_request) args=(--base HEAD^1) ;;
+            merge_group) args=(--base "$MERGE_BASE") ;;
+            push)
+              if [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+                && git fetch --no-tags --depth=1 origin "$BEFORE"; then
+                args=(--base "$BEFORE" --force)
+              else
+                args=(--all)
+              fi
+              ;;
+            *) args=(--all) ;;
+          esac
+          python3 scripts/ci-gates.py "${args[@]}" | tee -a "$GITHUB_OUTPUT"
 
   ios-swift:
     name: iOS package (Swift + WebKit)
@@ -1335,9 +1353,6 @@ jobs:
       # the same set so neither quietly stops describing an area.
       - name: Check labelling and ownership describe the same paths
         run: python3 scripts/check-path-routing.py
-
-      - name: Check the host registry
-        run: python3 scripts/ci-gates.py --check
 
   release-guard:
     name: Release guard

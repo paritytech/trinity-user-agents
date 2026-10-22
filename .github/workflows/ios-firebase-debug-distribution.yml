@@ -13,7 +13,8 @@ on:
   # A develop build for testers after each merge that changes the app. A merge
   # that changes neither the app nor what it is built from ships an identical
   # app, so it builds nothing: the list matches what ios-pr.yml builds the app
-  # from, with this workflow and the actions it calls in place of ios-pr's own.
+  # from, with this workflow and the actions it calls in place of ios-pr's own,
+  # and the ios entry in .github/hosts.json describes the same inputs.
   pull_request:
     types: [closed]
     branches:

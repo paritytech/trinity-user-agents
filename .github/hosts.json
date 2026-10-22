@@ -7,6 +7,7 @@
     "rust/crates/truapi-verifiable/",
     "rust/crates/uniffi-bindgen-cli/",
     "js/packages/truapi/",
+    "js/container/",
     "Cargo.toml",
     "Cargo.lock",
     "nightly-toolchain",
@@ -22,8 +23,19 @@
       "tree": [
         "hosts/ios/",
         "ios/",
-        "Package.swift",
+        "Package.swift"
+      ],
+      "full": [
+        "js/packages/",
         "js/container/",
+        "Makefile",
+        "nightly-toolchain",
+        "scripts/",
+        "package.json",
+        "package-lock.json",
+        ".github/actions/rust-nightly/"
+      ],
+      "ci": [
         ".github/workflows/ios-pr.yml",
         ".github/workflows/ios-firebase-debug-distribution.yml",
         ".github/actions/bootstrap-ios-core/",
@@ -37,11 +49,13 @@
     "android": {
       "tree": [
         "hosts/android/",
-        "android/",
-        "build.gradle.kts",
-        "settings.gradle.kts",
-        "gradle.properties",
-        ".github/actions/setup-android-build/"
+        "android/truapi-host/",
+        "android/truapi-container.gradle"
+      ],
+      "full": [],
+      "ci": [
+        ".github/actions/setup-android-build/",
+        ".github/actions/rust-cache/"
       ]
     }
   }
