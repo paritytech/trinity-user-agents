@@ -251,7 +251,7 @@ pub async fn lite_username_available(
 	auth_entropy: &[u8],
 	username_base: &str,
 ) -> Result<bool> {
-	let backend_base = network.identity_backend_base;
+	let backend_base = network.identity_backend()?;
 	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
 	let url = format!("{backend_base}/usernames/available");
 	let body = json!({ "usernames": [username_base] });
@@ -342,7 +342,7 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 pub async fn registered_lite_username(network: NetworkConfig, entropy: &[u8]) -> Result<String> {
 	let identity = derive_identity_keypair(entropy, network.network_suffix)
 		.map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
-	let mut reader = AssetHubReader::connect(network.asset_hub_ws).await?;
+	let mut reader = AssetHubReader::for_network(&network).await?;
 	reader
 		.dotns_identity(&identity.public.to_bytes())
 		.await?
@@ -358,7 +358,7 @@ pub async fn lookup_registered_username(
 ) -> Result<Option<String>> {
 	let identity = derive_identity_keypair(entropy, network.network_suffix)
 		.map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
-	let mut reader = AssetHubReader::connect(network.asset_hub_ws).await?;
+	let mut reader = AssetHubReader::for_network(&network).await?;
 	let identity = reader.dotns_identity(&identity.public.to_bytes()).await?;
 	Ok(identity.map(|identity| identity.primary_username().to_owned()))
 }
@@ -429,7 +429,7 @@ async fn search_backend_prefix(
 ) -> Result<Vec<String>> {
 	const PAGE_LIMIT: &str = "1000";
 
-	let backend_base = network.identity_backend_base;
+	let backend_base = network.identity_backend()?;
 	let url = format!("{backend_base}/usernames/search");
 	let prefix = initial.to_string();
 	let mut cursor = None;
@@ -503,7 +503,7 @@ pub async fn check_identity(network: NetworkConfig, entropy: &[u8]) -> Result<()
 		.map_err(|err| anyhow::anyhow!("invalid entropy: {err}"))?;
 	let identity = derive_identity_keypair(entropy, network.network_suffix)
 		.map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
-	let mut reader = AssetHubReader::connect(network.asset_hub_ws).await?;
+	let mut reader = AssetHubReader::for_network(&network).await?;
 	let identity_path =
 		format!("//product//{}/index_bytes(0)", identity_product_id(network.network_suffix));
 
