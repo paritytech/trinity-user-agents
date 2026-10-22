@@ -60,6 +60,9 @@ runs:
 
         # The system volume holds DerivedData, the simulators and the toolchain caches.
         free_gb="$(df -g / | awk 'NR == 2 { print $4 }')"
+        case "$free_gb" in
+          '' | *[!0-9]*) unhealthy "the free space on the system volume could not be read" ;;
+        esac
         if [ "$free_gb" -lt "$MIN_FREE_GB" ]; then
           unhealthy "${free_gb} GB free on the system volume, below the ${MIN_FREE_GB} GB this job needs"
         fi
