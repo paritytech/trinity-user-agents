@@ -257,16 +257,17 @@ impl Dispatcher {
 			+ Sync
 			+ 'static,
 	{
-		let handler: RequestHandler =
+		let decode_then_handle: RequestHandler =
 			Arc::new(move |request_id, bytes, cancel| match Request::decode_all(&mut &bytes[..]) {
 				Ok(request) => handler(request_id, request, cancel),
 				Err(error) => {
-					Box::pin(future::ready(encode_malformed_frame_error(error.to_string())))
+					let malformed = encode_malformed_frame_error(error.to_string());
+					Box::pin(future::ready(malformed))
 				},
 			});
 		self.by_request.insert(
 			(ids.trait_id, ids.method_id),
-			RequestEntry { ids, newest_version: Request::LATEST, handler },
+			RequestEntry { ids, newest_version: Request::LATEST, handler: decode_then_handle },
 		)
 	}
 
@@ -291,16 +292,17 @@ impl Dispatcher {
 			+ Sync
 			+ 'static,
 	{
-		let handler: SubscriptionHandler =
+		let decode_then_handle: SubscriptionHandler =
 			Arc::new(move |request_id, bytes| match Request::decode_all(&mut &bytes[..]) {
 				Ok(request) => handler(request_id, request),
 				Err(error) => {
-					Box::pin(future::ready(Err(encode_malformed_frame_error(error.to_string()))))
+					let malformed = encode_malformed_frame_error(error.to_string());
+					Box::pin(future::ready(Err(malformed)))
 				},
 			});
 		self.by_start.insert(
 			(ids.trait_id, ids.method_id),
-			SubscriptionEntry { ids, newest_version: Request::LATEST, handler },
+			SubscriptionEntry { ids, newest_version: Request::LATEST, handler: decode_then_handle },
 		)
 	}
 
