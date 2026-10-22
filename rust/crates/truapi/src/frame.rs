@@ -77,17 +77,15 @@ pub enum ProtocolErrorV1 {
 		/// Method discriminant of the unsupported incoming frame.
 		method_id: u8,
 	},
-	/// The receiver handles the method but not the version the request was
-	/// sent in. It rejected the request before handling it, so the sender can
-	/// send it again in a version the receiver accepts.
+	/// The host knows the method but not the version of the request, and
+	/// rejected it without running it.
 	#[codec(index = 1)]
 	UnsupportedVersion {
 		/// Trait discriminant of the rejected request.
 		trait_id: u8,
 		/// Method discriminant of the rejected request.
 		method_id: u8,
-		/// Newest request version the receiver accepts for this method,
-		/// numbered like the `V<N>` variant that carries it.
+		/// The newest version the host accepts for this method: `2` means `V2`.
 		newest_version: u8,
 	},
 }
