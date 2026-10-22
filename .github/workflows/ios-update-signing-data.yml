@@ -15,7 +15,9 @@ jobs:
     # profiles at Apple and pushes the encrypted result back to the match
     # repository. force_for_new_devices is what picks up a newly registered
     # device, so the daily run is how a device reaches an ad-hoc build.
-    runs-on: macos-26
+    # The Parity pool, out of the hosted macOS queue. The install action pins
+    # the Xcode the app builds with, so the machine's default does not matter.
+    runs-on: parity-macos
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 

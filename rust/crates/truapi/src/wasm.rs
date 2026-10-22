@@ -1161,8 +1161,9 @@ impl WasmPairingHostRuntime {
 /// Whether `productId` is a first-party product the host grants every
 /// `RemotePermission` without prompting.
 ///
-/// Blessed products bypass recorded permissions. Only device permissions require
-/// consent. Hosts mediating product network access can use this check before storage.
+/// Trusted products bypass recorded permissions and permission prompts. Device
+/// permissions still need the OS grant. Hosts mediating product network access
+/// can use this check before storage.
 ///
 /// Normalizes before matching, and answers `false` for an id that does not
 /// normalize, so an unknown spelling is never read as trusted.

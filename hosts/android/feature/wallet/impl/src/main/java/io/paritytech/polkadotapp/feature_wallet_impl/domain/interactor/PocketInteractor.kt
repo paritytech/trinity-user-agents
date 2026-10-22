@@ -5,8 +5,6 @@ import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.withAmount
 import io.paritytech.polkadotapp.common.utils.filterResultSuccess
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
-import io.paritytech.polkadotapp.feature_coinage_api.domain.model.needsAttention
-import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageAccountBackupObserver
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageBackupService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TotalBalanceUseCase
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
@@ -31,15 +29,12 @@ class PocketInteractor @Inject constructor(
     @param:DigitalDollarChainAssetProvider private val chainAssetProvider: ChainAssetProvider,
     private val totalBalanceUseCase: TotalBalanceUseCase,
     private val coinageBackupService: CoinageBackupService,
-    private val coinageAccountBackupObserver: CoinageAccountBackupObserver,
     private val pocketCollection: PocketCollection,
     private val pocketFaceSource: PocketFaceSource,
     private val pocketCardFaceOnOpen: PocketCardFaceOnOpen,
     private val productContentWarmUp: ProductContentWarmUp,
 ) {
     fun observeBackupProgress(): Flow<BackupProgress> = coinageBackupService.subscribeProgress()
-
-    fun observeAccountBackupPending(): Flow<Boolean> = coinageAccountBackupObserver.subscribeStatus().map { it.needsAttention }
 
     fun observeDigitalDollarBalance(): Flow<DigitalDollarBalance> = flow {
         val asset = chainAssetProvider.asset()

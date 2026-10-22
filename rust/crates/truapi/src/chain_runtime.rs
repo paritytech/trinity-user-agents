@@ -75,6 +75,7 @@ use truapi::v01::{
 use crate::{host_rpc_client::HostRpcClient, subscription::Spawner};
 
 const FOLLOW_METHOD: &str = "remote_chain_head_follow";
+const CONNECT_METHOD: &str = "remote_chain_connect";
 /// Method tag for failures building or using the legacy Subxt client.
 const LEGACY_CONNECTION: &str = "legacy_connection";
 
@@ -225,13 +226,10 @@ impl RuntimeFailure {
 	}
 
 	/// Re-tag this failure under `method`, preserving its kind and nesting
-	/// the original reason (when one exists) for diagnostics.
+	/// the original method and reason so the caller still sees where it
+	/// failed.
 	fn reclassify(&self, method: &'static str) -> RuntimeFailure {
-		RuntimeFailure {
-			kind: self.kind,
-			method,
-			reason: self.reason.as_ref().map(|_| self.reason()),
-		}
+		RuntimeFailure { kind: self.kind, method, reason: Some(self.reason()) }
 	}
 }
 
@@ -887,8 +885,7 @@ impl ChainRuntime {
 		let key = self.connection_key(genesis_hash);
 		let setup = {
 			let mut scopes = self.connections.lock().unwrap();
-			let connections =
-				scopes.get_mut(&self.scope).ok_or_else(|| RuntimeFailure::unavailable(method))?;
+			let connections = scopes.get_mut(&self.scope).ok_or_else(|| scope_released(method))?;
 			match connections.get(&key) {
 				Some(ConnectionEntry::Ready(connection)) if !connection.is_closed() => {
 					return Ok(connection.clone());
@@ -908,20 +905,18 @@ impl ChainRuntime {
 							.connect(genesis_hash.clone())
 							.await
 							.map(|rpc| ChainConnection::new(rpc, spawner, genesis_hash));
-						let registry = registry
-							.upgrade()
-							.ok_or_else(|| RuntimeFailure::unavailable("remote_chain_connect"))?;
+						let registry =
+							registry.upgrade().ok_or_else(|| scope_released(CONNECT_METHOD))?;
 						let mut scopes = registry.lock().unwrap();
-						let connections = scopes
-							.get_mut(&scope)
-							.ok_or_else(|| RuntimeFailure::unavailable("remote_chain_connect"))?;
+						let connections =
+							scopes.get_mut(&scope).ok_or_else(|| scope_released(CONNECT_METHOD))?;
 						let Some(ConnectionEntry::Connecting { identity, .. }) =
 							connections.get(&setup_key)
 						else {
-							return Err(RuntimeFailure::unavailable("remote_chain_connect"));
+							return Err(connection_superseded());
 						};
 						if !Arc::ptr_eq(identity, &setup_identity) {
-							return Err(RuntimeFailure::unavailable("remote_chain_connect"));
+							return Err(connection_superseded());
 						}
 						match &result {
 							Ok(connection) => {
@@ -957,11 +952,11 @@ impl ChainRuntime {
 		cancelled: Arc<AtomicBool>,
 	) -> Result<(), RuntimeFailure> {
 		if cancelled.load(Ordering::SeqCst) {
-			return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
+			return Err(follow_closed());
 		}
 		let connection = self.connection_for(FOLLOW_METHOD, &request.genesis_hash).await?;
 		if cancelled.load(Ordering::SeqCst) {
-			return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
+			return Err(follow_closed());
 		}
 		// Record this subscriber's sender before kicking off (or joining) the
 		// single-flight setup so events route to it regardless of which caller
@@ -974,7 +969,7 @@ impl ChainRuntime {
 		);
 		if connection.follow_cancelled_or_missing(&local_follow_id) {
 			connection.unfollow(&local_follow_id);
-			return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
+			return Err(follow_closed());
 		}
 		connection.ensure_remote_follow(local_follow_id, request.with_runtime).await?;
 		Ok(())
@@ -1392,7 +1387,7 @@ impl ChainConnection {
 		with_runtime: bool,
 	) -> Result<String, RuntimeFailure> {
 		if self.follow_cancelled_or_missing(&local_follow_id) {
-			return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
+			return Err(follow_closed());
 		}
 		if let Some(remote_follow_id) = self.remote_follow_id(&local_follow_id) {
 			return Ok(remote_follow_id);
@@ -1460,7 +1455,7 @@ impl ChainConnection {
 	) -> Result<String, RuntimeFailure> {
 		if self.follow_cancelled_or_missing(&local_follow_id) {
 			self.remove_follow(&local_follow_id);
-			return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
+			return Err(follow_closed());
 		}
 		let mut follow = self.methods.chainhead_v1_follow(with_runtime).await.map_err(|err| {
 			self.remove_follow(&local_follow_id);
@@ -1476,7 +1471,7 @@ impl ChainConnection {
 		if self.follow_cancelled_or_missing(&local_follow_id) {
 			self.remove_follow(&local_follow_id);
 			drop(follow);
-			return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
+			return Err(follow_closed());
 		}
 
 		let (abort, abort_registration) = AbortHandle::new_pair();
@@ -1509,7 +1504,7 @@ impl ChainConnection {
 		};
 
 		if !self.attach_remote_follow(&local_follow_id, remote_follow_id.clone(), abort) {
-			return Err(RuntimeFailure::unavailable(FOLLOW_METHOD));
+			return Err(follow_closed());
 		}
 
 		(self.spawner)(Abortable::new(pump, abort_registration).map(|_| ()).boxed());
@@ -1811,10 +1806,22 @@ fn transaction_operation_already_finished(error: &SubxtRpcError) -> bool {
 	reason.contains("Invalid operation id") && reason.contains("-32602")
 }
 
+fn scope_released(method: &'static str) -> RuntimeFailure {
+	RuntimeFailure::unavailable_with_reason(method, "chain connections were released")
+}
+
+fn connection_superseded() -> RuntimeFailure {
+	RuntimeFailure::unavailable_with_reason(CONNECT_METHOD, "connection setup was superseded")
+}
+
+fn follow_closed() -> RuntimeFailure {
+	RuntimeFailure::unavailable_with_reason(FOLLOW_METHOD, "follow subscription was closed")
+}
+
 fn rpc_failure(method: &'static str, error: SubxtRpcError) -> RuntimeFailure {
 	match error {
 		SubxtRpcError::Client(_) | SubxtRpcError::DisconnectedWillReconnect(_) => {
-			RuntimeFailure::unavailable(method)
+			RuntimeFailure::unavailable_with_reason(method, error.to_string())
 		},
 		error => RuntimeFailure::host_failure(method, error.to_string()),
 	}
@@ -3195,7 +3202,7 @@ mod tests {
 
 		assert_eq!(
 			(completed, connections_empty, follow.next().now_or_never()),
-			(Some(()), true, Some(Some(Err(RuntimeFailure::unavailable(FOLLOW_METHOD)))),),
+			(Some(()), true, Some(Some(Err(scope_released(FOLLOW_METHOD)))),),
 			"closing the product must reject follow setup queued before teardown",
 		);
 	}
@@ -3232,7 +3239,11 @@ mod tests {
 			futures::executor::block_on(runtime.connection_for("retry", &genesis)).map(|_| ());
 		assert_eq!(
 			(failed, retried, provider.inner.connect_calls.load(Ordering::SeqCst)),
-			(Err(RuntimeFailure::unavailable("retry")), Ok(()), 1),
+			(
+				Err(RuntimeFailure::unavailable_with_reason("retry", "remote_chain_connect")),
+				Ok(()),
+				1
+			),
 		);
 	}
 
@@ -3278,6 +3289,70 @@ mod tests {
 		};
 		assert_eq!(err.kind(), RuntimeFailureKind::HostFailure);
 		assert!(err.reason().contains("method not found"), "unexpected reason: {}", err.reason());
+	}
+
+	/// A product only sees the reason string, so a transport that closes under
+	/// a chain-head call must say so instead of naming just the method.
+	#[test]
+	fn a_closed_transport_names_its_cause_on_the_call_and_the_follow() {
+		let provider = Arc::new(ScriptedProvider::new(|request| {
+			let id = extract_id(request).unwrap();
+			request
+				.contains("chainHead_v1_follow")
+				.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
+		}));
+		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let mut follow = runtime.remote_chain_head_follow(
+			"local-follow".to_string(),
+			RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: false },
+		);
+		notification_sender(&provider)
+			.unbounded_send(
+				r#"{"jsonrpc":"2.0","method":"chainHead_v1_followEvent","params":{"subscription":"REMOTE-FOLLOW","result":{"event":"initialized","finalizedBlockHashes":[]}}}"#
+					.to_string(),
+			)
+			.unwrap();
+		assert!(matches!(
+			futures::executor::block_on(follow.next()),
+			Some(Ok(RemoteChainHeadFollowItem::Initialized { .. }))
+		));
+		let storage_runtime = runtime.clone();
+		let storage = std::thread::spawn(move || {
+			futures::executor::block_on(storage_runtime.remote_chain_head_storage(
+				RemoteChainHeadStorageRequest {
+					genesis_hash: vec![0u8; 32],
+					follow_subscription_id: "local-follow".to_string(),
+					hash: vec![1u8; 32],
+					items: vec![StorageQueryItem {
+						key: vec![0xaa],
+						query_type: StorageQueryType::Value,
+					}],
+					child_trie: None,
+				},
+			))
+		});
+		wait_for_sent(&provider, |sent| {
+			sent.iter().any(|request| request.contains("chainHead_v1_storage"))
+		});
+
+		provider.sender.lock().unwrap().take();
+
+		let cause = "RPC error: client error: json-rpc connection closed: RPC error: client error: json-rpc response stream ended";
+		let storage_failure =
+			storage.join().unwrap().map(|_| ()).map_err(|failure| failure.reason());
+		let follow_failures: Vec<String> = futures::executor::block_on(
+			follow.filter_map(|item| core::future::ready(item.err())).collect::<Vec<_>>(),
+		)
+		.into_iter()
+		.map(|failure| failure.reason())
+		.collect();
+		assert_eq!(
+			(storage_failure, follow_failures),
+			(
+				Err(format!("remote_chain_head_storage: {cause}")),
+				vec![format!("remote_chain_head_follow: {cause}")]
+			),
+		);
 	}
 
 	#[test]
