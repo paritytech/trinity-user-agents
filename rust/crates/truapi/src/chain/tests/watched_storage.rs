@@ -314,6 +314,32 @@ fn a_best_watch_carries_on_over_a_new_connection_reporting_only_what_changed() {
 }
 
 #[test]
+fn a_best_watch_reports_a_change_again_after_its_read_failed() {
+	// A node names a key only in a block that writes it. If a failed read
+	// counted as reported, the change would be lost until the key is written
+	// again, so the watch subscribes again and the new subscription's first
+	// notification carries it.
+	let mut node = node_with_best_block_five();
+	store_values_at_block(&mut node, 5, &[(WATCHED, b"one"), (OTHER, b"two")]);
+	store_values_at_block(&mut node, 6, &[(WATCHED, b"one"), (OTHER, b"three")]);
+	let at = node.block(6);
+	let (node, provider, chain) = serve(node);
+	let received = start_watch(&chain, WatchedHead::Best, &[WATCHED, OTHER]);
+	next_item_within_timeout(&received).unwrap();
+
+	node.lock().unwrap().best = 6;
+	let unknown_block = format!("0x{}", "ee".repeat(32));
+	let other = format!("0x{}", hex::encode(OTHER));
+	let unreadable = json!({"block": unknown_block, "changes": [[other, "0x01"]]});
+	notification_sender(&provider)
+		.unbounded_send(storage_notification(unreadable))
+		.unwrap();
+	let changes = next_change_within_timeout(&received);
+
+	assert_eq!((changes.at, changes.value), (at, vec![(1, Some(b"three".to_vec()))]));
+}
+
+#[test]
 fn a_finalized_watch_reads_over_a_new_connection_after_the_old_one_closes() {
 	// The head subscriptions reconnect on their own. If reads kept using the
 	// closed connection, every read after the drop would fail.

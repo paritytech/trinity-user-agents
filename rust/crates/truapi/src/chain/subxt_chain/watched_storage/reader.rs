@@ -4,7 +4,7 @@
 use core::future::ready;
 use std::{collections::HashMap, sync::Arc};
 
-use futures::stream::{StreamExt, TryStreamExt};
+use futures::stream::{self, StreamExt, TryStreamExt};
 use parking_lot::Mutex;
 use subxt::{
 	ArcMetadata, client::OnlineClientAtBlock, config::SubstrateConfig,
@@ -93,20 +93,19 @@ impl WatchedKeysReader {
 	/// their changes. The first notification of the watch must include every
 	/// key. A node also reports keys that a block wrote with an unchanged
 	/// value. Those keys are skipped, and so is a notification with no
-	/// changes left.
+	/// changes left. The changes end after the first failure, so that the
+	/// watch subscribes again and the new subscription's first notification
+	/// carries the change that failed.
 	pub async fn subscribe_to_changes(self: Arc<Self>) -> Result<RawChangeStream, RuntimeFailure> {
 		let legacy = self.chain.legacy(self.genesis).await?;
 		let subscription = self.open_storage_subscription(&legacy).await?;
-		let tracker = self.clone();
+		let finder = self.clone();
 		let changes = subscription
 			.map_err(|error| failure(STORAGE_WATCH, error))
-			.and_then(move |change_set| ready(tracker.track_changed_keys(change_set)))
+			.and_then(move |change_set| ready(finder.find_changed_keys(change_set)))
 			.try_filter_map(|changed| ready(Ok(changed)))
-			.and_then(move |changed| {
-				self.clone().enrich_raw_changes_with_metadata(legacy.clone(), changed)
-			})
-			.boxed();
-		Ok(changes)
+			.and_then(move |changed| self.clone().report_changed_keys(legacy.clone(), changed));
+		Ok(end_after_first_failure(changes.boxed()))
 	}
 
 	/// A `state_subscribeStorage` of every one of the reader's keys.
@@ -123,18 +122,22 @@ impl WatchedKeysReader {
 			.map_err(|error| failure(STORAGE_WATCH, error))
 	}
 
-	/// Returns the keys whose values changed in `change_set` and remembers
-	/// their new values for the next comparison.
-	fn track_changed_keys(
-		&self,
-		change_set: StorageChangeSet<H256>,
-	) -> Result<Option<ChangedKeysAtBlock>, RuntimeFailure> {
-		let mut held_hashes = self.held_hashes.lock();
-		let changed = self.find_changed_keys(held_hashes.as_deref(), change_set)?;
-		if let Some(changed) = &changed {
-			record_hashes(&mut held_hashes, self.keys.len(), &changed.changed);
-		}
-		Ok(changed)
+	/// `changed` with its block number and metadata. Only a change that is
+	/// reported has its new values remembered for the next comparison, so a
+	/// failed one counts as a change again.
+	async fn report_changed_keys(
+		self: Arc<Self>,
+		legacy: LegacyConnection,
+		changed: ChangedKeysAtBlock,
+	) -> Result<RawStorageChanges, RuntimeFailure> {
+		let hashes: Vec<_> = changed
+			.changed
+			.iter()
+			.map(|(position, value)| (*position, value_hash(value)))
+			.collect();
+		let reported = self.clone().enrich_raw_changes_with_metadata(legacy, changed).await?;
+		record_hashes(&mut self.held_hashes.lock(), self.keys.len(), &hashes);
+		Ok(reported)
 	}
 
 	/// `change_set` as changes to the watched keys, with the block number and
@@ -154,17 +157,17 @@ impl WatchedKeysReader {
 		Ok(DecodableAtBlock { at, metadata, value: watched })
 	}
 
-	/// The keys in `change_set` whose value changed since the values with
-	/// `held_hashes`, by position, `None` when none did. With nothing held
-	/// yet, `change_set` must name every key, and all of them changed.
+	/// The keys in `change_set` whose value changed since the last reported
+	/// values, by position, `None` when none did. With nothing reported yet,
+	/// `change_set` must name every key, and all of them changed.
 	fn find_changed_keys(
 		&self,
-		held_hashes: Option<&[Option<[u8; 32]>]>,
 		change_set: StorageChangeSet<H256>,
 	) -> Result<Option<ChangedKeysAtBlock>, RuntimeFailure> {
 		let block = change_set.block;
 		let values_by_key = group_values_by_key([change_set]);
-		let Some(held_hashes) = held_hashes else {
+		let held_hashes = self.held_hashes.lock();
+		let Some(held_hashes) = held_hashes.as_deref() else {
 			let values = all_keys_answered_or_err(&self.keys, &values_by_key, block)?;
 			let changed = values.into_iter().enumerate().collect();
 			return Ok(Some(ChangedKeysAtBlock { block, changed }));
@@ -236,17 +239,28 @@ impl WatchedKeysReader {
 	}
 }
 
-/// Puts the hash of each `changed` value into `held_hashes`, which start as
-/// `key_count` absent entries.
+/// Puts each of `changed`, a value hash by position, into `held_hashes`,
+/// which start as `key_count` absent entries.
 fn record_hashes(
 	held_hashes: &mut Option<Vec<Option<[u8; 32]>>>,
 	key_count: usize,
-	changed: &[(usize, Option<Vec<u8>>)],
+	changed: &[(usize, Option<[u8; 32]>)],
 ) {
 	let hashes = held_hashes.get_or_insert_with(|| vec![None; key_count]);
-	for (position, value) in changed {
-		hashes[*position] = value_hash(value);
+	for (position, hash) in changed {
+		hashes[*position] = *hash;
 	}
+}
+
+/// `changes` up to and including the first failure.
+fn end_after_first_failure(changes: RawChangeStream) -> RawChangeStream {
+	stream::unfold(Some(changes), |changes| async move {
+		let mut changes = changes?;
+		let change = changes.next().await?;
+		let rest = change.is_ok().then_some(changes);
+		Some((change, rest))
+	})
+	.boxed()
 }
 
 /// One notification's changes, with `System.LastRuntimeUpgrade` taken out.
