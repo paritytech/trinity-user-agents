@@ -21,6 +21,9 @@ import uniffi.truapi.HostSignRawRequest
 import uniffi.truapi.HostSignRawWithLegacyAccountRequest
 import uniffi.truapi.IdentityDisclosureReview
 import uniffi.truapi.LegacyAccountTxPayload
+import uniffi.truapi.NftPurseDrainDestination
+import uniffi.truapi.NftPurseDrainReview
+import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.ProductAccountTxPayload
 import uniffi.truapi.ProductSubtreeReview
 import uniffi.truapi.RawPayload
@@ -285,6 +288,27 @@ class ConfirmationReviewMappingTest {
 
         assertEquals("caller.dot", confirmation.requesterProductId)
         assertEquals("target.dot", confirmation.targetProductId)
+    }
+
+    @Test
+    fun `nft purse drain maps the purse, its root owner and the destination purse`() {
+        val review = UserConfirmationReview.NftPurseDrain(
+            NftPurseDrainReview(
+                callingProductId = "drainer.dot",
+                fromPurse = 4u,
+                owner = NftPurseOwner.Root,
+                itemCount = 2u,
+                destination = NftPurseDrainDestination.Purse(purse = 0u),
+            ),
+        )
+
+        val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.NftPurseDrain
+
+        assertEquals("drainer.dot", confirmation.requesterProductId)
+        assertEquals(4u, confirmation.fromPurse)
+        assertEquals(null, confirmation.ownerProductId)
+        assertEquals(2u, confirmation.itemCount)
+        assertEquals(TrUAPIConfirmation.NftPurseDrain.Destination.Purse(0u), confirmation.destination)
     }
 
     @Test

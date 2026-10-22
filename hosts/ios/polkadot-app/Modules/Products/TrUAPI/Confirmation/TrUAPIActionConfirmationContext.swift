@@ -3,6 +3,23 @@ import Products
 
 enum TrUAPIActionConfirmationRequest: Equatable, Sendable {
     case productSubtree(productId: ProductId)
+    /// Move NFT items out of a purse the product does not own. A nil owner
+    /// is the user's own account.
+    case nftPurseDrain(
+        productId: ProductId,
+        fromPurse: UInt32,
+        ownerProductId: ProductId?,
+        itemCount: UInt32,
+        destination: NftPurseDrainTarget
+    )
+}
+
+/// Where drained NFT items go.
+enum NftPurseDrainTarget: Equatable, Sendable {
+    /// Fresh keys of this purse.
+    case purse(UInt32)
+    /// A key outside every purse, as hex.
+    case key(hex: String)
 }
 
 @MainActor

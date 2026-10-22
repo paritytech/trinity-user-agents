@@ -77,6 +77,8 @@ private extension TrUAPIConfirmationPresenter {
             )
         case let .productSubtree(subtreeReview):
             await confirmAction(promptMapper.makeActionRequest(from: subtreeReview))
+        case let .nftPurseDrain(drainReview):
+            await confirmAction(promptMapper.makeActionRequest(from: drainReview))
         case .identityDisclosure,
              .accountAccess,
              .accountAlias:
