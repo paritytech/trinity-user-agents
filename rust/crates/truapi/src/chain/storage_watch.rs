@@ -127,9 +127,9 @@ impl dyn WatchedStorage {
 		Ok(changes.map(move |raw| decoder.decode_raw_changes(raw?)).boxed())
 	}
 
-	/// [`Self::watch_entry_changes`] for as long as the stream is held. A
-	/// watch that cannot be opened is an `Err` item, and is opened again
-	/// after [`REOPEN_DELAY`] on `timer`. A permanent failure, as
+	/// `watch_entry_changes` for as long as the stream is held. A watch that
+	/// cannot be opened is an `Err` item, and is opened again after five
+	/// seconds on `timer`. A permanent failure, as
 	/// [`StorageWatchError::is_permanent`] names it, is the last item.
 	pub fn keep_watching_entry<A>(
 		self: Arc<Self>,
