@@ -43,7 +43,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let settingsManager: SettingsManagerProtocol
     private let coreStorage: TrUAPILocalStoring
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
-    private let currentInstallation: any CoinageCurrentInstallationRepositoryProtocol
+    private let installationRepository: any CoinageCurrentInstallationRepositoryProtocol
     private let tldProvider: DotNsTldProviding
     private let logger: LoggerProtocol
 
@@ -65,7 +65,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         settingsManager: SettingsManagerProtocol,
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
-        currentInstallation: any CoinageCurrentInstallationRepositoryProtocol,
+        installationRepository: any CoinageCurrentInstallationRepositoryProtocol,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         logger: LoggerProtocol
     ) {
@@ -74,7 +74,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.settingsManager = settingsManager
         self.coreStorage = coreStorage
         self.confirmationRouterFacade = confirmationRouterFacade
-        self.currentInstallation = currentInstallation
+        self.installationRepository = installationRepository
         self.tldProvider = tldProvider
         self.logger = logger
     }
@@ -149,7 +149,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             chainConnections: chainConnections,
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade),
             workerManager: workerManager,
-            currentInstallation: currentInstallation,
+            installationRepository: installationRepository,
             logger: logger
         )
 

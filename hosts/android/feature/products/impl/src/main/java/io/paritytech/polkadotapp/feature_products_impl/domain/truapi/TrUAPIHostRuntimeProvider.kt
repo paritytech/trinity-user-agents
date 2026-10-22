@@ -77,7 +77,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val contactsBridge: AppContactsHostBridge,
     private val paymentPlatforms: TrUAPIPaymentPlatforms,
     private val scannerBridge: TrUAPIProductScans,
-    private val currentInstallation: CoinageCurrentInstallation,
+    private val installations: CoinageCurrentInstallation,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     dispatchers: CoroutineDispatchers,
@@ -240,7 +240,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         // TODO: wait for the installation backup through a native provider, as
         //  CurrentInstallationProvider.awaitBackedUp from polkadot-android-community#246 does.
         override suspend fun currentInstallation(): ByteArray =
-            currentInstallation.getOrCreateCurrent().value.value
+            installations.getOrCreateCurrent().value.value
 
         override suspend fun navigateTo(url: String) {
             throw HostNavigateToException.Unknown("navigation unavailable at host level")

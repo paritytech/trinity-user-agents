@@ -29,7 +29,7 @@ private func makeHostBridge(
         coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeHostDefaults()),
         chainConnections: chainConnections,
         confirmationPresenter: confirmationPresenter,
-        currentInstallation: AlwaysNewInstallation(),
+        installationRepository: AlwaysNewInstallation(),
         logger: Logger.shared
     )
 }

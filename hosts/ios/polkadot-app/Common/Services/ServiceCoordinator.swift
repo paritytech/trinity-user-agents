@@ -303,7 +303,7 @@ extension ServiceCoordinator {
             settingsManager: SettingsManager.shared,
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationRouterFacade: ProductRoutersFacade.sso(),
-            currentInstallation: CoinageCurrentInstallationCoreDataRepository(
+            installationRepository: CoinageCurrentInstallationCoreDataRepository(
                 storageFacade: UserDataStorageFacade.shared
             ),
             logger: logger

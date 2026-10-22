@@ -21,7 +21,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     private let chainConnections: TrUAPIChainConnecting
     private let confirmationPresenter: TrUAPIConfirmationPresenting
     private let workerManager: (any TrUAPIWorkerManaging)?
-    private let currentInstallation: any CoinageCurrentInstallationRepositoryProtocol
+    private let installationRepository: any CoinageCurrentInstallationRepositoryProtocol
     private let logger: LoggerProtocol
     private weak var runtime: TrUAPIHostRuntime?
 
@@ -31,14 +31,14 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         chainConnections: TrUAPIChainConnecting,
         confirmationPresenter: TrUAPIConfirmationPresenting,
         workerManager: (any TrUAPIWorkerManaging)? = nil,
-        currentInstallation: any CoinageCurrentInstallationRepositoryProtocol,
+        installationRepository: any CoinageCurrentInstallationRepositoryProtocol,
         logger: LoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
         self.chainConnections = chainConnections
         self.confirmationPresenter = confirmationPresenter
         self.workerManager = workerManager
-        self.currentInstallation = currentInstallation
+        self.installationRepository = installationRepository
         self.logger = logger
         self.coreStorage = CoreStorageBackend(storage: coreStorage)
         storage = EmptyHostStorageBackend()
@@ -126,7 +126,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     // TODO: wait for the installation backup through a native provider, as Android's
     // CurrentInstallationProvider.awaitBackedUp from polkadot-android-community#246 does.
     func currentInstallation() async throws -> Data {
-        try await currentInstallation.getOrCreateCurrent { try CoinageInstallationId.random() }.value
+        try await installationRepository.getOrCreateCurrent { try CoinageInstallationId.random() }.value
     }
 
     func supportedChains() throws -> HostChainSet {
