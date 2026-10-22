@@ -9,8 +9,8 @@ use truapi::{CallError, Subscription, latest};
 use super::host_failure;
 use crate::{
 	durable::RegistrationError,
-	nft::{AllocateItemsError, PurseId, StartOperationError},
-	nft_purse::{NftPurses, PurseOwner, StartError, drain_needs_confirmation},
+	nft::{AllocateItemsError, ItemKey, PurseId, StartOperationError},
+	nft_purse::{NftPurses, PurseOwner, drain_needs_confirmation},
 	platform::{NftPurseDrainDestination, NftPurseDrainReview, UserConfirmationReview},
 	runtime::ProductRuntimeHost,
 };
@@ -54,7 +54,7 @@ const TRANSFER_REFUSALS: OperationRefusals<latest::HostNftPurseTransferItemError
 impl<E> OperationRefusals<E> {
 	/// `error` as the call's error: the product's refusals as its domain
 	/// errors, everything else as the host's failure.
-	fn refusal_of(self, error: StartError) -> CallError<E> {
+	fn refusal_of(self, error: RegistrationError<StartOperationError>) -> CallError<E> {
 		let refusal = match error {
 			RegistrationError::Hook(refusal) => refusal,
 			RegistrationError::UnknownDomain(_) => return CallError::Unsupported,
@@ -79,7 +79,7 @@ impl<E> OperationRefusals<E> {
 struct Drain {
 	from: PurseId,
 	owner: PurseOwner,
-	item_count: usize,
+	item_count: u32,
 	destination: NftPurseDrainDestination,
 }
 
@@ -93,18 +93,15 @@ impl ProductRuntimeHost {
 		self.require_session()?;
 		let purses = self.connection.nft_purses()?;
 		let latest::HostNftPurseRebalancePurseRequest { from, to, keys, idempotency_key } = request;
-		let distinct: BTreeSet<[u8; 32]> = keys.iter().map(|key| key.0).collect();
-		if distinct.is_empty() {
+		let items: BTreeSet<ItemKey> = keys.iter().map(|key| ItemKey(key.0)).collect();
+		if items.is_empty() {
 			return Err(CallError::Domain(REBALANCE_REFUSALS.no_items));
 		}
 		let (from, to) = (PurseId(from.0), PurseId(to.0));
-		let owner = existing_owner(&purses, from).await?;
-		existing_owner(&purses, to).await?;
-		let destination = NftPurseDrainDestination::Purse { purse: to.0 };
-		let drain = Drain { from, owner, item_count: distinct.len(), destination };
+		let drain = rebalance_drain(&purses, from, to, items.len()).await?;
 		self.confirm_drain(drain, REBALANCE_REFUSALS.denied).await?;
 		let caller = self.connection.product_id();
-		let started = purses.rebalance(caller, from, to, &keys, idempotency_key).await;
+		let started = purses.rebalance(caller, from, to, items, idempotency_key).await;
 		started.map_err(|error| REBALANCE_REFUSALS.refusal_of(error))
 	}
 
@@ -146,7 +143,9 @@ impl ProductRuntimeHost {
 		};
 		let caller = self.connection.product_id();
 		let statuses = purses.observe_status(caller, request.idempotency_key);
-		Subscription::new(statuses.map(|read| read.map_err(host_failure)?.ok_or(NOT_FOUND)))
+		let found =
+			|read: Result<Option<_>, _>| read.map_err(host_failure)?.ok_or(OPERATION_NOT_FOUND);
+		Subscription::new(statuses.map(found))
 	}
 
 	/// Asks the user to confirm `drain` when the caller does not own its
@@ -160,7 +159,7 @@ impl ProductRuntimeHost {
 			calling_product_id: caller.clone(),
 			from_purse: drain.from.0,
 			owner: drain.owner.to_wire(),
-			item_count: u32::try_from(drain.item_count).unwrap_or(u32::MAX),
+			item_count: drain.item_count,
 			destination: drain.destination,
 		});
 		let confirmed = self.connection.confirm_user_action_if_needed(review).await;
@@ -169,11 +168,26 @@ impl ProductRuntimeHost {
 	}
 }
 
-const NOT_FOUND: CallError<latest::HostNftPurseObserveOperationStatusError> =
+const OPERATION_NOT_FOUND: CallError<latest::HostNftPurseObserveOperationStatusError> =
 	CallError::Domain(latest::HostNftPurseObserveOperationStatusError::OperationNotFound);
 
+/// The drain a rebalance of `item_count` items from `from` into `to` makes,
+/// refusing it when either purse does not exist.
+async fn rebalance_drain(
+	purses: &NftPurses,
+	from: PurseId,
+	to: PurseId,
+	item_count: usize,
+) -> Result<Drain, CallError<latest::HostNftPurseRebalancePurseError>> {
+	let owner = owner_or_purse_not_found(purses, from).await?;
+	owner_or_purse_not_found(purses, to).await?;
+	let item_count = u32::try_from(item_count).map_err(host_failure)?;
+	let destination = NftPurseDrainDestination::Purse { purse: to.0 };
+	Ok(Drain { from, owner, item_count, destination })
+}
+
 /// The owner of `purse`, refusing a purse that does not exist.
-async fn existing_owner(
+async fn owner_or_purse_not_found(
 	purses: &NftPurses,
 	purse: PurseId,
 ) -> Result<PurseOwner, CallError<latest::HostNftPurseRebalancePurseError>> {

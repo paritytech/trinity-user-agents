@@ -215,11 +215,14 @@ fn transfer_progress(
 	conn: &rusqlite::Connection,
 	state: DurableTxState,
 ) -> Result<TransferProgress, DbError> {
-	let unreadable = |what: &str| DbError::Connection(format!("move {:?} has no {what}", state.id));
-	let (consumed, _) = dao::input_of(conn, state.id)?.ok_or_else(|| unreadable("spent key"))?;
-	let plan = state.plan.as_ref().ok_or_else(|| unreadable("plan"))?;
-	let params =
-		TransferParams::try_from(&plan.params).map_err(|_| unreadable("transfer params"))?;
+	let unreadable = |what: String| {
+		DbError::Connection(format!("transfer {:?} has no readable {what}", state.id))
+	};
+	let (consumed, _) =
+		dao::input_of(conn, state.id)?.ok_or_else(|| unreadable("spent key".into()))?;
+	let plan = state.plan.as_ref().ok_or_else(|| unreadable("plan".into()))?;
+	let params = TransferParams::try_from(&plan.params)
+		.map_err(|error| unreadable(format!("params: {error}")))?;
 	let state_of_transfer = TransferState::from(state.status);
 	Ok(TransferProgress {
 		consumed,

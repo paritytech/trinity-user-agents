@@ -8,6 +8,7 @@
 mod migration;
 mod observe;
 
+use core::convert::Infallible;
 use std::{
 	path::{Path, PathBuf},
 	sync::Arc,
@@ -189,19 +190,9 @@ impl Db {
 		F: FnOnce(&rusqlite::Transaction<'_>) -> Result<T, DbError> + Send + 'static,
 		T: Send + 'static,
 	{
-		let invalidation = self.invalidation.clone();
-		self.writer
-			.conn_mut_and_then(move |conn| {
-				let committed = in_transaction(conn, f);
-				// Publish only once readers can see the rows: `commit_hook`
-				// runs before the commit is visible.
-				match committed {
-					Ok(_) => invalidation.publish(),
-					Err(_) => invalidation.discard(),
-				}
-				committed
-			})
-			.await
+		let never_refused = move |tx: &rusqlite::Transaction<'_>| Ok(Ok::<_, Infallible>(f(tx)?));
+		let written = self.write_unless_refused(never_refused).await?;
+		Ok(written.unwrap_or_else(|never| match never {}))
 	}
 
 	/// Runs `f` in one `BEGIN IMMEDIATE` transaction on the writer, like
@@ -218,6 +209,8 @@ impl Db {
 		self.writer
 			.conn_mut_and_then(move |conn| {
 				let outcome = in_transaction_unless_refused(conn, f);
+				// Publish only once readers can see the rows: `commit_hook`
+				// runs before the commit is visible.
 				match outcome {
 					Ok(Ok(_)) => invalidation.publish(),
 					Ok(Err(_)) | Err(_) => invalidation.discard(),
@@ -258,17 +251,6 @@ impl Db {
 		self.invalidation.close();
 		Ok(())
 	}
-}
-
-/// Runs `f` in one `BEGIN IMMEDIATE` transaction, committing on `Ok`.
-fn in_transaction<T>(
-	conn: &mut rusqlite::Connection,
-	f: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<T, DbError>,
-) -> Result<T, DbError> {
-	let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-	let value = f(&tx)?;
-	tx.commit()?;
-	Ok(value)
 }
 
 /// Runs `f` in a transaction that commits only when `f` returns `Ok(Ok(_))`

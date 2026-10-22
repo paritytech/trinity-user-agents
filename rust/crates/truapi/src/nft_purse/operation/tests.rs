@@ -7,33 +7,33 @@ use crate::{
 	store::{Db, open_temporary_core_db},
 };
 
-fn key(byte: u8) -> ItemKey {
+fn item_key(byte: u8) -> ItemKey {
 	ItemKey([byte; 32])
 }
 
-fn progress(byte: u8, state: TransferState) -> TransferProgress {
+fn transfer_at(byte: u8, state: TransferState) -> TransferProgress {
 	TransferProgress {
-		consumed: key(byte),
-		minted: key(byte + 100),
+		consumed: item_key(byte),
+		minted: item_key(byte + 100),
 		tx_hash: Some(H256([byte + 200; 32])),
 		state,
 	}
 }
 
 fn waiting(byte: u8) -> TransferProgress {
-	TransferProgress { tx_hash: None, ..progress(byte, TransferState::Waiting) }
+	TransferProgress { tx_hash: None, ..transfer_at(byte, TransferState::Waiting) }
 }
 
 fn landed(byte: u8) -> TransferProgress {
-	progress(byte, TransferState::Landed { finalized: false })
+	transfer_at(byte, TransferState::Landed { finalized: false })
 }
 
 fn finalized(byte: u8) -> TransferProgress {
-	progress(byte, TransferState::Landed { finalized: true })
+	transfer_at(byte, TransferState::Landed { finalized: true })
 }
 
 fn failed(byte: u8) -> TransferProgress {
-	progress(byte, TransferState::Failed)
+	transfer_at(byte, TransferState::Failed)
 }
 
 fn cleared(byte: u8, finalized: bool) -> NftPurseClearedItem {
@@ -111,7 +111,8 @@ fn the_status_stream_ends_with_its_terminal_status() {
 	let caller: ProductId = "tickets.dot".parse().unwrap();
 	let item = held_item_in_new_purses(&ledger);
 	let key = NftPurseIdempotencyKey([1; 32]);
-	block_on(purses.rebalance(&caller, PurseId(0), PurseId(1), &[item], key)).unwrap();
+	let items = BTreeSet::from([item]);
+	block_on(purses.rebalance(&caller, PurseId(0), PurseId(1), items, key)).unwrap();
 	finalize_every_transfer(&db);
 
 	let observed = block_on(async {
@@ -139,7 +140,7 @@ fn repeated_statuses_are_reported_once() {
 const TIMEOUT: core::time::Duration = core::time::Duration::from_secs(5);
 
 /// A key of purse 0, holding an NFT, with purse 1 beside it.
-fn held_item_in_new_purses(ledger: &NftLedger) -> NftPurseItemKey {
+fn held_item_in_new_purses(ledger: &NftLedger) -> ItemKey {
 	for name in ["from", "to"] {
 		block_on(ledger.create_purse(name.to_owned(), PurseTag::default())).unwrap();
 	}
@@ -147,7 +148,7 @@ fn held_item_in_new_purses(ledger: &NftLedger) -> NftPurseItemKey {
 	let key = block_on(ledger.allocate_items(PurseId(0), one)).unwrap()[0];
 	let held = HeldItem { collection: 1, item: 1, instance: 7 };
 	block_on(ledger.record_holdings(vec![(key, Some(held))])).unwrap();
-	NftPurseItemKey(key.0)
+	key
 }
 
 fn finalize_every_transfer(db: &Db) {

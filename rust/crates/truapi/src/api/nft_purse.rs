@@ -108,8 +108,8 @@ pub trait NftPurse: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// Move items from one purse to fresh keys of another. Returns once the
-	/// moves are registered under the idempotency key.
+	/// Transfer items from one purse to fresh keys of another. Returns once
+	/// the transfers are registered under the idempotency key.
 	///
 	/// ```ts
 	/// const result = await truapi.nftPurse.rebalancePurse({
@@ -256,7 +256,7 @@ pub trait NftPurse: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// Move one item to a key outside the purses. Returns once the move is
+	/// Transfer one item to a key outside the purses. Returns once the transfer is
 	/// registered under the idempotency key.
 	///
 	/// ```ts

@@ -12,6 +12,7 @@ use subxt::{
 use super::transfer::TransferRuntime;
 use crate::{
 	chain::{ChainHeads, HashAndNumber, StorageWatchError, WatchedStorage},
+	chain_runtime::RuntimeFailure,
 	nft::{HeldItem, ItemKey},
 };
 
@@ -21,17 +22,17 @@ pub fn nfts_by_owner() -> DynamicAddress<(AccountId32,), ScarcityNft> {
 }
 
 /// The `Scarcity::Instances` entry, naming who holds each instance.
-fn instance_holders() -> DynamicAddress<(u64,), AccountId32> {
+fn instances_entry() -> DynamicAddress<(u64,), AccountId32> {
 	dynamic("Scarcity", "Instances")
 }
 
 /// The `Scarcity::Locked` entry, naming the keys a failed transfer locked.
-fn key_locks() -> DynamicAddress<(AccountId32,), ScarcityLock> {
+fn locked_entry() -> DynamicAddress<(AccountId32,), ScarcityLock> {
 	dynamic("Scarcity", "Locked")
 }
 
 /// The `Timestamp::Now` entry, the chain time a lock compares against.
-fn chain_time() -> DynamicAddress<(), u64> {
+fn timestamp_now_entry() -> DynamicAddress<(), u64> {
 	dynamic("Timestamp", "Now")
 }
 
@@ -158,7 +159,7 @@ impl ScarcityChain for ScarcityStorage {
 		let instances: Vec<_> = instances.iter().map(|instance| (*instance,)).collect();
 		let holders = self
 			.storage
-			.read_entries_at(self.genesis, at, &instance_holders(), &instances)
+			.read_entries_at(self.genesis, at, &instances_entry(), &instances)
 			.await?;
 		Ok(holders
 			.into_iter()
@@ -168,11 +169,11 @@ impl ScarcityChain for ScarcityStorage {
 
 	async fn locks_at(&self, at: H256, keys: &[ItemKey]) -> Result<KeyLocks, StorageWatchError> {
 		let owners: Vec<_> = keys.iter().map(|key| (AccountId32(key.0),)).collect();
-		let (locks_entry, time_entry) = (key_locks(), chain_time());
+		let (locks_entry, time_entry) = (locked_entry(), timestamp_now_entry());
 		let read_locks = self.storage.read_entries_at(self.genesis, at, &locks_entry, &owners);
 		let read_now = self.storage.read_entries_at(self.genesis, at, &time_entry, &[()]);
 		let (locks, now) = futures::future::try_join(read_locks, read_now).await?;
-		let now = now.into_iter().flatten().next().unwrap_or_default();
+		let now = now.into_iter().flatten().next().ok_or_else(|| chain_time_missing(at))?;
 		let until = locks.into_iter().map(|lock| lock.map(|lock| lock.until)).collect();
 		Ok(KeyLocks { now, until })
 	}
@@ -189,6 +190,13 @@ impl ScarcityChain for ScarcityStorage {
 		let best = self.heads.heads(self.genesis).await?.best;
 		Ok(TransferContext { birth, runtime, best })
 	}
+}
+
+/// The error for a block whose `Timestamp::Now` read came back empty, which
+/// locks cannot be compared against.
+fn chain_time_missing(at: H256) -> StorageWatchError {
+	let reason = format!("Timestamp::Now is absent at {at:?}, expected the block's chain time");
+	StorageWatchError::Chain(RuntimeFailure::host_failure("scarcity_locks_at", reason))
 }
 
 #[cfg(test)]

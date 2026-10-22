@@ -1,6 +1,6 @@
 //! The chain operations of NFT purses through the product-facing trait.
 
-use std::num::NonZeroU32;
+use core::num::NonZeroU32;
 
 use futures::{StreamExt, executor::block_on};
 use truapi::versioned::nft_purse::{

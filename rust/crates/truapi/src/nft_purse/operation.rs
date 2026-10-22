@@ -3,6 +3,7 @@
 //! observes for it.
 
 use core::future::ready;
+use std::collections::BTreeSet;
 
 use futures::{StreamExt, stream::BoxStream};
 use parity_scale_codec::Encode;
@@ -24,22 +25,18 @@ use crate::{
 	store::DbError,
 };
 
-/// Why an operation was not registered.
-pub type StartError = RegistrationError<StartOperationError>;
-
 impl NftPurses {
-	/// Registers transferring `keys` from `from` into fresh keys of `to`, as the
-	/// operation `caller` names `idempotency_key`. The caller asks for
+	/// Registers transferring `items` from `from` into fresh keys of `to`, as
+	/// the operation `caller` names `idempotency_key`. The caller asks for
 	/// [`drain_needs_confirmation`] first.
 	pub async fn rebalance(
 		&self,
 		caller: &ProductId,
 		from: PurseId,
 		to: PurseId,
-		keys: &[NftPurseItemKey],
+		items: BTreeSet<ItemKey>,
 		idempotency_key: NftPurseIdempotencyKey,
-	) -> Result<(), StartError> {
-		let items = keys.iter().map(|key| ItemKey(key.0)).collect();
+	) -> Result<(), RegistrationError<StartOperationError>> {
 		let operation = operation_key(caller, idempotency_key);
 		let destinations = TransferDestinations::AllocatedIn(to);
 		self.ledger
@@ -56,7 +53,7 @@ impl NftPurses {
 		item: NftPurseItemKey,
 		destination: NftPurseItemKey,
 		idempotency_key: NftPurseIdempotencyKey,
-	) -> Result<(), StartError> {
+	) -> Result<(), RegistrationError<StartOperationError>> {
 		let items = [ItemKey(item.0)].into_iter().collect();
 		let operation = operation_key(caller, idempotency_key);
 		let destinations = TransferDestinations::Foreign(ItemKey(destination.0));
@@ -111,16 +108,8 @@ fn status_of(transfers: Vec<TransferProgress>) -> Option<NftPurseStatus> {
 /// The RFC status of an operation whose transfers stand as `transfers`.
 fn fold_status(transfers: &[TransferProgress]) -> NftPurseStatus {
 	let cleared: Vec<_> = transfers.iter().filter_map(cleared_item).collect();
-	let failed: Vec<_> = transfers
-		.iter()
-		.filter(|progress| progress.state == TransferState::Failed)
-		.map(|progress| NftPurseItemKey(progress.consumed.0))
-		.collect();
-	let finalized =
-		|progress: &TransferProgress| progress.state == TransferState::Landed { finalized: true };
-	let settled = transfers
-		.iter()
-		.all(|progress| finalized(progress) || progress.state == TransferState::Failed);
+	let failed = failed_items(transfers);
+	let settled = transfers.iter().all(is_settled);
 	match (settled, failed.is_empty(), cleared.is_empty()) {
 		(true, true, _) => {
 			NftPurseStatus::Cleared { reference: clearing_reference(transfers), cleared }
@@ -131,6 +120,17 @@ fn fold_status(transfers: &[TransferProgress]) -> NftPurseStatus {
 		(false, _, false) => NftPurseStatus::Clearing { cleared },
 		(false, _, true) => NftPurseStatus::InProgress,
 	}
+}
+
+/// The source keys of the transfers that failed.
+fn failed_items(transfers: &[TransferProgress]) -> Vec<NftPurseItemKey> {
+	let failed = transfers.iter().filter(|progress| progress.state == TransferState::Failed);
+	failed.map(|progress| NftPurseItemKey(progress.consumed.0)).collect()
+}
+
+/// Whether nothing will change `progress` again: it is finalized or failed.
+fn is_settled(progress: &TransferProgress) -> bool {
+	matches!(progress.state, TransferState::Landed { finalized: true } | TransferState::Failed)
 }
 
 /// `progress` as a cleared item, when its transfer landed.

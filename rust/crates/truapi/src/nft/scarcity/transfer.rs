@@ -70,7 +70,8 @@ fn transfer_call(
 	let missing = || LocalTransactionError::Other("runtime has no Scarcity::transfer".to_string());
 	let pallet = metadata.pallet_by_name("Scarcity").ok_or_else(missing)?;
 	let call = pallet.call_variant_by_name("transfer").ok_or_else(missing)?;
-	Ok([&[pallet.call_index(), call.index][..], &destination.0].concat())
+	let indices = [pallet.call_index(), call.index];
+	Ok([&indices[..], &destination.0].concat())
 }
 
 /// Every extension of the transfer pipeline, by name. Only `AsScarcity` names the

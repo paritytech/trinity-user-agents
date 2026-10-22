@@ -13,7 +13,7 @@ use truapi::latest::{
 	NftPursePurse, RemotePermission,
 };
 
-pub use operation::{StartError, drain_needs_confirmation};
+pub use operation::drain_needs_confirmation;
 
 use crate::{
 	nft::{

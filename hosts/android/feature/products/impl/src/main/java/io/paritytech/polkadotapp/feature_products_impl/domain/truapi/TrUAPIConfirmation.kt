@@ -70,7 +70,7 @@ sealed interface TrUAPIConfirmation {
     ) : TrUAPIConfirmation.Prompt
 
     /** Move NFT items out of a purse the requesting product does not own. */
-    class NftPurseDrain(
+    data class NftPurseDrain(
         override val requesterProductId: String,
         val fromPurse: UInt,
         /** The product that owns the purse, or null when the user's own account does. */

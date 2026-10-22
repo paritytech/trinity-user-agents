@@ -302,13 +302,16 @@ class ConfirmationReviewMappingTest {
             ),
         )
 
-        val confirmation = review.toConfirmation(caller) as TrUAPIConfirmation.NftPurseDrain
+        val confirmation = review.toConfirmation(caller)
 
-        assertEquals("drainer.dot", confirmation.requesterProductId)
-        assertEquals(4u, confirmation.fromPurse)
-        assertEquals(null, confirmation.ownerProductId)
-        assertEquals(2u, confirmation.itemCount)
-        assertEquals(TrUAPIConfirmation.NftPurseDrain.Destination.Purse(0u), confirmation.destination)
+        val expected = TrUAPIConfirmation.NftPurseDrain(
+            requesterProductId = "drainer.dot",
+            fromPurse = 4u,
+            ownerProductId = null,
+            itemCount = 2u,
+            destination = TrUAPIConfirmation.NftPurseDrain.Destination.Purse(0u),
+        )
+        assertEquals(expected, confirmation)
     }
 
     @Test

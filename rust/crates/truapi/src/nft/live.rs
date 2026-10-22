@@ -69,14 +69,14 @@ impl CollectionOwner {
 
 	/// Signs `call` of `Scarcity`, submits it, and waits until a best block
 	/// includes it, failing the test unless it dispatched successfully.
-	async fn dispatch(&self, call: &str, args: Vec<Value>) {
-		let extrinsic = self.signed(call, args).await;
+	async fn dispatch_successfully(&self, call: &str, args: Vec<Value>) {
+		let extrinsic = self.signed_by_owner(call, args).await;
 		let at = self.included_at(&extrinsic).await;
 		let outcome = self.chain.dispatch_outcome(self.genesis, at, extrinsic.hash()).await;
 		assert_eq!(outcome.expect("outcome readable"), Some(DispatchOutcome::Succeeded), "{call}");
 	}
 
-	async fn signed(&self, call: &str, args: Vec<Value>) -> EncodedExtrinsic {
+	async fn signed_by_owner(&self, call: &str, args: Vec<Value>) -> EncodedExtrinsic {
 		let client = self.chain.client_at_finalized_head(self.genesis).await.expect("client");
 		let call_data = client.tx().call_data(&tx("Scarcity", call, args)).expect("call encodes");
 		let nonce = self.next_nonce().await;
@@ -227,10 +227,10 @@ impl CollectionOwner {
 	/// returns its id.
 	async fn create_collection(&self) -> u32 {
 		let collection = self.next_collection_id().await;
-		self.dispatch("create_collection", vec![]).await;
+		self.dispatch_successfully("create_collection", vec![]).await;
 		let transferable = Value::unnamed_variant("Transferable", []);
 		let args = vec![Value::u128(collection.into()), transferable, Value::unnamed_composite([])];
-		self.dispatch("define_item", args).await;
+		self.dispatch_successfully("define_item", args).await;
 		collection
 	}
 
@@ -243,7 +243,7 @@ impl CollectionOwner {
 				to,
 				Value::unnamed_composite([]),
 			];
-			self.dispatch("mint", args).await;
+			self.dispatch_successfully("mint", args).await;
 		}
 	}
 
@@ -251,11 +251,16 @@ impl CollectionOwner {
 	/// the collection. Runs whatever the test did, so each step only logs.
 	async fn clean_up(&self, collection: u32, keys: &[ItemKey]) {
 		for instance in self.instances_held_by(keys).await {
-			self.dispatch("force_burn", vec![Value::u128(instance.into())]).await;
+			self.dispatch_successfully("force_burn", vec![Value::u128(instance.into())])
+				.await;
 		}
-		self.dispatch("delete_item", vec![Value::u128(collection.into()), Value::u128(0)])
+		self.dispatch_successfully(
+			"delete_item",
+			vec![Value::u128(collection.into()), Value::u128(0)],
+		)
+		.await;
+		self.dispatch_successfully("delete_collection", vec![Value::u128(collection.into())])
 			.await;
-		self.dispatch("delete_collection", vec![Value::u128(collection.into())]).await;
 	}
 
 	async fn instances_held_by(&self, keys: &[ItemKey]) -> Vec<u64> {
@@ -309,7 +314,7 @@ where
 		.unwrap_or_else(|_| panic!("timed out waiting for {what}"))
 }
 
-async fn available(ledger: &NftLedger, purse: PurseId) -> BTreeSet<ItemKey> {
+async fn available_keys(ledger: &NftLedger, purse: PurseId) -> BTreeSet<ItemKey> {
 	let page = PageRequest { index: 0, size: NonZeroU32::new(100).unwrap() };
 	ledger
 		.available_items(purse, page)
@@ -362,7 +367,7 @@ async fn rebalance_round_trip(
 	owner.mint_into(collection, items).await;
 	let expected: BTreeSet<_> = items.iter().copied().collect();
 	wait_for("the minted items", || async {
-		(available(ledger, from).await == expected).then_some(())
+		(available_keys(ledger, from).await == expected).then_some(())
 	})
 	.await;
 
@@ -378,10 +383,10 @@ async fn rebalance_round_trip(
 
 	let landed: BTreeSet<_> = minted.iter().copied().collect();
 	wait_for("the transferred items", || async {
-		(available(ledger, to).await == landed).then_some(())
+		(available_keys(ledger, to).await == landed).then_some(())
 	})
 	.await;
-	assert_eq!(available(ledger, from).await, BTreeSet::new());
+	assert_eq!(available_keys(ledger, from).await, BTreeSet::new());
 	minted
 }
 
