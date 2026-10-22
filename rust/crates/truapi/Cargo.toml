@@ -193,6 +193,8 @@ wasm-bindgen-test = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "sync", "macros", "io-util", "time"] }
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "handshake"] }
 tempfile = { workspace = true }
+# Live chain tests reach a node over WebSocket.
+truapi-provider = { path = "../truapi-provider", default-features = false, features = ["ws"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dev-dependencies]
 socket2 = { workspace = true }
