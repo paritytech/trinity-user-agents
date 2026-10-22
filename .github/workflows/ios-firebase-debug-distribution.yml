@@ -36,6 +36,8 @@ on:
       - "rust/crates/truapi-macros/**"
       - "rust/crates/truapi-provider/**"
       - "rust/crates/uniffi-bindgen-cli/**"
+      - "rust/crates/truapi-verifiable/**"
+      - "js/packages/truapi/**"
       - ".github/workflows/ios-firebase-debug-distribution.yml"
       - ".github/actions/bootstrap-ios-core/**"
       - ".github/actions/mac-preflight/**"
