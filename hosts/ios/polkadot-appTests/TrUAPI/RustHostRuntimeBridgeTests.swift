@@ -29,12 +29,12 @@ private func makeHostBridge(
         coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeHostDefaults()),
         chainConnections: chainConnections,
         confirmationPresenter: confirmationPresenter,
-        currentInstallation: FixedCurrentInstallation(),
+        currentInstallation: AlwaysNewInstallation(),
         logger: Logger.shared
     )
 }
 
-private struct FixedCurrentInstallation: CoinageCurrentInstallationRepositoryProtocol {
+private struct AlwaysNewInstallation: CoinageCurrentInstallationRepositoryProtocol {
     func getOrCreateCurrent(
         newInstallation: @escaping @Sendable () throws -> CoinageInstallationId
     ) async throws -> CoinageInstallationId {
