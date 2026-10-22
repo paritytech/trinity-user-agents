@@ -227,11 +227,7 @@ function decodeProtocolError(
   return error.value.value;
 }
 
-/**
- * Tell a developer the host refused a call's version. The call fails as
- * unsupported either way; the newest version shows whether the app is older
- * than the product or the request was corrupt.
- */
+/** Warns that the host refused a call's version, naming the newest it accepts. */
 function reportRefusedVersion(
   requestId: string,
   {
