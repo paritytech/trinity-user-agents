@@ -204,6 +204,29 @@ impl Db {
 			.await
 	}
 
+	/// Runs `f` in one `BEGIN IMMEDIATE` transaction on the writer, like
+	/// [`Self::write`], and commits only when `f` returns `Ok(Ok(_))`. An
+	/// inner `Err` is a refusal: the transaction rolls back and the refusal is
+	/// returned as it is.
+	pub async fn write_unless_refused<T, E, F>(&self, f: F) -> Result<Result<T, E>, DbError>
+	where
+		F: FnOnce(&rusqlite::Transaction<'_>) -> Result<Result<T, E>, DbError> + Send + 'static,
+		T: Send + 'static,
+		E: Send + 'static,
+	{
+		let invalidation = self.invalidation.clone();
+		self.writer
+			.conn_mut_and_then(move |conn| {
+				let outcome = in_transaction_unless_refused(conn, f);
+				match outcome {
+					Ok(Ok(_)) => invalidation.publish(),
+					Ok(Err(_)) | Err(_) => invalidation.discard(),
+				}
+				outcome
+			})
+			.await
+	}
+
 	/// Runs `f` on a read-only connection that sees the last committed state.
 	pub async fn read<T, F>(&self, f: F) -> Result<T, DbError>
 	where
@@ -246,6 +269,21 @@ fn in_transaction<T>(
 	let value = f(&tx)?;
 	tx.commit()?;
 	Ok(value)
+}
+
+/// Runs `f` in a transaction that commits only when `f` returns `Ok(Ok(_))`
+/// and otherwise rolls back when it is dropped.
+fn in_transaction_unless_refused<T, E>(
+	conn: &mut rusqlite::Connection,
+	f: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<Result<T, E>, DbError>,
+) -> Result<Result<T, E>, DbError> {
+	let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+	let value = match f(&tx)? {
+		Ok(value) => value,
+		Err(refusal) => return Ok(Err(refusal)),
+	};
+	tx.commit()?;
+	Ok(Ok(value))
 }
 
 const BUSY_TIMEOUT: core::time::Duration = core::time::Duration::from_secs(5);
@@ -318,6 +356,34 @@ mod tests {
 
 		assert!(matches!(result, Err(DbError::Connection(_))));
 		assert_eq!(notes(&db), Vec::<String>::new());
+	}
+
+	#[test]
+	fn a_refused_write_leaves_nothing_behind_and_returns_the_refusal() {
+		// A domain hook refuses a registration after the ledger rows are
+		// written; the refusal must undo them and still reach the caller.
+		let db = block_on(Db::open(memory_config())).unwrap();
+
+		let result = block_on(db.write_unless_refused(|tx| {
+			tx.execute("INSERT INTO ledger (note) VALUES ('refused')", [])?;
+			Ok(Err::<(), _>("item in use"))
+		}));
+
+		assert_eq!(result.unwrap(), Err("item in use"));
+		assert_eq!(notes(&db), Vec::<String>::new());
+	}
+
+	#[test]
+	fn an_accepted_write_unless_refused_commits() {
+		let db = block_on(Db::open(memory_config())).unwrap();
+
+		let result = block_on(db.write_unless_refused(|tx| {
+			tx.execute("INSERT INTO ledger (note) VALUES ('kept')", [])?;
+			Ok(Ok::<_, &str>(()))
+		}));
+
+		assert_eq!(result.unwrap(), Ok(()));
+		assert_eq!(notes(&db), vec!["kept".to_owned()]);
 	}
 
 	#[test]

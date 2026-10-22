@@ -55,8 +55,9 @@ enum RequestedTransactions {
 pub struct EmptyRequest;
 
 /// Why a registration was not recorded. Nothing was written or broadcast.
+/// `E` is what the caller's hook refuses with.
 #[derive(Debug, thiserror::Error)]
-pub enum RegistrationError {
+pub enum RegistrationError<E = DbError> {
 	/// No oracle is registered for the domain, so nothing could decide its
 	/// transactions.
 	#[error("no durable domain {}: register an oracle for it first", .0.as_str())]
@@ -65,9 +66,12 @@ pub enum RegistrationError {
 	/// nothing could build or rebuild its transaction.
 	#[error("no submission policy {}: register it first", .0.as_str())]
 	UnknownPolicy(PolicyId),
-	/// The write failed or the caller's hook refused it.
+	/// The write failed.
 	#[error(transparent)]
 	Db(#[from] DbError),
+	/// The caller's hook refused the registration.
+	#[error("the registering domain refused: {0}")]
+	Hook(E),
 }
 
 impl RequestedTransactions {
@@ -164,25 +168,25 @@ impl DurableTxEngine {
 		self: &Arc<Self>,
 		request: DurableRequest,
 	) -> Result<Vec<DurableTxId>, RegistrationError> {
-		let (ids, ()) = self.execute_with(request, |_, _| Ok(())).await?;
+		let (ids, ()) = self.execute_with(request, |_, _| Ok::<_, DbError>(())).await?;
 		Ok(ids)
 	}
 
 	/// Records `request` and runs `on_register` with the new ids in the same
 	/// write, so the domain's own rows commit or roll back with the ledger's.
-	/// An error from `on_register` rolls everything back and broadcasts
-	/// nothing. The registration finishes even when the caller stops
-	/// waiting, because committed rows are useless without their broadcast.
-	pub async fn execute_with<T, F>(
+	/// An error from `on_register` rolls everything back, broadcasts nothing
+	/// and comes back as [`RegistrationError::Hook`]. The registration
+	/// finishes even when the caller stops waiting, because committed rows are
+	/// useless without their broadcast.
+	pub async fn execute_with<T, E, F>(
 		self: &Arc<Self>,
 		request: DurableRequest,
 		on_register: F,
-	) -> Result<(Vec<DurableTxId>, T), RegistrationError>
+	) -> Result<(Vec<DurableTxId>, T), RegistrationError<E>>
 	where
-		F: FnOnce(&rusqlite::Transaction<'_>, &[DurableTxId]) -> Result<T, DbError>
-			+ Send
-			+ 'static,
+		F: FnOnce(&rusqlite::Transaction<'_>, &[DurableTxId]) -> Result<T, E> + Send + 'static,
 		T: Send + 'static,
+		E: Send + 'static,
 	{
 		let genesis = self.registered_chain(&request.domain)?;
 		self.check_policies_registered(&request)?;
@@ -202,14 +206,17 @@ impl DurableTxEngine {
 	}
 
 	/// The genesis of the chain `domain` lives on, when it is registered.
-	fn registered_chain(&self, domain: &DomainId) -> Result<H256, RegistrationError> {
+	fn registered_chain<E>(&self, domain: &DomainId) -> Result<H256, RegistrationError<E>> {
 		self.chain_of(domain)
 			.ok_or_else(|| RegistrationError::UnknownDomain(domain.clone()))
 	}
 
 	/// Refuses a request naming a policy that is not registered, which
 	/// nothing could ever build.
-	fn check_policies_registered(&self, request: &DurableRequest) -> Result<(), RegistrationError> {
+	fn check_policies_registered<E>(
+		&self,
+		request: &DurableRequest,
+	) -> Result<(), RegistrationError<E>> {
 		let unknown = request
 			.named_plans()
 			.find(|plan| self.registry.submission_policy(&plan.policy).is_none());
@@ -220,20 +227,20 @@ impl DurableTxEngine {
 	}
 
 	/// Records the rows, then broadcasts what was committed.
-	async fn register<T, F>(
+	async fn register<T, E, F>(
 		self: Arc<Self>,
 		genesis: H256,
 		request: DurableRequest,
 		on_register: F,
-	) -> Result<(Vec<DurableTxId>, T), RegistrationError>
+	) -> Result<(Vec<DurableTxId>, T), RegistrationError<E>>
 	where
-		F: FnOnce(&rusqlite::Transaction<'_>, &[DurableTxId]) -> Result<T, DbError>
-			+ Send
-			+ 'static,
+		F: FnOnce(&rusqlite::Transaction<'_>, &[DurableTxId]) -> Result<T, E> + Send + 'static,
 		T: Send + 'static,
+		E: Send + 'static,
 	{
 		let submissions = request.transactions.presigned().to_vec();
-		let (ids, value, claims) = self.record(request, on_register).await?;
+		let recorded = self.record(request, on_register).await?;
+		let (ids, value, claims) = recorded.map_err(RegistrationError::Hook)?;
 		for (claim, DurableSubmission { extrinsic, .. }) in claims.into_iter().zip(submissions) {
 			spawn_watch(&self, Attempt::new(claim, genesis, &extrinsic), extrinsic.extrinsic);
 		}
@@ -243,33 +250,33 @@ impl DurableTxEngine {
 	/// Writes the rows and the hook's rows in one transaction, taking
 	/// ownership of each attempt inside it so a recovery pass never reaches
 	/// a committed row before its watch. Returns the claims, one per
-	/// presigned row in order. A rolled-back write gives them up again.
-	async fn record<T, F>(
+	/// presigned row in order, or the hook's refusal. A rolled-back write
+	/// gives the claims up again.
+	async fn record<T, E, F>(
 		&self,
 		request: DurableRequest,
 		on_register: F,
-	) -> Result<(Vec<DurableTxId>, T, Vec<OwnershipClaim>), DbError>
+	) -> Result<Result<(Vec<DurableTxId>, T, Vec<OwnershipClaim>), E>, DbError>
 	where
-		F: FnOnce(&rusqlite::Transaction<'_>, &[DurableTxId]) -> Result<T, DbError>
-			+ Send
-			+ 'static,
+		F: FnOnce(&rusqlite::Transaction<'_>, &[DurableTxId]) -> Result<T, E> + Send + 'static,
 		T: Send + 'static,
+		E: Send + 'static,
 	{
 		let taken = Arc::new(Mutex::new(Vec::new()));
 		let (ownership, claims) = (self.ownership.clone(), taken.clone());
 		let written = self
 			.db
-			.write(move |tx| {
+			.write_unless_refused(move |tx| {
 				let ids = request.insert_all(tx)?;
 				claims.lock().extend(claim_presigned(&ownership, &ids, &request));
-				Ok((ids.clone(), on_register(tx, &ids)?))
+				Ok(on_register(tx, &ids).map(|value| (ids, value)))
 			})
 			.await;
 		let claims = core::mem::take(&mut *taken.lock());
-		if written.is_err() {
+		if !matches!(written, Ok(Ok(_))) {
 			claims.iter().for_each(|claim| self.ownership.release(*claim));
 		}
-		written.map(|(ids, value)| (ids, value, claims))
+		written.map(|recorded| recorded.map(|(ids, value)| (ids, value, claims)))
 	}
 }
 
@@ -298,6 +305,21 @@ mod tests {
 		},
 		test_support::wait_until,
 	};
+
+	/// What a test domain refuses a registration with.
+	#[derive(Debug, thiserror::Error)]
+	enum DomainRefusal {
+		#[error("an item is already spent")]
+		ItemSpent,
+		#[error(transparent)]
+		Db(#[from] DbError),
+	}
+
+	impl From<rusqlite::Error> for DomainRefusal {
+		fn from(error: rusqlite::Error) -> Self {
+			Self::Db(error.into())
+		}
+	}
 
 	fn domain() -> DomainId {
 		DomainId::new("test")
@@ -372,7 +394,7 @@ mod tests {
 
 		let (_, owned_in_write) =
 			block_on(engine.execute_with(request(vec![extrinsic(1, 100, 64)]), move |_, ids| {
-				Ok(probe.ownership.is_owned(ids[0]))
+				Ok::<_, DbError>(probe.ownership.is_owned(ids[0]))
 			}))
 			.unwrap();
 
@@ -390,7 +412,7 @@ mod tests {
 			block_on(engine.execute_with(request(vec![extrinsic(1, 100, 64)]), |tx, ids| {
 				tx.execute_batch("CREATE TABLE locks (tx_id INTEGER NOT NULL)")?;
 				tx.execute("INSERT INTO locks (tx_id) VALUES (?1)", [ids[0].0])?;
-				Ok(ids.to_vec())
+				Ok::<_, DbError>(ids.to_vec())
 			}))
 			.unwrap();
 
@@ -413,9 +435,9 @@ mod tests {
 
 		let result = block_on(engine.execute_with(
 			request(vec![extrinsic(1, 100, 64), extrinsic(2, 100, 64)]),
-			|tx, _| -> Result<(), DbError> {
+			|tx, _| -> Result<(), DomainRefusal> {
 				tx.execute_batch("CREATE TABLE locks (tx_id INTEGER NOT NULL)")?;
-				Err(DbError::Connection("domain refused".into()))
+				Err(DomainRefusal::ItemSpent)
 			},
 		));
 
@@ -427,7 +449,7 @@ mod tests {
 			)?)
 		}))
 		.unwrap();
-		assert!(matches!(result, Err(RegistrationError::Db(_))));
+		assert!(matches!(result, Err(RegistrationError::Hook(DomainRefusal::ItemSpent))));
 		assert_eq!(block_on(engine.group(&domain(), &GroupId::new("op"))).unwrap(), vec![]);
 		assert_eq!(tables, 0);
 		assert_eq!(chain.state().submitted.len(), 0);
@@ -546,10 +568,10 @@ mod tests {
 		let request = scheduled_in_op(vec![test_plan(vec![1])]);
 
 		let result = block_on(engine.execute_with(request, |_, _| {
-			Err::<(), _>(DbError::Connection("locking the spent funds failed".into()))
+			Err::<(), _>(DomainRefusal::ItemSpent)
 		}));
 
-		assert!(matches!(result, Err(RegistrationError::Db(_))));
+		assert!(matches!(result, Err(RegistrationError::Hook(DomainRefusal::ItemSpent))));
 		assert_eq!(op_group(engine), vec![]);
 	}
 }
