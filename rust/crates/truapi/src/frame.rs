@@ -145,13 +145,11 @@ pub fn encode_cancelled_response() -> Vec<u8> {
 	Err::<(), CallError<()>>(CallError::Cancelled).encode()
 }
 
-/// Encode `Err(CallError::MalformedFrame { reason })` for a payload that did
-/// not decode.
+/// Encodes the answer to a payload that did not decode, as
+/// `Err(CallError::MalformedFrame { reason })`.
 ///
-/// Valid as any request's `Response` and any subscription's `Interrupt`
-/// without knowing the method's types, for the same reason as
-/// [`encode_cancelled_response`]: both legs are a `Result` whose `Ok` arm is
-/// never reached, and `MalformedFrame` carries only its reason.
+/// The bytes do not depend on the method's types, so they work as any
+/// request's response and any subscription's interrupt.
 pub fn encode_malformed_frame_error(reason: String) -> Vec<u8> {
 	Err::<(), CallError<()>>(CallError::MalformedFrame { reason }).encode()
 }
