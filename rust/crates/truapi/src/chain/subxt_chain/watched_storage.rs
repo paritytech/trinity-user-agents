@@ -10,10 +10,10 @@
 //! drops those that did not change. A full answer gives an absent entry as an
 //! explicit null, and a key it leaves out is an error rather than an absent
 //! value. `System.LastRuntimeUpgrade` is watched with the keys, and metadata
-//! is fetched only when it changes. When the node ends a subscription, the
-//! watch opens a new one, on a new connection if the old one was closed. After
-//! that it reports only the keys whose values changed while it was
-//! disconnected.
+//! is fetched only when it changes. When the node ends a subscription, or a
+//! notification cannot be read, the watch opens a new one, on a new connection
+//! if the old one was closed. After that it reports only the keys whose values
+//! differ from the last ones it reported.
 
 use core::{
 	future::{Future, ready},
