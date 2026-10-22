@@ -9,15 +9,20 @@ mod served;
 #[cfg(target_arch = "wasm32")]
 mod browser {
 	use truapi::{
-		CallContext, CallError,
+		CallContext, CallError, Subscription,
 		api::NftPurse,
 		versioned::nft_purse::{
 			HostNftPurseCreateItemsError, HostNftPurseCreateItemsRequest,
 			HostNftPurseCreateItemsResponse, HostNftPurseCreatePurseError,
 			HostNftPurseCreatePurseRequest, HostNftPurseCreatePurseResponse,
 			HostNftPurseListPursesError, HostNftPurseListPursesRequest,
-			HostNftPurseListPursesResponse, HostNftPurseQueryPurseError,
-			HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
+			HostNftPurseListPursesResponse, HostNftPurseObserveOperationStatusError,
+			HostNftPurseObserveOperationStatusItem, HostNftPurseObserveOperationStatusRequest,
+			HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest,
+			HostNftPurseQueryPurseResponse, HostNftPurseRebalancePurseError,
+			HostNftPurseRebalancePurseRequest, HostNftPurseRebalancePurseResponse,
+			HostNftPurseTransferItemError, HostNftPurseTransferItemRequest,
+			HostNftPurseTransferItemResponse,
 		},
 	};
 
@@ -55,6 +60,34 @@ mod browser {
 			_request: HostNftPurseListPursesRequest,
 		) -> Result<HostNftPurseListPursesResponse, CallError<HostNftPurseListPursesError>> {
 			Err(CallError::Unsupported)
+		}
+
+		async fn rebalance_purse(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseRebalancePurseRequest,
+		) -> Result<HostNftPurseRebalancePurseResponse, CallError<HostNftPurseRebalancePurseError>>
+		{
+			Err(CallError::Unsupported)
+		}
+
+		async fn transfer_item(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseTransferItemRequest,
+		) -> Result<HostNftPurseTransferItemResponse, CallError<HostNftPurseTransferItemError>> {
+			Err(CallError::Unsupported)
+		}
+
+		async fn observe_operation_status(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseObserveOperationStatusRequest,
+		) -> Subscription<
+			HostNftPurseObserveOperationStatusItem,
+			CallError<HostNftPurseObserveOperationStatusError>,
+		> {
+			Subscription::interrupted(CallError::Unsupported)
 		}
 	}
 }

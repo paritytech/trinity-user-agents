@@ -15,7 +15,8 @@ rust/crates/
                          scheduled ones through their submission policies; its `nft`
                          (purse records, item keys, and the tracker of what they hold on
                          Asset Hub) and `nft_purse` (the NFT purses RFC over them)
-                         modules keep NFT purses in the same database
+                         modules keep NFT purses in the same database, and move items
+                         as scheduled durable transactions
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher
   truapi-macros/         #[wire_trait(id = N)] and #[wire(id = N)] proc-macros;
                          #[sso_service] for truapi's inter-host SSO protocol
