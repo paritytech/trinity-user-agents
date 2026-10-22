@@ -67,3 +67,37 @@ fn a_move_acts_as_the_nft_it_names_without_fee_or_nonce() {
 	assert_eq!(value_of("CheckNonce"), [0]);
 	assert_eq!(value_of("ChargeAssetTxPayment"), [0, 0]);
 }
+
+/// The pallet's `InvalidTransaction::Custom` code for a source key that holds
+/// no NFT.
+const NO_NFT: u8 = 2;
+
+/// The node decodes a signed transfer and checks its signature before it
+/// looks for the NFT, so a transfer from a key that holds nothing failing
+/// with the pallet's "no NFT" code proves the encoding and the signature.
+/// Run with `cargo test -p truapi --lib nft::scarcity::transfer -- --ignored`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a live Asset Hub"]
+async fn the_live_node_refuses_a_transfer_from_an_empty_key_as_holding_no_nft() {
+	use subxt::tx::{TransactionInvalid, ValidationResult};
+
+	use crate::chain::{TxValidator, WatchedStorage, live_asset_hub, live_asset_hub_genesis};
+
+	let genesis = live_asset_hub_genesis();
+	let chain = live_asset_hub(genesis);
+	let client = chain.client_at_finalized_head(genesis).await.expect("finalized client");
+	let birth = HashAndNumber { hash: client.block_hash(), number: client.block_number() };
+	let runtime = TransferRuntime {
+		genesis,
+		spec_version: client.spec_version(),
+		transaction_version: client.transaction_version(),
+		metadata: client.metadata(),
+	};
+	let mortality = Mortality::new(birth, 64).expect("a 64-block era");
+
+	let signed = sign_transfer(&test_signer(), &runtime, &test_transfer(), mortality).unwrap();
+	let validated = chain.validate(genesis, &signed.extrinsic).await.expect("node validates");
+
+	let no_nft = ValidationResult::Invalid(TransactionInvalid::Custom(NO_NFT));
+	assert_eq!(format!("{validated:?}"), format!("{no_nft:?}"));
+}
