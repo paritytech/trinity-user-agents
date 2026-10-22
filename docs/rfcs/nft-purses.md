@@ -19,8 +19,8 @@ This RFC defines a host API for keeping NFT items in firewalled purses. It is ba
 
 - querying and rebalancing a purse return individual item public keys;
 - a cheque carries its item public keys in a cleartext part;
-- every chain-exposed operation takes an idempotency key, and repeating a call returns the status of the operation
-  already started, so a product can recover the outcome after a restart;
+- every chain-exposed operation is registered under an idempotency key and observed by that key, so a product can
+  recover the outcome after a restart;
 - the host's obligations when restoring purses from a backup are defined.
 
 ## Motivation
@@ -46,8 +46,8 @@ RFC must state what the host is and is not obliged to recover.
 
 - Purse queries are paginated, since one purse can hold hundreds of items.
 - `list_purses` lets a product rediscover its purses after a host reinstall.
-- Chain-exposed operations are asynchronous and idempotent. Repeating a call with the same idempotency key returns the
-  status of the existing operation.
+- Chain-exposed operations are asynchronous. A call only registers the operation under an idempotency key;
+  `observe_operation_status` follows it. Registering a key twice fails.
 - The host tracks which items are in use, either by an active operation or because they were handed off in a cheque,
   and refuses to consume them again. `revoke_cheque` releases items handed off in a cheque.
 - Products cannot sign arbitrary transactions with purse items, because the host could then not track item status.
@@ -192,35 +192,55 @@ enum ListPursesError {
 
 ```rust
 // Consume `keys` from `from` and mint new keys in `to`.
-// The unordered set of `keys` together with `to` is the idempotency key: a repeated
-// call with the same set and `to` returns the status of the operation already started.
-// A call whose `keys` overlap an active operation's keys with a different set or a
-// different `to` fails with ItemUnavailable.
+// Returns once the operation is registered; follow it with `observe_operation_status(key)`.
 // The items are InUse while the operation is active.
 // Asks for a confirmation if owner(from) != PurseOwner::Product(self).
 fn rebalance_purse(
     from: PurseId,
     to: PurseId,
     keys: Vec<ItemKey>,
-) -> Result<Subscription<Status>, RebalancePurseError>;
+    key: IdempotencyKey,
+) -> Result<(), RebalancePurseError>;
 
 enum RebalancePurseError {
     Denied,
     // `from` or `to` was not found
     PurseNotFound,
+    // `keys` is empty
+    NoItems,
     // Some item in `keys` was not found in `from`
     ItemNotFound,
     // Some item in `keys` is not Idle
     ItemUnavailable,
+    // An operation with `key` is already registered
+    OperationExists,
     Other(GenericError),
 }
 ```
 
 #### Operation status
 
-`Status` is shared by `rebalance_purse`, `deposit`, `refund` and `transfer_item`.
+`rebalance_purse`, `deposit`, `refund` and `transfer_item` register an operation under an idempotency key, and
+`observe_operation_status` follows any of them.
 
 ```rust
+// Chosen by the product, scoped to it: another product's key is never visible.
+// A product can derive it from the call's inputs, for example
+// blake2_256(SCALE((from, to, sorted keys))) for a rebalance.
+type IdempotencyKey = [u8; 32];
+
+// Emits the status of the operation registered under `key`, and ends after a terminal value.
+// An operation stays observable after it ends.
+fn observe_operation_status(
+    key: IdempotencyKey,
+) -> Result<Subscription<Status>, ObserveOperationStatusError>;
+
+enum ObserveOperationStatusError {
+    // No operation of this product is registered under `key`
+    OperationNotFound,
+    Other(GenericError),
+}
+
 enum Status {
     // Emitted while neither an optimistic success nor a terminal failure is observed.
     InProgress,
@@ -257,9 +277,10 @@ struct ClearedItem {
 }
 
 struct ClearingReference {
-    // Trie root of `leaves`
+    // Binary Merkle root of the SCALE-encoded `leaves`, as `binary_merkle_tree::merkle_root`
+    // computes it with Blake2-256. A verifier must check the leaf count.
     root: [u8; 32],
-    // Source item and the transaction that moved it
+    // Source item and the transaction that moved it, sorted by item
     leaves: Vec<(ItemKey, TransactionHash)>,
 }
 
@@ -402,14 +423,14 @@ enum RevokeChequeError {
 
 ```rust
 // Receiver side: deposit a received cheque into `to`.
-// Cheque.id is the idempotency key: depositing the same cheque again is a no-op
-// and returns the status of the existing deposit.
+// Cheque.id is the idempotency key: depositing the same cheque again fails with OperationExists.
 // Depositing a cheque with the same id but different content is undefined behavior.
 // Needs no grant or confirmation: receiving only adds items to a purse.
-fn deposit(what: Cheque, to: PurseId) -> Result<Subscription<Status>, DepositError>;
+fn deposit(what: Cheque, to: PurseId) -> Result<(), DepositError>;
 
 enum DepositError {
     PurseNotFound,
+    OperationExists,
     // Cheque.items is empty
     EmptyCheque,
     // Cheque.encrypted_secrets cannot be decoded, or the decoded secrets do not match `items`
@@ -422,17 +443,17 @@ enum DepositError {
 
 ```rust
 // Receiver side: return the items of a previously deposited cheque to their original keys.
-// The cheque id is the idempotency key: refunding the same cheque again is a no-op
-// and returns the status of the existing refund.
+// The cheque id is the idempotency key: refunding the same cheque again fails with OperationExists.
 // Minted items that are no longer Idle are reported in Status::Incomplete.failed.
 // Denied if `what` was not deposited by this product.
 // Asks for a confirmation if the purse it was deposited into is not owned by PurseOwner::Product(self).
-fn refund(what: ChequeId) -> Result<Subscription<Status>, RefundError>;
+fn refund(what: ChequeId) -> Result<(), RefundError>;
 
 enum RefundError {
     // The cheque was not deposited by this product
     Denied,
     ChequeNotFound,
+    OperationExists,
     Other(GenericError),
 }
 ```
@@ -441,14 +462,12 @@ enum RefundError {
 
 ```rust
 // Transfer a purse item to `destination`.
-// (item, destination) is the idempotency key: a repeated call with the same pair
-// returns the status of the existing operation. A call with the same item and a
-// different destination fails with ItemUnavailable.
 // Asks for a confirmation if owner(purse(item)) != PurseOwner::Product(self).
 fn transfer_item(
     item: ItemKey,
     destination: ItemKey,
-) -> Result<Subscription<Status>, TransferItemError>;
+    key: IdempotencyKey,
+) -> Result<(), TransferItemError>;
 
 enum TransferItemError {
     Denied,
@@ -456,6 +475,8 @@ enum TransferItemError {
     ItemNotFound,
     // The item is not Idle
     ItemUnavailable,
+    // An operation with `key` is already registered
+    OperationExists,
     Other(GenericError),
 }
 ```
