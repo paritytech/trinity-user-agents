@@ -30,7 +30,9 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.Ow
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinAmountBreakdownUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageAssetValueUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageBalanceConverterUseCase
+import io.paritytech.polkadotapp.feature_coinage_impl.TEST_INSTALLATION
 import io.paritytech.polkadotapp.feature_coinage_impl.data.repository.VoucherRepository
+import io.paritytech.polkadotapp.feature_coinage_impl.domain.common.HeldInstallationGate
 import io.paritytech.polkadotapp.feature_coinage_impl.testKey
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_transactions.api.domain.durable.DurableTxStatus
@@ -45,6 +47,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
@@ -78,6 +82,7 @@ class RealOnboardingUseCaseTest {
     private val tokenBalanceTypeRegistry: TokenBalanceTypeRegistry = mockk()
     private val submissionUseCase: CoinageOnboardingSubmissionUseCase = mockk()
     private val timeProvider: TimeProvider = mockk()
+    private val gate = HeldInstallationGate()
 
     private val useCase = RealOnboardingUseCase(
         chainAssetProvider = chainAssetProvider,
@@ -89,6 +94,7 @@ class RealOnboardingUseCaseTest {
         tokenBalanceTypeRegistry = tokenBalanceTypeRegistry,
         submissionUseCase = submissionUseCase,
         timeProvider = timeProvider,
+        currentInstallationProvider = gate,
     )
 
     private val groupId = CoinageOperationGroupId("group")
@@ -99,6 +105,7 @@ class RealOnboardingUseCaseTest {
 
     @Before
     fun openTheWindow() {
+        gate.release(TEST_INSTALLATION)
         // A real Chain, not a bare mock: the loop renders the funding account as an address for the log,
         // and an unstubbed property there is swallowed by the balance flow's retry rather than surfacing.
         coEvery { chainAssetProvider.chain() } returns mockk {
@@ -388,6 +395,41 @@ class RealOnboardingUseCaseTest {
         givenAccountHolds(listOf(price(listOf(SMALL))))
 
         val reported = reportsOfCompleted()
+
+        assertEquals(CoinageTransferDetection.NotClaimed, reported.last())
+        assertNothingOnboarded()
+    }
+
+    /**
+     * Submitting allocates vouchers, and allocation waits for the installation backup. A window that closed
+     * during that wait is still closed: the account is not charged for an onboarding the caller wrote off.
+     */
+    @Test
+    fun `a window that closes while the backup is pending ends the onboarding unsubmitted`() = runTest {
+        val pendingBackup = HeldInstallationGate()
+        val onboarding = RealOnboardingUseCase(
+            chainAssetProvider = chainAssetProvider,
+            voucherRepository = voucherRepository,
+            transactionService = transactionService,
+            coinAmountBreakdownUseCase = breakdownUseCase,
+            balanceConverterUseCase = balanceConverterUseCase,
+            assetValueUseCase = assetValueUseCase,
+            tokenBalanceTypeRegistry = tokenBalanceTypeRegistry,
+            submissionUseCase = submissionUseCase,
+            timeProvider = timeProvider,
+            currentInstallationProvider = pendingBackup,
+        )
+        givenAmountBreaksInto(listOf(SMALL))
+        givenGroupReports(noEntries())
+        givenAccountHolds(listOf(price(listOf(SMALL))))
+        val reported = mutableListOf<CoinageTransferDetection>()
+        val run = launch { onboarding.onboardDurably(AMOUNT, signerSource(), groupId, RETRY_UNTIL).collect { reported += it } }
+        runCurrent()
+        assertNothingOnboarded()
+
+        every { timeProvider.now() } returns WINDOW_CLOSED
+        pendingBackup.release(TEST_INSTALLATION)
+        run.join()
 
         assertEquals(CoinageTransferDetection.NotClaimed, reported.last())
         assertNothingOnboarded()

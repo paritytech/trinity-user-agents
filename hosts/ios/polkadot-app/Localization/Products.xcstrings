@@ -1011,13 +1011,36 @@
         }
       }
     },
-    "product.tabs.accessibility.openApps": {
+    "product.tabs.accessibility.closeSearch": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Open apps, %lld"
+            "value": "Close search"
+          }
+        }
+      }
+    },
+    "product.tabs.accessibility.openApps": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Open app, %lld"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Open apps, %lld"
+                }
+              }
+            }
           }
         }
       }
@@ -1029,6 +1052,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "QR scanner"
+          }
+        }
+      }
+    },
+    "product.tabs.empty": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No open apps"
           }
         }
       }

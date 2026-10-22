@@ -8,6 +8,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import dagger.hilt.android.testing.HiltAndroidTest
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import uniffi.truapi.HostRuntimeConfig
@@ -44,8 +45,9 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.createTempDirectory
 
+@HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
-class MediaPermissionIntegrationTest {
+class MediaPermissionIntegrationTest : BaseIntegrationTest() {
     @Test
     fun rustConsentPrecedesNativeCaptureAndAllowOnceIsConsumedOnce() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()

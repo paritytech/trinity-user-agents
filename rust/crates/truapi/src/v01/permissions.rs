@@ -15,6 +15,7 @@ use parity_scale_codec::{Decode, Encode};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, Display)]
 #[allow(clippy::upper_case_acronyms)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(test, derive(strum::VariantArray))]
 pub enum HostDevicePermissionRequest {
 	/// Showing system notifications.
 	#[display("notifications")]

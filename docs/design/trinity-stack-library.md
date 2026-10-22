@@ -32,7 +32,8 @@ In:
 - Encode and decode pointer links, and tell whether two pointers name the same stack.
 - Decide what a reader does with a fetched descriptor, given what it stored.
 - Check a spec's bytes against `sha256`, and a light spec against its chain's `genesisHash`.
-- Sign, render a model, track `sequence` across publishes, links and QR codes.
+- Sign, render a model, track `sequence` across publishes, and encode links. Drawing a link's QR code is left to the
+  consumer.
 - `truapi-host stack` commands around all of it, the vectors and a JSON Schema.
 
 Out:
@@ -85,12 +86,13 @@ It also reports a new generation, so the caller drops its chain caches, and whet
 ## The package
 
 The package loads the wasm once at import, so its API is synchronous: Node and Bun read the file, browsers fetch it next
-to the module. Descriptors cross the boundary as JSON, and errors as a `TrinityStackError` with the rule's `code`.
+to the module. Values cross the boundary as plain objects of the crate's own types, whose TypeScript declarations tsify
+generates, and errors as a `TrinityStackError` with the rule's `code`.
 
-- **Signing and QR codes** run in the crate too. That keeps one Ed25519 implementation and adds no JavaScript
-  dependency.
-- **`publish`** renders a model (a descriptor without `$v`, `sequence` and `generation`) and owns `sequence`. It keeps
-  `PublishState { sequence, contentHash }`, leaves `sequence` alone when the content hash is unchanged, and otherwise
+- **Signing** runs in the crate too. That keeps one Ed25519 implementation and adds no JavaScript dependency.
+- **`publish`** renders a model (a descriptor without `$v`, `sequence` and `generation`) and owns `sequence`, through the
+  crate's `render`, which every publisher calls: this package, `truapi-host stack publish` and services such as
+  testenv-manager. It keeps `PublishState { sequence, contentHash }`, leaves `sequence` alone when the content hash is unchanged, and otherwise
   raises it to the larger of the last value plus one and the time in seconds. With no state it uses the time, as the RFC
   says the CLI defaults to. `generation` is part of the content, so a new generation always raises `sequence`. Two
   publishes in the same second with no state get the same `sequence`, so an operator that publishes more often keeps the
@@ -133,7 +135,7 @@ too. `schema/trinity-stack.v1.schema.json` describes the shape; rules that span 
 
 - **Where it lives.** This repository keeps the crate next to its first reader, the core. A separate repository would
   suit operators better if the core's release cadence gets in the way.
-- **wasm size.** The bundle is about 550 KiB before `wasm-opt`. Fine for tools; a page that only reads stacks may want a
-  build without signing and QR codes.
+- **wasm size.** The bundle is about 540 KiB before `wasm-opt`. Fine for tools; a page that only reads stacks may want a
+  build without signing.
 - **Light-spec building.** Appendix A of the RFC plans to build light specs from full specs. That needs a node, so it is
   not part of the CLI.

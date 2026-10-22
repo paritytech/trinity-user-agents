@@ -22,7 +22,7 @@ final class AssetDetailsWireframe: AssetDetailsWireframeProtocol {
     }
 
     func showProduct(page: ProductPage) {
-        moduleNavigator.openProduct(page: page)
+        moduleNavigator.presentProduct(page: page)
     }
 
     func showTransfer(from view: ControllerBackedProtocol?, chainAsset: ChainAsset) {

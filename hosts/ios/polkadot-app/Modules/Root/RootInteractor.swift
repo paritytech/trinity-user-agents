@@ -44,7 +44,7 @@ final class RootInteractor {
     }
 
     private static let requiredChainIds: Set<ChainModel.Id> = [
-        AppConfig.Chains.usernameChain,
+        AppConfig.Chains.peopleChain,
         AppConfig.Chains.bulletInChain,
         AppConfig.Chains.assethubChain
     ]
