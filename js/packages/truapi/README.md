@@ -192,7 +192,7 @@ A host that predates the `Cancel` leg drops the frame with no reply, and the cal
 
 The pair `(255, 255)` is reserved for method-independent protocol errors. When a peer rejects an unknown API message with that frame, requests resolve as `CallError.Unsupported` and subscriptions terminate with an `UnsupportedMessageError` cause carrying the unsupported `(trait, method)` pair.
 
-A host also sends this frame when it knows the method but not the request's version, for example when a product is built against a newer protocol than the app. The call then fails the same way as for an unknown method: a request resolves as `CallError.Unsupported`, and a subscription terminates with `UnsupportedMessageError`.
+The host also uses this frame to reject a request in a version it doesn't know. The product sees the same errors as for an unknown method.
 
 ## Generated files
 
