@@ -699,10 +699,7 @@ mod tests {
 
 		assert_eq!(
 			read(&db, move |conn| group(conn, &domain(), &group_id)),
-			vec![
-				pending_presigned(first, 1),
-				pending_presigned(second, 2),
-			]
+			vec![pending_presigned(first, 1), pending_presigned(second, 2)]
 		);
 	}
 

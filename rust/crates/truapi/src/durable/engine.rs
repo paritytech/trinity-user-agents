@@ -168,10 +168,7 @@ mod tests {
 		let mut group = engine.observe_group(&domain(), &GroupId::new("op"));
 
 		assert_eq!(block_on(status.next()).unwrap().unwrap(), Some(DurableTxStatus::Pending));
-		assert_eq!(
-			block_on(group.next()).unwrap().unwrap(),
-			vec![pending_presigned(id, 1)]
-		);
+		assert_eq!(block_on(group.next()).unwrap().unwrap(), vec![pending_presigned(id, 1)]);
 		assert_eq!(block_on(engine.status(id)).unwrap(), Some(DurableTxStatus::Pending));
 		assert_eq!(block_on(engine.status(DurableTxId(99))).unwrap(), None);
 	}
