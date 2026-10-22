@@ -1,7 +1,9 @@
 /**
  * A product worker for the browser test: it creates one room, posts a text
  * and a counter card, draws the card with an image from its own archive,
- * counts button presses, and answers what the user types. It reaches the host
+ * counts button presses, and answers what the user types. It also posts rich
+ * text with an inline image, a set of buttons it answers when pressed, a file
+ * link, and its own reactions to its first message, one placed and removed. It reaches the host
  * only through TrUAPI, and makes no other request. What it saw is kept on
  * `window.__fixture` for the test to read.
  */
@@ -19,6 +21,9 @@ interface Seen {
   posted: string[];
   actions: string[];
   messages: string[];
+  /** The id of the message with buttons, and the presses on them, as `messageId:actionId`. */
+  buttons: string | null;
+  triggered: string[];
   errors: string[];
 }
 
@@ -28,6 +33,8 @@ const seen: Seen = {
   posted: [],
   actions: [],
   messages: [],
+  buttons: null,
+  triggered: [],
   errors: [],
 };
 (window as unknown as { __fixture: Seen }).__fixture = seen;
@@ -96,6 +103,12 @@ client.renderer.actionSubscribe().subscribe({
 client.chat.actionSubscribe().subscribe({
   next(item) {
     const payload = item.payload;
+    if (payload.tag === "ActionTriggered") {
+      const { messageId, actionId } = payload.value;
+      seen.triggered.push(`${messageId}:${actionId}`);
+      void post({ tag: "Text", value: { text: `chose: ${actionId}` } });
+      return;
+    }
     if (payload.tag !== "MessagePosted" || payload.value.tag !== "Text") return;
     seen.messages.push(payload.value.value.text);
     void post({
@@ -108,10 +121,14 @@ client.chat.actionSubscribe().subscribe({
 async function post(
   payload: Parameters<typeof client.chat.postMessage>[0]["payload"],
   alt?: string,
-): Promise<void> {
+): Promise<string | null> {
   const result = await client.chat.postMessage({ roomId: ROOM, payload, alt });
-  if (result.isOk()) seen.posted.push(result.value.messageId);
-  else seen.errors.push(`post: ${JSON.stringify(result.error)}`);
+  if (result.isOk()) {
+    seen.posted.push(result.value.messageId);
+    return result.value.messageId;
+  }
+  seen.errors.push(`post ${payload.tag}: ${JSON.stringify(result.error)}`);
+  return null;
 }
 
 const bot = await client.chat.registerBot({
@@ -131,7 +148,10 @@ if (room.isErr()) {
 } else {
   seen.room = "created";
   await client.chat.setRoomFooter({ roomId: ROOM, footer: "TextInput" });
-  await post({ tag: "Text", value: { text: "hello from the fixture" } });
+  const hello = await post({
+    tag: "Text",
+    value: { text: "hello from the fixture" },
+  });
   await post(
     {
       tag: "Custom",
@@ -139,4 +159,38 @@ if (room.isErr()) {
     },
     "A counter",
   );
+  await post({
+    tag: "RichText",
+    value: { text: "<i>rich</i> text", media: [{ url: ICON }] },
+  });
+  seen.buttons = await post({
+    tag: "Actions",
+    value: {
+      text: "Play again?",
+      actions: [
+        { actionId: "yes", title: "Yes" },
+        { actionId: "no", title: "No" },
+      ],
+      layout: "Grid",
+    },
+  });
+  await post({
+    tag: "File",
+    value: {
+      url: "https://files.invalid/rules.pdf",
+      fileName: "rules.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 1_536n,
+      text: "The rules",
+    },
+  });
+  // 👍 stays; 🎉 is placed and then removed.
+  const reactions = [
+    ["Reaction", "👍"],
+    ["Reaction", "🎉"],
+    ["ReactionRemoved", "🎉"],
+  ] as const;
+  if (hello !== null)
+    for (const [tag, emoji] of reactions)
+      await post({ tag, value: { messageId: hello, emoji } });
 }

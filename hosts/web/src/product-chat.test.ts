@@ -102,12 +102,13 @@ describe("product chat", () => {
       name: "Lobby",
       icon: ICON,
     });
+    // A reaction names one of the room's messages; a made-up id is refused.
     await expect(
       platform.postChatMessage(worker("game.paseo"), {
         roomId: "lobby",
         payload: { tag: "Reaction", value: { messageId: "m", emoji: "+" } },
       }),
-    ).rejects.toThrow("does not show Reaction messages");
+    ).rejects.toThrow("There is no message m in room lobby.");
     // A room is the product's own: another product cannot post into it.
     await expect(
       platform.postChatMessage(worker("other.paseo"), {
@@ -178,5 +179,111 @@ describe("product chat", () => {
     const kept = chat.messages("game.paseo", "lobby");
     expect(kept.length).toBe(ROOM_MESSAGE_LIMIT);
     expect(kept[0].content).toEqual({ tag: "Text", text: "5" });
+  });
+
+  test("keeps rich text, action buttons and file links as the product sent them", async () => {
+    const { chat } = signedIn();
+    const game = worker("game.paseo");
+    await chat.platform.createChatRoom(game, {
+      roomId: "lobby",
+      name: "Lobby",
+      icon: ICON,
+    });
+    await chat.platform.postChatMessage(game, {
+      roomId: "lobby",
+      payload: {
+        tag: "RichText",
+        value: { text: "Look", media: [{ url: ICON }] },
+      },
+    });
+    await chat.platform.postChatMessage(game, {
+      roomId: "lobby",
+      payload: {
+        tag: "Actions",
+        value: {
+          text: "Play again?",
+          actions: [
+            { actionId: "yes", title: "Yes" },
+            { actionId: "no", title: "No" },
+          ],
+          layout: "Grid",
+        },
+      },
+    });
+    await chat.platform.postChatMessage(game, {
+      roomId: "lobby",
+      payload: {
+        tag: "File",
+        value: {
+          url: "https://files.invalid/rules.pdf",
+          fileName: "rules.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 1_536n,
+        },
+      },
+    });
+    expect(
+      chat.messages("game.paseo", "lobby").map((message) => message.content),
+    ).toEqual([
+      { tag: "RichText", text: "Look", media: [ICON] },
+      {
+        tag: "Actions",
+        text: "Play again?",
+        actions: [
+          { actionId: "yes", title: "Yes" },
+          { actionId: "no", title: "No" },
+        ],
+        layout: "Grid",
+      },
+      {
+        tag: "File",
+        url: "https://files.invalid/rules.pdf",
+        fileName: "rules.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 1536,
+        text: null,
+      },
+    ]);
+  });
+
+  test("places and removes the product's reactions on its own messages, once per emoji", async () => {
+    const { chat, storage } = signedIn();
+    const game = worker("game.paseo");
+    await chat.platform.createChatRoom(game, {
+      roomId: "lobby",
+      name: "Lobby",
+      icon: ICON,
+    });
+    const { messageId } = await chat.platform.postChatMessage(game, {
+      roomId: "lobby",
+      payload: { tag: "Text", value: { text: "gg" } },
+    });
+    const react = (tag: "Reaction" | "ReactionRemoved", emoji: string) =>
+      chat.platform.postChatMessage(game, {
+        roomId: "lobby",
+        payload: { tag, value: { messageId, emoji } },
+      });
+    await react("Reaction", "👍");
+    await react("Reaction", "🎉");
+    await react("Reaction", "👍");
+    await react("ReactionRemoved", "🎉");
+    await react("ReactionRemoved", "🔥");
+    const [message] = chat.messages("game.paseo", "lobby");
+    // A reaction is not a message of its own.
+    expect(chat.messages("game.paseo", "lobby").length).toBe(1);
+    expect(message.reactions).toEqual(["👍"]);
+    // Another product cannot react in this product's room.
+    await expect(
+      chat.platform.postChatMessage(worker("other.paseo"), {
+        roomId: "lobby",
+        payload: { tag: "Reaction", value: { messageId, emoji: "👎" } },
+      }),
+    ).rejects.toThrow();
+    // Kept with the room, so it is there after a reload.
+    const reloaded = new ProductChat(storage, () => 1_000);
+    reloaded.setScope(productChatKey("paseo", "w1"));
+    expect(reloaded.messages("game.paseo", "lobby")[0].reactions).toEqual([
+      "👍",
+    ]);
   });
 });

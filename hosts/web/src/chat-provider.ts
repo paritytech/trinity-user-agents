@@ -44,6 +44,12 @@ export interface ChatProvider {
   composer(conversationId: string): Composer;
   /** Send text. The provider delivers it and reports the message through an event. */
   send(conversationId: string, text: string): Promise<void>;
+  /** The user pressed one of an `Actions` message's buttons. */
+  triggerAction?(
+    conversationId: string,
+    messageId: string,
+    actionId: string,
+  ): Promise<void>;
   /** Send a failed message again, as the same message. */
   retry?(conversationId: string, messageId: string): Promise<void>;
   /**
@@ -118,12 +124,38 @@ export type MessageStatus =
 export type MessageContent =
   | { tag: "Text"; text: string; label?: string }
   | { tag: "System"; text: string }
+  /** Text and media. Each media entry is an `https` URL or an inline raster image. */
+  | { tag: "RichText"; text: string | null; media: readonly string[] }
+  /** Buttons the host draws. A press goes to {@link ChatProvider.triggerAction}. */
+  | {
+      tag: "Actions";
+      text: string | null;
+      actions: readonly { actionId: string; title: string }[];
+      layout: "Column" | "Grid";
+    }
+  /** A link to a file. Its name, type and size are the sender's, not checked. */
+  | {
+      tag: "File";
+      url: string;
+      fileName: string;
+      mimeType: string;
+      sizeBytes: number;
+      text: string | null;
+    }
   | {
       tag: "Custom";
       messageType: string;
       payload: HexString;
       alt: string | null;
     };
+
+/** The reactions on a message, one entry per emoji, as RFC 0002 aggregates them. */
+export interface MessageReaction {
+  emoji: string;
+  count: number;
+  /** Whether the user is among those who reacted. */
+  self: boolean;
+}
 
 export interface ChatMessage {
   /** Unique within its conversation, and stable: a change to a message keeps its id. */
@@ -135,6 +167,7 @@ export interface ChatMessage {
   /** Why the message failed, when it did. */
   problem?: string;
   content: MessageContent;
+  reactions?: readonly MessageReaction[];
 }
 
 export interface TimelinePage {

@@ -24,6 +24,8 @@ import { renderTree } from "./product-render.js";
 interface Row {
   message: ChatMessage;
   element: HTMLElement;
+  /** Where the message's reactions are drawn, when it can have them. */
+  reactions: HTMLElement | null;
   /** Ends the message's render stream, if it has one. */
   stop(): void;
 }
@@ -98,6 +100,94 @@ const STATUS_MARK: Record<ChatMessage["status"], string> = {
   failed: " · failed",
   received: "",
 };
+
+/** Image sources a message may show: an `https` URL or an inline raster image, as the core screens them. */
+const IMAGE_SOURCE =
+  /^(?:https:\/\/|data:image\/(?:png|jpeg|gif|webp);base64,)/;
+
+/** One media entry of a rich text message, shown as an image when its source is one this host shows. */
+function media(url: string): HTMLElement {
+  if (!IMAGE_SOURCE.test(url))
+    return el("span", "chat-media-note", "Media this host does not show");
+  const image = el("img", "chat-media");
+  image.src = url;
+  image.alt = "";
+  image.loading = "lazy";
+  image.referrerPolicy = "no-referrer";
+  image.addEventListener("error", () =>
+    image.replaceWith(
+      el("span", "chat-media-note", "This media could not be shown"),
+    ),
+  );
+  return image;
+}
+
+const SIZE_UNITS = ["B", "KB", "MB", "GB", "TB"];
+
+/** A byte count for people, such as `1.4 MB`. */
+export function formatSize(bytes: number): string {
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < SIZE_UNITS.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${unit === 0 ? value : value.toFixed(1)} ${SIZE_UNITS[unit]}`;
+}
+
+/**
+ * A file message: its name, type, size and caption, as the sender gave them,
+ * and a link that opens in a new tab with no referrer. Only an `https` file
+ * is a link; this host fetches nothing itself.
+ */
+function fileLink(
+  content: Extract<ChatMessage["content"], { tag: "File" }>,
+): HTMLElement {
+  const opens = content.url.startsWith("https://");
+  const card = opens ? el("a", "chat-file") : el("div", "chat-file");
+  if (card instanceof HTMLAnchorElement) {
+    card.href = content.url;
+    card.target = "_blank";
+    card.rel = "noopener noreferrer";
+    card.referrerPolicy = "no-referrer";
+  }
+  card.append(
+    el("span", "chat-file-name", content.fileName),
+    el(
+      "span",
+      "chat-file-meta",
+      `${content.mimeType} · ${formatSize(content.sizeBytes)}`,
+    ),
+  );
+  if (content.text !== null)
+    card.append(el("span", "chat-file-text", content.text));
+  if (!opens)
+    card.append(
+      el("span", "chat-file-meta", "This host opens only https links"),
+    );
+  return card;
+}
+
+/** Draw a message's reactions, one chip per emoji with its count. */
+function drawReactions(
+  container: HTMLElement,
+  reactions: ChatMessage["reactions"],
+): void {
+  container.hidden = reactions === undefined || reactions.length === 0;
+  container.replaceChildren(
+    ...(reactions ?? []).map((reaction) => {
+      const chip = el(
+        "span",
+        "chat-reaction",
+        reaction.count > 1
+          ? `${reaction.emoji} ${reaction.count}`
+          : reaction.emoji,
+      );
+      if (reaction.self) chip.dataset.self = "true";
+      return chip;
+    }),
+  );
+}
 
 /** How close to the end, in pixels, still counts as reading the newest messages. */
 const AT_END = 32;
@@ -256,6 +346,8 @@ export class ConversationView {
           JSON.stringify(known.message.content) ===
             JSON.stringify(message.content);
         if (keepsCard) {
+          if (known.reactions !== null)
+            drawReactions(known.reactions, message.reactions);
           known.message = message;
           continue;
         }
@@ -438,7 +530,7 @@ export class ConversationView {
       node.dataset.messageId = message.id;
       if (message.problem !== undefined) node.title = message.problem;
       if (canRetry) node.append(" ", this.retry(message));
-      return { message, element: node, stop: () => {} };
+      return { message, element: node, reactions: null, stop: () => {} };
     }
     const row = el(
       "div",
@@ -459,7 +551,10 @@ export class ConversationView {
       if (canRetry) failed.append(this.retry(message));
       row.append(failed);
     }
-    return { message, element: row, stop };
+    const reactions = el("div", "chat-reactions");
+    drawReactions(reactions, message.reactions);
+    row.append(reactions);
+    return { message, element: row, reactions, stop };
   }
 
   /** A message's bubble: who sent it, what it says, and when. Every field is drawn as text. */
@@ -470,13 +565,57 @@ export class ConversationView {
       bubble.append(el("span", "chat-bubble-label", content.label));
     if (!message.sender.self && message.sender.label !== this.summary?.title)
       bubble.append(el("span", "chat-bubble-sender", message.sender.label));
-    if (content.tag === "Text")
-      bubble.append(el("span", "chat-bubble-text", content.text));
+    const text = (value: string | null) => {
+      if (value !== null) bubble.append(el("span", "chat-bubble-text", value));
+    };
+    switch (content.tag) {
+      case "Text":
+        text(content.text);
+        break;
+      case "RichText":
+        text(content.text);
+        for (const url of content.media) bubble.append(media(url));
+        break;
+      case "Actions":
+        text(content.text);
+        bubble.append(this.actions(message.id, content));
+        break;
+      case "File":
+        bubble.append(fileLink(content));
+        break;
+      case "System":
+      case "Custom":
+        break;
+    }
     const meta = el("span", "chat-bubble-meta", time(message.at));
     if (message.sender.self)
       meta.append(el("span", "chat-tick", STATUS_MARK[message.status]));
     bubble.append(meta);
     return bubble;
+  }
+
+  /** An `Actions` message's buttons. A press goes to the provider; nothing happens here. */
+  private actions(
+    messageId: string,
+    content: Extract<ChatMessage["content"], { tag: "Actions" }>,
+  ): HTMLElement {
+    const list = el("div", "chat-actions");
+    list.dataset.layout = content.layout;
+    for (const action of content.actions) {
+      const press = button("chat-pill chat-action", action.title, () => {
+        this.error = null;
+        this.provider
+          .triggerAction?.(this.conversationId, messageId, action.actionId)
+          .catch((error: unknown) => {
+            this.error = errorText(error);
+            this.drawFooter();
+          });
+      });
+      press.dataset.actionId = action.actionId;
+      press.disabled = this.provider.triggerAction === undefined;
+      list.append(press);
+    }
+    return list;
   }
 
   /**

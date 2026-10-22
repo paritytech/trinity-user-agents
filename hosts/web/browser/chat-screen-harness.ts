@@ -145,6 +145,16 @@ function quizChannel(chat: ProductChat): RoomChannel {
     },
     publishChatAction: async (item) => {
       const payload = item.payload;
+      if (payload.tag === "ActionTriggered") {
+        await chat.platform.postChatMessage(quizWorker, {
+          roomId: item.roomId,
+          payload: {
+            tag: "Text",
+            value: { text: `picked: ${payload.value.actionId}` },
+          },
+        });
+        return;
+      }
       if (payload.tag !== "MessagePosted" || payload.value.tag !== "Text")
         return;
       await chat.platform.postChatMessage(quizWorker, {
@@ -202,6 +212,39 @@ class TestInbox implements ChatInboxView {
         value: { messageType: "quiz.counter", payload: "0x00" },
       },
       alt: "A counter",
+    });
+    const question = await chat.platform.postChatMessage(quizWorker, {
+      roomId: "quiz",
+      payload: {
+        tag: "Actions",
+        value: {
+          text: "Which is a prime?",
+          actions: [
+            { actionId: "four", title: "4" },
+            { actionId: "seven", title: "7" },
+          ],
+          layout: "Column",
+        },
+      },
+    });
+    await chat.platform.postChatMessage(quizWorker, {
+      roomId: "quiz",
+      payload: {
+        tag: "Reaction",
+        value: { messageId: question.messageId, emoji: "🤔" },
+      },
+    });
+    await chat.platform.postChatMessage(quizWorker, {
+      roomId: "quiz",
+      payload: {
+        tag: "File",
+        value: {
+          url: "data:image/png;base64,iVBORw0KGgo=",
+          fileName: "answers.png",
+          mimeType: "image/png",
+          sizeBytes: 2_400_000n,
+        },
+      },
     });
     const channel = quizChannel(chat);
     this.draft = new DraftChatProvider({

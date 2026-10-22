@@ -233,7 +233,7 @@ describe("chat screen over providers", () => {
   );
 
   test(
-    "names group senders, draws custom cards from both kinds of worker, and retries a failed message once",
+    "names group senders, draws custom cards, buttons and files, and retries a failed message once",
     async () => {
       const { context, page } = await open();
       try {
@@ -289,6 +289,26 @@ describe("chat screen over providers", () => {
         await counter.locator(".pr-text", { hasText: "count 0" }).waitFor();
         await counter.locator("button", { hasText: "bump" }).click();
         await counter.locator(".pr-text", { hasText: "count 1" }).waitFor();
+        // Buttons the host draws, a press answered by the worker, and its reaction on them.
+        const question = page.locator(".chat-message", {
+          hasText: "Which is a prime?",
+        });
+        expect(
+          await question.locator(".chat-reaction").allInnerTexts(),
+        ).toEqual(["🤔"]);
+        await question
+          .locator('.chat-actions[data-layout="Column"] .chat-action', {
+            hasText: "7",
+          })
+          .click();
+        await message(page, "picked: seven").waitFor();
+        // A file whose address is not https is shown, but not as a link.
+        const file = page.locator(".chat-file", { hasText: "answers.png" });
+        expect(await file.evaluate((node) => node.tagName)).toBe("DIV");
+        expect(await file.innerText()).toContain("image/png · 2.3 MB");
+        expect(await file.innerText()).toContain("opens only https links");
+        await screenshot(page, "product-room");
+
         await page.fill(".chat-composer-input", "hi quiz");
         await page.press(".chat-composer-input", "Enter");
         await message(page, "echo: hi quiz").waitFor();

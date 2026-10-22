@@ -3,6 +3,7 @@ import type {
   ChatRoomFooter,
   HexString,
   HostChatListSubscribeItem,
+  HostChatPostMessageRequest,
   HostChatPostMessageResponse,
 } from "@parity/truapi";
 import { subscription } from "./subscription.js";
@@ -12,7 +13,9 @@ import { subscription } from "./subscription.js";
  * TrUAPI Chat that writes them.
  *
  * A product's worker creates its rooms and posts into them through the core,
- * which checks the caller is a worker and screens what it sends. These rooms
+ * which checks the caller is a worker and screens what it sends: text, rich
+ * text with media, action buttons, file links, custom messages, and its own
+ * reactions to its messages. These rooms
  * are the products' own: they are kept apart from the person-to-person
  * conversations of the host's Nova chat, per network and wallet, in this
  * browser's `localStorage`.
@@ -30,6 +33,22 @@ export interface ProductRoom {
 
 export type ProductMessageContent =
   | { tag: "Text"; text: string }
+  | { tag: "RichText"; text: string | null; media: string[] }
+  | {
+      tag: "Actions";
+      text: string | null;
+      actions: { actionId: string; title: string }[];
+      layout: "Column" | "Grid";
+    }
+  | {
+      tag: "File";
+      url: string;
+      fileName: string;
+      mimeType: string;
+      /** As the product gave it, not checked against the file. */
+      sizeBytes: number;
+      text: string | null;
+    }
   | {
       tag: "Custom";
       messageType: string;
@@ -45,6 +64,8 @@ export interface ProductMessage {
   direction: "in" | "out";
   at: number;
   content: ProductMessageContent;
+  /** The emoji the product reacted to this message with, in the order it placed them. */
+  reactions?: string[];
 }
 
 interface Record {
@@ -61,6 +82,52 @@ export const productChatKey = (network: string, walletId: string): string =>
 export const NOT_SIGNED_IN = "Chat needs a signed-in wallet.";
 export const BOTS_UNSUPPORTED =
   "This host does not register chat bots. Create a room instead.";
+
+/** What the room keeps of a message the product posted. */
+function contentOf(
+  payload: Exclude<
+    HostChatPostMessageRequest["payload"],
+    { tag: "Reaction" | "ReactionRemoved" }
+  >,
+  alt: string | null,
+): ProductMessageContent {
+  switch (payload.tag) {
+    case "Text":
+      return { tag: "Text", text: payload.value.text };
+    case "RichText":
+      return {
+        tag: "RichText",
+        text: payload.value.text ?? null,
+        media: payload.value.media.map((item) => item.url),
+      };
+    case "Actions":
+      return {
+        tag: "Actions",
+        text: payload.value.text ?? null,
+        actions: payload.value.actions.map(({ actionId, title }) => ({
+          actionId,
+          title,
+        })),
+        layout: payload.value.layout,
+      };
+    case "File":
+      return {
+        tag: "File",
+        url: payload.value.url,
+        fileName: payload.value.fileName,
+        mimeType: payload.value.mimeType,
+        sizeBytes: Number(payload.value.sizeBytes),
+        text: payload.value.text ?? null,
+      };
+    case "Custom":
+      return {
+        tag: "Custom",
+        messageType: payload.value.messageType,
+        payload: payload.value.payload,
+        alt,
+      };
+  }
+}
 
 const sameRoom =
   (productId: string, roomId: string) =>
@@ -171,6 +238,32 @@ export class ProductChat {
     this.changed(productId);
   }
 
+  /**
+   * Place or remove the product's reaction on one of the room's messages.
+   * The product learns only its own messages' ids, so those are the ones it
+   * can name; any other id is refused rather than kept for a message that
+   * is not here.
+   */
+  private react(
+    productId: string,
+    roomId: string,
+    messageId: string,
+    emoji: string,
+    placed: boolean,
+  ): void {
+    const message = this.record.messages.find(
+      (entry) =>
+        sameRoom(productId, roomId)(entry) && entry.messageId === messageId,
+    );
+    if (message === undefined)
+      throw new Error(`There is no message ${messageId} in room ${roomId}.`);
+    const reactions = (message.reactions ?? []).filter(
+      (entry) => entry !== emoji,
+    );
+    message.reactions = placed ? [...reactions, emoji] : reactions;
+    this.changed(null);
+  }
+
   private roomsOf(productId: string): HostChatListSubscribeItem {
     return {
       rooms: this.record.rooms
@@ -212,26 +305,24 @@ export class ProductChat {
       if (this.room(product.productId, request.roomId) === undefined)
         throw new Error(`There is no room ${request.roomId} for this product.`);
       const payload = request.payload;
-      let content: ProductMessageContent;
-      if (payload.tag === "Text")
-        content = { tag: "Text", text: payload.value.text };
-      else if (payload.tag === "Custom")
-        content = {
-          tag: "Custom",
-          messageType: payload.value.messageType,
-          payload: payload.value.payload,
-          alt: request.alt ?? null,
-        };
-      else
-        throw new Error(`This host does not show ${payload.tag} messages yet.`);
       const messageId = `m-${this.now().toString(36)}-${(this.nextId++).toString(36)}`;
+      if (payload.tag === "Reaction" || payload.tag === "ReactionRemoved") {
+        this.react(
+          product.productId,
+          request.roomId,
+          payload.value.messageId,
+          payload.value.emoji,
+          payload.tag === "Reaction",
+        );
+        return { messageId };
+      }
       this.append({
         productId: product.productId,
         roomId: request.roomId,
         messageId,
         direction: "in",
         at: this.now(),
-        content,
+        content: contentOf(payload, request.alt ?? null),
       });
       this.changed(null);
       return { messageId };
