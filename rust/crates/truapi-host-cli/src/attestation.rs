@@ -350,8 +350,8 @@ pub async fn registered_lite_username(network: NetworkConfig, entropy: &[u8]) ->
 		.context("attested signer has no dotNS lite username")
 }
 
-/// Resolve an existing full-person or Lite dotNS identity when one exists.
-/// An unlabeled account is a valid result and can still back a local session.
+/// Resolve an existing username, preferring the dotNS identity when present.
+/// Otherwise consult the identity backend; an unlabeled account remains valid.
 pub async fn lookup_registered_username(
 	network: NetworkConfig,
 	entropy: &[u8],
@@ -359,8 +359,11 @@ pub async fn lookup_registered_username(
 	let identity = derive_identity_keypair(entropy, network.network_suffix)
 		.map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
 	let mut reader = AssetHubReader::connect(network.asset_hub_ws).await?;
-	let identity = reader.dotns_identity(&identity.public.to_bytes()).await?;
-	Ok(identity.map(|identity| identity.primary_username().to_owned()))
+	if let Some(registered) = reader.dotns_identity(&identity.public.to_bytes()).await? {
+		return Ok(Some(registered.primary_username().to_owned()));
+	}
+	let address = product_public_key_to_address(identity.public.to_bytes());
+	lookup_backend_username(network, entropy, &address).await
 }
 
 #[derive(Deserialize)]
@@ -385,7 +388,7 @@ struct UsernameSearchItem {
 /// initial letter and retain only rows whose candidate account is the mnemonic's
 /// `uid.<suffix>` identity on this network. The bearer token exempts these calls
 /// from the unauthenticated proof-of-compute challenge.
-pub async fn lookup_backend_username(
+async fn lookup_backend_username(
 	network: NetworkConfig,
 	auth_entropy: &[u8],
 	candidate_account_id: &str,
