@@ -83,6 +83,7 @@ import { bindProductCard } from "./pocket-card-view.js";
 import { bulletinImageUrl } from "./product-render.js";
 import { resolveWidget } from "./widget.js";
 import { ChatScreen } from "./chat-screen.js";
+import { ChatInbox } from "./chat-inbox.js";
 import { ProductChat, productChatKey } from "./product-chat.js";
 import { ProductWorkers } from "./product-workers.js";
 import { resolveWorker } from "./worker-manifest.js";
@@ -205,23 +206,31 @@ const pocketFaces = new PocketFaces({
   storage: localStorage,
   log,
 });
+/** The chat providers of the signed-in session: Nova and product rooms. */
+const chatInbox = new ChatInbox({
+  storage: localStorage,
+  diagnostics: chatDiagnostics,
+  rooms: {
+    chat: productChat,
+    channel: (productId) => productWorkers.provider(productId),
+    workerState: (productId) => productWorkers.state(productId),
+    onWorkersChange: (listener) => productWorkers.onChange(listener),
+    archiveImage: (productId, path) =>
+      productWorkers.archiveImage(productId, path),
+    gateway: () => activeNetwork.dotns.contentGateway,
+    log,
+  },
+  workerNames: () => productWorkers.names(),
+  log,
+});
 const chatScreen = new ChatScreen(
   element("chat-screen"),
-  localStorage,
-  chatDiagnostics,
+  chatInbox,
+  productWorkers,
   (pendingRequests) => {
     if (chatBadge === null) return;
     chatBadge.hidden = pendingRequests === 0;
     chatBadge.textContent = String(pendingRequests);
-  },
-  {
-    chat: productChat,
-    workers: productWorkers,
-    provider: (productId) => productWorkers.provider(productId),
-    archiveImage: (productId, path) =>
-      productWorkers.archiveImage(productId, path),
-    gateway: activeNetwork.dotns.contentGateway,
-    log,
   },
 );
 const dockButtons = DESTINATIONS.map((destination) => ({
@@ -689,7 +698,7 @@ function syncChatSession(): void {
     pocketFaces.setSession(null);
     productWorkers.setSession(null);
     productChat.setScope(null);
-    chatScreen.setSession(null);
+    chatInbox.setSession(null);
     return;
   }
   productChat.setScope(productChatKey(activeNetwork.id, wallet.id));
@@ -701,7 +710,7 @@ function syncChatSession(): void {
   });
   const { identityAccountId, chatPublicKey, fullUsername, liteUsername } =
     lastAuthState.value;
-  chatScreen.setSession({
+  chatInbox.setSession({
     walletId: wallet.id,
     entropy: wallet.entropy,
     network: activeNetwork.id,

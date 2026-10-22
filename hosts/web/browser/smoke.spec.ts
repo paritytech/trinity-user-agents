@@ -789,7 +789,7 @@ describe("product worker chat", () => {
 
         await page.click('[aria-label="Back to chats"]');
         const row = page.locator(
-          `[data-product-room="${WORKER_NAME}/fixture"]`,
+          `[data-conversation="product:${WORKER_NAME}/fixture"]`,
         );
         await row.waitFor();
         expect(await row.innerText()).toContain("Fixture bot");
@@ -878,12 +878,16 @@ describe("product worker chat", () => {
           .locator(".chat-empty-title")
           .filter({ hasText: "Sign in to chat" })
           .waitFor();
-        expect(await page.locator("[data-product-room]").count()).toBe(0);
+        expect(await page.locator('[data-provider^="product:"]').count()).toBe(
+          0,
+        );
 
         // Another wallet has no workers and no product rooms.
         await signInWith(page, SYNTHETIC_MNEMONIC);
-        await page.locator(".product-section").waitFor();
-        expect(await page.locator("[data-product-room]").count()).toBe(0);
+        await page.locator('[data-action="manage-workers"]').waitFor();
+        expect(await page.locator('[data-provider^="product:"]').count()).toBe(
+          0,
+        );
         expect(await page.locator("#worker-frames iframe").count()).toBe(0);
 
         // Back on the first wallet, its saved worker starts again and its
