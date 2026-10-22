@@ -15,7 +15,7 @@ TrUAPI (Triangle User-Agent Programming Interface) is the API surface that hosts
 
 - [TrUAPI reference](https://docs.polkadot.com/reference/apps/protocol/truapi/)
 - [Rust API reference](https://paritytech.github.io/trinity-user-agents/)
-- [Building the apps locally](docs/local-app-builds.md)
+- [Building the apps for development](docs/local-app-builds.md)
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
 
