@@ -400,6 +400,8 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: ./.github/actions/mac-preflight
+
       # The Xcode the app builds with, so the package is checked with the same
       # compiler on any machine; hosts/ios/.github/actions/install pins it.
       - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0

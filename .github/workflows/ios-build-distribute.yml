@@ -158,10 +158,14 @@ jobs:
             console.log('Security checks passed!');
 
       - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.release_branch }}
           fetch-depth: 0
+
+      - uses: ./.github/actions/mac-preflight
+        with:
+          simulator: "false"
 
       - name: Prepare TestFlight release notes
         id: release_notes
@@ -259,10 +263,12 @@ jobs:
     needs: prepare_build_metadata
     steps:
       - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.release_branch }}
           fetch-depth: 0
+
+      - uses: ./.github/actions/mac-preflight
 
       - name: Setup iOS Environment
         uses: ./hosts/ios/.github/actions/install
@@ -301,6 +307,36 @@ jobs:
           google_service_info_release_base64: ${{ inputs.build_configuration == 'Safetynet' && secrets.GOOGLE_SERVICE_INFO_SAFETY_BASE64 || secrets.GOOGLE_SERVICE_INFO_RELEASE_BASE64 }}
           sentry_dsn: ${{ secrets.SENTRY_DSN_IOS }}
           meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
+
+      # The distribute action runs the unit tests before it archives. xcpretty
+      # drops the failing test names, and on a reused runner the result bundle
+      # does not outlive the next job, so both are taken here.
+      - name: Report failed tests
+        if: failure()
+        working-directory: hosts/ios
+        run: |
+          result=fastlane/test_output/polkadot-app.xcresult
+          if [[ -d "$result" ]]; then
+            summary="$(xcrun xcresulttool get test-results summary --path "$result")"
+            echo "$summary"
+            {
+              echo "### Unit test results"
+              echo '```json'
+              echo "$summary"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No result bundle: the run failed before or after the tests"
+          fi
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nightly-test-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: hosts/ios/fastlane/test_output/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Comment on PR with build info
         if: inputs.release_pr_number != ''
@@ -381,7 +417,7 @@ jobs:
       succeeded: ${{ steps.check.outputs.succeeded }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check the build result
         id: check
         uses: ./hosts/ios/.github/actions/check-job-conclusion
