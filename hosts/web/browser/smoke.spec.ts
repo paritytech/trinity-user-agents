@@ -650,6 +650,16 @@ describe("the dock", () => {
           await page.locator('[data-action^="chat-"], .chat-toggle').count(),
         ).toBe(0);
 
+        // The draft worker-owned chat is off until turned on, then runs in a
+        // Web Worker of the host's own, beside Nova in the same list.
+        expect(await page.locator('[data-provider="draft"]').count()).toBe(0);
+        await page.click('[data-action="manage-workers"]');
+        await page.check('[data-action="draft-chat"]');
+        await page.click('[aria-label="Back to chats"]');
+        await page.locator('[data-conversation="draft/ada"]').click();
+        await page.locator('[data-message-id="ada-120"]').waitFor();
+        await page.click('[aria-label="Back to chats"]');
+
         // The inspector's Chat view lists the engine's events with no product
         // open, apart from the TrUAPI traces.
         await page.click("#inspector-toggle");
