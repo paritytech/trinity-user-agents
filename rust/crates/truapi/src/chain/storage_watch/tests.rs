@@ -398,11 +398,11 @@ fn metadata_without_the_watched_entry_fails_the_watch_before_it_starts() {
 	assert_eq!(*fake.requested.lock().unwrap(), None);
 }
 
-/// A consumer that keeps watching must not lose its keys to an unreachable
-/// chain, nor retry it without pause: the watch reports why it could not
-/// start, and starts again only once the delay has passed.
+/// A watch must not lose its keys to an unreachable chain, nor retry it
+/// without pause: it reports why it could not start, and starts again only
+/// once the delay has passed.
 #[test]
-fn a_kept_watch_that_cannot_start_says_why_and_starts_again_after_the_delay() {
+fn a_watch_that_cannot_start_reports_why_and_retries_after_the_delay() {
 	let (fake, sender) = ScriptedWatchedStorage::unreachable_for(1);
 	let timer = fake.timer.clone();
 	let storage: Arc<dyn WatchedStorage> = fake;
@@ -428,7 +428,7 @@ fn a_kept_watch_that_cannot_start_says_why_and_starts_again_after_the_delay() {
 /// A runtime that does not declare the entry fails every attempt the same
 /// way, so the watch says why once and ends instead of retrying forever.
 #[test]
-fn a_kept_watch_of_an_entry_the_runtime_lacks_ends_with_why() {
+fn a_watch_of_an_entry_the_runtime_lacks_reports_why_and_ends() {
 	let (fake, _sender) = ScriptedWatchedStorage::new();
 	let timer = fake.timer.clone();
 	let storage: Arc<dyn WatchedStorage> = fake;
