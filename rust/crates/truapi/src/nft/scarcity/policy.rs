@@ -18,6 +18,7 @@ use crate::{
 	},
 	nft::{ItemKey, ItemSigner, ItemSlot, dao},
 	store::Db,
+	unix_time::current_unix_secs,
 };
 
 /// The name rows store for this policy.
@@ -34,14 +35,22 @@ const MAXIMUM_MOVES: u16 = 16;
 /// Blocks a move stays valid for after its birth.
 const MOVE_PERIOD: u64 = 64;
 
-/// What the policy stores with each move: the instance it moves and the key
-/// it goes to.
+/// How long a registered move may keep waiting for its NFT or for a lock to
+/// end before it is given up, so its item never stays in use for good.
+pub const MOVE_WAIT_LIMIT_SECS: u64 = 30 * 60;
+
+/// What the policy stores with each move: the instance it moves, the key it
+/// goes to, and when it stops waiting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode)]
 pub struct MoveParams {
 	/// The instance the source key holds when the move is registered.
 	pub instance: u64,
 	/// The key it goes to.
 	pub destination: ItemKey,
+	/// Unix time, in seconds of the host's clock, after which a move that
+	/// still waits is given up. Fixed at registration, so a restart never
+	/// extends it.
+	pub give_up_after: u64,
 }
 
 impl From<MoveParams> for PolicyParams {
@@ -185,8 +194,9 @@ impl ScarcityMovePolicy {
 		mortality: Mortality,
 	) -> Result<HashMap<DurableTxId, Preparation>, PolicyError> {
 		let mut prepared = HashMap::new();
+		let now = current_unix_secs();
 		for (index, planned_move) in planned.iter().enumerate() {
-			let preparation = match decide_move(planned_move, view, index) {
+			let preparation = match decide_move(planned_move, view, index, now) {
 				MoveDecision::GiveUp => Preparation::GiveUp,
 				MoveDecision::Wait => continue,
 				MoveDecision::Build { state_nonce } => {
@@ -208,7 +218,7 @@ impl ScarcityMovePolicy {
 		mortality: Mortality,
 	) -> Result<MortalExtrinsic, PolicyError> {
 		let signer = self.deps.signer.item_signer(planned_move.slot).map_err(policy_error)?;
-		let MoveParams { instance, destination } = planned_move.params;
+		let MoveParams { instance, destination, .. } = planned_move.params;
 		let nft_move = NftMove { instance, state_nonce, destination };
 		sign_move(&signer, runtime, &nft_move, mortality).map_err(policy_error)
 	}
@@ -231,13 +241,32 @@ fn planned_move(
 	}))
 }
 
-/// What to do with the move at `index` of `view`.
-fn decide_move(planned_move: &PlannedMove, view: &ChainView, index: usize) -> MoveDecision {
+/// What to do with the move at `index` of `view` at unix time `now`: what the
+/// chain says, except that a move waiting past its limit is given up.
+fn decide_move(
+	planned_move: &PlannedMove,
+	view: &ChainView,
+	index: usize,
+	now: u64,
+) -> MoveDecision {
+	let decision = decide_from_chain(planned_move, view, index);
+	let waited_too_long = now >= planned_move.params.give_up_after;
+	if decision == MoveDecision::Wait && waited_too_long {
+		return MoveDecision::GiveUp;
+	}
+	decision
+}
+
+/// What the chain says about the move at `index` of `view`. A source that
+/// does not hold the instance waits, since a reorg can put it back; an
+/// occupied destination or a used-up move budget never changes.
+fn decide_from_chain(planned_move: &PlannedMove, view: &ChainView, index: usize) -> MoveDecision {
 	if planned_move.attempts >= MAX_ATTEMPTS || view.destinations[index].is_some() {
 		return MoveDecision::GiveUp;
 	}
-	let Some(held) = view.sources[index] else { return MoveDecision::GiveUp };
-	if held.instance != planned_move.params.instance || held.moves >= MAXIMUM_MOVES {
+	let held = view.sources[index].filter(|held| held.instance == planned_move.params.instance);
+	let Some(held) = held else { return MoveDecision::Wait };
+	if held.moves >= MAXIMUM_MOVES {
 		return MoveDecision::GiveUp;
 	}
 	let locked = view.locks.until[index].is_some_and(|until| until > view.locks.now);

@@ -52,7 +52,7 @@ impl ScarcityChain for InstanceHolders {
 }
 
 fn move_entry() -> DurableTxEntry {
-	let params = MoveParams { instance: INSTANCE, destination: DESTINATION };
+	let params = MoveParams { instance: INSTANCE, destination: DESTINATION, give_up_after: 0 };
 	DurableTxEntry {
 		id: DurableTxId(1),
 		domain: DomainId::new("nft"),

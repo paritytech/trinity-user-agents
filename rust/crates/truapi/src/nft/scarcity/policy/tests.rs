@@ -15,6 +15,7 @@ use crate::{
 	},
 	runtime::AuthorityError,
 	store::open_temporary_core_db,
+	unix_time::current_unix_secs,
 };
 
 const FINALIZED: HashAndNumber = HashAndNumber { hash: H256([0x0f; 32]), number: 2_138_796 };
@@ -90,6 +91,11 @@ struct RegisteredMove {
 }
 
 fn registered_move(attempts: u32) -> RegisteredMove {
+	registered_move_until(attempts, current_unix_secs() + MOVE_WAIT_LIMIT_SECS)
+}
+
+/// [`registered_move`] that stops waiting at unix time `give_up_after`.
+fn registered_move_until(attempts: u32, give_up_after: u64) -> RegisteredMove {
 	let (dir, db) = open_temporary_core_db();
 	let source = allocate_one_key(&test_ledger(db.clone()));
 	let id = block_on(db.write(move |tx| {
@@ -102,7 +108,7 @@ fn registered_move(attempts: u32) -> RegisteredMove {
 		Ok(id)
 	}))
 	.unwrap();
-	let params = MoveParams { instance: INSTANCE, destination: DESTINATION };
+	let params = MoveParams { instance: INSTANCE, destination: DESTINATION, give_up_after };
 	let plan = SubmissionPlan { policy: PolicyId::new(MOVE_POLICY), params: params.into() };
 	let scheduled =
 		ScheduledDurableTx { id, domain: DomainId::new("nft"), group: None, plan, attempts };
@@ -147,16 +153,43 @@ fn an_nft_held_at_the_best_head_is_built_born_at_the_finalized_head() {
 	assert_eq!(signed.mortality, Mortality::new(FINALIZED, MOVE_PERIOD).unwrap());
 }
 
+/// A reorg can briefly show the source key without its NFT, so the move
+/// waits for it to come back rather than failing the operation.
 #[test]
-fn a_key_that_no_longer_holds_the_instance_is_given_up() {
+fn a_key_that_does_not_hold_the_instance_waits_for_it() {
 	let registered = registered_move(0);
 	let moved_on = ScarcityNft { instance: INSTANCE + 1, ..held_nft(0) };
 
 	let gone = prepare_one(&registered, ScriptedScarcity::default());
 	let replaced = prepare_one(&registered, holding(&registered, moved_on));
 
-	assert_eq!(gone, Some(Preparation::GiveUp));
-	assert_eq!(replaced, Some(Preparation::GiveUp));
+	assert_eq!(gone, None);
+	assert_eq!(replaced, None);
+}
+
+/// Waiting is bounded, so an NFT that is gone for good does not keep its
+/// item in use forever.
+#[test]
+fn a_move_still_waiting_past_its_limit_is_given_up() {
+	let expired = registered_move_until(0, current_unix_secs() - 1);
+	let mut locked = holding(&expired, held_nft(0));
+	locked.locked_until.insert(expired.source, NOW + 1);
+
+	let without_nft = prepare_one(&expired, ScriptedScarcity::default());
+	let while_locked = prepare_one(&expired, locked);
+
+	assert_eq!(without_nft, Some(Preparation::GiveUp));
+	assert_eq!(while_locked, Some(Preparation::GiveUp));
+}
+
+/// The limit only bounds waiting: a move the chain allows is still built.
+#[test]
+fn a_move_past_its_limit_is_still_built_when_nothing_holds_it_back() {
+	let expired = registered_move_until(0, current_unix_secs() - 1);
+
+	let prepared = prepare_one(&expired, holding(&expired, held_nft(0)));
+
+	assert!(matches!(prepared, Some(Preparation::Ready(_))));
 }
 
 #[test]

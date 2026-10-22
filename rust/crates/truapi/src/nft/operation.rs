@@ -14,7 +14,7 @@ use super::{
 	item::{AllocateItemsError, Allocation, allocate_items_in},
 	keys::{ItemKey, ItemKeyDeriver},
 	purse::PurseId,
-	scarcity::MoveParams,
+	scarcity::{MOVE_WAIT_LIMIT_SECS, MoveParams},
 };
 use crate::{
 	durable::{
@@ -22,6 +22,7 @@ use crate::{
 	},
 	installation::InstallationId,
 	store::DbError,
+	unix_time::current_unix_secs,
 };
 
 /// The durable domain NFT moves are registered under.
@@ -115,10 +116,10 @@ pub fn plan_moves(
 		MoveDestinations::AllocatedIn(purse) => allocate_destinations(tx, purse, &instances, keys)?,
 		MoveDestinations::Foreign(destination) => vec![destination],
 	};
-	let params = instances.into_iter().zip(destinations);
-	Ok(params
-		.map(|(instance, destination)| MoveParams { instance, destination }.into())
-		.collect())
+	let give_up_after = current_unix_secs() + MOVE_WAIT_LIMIT_SECS;
+	let move_params =
+		|(instance, destination)| MoveParams { instance, destination, give_up_after }.into();
+	Ok(instances.into_iter().zip(destinations).map(move_params).collect())
 }
 
 /// One fresh key in `purse` for each of `instances`.

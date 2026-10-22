@@ -213,3 +213,23 @@ fn an_operation_never_registered_has_no_moves() {
 fn the_same_idempotency_key_of_another_scope_is_another_operation() {
 	assert_ne!(OperationKey::new(b"one", [1; 32]), OperationKey::new(b"two", [1; 32]));
 }
+
+/// A move stops waiting a fixed time after it is registered, whatever
+/// happens to the host meanwhile.
+#[test]
+fn each_move_is_registered_with_its_wait_limit() {
+	let purses = purses_holding(1);
+	let before = crate::unix_time::current_unix_secs();
+
+	start(&purses, rebalance(operation(1), &purses.held)).unwrap();
+
+	let stored = |conn: &rusqlite::Connection| {
+		Ok(conn.query_row("SELECT policy_params FROM durable_tx", [], |row| {
+			row.get::<_, Vec<u8>>(0)
+		})?)
+	};
+	let params = block_on(purses.db.read(stored)).unwrap();
+	let params = MoveParams::try_from(&crate::durable::PolicyParams(params)).unwrap();
+	let limit = params.give_up_after - before;
+	assert!((MOVE_WAIT_LIMIT_SECS..=MOVE_WAIT_LIMIT_SECS + 5).contains(&limit), "{limit}");
+}

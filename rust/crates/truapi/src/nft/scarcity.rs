@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use subxt::utils::H256;
 
-pub use policy::{MOVE_POLICY, MoveParams};
+pub use policy::{MOVE_POLICY, MOVE_WAIT_LIMIT_SECS, MoveParams};
 pub use tracker::{HoldingTracker, HoldingTrackerDeps};
 
 use self::{
