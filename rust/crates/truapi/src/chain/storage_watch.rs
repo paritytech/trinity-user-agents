@@ -2,8 +2,9 @@
 //! and reported only when they change.
 //!
 //! [`WatchedStorage`] reports changes to raw keys. On top of it,
-//! `watch_entry_changes` encodes the keys of a subxt storage address and decodes the
-//! changed values, with the metadata of the runtime they were read under. A
+//! `watch_entry_changes` encodes the keys of a subxt storage address, decodes
+//! the changed values with the metadata of the runtime they were read under,
+//! and starts the watch again whenever it cannot start or ends. A
 //! source that reads every key at each head turns its snapshots into changes
 //! with [`diffed`]. Such a source may skip heads that arrive during
 //! a read, because the next read includes their effect, so a value that
@@ -98,16 +99,17 @@ impl StorageWatchError {
 type DecodedEntryChangeStream<K, V> =
 	BoxStream<'static, Result<DecodedEntryChanges<K, V>, StorageWatchError>>;
 
-/// How long `keep_watching_entry` waits between attempts to watch.
+/// How long `watch_entry_changes` waits between attempts to start a watch.
 const RETRY_DELAY: Duration = Duration::from_secs(5);
 
 impl dyn WatchedStorage {
-	/// Watches `keys` of the entry `address` names on `genesis`, at `head`.
-	/// The first item has every key, and later items only the keys whose
-	/// value changed. A failed read is an `Err` item, and later heads are
-	/// still read. Keys are encoded once, with the metadata current when the
-	/// watch starts.
-	pub async fn watch_entry_changes<A>(
+	/// Starts one watch of `keys` of the entry `address` names on `genesis`,
+	/// at `head`, or returns why it cannot start: the chain is unreachable, or
+	/// the runtime has no such entry. The first item has every key, and later
+	/// items only the keys whose value changed. A failed read is an `Err`
+	/// item, and later heads are still read. Keys are encoded once, with the
+	/// metadata current when the watch starts.
+	async fn start_entry_watch<A>(
 		self: Arc<Self>,
 		genesis: H256,
 		head: WatchedHead,
@@ -126,16 +128,16 @@ impl dyn WatchedStorage {
 		Ok(changes.map(move |raw| decoder.decode_raw_changes(raw?)).boxed())
 	}
 
-	/// Watches `keys` of `address` for as long as the stream is held. Each
-	/// attempt starts a watch with `watch_entry_changes`, which fails when
-	/// the watch cannot start: the chain is unreachable, or the runtime has
-	/// no such entry. That failure is passed on as an `Err` item, and the
-	/// next attempt starts five seconds on `timer` after the last one failed
-	/// or its changes ended. A permanent failure, as
-	/// [`StorageWatchError::is_permanent`] names it, is the last item.
-	pub fn keep_watching_entry<A>(
+	/// Watches `keys` of the entry `address` names on `genesis`, at `head`,
+	/// for as long as the stream is held. The first item has every key, and
+	/// later items only the keys whose value changed. A failed read is an
+	/// `Err` item, and later heads are still read. A watch that cannot start,
+	/// because the chain is unreachable, is an `Err` item too, and is started
+	/// again five seconds after it failed or its changes ended. A
+	/// permanent failure, as [`StorageWatchError::is_permanent`] names it,
+	/// such as an entry the runtime does not declare, is the last item.
+	pub fn watch_entry_changes<A>(
 		self: Arc<Self>,
-		timer: Arc<dyn Timer>,
 		genesis: H256,
 		head: WatchedHead,
 		address: A,
@@ -146,6 +148,7 @@ impl dyn WatchedStorage {
 		A::KeyParts: Clone + Send + 'static,
 		A::Value: Send + 'static,
 	{
+		let timer = self.timer();
 		let request = WatchRequest { storage: self, genesis, head, address, keys };
 		let first_attempt = request.clone().start_watch_immediately(&timer);
 		let retries =
@@ -155,7 +158,7 @@ impl dyn WatchedStorage {
 	}
 }
 
-/// What `keep_watching_entry` watches, each time it starts a watch.
+/// What `watch_entry_changes` watches, each time it starts a watch.
 struct WatchRequest<A: Address> {
 	storage: Arc<dyn WatchedStorage>,
 	genesis: H256,
@@ -200,7 +203,7 @@ where
 		self,
 	) -> Result<DecodedEntryChangeStream<A::KeyParts, A::Value>, StorageWatchError> {
 		self.storage
-			.watch_entry_changes(self.genesis, self.head, self.address, self.keys)
+			.start_entry_watch(self.genesis, self.head, self.address, self.keys)
 			.await
 	}
 }

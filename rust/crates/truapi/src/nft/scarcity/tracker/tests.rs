@@ -20,7 +20,7 @@ use crate::{
 	nft::{PurseId, PurseTag, insert_item_row, test_ledger},
 	store::{Db, open_temporary_core_db},
 	test_support::test_spawner,
-	time::ManualTimer,
+	time::{ManualTimer, Timer},
 };
 
 const GENESIS: H256 = H256([0xab; 32]);
@@ -112,6 +112,10 @@ impl WatchedStorage for ScriptedChain {
 			.expect("the test listens for watches");
 		Ok(reported.boxed())
 	}
+
+	fn timer(&self) -> Arc<dyn Timer> {
+		Arc::new(ManualTimer::default())
+	}
 }
 
 /// A running tracker over a fresh ledger, the watches it opens, and the
@@ -136,7 +140,6 @@ fn tracker_after(prepare: impl FnOnce(&Db)) -> TrackerFixture {
 		storage: Arc::new(ScriptedChain::new(announce)),
 		genesis: GENESIS,
 		spawner: test_spawner(),
-		timer: Arc::new(ManualTimer::default()),
 	});
 	TrackerFixture { _dir: dir, db, ledger, opened, _tracker: tracker }
 }

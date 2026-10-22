@@ -13,7 +13,6 @@ use crate::{
 	chain::{DecodedEntryChanges, WatchedHead, WatchedStorage},
 	nft::{HeldItem, ItemKey, NftLedger},
 	subscription::Spawner,
-	time::Timer,
 };
 
 /// What one watch reports for the keys it covers.
@@ -29,8 +28,6 @@ pub struct HoldingTrackerDeps {
 	pub genesis: H256,
 	/// Runs the tracking task.
 	pub spawner: Spawner,
-	/// Waits between attempts.
-	pub timer: Arc<dyn Timer>,
 }
 
 /// Keeps the ledger's holdings equal to `NftsByOwner` at the best block, for
@@ -44,8 +41,8 @@ pub struct HoldingTracker {
 impl HoldingTracker {
 	/// Starts tracking on the deps' spawner.
 	pub fn start(deps: HoldingTrackerDeps) -> Self {
-		let HoldingTrackerDeps { ledger, storage, genesis, spawner, timer } = deps;
-		let tracking = Tracking { ledger, storage, genesis, timer };
+		let HoldingTrackerDeps { ledger, storage, genesis, spawner } = deps;
+		let tracking = Tracking { ledger, storage, genesis };
 		Self { _tracking: BackgroundTask::spawn(&spawner, tracking.run()) }
 	}
 }
@@ -55,7 +52,6 @@ struct Tracking {
 	ledger: NftLedger,
 	storage: Arc<dyn WatchedStorage>,
 	genesis: H256,
-	timer: Arc<dyn Timer>,
 }
 
 impl Tracking {
@@ -87,9 +83,8 @@ impl Tracking {
 	fn watch_batch(&self, batch: Vec<ItemKey>) -> BoxStream<'static, HoldingChanges> {
 		let owners = batch.iter().map(|key| (AccountId32(key.0),)).collect();
 		let storage = self.storage.clone();
-		let timer = self.timer.clone();
 		storage
-			.keep_watching_entry(timer, self.genesis, WatchedHead::Best, nfts_by_owner(), owners)
+			.watch_entry_changes(self.genesis, WatchedHead::Best, nfts_by_owner(), owners)
 			.filter_map(|read| ready(ok_or_warn(read, "holdings unread")))
 			.boxed()
 	}

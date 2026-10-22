@@ -32,7 +32,7 @@ use crate::{
 	},
 	chain_runtime::{ChainRuntime, RuntimeFailure},
 	host_internal::extrinsic::tests::{bulletin_chain_state, bulletin_metadata},
-	time::ManualTimer,
+	time::{ManualTimer, Timer},
 };
 
 const GENESIS: H256 = H256([0xab; 32]);
@@ -244,6 +244,8 @@ struct ScriptedWatchedStorage {
 	requested: Mutex<Option<(WatchedHead, Vec<Vec<u8>>)>>,
 	/// How many more watches fail to open, as if the chain were unreachable.
 	unreachable_opens: AtomicUsize,
+	/// The clock a watch waits on between attempts, which the test moves.
+	timer: Arc<ManualTimer>,
 }
 
 impl ScriptedWatchedStorage {
@@ -259,8 +261,9 @@ impl ScriptedWatchedStorage {
 		let (_node, _provider, chain) = serve(Node::new(3, 5));
 		let changes = Mutex::new(Some(receiver));
 		let unreachable_opens = AtomicUsize::new(opens);
-		let fake =
-			Arc::new(Self { chain, changes, requested: Mutex::new(None), unreachable_opens });
+		let timer = Arc::new(ManualTimer::default());
+		let requested = Mutex::new(None);
+		let fake = Arc::new(Self { chain, changes, requested, unreachable_opens, timer });
 		(fake, sender)
 	}
 }
@@ -293,6 +296,10 @@ impl WatchedStorage for ScriptedWatchedStorage {
 		let receiver = self.changes.lock().unwrap().take().expect("one watch per fake");
 		Ok(receiver.boxed())
 	}
+
+	fn timer(&self) -> Arc<dyn Timer> {
+		self.timer.clone()
+	}
 }
 
 fn scripted_raw_changes_at(
@@ -321,7 +328,7 @@ fn a_watch_reads_the_encoded_keys_and_reports_decoded_values_under_the_callers_k
 	let (fake, sender) = ScriptedWatchedStorage::new();
 	let storage: Arc<dyn WatchedStorage> = fake.clone();
 	let address = dynamic::<(u32,), [u8; 32]>("System", "BlockHash");
-	let watch = storage.watch_entry_changes(GENESIS, WatchedHead::Best, address, vec![(1,), (2,)]);
+	let watch = storage.start_entry_watch(GENESIS, WatchedHead::Best, address, vec![(1,), (2,)]);
 	let mut changes = block_on(watch).unwrap();
 	sender
 		.unbounded_send(scripted_raw_changes_at(5, &[(0, Some(&[1; 32])), (1, None)]))
@@ -360,7 +367,7 @@ fn a_failed_read_is_an_error_item_and_the_watch_goes_on() {
 	let storage: Arc<dyn WatchedStorage> = fake;
 	let address = dynamic::<(), u32>("System", "Number");
 	let mut changes =
-		block_on(storage.watch_entry_changes(GENESIS, WatchedHead::Finalized, address, vec![()]))
+		block_on(storage.start_entry_watch(GENESIS, WatchedHead::Finalized, address, vec![()]))
 			.unwrap();
 	sender
 		.unbounded_send(Err(RuntimeFailure::host_failure("storage_watch", "scripted failure")))
@@ -383,7 +390,7 @@ fn metadata_without_the_watched_entry_fails_the_watch_before_it_starts() {
 	let address = dynamic::<(), u32>("NoSuchPallet", "Number");
 
 	let watch =
-		block_on(storage.watch_entry_changes(GENESIS, WatchedHead::Finalized, address, vec![()]));
+		block_on(storage.start_entry_watch(GENESIS, WatchedHead::Finalized, address, vec![()]));
 
 	assert!(matches!(watch, Err(StorageWatchError::Incompatible { .. })));
 	assert_eq!(*fake.requested.lock().unwrap(), None);
@@ -395,11 +402,10 @@ fn metadata_without_the_watched_entry_fails_the_watch_before_it_starts() {
 #[test]
 fn a_kept_watch_that_cannot_start_says_why_and_starts_again_after_the_delay() {
 	let (fake, sender) = ScriptedWatchedStorage::unreachable_for(1);
+	let timer = fake.timer.clone();
 	let storage: Arc<dyn WatchedStorage> = fake;
-	let timer = Arc::new(ManualTimer::default());
 	let address = dynamic::<(), u32>("System", "Number");
-	let mut changes =
-		storage.keep_watching_entry(timer.clone(), GENESIS, WatchedHead::Best, address, vec![()]);
+	let mut changes = storage.watch_entry_changes(GENESIS, WatchedHead::Best, address, vec![()]);
 	let failed = block_on(changes.next()).expect("an item");
 	let mut restarted = changes.next();
 	let pending = block_on(async { futures::poll!(&mut restarted) }).is_pending();
@@ -422,12 +428,11 @@ fn a_kept_watch_that_cannot_start_says_why_and_starts_again_after_the_delay() {
 #[test]
 fn a_kept_watch_of_an_entry_the_runtime_lacks_ends_with_why() {
 	let (fake, _sender) = ScriptedWatchedStorage::new();
+	let timer = fake.timer.clone();
 	let storage: Arc<dyn WatchedStorage> = fake;
-	let timer = Arc::new(ManualTimer::default());
 	let address = dynamic::<(), u32>("NoSuchPallet", "Number");
 
-	let mut changes =
-		storage.keep_watching_entry(timer.clone(), GENESIS, WatchedHead::Best, address, vec![()]);
+	let mut changes = storage.watch_entry_changes(GENESIS, WatchedHead::Best, address, vec![()]);
 	let first = block_on(changes.next());
 	let ended = block_on(async { futures::poll!(changes.next()) }).is_ready();
 
