@@ -16,7 +16,9 @@ use super::{
 use crate::{
 	chain::{RawStorageChanges, WatchedHead, WatchedStorage},
 	chain_runtime::{ChainRuntime, RuntimeFailure},
-	test_support::{ScriptedProvider, notification_sender},
+	test_support::{
+		ScriptedProvider, later_notification_sender, notification_sender, wait_for_sent,
+	},
 };
 
 const WATCHED: &[u8] = b"watched";
@@ -108,6 +110,31 @@ fn node_with_best_block_five() -> Node {
 	let mut node = Node::new(3, 7);
 	node.best = 5;
 	node
+}
+
+/// The next change within [`TIMEOUT`], past the errors reported while the
+/// watch reconnects.
+fn next_change_within_timeout(received: &ReceivedRawChanges) -> RawStorageChanges {
+	let deadline = std::time::Instant::now() + TIMEOUT;
+	loop {
+		let left = deadline.saturating_duration_since(std::time::Instant::now());
+		match received.recv_timeout(left).expect("a change before the timeout") {
+			Ok(changes) => return changes,
+			Err(_) => continue,
+		}
+	}
+}
+
+/// Ends the first connection's responses, as a dropped socket does.
+fn close_first_connection(provider: &ScriptedProvider) {
+	provider.sender.lock().unwrap().take();
+}
+
+/// Waits until `method` was sent twice, the second time on a new connection.
+fn wait_for_second(provider: &ScriptedProvider, method: &str) {
+	let sent_twice =
+		|sent: &[String]| sent.iter().filter(|request| request.contains(method)).count() >= 2;
+	assert!(sent_twice(&wait_for_sent(provider, sent_twice)), "{method} not sent again");
 }
 
 fn next_item_within_timeout(
@@ -263,4 +290,49 @@ fn a_best_watch_whose_first_notification_leaves_a_key_out_is_an_error() {
 
 	let key = hex::encode(OTHER);
 	assert!(error.to_string().contains(&format!("key 0x{key} at")), "{error}");
+}
+
+#[test]
+fn a_best_watch_carries_on_over_a_new_connection_reporting_only_what_changed() {
+	// A dropped socket closes its client for good, so the watch has to
+	// subscribe over a new one. The new subscription names every key again,
+	// and only the one that changed while it was away is a change.
+	let mut node = node_with_best_block_five();
+	store_values_at_block(&mut node, 5, &[(WATCHED, b"one"), (OTHER, b"two")]);
+	store_values_at_block(&mut node, 6, &[(WATCHED, b"one"), (OTHER, b"three")]);
+	let at = node.block(6);
+	let (node, provider, chain) = serve(node);
+	let received = start_watch(&chain, WatchedHead::Best, &[WATCHED, OTHER]);
+	next_item_within_timeout(&received).unwrap();
+
+	node.lock().unwrap().best = 6;
+	close_first_connection(&provider);
+	let changes = next_change_within_timeout(&received);
+
+	assert_eq!((changes.at, changes.value), (at, vec![(1, Some(b"three".to_vec()))]));
+}
+
+#[test]
+fn a_finalized_watch_reads_over_a_new_connection_after_the_old_one_closes() {
+	// The head subscriptions reconnect by themselves, so reads that stayed on
+	// the closed client would fail at every finalized head from then on.
+	let mut node = Node::new(3, 7);
+	store_values_at_block(&mut node, 4, &[(WATCHED, b"one")]);
+	store_values_at_block(&mut node, 5, &[(WATCHED, b"two")]);
+	let (node, provider, chain) = serve(node);
+	let received = start_finalized_watch(&provider, &chain, &[WATCHED]);
+	announce_head(&node, &provider, FINALIZED_SUBSCRIPTION, 4);
+	next_item_within_timeout(&received).unwrap();
+
+	close_first_connection(&provider);
+	wait_for_second(&provider, "chain_subscribeFinalizedHeads");
+	let header = node.lock().unwrap().headers[5].clone();
+	later_notification_sender(&provider, 0)
+		.expect("a second connection")
+		.unbounded_send(head_notification(FINALIZED_SUBSCRIPTION, &header))
+		.unwrap();
+	let changes = next_change_within_timeout(&received);
+
+	let at = node.lock().unwrap().block(5);
+	assert_eq!((changes.at, changes.value), (at, vec![(0, Some(b"two".to_vec()))]));
 }

@@ -41,6 +41,9 @@ pub struct ScriptedProvider {
 	/// First connection's response sender; dropping it ends that connection's
 	/// responses. Later connections each get their own.
 	pub sender: Arc<SenderSlot>,
+	/// Response senders of the connections after the first, in the order
+	/// they connected.
+	later_senders: Arc<Mutex<Vec<Arc<SenderSlot>>>>,
 	receiver: Arc<ReceiverSlot>,
 	/// How many times the core asked for a connection.
 	pub connect_calls: Arc<AtomicUsize>,
@@ -68,6 +71,7 @@ impl ScriptedProvider {
 			respond: Arc::new(respond),
 			sent: Arc::new(Mutex::new(Vec::new())),
 			sender: first,
+			later_senders: Arc::new(Mutex::new(Vec::new())),
 			receiver: Arc::new(Mutex::new(Some(rx))),
 			connect_calls: Arc::new(AtomicUsize::new(0)),
 		}
@@ -126,6 +130,7 @@ impl RuntimeChainProvider for ScriptedProvider {
 			None => {
 				let (tx, rx) = fut_mpsc::unbounded();
 				let slot: Arc<SenderSlot> = Arc::new(Mutex::new(Some(tx)));
+				self.later_senders.lock().unwrap().push(slot.clone());
 				Ok(Arc::new(ScriptedConnection {
 					respond: self.respond.clone(),
 					sent: self.sent.clone(),
@@ -147,6 +152,17 @@ pub fn notification_sender(provider: &ScriptedProvider) -> fut_mpsc::UnboundedSe
 		.as_ref()
 		.expect("notification sender available")
 		.clone()
+}
+
+/// Sender of notifications on the `index`th connection after the first, or
+/// `None` before that connection is made.
+pub fn later_notification_sender(
+	provider: &ScriptedProvider,
+	index: usize,
+) -> Option<fut_mpsc::UnboundedSender<String>> {
+	let senders = provider.later_senders.lock().unwrap();
+	let slot = senders.get(index)?.lock().unwrap();
+	slot.as_ref().cloned()
 }
 
 /// Find the json-rpc request id of the just-sent frame so the scripted
