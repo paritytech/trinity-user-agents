@@ -1,9 +1,9 @@
 //! Tolerant decoding of the protocol-error frame payload.
 
 use parity_scale_codec::{Decode, Error as CodecError};
-use scale_info::{TypeDef, TypeInfo};
+use scale_info::{PortableRegistry, Registry, TypeDef, TypeInfo, meta_type};
 
-use crate::frame::{ProtocolErrorV1, VersionedProtocolError};
+use crate::frame::VersionedProtocolError;
 
 /// Decode a [`crate::frame::PROTOCOL_ERROR_KEY`] frame's payload.
 ///
@@ -19,29 +19,84 @@ use crate::frame::{ProtocolErrorV1, VersionedProtocolError};
 pub fn decode_protocol_error_payload(
 	payload: &[u8],
 ) -> Result<Option<VersionedProtocolError>, CodecError> {
-	match (payload.first(), payload.get(1)) {
-		(None, _) => Err("protocol error payload is empty".into()),
-		// A version from a later protocol.
-		(Some(version), _) if *version != 0 => Ok(None),
-		// A `V1` variant from a later protocol.
-		(Some(_), Some(variant)) if !is_known_v1_variant(*variant) => Ok(None),
-		// A `V1` variant this build knows.
-		_ => {
-			let mut input = payload;
-			let error = VersionedProtocolError::decode(&mut input)?;
-			if !input.is_empty() {
-				return Err("protocol error payload has trailing bytes".into());
-			}
-			Ok(Some(error))
-		},
+	if payload.is_empty() {
+		return Err("protocol error payload is empty".into());
 	}
+	if !names_known_variants::<VersionedProtocolError>(payload) {
+		return Ok(None);
+	}
+	let mut input = payload;
+	let error = VersionedProtocolError::decode(&mut input)?;
+	if !input.is_empty() {
+		return Err("protocol error payload has trailing bytes".into());
+	}
+	Ok(Some(error))
 }
 
-/// Whether `index` encodes a [`ProtocolErrorV1`] variant this build knows, read
-/// from the enum itself so a new variant is known the moment it is declared.
-fn is_known_v1_variant(index: u8) -> bool {
-	matches!(
-		ProtocolErrorV1::type_info().type_def,
-		TypeDef::Variant(def) if def.variants.iter().any(|variant| variant.index == index)
-	)
+/// Whether the variant indexes leading `payload` all name variants of `T`: the
+/// version, then the error within that version, and so on while a variant
+/// wraps a single enum. Read from `T`'s type information, so a version or an
+/// error is known as soon as it is declared.
+fn names_known_variants<T: TypeInfo + 'static>(payload: &[u8]) -> bool {
+	let mut registry = Registry::new();
+	let mut type_id = registry.register_type(&meta_type::<T>()).id;
+	let registry = PortableRegistry::from(registry);
+	for &index in payload {
+		let Some(TypeDef::Variant(def)) = registry.resolve(type_id).map(|ty| &ty.type_def) else {
+			return true;
+		};
+		let Some(variant) = def.variants.iter().find(|variant| variant.index == index) else {
+			return false;
+		};
+		// A variant that wraps one value puts that value's index next; any
+		// other variant starts its fields.
+		match variant.fields.as_slice() {
+			[field] if field.name.is_none() => type_id = field.ty.id,
+			_ => return true,
+		}
+	}
+	true
+}
+
+#[cfg(test)]
+mod tests {
+	use parity_scale_codec::Encode;
+
+	use super::*;
+
+	/// A later version of the protocol error needs no change to the decoder:
+	/// its errors are read from the type like V1's.
+	#[test]
+	fn the_errors_of_every_version_are_read_from_the_type() {
+		#[derive(Encode, TypeInfo)]
+		enum Versioned {
+			V1(First),
+			V2(Second),
+		}
+		#[derive(Encode, TypeInfo)]
+		enum First {
+			Only { id: u8 },
+		}
+		#[derive(Encode, TypeInfo)]
+		enum Second {
+			Only { id: u8 },
+			Added { id: u8, version: u8 },
+		}
+
+		let payloads = [
+			Versioned::V1(First::Only { id: 7 }).encode(),
+			Versioned::V2(Second::Only { id: 7 }).encode(),
+			Versioned::V2(Second::Added { id: 7, version: 2 }).encode(),
+			// An error V1 does not have.
+			vec![0, 1, 7],
+			// An error V2 does not have.
+			vec![1, 2, 7],
+			// A version that does not exist.
+			vec![2, 0, 7],
+		];
+		assert_eq!(
+			payloads.map(|payload| names_known_variants::<Versioned>(&payload)),
+			[true, true, true, false, false, false],
+		);
+	}
 }

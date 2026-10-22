@@ -57,7 +57,7 @@ pub const PROTOCOL_ERROR_METHOD_ID: u8 = 255;
 pub const PROTOCOL_ERROR_KEY: (u8, u8) = (PROTOCOL_ERROR_TRAIT_ID, PROTOCOL_ERROR_METHOD_ID);
 
 /// Versioned payload carried by [`PROTOCOL_ERROR_KEY`] frames.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, TypeInfo)]
 pub enum VersionedProtocolError {
 	/// Initial protocol error shape.
 	#[codec(index = 0)]
