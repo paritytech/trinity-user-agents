@@ -246,7 +246,7 @@ enum Command {
 	/// identity/username.
 	IdentityCheck {
 		/// BIP-39 mnemonic to probe.
-		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
+		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC", hide_env_values = true)]
 		mnemonic: String,
 		/// Network preset to probe.
 		#[arg(long, value_enum, default_value = "paseo-next-v2")]
@@ -257,7 +257,7 @@ enum Command {
 	/// person. That person's People ring must have propagated to Asset Hub.
 	RegisterName {
 		/// BIP-39 mnemonic of the recognized full person.
-		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
+		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC", hide_env_values = true)]
 		mnemonic: String,
 		/// Network preset to use.
 		#[arg(long, value_enum, default_value = "paseo-next-v2")]
@@ -280,7 +280,7 @@ enum Command {
 	/// test mnemonics; the account store is not touched.
 	Attest {
 		/// BIP-39 mnemonic of the identity to attest.
-		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
+		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC", hide_env_values = true)]
 		mnemonic: String,
 		/// Network preset to attest on.
 		#[arg(long, value_enum, default_value = "paseo-next-v2")]
@@ -294,7 +294,7 @@ enum Command {
 	/// (with `--submit`) the `set_statement_store_account` extrinsic.
 	AllocCheck {
 		/// BIP-39 mnemonic proving LitePeople ring membership.
-		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
+		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC", hide_env_values = true)]
 		mnemonic: String,
 		/// Network preset to use for People-chain RPC.
 		#[arg(long, value_enum, default_value = "paseo-next-v2")]
@@ -315,7 +315,7 @@ enum Command {
 	/// slot, and the `Pgas.claim_pgas` extrinsic.
 	PgasCheck {
 		/// BIP-39 mnemonic proving LitePeople ring membership.
-		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
+		#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC", hide_env_values = true)]
 		mnemonic: String,
 		/// Network preset to use for People and Asset Hub RPC.
 		#[arg(long, value_enum, default_value = "paseo-next-v2")]
@@ -429,7 +429,7 @@ struct DevArgs {
 	/// BIP-39 mnemonic for the wallet root, to sign as an existing identity
 	/// instead of the auto-managed one. Confirmations are auto-approved here,
 	/// so the connected product can sign anything: testnet keys only.
-	#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
+	#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC", hide_env_values = true)]
 	mnemonic: Option<String>,
 	/// Base directory; CLI-managed state lives in its v2 subdirectory.
 	#[arg(long = "base-path", env = "TRUAPI_HOST_BASE_PATH")]
@@ -464,7 +464,7 @@ struct SigningHostArgs {
 	/// BIP-39 mnemonic for the wallet root. If omitted, the
 	/// `HOST_CLI_SIGNER_MNEMONIC` env var is used when set. Any mnemonic
 	/// bypasses account auto-management.
-	#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC")]
+	#[arg(long, env = "HOST_CLI_SIGNER_MNEMONIC", hide_env_values = true)]
 	mnemonic: Option<String>,
 	/// Named stored account to use. Omit this and `--mnemonic` to auto-select
 	/// or create a usable account.
@@ -624,7 +624,7 @@ async fn dispatch(
 				"{} must be set",
 				local_network::CONFIG_ENV
 			);
-			let config = network.cli_config()?;
+			let config = network.cli_config().await?;
 			println!(
 				"{}",
 				serde_json::json!({
@@ -650,7 +650,7 @@ async fn dispatch(
 			let entropy = bip39::Mnemonic::parse(mnemonic.trim())
 				.context("invalid BIP-39 mnemonic")?
 				.to_entropy();
-			attestation::check_identity(network.cli_config()?, &entropy).await
+			attestation::check_identity(network.cli_config().await?, &entropy).await
 		},
 		Command::RegisterName { mnemonic, network, label, link_lite, chat_key } => {
 			let entropy = bip39::Mnemonic::parse(mnemonic.trim())
@@ -666,7 +666,7 @@ async fn dispatch(
 				})
 				.transpose()?;
 			register_name::register_name(&register_name::RegisterNameConfig {
-				network: network.cli_config()?,
+				network: network.cli_config().await?,
 				entropy,
 				label,
 				link_lite,
@@ -675,14 +675,15 @@ async fn dispatch(
 			.await
 		},
 		Command::AllocCheck { mnemonic, network, target, lookback, submit } => {
-			run_alloc_check(mnemonic, network.cli_config()?, target, lookback, submit).await
+			run_alloc_check(mnemonic, network.cli_config().await?, target, lookback, submit).await
 		},
 		Command::PgasCheck { mnemonic, network, target, lookback, submit } => {
-			run_pgas_check(mnemonic, network.cli_config()?, target, lookback, submit).await
+			run_pgas_check(mnemonic, network.cli_config().await?, target, lookback, submit).await
 		},
 		Command::Attest { mnemonic, network, username } => {
 			let attested =
-				accounts::attest_mnemonic(network.cli_config()?, &mnemonic, &username).await?;
+				accounts::attest_mnemonic(network.cli_config().await?, &mnemonic, &username)
+					.await?;
 			println!(
 				"{}",
 				serde_json::json!({
@@ -1245,7 +1246,7 @@ async fn run_pairing_host(
 			"interactive pairing-host requires a TTY; use pairing-host --script <path>",
 		);
 	}
-	let network = args.network.cli_config()?;
+	let network = args.network.cli_config().await?;
 	let base_path = state_base_path(args.base_path);
 	let product =
 		frame_server::ProductSelection::new(args.product_id, args.execution_kind.context())?;
@@ -1365,7 +1366,7 @@ async fn run_signing_host(
 		args.execution_kind.context(),
 	)?;
 	let product_id = product.current();
-	let network = args.network.cli_config()?;
+	let network = args.network.cli_config().await?;
 	let base_path = state_base_path(args.base_path.clone());
 	let session_catalog = SessionCatalog::new(base_path.clone(), network.id)?;
 	let initial_session_name = initial_session_name(&args, &session_catalog)?;

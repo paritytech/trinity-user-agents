@@ -799,6 +799,11 @@ pub async fn attest_mnemonic(
 	mnemonic: &str,
 	username_base: &str,
 ) -> Result<AttestedIdentity> {
+	anyhow::ensure!(
+		network.disposable_identities,
+		"{} holds real identities, so attest is only available on test network presets",
+		network.id
+	);
 	let username_base = lite_username_base(username_base)?;
 	let identity = identity_from_mnemonic(mnemonic, network.network_suffix)?;
 	let lite_username = attestation::attest(&attest_config(
@@ -1175,6 +1180,14 @@ mod tests {
 				.is_none()
 		);
 		Ok(())
+	}
+
+	#[tokio::test]
+	async fn attest_is_refused_on_a_real_identity_preset() {
+		let Err(error) = attest_mnemonic(production_network(), MNEMONIC, "abcdefg").await else {
+			panic!("attest is for test presets");
+		};
+		assert!(error.to_string().contains("attest"), "{error}");
 	}
 
 	/// A preset whose identities are real, standing in for a production one.

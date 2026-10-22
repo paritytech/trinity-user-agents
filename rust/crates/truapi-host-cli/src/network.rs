@@ -92,14 +92,22 @@ impl Network {
 	/// CLI resolution: the preset with the backend and chain URL overrides, or
 	/// the opt-in disposable local-network configuration, which cannot be
 	/// combined with the chain URL overrides.
-	pub fn cli_config(self) -> anyhow::Result<NetworkConfig> {
+	///
+	/// A rerouted chain must still be the chain the preset names: each endpoint
+	/// that differs from the preset's is asked for its genesis before anything
+	/// runs against it, and a disposable configuration may never carry the
+	/// genesis of a preset whose identities are real.
+	pub async fn cli_config(self) -> anyhow::Result<NetworkConfig> {
 		let overrides = ChainOverrides::from_env()?;
 		let set = overrides.set_names();
 		refuse_light_client(&set, std::env::var(crate::local_network::LIGHT_CLIENT_ENV).ok())?;
-		crate::local_network::resolve(
+		let config = crate::local_network::resolve(
 			apply_chain_overrides(self.with_backend_override(), overrides),
 			&set,
-		)
+		)?;
+		refuse_real_identity_genesis(&config)?;
+		verify_rerouted_endpoints(&config, &self.preset()).await?;
+		Ok(config)
 	}
 
 	/// [`Self::cli_config`] without the local-network file, for tests.
@@ -189,6 +197,61 @@ fn apply_backend_override(mut config: NetworkConfig, base: Option<String>) -> Ne
 		}
 	}
 	config
+}
+
+/// Refuses a disposable-identity configuration whose chains are a real-identity
+/// preset's. A fork or local copy of mainnet keeps mainnet's genesis, and a
+/// signature made against it is valid on mainnet itself.
+fn refuse_real_identity_genesis(config: &NetworkConfig) -> anyhow::Result<()> {
+	if !config.disposable_identities {
+		return Ok(());
+	}
+	for real in Network::value_variants().iter().map(|network| network.preset()) {
+		if real.disposable_identities {
+			continue;
+		}
+		for endpoint in config.live_chain_endpoints {
+			anyhow::ensure!(
+				!real.live_chain_endpoints.iter().any(|chain| chain.genesis == endpoint.genesis),
+				"{} would route to {}'s chain at {}, whose identities are real; point it at a \
+				 test network",
+				config.id,
+				real.id,
+				endpoint.ws
+			);
+		}
+	}
+	Ok(())
+}
+
+/// Asks every endpoint that differs from the preset's for its genesis, and
+/// refuses one that is not the chain it is routed as.
+async fn verify_rerouted_endpoints(
+	config: &NetworkConfig,
+	preset: &NetworkConfig,
+) -> anyhow::Result<()> {
+	use truapi::statement_allowance as alloc;
+
+	for endpoint in config.live_chain_endpoints {
+		if preset.live_chain_endpoints.iter().any(|chain| chain.ws == endpoint.ws) {
+			continue;
+		}
+		let rpc = alloc::rpc::RpcClient::connect(endpoint.ws).await.map_err(|err| {
+			anyhow::anyhow!("cannot reach {} to check its genesis: {err}", endpoint.ws)
+		})?;
+		let reported = alloc::fetch_genesis_hash(&rpc)
+			.await
+			.map_err(|err| anyhow::anyhow!("cannot read the genesis of {}: {err}", endpoint.ws))?;
+		anyhow::ensure!(
+			reported == endpoint.genesis,
+			"{} reports genesis 0x{}, but {} routes it as the chain with genesis 0x{}",
+			endpoint.ws,
+			hex::encode(reported),
+			config.id,
+			hex::encode(endpoint.genesis)
+		);
+	}
+	Ok(())
 }
 
 /// Points each overridden role at its new URL, in both the preset field and the
@@ -597,18 +660,14 @@ mod tests {
 		}
 	}
 
-	/// Hosts a disposable-identity preset may route to. Every entry is a test
-	/// deployment:
-	/// `paseo`/`testnet` name the Paseo testnets,
-	/// `previewnet.substrate.dev` is the previewnet parachain set, and the two
-	/// exact dotSpark hosts are those test presets' identity backends.
-	///
-	/// An allowlist rather than a substring rule, because the rule this test
-	/// exists for is "no production network", and a production host can contain
-	/// any substring. Adding a preset means adding its hosts here on purpose.
-	const TEST_NETWORK_MARKERS: &[&str] = &[
-		"paseo",
-		"testnet",
+	/// Hosts a disposable-identity preset may route to, matched exactly: the
+	/// paseo-next-v2 chains, the previewnet parachain set, and those two
+	/// presets' dotSpark identity backends. Adding a preset means adding its
+	/// hosts here on purpose.
+	const TEST_NETWORK_HOSTS: &[&str] = &[
+		"paseo-asset-hub-next-rpc.polkadot.io",
+		"paseo-people-next-system-rpc.polkadot.io",
+		"paseo-bulletin-next-rpc.polkadot.io",
 		"previewnet.substrate.dev",
 		"identity.dotspark.app",
 		"identity-previewnet.dotspark.app",
@@ -645,10 +704,13 @@ mod tests {
 			routes.extend(config.live_chain_endpoints.iter().map(|chain| chain.ws));
 
 			for route in routes {
+				let host = reqwest::Url::parse(route)
+					.ok()
+					.and_then(|url| url.host_str().map(str::to_owned))
+					.unwrap_or_default();
 				assert!(
-					TEST_NETWORK_MARKERS.iter().any(|marker| route.contains(marker)),
-					"preset `{}` routes to a host that is not a recognised test \
-                     network: {route}",
+					TEST_NETWORK_HOSTS.contains(&host.as_str()),
+					"preset `{}` routes to a host that is not a recognised test network: {route}",
 					config.id,
 				);
 			}
@@ -811,6 +873,59 @@ mod tests {
 			Network::Polkadot.preset().dotns_pop_controller,
 			Some(manifest_address(POLKADOT_DOTNS_DEPLOYMENT, "DotnsPopController"))
 		);
+	}
+
+	/// A fork keeps its source's genesis, so a test preset routed at a copy of
+	/// mainnet would sign mainnet-valid transactions with auto-approval.
+	#[test]
+	fn a_test_preset_never_carries_a_real_identity_genesis() {
+		assert!(refuse_real_identity_genesis(&Network::PaseoNextV2.preset()).is_ok());
+
+		let mainnet_people = POLKADOT_PEOPLE;
+		let mut forked = Network::PaseoNextV2.preset();
+		forked.live_chain_endpoints = Box::leak(vec![mainnet_people].into_boxed_slice());
+		let error = refuse_real_identity_genesis(&forked).expect_err("mainnet genesis is refused");
+		assert!(error.to_string().contains("polkadot"), "{error}");
+	}
+
+	/// A rerouted endpoint is checked before use, so one that cannot answer is
+	/// refused rather than trusted.
+	#[tokio::test]
+	async fn an_unreachable_rerouted_endpoint_is_refused() {
+		let preset = Network::PaseoNextV2.preset();
+		let rerouted = apply_chain_overrides(
+			preset,
+			ChainOverrides {
+				people_ws: Some("ws://127.0.0.1:9".to_string()),
+				..Default::default()
+			},
+		);
+		let error = verify_rerouted_endpoints(&rerouted, &preset)
+			.await
+			.expect_err("an endpoint that cannot report its genesis is refused");
+		assert!(error.to_string().contains("ws://127.0.0.1:9"), "{error}");
+		assert!(verify_rerouted_endpoints(&preset, &preset).await.is_ok());
+	}
+
+	/// The case the override check exists for: a test preset pointed at a real
+	/// network's endpoint.
+	///
+	/// Ignored by default; needs network access to Polkadot People.
+	#[tokio::test]
+	#[ignore = "needs network access to Polkadot People"]
+	async fn a_test_preset_pointed_at_mainnet_is_refused() {
+		let preset = Network::PaseoNextV2.preset();
+		let rerouted = apply_chain_overrides(
+			preset,
+			ChainOverrides {
+				people_ws: Some(POLKADOT_PEOPLE.ws.to_string()),
+				..Default::default()
+			},
+		);
+		let error = verify_rerouted_endpoints(&rerouted, &preset)
+			.await
+			.expect_err("mainnet People is not paseo-next-v2's People");
+		assert!(error.to_string().contains("reports genesis"), "{error}");
 	}
 
 	/// Mainnet identities are real: they must never reach the plaintext account

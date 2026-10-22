@@ -112,6 +112,10 @@ async fn protocol_registry<T: DotnsTransport + ?Sized>(
 	transport: &mut T,
 ) -> Result<Option<[u8; 20]>, String> {
 	let Some(controller) = discover_pop_controller(transport).await? else {
+		warn!(
+			"DotnsGateway.DispatcherAddress is unset, so no product manifest resolves and \
+			 trustedProducts grants are refused until the dispatcher is set"
+		);
 		return Ok(None);
 	};
 	let output = transport
