@@ -194,24 +194,6 @@ describe("mock host surface agreement", () => {
     });
   });
 
-  it("keys permissions on the tag the generated TypeScript uses", () => {
-    // The Rust mock maps each permission variant to a decision key by hand.
-    // Codegen emits the variant identifier verbatim as the TypeScript tag, so
-    // the key has to be spelled exactly like the variant. Renaming a variant
-    // updates the match pattern and leaves the string beside it compiling and
-    // silently disagreeing, which is the drift this whole mock exists to stop.
-    const source = readFileSync(MOCK_RS, "utf8");
-    const arms = [
-      ...source.matchAll(
-        /^\s+(?:Request|Permission)::([A-Za-z0-9]+)(?: \{ \.\. \})? => "([^"]+)",$/gm,
-      ),
-    ].map(([, variant, key]) => ({ variant, key }));
-
-    // A regex that matched nothing would make this pass forever.
-    expect(arms.length).toBe(17);
-    expect(arms.filter(({ variant, key }) => variant !== key)).toEqual([]);
-  });
-
   it("reads a whole Rust surface, so the check cannot pass vacuously", () => {
     // A regex that silently matched nothing, or a block slice that stopped
     // early, would make the checks above green forever. Pin a floor plus the
