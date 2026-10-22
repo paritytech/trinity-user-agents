@@ -34,7 +34,7 @@ const STORAGE_SUBSCRIPTION: &str = "storage";
 
 /// A linear chain the scripted node serves over both the legacy methods and
 /// chainHead, plus the scripted outcome of validation and submission.
-struct Node {
+pub struct Node {
 	headers: Vec<SubstrateHeader<H256>>,
 	finalized: u64,
 	best: u64,
@@ -60,7 +60,7 @@ struct Node {
 
 impl Node {
 	/// Blocks `0..=best`, with `finalized` finalized, no bodies and no events.
-	fn new(finalized: u64, best: u64) -> Self {
+	pub fn new(finalized: u64, best: u64) -> Self {
 		let mut headers: Vec<SubstrateHeader<H256>> = Vec::new();
 		for number in 0..=best {
 			let parent_hash = headers.last().map(header_hash).unwrap_or_default();
@@ -337,7 +337,7 @@ fn validation_output(valid: bool) -> Vec<u8> {
 }
 
 /// A scripted node for `node` and the capabilities over it.
-fn serve(node: Node) -> (Arc<Mutex<Node>>, Arc<ScriptedProvider>, ChainRuntime) {
+pub fn serve(node: Node) -> (Arc<Mutex<Node>>, Arc<ScriptedProvider>, ChainRuntime) {
 	let node = Arc::new(Mutex::new(node));
 	let scripted = node.clone();
 	let provider = Arc::new(ScriptedProvider::with_frames(move |request| {

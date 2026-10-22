@@ -107,8 +107,8 @@ impl dyn WatchedStorage {
 		A::KeyParts: Clone + Send + 'static,
 		A::Value: Send + 'static,
 	{
-		let metadata = self.metadata_at_finalized_head(genesis).await?;
-		let encoded = codec::encode_storage_keys(&address, &keys, &metadata)?;
+		let client = self.client_at_finalized_head(genesis).await?;
+		let encoded = codec::encode_storage_keys(&address, &keys, &client)?;
 		let changes = self.watch_raw_key_changes(genesis, head, encoded).await?;
 		let decoder = EntryChangesDecoder { address, keys };
 		Ok(changes.map(move |raw| decoder.decode_raw_changes(raw?)).boxed())
