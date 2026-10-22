@@ -12,10 +12,9 @@
 
 /// A versioned message envelope.
 ///
-/// Its encoding starts with `version() - 1`, and versions run from 1 to
-/// [`LATEST`](Self::LATEST) with no gaps. The dispatcher reads that first byte
-/// to refuse a request newer than its handler knows. `versioned_type!` keeps
-/// this; a hand-written impl must too.
+/// The first encoded byte is `version() - 1`, and every version from 1 to
+/// [`LATEST`](Self::LATEST) exists. The dispatcher relies on this to refuse a
+/// request in a newer version.
 pub trait Versioned: Sized {
 	/// The newest version's payload. Handlers operate exclusively on this.
 	type Latest;
