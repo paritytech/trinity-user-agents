@@ -33,29 +33,28 @@ pub fn decode_protocol_error_payload(
 	Ok(Some(error))
 }
 
-/// Whether the variant indexes leading `payload` all name variants of `T`: the
-/// version, then the error within that version, and so on while a variant
-/// wraps a single enum. Read from `T`'s type information, so a version or an
-/// error is known as soon as it is declared.
+/// Whether `T` has the version and error that `payload` starts with.
 fn names_known_variants<T: TypeInfo + 'static>(payload: &[u8]) -> bool {
 	let mut registry = Registry::new();
-	let mut type_id = registry.register_type(&meta_type::<T>()).id;
-	let registry = PortableRegistry::from(registry);
-	for &index in payload {
-		let Some(TypeDef::Variant(def)) = registry.resolve(type_id).map(|ty| &ty.type_def) else {
-			return true;
-		};
-		let Some(variant) = def.variants.iter().find(|variant| variant.index == index) else {
-			return false;
-		};
-		// A variant that wraps one value puts that value's index next; any
-		// other variant starts its fields.
-		match variant.fields.as_slice() {
-			[field] if field.name.is_none() => type_id = field.ty.id,
-			_ => return true,
-		}
+	let type_id = registry.register_type(&meta_type::<T>()).id;
+	indexes_are_known(&PortableRegistry::from(registry), type_id, payload)
+}
+
+/// Whether `payload`'s first byte names a variant of the enum `type_id`, and,
+/// when that variant wraps one value, whether the rest names that value's.
+fn indexes_are_known(registry: &PortableRegistry, type_id: u32, payload: &[u8]) -> bool {
+	match (payload.split_first(), registry.resolve(type_id).map(|ty| &ty.type_def)) {
+		(Some((&index, rest)), Some(TypeDef::Variant(def))) => def
+			.variants
+			.iter()
+			.find(|variant| variant.index == index)
+			.is_some_and(|variant| match variant.fields.as_slice() {
+				[field] if field.name.is_none() => indexes_are_known(registry, field.ty.id, rest),
+				_ => true,
+			}),
+		// The payload ended, or fields follow: decoding checks the rest.
+		_ => true,
 	}
-	true
 }
 
 #[cfg(test)]
