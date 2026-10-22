@@ -355,7 +355,10 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
                 try await roomMetadataRepository.saveOperation({ [update] }, { [] }).asyncExecute()
             }
 
-            return .exists
+            // A row HostPlacedRoomPlacer drew before the product ran is a stand-in, not the
+            // product's room: adopt it and answer `new`, or the product never sees its first
+            // registration and its first-boot welcome never posts.
+            return existingChat.isHostPlacedPlaceholder ? .new : .exists
         }
 
         let chat = Chat.LocalModel.newChatWithRoom(

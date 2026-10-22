@@ -26,8 +26,9 @@ public enum BuiltInProduct {
         product(for: "uid", tld: tld)
     }
 
-    /// Personhood — ring-VRF key domain for full/light person keys.
-    public static func personhood(for tld: String) -> String {
+    /// Personhood — ring-VRF key domain for full/light person keys, and the identity the Humanity
+    /// product publishes under. `@Sendable` for the same reason as ``dim2(for:)``.
+    @Sendable public static func personhood(for tld: String) -> String {
         product(for: "peopl", tld: tld)
     }
 
