@@ -35,8 +35,6 @@
 //   sign-again      dim2.paseo signs once more, so a refusal above cannot be
 //                   the registration having gone.
 
-import { PASEO_NEXT_V2_INDIVIDUALITY } from "../../../../js/packages/truapi/src/index.ts";
-
 const OWNER = "peopl.paseo";
 const GRANTED = "dim2.paseo";
 const UNTRUSTED = "stash.paseo";
@@ -45,8 +43,11 @@ const UNTRUSTED = "stash.paseo";
 const PEOPLE_LITE_COLLECTION_ID =
   "0x706f703a706f6c6b61646f742e6e6574776f726b2f70656f706c652d6c697465";
 
+const people = await truapi.chain.getChainInfo({ chain: "People" });
+assert(people.isOk(), "get_chain_info failed", people);
+
 const RING = {
-  chainId: PASEO_NEXT_V2_INDIVIDUALITY.genesis,
+  chainId: people.value.genesisHash,
   junctions: [
     { tag: "CollectionId" as const, value: PEOPLE_LITE_COLLECTION_ID },
   ],
