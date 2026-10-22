@@ -71,8 +71,9 @@ impl InstallationIdProvider for CliInstallation {
 
 fn random_installation() -> Result<InstallationId, GenericError> {
 	let mut bytes = [0u8; 32];
-	getrandom::getrandom(&mut bytes)
-		.map_err(|error| GenericError { reason: format!("no randomness: {error}") })?;
+	getrandom::getrandom(&mut bytes).map_err(|error| GenericError {
+		reason: format!("generating a random installation id: {error}"),
+	})?;
 	Ok(InstallationId(bytes))
 }
 
@@ -94,18 +95,19 @@ mod tests {
 		let first = CliInstallation::new(path.clone()).current_installation().await;
 		let again = CliInstallation::new(path.clone()).current_installation().await;
 
-		assert_eq!(first.expect("created").0, again.expect("read back").0);
+		assert_eq!(first.expect("created"), again.expect("read back"));
 	}
 
-	/// A second first call must not replace the id the first one stored.
+	/// A call that loses the race to create the file finds an id already
+	/// stored, and must return that one rather than its own.
 	#[test]
-	fn a_racing_first_call_keeps_the_stored_id() {
+	fn creating_over_a_stored_id_keeps_it() {
 		let directory = tempfile::tempdir().expect("temporary directory");
 		let installation = CliInstallation::new(directory.path().join("installation"));
 		let stored = installation.create_unless_stored().expect("created");
 
-		let raced = installation.create_unless_stored().expect("kept");
+		let kept = installation.create_unless_stored().expect("kept");
 
-		assert_eq!(raced.0, stored.0);
+		assert_eq!(kept, stored);
 	}
 }

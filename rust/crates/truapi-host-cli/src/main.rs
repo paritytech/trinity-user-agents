@@ -1779,8 +1779,8 @@ fn build_signing_runtime(
 		truapi::store::core_db_config(&storage_path),
 	))
 	.with_context(|| format!("opening the core database in {}", storage_path.display()))?;
-	let installation =
-		Arc::new(installation::CliInstallation::new(storage_path.join("installation")));
+	let installation_path = storage_path.join("installation");
+	let installation = Arc::new(installation::CliInstallation::new(installation_path));
 	let platform = CliPlatform::new(
 		network,
 		Some(CliStoragePaths::new(storage_path, product_storage_dir)),
