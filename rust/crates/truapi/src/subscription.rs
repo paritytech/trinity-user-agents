@@ -455,13 +455,14 @@ impl HostInitiatedSubscriptionManager {
 		// silently drop the frame that reports our start as unsupported.
 		if key == PROTOCOL_ERROR_KEY {
 			let frame = match decode_protocol_error_payload(&message.payload.value) {
-				Ok(Some(VersionedProtocolError::V1(ProtocolErrorV1::UnsupportedMessage {
-					trait_id,
-					method_id,
-				}))) => {
+				Ok(Some(VersionedProtocolError::V1(
+					ProtocolErrorV1::UnsupportedMessage { trait_id, method_id } |
+					ProtocolErrorV1::UnsupportedVersion { trait_id, method_id, .. },
+				))) => {
 					// Only OUR start frame going unsupported ends this render;
 					// an error about any other pair belongs to a different
-					// subscription.
+					// subscription. A product refusing the start's version ends
+					// it the same way.
 					if (trait_id, method_id) != (slot.ids.trait_id, slot.ids.method_id) {
 						return None;
 					}
@@ -879,29 +880,37 @@ mod tests {
 
 	#[test]
 	fn protocol_error_ends_one_host_render_without_echoing_stop() {
-		let transport_typed = Arc::new(RecordingTransport::new());
-		let transport: Arc<dyn Transport> = transport_typed.clone();
-		let manager = HostInitiatedSubscriptionManager::new();
-		let mut unsupported =
-			manager.start::<u32, v01::GenericError>(host_ids(), vec![], transport);
-
-		manager.handle_message(ProtocolMessage {
-			request_id: "h:1".into(),
-			payload: Payload {
-				trait_id: PROTOCOL_ERROR_TRAIT_ID,
-				method_id: PROTOCOL_ERROR_METHOD_ID,
-				message_type: MESSAGE_TYPE_RESPONSE,
-				value: VersionedProtocolError::V1(ProtocolErrorV1::UnsupportedMessage {
-					trait_id: host_ids().trait_id,
-					method_id: host_ids().method_id,
-				})
-				.encode(),
+		for error in [
+			ProtocolErrorV1::UnsupportedMessage {
+				trait_id: host_ids().trait_id,
+				method_id: host_ids().method_id,
 			},
-		});
+			ProtocolErrorV1::UnsupportedVersion {
+				trait_id: host_ids().trait_id,
+				method_id: host_ids().method_id,
+				newest_version: 1,
+			},
+		] {
+			let transport_typed = Arc::new(RecordingTransport::new());
+			let transport: Arc<dyn Transport> = transport_typed.clone();
+			let manager = HostInitiatedSubscriptionManager::new();
+			let mut unsupported =
+				manager.start::<u32, v01::GenericError>(host_ids(), vec![], transport);
 
-		assert_eq!(unsupported.next().now_or_never(), Some(Some(Err(CallError::Unsupported))));
-		assert_eq!(unsupported.next().now_or_never(), Some(None));
-		assert_eq!(transport_typed.sent().len(), 1);
+			manager.handle_message(ProtocolMessage {
+				request_id: "h:1".into(),
+				payload: Payload {
+					trait_id: PROTOCOL_ERROR_TRAIT_ID,
+					method_id: PROTOCOL_ERROR_METHOD_ID,
+					message_type: MESSAGE_TYPE_RESPONSE,
+					value: VersionedProtocolError::V1(error).encode(),
+				},
+			});
+
+			assert_eq!(unsupported.next().now_or_never(), Some(Some(Err(CallError::Unsupported))));
+			assert_eq!(unsupported.next().now_or_never(), Some(None));
+			assert_eq!(transport_typed.sent().len(), 1);
+		}
 	}
 
 	#[test]
@@ -970,6 +979,12 @@ mod tests {
 			VersionedProtocolError::V1(ProtocolErrorV1::UnsupportedMessage {
 				trait_id: host_ids().trait_id,
 				method_id: host_ids().method_id + 1,
+			})
+			.encode(),
+			VersionedProtocolError::V1(ProtocolErrorV1::UnsupportedVersion {
+				trait_id: host_ids().trait_id,
+				method_id: host_ids().method_id + 1,
+				newest_version: 1,
 			})
 			.encode(),
 			vec![0, 0],

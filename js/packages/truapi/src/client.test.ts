@@ -233,6 +233,19 @@ function unsupportedMessage(
     return protocolError(requestId, new Uint8Array([0, 0, traitId, methodId]));
 }
 
+function unsupportedVersion(
+    requestId: string,
+    traitId: number,
+    methodId: number,
+    newestVersion: number,
+): Uint8Array {
+    // [0] version index, [1] variant index, the refused pair, the newest version.
+    return protocolError(
+        requestId,
+        new Uint8Array([0, 1, traitId, methodId, newestVersion]),
+    );
+}
+
 describe("generated client transport", () => {
     it("encodes unit-only enums as a single-byte SCALE discriminant", () => {
         // Unit-only enums expose a string union on the public API while
@@ -387,6 +400,43 @@ describe("generated client transport", () => {
         expect(fixture.sent).toHaveLength(2);
     });
 
+    it("settles only the request a refused version names, as unsupported", async () => {
+        const fixture = providerFixture();
+        const transport = createTransport(fixture.provider);
+        const request = () =>
+            transport.request<string, CallErrorValue<never>>({
+                ids: { trait: 200, method: 194, kind: "request" },
+                payload: new Uint8Array([1]),
+                decodeResponse: () => ({ success: true, value: "supported" }),
+            });
+
+        const refused = request();
+        const answered = request();
+        const warnings: unknown[][] = [];
+        const originalWarn = console.warn;
+        console.warn = (...args: unknown[]) => {
+            warnings.push(args);
+        };
+        try {
+            fixture.receive(unsupportedVersion("p:1", 200, 194, 1));
+            // A refusal naming another method belongs to another call.
+            fixture.receive(unsupportedVersion("p:2", 200, 196, 1));
+            fixture.receive(wireFrame("p:2", { trait: 200, method: 194 }, MESSAGE_TYPE_RESPONSE));
+        } finally {
+            console.warn = originalWarn;
+        }
+
+        expect((await refused)._unsafeUnwrapErr()).toEqual({ tag: "Unsupported" });
+        expect((await answered)._unsafeUnwrap()).toBe("supported");
+        // Nothing is sent again after a refusal.
+        expect(fixture.sent).toHaveLength(2);
+        // The newest version is how a developer tells an older app from a
+        // corrupt request.
+        expect(String(warnings[0]?.[0])).toContain(
+            "refused request p:1 for (200, 194): it accepts versions up to V1",
+        );
+    });
+
     it("does not settle a request from an unmatched or mismatched protocol error", async () => {
         const fixture = providerFixture();
         const transport = createTransport(fixture.provider);
@@ -450,6 +500,32 @@ describe("generated client transport", () => {
         expect(fixture.sent).toHaveLength(1);
     });
 
+    it("ends a subscription whose start version the host refuses", () => {
+        const fixture = providerFixture();
+        const transport = createTransport(fixture.provider);
+        const errors: Error[] = [];
+        const subscription = transport.subscribeRaw({
+            ids: { trait: 7, method: 194, kind: "subscription" },
+            payload: new Uint8Array([1]),
+            onReceive: () => {},
+            onClose: (error) => errors.push(error),
+        });
+        const originalWarn = console.warn;
+        console.warn = () => {};
+        try {
+            // A refusal naming another method belongs to another subscription.
+            fixture.receive(unsupportedVersion(subscription.subscriptionId, 7, 195, 1));
+            fixture.receive(unsupportedVersion(subscription.subscriptionId, 7, 194, 1));
+        } finally {
+            console.warn = originalWarn;
+        }
+        subscription.unsubscribe();
+
+        expect(errors).toEqual([new UnsupportedMessageError(7, 194)]);
+        // The host never started it, so there is nothing to stop.
+        expect(fixture.sent).toHaveLength(1);
+    });
+
     it("terminates a generated subscription when its API is unsupported", () => {
         const fixture = providerFixture();
         const client = createClient(createTransport(fixture.provider));
@@ -489,11 +565,15 @@ describe("generated client transport", () => {
         // unknown protocol error".
         const malformedPayloads = [
             [new Uint8Array([]), "empty"],
-            [new Uint8Array([0, 0]), "expected 4 bytes, received 2"],
+            [new Uint8Array([0, 0]), "truncated"],
             // trait present, method truncated
-            [new Uint8Array([0, 0, 194]), "expected 4 bytes, received 3"],
+            [new Uint8Array([0, 0, 194]), "truncated"],
             // one trailing byte past a full pair
-            [new Uint8Array([0, 0, 194, 193, 0]), "expected 4 bytes, received 5"],
+            [new Uint8Array([0, 0, 194, 193, 0]), "trailing bytes"],
+            // `UnsupportedVersion` without its newest version
+            [new Uint8Array([0, 1, 194, 193]), "truncated"],
+            // one trailing byte past a full `UnsupportedVersion`
+            [new Uint8Array([0, 1, 194, 193, 2, 0]), "trailing bytes"],
         ] as const;
 
         for (const [payload, message] of malformedPayloads) {

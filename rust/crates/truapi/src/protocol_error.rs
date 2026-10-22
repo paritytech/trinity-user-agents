@@ -1,8 +1,9 @@
 //! Tolerant decoding of the protocol-error frame payload.
 
 use parity_scale_codec::{Decode, Error as CodecError};
+use scale_info::{TypeDef, TypeInfo};
 
-use crate::frame::VersionedProtocolError;
+use crate::frame::{ProtocolErrorV1, VersionedProtocolError};
 
 /// Decode a [`crate::frame::PROTOCOL_ERROR_KEY`] frame's payload.
 ///
@@ -15,7 +16,8 @@ use crate::frame::VersionedProtocolError;
 /// settle the correlated call as an unspecified protocol failure and carry on.
 ///
 /// A payload this build does recognise stays strict: a truncated or over-long
-/// `V1(UnsupportedMessage)` is corruption, not a newer peer, and still fails.
+/// `V1(UnsupportedMessage)` or `V1(UnsupportedVersion)` is corruption, not a
+/// newer peer, and still fails.
 pub fn decode_protocol_error_payload(
 	payload: &[u8],
 ) -> Result<Option<VersionedProtocolError>, CodecError> {
@@ -24,8 +26,8 @@ pub fn decode_protocol_error_payload(
 		// A version from a later protocol.
 		(Some(version), _) if *version != 0 => Ok(None),
 		// A `V1` variant from a later protocol.
-		(Some(_), Some(variant)) if *variant != 0 => Ok(None),
-		// `V1(UnsupportedMessage)`, the only shape this build knows.
+		(Some(_), Some(variant)) if !is_known_v1_variant(*variant) => Ok(None),
+		// A `V1` variant this build knows.
 		_ => {
 			let mut input = payload;
 			let error = VersionedProtocolError::decode(&mut input)?;
@@ -35,4 +37,13 @@ pub fn decode_protocol_error_payload(
 			Ok(Some(error))
 		},
 	}
+}
+
+/// Whether `index` encodes a [`ProtocolErrorV1`] variant this build knows, read
+/// from the enum itself so a new variant is known the moment it is declared.
+fn is_known_v1_variant(index: u8) -> bool {
+	matches!(
+		ProtocolErrorV1::type_info().type_def,
+		TypeDef::Variant(def) if def.variants.iter().any(|variant| variant.index == index)
+	)
 }

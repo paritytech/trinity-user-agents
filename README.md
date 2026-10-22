@@ -778,6 +778,10 @@ use a different state directory while debugging.
 - **v0.2**: See [`docs/design/releases/v0.2.md`](docs/design/releases/v0.2.md) for the rationale behind each change.
 - **v0.3**: current protocol version.
 
+A host refuses a request in a version newer than it knows, and the call
+settles as unsupported. See
+[Request versions](docs/design/truapi-protocol.md#request-versions).
+
 ## Deploy
 
 Pushes to `main` build and deploy:

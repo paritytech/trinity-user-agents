@@ -192,6 +192,8 @@ A host that predates the `Cancel` leg drops the frame with no reply, and the cal
 
 The pair `(255, 255)` is reserved for method-independent protocol errors. When a peer rejects an unknown API message with that frame, requests resolve as `CallError.Unsupported` and subscriptions terminate with an `UnsupportedMessageError` cause carrying the unsupported `(trait, method)` pair.
 
+A host also sends this frame when it knows the method but not the request's version, for example when a product is built against a newer protocol than the app. The call then fails the same way as for an unknown method: a request resolves as `CallError.Unsupported`, and a subscription terminates with `UnsupportedMessageError`.
+
 ## Generated files
 
 `src/generated/`, `src/playground/codegen/`, and `test/generated/examples/` are produced by [`truapi-codegen`](../../../rust/crates/truapi-codegen/) from the Rust crate and are ignored by git. Do not edit generated files directly. Run from the repo root:
