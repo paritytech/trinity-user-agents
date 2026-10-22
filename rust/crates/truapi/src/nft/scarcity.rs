@@ -22,7 +22,11 @@ use self::{
 	policy::{ScarcityMovePolicy, ScarcityMovePolicyDeps},
 };
 use super::{ItemSigner, operation::nft_domain};
-use crate::{chain::WatchedStorage, durable::DurableRegistry, store::Db};
+use crate::{
+	chain::{ChainHeads, WatchedStorage},
+	durable::DurableRegistry,
+	store::Db,
+};
 
 /// What NFT moves need to be decided and built.
 pub struct ScarcityMovesDeps {
@@ -30,6 +34,8 @@ pub struct ScarcityMovesDeps {
 	pub db: Db,
 	/// Storage of the chain that runs the pallet.
 	pub storage: Arc<dyn WatchedStorage>,
+	/// Heads of that chain.
+	pub heads: Arc<dyn ChainHeads>,
 	/// Genesis of that chain.
 	pub genesis: H256,
 	/// Signs with item keys.
@@ -39,8 +45,8 @@ pub struct ScarcityMovesDeps {
 /// `registry` with the NFT domain, whose moves the Scarcity oracle decides
 /// and the move policy builds.
 pub fn with_scarcity_moves(registry: DurableRegistry, deps: ScarcityMovesDeps) -> DurableRegistry {
-	let ScarcityMovesDeps { db, storage, genesis, signer } = deps;
-	let chain = Arc::new(ScarcityStorage::new(storage, genesis));
+	let ScarcityMovesDeps { db, storage, heads, genesis, signer } = deps;
+	let chain = Arc::new(ScarcityStorage::new(storage, heads, genesis));
 	let oracle = Arc::new(ScarcityMoveOracle::new(chain.clone(), genesis));
 	let policy = ScarcityMovePolicy::new(ScarcityMovePolicyDeps { db, chain, signer });
 	registry.with_domain(nft_domain(), oracle).with_policy(Arc::new(policy))

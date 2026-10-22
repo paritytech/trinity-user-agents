@@ -5,9 +5,8 @@ use crate::{
 	chain::Mortality,
 	durable::{DomainId, DurableTxStatus, PolicyId, SubmissionPlan},
 	nft::scarcity::{
-		chain::{KeyLocks, ScarcityNft},
+		chain::{KeyLocks, MoveContext, ScarcityNft},
 		policy::MOVE_POLICY,
-		transfer::MoveRuntime,
 	},
 };
 
@@ -47,7 +46,7 @@ impl ScarcityChain for InstanceHolders {
 		unreachable!("the oracle only asks who holds an instance")
 	}
 
-	async fn finalized_runtime(&self) -> Result<(HashAndNumber, MoveRuntime), StorageWatchError> {
+	async fn move_context(&self) -> Result<MoveContext, StorageWatchError> {
 		unreachable!("the oracle only asks who holds an instance")
 	}
 }

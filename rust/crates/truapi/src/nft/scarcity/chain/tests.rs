@@ -95,7 +95,9 @@ impl WatchedStorage for StoredAtBlock {
 }
 
 fn scarcity(values: Vec<(Vec<u8>, Vec<u8>)>) -> ScarcityStorage {
-	ScarcityStorage::new(StoredAtBlock::new(values), GENESIS)
+	let stored = StoredAtBlock::new(values);
+	let heads = Arc::new(stored.chain.clone());
+	ScarcityStorage::new(stored, heads, GENESIS)
 }
 
 #[test]

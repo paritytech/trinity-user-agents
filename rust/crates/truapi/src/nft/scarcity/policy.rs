@@ -1,16 +1,17 @@
 //! [`ScarcityMovePolicy`]: builds each NFT move when the engine submits it,
-//! from chain state read fresh at the finalized head.
+//! from chain state read fresh at the best head.
 
 use std::{collections::HashMap, sync::Arc};
 
 use parity_scale_codec::{Decode, Encode};
+use subxt::utils::H256;
 
 use super::{
-	chain::{KeyLocks, ScarcityChain, ScarcityNft},
+	chain::{KeyLocks, MoveContext, ScarcityChain, ScarcityNft},
 	transfer::{MoveRuntime, NftMove, sign_move},
 };
 use crate::{
-	chain::{HashAndNumber, MortalExtrinsic, Mortality},
+	chain::{MortalExtrinsic, Mortality},
 	durable::{
 		DurableTxEntry, DurableTxId, PolicyError, PolicyId, PolicyParams, Preparation,
 		ScheduledDurableTx, SubmissionPolicy, VerdictFailureKind,
@@ -123,9 +124,10 @@ impl SubmissionPolicy for ScarcityMovePolicy {
 		batch: &[ScheduledDurableTx],
 	) -> Result<HashMap<DurableTxId, Preparation>, PolicyError> {
 		let (planned, unplanned) = self.read_planned_moves(batch).await?;
-		let (head, runtime) = self.deps.chain.finalized_runtime().await.map_err(policy_error)?;
-		let view = self.read_chain_view(head, &planned).await?;
-		let mortality = Mortality::new(head, MOVE_PERIOD).map_err(policy_error)?;
+		let MoveContext { birth, runtime, best } =
+			self.deps.chain.move_context().await.map_err(policy_error)?;
+		let view = self.read_chain_view(best, &planned).await?;
+		let mortality = Mortality::new(birth, MOVE_PERIOD).map_err(policy_error)?;
 		let mut prepared = self.prepare_moves(&planned, &view, &runtime, mortality)?;
 		prepared.extend(unplanned.into_iter().map(|id| (id, Preparation::GiveUp)));
 		Ok(prepared)
@@ -154,10 +156,10 @@ impl ScarcityMovePolicy {
 		self.deps.db.read(read).await.map_err(policy_error)
 	}
 
-	/// The sources, destinations and source locks of `planned` at `head`.
+	/// The sources, destinations and source locks of `planned` at `at`.
 	async fn read_chain_view(
 		&self,
-		head: HashAndNumber,
+		at: H256,
 		planned: &[PlannedMove],
 	) -> Result<ChainView, PolicyError> {
 		let sources: Vec<ItemKey> = planned.iter().map(|planned| planned.source).collect();
@@ -165,9 +167,9 @@ impl ScarcityMovePolicy {
 			planned.iter().map(|planned| planned.params.destination).collect();
 		let chain = &self.deps.chain;
 		let (sources_held, destinations_held, locks) = futures::future::try_join3(
-			chain.nfts_at(head.hash, &sources),
-			chain.nfts_at(head.hash, &destinations),
-			chain.locks_at(head.hash, &sources),
+			chain.nfts_at(at, &sources),
+			chain.nfts_at(at, &destinations),
+			chain.locks_at(at, &sources),
 		)
 		.await
 		.map_err(policy_error)?;

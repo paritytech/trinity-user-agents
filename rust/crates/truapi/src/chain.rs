@@ -40,7 +40,7 @@ pub use tx_validator::TxValidator;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
-pub use tests::{Node, serve};
+pub use tests::{Node, live_asset_hub, live_asset_hub_genesis, serve, tokio_spawner};
 
 /// An encoded extrinsic, ready to submit.
 #[derive(Clone, Debug, PartialEq, Eq)]

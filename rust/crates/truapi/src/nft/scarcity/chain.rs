@@ -11,7 +11,7 @@ use subxt::{
 
 use super::transfer::MoveRuntime;
 use crate::{
-	chain::{HashAndNumber, StorageWatchError, WatchedStorage},
+	chain::{ChainHeads, HashAndNumber, StorageWatchError, WatchedStorage},
 	nft::{HeldItem, ItemKey},
 };
 
@@ -101,20 +101,41 @@ pub trait ScarcityChain: Send + Sync {
 	/// The lock on each of `keys` at `at`, and the chain time of `at`.
 	async fn locks_at(&self, at: H256, keys: &[ItemKey]) -> Result<KeyLocks, StorageWatchError>;
 
-	/// The finalized head, and the runtime a move born there is signed for.
-	async fn finalized_runtime(&self) -> Result<(HashAndNumber, MoveRuntime), StorageWatchError>;
+	/// Where moves built now stand: the finalized head they are born at, the
+	/// runtime they are signed for, and the best head their state is read at.
+	async fn move_context(&self) -> Result<MoveContext, StorageWatchError>;
 }
 
-/// [`ScarcityChain`] over the storage of the chain that runs the pallet.
+/// What a batch of moves is built against. State is read at the best head,
+/// where the tracker sees holdings, so a move is never judged on a finalized
+/// block that does not hold its NFT yet. Its era is born at the finalized
+/// head, which no reorg removes.
+#[derive(Clone, Debug)]
+pub struct MoveContext {
+	/// The finalized head, where each move's era is born.
+	pub birth: HashAndNumber,
+	/// The runtime at the birth block.
+	pub runtime: MoveRuntime,
+	/// The best head, where the state each move depends on is read.
+	pub best: H256,
+}
+
+/// [`ScarcityChain`] over the storage and heads of the chain that runs the
+/// pallet.
 pub struct ScarcityStorage {
 	storage: Arc<dyn WatchedStorage>,
+	heads: Arc<dyn ChainHeads>,
 	genesis: H256,
 }
 
 impl ScarcityStorage {
 	/// Reads of the pallet on the chain with `genesis`.
-	pub fn new(storage: Arc<dyn WatchedStorage>, genesis: H256) -> Self {
-		Self { storage, genesis }
+	pub fn new(
+		storage: Arc<dyn WatchedStorage>,
+		heads: Arc<dyn ChainHeads>,
+		genesis: H256,
+	) -> Self {
+		Self { storage, heads, genesis }
 	}
 }
 
@@ -156,16 +177,17 @@ impl ScarcityChain for ScarcityStorage {
 		Ok(KeyLocks { now, until })
 	}
 
-	async fn finalized_runtime(&self) -> Result<(HashAndNumber, MoveRuntime), StorageWatchError> {
+	async fn move_context(&self) -> Result<MoveContext, StorageWatchError> {
 		let client = self.storage.client_at_finalized_head(self.genesis).await?;
-		let head = HashAndNumber { hash: client.block_hash(), number: client.block_number() };
+		let birth = HashAndNumber { hash: client.block_hash(), number: client.block_number() };
 		let runtime = MoveRuntime {
 			genesis: self.genesis,
 			spec_version: client.spec_version(),
 			transaction_version: client.transaction_version(),
 			metadata: client.metadata(),
 		};
-		Ok((head, runtime))
+		let best = self.heads.heads(self.genesis).await?.best.hash;
+		Ok(MoveContext { birth, runtime, best })
 	}
 }
 

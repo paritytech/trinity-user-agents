@@ -1349,8 +1349,14 @@ fn durable_registry(
 		tracing::warn!("no Asset Hub genesis configured, NFT moves are off");
 		return registry;
 	};
-	let storage = Arc::new(services.chain.clone());
-	let deps = ScarcityMovesDeps { db, storage, genesis: genesis.into(), signer };
+	let chain = Arc::new(services.chain.clone());
+	let deps = ScarcityMovesDeps {
+		db,
+		storage: chain.clone(),
+		heads: chain,
+		genesis: genesis.into(),
+		signer,
+	};
 	with_scarcity_moves(registry, deps)
 }
 

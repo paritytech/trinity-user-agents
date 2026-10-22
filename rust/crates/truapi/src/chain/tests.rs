@@ -26,6 +26,8 @@ use crate::{
 };
 
 mod live_storage_watch;
+
+pub use live_storage_watch::{live_asset_hub, live_asset_hub_genesis, tokio_spawner};
 mod watched_storage;
 
 const GENESIS: H256 = H256([0xab; 32]);

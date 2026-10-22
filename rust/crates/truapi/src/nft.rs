@@ -9,6 +9,8 @@ mod holding;
 mod item;
 mod keys;
 mod ledger;
+#[cfg(test)]
+mod live;
 mod operation;
 mod purse;
 mod scarcity;

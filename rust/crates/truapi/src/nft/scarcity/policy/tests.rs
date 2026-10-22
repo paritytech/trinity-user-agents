@@ -10,19 +10,21 @@ use crate::{
 	durable::{DomainId, SubmissionPlan},
 	nft::{
 		NftLedger, PurseId, PurseTag,
-		scarcity::testing::asset_hub_metadata,
+		scarcity::{chain::MoveContext, testing::asset_hub_metadata},
 		testing::{FixedEntropy, TEST_ENTROPY, test_ledger},
 	},
 	runtime::AuthorityError,
 	store::open_temporary_core_db,
 };
 
-const HEAD: HashAndNumber = HashAndNumber { hash: H256([0x0f; 32]), number: 2_138_796 };
+const FINALIZED: HashAndNumber = HashAndNumber { hash: H256([0x0f; 32]), number: 2_138_796 };
+/// The best head, ahead of [`FINALIZED`]: an NFT minted there is held only here.
+const BEST: H256 = H256([0x0b; 32]);
 const DESTINATION: ItemKey = ItemKey([0x08; 32]);
 const INSTANCE: u64 = 330;
 const NOW: u64 = 1_700_000_000_000;
 
-/// Scarcity storage a test writes by hand, read at [`HEAD`].
+/// Scarcity storage a test writes by hand, held at [`BEST`] only.
 #[derive(Default)]
 struct ScriptedScarcity {
 	held: HashMap<ItemKey, ScarcityNft>,
@@ -36,8 +38,8 @@ impl ScarcityChain for ScriptedScarcity {
 		at: H256,
 		keys: &[ItemKey],
 	) -> Result<Vec<Option<ScarcityNft>>, StorageWatchError> {
-		assert_eq!(at, HEAD.hash);
-		Ok(keys.iter().map(|key| self.held.get(key).copied()).collect())
+		let held = |key: &ItemKey| self.held.get(key).copied().filter(|_| at == BEST);
+		Ok(keys.iter().map(held).collect())
 	}
 
 	async fn holders_at(
@@ -49,19 +51,19 @@ impl ScarcityChain for ScriptedScarcity {
 	}
 
 	async fn locks_at(&self, at: H256, keys: &[ItemKey]) -> Result<KeyLocks, StorageWatchError> {
-		assert_eq!(at, HEAD.hash);
+		assert_eq!(at, BEST);
 		let until = keys.iter().map(|key| self.locked_until.get(key).copied()).collect();
 		Ok(KeyLocks { now: NOW, until })
 	}
 
-	async fn finalized_runtime(&self) -> Result<(HashAndNumber, MoveRuntime), StorageWatchError> {
+	async fn move_context(&self) -> Result<MoveContext, StorageWatchError> {
 		let runtime = MoveRuntime {
 			genesis: H256([0xab; 32]),
 			spec_version: 3_004_000,
 			transaction_version: 22,
 			metadata: asset_hub_metadata(),
 		};
-		Ok((HEAD, runtime))
+		Ok(MoveContext { birth: FINALIZED, runtime, best: BEST })
 	}
 }
 
@@ -132,14 +134,17 @@ fn prepare_one(registered: &RegisteredMove, chain: ScriptedScarcity) -> Option<P
 	prepared.remove(&registered.scheduled.id)
 }
 
+/// An item is available once the best block holds it, so a move is judged
+/// there: an NFT minted at the best head and not finalized yet is built, its
+/// era born at the finalized head.
 #[test]
-fn a_held_unlocked_nft_is_built_born_at_the_finalized_head() {
+fn an_nft_held_at_the_best_head_is_built_born_at_the_finalized_head() {
 	let registered = registered_move(0);
 
 	let prepared = prepare_one(&registered, holding(&registered, held_nft(0)));
 
 	let Some(Preparation::Ready(signed)) = prepared else { panic!("built: {prepared:?}") };
-	assert_eq!(signed.mortality, Mortality::new(HEAD, MOVE_PERIOD).unwrap());
+	assert_eq!(signed.mortality, Mortality::new(FINALIZED, MOVE_PERIOD).unwrap());
 }
 
 #[test]
