@@ -14,9 +14,10 @@ use crate::{
 /// cap on chat identifiers.
 pub const PRODUCT_ID_MAX_BYTES: usize = 256;
 
-/// Blessed product labels across every network in [`DOTNS_TLDS`].
+/// Trusted product labels across every network in [`DOTNS_TLDS`].
 ///
-/// These products bypass recorded permissions and prompt only for device access.
+/// These products bypass recorded permissions and permission prompts. Device
+/// permissions still need the OS grant.
 ///
 /// [`DOTNS_TLDS`]: crate::dotns_name::DOTNS_TLDS
 pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", GAME_PRODUCT_LABEL, "stash"];
