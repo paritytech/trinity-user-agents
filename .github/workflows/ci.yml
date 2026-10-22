@@ -288,6 +288,17 @@ jobs:
       workflows: ${{ steps.filter.outputs.workflows }}
       needs_changeset: ${{ steps.filter.outputs.needs_changeset }}
       adds_changeset: ${{ steps.filter.outputs.adds_changeset }}
+      # From .github/hosts.json, one set per host: whether a core input
+      # changed, whether one of the host's own inputs did, and either.
+      ios_core: ${{ steps.hosts.outputs.ios_core }}
+      ios_tree: ${{ steps.hosts.outputs.ios_tree }}
+      ios_changed: ${{ steps.hosts.outputs.ios_changed }}
+      android_core: ${{ steps.hosts.outputs.android_core }}
+      android_tree: ${{ steps.hosts.outputs.android_tree }}
+      android_changed: ${{ steps.hosts.outputs.android_changed }}
+      # False for a pull request from a fork, whose code must not reach the
+      # self-hosted runners, which are persistent and shared.
+      trusted: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -352,7 +363,7 @@ jobs:
           }
 
           gate sdk_swift '^(ios/|Package\.swift$|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|js/container/|scripts/codegen\.sh$|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/truapi-provider/|rust/crates/uniffi-bindgen-cli/|rust/crates/truapi-verifiable/|js/packages/truapi/|\.github/workflows/ci\.yml$)'
-          gate workflows '^(\.github/workflows/|\.github/actions/|\.github/labeler\.yml$|\.github/CODEOWNERS$|hosts/[a-z]+/\.github/|scripts/(lint-composite-shell|check-path-routing)\.py$)'
+          gate workflows '^(\.github/workflows/|\.github/actions/|\.github/labeler\.yml$|\.github/CODEOWNERS$|\.github/hosts\.json$|hosts/[a-z]+/\.github/|scripts/(lint-composite-shell|check-path-routing|ci-gates)\.py$)'
           gate sdk_kotlin '^(android/|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|build\.gradle\.kts$|settings\.gradle\.kts$|gradle\.properties$|package\.json$|package-lock\.json$|scripts/codegen\.sh$|rust/crates/truapi/|rust/crates/truapi-codegen/|rust/crates/truapi-macros/|rust/crates/uniffi-bindgen-cli/|\.github/workflows/ci\.yml$)'
 
           # The provider AAR is generated from its own cdylib and compiles
@@ -386,6 +397,23 @@ jobs:
           changed="$(git diff --name-only --find-renames --diff-filter=A "$base" HEAD -- .changeset/)"
           changed="$(sed '\|^\.changeset/README\.md$|d' <<<"$changed")"
           gate adds_changeset '^\.changeset/[^/]+\.md$'
+
+      # The host registry, evaluated on the same base as the gates above. A
+      # host is gated on its own inputs and the shared core, so an edit to this
+      # workflow alone runs no host. The step above has fetched the merge
+      # group's base.
+      - name: Evaluate the host registry
+        id: hosts
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MERGE_BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request) python3 scripts/ci-gates.py --base HEAD^1 ;;
+            merge_group) python3 scripts/ci-gates.py --base "$MERGE_BASE" ;;
+            *) python3 scripts/ci-gates.py --all ;;
+          esac | tee -a "$GITHUB_OUTPUT"
 
   ios-swift:
     name: iOS package (Swift + WebKit)
@@ -1307,6 +1335,10 @@ jobs:
       # the same set so neither quietly stops describing an area.
       - name: Check labelling and ownership describe the same paths
         run: python3 scripts/check-path-routing.py
+
+      - name: Check the host registry
+        run: python3 scripts/ci-gates.py --check
+
   release-guard:
     name: Release guard
     timeout-minutes: 10
