@@ -1,20 +1,16 @@
 import Foundation
 import TrUAPIHost
 
-// MARK: - Staged attachments
+// MARK: - Messages of the user
 
 extension ProductMessageSource {
-    /// Shows the outbox entries of the room, and follows their changes (P10.3). An entry is a message of the user
-    /// that waits at the end of the window. When the product made the message, its message takes the place of the
-    /// entry.
+    /// Shows the messages of the room that the outbox holds, and follows their changes (P10.3). A message of the
+    /// outbox waits at the end of the window. When the product has it, the message of the product takes its place
+    /// under the same id.
     func followOutbox() async {
-        guard let stager else {
-            return
-        }
-
-        let events = await stager.events()
-        for (entry, preview) in await stager.previews(productId: productId, roomId: roomId) {
-            showOutboxEntry(entry, preview: preview)
+        let events = await outbox.events()
+        for message in await outbox.entries(productId: productId, roomId: roomId) {
+            show(message)
         }
 
         outboxTask = Task { [weak self] in
@@ -24,51 +20,120 @@ extension ProductMessageSource {
         }
     }
 
+    /// Puts a text of the user in the outbox, under an id that the host chose, and shows it at once.
+    func send(text: String, replyTo: String?, request: Bool = false) async -> ChatSourceActionOutcome {
+        if !isAtNewestEnd {
+            await reload()
+        }
+
+        do {
+            let message = try await outbox.send(
+                text: text,
+                replyTo: replyTo,
+                request: request,
+                productId: productId,
+                roomId: roomId
+            )
+            show(message)
+            emit()
+            return .done
+        } catch {
+            logger.error("Room \(roomId) did not keep a message: \(error)")
+            return .failed
+        }
+    }
+
+    /// Puts the photo or the video that the user picked in the outbox. The caption goes with it.
+    func sendMedia(_ richText: Chat.LocalMessage.Content.RichText) async -> ChatSourceActionOutcome {
+        guard case let .localUploadable(file)? = richText.attachments?.first else {
+            return .refused(reason: nil)
+        }
+
+        if !isAtNewestEnd {
+            await reload()
+        }
+
+        do {
+            let message = try await outbox.send(
+                ProcessedAttachment(fileId: file.relativeLocalPath, fileUrl: URL(fileURLWithPath: ""), meta: file.meta),
+                caption: richText.text,
+                productId: productId,
+                roomId: roomId
+            )
+            show(message)
+            emit()
+            return .done
+        } catch {
+            logger.error("Room \(roomId) did not keep a photo or a video: \(error)")
+            return .failed
+        }
+    }
+
     func apply(_ event: ProductOutboxEvent) {
         switch event {
-        case let .changed(entry, preview):
-            guard isOfRoom(entry) else { return }
-            showOutboxEntry(entry, preview: preview)
-        case let .delivered(entry, created, body):
-            guard isOfRoom(entry) else { return }
+        case let .changed(message):
+            guard isOfRoom(message) else { return }
+            show(message)
+        case let .delivered(message, created):
+            guard isOfRoom(message) else { return }
+            pending.removeAll { $0 == message.id }
+            uploads[message.id] = nil
             if let created {
-                pending.removeAll { $0 == entry.id }
-                messages[entry.id] = nil
                 insertLive(created)
-            } else {
-                // The product acknowledged the message and made no message of its own.
-                modify(entry.id) {
-                    $0.body = body
-                    $0.status = .sent
-                }
+            } else if let shown = messages[message.id] {
+                messages[message.id] = nil
+                var sent = shown
+                sent.status = .sent
+                insertLive(sent)
             }
-        case let .removed(entry, _):
-            guard isOfRoom(entry) else { return }
-            remove(entry.id)
         }
 
         emit()
     }
 
-    private func isOfRoom(_ entry: ProductOutboxEntry) -> Bool {
-        entry.productId == productId && entry.roomId == roomId && entry.store == .product
+    /// Waits until the product has a message of the user that the outbox holds. An action on the message goes after
+    /// it, as the native chat sends it after the message. Gives false when the product refused the message.
+    func waitUntilDelivered(_ messageId: String) async -> Bool {
+        guard pending.contains(messageId) else {
+            return true
+        }
+
+        return await outbox.waitUntilDelivered(messageId)
     }
 
-    private func showOutboxEntry(_ entry: ProductOutboxEntry, preview: ChatMessageBody) {
-        guard entry.store == .product else { return }
+    private func isOfRoom(_ message: ProductOutgoingMessage) -> Bool {
+        message.productId == productId && message.roomId == roomId
+    }
 
-        if messages[entry.id] == nil {
-            pending.append(entry.id)
+    private func show(_ message: ProductOutgoingMessage) {
+        // The product can give the message before the outbox tells that it has it.
+        if pages.contains(where: { $0.ids.contains(message.id) }) {
+            return
         }
-        messages[entry.id] = ChatMessage(
-            messageId: entry.id,
-            origin: ChatMessageOrigin(participantId: productUserParticipantId),
-            timestamp: entry.createdAt,
-            body: preview,
-            status: entry.isFailed ? .failed : .preparing,
-            replyTo: nil,
-            editedAt: nil,
-            reactions: []
-        )
+
+        if !pending.contains(message.id) {
+            pending.append(message.id)
+        }
+
+        switch message.content {
+        case let .text(text, replyTo, request):
+            guard messages[message.id] == nil else { return }
+            messages[message.id] = ChatMessage(
+                messageId: message.id,
+                origin: ChatMessageOrigin(participantId: productUserParticipantId),
+                timestamp: message.createdAt,
+                body: .text(text: text),
+                status: .preparing,
+                replyTo: replyTo,
+                replyPreview: replyTo.flatMap { messages[$0] }.map {
+                    ChatReplyPreview(origin: $0.origin, body: $0.body)
+                },
+                editedAt: nil,
+                reactions: [],
+                request: request
+            )
+        case .media:
+            uploads[message.id] = message
+        }
     }
 }

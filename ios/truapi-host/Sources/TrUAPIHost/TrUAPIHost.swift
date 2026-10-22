@@ -250,7 +250,7 @@ public protocol ChatHostBridge: AnyObject, Sendable {
 
     /// Set what a product's native Chat room shows below its messages, and
     /// keep it until the product sets another. A room without a footer shows
-    /// the input with photo and video on.
+    /// the text input.
     func setRoomFooter(roomId: String, footer: ChatRoomFooter) async throws
 
     /// Return the current product-scoped native Chat rooms.
@@ -262,11 +262,13 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     func roomConfig(roomId: String) async throws -> ChatRoomConfig
 
     /// Replace the configuration of a room whole, and keep it across
-    /// restarts. A change of `productSource` discards the stored messages or
-    /// the cached pages of the room.
+    /// restarts, when the product declares one with `setRoomConfig`. A room
+    /// the product declared none for has ``ChatRoomConfig/hostDefault``. A
+    /// change of `productSource` discards the stored messages or the cached
+    /// pages of the room.
     func setRoomConfig(roomId: String, config: ChatRoomConfig) async throws
 
-    /// Replace the name, avatar and description of a room.
+    /// Replace the name and description of a room.
     func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws
 
     /// Replace how a room shows in the chat list.
@@ -304,18 +306,16 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     /// has already checked that this host lists the feature of the call.
     func setRoomCall(roomId: String, call: ChatRoomCall?) async throws
 
-    /// Return the state of each room of the product that the user muted or
-    /// archived.
-    func roomUserStates() async throws -> [ChatRoomUserState]
-
-    /// Return the bot ids of the personas that the product registered.
-    func bots() async throws -> [String]
+    /// Set the contact of a room and keep it across restarts. Draw the room
+    /// as the host's own person-to-person chat with that contact. The core
+    /// has already checked that this host lists `contact_rooms`.
+    func setRoomContact(roomId: String, contact: ChatRoomContact) async throws
 }
 
 /// Defaults for a host that does not serve the Chat Extension v2 requests yet.
-/// The product receives a rejection for each request, except for the
-/// declarations that a new room always carries: the host keeps the name and
-/// icon of `createRoom`, and the configuration that the host serves anyway.
+/// The product receives a rejection for each request, except for metadata,
+/// which the host ignores and keeps the name and icon of `createRoom`, and for
+/// a configuration that keeps the behaviour the host serves anyway.
 public extension ChatHostBridge {
     func roomConfig(roomId _: String) async throws -> ChatRoomConfig {
         .hostDefault
@@ -355,12 +355,8 @@ public extension ChatHostBridge {
         throw unservedChatRequest("setRoomCall")
     }
 
-    func roomUserStates() async throws -> [ChatRoomUserState] {
-        []
-    }
-
-    func bots() async throws -> [String] {
-        []
+    func setRoomContact(roomId _: String, contact _: ChatRoomContact) async throws {
+        throw unservedChatRequest("setRoomContact")
     }
 }
 
@@ -372,14 +368,7 @@ public extension ChatRoomFeatures {
     /// The features of a room that declares none: the room shows what a
     /// room of Chat Extension v2 shows.
     static var hostDefault: ChatRoomFeatures {
-        ChatRoomFeatures(
-            preimageAttachments: false,
-            search: false,
-            calls: nil,
-            readAloud: false,
-            sealedAttachments: false,
-            hopAttachments: false
-        )
+        ChatRoomFeatures(calls: nil, hopAttachments: false)
     }
 }
 
@@ -387,15 +376,7 @@ public extension ChatRoomConfig {
     /// The configuration of a room that declares nothing: the host stores the
     /// messages and serves every part of the room itself.
     static var hostDefault: ChatRoomConfig {
-        ChatRoomConfig(
-            productSource: false,
-            reactionDetails: false,
-            participants: false,
-            messageActions: false,
-            allowedReactions: nil,
-            placeholder: nil,
-            reportSeen: false
-        )
+        ChatRoomConfig(productSource: false, reactionDetails: false, reportSeen: false)
     }
 }
 
@@ -542,12 +523,6 @@ public protocol ScannerHostBridge: AnyObject, Sendable {
     ) async throws -> HostScan
 }
 
-/// The username directory of the host, following the rules on the core's
-/// `UsernamesPlatform`. Closes an open question when the task is cancelled.
-public protocol UsernamesHostBridge: AnyObject, Sendable {
-    func searchUsernames(productId: String, prefix: String) async throws -> [String]
-}
-
 /// The person chat services of the host, following the rules on the core's
 /// `PersonChatPlatform`: the `wss://` URLs of the HOP nodes of the network's
 /// Bulletin chain, the devices paired with the wallet, and the chat's contacts
@@ -599,15 +574,6 @@ public protocol CallMediaHostBridge: AnyObject, Sendable {
     func callMediaSignal(productId: String, roomId: String, callId: String, signal: Data) async throws
 
     func stopCallMedia(productId: String, roomId: String, callId: String) async throws
-}
-
-/// The push relay client of the host. The core gives it the wake topics of
-/// every product and the key of the device; the host adds what identifies the
-/// device to its relay (the push token and the app id) and sends the
-/// registration to its relay endpoint. Only the core calls it. An empty topic
-/// list removes the registration.
-public protocol WakeRelayHostBridge: AnyObject, Sendable {
-    func registerWakeTopics(registration: WakeRelayRegistration) async throws
 }
 
 public extension HostBridge {
@@ -767,12 +733,10 @@ private final class ChatCallbackAdapter: NativeChatCallbacks, @unchecked Sendabl
         try await withHostRejection { try await bridge.setRoomCall(roomId: roomId, call: call) }
     }
 
-    func roomUserStates() async throws -> [ChatRoomUserState] {
-        try await withHostRejection { try await bridge.roomUserStates() }
-    }
-
-    func bots() async throws -> [String] {
-        try await withHostRejection { try await bridge.bots() }
+    func setRoomContact(roomId: String, contact: ChatRoomContact) async throws {
+        try await withHostRejection {
+            try await bridge.setRoomContact(roomId: roomId, contact: contact)
+        }
     }
 
     /// Pass a ``NativeChatFeedRejection`` to the product as it is, and any
@@ -821,20 +785,6 @@ private final class GameCallbackAdapter: NativeGameCallbacks, @unchecked Sendabl
 
     func cancelReminder() async throws {
         try await withHostRejection { try await bridge.cancelReminder() }
-    }
-}
-
-/// Adapter that bridges the public `WakeRelayHostBridge` to the generated
-/// UniFFI `NativeWakeRelayCallbacks` protocol.
-private final class WakeRelayCallbackAdapter: NativeWakeRelayCallbacks, @unchecked Sendable {
-    private let bridge: WakeRelayHostBridge
-
-    init(bridge: WakeRelayHostBridge) {
-        self.bridge = bridge
-    }
-
-    func registerWakeTopics(registration: WakeRelayRegistration) async throws {
-        try await withHostRejection { try await bridge.registerWakeTopics(registration: registration) }
     }
 }
 
@@ -954,23 +904,6 @@ private final class BalanceCallbackAdapter: NativeBalanceCallbacks, @unchecked S
             throw HostPaymentBalanceSubscribeError.Unknown(reason: hostRejectionReason(error))
         }
     }
-}
-
-/// Adapter that bridges the public `UsernamesHostBridge` to the generated UniFFI
-/// `NativeUsernamesCallbacks` protocol.
-private final class UsernamesCallbackAdapter: NativeUsernamesCallbacks, @unchecked Sendable {
-    private let bridge: UsernamesHostBridge
-
-    init(bridge: UsernamesHostBridge) {
-        self.bridge = bridge
-    }
-
-    func searchUsernames(productId: String, prefix: String) async throws -> [String] {
-        try await withHostRejection {
-            try await bridge.searchUsernames(productId: productId, prefix: prefix)
-        }
-    }
-
 }
 
 /// Adapter that bridges the public `PersonChatHostBridge` to the generated
@@ -1312,12 +1245,9 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     private var paymentsRetainer: NativePaymentCallbacks?
     private var balanceRetainer: NativeBalanceCallbacks?
     private var scannerRetainer: NativeScannerCallbacks?
-    private var usernamesRetainer: NativeUsernamesCallbacks?
     private var personChatRetainer: NativePersonChatCallbacks?
     private var pushRetainer: NativePushCallbacks?
     private var callMediaRetainer: NativeCallMediaCallbacks?
-    private let wakeRelayLock = NSLock()
-    private var wakeRelayAdapter: NativeWakeRelayCallbacks?
 
     public convenience init(bridge: HostBridge, runtimeConfig: HostRuntimeConfig) throws {
         try self.init(bridge: bridge, runtimeConfig: runtimeConfig, notificationCenter: .default)
@@ -1375,15 +1305,6 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         return inner.setScannerCallbacks(callbacks: adapter)
     }
 
-    /// Install the host's username directory before opening any product
-    /// execution. Set-once: answers whether this call installed it.
-    @discardableResult
-    public func setUsernames(_ usernames: UsernamesHostBridge) -> Bool {
-        let adapter = UsernamesCallbackAdapter(bridge: usernames)
-        usernamesRetainer = adapter
-        return inner.setUsernamesCallbacks(callbacks: adapter)
-    }
-
     /// Install the host's person chat services (the HOP nodes) before opening
     /// any product execution. Set-once: answers whether this call installed it.
     @discardableResult
@@ -1409,25 +1330,6 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         let adapter = CallMediaCallbackAdapter(bridge: callMedia)
         callMediaRetainer = adapter
         return inner.setCallMediaCallbacks(callbacks: adapter)
-    }
-
-    /// Install the host's push relay client, or remove it with `nil`. The core
-    /// gives it the stored wake topics of every product at once, and again at
-    /// each change of the watches. Throws when the relay refused the stored
-    /// topics; the relay stays installed.
-    public func setWakeRelay(_ relay: WakeRelayHostBridge?) async throws {
-        let adapter = relay.map { WakeRelayCallbackAdapter(bridge: $0) }
-        wakeRelayLock.withLock { wakeRelayAdapter = adapter }
-        try await inner.setWakeRelay(relay: adapter)
-    }
-
-    /// Check a wake push from the push relay and wake each product that
-    /// watches its topic for 30 seconds, as a notification wake. `payload` is
-    /// the JSON text of the `truapi-wake` value of the push. Throws
-    /// ``PushWakeRejection`` for a push the core does not trust; the core
-    /// wakes nothing then. Keep the app running until the end of each hold.
-    public func handleWakePush(payload: String) async throws -> [PushWakeDelivery] {
-        try await inner.handleWakePush(payload: payload)
     }
 
     /// Keep `secret`, the X25519 key the native chat of this install used as
@@ -1560,9 +1462,9 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.setWorkerKeepAlive(productId: productId, keepAlive: keepAlive)
     }
 
-    /// Send one event about a room to the product: the user muted or
-    /// archived the room, pressed a call button, answered a call, or selected
-    /// another alternative of a message. The core keeps the newest events of
+    /// Send one event about a room to the product: the user pressed a call
+    /// button, answered or ended a call, or the call has a media signal. The
+    /// core keeps the newest events of
     /// a product until its worker subscribes, so the worker does not have to
     /// run.
     public func publishChatRoomEvent(productId: String, roomId: String, event: ChatRoomEvent) throws {
@@ -1570,56 +1472,34 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     }
 
     /// Hold the worker of the product for a wake of 30 seconds. A new wake
-    /// moves the end of the hold. A notification wake also sends
-    /// ``ChatRoomEvent/woken(watchId:)`` to the room, at most 12 times in one
-    /// hour; after that the core answers ``ChatWakeOutcome/budgetSpent``.
+    /// moves the end of the hold. A product gets at most 12 notification
+    /// wakes in one hour; after that the core answers
+    /// ``ChatWakeOutcome/budgetSpent``.
     @discardableResult
     public func wakeProduct(productId: String, reason: ChatWakeReason) throws -> ChatWakeOutcome {
         try inner.wakeProduct(productId: productId, reason: reason)
     }
 
-    /// Stage a user attachment of a room as a preimage that the Bulletin
-    /// allowance of the product pays for, and return its key. The core
-    /// throws ``NativeChatStageRejection``: `notDeclared` for a room whose
-    /// features do not declare `preimage_attachments`, `tooLarge` above
-    /// 8 MiB or above the Bulletin chain's per-transaction bound,
-    /// `permissionDenied` when the user refused `PreimageSubmit` for the
-    /// product (the core prompts through the product's open Worker
-    /// execution when the user did not decide yet), `allowanceUnavailable`
-    /// and `submitFailed`. Staging needs no worker reference.
-    public func stageChatAttachment(
-        productId: String,
-        roomId: String,
-        mimeType: String,
-        bytes: Data
-    ) async throws -> Data {
-        try await inner.chatStageAttachment(
-            productId: productId,
-            roomId: roomId,
-            mimeType: mimeType,
-            bytes: bytes
-        )
-    }
-
-    /// Seal a user attachment of a room: the core encrypts it with a new key,
-    /// stores the ciphertext as Bulletin preimages in parts that the
-    /// allowance of the product pays for, and returns the
-    /// ``ChatResource/sealed(parts:key:nonce:size:digest:)`` that names them.
-    /// The core throws ``NativeChatStageRejection``: `notDeclared` for a room
-    /// whose features do not declare `sealed_attachments`, `tooLarge` above
-    /// 32 MiB, `permissionDenied`, `allowanceUnavailable` and `submitFailed`,
-    /// as ``stageChatAttachment(productId:roomId:mimeType:bytes:)`` does.
-    public func sealChatAttachment(productId: String, roomId: String, bytes: Data) async throws -> ChatResource {
-        try await inner.chatSealAttachment(productId: productId, roomId: roomId, bytes: bytes)
-    }
-
     /// Upload a user file of a room of the chat product that declares
     /// `hop_attachments` to a HOP node, up to 128 MiB, and return the
     /// ``ChatResource/hop(identifier:ticket:node:size:)`` to send to the
-    /// product. Throws ``NativeChatStageRejection`` as
-    /// ``sealChatAttachment(productId:roomId:bytes:)`` does.
-    public func hopChatAttachment(productId: String, roomId: String, bytes: Data) async throws -> ChatResource {
-        try await inner.chatHopAttachment(productId: productId, roomId: roomId, bytes: bytes)
+    /// product. Throws ``NativeChatStageRejection``: `notDeclared` for a room
+    /// that does not declare `hop_attachments` or another product,
+    /// `tooLarge` above 128 MiB, and `submitFailed`. `progress` gets the
+    /// bytes the node holds and the size of the file: none before the first
+    /// part goes, then after each part, and all of them once the file is in.
+    public func hopChatAttachment(
+        productId: String,
+        roomId: String,
+        bytes: Data,
+        progress: (@Sendable (_ sent: UInt64, _ total: UInt64) -> Void)? = nil
+    ) async throws -> ChatResource {
+        try await inner.chatHopAttachment(
+            productId: productId,
+            roomId: roomId,
+            bytes: bytes,
+            progress: progress.map(HopUploadProgressObserver.init)
+        )
     }
 
     /// The bytes of a ``ChatResource/hop(identifier:ticket:node:size:)`` of a
@@ -1627,11 +1507,21 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// when ``PersonChatHostBridge`` lists that node, or from Bulletin once the
     /// node promoted it. Keep the bytes, then call
     /// ``ackHopChatResource(productId:resource:entries:)`` with the entries.
-    public func openHopChatResource(productId: String, resource: ChatResource) async throws -> NativeHopFile {
-        try await inner.openHopChatResource(productId: productId, resource: resource)
+    /// `progress` gets the bytes received and the size of the file: once the
+    /// size is known, then after each part of the file.
+    public func openHopChatResource(
+        productId: String,
+        resource: ChatResource,
+        progress: (@Sendable (_ received: UInt64, _ total: UInt64) -> Void)? = nil
+    ) async throws -> NativeHopFile {
+        try await inner.openHopChatResource(
+            productId: productId,
+            resource: resource,
+            progress: progress.map(HopDownloadProgressObserver.init)
+        )
     }
 
-    /// Tell the node that the entries ``openHopChatResource(productId:resource:)``
+    /// Tell the node that the entries ``openHopChatResource(productId:resource:progress:)``
     /// gave were taken, once the bytes are kept.
     public func ackHopChatResource(productId: String, resource: ChatResource, entries: [Data]) async throws {
         try await inner.ackHopChatResource(productId: productId, resource: resource, entries: entries)
@@ -1840,7 +1730,6 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     func stopWsBridge()
     func close()
     func publishChatAction(_ action: HostChatActionSubscribeItem) throws
-    func publishChatEvent(roomId: String, peer: String, event: ChatEvent) throws
     func chatMessagesQuery(
         _ request: ProductChatMessagesQueryRequest,
         timeout: Duration
@@ -1853,18 +1742,10 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
         _ request: ProductChatReactionsQueryRequest,
         timeout: Duration
     ) async throws -> ProductChatReactionsQueryItem
-    func chatParticipantsQuery(
-        _ request: ProductChatParticipantsQueryRequest,
+    func chatEditHistory(
+        _ request: ProductChatEditHistoryQueryRequest,
         timeout: Duration
-    ) async throws -> ProductChatParticipantsQueryItem
-    func chatMessageActionsQuery(
-        _ request: ProductChatMessageActionsQueryRequest,
-        timeout: Duration
-    ) async throws -> ProductChatMessageActionsQueryItem
-    func chatSearchQuery(
-        _ request: ProductChatSearchQueryRequest,
-        timeout: Duration
-    ) async throws -> ProductChatSearchQueryItem
+    ) async throws -> ProductChatEditHistoryQueryItem
     func chatOpenLink(
         _ request: ProductChatOpenLinkRequest,
         timeout: Duration
@@ -1910,22 +1791,10 @@ public extension TrUAPIProductExecutionProtocol {
         try await chatReactionsQuery(request, timeout: ChatQueryTimeout.lookup)
     }
 
-    func chatParticipantsQuery(
-        _ request: ProductChatParticipantsQueryRequest
-    ) async throws -> ProductChatParticipantsQueryItem {
-        try await chatParticipantsQuery(request, timeout: ChatQueryTimeout.lookup)
-    }
-
-    func chatMessageActionsQuery(
-        _ request: ProductChatMessageActionsQueryRequest
-    ) async throws -> ProductChatMessageActionsQueryItem {
-        try await chatMessageActionsQuery(request, timeout: ChatQueryTimeout.lookup)
-    }
-
-    func chatSearchQuery(
-        _ request: ProductChatSearchQueryRequest
-    ) async throws -> ProductChatSearchQueryItem {
-        try await chatSearchQuery(request, timeout: ChatQueryTimeout.search)
+    func chatEditHistory(
+        _ request: ProductChatEditHistoryQueryRequest
+    ) async throws -> ProductChatEditHistoryQueryItem {
+        try await chatEditHistory(request, timeout: ChatQueryTimeout.lookup)
     }
 
     func chatOpenLink(
@@ -1943,12 +1812,12 @@ public extension TrUAPIProductExecutionProtocol {
         throw ChatQueryError.refused(.notAvailable)
     }
 
-    /// An execution that does not ask searches answers that search is not
-    /// available.
-    func chatSearchQuery(
-        _: ProductChatSearchQueryRequest,
+    /// An execution that does not ask edit histories answers that the
+    /// history is not available.
+    func chatEditHistory(
+        _: ProductChatEditHistoryQueryRequest,
         timeout _: Duration
-    ) async throws -> ProductChatSearchQueryItem {
+    ) async throws -> ProductChatEditHistoryQueryItem {
         throw ChatQueryError.refused(.notAvailable)
     }
 }
@@ -1962,11 +1831,9 @@ public enum ChatQueryTimeout {
     public static let sentMessage: Duration = .seconds(30)
     /// A user action that is not a sent message.
     public static let userAction: Duration = .seconds(10)
-    /// Reactions, participants, a message menu or a participant menu.
+    /// Reactions or the edit history of a message.
     public static let lookup: Duration = .seconds(5)
-    /// The messages that match a search.
-    public static let search: Duration = .seconds(10)
-    /// A room link that the user opened. The product can be starting, so the
+    /// A link that the user opened. The product can be starting, so the
     /// host waits longer, and it does not block the screen.
     public static let openLink: Duration = .seconds(90)
 
@@ -2044,14 +1911,6 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
         try inner.publishChatAction(action: action)
     }
 
-    /// Publish one chat event, and keep it until the product connection
-    /// subscribes. A subscriber at the first protocol version receives only
-    /// the events that its version carries. The product receives at most one
-    /// `seen` event for each room each second.
-    public func publishChatEvent(roomId: String, peer: String, event: ChatEvent) throws {
-        try inner.publishChatEvent(roomId: roomId, peer: peer, event: event)
-    }
-
     /// Ask the product for one page of messages of a room that it keeps.
     public func chatMessagesQuery(
         _ request: ProductChatMessagesQueryRequest,
@@ -2088,44 +1947,20 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
         }
     }
 
-    /// Ask the product about the participants of a room.
-    public func chatParticipantsQuery(
-        _ request: ProductChatParticipantsQueryRequest,
+    /// Ask the product for the texts one message had, oldest first.
+    public func chatEditHistory(
+        _ request: ProductChatEditHistoryQueryRequest,
         timeout: Duration
-    ) async throws -> ProductChatParticipantsQueryItem {
+    ) async throws -> ProductChatEditHistoryQueryItem {
         try await chatQuery(timeout: timeout) { observer in
-            try inner.chatParticipantsQuery(request: request, observer: observer)
+            try inner.chatEditHistory(request: request, observer: observer)
         } answer: { answer in
-            if case let .participants(item) = answer { item } else { nil }
+            if case let .editHistory(history) = answer { history } else { nil }
         }
     }
 
-    /// Ask the product for the menu of one message.
-    public func chatMessageActionsQuery(
-        _ request: ProductChatMessageActionsQueryRequest,
-        timeout: Duration
-    ) async throws -> ProductChatMessageActionsQueryItem {
-        try await chatQuery(timeout: timeout) { observer in
-            try inner.chatMessageActionsQuery(request: request, observer: observer)
-        } answer: { answer in
-            if case let .messageMenu(menu) = answer { menu } else { nil }
-        }
-    }
-
-    /// Ask the product for the messages of a room that it keeps that match
-    /// what the user typed, newest first.
-    public func chatSearchQuery(
-        _ request: ProductChatSearchQueryRequest,
-        timeout: Duration
-    ) async throws -> ProductChatSearchQueryItem {
-        try await chatQuery(timeout: timeout) { observer in
-            try inner.chatSearchQuery(request: request, observer: observer)
-        } answer: { answer in
-            if case let .search(page) = answer { page } else { nil }
-        }
-    }
-
-    /// Give the product the payload of a room link that the user opened.
+    /// Give the product something the user opened from an entry point of the
+    /// host, such as a contact link or a username.
     public func chatOpenLink(
         _ request: ProductChatOpenLinkRequest,
         timeout: Duration
@@ -2337,6 +2172,30 @@ private func rendererStream(
         subscription.cancel()
     }
     return stream
+}
+
+private final class HopDownloadProgressObserver: NativeHopDownloadProgress, Sendable {
+    private let report: @Sendable (UInt64, UInt64) -> Void
+
+    init(_ report: @escaping @Sendable (UInt64, UInt64) -> Void) {
+        self.report = report
+    }
+
+    func onProgress(received: UInt64, total: UInt64) {
+        report(received, total)
+    }
+}
+
+private final class HopUploadProgressObserver: NativeHopUploadProgress, Sendable {
+    private let report: @Sendable (UInt64, UInt64) -> Void
+
+    init(_ report: @escaping @Sendable (UInt64, UInt64) -> Void) {
+        self.report = report
+    }
+
+    func onProgress(sent: UInt64, total: UInt64) {
+        report(sent, total)
+    }
 }
 
 private final class RendererStreamObserver: NativeRendererObserver, @unchecked Sendable {

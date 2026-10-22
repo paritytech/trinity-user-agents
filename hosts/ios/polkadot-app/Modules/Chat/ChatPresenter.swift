@@ -3,6 +3,7 @@ import Keystore_iOS
 import PolkadotUI
 import Products
 import SubstrateSdk
+import TrUAPIHost
 import UIKit.UIPasteboard
 
 final class ChatPresenter {
@@ -17,10 +18,11 @@ final class ChatPresenter {
     private var metadata: MessageListMetadata?
     private var footer: (any HashableContentConfiguration)?
     private var paymentAssetViewModel: PaymentAssetViewModelProtocol?
-    /// See ``scheduleListUpdate()``.
-    var listUpdatePending = false, lastListUpdate: CFTimeInterval = 0
-    /// The parts of a product room that its product declares (P6). Nil for a person chat.
+    /// The parts of a product room that the room screen asks its product for. Nil for a person chat.
     var productRoom: ChatProductRoomPresenter?
+    /// The screen closed once already. A product deletes the room of a declined request or a left chat, which
+    /// closes the screen a second time.
+    private var isClosed = false
 
     init(
         interactor: ChatInteractorInputProtocol,
@@ -51,20 +53,18 @@ extension ChatPresenter: ChatPresenterProtocol {
     func setup() {
         interactor.setup()
         subscribeToPaymentAsset()
-        productRoom?.onChange = { [weak self] in self?.provideViewModel() }
-        productRoom?.onHeaderChange = { [weak self] in self?.provideMoreActions() }
     }
 
     func viewWillAppear() {
         interactor.notifyViewAppeared()
         interactor.openRoom()
-        productRoom?.screenWillAppear()
+        MainActor.assumeIsolated { productRoom?.screenWillAppear() }
     }
 
     func viewWillDisappear() {
         interactor.notifyViewDisappeared()
         interactor.closeRoom()
-        productRoom?.screenWillDisappear()
+        MainActor.assumeIsolated { productRoom?.screenWillDisappear() }
     }
 
     func send(text: String, replyToMessageId: String? = nil) {
@@ -136,12 +136,7 @@ extension ChatPresenter: ChatInteractorOutputProtocol {
 
     func didReceive(listModel: MessageListModel) {
         self.listModel = listModel
-        scheduleListUpdate()
-    }
 
-    /// Draws the newest list model. ``scheduleListUpdate()`` calls it at most once in each frame.
-    func applyListModel() {
-        guard let listModel else { return }
         markInvisibleMessagesAsRead(in: listModel)
         provideViewModel()
     }
@@ -157,39 +152,31 @@ extension ChatPresenter: ChatInteractorOutputProtocol {
     }
 
     func didLeftChat() {
-        wireframe.dismissChat(from: view)
+        closeChat()
     }
 
     func didBlockUser() {
-        wireframe.dismissChat(from: view)
+        closeChat()
     }
 
     func didDeclineChatRequest() {
-        wireframe.dismissChat(from: view)
+        closeChat()
     }
 
     func didRemoveChat() {
-        productRoom?.mark("screen", "removed")
-        wireframe.dismissChat(from: view)
-    }
-
-    /// The user sees why, and finds the text in the input again, with its reply or its edit.
-    func didRefuseSend(_ refused: ChatRefusedSend) {
-        didRefuseUserAction(reason: refused.reason)
-
-        if let editedMessageId = refused.editedMessageId {
-            view?.showEdit(messageId: editedMessageId, currentText: refused.text)
-            return
-        }
-
-        if let replyToMessageId = refused.replyToMessageId {
-            handleReplyAction(for: replyToMessageId)
-        }
-        view?.restoreInput(text: refused.text)
+        closeChat()
     }
 }
 
 private extension ChatPresenter {
+    @MainActor
+    func closeChat() {
+        guard !isClosed else { return }
+
+        isClosed = true
+        wireframe.dismissChat(from: view)
+    }
+
     var viewModelProvidedOnce: Bool {
         listModel != nil && metadata != nil
     }
@@ -236,9 +223,6 @@ private extension ChatPresenter {
             showFile: { [weak self] url in
                 self?.handleShowFile(at: url)
             },
-            openLink: { [weak self] url in
-                self?.handleOpenLink(url)
-            },
             processAction: { [weak self] action in
                 self?.interactor.processAction(action)
             },
@@ -257,12 +241,6 @@ private extension ChatPresenter {
                 Task {
                     @MainActor in moduleNavigator.openProduct(page: productPage)
                 }
-            },
-            retry: { [weak self] messageId in
-                self?.interactor.retrySend(messageId: messageId)
-            },
-            delete: { [weak self] messageId in
-                self?.handleDeleteAction(for: messageId)
             }
         )
 
@@ -273,7 +251,6 @@ private extension ChatPresenter {
             footerConfiguration: footer
         )
         viewModel.paging = ChatViewLayout.ViewModel.Paging(paging: listModel.paging)
-        viewModel.roomStatus = ChatViewLayout.ViewModel.RoomStatus(readiness: listModel.readiness)
         view?.didReceive(viewModel: viewModel)
     }
 
@@ -299,7 +276,7 @@ private extension ChatPresenter {
                  .videoCall: false
             default: true
             }
-        } + (MainActor.assumeIsolated { productRoom?.headerMenuActions() } ?? [])
+        }
         let menu = menuActions.isEmpty ? nil : MainActor.assumeIsolated {
             wireframe.makeContactActionsMenu(
                 from: view,
@@ -355,11 +332,11 @@ private extension ChatPresenter {
                 case let .versionedChatRequest(content):
                     content.ensureV1().welcomeMessage?.text ?? String(localized: .chatReplyPlaceholder)
                 default:
-                    message.content.productReplyPreview ?? String(localized: .chatReplyPlaceholder)
+                    String(localized: .chatReplyPlaceholder)
                 }
             }
 
-        view?.showReply(messageId: messageId, username: username, text: message.quoteText(currentText))
+        view?.showReply(messageId: messageId, username: username, text: currentText)
     }
 
     func handleCopyAction(content: String) {
@@ -406,8 +383,33 @@ private extension ChatPresenter {
             return
         }
 
+        // A product room that offers reaction details keeps the time of each reaction. Without its answer, the
+        // list shows the reactions that the room holds, as for any other room.
+        if metadata.chatMetadata.roomPolicy?.offersReactionDetails == true,
+           let productRoom = MainActor.assumeIsolated({ productRoom }) {
+            Task { @MainActor [weak self] in
+                let details = await productRoom.reactionDetails(of: messageId)
+                self?.showReactionDetails(
+                    aggregates: aggregates,
+                    details: details.map { ($0, .chatExtension(productRoom.productId)) },
+                    metadata: metadata
+                )
+            }
+            return
+        }
+
+        showReactionDetails(aggregates: aggregates, details: nil, metadata: metadata)
+    }
+
+    func showReactionDetails(
+        aggregates: [Chat.MessageReactionAggregate],
+        details: (reactions: [ChatReactionDetail], contactOrigin: Chat.LocalMessage.Origin)?,
+        metadata: MessageListMetadata
+    ) {
         let reactionGroups = aggregates.map { aggregate in
-            let reactors = aggregate.reactors.map { reactor in
+            let reactors = details.map { aggregate.reactors(with: $0.reactions, contactOrigin: $0.contactOrigin) }
+                ?? aggregate.reactors
+            let reactorModels = reactors.map { reactor in
                 let username: String =
                     switch reactor.origin {
                     case .user:
@@ -426,7 +428,7 @@ private extension ChatPresenter {
             return ReactionDetailsViewModel.ReactionGroup(
                 emoji: aggregate.emoji,
                 count: aggregate.count,
-                reactors: reactors
+                reactors: reactorModels
             )
         }
 
@@ -437,18 +439,23 @@ private extension ChatPresenter {
 
     func handleShowEditHistory(for messageId: String) {
         MainActor.assumeIsolated {
+            // A room whose product keeps the messages asks the product for the history. Any other room reads its
+            // own store.
+            if metadata?.chatMetadata.roomPolicy?.messageStore == .product,
+               let productRoom, let message = listModel?.getMessage(by: messageId),
+               let wireframe = wireframe as? ChatWireframe {
+                wireframe.showEditHistory(
+                    from: view,
+                    messageId: messageId,
+                    interactor: productRoom.editHistoryInteractor(for: message)
+                )
+                return
+            }
+
             wireframe.showEditHistory(
                 from: view,
                 messageId: messageId
             )
-        }
-    }
-
-    func handleDeleteAction(for messageId: String) {
-        MainActor.assumeIsolated {
-            wireframe.confirmDeleteMessage(from: view) { [weak self] in
-                self?.interactor.deleteMessage(messageId: messageId)
-            }
         }
     }
 
@@ -458,19 +465,15 @@ private extension ChatPresenter {
         }
     }
 
-    func handleOpenLink(_ url: URL) {
-        MainActor.assumeIsolated {
-            wireframe.confirmOpenLink(url, from: view)
-        }
-    }
-
     func handleStartCall(callType: ChatCallType) {
-        guard let metadata, !routesCallToProduct(callType) else { return }
+        guard let metadata else { return }
         MainActor.assumeIsolated {
             if interactor.isMicrophoneDenied() {
                 wireframe.presentMicrophoneAccessDenied(from: view)
                 return
             }
+
+            guard !routesCallToProduct(callType) else { return }
 
             wireframe.showCall(
                 from: view,
@@ -512,5 +515,21 @@ private extension ChatPresenter {
                 )
             }
         }
+    }
+}
+
+extension ChatPresenter: ChatMoreActionsDelegate {
+    func didConfirmLeaveChat() {
+        interactor.leaveChat()
+    }
+
+    func didConfirmBlockUser() {
+        interactor.blockUser()
+    }
+}
+
+extension ChatPresenter: ChatAttachmentPreviewDelegate {
+    func attachmentPreview(didComplete text: String, attachment: ProcessedAttachment) {
+        interactor.send(text: text, attachments: [attachment], replyToMessageId: nil)
     }
 }

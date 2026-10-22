@@ -20,7 +20,6 @@ struct ProductMessageCacheTests {
             productId: productId,
             roomId: roomId
         )
-        await cache.apply(.deleted(messageId: "m2"), productId: productId, roomId: roomId)
         await cache.apply(
             .reactionPlaced(messageId: "m3", participantId: "c1", emoji: "👍"),
             productId: productId,
@@ -29,10 +28,11 @@ struct ProductMessageCacheTests {
         await cache.apply(.statusChanged(messageId: "m5", status: .read), productId: productId, roomId: roomId)
 
         let cached = await cache.entry(productId: productId, roomId: roomId)
-        #expect(cached?.messages.map(\.messageId) == ["m1", "m3", "m4", "m5"])
+        #expect(cached?.messages.map(\.messageId) == ["m1", "m2", "m3", "m4", "m5"])
         #expect(cached?.messages.first?.body == .text(text: "changed"))
         #expect(cached?.messages.first?.editedAt == 9)
-        #expect(cached?.messages[1].reactions == [ChatReactionSummary(emoji: "👍", count: 1, reactedByUser: false)])
+        let reaction = ChatReactionSummary(emoji: "👍", count: 1, reactedByUser: false, unseen: true)
+        #expect(cached?.messages[2].reactions == [reaction])
         #expect(cached?.messages.last?.status == .read)
         #expect(cached?.next == "0")
         #expect(cached?.seenMessageId == "m3")
@@ -129,8 +129,10 @@ struct ProductMessageCacheTests {
             body: .text(text: text ?? "message \(index)"),
             status: .delivered,
             replyTo: nil,
+            replyPreview: nil,
             editedAt: nil,
-            reactions: []
+            reactions: [],
+            request: false
         )
     }
 }

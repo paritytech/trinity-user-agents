@@ -6,36 +6,30 @@ import Testing
 struct ChatRoomCallStoreTests {
     private let room = Chat.Id.chatExtension("game.dot", roomId: "lobby")
 
-    @Test func aRingingCallGoesAfterTheRingingLifetime() async throws {
-        let store = ChatRoomCallStore(ringingLifetime: .milliseconds(100))
+    /// A ringing call has no lifetime of its own: it rings until the product clears it, as the native chat rings
+    /// until the caller ends the call.
+    @Test func aRingingCallStaysUntilTheProductClearsIt() async throws {
+        let store = ChatRoomCallStore()
+        var updates = store.callUpdates(for: room).makeAsyncIterator()
+        #expect(await updates.next() == .some(nil))
 
-        store.set(.ringing(callId: "c1", video: false, caller: nil), for: room)
-        #expect(store.call(for: room) != nil)
-
-        try await poll { store.call(for: room) == nil }
-    }
-
-    @Test func anActiveCallStaysAfterTheRingingLifetime() async throws {
-        let store = ChatRoomCallStore(ringingLifetime: .milliseconds(50))
-
-        store.set(.ringing(callId: "c1", video: false, caller: nil), for: room)
-        store.set(.active(callId: "c1", video: false, startedAt: 1, mediaSession: nil), for: room)
+        store.set(.ringing(callId: "c1", video: false, caller: "contact"), for: room)
+        #expect(await updates.next() == .some(.ringing(callId: "c1", video: false, caller: "contact")))
         try await Task.sleep(for: .milliseconds(200))
+        #expect(store.call(for: room) == .ringing(callId: "c1", video: false, caller: "contact"))
 
-        #expect(store.call(for: room) == .active(callId: "c1", video: false, startedAt: 1, mediaSession: nil))
+        store.set(nil, for: room)
+        #expect(await updates.next() == .some(nil))
+        #expect(store.call(for: room) == nil)
     }
 
-    /// The lifetime of a new ringing call starts again, so the end of an earlier one does not remove it.
-    @Test func theEndOfAnEarlierRingingCallLeavesANewOne() async throws {
-        let store = ChatRoomCallStore(ringingLifetime: .seconds(2))
+    @Test func anAnsweredCallTurnsActive() {
+        let store = ChatRoomCallStore()
 
         store.set(.ringing(callId: "c1", video: false, caller: nil), for: room)
-        try await Task.sleep(for: .milliseconds(1_200))
-        store.set(.ringing(callId: "c2", video: false, caller: nil), for: room)
-        try await Task.sleep(for: .milliseconds(1_200))
+        store.set(.active(callId: "c1", video: false, startedAt: 1), for: room)
 
-        #expect(store.call(for: room) == .ringing(callId: "c2", video: false, caller: nil))
-        try await poll { store.call(for: room) == nil }
+        #expect(store.call(for: room) == .active(callId: "c1", video: false, startedAt: 1))
     }
 
     @Test func changesGivesEachChangeOfEachRoom() async throws {
@@ -59,7 +53,7 @@ struct ChatRoomCallStoreTests {
         let active = Chat.Id.chatExtension("game.dot", roomId: "active")
         let other = Chat.Id.chatExtension("other.dot", roomId: "lobby")
         store.set(.ringing(callId: "c1", video: false, caller: nil), for: room)
-        store.set(.active(callId: "c2", video: false, startedAt: 1, mediaSession: nil), for: active)
+        store.set(.active(callId: "c2", video: false, startedAt: 1), for: active)
         store.set(.ringing(callId: "c3", video: false, caller: nil), for: other)
 
         store.clearRinging(ofProduct: "game.dot")
@@ -67,18 +61,5 @@ struct ChatRoomCallStoreTests {
         #expect(store.call(for: room) == nil)
         #expect(store.call(for: active) != nil)
         #expect(store.call(for: other) != nil)
-    }
-}
-
-private extension ChatRoomCallStoreTests {
-    func poll(_ condition: @escaping () -> Bool) async throws {
-        let deadline = ContinuousClock.now + .seconds(10)
-        while !condition() {
-            guard ContinuousClock.now < deadline else {
-                Issue.record("the condition did not become true in time")
-                return
-            }
-            try await Task.sleep(for: .milliseconds(10))
-        }
     }
 }

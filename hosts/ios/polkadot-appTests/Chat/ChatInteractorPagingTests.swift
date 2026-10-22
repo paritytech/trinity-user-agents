@@ -20,7 +20,6 @@ struct ChatInteractorPagingTests {
         let model = try #require(output.listModel)
         #expect(model.paging == ChatPagingState(older: .loading, newer: .end))
         #expect(model.readiness == .loading)
-        #expect(model.holdsMessagesOutsideWindow)
     }
 
     @Test func anEndWithMoreMessagesAsksForAPage() async {
@@ -80,7 +79,6 @@ struct ChatInteractorPagingTests {
         #expect(model.isEdited("m1"))
         #expect(model.getLatestEdit(for: "m1")?.newText == "now")
         #expect(model.paging == .complete)
-        #expect(!model.holdsMessagesOutsideWindow)
     }
 }
 

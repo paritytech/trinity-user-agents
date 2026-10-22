@@ -7,7 +7,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,7 +14,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -56,22 +54,14 @@ internal fun QuickReactionsRow(
             color = PolkadotTheme.colors.bg.surface.container,
             border = BorderStroke(PolkadotTheme.borders.default, PolkadotTheme.colors.stroke.secondary)
         ) {
-            val allowedReactions = state.allowedReactions
-
-            // A product room can limit the picker to its own emoji (02-DESIGN §4). Then the row shows only them.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .then(if (allowedReactions != null) Modifier.horizontalScroll(rememberScrollState()) else Modifier)
                     .padding(PolkadotTheme.spacings.small),
-                horizontalArrangement = if (allowedReactions != null) {
-                    Arrangement.spacedBy(PolkadotTheme.spacings.small)
-                } else {
-                    Arrangement.SpaceBetween
-                },
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                (allowedReactions ?: QUICK_REACTIONS).fastForEach { emoji ->
+                QUICK_REACTIONS.fastForEach { emoji ->
                     val onClick = remember(emoji) {
                         { onMessageAction(MessageAction.Reaction(state.message, emoji)) }
                     }
@@ -82,12 +72,10 @@ internal fun QuickReactionsRow(
                     )
                 }
 
-                if (allowedReactions == null) {
-                    ExpandButton(
-                        isExpanded = isExpanded,
-                        onClick = { isExpanded = !isExpanded }
-                    )
-                }
+                ExpandButton(
+                    isExpanded = isExpanded,
+                    onClick = { isExpanded = !isExpanded }
+                )
             }
         }
 

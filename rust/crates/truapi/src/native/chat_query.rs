@@ -11,6 +11,8 @@ use truapi::{CallError, latest};
 use crate::{host_core::ChatQuery, subscription::Spawner};
 
 /// The answer a product gave to one chat query, in the kind of the query.
+// A uniffi `Enum` cannot box a variant.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum NativeChatQueryAnswer {
 	/// The answer to `chat_messages_query`.
@@ -28,16 +30,6 @@ pub enum NativeChatQueryAnswer {
 		/// Who reacted.
 		reactions: latest::ProductChatReactionsQueryItem,
 	},
-	/// The answer to `chat_participants_query`.
-	Participants {
-		/// The count, the page or the participants asked for.
-		answer: latest::ProductChatParticipantsQueryItem,
-	},
-	/// The answer to `chat_message_actions_query`.
-	MessageMenu {
-		/// The menu of the message.
-		menu: latest::ProductChatMessageActionsQueryItem,
-	},
 	/// The answer to `chat_search_query`.
 	Search {
 		/// One page of matches, newest first.
@@ -47,6 +39,11 @@ pub enum NativeChatQueryAnswer {
 	OpenLink {
 		/// The room the host shows next.
 		answer: latest::ProductChatOpenLinkItem,
+	},
+	/// The answer to `chat_edit_history`.
+	EditHistory {
+		/// The texts of the message, oldest first.
+		history: latest::ProductChatEditHistoryQueryItem,
 	},
 }
 

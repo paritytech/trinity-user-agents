@@ -62,11 +62,18 @@ private extension ChatInteractor {
             do {
                 let metadataStream = engine.chatMetadataStream()
                 var hasShownChat = false
+                var messageStore: ChatRoomPolicy.MessageStore?
                 for try await chatMetadata in metadataStream {
                     if let chatMetadata {
                         hasShownChat = true
                         let metadata = MessageListMetadata(chatMetadata: chatMetadata, myUsername: currentUsername)
                         await self?.presenter?.didReceive(metadata: metadata)
+
+                        let store = chatMetadata.roomPolicy?.messageStore
+                        if store != messageStore {
+                            messageStore = store
+                            await self?.refreshMessageStore()
+                        }
                     } else if hasShownChat, self?.isProductRoom == true {
                         await self?.presenter?.didRemoveChat()
                         hasShownChat = false
@@ -78,6 +85,17 @@ private extension ChatInteractor {
 
             logger.debug("Peer metadata stream ended")
         }
+    }
+
+    /// The product set the configuration of the room after the room screen subscribed to its messages: the screen
+    /// follows the messages of the new store.
+    func refreshMessageStore() async {
+        guard await engine.refreshMessageStore() else {
+            return
+        }
+
+        messagesTask?.cancel()
+        subscribeMessages()
     }
 
     func subscribeFooter() {
@@ -166,14 +184,8 @@ extension ChatInteractor: ChatInteractorInputProtocol {
                 }
 
                 try await self.engine.sendUserMessage(with: content)
-            } catch let refusal as ChatUserActionRefusal where !(text ?? "").isEmpty {
-                await self.presenter?.didRefuseSend(ChatRefusedSend(
-                    text: text ?? "",
-                    replyToMessageId: replyToMessageId,
-                    reason: refusal.reason
-                ))
             } catch {
-                await self.report(error)
+                self.logger.error("\(error)")
             }
         }
     }
@@ -195,7 +207,11 @@ extension ChatInteractor: ChatInteractorInputProtocol {
             do {
                 // A product-source room knows which message the user saw last, and tells the product (P5.6).
                 if await engine.messageStore() == .product {
+                    let seesNewMessage = await self.state.noteSeen(messageIds: identifiers)
                     try await engine.markAsSeen(messageIds: Set(identifiers))
+                    if seesNewMessage {
+                        try await notificationsCleaner.cleanNotifications(for: chatId, messageIds: identifiers)
+                    }
                     return
                 }
 
@@ -310,14 +326,8 @@ extension ChatInteractor: ChatInteractorInputProtocol {
 
                 // Send to peer
                 try await engine.sendUserMessage(with: .edited(editedContent))
-            } catch let refusal as ChatUserActionRefusal {
-                await presenter?.didRefuseSend(ChatRefusedSend(
-                    text: newText,
-                    editedMessageId: messageId,
-                    reason: refusal.reason
-                ))
             } catch {
-                await report(error)
+                logger.error("\(error)")
             }
         }
     }
@@ -380,44 +390,13 @@ extension ChatInteractor: ChatInteractorInputProtocol {
             await engine.processAction(action)
         }
     }
-
-    func deleteMessage(messageId: Chat.MessageId) {
-        Task { [engine, logger] in
-            do {
-                try await engine.deleteMessage(messageId)
-            } catch {
-                logger.error("Can't delete message \(messageId): \(error)")
-                await self.report(error)
-            }
-        }
-    }
-
-    func retrySend(messageId: Chat.MessageId) {
-        // Only a product-source room offers Retry (02-DESIGN §13 item 9). It sends again through `user_action`.
-        Task {
-            do {
-                try await perform(.retry(messageId))
-            } catch {
-                logger.error("Can't retry message \(messageId): \(error)")
-            }
-        }
-    }
 }
 
 private extension ChatInteractor {
-    /// Sends the action to the message source. A refusal goes to the presenter, so the user sees the reason.
+    /// Sends the action to the message source. A refusal is logged, as the native chat logs a failed action.
     func perform(_ action: ChatSourceAction) async throws {
         if case let .refused(reason) = try await engine.perform(action) {
-            await presenter?.didRefuseUserAction(reason: reason)
-        }
-    }
-
-    /// Logs the error. A refusal of the product also goes to the presenter.
-    func report(_ error: Error) async {
-        logger.error("\(error)")
-
-        if let refusal = error as? ChatUserActionRefusal {
-            await presenter?.didRefuseUserAction(reason: refusal.reason)
+            logger.error("The product refused \(action): \(reason ?? "")")
         }
     }
 

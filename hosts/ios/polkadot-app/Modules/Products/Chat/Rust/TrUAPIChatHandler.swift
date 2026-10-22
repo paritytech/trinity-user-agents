@@ -6,10 +6,11 @@ import UIKitExt
 
 /// The chat half of a product's worker.
 ///
-/// Started when the chat bot of the product is discovered. The start binds the chat surface of the product and
-/// holds no worker (02-DESIGN D10). Each open room screen and each query asks ``TrUAPIWorkerManager`` for the
-/// worker, and gives the request back when it ends. The core keeps one Worker execution per product and decides
-/// when it runs, so this asks for one rather than opening an execution of its own. The same worker also draws the
+/// Started when the chat bot of the product is discovered. The start binds the chat surface of the product. For the
+/// chat product it holds no worker (02-DESIGN D10); any other product holds its worker for the whole session. Each
+/// open room screen and each query asks ``TrUAPIWorkerManager`` for the worker, and gives the request back when it
+/// ends. The core keeps one Worker execution per product and decides when it runs, so this asks for one rather than
+/// opening an execution of its own. The same worker also draws the
 /// product's Pocket cards.
 ///
 /// Chat-environment context route through that execution: what the user does
@@ -98,14 +99,32 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         assert(!started || disposed, "TrUAPIChatHandler dropped without dispose()")
     }
 
-    /// Binds the chat surface of the product, so the core can reach it whenever the worker runs. The worker starts
-    /// when a room screen opens (``open(roomId:)``), a query is due, or a message wakes it. A product that has no
-    /// room yet gets a start wake (``ProductFirstRoomHold``).
+    /// Binds the chat surface of the product, so the core can reach it whenever the worker runs. The worker of the
+    /// chat product starts when a room screen opens (``open(roomId:)``), a query is due, or a message wakes it. A
+    /// product that has no room yet gets a start wake (``ProductFirstRoomHold``).
+    ///
+    /// Any other product keeps its worker from the start to ``dispose()``, as before the chat product: its bot posts
+    /// and its cards draw while no room screen is open.
     func start(messagingSupport: ProductsNativeApi.MessagingSupport) async throws {
         guard !started, !disposed else { throw CancellationError() }
         started = true
 
         context.chat.bind(messagingSupport, owner: self)
+
+        guard BundledChatProductResolver.isChatProduct(productId) else {
+            do {
+                try await holdWorker()
+            } catch {
+                // Nothing upstream tears us down (`ProductBot` only logs), so a half-started session would hold its
+                // worker reference forever.
+                await dispose()
+                throw error
+            }
+            startRoomsForwarding()
+            logger.debug("Rust chat runtime started for: \(productId)")
+            return
+        }
+
         startRoomsForwarding()
         startFollowingWorker()
         startFirstRoomHold()
@@ -114,8 +133,9 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         logger.debug("Rust chat runtime started for: \(productId)")
     }
 
-    /// Holds the worker until ``dispose()``. Only the harness of the simulator calls it, so its command feed
-    /// reaches the product while no room screen is open.
+    /// Holds the worker until ``dispose()``. ``start(messagingSupport:)`` calls it for every product but the chat
+    /// product, and the harness of the simulator calls it so its command feed reaches the product while no room
+    /// screen is open.
     func holdWorker() async throws {
         try checkNotDisposed()
         guard request == .none else { return }
@@ -138,7 +158,8 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
 
     // MARK: - ChatRoomLifecycle
 
-    /// Holds the worker for the open room screen (02-DESIGN §8.4). Throws when the worker does not start in the startup window of the worker manager. Then the room holds nothing.
+    /// Holds the worker for the open room screen (02-DESIGN §8.4). Throws when the worker does not start in the startup
+    /// window of the worker manager. Then the room holds nothing.
     func open(roomId: String) async throws {
         try checkNotDisposed()
 
@@ -202,34 +223,8 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
         }
     }
 
-    /// The tree of the custom footer of a room (`ChatRoomFooter::Custom`), drawn through the renderer with a
-    /// `ChatFooter` context and an empty payload (02-DESIGN §6.4, §13 item 14).
-    func renderFooter(roomId: String) async -> AsyncThrowingStream<ChatRendererOutput, Error> {
-        do {
-            let request = ProductRendererRenderRequest(context: .chatFooter(roomId: roomId), payload: Data())
-            return try await renderOutputs(request, name: "footer of \(roomId)")
-        } catch {
-            return AsyncThrowingStream { $0.finish(throwing: error) }
-        }
-    }
-
-    /// A press inside the custom footer reaches `Renderer::action_subscribe` with the `ChatFooter` context.
-    func dispatchFooterAction(roomId: String, actionId: String, payload: String?) async {
-        do {
-            try checkNotDisposed()
-            try await executionForMessage(in: roomId).publishRendererAction(HostRendererActionSubscribeItem(
-                context: .chatFooter(roomId: roomId),
-                actionId: actionId,
-                payload: payload.map { Data($0.utf8) } ?? Data()
-            ))
-        } catch {
-            logger.error("Rust chat runtime failed to dispatch footer action \(actionId): \(error)")
-        }
-    }
-
     /// A press inside a body the product drew is a renderer action addressed by
-    /// `RenderContext`, not a chat action: `ChatActionPayload.actionTriggered`
-    /// means a host-drawn `Actions` button, see ``dispatchActionTrigger(roomId:messageId:actionId:)``.
+    /// `RenderContext`, not a chat action.
     func dispatchEvent(
         roomId: String?,
         messageId: String,
@@ -257,27 +252,6 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
             logger.debug("Rust chat runtime disposed before event \(actionId)")
         } catch {
             logger.error("Rust chat runtime failed to dispatch event \(actionId): \(error)")
-        }
-    }
-
-    func dispatchActionTrigger(roomId: String?, messageId: String, actionId: String) async {
-        do {
-            try checkNotDisposed()
-            guard let roomId else { throw ChatSeamError.roomlessChat }
-            let trigger = ActionTrigger(
-                messageId: productMessageId(messageId, roomId: roomId),
-                actionId: actionId,
-                payload: nil
-            )
-            try await executionForMessage(in: roomId).publishChatEvent(
-                roomId: roomId,
-                peer: Self.hostUserPeer,
-                event: .actionTriggered(trigger)
-            )
-        } catch is CancellationError {
-            logger.debug("Rust chat runtime disposed before action \(actionId)")
-        } catch {
-            logger.error("Rust chat runtime failed to report action \(actionId): \(error)")
         }
     }
 
@@ -332,13 +306,6 @@ extension TrUAPIChatHandler {
             peer: Self.hostUserPeer,
             payload: .messagePosted(.text(text: text))
         ))
-    }
-
-    func publishUserEvent(_ event: ProductChatUserEvent, roomId: String?) async throws {
-        try checkNotDisposed()
-        guard let roomId else { throw ChatSeamError.roomlessChat }
-        try await executionForMessage(in: roomId)
-            .publishChatEvent(roomId: roomId, peer: Self.hostUserPeer, event: event.chatEvent)
     }
 }
 
@@ -446,25 +413,6 @@ private extension TrUAPIChatHandler {
                 guard !Task.isCancelled else { return }
                 logger.error("Rust chat runtime rooms forwarding ended: \(error)")
             }
-        }
-    }
-}
-
-private extension ProductChatUserEvent {
-    var chatEvent: ChatEvent {
-        switch self {
-        case let .messagePosted(messageId, text, replyTo):
-            .messagePosted(messageId: messageId, body: .text(text: text), replyTo: replyTo)
-        case let .attachmentPosted(messageId, body):
-            .messagePosted(messageId: messageId, body: body.userWireBody ?? .text(text: ""), replyTo: nil)
-        case let .edited(messageId, text):
-            .userEdited(messageId: messageId, body: .text(text: text))
-        case let .deleted(messageId):
-            .userDeleted(messageId: messageId)
-        case let .reacted(messageId, emoji, placed):
-            .userReacted(messageId: messageId, emoji: emoji, placed: placed)
-        case let .seen(messageId):
-            .seen(messageId: messageId)
         }
     }
 }

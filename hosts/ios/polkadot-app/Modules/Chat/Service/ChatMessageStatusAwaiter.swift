@@ -41,10 +41,9 @@ private extension ChatMessageStatusAwaiter {
     ) -> NSPredicate {
         let accepted: [Chat.LocalMessage.Status.OutgoingStatus] =
             switch target {
-            case .new: [.new, .sent, .delivered, .read]
-            case .sent: [.sent, .delivered, .read]
-            case .delivered: [.delivered, .read]
-            case .read: [.read]
+            case .new: [.new, .sent, .delivered]
+            case .sent: [.sent, .delivered]
+            case .delivered: [.delivered]
             case .failed: [.failed]
             }
 

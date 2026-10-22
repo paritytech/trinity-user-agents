@@ -62,8 +62,6 @@ extension Chat.LocalMessage.Content {
              .extensionActionResponse,
              .customRendered,
              .file,
-             .productBody,
-             .deleted,
              .chatRequest,
              .versionedChatRequest:
             false
@@ -125,9 +123,7 @@ private extension Chat.LocalMessage.Content {
         case .staticTextImageContent,
              .extensionActionResponse,
              .customRendered,
-             .file,
-             .productBody,
-             .deleted:
+             .file:
             nil
         case .chatRequest,
              .versionedChatRequest:

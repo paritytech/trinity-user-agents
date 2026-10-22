@@ -7,7 +7,7 @@ import TrUAPIHost
 /// A user message, a user action or an event of a room wakes the worker for 30 seconds, so the product answers
 /// after the user closes the room (W1 of 07-LATER §10.2, scenario S69).
 struct TrUAPIChatHandlerWakeTests {
-    private let product: ProductId = "test.dot"
+    private let product: ProductId = "chat.dot"
 
     @Test func aUserMessageWakesTheWorkerForItsRoom() async throws {
         let execution = MockProductExecution()
@@ -21,18 +21,6 @@ struct TrUAPIChatHandlerWakeTests {
         #expect(workers.references.log.isEmpty)
     }
 
-    @Test func eachUserEventWakesTheWorker() async throws {
-        let execution = MockProductExecution()
-        let workers = runningWorkers(execution)
-        let handler = makeHandler(workers)
-
-        try await handler.publishUserEvent(.seen(messageId: "m1"), roomId: "host")
-        await handler.dispatchActionTrigger(roomId: "host", messageId: "m1", actionId: "a1")
-
-        #expect(workers.wakes == Array(repeating: .messageInFlight(roomId: "host"), count: 2))
-        #expect(execution.publishedChatEvents.count == 2)
-    }
-
     @Test func aUserActionWakesTheWorkerBeforeItsQuery() async throws {
         let execution = MockProductExecution()
         let workers = runningWorkers(execution)
@@ -40,7 +28,7 @@ struct TrUAPIChatHandlerWakeTests {
 
         _ = try? await handler.userAction(ProductChatUserActionRequest(
             roomId: "source",
-            action: .retry(messageId: "m1")
+            action: .seen(messageId: "m1")
         ))
 
         #expect(workers.wakes == [.messageInFlight(roomId: "source")])
@@ -92,7 +80,7 @@ struct TrUAPIChatHandlerWakeTests {
         let active = Chat.Id.chatExtension(product, roomId: "active")
         let other = Chat.Id.chatExtension("other.dot", roomId: "ringing")
         calls.set(.ringing(callId: "c1", video: false, caller: nil), for: ringing)
-        calls.set(.active(callId: "c2", video: false, startedAt: 1, mediaSession: nil), for: active)
+        calls.set(.active(callId: "c2", video: false, startedAt: 1), for: active)
         calls.set(.ringing(callId: "c3", video: false, caller: nil), for: other)
         let handler = TrUAPIChatHandler(productId: product, workers: workers, calls: calls, wakesAtStart: false)
         try await handler.start(messagingSupport: .init(bot: nil, context: nil))

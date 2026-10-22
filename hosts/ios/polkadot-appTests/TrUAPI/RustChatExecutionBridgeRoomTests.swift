@@ -25,30 +25,17 @@ struct RustChatExecutionBridgeRoomTests {
         #expect(api.roomConfigs.map(\.config) == [config])
     }
 
-    @Test func metadataKeepsTheNameTheDescriptionAndTheAvatarBytes() async throws {
+    /// The native chat draws a name only, so the host keeps the name and drops the description.
+    @Test func metadataKeepsTheName() async throws {
         let bridge = await makeBridge()
 
-        try await bridge.setRoomMetadata(roomId: "r", metadata: ChatRoomMetadata(
-            name: "Lobby",
-            avatar: .inline(mimeType: "image/png", bytes: Data([1, 2])),
-            description: "Weekly game"
-        ))
-        try await bridge.setRoomMetadata(roomId: "r", metadata: ChatRoomMetadata(
-            name: "Lobby",
-            avatar: .preimage(key: Data([7])),
-            description: nil
-        ))
-        try await bridge.setRoomMetadata(roomId: "r", metadata: ChatRoomMetadata(
-            name: "Plain",
-            avatar: nil,
-            description: nil
-        ))
+        try await bridge.setRoomMetadata(
+            roomId: "r",
+            metadata: ChatRoomMetadata(name: "Lobby", description: "Weekly game")
+        )
+        try await bridge.setRoomMetadata(roomId: "r", metadata: ChatRoomMetadata(name: "Plain", description: nil))
 
-        #expect(api.roomMetadata == [
-            .init(roomId: "r", name: "Lobby", description: "Weekly game", avatar: .inline(Data([1, 2]))),
-            .init(roomId: "r", name: "Lobby", description: nil, avatar: .preimage(key: Data([7]))),
-            .init(roomId: "r", name: "Plain", description: nil, avatar: nil)
-        ])
+        #expect(api.roomMetadata == [.init(roomId: "r", name: "Lobby"), .init(roomId: "r", name: "Plain")])
     }
 
     @Test(arguments: PreviewCase.all)
@@ -58,27 +45,6 @@ struct RustChatExecutionBridgeRoomTests {
         try await bridge.setRoomPreview(roomId: "r", preview: previewCase.wire)
 
         #expect(api.roomPreviews.map(\.preview) == [previewCase.stored])
-    }
-
-    @Test func anInputFooterKeepsItsSettings() async throws {
-        let bridge = await makeBridge()
-        let destination = Data(repeating: 1, count: 32)
-
-        try await bridge.setRoomFooter(roomId: "r", footer: .input(ChatInputConfig(
-            placeholder: "Ask",
-            photo: false,
-            video: true,
-            file: true,
-            payment: .enabled(destination: destination)
-        )))
-
-        #expect(api.footerConfigs.map(\.footer) == [.input(.init(
-            placeholder: "Ask",
-            photo: false,
-            video: true,
-            file: true,
-            payment: .enabled(destination: destination)
-        ))])
     }
 
     /// `delete_room` is idempotent, so a room that is gone already is not an error.
@@ -103,7 +69,7 @@ struct RustChatExecutionBridgeRoomTests {
         await #expect(throws: ChatRoomError.self) {
             try await bridge.setRoomMetadata(
                 roomId: "gone",
-                metadata: ChatRoomMetadata(name: "x", avatar: nil, description: nil)
+                metadata: ChatRoomMetadata(name: "x", description: nil)
             )
         }
         await #expect(throws: ChatRoomError.self) {
@@ -129,104 +95,69 @@ struct PreviewCase: CustomTestStringConvertible, Sendable {
     static let all: [PreviewCase] = [
         PreviewCase(
             testDescription: "host defaults",
-            wire: ChatRoomPreview(order: .timestamp, timestamp: nil, badge: nil, text: nil),
+            wire: ChatRoomPreview(
+                timestamp: nil,
+                badge: nil,
+                lastMessage: nil,
+                lastReaction: nil,
+                unseenReactions: 0
+            ),
             stored: .hostDefault
         ),
         PreviewCase(
-            testDescription: "pinned with a timestamp",
-            wire: ChatRoomPreview(order: .pinToTop, timestamp: 1_700_000_000_000, badge: nil, text: nil),
-            stored: .init(
-                order: .pinToTop,
+            testDescription: "a timestamp",
+            wire: ChatRoomPreview(
                 timestamp: 1_700_000_000_000,
-                badge: .hostDefault,
-                text: nil,
-                ongoing: false
-            )
+                badge: nil,
+                lastMessage: nil,
+                lastReaction: nil,
+                unseenReactions: 0
+            ),
+            stored: .init(timestamp: 1_700_000_000_000, badge: .hostDefault, lastMessage: nil, unseenReaction: false)
         ),
         PreviewCase(
             testDescription: "count badge",
-            wire: ChatRoomPreview(order: .timestamp, timestamp: nil, badge: .unreadCount(count: 4), text: nil),
-            stored: .init(order: .byTimestamp, timestamp: nil, badge: .unreadCount(4), text: nil, ongoing: false)
+            wire: ChatRoomPreview(
+                timestamp: nil,
+                badge: .unreadCount(count: 4),
+                lastMessage: nil,
+                lastReaction: nil,
+                unseenReactions: 0
+            ),
+            stored: .init(timestamp: nil, badge: .unreadCount(4), lastMessage: nil, unseenReaction: false)
         ),
         PreviewCase(
             testDescription: "hidden badge",
-            wire: ChatRoomPreview(order: .timestamp, timestamp: nil, badge: .hidden, text: nil),
-            stored: .init(order: .byTimestamp, timestamp: nil, badge: .none, text: nil, ongoing: false)
-        ),
-        PreviewCase(
-            testDescription: "inline image badge",
             wire: ChatRoomPreview(
-                order: .timestamp,
                 timestamp: nil,
-                badge: .image(resource: .inline(mimeType: "image/png", bytes: Data([5]))),
-                text: nil
+                badge: .hidden,
+                lastMessage: nil,
+                lastReaction: nil,
+                unseenReactions: 0
             ),
-            stored: .init(
-                order: .byTimestamp,
-                timestamp: nil,
-                badge: .image(.inline(Data([5]))),
-                text: nil,
-                ongoing: false
-            )
+            stored: .init(timestamp: nil, badge: .none, lastMessage: nil, unseenReaction: false)
         ),
         PreviewCase(
-            testDescription: "preimage image badge",
+            testDescription: "unseen reaction",
             wire: ChatRoomPreview(
-                order: .timestamp,
-                timestamp: nil,
-                badge: .image(resource: .preimage(key: Data([6]))),
-                text: nil
-            ),
-            stored: .init(
-                order: .byTimestamp,
-                timestamp: nil,
-                badge: .image(.preimage(key: Data([6]))),
-                text: nil,
-                ongoing: false
-            )
-        ),
-        PreviewCase(
-            testDescription: "ongoing text",
-            wire: ChatRoomPreview(
-                order: .timestamp,
                 timestamp: nil,
                 badge: nil,
-                text: ChatRoomPreviewText(text: "Bot is typing", ongoing: true)
+                lastMessage: nil,
+                lastReaction: nil,
+                unseenReactions: 1
             ),
-            stored: .init(
-                order: .byTimestamp,
-                timestamp: nil,
-                badge: .hostDefault,
-                text: "Bot is typing",
-                ongoing: true
-            )
+            stored: .init(timestamp: nil, badge: .hostDefault, lastMessage: nil, unseenReaction: true)
         )
     ]
 }
 
 private extension RustChatExecutionBridgeRoomTests {
     var config: Chat.RoomConfig {
-        Chat.RoomConfig(
-            productSource: true,
-            reactionDetails: true,
-            participants: false,
-            messageActions: true,
-            allowedReactions: ["👍"],
-            placeholder: "Nothing yet",
-            reportSeen: true
-        )
+        Chat.RoomConfig(productSource: true, reactionDetails: true, reportSeen: true)
     }
 
     var wireConfig: ChatRoomConfig {
-        ChatRoomConfig(
-            productSource: true,
-            reactionDetails: true,
-            participants: false,
-            messageActions: true,
-            allowedReactions: ["👍"],
-            placeholder: "Nothing yet",
-            reportSeen: true
-        )
+        ChatRoomConfig(productSource: true, reactionDetails: true, reportSeen: true)
     }
 
     func makeBridge() async -> RustChatExecutionBridge {
@@ -237,13 +168,6 @@ private extension RustChatExecutionBridgeRoomTests {
     }
 
     func declarations(config: Chat.RoomConfig?) -> Chat.RoomDeclarations {
-        Chat.RoomDeclarations(
-            description: nil,
-            avatar: nil,
-            config: config,
-            configGeneration: 1,
-            preview: .hostDefault,
-            footerConfig: nil
-        )
+        Chat.RoomDeclarations(config: config, configGeneration: 1, preview: .hostDefault)
     }
 }

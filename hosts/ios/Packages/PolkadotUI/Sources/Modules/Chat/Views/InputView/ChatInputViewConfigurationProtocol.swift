@@ -26,6 +26,4 @@ public protocol ChatInputEditPresenting: AnyObject {
 
 public protocol ChatTextInputPresenting: AnyObject {
     func activateTextField()
-    /// Puts a text in the text field again, for example a message that the room refused.
-    func restoreText(_ text: String)
 }

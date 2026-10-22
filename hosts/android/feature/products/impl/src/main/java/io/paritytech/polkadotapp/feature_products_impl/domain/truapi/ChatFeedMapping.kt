@@ -1,9 +1,10 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import io.parity.truapi.ChatQueryException
-import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
+import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ProductMessageBody
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageRevisionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
@@ -12,34 +13,70 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFee
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductReactionSummaryModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductReplyPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductSearchPage
-import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
+import uniffi.truapi.ChatContactEvent
 import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageBody
 import uniffi.truapi.ChatMessageStatus
 import uniffi.truapi.ChatPageAnchor
 import uniffi.truapi.ChatUserAction
+import uniffi.truapi.ProductChatEditHistoryQueryItem
 import uniffi.truapi.ProductChatMessagesQueryItem
 import uniffi.truapi.ProductChatQueryError
 import uniffi.truapi.ProductChatSearchQueryItem
 import uniffi.truapi.ProductChatUserActionError
 import uniffi.truapi.ProductChatUserActionItem
+import java.math.BigInteger
 import uniffi.truapi.ChatMessage as CoreChatMessage
 
-// Maps the messages that cross the wire to the chat models of the app, and back. [rendererId] is the
-// renderer of the product, which draws a custom body.
+// Maps the messages that cross the wire to the chat models of the app, and back. The lines about the conversation,
+// the calls and the payments of a room of the chat product become the native kinds, so the room draws them the
+// native way.
 
-fun ChatMessageBody.toContent(rendererId: String): ChatMessage.Content = when (this) {
+fun ChatMessageBody.toContent(): ChatMessage.Content = when (this) {
     is ChatMessageBody.Text -> ChatMessage.Content.Text(text)
-    is ChatMessageBody.RichText -> ChatMessage.Content.ProductBody(ProductMessageBody.RichText(text, media.map { it.toModel() }))
-    is ChatMessageBody.Actions -> ChatMessage.Content.ProductBody(v1.toBody())
-    is ChatMessageBody.Custom -> ChatMessage.Content.Custom(
-        rendererId = rendererId,
-        content = Result.success(ProductsMessageContent(messageType, payload.toDataByteArray(), previewText)),
+    is ChatMessageBody.RichText -> if (media.isEmpty()) {
+        ChatMessage.Content.Text(text.orEmpty())
+    } else {
+        ChatMessage.Content.ProductBody(ProductMessageBody.RichText(text, media.map { it.toModel() }))
+    }
+    is ChatMessageBody.Event -> when (v1) {
+        // The native row of an accepted request does not read the id of the request.
+        ChatContactEvent.REQUEST_ACCEPTED -> ChatMessage.Content.ChatAccepted(requestId = "")
+        ChatContactEvent.CONTACT_ADDED -> ChatMessage.Content.ContactAdded
+        ChatContactEvent.LEFT_CHAT -> ChatMessage.Content.LeftChat
+        ChatContactEvent.UNAVAILABLE -> ChatMessage.Content.CompactionUnavailable
+        ChatContactEvent.UNSUPPORTED -> ChatMessage.Content.Unsupported(ByteArray(0))
+    }
+    is ChatMessageBody.Call -> ChatMessage.Content.ContactCall(
+        video = v1.video,
+        answeredAt = v1.answeredAt?.toLong(),
+        closedAt = v1.closed?.at?.toLong(),
+        closedByUser = v1.closed?.byUser == true,
     )
-    // Android draws a line about the room as a text until it has a system row for products.
-    is ChatMessageBody.Notice -> ChatMessage.Content.Text(text)
+    // The native Android chat has no legacy Send message, so it shows one as unsupported, as its push does.
+    is ChatMessageBody.Payment -> if (v1.legacy) {
+        ChatMessage.Content.Unsupported(ByteArray(0))
+    } else {
+        // The product claims the coins of a payment itself, so the room shows the payment as transferred.
+        val amount = Balance(BigInteger(v1.amount))
+        ChatMessage.Content.CoinagePayment(
+            totalValue = amount,
+            coinKeys = emptyList(),
+            status = ChatMessage.Content.CoinagePayment.Status.Transferred(amount),
+        )
+    }
+}
+
+/** The welcome text of a chat request draws as the native request message. */
+private fun ChatMessageBody.toMessageContent(request: Boolean): ChatMessage.Content {
+    val content = toContent()
+    if (!request) return content
+    return when (content) {
+        is ChatMessage.Content.Text -> ChatMessage.Content.ChatRequest(ChatMessage.Content.RichText(content.text, emptyList()))
+        else -> content
+    }
 }
 
 /**
@@ -48,37 +85,34 @@ fun ChatMessageBody.toContent(rendererId: String): ChatMessage.Content = when (t
  */
 fun ChatMessage.Content.toCoreBody(): ChatMessageBody? = when (this) {
     is ChatMessage.Content.Text -> ChatMessageBody.Text(text)
-    // The attachments of a v1 rich text are network uploads that no product fetches. An attachment that the user sends
-    // in a product room is a product body with inline media, so only the text of a rich text goes.
+    // The attachments of a v1 rich text are network uploads that no product fetches, so only the text goes.
     is ChatMessage.Content.RichText -> text?.let { ChatMessageBody.Text(it) }
     is ChatMessage.Content.ProductBody -> when (val body = body) {
         is ProductMessageBody.RichText -> ChatMessageBody.RichText(body.text, body.media.mapNotNull { it.toCore() })
-        is ProductMessageBody.Actions -> ChatMessageBody.Actions(body.toCore())
-    }
-    is ChatMessage.Content.Custom<*> -> (content.getOrNull() as? ProductsMessageContent)?.let {
-        ChatMessageBody.Custom(it.messageType, it.data.value, it.alt)
     }
     else -> null
 }
 
-fun CoreChatMessage.toModel(rendererId: String) = ProductRoomMessage(
+fun CoreChatMessage.toModel() = ProductRoomMessage(
     messageId = messageId,
     participantId = origin.participantId,
     timestamp = timestamp.toLong(),
-    content = body.toContent(rendererId),
+    content = body.toMessageContent(request),
     status = status.toModel(),
     replyTo = replyTo,
     editedAt = editedAt?.toLong(),
     reactions = reactions.map { ProductReactionSummaryModel(it.emoji, it.count.toInt(), it.reactedByUser) },
+    request = request,
+    replyPreview = replyPreview?.let { ProductReplyPreviewModel(it.origin.participantId, it.body.toContent()) },
 )
 
-fun ChatFeedUpdate.toModel(rendererId: String): ProductFeedUpdateModel = when (this) {
-    is ChatFeedUpdate.New -> ProductFeedUpdateModel.New(v1.toModel(rendererId))
-    is ChatFeedUpdate.Edited -> ProductFeedUpdateModel.Edited(messageId, body.toContent(rendererId), editedAt.toLong())
-    is ChatFeedUpdate.Deleted -> ProductFeedUpdateModel.Deleted(messageId)
+fun ChatFeedUpdate.toModel(): ProductFeedUpdateModel = when (this) {
+    is ChatFeedUpdate.New -> ProductFeedUpdateModel.New(v1.toModel())
+    is ChatFeedUpdate.Edited -> ProductFeedUpdateModel.Edited(messageId, body.toContent(), editedAt.toLong())
     is ChatFeedUpdate.ReactionPlaced -> ProductFeedUpdateModel.ReactionPlaced(messageId, participantId, emoji)
     is ChatFeedUpdate.ReactionRemoved -> ProductFeedUpdateModel.ReactionRemoved(messageId, participantId, emoji)
     is ChatFeedUpdate.StatusChanged -> ProductFeedUpdateModel.StatusChanged(messageId, status.toModel())
+    is ChatFeedUpdate.Replaced -> ProductFeedUpdateModel.Replaced(v1.toModel())
 }
 
 fun ChatMessageStatus.toModel(): ProductMessageStatusModel = when (this) {
@@ -96,23 +130,28 @@ fun ChatPageAnchorModel.toCore(): ChatPageAnchor = when (this) {
 
 /** Null when a new or edited message has no body for the product. */
 fun ChatUserActionModel.toCore(): ChatUserAction? = when (this) {
-    is ChatUserActionModel.NewMessage -> content.toCoreBody()?.let { ChatUserAction.NewMessage(it, replyTo) }
+    is ChatUserActionModel.NewMessage -> content.toCoreBody()?.let { ChatUserAction.NewMessage(it, replyTo, messageId, timestamp?.toULong()) }
     is ChatUserActionModel.EditMessage -> content.toCoreBody()?.let { ChatUserAction.EditMessage(messageId, it) }
-    is ChatUserActionModel.DeleteMessage -> ChatUserAction.DeleteMessage(messageId)
     is ChatUserActionModel.ReactionPlaced -> ChatUserAction.ReactionPlaced(messageId, emoji)
     is ChatUserActionModel.ReactionRemoved -> ChatUserAction.ReactionRemoved(messageId, emoji)
     is ChatUserActionModel.Seen -> ChatUserAction.Seen(messageId)
-    is ChatUserActionModel.Retry -> ChatUserAction.Retry(messageId)
+    ChatUserActionModel.AcceptRequest -> ChatUserAction.AcceptRequest
+    ChatUserActionModel.DeclineRequest -> ChatUserAction.DeclineRequest
+    ChatUserActionModel.Block -> ChatUserAction.Block
+    ChatUserActionModel.Unblock -> ChatUserAction.Unblock
+    ChatUserActionModel.Leave -> ChatUserAction.Leave
 }
 
-fun ProductChatMessagesQueryItem.toModel(rendererId: String) =
-    ProductMessagesPage(messages = messages.map { it.toModel(rendererId) }, next = next)
+fun ProductChatMessagesQueryItem.toModel() =
+    ProductMessagesPage(messages = messages.map { it.toModel() }, next = next)
 
-fun ProductChatSearchQueryItem.toModel(rendererId: String) =
-    ProductSearchPage(hits = hits.map { it.toModel(rendererId) }, next = next)
+fun ProductChatSearchQueryItem.toModel() = ProductMessagesPage(messages = hits.map { it.toModel() }, next = next)
 
-fun ProductChatUserActionItem.toModel(rendererId: String): ChatUserActionOutcome = when (this) {
-    is ProductChatUserActionItem.MessageCreated -> ChatUserActionOutcome.MessageCreated(v1.toModel(rendererId))
+fun ProductChatEditHistoryQueryItem.toModel(): List<ChatMessageRevisionModel> =
+    revisions.map { ChatMessageRevisionModel(editedAt = it.editedAt.toLong(), text = it.text) }
+
+fun ProductChatUserActionItem.toModel(): ChatUserActionOutcome = when (this) {
+    is ProductChatUserActionItem.MessageCreated -> ChatUserActionOutcome.MessageCreated(v1.toModel())
     ProductChatUserActionItem.Acknowledged -> ChatUserActionOutcome.Acknowledged
 }
 

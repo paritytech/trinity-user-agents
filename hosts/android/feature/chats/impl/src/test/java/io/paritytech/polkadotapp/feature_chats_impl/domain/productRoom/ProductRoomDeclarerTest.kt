@@ -7,8 +7,8 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomDeclarationsRe
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownChatRoomException
 import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomDeclarationsWriter
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
@@ -37,17 +37,17 @@ class ProductRoomDeclarerTest {
     fun `a declaration for a room that does not exist fails as an unknown room`() = runBlocking<Unit> {
         withRoomExisting(false)
 
-        val result = declarer.setFooter(extensionId, room, ChatRoomFooterModel.Empty)
+        val result = declarer.setPreview(extensionId, room, EMPTY_PREVIEW)
 
         assertUnknownRoom(result)
-        coVerify(exactly = 0) { declarationsWriter.setFooter(any(), any()) }
+        coVerify(exactly = 0) { declarationsWriter.setPreview(any(), any()) }
     }
 
     @Test
     fun `a declaration for the room of another extension fails as an unknown room`() = runBlocking<Unit> {
         withRoomExisting(true)
 
-        val result = declarer.setFooter("ProductBot_other.dot", room, ChatRoomFooterModel.Empty)
+        val result = declarer.setPreview("ProductBot_other.dot", room, EMPTY_PREVIEW)
 
         assertUnknownRoom(result)
     }
@@ -88,9 +88,9 @@ class ProductRoomDeclarerTest {
     }
 
     @Test
-    fun `metadata renames the room and keeps the description and avatar as declarations`() = runBlocking<Unit> {
+    fun `metadata renames the room and keeps the description as a declaration`() = runBlocking<Unit> {
         withRoomExisting(true)
-        val metadata = ChatRoomMetadataModel(description = "Play", avatar = null)
+        val metadata = ChatRoomMetadataModel(description = "Play")
 
         declarer.setMetadata(extensionId, room, "Lobby", metadata)
 
@@ -108,5 +108,9 @@ class ProductRoomDeclarerTest {
 
     private fun assertUnknownRoom(result: Result<Unit>) {
         assertTrue("expected UnknownChatRoomException but was $result", result.exceptionOrNull() is UnknownChatRoomException)
+    }
+
+    private companion object {
+        val EMPTY_PREVIEW = ChatRoomPreviewModel(timestamp = null, badge = null, lastMessage = null, lastReaction = null, unseenReactions = 0)
     }
 }

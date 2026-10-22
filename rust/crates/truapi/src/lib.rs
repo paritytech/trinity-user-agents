@@ -97,17 +97,16 @@ pub mod latest {
 	pub use crate::product_id::{PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
 
 	pub use crate::v01::{
-		ActionTrigger, AllocatableResource, AllocationOutcome, Arrangement, Background,
-		BlendingMode, BorderStyle, BoxProps, ButtonProps, ButtonVariant, ChainIdentifier,
-		ChatAction, ChatActionHandler, ChatActionLayout, ChatActions, ChatBotRegistrationStatus,
-		ChatBuiltInMessageAction, ChatCommand, ChatCustomMessage, ChatEvent, ChatFeedUpdate,
-		ChatFile, ChatInputConfig, ChatInputPayment, ChatMedia, ChatMediaItem, ChatMediaMeta,
-		ChatMessage, ChatMessageBody, ChatMessageContent, ChatMessageMenu, ChatMessageOrigin,
-		ChatMessageStatus, ChatPageAnchor, ChatParticipant, ChatParticipantEntry,
-		ChatParticipantsQuery, ChatProductAction, ChatReaction, ChatReactionDetail,
-		ChatReactionSummary, ChatResource, ChatRichText, ChatRoom, ChatRoomBadge, ChatRoomCall,
-		ChatRoomCalls, ChatRoomConfig, ChatRoomEvent, ChatRoomFeatures, ChatRoomMetadata,
-		ChatRoomOrder, ChatRoomParticipation, ChatRoomPreview, ChatRoomPreviewText,
+		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
+		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
+		ChatActionPayload, ChatActions, ChatBotRegistrationStatus, ChatCallClose, ChatCallRecord,
+		ChatContactEvent, ChatContactState, ChatCustomMessage, ChatFeedUpdate, ChatFile, ChatMedia,
+		ChatMediaItem, ChatMediaMeta, ChatMessage, ChatMessageBody, ChatMessageContent,
+		ChatMessageOrigin, ChatMessageRevision, ChatMessageStatus, ChatPageAnchor,
+		ChatPaymentRecord, ChatPreviewReaction, ChatReaction, ChatReactionDetail,
+		ChatReactionSummary, ChatReplyPreview, ChatResource, ChatRichText, ChatRoom, ChatRoomBadge,
+		ChatRoomCall, ChatRoomCalls, ChatRoomConfig, ChatRoomContact, ChatRoomEvent,
+		ChatRoomFeatures, ChatRoomFooter, ChatRoomMetadata, ChatRoomParticipation, ChatRoomPreview,
 		ChatRoomRegistrationStatus, ChatUserAction, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
 		Dimensions, Effect, EffectProps, FundingDirection, FundingFailure, GenericError,
@@ -127,10 +126,8 @@ pub mod latest {
 		RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape,
 		SignedStatement, Size, Statement, StatementProof, StorageQueryItem, StorageQueryType,
 		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
-		TypographyStyle, VerticalAlignment, VrfSignature, WorkerWakeDelivery, WorkerWakeWatch,
+		TypographyStyle, VerticalAlignment, VrfSignature,
 	};
-
-	pub use crate::v02::ChatRoomFooter;
 
 	/// Latest payload type of a versioned envelope.
 	pub type LatestOf<T> = <T as Versioned>::Latest;
@@ -229,7 +226,7 @@ pub mod latest {
 	pub type HostChatRoomError = LatestOf<versioned::chat::HostChatRoomError>;
 	/// Failure of a chat query the host sends to a product.
 	pub type ProductChatQueryError = LatestOf<versioned::chat::ProductChatQueryError>;
-	/// Request to replace the name, avatar and description of a native chat room.
+	/// Request to replace the name and description of a native chat room.
 	pub type HostChatSetRoomMetadataRequest =
 		LatestOf<versioned::chat::HostChatSetRoomMetadataRequest>;
 	/// Request to replace how a native chat room shows in the chat list.
@@ -258,20 +255,17 @@ pub mod latest {
 	/// Product-to-host list of who reacted to a chat message.
 	pub type ProductChatReactionsQueryItem =
 		LatestOf<versioned::chat::ProductChatReactionsQueryItem>;
-	/// Host-to-product question about the participants of a chat room.
-	pub type ProductChatParticipantsQueryRequest =
-		LatestOf<versioned::chat::ProductChatParticipantsQueryRequest>;
-	/// Product-to-host answer about the participants of a chat room.
-	pub type ProductChatParticipantsQueryItem =
-		LatestOf<versioned::chat::ProductChatParticipantsQueryItem>;
-	/// Host-to-product question for the menu of a chat message.
-	pub type ProductChatMessageActionsQueryRequest =
-		LatestOf<versioned::chat::ProductChatMessageActionsQueryRequest>;
-	/// Product-to-host menu of a chat message.
-	pub type ProductChatMessageActionsQueryItem =
-		LatestOf<versioned::chat::ProductChatMessageActionsQueryItem>;
-	/// The Chat features a host serves, and its attachment bounds.
-	pub type HostChatCapabilitiesResponse = LatestOf<versioned::chat::HostChatCapabilitiesResponse>;
+	/// Host-to-product question for the earlier texts of a chat message.
+	pub type ProductChatEditHistoryQueryRequest =
+		LatestOf<versioned::chat::ProductChatEditHistoryQueryRequest>;
+	/// Product-to-host texts a chat message had.
+	pub type ProductChatEditHistoryQueryItem =
+		LatestOf<versioned::chat::ProductChatEditHistoryQueryItem>;
+	/// Host-to-product search for the messages of a room.
+	pub type ProductChatSearchQueryRequest =
+		LatestOf<versioned::chat::ProductChatSearchQueryRequest>;
+	/// Product-to-host messages that match a search.
+	pub type ProductChatSearchQueryItem = LatestOf<versioned::chat::ProductChatSearchQueryItem>;
 	/// Request to declare the optional features of a native chat room.
 	pub type HostChatSetRoomFeaturesRequest =
 		LatestOf<versioned::chat::HostChatSetRoomFeaturesRequest>;
@@ -280,14 +274,14 @@ pub mod latest {
 	/// What the user did with the optional features of a native chat room.
 	pub type HostChatRoomEventsSubscribeItem =
 		LatestOf<versioned::chat::HostChatRoomEventsSubscribeItem>;
-	/// Host-to-product question for the messages of a room that match a search.
-	pub type ProductChatSearchQueryRequest =
-		LatestOf<versioned::chat::ProductChatSearchQueryRequest>;
-	/// Product-to-host page of the messages that match a search.
-	pub type ProductChatSearchQueryItem = LatestOf<versioned::chat::ProductChatSearchQueryItem>;
-	/// Host-to-product room link that carries a payload for the product.
+	/// Request to set the contact of a native chat room.
+	pub type HostChatSetRoomContactRequest =
+		LatestOf<versioned::chat::HostChatSetRoomContactRequest>;
+	/// Request to set the parts of a native chat room the product serves.
+	pub type HostChatSetRoomConfigRequest = LatestOf<versioned::chat::HostChatSetRoomConfigRequest>;
+	/// Host-to-product link or code that the product reads.
 	pub type ProductChatOpenLinkRequest = LatestOf<versioned::chat::ProductChatOpenLinkRequest>;
-	/// Product-to-host answer to an opened room link.
+	/// Product-to-host answer to an opened link.
 	pub type ProductChatOpenLinkItem = LatestOf<versioned::chat::ProductChatOpenLinkItem>;
 	/// Current native room list for a product.
 	pub type HostChatListSubscribeItem = LatestOf<versioned::chat::HostChatListSubscribeItem>;
@@ -328,14 +322,6 @@ pub mod latest {
 	pub type HostCallMediaResponse = LatestOf<versioned::call_media::HostCallMediaResponse>;
 	/// Call media failure.
 	pub type HostCallMediaError = LatestOf<versioned::call_media::HostCallMediaError>;
-	/// Username search request.
-	pub type HostUsernamesSearchRequest =
-		LatestOf<versioned::usernames::HostUsernamesSearchRequest>;
-	/// Usernames that a search found.
-	pub type HostUsernamesSearchResponse =
-		LatestOf<versioned::usernames::HostUsernamesSearchResponse>;
-	/// Username search failure.
-	pub type HostUsernamesSearchError = LatestOf<versioned::usernames::HostUsernamesSearchError>;
 	/// Contextual alias derivation result.
 	pub type HostAccountGetAliasResponse =
 		LatestOf<versioned::account::HostAccountGetAliasResponse>;
@@ -579,15 +565,6 @@ pub mod latest {
 	/// Result of beginning a worker pending operation.
 	pub type HostWorkerBeginOperationResponse =
 		LatestOf<versioned::worker::HostWorkerBeginOperationResponse>;
-	/// Request to replace the wake watches of a worker.
-	pub type HostWorkerSetWakeWatchesRequest =
-		LatestOf<versioned::worker::HostWorkerSetWakeWatchesRequest>;
-	/// Result of a wake watch replacement.
-	pub type HostWorkerSetWakeWatchesResponse =
-		LatestOf<versioned::worker::HostWorkerSetWakeWatchesResponse>;
-	/// Wake watch replacement failure.
-	pub type HostWorkerSetWakeWatchesError =
-		LatestOf<versioned::worker::HostWorkerSetWakeWatchesError>;
 	/// Transaction creation payload for a legacy account.
 	pub type LegacyAccountTxPayload =
 		LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountRequest>;
@@ -1023,10 +1000,8 @@ pub use runtime::{
 };
 #[cfg(feature = "runtime")]
 pub use runtime::{
-	CHAT_NOTIFICATION_WAKES_PER_HOUR, CHAT_RINGING_HOLD_MS, CHAT_SEALED_AAD, CHAT_WAKE_HOLD_MS,
-	ChatOpenRejection, ChatStageRejection, ChatWakeOutcome, ChatWakeReason, PushWakeDelivery,
-	PushWakeOutcome, PushWakeRejection, WAKE_PUSH_PAYLOAD_KEY, WakePush, WakeRelay,
-	WakeRelayRegistration, statement_hash, wake_push_mac,
+	CHAT_NOTIFICATION_WAKES_PER_HOUR, CHAT_WAKE_HOLD_MS, ChatStageRejection, ChatWakeOutcome,
+	ChatWakeReason,
 };
 #[cfg(feature = "runtime")]
 pub use unix_time::current_unix_millis;

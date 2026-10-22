@@ -109,7 +109,8 @@ internal class AddContactViewModel @Inject constructor(
 
             interactor.getStartChatData(result.contactAccountId)
                 .onSuccess { startChatData ->
-                    interactor.addRecent(ChatId.fromContact(result.contactAccountId))
+                    // A person chat of the chat product is its room.
+                    interactor.addRecent((startChatData as? StartChatData.ProductRoom)?.chatId ?: ChatId.fromContact(result.contactAccountId))
                     openChatFeed(startChatData)
                 }
                 .onFailure { showPresentationError(it.asStartChatError().toPresentationError()) }

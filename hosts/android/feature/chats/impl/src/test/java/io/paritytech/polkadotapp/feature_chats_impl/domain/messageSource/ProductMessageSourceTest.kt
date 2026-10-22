@@ -1,18 +1,19 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMediaItemModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMediaMetaModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ProductMessageBody
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -109,21 +110,30 @@ class ProductMessageSourceTest {
     }
 
     @Test
-    fun `a page that times out fails without a retry`() = runBlocking<Unit> {
+    fun `an older page that fails shows nothing and is asked again when the user comes near it`() = runBlocking<Unit> {
+        val failures = AtomicInteger(1)
         val querying = ScriptedProductChatQuerying(answerPage = { anchor, _ ->
-            if (anchor == before(null)) newestPage(next = "1") else Result.failure(ProductChatQueryException.TimedOut())
+            when {
+                anchor == before(null) -> newestPage(next = "1")
+                failures.getAndDecrement() > 0 -> Result.failure(ProductChatQueryException.TimedOut())
+                else -> Result.success(ProductMessagesPage(listOf(productMessage(0)), next = null))
+            }
         })
         val source = openedSource(querying)
 
         assertEquals(ChatPageOutcome.Failed, source.loadOlder())
 
+        // As the native list, which has no failure row: the end can load again.
         assertEquals(2, querying.pageRequests.size)
-        assertEquals(ChatPagingState.Edge.FAILED, source.snapshot.paging.older)
+        assertEquals(ChatPagingState.Edge.MORE, source.snapshot.paging.older)
         assertEquals(ChatRoomReadiness.READY, source.snapshot.readiness)
+
+        assertEquals(ChatPageOutcome.Appended(1), source.loadOlder())
+        assertEquals(listOf("m0", "m1"), source.oldestFirstIds())
     }
 
     @Test
-    fun `a newest page that times out could not load, keeps the cached page and loads on retry`() = runBlocking<Unit> {
+    fun `a newest page that times out keeps the cached page and is asked again silently`() = runBlocking<Unit> {
         val cache = ProductMessageCache()
         cache.store(productRoom, ProductRoomCacheEntry(listOf(productMessage(1)), "1", "m1", 1_000, null))
         val answers = ArrayDeque(listOf(Result.failure<ProductMessagesPage>(ProductChatQueryException.TimedOut()), newestPage(next = null)))
@@ -131,13 +141,9 @@ class ProductMessageSourceTest {
 
         val source = openedSource(querying, cache = cache)
 
-        assertEquals(ChatRoomReadiness.FAILED, source.snapshot.readiness)
         assertEquals(listOf("m1"), source.oldestFirstIds())
-        assertEquals(1, querying.pageRequests.size)
-
-        source.reload()
-
-        assertEquals(ChatRoomReadiness.READY, source.snapshot.readiness)
+        waitFor { source.snapshot.readiness.takeIf { it == ChatRoomReadiness.READY } }
+        assertEquals(2, querying.pageRequests.size)
     }
 
     @Test
@@ -176,7 +182,10 @@ class ProductMessageSourceTest {
 
         assertEquals(ChatRoomReadiness.UNAVAILABLE, source.snapshot.readiness)
         assertEquals(listOf("m1", "m2"), source.oldestFirstIds())
-        assertEquals(2, querying.pageRequests.size)
+        assertTrue(querying.pageRequests.size >= 2)
+        // The newest page is asked again later, with a delay that grows.
+        waitFor { querying.pageRequests.size.takeIf { it >= 4 } }
+        source.close()
     }
 
     @Test
@@ -196,7 +205,7 @@ class ProductMessageSourceTest {
     // region Feed updates
 
     @Test
-    fun `S18 new, edit, delete, reactions and status changes apply to the window`() = runBlocking<Unit> {
+    fun `S18 new, edit, replace, reactions and status changes apply to the window`() = runBlocking<Unit> {
         val history = ProductRoomHistory(count = 10)
         val source = openedSource(ScriptedProductChatQuerying(answerPage = history.answer))
         val edited = ChatMessage.Content.Text("edited")
@@ -204,7 +213,7 @@ class ProductMessageSourceTest {
         source.apply(productRoom, ProductFeedUpdateModel.New(productMessage(10)))
         source.apply(productRoom, ProductFeedUpdateModel.New(productMessage(45, id = "late", timestamp = 4_500)))
         source.apply(productRoom, ProductFeedUpdateModel.Edited("m3", edited, editedAt = 99))
-        source.apply(productRoom, ProductFeedUpdateModel.Deleted("m2"))
+        source.apply(productRoom, ProductFeedUpdateModel.Replaced(productMessage(2).copy(content = ChatMessage.Content.Text("replaced"))))
         source.apply(productRoom, ProductFeedUpdateModel.ReactionPlaced("m1", "a", "👍"))
         source.apply(productRoom, ProductFeedUpdateModel.ReactionPlaced("m1", "b", "👍"))
         source.apply(productRoom, ProductFeedUpdateModel.ReactionRemoved("m1", "b", "👍"))
@@ -213,8 +222,10 @@ class ProductMessageSourceTest {
         source.apply(productRoom, ProductFeedUpdateModel.StatusChanged("m11", ProductMessageStatusModel.READ))
 
         val snapshot = source.snapshot
-        assertEquals(listOf("m0", "m1", "m3", "m4", "late", "m5", "m6", "m7", "m8", "m9", "m10", "m11"), source.oldestFirstIds())
+        assertEquals(listOf("m0", "m1", "m2", "m3", "m4", "late", "m5", "m6", "m7", "m8", "m9", "m10", "m11"), source.oldestFirstIds())
         assertEquals(edited, snapshot.messages.single { it.id == "m3" }.content)
+        assertEquals("replaced", (snapshot.messages.single { it.id == "m2" }.content as ChatMessage.Content.Text).text)
+        assertFalse("m2" in snapshot.revisions)
         assertEquals(99L, snapshot.revisions.getValue("m3").timestamp)
         assertEquals(listOf("👍", "🔥"), snapshot.reactions.getValue("m1").map { it.content.emoji }.sorted())
         assertTrue(snapshot.reactions.getValue("m1").single { it.content.emoji == "🔥" }.origin is ChatMessageOrigin.User)
@@ -223,19 +234,26 @@ class ProductMessageSourceTest {
     }
 
     @Test
-    fun `a live message is unread until the user sees it`() = runBlocking<Unit> {
+    fun `an incoming message is unread until the product reads it or the user sees it`() = runBlocking<Unit> {
         val history = ProductRoomHistory(count = 3)
         val source = openedSource(ScriptedProductChatQuerying(answerPage = history.answer))
 
-        source.apply(productRoom, ProductFeedUpdateModel.New(productMessage(3)))
+        source.apply(productRoom, ProductFeedUpdateModel.New(productMessage(3, status = ProductMessageStatusModel.DELIVERED)))
+        source.apply(productRoom, ProductFeedUpdateModel.New(productMessage(4, status = ProductMessageStatusModel.READ)))
         assertEquals(
-            listOf(ChatMessage.Status.IS_READ, ChatMessage.Status.IS_READ, ChatMessage.Status.IS_READ, ChatMessage.Status.NEW),
+            listOf(
+                ChatMessage.Status.NEW,
+                ChatMessage.Status.NEW,
+                ChatMessage.Status.NEW,
+                ChatMessage.Status.NEW,
+                ChatMessage.Status.IS_READ,
+            ),
             source.snapshot.messages.reversed().map { it.status },
         )
 
         source.perform(ChatSourceAction.MarkSeen(setOf("m3")))
 
-        assertEquals(ChatMessage.Status.IS_READ, source.snapshot.messages.first().status)
+        assertTrue(source.snapshot.messages.all { it.status == ChatMessage.Status.IS_READ })
     }
 
     @Test
@@ -253,86 +271,22 @@ class ProductMessageSourceTest {
     // region User actions
 
     @Test
-    fun `S19 a send is optimistic until the product creates the message`() = runBlocking<Unit> {
-        val gate = CompletableDeferred<Unit>()
-        val created = productMessage(50, id = "created", participant = "user")
-        val querying = ScriptedProductChatQuerying(answerAction = {
-            gate.await()
-            Result.success(ChatUserActionOutcome.MessageCreated(created))
-        })
-        val source = openedSource(querying)
+    fun `after a send the room shows its newest messages, and asks them again only when they are out of the window`() =
+        runBlocking<Unit> {
+            val history = ProductRoomHistory(count = 2_000)
+            val querying = ScriptedProductChatQuerying(answerPage = history.answer)
+            val source = openedSource(querying)
 
-        val send = async(Dispatchers.Default) { source.perform(ChatSourceAction.Send(text("hi"), replyTo = null)) }
-        val optimistic = waitFor { source.snapshot.messages.firstOrNull { it.id.startsWith(ProductMessageSource.LOCAL_ID_PREFIX) } }
-        assertEquals(ProductMessageStatusModel.PREPARING, source.snapshot.productStatuses[optimistic.id])
-        assertEquals(ChatMessage.Status.NEW, optimistic.status)
+            assertEquals(ChatSourceActionOutcome.Done, source.perform(ChatSourceAction.ShowNewest))
+            assertEquals(1, querying.pageRequests.size)
 
-        gate.complete(Unit)
+            repeat(20) { source.loadOlder() }
+            assertEquals(ChatPagingState.Edge.MORE, source.snapshot.paging.newer)
+            source.perform(ChatSourceAction.ShowNewest)
 
-        assertEquals(ChatSourceActionOutcome.Done, send.await())
-        assertEquals(listOf("created"), source.oldestFirstIds())
-        assertEquals(ProductMessageStatusModel.SENT, source.snapshot.productStatuses["created"])
-        assertSentText("hi", replyTo = null, querying.actionRequests.single())
-    }
-
-    @Test
-    fun `a reply carries the message it answers`() = runBlocking<Unit> {
-        val querying = ScriptedProductChatQuerying()
-        val source = openedSource(querying)
-
-        source.perform(ChatSourceAction.Send(text("yes"), replyTo = "m1"))
-
-        assertSentText("yes", replyTo = "m1", querying.actionRequests.single())
-        assertEquals("m1", source.snapshot.messages.first().replyToMessageId)
-    }
-
-    @Test
-    fun `S20 a send that the product rejects goes away with the reason`() = runBlocking<Unit> {
-        val querying = ScriptedProductChatQuerying(answerAction = { Result.failure(ProductChatQueryException.Rejected("Too long")) })
-        val source = openedSource(querying)
-
-        val outcome = source.perform(ChatSourceAction.Send(text("hi"), replyTo = null))
-
-        assertEquals(ChatSourceActionOutcome.Refused("Too long"), outcome)
-        assertTrue(source.snapshot.messages.isEmpty())
-    }
-
-    @Test
-    fun `S21 no answer in time marks the send failed and a retry sends it again`() = runBlocking<Unit> {
-        val attempts = AtomicInteger()
-        val created = productMessage(60, id = "created", participant = "user")
-        val querying = ScriptedProductChatQuerying(answerAction = {
-            if (attempts.incrementAndGet() == 1) {
-                Result.failure(ProductChatQueryException.TimedOut())
-            } else {
-                Result.success(ChatUserActionOutcome.MessageCreated(created))
-            }
-        })
-        val source = openedSource(querying)
-
-        assertEquals(ChatSourceActionOutcome.Failed, source.perform(ChatSourceAction.Send(text("hi"), replyTo = null)))
-        val failed = source.snapshot.messages.single()
-        assertEquals(ProductMessageStatusModel.FAILED, source.snapshot.productStatuses[failed.id])
-        assertEquals(ChatRoomReadiness.READY, source.snapshot.readiness)
-
-        assertEquals(ChatSourceActionOutcome.Done, source.perform(ChatSourceAction.Retry(failed.id)))
-
-        assertEquals(listOf("created"), source.oldestFirstIds())
-        assertEquals(2, querying.actionRequests.size)
-        querying.actionRequests.forEach { assertSentText("hi", replyTo = null, it) }
-    }
-
-    @Test
-    fun `a retry of a failed product message asks the product`() = runBlocking<Unit> {
-        val querying = ScriptedProductChatQuerying()
-        val source = openedSource(querying)
-        source.apply(productRoom, ProductFeedUpdateModel.New(productMessage(1, participant = "user", status = ProductMessageStatusModel.FAILED)))
-
-        assertEquals(ChatSourceActionOutcome.Done, source.perform(ChatSourceAction.Retry("m1")))
-
-        assertEquals(listOf(ChatUserActionModel.Retry("m1")), querying.actionRequests)
-        assertEquals(ProductMessageStatusModel.PREPARING, source.snapshot.productStatuses["m1"])
-    }
+            assertEquals(history.ids(1_950..1_999), source.oldestFirstIds())
+            assertTrue(querying.actionRequests.isEmpty())
+        }
 
     @Test
     fun `a refused edit restores the body`() = runBlocking<Unit> {
@@ -353,17 +307,33 @@ class ProductMessageSourceTest {
     }
 
     @Test
-    fun `a delete that times out puts the message back`() = runBlocking<Unit> {
-        val history = ProductRoomHistory(count = 3)
-        val querying = ScriptedProductChatQuerying(
-            answerPage = history.answer,
-            answerAction = { Result.failure(ProductChatQueryException.TimedOut()) },
-        )
+    fun `an edit of a message with media keeps the media and takes the text as caption`() = runBlocking<Unit> {
+        val querying = ScriptedProductChatQuerying()
         val source = openedSource(querying)
+        val media = ChatMediaItemModel.Image(
+            ChatResourceModel.Url("data:image/png;base64,AA=="),
+            ChatMediaMetaModel("image/png", sizeBytes = 1, width = 1, height = 1, placeholder = null, alt = null),
+        )
+        val photo = productMessage(1, participant = "user").copy(content = ChatMessage.Content.ProductBody(ProductMessageBody.RichText("old", listOf(media))))
+        source.apply(productRoom, ProductFeedUpdateModel.New(photo))
 
-        assertEquals(ChatSourceActionOutcome.Refused(null), source.perform(ChatSourceAction.Delete("m1")))
+        source.perform(ChatSourceAction.Edit("m1", text("new")))
 
-        assertEquals(listOf("m0", "m1", "m2"), source.oldestFirstIds())
+        val body = (source.snapshot.messages.single().content as ChatMessage.Content.ProductBody).body as ProductMessageBody.RichText
+        assertEquals("new", body.text)
+        assertEquals(listOf(media), body.media)
+        assertEquals(ChatUserActionModel.EditMessage("m1", text("new")).messageId, (querying.actionRequests.single() as ChatUserActionModel.EditMessage).messageId)
+    }
+
+    @Test
+    fun `as in a person chat, a new emoji replaces the reaction of the user`() = runBlocking<Unit> {
+        val history = ProductRoomHistory(count = 2)
+        val source = openedSource(ScriptedProductChatQuerying(answerPage = history.answer))
+
+        source.perform(ChatSourceAction.ToggleReaction("m1", "👍"))
+        source.perform(ChatSourceAction.ToggleReaction("m1", "🔥"))
+
+        assertEquals(listOf("🔥"), source.snapshot.reactions.getValue("m1").map { it.content.emoji })
     }
 
     @Test
@@ -442,12 +412,6 @@ class ProductMessageSourceTest {
     private fun newestPage(next: String?) = Result.success(ProductMessagesPage(listOf(productMessage(1)), next = next))
 
     private fun text(text: String) = ChatMessage.Content.Text(text)
-
-    private fun assertSentText(text: String, replyTo: String?, request: ChatUserActionModel) {
-        val newMessage = request as ChatUserActionModel.NewMessage
-        assertEquals(text, (newMessage.content as ChatMessage.Content.Text).text)
-        assertEquals(replyTo, newMessage.replyTo)
-    }
 
     private suspend fun <T : Any> waitFor(value: () -> T?): T = withTimeout(5_000) {
         var found = value()

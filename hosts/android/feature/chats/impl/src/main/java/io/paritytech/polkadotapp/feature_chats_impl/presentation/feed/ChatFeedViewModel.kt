@@ -7,10 +7,8 @@ import io.paritytech.polkadotapp.common.domain.model.Timestamp
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.loading.awaitLoaded
-import io.paritytech.polkadotapp.common.presentation.loading.dataOrNull
 import io.paritytech.polkadotapp.common.presentation.loading.onLoaded
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
-import io.paritytech.polkadotapp.common.presentation.ui.errors.PresentationThrowable
 import io.paritytech.polkadotapp.common.presentation.ui.errors.UnexpectedPresentationError
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.OneShotEventChannel
@@ -19,6 +17,7 @@ import io.paritytech.polkadotapp.common.utils.combineToPair
 import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.mapResult
 import io.paritytech.polkadotapp.common.utils.permissions.PermissionAsker
 import io.paritytech.polkadotapp.common.utils.permissions.PermissionResult
 import io.paritytech.polkadotapp.common.utils.shareInBackground
@@ -50,21 +49,15 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoo
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatSourceActionOutcome
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.InitiateCallResult
-import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.takesText
-import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.error.BusyInAnotherChatPresentationError
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.error.toPresentationError
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.attachments.ChatAttachmentSender
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.draft.ChatDraftController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.mappers.ChatMessageUiMapper
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.mappers.toUi
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatDisplayUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatInputUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMenuType
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMessagesState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatRequestAnswerProgress
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatRoomUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatSendMessageInputState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.InputMessageRelation
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.MessagePopUpSelection
@@ -72,17 +65,10 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.cle
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.isNotNone
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.sendableMessageState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.sendableMessageText
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.toRoomUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.toUi
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatProductRoomController
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.ChatRoomSearchController
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.RoomSearchAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.AttachmentExecutor
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.AttachmentKind
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.attachmentKinds
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ChatResourceResolver
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.roomAvatar
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.AttachmentResult
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ProductRoomMedia
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.SendEnterAmountPayload
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.TransferMethodPayload
 import kotlinx.collections.immutable.persistentListOf
@@ -94,7 +80,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.dropWhile
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -123,11 +111,9 @@ class ChatFeedViewModel @Inject constructor(
     private val permissionAsker: PermissionAsker,
     private val attachmentExecutor: AttachmentExecutor,
     private val dispatchers: CoroutineDispatchers,
-    private val resourceResolver: ChatResourceResolver,
-    productRoomFactory: ChatProductRoomController.Factory,
     draftControllerFactory: ChatDraftController.Factory,
     callStateTracker: CallStateTracker,
-    roomSearchFactory: ChatRoomSearchController.Factory,
+    productRoomMediaFactory: ProductRoomMedia.Factory,
 ) : BaseViewModel(), ChatFeedContract {
     private val payload: ChatFeedPayload = savedStateHandle.getPayload()
 
@@ -140,77 +126,35 @@ class ChatFeedViewModel @Inject constructor(
     override val scrollToPosition = MutableSharedFlow<Int>()
     private val lastReadMessageTimestamp = MutableStateFlow<Timestamp>(0)
 
-    private val roomPolicy = interactor.observeRoomPolicy(chatId).shareInBackground()
+    // A room of the chat product is a person chat also before the product declares its contact.
+    private val isPersonChatRoom = interactor.isPersonChatRoom(chatId)
 
-    override val roomState = roomPolicy
-        .map { it.toRoomUiState() }
-        .stateInBackground(initialValue = ChatRoomUiState.PersonChat)
+    /** The contact of a room of the chat product, which the room draws as a person chat. Null in any other chat. */
+    private val roomContact = interactor.observeRoomPolicy(chatId)
+        .map { it?.contact }
+        .distinctUntilChanged()
+        .shareInBackground()
 
-    private val originDisplayResolver = flowOf { interactor.getMessageOriginDisplayResolver(openChatRequest) }
+    // A person chat of the chat product names its contact once the product declares the contact.
+    private val originDisplayResolver = roomContact
+        .map { interactor.getMessageOriginDisplayResolver(openChatRequest) }
         .shareInBackground()
 
     private val feedSnapshot = interactor.subscribeMessages(chatId).shareInBackground()
 
-    private val productRoom = productRoomFactory.create(
-        scope = this,
-        chatId = chatId,
-        roomPolicy = roomPolicy,
-        feedSnapshot = feedSnapshot,
-        origins = originDisplayResolver,
-        screen = object : ChatProductRoomController.Screen {
-            override fun showPopup(selection: MessagePopUpSelection) = messagePopupSection.update { selection }
-
-            override fun showMenu(type: ChatMenuType) = menuState.update { it.copy(isVisible = true, type = type) }
-
-            override fun closeMenu() = onCloseMenu()
-
-            override fun showFailure(error: Throwable) = showPresentationError(UnexpectedPresentationError(error))
-
-            override fun showOutcome(outcome: ChatSourceActionOutcome) = showActionOutcome(outcome)
-
-            override fun leave() = router.back()
-        },
-    )
-
-    override val productRoomState = productRoom.uiState
+    /** The media of product messages, and the transfers that the messages show. */
+    val productMedia = productRoomMediaFactory.create(this)
 
     private val reactions = feedSnapshot.map { it.reactions }.distinctUntilChanged().shareInBackground()
 
     private val revisions = feedSnapshot.map { it.revisions }.distinctUntilChanged().shareInBackground()
 
-    private val statusOverrides = feedSnapshot
-        .map { snapshot -> snapshot.productStatuses.mapValues { (_, status) -> status.toUi() } }
-        .distinctUntilChanged()
-        .shareInBackground()
-
     private val customMessageRenderers = flowOf { interactor.getCustomMessageRenderersForChat(chatId) }
-
-    // The window of a product-source room can miss the replied message, so its quote offers a jump.
-    private val quotesUnloadedReplies = roomPolicy
-        .map { it?.messageStore == ChatRoomPolicy.MessageStore.PRODUCT }
-        .distinctUntilChanged()
 
     private val animatesMessageReveal = flowOf { interactor.animatesMessageReveal(chatId) }
         .shareInBackground()
 
     private val revealedUpTo = MutableStateFlow<Timestamp?>(null)
-
-    private val attachments = ChatAttachmentSender(
-        chatId = chatId,
-        interactor = interactor,
-        screen = object : ChatAttachmentSender.Screen {
-            override fun showNotice(productName: String) =
-                menuState.update { it.copy(isVisible = true, type = ChatMenuType.PublicStorageNotice(productName)) }
-
-            override fun closeMenu() = menuState.update { it.copy(isVisible = false) }
-
-            override fun clearInput() = messageInputState.clear()
-
-            override fun showOutcome(outcome: ChatSourceActionOutcome) = showActionOutcome(outcome)
-
-            override fun showFailure(error: PresentationThrowable) = showPresentationError(error)
-        },
-    )
 
     private val gatedDomainMessages = combine(
         feedSnapshot.map { it.messages },
@@ -232,14 +176,14 @@ class ChatFeedViewModel @Inject constructor(
 
     private val messages = combine(
         combineToPair(
-            gatedDomainMessages.map { it.visibleMessages },
+            gatedDomainMessages.map { it.visibleMessages }.onEach(productMedia::track),
             callStateTracker.observeActiveCall().map { state -> state?.takeIf { it.chatId == chatId } }
         ),
-        combineToPair(reactions, statusOverrides),
+        combineToPair(reactions, productMedia.files),
         originDisplayResolver,
-        revisions,
-        combineToPair(customMessageRenderers, quotesUnloadedReplies),
-    ) { (messages, activeCall), (reactions, statusOverrides), originDisplayResolver, revisionsMap, (customMessageRenderers, quotesUnloaded) ->
+        combineToPair(revisions, feedSnapshot.map { it.replyQuotes }.distinctUntilChanged()),
+        customMessageRenderers,
+    ) { (messages, activeCall), (reactions, mediaFiles), originDisplayResolver, (revisionsMap, replyQuotes), customMessageRenderers ->
         messageUiMapper.map(
             messages = messages,
             originDisplayResolver = originDisplayResolver,
@@ -247,8 +191,8 @@ class ChatFeedViewModel @Inject constructor(
             revisions = revisionsMap,
             customMessageRenderers = customMessageRenderers,
             activeCall = activeCall,
-            statusOverrides = statusOverrides,
-            quoteUnloadedReplies = quotesUnloaded,
+            productMedia = mediaFiles,
+            replyQuotes = replyQuotes,
         )
     }.shareInBackground()
 
@@ -256,9 +200,8 @@ class ChatFeedViewModel @Inject constructor(
 
     private val readiness = feedSnapshot.map { it.readiness }.distinctUntilChanged()
 
-    override val chatDisplay = combine(interactor.observeChatDisplay(openChatRequest), roomPolicy) { display, policy ->
-        display.map { ChatDisplayUiModel(username = it.name, avatarModel = resourceResolver.roomAvatar(it.avatar, policy?.avatar)) }
-    }
+    override val chatDisplay = interactor.observeChatDisplay(openChatRequest)
+        .mapResult { it.toUi() }
         .withLoading()
         .stateInBackground(initialValue = LoadingState.Loading)
 
@@ -273,38 +216,31 @@ class ChatFeedViewModel @Inject constructor(
         .distinctUntilChanged()
         .shareInBackground()
 
-    override val menuRenderer = flowOf {
-        interactor.getMenuRendererForChat(chatId)
+    // A room of the chat product has the menu of a person chat, not the menu of its product.
+    override val menuRenderer = combine(flowOf { interactor.getMenuRendererForChat(chatId) }, roomContact) { renderer, contact ->
+        renderer.takeIf { contact == null && !isPersonChatRoom }
     }.stateInBackground(initialValue = null)
 
     override val toolbarActions = combine(
         chatInputStateType,
         menuRenderer,
-    ) { inputStateType, renderer ->
+        roomContact,
+    ) { inputStateType, renderer, contact ->
         val hasRenderer = renderer != null
-        menuActionsProvider.getToolbarActions(openChatRequest, inputStateType, addMenuIconForcibly = hasRenderer)
+        val isPersonChat = contact != null || isPersonChatRoom
+        menuActionsProvider.getToolbarActions(openChatRequest, inputStateType, addMenuIconForcibly = hasRenderer, isPersonChat = isPersonChat)
     }.stateInBackground(initialValue = persistentListOf())
 
     override val popupState = combine(
-        combine(messagePopupSection, productRoom.messageMenu, productRoom.reactionDetails, ::Triple),
+        messagePopupSection,
         reactions,
         originDisplayResolver,
         messages,
-        combineToPair(chatInputStateType, roomPolicy),
-    ) { (popupSelection, productMenu, productReactions), reactions, originDisplayResolver, messagesList, (chatInputStateType, policy) ->
+        chatInputStateType,
+    ) { popupSelection, reactions, originDisplayResolver, messagesList, chatInputStateType ->
         if (popupSelection == null) return@combine null
-        val answered = productReactions?.takeIf { popupSelection.type == MessagePopUpSelection.Type.REACTION_DETAILS }
-        if (answered?.messageId == popupSelection.messageId) return@combine answered
 
-        productRoom.adjustPopup(messageUiMapper.constructPopUpState(
-            selection = popupSelection,
-            reactions = reactions,
-            originDisplayResolver = originDisplayResolver,
-            messages = messagesList,
-            userInputState = chatInputStateType,
-            roomPolicy = policy,
-            productMenu = productMenu,
-        ))
+        messageUiMapper.constructPopUpState(popupSelection, reactions, originDisplayResolver, messagesList, chatInputStateType)
     }.stateIn(this, SharingStarted.Eagerly, null)
 
     private val messageInputState = MutableStateFlow(ChatSendMessageInputState())
@@ -315,16 +251,17 @@ class ChatFeedViewModel @Inject constructor(
     override val chatInputUiState = combine(
         messageInputState,
         chatInputStateType,
-        chatRequestAnswerProgress,
-        roomPolicy,
-    ) { messageInput, chatInputStateType, answerProgress, policy ->
-        chatInputStateType.toChatInputUiState(messageInput, answerProgress, policy?.footer)
+        chatRequestAnswerProgress
+    ) { messageInput, chatInputStateType, answerProgress ->
+        chatInputStateType.toChatInputUiState(messageInput, answerProgress)
     }.stateIn(this, SharingStarted.Eagerly, ChatInputUiState.Hidden)
 
-    // The "New messages" marker waits for the first page of a product-source room, so a cached page does not set it.
-    private val firstNewMessageInfo = combineToPair(messages, readiness)
-        .transformWhile { (messagesList, readiness) ->
-            val ready = readiness != ChatRoomReadiness.LOADING
+    // The "New messages" marker waits for the first page of a product-source room, so a cached page does not set it, and
+    // for that page to reach the mapped list, which starts empty while the snapshot already holds the messages.
+    private val firstNewMessageInfo = combineToPair(messages, feedSnapshot)
+        .transformWhile { (messagesList, snapshot) ->
+            val ready = snapshot.readiness != ChatRoomReadiness.LOADING &&
+                (messagesList.isNotEmpty() || snapshot.messages.isEmpty())
             emit(if (ready) messagesList.firstNewMessageInfo() else null)
             !ready
         }
@@ -345,7 +282,7 @@ class ChatFeedViewModel @Inject constructor(
         paging,
         readiness,
     ) { messagesList, firstNewMessageInfo, unreadCounter, paging, readiness ->
-        ChatMessagesState(
+        readiness to ChatMessagesState(
             messages = messagesList,
             unreadCounter = unreadCounter,
             firstNewMessageInfo = firstNewMessageInfo,
@@ -354,30 +291,22 @@ class ChatFeedViewModel @Inject constructor(
             readiness = readiness.toUi(),
         )
     }
+        // The list stays loading until the first page of a product-source room, so it opens at the first unread message
+        // as the native list does.
+        .dropWhile { (readiness, _) -> readiness == ChatRoomReadiness.LOADING }
+        .map { (_, state) -> state }
         .withLoading()
         .stateIn(CoroutineScope(coroutineContext + dispatchers.computation), SharingStarted.Eagerly, LoadingState.Loading)
 
     private val feedPaging = ChatFeedPaging(chatId, interactor, chatMessagesState)
 
-    private val roomSearch = roomSearchFactory.create(
-        scope = this,
-        chatId = chatId,
-        roomPolicy = roomPolicy,
-        roomName = chatDisplay.map { it.dataOrNull?.username },
-        onJump = { messageId -> launchUnit { jumpToMessage(messageId) } },
-    )
-
-    override val roomSearchState = roomSearch.uiState
-
     override val menuState = MutableStateFlow(ChatMenuState())
 
-    // A product room draws its footer in the footer slot, not in the list.
     override val footerRenderer = combine(
         flowOf { interactor.getFooterRendererForChat(chatId) },
         revealComplete,
-        roomPolicy,
-    ) { renderer, revealed, policy ->
-        renderer.takeIf { revealed && policy == null }
+    ) { renderer, revealed ->
+        renderer.takeIf { revealed }
     }.stateInBackground(initialValue = null)
 
     override val customAppearance = flowOf {
@@ -390,7 +319,7 @@ class ChatFeedViewModel @Inject constructor(
         markNonDisplayableMessagesAsRead()
         draftController.start()
         jumpToTargetMessageIfNeeded()
-        attachments.observeFailures().onEach(::showPresentationError).launchIn(this)
+        leaveWhenRoomIsRemoved()
     }
 
     override fun onCleared() {
@@ -421,6 +350,8 @@ class ChatFeedViewModel @Inject constructor(
         revealedUpTo.value = interactor.getLastRevealedTimestamp(chatId) ?: 0L
     }
 
+    // A person chat of the chat product opens the native amount screen too; the chat product carries no coins yet, so
+    // that screen refuses the payment when the user confirms it.
     override fun onPayClick() = launchUnit {
         val inputState = (chatInputStateType.first() as? ChatUserInputState.SendMessage) ?: return@launchUnit
         val paymentAddress = when (val paymentState = inputState.paymentState) {
@@ -446,7 +377,6 @@ class ChatFeedViewModel @Inject constructor(
     override fun onSendMessageClick() {
         val sendableMessageState = chatInputUiState.value.sendableMessageState() ?: return
         val text = sendableMessageState.sendableMessageText() ?: return
-        if (!chatId.takesText(text)) return showMessage(RCommon.string.chat_message_too_long)
 
         launch {
             val inputType = chatInputStateType.first()
@@ -479,14 +409,11 @@ class ChatFeedViewModel @Inject constructor(
 
     override fun onScreenStarted() {
         interactor.openRoom(chatId)
+        launch { interactor.resumeOutbox(chatId) }
     }
 
     override fun onScreenStopped() {
         interactor.closeRoom(chatId)
-    }
-
-    override fun onRetryRoom() {
-        interactor.retryRoom(chatId)
     }
 
     override fun setChatActive() {
@@ -502,11 +429,8 @@ class ChatFeedViewModel @Inject constructor(
     }
 
     override fun onCloseMenu() {
-        attachments.dropPending()
         menuState.update { it.copy(isVisible = false) }
     }
-
-    override fun onPublicStorageNoticeAccept() = launchUnit { attachments.acceptNotice() }
 
     override fun onLeaveChatRequest() = launchUnit {
         val username = chatDisplay.awaitLoaded().username
@@ -515,7 +439,7 @@ class ChatFeedViewModel @Inject constructor(
 
     override fun onLeaveChatConfirm() = launchUnit {
         interactor.leaveChat(chatId)
-            .onSuccess { router.back() }
+            .onSuccess { closeRoomOnce() }
             .onFailure { showPresentationError(UnexpectedPresentationError(it)) }
     }
 
@@ -526,7 +450,7 @@ class ChatFeedViewModel @Inject constructor(
 
     override fun onBlockUserConfirm() = launchUnit {
         interactor.blockUser(chatId)
-            .onSuccess { router.back() }
+            .onSuccess { closeRoomOnce() }
             .onFailure { showPresentationError(UnexpectedPresentationError(it)) }
     }
 
@@ -597,7 +521,6 @@ class ChatFeedViewModel @Inject constructor(
                 messagePopupSection.update {
                     MessagePopUpSelection.actions(action.message.id)
                 }
-                productRoom.askMessageMenu(action.message)
             }
 
             is MessageAction.Press -> handleMessagePress(action.message)
@@ -622,7 +545,9 @@ class ChatFeedViewModel @Inject constructor(
                 messagePopupSection.update { null }
             }
 
-            is MessageAction.ShowReactionDetails -> productRoom.showReactionDetails(action.message.id)
+            is MessageAction.ShowReactionDetails -> {
+                messagePopupSection.update { MessagePopUpSelection.reactionDetails(action.message.id) }
+            }
 
             is MessageAction.ReplyPreviewTap -> launchUnit { jumpToMessage(action.messageId) }
             is MessageAction.ViewEditHistory -> {
@@ -630,52 +555,15 @@ class ChatFeedViewModel @Inject constructor(
                 showMessageHistory(action.message.id)
             }
 
-            is MessageAction.ActionPress -> launchUnit {
-                interactor.triggerMessageAction(chatId, action.message.id, action.actionId)
-                    .onFailure { showPresentationError(UnexpectedPresentationError(it)) }
-            }
-
-            is MessageAction.Delete -> {
-                messagePopupSection.update { null }
-                menuState.update { it.copy(isVisible = true, type = ChatMenuType.DeleteMessageConfirmation(action.message.id)) }
-            }
-
-            is MessageAction.Retry -> {
-                messagePopupSection.update { null }
-                launchUnit {
-                    interactor.retryProductRoomMessage(chatId, action.message.id)
-                        .onSuccess(::showActionOutcome)
-                        .onFailure { showPresentationError(UnexpectedPresentationError(it)) }
-                }
-            }
-
-            is MessageAction.ProductMenuAction -> {
-                messagePopupSection.update { null }
-                productRoom.selectMessageMenuAction(action.message.id, action.actionId)
-            }
-
-            is MessageAction.ReadAloud -> productRoom.readAloud(action.text).also { messagePopupSection.update { null } }
-
             is MessageAction.DismissActionMenu -> {
                 messagePopupSection.update { null }
             }
         }
     }
 
-    override fun onProductRoomAction(action: ProductRoomAction) = productRoom.handle(action)
-
-    override fun onRoomSearchAction(action: RoomSearchAction) = roomSearch.handle(action)
-
-    override fun onDeleteMessageConfirm(messageId: ChatMessageId) = launchUnit {
-        onCloseMenu()
-
-        val policy = roomPolicy.first() ?: return@launchUnit
-        interactor.deleteProductRoomMessage(chatId, messageId, policy)
-            .onSuccess(::showActionOutcome)
-            .onFailure { showPresentationError(UnexpectedPresentationError(it)) }
-    }
-
     override fun onAcceptChatRequest() = launchUnit {
+        if (roomContact.first() != null) return@launchUnit answerProductChatRequest(accept = true)
+
         val contactAccountId = chatId.contactOrNull()?.contactAccountId ?: return@launchUnit
 
         chatRequestAnswerProgress.value = ChatRequestAnswerProgress.Accepting
@@ -688,6 +576,8 @@ class ChatFeedViewModel @Inject constructor(
     }
 
     override fun onDeclineChatRequest() = launchUnit {
+        if (roomContact.first() != null) return@launchUnit answerProductChatRequest(accept = false)
+
         val contactAccountId = chatId.contactOrNull()?.contactAccountId ?: return@launchUnit
 
         chatRequestAnswerProgress.value = ChatRequestAnswerProgress.Declining
@@ -701,11 +591,8 @@ class ChatFeedViewModel @Inject constructor(
     }
 
     override fun onAttachClick() = launchUnit {
-        val kinds = roomPolicy.first().attachmentKinds()
-        val cameraPermissionGranted = AttachmentKind.PHOTO in kinds &&
-            permissionAsker.askPermission(Manifest.permission.CAMERA) == PermissionResult.GRANTED
+        val cameraPermissionGranted = permissionAsker.askPermission(Manifest.permission.CAMERA) == PermissionResult.GRANTED
         attachmentExecutor.setCameraAllowed(cameraPermissionGranted)
-        attachmentExecutor.setAllowedKinds(kinds)
 
         attachmentExecutor.execute()
             .onSuccess { attachmentResult ->
@@ -715,14 +602,66 @@ class ChatFeedViewModel @Inject constructor(
                 val text = inputState.inputMessage.trim().takeIf { it.isNotEmpty() }
                 val replyToMessageId = (inputState.relation as? InputMessageRelation.Reply)?.preview?.messageId
 
-                attachments.send(attachmentResult, text, replyToMessageId)
+                messageInputState.clear()
+
+                sendAttachmentMessage(attachmentResult, text, replyToMessageId)
             }
             .onFailure {
                 showPresentationError(it.asAttachmentError().toPresentationError())
             }
     }
 
+    private suspend fun sendAttachmentMessage(
+        attachmentResult: AttachmentResult,
+        text: String?,
+        replyToMessageId: ChatMessageId?
+    ) {
+        interactor.sendAttachmentMessage(
+            chatId = chatId,
+            contentUri = attachmentResult.uri,
+            mimeType = attachmentResult.mimeType,
+            fileSize = attachmentResult.size,
+            text = text,
+            replyToMessageId = replyToMessageId
+        ).onSuccess(::showActionOutcome).onFailure {
+            showPresentationError(it.asAttachmentError().toPresentationError())
+        }
+    }
+
+    private suspend fun answerProductChatRequest(accept: Boolean) {
+        chatRequestAnswerProgress.value = if (accept) ChatRequestAnswerProgress.Accepting else ChatRequestAnswerProgress.Declining
+
+        interactor.answerProductChatRequest(chatId, accept)
+            .onSuccess { if (!accept) closeRoomOnce() }
+            .onFailure {
+                chatRequestAnswerProgress.value = ChatRequestAnswerProgress.None
+                showPresentationError(UnexpectedPresentationError(it))
+            }
+    }
+
+    // A room of the chat product that the product deletes, such as a declined request or a chat that the user left,
+    // closes its screen. The room of any other product stays on screen, as before the chat product.
+    private fun leaveWhenRoomIsRemoved() = launchUnit {
+        if (!isPersonChatRoom) return@launchUnit
+        val removed = interactor.observeRoomExists(chatId).dropWhile { exists -> !exists }.firstOrNull { exists -> !exists }
+        if (removed != null) closeRoomOnce()
+    }
+
+    // A leave or a decline removes the room as well, and the screen closes once.
+    private var roomClosed = false
+
+    private fun closeRoomOnce() {
+        if (roomClosed) return
+        roomClosed = true
+        router.back()
+    }
+
     private suspend fun sendChatRequest(welcomeText: String) {
+        // The first message in a room of the chat product with a new contact is the welcome message of its request.
+        if (roomContact.first() != null) {
+            return showActionOutcome(interactor.sendTextMessage(chatId, welcomeText, replyToMessageId = null, request = true))
+        }
+
         val chatRequest = openChatRequest as? OpenChatRequest.StartChatWithContact
         if (chatRequest == null) {
             Timber.e("Expected open chat request to be StartChatWithContact, but got: $openChatRequest")
@@ -902,11 +841,9 @@ private fun gateMessageReveal(
     return GatedMessages(visibleMessages = visible, revealingMessageId = revealing?.id, revealComplete = revealing == null)
 }
 
-/** [footer] is the footer that a product room declares, or null in a person chat. */
 private fun ChatUserInputState.toChatInputUiState(
     messageInputState: ChatSendMessageInputState,
-    answerProgress: ChatRequestAnswerProgress,
-    footer: ChatRoomPolicy.Footer?,
+    answerProgress: ChatRequestAnswerProgress
 ): ChatInputUiState {
     return when (this) {
         is ChatUserInputState.AcceptChatRequest -> ChatInputUiState.AcceptChatRequest(answerProgress)
@@ -918,15 +855,12 @@ private fun ChatUserInputState.toChatInputUiState(
             ChatInputUiState.SendMessage(messageInputState.clearRelation(), isChatRequest = true)
         }
 
-        // A product room has no payment path yet, so its input has no payment button (P10).
         is ChatUserInputState.SendMessage -> {
-            val productInput = (footer as? ChatRoomPolicy.Footer.TextInput)?.input
             ChatInputUiState.SendMessage(
                 messageState = messageInputState,
                 isChatRequest = false,
                 showPayButton = paymentState is ChatUserInputState.SendMessage.Payment.Available,
-                showAttachButton = attachmentsSupported || productInput?.allowsAttachments == true,
-                placeholder = productInput?.placeholder,
+                showAttachButton = attachmentsSupported
             )
         }
     }

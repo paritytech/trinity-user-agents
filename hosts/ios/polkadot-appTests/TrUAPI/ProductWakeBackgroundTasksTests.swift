@@ -101,7 +101,7 @@ struct TrUAPIWorkerManagerWakeTests {
         let tasks = RecordingWakeTasks()
         let manager = makeManager(references: SpentReferences(), tasks: tasks)
 
-        let outcome = await manager.wake("a.dot", reason: .notification(roomId: "host", watchId: "w"))
+        let outcome = await manager.wake("a.dot", reason: .notification(roomId: "host"))
 
         #expect(outcome == .budgetSpent)
         #expect(await tasks.holds.isEmpty)
@@ -181,10 +181,6 @@ private final class SpentReferences: TrUAPIWorkerReferencing, @unchecked Sendabl
     func setWorkerKeepAlive(productId _: ProductId, keepAlive _: WorkerKeepAlive) {}
     func wakeProduct(productId _: ProductId, reason _: ChatWakeReason) throws -> ChatWakeOutcome {
         .budgetSpent
-    }
-
-    func handleWakePush(payload _: String) async throws -> [PushWakeDelivery] {
-        [PushWakeDelivery(productId: "a.dot", roomId: "host", watchId: "w", outcome: .budgetSpent)]
     }
 }
 

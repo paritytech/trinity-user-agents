@@ -6,9 +6,9 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomContactModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
@@ -54,12 +54,10 @@ interface ChatExtensionContext {
      */
     suspend fun setRoomConfig(chatId: ChatId, config: ChatRoomConfigModel): Result<Unit>
 
-    /** Replaces the name, the description and the avatar of the room. The v1 icon of the room stays. */
+    /** Replaces the name and the description of the room. The v1 icon of the room stays. */
     suspend fun setRoomMetadata(chatId: ChatId, name: String, metadata: ChatRoomMetadataModel): Result<Unit>
 
     suspend fun setRoomPreview(chatId: ChatId, preview: ChatRoomPreviewModel): Result<Unit>
-
-    suspend fun setRoomFooter(chatId: ChatId, footer: ChatRoomFooterModel): Result<Unit>
 
     /**
      * Stores one change that the extension pushes to a room whose messages the host keeps. Message ids are the
@@ -74,6 +72,9 @@ interface ChatExtensionContext {
 
     /** Shows the call of the room, or removes it with null. The host keeps it in memory only. */
     suspend fun setRoomCall(chatId: ChatId, call: ChatRoomCallModel?): Result<Unit>
+
+    /** Replaces the contact of a room of the chat product. The host draws the room as its own person chat. */
+    suspend fun setRoomContact(chatId: ChatId, contact: ChatRoomContactModel): Result<Unit>
 }
 
 suspend fun ChatExtensionContext.markMessageProcessed(message: ChatMessage) {

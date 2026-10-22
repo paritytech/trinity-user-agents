@@ -15,6 +15,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.first
@@ -24,6 +25,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 import javax.inject.Inject
+import kotlin.time.Duration.Companion.seconds
 
 /** Makes the source of a room whose messages the product keeps. */
 fun interface ProductMessageSourceFactory {
@@ -84,6 +86,8 @@ class ChatRoomSourceContext(
 
     private val roomWork = Channel<suspend () -> Unit>(Channel.UNLIMITED)
     private var openLifecycle: ChatRoomLifecycle? = null
+    private var wantsOpen = false
+    private var openFailures = 0
 
     init {
         scope.launch {
@@ -109,19 +113,19 @@ class ChatRoomSourceContext(
         return resolution?.await()?.takeIf { it.store == ChatRoomPolicy.MessageStore.PRODUCT }?.source
     }
 
-    /** Holds the product of the room while the room screen shows it. A person chat holds nothing. */
-    fun open() = enqueue { openRoom() }
-
-    fun close() = enqueue { closeRoom() }
-
     /**
-     * Opens the room again, then asks for the newest page. A room that is open closes first, so the room gets the
-     * worker of its product again, and a worker whose start failed starts again (02-DESIGN §3.6, S23).
+     * Holds the product of the room while the room screen shows it. A person chat holds nothing. A room that does not
+     * open opens again after a delay, with its newest page, as long as the screen shows it (02-DESIGN §3.6, S23).
      */
-    fun retry() = enqueue {
-        closeRoom()
+    fun open() = enqueue {
+        wantsOpen = true
+        openFailures = 0
         openRoom()
-        source().reload()
+    }
+
+    fun close() = enqueue {
+        wantsOpen = false
+        closeRoom()
     }
 
     /** Closes the room when it is open, then stops the source. Call it once, when the room screen goes away. */
@@ -147,7 +151,21 @@ class ChatRoomSourceContext(
             .onFailure {
                 Timber.w(it, "The product room did not open")
                 source().markUnavailable()
+                openAgainLater()
             }
+    }
+
+    private fun openAgainLater() {
+        val wait = (OPEN_RETRY_DELAY * (1 shl openFailures.coerceAtMost(MAX_OPEN_BACKOFF_SHIFT))).coerceAtMost(MAX_OPEN_RETRY_DELAY)
+        openFailures++
+        scope.launch {
+            delay(wait)
+            enqueue {
+                if (!wantsOpen || openLifecycle != null) return@enqueue
+                openRoom()
+                if (openLifecycle != null) source().reload()
+            }
+        }
     }
 
     private suspend fun closeRoom() {
@@ -185,4 +203,10 @@ class ChatRoomSourceContext(
         }
 
     private class ResolvedSource(val store: ChatRoomPolicy.MessageStore, val source: ChatMessageSource)
+
+    private companion object {
+        val OPEN_RETRY_DELAY = 2.seconds
+        val MAX_OPEN_RETRY_DELAY = 60.seconds
+        const val MAX_OPEN_BACKOFF_SHIFT = 5
+    }
 }

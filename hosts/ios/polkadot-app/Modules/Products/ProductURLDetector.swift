@@ -7,17 +7,15 @@ struct DetectedProductLink {
 }
 
 enum ProductURLDetector {
-    /// One detector for the app. A detector is immutable and safe on any thread, and it is slow to make, and the
-    /// chat screen asks for each text message at each list update (P7.1, B3).
-    private static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
-
     static func firstProductLink(
         in text: String,
         hostProvider: ProductHostProviding
     ) -> DetectedProductLink? {
         guard !text.isEmpty else { return nil }
 
-        guard let detector = linkDetector else {
+        guard let detector = try? NSDataDetector(
+            types: NSTextCheckingResult.CheckingType.link.rawValue
+        ) else {
             return nil
         }
 

@@ -56,9 +56,9 @@ Reference holders, by modality:
 [Chat Extension v2 additions](chat-extension-v2-additions.md) adds two Chat holders:
 
 - **Wake.** The host holds the worker for 30 s from one of three sources: a message, user action or room event sent to
-  the product while no room screen holds the worker; a chat product that starts and owns no room yet, once; and an
-  authenticated notification routed to a room (`/-/chat/<room_id>`), at most 12 per product per rolling hour. A product
-  has at most one wake hold, and a new wake moves its deadline. The product extends a wake only through
+  the product while no room screen holds the worker; a chat product that starts and owns no room yet, once; and a chat
+  push for a room of the product that the app receives, at most 12 per product per rolling hour. A product has at most
+  one wake hold, and a new wake moves its deadline. The product extends a wake only through
   `Worker::begin_operation`.
 - **Call.** A room with a `Ringing` or `Active` call holds the worker until the product clears the call or deletes
   the room. A `Ringing` call holds it for at most 60 s, the time a host rings before it clears the banner.
@@ -83,10 +83,8 @@ foreground:
   does not suspend the app then. In the background the hold goes, and the worker stops unless another holder holds it.
 - **Faults.** A worker that ends on a fault stays stopped while the hold stays. The next return to the foreground
   starts it again, so a worker that faults at each start does not loop.
-- **No background work.** The hold does not keep a worker in the background. A worker that must learn of a statement
-  while the app is in the background names its topics with `worker.setWakeWatches`. A new statement on one of them
-  reaches the device as a push from the host's push relay, and the core takes a notification wake for the room of the
-  watch ([Push wakes](../design/push-wake.md)). No relay with APNs or FCM credentials exists yet.
+- **No background work.** The hold does not keep a worker in the background. When a chat push for a room of the
+  product reaches the app in the background, the host takes a notification wake for that room.
 
 ### Stopping
 
@@ -105,8 +103,6 @@ foreground:
 - A foreground worker costs memory and connections while the app is open, also when the user never opens the product.
   The manifest field makes the cost visible per product, and a host may refuse it (for example on low memory) as it may
   stop any worker.
-- Considered for the foreground: a start when a statement arrives for the product (the notification wake). It needs
-  the core to keep the product's topics while the worker sleeps and a relay to push to a suspended app, so it is the
-  background complement of the foreground hold, not a replacement. The core side and a reference relay exist
-  ([Push wakes](../design/push-wake.md)); `worker.setWakeWatches` is the one product call it adds, so requirement 4
-  holds for the reference holders only.
+- Considered for the foreground: a start whenever a statement arrives for the product. It needs the core to keep the
+  product's topics while the worker sleeps and a relay to push to a suspended app. The notification wake starts the
+  worker only for a chat push the app already receives, so it adds no product call.

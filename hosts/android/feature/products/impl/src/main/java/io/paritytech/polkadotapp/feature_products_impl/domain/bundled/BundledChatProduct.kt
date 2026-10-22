@@ -41,7 +41,7 @@ internal class BundledChatProduct @Inject constructor(
             "bundled chat worker digest $digest does not match the pinned $BUNDLED_CHAT_WORKER_SHA256"
         }
         val workerHost = ProductManifest.hostOf(ReservedProductIds.chat(tld), ExecutableKind.WORKER)
-        bundledContent.install(workerHost.value, "bundled-chat-$digest", files)
+        bundledContent.install(workerHost.value, digest, files)
     }
 
     /** The bundled worker, with the version its manifest declares. */

@@ -32,19 +32,9 @@ import type {
 import { errorMessage } from "./error.js";
 import {
   CHAT_ACTION_ENTRY_POINT,
-  CHAT_EVENT_ENTRY_POINT,
-  CHAT_ROOM_EVENT_ENTRY_POINT,
   RENDERER_ACTION_ENTRY_POINT,
   handlePublishAction,
 } from "./worker-actions.js";
-import {
-  handleChatQueryStart,
-  handleStageChatAttachment,
-  handleWakeProduct,
-  stopChatQueriesForCore,
-  stopChatQuery,
-  type ChatQueries,
-} from "./worker-chat-queries.js";
 import {
   handleRenderStart,
   stopRender,
@@ -613,8 +603,6 @@ const cores = new Map<number, WorkerProductRuntime>();
 const inFlightFrames = new Map<number, Set<Promise<void>>>();
 /** Live render subscriptions, keyed by main-thread render id. */
 const renders: RenderSubscriptions = new Map();
-/** Open chat queries, keyed by main-thread query id. */
-const chatQueries: ChatQueries = new Map();
 let wasm: WasmModuleShape | null = null;
 
 (async () => {
@@ -958,61 +946,6 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
         msg.action,
       );
       break;
-    case "publishChatEvent":
-      handlePublishAction(
-        CHAT_EVENT_ENTRY_POINT,
-        cores.get(msg.coreId),
-        postToMain,
-        msg.coreId,
-        msg.requestId,
-        msg.action,
-      );
-      break;
-    case "publishChatRoomEvent":
-      handlePublishAction(
-        CHAT_ROOM_EVENT_ENTRY_POINT,
-        cores.get(msg.coreId),
-        postToMain,
-        msg.coreId,
-        msg.requestId,
-        msg.action,
-      );
-      break;
-    case "wakeProduct":
-      handleWakeProduct(
-        cores.get(msg.coreId),
-        postToMain,
-        msg.coreId,
-        msg.requestId,
-        msg.roomId,
-        msg.watchId,
-      );
-      break;
-    case "stageChatAttachment":
-      void handleStageChatAttachment(
-        cores.get(msg.coreId),
-        postToMain,
-        msg.coreId,
-        msg.requestId,
-        msg.roomId,
-        msg.mimeType,
-        msg.bytes,
-      );
-      break;
-    case "chatQueryStart":
-      handleChatQueryStart(
-        cores.get(msg.coreId),
-        postToMain,
-        chatQueries,
-        msg.coreId,
-        msg.queryId,
-        msg.name,
-        msg.request,
-      );
-      break;
-    case "chatQueryStop":
-      stopChatQuery(chatQueries, msg.queryId);
-      break;
     case "publishRendererAction":
       handlePublishAction(
         RENDERER_ACTION_ENTRY_POINT,
@@ -1072,8 +1005,6 @@ async function disposeCore(coreId: number): Promise<void> {
   cores.delete(coreId);
   // A render subscription outliving its core would call into freed wasm.
   stopRendersForCore(renders, coreId);
-  // The same holds for a chat query.
-  stopChatQueriesForCore(chatQueries, coreId);
   try {
     await disposeAwaitingFrames(core, coreId, inFlightFrames);
   } catch (err) {

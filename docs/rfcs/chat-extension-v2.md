@@ -9,11 +9,11 @@ status: draft
 ## Summary
 
 A product's Worker owns the data of its chat rooms: which rooms exist, how they appear in the chat list, which messages
-they hold, who takes part, and what the user can do to a message or a participant. The host owns the screen, draws all
-of it with native elements, and applies a default for every part the product does not declare, so a product that only
-creates a room and posts into it gets a complete chat. `Chat` keeps its six methods and gains nine: four requests by
-which the product changes its rooms and their messages, and five host-initiated queries by which the host asks the
-product for pages, user actions, reactions, participants and message menus.
+they hold and who reacted to them. The host owns the screen, draws all of it with native elements, and applies a
+default for every part the product does not declare, so a product that only creates a room and posts into it gets a
+complete chat. `Chat` keeps its six methods and gains seven: four requests by which the product changes its rooms and
+their messages, and three host-initiated queries by which the host asks the product for pages, user actions and
+reactions.
 
 Tracking issue: [#487](https://github.com/paritytech/host-rust-core/issues/487).
 
@@ -24,11 +24,9 @@ every message, and a room has one fixed shape:
 
 - A product whose messages live elsewhere, on chain, in a peer-to-peer protocol or on its own backend, must copy each
   one into the host store and keep two stores in step, and it cannot edit or delete what it copied.
-- The room has no product entries in the message menu, no placeholder, and a name and icon fixed at creation.
+- The room has a name and icon fixed at creation, and no way to show where it stands in the chat list.
 - The host loads a room whole. A room cannot hold more history than the host is willing to store, and the product has no
   way to serve older pages on demand.
-- Every message comes from the user or the product. A room cannot name its participants, so a group room cannot show who
-  wrote what.
 
 ## Approach
 
@@ -54,25 +52,25 @@ The design has nine parts:
   screen and asks the product for pages.
 - A **declaration** is anything the product tells the host about a room: metadata, configuration, preview, footer. The
   host persists each one until the product replaces it or deletes the room.
-- A **feed update** is one change to a room's messages that the product pushes: a new message, an edit, a deletion, a
-  reaction placed or removed, a status change.
+- A **feed update** is one change to a room's messages that the product pushes: a new message, an edit, a reaction
+  placed or removed, a status change, or a message drawn again with new content.
 - A **query** is a host-initiated subscription that carries one question. The product answers with one item and
   completes it.
 - A **participant id** is a product-local string naming one participant of a room. The reserved id `"user"` is the
-  host's user and the reserved id `"product"` is the product itself; neither needs a query to resolve.
+  host's user, the reserved id `"product"` is the product itself, and the reserved id `"contact"` is the contact of a
+  room ([Chat Extension v2 additions](chat-extension-v2-additions.md#contact-rooms)).
 
 Ownership of each concern:
 
 | Concern                                         | Owner                        | How it crosses the wire                                           |
 | ----------------------------------------------- | ---------------------------- | ----------------------------------------------------------------- |
-| Room existence, name, avatar, description       | Product                      | `create_room`, `set_room_metadata`, `delete_room`                 |
-| Configuration of the room                       | Product, with host defaults  | `create_room`                                                     |
-| Place of the room in the chat list              | Product, with a host default | `create_room`, `set_room_preview`                                 |
+| Room existence, name, description               | Product                      | `create_room`, `set_room_metadata`, `delete_room`                 |
+| Configuration of the room                       | Product, with host defaults  | `set_room_config`                                                 |
+| Place of the room in the chat list              | Product, with a host default | `set_room_preview`                                                |
 | Messages of a host-store room                   | Host                         | `update_feed`, `post_message`; user actions on `action_subscribe` |
 | Messages of a product-source room               | Product                      | `messages_query`, `update_feed`, `user_action`                    |
-| Who reacted, participants, message menus        | Product, with host defaults  | Queries                                                           |
-| Footer, placeholder                             | Product, with host defaults  | `set_room_footer`, `create_room`                                  |
-| `Custom` message bodies and a custom footer     | Product                      | `Renderer::render`                                                |
+| Who reacted                                     | Product, with a host default | `reactions_query`                                                 |
+| Footer                                          | Product, with a host default | `set_room_footer`                                                 |
 | Layout, theme, fonts, accessibility, navigation | Host                         | Nothing                                                           |
 
 ### Wire patterns
@@ -95,7 +93,7 @@ Every payload is SCALE-encoded and travels in a versioned envelope, as every oth
 ### Trait
 
 `Chat` keeps trait id `4`, the `Worker` execution gate, and ids `0` to `4` and `6`; id `5` is spent. The new methods take
-ids `8` to `11` and `16` to `20`.
+ids `8` to `11`, `16` to `18` and `31`.
 
 ```rust
 /// Chat rooms a product serves, drawn by the host.
@@ -165,7 +163,7 @@ pub trait Chat: Send + Sync {
         Err(CallError::unavailable())
     }
 
-    /// Replace a room's name, avatar and description.
+    /// Replace a room's name and description.
     #[wire(id = 8)]
     async fn set_room_metadata(
         &self,
@@ -235,61 +233,49 @@ pub trait Chat: Send + Sync {
         Subscription::interrupted(CallError::unavailable())
     }
 
-    /// The participants of a room: a count, a page, or some by id. One item, then complete.
-    #[wire(host_initiated, id = 19)]
-    fn participants_query(
+    /// Declare which parts of a room the product serves. Replaces the previous configuration.
+    #[wire(id = 31)]
+    async fn set_room_config(
         &self,
         _cx: &CallContext,
-        _request: ProductChatParticipantsQueryRequest,
-    ) -> Subscription<ProductChatParticipantsQueryItem, CallError<ProductChatQueryError>> {
-        Subscription::interrupted(CallError::unavailable())
-    }
-
-    /// The menu for one message. One item, then complete.
-    #[wire(host_initiated, id = 20)]
-    fn message_actions_query(
-        &self,
-        _cx: &CallContext,
-        _request: ProductChatMessageActionsQueryRequest,
-    ) -> Subscription<ProductChatMessageActionsQueryItem, CallError<ProductChatQueryError>> {
-        Subscription::interrupted(CallError::unavailable())
+        _request: HostChatSetRoomConfigRequest,
+    ) -> Result<HostChatSetRoomConfigResponse, CallError<HostChatRoomError>> {
+        Err(CallError::unavailable())
     }
 }
 ```
 
-Three legs gain a `V2` shape. The host upgrades each `V1` caller and answers it in its own version:
+The methods of the first Chat surface keep their shapes and versions. A host injects its own `@parity/truapi` client
+into every product it runs, and that client encodes the newest version of each request, so a product built against the
+first SDK calls these methods with the first shapes. `create_room` takes `{ room_id, name, icon }` at `V1`,
+`set_room_footer` takes `ChatRoomFooter` with `TextInput` and `Empty` at `V1`, and `post_message` keeps its `V1` and
+its `V2` with `alt`. `register_bot`, `list_subscribe` and `action_subscribe` keep their shapes too: an
+`action_subscribe` item is `{ room_id, peer, payload: ChatActionPayload }` with `MessagePosted`, `ActionTriggered` and
+`Command`.
 
-| Leg                     | `V2` shape                                    | A `V1` caller                                                                                     |
-| ----------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `create_room` request   | `{ room_id, metadata, config, preview }`      | `{ room_id, name, icon }` becomes metadata with an inline `icon` as the avatar, and the default configuration; an `https` icon keeps the `V1` rules |
-| `set_room_footer` request | `ChatRoomFooter` with `Input`, `Empty`, `Custom` | `TextInput` becomes `Input` with the default input, `Empty` stays `Empty`                       |
-| `action_subscribe` item | `{ room_id, peer, event: ChatEvent }`         | receives `MessagePosted`, `ActionTriggered` and `Command` only                                    |
-
-A `V1` subscriber receives a posted `Text` or `Custom` body as it is, any other body as `Text` with the body's text, and
-nothing for a body without text. The response and error of `create_room` and of `set_room_footer`, and the request and
-error of `action_subscribe`, gain a `V2` with the `V1` shape, so a caller's version reaches every leg of its call. Every
-new method has a single `V1` shape. The responses of methods `8` to `11` carry no payload, so each envelope is the bare
-`V1` variant. `register_bot`, `list_subscribe` and `post_message` keep their shapes.
+A new room is a host-store room with the name and icon of `create_room` and the text input. The product declares the
+rest with `set_room_config`, `set_room_metadata` and `set_room_preview`. Every new method has a single `V1` shape. The
+responses of methods `8` to `11` and `31` carry no payload, so each envelope is the bare `V1` variant.
 
 ### Types
 
-Resources travel inline or as a preimage key, never as a URL, so the host never fetches from an address the product
-chose.
+Resources never travel as a URL, so the host never fetches from an address the product chose. A media item names a file
+in the HOP pool of the person-to-person chat, which the host claims through the core
+([HOP attachments](chat-extension-v2-additions.md#hop-attachments)).
 
 ```rust
-/// Bytes the host shows: an avatar, an icon, a badge or a media item.
+/// Bytes the host shows: a media item.
 pub enum ChatResource {
-    /// The bytes themselves.
-    Inline {
-        /// Media type of `bytes`, such as `image/png`.
-        mime_type: String,
-        /// The content.
-        bytes: Vec<u8>,
-    },
-    /// A preimage the host fetches through `Preimage::lookup_subscribe`.
-    Preimage {
-        /// The preimage key, as `Preimage::submit` returns it.
-        key: Vec<u8>,
+    /// A file in the HOP pool. The ticket claims and opens it.
+    Hop {
+        /// The 32-byte identifier of the file's root entry.
+        identifier: Vec<u8>,
+        /// The 32-byte ticket.
+        ticket: Vec<u8>,
+        /// The `wss://` node that holds it.
+        node: String,
+        /// The size the sender states.
+        size: u64,
     },
 }
 
@@ -297,7 +283,7 @@ pub enum ChatResource {
 pub struct ChatMediaMeta {
     /// Media type of the item.
     pub mime_type: String,
-    /// Size in bytes, as the product states it. The host checks it against a preimage it fetched.
+    /// Size in bytes, as the product states it.
     pub size_bytes: Option<u64>,
     /// Width in pixels.
     pub width: Option<u32>,
@@ -305,8 +291,10 @@ pub struct ChatMediaMeta {
     pub height: Option<u32>,
     /// A BlurHash the host draws until the bytes arrive.
     pub placeholder: Option<String>,
-    /// Accessibility text, and the chat-list preview of a message with media only.
+    /// Accessibility text.
     pub alt: Option<String>,
+    /// Length of a video, in milliseconds.
+    pub duration_ms: Option<u64>,
 }
 
 /// One media item of a message.
@@ -340,40 +328,23 @@ pub enum ChatMediaItem {
 Rooms, their configuration and their place in the chat list:
 
 ```rust
-/// What a room is called and how it looks in its header.
+/// What a room is called.
 pub struct ChatRoomMetadata {
     /// Display name.
     pub name: String,
-    /// Avatar; `None` draws the product's icon.
-    pub avatar: Option<ChatResource>,
     /// One paragraph shown in the room's details.
     pub description: Option<String>,
 }
 
 /// Which parts of a room the product serves itself. A field left at its default selects the host default.
 pub struct ChatRoomConfig {
-    /// `true`: the product answers `messages_query` and `user_action`, and the host persists no message.
+    /// `true`: the product answers `messages_query`, `user_action` and `edit_history`, and the host persists no
+    /// message.
     pub product_source: bool,
     /// `true`: the host offers "who reacted" and asks `reactions_query`.
     pub reaction_details: bool,
-    /// `true`: the host asks `participants_query`.
-    pub participants: bool,
-    /// `true`: the host asks `message_actions_query` before it opens a message menu.
-    pub message_actions: bool,
-    /// Emoji the reaction picker offers; `None` offers all.
-    pub allowed_reactions: Option<Vec<String>>,
-    /// Text shown while the room has no messages; `None` shows the host's text.
-    pub placeholder: Option<String>,
     /// `true`: the host reports the newest message the user saw.
     pub report_seen: bool,
-}
-
-/// How a room sorts in the chat list.
-pub enum ChatRoomOrder {
-    /// By the preview's timestamp, among the rooms that are not pinned.
-    Timestamp,
-    /// Above every room that is not pinned, by timestamp among the pinned.
-    PinToTop,
 }
 
 /// The badge of a room in the chat list.
@@ -385,43 +356,55 @@ pub enum ChatRoomBadge {
         /// The number shown.
         count: u32,
     },
-    /// An image.
-    Image {
-        /// The image.
-        resource: ChatResource,
-    },
 }
 
-/// The line of text under a room's name in the chat list.
-pub struct ChatRoomPreviewText {
-    /// The text.
-    pub text: String,
-    /// `true`: drawn as an ongoing activity, such as "Alice is typing", with its animation.
-    pub ongoing: bool,
+/// The newest event of a room when it is a reaction.
+pub struct ChatPreviewReaction {
+    /// The emoji.
+    pub emoji: String,
+    /// `true`: the user reacted. `false`: the contact did.
+    pub by_user: bool,
+    /// The message the reaction is on.
+    pub message: Option<ChatMessage>,
+    /// `true`: the newest event is the removal of this reaction.
+    pub removed: bool,
 }
 
 /// How a room appears in the chat list. A field left at `None` keeps the host default.
 pub struct ChatRoomPreview {
-    /// Where the room sorts.
-    pub order: ChatRoomOrder,
-    /// Sort key, in milliseconds since the Unix epoch; `None` uses the newest message's time.
+    /// Sort key, in milliseconds since the Unix epoch, newest first; `None` uses the newest message's time.
     pub timestamp: Option<u64>,
     /// Badge; `None` keeps the host's unread count.
     pub badge: Option<ChatRoomBadge>,
-    /// Text; `None` shows the newest message.
-    pub text: Option<ChatRoomPreviewText>,
+    /// The newest message the user sees; the host makes the preview line from it. `None` uses the newest message the
+    /// host holds.
+    pub last_message: Option<ChatMessage>,
+    /// The newest event, when it is a reaction newer than `last_message`.
+    pub last_reaction: Option<ChatPreviewReaction>,
+    /// The number of reactions of the contact the user did not see yet.
+    pub unseen_reactions: u32,
+    /// The newest call message, a `Call` body with its record, when it is not already `last_message`. The host follows
+    /// its native rule: iOS shows the call once its newest event (the close, else the answer) is newer than
+    /// `last_message`; Android keeps `last_message`.
+    pub last_call: Option<ChatMessage>,
 }
 
-/// Request to create a room.
+/// Request to create a room, unchanged from the first Chat surface.
 pub struct HostChatCreateRoomRequest {
     /// The product's identifier for the room.
     pub room_id: String,
-    /// Name, avatar and description.
-    pub metadata: ChatRoomMetadata,
-    /// Which parts the product serves.
+    /// Room display name.
+    pub name: String,
+    /// URL or base64 image.
+    pub icon: String,
+}
+
+/// Request to declare which parts of a room the product serves.
+pub struct HostChatSetRoomConfigRequest {
+    /// A room the product created.
+    pub room_id: String,
+    /// The configuration. It replaces the previous one.
     pub config: ChatRoomConfig,
-    /// Place in the chat list; `None` keeps the host default.
-    pub preview: Option<ChatRoomPreview>,
 }
 
 /// Request to replace a room's metadata.
@@ -469,7 +452,7 @@ Messages and feed updates:
 ```rust
 /// Who wrote a message.
 pub struct ChatMessageOrigin {
-    /// A participant id of the room, or `"user"` or `"product"`.
+    /// A participant id of the room: `"user"`, `"product"` or `"contact"`.
     pub participant_id: String,
 }
 
@@ -483,7 +466,7 @@ pub enum ChatMessageStatus {
     Delivered,
     /// Read by its recipients.
     Read,
-    /// Not sent; the host offers retry and delete.
+    /// Not sent.
     Failed,
 }
 
@@ -494,29 +477,19 @@ pub enum ChatMessageBody {
         /// The text, drawn without Markdown.
         text: String,
     },
-    /// Markdown text with media under it.
+    /// Plain text with media under it.
     RichText {
-        /// Markdown text.
+        /// The caption, drawn without Markdown.
         text: Option<String>,
         /// Media drawn under the text.
         media: Vec<ChatMediaItem>,
     },
-    /// Buttons the host draws under an optional text.
-    Actions(ChatActions),
-    /// A body the product draws through `Renderer::render`.
-    Custom {
-        /// Product-defined discriminator, passed to the render request.
-        message_type: String,
-        /// Product-defined payload, passed to the render request.
-        payload: Vec<u8>,
-        /// One line the host shows wherever it does not draw the body, such as the chat list.
-        preview_text: Option<String>,
-    },
-    /// A line about the room, such as "You are connected with Bob", drawn as a system row.
-    Notice {
-        /// The text, plain.
-        text: String,
-    },
+    /// A line about the conversation, drawn as a row with the host's strings.
+    Event(ChatContactEvent),
+    /// A call, drawn as the host's call bubble.
+    Call(ChatCallRecord),
+    /// A payment, drawn as the host's transfer bubble.
+    Payment(ChatPaymentRecord),
 }
 
 /// The reactions of one emoji on one message.
@@ -527,6 +500,16 @@ pub struct ChatReactionSummary {
     pub count: u32,
     /// `true`: the host's user is one of them.
     pub reacted_by_user: bool,
+    /// `true`: the contact placed it and the user has not seen that reaction yet.
+    pub unseen: bool,
+}
+
+/// The message a reply quotes, so that the host draws the quote without loading that message.
+pub struct ChatReplyPreview {
+    /// Who wrote the quoted message.
+    pub origin: ChatMessageOrigin,
+    /// What the quoted message says.
+    pub body: ChatMessageBody,
 }
 
 /// One message of a room.
@@ -543,10 +526,15 @@ pub struct ChatMessage {
     pub status: ChatMessageStatus,
     /// The message it replies to.
     pub reply_to: Option<String>,
+    /// The message it replies to, as the host quotes it; `None` without `reply_to` or when the product no longer has
+    /// that message.
+    pub reply_preview: Option<ChatReplyPreview>,
     /// When it was last edited, in milliseconds since the Unix epoch.
     pub edited_at: Option<u64>,
     /// Its reactions, one entry per emoji.
     pub reactions: Vec<ChatReactionSummary>,
+    /// `true`: the welcome message of a chat request.
+    pub request: bool,
 }
 
 /// One change to a room's messages.
@@ -561,11 +549,6 @@ pub enum ChatFeedUpdate {
         body: ChatMessageBody,
         /// When, in milliseconds since the Unix epoch.
         edited_at: u64,
-    },
-    /// A message removed.
-    Deleted {
-        /// The message.
-        message_id: String,
     },
     /// A participant placed a reaction.
     ReactionPlaced {
@@ -592,6 +575,9 @@ pub enum ChatFeedUpdate {
         /// The new status.
         status: ChatMessageStatus,
     },
+    /// A message changed for a reason that is not an edit, such as an answered call; drawn again in its place and
+    /// not marked edited.
+    Replaced(ChatMessage),
 }
 
 /// Request to push one change to a room's messages.
@@ -612,7 +598,7 @@ pub enum HostChatUpdateFeedError {
     UnknownMessage,
     /// `New` names a message the room already holds.
     DuplicateMessage,
-    /// A text or payload is over its bound.
+    /// A text is over its bound.
     MessageTooLarge,
     /// In a host-store room: `New` from `"user"`, or `Edited` of a message the product did not write.
     NotOwner,
@@ -626,7 +612,8 @@ pub enum HostChatUpdateFeedError {
 }
 ```
 
-`ChatActions` is the type `post_message` already takes. A product streams a long answer as `New` with
+`ChatContactEvent`, `ChatCallRecord` and `ChatPaymentRecord` are the types of
+[Contact rooms](chat-extension-v2-additions.md#contact-rooms). A product streams a long answer as `New` with
 `status: Preparing`, then `Edited` as text arrives, then `StatusChanged` to `Sent`.
 
 Paging and user actions, for product-source rooms:
@@ -685,6 +672,12 @@ pub enum ChatUserAction {
         body: ChatMessageBody,
         /// The message the user replied to.
         reply_to: Option<String>,
+        /// The id the host chose for the message; the product stores and sends the message under it. `None` lets
+        /// the product choose.
+        message_id: Option<String>,
+        /// When the user wrote the message, in milliseconds since the Unix epoch; the product sends the message with
+        /// this time. `None` lets the product use its own clock.
+        timestamp: Option<u64>,
     },
     /// The user edited a message of their own.
     EditMessage {
@@ -692,11 +685,6 @@ pub enum ChatUserAction {
         message_id: String,
         /// The new body.
         body: ChatMessageBody,
-    },
-    /// The user deleted a message of their own.
-    DeleteMessage {
-        /// The message.
-        message_id: String,
     },
     /// The user placed a reaction.
     ReactionPlaced {
@@ -717,11 +705,13 @@ pub enum ChatUserAction {
         /// The message.
         message_id: String,
     },
-    /// The user asked to send a `Failed` message again.
-    Retry {
-        /// The message.
-        message_id: String,
-    },
+    /// What the user did with the contact of the room: see
+    /// [Contact rooms](chat-extension-v2-additions.md#contact-rooms).
+    AcceptRequest,
+    DeclineRequest,
+    Block,
+    Unblock,
+    Leave,
 }
 
 /// The host reports one user action.
@@ -734,7 +724,8 @@ pub struct ProductChatUserActionRequest {
 
 /// The product's answer to a user action.
 pub enum ProductChatUserActionItem {
-    /// For `NewMessage`: the message as the product stored it, with its id, timestamp and status.
+    /// For `NewMessage`: the message as the product stored it, with its id (the one the host chose, when it chose one),
+    /// timestamp and status.
     MessageCreated(ChatMessage),
     /// For every other action: the product applied it.
     Acknowledged,
@@ -759,95 +750,9 @@ pub enum ProductChatUserActionError {
 }
 ```
 
-Participants and reactions:
+Reactions:
 
 ```rust
-/// Who a participant is.
-pub enum ChatParticipant {
-    /// A verified person of the People chain; the host draws the person.
-    Person {
-        /// The person's id on the People chain.
-        person_id: u32,
-    },
-    /// A registered account that is not yet a person.
-    LitePerson {
-        /// The account.
-        account: Bytes32,
-    },
-    /// A contact the user picked through the Contacts API; the host draws its name and avatar.
-    Contact {
-        /// The handle the Contacts API gave the product.
-        handle: ContactHandle,
-    },
-    /// Another product; the host draws its manifest name and icon.
-    Product {
-        /// The product's identifier.
-        product_id: String,
-    },
-    /// Anyone else; the product supplies the appearance.
-    Custom {
-        /// Display name.
-        nickname: String,
-        /// Avatar; `None` draws a generic one.
-        avatar: Option<ChatResource>,
-    },
-}
-
-/// One participant of a room.
-pub struct ChatParticipantEntry {
-    /// The participant id messages and reactions use.
-    pub participant_id: String,
-    /// Who the participant is.
-    pub participant: ChatParticipant,
-}
-
-/// What the host asks about a room's participants.
-pub enum ChatParticipantsQuery {
-    /// How many there are.
-    Count,
-    /// One page of them.
-    Page {
-        /// Cursor of the previous page; `None` starts at the first.
-        cursor: Option<String>,
-        /// How many the host wants at most.
-        page_size: u32,
-    },
-    /// The ones with these ids.
-    ByIds {
-        /// The participant ids.
-        participant_ids: Vec<String>,
-    },
-}
-
-/// The host asks about a room's participants.
-pub struct ProductChatParticipantsQueryRequest {
-    /// The room.
-    pub room_id: String,
-    /// The question.
-    pub query: ChatParticipantsQuery,
-}
-
-/// The answer, of the kind the question asked for.
-pub enum ProductChatParticipantsQueryItem {
-    /// Answer to `Count`.
-    Count {
-        /// How many participants the room has.
-        count: u32,
-    },
-    /// Answer to `Page`.
-    Page {
-        /// The participants.
-        participants: Vec<ChatParticipantEntry>,
-        /// Cursor of the next page; `None` ends the list.
-        next: Option<String>,
-    },
-    /// Answer to `ByIds`; an id the product does not know is left out.
-    Resolved {
-        /// The participants.
-        participants: Vec<ChatParticipantEntry>,
-    },
-}
-
 /// The host asks who reacted to one message.
 pub struct ProductChatReactionsQueryRequest {
     /// The room.
@@ -862,6 +767,8 @@ pub struct ChatReactionDetail {
     pub participant_id: String,
     /// The emoji.
     pub emoji: String,
+    /// When it was placed, in milliseconds since the Unix epoch.
+    pub timestamp: u64,
 }
 
 /// Every reaction on the message.
@@ -871,111 +778,17 @@ pub struct ProductChatReactionsQueryItem {
 }
 ```
 
-Menus and the footer:
+The footer, unchanged from the first Chat surface. The host draws its own input: in a room with a contact it draws the
+input of the contact state, with attachments when the room declares `hop_attachments`
+([Chat Extension v2 additions](chat-extension-v2-additions.md#contact-rooms)).
 
 ```rust
-/// What happens when the user picks a product action.
-pub enum ChatActionHandler {
-    /// The host opens the link; the worker is not involved.
-    Deeplink {
-        /// A link the host may open through `system.navigate_to`.
-        url: String,
-    },
-    /// The host sends the matching `ChatEvent` on `action_subscribe`.
-    Callback,
-}
-
-/// An entry the product adds to a menu.
-pub struct ChatProductAction {
-    /// Identifier sent back in the event.
-    pub action_id: String,
-    /// Label.
-    pub label: String,
-    /// Icon drawn beside the label.
-    pub icon: Option<ChatResource>,
-    /// `true`: drawn as destructive, last in its section.
-    pub destructive: bool,
-    /// What a pick does.
-    pub handler: ChatActionHandler,
-}
-
-/// An entry the host implements itself in a message menu.
-pub enum ChatBuiltInMessageAction {
-    /// Copy the text.
-    Copy,
-    /// Reply to the message.
-    Reply,
-    /// Edit a message of the user's own.
-    Edit,
-    /// Delete a message of the user's own.
-    Delete,
-    /// Open the reaction picker.
-    React,
-    /// Send a `Failed` message again.
-    Retry,
-}
-
-/// The menu of one message.
-pub enum ChatMessageMenu {
-    /// Only the product's entries.
-    Custom {
-        /// The entries.
-        actions: Vec<ChatProductAction>,
-    },
-    /// The host's entries minus `hidden`, then the product's in a section of their own.
-    ExtendBuiltIn {
-        /// The product's entries.
-        actions: Vec<ChatProductAction>,
-        /// Host entries left out.
-        hidden: Vec<ChatBuiltInMessageAction>,
-    },
-}
-
-/// The host asks for the menu of one message.
-pub struct ProductChatMessageActionsQueryRequest {
-    /// The room.
-    pub room_id: String,
-    /// The message; a `Custom` body arrives with an empty `payload`.
-    pub message: ChatMessage,
-}
-
-/// The menu of the message.
-pub struct ProductChatMessageActionsQueryItem {
-    /// The menu.
-    pub menu: ChatMessageMenu,
-}
-
-/// The host's message input.
-pub struct ChatInputConfig {
-    /// Hint text in the empty input; `None` shows the host's.
-    pub placeholder: Option<String>,
-    /// `true`: the user can attach photos.
-    pub photo: bool,
-    /// `true`: the user can attach videos.
-    pub video: bool,
-    /// `true`: the user can attach files.
-    pub file: bool,
-    /// A payment button; `None` shows none.
-    pub payment: Option<ChatInputPayment>,
-}
-
-/// The payment button of the input.
-pub enum ChatInputPayment {
-    /// Payments go to one account.
-    Enabled {
-        /// The account that receives the payment.
-        destination: Bytes32,
-    },
-}
-
 /// What a room shows below its messages.
 pub enum ChatRoomFooter {
-    /// The host's message input.
-    Input(ChatInputConfig),
+    /// The text field the user types messages into.
+    TextInput,
     /// Nothing, for a room the product drives through actions alone.
     Empty,
-    /// A body the product draws through `Renderer::render` with a `ChatFooter` context.
-    Custom,
 }
 
 /// Request to set what a room shows below its messages.
@@ -987,145 +800,39 @@ pub struct HostChatSetRoomFooterRequest {
 }
 ```
 
-`ChatRoomFooter::Custom` adds a context to the [Unified Renderer](unified-renderer.md)'s `RenderContext`, appended after
-the existing variants. The render request of a custom footer carries an empty payload.
-
-```rust
-/// Where a product-drawn body lives.
-pub enum RenderContext {
-    /// A message in a chat room.
-    ChatMessage {
-        /// Room the message is in.
-        room_id: String,
-        /// The message's id.
-        message_id: String,
-        /// Product-defined discriminator, as in the `Custom` body.
-        message_type: String,
-    },
-    /// A candidate answered to an input query.
-    InputWidget {
-        /// Candidate id, as the product answered it.
-        candidate_id: String,
-    },
-    /// A card face in the host's Pocket collection.
-    PocketCard {
-        /// Card id, as declared in the product's worker manifest.
-        card_id: String,
-    },
-    /// The custom footer of a chat room.
-    ChatFooter {
-        /// The room.
-        room_id: String,
-    },
-}
-```
-
-Events, the `V2` item of `action_subscribe`:
-
-```rust
-/// Something the user did in one of the product's rooms.
-pub enum ChatEvent {
-    /// The user sent a message into a host-store room.
-    MessagePosted {
-        /// The id the host gave the message.
-        message_id: String,
-        /// What the user wrote.
-        body: ChatMessageBody,
-        /// The message the user replied to.
-        reply_to: Option<String>,
-    },
-    /// The user pressed a button of an `Actions` message.
-    ActionTriggered(ActionTrigger),
-    /// The user sent a slash command.
-    Command(ChatCommand),
-    /// The user edited a message of their own in a host-store room.
-    UserEdited {
-        /// The message.
-        message_id: String,
-        /// The new body.
-        body: ChatMessageBody,
-    },
-    /// The user deleted a message of their own in a host-store room.
-    UserDeleted {
-        /// The message.
-        message_id: String,
-    },
-    /// The user placed or removed a reaction in a host-store room.
-    UserReacted {
-        /// The message.
-        message_id: String,
-        /// The emoji.
-        emoji: String,
-        /// `true`: placed. `false`: removed.
-        placed: bool,
-    },
-    /// The user saw this message, the newest one on screen, in a host-store room.
-    Seen {
-        /// The message.
-        message_id: String,
-    },
-    /// The user picked a `Callback` entry of a message menu.
-    MessageActionTriggered {
-        /// The message.
-        message_id: String,
-        /// The entry.
-        action_id: String,
-    },
-}
-
-/// One event in one room.
-pub struct HostChatActionSubscribeItem {
-    /// The room.
-    pub room_id: String,
-    /// Who acted; `"native"` for the host's user.
-    pub peer: String,
-    /// What happened.
-    pub event: ChatEvent,
-}
-```
-
-`ActionTrigger` and `ChatCommand` are the existing types.
-
 ### Room rules
 
 - Every request except `create_room` needs a room the product created as its host. The core checks it, and the limits
   and rate limits, before a host sees the call.
-- `create_room` on a room that exists answers `Exists` and keeps the stored declarations. The configuration is the one
-  the room was created with; the product changes the other declarations with the `set_room_*` requests.
+- `create_room` on a room that exists answers `Exists` and keeps the stored declarations. The product changes them with
+  the `set_room_*` requests. A room the product declared no configuration for keeps the behaviour of a host-store room,
+  as on a host of the first Chat surface; the product declares the configuration right after `create_room`.
 - In a host-store room the host persists `update_feed` and `post_message`. A message from `post_message` has the origin
-  `"product"`. The product cannot write as `"user"` or edit a message it did not write, and it can delete any message.
+  `"product"`. The product cannot write as `"user"` or edit a message it did not write.
 - Where a query or an event carries a message from `post_message`, its body converts to `ChatMessageBody`. A `Reaction`
-  or `ReactionRemoved` body applies as a reaction of `"product"`, and URL media, which `ChatMediaItem` cannot carry,
-  is left out of the converted body.
+  or `ReactionRemoved` body applies as a reaction of `"product"`. URL media, which `ChatMediaItem` cannot carry, the
+  buttons of `Actions` and the payload of `Custom` are left out of the converted body.
 - In a product-source room the host persists no message. It applies `update_feed` to the pages of an open room screen
   and to the chat-list preview. When no screen shows the room, it applies the update to the cached newest page of the
   room, if the host has one, so the next open shows the change before the newest page arrives. The core refuses
   `post_message` with `Unknown`.
 - The app icon badge, where the host has one, counts the `UnreadCount` badge of each product room as it counts the
-  unread messages of a stored chat. A room whose product sets its badge counts that badge, not its stored messages, and a
-  room that the user muted counts nothing.
+  unread messages of a stored chat. A room whose product sets its badge counts that badge, not its stored messages.
 - In a product-source room the host sends every user action to `user_action`. It draws a sent message as `Preparing`
   at once and replaces it with the `MessageCreated` answer. On `Rejected` it removes the message and shows the reason,
   and on time-out it marks the message `Failed`. It reverts any other action that fails and shows the reason.
-- `Seen` is reported only when `report_seen` is `true`, at most once per newest message on screen. On `action_subscribe`
-  a room's `Seen` events reach the product at most once per second: the core holds the newest one and sends it when the
-  second ends.
+- `Seen` is reported only when `report_seen` is `true`, at most once per newest message on screen.
+- In a host-store room a message the user sends reaches `action_subscribe` as `MessagePosted`. The user's edits,
+  reactions and seen messages there reach no product.
 - The core answers a query whose flag the configuration does not set with `NotAvailable`, and a `user_action` in a
   host-store room with `Unknown`, without starting the worker.
-- `Retry` is offered on a `Failed` message in a product-source room. A `Failed` message in a host-store room offers
-  delete only.
-- `message_actions_query` carries the whole message, except that a `Custom` body arrives with an empty payload.
-- A `Deeplink` handler and the room link go through the host's navigation policy. A room is addressed as
-  `polkadot://<product_id>.<tld>/-/chat/<room_id>`, following the reserved `-` segment of
-  [Pocket modality](pocket-modality.md); a host without the room opens the chat list.
 
 Events, by room mode:
 
-| Event                                                                                                                      | Host-store room          | Product-source room               |
-| -------------------------------------------------------------------------------------------------------------------------- | ------------------------ | --------------------------------- |
-| `MessagePosted`, `UserEdited`, `UserDeleted`, `UserReacted`                                                                | Sent                     | Not sent; `user_action` carries it |
-| `Seen`                                                                                                                     | Sent with `report_seen`  | Not sent; `user_action` carries it |
-| `ActionTriggered`, `Command`, `MessageActionTriggered`                                                                     | Sent                     | Sent                              |
+| Event                        | Host-store room | Product-source room                |
+| ---------------------------- | --------------- | ---------------------------------- |
+| `MessagePosted`              | Sent            | Not sent; `user_action` carries it |
+| `ActionTriggered`, `Command` | Sent            | Sent                               |
 
 ### Defaults
 
@@ -1133,15 +840,13 @@ What the host does for an aspect the product does not declare:
 
 | Aspect                     | Default                                                                                             | Declared through                                      |
 | -------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| Message store              | Host-store                                                                                          | `product_source`                                      |
-| Chat-list preview          | Newest message: its text, `preview_text`, `alt`, or "Sent a message"; sorted by its time           | `set_room_preview`                                    |
+| Message store              | Host-store                                                                                          | `product_source` of `set_room_config`                 |
+| Chat-list preview          | A line the host makes from the newest message; sorted by its time                                  | `set_room_preview`                                    |
 | Badge, host-store room     | Unread count after the newest message the user saw                                                  | `set_room_preview`                                    |
 | Badge, product-source room | None                                                                                                | `set_room_preview`                                    |
-| Message menu               | Copy, Reply, Edit and Delete on the user's own messages, React with every emoji, Retry when `Failed` in a product-source room | `message_actions`, `allowed_reactions`               |
-| Participants               | The user and the product, drawn with the product's manifest name and icon                           | `participants`                                        |
-| Who reacted                | Not offered                                                                                         | `reaction_details`                                    |
-| Footer                     | `Input` with photo and video on, file and payment off, the host's hint text                         | `set_room_footer`                                     |
-| Placeholder                | The host's text                                                                                     | `placeholder`                                         |
+| Message menu               | Copy, Reply, React, and Edit on the user's own text; the edit history of an edited message in a product-source room | Not declared                         |
+| Who reacted                | Not offered                                                                                         | `reaction_details` of `set_room_config`               |
+| Footer                     | `TextInput`                                                                                         | `set_room_footer`                                     |
 
 ### Lifecycle
 
@@ -1159,7 +864,6 @@ Chat reference holders for the [Worker Lifecycle](worker-lifecycle.md):
 | ------------------------------------------------ | ----------------------------------------------------------- |
 | Room screen                                      | The room is on screen                                       |
 | Query                                            | From its `Start` to its first item, interrupt or time-out   |
-| `Renderer::render` stream of a body or a footer  | The body is on screen                                       |
 | Chat list                                        | Never                                                       |
 
 A product-source room's screen opens with the cached pages, if any, and `messages_query` with `Before { cursor: None }`.
@@ -1173,21 +877,14 @@ product removes all its rooms.
 
 The host draws everything in its own theme; a product sends no colours, fonts or layout.
 
-- `Text` is plain, with its web links detected: `https` and `http` addresses as written, and a bare domain as
-  `https`. `RichText` text is CommonMark limited to paragraphs, bold, italic, inline and fenced code, lists, block
-  quotes and `https` and `http` links, with bare web addresses linked as in `Text`; headings draw as bold paragraphs,
-  and anything else draws as its text. A line ending inside a paragraph draws as a line break, as in a chat message.
-  The host asks before it opens a link.
-- Media draws at its stated size with the BlurHash until the bytes arrive. A preimage that cannot be fetched draws the
+- `Text` and the caption of `RichText` are plain, with their web links detected: `https` and `http` addresses as
+  written, and a bare domain as `https`.
+- Media draws at its stated size with the BlurHash until the bytes arrive. A file that cannot be claimed draws the
   placeholder with a retry.
-- `Notice` draws as a system row in the middle of the room, as the host draws "contact added" in a person chat: no
-  bubble, no author, no reactions and no menu. A V1 subscriber receives it as `Text`.
-- `Actions` draws its buttons in a column or a grid. The host disables none; the product removes them by editing the
-  message.
-- `Custom` bodies and the `Custom` footer draw through `Renderer::render`; a host without `Renderer` draws
-  `preview_text`.
+- `Event`, `Call` and `Payment` draw as the host draws them in its person chat: an event as a row with no bubble, a call
+  as the call bubble, a payment as the transfer bubble ([Contact rooms](chat-extension-v2-additions.md#contact-rooms)).
 - The user's own messages carry a status mark per `ChatMessageStatus`. A reply quotes the first line or the media kind of
-  the message it answers. Reactions draw as chips that toggle the user's reaction. An edited message is marked "edited".
+  its `reply_preview`. Reactions draw as chips that toggle the user's reaction. An edited message is marked "edited".
 
 ### Limits
 
@@ -1195,26 +892,22 @@ The core enforces these bounds before a host sees a value:
 
 | Value                                                                                           | Bound                                                    |
 | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `room_id`, `message_id`, `participant_id`, `action_id`, `message_type`, `product_id`            | Identifier: normalized, screened, 256 bytes              |
-| `name`, `label`, `nickname`, `alt`, `file_name`, `mime_type`, media `placeholder`, emoji, input hint, preview text | Display text: screened, 256 bytes |
+| `room_id`, `message_id`, `participant_id`, `action_id`, `message_type`                          | Identifier: normalized, screened, 256 bytes              |
+| `name`, `alt`, `file_name`, `mime_type`, media `placeholder`, emoji, input hint                 | Display text: screened, 256 bytes                        |
 | `description` of a room                                                                         | Screened with line breaks kept, 1 KiB                    |
-| Message text, `preview_text`, room placeholder                                                  | 16 KiB                                                   |
-| `Custom` payload                                                                                | 256 KiB                                                  |
-| Inline avatar, icon or badge image                                                              | 64 KiB, raster image                                     |
-| Inline media item                                                                               | 1 MiB                                                    |
-| Preimage key                                                                                    | Exactly 32 bytes                                         |
-| Media per message, buttons per `Actions` body                                                   | 32                                                       |
-| Reaction summaries per message, emoji in `allowed_reactions`                                    | 64                                                       |
-| Menu entries                                                                                    | 16                                                       |
-| `page_size` the host asks                                                                       | 1 to 100 messages, 1 to 200 participants                 |
-| `ByIds`                                                                                         | 100 ids                                                  |
-| Cursor, deeplink                                                                                | 1 KiB; a deeplink also passes `system.navigate_to`       |
+| Message text                                                                                    | 16 KiB                                                   |
+| `Custom` payload of `post_message`                                                              | 256 KiB                                                  |
+| HOP file                                                                                        | 32-byte identifier and ticket, a `wss://` node, 128 MiB  |
+| Media per message, buttons per `post_message` `Actions`                                         | 32                                                       |
+| Reaction summaries per message                                                                  | 64                                                       |
+| `page_size` the host asks                                                                       | 1 to 100 messages                                        |
+| Cursor                                                                                          | 1 KiB                                                    |
 | `update_feed`                                                                                   | 20 per second per room; the screen coalesces `Edited`    |
 | `set_room_preview`                                                                              | 5 per second per room                                    |
 
-No other request has a rate bound. The ids of the entries of a menu are unique in their list, and so are the emoji of `allowed_reactions` and of a message's reactions. The
-answers of a query pass the same bounds: a page of messages holds at most the `page_size` asked, and a page or list of
-participants at most 200.
+No other request of the base has a rate bound. The ids of the buttons of an `Actions` content are unique in their list,
+and so are the emoji of a message's reactions. The answers of a query pass the same bounds: a page of messages holds at
+most the `page_size` asked.
 
 In `update_feed` and `post_message`, a message text or `Custom` payload over its bound fails with `MessageTooLarge`. A
 rate over its bound fails with `RateLimited`, and any other bound fails with `Unknown` naming the field.
@@ -1226,7 +919,7 @@ How long the host waits for a query:
 | `messages_query`                                                           | 10 s | Keeps what it shows and offers a retry                     |
 | `user_action` with `NewMessage`                                            | 30 s | Marks the message `Failed`                                 |
 | `user_action`, any other                                                   | 10 s | Reverts the change and says so                             |
-| `reactions_query`, `participants_query`, `message_actions_query`           | 5 s  | Applies its default for the item                           |
+| `reactions_query`                                                          | 5 s  | Applies its default for the item                           |
 
 The wait starts at the first frame of a worker the query had to start. A worker that cannot start leaves the room with
 its cached pages and an input that says the product is unavailable.
@@ -1239,9 +932,7 @@ its cached pages and an input that says the product is unavailable.
   frame leg, codegen and dispatch in every client.
 - Declarations are pushed and persisted rather than pulled, so a product changes its footer or badge by calling again,
   and a stopped product cannot be asked.
-- Resources cannot be URLs. A product with media on its own server re-hosts it inline or as a preimage.
-- `Actions` and `Custom` are two ways to put a button in a message. `Actions` stays because every shipped chat product
-  uses it and it needs no renderer.
+- Resources cannot be URLs. Media travels as a file in the HOP pool, which the host claims through the core.
 - Room ids are the product's own strings, scoped by the host. A host-derived hash was dropped: every existing call
   addresses a room by its id, and the host knows the caller.
 - Considered and dropped: a separate trait for rooms, a host-initiated request leg, product-declared timeouts, and a
@@ -1249,10 +940,6 @@ its cached pages and an input that says the product is unavailable.
 
 ## Open questions
 
-- **Payments in the footer.** `ChatInputPayment` needs a payment path the product can address, such as the receivables
-  of [RFC 0017](0017-coinage-payment.md). Until one exists, hosts do not draw the button.
-- **Who pays for preimage media.** An attachment over 1 MiB needs a `Preimage::submit` paid from an allowance: the
-  product's, or a host purse. Until settled, user attachments go inline only.
 - **Notification wake.** The Worker Lifecycle counts a message addressed to the product as a reference holder, but no
   host wakes a worker for one, so a product-source room changes only while something holds the worker.
 - **Init barrier mechanics.** The worker runtime can hold host-initiated `Start` frames until the bundle evaluated, or

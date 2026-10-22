@@ -18,8 +18,6 @@ extension Chat {
         let titleProvider: () -> String
         let image: UIImage?
         let handler: () -> Void
-        /// The menu draws the entry in red.
-        var destructive = false
 
         static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.id == rhs.id

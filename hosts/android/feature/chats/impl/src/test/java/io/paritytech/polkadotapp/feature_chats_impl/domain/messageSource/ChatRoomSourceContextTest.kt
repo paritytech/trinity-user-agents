@@ -109,32 +109,32 @@ class ChatRoomSourceContextTest {
     }
 
     @Test
-    fun `retry opens the room and asks for the newest page`() = runBlocking<Unit> {
+    fun `S23 a room that did not open opens again after a delay, with its newest page`() = runBlocking<Unit> {
+        coEvery { lifecycle.open(any()) } returnsMany listOf(Result.failure(IllegalStateException("the worker did not start")), Result.success(Unit))
         val context = context(policy(ChatRoomPolicy.MessageStore.PRODUCT))
 
-        context.retry()
+        context.open()
 
-        coVerify(timeout = 5_000) { productSource.reload() }
+        coVerify(timeout = 10_000) { productSource.reload() }
         coVerifyOrder {
+            lifecycle.open(productRoom)
+            productSource.markUnavailable()
             lifecycle.open(productRoom)
             productSource.reload()
         }
     }
 
     @Test
-    fun `S23 retry of an open room closes it and opens it again, so the worker starts again`() = runBlocking<Unit> {
+    fun `a closed room does not open again`() = runBlocking<Unit> {
+        coEvery { lifecycle.open(any()) } returns Result.failure(IllegalStateException("the worker did not start"))
         val context = context(policy(ChatRoomPolicy.MessageStore.PRODUCT))
+
         context.open()
+        coVerify(timeout = 5_000) { productSource.markUnavailable() }
+        context.close()
+        delay(3_000)
 
-        context.retry()
-
-        coVerify(timeout = 5_000) { productSource.reload() }
-        coVerifyOrder {
-            lifecycle.open(productRoom)
-            lifecycle.close(productRoom)
-            lifecycle.open(productRoom)
-            productSource.reload()
-        }
+        coVerify(exactly = 1) { lifecycle.open(productRoom) }
     }
 
     @Test

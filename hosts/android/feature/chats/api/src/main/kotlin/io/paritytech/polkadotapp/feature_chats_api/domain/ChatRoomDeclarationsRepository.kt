@@ -10,4 +10,7 @@ interface ChatRoomDeclarationsRepository {
     fun observe(chatId: ChatId): Flow<ChatRoomDeclarations?>
 
     suspend fun get(chatId: ChatId): ChatRoomDeclarations?
+
+    /** The declarations of each room that has a contact, the rooms of the chat product. */
+    fun observeContactRooms(): Flow<Map<ChatId, ChatRoomDeclarations>>
 }

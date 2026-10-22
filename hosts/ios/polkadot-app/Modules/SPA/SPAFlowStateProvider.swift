@@ -72,8 +72,7 @@ final class SPAFlowStateProvider: SPAFlowStateProviding {
             iconViewModelFactory: ProductIconViewModelFactory(
                 dotNsResolver: resolver,
                 iconLoader: ProductIconLoader(productResolver: productResolver)
-            ),
-            chatProductReleases: ChatProductReleases(contractApi: contractApi, carFetcher: carFetcher)
+            )
         )
 
         return state.withLock { state in

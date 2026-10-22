@@ -33,17 +33,25 @@ struct MessageListSnapshot: Equatable {
     let readiness: ChatRoomReadiness
     /// The edit time of each edited message, in milliseconds since the Unix epoch.
     let editedAt: [Chat.MessageId: Chat.Timestamp]
+    /// The messages that replies of the window quote and the window does not hold, by their ids.
+    let replyPreviews: [Chat.MessageId: Chat.LocalMessage]
+    /// The messages with a reaction of the contact that the user has not seen yet, oldest first.
+    let unseenReactionTargets: [Chat.MessageId]
 
     init(
         messages: [Chat.LocalMessage],
         paging: ChatPagingState = .complete,
         readiness: ChatRoomReadiness = .ready,
-        editedAt: [Chat.MessageId: Chat.Timestamp] = [:]
+        editedAt: [Chat.MessageId: Chat.Timestamp] = [:],
+        replyPreviews: [Chat.MessageId: Chat.LocalMessage] = [:],
+        unseenReactionTargets: [Chat.MessageId] = []
     ) {
         self.messages = messages
         self.paging = paging
         self.readiness = readiness
         self.editedAt = editedAt
+        self.replyPreviews = replyPreviews
+        self.unseenReactionTargets = unseenReactionTargets
     }
 }
 
@@ -93,18 +101,29 @@ enum ChatSourceAction: Equatable {
     case send(Chat.LocalMessage.Content)
     /// The user saw these messages.
     case markSeen(Set<Chat.MessageId>)
-    case delete(Chat.MessageId)
     /// Adds the reaction of the user, or removes it when the user has it.
     case toggleReaction(messageId: Chat.MessageId, emoji: String)
-    /// Sends a failed message again.
-    case retry(Chat.MessageId)
+    /// What the user did with the contact of a room of the chat product.
+    case contactAction(Chat.ContactAction)
+}
+
+extension Chat {
+    /// What the user does with the contact of a room, as the native chat offers it: the answer to a chat request,
+    /// a block, an unblock, or a leave.
+    enum ContactAction: Equatable {
+        case acceptRequest
+        case declineRequest
+        case block
+        case unblock
+        case leave
+    }
 }
 
 enum ChatSourceActionOutcome: Equatable {
     case done
     /// The product refused the action, and the window shows the state before it. The reason is for the user.
     case refused(reason: String?)
-    /// The message stays in the window with the failed status. The user can retry it.
+    /// The message stays in the window with the failed status.
     case failed
 }
 

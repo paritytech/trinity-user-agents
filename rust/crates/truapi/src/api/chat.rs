@@ -4,7 +4,6 @@ use crate::{
 	CallContext, CallError, Subscription,
 	versioned::chat::{
 		HostChatActionSubscribeError, HostChatActionSubscribeItem, HostChatActionSubscribeRequest,
-		HostChatCapabilitiesError, HostChatCapabilitiesRequest, HostChatCapabilitiesResponse,
 		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
 		HostChatDeleteRoomRequest, HostChatDeleteRoomResponse, HostChatListSubscribeError,
 		HostChatListSubscribeItem, HostChatListSubscribeRequest, HostChatPostMessageError,
@@ -12,15 +11,15 @@ use crate::{
 		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatRoomError,
 		HostChatRoomEventsSubscribeError, HostChatRoomEventsSubscribeItem,
 		HostChatRoomEventsSubscribeRequest, HostChatSetRoomCallRequest,
-		HostChatSetRoomCallResponse, HostChatSetRoomFeaturesRequest,
-		HostChatSetRoomFeaturesResponse, HostChatSetRoomFooterError, HostChatSetRoomFooterRequest,
-		HostChatSetRoomFooterResponse, HostChatSetRoomMetadataRequest,
-		HostChatSetRoomMetadataResponse, HostChatSetRoomPreviewRequest,
-		HostChatSetRoomPreviewResponse, HostChatUpdateFeedError, HostChatUpdateFeedRequest,
-		HostChatUpdateFeedResponse, ProductChatMessageActionsQueryItem,
-		ProductChatMessageActionsQueryRequest, ProductChatMessagesQueryItem,
+		HostChatSetRoomCallResponse, HostChatSetRoomConfigRequest, HostChatSetRoomConfigResponse,
+		HostChatSetRoomContactRequest, HostChatSetRoomContactResponse,
+		HostChatSetRoomFeaturesRequest, HostChatSetRoomFeaturesResponse,
+		HostChatSetRoomFooterError, HostChatSetRoomFooterRequest, HostChatSetRoomFooterResponse,
+		HostChatSetRoomMetadataRequest, HostChatSetRoomMetadataResponse,
+		HostChatSetRoomPreviewRequest, HostChatSetRoomPreviewResponse, HostChatUpdateFeedError,
+		HostChatUpdateFeedRequest, HostChatUpdateFeedResponse, ProductChatEditHistoryQueryItem,
+		ProductChatEditHistoryQueryRequest, ProductChatMessagesQueryItem,
 		ProductChatMessagesQueryRequest, ProductChatOpenLinkItem, ProductChatOpenLinkRequest,
-		ProductChatParticipantsQueryItem, ProductChatParticipantsQueryRequest,
 		ProductChatQueryError, ProductChatReactionsQueryItem, ProductChatReactionsQueryRequest,
 		ProductChatSearchQueryItem, ProductChatSearchQueryRequest, ProductChatUserActionError,
 		ProductChatUserActionItem, ProductChatUserActionRequest,
@@ -33,22 +32,13 @@ use crate::{
 #[crate::service(required_execution = Worker)]
 #[crate::async_trait]
 pub trait Chat: Send + Sync {
-	/// Create a chat room, or find it again. The request carries the name,
-	/// avatar and description of the room, the parts of the room the product
-	/// serves itself, and optionally its chat list preview. A new room that
-	/// declares nothing is a room the host stores, with the host defaults.
+	/// Create a chat room.
 	///
 	/// ```ts
 	/// const result = await truapi.chat.createRoom({
 	///   roomId: "test-room",
-	///   metadata: { name: "Test Room", description: "A room for tests" },
-	///   config: {
-	///     productSource: false,
-	///     reactionDetails: false,
-	///     participants: false,
-	///     messageActions: false,
-	///     reportSeen: false,
-	///   },
+	///   name: "Test Room",
+	///   icon: "",
 	/// });
 	/// assert(result.isOk(), "createRoom failed:", result);
 	/// console.log("room created:", result.value);
@@ -132,10 +122,7 @@ pub trait Chat: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// Subscribe to what users do in the rooms of the product: posted
-	/// messages, button presses, commands, edits, deletes, reactions, menu and
-	/// toolbar selections, quick replies, and the room screen as it opens and
-	/// closes. A posted message carries the id the host gave it.
+	/// Subscribe to received chat actions.
 	///
 	/// ```ts
 	/// import { firstValueFrom, from } from "rxjs";
@@ -156,31 +143,20 @@ pub trait Chat: Send + Sync {
 
 	// Id 5 is spent and must never be reassigned.
 
-	/// Set what a room the product created shows below its messages: the
-	/// input with its attachment buttons, nothing, or a footer the product
-	/// draws through `Renderer::render` with a `ChatFooter` context. A room
+	/// Set what a room the product created shows below its messages. A room
 	/// keeps the footer until the product sets another, and a new room shows
-	/// the input with photo and video on.
+	/// the text input.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
 	///   roomId: "test-room",
-	///   metadata: { name: "Test Room" },
-	///   config: {
-	///     productSource: false,
-	///     reactionDetails: false,
-	///     participants: false,
-	///     messageActions: false,
-	///     reportSeen: false,
-	///   },
+	///   name: "Test Room",
+	///   icon: "",
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.setRoomFooter({
 	///   roomId: "test-room",
-	///   footer: {
-	///     tag: "Input",
-	///     value: { placeholder: "Ask anything", photo: true, video: false, file: true },
-	///   },
+	///   footer: "Empty",
 	/// });
 	/// assert(result.isOk(), "setRoomFooter failed:", result);
 	/// ```
@@ -193,19 +169,13 @@ pub trait Chat: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// Replace the name, avatar and description of a room.
+	/// Replace the name and description of a room.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
 	///   roomId: "test-room",
-	///   metadata: { name: "Test Room" },
-	///   config: {
-	///     productSource: false,
-	///     reactionDetails: false,
-	///     participants: false,
-	///     messageActions: false,
-	///     reportSeen: false,
-	///   },
+	///   name: "Test Room",
+	///   icon: "",
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.setRoomMetadata({
@@ -223,29 +193,32 @@ pub trait Chat: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// Replace how a room shows in the chat list: its order, sort time, badge
-	/// and preview line.
+	/// Replace how a room shows in the chat list: its sort time, its badge,
+	/// and the newest message and reaction the host makes the preview line
+	/// from.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
 	///   roomId: "test-room",
-	///   metadata: { name: "Test Room" },
-	///   config: {
-	///     productSource: false,
-	///     reactionDetails: false,
-	///     participants: false,
-	///     messageActions: false,
-	///     reportSeen: false,
-	///   },
+	///   name: "Test Room",
+	///   icon: "",
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.setRoomPreview({
 	///   roomId: "test-room",
 	///   preview: {
-	///     order: "PinToTop",
 	///     timestamp: BigInt(Date.now()),
 	///     badge: { tag: "UnreadCount", value: { count: 3 } },
-	///     text: { text: "Three new answers", ongoing: false },
+	///     lastMessage: {
+	///       messageId: "m3",
+	///       origin: { participantId: "contact" },
+	///       timestamp: BigInt(Date.now()),
+	///       body: { tag: "Text", value: { text: "Three new answers" } },
+	///       status: "Delivered",
+	///       reactions: [],
+	///       request: false,
+	///     },
+	///     unseenReactions: 0,
 	///   },
 	/// });
 	/// assert(result.isOk(), "setRoomPreview failed:", result);
@@ -265,14 +238,8 @@ pub trait Chat: Send + Sync {
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
 	///   roomId: "test-room",
-	///   metadata: { name: "Test Room" },
-	///   config: {
-	///     productSource: false,
-	///     reactionDetails: false,
-	///     participants: false,
-	///     messageActions: false,
-	///     reportSeen: false,
-	///   },
+	///   name: "Test Room",
+	///   icon: "",
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.deleteRoom({ roomId: "test-room" });
@@ -288,20 +255,14 @@ pub trait Chat: Send + Sync {
 	}
 
 	/// Push one change to the messages of a room: a new message, an edit, a
-	/// delete, a reaction, or a status. The host stores the change for a room
-	/// it stores, and only shows it for a room the product keeps.
+	/// reaction, a status, or a message drawn again with new content. The host stores the change
+	/// for a room it stores, and only shows it for a room the product keeps.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
 	///   roomId: "test-room",
-	///   metadata: { name: "Test Room" },
-	///   config: {
-	///     productSource: false,
-	///     reactionDetails: false,
-	///     participants: false,
-	///     messageActions: false,
-	///     reportSeen: false,
-	///   },
+	///   name: "Test Room",
+	///   icon: "",
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.updateFeed({
@@ -315,6 +276,7 @@ pub trait Chat: Send + Sync {
 	///       body: { tag: "Text", value: { text: "Welcome!" } },
 	///       status: "Sent",
 	///       reactions: [],
+	///       request: false,
 	///     },
 	///   },
 	/// });
@@ -345,6 +307,7 @@ pub trait Chat: Send + Sync {
 	///         body: { tag: "Text", value: { text: "The oldest message" } },
 	///         status: "Sent",
 	///         reactions: [],
+	///         request: false,
 	///       },
 	///     ],
 	///   });
@@ -361,7 +324,8 @@ pub trait Chat: Send + Sync {
 
 	/// Apply what the user did in a room the product keeps. Send one item,
 	/// then the host closes the query: the stored message for a new message,
-	/// or an acknowledgement.
+	/// under the `messageId` the host chose when it chose one, or an
+	/// acknowledgement.
 	///
 	/// ```ts
 	/// truapi.chat.onUserAction(({ roomId, action }, send, interrupt) => {
@@ -376,13 +340,14 @@ pub trait Chat: Send + Sync {
 	///   send({
 	///     tag: "MessageCreated",
 	///     value: {
-	///       messageId: `m-${Date.now()}`,
+	///       messageId: action.value.messageId ?? `m-${Date.now()}`,
 	///       origin: { participantId: "user" },
 	///       timestamp: BigInt(Date.now()),
 	///       body: action.value.body,
 	///       status: "Sent",
 	///       replyTo: action.value.replyTo,
 	///       reactions: [],
+	///       request: false,
 	///     },
 	///   });
 	/// });
@@ -403,7 +368,7 @@ pub trait Chat: Send + Sync {
 	/// ```ts
 	/// truapi.chat.onReactionsQuery(({ messageId }, send) => {
 	///   console.log("reactions asked:", messageId);
-	///   send({ reactions: [{ participantId: "user", emoji: "👍" }] });
+	///   send({ reactions: [{ participantId: "user", emoji: "👍", timestamp: BigInt(Date.now()) }] });
 	/// });
 	/// ```
 	#[wire(host_initiated, id = 18)]
@@ -415,84 +380,24 @@ pub trait Chat: Send + Sync {
 		Subscription::interrupted(CallError::unavailable())
 	}
 
-	/// Answer a question about the participants of a room: their number, one
-	/// page, or some of them by id. Send one item, then the host closes the
-	/// query. The host asks only for a room whose configuration sets
-	/// `participants`.
+	/// Answer the messages of a room the product keeps that match what the
+	/// user typed, newest first, for the search of the host. Send one item,
+	/// then the host closes the query. The host asks only for a room whose
+	/// configuration sets `productSource`.
 	///
 	/// ```ts
-	/// truapi.chat.onParticipantsQuery(({ query }, send) => {
-	///   if (query.tag === "Count") {
-	///     send({ tag: "Count", value: { count: 1 } });
-	///     return;
-	///   }
-	///   const guide = {
-	///     participantId: "guide",
-	///     participant: { tag: "Custom", value: { nickname: "Guide" } },
-	///   } as const;
-	///   const participants = [guide];
-	///   send(
-	///     query.tag === "Page"
-	///       ? { tag: "Page", value: { participants } }
-	///       : { tag: "Resolved", value: { participants } },
-	///   );
+	/// truapi.chat.onSearchQuery(({ roomId, text, pageSize }, send) => {
+	///   console.log("search asked:", roomId, text, pageSize);
+	///   send({ hits: [] });
 	/// });
 	/// ```
-	#[wire(host_initiated, id = 19)]
-	fn participants_query(
+	#[wire(host_initiated, id = 27)]
+	fn search_query(
 		&self,
 		_cx: &CallContext,
-		_request: ProductChatParticipantsQueryRequest,
-	) -> Subscription<ProductChatParticipantsQueryItem, CallError<ProductChatQueryError>> {
+		_request: ProductChatSearchQueryRequest,
+	) -> Subscription<ProductChatSearchQueryItem, CallError<ProductChatQueryError>> {
 		Subscription::interrupted(CallError::unavailable())
-	}
-
-	/// Answer the menu for one message. Send one item, then the host closes the
-	/// query. The message carries a `Custom` body with an empty payload. The
-	/// host asks only for a room whose configuration sets `messageActions`.
-	///
-	/// ```ts
-	/// truapi.chat.onMessageActionsQuery(({ message }, send) => {
-	///   console.log("menu asked:", message.messageId);
-	///   send({
-	///     menu: {
-	///       tag: "ExtendBuiltIn",
-	///       value: {
-	///         actions: [
-	///           { actionId: "pin", label: "Pin", destructive: false, handler: { tag: "Callback" } },
-	///         ],
-	///         hidden: ["Edit"],
-	///       },
-	///     },
-	///   });
-	/// });
-	/// ```
-	#[wire(host_initiated, id = 20)]
-	fn message_actions_query(
-		&self,
-		_cx: &CallContext,
-		_request: ProductChatMessageActionsQueryRequest,
-	) -> Subscription<ProductChatMessageActionsQueryItem, CallError<ProductChatQueryError>> {
-		Subscription::interrupted(CallError::unavailable())
-	}
-
-	/// The Chat features this host serves, by name, and its attachment
-	/// bounds. A host lists a feature only when it serves it from end to end.
-	/// A host that knows no such request answers `unavailable`; the product
-	/// then keeps to the features of every v2 host.
-	///
-	/// ```ts
-	/// const result = await truapi.chat.capabilities();
-	/// assert(result.isOk(), "capabilities failed:", result);
-	/// console.log("features:", result.value.features.join(", "));
-	/// ```
-	#[wire(id = 22)]
-	async fn capabilities(
-		&self,
-		_cx: &CallContext,
-		_request: HostChatCapabilitiesRequest,
-	) -> Result<HostChatCapabilitiesResponse, CallError<HostChatCapabilitiesError>> {
-		Err(CallError::unavailable())
 	}
 
 	/// Declare the optional features of a room. The host keeps the
@@ -502,23 +407,15 @@ pub trait Chat: Send + Sync {
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
 	///   roomId: "test-room",
-	///   metadata: { name: "Test Room" },
-	///   config: {
-	///     productSource: false,
-	///     reactionDetails: false,
-	///     participants: false,
-	///     messageActions: false,
-	///     reportSeen: false,
-	///   },
+	///   name: "Test Room",
+	///   icon: "",
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.setRoomFeatures({
 	///   roomId: "test-room",
 	///   features: {
-	///     preimageAttachments: false,
-	///     search: false,
 	///     calls: { audio: true, video: false },
-	///     readAloud: true,
+	///     hopAttachments: false,
 	///   },
 	/// });
 	/// assert(result.isOk(), "setRoomFeatures failed:", result);
@@ -538,14 +435,8 @@ pub trait Chat: Send + Sync {
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
 	///   roomId: "test-room",
-	///   metadata: { name: "Test Room" },
-	///   config: {
-	///     productSource: false,
-	///     reactionDetails: false,
-	///     participants: false,
-	///     messageActions: false,
-	///     reportSeen: false,
-	///   },
+	///   name: "Test Room",
+	///   icon: "",
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.setRoomCall({
@@ -567,9 +458,8 @@ pub trait Chat: Send + Sync {
 	}
 
 	/// Subscribe to what the user does with the optional features of the
-	/// rooms of the product: mute and archive, wakes, calls and branches. The
-	/// stream starts with the state of each room the user muted or archived.
-	/// A second subscription replaces the first.
+	/// rooms of the product: wakes and calls. A second subscription replaces
+	/// the first.
 	///
 	/// ```ts
 	/// import { firstValueFrom, from } from "rxjs";
@@ -589,31 +479,12 @@ pub trait Chat: Send + Sync {
 		Subscription::interrupted(CallError::unavailable())
 	}
 
-	/// Answer the messages of a room the product keeps that match what the
-	/// user typed, newest first. Send one item, then the host closes the
-	/// query. The host asks only for a room whose configuration sets
-	/// `productSource` and whose features set `search`.
-	///
-	/// ```ts
-	/// truapi.chat.onSearchQuery(({ roomId, text, pageSize }, send) => {
-	///   console.log("search asked:", roomId, text, pageSize);
-	///   send({ hits: [] });
-	/// });
-	/// ```
-	#[wire(host_initiated, id = 27)]
-	fn search_query(
-		&self,
-		_cx: &CallContext,
-		_request: ProductChatSearchQueryRequest,
-	) -> Subscription<ProductChatSearchQueryItem, CallError<ProductChatQueryError>> {
-		Subscription::interrupted(CallError::unavailable())
-	}
-
-	/// Take the payload of a room link that the user opened: the text after
-	/// `#` in `polkadot://<product>/-/chat/<room>#<payload>`. Send one item,
-	/// then the host closes the query and shows the room. The host asks for
-	/// any room of the product, and shows the room without the payload when
-	/// the product does not answer.
+	/// Take something the user opened from an entry point of the host that
+	/// the product reads, such as a contact link, a scanned code or a
+	/// username. Send one item, then the host closes the query and shows the
+	/// room the item names, or the room of the request. The host asks for any
+	/// room of the product, and shows the room of the request when the
+	/// product does not answer.
 	///
 	/// ```ts
 	/// truapi.chat.onOpenLink(({ roomId, payload }, send) => {
@@ -628,5 +499,90 @@ pub trait Chat: Send + Sync {
 		_request: ProductChatOpenLinkRequest,
 	) -> Subscription<ProductChatOpenLinkItem, CallError<ProductChatQueryError>> {
 		Subscription::interrupted(CallError::unavailable())
+	}
+
+	/// Set the person a room is a conversation with. The host then draws the
+	/// room as its own person-to-person chat: the avatar and name of the
+	/// account, and the header, menu, footer and banners of the contact
+	/// state. Needs the `contact_rooms` feature of the host.
+	///
+	/// ```ts
+	/// const created = await truapi.chat.createRoom({
+	///   roomId: "test-room",
+	///   name: "Alice",
+	///   icon: "",
+	/// });
+	/// assert(created.isOk(), "createRoom failed:", created);
+	/// await truapi.chat.setRoomConfig({
+	///   roomId: "test-room",
+	///   config: { productSource: true, reactionDetails: false, reportSeen: true },
+	/// });
+	/// const result = await truapi.chat.setRoomContact({
+	///   roomId: "test-room",
+	///   contact: {
+	///     account: "0x0000000000000000000000000000000000000000000000000000000000000000",
+	///     username: "alice",
+	///     state: "Established",
+	///   },
+	/// });
+	/// console.log("setRoomContact:", result);
+	/// ```
+	#[wire(id = 29)]
+	async fn set_room_contact(
+		&self,
+		_cx: &CallContext,
+		_request: HostChatSetRoomContactRequest,
+	) -> Result<HostChatSetRoomContactResponse, CallError<HostChatRoomError>> {
+		Err(CallError::unavailable())
+	}
+
+	/// Answer the texts one message of a room the product keeps had, oldest
+	/// first, for the edit history the host shows. Send one item, then the
+	/// host closes the query. The host asks only for a room whose
+	/// configuration sets `productSource`.
+	///
+	/// ```ts
+	/// truapi.chat.onEditHistory(({ messageId }, send) => {
+	///   console.log("edit history asked:", messageId);
+	///   send({ revisions: [{ editedAt: BigInt(Date.now()), text: "First text" }] });
+	/// });
+	/// ```
+	#[wire(host_initiated, id = 30)]
+	fn edit_history(
+		&self,
+		_cx: &CallContext,
+		_request: ProductChatEditHistoryQueryRequest,
+	) -> Subscription<ProductChatEditHistoryQueryItem, CallError<ProductChatQueryError>> {
+		Subscription::interrupted(CallError::unavailable())
+	}
+
+	/// Declare the parts of a room the product serves itself: its messages
+	/// (`productSource`), who reacted (`reactionDetails`) and the reports of
+	/// what the user saw (`reportSeen`). The host keeps the configuration
+	/// across restarts, and a new one replaces the previous one completely. A
+	/// room the product declared no configuration for keeps the behaviour of a
+	/// room the host stores. Declare it right after `createRoom`, before the
+	/// room shows messages.
+	///
+	/// ```ts
+	/// const created = await truapi.chat.createRoom({
+	///   roomId: "test-room",
+	///   name: "Test Room",
+	///   icon: "",
+	/// });
+	/// assert(created.isOk(), "createRoom failed:", created);
+	/// const result = await truapi.chat.setRoomConfig({
+	///   roomId: "test-room",
+	///   config: { productSource: false, reactionDetails: true, reportSeen: true },
+	/// });
+	/// assert(result.isOk(), "setRoomConfig failed:", result);
+	/// ```
+	#[wire(id = 31)]
+	async fn set_room_config(
+		&self,
+		_cx: &CallContext,
+		_request: HostChatSetRoomConfigRequest,
+	) -> Result<HostChatSetRoomConfigResponse, CallError<HostChatRoomError>> {
+		Err(CallError::unavailable())
 	}
 }

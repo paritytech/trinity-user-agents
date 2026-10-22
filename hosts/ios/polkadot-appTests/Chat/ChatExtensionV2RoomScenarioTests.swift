@@ -20,11 +20,7 @@ struct ChatExtensionV2RoomScenarioTests {
         let status = try await create(
             bridge,
             icon: icon,
-            metadata: ChatRoomMetadata(
-                name: "Lobby",
-                avatar: .inline(mimeType: "image/png", bytes: png),
-                description: nil
-            ),
+            metadata: ChatRoomMetadata(name: "Lobby", description: nil),
             config: .hostDefault,
             preview: nil
         )
@@ -32,7 +28,6 @@ struct ChatExtensionV2RoomScenarioTests {
         #expect(status == .new)
         let chat = try #require(try await fixture.storedChat("lobby"))
         #expect(chat.roomMetadata == Chat.RoomMetadata(chatRelativeId: "lobby", name: "Lobby", icon: icon))
-        #expect(chat.roomDeclarations?.avatar == .inline(png))
         // The core sets the configuration of a new room, and each `set_room_config` starts a generation (O9).
         var defaults = ChatRoomPolicy.defaults
         defaults.configGeneration = 1
@@ -41,16 +36,16 @@ struct ChatExtensionV2RoomScenarioTests {
         #expect(try await bridge.listRooms() == [ChatRoom(roomId: "lobby", participatingAs: .roomHost)])
     }
 
-    /// S2: a second-version `create_room` keeps its metadata, configuration and preview, and a repeat that
-    /// finds the room keeps them.
+    /// S2: a second-version `create_room` keeps its configuration and preview, and a repeat that finds the room
+    /// keeps them.
     @Test func s2ASecondVersionRoomKeepsItsDeclarations() async throws {
         let bridge = await fixture.bridge()
 
-        let first = try await create(bridge, metadata: metadata, config: config, preview: pinned)
+        let first = try await create(bridge, metadata: metadata, config: config, preview: preview)
         let declared = try await fixture.storedChat("lobby")?.roomDeclarations
         let repeated = try await create(
             bridge,
-            metadata: ChatRoomMetadata(name: "Lobby", avatar: nil, description: "Another"),
+            metadata: ChatRoomMetadata(name: "Lobby", description: "Another"),
             config: .hostDefault,
             preview: nil
         )
@@ -59,95 +54,67 @@ struct ChatExtensionV2RoomScenarioTests {
         #expect(repeated == .exists)
         let chat = try #require(try await fixture.storedChat("lobby"))
         #expect(chat.roomDeclarations == declared)
-        #expect(chat.roomDeclarations?.description == "Weekly game")
-        #expect(chat.roomDeclarations?.avatar == .preimage(key: key))
         #expect(chat.roomDeclarations?.config == Chat.RoomConfig(config))
-        #expect(chat.roomDeclarations?.preview == Chat.RoomPreview(pinned))
+        #expect(chat.roomDeclarations?.preview == Chat.RoomPreview(preview))
         #expect(chat.roomPolicy?.reportsSeen == true)
-        #expect(chat.roomPolicy?.listOrder.isPinned == true)
         #expect(try await bridge.roomConfig(roomId: "lobby") == config)
     }
 
-    /// S3: `set_room_metadata` reaches the chat-list row and the room header.
+    /// S3: `set_room_metadata` reaches the chat-list row and the room header. The native chat draws no
+    /// description.
     @Test func s3MetadataReachesTheListAndTheHeader() async throws {
         let bridge = await fixture.bridge()
         try await create(bridge, metadata: metadata, config: .hostDefault, preview: nil)
 
-        try await bridge.setRoomMetadata(roomId: "lobby", metadata: ChatRoomMetadata(
-            name: "Finals",
-            avatar: .inline(mimeType: "image/png", bytes: png),
-            description: "Tonight"
-        ))
+        try await bridge.setRoomMetadata(roomId: "lobby", metadata: ChatRoomMetadata(name: "Finals", description: "x"))
 
         let chat = try #require(try await fixture.storedChat("lobby"))
         let registry = SingleBotRegistry(bot: fixture.bot)
-        let row = chat.chatWithPeerMetadata(using: registry).peerMetadata
-        #expect(row.name == "Finals")
-        #expect(row.icon == .roomImage(.inline(png)))
-        let header = chat.chatMetadata(using: registry)
-        #expect(header.peerMetadata.name == "Finals")
-        #expect(header.subtitle == "Tonight")
+        #expect(chat.chatWithPeerMetadata(using: registry).peerMetadata.name == "Finals")
+        #expect(chat.chatMetadata(using: registry).peerMetadata.name == "Finals")
     }
 
-    /// S4: each preview variant reaches the policy that the chat list reads, and a preview without values
-    /// gives the host defaults back.
-    @Test(arguments: PreviewCase.all)
-    func s4EachPreviewReachesTheList(_ previewCase: PreviewCase) async throws {
-        let bridge = await fixture.bridge()
-        try await create(bridge, metadata: metadata, config: .hostDefault, preview: pinned)
-
-        try await bridge.setRoomPreview(roomId: "lobby", preview: previewCase.wire)
-
-        let chat = try #require(try await fixture.storedChat("lobby"))
-        #expect(chat.roomDeclarations?.preview == previewCase.stored)
-        var expected = ChatRoomPolicy(footer: nil, preview: previewCase.stored)
-        expected.configGeneration = 1
-        #expect(chat.roomPolicy == expected)
-    }
-
-    @Test func s4ThePolicyShowsEachPreviewValue() async throws {
+    /// S4: the badge, the time, the last message and the reaction of a preview reach the row of the chat list.
+    @Test func s4ThePreviewReachesTheRow() async throws {
         let bridge = await fixture.bridge()
         try await create(bridge, metadata: metadata, config: .hostDefault, preview: nil)
 
         try await bridge.setRoomPreview(roomId: "lobby", preview: ChatRoomPreview(
-            order: .pinToTop,
             timestamp: 42,
             badge: .unreadCount(count: 3),
-            text: ChatRoomPreviewText(text: "Bot is typing", ongoing: true)
+            // The product gives a message of the contact that the user has not seen as `Delivered`.
+            lastMessage: message("m1", text: "Your turn", timestamp: 42, status: .delivered),
+            lastReaction: nil,
+            unseenReactions: 1
         ))
-        var policy = try #require(try await fixture.storedChat("lobby")?.roomPolicy)
-        #expect(policy.listOrder == .init(isPinned: true, timestamp: 42))
-        #expect(policy.listBadge == .count(3))
-        #expect(policy.listPreview == .text("Bot is typing", ongoing: true))
+        var chat = try #require(try await fixture.storedChat("lobby"))
+        #expect(chat.roomPolicy?.listBadge == .count(3))
+        #expect(chat.unreadDisplayMessageCount == 3)
+        #expect(chat.hasIncomingReaction)
+        #expect(chat.message?.content == .text("Your turn"))
+        #expect(chat.message?.timestamp == 42)
+        #expect(chat.message?.status == .incoming(.new))
 
         try await bridge.setRoomPreview(roomId: "lobby", preview: ChatRoomPreview(
-            order: .timestamp,
             timestamp: nil,
-            badge: .image(resource: .preimage(key: key)),
-            text: nil
+            badge: .hidden,
+            lastMessage: nil,
+            lastReaction: nil,
+            unseenReactions: 0
         ))
-        policy = try #require(try await fixture.storedChat("lobby")?.roomPolicy)
-        #expect(policy.listOrder == .lastMessage)
-        #expect(policy.listBadge == .image(.preimage(key: key)))
-        #expect(policy.listPreview == .lastMessage)
+        chat = try #require(try await fixture.storedChat("lobby"))
+        #expect(chat.roomPolicy?.listBadge == .hidden)
+        #expect(chat.unreadDisplayMessageCount == 0)
+        #expect(!chat.hasIncomingReaction)
+        #expect(chat.message == nil)
     }
 
     /// S5: `delete_room` removes the room, its messages and reactions, and its declarations. A second delete
     /// succeeds.
     @Test func s5DeleteRemovesTheRoomAndEverythingInIt() async throws {
         let bridge = await fixture.bridge()
-        try await create(bridge, metadata: metadata, config: config, preview: pinned)
-        let message = ChatMessage(
-            messageId: "m1",
-            origin: ChatMessageOrigin(participantId: "product"),
-            timestamp: 1,
-            body: .text(text: "hi"),
-            status: .sent,
-            replyTo: nil,
-            editedAt: nil,
-            reactions: []
-        )
-        try await bridge.updateFeed(roomId: "lobby", update: .new(message), persist: true)
+        try await create(bridge, metadata: metadata, config: config, preview: preview)
+        try await bridge.updateFeed(roomId: "lobby", update: .new(message("m1", text: "hi")), persist: true)
         try await bridge.updateFeed(
             roomId: "lobby",
             update: .reactionPlaced(messageId: "m1", participantId: "alice", emoji: "👍"),
@@ -168,15 +135,14 @@ struct ChatExtensionV2RoomScenarioTests {
     /// no worker to do so.
     @Test func s6TheListDrawsARoomWithoutTheWorker() async throws {
         let bridge = await fixture.bridge()
-        try await create(bridge, metadata: metadata, config: config, preview: pinned)
+        try await create(bridge, metadata: metadata, config: config, preview: preview)
 
         let workers = StubWorkerManager()
         let productBot = ProductBot(
             product: Product(id: fixture.productId, name: "Game"),
             description: nil,
             runtime: TrUAPIChatHandler(productId: fixture.productId, workers: workers),
-            resolveImage: WidgetImageResolver { _ in nil },
-            rooms: ProductRoomReader(storageFacade: fixture.storageFacade)
+            resolveImage: WidgetImageResolver { _ in nil }
         )
 
         let chats = try await fixture.storageFacade.createRepository(
@@ -189,11 +155,30 @@ struct ChatExtensionV2RoomScenarioTests {
 
         let row = try #require(chats.first).chatWithPeerMetadata(using: SingleBotRegistry(bot: productBot))
         #expect(row.peerMetadata.name == "Lobby")
-        #expect(row.peerMetadata.icon == .roomImage(.preimage(key: key)))
-        #expect(row.chat.roomPolicy?.listPreview == .text("Your turn", ongoing: false))
-        #expect(row.chat.roomPolicy?.listOrder.isPinned == true)
+        #expect(row.chat.message?.content == .text("Your turn"))
         #expect(workers.references.acquired.isEmpty)
         await productBot.dispose()
+    }
+
+    /// The contact of a room survives a restart, and the room draws as the native person chat with the contact.
+    @Test func theContactOfARoomDrawsThePersonChat() async throws {
+        let bridge = await fixture.bridge()
+        try await create(bridge, metadata: metadata, config: config, preview: nil)
+        let account = Data(repeating: 7, count: 32)
+
+        try await bridge.setRoomContact(
+            roomId: "lobby",
+            contact: ChatRoomContact(account: account, username: "alice", state: .established)
+        )
+
+        let chat = try #require(try await fixture.storedChat("lobby"))
+        #expect(chat.roomContact == Chat.RoomContact(account: account, username: "alice", state: .established))
+        #expect(chat.avatarColorSeed == Chat.Id.person(account).colorSeed)
+        let header = chat.chatMetadata(using: SingleBotRegistry(bot: fixture.bot))
+        #expect(header.peerMetadata.name == "alice")
+        #expect(header.peerMetadata.icon == .image(nil))
+        #expect(header.peerMetadata.moreActions == [.blockUser, .leaveChat])
+        #expect(header.colorSeed == account.toHex())
     }
 
     /// S47: a `set_room_config` while the room screen is open reaches the screen with a new configuration
@@ -209,10 +194,10 @@ struct ChatExtensionV2RoomScenarioTests {
         var chats = provider.subscribeChat(by: fixture.chatId("lobby")).makeAsyncIterator()
         let opened = try #require(try await chats.next() ?? nil)
         let generation = try #require(opened.roomPolicy?.configGeneration)
-        #expect(opened.roomPolicy?.messageMenu.allowedReactions == ["👍"])
+        #expect(opened.roomPolicy?.reportsSeen == true)
 
         var changed = config
-        changed.allowedReactions = ["❤️", "🎉"]
+        changed.reportSeen = false
         try await bridge.setRoomConfig(roomId: "lobby", config: changed)
 
         var reloaded = opened
@@ -221,36 +206,48 @@ struct ChatExtensionV2RoomScenarioTests {
         }
 
         #expect(reloaded.roomPolicy?.configGeneration == generation + 1)
-        #expect(reloaded.roomPolicy?.messageMenu.allowedReactions == ["❤️", "🎉"])
+        #expect(reloaded.roomPolicy?.reportsSeen == false)
     }
 }
 
 private let png = Data([0x89, 0x50, 0x4E, 0x47])
-private let key = Data(repeating: 9, count: 32)
 
 private extension ChatExtensionV2RoomScenarioTests {
     var metadata: ChatRoomMetadata {
-        ChatRoomMetadata(name: "Lobby", avatar: .preimage(key: key), description: "Weekly game")
+        ChatRoomMetadata(name: "Lobby", description: "Weekly game")
     }
 
     var config: ChatRoomConfig {
-        ChatRoomConfig(
-            productSource: false,
-            reactionDetails: false,
-            participants: false,
-            messageActions: false,
-            allowedReactions: ["👍"],
-            placeholder: "Nothing yet",
-            reportSeen: true
+        ChatRoomConfig(productSource: false, reactionDetails: false, reportSeen: true)
+    }
+
+    var preview: ChatRoomPreview {
+        ChatRoomPreview(
+            timestamp: nil,
+            badge: nil,
+            lastMessage: message("m0", text: "Your turn"),
+            lastReaction: nil,
+            unseenReactions: 0
         )
     }
 
-    var pinned: ChatRoomPreview {
-        ChatRoomPreview(
-            order: .pinToTop,
-            timestamp: nil,
-            badge: nil,
-            text: ChatRoomPreviewText(text: "Your turn", ongoing: false)
+    func message(
+        _ id: String,
+        text: String,
+        timestamp: UInt64 = 1,
+        status: ChatMessageStatus = .sent
+    ) -> ChatMessage {
+        ChatMessage(
+            messageId: id,
+            origin: ChatMessageOrigin(participantId: "product"),
+            timestamp: timestamp,
+            body: .text(text: text),
+            status: status,
+            replyTo: nil,
+            replyPreview: nil,
+            editedAt: nil,
+            reactions: [],
+            request: false
         )
     }
 

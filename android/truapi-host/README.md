@@ -77,28 +77,27 @@ The public surface lives in [`src/main/kotlin/io/parity/truapi/TrUAPIHost.kt`](s
 
 ## Chat
 
-A host serving the Chat modality implements `ChatHostBridge` and passes it when it opens the product's `ProductExecutionKind.WORKER` execution. The bridge carries the requests of Chat Extension v2 ([RFC](../../docs/rfcs/chat-extension-v2.md)). `createRoom`, `registerBot`, `postMessage`, `setRoomFooter` and `listRooms` have no default. The other requests have defaults for a host that does not serve them yet: `roomConfig` answers `HOST_DEFAULT_CHAT_ROOM_CONFIG`, `setRoomConfig` accepts only that configuration, `setRoomMetadata` keeps the name and icon of `createRoom`, and every other request answers a rejection. Each room the product creates carries a configuration and metadata, so these three defaults keep room creation working.
+A host serving the Chat modality implements `ChatHostBridge` and passes it when it opens the product's `ProductExecutionKind.WORKER` execution. The bridge carries the requests of Chat Extension v2 ([RFC](../../docs/rfcs/chat-extension-v2.md)). `createRoom`, `registerBot`, `postMessage`, `setRoomFooter` and `listRooms` have no default. The other requests have defaults for a host that does not serve them yet: `roomConfig` answers `HOST_DEFAULT_CHAT_ROOM_CONFIG`, `setRoomConfig` accepts only that configuration, `setRoomMetadata` keeps the name and icon of `createRoom`, and every other request answers a rejection. A room the product declares nothing for is a room the host stores, with the name and icon of `createRoom` and the text input.
 
 | Request | What the host does |
 | --- | --- |
 | `roomConfig` | Answers the configuration last declared for the room. The core reads it before each feed update, posted message and query |
-| `setRoomConfig` | Keeps the configuration a room was created with across restarts. The core calls it when `createRoom` makes a new room |
-| `setRoomMetadata`, `setRoomPreview` | Replace the name, avatar and description, and how the room shows in the chat list |
+| `setRoomConfig` | Keeps the configuration the product declared for a room across restarts. The core calls it for the product's `setRoomConfig` |
+| `setRoomMetadata`, `setRoomPreview` | Replace the name and description, and how the room shows in the chat list (sort time, badge, the newest message and reaction the preview line is made from) |
 | `deleteRoom` | Deletes the room with its messages, cache and declarations, and closes its screen |
 | `updateFeed` | Applies one change to the messages; `persist` is `true` for a room the host stores. Throw `NativeChatFeedRejection` to refuse it |
-| `setRoomFooter` | Shows the input with its `ChatInputConfig`, nothing, or a footer the product draws through `render` |
+| `setRoomFooter` | Shows the text input, or nothing. A room with a contact shows the input of its contact state instead |
 
 The core checks that the product created the room before it calls any of these.
 
-The bridge also carries the Chat Extension v2 additions ([RFC](../../docs/rfcs/chat-extension-v2-additions.md)). Each has an interface default for a host that does not serve them: `capabilities`, `roomUserStates` and `bots` answer an empty list, `roomFeatures` answers `HOST_DEFAULT_CHAT_ROOM_FEATURES`, and the two setters answer a rejection.
+The bridge also carries the Chat Extension v2 additions ([RFC](../../docs/rfcs/chat-extension-v2-additions.md)). Each has an interface default for a host that does not serve them: `capabilities` answers an empty list, `roomFeatures` answers `HOST_DEFAULT_CHAT_ROOM_FEATURES`, and the three setters answer a rejection.
 
 | Request | What the host does |
 | --- | --- |
-| `capabilities` | Answers the feature names it serves from end to end (the RFC's feature table). The core drops each name it does not know or cannot back, and answers the product's `capabilities` with the rest |
+| `capabilities` | Answers the feature names it serves from end to end (the RFC's feature table). The core drops each name it does not know or cannot back, and uses the rest to refuse a call or contact the host does not serve. Products do not read the list |
 | `roomFeatures`, `setRoomFeatures` | Answer and replace the optional features of a room. Keep a feature this build does not serve, so a later build applies it |
-| `setRoomCall` | Shows, changes or removes the call of a room. The core first checks that `capabilities` lists `call_buttons` or `room_calls` |
-| `roomUserStates` | Answers each room of the product the user muted or archived; the core sends it to the product when its `roomEventsSubscribe` starts, and silences an immediate notification into a muted room |
-| `bots` | Answers the bot ids of the personas the product registered; the core refuses a `bot:<id>` author that is not one of them |
+| `setRoomCall` | Shows, changes or removes the call of a room. The core first checks that `capabilities` lists `call_buttons` |
+| `setRoomContact` | Keeps the contact of a room (`ChatRoomContact`: account, username, `ChatContactState`) and draws the room as the host's own person-to-person chat. The core first checks that `capabilities` lists `contact_rooms`, which it backs only for the chat product |
 
 ```kotlin
 import io.parity.truapi.*
@@ -180,7 +179,7 @@ names are also normalized; a message body is bounded and screened but passed
 through byte-for-byte, and `ChatFile.size_bytes` is product-asserted and
 unverified. Contextual output escaping is the host's job.
 
-The host asks a room that declares a handler in its configuration through six `suspend` queries on the execution: `chatMessagesQuery`, `chatUserAction`, `chatReactionsQuery`, `chatParticipantsQuery`, `chatMessageActionsQuery` and `chatSearchQuery` (asked only of a product-source room whose features set `search`). Each one waits for one answer, and stops the query in the product after its timeout or when the coroutine is cancelled. The default timeouts are in `ChatQueryTimeout`: 10 s for a page of messages, 30 s for a sent message, 10 s for other user actions, 5 s for reactions, participants and menus, and 10 s for a search; each query also takes `timeout`. A query with no answer throws `ChatQueryException`: `Refused` with `ProductChatQueryError.NotAvailable` asks the host to apply its default, `ActionRefused` reverts a user action, and `Failed`, `NoAnswer` and `TimedOut` show the failure state of that query. The core answers `NotAvailable` itself for a room that does not declare the handler, without starting the worker.
+The host asks a room that declares a handler in its configuration through five `suspend` queries on the execution: `chatMessagesQuery`, `chatUserAction`, `chatSearchQuery`, `chatEditHistory` and `chatOpenLink`. Each one waits for one answer, and stops the query in the product after its timeout or when the coroutine is cancelled. The default timeouts are in `ChatQueryTimeout`: 10 s for a page of messages or of search matches, 30 s for a sent message, 10 s for other user actions, 5 s for an edit history, and 90 s for an opened link; each query also takes `timeout`. A query with no answer throws `ChatQueryException`: `Refused` with `ProductChatQueryError.NotAvailable` asks the host to apply its default, `ActionRefused` reverts a user action, and `Failed`, `NoAnswer` and `TimedOut` show the failure state of that query. The core answers `NotAvailable` itself for a room that does not declare the handler, without starting the worker.
 
 ```kotlin
 val page = execution.chatMessagesQuery(
@@ -188,9 +187,7 @@ val page = execution.chatMessagesQuery(
 )
 ```
 
-`publishChatEvent(roomId, peer, event)` delivers what the user did in a room the host stores, and the room events of both kinds of room (`ActionTriggered`, `MessageActionTriggered` and the others), with peer `"native"` for the user of the host. The product receives at most one `Seen` event for each room each second, and a product at the first protocol version receives only the events that its version carries.
-
-The runtime carries the parts of the additions that need no execution: `publishChatRoomEvent(productId, roomId, event)` sends a `ChatRoomEvent` (mute and archive, call buttons and answers) and the core keeps the newest 64 of a product until its worker subscribes; `wakeProduct(productId, reason)` holds the worker for 30 seconds for a `ChatWakeReason` and answers `ChatWakeOutcome`, at most 12 notification wakes for each product in one hour; `stageChatAttachment(productId, roomId, mimeType, bytes)` stores a user attachment above the inline bound as one Bulletin preimage that the product's own allowance pays for and returns its key, or throws `NativeChatStageRejection` (the room does not declare `preimage_attachments`, the file is above 8 MiB or the chain's per-transaction bound, the user refused `PreimageSubmit`, no allowance, or the submission failed).
+The runtime carries the parts of the additions that need no execution: `publishChatRoomEvent(productId, roomId, event)` sends a `ChatRoomEvent` (call buttons, answers, ends and media signals) and the core keeps the newest 64 of a product until its worker subscribes; `wakeProduct(productId, reason)` holds the worker for 30 seconds for a `ChatWakeReason` and answers `ChatWakeOutcome`, at most 12 notification wakes for each product in one hour (wake with `ChatWakeReason.Notification(roomId)` when a chat push for a room arrives); `hopChatAttachment(productId, roomId, bytes, progress)` uploads a user file of a room of the chat product that declares `hop_attachments` to a HOP node and returns the `ChatResource.Hop` to send to the product, or throws `NativeChatStageRejection` (the room does not declare `hop_attachments`, the file is above 128 MiB, or the upload failed), and calls the optional `progress` lambda with the bytes the node holds and the size of the file; `openHopChatResource(productId, resource, progress)` opens a `ChatResource.Hop` a room shows, and calls the optional `progress` lambda with the bytes received and the size of the file as they arrive.
 
 `postMessage` receives any `ChatMessageContent` variant; throw from it for one this host cannot render. The id it returns is the correlation key `ActionTrigger.messageId` carries back, so it must name that message for as long as the host stores it. `alt` is the product's one-line description of the message, already trimmed and screened, for places that list the message rather than draw it, such as a chat list preview of a custom card. Only a custom message carries one, since every other kind previews from its own content.
 
@@ -206,7 +203,7 @@ The `NativeAnnouncedPairing` that `notifyPairingAllowanceAllocation` returns hol
 
 `durableWorkChanged` on the runtime bridge reports whether the core has durable transactions still awaiting a verdict, starting with the state it finds at launch. While it is `true`, enqueue unique background work requiring a network connection that awaits `runDurableRecovery()`, which returns once nothing is live and throws `RecoveryException` when recovery stopped early, so the work is retried. Defaults to a no-op for a host that runs no durable work.
 
-On the execution: `publishChatEvent` and `publishChatAction` deliver a user's action back to the product (buffered until it subscribes), `notifyChatRoomsChanged` republishes the room list, `render` returns a `Flow` of `RendererNode` trees for one render context, `publishRendererAction` delivers a renderer action back to the product, and `sessionChatIdentityKey` reads the session's X25519 chat identity key. An open render stream is one worker reference the core holds on the product's behalf; the transition it causes arrives on the runtime bridge's `workerDemandChanged`, never on the execution's. Two rules the core cannot check are the host's to keep: send a render context only for a surface the product's manifest `includes`, and publish a renderer action only from the current tree of an open render stream.
+On the execution: `publishChatAction` delivers a user's action back to the product (buffered until it subscribes), `notifyChatRoomsChanged` republishes the room list, `render` returns a `Flow` of `RendererNode` trees for one render context, `publishRendererAction` delivers a renderer action back to the product, and `sessionChatIdentityKey` reads the session's X25519 chat identity key. An open render stream is one worker reference the core holds on the product's behalf; the transition it causes arrives on the runtime bridge's `workerDemandChanged`, never on the execution's. Two rules the core cannot check are the host's to keep: send a render context only for a surface the product's manifest `includes`, and publish a renderer action only from the current tree of an open render stream.
 
 ## Architecture
 

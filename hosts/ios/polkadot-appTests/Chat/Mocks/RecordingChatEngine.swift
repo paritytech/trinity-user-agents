@@ -8,7 +8,6 @@ import PolkadotUI
 final class RecordingChatEngine: ChatEngineProtocol, @unchecked Sendable {
     enum Call: Equatable {
         case sendUserMessage(Chat.LocalMessage.Content)
-        case deleteMessage(Chat.MessageId)
         case markAsSeen(Set<Chat.MessageId>)
         case loadOlder
         case loadNewer
@@ -16,7 +15,6 @@ final class RecordingChatEngine: ChatEngineProtocol, @unchecked Sendable {
         case perform(ChatSourceAction)
         case openRoom
         case closeRoom
-        case retryRoom
     }
 
     /// What `chatMetadataStream` yields before it finishes.
@@ -26,7 +24,7 @@ final class RecordingChatEngine: ChatEngineProtocol, @unchecked Sendable {
     var store = ChatRoomPolicy.MessageStore.host
     var jumpFindsMessage = true
     var actionOutcome = ChatSourceActionOutcome.done
-    /// What `sendUserMessage` and `deleteMessage` throw after they record the call.
+    /// What `sendUserMessage` throws after it records the call.
     var sendError: Error?
 
     let calls: AsyncStream<Call>
@@ -73,14 +71,6 @@ final class RecordingChatEngine: ChatEngineProtocol, @unchecked Sendable {
 
     func processAction(_: Chat.Action) async {}
 
-    func deleteMessage(_ messageId: Chat.MessageId) async throws {
-        continuation.yield(.deleteMessage(messageId))
-
-        if let sendError {
-            throw sendError
-        }
-    }
-
     func messageSnapshots() async throws -> AnyAsyncSequence<MessageListSnapshot> {
         guard !snapshotUpdates.isEmpty else {
             return AsyncStream<MessageListSnapshot> { $0.finish() }.eraseToAnyAsyncSequence()
@@ -123,9 +113,5 @@ final class RecordingChatEngine: ChatEngineProtocol, @unchecked Sendable {
 
     func closeRoom() async {
         continuation.yield(.closeRoom)
-    }
-
-    func retryRoom() async {
-        continuation.yield(.retryRoom)
     }
 }

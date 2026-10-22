@@ -1,41 +1,40 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy
 
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatPreviewReactionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomContactModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewTextModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 
 fun declarations(
     config: ChatRoomConfigModel? = ChatRoomConfigModel.HOST_DEFAULT,
     description: String? = null,
-    avatar: ChatResourceModel? = null,
     preview: ChatRoomPreviewModel? = null,
-    footer: ChatRoomFooterModel? = null,
     features: ChatRoomFeaturesModel? = null,
+    contact: ChatRoomContactModel? = null,
 ) = ChatRoomDeclarations(
     config = config,
     configGeneration = 1,
-    metadata = ChatRoomMetadataModel(description = description, avatar = avatar),
+    metadata = ChatRoomMetadataModel(description = description),
     preview = preview,
-    footer = footer,
     features = features,
+    contact = contact,
 )
 
 fun preview(
-    order: Order = Order.ByTimestamp,
     timestamp: Long? = null,
     badge: ChatRoomBadgeModel? = null,
-    text: String? = null,
-    ongoing: Boolean = false,
+    lastMessage: ProductRoomMessage? = null,
+    lastReaction: ChatPreviewReactionModel? = null,
+    unseenReactions: Int = 0,
 ) = ChatRoomPreviewModel(
-    order = order,
     timestamp = timestamp,
     badge = badge,
-    text = text?.let { ChatRoomPreviewTextModel(it, ongoing) },
+    lastMessage = lastMessage,
+    lastReaction = lastReaction,
+    unseenReactions = unseenReactions,
 )

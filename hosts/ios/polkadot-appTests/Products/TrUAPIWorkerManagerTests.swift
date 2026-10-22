@@ -281,29 +281,47 @@ struct TrUAPIWorkerManagerTests {
         #expect(try builder.bridge?.listCards().map(\.cardId).sorted() == ["loyalty", "streak"])
     }
 
-    /// An uncaught error ends the worker (06-OPEN-ITEMS O26). The core still counts the references of its
-    /// holders and sends no new start, so the next request starts the worker again.
+    /// An uncaught error ends the worker of the chat product (06-OPEN-ITEMS O26). The core still counts the
+    /// references of its holders and sends no new start, so the next request starts the worker again.
     @Test
     func anUncaughtErrorStopsTheWorkerAndTheNextRequestStartsItAgain() async throws {
         let builder = StubWorkerBuilder()
         let references = StubWorkerReferences()
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]), references: references)
 
+        manager.demandChanged(productId: "chat.paseo", transition: .start)
+        try await execution(of: "chat.paseo", in: manager)
+        let first = try #require(builder.executions["chat.paseo"])
+
+        try await builder.engine?.invokeNative(TrUAPIWorkerRuntime.faultHandlerName, args: "boom at worker.js:1")
+        try await noExecution(of: "chat.paseo", in: manager)
+        try await withTimeout(.seconds(5)) { await first.awaitClose() }
+
+        #expect(first.closeCallCount == 1)
+
+        let execution = try await manager.ensureWorker(for: "chat.paseo")
+
+        #expect(builder.built == ["chat.paseo", "chat.paseo"])
+        #expect((execution as? MockProductExecution) !== first)
+        #expect(references.acquired == ["chat.paseo"])
+    }
+
+    /// Any other product keeps its worker after an uncaught error, as before the chat product.
+    @Test
+    func anUncaughtErrorOfAnotherProductKeepsItsWorker() async throws {
+        let builder = StubWorkerBuilder()
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+
         manager.demandChanged(productId: "game.paseo", transition: .start)
         try await execution(of: "game.paseo", in: manager)
         let first = try #require(builder.executions["game.paseo"])
 
         try await builder.engine?.invokeNative(TrUAPIWorkerRuntime.faultHandlerName, args: "boom at worker.js:1")
-        try await noExecution(of: "game.paseo", in: manager)
-        try await withTimeout(.seconds(5)) { await first.awaitClose() }
+        try await barrier(manager)
 
-        #expect(first.closeCallCount == 1)
-
-        let execution = try await manager.ensureWorker(for: "game.paseo")
-
-        #expect(builder.built == ["game.paseo", "game.paseo"])
-        #expect((execution as? MockProductExecution) !== first)
-        #expect(references.acquired == ["game.paseo"])
+        #expect(manager.currentExecution(of: "game.paseo") as? MockProductExecution === first)
+        #expect(first.closeCallCount == 0)
+        #expect(builder.built == ["game.paseo", "barrier.paseo"])
     }
 
     /// The core stops and starts the worker itself after the last holder goes, so a request after that waits
@@ -313,17 +331,17 @@ struct TrUAPIWorkerManagerTests {
         let builder = StubWorkerBuilder()
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        try await execution(of: "game.paseo", in: manager)
+        manager.demandChanged(productId: "chat.paseo", transition: .start)
+        try await execution(of: "chat.paseo", in: manager)
         try await builder.engine?.invokeNative(TrUAPIWorkerRuntime.faultHandlerName, args: "boom")
-        try await noExecution(of: "game.paseo", in: manager)
-        manager.demandChanged(productId: "game.paseo", transition: .stop)
+        try await noExecution(of: "chat.paseo", in: manager)
+        manager.demandChanged(productId: "chat.paseo", transition: .stop)
 
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        _ = try await manager.ensureWorker(for: "game.paseo")
+        manager.demandChanged(productId: "chat.paseo", transition: .start)
+        _ = try await manager.ensureWorker(for: "chat.paseo")
         try await barrier(manager)
 
-        #expect(builder.built == ["game.paseo", "game.paseo", "barrier.paseo"])
+        #expect(builder.built == ["chat.paseo", "chat.paseo", "barrier.paseo"])
     }
 
     // MARK: - Foreground workers (VERBOSITY-WASM-PRODUCT I5)
@@ -335,17 +353,17 @@ struct TrUAPIWorkerManagerTests {
         let builder = StubWorkerBuilder()
         let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
-        manager.demandChanged(productId: "game.paseo", transition: .start)
-        try await execution(of: "game.paseo", in: manager)
+        manager.demandChanged(productId: "chat.paseo", transition: .start)
+        try await execution(of: "chat.paseo", in: manager)
         try await builder.engine?.invokeNative(TrUAPIWorkerRuntime.faultHandlerName, args: "boom")
-        try await noExecution(of: "game.paseo", in: manager)
+        try await noExecution(of: "chat.paseo", in: manager)
 
         manager.appForegroundChanged(false)
-        #expect(builder.built == ["game.paseo"])
+        #expect(builder.built == ["chat.paseo"])
 
         manager.appForegroundChanged(true)
-        try await execution(of: "game.paseo", in: manager)
-        #expect(builder.built == ["game.paseo", "game.paseo"])
+        try await execution(of: "chat.paseo", in: manager)
+        #expect(builder.built == ["chat.paseo", "chat.paseo"])
     }
 
     /// A worker that runs and has no fault is the core's to start and stop, so a return to the foreground does not

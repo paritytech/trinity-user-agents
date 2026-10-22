@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.outbox
 
 import android.content.Context
 import androidx.hilt.work.HiltWorker
+import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
@@ -9,22 +10,32 @@ import androidx.work.ForegroundInfo
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import androidx.work.WorkRequest
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.novasama.substrate_sdk_android.extensions.fromHex
+import io.novasama.substrate_sdk_android.extensions.toHexString
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.transfer.hopTransferForegroundInfo
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.ProductAttachmentStageScheduler
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.ProductAttachmentStager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import timber.log.Timber
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import io.paritytech.polkadotapp.common.R as RCommon
 
-/** Stages one entry of the attachment outbox. The job continues after the room screen closes. */
+/**
+ * Sends the outbox of one room, in order. The job continues after the room screen closes and after the process stops,
+ * and runs again with a backoff while a message did not go, as the native chat sends a message until it goes.
+ */
 @HiltWorker
 class ProductAttachmentStageWorker @AssistedInject constructor(
     @Assisted appContext: Context,
@@ -32,14 +43,16 @@ class ProductAttachmentStageWorker @AssistedInject constructor(
     private val stager: ProductAttachmentStager,
 ) : CoroutineWorker(appContext, parameters) {
     override suspend fun doWork(): Result {
-        val entryId = inputData.getString(KEY_ENTRY_ID) ?: return Result.failure()
+        // A job of an earlier build named an entry, not a room. Its entry goes with the next send of its room.
+        val chatId = inputData.getString(KEY_CHAT_ID)?.let { ChatId.fromRawValue(it.fromHex()) } ?: return Result.success()
 
-        runCancellableCatching { setForeground(getForegroundInfo()) }
-            .onFailure { Timber.d(it, "The attachment stage job runs as background work") }
+        // Only an upload shows the notification of a file transfer.
+        if (stager.hasUploads(chatId)) {
+            runCancellableCatching { setForeground(getForegroundInfo()) }
+                .onFailure { Timber.d(it, "The outbox job runs as background work") }
+        }
 
-        // The stager keeps each failure in the outbox entry, where the user can retry it.
-        stager.process(entryId)
-        return Result.success()
+        return if (stager.processRoom(chatId)) Result.success() else Result.retry()
     }
 
     override suspend fun getForegroundInfo(): ForegroundInfo = hopTransferForegroundInfo(
@@ -50,29 +63,31 @@ class ProductAttachmentStageWorker @AssistedInject constructor(
     )
 
     companion object {
-        const val KEY_ENTRY_ID = "entry_id"
+        const val KEY_CHAT_ID = "chat_id"
         private const val NOTIFICATION_ID = 1004
 
-        fun workName(entryId: ChatMessageId) = "ProductAttachmentStage:$entryId"
+        fun workName(chatId: ChatId) = "ProductOutbox:${chatId.value.value.toHexString()}"
     }
 }
 
 class WorkManagerProductAttachmentStageScheduler @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) : ProductAttachmentStageScheduler {
-    override fun schedule(entryId: ChatMessageId) {
+    override suspend fun schedule(chatId: ChatId) {
         val request = OneTimeWorkRequestBuilder<ProductAttachmentStageWorker>()
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-            .setInputData(workDataOf(ProductAttachmentStageWorker.KEY_ENTRY_ID to entryId))
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
+            .setInputData(workDataOf(ProductAttachmentStageWorker.KEY_CHAT_ID to chatId.value.value.toHexString()))
             .build()
 
-        // A retry that comes while the last job of the entry ends runs after that job. It does not stop it.
-        WorkManager.getInstance(context)
-            .enqueueUniqueWork(ProductAttachmentStageWorker.workName(entryId), ExistingWorkPolicy.APPEND_OR_REPLACE, request)
-    }
-
-    override fun cancel(entryId: ChatMessageId) {
-        WorkManager.getInstance(context).cancelUniqueWork(ProductAttachmentStageWorker.workName(entryId))
+        // A send that comes while a job of the room runs goes after that job, so the messages of a room keep their order. A
+        // job that waits for its backoff gives way, so a new message goes at once.
+        val workManager = WorkManager.getInstance(context)
+        val name = ProductAttachmentStageWorker.workName(chatId)
+        val running = withContext(Dispatchers.IO) { workManager.getWorkInfosForUniqueWork(name).get() }
+            .any { it.state == WorkInfo.State.RUNNING }
+        val policy = if (running) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.REPLACE
+        workManager.enqueueUniqueWork(name, policy, request)
     }
 }

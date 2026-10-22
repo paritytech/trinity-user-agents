@@ -235,10 +235,12 @@ impl ProductRuntimeHost {
 
 	/// Upload `data` as one file to a node the host picks at random, under a
 	/// new ticket, signed by the product's Bulletin allowance account.
+	/// `progress` follows the upload, as [`HopClient::upload`] reports it.
 	async fn upload_hop_file_checked(
 		&self,
 		cx: &CallContext,
 		data: Vec<u8>,
+		progress: impl FnMut(u64, u64) + Send,
 	) -> PersonChatResult<latest::HostPersonChatHopUploadResponse> {
 		let nodes = self.hop_nodes(cx).await?;
 		let mut pick = [0u8; 8];
@@ -260,10 +262,11 @@ impl ProductRuntimeHost {
 		let signer = allowance_signer(&allowance).map_err(unknown)?;
 		let client = self.hop_client(cx, &node).await?;
 		let now_ms = current_unix_millis();
-		let identifier = until_cancelled(cx, client.upload(&ticket, &data, &signer, now_ms))
-			.await
-			.map_err(|error| unknown(error.to_string()))?
-			.map_err(hop_error)?;
+		let identifier =
+			until_cancelled(cx, client.upload(&ticket, &data, &signer, now_ms, progress))
+				.await
+				.map_err(|error| unknown(error.to_string()))?
+				.map_err(hop_error)?;
 		if let Err(error) = self
 			.connection
 			.services
@@ -282,8 +285,9 @@ impl ProductRuntimeHost {
 		&self,
 		cx: &CallContext,
 		data: Vec<u8>,
+		progress: impl FnMut(u64, u64) + Send,
 	) -> Result<latest::HostPersonChatHopUploadResponse, String> {
-		self.upload_hop_file_checked(cx, data)
+		self.upload_hop_file_checked(cx, data, progress)
 			.await
 			.map_err(|error| format!("{error:?}"))
 	}
@@ -299,9 +303,7 @@ impl ProductRuntimeHost {
 
 /// The identifier, ticket and node of a [`latest::ChatResource::Hop`].
 fn hop_resource(resource: &latest::ChatResource) -> Result<([u8; 32], [u8; 32], String), String> {
-	let latest::ChatResource::Hop { identifier, ticket, node, .. } = resource else {
-		return Err("the resource is not a HOP file".to_string());
-	};
+	let latest::ChatResource::Hop { identifier, ticket, node, .. } = resource;
 	let identifier =
 		identifier.as_slice().try_into().map_err(|_| "the identifier is not 32 bytes")?;
 	let ticket = ticket.as_slice().try_into().map_err(|_| "the ticket is not 32 bytes")?;
@@ -312,9 +314,11 @@ impl ProductRuntimeHost {
 	/// The bytes of a HOP file that a room of the chat product shows, and the
 	/// pool entries to ack once the host keeps them. Claims only from a node
 	/// the host lists, and falls back to Bulletin for promoted entries.
+	/// `progress` follows the download as [`HopClient::download`] reports it.
 	pub async fn open_hop_chat_resource(
 		&self,
 		resource: &latest::ChatResource,
+		progress: impl FnMut(u64, u64) + Send,
 	) -> Result<(Vec<u8>, Vec<[u8; 32]>), String> {
 		if !self.connection.product.is_person_chat_product() {
 			return Err("only the chat product's rooms carry HOP files".to_string());
@@ -322,8 +326,10 @@ impl ProductRuntimeHost {
 		let (identifier, ticket, node) = hop_resource(resource)?;
 		let cx = CallContext::default();
 		let client = self.hop_client(&cx, &node).await.map_err(|error| format!("{error:?}"))?;
-		let (data, entries) =
-			client.download(&identifier, &ticket).await.map_err(|error| error.to_string())?;
+		let (data, entries) = client
+			.download(&identifier, &ticket, progress)
+			.await
+			.map_err(|error| error.to_string())?;
 		if data.len() as u64 > crate::platform::CHAT_HOP_FILE_MAX_BYTES {
 			return Err("the file is larger than a chat file may be".to_string());
 		}
@@ -723,7 +729,7 @@ impl PersonChat for ProductRuntimeHost {
 			if data.is_empty() || data.len() > HOP_FILE_MAX_BYTES {
 				return Err(invalid(format!("a file must be 1 to {HOP_FILE_MAX_BYTES} bytes")));
 			}
-			self.upload_hop_file_checked(cx, data).await
+			self.upload_hop_file_checked(cx, data, |_, _| {}).await
 		}
 		.await;
 		result
@@ -743,10 +749,11 @@ impl PersonChat for ProductRuntimeHost {
 		let result = async {
 			self.person_chat_session()?;
 			let client = self.hop_client(cx, &node).await?;
-			let (data, entries) = until_cancelled(cx, client.download(&identifier, &ticket))
-				.await
-				.map_err(|error| unknown(error.to_string()))?
-				.map_err(hop_error)?;
+			let (data, entries) =
+				until_cancelled(cx, client.download(&identifier, &ticket, |_, _| {}))
+					.await
+					.map_err(|error| unknown(error.to_string()))?
+					.map_err(hop_error)?;
 			if data.len() > HOP_FILE_MAX_BYTES {
 				return Err(unknown(format!("the file is larger than {HOP_FILE_MAX_BYTES} bytes")));
 			}

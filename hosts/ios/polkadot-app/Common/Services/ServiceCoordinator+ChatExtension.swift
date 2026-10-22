@@ -45,8 +45,7 @@ extension ServiceCoordinator {
             productProvider: productRepositoryFactory.createProvider(),
             botFactory: botFactory,
             dotNsResolver: spaFlowState.dotNsResolver,
-            productResolver: spaFlowState.productResolver,
-            chatProductReleases: spaFlowState.chatProductReleases
+            productResolver: spaFlowState.productResolver
         )
 
         let registry = MainActor.assumeIsolated {

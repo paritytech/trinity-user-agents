@@ -14,7 +14,6 @@ mod preimage;
 mod resources;
 mod scanner;
 mod signing;
-mod usernames;
 
 use crate::{CallError, versioned::FromLatest};
 

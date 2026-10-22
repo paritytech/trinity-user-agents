@@ -31,8 +31,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -102,7 +100,6 @@ internal fun ChatInputRow(
 
                         SendMessageInput(
                             messageState = inputState.messageState,
-                            placeholder = inputState.placeholder,
                             characterLimit = MAX_WELCOME_MESSAGE_LENGTH.takeIf { inputState.isChatRequest },
                             showPayButton = inputState.showPayButton,
                             showAttachmentButton = inputState.showAttachButton,
@@ -172,7 +169,6 @@ private fun footerBackgroundBrush(state: ChatInputUiState): Brush = when (state)
 @Composable
 private fun SendMessageInput(
     messageState: ChatSendMessageInputState,
-    placeholder: String?,
     characterLimit: Int?,
     showPayButton: Boolean,
     showAttachmentButton: Boolean,
@@ -225,7 +221,6 @@ private fun SendMessageInput(
                         .fillMaxWidth()
                         .animateContentSize(),
                     text = messageState.inputMessage,
-                    placeholder = placeholder,
                     characterLimit = characterLimit,
                     onTextChanged = onMessageChange,
                     onSendAction = onSendMessageClick
@@ -286,7 +281,6 @@ private fun ReplyBanner(
             AnnotatedString(content.caption ?: stringResource(RCommon.string.chat_attachment_name_video))
         is ReplyPreview.Content.File -> AnnotatedString(content.caption ?: content.fileName)
         is ReplyPreview.Content.Payment -> content.paymentSubtitle(PolkadotTheme.typography.body.smallEmphasized)
-        ReplyPreview.Content.Unloaded -> AnnotatedString(stringResource(RCommon.string.chat_reply_earlier_message))
     }
 
     TitledBanner(
@@ -350,9 +344,7 @@ private fun TitledBanner(
                     end = PolkadotTheme.spacings.tiny
                 )
             ) {
-                val closeLabel = stringResource(RCommon.string.common_close)
                 PolkadotIconButton(
-                    modifier = Modifier.semantics { contentDescription = closeLabel },
                     icon = NovaIcons.Close,
                     onClick = onClose,
                     style = PolkadotButtonStyle.ghost(),

@@ -4,21 +4,20 @@ import PolkadotUI
 import Testing
 @testable import polkadot_app
 
-/// The room screen opens and closes the room of its product, and shows when the product does not answer (P5.7).
+/// The room screen opens and closes the room of its product (P5.7).
 @MainActor
 struct ChatRoomReadinessTests {
     private let engine = RecordingChatEngine()
     private let output = RecordingChatInteractorOutput()
 
-    @Test func openCloseAndRetryReachTheEngineInOrder() async {
+    @Test func openAndCloseReachTheEngineInOrder() async {
         let interactor = makeInteractor()
 
         interactor.openRoom()
         interactor.closeRoom()
         interactor.openRoom()
-        interactor.retryRoom()
 
-        #expect(await calls(4) == [.openRoom, .closeRoom, .openRoom, .retryRoom])
+        #expect(await calls(3) == [.openRoom, .closeRoom, .openRoom])
     }
 
     @Test func theReadinessOfTheWindowReachesThePresenter() async throws {
@@ -33,37 +32,13 @@ struct ChatRoomReadinessTests {
         #expect(try #require(output.listModel).readiness == .unavailable)
     }
 
-    @Test func aReadyRoomShowsNoStatusLine() {
-        #expect(ChatViewLayout.ViewModel.RoomStatus(readiness: .ready) == nil)
-    }
-
-    @Test func aLoadingRoomShowsASpinnerLine() {
-        guard case .loading = ChatViewLayout.ViewModel.RoomStatus(readiness: .loading) else {
-            Issue.record("a loading room shows the loading line")
-            return
-        }
-    }
-
-    @Test func anUnavailableRoomOffersARetry() {
-        guard case let .unavailable(text, retryTitle) = ChatViewLayout.ViewModel.RoomStatus(readiness: .unavailable)
-        else {
-            Issue.record("an unavailable room shows the retry line")
-            return
-        }
-
-        #expect(!text.isEmpty)
-        #expect(!retryTitle.isEmpty)
-    }
-
-    @Test func aFailedPageShowsATextRow() {
+    /// The native chat shows no row while it loads messages, and none for a page that failed: the chat asks a failed
+    /// page again when the user scrolls near its end.
+    @Test func aFailedPageIsAskedAgainWithoutARow() {
         let paging = ChatViewLayout.ViewModel.Paging(paging: ChatPagingState(older: .failed, newer: .loading))
 
+        #expect(paging.older == .more)
         #expect(paging.newer == .loading)
-        guard case let .failed(text) = paging.older else {
-            Issue.record("a failed page shows a text row")
-            return
-        }
-        #expect(!text.isEmpty)
     }
 }
 

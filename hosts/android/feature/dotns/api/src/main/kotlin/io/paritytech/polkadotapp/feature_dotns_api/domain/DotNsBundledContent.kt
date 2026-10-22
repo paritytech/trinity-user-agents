@@ -7,8 +7,9 @@ package io.paritytech.polkadotapp.feature_dotns_api.domain
  */
 interface DotNsBundledContent {
     /**
-     * Serves [files] (paths relative to the archive root) for [dotNsName] under [contentHash], an id of the
-     * content that changes whenever the files do. Idempotent: content already stored is not written again.
+     * Serves [files] (paths relative to the archive root) for [dotNsName] under [contentHash], a hex id of the
+     * content that changes whenever the files do (the resolver decodes it as hex). Idempotent: content already
+     * stored is not written again.
      */
     suspend fun install(dotNsName: String, contentHash: String, files: Map<String, ByteArray>)
 }

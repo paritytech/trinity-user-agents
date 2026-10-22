@@ -6,8 +6,8 @@ import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
 import io.paritytech.polkadotapp.design.configs.colors.AvatarColorScheme
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
 import io.paritytech.polkadotapp.feature_settings_impl.SettingsRouter
+import io.paritytech.polkadotapp.feature_settings_impl.domain.interactors.BlockedUser
 import io.paritytech.polkadotapp.feature_settings_impl.domain.interactors.BlockedUsersInteractor
 import io.paritytech.polkadotapp.feature_settings_impl.presentation.blockedUsers.models.BlockedUserUiModel
 import io.paritytech.polkadotapp.feature_settings_impl.presentation.blockedUsers.models.BlockedUsersUiState
@@ -42,11 +42,12 @@ class BlockedUsersViewModel @Inject constructor(
         interactor.unblockContact(accountId)
     }
 
-    override fun onChatClick(accountId: AccountId) {
-        router.openContactChat(accountId)
+    override fun onChatClick(accountId: AccountId) = launchUnit {
+        val productRoom = interactor.productRoomOf(accountId)
+        if (productRoom != null) router.openChat(productRoom) else router.openContactChat(accountId)
     }
 
-    private fun Contact.toUiModel(): BlockedUserUiModel {
+    private fun BlockedUser.toUiModel(): BlockedUserUiModel {
         val displayName = username ?: accountId.value.toHexShort()
         val avatarUrl = avatarUrl
         val avatarModel = if (avatarUrl != null) {

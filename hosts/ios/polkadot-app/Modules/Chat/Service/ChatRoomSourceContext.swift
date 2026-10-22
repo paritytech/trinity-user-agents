@@ -10,8 +10,10 @@ struct ProductRoomServices: Sendable {
     let feedListeners: ProductFeedListeners
     let cache: ProductMessageCaching
     let settings: ProductMessageSource.Settings
-    /// The outbox of the staged attachments (P10.3). Nil shows no outbox entry in the window.
-    let stager: ProductAttachmentStager?
+    /// The outbox of the messages of the user (P10.3). Nil sends through an outbox in memory of the room.
+    let outbox: ProductOutbox?
+    /// Takes the photos and the videos of the contact. Nil takes none.
+    let downloads: ProductMediaDownloads?
 
     init(
         querying: ProductChatQuerying?,
@@ -19,14 +21,16 @@ struct ProductRoomServices: Sendable {
         feedListeners: ProductFeedListeners = .shared,
         cache: ProductMessageCaching = ProductMessageCache.shared,
         settings: ProductMessageSource.Settings = .init(),
-        stager: ProductAttachmentStager? = nil
+        outbox: ProductOutbox? = nil,
+        downloads: ProductMediaDownloads? = nil
     ) {
         self.querying = querying
         self.lifecycle = lifecycle
         self.feedListeners = feedListeners
         self.cache = cache
         self.settings = settings
-        self.stager = stager
+        self.outbox = outbox
+        self.downloads = downloads
     }
 
     /// The services that the bot of a product gives. A bot conforms to ``ProductChatQuerying`` and
@@ -35,7 +39,8 @@ struct ProductRoomServices: Sendable {
         self.init(
             querying: bot as? ProductChatQuerying,
             lifecycle: (bot as? ChatRoomLifecycle) ?? NoChatRoomLifecycle(),
-            stager: .shared
+            outbox: .shared,
+            downloads: .shared
         )
     }
 }
@@ -81,6 +86,27 @@ actor ChatRoomSourceContext {
         await source() is ProductMessageSource ? .product : .host
     }
 
+    /// Picks the source again when the policy of the room now names the other message store: the product set the
+    /// configuration of the room after the screen picked a source. Gives true when the source changed.
+    func refresh() async -> Bool {
+        guard resolution != nil else {
+            return false
+        }
+
+        let resolvedProduct = await source() is ProductMessageSource
+        guard await wantsProductSource() != resolvedProduct else {
+            return false
+        }
+
+        logger.debug("Room \(chatId.rawRepresentation) changed its message store")
+        registration?.cancel()
+        registration = nil
+        productSource = nil
+        resolution = nil
+        _ = await source()
+        return true
+    }
+
     /// Holds the product of the room while the room screen shows it.
     func open() async {
         guard !isOpen, let services, let roomId = chatId.roomId else {
@@ -105,15 +131,17 @@ actor ChatRoomSourceContext {
         isOpen = false
         await services.lifecycle.close(roomId: roomId)
     }
-
-    /// Opens the room again when the last open failed, then asks for the newest page.
-    func retry() async {
-        await open()
-        await source().reload()
-    }
 }
 
 private extension ChatRoomSourceContext {
+    func wantsProductSource() async -> Bool {
+        guard services != nil, chatId.roomId != nil else {
+            return false
+        }
+
+        return await policy()?.messageStore == .product
+    }
+
     func resolve() async -> ChatMessageSourcing {
         guard
             let services,
@@ -134,7 +162,8 @@ private extension ChatRoomSourceContext {
             querying: services.querying ?? MissingProductChatQuerying(),
             cache: services.cache,
             settings: settings,
-            stager: services.stager,
+            outbox: services.outbox,
+            downloads: services.downloads,
             logger: logger
         )
         registration = services.feedListeners.register(source, for: chatId)

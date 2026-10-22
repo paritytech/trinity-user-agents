@@ -6,6 +6,7 @@ import io.mockk.mockk
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContact
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContacts
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactsRepository
@@ -35,12 +36,26 @@ class RealContactDisplayProviderTest {
             PersonChatContact(bob, "bob.01", ChatId.forExtensionRoom("ProductBot_chat.dot", "dm-b0"), blocked = false),
         )
     }
-    private val provider = RealContactDisplayProvider(contacts, chatEngine, personChat, ChatDisplayGenerator(mockk()))
+    private fun provider(productChat: Boolean) = RealContactDisplayProvider(
+        contacts,
+        chatEngine,
+        personChat,
+        ChatDisplayGenerator(mockk()),
+        mockk<PersonChatMode> { every { isProductChat() } returns productChat },
+    )
 
     @Test
     fun `a caller the chat product knows gets its name, and a native contact keeps the native one`() = runTest {
+        val provider = provider(productChat = true)
         assertEquals("alice", provider.getContactDisplay(alice)?.username)
         assertEquals("bob.01", provider.getContactDisplay(bob)?.username)
         assertNull(provider.getContactDisplay(carol))
+    }
+
+    @Test
+    fun `the native chat knows only its own contacts`() = runTest {
+        val provider = provider(productChat = false)
+        assertEquals("alice", provider.getContactDisplay(alice)?.username)
+        assertNull(provider.getContactDisplay(bob))
     }
 }

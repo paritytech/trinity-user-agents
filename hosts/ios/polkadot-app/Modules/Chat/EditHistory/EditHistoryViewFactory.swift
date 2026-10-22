@@ -6,8 +6,6 @@ import UIKit
 @MainActor
 enum EditHistoryViewFactory {
     static func createView(messageId: String) -> EditHistoryViewController {
-        let timestampFormatter = ContactTimestampFormatter()
-
         let sortDescriptor = NSSortDescriptor(
             key: #keyPath(CDChatMessage.timestamp),
             ascending: false
@@ -19,6 +17,23 @@ enum EditHistoryViewFactory {
         )
 
         let interactor = EditHistoryInteractor(messageId: messageId, repository: repository)
+        let view = createView(messageId: messageId, interactor: interactor)
+        interactor.presenter = view.presenter as? EditHistoryPresenter
+        return view
+    }
+
+    /// The edit history of a message of a room that the product keeps.
+    static func createView(messageId: String, interactor: ProductEditHistoryInteractor) -> EditHistoryViewController {
+        let view = createView(messageId: messageId, interactor: interactor as EditHistoryInteractorInputProtocol)
+        interactor.presenter = view.presenter as? EditHistoryPresenter
+        return view
+    }
+
+    private static func createView(
+        messageId: String,
+        interactor: EditHistoryInteractorInputProtocol
+    ) -> EditHistoryViewController {
+        let timestampFormatter = ContactTimestampFormatter()
         let presenter = EditHistoryPresenter(
             messageId: messageId,
             timestampFormatter: timestampFormatter,
@@ -28,7 +43,6 @@ enum EditHistoryViewFactory {
 
         viewController.presenter = presenter
         presenter.view = viewController
-        interactor.presenter = presenter
 
         configureSheetPresentation(for: viewController)
 

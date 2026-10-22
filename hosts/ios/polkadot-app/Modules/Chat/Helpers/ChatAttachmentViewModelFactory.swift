@@ -340,7 +340,8 @@ private extension ChatAttachmentViewModelFactory {
                 time: .zero
             )
         )
-        let duration = try? durationFormatter.string(from: TimeInterval(meta.duration))
+        // A video of the chat product carries no duration, so it shows none.
+        let duration = meta.duration > 0 ? try? durationFormatter.string(from: TimeInterval(meta.duration)) : nil
         let durationConfiguration = duration.map {
             ChatMessageOverlayInfoViewConfiguration(
                 icon: nil,

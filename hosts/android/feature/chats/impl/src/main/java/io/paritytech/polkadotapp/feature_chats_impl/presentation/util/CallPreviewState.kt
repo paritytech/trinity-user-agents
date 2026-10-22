@@ -83,6 +83,37 @@ internal fun resolveCallState(
     }
 }
 
+/**
+ * The state of a call of a room of the chat product, from the call record of the product, by the rules of
+ * [resolveCallState]: the offer is the message, its answer and its close are times of the record.
+ */
+internal fun resolveContactCallState(
+    offer: ChatMessage,
+    call: ChatMessage.Content.ContactCall,
+    activeCall: ActiveCallState? = null,
+): ChatMessageUiModel.Call.State {
+    activeCall.toLiveCallState(offer)?.let { return it }
+
+    val closedAt = call.closedAt
+    val answeredAt = call.answeredAt
+
+    return when {
+        closedAt == null && answeredAt == null -> ChatMessageUiModel.Call.State.Ringing
+        closedAt == null -> ChatMessageUiModel.Call.State.Ongoing
+        answeredAt != null -> ChatMessageUiModel.Call.State.Ended((closedAt - answeredAt).milliseconds)
+        else -> {
+            val duration = (closedAt - offer.timestamp).milliseconds
+            val offerOutgoing = offer.direction == ChatMessageDirection.OUTGOING
+
+            when {
+                offerOutgoing && call.closedByUser -> ChatMessageUiModel.Call.State.Canceled(duration)
+                !offerOutgoing && !call.closedByUser -> ChatMessageUiModel.Call.State.Missed
+                else -> ChatMessageUiModel.Call.State.Declined(duration)
+            }
+        }
+    }
+}
+
 internal fun ActiveCallState?.toLiveCallState(offer: ChatMessage): ChatMessageUiModel.Call.State? {
     if (this == null || offerId != offer.id) return null
 

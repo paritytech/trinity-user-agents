@@ -37,18 +37,14 @@ struct RustChatExecutionBridgeTests {
         #expect(api.createdRooms.last?.icon == "icon")
     }
 
-    /// A room the product drives through actions alone asks for an empty footer, can ask for the text input
-    /// back, and can draw the footer itself (P6.6).
     @Test func setRoomFooterForwardsTheFooter() async throws {
         let api = RecordingChatMessaging()
         let bridge = await makeBridge(api: api)
         try await bridge.setRoomFooter(roomId: "r", footer: .empty)
-        let input = ChatInputConfig(placeholder: nil, photo: true, video: true, file: false, payment: nil)
-        try await bridge.setRoomFooter(roomId: "r", footer: .input(input))
-        try await bridge.setRoomFooter(roomId: "r", footer: .custom)
+        try await bridge.setRoomFooter(roomId: "r", footer: .textInput)
 
-        #expect(api.footerConfigs.map(\.footer) == [.empty, .input(.hostDefault), .custom])
-        #expect(api.footerConfigs.map(\.roomId) == ["r", "r", "r"])
+        #expect(api.roomFooters.map(\.footer) == [.empty, .textInput])
+        #expect(api.roomFooters.map(\.roomId) == ["r", "r"])
     }
 
     @Test func setRoomFooterRejectsAnEmptyRoom() async throws {
@@ -58,7 +54,7 @@ struct RustChatExecutionBridgeTests {
         await #expect(throws: HostRejection.self) {
             try await bridge.setRoomFooter(roomId: "", footer: .empty)
         }
-        #expect(api.footerConfigs.isEmpty)
+        #expect(api.roomFooters.isEmpty)
     }
 
     @Test func postMessageForwardsTextAndCustom() async throws {
@@ -94,66 +90,28 @@ struct RustChatExecutionBridgeTests {
         #expect(api.sentMessages.count == 2)
     }
 
-    @Test func postMessageForwardsRichTextWithItsMedia() async throws {
+    /// The native chat draws no rich text, actions or file of a product, so the host refuses them.
+    @Test func postMessageRejectsWhatTheNativeChatDoesNotDraw() async throws {
         let api = RecordingChatMessaging()
         let bridge = await makeBridge(api: api)
-        let media = ["https://example.com/a.png", "data:image/png;base64,AAAA"]
-
-        _ = try await bridge.postMessage(
-            roomId: "r",
-            content: .richText(ChatRichText(text: "**hi**", media: media.map { ChatMedia(url: $0) })),
-            alt: nil
-        )
-
-        #expect(api.sentMessages == [.richText(text: "**hi**", media: media)])
-    }
-
-    @Test func postMessageForwardsActionsWithTheirLayout() async throws {
-        let api = RecordingChatMessaging()
-        let bridge = await makeBridge(api: api)
-
-        _ = try await bridge.postMessage(
-            roomId: "r",
-            content: .actions(ChatActions(
-                text: "Pick one",
-                actions: [ChatAction(actionId: "yes", title: "Yes"), ChatAction(actionId: "no", title: "No")],
-                layout: .grid
-            )),
-            alt: nil
-        )
-
-        let expected = ProductBotActions(
-            text: "Pick one",
-            buttons: [.init(actionId: "yes", title: "Yes"), .init(actionId: "no", title: "No")],
-            layout: .grid
-        )
-        #expect(api.sentMessages == [.actions(expected)])
-    }
-
-    @Test func postMessageForwardsAFile() async throws {
-        let api = RecordingChatMessaging()
-        let bridge = await makeBridge(api: api)
-
-        _ = try await bridge.postMessage(
-            roomId: "r",
-            content: .file(ChatFile(
-                url: "https://example.com/report.pdf",
-                fileName: "report.pdf",
+        let contents: [ChatMessageContent] = [
+            .richText(ChatRichText(text: "**hi**", media: [])),
+            .actions(ChatActions(text: "Pick one", actions: [], layout: .grid)),
+            .file(ChatFile(
+                url: "https://example.com/a.pdf",
+                fileName: "a.pdf",
                 mimeType: "application/pdf",
-                sizeBytes: 2_048,
-                text: "Your report"
-            )),
-            alt: nil
-        )
+                sizeBytes: 1,
+                text: nil
+            ))
+        ]
 
-        let expected = ProductBotFile(
-            url: "https://example.com/report.pdf",
-            fileName: "report.pdf",
-            mimeType: "application/pdf",
-            sizeBytes: 2_048,
-            text: "Your report"
-        )
-        #expect(api.sentMessages == [.file(expected)])
+        for content in contents {
+            await #expect(throws: HostRejection.self) {
+                try await bridge.postMessage(roomId: "r", content: content, alt: nil)
+            }
+        }
+        #expect(api.sentMessages.isEmpty)
     }
 
     @Test func postMessageRejectsAReactionRemoval() async throws {
@@ -205,27 +163,14 @@ struct RustChatExecutionBridgeTests {
         #expect(api.createdRooms.isEmpty)
     }
 
-    /// P10.6: `register_bot` keeps a persona. An empty icon means no icon.
-    @Test func registerBotKeepsAPersona() async throws {
-        let api = RecordingChatMessaging()
-        let bridge = await makeBridge(api: api)
-
-        #expect(try await bridge.registerBot(botId: "b", name: "n", icon: "") == .new)
-        #expect(try await bridge.registerBot(botId: "b", name: "m", icon: "https://e.com/i.png") == .exists)
-        #expect(api.registeredPersonas == [
-            .init(botId: "b", name: "n", icon: nil),
-            .init(botId: "b", name: "m", icon: "https://e.com/i.png")
-        ])
-    }
-
-    @Test func registerBotRejectsAnEmptyId() async throws {
+    /// The native chat has no bots of its own, so the host refuses `register_bot`.
+    @Test func registerBotIsRefused() async throws {
         let api = RecordingChatMessaging()
         let bridge = await makeBridge(api: api)
 
         await #expect(throws: HostRejection.self) {
-            try await bridge.registerBot(botId: "", name: "n", icon: "")
+            try await bridge.registerBot(botId: "b", name: "n", icon: "")
         }
-        #expect(api.registeredPersonas.isEmpty)
     }
 
     @Test func listRoomsReadsTheCurrentRooms() async throws {

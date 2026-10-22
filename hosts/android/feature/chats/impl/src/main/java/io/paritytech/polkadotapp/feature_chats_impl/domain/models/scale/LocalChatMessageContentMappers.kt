@@ -47,7 +47,7 @@ fun ChatMessageContentLocal.toDomain(
         )
         is ChatMessageContentLocal.CompactionUnavailable -> ChatMessage.Content.CompactionUnavailable
         is ChatMessageContentLocal.ProductBody -> ChatMessage.Content.ProductBody(body.toDomain())
-        is ChatMessageContentLocal.Deleted -> ChatMessage.Content.Deleted
+        is ChatMessageContentLocal.ContactCall -> ChatMessage.Content.ContactCall(video, answeredAt, closedAt, closedByUser)
 
         is ChatMessageContentLocal.Custom -> {
             val decoded = rawContent?.let { customContentDecoder.decode(rendererId, rawContent) }
@@ -98,7 +98,7 @@ fun ChatMessage.Content.toData(
         )
         ChatMessage.Content.CompactionUnavailable -> ChatMessageContentLocal.CompactionUnavailable
         is ChatMessage.Content.ProductBody -> ChatMessageContentLocal.ProductBody(body.toLocal())
-        ChatMessage.Content.Deleted -> ChatMessageContentLocal.Deleted
+        is ChatMessage.Content.ContactCall -> ChatMessageContentLocal.ContactCall(video, answeredAt, closedAt, closedByUser)
     }
 }
 

@@ -3,7 +3,7 @@
 > **What this doc is:** rules and seams for the chat subsystem.
 > **What this doc is NOT:** a tour of the chat engine. The PR-litigated anti-patterns are the canonical learning material.
 
-Native `ChatExtension`s plug renderers, overlays and state into the chat. Product rooms follow **Chat Extension v2** ([RFC](../../../../../docs/rfcs/chat-extension-v2.md)): the product declares each room (metadata, configuration, preview, footer, features), the host persists the declarations and renders everything with native elements. A room is in one of two modes: **host-store** (the host database keeps the messages and the product pushes feed updates into it) or **product-source** (the product keeps the messages, the host asks for pages and keeps only a window). The RFC is implemented in the shared Rust core and served on the core runtime; this doc covers the Android side.
+Native `ChatExtension`s plug renderers, overlays and state into the chat. Product rooms follow **Chat Extension v2** ([RFC](../../../../../docs/rfcs/chat-extension-v2.md)): the product declares each room (metadata, configuration with `set_room_config`, preview, features, contact), the host persists the declarations and renders everything with native elements. A room is in one of two modes: **host-store** (the host database keeps the messages and the product pushes feed updates into it) or **product-source** (the product keeps the messages, the host asks for pages and keeps only a window). The RFC is implemented in the shared Rust core and served on the core runtime; this doc covers the Android side.
 
 Paths below are relative to `hosts/android`. `chats-api` is `feature/chats/api/src/main/kotlin/io/paritytech/polkadotapp/feature_chats_api`, `chats-impl` is `feature/chats/impl/src/main/java/io/paritytech/polkadotapp/feature_chats_impl`, `products-impl` is `feature/products/impl/src/main/java/io/paritytech/polkadotapp/feature_products_impl`.
 
@@ -34,7 +34,7 @@ Paths below are relative to `hosts/android`. `chats-api` is `feature/chats/api/s
 5. **`blocking`**: The room screen reads messages only through `ChatMessageSource`. Code that subscribes to `ChatMessageRepository` for a room's feed, or assumes the host database holds every message, breaks product-source rooms, which store nothing.
 6. **`blocking`**: Everything a product room shows comes from `ChatRoomPolicy`. Do not read `ChatRoomDeclarations` in a screen, and do not branch on "is this a product room" where a policy field can carry the difference.
 7. **`blocking`**: A product message id crosses the store boundary only through `ProductMessageIds`. Every id that reaches the product (events, `user_action`, render contexts) is the product's id, never the stored one.
-8. **`blocking`**: The worker is held per open room, not per installed product. Hold it through `ChatRoomLifecycle` (one `close` for every successful `open`) or the brief holds of `WorkerHolds`; never acquire for the life of the extension.
+8. **`blocking`**: The chat product's worker is held per open room, not per installed product. Hold it through `ChatRoomLifecycle` (one `close` for every successful `open`) or the brief holds of `WorkerHolds`. Every other product's worker is held for the life of its chat, as before the chat product (`TrUAPIChatWorker.holdsForSession`); its rooms, messages and pushes add no hold, wake or restart.
 9. **`blocking`**: Style parameters silently overridden by ambient `CompositionLocal`s are forbidden. If a caller passes `style: ChatMessageSurfaceStyle`, `direction`, etc., the renderer must honor it.
 10. **`blocking`**: `reverseLayout = true` always in the chat feed. The newest message is the first item; the paging rows for older and newer pages are the last and first items.
 11. **`major`**: Custom item-entry animations are forbidden; use `LazyListScope.animateItem()`.
@@ -43,7 +43,7 @@ Paths below are relative to `hosts/android`. `chats-api` is `feature/chats/api/s
 14. **`major`**: Bots do not decide when to send their messages if a higher-level engine should drive it. Don't change business logic for a UI-only feature.
 15. **`major`**: Chat-specific fields (`is_read`, etc.) are not smuggled through generic flags for other features.
 16. **`major`**: Custom message renderers are registered per extension. The product's renderer receives the room and message in `RenderContext.ChatMessage`, so per-room behaviour belongs in the product, not in per-chat hacks on the host.
-17. **`major`**: Events go where the RFC puts them. In a product-source room the user's send, edit, delete, reaction and seen go to `user_action` only; in a host-store room they go to `action_subscribe`. The other events go to `action_subscribe` in both modes.
+17. **`major`**: Events go where the RFC puts them. In a product-source room the user's send, edit, reaction and seen go to `user_action` only; in a host-store room they go to `action_subscribe`. The other events go to `action_subscribe` in both modes.
 
 ## Seams
 
@@ -54,14 +54,13 @@ Paths below are relative to `hosts/android`. `chats-api` is `feature/chats/api/s
 | `customGlobalOverlayRenderer()` + `ownedFragmentClasses()` | Cross-screen overlay surface | New floating UI driven by an extension |
 | `CustomChatMessageRenderer<T>` + stable `rendererId` | Custom message types | New on-wire message type |
 | `subscribeNewMessages(contentTypes = ...)` | Background processor pattern | "Chat watches on-chain event" extensions (e.g. coinage payment) |
-| `ChatExtensionContext` v2 setters (`setRoomConfig`, `setRoomMetadata`, `setRoomPreview`, `setRoomFooter`, `setRoomFeatures`, `setRoomCall`, `applyFeedUpdate`, `deleteRoom`) | An extension declares its rooms and pushes feed updates; `ProductRoomDeclarer` and `ProductFeedApplier` (`chats-impl/domain/productRoom/`) check ownership and write | A new room declaration |
+| `ChatExtensionContext` v2 setters (`setRoomConfig`, `setRoomMetadata`, `setRoomPreview`, `setRoomFeatures`, `setRoomCall`, `setRoomContact`, `applyFeedUpdate`, `deleteRoom`) | An extension declares its rooms and pushes feed updates; `ProductRoomDeclarer` and `ProductFeedApplier` (`chats-impl/domain/productRoom/`) check ownership and write | A new room declaration |
 | `ChatRoomDeclarationsRepository` (`chats-api/domain/ChatRoomDeclarationsRepository.kt`) | Read the persisted declarations | Never written from outside the engine |
 | `ChatRoomPolicyProvider` (`chats-impl/domain/roomPolicy/ChatRoomPolicyProvider.kt`) | One `ChatRoomPolicy` per room, or per list of rooms | A new aspect a product can declare: add a policy field with its §4 default |
 | `domain.productRoom` (`chats-api/domain/productRoom/`) | `ChatRoomLifecycle` (open and close a room, hold the worker), `ProductChatQuerying` (`messagesPage`, `userAction`), `ProductFeedListeners` (live updates to open screens), `ProductMessageIds`, and the models of pages, user actions, feed updates and events | Another query the room screen asks of its product |
 | `ChatMessageSource` + `ChatRoomSourceContext` (`chats-impl/domain/messageSource/`) | Picks the source of a room from its policy; runs open, close and retry in request order (retry closes and opens again, so a worker whose start failed starts again); releases the room when the screen goes away | A different store mode |
-| `ChatFeedInteractor` `openRoom`, `closeRoom`, `retryRoom`, `releaseRoom`, `roomQuerying`, `sendUserEvent` | What the room view model calls: open on screen start, close on screen stop, release in `onCleared` | New room-screen lifecycle event |
-| `ChatResourceResolver` (`chats-impl/presentation/resources/ChatResourceResolver.kt`) | Resolves a `ChatResourceModel` (inline bytes, preimage through the IPFS raw-block link, v1 `data:`/`https` icons) to an image model | New resource kind |
-| `ChatMediaLoader` + `ChatResourceDiskCache` (`chats-impl/presentation/resources/`, `chats-impl/data/resources/`) | Puts the bytes of a media item (inline, preimage through `lookupRawHash`, v1 `data:`) in one 64 MiB LRU file cache; `ProductMediaController` (`LocalProductMediaController`) draws, plays and opens the files and offers a retry when a preimage does not load | New media behaviour |
+| `ChatFeedInteractor` `openRoom`, `closeRoom`, `retryRoom`, `releaseRoom`, `roomQuerying` | What the room view model calls: open on screen start, close on screen stop, release in `onCleared` | New room-screen lifecycle event |
+| `ChatMediaLoader` + `ChatHopFileCache` (`chats-impl/presentation/resources/`, `chats-impl/data/resources/`) | Puts the bytes of a media item in a file: a HOP file opened and then acked through the core, the kept file of an outbox entry, or a v1 `data:` address; `ProductRoomMedia` hands the files to the native multimedia bubble | New media behaviour |
 | `ProductChatHostBridge` (`products-impl/domain/truapi/ProductChatHostBridge.kt`) | The core's `ChatHostBridge` for one product: maps each callback onto `ProductChatMessaging`; `updateFeed` with `persist` stores, without it delivers to `ProductFeedListeners` | A new core chat callback |
 | `TrUAPIChatWorker` + `WorkerHolds` (`products-impl/domain/truapi/worker/`) | The core-runtime `ProductWorker`: one worker reference per open room, brief holds for a message in flight and for a product with no room yet, the queries with their timeouts and one retry after an unavailable worker, every `ChatEvent` | A new event or query to the product |
 | `ProductChatExtension` wrapper | Products as N-room chat extensions | Don't fork; extend the wrapper |
@@ -71,10 +70,10 @@ Paths below are relative to `hosts/android`. `chats-api` is `feature/chats/api/s
 A product integrates with chat through its worker. On the core runtime, `TrUAPIWorkerSupervisor` boots the worker in a hidden WebView as a `WORKER` execution and passes a `ProductChatHostBridge` when the worker manifest `includes` chat; the same worker serves Pocket. The flow for one room:
 
 1. **Declare.** The product calls `create_room` with the room's configuration, then the `set_room_*` requests. The core checks ownership, limits and rate limits, then calls `ProductChatHostBridge`, which goes through `ProductChatMessaging` to `ChatExtensionContext` and `ProductRoomDeclarer`. The declarations are persisted, so the chat list renders without a running worker.
-2. **List.** `ChatRoomPolicyProvider.observePolicies` feeds the chat list: product preview text and ongoing dots, badge (count, image, hidden or the host count), pin and timestamp. `chatListOrder` (`chats-impl/domain/models/ChatListOrder.kt`) merges product timestamps with the local message order.
+2. **List.** `ChatRoomPolicyProvider.observePolicies` feeds the chat list: the last message and reaction that the product gives, drawn as the native preview line, the badge (count, hidden or the host count) and the timestamp. A room with a contact lists as the native person chat of that contact, and only once the contact is listed (an incoming request waits behind New requests). `chatListOrder` (`chats-impl/domain/models/ChatListOrder.kt`) merges product timestamps with the local message order.
 3. **Open.** The room view model calls `openRoom`. `ChatRoomSourceContext` calls `ChatRoomLifecycle.open`, which holds the worker; a failure shows the room as unavailable with Retry. Screen stop releases the reference.
 4. **Messages.** In a host-store room `HostStoreMessageSource` reads the database, and feed updates with `persist` go through `ProductFeedApplier`. In a product-source room `ProductMessageSource` asks `messages_query` for pages of 50 into a window of 500, pages at both ends, jumps to a quoted message, and takes live feed updates as a `ProductFeedListener`; nothing is stored. User actions go to `user_action` with an optimistic row (`Preparing`, then the product's answer, `Rejected` removes it, a time-out marks it `Failed`).
-5. **Events.** Taps on buttons and menu entries reach the extension as `ChatRoomUserEvent` through `onUserEvent`, and `TrUAPIChatWorker` publishes them as `ChatEvent`s with ids converted by `ProductMessageIds`.
+5. **Events.** A seen report reaches the extension as `ChatRoomUserEvent` through `onUserEvent`, and `TrUAPIChatWorker` publishes it as a `ChatEvent` with the id converted by `ProductMessageIds`. Call requests and answers go through `onRoomEvent` to the core.
 
 The native runtime (release builds, and debug builds with the toggle off) still runs chat products through `ChatHostCalls`. It serves v1 only: no room declarations, no queries, no product-source rooms.
 
@@ -92,7 +91,7 @@ The native runtime (release builds, and debug builds with the toggle off) still 
 | Room screen reads `ChatMessageRepository` directly for its feed | blocking | read `ChatMessageSource` through `ChatFeedInteractor.subscribeMessages` |
 | Screen reads declarations or checks "product room" to decide what to show | blocking | add a field to `ChatRoomPolicy` with its host default |
 | Stored message id sent to the product, or a product id used as a store key | blocking | convert with `ProductMessageIds` |
-| Worker acquired for the life of the extension | blocking | `ChatRoomLifecycle` per open room, `WorkerHolds` brief holds |
+| Chat product worker acquired for the life of the extension | blocking | `ChatRoomLifecycle` per open room, `WorkerHolds` brief holds |
 | Persisting a feed update of a product-source room | blocking | deliver it to `ProductFeedListeners`; the screen asks again on open |
 | Custom message-entry animation | major | `LazyListScope.animateItem()` |
 | Always-on `Modifier.blur` without API 31+ guard | major | guard or polyfill |
@@ -102,9 +101,9 @@ The native runtime (release builds, and debug builds with the toggle off) still 
 
 ## North star: Chat Extension v2
 
-The RFC is implemented in the core and on Android up to product-source rooms. What remains on Android is in the plan: product menus, participants, the custom footer, the placeholder, and the core runtime as the release default for chat products.
+The RFC is implemented in the core and on Android up to product-source rooms. A room with a contact (the chat product's person chats) draws as the native person chat: its bubbles, call rows, footers, menus and toolbar. Product menus, participants, custom bodies and footers, search, mute and archive are not served.
 
-- **Product declares, host renders.** Rooms, metadata, preview, configuration, footer and features are product declarations, persisted by the host. The host draws them with native elements and its own theme.
+- **Product declares, host renders.** Rooms, metadata, preview, configuration and features are product declarations, persisted by the host. The footer is the v1 `set_room_footer` (text input or nothing), kept in memory as before the chat product; a room with a contact draws the native input of its contact state (attachments when it declares `hop_attachments`, the $ button by the native rule). The host draws them with native elements and its own theme.
 - **Two store modes.** The host owns the message store only in a host-store room. In a product-source room the product is the data source and the host keeps a window.
 - **Per-room scope.** Every declaration, query and event names a room. Nothing is per extension except the renderer registration.
 - **SCALE over the core.** The wire is the core's SCALE codec; Android sees typed UniFFI values through `ChatHostBridge` and the execution's queries.

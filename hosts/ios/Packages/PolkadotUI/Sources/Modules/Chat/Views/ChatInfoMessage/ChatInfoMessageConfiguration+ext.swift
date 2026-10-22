@@ -27,15 +27,6 @@ public extension ChatInfoMessageConfiguration {
         )
     }
 
-    /// A line of a product about the room, such as "You are connected with Bob", as a system row.
-    static func notice(_ text: String) -> ChatInfoMessageConfiguration {
-        infoActionConfiguration(
-            fullText: text,
-            username: "",
-            icon: UIImage(systemName: "info.circle") ?? UIImage(resource: .peopleOutline)
-        )
-    }
-
     static func youLeft() -> ChatInfoMessageConfiguration {
         infoActionConfiguration(
             fullText: String(localized: .chatYouLeft),

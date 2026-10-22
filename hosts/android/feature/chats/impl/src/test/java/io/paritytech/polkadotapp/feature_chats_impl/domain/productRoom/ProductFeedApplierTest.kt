@@ -44,13 +44,12 @@ class ProductFeedApplierTest {
     }
 
     @Test
-    fun `a new message is stored under an id of its room, as its participant`() = runBlocking<Unit> {
+    fun `a new message is stored under an id of its room`() = runBlocking<Unit> {
         val result = apply(ProductFeedUpdateModel.New(productMessage("m1", participant = "alice")))
 
         assertSuccess(result)
         val message = saved.single()
         assertEquals(ProductMessageIds.stored("m1", room), message.id)
-        assertEquals("alice", message.originParticipantId)
         assertEquals(ChatMessage.Status.NEW, message.status)
         assertTrue(message.origin is ChatMessageOrigin.Extension)
     }
@@ -72,7 +71,7 @@ class ProductFeedApplierTest {
     fun `a message of another room with the same id is not this room's message`() = runBlocking<Unit> {
         withStoredMessage(message(id = "m1", chatId = otherRoom, origin = ChatMessageOrigin.User))
 
-        assertRejected<ProductFeedRejection.UnknownMessage>(apply(ProductFeedUpdateModel.Deleted("m1")))
+        assertRejected<ProductFeedRejection.UnknownMessage>(apply(ProductFeedUpdateModel.Replaced(productMessage("m1"))))
     }
 
     @Test
@@ -103,19 +102,21 @@ class ProductFeedApplierTest {
     }
 
     @Test
-    fun `a delete keeps a tombstone of any message`() = runBlocking<Unit> {
-        withStoredMessage(message(id = "u1", chatId = room, origin = ChatMessageOrigin.User))
+    fun `a replaced message takes the new body without an edit mark`() = runBlocking<Unit> {
+        val stored = productStored("m1")
+        withStoredMessage(stored)
 
-        assertSuccess(apply(ProductFeedUpdateModel.Deleted("u1")))
+        assertSuccess(apply(ProductFeedUpdateModel.Replaced(productMessage("m1"))))
 
-        coVerify { chatMessageRepository.markMessageDeleted("u1") }
+        coVerify { chatMessageRepository.updateMessageContent(stored.id, match { (it as ChatMessage.Content.Text).text == "hi" }, decoder) }
+        coVerify(exactly = 0) { messageRevisionRepository.saveRevision(any(), any(), any(), any(), any()) }
     }
 
     @Test
-    fun `an edit of a deleted message is refused`() = runBlocking<Unit> {
-        withStoredMessage(productStored("m1", content = ChatMessage.Content.Deleted))
+    fun `a replacement of a message of the user is refused`() = runBlocking<Unit> {
+        withStoredMessage(message(id = "u1", chatId = room, origin = ChatMessageOrigin.User))
 
-        assertRejected<ProductFeedRejection.UnknownMessage>(apply(ProductFeedUpdateModel.Edited("m1", ChatMessage.Content.Text("x"), 1)))
+        assertRejected<ProductFeedRejection.NotOwner>(apply(ProductFeedUpdateModel.Replaced(productMessage("u1"))))
     }
 
     @Test
@@ -169,7 +170,7 @@ class ProductFeedApplierTest {
     fun `an update for a room that does not exist is an unknown room`() = runBlocking<Unit> {
         coEvery { chatRoomRepository.roomExists(room) } returns false
 
-        assertRejected<ProductFeedRejection.UnknownRoom>(apply(ProductFeedUpdateModel.Deleted("m1")))
+        assertRejected<ProductFeedRejection.UnknownRoom>(apply(ProductFeedUpdateModel.Replaced(productMessage("m1"))))
     }
 
     private suspend fun apply(update: ProductFeedUpdateModel) = applier.apply(extensionId, room, update, decoder) { saved += it }
@@ -187,6 +188,7 @@ class ProductFeedApplierTest {
         replyTo = null,
         editedAt = null,
         reactions = emptyList(),
+        request = false,
     )
 
     private fun productStored(id: String, content: ChatMessage.Content = ChatMessage.Content.Text("hi")) =

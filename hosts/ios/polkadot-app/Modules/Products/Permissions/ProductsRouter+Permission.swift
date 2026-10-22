@@ -19,10 +19,6 @@ extension ProductsRouter: @retroactive ProductPermissionRouting {
             context.abandon(.cannotShow)
             return
         }
-
-        #if targetEnvironment(simulator)
-            TrUAPIE2EPendingPermission.show(context, controller: promptView.controller)
-        #endif
     }
 }
 
@@ -51,43 +47,3 @@ private final class ProductPermissionPromptLifetime: NSObject {
         Task { @MainActor [context] in context.abandon(.closedWithoutAnswer) }
     }
 }
-
-#if targetEnvironment(simulator)
-    /// The permission prompt that waits for an answer, for the truapi E2E harness. The harness cannot tap the
-    /// simulator, so it answers with the host action `permission` (`always`, `once` or `deny`).
-    @MainActor
-    enum TrUAPIE2EPendingPermission {
-        private weak static var context: ProductPermissionContext?
-        private weak static var controller: UIViewController?
-        private static var productId = ""
-
-        static func show(_ context: ProductPermissionContext, controller: UIViewController) {
-            guard TrUAPIE2EMarkers.isEnabled else { return }
-            self.context = context
-            self.controller = controller
-            productId = context.productId
-            let names = context.permissions.map { String(describing: $0) }.joined(separator: ",")
-            Logger.shared.debug("[e2e:ui] prompt \(context.productId) \(names)")
-        }
-
-        static func answer(_ argument: String?) {
-            let decision: PermissionDecision? =
-                switch argument {
-                case "always": .allowAlways
-                case "once": .allowOnce
-                case "deny": .deny
-                default: nil
-                }
-            guard let context, let decision else {
-                // The prompt went away with no answer. The marker tells the harness that no prompt waits.
-                Logger.shared.debug("[e2e:ui] prompt-answer \(productId) none")
-                return
-            }
-            context.deliver(decision)
-            controller?.dismiss(animated: false)
-            Logger.shared.debug("[e2e:ui] prompt-answer \(context.productId) \(argument ?? "")")
-            self.context = nil
-            controller = nil
-        }
-    }
-#endif

@@ -45,9 +45,6 @@ const ALIASES: Record<string, string> = {
   chat_rooms: "getChatRooms",
   chat_bots: "getChatBots",
   posted_chat_messages: "getChatMessageLog",
-  chat_room_declarations: "room",
-  set_chat_room_user_state: "setRoomUserState",
-  chat_room_user_state: "roomUserState",
   product_storage: "getProductStorage",
 };
 
@@ -75,13 +72,6 @@ const JS_ONLY: Record<string, string> = {
   getInjectedStatements: "loopback statement store, refused on both sides",
   injectStatement: "loopback statement store, refused on both sides",
   clearStatements: "loopback statement store, refused on both sides",
-  rooms: "every room of `room`, for the P2.7 assertions; Rust reads one room",
-  feed: "the messages of a room after the feed updates; Rust keeps the updates",
-  preview: "the chat list row with the host defaults, which Rust does not draw",
-  events: "the chat events the JS chat user sent; Rust has no chat user",
-  roomEvents: "the room events the JS chat user sent; Rust has no chat user",
-  chatUser:
-    "plays the user against the product through the JS host runtime queries",
   payment: "unimplemented by every host; the mock refuses and explains",
   coinPayment: "unimplemented by every host; the mock refuses and explains",
 };

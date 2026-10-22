@@ -40,8 +40,7 @@ pub use callbacks::{
 	HostCallbacks, NativeBalanceCallbacks, NativeCallMediaCallbacks, NativeChatCallbacks,
 	NativeContactsCallbacks, NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
 	NativePersonChatCallbacks, NativePocketCallbacks, NativePocketRemoval, NativePushCallbacks,
-	NativeScannerCallbacks, NativeTopUpCallbacks, NativeUsernamesCallbacks,
-	NativeWakeRelayCallbacks,
+	NativeScannerCallbacks, NativeTopUpCallbacks,
 };
 pub use chat_query::{
 	NativeChatQuery, NativeChatQueryAnswer, NativeChatQueryObserver, NativeChatQueryRefusal,
@@ -53,8 +52,8 @@ pub use errors::{
 };
 pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
-	NativeAnnouncedPairing, NativeHopFile, NativePairingError, NativeProductExecution,
-	NativeTrUApiHostRuntime,
+	NativeAnnouncedPairing, NativeHopDownloadProgress, NativeHopFile, NativeHopUploadProgress,
+	NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
 };
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 

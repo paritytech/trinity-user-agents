@@ -10,23 +10,22 @@ protocol ShareProductRoomsProviding: AnyObject, Sendable {
     func send(text: String, to chatId: Chat.Id) async throws
 }
 
-/// The product cannot take the shared text.
+/// The chat is no room of the chat product.
 enum ShareProductRoomError: Error, Equatable {
     case noRoom
-    case productNotRunning
-    case refused(reason: String)
 }
 
-/// A room is a target when it keeps its messages in its product, shows the input, is no thread, and its product
-/// runs. The text goes through the `NewMessage` user action of the room, as a message that the user types there,
-/// so the product sends it and keeps it.
-///
-/// A room that the host stores is not a target: its product gets a message there only from the room screen.
+/// A room is a target when it is the conversation with a contact of the chat product that both sides accepted, as
+/// the native chat lists its person chats that are ready for messaging. The text goes to the outbox of the room, as
+/// a message that the user types there, and the outbox gives it to the product, as the native chat keeps a shared
+/// text in its outbox.
 final class ShareProductRooms: ShareProductRoomsProviding, @unchecked Sendable {
     private let registry: ChatExtensionsRegistering
+    private let outbox: ProductOutbox
 
-    init(registry: ChatExtensionsRegistering) {
+    init(registry: ChatExtensionsRegistering, outbox: ProductOutbox = .shared) {
         self.registry = registry
+        self.outbox = outbox
     }
 
     func target(for chat: Chat.LocalModel) -> ChatWithPeerMetadata? {
@@ -36,7 +35,9 @@ final class ShareProductRooms: ShareProductRoomsProviding, @unchecked Sendable {
             registry.hasChatExtension(for: extensionId),
             let policy = chat.roomPolicy,
             policy.messageStore == .product,
-            policy.footer.showsInput
+            policy.footer.showsInput,
+            let contact = policy.contact,
+            contact.state == .established || contact.state == .peerLeft
         else {
             return nil
         }
@@ -48,17 +49,7 @@ final class ShareProductRooms: ShareProductRoomsProviding, @unchecked Sendable {
         guard case let .chatExtension(extensionId, roomId?) = chatId else {
             throw ShareProductRoomError.noRoom
         }
-        guard let querying = registry.getChatExtensionBot(for: extensionId) as? ProductChatQuerying else {
-            throw ShareProductRoomError.productNotRunning
-        }
 
-        do {
-            _ = try await querying.userAction(ProductChatUserActionRequest(
-                roomId: roomId,
-                action: .newMessage(body: .text(text: text), replyTo: nil)
-            ))
-        } catch let ChatQueryError.actionRefused(.rejected(reason)) {
-            throw ShareProductRoomError.refused(reason: reason)
-        }
+        try await outbox.send(text: text, replyTo: nil, productId: extensionId, roomId: roomId)
     }
 }

@@ -58,6 +58,10 @@ extension ChatRequestListPresenter {
 private extension ChatRequestListPresenter {
     func makeItems(from chats: [Chat.LocalModel]) -> [ChatRequestListItem] {
         chats.compactMap { chat in
+            if let contact = chat.roomContact {
+                return makeItem(from: chat, contact: contact)
+            }
+
             guard case let .person(contact) = chat.peer else {
                 return nil
             }
@@ -99,9 +103,36 @@ private extension ChatRequestListPresenter {
     }
 }
 
+private extension ChatRequestListPresenter {
+    /// The request of a contact of the chat product, as the native chat lists the request of a contact.
+    func makeItem(from chat: Chat.LocalModel, contact: Chat.RoomContact) -> ChatRequestListItem? {
+        guard contact.state == .incoming else {
+            return nil
+        }
+
+        let contactName = contact.name(fallback: chat.roomMetadata?.name ?? "")
+        let timestamp = chat.message?.timestamp ?? chat.roomDeclarations?.preview.timestamp.map(UInt64.init) ?? 0
+
+        return ChatRequestListItem(
+            id: chat.identifier,
+            contactName: contactName,
+            avatarViewModel: .colored(text: String(contactName.prefix(1)), colorSeed: chat.avatarColorSeed),
+            messageText: chat.message?.content.requestListMessage() ?? String(localized: .noMessage),
+            date: Date.fromChatTimestamp(timestamp),
+            isSeen: chat.message?.status != .incoming(.new)
+        )
+    }
+}
+
 private extension Chat.Request {
     func requestListMessage() -> String {
-        switch message?.content {
+        message?.content.requestListMessage() ?? String(localized: .noMessage)
+    }
+}
+
+private extension Chat.LocalMessage.Content {
+    func requestListMessage() -> String {
+        switch self {
         case let .chatRequest(content):
             content.welcomeMessage?.text ?? String(localized: .noMessage)
         case let .versionedChatRequest(content):

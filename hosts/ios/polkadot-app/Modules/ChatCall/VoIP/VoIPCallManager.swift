@@ -434,7 +434,7 @@ private extension VoIPCallKitManager {
         }
 
         // The chat product's offers open with its routes; the native chat does not run beside it (HX2).
-        if PersonChatMode.isProductChat, let input = productCalls.input(pushId: pushId, message: messageHex) {
+        if PersonChatMode.isProductChat, let input = try await productCalls.input(pushId: pushId, message: messageHex) {
             return input
         }
 

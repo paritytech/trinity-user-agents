@@ -10,12 +10,8 @@ object ProductParticipant {
     /** The product itself. */
     const val PRODUCT = "product"
 
-    /** The start of the participant id `bot:<botId>` of a bot persona of the product (07-LATER §5.2). */
-    const val PERSONA_PREFIX = "bot:"
-
-    /** The bot id of a persona participant id, or null for every other participant id. */
-    fun personaBotId(participantId: String): String? =
-        participantId.takeIf { it.startsWith(PERSONA_PREFIX) }?.removePrefix(PERSONA_PREFIX)?.takeIf { it.isNotEmpty() }
+    /** The contact of a room of the chat product. */
+    const val CONTACT = "contact"
 }
 
 /** The status of a message as its product gives it (`ChatMessageStatus`). */
@@ -36,7 +32,14 @@ data class ProductRoomMessage(
     val replyTo: String?,
     val editedAt: Long?,
     val reactions: List<ProductReactionSummaryModel>,
+    /** The message is the welcome message of a chat request. */
+    val request: Boolean,
+    /** The message that [replyTo] names, so the quote shows while that message is not loaded. */
+    val replyPreview: ProductReplyPreviewModel? = null,
 )
+
+/** The author and the body of a replied message (`ChatReplyPreview`). */
+data class ProductReplyPreviewModel(val participantId: String, val content: ChatMessage.Content)
 
 /** One page of messages, the oldest first. A null [next] ends the paging in this direction. */
 data class ProductMessagesPage(val messages: List<ProductRoomMessage>, val next: String?)
@@ -51,11 +54,20 @@ sealed interface ChatPageAnchorModel {
 
 /** What the user did in a room whose messages the product keeps (`ChatUserAction`). Ids are product ids. */
 sealed interface ChatUserActionModel {
-    data class NewMessage(val content: ChatMessage.Content, val replyTo: String?) : ChatUserActionModel
+    /**
+     * [messageId] is the id that the host chose for the message, a UUID as the native chat names its messages. The
+     * product sends the message under it, and a second `NewMessage` with the same id sends nothing new. [timestamp] is
+     * when the user wrote it, in milliseconds since the Unix epoch: the product sends the message with that time, as the
+     * native chat keeps the compose time.
+     */
+    data class NewMessage(
+        val content: ChatMessage.Content,
+        val replyTo: String?,
+        val messageId: String? = null,
+        val timestamp: Long? = null,
+    ) : ChatUserActionModel
 
     data class EditMessage(val messageId: String, val content: ChatMessage.Content) : ChatUserActionModel
-
-    data class DeleteMessage(val messageId: String) : ChatUserActionModel
 
     data class ReactionPlaced(val messageId: String, val emoji: String) : ChatUserActionModel
 
@@ -63,7 +75,17 @@ sealed interface ChatUserActionModel {
 
     data class Seen(val messageId: String) : ChatUserActionModel
 
-    data class Retry(val messageId: String) : ChatUserActionModel
+    // The answers of the user to the contact of a room of the chat product.
+
+    data object AcceptRequest : ChatUserActionModel
+
+    data object DeclineRequest : ChatUserActionModel
+
+    data object Block : ChatUserActionModel
+
+    data object Unblock : ChatUserActionModel
+
+    data object Leave : ChatUserActionModel
 }
 
 sealed interface ChatUserActionOutcome {
@@ -101,7 +123,8 @@ sealed interface ProductFeedUpdateModel {
 
     data class Edited(val messageId: String, val content: ChatMessage.Content, val editedAt: Long) : ProductFeedUpdateModel
 
-    data class Deleted(val messageId: String) : ProductFeedUpdateModel
+    /** The message changed for a reason that is not an edit, such as its call ending. It is not marked edited. */
+    data class Replaced(val message: ProductRoomMessage) : ProductFeedUpdateModel
 
     data class ReactionPlaced(val messageId: String, val participantId: String, val emoji: String) : ProductFeedUpdateModel
 
@@ -124,17 +147,4 @@ sealed class ProductFeedRejection(message: String) : Exception(message) {
 
     /** The product tried to write as the user, or to edit a message that it did not write. */
     class NotOwner : ProductFeedRejection("the product does not own this message")
-}
-
-/** Something the user did in a product room that goes to the product as an event. Ids are host ids. */
-sealed interface ChatRoomUserEvent {
-    data class MessageDeleted(val messageId: String) : ChatRoomUserEvent
-
-    /** The newest message that the user saw. */
-    data class MessageSeen(val messageId: String) : ChatRoomUserEvent
-
-    /** A press on a button of an Actions message. */
-    data class ActionTriggered(val messageId: String, val actionId: String) : ChatRoomUserEvent
-
-    data class MessageActionTriggered(val messageId: String, val actionId: String) : ChatRoomUserEvent
 }

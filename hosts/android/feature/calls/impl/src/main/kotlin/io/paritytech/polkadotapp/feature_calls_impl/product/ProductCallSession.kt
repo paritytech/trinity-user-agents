@@ -30,7 +30,7 @@ class ProductCallSession(
     private val offer = CompletableDeferred<EncodedSpd>()
     private val answer = CompletableDeferred<EncodedSpd>()
     private val candidates = Channel<EncodedIceCandidates>(Channel.UNLIMITED)
-    private val offerSent = MutableStateFlow(false)
+    private val offerRead = MutableStateFlow(false)
     private val closed = MutableStateFlow(false)
 
     fun receive(signal: ByteArray) {
@@ -55,10 +55,12 @@ class ProductCallSession(
         return true
     }
 
-    override suspend fun sendOffer(offerId: OfferId, chatId: ChatId, sdp: EncodedSpd, withVideo: Boolean) {
-        send(PeerSignal.Offer(sdp))
-        offerSent.value = true
+    /** A device of the contact acknowledged the offer message, whose id is the call id: the call rings there. */
+    fun markOfferRead() {
+        offerRead.value = true
     }
+
+    override suspend fun sendOffer(offerId: OfferId, chatId: ChatId, sdp: EncodedSpd, withVideo: Boolean) = send(PeerSignal.Offer(sdp))
 
     override suspend fun sendAnswer(offerId: OfferId, chatId: ChatId, sdp: EncodedSpd) = send(PeerSignal.Answer(sdp))
 
@@ -81,7 +83,8 @@ class ProductCallSession(
     override fun subscribeIncomingCloseSignal(offerId: OfferId, chatId: ChatId): Flow<Unit> =
         closed.filter { it }.map { }
 
-    override fun observeOfferReadStatus(offerId: OfferId): Flow<Boolean> = offerSent.asStateFlow()
+    // As the native call, which shows "Ringing" once the offer message is read (IS_READ).
+    override fun observeOfferReadStatus(offerId: OfferId): Flow<Boolean> = offerRead.asStateFlow()
 
     private suspend fun send(signal: PeerSignal) = signals.send(coder.encode(signal))
 }

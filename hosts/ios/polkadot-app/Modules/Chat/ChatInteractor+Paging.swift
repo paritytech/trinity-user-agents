@@ -30,10 +30,6 @@ extension ChatInteractor {
         enqueueRoomWork { await $0.closeRoom() }
     }
 
-    func retryRoom() {
-        enqueueRoomWork { await $0.retryRoom() }
-    }
-
     func jump(to messageId: Chat.MessageId) {
         Task { [weak self, engine] in
             let found = await engine.jump(to: messageId)

@@ -23,14 +23,6 @@ protocol QRCaptureServiceDelegate: AnyObject {
     func qrCapture(service: QRCaptureServiceProtocol, didSetup captureSession: AVCaptureSession)
     func qrCapture(service: QRCaptureServiceProtocol, didReceive code: String)
     func qrCapture(service: QRCaptureServiceProtocol, didFailure error: Error)
-    /// A code and its type. By default the delegate gets the code only.
-    func qrCapture(service: QRCaptureServiceProtocol, didReceive code: String, type: AVMetadataObject.ObjectType)
-}
-
-extension QRCaptureServiceDelegate {
-    func qrCapture(service: QRCaptureServiceProtocol, didReceive code: String, type _: AVMetadataObject.ObjectType) {
-        qrCapture(service: service, didReceive: code)
-    }
 }
 
 final class QRCaptureService: NSObject {
@@ -45,17 +37,13 @@ final class QRCaptureService: NSObject {
 
     weak var delegate: QRCaptureServiceDelegate?
     var delegateQueue: DispatchQueue
-    /// The code types that the camera reads. The types that the device cannot read are left out.
-    let codeTypes: [AVMetadataObject.ObjectType]
 
     init(
         delegate: QRCaptureServiceDelegate?,
-        delegateQueue: DispatchQueue? = nil,
-        codeTypes: [AVMetadataObject.ObjectType] = [.qr]
+        delegateQueue: DispatchQueue? = nil
     ) {
         self.delegate = delegate
         self.delegateQueue = delegateQueue ?? QRCaptureService.processingQueue
-        self.codeTypes = codeTypes
 
         super.init()
     }
@@ -89,7 +77,7 @@ final class QRCaptureService: NSObject {
         self.captureSession = captureSession
 
         output.setMetadataObjectsDelegate(self, queue: QRCaptureService.processingQueue)
-        output.metadataObjectTypes = codeTypes.filter(output.availableMetadataObjectTypes.contains)
+        output.metadataObjectTypes = [.qr]
     }
 
     private func startAuthorizedSession() {
@@ -126,9 +114,9 @@ final class QRCaptureService: NSObject {
         }
     }
 
-    private func notifyDelegateWithCode(_ code: String, type: AVMetadataObject.ObjectType) {
+    private func notifyDelegateWithCode(_ code: String) {
         run(in: delegateQueue) {
-            self.delegate?.qrCapture(service: self, didReceive: code, type: type)
+            self.delegate?.qrCapture(service: self, didReceive: code)
         }
     }
 
@@ -206,6 +194,6 @@ extension QRCaptureService: AVCaptureMetadataOutputObjectsDelegate {
             return
         }
 
-        notifyDelegateWithCode(possibleCode, type: metadata.type)
+        notifyDelegateWithCode(possibleCode)
     }
 }

@@ -14,7 +14,6 @@ final class CoreDataMessageSource: ChatMessageSourcing, @unchecked Sendable {
     private let historyRepository: AnyDataProviderRepository<ChatExtension.ProcessingHistory>
     private let messageRepository: AnyDataProviderRepository<Chat.LocalMessage>
     private let messageStatusUpdateRepository: AnyDataProviderRepository<Chat.ChatMessageStatusUpdate>
-    private let messageDeletionRepository: AnyDataProviderRepository<Chat.MessageDeletion>
     private let attachmentsUpdateRepository: AnyDataProviderRepository<Chat.AttachmentUploadingUpdate>
     private let logger: LoggerProtocol
 
@@ -25,7 +24,6 @@ final class CoreDataMessageSource: ChatMessageSourcing, @unchecked Sendable {
         historyRepository: AnyDataProviderRepository<ChatExtension.ProcessingHistory>,
         messageRepository: AnyDataProviderRepository<Chat.LocalMessage>,
         messageStatusUpdateRepository: AnyDataProviderRepository<Chat.ChatMessageStatusUpdate>,
-        messageDeletionRepository: AnyDataProviderRepository<Chat.MessageDeletion>,
         attachmentsUpdateRepository: AnyDataProviderRepository<Chat.AttachmentUploadingUpdate>,
         logger: LoggerProtocol
     ) {
@@ -35,7 +33,6 @@ final class CoreDataMessageSource: ChatMessageSourcing, @unchecked Sendable {
         self.historyRepository = historyRepository
         self.messageRepository = messageRepository
         self.messageStatusUpdateRepository = messageStatusUpdateRepository
-        self.messageDeletionRepository = messageDeletionRepository
         self.attachmentsUpdateRepository = attachmentsUpdateRepository
         self.logger = logger
     }
@@ -123,10 +120,8 @@ final class CoreDataMessageSource: ChatMessageSourcing, @unchecked Sendable {
             try await save(content: content)
         case let .markSeen(messageIds):
             try await markAsSeen(messageIds: messageIds)
-        case let .delete(messageId):
-            try await delete(messageId: messageId)
         case .toggleReaction,
-             .retry:
+             .contactAction:
             throw ChatMessageSourceError.unsupported
         }
 
@@ -151,11 +146,6 @@ private extension CoreDataMessageSource {
         }
 
         try await messageStatusUpdateRepository.saveOperation({ updates }, { [] }).asyncExecute()
-    }
-
-    func delete(messageId: Chat.MessageId) async throws {
-        let deletion = Chat.MessageDeletion(messageId: messageId)
-        try await messageDeletionRepository.saveOperation({ [deletion] }, { [] }).asyncExecute()
     }
 
     var initialStatus: Chat.LocalMessage.Status {

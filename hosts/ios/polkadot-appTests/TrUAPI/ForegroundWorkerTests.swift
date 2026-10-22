@@ -143,28 +143,6 @@ struct ForegroundWorkerTests {
 
         #expect(workers.foregroundDeclarations.isEmpty)
     }
-
-    // MARK: - The harness
-
-    #if targetEnvironment(simulator)
-
-        /// The harness holds the worker of the product that it drives, unless `TRUAPI_IOS_E2E_HOLD_WORKER=0` asks for
-        /// the worker of a user.
-        @Test func theHarnessHoldCanBeTurnedOff() {
-            let driven = ["TRUAPI_IOS_E2E_CHAT_PRODUCT_HOST": "chat.dot", "TRUAPI_IOS_E2E_CHAT_COMMANDS": "1"]
-
-            #expect(TrUAPIE2ECommandFeed.holdsWorker(for: "chat.dot", environment: driven))
-            #expect(!TrUAPIE2ECommandFeed.holdsWorker(for: "other.dot", environment: driven))
-            #expect(!TrUAPIE2ECommandFeed.holdsWorker(
-                for: "chat.dot",
-                environment: driven.merging(["TRUAPI_IOS_E2E_HOLD_WORKER": "0"]) { $1 }
-            ))
-            #expect(TrUAPIE2ECommandFeed.holdsWorker(
-                for: "chat.dot",
-                environment: driven.merging(["TRUAPI_IOS_E2E_HOLD_WORKER": "1"]) { $1 }
-            ))
-        }
-    #endif
 }
 
 /// A builder for a manager whose tests start no worker.

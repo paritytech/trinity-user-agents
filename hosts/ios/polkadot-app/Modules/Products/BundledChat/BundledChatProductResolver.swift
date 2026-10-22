@@ -2,9 +2,8 @@ import Foundation
 import KeyDerivation
 import Products
 
-/// Serves the chat product (`chat.<tld>`) from the files installed for it, whatever dotNS publishes under that name.
-/// The label reaches the core's `PersonChat`, so a published release reaches those files only through
-/// ``ChatProductReleases``, after its archive, version and entry file pass their checks (HX4).
+/// Serves the chat product (`chat.<tld>`) from the files that the app bundles for it, whatever dotNS publishes under
+/// that name. The label reaches the core's `PersonChat`, so only the bundled release runs there (HX4).
 struct BundledChatProductResolver: ProductResolving {
     let resolver: ProductResolving
 

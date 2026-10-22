@@ -10,7 +10,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomRe
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.DefaultRoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.NewMessagesRoomFilter
-import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMenuRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatPreviewDelegate
@@ -20,18 +19,15 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomContactModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomEventModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageRevisionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantEntryModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatReactionDetailModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomLifecycle
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
@@ -40,9 +36,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFee
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipantsPage
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductSearchPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownChatRoomException
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
@@ -50,7 +43,6 @@ import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_api.model.productRoomId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatId
-import io.paritytech.polkadotapp.feature_products_api.model.toUrl
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageRenderer
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
@@ -58,7 +50,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreatePr
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductChatRoomEventSink
-import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductRoomEvent
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerModalityApi
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.menu.ProductChatMenuRenderer
@@ -68,6 +59,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -76,10 +68,10 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Products extension that drives a product's shared worker. Supports multiple rooms — JS scripts can
@@ -118,32 +110,26 @@ class ProductChatExtension(
 
     private var botScope: CoroutineScope? = null
 
-    private val lastSeen = ConcurrentHashMap<ChatId, String>()
-
     // Strong ref to the messaging target bound weakly onto the shared worker; held for our lifetime.
     private var chatMessaging: ProductChatMessaging? = null
 
-    // Only an Input footer shows the input: an Empty footer shows nothing, a Custom one shows the tree of the product.
+    // Rooms the product asked to show nothing below the messages. Absent means the text input, the default.
+    private val roomsWithoutInput = MutableStateFlow(emptySet<ProductChatIdParameter>())
+
     override fun observeUserInputAllowed(chatId: ChatId): Flow<Boolean> {
-        if (chatId.productRoomId(id) == null) return flowOf(true)
-        return declarationsRepository.observe(chatId)
-            .map { declarations -> (declarations ?: ChatRoomDeclarations.EMPTY).effectiveFooter is ChatRoomFooterModel.Input }
-            .distinctUntilChanged()
+        val room = chatId.productRoomId(id) ?: return flowOf(true)
+        return roomsWithoutInput.map { room !in it }.distinctUntilChanged()
     }
 
     override fun customMessageRenderers(): List<CustomChatMessageRenderer<*>> {
         return listOf(messageRenderer)
     }
 
-    private val chatPreviewDelegate = ProductChatPreviewDelegate(origin)
-
     override fun customMenuRenderer(chatId: ChatId): CustomChatMenuRenderer =
         ProductChatMenuRenderer(product, chatId, removable = origin == ProductChatExtensionOrigin.InstalledByUser)
 
-    override fun customChatPreviewDelegate(chatId: ChatId): CustomChatPreviewDelegate<*> = chatPreviewDelegate
-
-    override fun customFooterRenderer(chatId: ChatId): CustomChatFooterRenderer? =
-        chatId.productRoomId(id)?.let { ProductFooterRenderer(it, runningWorker) }
+    override fun customChatPreviewDelegate(chatId: ChatId): CustomChatPreviewDelegate<*> =
+        ProductChatPreviewDelegate(origin, isPersonChat = declarationsRepository.observe(chatId).map { it?.contact != null })
 
     context(chatExtensionContext: ChatExtensionContext)
     override fun startGlobalWork() {
@@ -206,8 +192,6 @@ class ProductChatExtension(
         Timber.d("Disposed product bot: ${product.name}")
     }
 
-    override fun productAppAddress(chatId: ChatId): String? = chatId.productRoomId(id)?.let { product.id.toUrl() }
-
     override fun roomLifecycle(chatId: ChatId): ChatRoomLifecycle? {
         if (chatId.productRoomId(id) == null) return null
         return object : ChatRoomLifecycle {
@@ -235,43 +219,19 @@ class ProductChatExtension(
                 return runningWorker.userAction(room, action.withProductIds(chatId))
             }
 
-            override suspend fun messageMenu(chatId: ChatId, message: ProductRoomMessage): Result<ChatMessageMenuModel> {
+            override suspend fun editHistory(chatId: ChatId, messageId: String): Result<List<ChatMessageRevisionModel>> {
                 val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
-                val productMessage = message.copy(
-                    messageId = ProductMessageIds.product(message.messageId, chatId),
-                    replyTo = message.replyTo?.let { ProductMessageIds.product(it, chatId) },
-                )
-                return runningWorker.messageMenu(room, productMessage)
-            }
-
-            override suspend fun participantsCount(chatId: ChatId): Result<Int> {
-                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
-                return runningWorker.participantsCount(room)
-            }
-
-            override suspend fun participantsPage(chatId: ChatId, cursor: String?, pageSize: Int): Result<ProductParticipantsPage> {
-                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
-                return runningWorker.participantsPage(room, cursor, pageSize)
-            }
-
-            override suspend fun participantsByIds(chatId: ChatId, participantIds: List<String>): Result<List<ChatParticipantEntryModel>> {
-                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
-                return runningWorker.participantsByIds(room, participantIds)
-            }
-
-            override suspend fun reactions(chatId: ChatId, messageId: String): Result<List<ChatReactionDetailModel>> {
-                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
-                return runningWorker.reactions(room, ProductMessageIds.product(messageId, chatId))
-            }
-
-            override suspend fun searchPage(chatId: ChatId, text: String, cursor: String?, pageSize: Int): Result<ProductSearchPage> {
-                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
-                return runningWorker.searchPage(room, text, cursor, pageSize)
+                return runningWorker.editHistory(room, ProductMessageIds.product(messageId, chatId))
             }
 
             override suspend fun openLink(chatId: ChatId, payload: String): Result<ChatId?> {
                 val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
                 return runningWorker.openLink(room, payload).map { it?.toChatId(id) }
+            }
+
+            override suspend fun search(chatId: ChatId, text: String, cursor: String?, pageSize: Int): Result<ProductMessagesPage> {
+                val room = chatId.productRoomId(id) ?: return Result.failure(ProductChatQueryException.UnknownRoom())
+                return runningWorker.search(room, text, cursor, pageSize)
             }
         }
     }
@@ -282,20 +242,16 @@ class ProductChatExtension(
         return when (this) {
             is ChatUserActionModel.NewMessage -> copy(replyTo = replyTo?.let(::productId))
             is ChatUserActionModel.EditMessage -> copy(messageId = productId(messageId))
-            is ChatUserActionModel.DeleteMessage -> copy(messageId = productId(messageId))
             is ChatUserActionModel.ReactionPlaced -> copy(messageId = productId(messageId))
             is ChatUserActionModel.ReactionRemoved -> copy(messageId = productId(messageId))
             is ChatUserActionModel.Seen -> copy(messageId = productId(messageId))
-            is ChatUserActionModel.Retry -> copy(messageId = productId(messageId))
+            ChatUserActionModel.AcceptRequest,
+            ChatUserActionModel.DeclineRequest,
+            ChatUserActionModel.Block,
+            ChatUserActionModel.Unblock,
+            ChatUserActionModel.Leave,
+            -> this
         }
-    }
-
-    override suspend fun onUserEvent(chatId: ChatId, event: ChatRoomUserEvent) {
-        val room = chatId.productRoomId(id) ?: return
-        val config = declarationsRepository.get(chatId)?.effectiveConfig ?: ChatRoomConfigModel.HOST_DEFAULT
-        val roomEvent = event.toRoomEvent(chatId, config) ?: return
-        runningWorker.publishRoomEvent(room, roomEvent)
-            .onFailure { Timber.w(it, "No room event %s for %s", roomEvent::class.simpleName, product.id.value) }
     }
 
     // The core keeps the event until the worker subscribes, so the event does not start the worker.
@@ -305,46 +261,14 @@ class ProductChatExtension(
             .onFailure { Timber.w(it, "No room event %s for %s", event::class.simpleName, product.id.value) }
     }
 
-    // In a room whose product keeps the messages, these actions go to `user_action`, so they send no event.
+    // In a room whose product keeps the messages, the user's messages go to `user_action`.
     private suspend fun routeMessage(context: ChatExtensionContext, message: ChatMessage) {
-        val room = message.chatId.productRoomId(id) ?: return
         val config = context.roomDeclarations(message.chatId)?.effectiveConfig ?: ChatRoomConfigModel.HOST_DEFAULT
         if (config.productSource) return
-        val event = message.toUserEvent() ?: return
-        runningWorker.publishRoomEvent(room, event)
-            .onFailure { Timber.w(it, "No user event for %s", product.id.value) }
-    }
-
-    private fun ChatMessage.toUserEvent(): ProductRoomEvent? {
-        fun productId(storedId: String) = ProductMessageIds.product(storedId, chatId)
-        return when (val content = content) {
-            is ChatMessage.Content.Text,
-            is ChatMessage.Content.RichText,
-            is ChatMessage.Content.ProductBody,
-            -> ProductRoomEvent.MessagePosted(id, content, replyToMessageId?.let(::productId))
-            is ChatMessage.Content.Edited -> ProductRoomEvent.UserEdited(productId(content.messageId), content.content)
-            is ChatMessage.Content.Reacted -> ProductRoomEvent.UserReacted(productId(content.messageId), content.content.emoji, placed = true)
-            is ChatMessage.Content.ReactionRemoved ->
-                ProductRoomEvent.UserReacted(productId(content.messageId), content.content.emoji, placed = false)
-            else -> null
+        when (val content = message.content) {
+            is ChatMessage.Content.Text -> runningWorker.onUserMessage(message.chatId.productRoomId(id), content.text)
+            else -> {}
         }
-    }
-
-    private fun ChatRoomUserEvent.toRoomEvent(chatId: ChatId, config: ChatRoomConfigModel): ProductRoomEvent? {
-        fun productId(storedId: String) = ProductMessageIds.product(storedId, chatId)
-        return when (this) {
-            is ChatRoomUserEvent.MessageDeleted -> ProductRoomEvent.UserDeleted(productId(messageId)).takeUnless { config.productSource }
-            is ChatRoomUserEvent.MessageSeen -> seenEvent(chatId, productId(messageId), config)
-            is ChatRoomUserEvent.ActionTriggered -> ProductRoomEvent.ActionTriggered(productId(messageId), actionId)
-            is ChatRoomUserEvent.MessageActionTriggered -> ProductRoomEvent.MessageActionTriggered(productId(messageId), actionId)
-        }
-    }
-
-    // The screen reports the newest visible message at each scroll; the product hears of each message once.
-    private fun seenEvent(chatId: ChatId, messageId: String, config: ChatRoomConfigModel): ProductRoomEvent? {
-        if (!config.reportSeen || config.productSource) return null
-        val previous = lastSeen.put(chatId, messageId)
-        return ProductRoomEvent.Seen(messageId).takeUnless { previous == messageId }
     }
 
     private inner class ChatMessagingBinding(
@@ -395,14 +319,21 @@ class ProductChatExtension(
         override suspend fun deleteRoom(chatIdParameter: ProductChatIdParameter): Result<Unit> =
             runCancellableCatching { extensionContext.deleteRoom(chatIdParameter.toChatId(id)) }
 
-        override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, footer: ChatRoomFooterModel): Result<Unit> =
-            extensionContext.setRoomFooter(chatIdParameter.toChatId(id), footer)
+        override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, showsTextInput: Boolean): Result<Unit> {
+            roomsWithoutInput.update { rooms ->
+                if (showsTextInput) rooms - chatIdParameter else rooms + chatIdParameter
+            }
+            return Result.success(Unit)
+        }
 
         override suspend fun setRoomFeatures(chatIdParameter: ProductChatIdParameter, features: ChatRoomFeaturesModel): Result<Unit> =
             extensionContext.setRoomFeatures(chatIdParameter.toChatId(id), features)
 
         override suspend fun setRoomCall(chatIdParameter: ProductChatIdParameter, call: ChatRoomCallModel?): Result<Unit> =
             extensionContext.setRoomCall(chatIdParameter.toChatId(id), call)
+
+        override suspend fun setRoomContact(chatIdParameter: ProductChatIdParameter, contact: ChatRoomContactModel): Result<Unit> =
+            extensionContext.setRoomContact(chatIdParameter.toChatId(id), contact)
 
         // An active call stays: the bar of a call follows the call, not the worker.
         override suspend fun clearRingingCalls(): Result<Unit> = runCancellableCatching {
@@ -413,7 +344,6 @@ class ProductChatExtension(
 
         private fun ProductBotMessage.toChatMessageContent(): ChatMessage.Content = when (this) {
             is ProductBotMessage.Text -> ChatMessage.Content.Text(text)
-            is ProductBotMessage.Body -> ChatMessage.Content.ProductBody(body)
             is ProductBotMessage.Custom -> {
                 val messageContent = ProductsMessageContent(messageType, data, alt)
                 ChatMessage.Content.Custom(

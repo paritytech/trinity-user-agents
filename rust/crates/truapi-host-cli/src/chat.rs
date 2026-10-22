@@ -13,19 +13,18 @@
 //!
 //! The same state is what the development chat surface draws. A room keeps
 //! what the product declared about it (metadata, configuration, preview,
-//! footer, optional features and its call), the state the user gave it (mute and
-//! archive), and its messages: every message of a room the host keeps, and a
-//! page cache of a room the product keeps. Each change goes to every observer
-//! as the JSON the surface protocol names.
+//! footer, optional features, its call and its contact), and its messages:
+//! every message of a room the host keeps, and a page cache of a room the
+//! product keeps. Each change goes to every observer as the JSON the surface
+//! protocol names.
 
 use std::{
-	collections::BTreeMap,
+	collections::{BTreeMap, BTreeSet},
 	path::PathBuf,
 	sync::{Arc, Mutex},
 	time::{SystemTime, UNIX_EPOCH},
 };
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures::{
 	StreamExt,
 	channel::mpsc,
@@ -35,24 +34,22 @@ use parity_scale_codec::Encode;
 use serde_json::{Value, json};
 use truapi::{
 	latest::{
-		ChatActionHandler, ChatActionLayout, ChatBotRegistrationStatus, ChatFeedUpdate,
-		ChatMediaItem, ChatMediaMeta, ChatMessage, ChatMessageBody, ChatMessageContent,
-		ChatMessageOrigin, ChatMessageStatus, ChatReactionSummary, ChatResource, ChatRoom,
-		ChatRoomBadge, ChatRoomCall, ChatRoomCalls, ChatRoomConfig, ChatRoomFeatures,
-		ChatRoomFooter, ChatRoomMetadata, ChatRoomOrder, ChatRoomParticipation, ChatRoomPreview,
-		ChatRoomRegistrationStatus, ChatUserAction, GenericError, HostChatCreateRoomError,
-		HostChatCreateRoomRequest, HostChatCreateRoomResponse, HostChatDeleteRoomRequest,
-		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
-		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-		HostChatRegisterBotResponse, HostChatSetRoomCallRequest, HostChatSetRoomFeaturesRequest,
-		HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
-		HostChatSetRoomPreviewRequest, HostChatUpdateFeedError, HostChatUpdateFeedRequest,
-		ProductChatUserActionItem,
+		ChatBotRegistrationStatus, ChatCallRecord, ChatContactEvent, ChatContactState,
+		ChatFeedUpdate, ChatMediaItem, ChatMediaMeta, ChatMessage, ChatMessageBody,
+		ChatMessageContent, ChatMessageOrigin, ChatMessageStatus, ChatReactionSummary,
+		ChatResource, ChatRoom, ChatRoomBadge, ChatRoomCall, ChatRoomCalls, ChatRoomConfig,
+		ChatRoomContact, ChatRoomFeatures, ChatRoomFooter, ChatRoomMetadata, ChatRoomParticipation,
+		ChatRoomPreview, ChatRoomRegistrationStatus, ChatUserAction, GenericError,
+		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
+		HostChatDeleteRoomRequest, HostChatListSubscribeItem, HostChatPostMessageError,
+		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
+		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomCallRequest,
+		HostChatSetRoomConfigRequest, HostChatSetRoomContactRequest,
+		HostChatSetRoomFeaturesRequest, HostChatSetRoomFooterRequest,
+		HostChatSetRoomMetadataRequest, HostChatSetRoomPreviewRequest, HostChatUpdateFeedError,
+		HostChatUpdateFeedRequest, ProductChatUserActionItem,
 	},
-	platform::{
-		ChatBotIds, ChatFeatureNames, ChatPlatform, ChatRoomUserState, ChatRoomUserStates,
-		ProductContext, async_trait,
-	},
+	platform::{ChatFeatureNames, ChatPlatform, ProductContext, async_trait},
 };
 
 use crate::transcript::Transcript;
@@ -60,36 +57,20 @@ use crate::transcript::Transcript;
 /// The reserved participant id of the host's user.
 pub const USER: &str = "user";
 
-/// The reserved participant id of the product itself.
-pub const PRODUCT: &str = "product";
-
 /// The list text of a message that has no text of its own.
 const SENT_A_MESSAGE: &str = "Sent a message";
 
 /// The Chat features this host serves from end to end, from
-/// `CHAT_FEATURE_NAMES`. The page has no renderer and no room links, so
-/// `custom_bodies`, `custom_footer` and `room_links` are not here. A P10 item
-/// adds its name when the page serves it.
-pub const CLI_CHAT_FEATURES: [&str; 12] = [
-	"product_source_rooms",
-	"reaction_details",
-	"participants",
-	"message_menus",
-	"inline_attachments",
-	"preimage_attachments",
-	"sealed_attachments",
-	"search",
-	"bot_personas",
-	"mute_archive",
-	"read_aloud",
-	"call_buttons",
-];
+/// `CHAT_FEATURE_NAMES`. The page has no HOP node, so `hop_attachments` is
+/// not here.
+pub const CLI_CHAT_FEATURES: [&str; 4] =
+	["product_source_rooms", "reaction_details", "call_buttons", "contact_rooms"];
 
 /// A room this host created, with everything the product declared about it.
 struct RoomRecord {
 	participating_as: ChatRoomParticipation,
 	metadata: ChatRoomMetadata,
-	/// The `https` icon of a first-version caller, or empty.
+	/// The icon the room was created with, or empty.
 	icon_url: String,
 	config: ChatRoomConfig,
 	preview: Option<ChatRoomPreview>,
@@ -104,43 +85,31 @@ struct RoomRecord {
 	features: ChatRoomFeatures,
 	/// The call of the room now.
 	call: Option<ChatRoomCall>,
-	/// Milliseconds since the Unix epoch when the mute the user set ends.
-	muted_until: Option<u64>,
-	/// The user archived the room.
-	archived: bool,
+	/// The person the room is a conversation with.
+	contact: Option<ChatRoomContact>,
 }
 
 impl RoomRecord {
-	fn new(
-		participating_as: ChatRoomParticipation,
-		metadata: ChatRoomMetadata,
-		icon_url: String,
-		config: ChatRoomConfig,
-		preview: Option<ChatRoomPreview>,
-	) -> Self {
+	/// A room that declared nothing yet: the host keeps its messages, and it
+	/// shows the text input.
+	fn new(participating_as: ChatRoomParticipation, name: String, icon_url: String) -> Self {
 		Self {
 			participating_as,
-			metadata,
+			metadata: ChatRoomMetadata { name, description: None },
 			icon_url,
-			config,
-			preview,
-			footer: ChatRoomFooter::Input(Default::default()),
+			config: ChatRoomConfig::default(),
+			preview: None,
+			footer: ChatRoomFooter::TextInput,
 			messages: Vec::new(),
 			last_seen: None,
 			features: ChatRoomFeatures::default(),
 			call: None,
-			muted_until: None,
-			archived: false,
+			contact: None,
 		}
 	}
 
 	fn position(&self, message_id: &str) -> Option<usize> {
 		self.messages.iter().position(|stored| stored.message.message_id == message_id)
-	}
-
-	/// The index of a message that is not deleted.
-	fn live(&self, message_id: &str) -> Option<usize> {
-		self.position(message_id).filter(|&index| !self.messages[index].deleted)
 	}
 
 	/// Whether the host keeps the messages of the room.
@@ -152,11 +121,13 @@ impl RoomRecord {
 	/// host keeps, the newest by time in the page cache of a room the
 	/// product keeps.
 	fn last_message(&self) -> Option<&ChatMessage> {
-		let mut live = self.messages.iter().filter(|stored| !stored.deleted);
+		let mut messages = self.messages.iter();
 		if self.host_store() {
-			live.next_back().map(|stored| &stored.message)
+			messages.next_back().map(|stored| &stored.message)
 		} else {
-			live.max_by_key(|stored| stored.message.timestamp).map(|stored| &stored.message)
+			messages
+				.max_by_key(|stored| stored.message.timestamp)
+				.map(|stored| &stored.message)
 		}
 	}
 
@@ -169,7 +140,7 @@ impl RoomRecord {
 			.map_or(0, |index| index + 1);
 		self.messages[after.min(self.messages.len())..]
 			.iter()
-			.filter(|stored| !stored.deleted && stored.message.origin.participant_id != USER)
+			.filter(|stored| stored.message.origin.participant_id != USER)
 			.count()
 	}
 }
@@ -181,16 +152,11 @@ struct StoredMessage {
 	/// host keeps. The summaries of a room the product keeps come from the
 	/// product, so this stays empty there.
 	reactions: Vec<(String, String)>,
-	/// Deleted messages stay as a tombstone, so the screen can say so.
-	deleted: bool,
-	/// The content a first-version `post_message` sent. A `ChatMessage`
-	/// cannot carry its URL media, so the surface draws it from here.
-	legacy: Option<ChatMessageContent>,
 }
 
 impl StoredMessage {
 	fn new(message: ChatMessage) -> Self {
-		Self { message, reactions: Vec::new(), deleted: false, legacy: None }
+		Self { message, reactions: Vec::new() }
 	}
 
 	/// Place or remove one reaction. `tracked` keeps the reaction book and
@@ -230,6 +196,7 @@ impl StoredMessage {
 				emoji: emoji.to_string(),
 				count: 1,
 				reacted_by_user: user,
+				unseen: false,
 			}),
 			None => {},
 		}
@@ -251,17 +218,11 @@ fn summaries(reactions: &[(String, String)]) -> Vec<ChatReactionSummary> {
 				emoji: emoji.clone(),
 				count: 1,
 				reacted_by_user: user,
+				unseen: false,
 			}),
 		}
 	}
 	out
-}
-
-/// A bot the product registered. A bot is not a room, so registering one does
-/// not republish the room list.
-struct BotRecord {
-	name: String,
-	icon: String,
 }
 
 /// Rooms, bots and messages for one process.
@@ -269,8 +230,9 @@ struct BotRecord {
 struct State {
 	/// Room id to what the product created and declared.
 	rooms: BTreeMap<String, RoomRecord>,
-	/// Bot id to what the product registered it as.
-	bots: BTreeMap<String, BotRecord>,
+	/// Registered bot ids. A bot is not a room, so registering one does not
+	/// republish the room list.
+	bots: BTreeSet<String>,
 	/// How many message ids the host gave. A product correlates an action
 	/// trigger against that id, so product and user messages share one
 	/// sequence.
@@ -299,8 +261,6 @@ impl State {
 pub struct ChatSnapshot {
 	/// `Room` views in room-id order.
 	pub rooms: Vec<Value>,
-	/// `Bot` objects in bot-id order.
-	pub bots: Vec<Value>,
 	/// `{ roomId, message }` for every message of a room the host keeps, in
 	/// the order each arrived.
 	pub messages: Vec<Value>,
@@ -354,14 +314,13 @@ impl CliChatHost {
 		let mut state = self.lock();
 		let snapshot = ChatSnapshot {
 			rooms: state.rooms.iter().map(|(room_id, room)| room_json(room_id, room)).collect(),
-			bots: state.bots.iter().map(|(bot_id, bot)| bot_json(bot_id, bot)).collect(),
 			messages: state
 				.rooms
 				.iter()
 				.filter(|(_, room)| room.host_store())
 				.flat_map(|(room_id, room)| {
 					room.messages.iter().map(
-						move |stored| json!({ "roomId": room_id, "message": stored_json(stored) }),
+						move |stored| json!({ "roomId": room_id, "message": message_json(&stored.message) }),
 					)
 				})
 				.collect(),
@@ -369,44 +328,6 @@ impl CliChatHost {
 		let (sender, receiver) = mpsc::unbounded();
 		state.observers.push(sender);
 		(snapshot, receiver)
-	}
-
-	/// Play the user: mute `room_id` until `muted_until` and archive it or
-	/// not. `u64::MAX` mutes the room with no end.
-	pub fn set_user_state(
-		&self,
-		room_id: &str,
-		muted_until: Option<u64>,
-		archived: bool,
-	) -> Result<(), String> {
-		let mut state = self.lock();
-		let room = state.rooms.get_mut(room_id).ok_or_else(|| unknown_room(room_id))?;
-		room.muted_until = muted_until;
-		room.archived = archived;
-		let event = with_kind("room", room_json(room_id, room));
-		Self::broadcast(&mut state, event);
-		Ok(())
-	}
-
-	/// Show one notification the host delivered on every page, as a phone
-	/// shows it in its notification list.
-	pub fn notification_shown(&self, id: u32, text: &str, deeplink: Option<&str>) {
-		let event = json!({ "kind": "notification", "id": id, "text": text, "deeplink": deeplink });
-		Self::broadcast(&mut self.lock(), event);
-	}
-
-	/// The state of each room the user muted or archived, in room-id order.
-	pub fn user_states(&self) -> Vec<ChatRoomUserState> {
-		self.lock()
-			.rooms
-			.iter()
-			.filter(|(_, room)| room.muted_until.is_some() || room.archived)
-			.map(|(room_id, room)| ChatRoomUserState {
-				room_id: room_id.clone(),
-				muted_until: room.muted_until,
-				archived: room.archived,
-			})
-			.collect()
 	}
 
 	/// The configuration the product declared for `room_id`, if the room
@@ -427,48 +348,17 @@ impl CliChatHost {
 			.map(|room| (room.features.calls, room.call.clone()))
 	}
 
-	/// Whether `room_id` declares `sealed_attachments`.
-	pub fn seals_attachments(&self, room_id: &str) -> bool {
-		self.lock()
-			.rooms
-			.get(room_id)
-			.is_some_and(|room| room.features.sealed_attachments)
+	/// The contact of `room_id`, if the room exists and the product set one.
+	pub fn room_contact(&self, room_id: &str) -> Option<ChatRoomContact> {
+		self.lock().rooms.get(room_id).and_then(|room| room.contact.clone())
 	}
 
-	/// A message the room holds or the page cache saw, deleted or not.
+	/// A message the room holds or the page cache saw.
+	#[cfg(test)]
 	pub fn message(&self, room_id: &str, message_id: &str) -> Option<ChatMessage> {
 		let state = self.lock();
 		let room = state.rooms.get(room_id)?;
 		room.position(message_id).map(|index| room.messages[index].message.clone())
-	}
-
-	/// The messages of a room the host keeps whose list text holds `text`,
-	/// case and diacritics ignored, newest first: `page_size` of them after
-	/// the first `skip`, and whether more follow.
-	pub fn search_messages(
-		&self,
-		room_id: &str,
-		text: &str,
-		skip: usize,
-		page_size: usize,
-	) -> Result<(Vec<ChatMessage>, bool), String> {
-		let state = self.lock();
-		let room = state.rooms.get(room_id).ok_or_else(|| unknown_room(room_id))?;
-		if !room.host_store() {
-			return Err("the room keeps its messages in the product".to_string());
-		}
-		let needle = search_form(text);
-		let mut matches = room
-			.messages
-			.iter()
-			.rev()
-			.filter(|stored| {
-				!stored.deleted && search_form(&preview_text(&stored.message)).contains(&needle)
-			})
-			.skip(skip);
-		let page: Vec<ChatMessage> =
-			matches.by_ref().take(page_size).map(|stored| stored.message.clone()).collect();
-		Ok((page, matches.next().is_some()))
 	}
 
 	/// Keep one page the product answered in the page cache of a room it
@@ -511,8 +401,10 @@ impl CliChatHost {
 			body,
 			status: ChatMessageStatus::Sent,
 			reply_to,
+			reply_preview: None,
 			edited_at: None,
 			reactions: Vec::new(),
+			request: false,
 		};
 		let line = json!({
 			"kind": "message",
@@ -530,39 +422,6 @@ impl CliChatHost {
 		drop(state);
 		self.record(line);
 		Ok(message)
-	}
-
-	/// Apply a change the user made in a room the host keeps: an edit or a
-	/// delete of the user's own message, or a reaction to any message.
-	pub fn change_as_user(&self, room_id: &str, change: UserChange) -> Result<(), String> {
-		let mut state = self.lock();
-		let room = state.rooms.get_mut(room_id).ok_or_else(|| unknown_room(room_id))?;
-		if !room.host_store() {
-			return Err("the room keeps its messages in the product".to_string());
-		}
-		let message_id = change.message_id().to_string();
-		let index = room.live(&message_id).ok_or_else(|| unknown_message(&message_id))?;
-		let stored = &mut room.messages[index];
-		let own = stored.message.origin.participant_id == USER;
-		match change {
-			UserChange::Edit { body, .. } => {
-				if !own {
-					return Err("the user edits only the user's own messages".to_string());
-				}
-				stored.message.body = body;
-				stored.message.edited_at = Some(now_millis());
-			},
-			UserChange::Delete { .. } => {
-				// A failed message offers delete whoever wrote it.
-				if !own && stored.message.status != ChatMessageStatus::Failed {
-					return Err("the user deletes only the user's own messages".to_string());
-				}
-				stored.deleted = true;
-			},
-			UserChange::React { emoji, placed, .. } => stored.react(USER, &emoji, placed, true),
-		}
-		Self::announce_message(&mut state, room_id, index);
-		Ok(())
 	}
 
 	/// Mark `message_id` as the newest message the user saw in `room_id`. The
@@ -606,26 +465,33 @@ impl CliChatHost {
 			},
 			(_, ProductChatUserActionItem::MessageCreated(_)) => None,
 			(ChatUserAction::EditMessage { message_id, body }, _) => {
-				room.live(message_id).inspect(|&index| {
+				room.position(message_id).inspect(|&index| {
 					let message = &mut room.messages[index].message;
 					message.body = body.clone();
 					message.edited_at = Some(now_millis());
 				})
 			},
-			(ChatUserAction::DeleteMessage { message_id }, _) => {
-				room.live(message_id).inspect(|&index| room.messages[index].deleted = true)
-			},
 			(ChatUserAction::ReactionPlaced { message_id, emoji }, _) => room
-				.live(message_id)
+				.position(message_id)
 				.inspect(|&index| room.messages[index].react(USER, emoji, true, false)),
 			(ChatUserAction::ReactionRemoved { message_id, emoji }, _) => room
-				.live(message_id)
+				.position(message_id)
 				.inspect(|&index| room.messages[index].react(USER, emoji, false, false)),
 			(ChatUserAction::Seen { message_id }, _) => {
 				room.last_seen = Some(message_id.clone());
 				None
 			},
-			(ChatUserAction::Retry { .. } | ChatUserAction::NewMessage { .. }, _) => None,
+			// The product answers a contact action with a new contact and
+			// feed updates of its own.
+			(
+				ChatUserAction::NewMessage { .. } |
+				ChatUserAction::AcceptRequest |
+				ChatUserAction::DeclineRequest |
+				ChatUserAction::Block |
+				ChatUserAction::Unblock |
+				ChatUserAction::Leave,
+				_,
+			) => None,
 		};
 		if let Some(index) = changed {
 			Self::announce_message(&mut state, room_id, index);
@@ -642,69 +508,33 @@ impl CliChatHost {
 			"kind": "message",
 			"roomId": room_id,
 			"persisted": room.host_store(),
-			"message": stored_json(&room.messages[index]),
+			"message": message_json(&room.messages[index].message),
 			"list": list_json(room),
 		});
 		Self::broadcast(state, event);
 	}
 
-	/// Store one first-version message the product posted, and tell every
-	/// observer, then append it to the transcript.
-	fn accept_legacy(
-		&self,
-		room_id: &str,
-		content: ChatMessageContent,
-		alt: Option<String>,
-	) -> Option<String> {
+	/// Give a first-version message the product posted its id, and append it
+	/// to the transcript. Product and user messages share one id sequence.
+	fn accept_legacy(&self, request: &HostChatPostMessageRequest) -> Option<String> {
 		let mut state = self.lock();
-		if !state.rooms.contains_key(room_id) {
+		if !state.rooms.contains_key(&request.room_id) {
 			return None;
 		}
-		let message_id = state.next_id(room_id);
-		let line = json!({
+		let message_id = state.next_id(&request.room_id);
+		drop(state);
+		self.record(json!({
 			"kind": "message",
 			"messageId": message_id,
-			"roomId": room_id,
+			"roomId": request.room_id,
 			"author": "product",
-			"variant": variant_name(&content),
+			"variant": variant_name(&request.payload),
 			// The payload as the host received it. A summary would let a
 			// difference between what a product sent and what a host stored
 			// hide behind the summary.
-			"payload": hex::encode(content.encode()),
-			"alt": alt,
-		});
-		let room = state.rooms.get_mut(room_id).expect("the room was just found");
-		let changed = match &content {
-			// A first-version reaction is a reaction by the product, not a
-			// message of its own.
-			ChatMessageContent::Reaction(reaction) |
-			ChatMessageContent::ReactionRemoved(reaction) => {
-				let placed = matches!(content, ChatMessageContent::Reaction(_));
-				room.live(&reaction.message_id).inspect(|&index| {
-					room.messages[index].react(PRODUCT, &reaction.emoji, placed, true);
-				})
-			},
-			_ => {
-				let mut stored = StoredMessage::new(ChatMessage {
-					message_id: message_id.clone(),
-					origin: ChatMessageOrigin { participant_id: PRODUCT.to_string() },
-					timestamp: now_millis(),
-					body: legacy_body(&content, alt.as_deref()),
-					status: ChatMessageStatus::Sent,
-					reply_to: None,
-					edited_at: None,
-					reactions: Vec::new(),
-				});
-				stored.legacy = Some(content);
-				room.messages.push(stored);
-				Some(room.messages.len() - 1)
-			},
-		};
-		if let Some(index) = changed {
-			Self::announce_message(&mut state, room_id, index);
-		}
-		drop(state);
-		self.record(line);
+			"payload": hex::encode(request.payload.encode()),
+			"alt": request.alt,
+		}));
 		Some(message_id)
 	}
 
@@ -789,24 +619,6 @@ impl CliChatHost {
 	}
 }
 
-/// A change the user makes to one message of a room the host keeps.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UserChange {
-	Edit { message_id: String, body: ChatMessageBody },
-	Delete { message_id: String },
-	React { message_id: String, emoji: String, placed: bool },
-}
-
-impl UserChange {
-	fn message_id(&self) -> &str {
-		match self {
-			Self::Edit { message_id, .. } |
-			Self::Delete { message_id } |
-			Self::React { message_id, .. } => message_id,
-		}
-	}
-}
-
 /// Apply one feed update to `room`. The answer is the index of the message
 /// that changed. With `persist` the room is the host's store and the host refuses
 /// what a store cannot hold; without it the update is for the screen only,
@@ -832,10 +644,13 @@ fn apply_feed(
 			};
 		},
 		ChatFeedUpdate::Edited { message_id, .. } |
-		ChatFeedUpdate::Deleted { message_id } |
 		ChatFeedUpdate::ReactionPlaced { message_id, .. } |
 		ChatFeedUpdate::ReactionRemoved { message_id, .. } |
-		ChatFeedUpdate::StatusChanged { message_id, .. } => match room.live(message_id) {
+		ChatFeedUpdate::StatusChanged { message_id, .. } => match room.position(message_id) {
+			Some(index) => index,
+			None => return missing(),
+		},
+		ChatFeedUpdate::Replaced(message) => match room.position(&message.message_id) {
 			Some(index) => index,
 			None => return missing(),
 		},
@@ -850,10 +665,10 @@ fn apply_feed(
 			}
 			stored.message.body = body.clone();
 			stored.message.edited_at = Some(*edited_at);
-			stored.legacy = None;
 		},
-		ChatFeedUpdate::Deleted { .. } => {
-			stored.deleted = true;
+		// Drawn again in place; an edit mark comes only from an edit.
+		ChatFeedUpdate::Replaced(message) => {
+			stored.message = message.clone();
 		},
 		ChatFeedUpdate::ReactionPlaced { participant_id, emoji, .. } => {
 			stored.react(participant_id, emoji, true, persist);
@@ -871,33 +686,10 @@ fn feed_target(update: &ChatFeedUpdate) -> (&'static str, &str) {
 	match update {
 		ChatFeedUpdate::New(message) => ("New", &message.message_id),
 		ChatFeedUpdate::Edited { message_id, .. } => ("Edited", message_id),
-		ChatFeedUpdate::Deleted { message_id } => ("Deleted", message_id),
+		ChatFeedUpdate::Replaced(message) => ("Replaced", &message.message_id),
 		ChatFeedUpdate::ReactionPlaced { message_id, .. } => ("ReactionPlaced", message_id),
 		ChatFeedUpdate::ReactionRemoved { message_id, .. } => ("ReactionRemoved", message_id),
 		ChatFeedUpdate::StatusChanged { message_id, .. } => ("StatusChanged", message_id),
-	}
-}
-
-/// The body a first-version message shows as. URL media cannot be a
-/// `ChatMediaItem`, so it is left out, and a file keeps its text.
-fn legacy_body(content: &ChatMessageContent, alt: Option<&str>) -> ChatMessageBody {
-	match content {
-		ChatMessageContent::Text { text } => ChatMessageBody::Text { text: text.clone() },
-		ChatMessageContent::RichText(rich) => {
-			ChatMessageBody::RichText { text: rich.text.clone(), media: Vec::new() }
-		},
-		ChatMessageContent::Actions(actions) => ChatMessageBody::Actions(actions.clone()),
-		ChatMessageContent::File(file) => {
-			ChatMessageBody::RichText { text: file.text.clone(), media: Vec::new() }
-		},
-		ChatMessageContent::Custom(custom) => ChatMessageBody::Custom {
-			message_type: custom.message_type.clone(),
-			payload: custom.payload.clone(),
-			preview_text: alt.map(str::to_string),
-		},
-		ChatMessageContent::Reaction(_) | ChatMessageContent::ReactionRemoved(_) => {
-			ChatMessageBody::Text { text: String::new() }
-		},
 	}
 }
 
@@ -907,29 +699,43 @@ fn with_kind(kind: &str, mut body: Value) -> Value {
 	body
 }
 
-/// The form search compares: lower case, without diacritics.
-fn search_form(text: &str) -> String {
-	use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
-	text.nfd()
-		.filter(|character| !is_combining_mark(*character))
-		.collect::<String>()
-		.to_lowercase()
-}
-
-/// The chat-list text of one message: its text, its `preview_text`, the
-/// `alt` of its first media item, or a generic line.
+/// The chat-list text of one message: its text, the `alt` of its first
+/// media item, the line of an event, a call or a payment, or a generic line.
 pub fn preview_text(message: &ChatMessage) -> String {
 	let text = match &message.body {
 		ChatMessageBody::Text { text } => Some(text.clone()),
 		ChatMessageBody::RichText { text, media } => text
 			.clone()
 			.or_else(|| media.first().and_then(|item| media_meta(item).alt.clone())),
-		ChatMessageBody::Actions(actions) => actions.text.clone(),
-		ChatMessageBody::Custom { preview_text, .. } => preview_text.clone(),
-		ChatMessageBody::Notice { text } => Some(text.clone()),
+		ChatMessageBody::Event(event) => Some(event_line(*event).to_string()),
+		ChatMessageBody::Call(call) => Some(call_line(call)),
+		ChatMessageBody::Payment(payment) => Some(format!("Payment of {}", payment.amount)),
 	};
 	text.filter(|text| !text.trim().is_empty())
 		.unwrap_or_else(|| SENT_A_MESSAGE.to_string())
+}
+
+/// The line of an event about the conversation.
+fn event_line(event: ChatContactEvent) -> &'static str {
+	match event {
+		ChatContactEvent::RequestAccepted => "Request accepted",
+		ChatContactEvent::ContactAdded => "Contact added",
+		ChatContactEvent::LeftChat => "Left the chat",
+		ChatContactEvent::Unavailable => "Messages unavailable",
+		ChatContactEvent::Unsupported => "Unsupported message",
+	}
+}
+
+/// The line of a call: its kind, then how it stands.
+fn call_line(call: &ChatCallRecord) -> String {
+	let kind = if call.video { "Video call" } else { "Audio call" };
+	let state = match (call.answered_at, call.closed) {
+		(None, None) => "ringing",
+		(Some(_), None) => "ongoing",
+		(Some(_), Some(_)) => "ended",
+		(None, Some(_)) => "not answered",
+	};
+	format!("{kind}, {state}")
 }
 
 fn media_meta(item: &ChatMediaItem) -> &ChatMediaMeta {
@@ -951,7 +757,6 @@ fn room_json(room_id: &str, room: &RoomRecord) -> Value {
 		},
 		"name": room.metadata.name,
 		"description": room.metadata.description,
-		"avatar": room.metadata.avatar.as_ref().map(resource_json),
 		"icon": room.icon_url,
 		"config": config_json(&room.config),
 		"footer": footer_json(&room.footer),
@@ -959,18 +764,36 @@ fn room_json(room_id: &str, room: &RoomRecord) -> Value {
 		"list": list_json(room),
 		"features": features_json(&room.features),
 		"call": room.call.as_ref().map(call_json),
-		"userState": { "mutedUntil": room.muted_until, "archived": room.archived },
+		"contact": room.contact.as_ref().map(contact_json),
 	})
+}
+
+/// The surface view of the contact of a room.
+fn contact_json(contact: &ChatRoomContact) -> Value {
+	json!({
+		"account": format!("0x{}", hex::encode(contact.account)),
+		"username": contact.username,
+		"state": contact_state_name(contact.state),
+	})
+}
+
+/// The name a contact state has on the wire.
+pub fn contact_state_name(state: ChatContactState) -> &'static str {
+	match state {
+		ChatContactState::Invite => "Invite",
+		ChatContactState::Outgoing => "Outgoing",
+		ChatContactState::Incoming => "Incoming",
+		ChatContactState::Established => "Established",
+		ChatContactState::Blocked => "Blocked",
+		ChatContactState::PeerLeft => "PeerLeft",
+	}
 }
 
 /// The surface view of the optional features of a room.
 fn features_json(features: &ChatRoomFeatures) -> Value {
 	json!({
-		"preimageAttachments": features.preimage_attachments,
-		"sealedAttachments": features.sealed_attachments,
-		"search": features.search,
 		"calls": features.calls.map(|calls| json!({ "audio": calls.audio, "video": calls.video })),
-		"readAloud": features.read_aloud,
+		"hopAttachments": features.hop_attachments,
 	})
 }
 
@@ -983,34 +806,30 @@ fn call_json(call: &ChatRoomCall) -> Value {
 			"video": video,
 			"caller": caller,
 		}),
-		ChatRoomCall::Active { call_id, video, started_at, media_session } => json!({
+		ChatRoomCall::Active { call_id, video, started_at } => json!({
 			"type": "Active",
 			"callId": call_id,
 			"video": video,
 			"startedAt": started_at,
-			"mediaSession": media_session.map(|session| format!("0x{}", hex::encode(session))),
 		}),
 	}
 }
 
 /// The chat-list row of a room: the product's preview where it set one, the
-/// host default of each field where it did not.
+/// host default of each field where it did not. The line comes from the
+/// newest message the preview names, else from the newest message the host
+/// holds. A newer call the preview names apart shows beside it, and does not
+/// replace the line.
 fn list_json(room: &RoomRecord) -> Value {
 	let preview = room.preview.as_ref();
-	let last = room.last_message();
-	let text = match preview.and_then(|preview| preview.text.as_ref()) {
-		Some(text) => json!({ "text": text.text, "ongoing": text.ongoing }),
-		None => last.map_or(
-			Value::Null,
-			|message| json!({ "text": preview_text(message), "ongoing": false }),
-		),
-	};
+	let last = preview
+		.and_then(|preview| preview.last_message.as_ref())
+		.or_else(|| room.last_message());
+	let reaction = preview.and_then(|preview| preview.last_reaction.as_ref());
+	let call = preview.and_then(|preview| preview.last_call.as_ref());
 	let badge = match preview.and_then(|preview| preview.badge.as_ref()) {
 		Some(ChatRoomBadge::UnreadCount { count }) if *count > 0 => {
 			json!({ "type": "UnreadCount", "count": count })
-		},
-		Some(ChatRoomBadge::Image { resource }) => {
-			json!({ "type": "Image", "resource": resource_json(resource) })
 		},
 		// Matched by shape, not by name: an unread count of 0 and the
 		// variant that hides the badge both show nothing.
@@ -1023,11 +842,22 @@ fn list_json(room: &RoomRecord) -> Value {
 		},
 	};
 	json!({
-		"pinned": preview.is_some_and(|preview| preview.order == ChatRoomOrder::PinToTop),
 		"timestamp": preview
 			.and_then(|preview| preview.timestamp)
 			.or_else(|| last.map(|message| message.timestamp)),
-		"text": text,
+		"text": last.map(preview_text),
+		"origin": last.map(|message| &message.origin.participant_id),
+		"lastCall": call.map(|call| json!({
+			"messageId": call.message_id,
+			"text": preview_text(call),
+		})),
+		"lastReaction": reaction.map(|reaction| json!({
+			"emoji": reaction.emoji,
+			"byUser": reaction.by_user,
+			"messageId": reaction.message.as_ref().map(|message| &message.message_id),
+			"removed": reaction.removed,
+		})),
+		"unseenReactions": preview.map_or(0, |preview| preview.unseen_reactions),
 		"badge": badge,
 		"previewDeclared": preview.is_some(),
 	})
@@ -1037,80 +867,27 @@ fn config_json(config: &ChatRoomConfig) -> Value {
 	json!({
 		"productSource": config.product_source,
 		"reactionDetails": config.reaction_details,
-		"participants": config.participants,
-		"messageActions": config.message_actions,
-		"allowedReactions": config.allowed_reactions,
-		"placeholder": config.placeholder,
 		"reportSeen": config.report_seen,
 	})
 }
 
 fn footer_json(footer: &ChatRoomFooter) -> Value {
 	match footer {
-		ChatRoomFooter::Input(input) => json!({
-			"type": "Input",
-			"placeholder": input.placeholder,
-			"photo": input.photo,
-			"video": input.video,
-			"file": input.file,
-			"payment": input.payment.as_ref().map(|payment| match payment {
-				truapi::latest::ChatInputPayment::Enabled { destination } => {
-					json!({ "destination": format!("0x{}", hex::encode(destination)) })
-				},
-			}),
-		}),
+		ChatRoomFooter::TextInput => json!({ "type": "TextInput" }),
 		ChatRoomFooter::Empty => json!({ "type": "Empty" }),
-		ChatRoomFooter::Custom => json!({ "type": "Custom" }),
 	}
 }
 
-/// The surface view of a menu or toolbar handler.
-pub fn handler_json(handler: &ChatActionHandler) -> Value {
-	match handler {
-		ChatActionHandler::Deeplink { url } => json!({ "type": "Deeplink", "url": url }),
-		ChatActionHandler::Callback => json!({ "type": "Callback" }),
-	}
-}
-
-/// The surface view of a resource. Inline bytes travel as a `data:` URL the
-/// page can draw; a preimage travels as its key, which the page shows; a
-/// sealed resource travels as its parts, with no key; a HOP file as its node,
-/// with no ticket.
-pub fn resource_json(resource: &ChatResource) -> Value {
-	match resource {
-		ChatResource::Inline { mime_type, bytes } => json!({
-			"type": "Inline",
-			"mimeType": mime_type,
-			"size": bytes.len(),
-			"dataUrl": format!("data:{mime_type};base64,{}", BASE64.encode(bytes)),
-		}),
-		ChatResource::Preimage { key } => json!({
-			"type": "Preimage",
-			"key": format!("0x{}", hex::encode(key)),
-		}),
-		// The page gets no key: it shows the size and the parts only.
-		ChatResource::Sealed { parts, size, .. } => json!({
-			"type": "Sealed",
-			"size": size,
-			"parts": parts.iter().map(|part| format!("0x{}", hex::encode(part))).collect::<Vec<_>>(),
-		}),
-		// The ticket opens the file, so the page gets the node and the size only.
-		ChatResource::Hop { identifier, node, size, .. } => json!({
-			"type": "Hop",
-			"size": size,
-			"node": node,
-			"identifier": format!("0x{}", hex::encode(identifier)),
-		}),
-	}
-}
-
-fn stored_json(stored: &StoredMessage) -> Value {
-	let mut value = message_json(&stored.message);
-	value["deleted"] = Value::from(stored.deleted);
-	if let Some(legacy) = &stored.legacy {
-		value["legacy"] = content_json(legacy);
-	}
-	value
+/// The surface view of a resource. The ticket of a HOP file opens it, so the
+/// page gets the node and the size only.
+fn resource_json(resource: &ChatResource) -> Value {
+	let ChatResource::Hop { identifier, node, size, .. } = resource;
+	json!({
+		"type": "Hop",
+		"size": size,
+		"node": node,
+		"identifier": format!("0x{}", hex::encode(identifier)),
+	})
 }
 
 /// The surface view of one message.
@@ -1129,6 +906,7 @@ pub fn message_json(message: &ChatMessage) -> Value {
 			"reactedByUser": reaction.reacted_by_user,
 		})).collect::<Vec<_>>(),
 		"preview": preview_text(message),
+		"request": message.request,
 	})
 }
 
@@ -1143,8 +921,8 @@ pub fn status_name(status: ChatMessageStatus) -> &'static str {
 	}
 }
 
-/// The surface view of a message body. Every field is kept, and a custom
-/// payload travels as hex, so the surface draws what the host holds.
+/// The surface view of a message body. Every field is kept, so the surface
+/// draws what the host holds.
 pub fn body_json(body: &ChatMessageBody) -> Value {
 	match body {
 		ChatMessageBody::Text { text } => json!({ "type": "Text", "text": text }),
@@ -1153,23 +931,35 @@ pub fn body_json(body: &ChatMessageBody) -> Value {
 			"text": text,
 			"media": media.iter().map(media_json).collect::<Vec<_>>(),
 		}),
-		ChatMessageBody::Actions(actions) => json!({
-			"type": "Actions",
-			"text": actions.text,
-			"actions": actions
-				.actions
-				.iter()
-				.map(|action| json!({ "actionId": action.action_id, "title": action.title }))
-				.collect::<Vec<_>>(),
-			"layout": layout_name(actions.layout),
+		ChatMessageBody::Event(event) => json!({
+			"type": "Event",
+			"event": event_name(*event),
+			"text": event_line(*event),
 		}),
-		ChatMessageBody::Custom { message_type, payload, preview_text } => json!({
-			"type": "Custom",
-			"messageType": message_type,
-			"payloadHex": hex::encode(payload),
-			"previewText": preview_text,
+		ChatMessageBody::Call(call) => json!({
+			"type": "Call",
+			"video": call.video,
+			"answeredAt": call.answered_at,
+			"closed": call.closed.map(|closed| json!({ "at": closed.at, "byUser": closed.by_user })),
+			"text": call_line(call),
 		}),
-		ChatMessageBody::Notice { text } => json!({ "type": "Notice", "text": text }),
+		// A JSON number cannot hold every `u128`, so the amount is a string.
+		ChatMessageBody::Payment(payment) => json!({
+			"type": "Payment",
+			"amount": payment.amount.to_string(),
+			"legacy": payment.legacy,
+		}),
+	}
+}
+
+/// The name an event has on the wire.
+fn event_name(event: ChatContactEvent) -> &'static str {
+	match event {
+		ChatContactEvent::RequestAccepted => "RequestAccepted",
+		ChatContactEvent::ContactAdded => "ContactAdded",
+		ChatContactEvent::LeftChat => "LeftChat",
+		ChatContactEvent::Unavailable => "Unavailable",
+		ChatContactEvent::Unsupported => "Unsupported",
 	}
 }
 
@@ -1195,64 +985,6 @@ fn media_json(item: &ChatMediaItem) -> Value {
 	})
 }
 
-fn layout_name(layout: ChatActionLayout) -> &'static str {
-	match layout {
-		ChatActionLayout::Column => "Column",
-		ChatActionLayout::Grid => "Grid",
-	}
-}
-
-fn bot_json(bot_id: &str, bot: &BotRecord) -> Value {
-	json!({ "botId": bot_id, "name": bot.name, "icon": bot.icon })
-}
-
-/// The surface-protocol view of first-version content. Every field is kept,
-/// and a custom payload travels as hex, so the surface draws what the host
-/// holds.
-pub fn content_json(content: &ChatMessageContent) -> Value {
-	match content {
-		ChatMessageContent::Text { text } => json!({ "type": "Text", "text": text }),
-		ChatMessageContent::RichText(rich) => json!({
-			"type": "RichText",
-			"text": rich.text,
-			"media": rich.media.iter().map(|media| json!({ "url": media.url })).collect::<Vec<_>>(),
-		}),
-		ChatMessageContent::Actions(actions) => json!({
-			"type": "Actions",
-			"text": actions.text,
-			"actions": actions
-				.actions
-				.iter()
-				.map(|action| json!({ "actionId": action.action_id, "title": action.title }))
-				.collect::<Vec<_>>(),
-			"layout": layout_name(actions.layout),
-		}),
-		ChatMessageContent::File(file) => json!({
-			"type": "File",
-			"url": file.url,
-			"fileName": file.file_name,
-			"mimeType": file.mime_type,
-			"sizeBytes": file.size_bytes,
-			"text": file.text,
-		}),
-		ChatMessageContent::Reaction(reaction) => json!({
-			"type": "Reaction",
-			"messageId": reaction.message_id,
-			"emoji": reaction.emoji,
-		}),
-		ChatMessageContent::ReactionRemoved(reaction) => json!({
-			"type": "ReactionRemoved",
-			"messageId": reaction.message_id,
-			"emoji": reaction.emoji,
-		}),
-		ChatMessageContent::Custom(custom) => json!({
-			"type": "Custom",
-			"messageType": custom.message_type,
-			"payloadHex": hex::encode(&custom.payload),
-		}),
-	}
-}
-
 /// The variant name a transcript reader matches on.
 fn variant_name(content: &ChatMessageContent) -> &'static str {
 	match content {
@@ -1270,9 +1002,9 @@ fn body_variant(body: &ChatMessageBody) -> &'static str {
 	match body {
 		ChatMessageBody::Text { .. } => "Text",
 		ChatMessageBody::RichText { .. } => "RichText",
-		ChatMessageBody::Actions(_) => "Actions",
-		ChatMessageBody::Custom { .. } => "Custom",
-		ChatMessageBody::Notice { .. } => "Notice",
+		ChatMessageBody::Event(_) => "Event",
+		ChatMessageBody::Call(_) => "Call",
+		ChatMessageBody::Payment(_) => "Payment",
 	}
 }
 
@@ -1282,7 +1014,6 @@ impl ChatPlatform for CliChatHost {
 		&self,
 		_product: &ProductContext,
 		request: HostChatCreateRoomRequest,
-		icon_url: String,
 	) -> Result<HostChatCreateRoomResponse, HostChatCreateRoomError> {
 		let mut state = self.lock();
 		// A room that exists keeps what it declared.
@@ -1291,10 +1022,8 @@ impl ChatPlatform for CliChatHost {
 		} else {
 			let room = RoomRecord::new(
 				ChatRoomParticipation::RoomHost,
-				request.metadata.clone(),
-				icon_url.clone(),
-				request.config.clone(),
-				request.preview.clone(),
+				request.name.clone(),
+				request.icon.clone(),
 			);
 			let event = with_kind("room", room_json(&request.room_id, &room));
 			state.rooms.insert(request.room_id.clone(), room);
@@ -1303,7 +1032,7 @@ impl ChatPlatform for CliChatHost {
 			ChatRoomRegistrationStatus::New
 		};
 		drop(state);
-		self.record_registration("room", &request.room_id, &request.metadata.name, &icon_url);
+		self.record_registration("room", &request.room_id, &request.name, &request.icon);
 		Ok(HostChatCreateRoomResponse { status })
 	}
 
@@ -1313,14 +1042,11 @@ impl ChatPlatform for CliChatHost {
 		request: HostChatRegisterBotRequest,
 	) -> Result<HostChatRegisterBotResponse, HostChatRegisterBotError> {
 		let mut state = self.lock();
-		// A repeat keeps the persona and replaces its name and icon.
-		let bot = BotRecord { name: request.name.clone(), icon: request.icon.clone() };
-		let event = with_kind("bot", bot_json(&request.bot_id, &bot));
-		let status = match state.bots.insert(request.bot_id.clone(), bot) {
-			Some(_) => ChatBotRegistrationStatus::Exists,
-			None => ChatBotRegistrationStatus::New,
+		let status = if state.bots.insert(request.bot_id.clone()) {
+			ChatBotRegistrationStatus::New
+		} else {
+			ChatBotRegistrationStatus::Exists
 		};
-		Self::broadcast(&mut state, event);
 		drop(state);
 		self.record_registration("bot", &request.bot_id, &request.name, &request.icon);
 		Ok(HostChatRegisterBotResponse { status })
@@ -1332,10 +1058,9 @@ impl ChatPlatform for CliChatHost {
 		request: HostChatPostMessageRequest,
 	) -> Result<HostChatPostMessageResponse, HostChatPostMessageError> {
 		// A room this host never created is not one it can store against.
-		let message_id =
-			self.accept_legacy(&request.room_id, request.payload, request.alt).ok_or_else(
-				|| HostChatPostMessageError::Unknown { reason: unknown_room(&request.room_id) },
-			)?;
+		let message_id = self.accept_legacy(&request).ok_or_else(|| {
+			HostChatPostMessageError::Unknown { reason: unknown_room(&request.room_id) }
+		})?;
 		Ok(HostChatPostMessageResponse { message_id })
 	}
 
@@ -1345,7 +1070,7 @@ impl ChatPlatform for CliChatHost {
 		request: HostChatSetRoomFooterRequest,
 	) -> Result<(), GenericError> {
 		self.declare("footer", &request.room_id, &request, |room| {
-			room.footer = request.footer.clone();
+			room.footer = request.footer;
 		})
 	}
 
@@ -1368,6 +1093,16 @@ impl ChatPlatform for CliChatHost {
 		room_id: String,
 	) -> Result<ChatRoomConfig, GenericError> {
 		Ok(self.room_config(&room_id).unwrap_or_default())
+	}
+
+	async fn set_chat_room_config(
+		&self,
+		_product: &ProductContext,
+		request: HostChatSetRoomConfigRequest,
+	) -> Result<(), GenericError> {
+		self.declare("config", &request.room_id, &request, |room| {
+			room.config = request.config.clone();
+		})
 	}
 
 	async fn set_chat_room_metadata(
@@ -1476,15 +1211,14 @@ impl ChatPlatform for CliChatHost {
 		})
 	}
 
-	async fn read_chat_room_user_states(
+	async fn set_chat_room_contact(
 		&self,
 		_product: &ProductContext,
-	) -> Result<ChatRoomUserStates, GenericError> {
-		Ok(ChatRoomUserStates { rooms: self.user_states() })
-	}
-
-	async fn read_chat_bots(&self, _product: &ProductContext) -> Result<ChatBotIds, GenericError> {
-		Ok(ChatBotIds { bot_ids: self.lock().bots.keys().cloned().collect() })
+		request: HostChatSetRoomContactRequest,
+	) -> Result<(), GenericError> {
+		self.declare("contact", &request.room_id, &request, |room| {
+			room.contact = Some(request.contact.clone());
+		})
 	}
 }
 
@@ -1494,7 +1228,12 @@ mod tests {
 	use parity_scale_codec::Decode;
 	use std::fs::read_to_string;
 	use truapi::platform::ProductId;
-	use truapi::latest::{ChatInputConfig, ChatRoomPreviewText, HostChatSetRoomFooterRequest};
+	use truapi::latest::{
+		ChatCallClose, ChatPaymentRecord, ChatPreviewReaction, HostChatSetRoomFooterRequest,
+	};
+
+	/// The reserved participant id of the product itself.
+	const PRODUCT: &str = "product";
 
 	fn product() -> ProductContext {
 		ProductContext::new(ProductId::for_test("chat.dot"))
@@ -1511,13 +1250,8 @@ mod tests {
 	fn room(room_id: &str) -> HostChatCreateRoomRequest {
 		HostChatCreateRoomRequest {
 			room_id: room_id.to_string(),
-			metadata: ChatRoomMetadata {
-				name: "Support".to_string(),
-				avatar: None,
-				description: None,
-			},
-			config: ChatRoomConfig::default(),
-			preview: None,
+			name: "Support".to_string(),
+			icon: String::new(),
 		}
 	}
 
@@ -1526,8 +1260,16 @@ mod tests {
 	}
 
 	fn create(host: &CliChatHost, request: HostChatCreateRoomRequest) {
-		futures::executor::block_on(host.create_chat_room(&product(), request, String::new()))
+		futures::executor::block_on(host.create_chat_room(&product(), request))
 			.expect("a room is created");
+	}
+
+	fn configure(host: &CliChatHost, room_id: &str, config: ChatRoomConfig) {
+		futures::executor::block_on(host.set_chat_room_config(
+			&product(),
+			HostChatSetRoomConfigRequest { room_id: room_id.to_string(), config },
+		))
+		.expect("the room exists");
 	}
 
 	/// A host with the room `support` the host keeps and the room `kept`
@@ -1535,7 +1277,8 @@ mod tests {
 	fn host_with_rooms(transcript: Option<PathBuf>) -> Arc<CliChatHost> {
 		let host = CliChatHost::new(transcript);
 		create(&host, room("support"));
-		create(&host, HostChatCreateRoomRequest { config: source_config(), ..room("kept") });
+		create(&host, room("kept"));
+		configure(&host, "kept", source_config());
 		host
 	}
 
@@ -1547,8 +1290,10 @@ mod tests {
 			body: body(text),
 			status: ChatMessageStatus::Sent,
 			reply_to: None,
+			reply_preview: None,
 			edited_at: None,
 			reactions: Vec::new(),
+			request: false,
 		}
 	}
 
@@ -1633,41 +1378,6 @@ mod tests {
 		// and what the host received cannot hide behind a rendering.
 		assert_eq!(recorded["payload"], hex::encode(payload.encode()));
 		assert_eq!(recorded["alt"], "Two lines");
-		// The surface draws it as a message of the product.
-		let (snapshot, _) = host.observe();
-		assert_eq!(snapshot.messages[0]["message"]["origin"], PRODUCT);
-		assert_eq!(snapshot.messages[0]["message"]["body"]["text"], "line one\nline two");
-	}
-
-	#[test]
-	fn a_first_version_reaction_is_a_reaction_of_the_product() {
-		use truapi::latest::ChatReaction;
-		let host = CliChatHost::new(None);
-		create(&host, room("support"));
-		let post = |content| {
-			futures::executor::block_on(host.post_chat_message(
-				&product(),
-				HostChatPostMessageRequest {
-					room_id: "support".to_string(),
-					payload: content,
-					alt: None,
-				},
-			))
-			.expect("the room exists")
-			.message_id
-		};
-		let target = post(text("rate me"));
-		post(ChatMessageContent::Reaction(ChatReaction {
-			message_id: target.clone(),
-			emoji: "+1".to_string(),
-		}));
-
-		let messages = host.observe().0.messages;
-		assert_eq!(messages.len(), 1, "a reaction is not a message");
-		assert_eq!(
-			messages[0]["message"]["reactions"],
-			json!([{ "emoji": "+1", "count": 1, "reactedByUser": false }])
-		);
 	}
 
 	#[test]
@@ -1747,47 +1457,30 @@ mod tests {
 		);
 		assert_eq!(second.origin.participant_id, USER);
 
-		let origins: Vec<_> = host
-			.observe()
-			.0
-			.messages
-			.iter()
-			.map(|entry| entry["message"]["origin"].clone())
-			.collect();
-		assert_eq!(origins, vec![PRODUCT, USER, PRODUCT]);
 		let recorded = transcript_lines(transcript.path());
 		assert_eq!(recorded[2]["author"], "person");
 		assert_eq!(recorded[2]["messageId"], "m2");
 		assert_eq!(recorded[2]["payload"], hex::encode(body("hello").encode()));
 
 		assert!(host.post_user_message("elsewhere", body("lost"), None).is_err());
-		assert_eq!(host.observe().0.messages.len(), 3);
+		assert_eq!(host.observe().0.messages.len(), 1);
 	}
 
 	#[test]
 	fn a_room_the_product_keeps_takes_no_message_from_the_user_through_the_host() {
 		let host = host_with_rooms(None);
 		assert!(host.post_user_message("kept", body("hi"), None).is_err());
-		let change = UserChange::Delete { message_id: "x".to_string() };
-		assert!(host.change_as_user("kept", change).is_err());
 	}
 
 	#[test]
 	fn a_room_that_exists_keeps_what_it_declared() {
 		let host = CliChatHost::new(None);
-		create(&host, HostChatCreateRoomRequest { config: source_config(), ..room("kept") });
+		create(&host, room("kept"));
+		configure(&host, "kept", source_config());
 
 		let again = futures::executor::block_on(host.create_chat_room(
 			&product(),
-			HostChatCreateRoomRequest {
-				metadata: ChatRoomMetadata {
-					name: "Renamed".to_string(),
-					avatar: None,
-					description: None,
-				},
-				..room("kept")
-			},
-			String::new(),
+			HostChatCreateRoomRequest { name: "Renamed".to_string(), ..room("kept") },
 		))
 		.expect("an existing room is found again");
 
@@ -1809,7 +1502,7 @@ mod tests {
 	}
 
 	#[test]
-	fn metadata_replaces_the_name_avatar_and_description() {
+	fn metadata_replaces_the_name_and_description() {
 		let host = host_with_rooms(None);
 		let (_, mut events) = host.observe();
 		futures::executor::block_on(host.set_chat_room_metadata(
@@ -1818,10 +1511,6 @@ mod tests {
 				room_id: "support".to_string(),
 				metadata: ChatRoomMetadata {
 					name: "Help desk".to_string(),
-					avatar: Some(ChatResource::Inline {
-						mime_type: "image/png".to_string(),
-						bytes: vec![1, 2, 3],
-					}),
 					description: Some("We answer".to_string()),
 				},
 			},
@@ -1831,34 +1520,19 @@ mod tests {
 		let event = events.try_recv().expect("the room event");
 		assert_eq!(event["name"], "Help desk");
 		assert_eq!(event["description"], "We answer");
-		assert_eq!(
-			event["avatar"],
-			json!({
-				"type": "Inline",
-				"mimeType": "image/png",
-				"size": 3,
-				"dataUrl": "data:image/png;base64,AQID",
-			})
-		);
 	}
 
 	#[test]
 	fn the_list_row_takes_the_preview_and_defaults_the_rest() {
 		let host = host_with_rooms(None);
-		futures::executor::block_on(host.post_chat_message(
-			&product(),
-			HostChatPostMessageRequest {
-				room_id: "support".to_string(),
-				payload: text("newest"),
-				alt: None,
-			},
-		))
-		.expect("the room exists");
+		feed(&host, "support", ChatFeedUpdate::New(message("p-1", PRODUCT, "newest")), true)
+			.expect("the room exists");
 		// With nothing declared: the newest text and the host's unread count.
 		let list = &room_view(&host, "support")["list"];
-		assert_eq!(list["pinned"], false);
-		assert_eq!(list["text"], json!({ "text": "newest", "ongoing": false }));
+		assert_eq!(list["text"], "newest");
+		assert_eq!(list["origin"], PRODUCT);
 		assert_eq!(list["badge"], json!({ "type": "UnreadCount", "count": 1 }));
+		assert_eq!(list["unseenReactions"], 0);
 
 		let preview = |preview: ChatRoomPreview| {
 			futures::executor::block_on(host.set_chat_room_preview(
@@ -1869,45 +1543,58 @@ mod tests {
 			room_view(&host, "support")["list"].clone()
 		};
 		let list = preview(ChatRoomPreview {
-			order: ChatRoomOrder::PinToTop,
 			timestamp: Some(42),
 			badge: Some(ChatRoomBadge::UnreadCount { count: 7 }),
-			text: Some(ChatRoomPreviewText { text: "Bot is typing".to_string(), ongoing: true }),
+			last_message: Some(message("c-1", "contact", "from the product")),
+			last_reaction: Some(ChatPreviewReaction {
+				emoji: "+1".to_string(),
+				by_user: false,
+				message: Some(message("c-1", "contact", "from the product")),
+				removed: true,
+			}),
+			unseen_reactions: 2,
+			last_call: Some(ChatMessage {
+				body: ChatMessageBody::Call(ChatCallRecord {
+					video: false,
+					answered_at: Some(2),
+					closed: Some(ChatCallClose { at: 3, by_user: true }),
+				}),
+				..message("call-1", USER, "")
+			}),
 		});
-		assert_eq!(list["pinned"], true);
 		assert_eq!(list["timestamp"], 42);
 		assert_eq!(list["badge"], json!({ "type": "UnreadCount", "count": 7 }));
-		assert_eq!(list["text"], json!({ "text": "Bot is typing", "ongoing": true }));
+		assert_eq!(list["text"], "from the product");
+		assert_eq!(list["origin"], "contact");
+		assert_eq!(list["lastCall"], json!({ "messageId": "call-1", "text": "Audio call, ended" }));
+		assert_eq!(
+			list["lastReaction"],
+			json!({ "emoji": "+1", "byUser": false, "messageId": "c-1", "removed": true })
+		);
+		assert_eq!(list["unseenReactions"], 2);
 
 		// The variant that hides the badge, by its wire index rather than
 		// its name.
 		let hidden = ChatRoomBadge::decode(&mut &[0u8][..]).expect("variant 0 hides the badge");
 		let list = preview(ChatRoomPreview {
-			order: ChatRoomOrder::Timestamp,
 			timestamp: None,
 			badge: Some(hidden),
-			text: None,
+			last_message: None,
+			last_reaction: None,
+			unseen_reactions: 0,
+			last_call: None,
 		});
-		assert_eq!(list["pinned"], false);
 		assert_eq!(list["badge"], Value::Null);
-		assert_eq!(list["text"]["text"], "newest");
+		assert_eq!(list["text"], "newest");
 		let list = preview(ChatRoomPreview {
-			order: ChatRoomOrder::Timestamp,
 			timestamp: None,
 			badge: Some(ChatRoomBadge::UnreadCount { count: 0 }),
-			text: None,
+			last_message: None,
+			last_reaction: None,
+			unseen_reactions: 0,
+			last_call: None,
 		});
 		assert_eq!(list["badge"], Value::Null, "a count of 0 shows nothing");
-		let list = preview(ChatRoomPreview {
-			order: ChatRoomOrder::Timestamp,
-			timestamp: None,
-			badge: Some(ChatRoomBadge::Image {
-				resource: ChatResource::Preimage { key: vec![7; 32] },
-			}),
-			text: None,
-		});
-		assert_eq!(list["badge"]["type"], "Image");
-		assert_eq!(list["badge"]["resource"]["key"], format!("0x{}", "07".repeat(32)));
 	}
 
 	#[test]
@@ -1940,7 +1627,7 @@ mod tests {
 			.into_iter()
 			.map(|line| line["kind"].clone())
 			.collect();
-		assert_eq!(kinds, ["room", "room", "deleteRoom", "deleteRoom"]);
+		assert_eq!(kinds, ["room", "room", "config", "deleteRoom", "deleteRoom"]);
 	}
 
 	#[test]
@@ -2022,17 +1709,27 @@ mod tests {
 			json!([{ "emoji": "+1", "count": 2, "reactedByUser": true }])
 		);
 
-		feed(&host, "support", ChatFeedUpdate::Deleted { message_id: "p-1".to_string() }, true)
-			.expect("any message is deleted");
-		let deleted = drain(&mut events).pop().expect("the delete event");
-		assert_eq!(deleted["message"]["deleted"], true);
-		assert_eq!(deleted["list"]["text"]["text"], "mine", "the preview skips a deleted message");
+		// A call that ended is drawn again in place, without an edit mark.
+		let call = ChatMessage {
+			body: ChatMessageBody::Call(ChatCallRecord {
+				video: false,
+				answered_at: Some(5),
+				closed: Some(ChatCallClose { at: 9, by_user: true }),
+			}),
+			..message("p-1", PRODUCT, "")
+		};
+		feed(&host, "support", ChatFeedUpdate::Replaced(call), true).expect("replaced");
+		let replaced = drain(&mut events).pop().expect("the replace event");
+		assert_eq!(replaced["message"]["body"]["type"], "Call");
+		assert_eq!(replaced["message"]["body"]["text"], "Audio call, ended");
+		assert_eq!(replaced["message"]["editedAt"], Value::Null);
+		assert_eq!(replaced["message"]["reactions"], json!([]));
 		assert_eq!(
-			feed(&host, "support", ChatFeedUpdate::Deleted { message_id: "p-1".to_string() }, true),
+			feed(&host, "support", ChatFeedUpdate::Replaced(message("p-9", PRODUCT, "")), true),
 			Err(HostChatUpdateFeedError::UnknownMessage)
 		);
 		assert_eq!(
-			feed(&host, "gone", ChatFeedUpdate::Deleted { message_id: "p-1".to_string() }, true),
+			feed(&host, "gone", ChatFeedUpdate::Replaced(message("p-1", PRODUCT, "")), true),
 			Err(HostChatUpdateFeedError::UnknownRoom)
 		);
 
@@ -2056,15 +1753,19 @@ mod tests {
 		let (_, mut events) = host.observe();
 
 		// The page cache never saw it: nothing to change, and no error.
-		feed(&host, "kept", ChatFeedUpdate::Deleted { message_id: "old".to_string() }, false)
+		feed(&host, "kept", ChatFeedUpdate::Replaced(message("old", PRODUCT, "")), false)
 			.expect("an update for a message off screen is fine");
 		assert!(drain(&mut events).is_empty());
 
 		feed(&host, "kept", ChatFeedUpdate::New(message("s-1", PRODUCT, "hi")), false)
 			.expect("a new message goes to the screen");
 		let mut summary = message("s-2", USER, "with reactions");
-		summary.reactions =
-			vec![ChatReactionSummary { emoji: "+1".to_string(), count: 3, reacted_by_user: false }];
+		summary.reactions = vec![ChatReactionSummary {
+			emoji: "+1".to_string(),
+			count: 3,
+			reacted_by_user: false,
+			unseen: false,
+		}];
 		host.cache_page("kept", &[summary]);
 		feed(
 			&host,
@@ -2100,85 +1801,21 @@ mod tests {
 			&product(),
 			HostChatSetRoomFooterRequest {
 				room_id: "support".to_string(),
-				footer: ChatRoomFooter::Input(ChatInputConfig {
-					placeholder: Some("Ask".to_string()),
-					photo: false,
-					video: false,
-					file: true,
-					payment: Some(truapi::latest::ChatInputPayment::Enabled {
-						destination: [5; 32],
-					}),
-				}),
+				footer: ChatRoomFooter::Empty,
 			},
 		))
 		.expect("the room exists");
 
-		let view = room_view(&host, "support");
-		assert_eq!(view["footer"]["type"], "Input");
-		assert_eq!(view["footer"]["placeholder"], "Ask");
-		assert_eq!(view["footer"]["file"], true);
-		assert_eq!(view["footer"]["payment"]["destination"], format!("0x{}", "05".repeat(32)));
+		assert_eq!(room_view(&host, "support")["footer"], json!({ "type": "Empty" }));
 		// The default footer of a room that declared none.
-		assert_eq!(
-			room_view(&host, "kept")["footer"],
-			json!({
-				"type": "Input", "placeholder": null, "photo": true, "video": true, "file": false, "payment": null,
-			})
-		);
+		assert_eq!(room_view(&host, "kept")["footer"], json!({ "type": "TextInput" }));
 
 		let kinds: Vec<_> = transcript_lines(transcript.path())
 			.into_iter()
 			.map(|line| line["kind"].as_str().unwrap_or_default().to_string())
 			.filter(|kind| kind != "room")
 			.collect();
-		assert_eq!(kinds, ["footer"]);
-	}
-
-	#[test]
-	fn the_user_edits_and_deletes_only_the_users_own_messages() {
-		let host = host_with_rooms(None);
-		let mine = host.post_user_message("support", body("mine"), None).expect("the room exists");
-		feed(&host, "support", ChatFeedUpdate::New(message("p-1", PRODUCT, "theirs")), true)
-			.expect("stored");
-		let edit = |message_id: &str| UserChange::Edit {
-			message_id: message_id.to_string(),
-			body: body("changed"),
-		};
-
-		host.change_as_user("support", edit(&mine.message_id))
-			.expect("an own message is edited");
-		assert!(host.change_as_user("support", edit("p-1")).is_err());
-		assert!(
-			host.change_as_user("support", UserChange::Delete { message_id: "p-1".to_string() })
-				.is_err()
-		);
-		host.change_as_user(
-			"support",
-			UserChange::React {
-				message_id: "p-1".to_string(),
-				emoji: "+1".to_string(),
-				placed: true,
-			},
-		)
-		.expect("any message takes a reaction");
-		feed(
-			&host,
-			"support",
-			ChatFeedUpdate::StatusChanged {
-				message_id: "p-1".to_string(),
-				status: ChatMessageStatus::Failed,
-			},
-			true,
-		)
-		.expect("stored");
-		host.change_as_user("support", UserChange::Delete { message_id: "p-1".to_string() })
-			.expect("a failed message offers delete");
-
-		let edited = host.message("support", &mine.message_id).expect("kept");
-		assert_eq!(edited.body, body("changed"));
-		assert!(edited.edited_at.is_some());
-		let reacted = host.message("support", "p-1").expect("a tombstone stays");
-		assert!(reacted.reactions[0].reacted_by_user);
+		assert_eq!(kinds, ["config", "footer"]);
 	}
 
 	#[test]
@@ -2208,7 +1845,12 @@ mod tests {
 
 		host.apply_source_action(
 			"kept",
-			&ChatUserAction::NewMessage { body: body("hello"), reply_to: None },
+			&ChatUserAction::NewMessage {
+				body: body("hello"),
+				reply_to: None,
+				message_id: None,
+				timestamp: None,
+			},
 			&ProductChatUserActionItem::MessageCreated(created.clone()),
 		);
 		let acknowledged = ProductChatUserActionItem::Acknowledged;
@@ -2225,11 +1867,7 @@ mod tests {
 			},
 			&acknowledged,
 		);
-		host.apply_source_action(
-			"kept",
-			&ChatUserAction::DeleteMessage { message_id: "s-2".to_string() },
-			&acknowledged,
-		);
+		host.apply_source_action("kept", &ChatUserAction::AcceptRequest, &acknowledged);
 		host.apply_source_action(
 			"kept",
 			&ChatUserAction::Seen { message_id: "s-1".to_string() },
@@ -2241,14 +1879,12 @@ mod tests {
 		assert_eq!(messages[0]["messageId"], "s-2");
 		assert_eq!(messages[1]["body"]["text"], "edited");
 		assert_eq!(messages[2]["reactions"][0]["reactedByUser"], true);
-		assert_eq!(messages[3]["deleted"], true);
-		assert_eq!(events.len(), 4, "a seen report changes no message");
+		assert_eq!(events.len(), 3, "a contact action or a seen report changes no message");
 		assert_eq!(room_view(&host, "kept")["lastSeen"], "s-1");
 	}
 
 	#[test]
 	fn the_list_text_of_a_message_falls_back_in_order() {
-		use truapi::latest::{ChatAction, ChatActions};
 		let with = |body| ChatMessage { body, ..message("m", PRODUCT, "") };
 		let meta = |alt: Option<&str>| ChatMediaMeta {
 			mime_type: "image/png".to_string(),
@@ -2257,11 +1893,9 @@ mod tests {
 			height: None,
 			placeholder: None,
 			alt: alt.map(str::to_string),
+			duration_ms: None,
 		};
-		let image = |alt| ChatMediaItem::Image {
-			resource: ChatResource::Preimage { key: vec![0; 32] },
-			meta: meta(alt),
-		};
+		let image = |alt| ChatMediaItem::Image { resource: hop(), meta: meta(alt) };
 		assert_eq!(preview_text(&with(body("hi"))), "hi");
 		assert_eq!(
 			preview_text(&with(ChatMessageBody::RichText {
@@ -2275,31 +1909,40 @@ mod tests {
 			SENT_A_MESSAGE
 		);
 		assert_eq!(
-			preview_text(&with(ChatMessageBody::Actions(ChatActions {
-				text: Some("Pick".to_string()),
-				actions: vec![ChatAction { action_id: "a".to_string(), title: "A".to_string() }],
-				layout: ChatActionLayout::Grid,
-			}))),
-			"Pick"
+			preview_text(&with(ChatMessageBody::Event(ChatContactEvent::RequestAccepted))),
+			"Request accepted"
 		);
 		assert_eq!(
-			preview_text(&with(ChatMessageBody::Custom {
-				message_type: "card".to_string(),
-				payload: vec![1],
-				preview_text: Some("Sample card".to_string()),
-			})),
-			"Sample card"
+			preview_text(&with(ChatMessageBody::Call(ChatCallRecord {
+				video: true,
+				answered_at: None,
+				closed: Some(ChatCallClose { at: 1, by_user: false }),
+			}))),
+			"Video call, not answered"
 		);
+		assert_eq!(
+			preview_text(&with(ChatMessageBody::Payment(ChatPaymentRecord {
+				amount: 1_500,
+				legacy: false,
+			}))),
+			"Payment of 1500"
+		);
+	}
+
+	fn hop() -> ChatResource {
+		ChatResource::Hop {
+			identifier: vec![1; 32],
+			ticket: vec![2; 32],
+			node: "wss://hop.example".to_string(),
+			size: 1,
+		}
 	}
 
 	#[test]
 	fn a_body_is_shown_with_every_field_the_product_sent() {
 		let media = vec![
 			ChatMediaItem::Image {
-				resource: ChatResource::Inline {
-					mime_type: "image/png".to_string(),
-					bytes: vec![0xff],
-				},
+				resource: hop(),
 				meta: ChatMediaMeta {
 					mime_type: "image/png".to_string(),
 					size_bytes: Some(1),
@@ -2307,10 +1950,11 @@ mod tests {
 					height: Some(3),
 					placeholder: Some("LKO2".to_string()),
 					alt: Some("dot".to_string()),
+					duration_ms: None,
 				},
 			},
 			ChatMediaItem::File {
-				resource: ChatResource::Preimage { key: vec![1; 32] },
+				resource: hop(),
 				meta: ChatMediaMeta {
 					mime_type: "application/pdf".to_string(),
 					size_bytes: None,
@@ -2318,18 +1962,25 @@ mod tests {
 					height: None,
 					placeholder: None,
 					alt: None,
+					duration_ms: None,
 				},
 				file_name: "a.pdf".to_string(),
 			},
 		];
-		let view = body_json(&ChatMessageBody::RichText { text: Some("**b**".to_string()), media });
+		let view = body_json(&ChatMessageBody::RichText { text: Some("b".to_string()), media });
 		assert_eq!(view["type"], "RichText");
-		assert_eq!(view["text"], "**b**");
+		assert_eq!(view["text"], "b");
+		// The ticket stays with the host: the page gets the node and the size.
 		assert_eq!(
 			view["media"][0],
 			json!({
 				"kind": "Image",
-				"resource": { "type": "Inline", "mimeType": "image/png", "size": 1, "dataUrl": "data:image/png;base64,/w==" },
+				"resource": {
+					"type": "Hop",
+					"size": 1,
+					"node": "wss://hop.example",
+					"identifier": format!("0x{}", "01".repeat(32)),
+				},
 				"fileName": null,
 				"meta": { "mimeType": "image/png", "sizeBytes": 1, "width": 2, "height": 3, "placeholder": "LKO2", "alt": "dot" },
 			})
@@ -2337,87 +1988,30 @@ mod tests {
 		assert_eq!(view["media"][1]["kind"], "File");
 		assert_eq!(view["media"][1]["fileName"], "a.pdf");
 		assert_eq!(
-			view["media"][1]["resource"],
-			json!({ "type": "Preimage", "key": format!("0x{}", "01".repeat(32)) })
+			body_json(&ChatMessageBody::Call(ChatCallRecord {
+				video: false,
+				answered_at: Some(3),
+				closed: None,
+			})),
+			json!({
+				"type": "Call",
+				"video": false,
+				"answeredAt": 3,
+				"closed": null,
+				"text": "Audio call, ongoing",
+			})
 		);
 		assert_eq!(
-			body_json(&ChatMessageBody::Custom {
-				message_type: "card".to_string(),
-				payload: vec![0xde, 0xad],
-				preview_text: None,
-			}),
-			json!({ "type": "Custom", "messageType": "card", "payloadHex": "dead", "previewText": null })
+			body_json(&ChatMessageBody::Payment(ChatPaymentRecord {
+				amount: u128::MAX,
+				legacy: true,
+			})),
+			json!({ "type": "Payment", "amount": u128::MAX.to_string(), "legacy": true })
 		);
-	}
-
-	#[test]
-	fn first_version_content_is_shown_with_every_field_the_product_sent() {
-		use truapi::latest::{
-			ChatAction, ChatActions, ChatCustomMessage, ChatFile, ChatMedia, ChatReaction,
-			ChatRichText,
-		};
-		let reaction = ChatReaction { message_id: "m1".to_string(), emoji: "+1".to_string() };
-		let cases = [
-			(text("a\nb"), json!({"type": "Text", "text": "a\nb"})),
-			(
-				ChatMessageContent::RichText(ChatRichText {
-					text: None,
-					media: vec![ChatMedia { url: "https://x/1.png".to_string() }],
-				}),
-				json!({"type": "RichText", "text": null, "media": [{"url": "https://x/1.png"}]}),
-			),
-			(
-				ChatMessageContent::Actions(ChatActions {
-					text: Some("pick".to_string()),
-					actions: vec![ChatAction {
-						action_id: "claim".to_string(),
-						title: "Claim".to_string(),
-					}],
-					layout: ChatActionLayout::Grid,
-				}),
-				json!({
-					"type": "Actions",
-					"text": "pick",
-					"actions": [{"actionId": "claim", "title": "Claim"}],
-					"layout": "Grid",
-				}),
-			),
-			(
-				ChatMessageContent::File(ChatFile {
-					url: "https://x/f".to_string(),
-					file_name: "f.pdf".to_string(),
-					mime_type: "application/pdf".to_string(),
-					size_bytes: 42,
-					text: None,
-				}),
-				json!({
-					"type": "File",
-					"url": "https://x/f",
-					"fileName": "f.pdf",
-					"mimeType": "application/pdf",
-					"sizeBytes": 42,
-					"text": null,
-				}),
-			),
-			(
-				ChatMessageContent::Reaction(reaction.clone()),
-				json!({"type": "Reaction", "messageId": "m1", "emoji": "+1"}),
-			),
-			(
-				ChatMessageContent::ReactionRemoved(reaction),
-				json!({"type": "ReactionRemoved", "messageId": "m1", "emoji": "+1"}),
-			),
-			(
-				ChatMessageContent::Custom(ChatCustomMessage {
-					message_type: "card".to_string(),
-					payload: vec![0xde, 0xad],
-				}),
-				json!({"type": "Custom", "messageType": "card", "payloadHex": "dead"}),
-			),
-		];
-		for (content, expected) in cases {
-			assert_eq!(content_json(&content), expected);
-		}
+		assert_eq!(
+			body_json(&ChatMessageBody::Event(ChatContactEvent::LeftChat)),
+			json!({ "type": "Event", "event": "LeftChat", "text": "Left the chat" })
+		);
 	}
 
 	// S49: the host lists what the page serves end to end, and nothing more.
@@ -2451,10 +2045,8 @@ mod tests {
 	fn the_features_of_a_room_stay_whole() {
 		let host = host_with_rooms(None);
 		let features = ChatRoomFeatures {
-			preimage_attachments: true,
-			read_aloud: true,
 			calls: Some(truapi::latest::ChatRoomCalls { audio: true, video: false }),
-			..ChatRoomFeatures::default()
+			hop_attachments: true,
 		};
 
 		futures::executor::block_on(host.set_chat_room_features(
@@ -2474,13 +2066,7 @@ mod tests {
 		);
 		assert_eq!(
 			room_view(&host, "support")["features"],
-			json!({
-				"preimageAttachments": true,
-				"sealedAttachments": false,
-				"search": false,
-				"calls": { "audio": true, "video": false },
-				"readAloud": true,
-			})
+			json!({ "calls": { "audio": true, "video": false }, "hopAttachments": true })
 		);
 		assert_eq!(
 			futures::executor::block_on(
@@ -2515,82 +2101,42 @@ mod tests {
 	}
 
 	#[test]
-	fn the_user_state_of_a_room_reads_back() {
-		let host = host_with_rooms(None);
+	fn the_contact_of_a_room_shows_on_the_page() {
+		let transcript = tempfile::NamedTempFile::new().expect("a temp transcript");
+		let host = host_with_rooms(Some(transcript.path().to_path_buf()));
+		let contact = ChatRoomContact {
+			account: [9; 32],
+			username: Some("alice".to_string()),
+			state: ChatContactState::Incoming,
+		};
+		assert_eq!(room_view(&host, "kept")["contact"], Value::Null);
 
-		host.set_user_state("support", Some(u64::MAX), false).expect("the room exists");
-		host.set_user_state("kept", None, true).expect("the room exists");
-
-		assert_eq!(
-			futures::executor::block_on(host.read_chat_room_user_states(&product()))
-				.expect("read")
-				.rooms,
-			[
-				ChatRoomUserState {
-					room_id: "kept".to_string(),
-					muted_until: None,
-					archived: true
-				},
-				ChatRoomUserState {
-					room_id: "support".to_string(),
-					muted_until: Some(u64::MAX),
-					archived: false,
-				},
-			]
-		);
-		host.set_user_state("support", None, false).expect("the room exists");
-		assert_eq!(host.user_states().len(), 1);
-		assert!(host.set_user_state("gone", None, true).is_err());
-	}
-
-	// S54: the page lists what the host delivered, so it can show that a
-	// notification into a muted room never came.
-	#[test]
-	fn a_delivered_notification_reaches_every_page() {
-		let host = CliChatHost::new(None);
-		let (_, mut page) = host.observe();
-
-		host.notification_shown(3, "Ping", Some("polkadot://chat.dot/-/chat/main"));
+		futures::executor::block_on(host.set_chat_room_contact(
+			&product(),
+			HostChatSetRoomContactRequest { room_id: "kept".to_string(), contact: contact.clone() },
+		))
+		.expect("the room exists");
 
 		assert_eq!(
-			page.try_recv().expect("an event"),
+			room_view(&host, "kept")["contact"],
 			json!({
-				"kind": "notification",
-				"id": 3,
-				"text": "Ping",
-				"deeplink": "polkadot://chat.dot/-/chat/main",
+				"account": format!("0x{}", "09".repeat(32)),
+				"username": "alice",
+				"state": "Incoming",
 			})
 		);
-	}
-
-	// D30: a repeat registration keeps the persona and replaces its name.
-	#[test]
-	fn a_repeat_registration_replaces_the_persona() {
-		let host = CliChatHost::new(None);
-		let register = |name: &str| {
-			futures::executor::block_on(host.register_chat_bot(
+		assert_eq!(host.room_contact("kept"), Some(contact.clone()));
+		assert!(
+			futures::executor::block_on(host.set_chat_room_contact(
 				&product(),
-				HostChatRegisterBotRequest {
-					bot_id: "helper".to_string(),
-					name: name.to_string(),
-					icon: String::new(),
-				},
+				HostChatSetRoomContactRequest { room_id: "gone".to_string(), contact },
 			))
-			.expect("registered")
-			.status
-		};
-
-		assert_eq!(register("Helper"), ChatBotRegistrationStatus::New);
-		assert_eq!(register("Helper 2"), ChatBotRegistrationStatus::Exists);
-		assert_eq!(
-			futures::executor::block_on(host.read_chat_bots(&product()))
-				.expect("read")
-				.bot_ids,
-			["helper"]
+			.is_err()
 		);
+		let last = transcript_lines(transcript.path()).pop().expect("the contact line");
 		assert_eq!(
-			host.observe().0.bots,
-			[json!({ "botId": "helper", "name": "Helper 2", "icon": "" })]
+			(last["kind"].clone(), last["roomId"].clone()),
+			(json!("contact"), json!("kept"))
 		);
 	}
 }

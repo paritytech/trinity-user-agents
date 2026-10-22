@@ -32,9 +32,15 @@ internal class ChatFeedPaging(
         if (current?.newerPage != ChatPageEdgeUiState.END) interactor.showNewestMessages(chatId)
     }
 
-    /** Pages a product-source room until the message is loaded, then waits until the feed shows it. */
+    /**
+     * Pages a product-source room until the message is loaded, then waits until the feed shows it. A room that the host
+     * keeps loads all its messages, so it only waits.
+     */
     suspend fun awaitLoaded(messageId: ChatMessageId) {
-        if (!isLoaded(current, messageId)) interactor.jumpToMessage(chatId, messageId)
+        // A message that the product room does not have is not scrolled to, as in the native chat.
+        if (interactor.isProductSource(chatId) && !isLoaded(current, messageId) && !interactor.jumpToMessage(chatId, messageId)) {
+            return
+        }
 
         messagesState.first { isLoaded(it.dataOrNull, messageId) }
     }

@@ -78,15 +78,15 @@ actor TrUAPIWorkerRuntime {
         let jsEngine = try await bootEngine(scripts: scripts)
         try checkNotDisposed()
 
-        // Before the product's module runs, so an error of its first line ends the worker too.
+        // Before the product's module runs, so an error of its first line is reported too.
         let report: JSNativeHandler = { [faultContinuation, logger, productUrl] message in
-            logger.error("[truapi] worker fault, the worker ends: \(message) (\(productUrl))")
+            logger.error("[truapi] worker fault: \(message) (\(productUrl))")
             faultContinuation.yield(message)
         }
         await jsEngine.registerFunction(name: Self.faultHandlerName, handler: report)
-        // A WebContent crash ends the page with no error event: it is a fault, so the manager restarts the worker.
+        // A WebContent crash ends the page with no error event: it is a fault, so the manager can restart the worker.
         await jsEngine.registerTerminationHandler { [faultContinuation, logger, productUrl] in
-            logger.error("[truapi] worker web content process ended, the worker ends (\(productUrl))")
+            logger.error("[truapi] worker web content process ended (\(productUrl))")
             faultContinuation.yield("the web content process ended")
         }
         try checkNotDisposed()

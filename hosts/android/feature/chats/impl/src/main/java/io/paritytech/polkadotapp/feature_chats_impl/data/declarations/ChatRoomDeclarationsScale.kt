@@ -1,13 +1,18 @@
 package io.paritytech.polkadotapp.feature_chats_impl.data.declarations
 
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.annotations.EnumIndex
-import io.paritytech.polkadotapp.feature_chats_impl.domain.models.scale.ChatResourceLocal
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.scale.ChatMessageContentLocal
 import kotlinx.serialization.Serializable
 
 // The SCALE values that `chat_room_declarations` keeps. They keep the field order of the Chat Extension v2
-// wire types, so they encode to the wire bytes, except that a payment destination carries a length prefix.
-// The stored bytes have no version prefix: any change to these types requires a migration.
+// wire types, except that a payment destination carries a length prefix and a preview message keeps the stored
+// content of a message. The stored bytes have no version prefix: a value that does not decode reads as "not
+// declared", and the product declares it again.
 
+/**
+ * The configuration keeps its first stored layout, so the rooms keep their configuration. Chat Extension v2 dropped
+ * [participants], [messageActions], [allowedReactions] and [placeholder]: they are written empty and not read.
+ */
 @Serializable
 class ChatRoomConfigLocal(
     val productSource: Boolean,
@@ -21,14 +26,12 @@ class ChatRoomConfigLocal(
 
 @Serializable
 class ChatRoomPreviewLocal(
-    val order: ChatRoomOrderLocal,
     val timestamp: Long?,
     val badge: ChatRoomBadgeLocal?,
-    val text: ChatRoomPreviewTextLocal?,
+    val lastMessage: PreviewMessageLocal?,
+    val lastReaction: PreviewReactionLocal?,
+    val unseenReactions: Int,
 )
-
-@Serializable
-enum class ChatRoomOrderLocal { TIMESTAMP, PIN_TO_TOP }
 
 @Serializable
 sealed interface ChatRoomBadgeLocal {
@@ -39,42 +42,28 @@ sealed interface ChatRoomBadgeLocal {
     @Serializable
     @EnumIndex(1)
     class UnreadCount(val count: Int) : ChatRoomBadgeLocal
-
-    @Serializable
-    @EnumIndex(2)
-    class Image(val resource: ChatResourceLocal) : ChatRoomBadgeLocal
 }
 
 @Serializable
-class ChatRoomPreviewTextLocal(val text: String, val ongoing: Boolean)
-
-@Serializable
-sealed interface ChatRoomFooterLocal {
-    @Serializable
-    @EnumIndex(0)
-    class Input(val config: ChatInputConfigLocal) : ChatRoomFooterLocal
-
-    @Serializable
-    @EnumIndex(1)
-    object Empty : ChatRoomFooterLocal
-
-    @Serializable
-    @EnumIndex(2)
-    object Custom : ChatRoomFooterLocal
-}
-
-@Serializable
-class ChatInputConfigLocal(
-    val placeholder: String?,
-    val photo: Boolean,
-    val video: Boolean,
-    val file: Boolean,
-    val payment: ChatInputPaymentLocal?,
+class PreviewMessageLocal(
+    val messageId: String,
+    val participantId: String,
+    val timestamp: Long,
+    val content: ChatMessageContentLocal,
+    val status: PreviewMessageStatusLocal,
+    val replyTo: String?,
+    val editedAt: Long?,
+    val request: Boolean,
 )
 
 @Serializable
-sealed interface ChatInputPaymentLocal {
-    @Serializable
-    @EnumIndex(0)
-    class Enabled(val destination: ByteArray) : ChatInputPaymentLocal
-}
+enum class PreviewMessageStatusLocal { PREPARING, SENT, DELIVERED, READ, FAILED }
+
+@Serializable
+class PreviewReactionLocal(val emoji: String, val byUser: Boolean, val message: PreviewMessageLocal?, val removed: Boolean)
+
+@Serializable
+class ChatRoomContactLocal(val account: ByteArray, val username: String?, val state: ChatContactStateLocal)
+
+@Serializable
+enum class ChatContactStateLocal { INVITE, OUTGOING, INCOMING, ESTABLISHED, BLOCKED, PEER_LEFT }

@@ -47,22 +47,10 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
         }
     }
 
-    /// Keeps a persona that the product speaks as in its own rooms (07-LATER §5, D30). The core screened the
-    /// values and checked the bound of personas. The store checks the bound again.
-    func registerBot(botId: String, name: String, icon: String) async throws -> ChatBotRegistrationStatus {
-        logger.debug("[truapi:chat-bridge] registerBot \(botId)")
-        guard let botId = botId.nilIfEmpty else {
-            throw HostRejection.Rejected(reason: "a bot needs an id")
-        }
-
-        do {
-            return switch try await chatMessaging.registerPersona(botId: botId, name: name, icon: icon.nilIfEmpty) {
-            case .new: .new
-            case .exists: .exists
-            }
-        } catch let ChatProductPersonaError.tooMany(max) {
-            throw HostRejection.Rejected(reason: "a product registers at most \(max) bots")
-        }
+    func registerBot(botId: String, name _: String, icon _: String) async throws -> ChatBotRegistrationStatus {
+        logger.debug("[truapi:chat-bridge] registerBot \(botId) -> rejecting")
+        // No native bot registry; the container leaves it unimplemented too.
+        throw HostRejection.Rejected(reason: "bot registration is not supported by this host")
     }
 
     func postMessage(roomId: String, content: ChatMessageContent, alt: String?) async throws -> String {
@@ -76,7 +64,20 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
             throw HostRejection.Rejected(reason: "a chat message needs a room")
         }
 
-        return try await chatMessaging.sendMessage(content.toBotMessage(alt: alt), roomId: roomId)
+        let message: ProductBotMessage =
+            switch content {
+            case let .text(text):
+                .text(text)
+            case let .custom(custom):
+                .custom(messageType: custom.messageType, data: custom.payload, alt: alt)
+            case .richText,
+                 .actions,
+                 .file,
+                 .reaction,
+                 .reactionRemoved:
+                throw HostRejection.Rejected(reason: "this host renders text and custom messages only")
+            }
+        return try await chatMessaging.sendMessage(message, roomId: roomId)
     }
 
     func setRoomFooter(roomId: String, footer: ChatRoomFooter) async throws {
@@ -85,7 +86,12 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
             throw HostRejection.Rejected(reason: "a chat room needs an id")
         }
 
-        try await chatMessaging.setRoomFooterConfig(roomId: roomId, footer: Chat.RoomFooterConfig(footer))
+        let roomFooter: Chat.RoomFooter =
+            switch footer {
+            case .textInput: .textInput
+            case .empty: .empty
+            }
+        try await chatMessaging.setRoomFooter(roomId: roomId, footer: roomFooter)
     }
 
     func listRooms() async throws -> [ChatRoom] {
@@ -114,12 +120,7 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
 
     func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws {
         logger.debug("[truapi:chat-bridge] setRoomMetadata \(roomId)")
-        try await chatMessaging.setRoomMetadata(
-            roomId: requireRoomId(roomId),
-            name: metadata.name,
-            description: metadata.description,
-            avatar: metadata.avatarImage
-        )
+        try await chatMessaging.setRoomMetadata(roomId: requireRoomId(roomId), name: metadata.name)
     }
 
     func setRoomPreview(roomId: String, preview: ChatRoomPreview) async throws {
@@ -186,12 +187,10 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
         try await chatMessaging.setRoomCall(roomId: requireRoomId(roomId), call: call.map(Chat.RoomCall.init))
     }
 
-    func roomUserStates() async throws -> [ChatRoomUserState] {
-        try await chatMessaging.roomUserStates().map(\.wireValue)
-    }
-
-    func bots() async throws -> [String] {
-        try await chatMessaging.personaIds()
+    /// The core calls it only when this host lists `contact_rooms`. The contact stays across restarts.
+    func setRoomContact(roomId: String, contact: ChatRoomContact) async throws {
+        logger.debug("[truapi:chat-bridge] setRoomContact \(roomId)")
+        try await chatMessaging.setRoomContact(roomId: requireRoomId(roomId), contact: Chat.RoomContact(contact))
     }
 }
 
@@ -217,35 +216,6 @@ extension RoomInfo {
 }
 
 private extension ChatMessageContent {
-    /// The core screened every field: media and file URLs are `https` or inline images.
-    func toBotMessage(alt: String?) throws -> ProductBotMessage {
-        switch self {
-        case let .text(text):
-            .text(text)
-        case let .custom(custom):
-            .custom(messageType: custom.messageType, data: custom.payload, alt: alt)
-        case let .richText(richText):
-            .richText(text: richText.text, media: richText.media.map(\.url))
-        case let .actions(actions):
-            .actions(ProductBotActions(
-                text: actions.text,
-                buttons: actions.actions.map { .init(actionId: $0.actionId, title: $0.title) },
-                layout: actions.layout == .grid ? .grid : .column
-            ))
-        case let .file(file):
-            .file(ProductBotFile(
-                url: file.url,
-                fileName: file.fileName,
-                mimeType: file.mimeType,
-                sizeBytes: file.sizeBytes,
-                text: file.text
-            ))
-        case .reaction,
-             .reactionRemoved:
-            throw HostRejection.Rejected(reason: "this host does not apply reactions from a product")
-        }
-    }
-
     var variantName: String {
         switch self {
         case .text: "text"

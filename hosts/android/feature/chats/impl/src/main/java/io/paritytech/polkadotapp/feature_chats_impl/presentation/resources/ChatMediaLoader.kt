@@ -7,9 +7,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatHopFil
 import io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.outbox.ChatOutboxPreviews
 import io.paritytech.polkadotapp.feature_chats_impl.data.resources.ChatHopFileCache
 import io.paritytech.polkadotapp.feature_chats_impl.data.resources.ChatResourceDiskCache
-import io.paritytech.polkadotapp.feature_chats_impl.data.resources.ChatSealedFile
-import io.paritytech.polkadotapp.feature_chats_impl.data.resources.ChatSealedFileStore
-import io.paritytech.polkadotapp.tools_ipfs_api.IpfsContentLookup
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
@@ -25,47 +22,34 @@ interface ChatMediaLoader {
     /**
      * The file that holds the bytes of [resource]. [extension] is the file extension for the MIME type of the item, so
      * that the image loader and other apps know the type of the file. A failure means that the bytes are not
-     * available now, for example because the preimage lookup failed. A later call tries again.
+     * available now, for example because the HOP node did not answer. A later call tries again. [progress] gets the
+     * bytes received and the total size while a HOP file downloads.
      */
-    suspend fun load(resource: ChatResourceModel, extension: String?): Result<File>
+    suspend fun load(
+        resource: ChatResourceModel,
+        extension: String?,
+        progress: ((received: Long, total: Long) -> Unit)? = null,
+    ): Result<File>
 }
 
 class RealChatMediaLoader @Inject constructor(
-    private val ipfsContentLookup: IpfsContentLookup,
     private val cache: ChatResourceDiskCache,
     private val dispatchers: CoroutineDispatchers,
-    private val sealedFiles: ChatSealedFileStore,
     private val hopFiles: ChatHopFiles,
     private val hopCache: ChatHopFileCache,
     private val outboxPreviews: ChatOutboxPreviews = ChatOutboxPreviews { null },
 ) : ChatMediaLoader {
-    override suspend fun load(resource: ChatResourceModel, extension: String?): Result<File> = withContext(dispatchers.io) {
+    override suspend fun load(
+        resource: ChatResourceModel,
+        extension: String?,
+        progress: ((received: Long, total: Long) -> Unit)?,
+    ): Result<File> = withContext(dispatchers.io) {
         when (resource) {
-            is ChatResourceModel.Inline -> keep(inlineKey(resource.bytes.value), extension, resource.bytes.value)
-
-            is ChatResourceModel.Preimage -> {
-                val key = PREIMAGE_KEY_PREFIX + resource.key.value.toHex()
-                cache.file(key, extension)?.let { return@withContext Result.success(it) }
-
-                // A failed lookup is not kept, so that the retry of the user asks again.
-                ipfsContentLookup.lookupRawHash(resource.key.value).mapCatching { bytes -> keep(key, extension, bytes).getOrThrow() }
-            }
-
-            // An opened sealed file stays out of the cache: the chain keeps its parts for about two weeks only.
-            is ChatResourceModel.Sealed -> {
-                val key = SEALED_KEY_PREFIX + resource.digest.value.toHex()
-                sealedFiles.cache.file(key, extension)?.let { return@withContext Result.success(it) }
-
-                val file = ChatSealedFile.read(resource) { part -> ipfsContentLookup.lookupRawHash(part).getOrNull() }
-                    ?: return@withContext Result.failure(IOException("The sealed file did not open"))
-                sealedFiles.cache.store(key, extension, file)
-            }
-
             // The node drops an acked file, so it stays in the store of opened files; the ack follows the store.
             is ChatResourceModel.Hop -> {
                 hopCache.file(resource, extension)?.let { return@withContext Result.success(it) }
 
-                hopFiles.open(resource).flatMap { opened ->
+                hopFiles.open(resource, progress).flatMap { opened ->
                     hopCache.store(resource, extension, opened.bytes).onSuccess { hopFiles.ack(resource, opened.entries) }
                 }
             }
@@ -97,8 +81,6 @@ class RealChatMediaLoader @Inject constructor(
 
     private companion object {
         const val INLINE_KEY_PREFIX = "inline:"
-        const val PREIMAGE_KEY_PREFIX = "preimage:"
-        const val SEALED_KEY_PREFIX = "sealed:"
         const val DATA_SCHEME = "data:"
         const val BASE64_SUFFIX = ";base64"
     }

@@ -189,6 +189,8 @@ pub struct ChatRoomDeclarations {
 	pub features: Option<latest::ChatRoomFeatures>,
 	/// The call of the room now.
 	pub call: Option<latest::ChatRoomCall>,
+	/// The contact of the room now.
+	pub contact: Option<latest::ChatRoomContact>,
 }
 
 /// How the mock's chain connection behaves.
@@ -310,8 +312,6 @@ pub struct MockPlatform {
 	chat_bots: Arc<Mutex<BTreeMap<String, latest::HostChatRegisterBotRequest>>>,
 	chat_messages: Arc<Mutex<Vec<ChatMessageRecord>>>,
 	chat_declarations: Arc<Mutex<BTreeMap<String, ChatRoomDeclarations>>>,
-	/// The mute and archive state the user gave each room.
-	chat_user_states: Arc<Mutex<BTreeMap<String, crate::platform::ChatRoomUserState>>>,
 	/// Live `subscribe_chat_rooms` streams, fed a fresh list on every change.
 	chat_room_subscribers:
 		Arc<Mutex<Vec<mpsc::UnboundedSender<latest::HostChatListSubscribeItem>>>>,
@@ -364,7 +364,6 @@ impl MockPlatform {
 			chat_bots: Arc::new(Mutex::new(BTreeMap::new())),
 			chat_messages: Arc::new(Mutex::new(Vec::new())),
 			chat_declarations: Arc::new(Mutex::new(BTreeMap::new())),
-			chat_user_states: Arc::new(Mutex::new(BTreeMap::new())),
 			chat_room_subscribers: Arc::new(Mutex::new(Vec::new())),
 			next_chat_message_id: Arc::new(AtomicU32::new(0)),
 			next_operation_id: Arc::new(AtomicU32::new(0)),
@@ -668,42 +667,6 @@ impl MockPlatform {
 			.cloned()
 	}
 
-	/// Play the user: mute `room_id` until `muted_until` and archive it or
-	/// not. A room neither muted nor archived leaves the list of states.
-	pub fn set_chat_room_user_state(
-		&self,
-		room_id: &str,
-		muted_until: Option<u64>,
-		archived: bool,
-	) {
-		let mut states = self.chat_user_states.lock().expect("chat user states poisoned");
-		if muted_until.is_none() && !archived {
-			states.remove(room_id);
-			return;
-		}
-		states.insert(
-			room_id.to_string(),
-			crate::platform::ChatRoomUserState {
-				room_id: room_id.to_string(),
-				muted_until,
-				archived,
-			},
-		);
-	}
-
-	/// The mute and archive state of `room_id`, or `None` for a room the user
-	/// neither muted nor archived.
-	pub fn chat_room_user_state(
-		&self,
-		room_id: &str,
-	) -> Option<crate::platform::ChatRoomUserState> {
-		self.chat_user_states
-			.lock()
-			.expect("chat user states poisoned")
-			.get(room_id)
-			.cloned()
-	}
-
 	/// Apply `change` to the declarations of `room_id`, or fail with the
 	/// injected chat fault.
 	fn declare_chat_room(
@@ -728,7 +691,6 @@ impl MockPlatform {
 		self.chat_bots.lock().expect("chat bots poisoned").clear();
 		self.chat_messages.lock().expect("chat messages poisoned").clear();
 		self.chat_declarations.lock().expect("chat declarations poisoned").clear();
-		self.chat_user_states.lock().expect("chat user states poisoned").clear();
 		self.publish_chat_rooms();
 	}
 
@@ -836,7 +798,6 @@ fn core_key(key: &CoreStorageKey) -> String {
 		CoreStorageKey::LastProcessedPairingStatement => {
 			"core:last-processed-pairing-statement".to_string()
 		},
-		CoreStorageKey::PushWakeRegistry => "core:push-wake-registry".to_string(),
 		CoreStorageKey::HopUpload { identifier } => {
 			format!("core:hop-upload:{}", hex::encode(identifier))
 		},
@@ -1265,7 +1226,6 @@ impl ChatPlatform for MockPlatform {
 		&self,
 		_product: &ProductContext,
 		request: latest::HostChatCreateRoomRequest,
-		_icon_url: String,
 	) -> Result<latest::HostChatCreateRoomResponse, latest::HostChatCreateRoomError> {
 		if let Some(reason) = &self.config.faults.chat_error {
 			return Err(latest::HostChatCreateRoomError::Unknown { reason: reason.clone() });
@@ -1288,10 +1248,6 @@ impl ChatPlatform for MockPlatform {
 			}
 		};
 		if status == latest::ChatRoomRegistrationStatus::New {
-			self.declare_chat_room(request.room_id, |room| room.config = Some(request.config))
-				.map_err(|error| latest::HostChatCreateRoomError::Unknown {
-					reason: error.reason,
-				})?;
 			self.publish_chat_rooms();
 		}
 		Ok(latest::HostChatCreateRoomResponse { status })
@@ -1306,7 +1262,7 @@ impl ChatPlatform for MockPlatform {
 			return Err(latest::HostChatRegisterBotError::Unknown { reason: reason.clone() });
 		}
 		let mut bots = self.chat_bots.lock().expect("chat bots poisoned");
-		// A repeat keeps the persona and replaces its name and icon.
+		// A repeat keeps the bot and replaces its name and icon.
 		let status = match bots.insert(request.bot_id.clone(), request) {
 			Some(_) => latest::ChatBotRegistrationStatus::Exists,
 			None => latest::ChatBotRegistrationStatus::New,
@@ -1396,6 +1352,14 @@ impl ChatPlatform for MockPlatform {
 			.unwrap_or_default())
 	}
 
+	async fn set_chat_room_config(
+		&self,
+		_product: &ProductContext,
+		request: latest::HostChatSetRoomConfigRequest,
+	) -> Result<(), latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| room.config = Some(request.config))
+	}
+
 	async fn set_chat_room_metadata(
 		&self,
 		_product: &ProductContext,
@@ -1420,25 +1384,21 @@ impl ChatPlatform for MockPlatform {
 		if let Some(reason) = &self.config.faults.chat_error {
 			return Err(latest::GenericError { reason: reason.clone() });
 		}
-		let deleted = vec![request.room_id.clone()];
 		self.chat_declarations
 			.lock()
 			.expect("chat declarations poisoned")
 			.remove(&request.room_id);
-		// The user's mute and archive state goes with each room.
-		let mut states = self.chat_user_states.lock().expect("chat user states poisoned");
-		for room_id in &deleted {
-			states.remove(room_id);
-		}
-		drop(states);
 		self.chat_messages
 			.lock()
 			.expect("chat messages poisoned")
-			.retain(|message| !deleted.contains(&message.room_id));
-		let mut rooms = self.chat_rooms.lock().expect("chat rooms poisoned");
-		let removed = deleted.iter().filter(|room_id| rooms.remove(*room_id).is_some()).count();
-		drop(rooms);
-		if removed > 0 {
+			.retain(|message| message.room_id != request.room_id);
+		let removed = self
+			.chat_rooms
+			.lock()
+			.expect("chat rooms poisoned")
+			.remove(&request.room_id)
+			.is_some();
+		if removed {
 			self.publish_chat_rooms();
 		}
 		Ok(())
@@ -1488,20 +1448,12 @@ impl ChatPlatform for MockPlatform {
 		self.declare_chat_room(request.room_id, |room| room.call = request.call)
 	}
 
-	async fn read_chat_room_user_states(
+	async fn set_chat_room_contact(
 		&self,
 		_product: &ProductContext,
-	) -> Result<crate::platform::ChatRoomUserStates, latest::GenericError> {
-		let states = self.chat_user_states.lock().expect("chat user states poisoned");
-		Ok(crate::platform::ChatRoomUserStates { rooms: states.values().cloned().collect() })
-	}
-
-	async fn read_chat_bots(
-		&self,
-		_product: &ProductContext,
-	) -> Result<crate::platform::ChatBotIds, latest::GenericError> {
-		let bots = self.chat_bots.lock().expect("chat bots poisoned");
-		Ok(crate::platform::ChatBotIds { bot_ids: bots.keys().cloned().collect() })
+		request: latest::HostChatSetRoomContactRequest,
+	) -> Result<(), latest::GenericError> {
+		self.declare_chat_room(request.room_id, |room| room.contact = Some(request.contact))
 	}
 }
 
@@ -2046,24 +1998,15 @@ mod tests {
 	fn mock_room_request(room_id: &str) -> latest::HostChatCreateRoomRequest {
 		latest::HostChatCreateRoomRequest {
 			room_id: room_id.to_string(),
-			metadata: latest::ChatRoomMetadata {
-				name: format!("{room_id} room"),
-				avatar: None,
-				description: None,
-			},
-			config: latest::ChatRoomConfig::default(),
-			preview: None,
+			name: format!("{room_id} room"),
+			icon: "https://example.invalid/i.png".to_string(),
 		}
 	}
 
 	fn create_room(p: &MockPlatform, room_id: &str) -> latest::ChatRoomRegistrationStatus {
-		block_on(p.create_chat_room(
-			&mock_product(),
-			mock_room_request(room_id),
-			"https://example.invalid/i.png".to_string(),
-		))
-		.expect("room registration succeeds")
-		.status
+		block_on(p.create_chat_room(&mock_product(), mock_room_request(room_id)))
+			.expect("room registration succeeds")
+			.status
 	}
 
 	fn post_text(
@@ -2129,12 +2072,8 @@ mod tests {
 		});
 		let product = mock_product();
 
-		let room = block_on(p.create_chat_room(
-			&product,
-			mock_room_request("lobby"),
-			"https://example.invalid/i.png".to_string(),
-		))
-		.expect_err("room creation carries the injected reason");
+		let room = block_on(p.create_chat_room(&product, mock_room_request("lobby")))
+			.expect_err("room creation carries the injected reason");
 		assert!(
 			matches!(room, latest::HostChatCreateRoomError::Unknown { reason } if reason == "chat down"),
 		);
@@ -2428,27 +2367,29 @@ mod tests {
 		let product = mock_product();
 		let room = || "lobby".to_string();
 		let config = latest::ChatRoomConfig { reaction_details: true, ..Default::default() };
-		block_on(p.create_chat_room(
+		block_on(p.create_chat_room(&product, mock_room_request("lobby")))
+			.expect("room registration succeeds");
+		block_on(p.set_chat_room_config(
 			&product,
-			latest::HostChatCreateRoomRequest {
-				config: config.clone(),
-				..mock_room_request("lobby")
-			},
-			"https://example.invalid/i.png".to_string(),
+			latest::HostChatSetRoomConfigRequest { room_id: room(), config: config.clone() },
 		))
-		.expect("room registration succeeds");
+		.expect("the configuration is recorded");
 		let metadata = latest::ChatRoomMetadata {
 			name: "Lobby".to_string(),
-			avatar: None,
 			description: Some("Say hello".to_string()),
 		};
 		let preview = latest::ChatRoomPreview {
-			order: latest::ChatRoomOrder::PinToTop,
 			timestamp: Some(7),
 			badge: Some(latest::ChatRoomBadge::UnreadCount { count: 2 }),
-			text: None,
+			last_message: None,
+			last_reaction: None,
+			unseen_reactions: 0,
+			last_call: None,
 		};
-		let update = latest::ChatFeedUpdate::Deleted { message_id: "m1".to_string() };
+		let update = latest::ChatFeedUpdate::StatusChanged {
+			message_id: "m1".to_string(),
+			status: latest::ChatMessageStatus::Read,
+		};
 
 		block_on(p.set_chat_room_metadata(
 			&product,
@@ -2467,7 +2408,7 @@ mod tests {
 		))
 		.unwrap();
 
-		let features = latest::ChatRoomFeatures { search: true, ..Default::default() };
+		let features = latest::ChatRoomFeatures { hop_attachments: true, ..Default::default() };
 		block_on(p.set_chat_room_features(
 			&product,
 			latest::HostChatSetRoomFeaturesRequest { room_id: room(), features: features.clone() },
@@ -2478,6 +2419,16 @@ mod tests {
 		block_on(p.set_chat_room_call(
 			&product,
 			latest::HostChatSetRoomCallRequest { room_id: room(), call: Some(call.clone()) },
+		))
+		.unwrap();
+		let contact = latest::ChatRoomContact {
+			account: [3; 32],
+			username: Some("alice".to_string()),
+			state: latest::ChatContactState::Outgoing,
+		};
+		block_on(p.set_chat_room_contact(
+			&product,
+			latest::HostChatSetRoomContactRequest { room_id: room(), contact: contact.clone() },
 		))
 		.unwrap();
 
@@ -2492,6 +2443,7 @@ mod tests {
 				feed: vec![(update, true)],
 				features: Some(features),
 				call: Some(call),
+				contact: Some(contact),
 			})
 		);
 
@@ -2503,8 +2455,8 @@ mod tests {
 		assert!(p.chat_rooms().is_empty());
 	}
 
-	// The mock serves every P10 Chat method: it lists every feature name,
-	// reports the user state a test plays, and keeps one persona per bot id.
+	// The mock serves every P10 Chat method: it lists every feature name and
+	// keeps one bot per bot id.
 	#[test]
 	fn the_mock_serves_the_chat_additions() {
 		let p = MockPlatform::new();
@@ -2514,25 +2466,6 @@ mod tests {
 			block_on(p.chat_capabilities(&product)).unwrap().names,
 			crate::platform::CHAT_FEATURE_NAMES.map(str::to_string)
 		);
-
-		p.set_chat_room_user_state("lobby", Some(u64::MAX), true);
-		p.set_chat_room_user_state("quiet", None, false);
-		assert_eq!(
-			block_on(p.read_chat_room_user_states(&product)).unwrap().rooms,
-			[crate::platform::ChatRoomUserState {
-				room_id: "lobby".to_string(),
-				muted_until: Some(u64::MAX),
-				archived: true,
-			}]
-		);
-		// Deleting a room drops the state the user gave it.
-		assert!(p.chat_room_user_state("lobby").is_some());
-		block_on(p.delete_chat_room(
-			&product,
-			latest::HostChatDeleteRoomRequest { room_id: "lobby".to_string() },
-		))
-		.unwrap();
-		assert_eq!(p.chat_room_user_state("lobby"), None);
 
 		let register = |name: &str| {
 			block_on(p.register_chat_bot(
@@ -2548,7 +2481,6 @@ mod tests {
 		};
 		assert_eq!(register("Helper"), latest::ChatBotRegistrationStatus::New);
 		assert_eq!(register("Helper 2"), latest::ChatBotRegistrationStatus::Exists);
-		assert_eq!(block_on(p.read_chat_bots(&product)).unwrap().bot_ids, ["helper"]);
 		assert_eq!(p.chat_bots()[0].name, "Helper 2");
 	}
 }

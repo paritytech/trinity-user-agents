@@ -12,6 +12,7 @@ import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepo
 import io.paritytech.polkadotapp.feature_account_api.domain.model.SharedSecretDerivationDomain
 import io.paritytech.polkadotapp.feature_chain_resources_api.data.repository.ResourcesRepository
 import io.paritytech.polkadotapp.feature_chain_resources_api.domain.model.ConsumerInfo
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContacts
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatRooms
 import io.paritytech.polkadotapp.feature_chats_api.domain.error.StartChatError
@@ -32,6 +33,7 @@ class StartChatDataUseCase @Inject constructor(
     private val personChatMode: PersonChatMode,
     private val personChatRooms: PersonChatRooms,
     private val chatExtensionRegistry: ChatExtensionRegistry,
+    private val personChatContacts: PersonChatContacts,
 ) {
     private val chainId = knownChains.assetHub
 
@@ -57,13 +59,24 @@ class StartChatDataUseCase @Inject constructor(
             }
     }
 
-    // The chat product opens the chat with the account, sending it a request first when it is no contact yet.
+    // The chat product gives the room of the chat with the account. For an account that is no contact yet, the room
+    // shows the invite composer, and the first message of the user is the welcome message of the request.
     private suspend fun productRoom(contactAccountId: AccountId): Result<StartChatData> {
-        val home = personChatRooms.homeRoom() ?: return Result.failure(StartChatError.PeerNotRegistered)
-        val querying = chatExtensionRegistry.getExtensionForChat(home)?.roomQuerying(home)
-            ?: return Result.success(StartChatData.ProductRoom(home))
-        return querying.openLink(home, "contact:${contactAccountId.value.toHexString()}")
-            .map { StartChatData.ProductRoom(it ?: home) }
+        // An account that is no contact yet must have a chat key on chain, as the native chat checks.
+        if (personChatContacts.getContacts().none { it.accountId == contactAccountId }) {
+            val registered = resourcesRepository.consumerInfo(chainRegistry.getChain(chainId).id, contactAccountId)
+                .mapError(Throwable::asStartChatError)
+                .getOrElse { return Result.failure(it) }
+            if (registered == null) return Result.failure(StartChatError.PeerNotRegistered)
+        }
+
+        // Before the network is known the chat product cannot open a room yet; the account is not at fault.
+        val anchor = personChatRooms.homeRoom()
+            ?: return Result.failure(StartChatError.Unknown(IllegalStateException("The network of the chat product is not known yet")))
+        val querying = chatExtensionRegistry.getExtensionForChat(anchor)?.roomQuerying(anchor)
+            ?: return Result.failure<StartChatData>(IllegalStateException("The chat product does not run")).mapError(Throwable::asStartChatError)
+        return querying.openLink(anchor, "contact:${contactAccountId.value.toHexString()}")
+            .flatMap { room -> room?.let { Result.success(StartChatData.ProductRoom(it)) } ?: Result.failure(IllegalStateException("The chat product gave no room")) }
             .mapError(Throwable::asStartChatError)
     }
 

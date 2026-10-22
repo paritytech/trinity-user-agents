@@ -81,14 +81,10 @@ extension ProductMessageSource {
             messages[message.messageId] = message
         }
 
+        // The first page does not mark the room seen: a message of the contact that the product gives as
+        // `Delivered` stays new, so the screen draws the "Unread messages" separator above it, as the native chat
+        // does for the welcome message of a request.
         pages = [Page(anchor: .before(cursor: nil), next: item.next, ids: ids)]
-
-        if !hasFirstPage, seenMessageId == nil, let newest = item.messages.last {
-            // The first open of the room: the user saw what the room held before.
-            seenMessageId = newest.messageId
-            seenTimestamp = newest.timestamp
-        }
-
         hasFirstPage = true
         trimNewestMessages()
     }

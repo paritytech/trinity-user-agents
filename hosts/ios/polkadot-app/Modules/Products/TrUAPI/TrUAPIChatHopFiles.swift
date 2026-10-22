@@ -10,17 +10,21 @@ struct TrUAPIChatHopFiles: ChatHopFileOpening {
     private let tldProvider: DotNsTldProviding
 
     init(
-        runtime: @escaping @Sendable () throws -> TrUAPIHostRuntime = TrUAPIProductAttachmentStaging.sharedRuntime,
+        runtime: @escaping @Sendable () throws -> TrUAPIHostRuntime = TrUAPIProductHopUploads.sharedRuntime,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared
     ) {
         self.runtime = runtime
         self.tldProvider = tldProvider
     }
 
-    func open(_ resource: ChatHopResource) async throws -> ChatHopFile {
+    func open(
+        _ resource: ChatHopResource,
+        progress: @escaping @Sendable (_ received: UInt64, _ total: UInt64) -> Void
+    ) async throws -> ChatHopFile {
         let file = try await runtime().openHopChatResource(
             productId: BuiltInProduct.chat(for: tldProvider.resolveTld()),
-            resource: resource.wireResource
+            resource: resource.wireResource,
+            progress: progress
         )
         return ChatHopFile(bytes: file.bytes, entries: file.entries)
     }

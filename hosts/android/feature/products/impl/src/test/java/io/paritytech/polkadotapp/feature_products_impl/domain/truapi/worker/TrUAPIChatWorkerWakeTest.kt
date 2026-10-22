@@ -31,7 +31,7 @@ import kotlin.time.Duration.Companion.seconds
 // The worker holds through wakes of the core (W1 and W2 of 07-LATER §10.2): the core holds a wake for 30 s, and a
 // new wake moves its end.
 class TrUAPIChatWorkerWakeTest {
-    private val productId = ProductId.fromStoredValue("game.dot")
+    private val productId = ProductId.fromStoredValue("chat.dot")
     private val room = ProductChatIdParameter("lobby")
     private val execution: TrUAPIProductExecution = mockk(relaxed = true)
     private val runtime: TrUAPIHostRuntime = mockk(relaxed = true) {
@@ -83,21 +83,18 @@ class TrUAPIChatWorkerWakeTest {
     fun `a user action wakes the worker before it goes and once more after the answer`() = runTest {
         val worker = worker()
 
-        worker.userAction(room, ChatUserActionModel.Retry(messageId = "m1"))
+        worker.userAction(room, ChatUserActionModel.Seen(messageId = "m1"))
         runCurrent()
 
         verify(exactly = 2) { runtime.wakeProduct(productId.value, messageWake) }
     }
 
     @Test
-    fun `a press in a message or in the footer wakes the worker after the action goes`() = runTest {
+    fun `a press in a message wakes the worker after the action goes`() = runTest {
         val worker = worker()
 
-        worker.dispatchFooterEvent(room, "send", JsUiEvent.Type.ButtonClick)
-        verify(exactly = 1) { runtime.wakeProduct(productId.value, messageWake) }
-
         worker.dispatchEvent(JsUiEvent(roomId = room, messageId = "m1", messageType = "card", actionId = "ok", eventType = JsUiEvent.Type.ButtonClick))
-        verify(exactly = 2) { runtime.wakeProduct(productId.value, messageWake) }
+        verify(exactly = 1) { runtime.wakeProduct(productId.value, messageWake) }
     }
 
     @Test

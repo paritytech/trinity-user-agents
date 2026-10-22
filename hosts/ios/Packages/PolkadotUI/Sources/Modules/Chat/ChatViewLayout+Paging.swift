@@ -1,6 +1,4 @@
-import DesignSystem
 import UIKit
-internal import SnapKit
 
 // MARK: - View model
 
@@ -12,10 +10,9 @@ public extension ChatViewLayout.ViewModel {
             case end
             /// More messages exist. The chat asks for them when the user scrolls near this end.
             case more
-            /// A page for this end is on its way. The chat shows a row with a spinner.
+            /// A page for this end is on its way. The chat shows nothing for it, as the native chat shows nothing
+            /// while it loads messages.
             case loading
-            /// The last page did not arrive. The row shows the text, and a tap asks again.
-            case failed(String)
         }
 
         public let older: Edge
@@ -28,14 +25,6 @@ public extension ChatViewLayout.ViewModel {
 
         /// A window that holds the whole chat.
         public static let complete = Paging(older: .end, newer: .end)
-    }
-
-    /// Whether the product of the room can answer (P5.7).
-    enum RoomStatus: Equatable {
-        /// The first page is on its way.
-        case loading(String)
-        /// The product does not answer. The button asks again.
-        case unavailable(text: String, retryTitle: String)
     }
 }
 
@@ -142,147 +131,5 @@ public struct ChatPagingTrigger: Equatable {
         }
 
         return min(max((range.maxOffsetY - contentOffsetY) / span, 0), 1)
-    }
-}
-
-// MARK: - Paging row
-
-/// The row at an end of the window while a page is on its way, or after a page failed.
-public struct ChatPagingRowConfiguration: HashableContentConfiguration {
-    public enum State: Hashable {
-        case loading
-        case failed(String)
-    }
-
-    let state: State
-
-    public init(state: State) {
-        self.state = state
-    }
-
-    public func makeContentView() -> any UIView & UIContentView {
-        ChatPagingRowView(configuration: self)
-    }
-}
-
-final class ChatPagingRowView: UIView, UIContentView {
-    private let spinner = UIActivityIndicatorView(style: .medium)
-    private let label: Label = create {
-        $0.typography = .paragraphSmall
-        $0.textColor = .fgSecondary
-        $0.textAlignment = .center
-        $0.numberOfLines = 0
-    }
-
-    var configuration: UIContentConfiguration {
-        didSet {
-            apply()
-        }
-    }
-
-    init(configuration: ChatPagingRowConfiguration) {
-        self.configuration = configuration
-        super.init(frame: .zero)
-
-        addSubview(spinner)
-        addSubview(label)
-        spinner.snp.makeConstraints {
-            $0.center.equalToSuperview()
-            $0.top.greaterThanOrEqualToSuperview().inset(DSSpacings.small)
-        }
-        label.snp.makeConstraints {
-            $0.edges.equalToSuperview().inset(DSSpacings.small)
-        }
-        apply()
-    }
-
-    @available(*, unavailable)
-    required init?(coder _: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    private func apply() {
-        guard let configuration = configuration as? ChatPagingRowConfiguration else {
-            return
-        }
-
-        switch configuration.state {
-        case .loading:
-            label.text = nil
-            label.isHidden = true
-            spinner.startAnimating()
-        case let .failed(text):
-            spinner.stopAnimating()
-            label.text = text
-            label.isHidden = false
-        }
-    }
-}
-
-// MARK: - Room status
-
-/// The line above the input while the product of the room loads or does not answer (P5.7).
-final class ChatRoomStatusView: UIView {
-    var onRetry: (() -> Void)?
-
-    private let spinner = UIActivityIndicatorView(style: .medium)
-    private let label: Label = create {
-        $0.typography = .paragraphSmall
-        $0.textColor = .fgSecondary
-        $0.numberOfLines = 0
-    }
-
-    private let retryButton = UIButton(type: .system)
-
-    var status: ChatViewLayout.ViewModel.RoomStatus? {
-        didSet {
-            apply()
-        }
-    }
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-
-        backgroundColor = .bgSurfaceMain
-        let stack = UIStackView(arrangedSubviews: [spinner, label, retryButton])
-        stack.axis = .horizontal
-        stack.alignment = .center
-        stack.spacing = DSSpacings.small
-        addSubview(stack)
-        stack.snp.makeConstraints {
-            $0.edges.equalToSuperview().inset(DSSpacings.small)
-        }
-
-        retryButton.addTarget(self, action: #selector(handleRetry), for: .touchUpInside)
-        apply()
-    }
-
-    @available(*, unavailable)
-    required init?(coder _: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    private func apply() {
-        switch status {
-        case .none:
-            isHidden = true
-            spinner.stopAnimating()
-        case let .loading(text):
-            isHidden = false
-            spinner.startAnimating()
-            label.text = text
-            retryButton.isHidden = true
-        case let .unavailable(text, retryTitle):
-            isHidden = false
-            spinner.stopAnimating()
-            label.text = text
-            retryButton.setTitle(retryTitle, for: .normal)
-            retryButton.isHidden = false
-        }
-    }
-
-    @objc
-    private func handleRetry() {
-        onRetry?()
     }
 }

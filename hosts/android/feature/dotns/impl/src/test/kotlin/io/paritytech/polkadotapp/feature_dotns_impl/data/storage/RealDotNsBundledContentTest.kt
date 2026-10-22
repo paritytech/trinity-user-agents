@@ -25,22 +25,22 @@ class RealDotNsBundledContentTest {
     // Installed on every launch, so the archive is written once and the override is not rewritten.
     @Test
     fun `bundled content is stored once and served for its name`() = runTest {
-        bundled.install("worker.chat.paseo", "bundled-chat-aa", files)
-        bundled.install("worker.chat.paseo", "bundled-chat-aa", files)
+        bundled.install("worker.chat.paseo", "aa", files)
+        bundled.install("worker.chat.paseo", "aa", files)
 
-        coVerify(exactly = 1) { storage.saveContent("bundled-chat-aa", files) }
-        verify(exactly = 1) { contentHashOverrides.putContentHashOverride("worker.chat.paseo", "bundled-chat-aa") }
+        coVerify(exactly = 1) { storage.saveContent("aa", files) }
+        verify(exactly = 1) { contentHashOverrides.putContentHashOverride("worker.chat.paseo", "aa") }
     }
 
     // Clearing the dotNS cache deletes the files but keeps the override, which would then send the app
     // to download a hash that exists nowhere. The next install has to put the files back.
     @Test
     fun `content removed by a cache clear is stored again`() = runTest {
-        bundled.install("worker.chat.paseo", "bundled-chat-aa", files)
+        bundled.install("worker.chat.paseo", "aa", files)
         stored.clear()
 
-        bundled.install("worker.chat.paseo", "bundled-chat-aa", files)
+        bundled.install("worker.chat.paseo", "aa", files)
 
-        coVerify(exactly = 2) { storage.saveContent("bundled-chat-aa", files) }
+        coVerify(exactly = 2) { storage.saveContent("aa", files) }
     }
 }

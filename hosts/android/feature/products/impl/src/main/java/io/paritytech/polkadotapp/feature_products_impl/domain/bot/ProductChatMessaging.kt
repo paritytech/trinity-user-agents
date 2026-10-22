@@ -3,9 +3,9 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomContactModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
@@ -25,6 +25,9 @@ interface ProductChatMessaging {
 
     suspend fun sendMessage(chatIdParameter: ProductChatIdParameter, message: ProductBotMessage): Result<ChatMessageId>
 
+    /** Sets whether [chatIdParameter] shows the text input below its messages; the core's room footer. */
+    suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, showsTextInput: Boolean): Result<Unit>
+
     fun subscribeChatRooms(): Flow<List<ProductChatRoom>>
 
     // Chat Extension v2. A room that the product does not host fails with `UnknownChatRoomException`.
@@ -41,21 +44,19 @@ interface ProductChatMessaging {
     /** Removes the room with everything the host keeps for it. A room that is gone already is not an error. */
     suspend fun deleteRoom(chatIdParameter: ProductChatIdParameter): Result<Unit>
 
-    /** Sets what the room shows below its messages; the core's room footer. */
-    suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, footer: ChatRoomFooterModel): Result<Unit>
-
     /** Stores a feed update of a room that the host keeps. A refusal is a `ProductFeedRejection`. */
     suspend fun applyFeedUpdate(chatIdParameter: ProductChatIdParameter, update: ProductFeedUpdateModel): Result<Unit>
 
     /** Gives a feed update of a room that the product keeps to the screens that show it. False when none does. */
     suspend fun deliverLiveFeedUpdate(chatIdParameter: ProductChatIdParameter, update: ProductFeedUpdateModel): Boolean
 
-    // Chat Extension v2 additions. The features of a room come with its declarations. The user state of the rooms and
-    // the bot personas do not need a chat surface: `ProductChatStoredState` reads them.
+    // Chat Extension v2 additions. The features and the contact of a room come with its declarations.
 
     suspend fun setRoomFeatures(chatIdParameter: ProductChatIdParameter, features: ChatRoomFeaturesModel): Result<Unit>
 
     suspend fun setRoomCall(chatIdParameter: ProductChatIdParameter, call: ChatRoomCallModel?): Result<Unit>
+
+    suspend fun setRoomContact(chatIdParameter: ProductChatIdParameter, contact: ChatRoomContactModel): Result<Unit>
 
     /** Removes the ringing calls of the rooms of the product, because its worker stopped (07-LATER §11.2). */
     suspend fun clearRingingCalls(): Result<Unit> = Result.success(Unit)

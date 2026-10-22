@@ -23,8 +23,8 @@ import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsContentSto
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsTldStorage
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.RealDotNsBundledContent
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.RealDotNsContentStorage
-import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.RealDotNsVerifiedContent
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.RealDotNsTldStorage
+import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.RealDotNsVerifiedContent
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.SharedPrefsContentHashOverrides
 import io.paritytech.polkadotapp.feature_dotns_impl.domain.dotNs.RealDotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_impl.domain.tld.RealDotNsTldProvider

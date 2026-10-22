@@ -210,7 +210,7 @@ struct ProductMessageSourceTests {
 
     // MARK: - Feed updates
 
-    /// S18: new (in timestamp order), edit, delete, reactions and status change apply to the window.
+    /// S18: new (in timestamp order), edit, reactions and status change apply to the window.
     @Test func feedUpdatesApplyToTheWindow() async throws {
         let history = ProductRoomHistory(count: 10)
         let source = makeSource(ScriptedProductChatQuerying(page: history.answer))
@@ -219,7 +219,6 @@ struct ProductMessageSourceTests {
         await source.apply(.new(productMessage(10)))
         await source.apply(.new(productMessage(45, id: "late", timestamp: 4_500)))
         await source.apply(.edited(messageId: "m3", body: .text(text: "edited"), editedAt: 99))
-        await source.apply(.deleted(messageId: "m2"))
         await source.apply(.reactionPlaced(messageId: "m1", participantId: "a", emoji: "👍"))
         await source.apply(.reactionPlaced(messageId: "m1", participantId: "b", emoji: "👍"))
         await source.apply(.reactionRemoved(messageId: "m1", participantId: "b", emoji: "👍"))
@@ -229,7 +228,7 @@ struct ProductMessageSourceTests {
 
         let snapshot = await source.snapshot
         #expect(snapshot.messages.map(\.messageId) == [
-            "m0", "m1", "m3", "m4", "late", "m5", "m6", "m7", "m8", "m9", "m10", "m11"
+            "m0", "m1", "m2", "m3", "m4", "late", "m5", "m6", "m7", "m8", "m9", "m10", "m11"
         ])
 
         let edited = try #require(snapshot.messages.first { $0.messageId == "m3" })
@@ -241,17 +240,20 @@ struct ProductMessageSourceTests {
         #expect(reacted.reactions.first { $0.emoji == "🔥" }?.origin == .user)
 
         let sent = try #require(snapshot.messages.last)
-        #expect(sent.status == .outgoing(.read))
+        // The native chat draws a read message as delivered.
+        #expect(sent.status == .outgoing(.delivered))
         #expect(sent.origin == .user)
     }
 
     /// A message that arrives live after the user saw the room counts as unread until the user sees it.
+    /// A message of the contact is unread while the product gives it `Delivered`, and the user sees it before the
+    /// product marks it `Read`.
     @Test func aLiveMessageIsUnreadUntilSeen() async throws {
         let history = ProductRoomHistory(count: 3)
         let source = makeSource(ScriptedProductChatQuerying(page: history.answer))
         await open(source)
 
-        await source.apply(.new(productMessage(3)))
+        await source.apply(.new(productMessage(3, status: .delivered)))
         #expect(await source.snapshot.messages.map(\.status) == [
             .incoming(.seen), .incoming(.seen), .incoming(.seen), .incoming(.new)
         ])
@@ -262,30 +264,34 @@ struct ProductMessageSourceTests {
 
     // MARK: - User actions
 
-    /// S19: a send shows `Preparing`, then the message of `MessageCreated` replaces it.
-    @Test func aSendIsOptimisticUntilTheProductCreatesTheMessage() async throws {
+    /// S19: a send shows at once under the id that the host chose, pending as in the native chat, and the message
+    /// of the product takes its place under the same id.
+    @Test func aSendShowsAtOnceUnderTheIdThatTheHostChose() async throws {
         let gate = AnswerGate()
-        let created = productMessage(50, id: "created", origin: "user", status: .sent)
-        let querying = ScriptedProductChatQuerying(action: { _ in
+        let querying = ScriptedProductChatQuerying(action: { request in
             await gate.wait()
-            return .messageCreated(created)
+            return .messageCreated(createdMessage(for: request))
         })
         let source = makeSource(querying)
         await open(source)
 
-        let send = Task { try await source.perform(.send(.text("hi"))) }
-        let optimistic = try #require(await firstLocalMessage(in: source))
-        #expect(optimistic.status == .outgoing(.new))
-        #expect(optimistic.content == .text("hi"))
+        #expect(try await source.perform(.send(.text("hi"))) == .done)
+        let pending = try #require(await source.snapshot.messages.last)
+        #expect(pending.status == .outgoing(.new))
+        #expect(pending.content == .text("hi"))
+        #expect(UUID(uuidString: pending.messageId) != nil)
 
         await gate.open()
-        #expect(try await send.value == .done)
+        await waitUntil { await source.snapshot.messages.last?.status == .outgoing(.sent) }
 
         let snapshot = await source.snapshot
-        #expect(!snapshot.messages.contains { $0.messageId.hasPrefix("local:") })
-        #expect(snapshot.messages.last?.messageId == "created")
-        #expect(snapshot.messages.last?.status == .outgoing(.sent))
-        #expect(querying.actionRequests.map(\.action) == [.newMessage(body: .text(text: "hi"), replyTo: nil)])
+        #expect(snapshot.messages.last?.messageId == pending.messageId)
+        #expect(snapshot.messages.count == 1)
+        #expect(querying.actionRequests.map(\.action.composeTimeCleared) == [
+            .newMessage(body: .text(text: "hi"), replyTo: nil, messageId: pending.messageId, timestamp: nil)
+        ])
+        // The product gets the time at which the user wrote the message, which the pending message shows.
+        #expect(querying.actionRequests.map(\.action.composeTime) == [pending.timestamp])
     }
 
     @Test func aReplyCarriesTheMessageItAnswers() async throws {
@@ -298,62 +304,28 @@ struct ProductMessageSourceTests {
             ownContent: .init(text: "yes", attachments: nil)
         )
         _ = try await source.perform(.send(.reply(reply)))
+        let sent = try #require(await source.snapshot.messages.last)
+        await waitUntil { querying.actionRequests.count == 1 }
 
-        #expect(querying.actionRequests.map(\.action) == [.newMessage(body: .text(text: "yes"), replyTo: "m1")])
-        #expect(await source.snapshot.messages.last?.content == .reply(reply))
+        #expect(querying.actionRequests.map(\.action.composeTimeCleared) == [
+            .newMessage(body: .text(text: "yes"), replyTo: "m1", messageId: sent.messageId, timestamp: nil)
+        ])
+        #expect(sent.content == .reply(reply))
     }
 
-    /// S20: a send that the product rejects goes away and gives the reason.
-    @Test func aRejectedSendGoesAwayWithTheReason() async throws {
+    /// A send that the product refuses stays unsent, as a message of the native chat whose send cannot go again.
+    @Test func aRefusedSendStaysUnsent() async throws {
         let querying = ScriptedProductChatQuerying(action: { _ in
             throw ChatQueryError.actionRefused(.rejected(reason: "Too long"))
         })
         let source = makeSource(querying)
         await open(source)
 
-        #expect(try await source.perform(.send(.text("hi"))) == .refused(reason: "Too long"))
-        #expect(await source.snapshot.messages.isEmpty)
-    }
+        #expect(try await source.perform(.send(.text("hi"))) == .done)
+        await waitUntil { querying.actionRequests.count == 1 }
+        try? await Task.sleep(for: .milliseconds(50))
 
-    /// S21: no answer in time marks the send failed, and a retry sends it again.
-    @Test func aTimedOutSendFailsAndARetrySendsItAgain() async throws {
-        let attempts = OSAllocatedUnfairLock(initialState: 0)
-        let created = productMessage(60, id: "created", origin: "user", status: .sent)
-        let querying = ScriptedProductChatQuerying(action: { _ in
-            let attempt = attempts.withLock { count in
-                count += 1
-                return count
-            }
-            guard attempt > 1 else {
-                throw ChatQueryError.timedOut
-            }
-            return .messageCreated(created)
-        })
-        let source = makeSource(querying)
-        await open(source)
-
-        #expect(try await source.perform(.send(.text("hi"))) == .failed)
-        let failed = try #require(await source.snapshot.messages.last)
-        #expect(failed.status == .outgoing(.failed))
-        #expect(await source.snapshot.readiness == .ready)
-
-        #expect(try await source.perform(.retry(failed.messageId)) == .done)
-        #expect(await source.snapshot.messages.map(\.messageId) == ["created"])
-        #expect(querying.actionRequests.map(\.action) == [
-            .newMessage(body: .text(text: "hi"), replyTo: nil),
-            .newMessage(body: .text(text: "hi"), replyTo: nil)
-        ])
-    }
-
-    @Test func aRetryOfAFailedProductMessageAsksTheProduct() async throws {
-        let querying = ScriptedProductChatQuerying(action: { _ in .acknowledged })
-        let source = makeSource(querying)
-        await open(source)
-        await source.apply(.new(productMessage(1, origin: "user", status: .failed)))
-
-        #expect(try await source.perform(.retry("m1")) == .done)
-
-        #expect(querying.actionRequests.map(\.action) == [.retry(messageId: "m1")])
+        #expect(querying.actionRequests.count == 1)
         #expect(await source.snapshot.messages.last?.status == .outgoing(.new))
     }
 
@@ -373,20 +345,6 @@ struct ProductMessageSourceTests {
 
         #expect(querying.actionRequests.map(\.action) == [.editMessage(messageId: "m3", body: .text(text: "new"))])
         #expect(await source.snapshot.messages.first { $0.messageId == "m3" }?.content == .text("message 3"))
-    }
-
-    @Test func aDeleteThatTimesOutPutsTheMessageBack() async throws {
-        let history = ProductRoomHistory(count: 3)
-        let querying = ScriptedProductChatQuerying(page: history.answer, action: { _ in
-            throw ChatQueryError.timedOut
-        })
-        let source = makeSource(querying)
-        await open(source)
-
-        #expect(try await source.perform(.delete("m1")) == .refused(reason: nil))
-        await waitUntil { await source.snapshot.messages.count == 3 }
-
-        #expect(await source.snapshot.messages.map(\.messageId) == ["m0", "m1", "m2"])
     }
 
     @Test func aReactionTogglesTheReactionOfTheUser() async throws {
@@ -450,9 +408,68 @@ private let productId = "product.dot"
 private let roomId = "lobby"
 
 extension ProductMessageSourceTests {
-    /// P7.3: the worker ends while a send waits for its answer (06-OPEN-ITEMS O26). The send fails, the room is
-    /// unavailable, and the window keeps the messages that it has.
-    @Test func aSendWhoseWorkerEndsFailsAndTheRoomKeepsItsMessages() async throws {
+    /// S21: a send that gets no answer goes again under the same id, as the outbox of the native chat sends a
+    /// waiting message again. The product gives the same message for the same id.
+    @Test func aSendWithoutAnAnswerGoesAgainUnderTheSameId() async throws {
+        let attempts = OSAllocatedUnfairLock(initialState: 0)
+        let querying = ScriptedProductChatQuerying(action: { request in
+            let attempt = attempts.withLock { attempts in
+                attempts += 1
+                return attempts
+            }
+            guard attempt > 1 else { throw ChatQueryError.timedOut }
+            return .messageCreated(createdMessage(for: request))
+        })
+        let source = makeSource(querying)
+        await open(source)
+
+        _ = try await source.perform(.send(.text("hi")))
+        await waitUntil { await source.snapshot.messages.last?.status == .outgoing(.sent) }
+
+        let ids = querying.actionRequests.compactMap { request -> String? in
+            guard case let .newMessage(_, _, messageId, _) = request.action else { return nil }
+            return messageId
+        }
+        #expect(ids.count == 2)
+        #expect(Set(ids).count == 1)
+        #expect(await source.snapshot.messages.last?.messageId == ids.first)
+        #expect(await source.snapshot.readiness == .ready)
+    }
+
+    /// An edit of a message that the outbox still holds goes once the product has the message.
+    @Test func anEditOfAPendingMessageGoesAfterTheMessage() async throws {
+        let gate = AnswerGate()
+        let querying = ScriptedProductChatQuerying(action: { request in
+            if case .newMessage = request.action {
+                await gate.wait()
+                return .messageCreated(createdMessage(for: request))
+            }
+            return .acknowledged
+        })
+        let source = makeSource(querying)
+        await open(source)
+
+        _ = try await source.perform(.send(.text("hi")))
+        let pendingId = try #require(await source.snapshot.messages.last?.messageId)
+        let edit = Chat.RemoteMessageContentV1.MessageContent.EditedContent(
+            messageId: pendingId,
+            newContent: .init(text: "hello", attachments: nil)
+        )
+        let editing = Task { try await source.perform(.send(.edited(edit))) }
+        await waitUntil { querying.actionRequests.count == 1 }
+        #expect(await source.snapshot.messages.last?.content == .text("hello"))
+
+        await gate.open()
+        #expect(try await editing.value == .done)
+        #expect(querying.actionRequests.map(\.action.composeTimeCleared) == [
+            .newMessage(body: .text(text: "hi"), replyTo: nil, messageId: pendingId, timestamp: nil),
+            .editMessage(messageId: pendingId, body: .text(text: "hello"))
+        ])
+    }
+
+    /// P7.3: the worker ends while a send waits for its answer (06-OPEN-ITEMS O26). The message stays pending, the
+    /// room is unavailable, and the window keeps the messages that it has.
+    @Test func aSendWhoseWorkerEndsStaysPendingAndTheRoomKeepsItsMessages() async throws {
         let querying = ScriptedProductChatQuerying(
             page: { _ in .init(messages: [productMessage(10, id: "p1")], next: nil) },
             action: { _ in throw ChatQueryError.noAnswer }
@@ -460,13 +477,55 @@ extension ProductMessageSourceTests {
         let source = makeSource(querying)
         await open(source)
 
-        #expect(try await source.perform(.send(.text("hi"))) == .failed)
+        #expect(try await source.perform(.send(.text("hi"))) == .done)
+        await waitUntil { querying.actionRequests.count >= 1 }
         await source.productStopped()
 
         let snapshot = await source.snapshot
         #expect(snapshot.readiness == .unavailable)
         #expect(snapshot.messages.first?.messageId == "p1")
-        #expect(snapshot.messages.last?.status == .outgoing(.failed))
+        #expect(snapshot.messages.last?.status == .outgoing(.new))
+    }
+}
+
+extension ProductMessageSourceTests {
+    /// A reply whose quoted message is outside the window quotes the message that the product gave with it.
+    @Test func aReplyQuotesTheMessageThatTheProductGaveWithIt() async {
+        var reply = productMessage(5)
+        reply.replyTo = "m1"
+        reply.replyPreview = ChatReplyPreview(
+            origin: ChatMessageOrigin(participantId: "user"),
+            body: .text(text: "quoted")
+        )
+        let querying = ScriptedProductChatQuerying(page: { _ in .init(messages: [reply], next: "5") })
+        let source = makeSource(querying)
+        await open(source)
+
+        let quoted = await source.snapshot.replyPreviews["m1"]
+        #expect(quoted?.content == .text("quoted"))
+        #expect(quoted?.status.isIncoming == false)
+    }
+
+    /// A reaction of the contact that the user has not seen names its message for the scroll-to-reaction button,
+    /// and each seen message up to it marks the reactions of the room seen with `Seen`.
+    @Test func anUnseenReactionNamesItsMessageAndGoesWithEachSeen() async throws {
+        var reacted = productMessage(2)
+        reacted.reactions = [ChatReactionSummary(emoji: "👍", count: 1, reactedByUser: false, unseen: true)]
+        let querying = ScriptedProductChatQuerying(
+            page: { _ in .init(messages: [productMessage(1), reacted, productMessage(3)], next: nil) },
+            action: { _ in .acknowledged }
+        )
+        let source = makeSource(querying, reportsSeen: true)
+        await open(source)
+
+        #expect(await source.snapshot.unseenReactionTargets == ["m2"])
+
+        _ = try await source.perform(.markSeen(["m3"]))
+        await waitUntil { await source.reportedSeenMessageId == "m3" }
+        _ = try await source.perform(.markSeen(["m3"]))
+        await waitUntil { querying.actionRequests.count == 2 }
+
+        #expect(querying.actionRequests.map(\.action) == Array(repeating: .seen(messageId: "m3"), count: 2))
     }
 }
 
@@ -483,6 +542,11 @@ private func makeSource(
         cache: cache,
         settings: .init(retryDelay: .milliseconds(1), reportsSeen: reportsSeen),
         now: { 1_000_000 },
+        outbox: .inMemory(
+            querying: querying,
+            settings: .init(firstRetryDelay: .milliseconds(5), maxRetryDelay: .milliseconds(20)),
+            logger: StubLogger()
+        ),
         logger: StubLogger()
     )
 }
@@ -510,27 +574,37 @@ private func productMessage(
         body: .text(text: "message \(index)"),
         status: status,
         replyTo: nil,
+        replyPreview: nil,
         editedAt: nil,
-        reactions: []
+        reactions: [],
+        request: false
     )
 }
 
-private func firstLocalMessage(in source: ProductMessageSource) async -> Chat.LocalMessage? {
-    guard let snapshots = try? await source.snapshots() else {
-        return nil
+/// The message that the product makes for a `NewMessage` of the user, under the id that the host chose.
+private func createdMessage(for request: ProductChatUserActionRequest) -> ChatMessage {
+    guard case let .newMessage(body, replyTo, messageId, _) = request.action else {
+        return productMessage(0)
     }
 
-    do {
-        for try await snapshot in snapshots {
-            if let local = snapshot.messages.first(where: { $0.messageId.hasPrefix("local:") }) {
-                return local
-            }
-        }
-    } catch {
-        return nil
+    var message = productMessage(50, id: messageId, origin: "user", status: .sent)
+    message.body = body
+    message.replyTo = replyTo
+    return message
+}
+
+private extension ChatUserAction {
+    /// The action without the compose time of a `NewMessage`, which the outbox takes from the clock.
+    var composeTimeCleared: ChatUserAction {
+        guard case let .newMessage(body, replyTo, messageId, _) = self else { return self }
+        return .newMessage(body: body, replyTo: replyTo, messageId: messageId, timestamp: nil)
     }
 
-    return nil
+    /// The compose time of a `NewMessage`.
+    var composeTime: UInt64? {
+        guard case let .newMessage(_, _, _, timestamp) = self else { return nil }
+        return timestamp
+    }
 }
 
 private func waitUntil(_ condition: @Sendable () async -> Bool) async {

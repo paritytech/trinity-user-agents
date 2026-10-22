@@ -210,16 +210,23 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         )
         runtime.setContacts(contactsBridge)
         paymentsBridge?.install(on: runtime)
-        runtime.setScanner(AppScannerHostBridge(routerFacade: confirmationRouterFacade))
         runtime.setPush(AppPushHostBridge(
             deviceToken: { APNSTokenProviderFacade.sharedManager.currentToken },
             voipToken: { await PushKitService.shared.token(with: .voIP) },
             relay: BackendProductPushRelay(tokenProvider: JWTTokenManager.shared)
         ))
         let roomEvents = TrUAPIChatRoomEventPublisher(runtimeProvider: self)
-        runtime.setCallMedia(AppCallMediaHostBridge.app(publisher: roomEvents))
+        let callMedia = AppCallMediaHostBridge.app(publisher: roomEvents)
+        runtime.setCallMedia(callMedia)
+        // The call buttons of a product room open the outgoing call screen through it.
+        RootDependencyLocator.setDependency(callMedia as ProductOutgoingCalling)
         if PersonChatMode.isProductChat {
-            ProductVoIPCalls.shared.watchAnswers(of: VoIPCallKitManager.shared, publisher: roomEvents)
+            let voipCalls = ProductVoIPCalls.shared
+            voipCalls.watchAnswers(of: VoIPCallKitManager.shared, publisher: roomEvents)
+            voipCalls.watchRoomCalls(of: ChatRoomCallStore.shared, callKit: VoIPCallKitManager.shared)
+            voipCalls.wakeWorker { [weak self] call in
+                await self?.attachedWorkerManager?.wake(call.productId, reason: .notification(roomId: call.roomId))
+            }
         }
         let migration = ProductChatMigration()
         runtime.setPersonChat(AppPersonChatHostBridge(chainRegistry: chainRegistry, migration: migration))
@@ -229,7 +236,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
                 return try await runtime.importChatDeviceKey(secret)
             }
         }
-        runtime.setUsernames(AppUsernamesHostBridge(directory: RemoteContactOperationFactory()))
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
             logger: logger,
@@ -241,7 +247,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             }
         )
         try runtime.activateLocalSession(secret: secret, liteUsername: settingsManager.string(for: .username))
-        installWakeRelay(on: runtime)
 
         cachedRuntime = runtime
         // The core starts in the background. The report runs on its own queue after this lock.
@@ -314,23 +319,5 @@ extension TrUAPIHostRuntimeProvider {
         values.isExcludedFromBackup = true
         try directory.setResourceValues(values)
         return directory.path
-    }
-}
-
-private extension TrUAPIHostRuntimeProvider {
-    /// Gives the core the push relay client, where this build has a relay (VERBOSITY-WASM-PRODUCT A1). The core then
-    /// registers the stored wake topics of every product.
-    func installWakeRelay(on runtime: TrUAPIHostRuntime) {
-        guard let relay = TrUAPIWakeRelayClient.configured() else { return }
-
-        let logger = logger
-        Task {
-            do {
-                try await runtime.setWakeRelay(relay)
-                logger.info("[truapi] wake relay installed")
-            } catch {
-                logger.warning("[truapi] the wake relay refused the stored topics: \(error)")
-            }
-        }
     }
 }

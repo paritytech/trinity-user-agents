@@ -14,6 +14,9 @@ struct MessageListModel {
     /// The state of each end of the window. Only a product-source room pages.
     var paging: ChatPagingState = .complete
     var readiness: ChatRoomReadiness = .ready
+    /// The messages that replies quote and the window does not hold, by their ids. Only a product-source room
+    /// has them.
+    var replyPreviews: [Chat.MessageId: Chat.LocalMessage] = [:]
 
     var hasNewMessages: Bool {
         newMessageCount > 0
@@ -35,9 +38,9 @@ struct MessageListModel {
         latestEditByMessageId[messageId] != nil
     }
 
-    /// True when the room holds messages outside the window, so a reply can quote a message that is not here.
-    var holdsMessagesOutsideWindow: Bool {
-        paging.older != .end || paging.newer != .end
+    /// The message that a reply quotes: a message of the window, or the quote that the product gave.
+    func getQuotedMessage(by messageId: Chat.MessageId) -> Chat.LocalMessage? {
+        getMessage(by: messageId) ?? replyPreviews[messageId]
     }
 }
 
@@ -81,18 +84,22 @@ extension MessageListModel {
         )
         model.paging = paging
         model.readiness = readiness
+        model.replyPreviews = replyPreviews
         return model
     }
 }
 
 private extension Chat.LocalMessage.Content {
-    /// The text of a text message or a reply. Other content kinds show no edit text.
+    /// The text of a text message, a reply or the caption of a media message. Other content kinds show no edit
+    /// text.
     var editableText: String? {
         switch self {
         case let .text(text):
             text
         case let .reply(reply):
             reply.ownContent.text
+        case let .richText(richText):
+            richText.text
         default:
             nil
         }

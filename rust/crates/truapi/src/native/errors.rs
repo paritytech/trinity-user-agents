@@ -41,11 +41,12 @@ pub enum NativeChatFeedRejection {
 	},
 }
 
-/// Why the core did not stage a chat attachment as a preimage.
+/// Why the core did not upload a chat attachment to HOP.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
 pub enum NativeChatStageRejection {
-	/// The room does not declare `preimage_attachments`.
-	#[error("the room does not declare preimage attachments")]
+	/// The room does not declare `hop_attachments`, or the product is not the
+	/// chat product.
+	#[error("the room does not declare HOP attachments")]
 	NotDeclared,
 	/// The attachment is larger than the core stages.
 	#[error("the attachment is larger than {max_bytes} bytes")]
@@ -53,17 +54,8 @@ pub enum NativeChatStageRejection {
 		/// The largest attachment the core stages, in bytes.
 		max_bytes: u32,
 	},
-	/// The user refused `PreimageSubmit` for the product.
-	#[error("the user refused preimage submission for the product")]
-	PermissionDenied,
-	/// No Bulletin allowance is available for the product.
-	#[error("no Bulletin allowance for the product: {reason}")]
-	AllowanceUnavailable {
-		/// Human-readable reason.
-		reason: String,
-	},
-	/// The submission failed.
-	#[error("the preimage submission failed: {reason}")]
+	/// The upload failed.
+	#[error("the upload failed: {reason}")]
 	SubmitFailed {
 		/// Human-readable reason.
 		reason: String,
@@ -75,10 +67,6 @@ impl From<crate::ChatStageRejection> for NativeChatStageRejection {
 		match rejection {
 			crate::ChatStageRejection::NotDeclared => Self::NotDeclared,
 			crate::ChatStageRejection::TooLarge { max_bytes } => Self::TooLarge { max_bytes },
-			crate::ChatStageRejection::PermissionDenied => Self::PermissionDenied,
-			crate::ChatStageRejection::AllowanceUnavailable { reason } => {
-				Self::AllowanceUnavailable { reason }
-			},
 			crate::ChatStageRejection::SubmitFailed { reason } => Self::SubmitFailed { reason },
 		}
 	}

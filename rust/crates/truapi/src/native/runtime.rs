@@ -44,7 +44,6 @@ use super::{
 		NativeContactsCallbacks, NativeFundingCallbacks, NativeGameCallbacks,
 		NativePaymentCallbacks, NativePersonChatCallbacks, NativePocketCallbacks,
 		NativePushCallbacks, NativeScannerCallbacks, NativeTopUpCallbacks,
-		NativeUsernamesCallbacks, NativeWakeRelayCallbacks,
 	},
 	config::{
 		HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -58,7 +57,6 @@ use super::{
 		ContactsCallbackPlatform, FundingCallbackPlatform, GameCallbackPlatform,
 		PaymentCallbackPlatform, PersonChatCallbackPlatform, PocketCallbackPlatform,
 		PushCallbackPlatform, ScannerCallbackPlatform, TopUpCallbackPlatform,
-		UsernamesCallbackPlatform, WakeRelayCallbackPlatform,
 	},
 };
 #[cfg(doc)]
@@ -80,6 +78,15 @@ pub struct NativeTrUApiHostRuntime {
 	payments: OnceLock<Arc<PaymentCallbackPlatform>>,
 	/// The balance view changes are pushed to, once installed.
 	balance: OnceLock<Arc<BalanceCallbackPlatform>>,
+}
+
+/// Runs `work` on the core's Tokio runtime. A host awaits the exported calls
+/// on its own executor, and the HOP client needs the Tokio reactor.
+async fn on_core_runtime<T: Send + 'static>(
+	work: impl Future<Output = T> + Send + 'static,
+) -> Result<T, String> {
+	let executor = shared_native_executor().map_err(|error| error.to_string())?;
+	executor.handle().spawn(work).await.map_err(|error| error.to_string())
 }
 
 impl NativeTrUApiHostRuntime {
@@ -214,7 +221,7 @@ impl NativeTrUApiHostRuntime {
 			spawner: self.spawner.clone(),
 			callbacks,
 			closed: AtomicBool::new(false),
-			chat_connection: Arc::default(),
+			chat_connection: Arc::new(crate::runtime::ActionChannel::chat()),
 			renderer_connection: Arc::new(crate::runtime::ActionChannel::renderer()),
 			ws_bridge: self.ws_bridge.clone(),
 			bridge_token: Mutex::new(None),
@@ -278,6 +285,25 @@ pub struct NativeHopFile {
 	pub bytes: Vec<u8>,
 	/// The 32-byte identifiers of the pool entries the file came from.
 	pub entries: Vec<Vec<u8>>,
+}
+
+/// Observer implemented by a native host to follow the download of a HOP
+/// file, such as with a progress ring.
+#[uniffi::export(callback_interface)]
+pub trait NativeHopDownloadProgress: Send + Sync {
+	/// `received` of the `total` bytes of the file arrived: once the size is
+	/// known, then after each part of the file.
+	fn on_progress(&self, received: u64, total: u64);
+}
+
+/// Observer implemented by a native host to follow the upload of a HOP file,
+/// such as with a progress ring.
+#[uniffi::export(callback_interface)]
+pub trait NativeHopUploadProgress: Send + Sync {
+	/// `sent` of the `total` bytes of the file reached the node: none before
+	/// the first part goes, then after each part, and all of them once the
+	/// file is in.
+	fn on_progress(&self, sent: u64, total: u64);
 }
 
 /// Handle to a pairing this host has told the peer it is working on, taken
@@ -454,13 +480,6 @@ impl NativeTrUApiHostRuntime {
 			.set_scanner_platform(Arc::new(ScannerCallbackPlatform { scanner: callbacks }))
 	}
 
-	/// Install the host's username directory before opening any product
-	/// execution. Set-once: answers whether this call installed it.
-	pub fn set_usernames_callbacks(&self, callbacks: Arc<dyn NativeUsernamesCallbacks>) -> bool {
-		self.runtime
-			.set_usernames_platform(Arc::new(UsernamesCallbackPlatform { usernames: callbacks }))
-	}
-
 	/// Install the host's person chat services (the HOP nodes) before opening
 	/// any product execution. Set-once: answers whether this call installed it.
 	pub fn set_person_chat_callbacks(&self, callbacks: Arc<dyn NativePersonChatCallbacks>) -> bool {
@@ -561,9 +580,9 @@ impl NativeTrUApiHostRuntime {
 		}
 	}
 
-	/// Send one event about a room to the product: the user muted or
-	/// archived the room, pressed a call button, answered a call, or picked
-	/// another alternative of a message. The core keeps the newest events of
+	/// Send one event about a room to the product: the user pressed a call
+	/// button, answered or ended a call, or the call has a media signal for
+	/// the other side. The core keeps the newest events of
 	/// a product that has no `room_events_subscribe` until it subscribes.
 	pub fn publish_chat_room_event(
 		&self,
@@ -579,38 +598,10 @@ impl NativeTrUApiHostRuntime {
 			.map_err(|error| HostRejection::Rejected { reason: error.to_string() })
 	}
 
-	/// Install the host's push relay client, or remove it with `None`. The
-	/// core gives it the wake topics of every product at once and at each
-	/// change of the watches. Answers whether the relay took the stored
-	/// topics; the relay stays installed after a refusal.
-	pub async fn set_wake_relay(
-		&self,
-		relay: Option<Arc<dyn NativeWakeRelayCallbacks>>,
-	) -> Result<(), HostRejection> {
-		let relay = relay.map(|relay| -> Arc<dyn crate::runtime::WakeRelay> {
-			Arc::new(WakeRelayCallbackPlatform { relay })
-		});
-		self.runtime
-			.set_wake_relay(relay)
-			.await
-			.map_err(|reason| HostRejection::Rejected { reason })
-	}
-
-	/// Check a wake push and wake each product that watches its topic, each
-	/// for [`crate::CHAT_WAKE_HOLD_MS`] as a notification wake. `payload` is
-	/// the text of the JSON object under the key `truapi-wake` of the push.
-	/// The host keeps the app running until the end of each hold.
-	pub async fn handle_wake_push(
-		&self,
-		payload: String,
-	) -> Result<Vec<crate::PushWakeDelivery>, crate::PushWakeRejection> {
-		self.runtime.handle_wake_push(&payload).await
-	}
-
 	/// Hold the worker of the product for a wake of
 	/// [`crate::CHAT_WAKE_HOLD_MS`]. A new wake moves the end of the hold. A
-	/// notification wake also sends `ChatRoomEvent::Woken` to the room, at
-	/// most [`crate::CHAT_NOTIFICATION_WAKES_PER_HOUR`] times in one hour.
+	/// product gets at most [`crate::CHAT_NOTIFICATION_WAKES_PER_HOUR`]
+	/// notification wakes in one hour.
 	pub fn wake_product(
 		&self,
 		product_id: String,
@@ -621,53 +612,33 @@ impl NativeTrUApiHostRuntime {
 			.map_err(|error| HostRejection::Rejected { reason: error.to_string() })
 	}
 
-	/// Stage a user attachment of a room as a preimage that the Bulletin
-	/// allowance of the product pays for, and return its key.
-	///
-	/// The core refuses a room whose features do not declare
-	/// `preimage_attachments`, an attachment above 8 MiB or above the
-	/// per-transaction bound of the Bulletin runtime, and a product the user
-	/// refused `PreimageSubmit`; it prompts when the user did not decide yet.
-	/// The core reads the room's features from the last `set_room_features`
-	/// it accepted, else through the chat adapter of the product's open
-	/// Worker execution; with neither the room declares nothing. The prompt
-	/// goes through that execution's callbacks, else through the runtime's.
-	/// Staging needs no worker reference and goes on after the room closes.
-	pub async fn chat_stage_attachment(
-		&self,
-		product_id: String,
-		room_id: String,
-		mime_type: String,
-		bytes: Vec<u8>,
-	) -> Result<Vec<u8>, NativeChatStageRejection> {
-		let admin = self
-			.worker_admin(product_id)
-			.map_err(|reason| NativeChatStageRejection::SubmitFailed { reason })?;
-		admin
-			.product_runtime()
-			.stage_chat_attachment(&room_id, &mime_type, bytes)
-			.await
-			.map_err(Into::into)
-	}
-
 	/// The bytes of a `ChatResource::Hop` of a room of the chat product, which
 	/// the core claims from the node it names when the host's person chat
 	/// services list that node, or from Bulletin once the node promoted it.
 	/// Cache the bytes, then call [`Self::ack_hop_chat_resource`] with the
-	/// entries, as the native chat acks only a file it stored.
+	/// entries, as the native chat acks only a file it stored. `progress`
+	/// follows the download.
+	#[uniffi::method(default(progress = None))]
 	pub async fn open_hop_chat_resource(
 		&self,
 		product_id: String,
 		resource: truapi::latest::ChatResource,
+		progress: Option<Box<dyn NativeHopDownloadProgress>>,
 	) -> Result<NativeHopFile, HostRejection> {
 		let admin = self
 			.worker_admin(product_id)
 			.map_err(|reason| HostRejection::Rejected { reason })?;
-		let (bytes, entries) = admin
-			.product_runtime()
-			.open_hop_chat_resource(&resource)
-			.await
-			.map_err(|reason| HostRejection::Rejected { reason })?;
+		let (bytes, entries) = on_core_runtime(async move {
+			let report = |received, total| {
+				if let Some(progress) = &progress {
+					progress.on_progress(received, total);
+				}
+			};
+			admin.product_runtime().open_hop_chat_resource(&resource, report).await
+		})
+		.await
+		.and_then(|opened| opened)
+		.map_err(|reason| HostRejection::Rejected { reason })?;
 		Ok(NativeHopFile {
 			bytes,
 			entries: entries.into_iter().map(|entry| entry.to_vec()).collect(),
@@ -707,38 +678,12 @@ impl NativeTrUApiHostRuntime {
 		let admin = self
 			.worker_admin(product_id)
 			.map_err(|reason| HostRejection::Rejected { reason })?;
-		admin
-			.product_runtime()
-			.ack_hop_chat_resource(&resource, &entries)
-			.await
-			.map_err(|reason| HostRejection::Rejected { reason })
-	}
-
-	/// Seal a user attachment of a room: the core encrypts it with a new key,
-	/// stores the ciphertext as Bulletin preimages in parts that the
-	/// allowance of the product pays for, and returns the
-	/// `ChatResource::Sealed` that names them. The host sends that resource
-	/// to the product in place of the bytes.
-	///
-	/// The core refuses a room whose features do not declare
-	/// `sealed_attachments`, an attachment above 32 MiB, and a product the
-	/// user refused `PreimageSubmit`; it prompts when the user did not decide
-	/// yet. It reads the room's features as [`Self::chat_stage_attachment`]
-	/// does.
-	pub async fn chat_seal_attachment(
-		&self,
-		product_id: String,
-		room_id: String,
-		bytes: Vec<u8>,
-	) -> Result<truapi::latest::ChatResource, NativeChatStageRejection> {
-		let admin = self
-			.worker_admin(product_id)
-			.map_err(|reason| NativeChatStageRejection::SubmitFailed { reason })?;
-		admin
-			.product_runtime()
-			.seal_chat_attachment(&room_id, bytes)
-			.await
-			.map_err(Into::into)
+		on_core_runtime(async move {
+			admin.product_runtime().ack_hop_chat_resource(&resource, &entries).await
+		})
+		.await
+		.and_then(|acked| acked)
+		.map_err(|reason| HostRejection::Rejected { reason })
 	}
 
 	/// Upload a user photo, video or file of a room of the chat product to a
@@ -749,20 +694,32 @@ impl NativeTrUApiHostRuntime {
 	/// The core refuses a room whose features do not declare
 	/// `hop_attachments`, any product but the chat product, and a file above
 	/// 128 MiB. The product's Bulletin allowance account signs the upload.
+	/// The core reads the room's features from the last `set_room_features`
+	/// it accepted, else through the chat adapter of the product's open
+	/// Worker execution; with neither the room declares nothing. `progress`
+	/// follows the upload.
+	#[uniffi::method(default(progress = None))]
 	pub async fn chat_hop_attachment(
 		&self,
 		product_id: String,
 		room_id: String,
 		bytes: Vec<u8>,
+		progress: Option<Box<dyn NativeHopUploadProgress>>,
 	) -> Result<truapi::latest::ChatResource, NativeChatStageRejection> {
 		let admin = self
 			.worker_admin(product_id)
 			.map_err(|reason| NativeChatStageRejection::SubmitFailed { reason })?;
-		admin
-			.product_runtime()
-			.hop_chat_attachment(&room_id, bytes)
-			.await
-			.map_err(Into::into)
+		on_core_runtime(async move {
+			let report = |sent, total| {
+				if let Some(progress) = &progress {
+					progress.on_progress(sent, total);
+				}
+			};
+			admin.product_runtime().hop_chat_attachment(&room_id, bytes, report).await
+		})
+		.await
+		.map_err(|reason| NativeChatStageRejection::SubmitFailed { reason })?
+		.map_err(Into::into)
 	}
 
 	/// Tell the pairing host behind `deeplink` that allowance allocation is
@@ -1071,7 +1028,8 @@ pub struct NativeProductExecution {
 	callbacks: Arc<dyn HostCallbacks>,
 	/// Single Chat action buffer shared with every product connection this
 	/// execution opens; survives bridge restarts until [`Self::shutdown`].
-	chat_connection: Arc<crate::runtime::ChatEventChannel>,
+	chat_connection:
+		Arc<crate::runtime::ActionChannel<truapi::versioned::chat::HostChatActionSubscribeItem>>,
 	/// Single renderer action buffer shared with every product connection this
 	/// execution opens; survives bridge restarts until [`Self::shutdown`].
 	renderer_connection: Arc<
@@ -1303,27 +1261,7 @@ impl NativeProductExecution {
 		action: v01::HostChatActionSubscribeItem,
 	) -> Result<(), crate::ProductRuntimeError> {
 		self.require_chat()?;
-		let event = truapi::versioned::IntoLatest::into_latest(
-			truapi::versioned::chat::HostChatActionSubscribeItem::V1(action),
-		);
-		self.chat_connection.publish(event, &self.spawner)
-	}
-
-	/// Publish one native Chat event, buffering it until the product
-	/// connection subscribes. A subscriber at the first protocol version
-	/// receives only the events its version carries, and a burst of `Seen`
-	/// events reaches the product at most once per room each second.
-	pub fn publish_chat_event(
-		&self,
-		room_id: String,
-		peer: String,
-		event: v01::ChatEvent,
-	) -> Result<(), crate::ProductRuntimeError> {
-		self.require_chat()?;
-		self.chat_connection.publish(
-			truapi::latest::HostChatActionSubscribeItem { room_id, peer, event },
-			&self.spawner,
-		)
+		self.chat_connection.publish(action.into())
 	}
 
 	/// Ask the product to draw one body, delivering each replacement tree to
@@ -1399,46 +1337,27 @@ impl NativeProductExecution {
 		))
 	}
 
-	/// Ask the product about the participants of a room, and deliver its
-	/// answer to `observer`. The core answers `NotAvailable` itself for a room
-	/// that does not set `participants`.
-	pub fn chat_participants_query(
+	/// Ask the product for the texts one message had, and deliver its answer
+	/// to `observer`. The core answers `NotAvailable` itself for a room that
+	/// does not set `product_source`.
+	pub fn chat_edit_history(
 		&self,
-		request: v01::ProductChatParticipantsQueryRequest,
+		request: v01::ProductChatEditHistoryQueryRequest,
 		observer: Box<dyn NativeChatQueryObserver>,
 	) -> Result<Arc<NativeChatQuery>, crate::ProductRuntimeError> {
-		let query = self.chat_control()?.chat_participants_query(request)?;
+		let query = self.chat_control()?.chat_edit_history(request)?;
 		Ok(observe_chat_query(
 			query,
 			observer.into(),
 			self.spawner.clone(),
-			|answer| NativeChatQueryAnswer::Participants { answer },
-			|error| NativeChatQueryRefusal::Query { error },
-		))
-	}
-
-	/// Ask the product for the menu of one message, and deliver its answer to
-	/// `observer`. The core answers `NotAvailable` itself for a room that does
-	/// not set `message_actions`.
-	pub fn chat_message_actions_query(
-		&self,
-		request: v01::ProductChatMessageActionsQueryRequest,
-		observer: Box<dyn NativeChatQueryObserver>,
-	) -> Result<Arc<NativeChatQuery>, crate::ProductRuntimeError> {
-		let query = self.chat_control()?.chat_message_actions_query(request)?;
-		Ok(observe_chat_query(
-			query,
-			observer.into(),
-			self.spawner.clone(),
-			|menu| NativeChatQueryAnswer::MessageMenu { menu },
+			|history| NativeChatQueryAnswer::EditHistory { history },
 			|error| NativeChatQueryRefusal::Query { error },
 		))
 	}
 
 	/// Ask the product for the messages of a room it keeps that match what the
 	/// user typed, and deliver its answer to `observer`. The core answers
-	/// `NotAvailable` itself for a room that does not set `product_source`, or
-	/// whose features do not set `search`.
+	/// `NotAvailable` itself for a room that does not set `product_source`.
 	pub fn chat_search_query(
 		&self,
 		request: v01::ProductChatSearchQueryRequest,
@@ -1454,9 +1373,9 @@ impl NativeProductExecution {
 		))
 	}
 
-	/// Give the product the payload of a room link the user opened, and
-	/// deliver its answer to `observer`. The core answers `NotAvailable`
-	/// itself for a room the product does not have.
+	/// Give the product something the user opened from an entry point of the
+	/// host, such as a contact link or a username, and deliver its answer to
+	/// `observer`.
 	pub fn chat_open_link(
 		&self,
 		request: v01::ProductChatOpenLinkRequest,
@@ -1573,6 +1492,16 @@ mod tests {
 	use futures::stream::StreamExt;
 	use std::sync::{Arc, atomic::Ordering};
 	use truapi::v01;
+
+	#[test]
+	fn work_a_host_awaits_on_its_own_executor_runs_on_the_core_runtime() {
+		// A HOP upload or download needs the Tokio reactor; a host awaits it from its own executor.
+		let slept = futures::executor::block_on(on_core_runtime(async {
+			tokio::time::sleep(core::time::Duration::from_millis(1)).await;
+			"slept"
+		}));
+		assert_eq!(slept, Ok("slept"));
+	}
 
 	#[test]
 	fn a_worker_write_reaches_a_storage_subscription_in_the_products_other_execution() {

@@ -182,7 +182,8 @@ private fun ChatRequestsListScreenLoadedPreview() {
                                 username = "alice.polkadot",
                                 avatarModel = AvatarUiModel.Mock.fromName("alice.polkadot")
                             ),
-                            timestamp = System.currentTimeMillis()
+                            timestamp = System.currentTimeMillis(),
+                            productRoom = null
                         ),
                         ChatRequestsListUiState.ChatRequestItem(
                             accountId = Random.randomBytes(32).intoAccountId(),
@@ -190,7 +191,8 @@ private fun ChatRequestsListScreenLoadedPreview() {
                                 username = "bob.polkadot",
                                 avatarModel = AvatarUiModel.Mock.fromName("bob.polkadot")
                             ),
-                            timestamp = System.currentTimeMillis()
+                            timestamp = System.currentTimeMillis(),
+                            productRoom = null
                         )
                     )
                 )

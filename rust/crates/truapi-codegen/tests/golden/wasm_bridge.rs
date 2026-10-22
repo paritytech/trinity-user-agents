@@ -34,6 +34,7 @@ pub struct JsBridge {
     pub set_chat_room_footer: Function,
     pub subscribe_chat_rooms: Function,
     pub read_chat_room_config: Function,
+    pub set_chat_room_config: Function,
     pub set_chat_room_metadata: Function,
     pub set_chat_room_preview: Function,
     pub delete_chat_room: Function,
@@ -42,8 +43,7 @@ pub struct JsBridge {
     pub read_chat_room_features: Function,
     pub set_chat_room_features: Function,
     pub set_chat_room_call: Function,
-    pub read_chat_room_user_states: Function,
-    pub read_chat_bots: Function,
+    pub set_chat_room_contact: Function,
     pub contacts: Function,
     pub pick_contact: Function,
     pub read_core_storage: Function,
@@ -98,6 +98,8 @@ impl JsBridge {
                 .unwrap_or_else(|| missing_callback("subscribeChatRooms")),
             read_chat_room_config: get_optional_function(callbacks, "readChatRoomConfig")?
                 .unwrap_or_else(|| missing_callback("readChatRoomConfig")),
+            set_chat_room_config: get_optional_function(callbacks, "setChatRoomConfig")?
+                .unwrap_or_else(|| missing_callback("setChatRoomConfig")),
             set_chat_room_metadata: get_optional_function(callbacks, "setChatRoomMetadata")?
                 .unwrap_or_else(|| missing_callback("setChatRoomMetadata")),
             set_chat_room_preview: get_optional_function(callbacks, "setChatRoomPreview")?
@@ -114,10 +116,8 @@ impl JsBridge {
                 .unwrap_or_else(|| missing_callback("setChatRoomFeatures")),
             set_chat_room_call: get_optional_function(callbacks, "setChatRoomCall")?
                 .unwrap_or_else(|| missing_callback("setChatRoomCall")),
-            read_chat_room_user_states: get_optional_function(callbacks, "readChatRoomUserStates")?
-                .unwrap_or_else(|| missing_callback("readChatRoomUserStates")),
-            read_chat_bots: get_optional_function(callbacks, "readChatBots")?
-                .unwrap_or_else(|| missing_callback("readChatBots")),
+            set_chat_room_contact: get_optional_function(callbacks, "setChatRoomContact")?
+                .unwrap_or_else(|| missing_callback("setChatRoomContact")),
             contacts: get_optional_function(callbacks, "contacts")?
                 .unwrap_or_else(|| missing_callback("contacts")),
             pick_contact: get_optional_function(callbacks, "pickContact")?
@@ -161,6 +161,7 @@ impl JsBridge {
                 && get_optional_function(callbacks, "setChatRoomFooter")?.is_some()
                 && get_optional_function(callbacks, "subscribeChatRooms")?.is_some()
                 && get_optional_function(callbacks, "readChatRoomConfig")?.is_some()
+                && get_optional_function(callbacks, "setChatRoomConfig")?.is_some()
                 && get_optional_function(callbacks, "setChatRoomMetadata")?.is_some()
                 && get_optional_function(callbacks, "setChatRoomPreview")?.is_some()
                 && get_optional_function(callbacks, "deleteChatRoom")?.is_some()
@@ -169,8 +170,7 @@ impl JsBridge {
                 && get_optional_function(callbacks, "readChatRoomFeatures")?.is_some()
                 && get_optional_function(callbacks, "setChatRoomFeatures")?.is_some()
                 && get_optional_function(callbacks, "setChatRoomCall")?.is_some()
-                && get_optional_function(callbacks, "readChatRoomUserStates")?.is_some()
-                && get_optional_function(callbacks, "readChatBots")?.is_some(),
+                && get_optional_function(callbacks, "setChatRoomContact")?.is_some(),
             contacts_present: get_optional_function(callbacks, "contacts")?.is_some()
                 && get_optional_function(callbacks, "pickContact")?.is_some(),
             game_present: get_optional_function(callbacks, "scheduleGameReminder")?.is_some()
@@ -231,14 +231,12 @@ impl crate::platform::ChatPlatform for WasmPlatform {
         &self,
         product: &crate::platform::ProductContext,
         request: latest::HostChatCreateRoomRequest,
-        icon_url: String,
     ) -> Result<latest::HostChatCreateRoomResponse, latest::HostChatCreateRoomError> {
         let bytes = invoke_bytes_return(
             &self.bridge.create_chat_room,
             vec![
                 Uint8Array::from(product.encode().as_slice()).into(),
                 Uint8Array::from(request.encode().as_slice()).into(),
-                JsValue::from_str(&icon_url),
             ],
         )
         .await
@@ -335,6 +333,22 @@ impl crate::platform::ChatPlatform for WasmPlatform {
         .map_err(generic)?;
         decode_bytes::<latest::ChatRoomConfig>(bytes, "readChatRoomConfig response did not decode")
             .map_err(generic)
+    }
+
+    async fn set_chat_room_config(
+        &self,
+        _product: &crate::platform::ProductContext,
+        _request: latest::HostChatSetRoomConfigRequest,
+    ) -> Result<(), latest::GenericError> {
+        invoke_unit(
+            &self.bridge.set_chat_room_config,
+            vec![
+                Uint8Array::from(_product.encode().as_slice()).into(),
+                Uint8Array::from(_request.encode().as_slice()).into(),
+            ],
+        )
+        .await
+        .map_err(generic)
     }
 
     async fn set_chat_room_metadata(
@@ -473,35 +487,20 @@ impl crate::platform::ChatPlatform for WasmPlatform {
         .map_err(generic)
     }
 
-    async fn read_chat_room_user_states(
+    async fn set_chat_room_contact(
         &self,
         _product: &crate::platform::ProductContext,
-    ) -> Result<crate::platform::ChatRoomUserStates, latest::GenericError> {
-        let bytes = invoke_bytes_return(
-            &self.bridge.read_chat_room_user_states,
-            vec![Uint8Array::from(_product.encode().as_slice()).into()],
+        _request: latest::HostChatSetRoomContactRequest,
+    ) -> Result<(), latest::GenericError> {
+        invoke_unit(
+            &self.bridge.set_chat_room_contact,
+            vec![
+                Uint8Array::from(_product.encode().as_slice()).into(),
+                Uint8Array::from(_request.encode().as_slice()).into(),
+            ],
         )
         .await
-        .map_err(generic)?;
-        decode_bytes::<crate::platform::ChatRoomUserStates>(
-            bytes,
-            "readChatRoomUserStates response did not decode",
-        )
         .map_err(generic)
-    }
-
-    async fn read_chat_bots(
-        &self,
-        _product: &crate::platform::ProductContext,
-    ) -> Result<crate::platform::ChatBotIds, latest::GenericError> {
-        let bytes = invoke_bytes_return(
-            &self.bridge.read_chat_bots,
-            vec![Uint8Array::from(_product.encode().as_slice()).into()],
-        )
-        .await
-        .map_err(generic)?;
-        decode_bytes::<crate::platform::ChatBotIds>(bytes, "readChatBots response did not decode")
-            .map_err(generic)
     }
 }
 

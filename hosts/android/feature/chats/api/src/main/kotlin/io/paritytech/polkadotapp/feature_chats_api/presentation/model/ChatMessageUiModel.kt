@@ -11,7 +11,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomC
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableSet
@@ -34,79 +33,8 @@ sealed interface ChatMessageUiModel {
         val text: String,
         val replyPreview: ReplyPreview?,
         val reactions: ImmutableList<Reaction>,
-        val isEdited: Boolean,
-        /** True for the rich text of a product. The message draws the Markdown subset of Chat Extension v2. */
-        val isMarkdown: Boolean,
+        val isEdited: Boolean
     ) : ChatMessageUiModel
-
-    /** Host-drawn buttons of a product under an optional text (Chat Extension v2). */
-    data class Actions(
-        override val id: ChatMessageId,
-        override val timestamp: Timestamp,
-        override val direction: Direction,
-        override val status: Status,
-        override val origin: ChatMessageOrigin,
-        val text: String?,
-        val buttons: ImmutableList<ActionButton>,
-        val layout: ActionsLayout,
-        val reactions: ImmutableList<Reaction>,
-    ) : ChatMessageUiModel {
-        data class ActionButton(val actionId: String, val title: String)
-
-        enum class ActionsLayout { COLUMN, GRID }
-    }
-
-    /** Rich text of a product with media items above the text (Chat Extension v2). */
-    data class ProductMedia(
-        override val id: ChatMessageId,
-        override val timestamp: Timestamp,
-        override val direction: Direction,
-        override val status: Status,
-        override val origin: ChatMessageOrigin,
-        /** Markdown. */
-        val text: String?,
-        val media: ImmutableList<MediaItem>,
-        val replyPreview: ReplyPreview?,
-        val reactions: ImmutableList<Reaction>,
-        val isEdited: Boolean,
-    ) : ChatMessageUiModel {
-        @Immutable
-        sealed interface MediaItem {
-            /** The text for accessibility. */
-            val alt: String?
-
-            /** The bytes of the item. The room screen loads them when the item shows, or when the user opens a file. */
-            val resource: ChatResourceModel
-
-            val mimeType: String
-
-            data class Image(
-                override val resource: ChatResourceModel,
-                override val mimeType: String,
-                val width: Int?,
-                val height: Int?,
-                val blurHash: String?,
-                override val alt: String?,
-            ) : MediaItem
-
-            data class Video(
-                override val resource: ChatResourceModel,
-                override val mimeType: String,
-                val width: Int?,
-                val height: Int?,
-                val blurHash: String?,
-                override val alt: String?,
-            ) : MediaItem
-
-            data class File(
-                override val resource: ChatResourceModel,
-                override val mimeType: String,
-                val fileName: String,
-                val size: InformationSize?,
-                override val alt: String?,
-            ) : MediaItem
-        }
-    }
 
     data class ContactAdded(
         override val id: ChatMessageId,
@@ -266,7 +194,7 @@ sealed interface ChatMessageUiModel {
         val chatId: ChatId,
     ) : ChatMessageUiModel
 
-    enum class Status { PENDING, SENT, DELIVERED, READ, FAILED }
+    enum class Status { PENDING, SENT, READ, FAILED }
     enum class Direction { INCOMING, OUTGOING }
 
     data class Reaction(val count: Int, val emoji: String, val reactedByUser: Boolean)
@@ -284,9 +212,6 @@ data class ReplyPreview(
         data class Video(val thumbnailUri: Uri?, val caption: String?) : Content
         data class File(val fileName: String, val caption: String?) : Content
         data class Payment(val amount: TokenAmountModel, val direction: ChatMessageUiModel.Direction) : Content
-
-        /** The replied message is outside the loaded messages of the room. A tap pages until it is loaded. */
-        data object Unloaded : Content
     }
 }
 
@@ -319,11 +244,7 @@ sealed class MessagePopUpUiState {
         val message: ChatMessageUiModel,
         val userReactedEmojis: ImmutableSet<String>,
         val canLeaveReactions: Boolean,
-        val allowedMenuActions: ImmutableList<AllowedMessageMenuAction>,
-        /** The emoji that the picker offers. Null offers all emoji. */
-        val allowedReactions: ImmutableList<String>?,
-        /** The product of the room did not answer the menu of the message yet. The menu shows a loading row. */
-        val productActionsLoading: Boolean,
+        val allowedMenuActions: ImmutableList<AllowedMessageMenuAction>
     ) : MessagePopUpUiState()
 }
 
@@ -354,15 +275,6 @@ sealed interface MessageAction {
     data class ShowReactionDetails(val message: ChatMessageUiModel) : MessageAction
     data class ReplyPreviewTap(val messageId: ChatMessageId) : MessageAction
     data class ViewEditHistory(val message: ChatMessageUiModel) : MessageAction
-    data class ActionPress(val message: ChatMessageUiModel, val actionId: String) : MessageAction
-    data class Delete(val message: ChatMessageUiModel) : MessageAction
-    data class Retry(val message: ChatMessageUiModel) : MessageAction
-
-    /** A product entry of the message menu. */
-    data class ProductMenuAction(val message: ChatMessageUiModel, val actionId: String) : MessageAction
-
-    /** The host speaks [text], the plain text of a message (07-LATER §9.5). */
-    data class ReadAloud(val text: String) : MessageAction
     data object DismissActionMenu : MessageAction
 }
 
@@ -371,12 +283,4 @@ sealed interface AllowedMessageMenuAction {
     data class Copy(val text: String) : AllowedMessageMenuAction
     data class Edit(val text: String) : AllowedMessageMenuAction
     data object ViewEditHistory : AllowedMessageMenuAction
-    data object Delete : AllowedMessageMenuAction
-    data object Retry : AllowedMessageMenuAction
-
-    /** The built-in "Read aloud" of a room that declares `read_aloud`. [text] is the plain text to speak. */
-    data class ReadAloud(val text: String) : AllowedMessageMenuAction
-
-    /** An entry of the product of the room. [icon] is what the image loader draws, or null. */
-    data class Custom(val actionId: String, val label: String, val icon: Any?, val isDestructive: Boolean) : AllowedMessageMenuAction
 }

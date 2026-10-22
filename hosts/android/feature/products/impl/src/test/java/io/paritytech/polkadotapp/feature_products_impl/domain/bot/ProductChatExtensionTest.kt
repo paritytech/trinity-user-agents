@@ -6,41 +6,33 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
-import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
+import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomCallRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomDeclarationsRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPreview
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomPreviewData
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatContactStateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMediaItemModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMediaMetaModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReactionContent
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomContactModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomEventModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomUserStateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ProductMessageBody
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedListeners
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductChatRoomEventSink
-import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductRoomEvent
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerReference
@@ -69,7 +61,9 @@ private const val ROOM = "truapi-playground"
 class ProductChatExtensionTest {
     private val product = Product(ProductId.fromStoredValue("truapi-playground.dot"), "TrUAPI Playground", icon = null)
     private val extensionId = product.id.toChatExtensionId()
-    private val declarations: ChatRoomDeclarationsRepository = mockk()
+    private val declarations: ChatRoomDeclarationsRepository = mockk {
+        every { observe(any()) } returns flowOf(null)
+    }
     private val feedListeners: ProductFeedListeners = mockk()
     private val roomEventSink: ProductChatRoomEventSink = mockk()
     private val calls: ChatRoomCallRepository = mockk()
@@ -204,7 +198,7 @@ class ProductChatExtensionTest {
         val ringing = ChatId.forExtensionRoom(extensionId, ROOM)
         val active = ChatId.forExtensionRoom(extensionId, "active")
         every { calls.observe(ringing) } returns flowOf(ChatRoomCallModel.Ringing("c1", video = false, caller = "p1"))
-        every { calls.observe(active) } returns flowOf(ChatRoomCallModel.Active("c2", video = true, startedAt = 1, mediaSession = null))
+        every { calls.observe(active) } returns flowOf(ChatRoomCallModel.Active("c2", video = true, startedAt = 1))
         val hostScope = CoroutineScope(StandardTestDispatcher(testScheduler))
 
         try {
@@ -229,24 +223,19 @@ class ProductChatExtensionTest {
     )
 
     @Test
-    fun `a declared footer without an input hides the input of that room alone`() = runTest {
-        val extension = extension(FakeRefCounter(RecordingWorker()))
-        val room = ChatId.forExtensionRoom(extensionId, ROOM)
-        val other = ChatId.forExtensionRoom(extensionId, "other")
-        every { declarations.observe(room) } returns flowOf(ChatRoomDeclarations.EMPTY.copy(footer = ChatRoomFooterModel.Empty))
-        every { declarations.observe(other) } returns flowOf(null)
+    fun `an empty footer hides the input of that room alone`() = runTest {
+        val refCounter = FakeRefCounter(RecordingWorker())
+        val extension = extension(refCounter)
 
-        assertEquals(false, extension.observeUserInputAllowed(room).first())
-        assertEquals(true, extension.observeUserInputAllowed(other).first())
-    }
+        withChatHost { extension.startGlobalWork() }
+        val messaging = requireNotNull(refCounter.chatSurface)
 
-    @Test
-    fun `a footer the product draws hides the input until the host draws it`() = runTest {
-        val extension = extension(FakeRefCounter(RecordingWorker()))
-        val room = ChatId.forExtensionRoom(extensionId, ROOM)
-        every { declarations.observe(room) } returns flowOf(ChatRoomDeclarations.EMPTY.copy(footer = ChatRoomFooterModel.Custom))
+        assertEquals(true, extension.observeUserInputAllowed(ChatId.forExtensionRoom(extensionId, ROOM)).first())
 
-        assertEquals(false, extension.observeUserInputAllowed(room).first())
+        messaging.setRoomFooter(ProductChatIdParameter(ROOM), showsTextInput = false)
+
+        assertEquals(false, extension.observeUserInputAllowed(ChatId.forExtensionRoom(extensionId, ROOM)).first())
+        assertEquals(true, extension.observeUserInputAllowed(ChatId.forExtensionRoom(extensionId, "other")).first())
     }
 
     @Test
@@ -263,41 +252,16 @@ class ProductChatExtensionTest {
     }
 
     @Test
-    fun `a user message reaches the product as a posted message with its host id`() = runTest {
+    fun `a text of the user reaches the product as a user message`() = runTest {
         val worker = RecordingWorker()
-        val message = textMessage("hello")
 
-        withChatHost(incoming = flowOf(message)) { extension(FakeRefCounter(worker)).startGlobalWork() }
+        withChatHost(incoming = flowOf(textMessage("hello"))) { extension(FakeRefCounter(worker)).startGlobalWork() }
 
-        assertEquals(
-            listOf(ProductChatIdParameter(ROOM) to ProductRoomEvent.MessagePosted(message.id, message.content, null)),
-            worker.roomEvents,
-        )
+        assertEquals(listOf(ProductChatIdParameter(ROOM) to "hello"), worker.delivered)
     }
 
     @Test
-    fun `an attachment of the user reaches the product as a posted message with its inline media`() = runTest {
-        val worker = RecordingWorker()
-        val media = ChatMediaItemModel.Image(
-            ChatResourceModel.Inline("image/jpeg", byteArrayOf(1).toDataByteArray()),
-            ChatMediaMetaModel("image/jpeg", sizeBytes = 1, width = 1, height = 1, placeholder = null, alt = null),
-        )
-        val message = ChatMessage.new(
-            chatId = room,
-            content = ChatMessage.Content.ProductBody(ProductMessageBody.RichText(text = null, media = listOf(media))),
-            origin = ChatMessageOrigin.User,
-        )
-
-        withChatHost(incoming = flowOf(message)) { extension(FakeRefCounter(worker)).startGlobalWork() }
-
-        assertEquals(
-            listOf(ProductChatIdParameter(ROOM) to ProductRoomEvent.MessagePosted(message.id, message.content, null)),
-            worker.roomEvents,
-        )
-    }
-
-    @Test
-    fun `a room whose product keeps the messages sends no user event`() = runTest {
+    fun `a room whose product keeps the messages sends no user message`() = runTest {
         val worker = RecordingWorker()
         val productSource = ChatRoomDeclarations.EMPTY.copy(config = ChatRoomConfigModel.HOST_DEFAULT.copy(productSource = true))
 
@@ -305,49 +269,7 @@ class ProductChatExtensionTest {
             extension(FakeRefCounter(worker)).startGlobalWork()
         }
 
-        assertTrue(worker.roomEvents.isEmpty())
-    }
-
-    @Test
-    fun `an edit and a reaction of the user name the product id of their message`() = runTest {
-        val worker = RecordingWorker()
-        val target = ProductMessageIds.stored("answer-1", room)
-        val edit = userMessage(ChatMessage.Content.Edited(target, ChatMessage.Content.RichText("better", emptyList())))
-        val reaction = userMessage(ChatMessage.Content.Reacted(target, ChatMessageReactionContent("👍")))
-
-        withChatHost(incoming = flowOf(edit, reaction)) { extension(FakeRefCounter(worker)).startGlobalWork() }
-
-        val events = worker.roomEvents.map { it.second }
-        assertEquals("answer-1", (events[0] as ProductRoomEvent.UserEdited).messageId)
-        assertEquals(ProductRoomEvent.UserReacted("answer-1", "👍", placed = true), events[1])
-    }
-
-    @Test
-    fun `seen goes to the product once per message and only when the room asks for it`() = runTest {
-        val worker = RecordingWorker()
-        val extension = extension(FakeRefCounter(worker))
-        withChatHost { extension.startGlobalWork() }
-        withDeclarations(ChatRoomConfigModel.HOST_DEFAULT.copy(reportSeen = true))
-
-        extension.onUserEvent(room, ChatRoomUserEvent.MessageSeen(ProductMessageIds.stored("m1", room)))
-        extension.onUserEvent(room, ChatRoomUserEvent.MessageSeen(ProductMessageIds.stored("m1", room)))
-        withDeclarations(ChatRoomConfigModel.HOST_DEFAULT)
-        extension.onUserEvent(room, ChatRoomUserEvent.MessageSeen("m2"))
-
-        assertEquals(listOf<ProductRoomEvent>(ProductRoomEvent.Seen("m1")), worker.roomEvents.map { it.second })
-    }
-
-    @Test
-    fun `an action press goes to the product in either store mode`() = runTest {
-        val worker = RecordingWorker()
-        val extension = extension(FakeRefCounter(worker))
-        withChatHost { extension.startGlobalWork() }
-        withDeclarations(ChatRoomConfigModel.HOST_DEFAULT.copy(productSource = true))
-
-        extension.onUserEvent(room, ChatRoomUserEvent.ActionTriggered(ProductMessageIds.stored("m1", room), "yes"))
-        extension.onUserEvent(room, ChatRoomUserEvent.MessageDeleted("m1"))
-
-        assertEquals(listOf<ProductRoomEvent>(ProductRoomEvent.ActionTriggered("m1", "yes")), worker.roomEvents.map { it.second })
+        assertTrue(worker.delivered.isEmpty())
     }
 
     @Test
@@ -355,13 +277,13 @@ class ProductChatExtensionTest {
         val worker = RecordingWorker()
         val extension = extension(FakeRefCounter(worker))
         withChatHost { extension.startGlobalWork() }
-        val event = ChatRoomEventModel.UserStateChanged(ChatRoomUserStateModel(mutedUntil = 5, archived = true))
+        val event = ChatRoomEventModel.CallRequested(video = true)
         coEvery { roomEventSink.publish(any(), any(), any()) } returns Result.success(Unit)
 
         extension.onRoomEvent(room, event)
 
         coVerify { roomEventSink.publish(product.id, ProductChatIdParameter(ROOM), event) }
-        assertTrue(worker.roomEvents.isEmpty())
+        assertTrue(worker.delivered.isEmpty())
     }
 
     @Test
@@ -375,7 +297,7 @@ class ProductChatExtensionTest {
     fun `a live feed update goes to the screens of its room`() = runTest {
         val refCounter = FakeRefCounter(RecordingWorker())
         withChatHost { extension(refCounter).startGlobalWork() }
-        val update = ProductFeedUpdateModel.Deleted("m1")
+        val update = ProductFeedUpdateModel.StatusChanged("m1", ProductMessageStatusModel.READ)
         coEvery { feedListeners.deliver(room, update) } returns true
 
         assertTrue(requireNotNull(refCounter.chatSurface).deliverLiveFeedUpdate(ProductChatIdParameter(ROOM), update))
@@ -384,8 +306,6 @@ class ProductChatExtensionTest {
     private fun withDeclarations(config: ChatRoomConfigModel) {
         coEvery { declarations.get(room) } returns ChatRoomDeclarations.EMPTY.copy(config = config)
     }
-
-    private fun userMessage(content: ChatMessage.Content) = ChatMessage.new(chatId = room, content = content, origin = ChatMessageOrigin.User)
 
     @Test
     fun `a product without a room runs a short while to create one`() = runTest {
@@ -425,32 +345,10 @@ class ProductChatExtensionTest {
         val extension = extension(FakeRefCounter(worker))
         withChatHost(ownRooms = flowOf(listOf(room))) { extension.startGlobalWork() }
 
-        requireNotNull(extension.roomQuerying(room)).userAction(room, ChatUserActionModel.Retry(ProductMessageIds.stored("m1", room)))
-        requireNotNull(extension.roomQuerying(room)).userAction(room, ChatUserActionModel.DeleteMessage("m2"))
+        requireNotNull(extension.roomQuerying(room)).userAction(room, ChatUserActionModel.Seen(ProductMessageIds.stored("m1", room)))
+        requireNotNull(extension.roomQuerying(room)).userAction(room, ChatUserActionModel.Seen("m2"))
 
-        assertEquals(listOf<ChatUserActionModel>(ChatUserActionModel.Retry("m1"), ChatUserActionModel.DeleteMessage("m2")), worker.userActions)
-    }
-
-    @Test
-    fun `a message menu question names the message and its reply by the product ids`() = runTest {
-        val worker = RecordingWorker()
-        val extension = extension(FakeRefCounter(worker))
-        withChatHost(ownRooms = flowOf(listOf(room))) { extension.startGlobalWork() }
-        val message = ProductRoomMessage(
-            messageId = ProductMessageIds.stored("m1", room),
-            participantId = "product",
-            timestamp = 1L,
-            content = ChatMessage.Content.Text("hi"),
-            status = ProductMessageStatusModel.SENT,
-            replyTo = ProductMessageIds.stored("m0", room),
-            editedAt = null,
-            reactions = emptyList(),
-        )
-
-        val menu = requireNotNull(extension.roomQuerying(room)).messageMenu(room, message)
-
-        assertEquals(RecordingWorker.MENU, menu.getOrNull())
-        assertEquals(listOf(message.copy(messageId = "m1", replyTo = "m0")), worker.menuQuestions)
+        assertEquals(listOf<ChatUserActionModel>(ChatUserActionModel.Seen("m1"), ChatUserActionModel.Seen("m2")), worker.userActions)
     }
 
     private suspend fun ProductChatExtension.pinnedAndRemovable(chatId: ChatId): Pair<ChatPreview?, Boolean> = coroutineScope {
@@ -470,6 +368,16 @@ class ProductChatExtensionTest {
             ChatPreview.Custom(Order.PinToTop, CustomPreviewData.FromMessage, ChatPreview.Custom.BadgeStyle.UNREAD) to false,
             extension.pinnedAndRemovable(ChatId.forExtensionRoom(extensionId, "jollity")),
         )
+    }
+
+    @Test
+    fun `a person chat of a host-placed chat product is ordered by time, as a native person chat`() = runTest {
+        val extension = placedByHost(FakeRefCounter(RecordingWorker()))
+        val personChat = ChatId.forExtensionRoom(extensionId, "dm-b0")
+        val contact = ChatRoomContactModel(DataByteArray(ByteArray(32)), "bob.01", ChatContactStateModel.ESTABLISHED)
+        every { declarations.observe(personChat) } returns flowOf(ChatRoomDeclarations.EMPTY.copy(contact = contact))
+
+        assertEquals(null, extension.pinnedAndRemovable(personChat).first)
     }
 
     @Test

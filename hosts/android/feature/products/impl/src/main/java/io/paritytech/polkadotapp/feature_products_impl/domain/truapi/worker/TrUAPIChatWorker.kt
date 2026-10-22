@@ -6,35 +6,25 @@ import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageMenuModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatMessageRevisionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatParticipantEntryModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatReactionDetailModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageIds
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipantsPage
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductSearchPage
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCore
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCoreBody
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCount
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toModel
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toPage
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toQueryException
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toQueryMessage
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toResolved
-import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductRoomEvent
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -57,20 +47,15 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
-import uniffi.truapi.ActionTrigger
 import uniffi.truapi.ChatActionPayload
-import uniffi.truapi.ChatEvent
 import uniffi.truapi.ChatMessageContent
-import uniffi.truapi.ChatParticipantsQuery
 import uniffi.truapi.ChatWakeOutcome
 import uniffi.truapi.ChatWakeReason
 import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostRendererActionSubscribeItem
-import uniffi.truapi.ProductChatMessageActionsQueryRequest
+import uniffi.truapi.ProductChatEditHistoryQueryRequest
 import uniffi.truapi.ProductChatMessagesQueryRequest
 import uniffi.truapi.ProductChatOpenLinkRequest
-import uniffi.truapi.ProductChatParticipantsQueryRequest
-import uniffi.truapi.ProductChatReactionsQueryRequest
 import uniffi.truapi.ProductChatSearchQueryRequest
 import uniffi.truapi.ProductChatUserActionRequest
 import uniffi.truapi.ProductRendererRenderRequest
@@ -88,20 +73,25 @@ class TrUAPIChatWorker(
 ) : ProductWorker {
     private val rendererId = productId.toChatExtensionId()
 
-    // The worker runs while a room screen is open, or for a wake of the core (07-LATER §10.2); never for the life
-    // of the installed integration (D10).
+    // Every product but the chat product keeps its worker for the life of its chat, as each product did before the
+    // chat product: a bot posts with no room open. The worker of the chat product runs while a room screen is open,
+    // or for a wake of the core (07-LATER §10.2).
+    private val holdsForSession = !ReservedProductIds.isChat(productId)
+
     private val holds = WorkerHolds(
         acquire = { runtime.acquireWorker(productId.value) },
-        release = {
-            runCatching { runtime.releaseWorker(productId.value) }
-                .onFailure { Timber.w(it, "TrUAPI releaseWorker failed for %s", productId.value) }
-        },
+        release = ::releaseWorker,
     )
 
     init {
+        val workerJob = scope.coroutineContext.job
+        if (holdsForSession) {
+            runtime.acquireWorker(productId.value)
+            workerJob.invokeOnCompletion { releaseWorker() }
+        }
         // When the scope ends, the holds release each room hold and refuse each new hold. A wake of the core keeps
         // the worker without a room (07-LATER §10.2).
-        scope.coroutineContext.job.invokeOnCompletion { holds.close() }
+        workerJob.invokeOnCompletion { holds.close() }
         scope.launch {
             var ran = false
             workers.executionState(productId)
@@ -119,7 +109,13 @@ class TrUAPIChatWorker(
         }
     }
 
+    private fun releaseWorker() {
+        runCatching { runtime.releaseWorker(productId.value) }
+            .onFailure { Timber.w(it, "TrUAPI releaseWorker failed for %s", productId.value) }
+    }
+
     override suspend fun openRoom(roomId: ProductChatIdParameter): Result<Unit> {
+        if (holdsForSession) return Result.success(Unit)
         runCatching { holds.openRoom(roomId.value) }
             .onFailure { return Result.failure<Unit>(it).logFailure("truapi.chat.open for ${productId.value}") }
         workers.restartIfFailed(productId)
@@ -133,6 +129,7 @@ class TrUAPIChatWorker(
 
     // W2: a product without a room has no screen to start it. The wake lasts until the worker runs, and 30 s more.
     override fun holdBriefly() {
+        if (holdsForSession) return
         scope.launch {
             withWake(ChatWakeReason.ProductStart) {
                 withTimeoutOrNull(TrUAPIWorkerSupervisor.EXECUTION_WAIT_TIMEOUT) { runningExecution() }
@@ -146,7 +143,7 @@ class TrUAPIChatWorker(
         pageSize: Int,
     ): Result<ProductMessagesPage> = query { execution ->
         execution.chatMessagesQuery(ProductChatMessagesQueryRequest(roomId.value, anchor.toCore(), pageSize.toUInt()))
-            .toModel(rendererId)
+            .toModel()
     }
 
     override suspend fun userAction(roomId: ProductChatIdParameter, action: ChatUserActionModel): Result<ChatUserActionOutcome> {
@@ -155,48 +152,29 @@ class TrUAPIChatWorker(
         // W1: a user action is a message in flight too, so the product can answer after the room closes.
         return withBriefHold(roomId) {
             query { execution ->
-                execution.chatUserAction(ProductChatUserActionRequest(roomId.value, coreAction)).toModel(rendererId)
+                execution.chatUserAction(ProductChatUserActionRequest(roomId.value, coreAction)).toModel()
             }
         }
     }
 
-    override suspend fun messageMenu(roomId: ProductChatIdParameter, message: ProductRoomMessage): Result<ChatMessageMenuModel> =
+    override suspend fun editHistory(roomId: ProductChatIdParameter, messageId: String): Result<List<ChatMessageRevisionModel>> =
         query { execution ->
-            execution.chatMessageActionsQuery(ProductChatMessageActionsQueryRequest(roomId.value, message.toQueryMessage())).menu.toModel()
-        }
-
-    override suspend fun participantsCount(roomId: ProductChatIdParameter): Result<Int> = query { execution ->
-        execution.chatParticipantsQuery(ProductChatParticipantsQueryRequest(roomId.value, ChatParticipantsQuery.Count)).toCount()
-    }
-
-    override suspend fun participantsPage(roomId: ProductChatIdParameter, cursor: String?, pageSize: Int): Result<ProductParticipantsPage> =
-        query { execution ->
-            val page = ChatParticipantsQuery.Page(cursor, pageSize.toUInt())
-            execution.chatParticipantsQuery(ProductChatParticipantsQueryRequest(roomId.value, page)).toPage()
-        }
-
-    override suspend fun participantsByIds(roomId: ProductChatIdParameter, participantIds: List<String>): Result<List<ChatParticipantEntryModel>> =
-        query { execution ->
-            val byIds = ChatParticipantsQuery.ByIds(participantIds)
-            execution.chatParticipantsQuery(ProductChatParticipantsQueryRequest(roomId.value, byIds)).toResolved()
-        }
-
-    override suspend fun reactions(roomId: ProductChatIdParameter, messageId: String): Result<List<ChatReactionDetailModel>> =
-        query { execution ->
-            execution.chatReactionsQuery(ProductChatReactionsQueryRequest(roomId.value, messageId))
-                .reactions
-                .map { ChatReactionDetailModel(it.participantId, it.emoji) }
-        }
-
-    override suspend fun searchPage(roomId: ProductChatIdParameter, text: String, cursor: String?, pageSize: Int): Result<ProductSearchPage> =
-        query { execution ->
-            execution.chatSearchQuery(ProductChatSearchQueryRequest(roomId.value, text, cursor, pageSize.toUInt())).toModel(rendererId)
+            execution.chatEditHistory(ProductChatEditHistoryQueryRequest(roomId.value, messageId)).toModel()
         }
 
     override suspend fun openLink(roomId: ProductChatIdParameter, payload: String): Result<ProductChatIdParameter?> =
         query { execution ->
             execution.chatOpenLink(ProductChatOpenLinkRequest(roomId.value, payload)).roomId?.let(::ProductChatIdParameter)
         }
+
+    override suspend fun search(
+        roomId: ProductChatIdParameter,
+        text: String,
+        cursor: String?,
+        pageSize: Int,
+    ): Result<ProductMessagesPage> = query { execution ->
+        execution.chatSearchQuery(ProductChatSearchQueryRequest(roomId.value, text, cursor, pageSize.toUInt())).toModel()
+    }
 
     // The core holds the worker for each open query. A worker that is not running yet starts first, and an
     // unavailable worker is asked once more after a second (02-DESIGN §3.6, §5.1). The supervisor reports a
@@ -235,6 +213,7 @@ class TrUAPIChatWorker(
      * for 30 s and a new wake moves its end, so the wake starts again while a slow worker start continues.
      */
     private suspend fun <T> withWake(reason: ChatWakeReason, block: suspend () -> T): T {
+        if (holdsForSession) return block()
         wake(reason)
         val renewal = scope.launch {
             while (true) {
@@ -250,8 +229,10 @@ class TrUAPIChatWorker(
         }
     }
 
-    // A wake that the core refuses holds nothing, and the message goes on as before.
+    // A wake that the core refuses holds nothing, and the message goes on as before. A worker held for the session
+    // needs no wake.
     private fun wake(reason: ChatWakeReason) {
+        if (holdsForSession) return
         runCatching {
             when (val outcome = runtime.wakeProduct(productId.value, reason)) {
                 is ChatWakeOutcome.Held -> Timber.d("TrUAPI %s woken for %s until %d", productId.value, reason.label(), outcome.untilMs.toLong())
@@ -263,7 +244,7 @@ class TrUAPIChatWorker(
     private fun ChatWakeReason.label(): String = when (this) {
         ChatWakeReason.ProductStart -> "product-start"
         is ChatWakeReason.MessageInFlight -> "message-in-flight $roomId"
-        is ChatWakeReason.Notification -> "notification $roomId $watchId"
+        is ChatWakeReason.Notification -> "notification $roomId"
     }
 
     override suspend fun onUserMessage(roomId: ProductChatIdParameter?, text: String): Result<Unit> {
@@ -282,17 +263,6 @@ class TrUAPIChatWorker(
         return outcome.logFailure("truapi.chat.action for ${productId.value}")
     }
 
-    override suspend fun publishRoomEvent(roomId: ProductChatIdParameter, event: ProductRoomEvent): Result<Unit> {
-        val chatEvent = event.toChatEvent() ?: return Result.success(Unit)
-        return withBriefHold(roomId) { publishNow(roomId, chatEvent) }
-    }
-
-    private suspend fun publishNow(roomId: ProductChatIdParameter, event: ChatEvent): Result<Unit> {
-        val outcome = runCatching { awaitRunningExecution().publishChatEvent(roomId.value, NATIVE_PEER, event) }
-        outcome.exceptionOrNull()?.let { if (it is CancellationException) throw it }
-        return outcome.logFailure("truapi.chat.event for ${productId.value}")
-    }
-
     override fun renderMessage(
         roomId: ProductChatIdParameter?,
         messageId: ChatMessageId,
@@ -306,24 +276,6 @@ class TrUAPIChatWorker(
             messageType = messageType,
         )
         return render(context, messageData.value)
-    }
-
-    // The footer render request has an empty payload (02-DESIGN §13 item 14).
-    override fun renderFooter(roomId: ProductChatIdParameter): Flow<Result<JsWidget>> =
-        render(RenderContext.ChatFooter(roomId.value), ByteArray(0))
-
-    override fun dispatchFooterEvent(roomId: ProductChatIdParameter, actionId: String, eventType: JsUiEvent.Type) {
-        val execution = workers.currentExecution(productId)
-        if (execution == null) {
-            Timber.w("TrUAPI chat footer event for %s/%s dropped: no running execution", productId.value, roomId.value)
-            return
-        }
-        runCatching {
-            execution.publishRendererAction(
-                HostRendererActionSubscribeItem(RenderContext.ChatFooter(roomId.value), actionId, eventType.toActionPayload()),
-            )
-        }.onSuccess { wakeAfterAction(roomId) }
-            .logFailure("truapi.renderer.footer action '$actionId' for ${productId.value}")
     }
 
     // W1: the product answers a press after the action goes, maybe after the room closes. One wake of the core holds
@@ -374,16 +326,6 @@ class TrUAPIChatWorker(
     private fun productMessageId(roomId: ProductChatIdParameter, storedId: ChatMessageId): String =
         ProductMessageIds.product(storedId, roomId.toChatId(rendererId))
 
-    private fun ProductRoomEvent.toChatEvent(): ChatEvent? = when (this) {
-        is ProductRoomEvent.MessagePosted -> content.toCoreBody()?.let { ChatEvent.MessagePosted(messageId, it, replyTo) }
-        is ProductRoomEvent.UserEdited -> content.toCoreBody()?.let { ChatEvent.UserEdited(messageId, it) }
-        is ProductRoomEvent.UserDeleted -> ChatEvent.UserDeleted(messageId)
-        is ProductRoomEvent.UserReacted -> ChatEvent.UserReacted(messageId, emoji, placed)
-        is ProductRoomEvent.Seen -> ChatEvent.Seen(messageId)
-        is ProductRoomEvent.ActionTriggered -> ChatEvent.ActionTriggered(ActionTrigger(messageId, actionId, payload = null))
-        is ProductRoomEvent.MessageActionTriggered -> ChatEvent.MessageActionTriggered(messageId, actionId)
-    }
-
     private fun <T> roomlessFailure(what: String): Result<T> {
         val reason = "TrUAPI chat $what for ${productId.value} carries no room id"
         Timber.w(reason)
@@ -424,7 +366,6 @@ class TrUAPIChatWorker(
 
     private fun RenderContext.label(): String = when (this) {
         is RenderContext.ChatMessage -> messageId
-        is RenderContext.ChatFooter -> "footer:$roomId"
         else -> toString()
     }
 

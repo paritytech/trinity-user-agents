@@ -46,17 +46,13 @@ enum class ChatPageEdgeUiState {
     MORE,
     LOADING,
     END,
-
-    /** The last page did not load. The feed offers a retry. */
-    FAILED,
 }
 
 val ChatPageEdgeUiState.canLoad: Boolean
-    get() = this == ChatPageEdgeUiState.MORE || this == ChatPageEdgeUiState.FAILED
+    get() = this == ChatPageEdgeUiState.MORE
 
 fun ChatPagingState.Edge.toUi(): ChatPageEdgeUiState = when (this) {
     ChatPagingState.Edge.MORE -> ChatPageEdgeUiState.MORE
     ChatPagingState.Edge.LOADING -> ChatPageEdgeUiState.LOADING
     ChatPagingState.Edge.END -> ChatPageEdgeUiState.END
-    ChatPagingState.Edge.FAILED -> ChatPageEdgeUiState.FAILED
 }

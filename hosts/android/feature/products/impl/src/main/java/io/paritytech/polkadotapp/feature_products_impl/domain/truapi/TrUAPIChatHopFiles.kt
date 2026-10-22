@@ -19,10 +19,12 @@ class TrUAPIChatHopFiles @Inject constructor(
     private val runtimeProvider: Lazy<TrUAPIHostRuntimeProvider>,
     private val dotNsTldProvider: DotNsTldProvider,
 ) : ChatHopFiles {
-    override suspend fun open(resource: ChatResourceModel.Hop): Result<ChatHopFile> = call { runtime, productId ->
-        val file = runtime.openHopChatResource(productId, resource.toCore())
-        ChatHopFile(file.bytes, file.entries)
-    }
+    override suspend fun open(resource: ChatResourceModel.Hop, progress: ((received: Long, total: Long) -> Unit)?): Result<ChatHopFile> =
+        call { runtime, productId ->
+            val report = progress?.let { { received: ULong, total: ULong -> it(received.toLong(), total.toLong()) } }
+            val file = runtime.openHopChatResource(productId, resource.toCore(), report)
+            ChatHopFile(file.bytes, file.entries)
+        }
 
     override suspend fun ack(resource: ChatResourceModel.Hop, entries: List<ByteArray>): Result<Unit> =
         call { runtime, productId -> runtime.ackHopChatResource(productId, resource.toCore(), entries) }

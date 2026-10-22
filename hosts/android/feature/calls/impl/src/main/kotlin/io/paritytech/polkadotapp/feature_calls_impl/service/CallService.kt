@@ -310,10 +310,6 @@ class CallService : Service(), CoroutineScope {
         incomingCallCanceledJob?.cancel()
         incomingCallCanceledJob = null
 
-        // A product room rang in the room, not here, so its call starts at the answer.
-        if (callStateHolder.getActiveCall()?.offerId != callParams.offerId) {
-            callStateHolder.initCall(chatId, callParams.offerId, callParams.direction, callParams.withVideo)
-        }
         callStateHolder.updateStatus(CallStatus.Connecting)
         Timber.i("acceptIncomingCall: status updated, activeCall=${callStateHolder.getActiveCall()}")
 

@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.common.utils.openAppNotificationSettings
 import io.paritytech.polkadotapp.common.utils.openEmail
 import io.paritytech.polkadotapp.common.utils.toPayloadBundle
 import io.paritytech.polkadotapp.feature_backup_api.presentation.BackupConflictPayload
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatFeedPayload
 import io.paritytech.polkadotapp.feature_settings_impl.SettingsRouter
 import io.paritytech.polkadotapp.feature_settings_impl.presentation.backup.conflict.BackupConflictBottomSheet
@@ -79,6 +80,13 @@ class SettingsNavigator @Inject constructor(
         performNavigation(
             actionId = R.id.action_global_to_chatFeedFragment,
             args = ChatFeedPayload.existingContactChat(accountId).toPayloadBundle()
+        )
+    }
+
+    override fun openChat(chatId: ChatId) {
+        performNavigation(
+            actionId = R.id.action_global_to_chatFeedFragment,
+            args = ChatFeedPayload.existingChat(chatId).toPayloadBundle()
         )
     }
 

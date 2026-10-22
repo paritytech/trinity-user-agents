@@ -21,9 +21,9 @@ fun composeContactSearchSections(
     allUsers: List<ContactSearchResult>,
 ): ContactSearchSections {
     val matchedRecents = recents
-        .filter { chat -> chat.display.name.contains(query, ignoreCase = true) && chat.contactAccountId() !in blockedAccountIds }
+        .filter { chat -> chat.display.name.contains(query, ignoreCase = true) && chat.accountOfContact() !in blockedAccountIds }
         .take(MAX_RECENT_CHATS)
-    val recentIds = matchedRecents.mapNotNull { it.contactAccountId() }.toSet()
+    val recentIds = matchedRecents.mapNotNull { it.accountOfContact() }.toSet()
 
     val matchedUsers = allUsers
         .filter { it.accountId !in blockedAccountIds && it.accountId !in recentIds }
@@ -35,4 +35,4 @@ fun composeContactSearchSections(
     )
 }
 
-private fun Chat.contactAccountId(): AccountId? = id.contactOrNull()?.contactAccountId
+private fun Chat.accountOfContact(): AccountId? = productContactAccountId ?: id.contactOrNull()?.contactAccountId

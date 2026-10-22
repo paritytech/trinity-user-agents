@@ -55,8 +55,7 @@ class RealTextMessageDrawer @Inject constructor(
                     )
                 } else null,
                 reactions = persistentListOf(),
-                isEdited = false,
-                isMarkdown = false
+                isEdited = false
             )
 
             ChatMessageSurface(

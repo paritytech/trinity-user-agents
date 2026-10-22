@@ -34,7 +34,6 @@ use truapi::api::{
     Renderer,
     ResourceAllocation,
     Scanner,
-    Usernames,
     CallMedia,
     Signing,
     StatementStore,
@@ -79,7 +78,6 @@ where
     register_renderer(dispatcher, host.clone());
     register_resource_allocation(dispatcher, host.clone());
     register_scanner(dispatcher, host.clone());
-    register_usernames(dispatcher, host.clone());
     register_call_media(dispatcher, host.clone());
     register_signing(dispatcher, host.clone());
     register_statement_store(dispatcher, host.clone());
@@ -127,32 +125,6 @@ pub fn chat_reactions_query(
     )
 }
 
-/// Start the host-initiated `chat_participants_query` subscription.
-pub fn chat_participants_query(
-    subscriptions: &HostInitiatedSubscriptionManager,
-    transport: Arc<dyn Transport>,
-    request: versioned::chat::ProductChatParticipantsQueryRequest,
-) -> truapi::Subscription<versioned::chat::ProductChatParticipantsQueryItem, truapi::CallError<versioned::chat::ProductChatQueryError>> {
-    subscriptions.start(
-        wire_table::CHAT_PARTICIPANTS_QUERY,
-        parity_scale_codec::Encode::encode(&request),
-        transport,
-    )
-}
-
-/// Start the host-initiated `chat_message_actions_query` subscription.
-pub fn chat_message_actions_query(
-    subscriptions: &HostInitiatedSubscriptionManager,
-    transport: Arc<dyn Transport>,
-    request: versioned::chat::ProductChatMessageActionsQueryRequest,
-) -> truapi::Subscription<versioned::chat::ProductChatMessageActionsQueryItem, truapi::CallError<versioned::chat::ProductChatQueryError>> {
-    subscriptions.start(
-        wire_table::CHAT_MESSAGE_ACTIONS_QUERY,
-        parity_scale_codec::Encode::encode(&request),
-        transport,
-    )
-}
-
 /// Start the host-initiated `chat_search_query` subscription.
 pub fn chat_search_query(
     subscriptions: &HostInitiatedSubscriptionManager,
@@ -174,6 +146,19 @@ pub fn chat_open_link(
 ) -> truapi::Subscription<versioned::chat::ProductChatOpenLinkItem, truapi::CallError<versioned::chat::ProductChatQueryError>> {
     subscriptions.start(
         wire_table::CHAT_OPEN_LINK,
+        parity_scale_codec::Encode::encode(&request),
+        transport,
+    )
+}
+
+/// Start the host-initiated `chat_edit_history` subscription.
+pub fn chat_edit_history(
+    subscriptions: &HostInitiatedSubscriptionManager,
+    transport: Arc<dyn Transport>,
+    request: versioned::chat::ProductChatEditHistoryQueryRequest,
+) -> truapi::Subscription<versioned::chat::ProductChatEditHistoryQueryItem, truapi::CallError<versioned::chat::ProductChatQueryError>> {
+    subscriptions.start(
+        wire_table::CHAT_EDIT_HISTORY,
         parity_scale_codec::Encode::encode(&request),
         transport,
     )
@@ -1265,40 +1250,6 @@ where
     {
         let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
         let host = host.clone();
-        dispatcher.on_request(wire_table::CHAT_CAPABILITIES, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
-            let host = host.clone();
-            Box::pin(async move {
-                let request: versioned::chat::HostChatCapabilitiesRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::chat::HostChatCapabilitiesError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::chat::HostChatCapabilitiesResponse, truapi::CallError<versioned::chat::HostChatCapabilitiesError>> = Err(error);
-                        return result.encode();
-                    }
-                };
-                let target_version = request.version();
-                let cx = CallContext::with_parts(request_id, cancel);
-                if !execution_allowed {
-                    let error: truapi::CallError<versioned::chat::HostChatCapabilitiesError> = truapi::CallError::Denied;
-                    let result: Result<versioned::chat::HostChatCapabilitiesResponse, truapi::CallError<versioned::chat::HostChatCapabilitiesError>> = Err(error);
-                    return result.encode();
-                }
-                let result: Result<versioned::chat::HostChatCapabilitiesResponse, truapi::CallError<versioned::chat::HostChatCapabilitiesError>> =
-                    match host.capabilities(&cx, request).await {
-                        Ok(response) => Ok(<versioned::chat::HostChatCapabilitiesResponse as truapi::versioned::FromLatest>::from_latest(
-                            truapi::versioned::IntoLatest::into_latest(response),
-                            target_version,
-                        )),
-                        Err(err) => Err(downgrade_call_error(err, target_version)),
-                    };
-                result.encode()
-            })
-        });
-    }
-    {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
-        let host = host.clone();
         dispatcher.on_request(wire_table::CHAT_SET_ROOM_FEATURES, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
@@ -1366,7 +1317,7 @@ where
     }
     {
         let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
-        let host = host;
+        let host = host.clone();
         dispatcher.on_subscription(wire_table::CHAT_ROOM_EVENTS_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
             let host = host.clone();
             Box::pin(async move {
@@ -1398,6 +1349,74 @@ where
                     },
                 );
                 Ok(subscription_stream(stream))
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let host = host.clone();
+        dispatcher.on_request(wire_table::CHAT_SET_ROOM_CONTACT, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::chat::HostChatSetRoomContactRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::chat::HostChatRoomError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::chat::HostChatSetRoomContactResponse, truapi::CallError<versioned::chat::HostChatRoomError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::chat::HostChatRoomError> = truapi::CallError::Denied;
+                    let result: Result<versioned::chat::HostChatSetRoomContactResponse, truapi::CallError<versioned::chat::HostChatRoomError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::chat::HostChatSetRoomContactResponse, truapi::CallError<versioned::chat::HostChatRoomError>> =
+                    match host.set_room_contact(&cx, request).await {
+                        Ok(response) => Ok(<versioned::chat::HostChatSetRoomContactResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let host = host;
+        dispatcher.on_request(wire_table::CHAT_SET_ROOM_CONFIG, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::chat::HostChatSetRoomConfigRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::chat::HostChatRoomError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::chat::HostChatSetRoomConfigResponse, truapi::CallError<versioned::chat::HostChatRoomError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::chat::HostChatRoomError> = truapi::CallError::Denied;
+                    let result: Result<versioned::chat::HostChatSetRoomConfigResponse, truapi::CallError<versioned::chat::HostChatRoomError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::chat::HostChatSetRoomConfigResponse, truapi::CallError<versioned::chat::HostChatRoomError>> =
+                    match host.set_room_config(&cx, request).await {
+                        Ok(response) => Ok(<versioned::chat::HostChatSetRoomConfigResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
             })
         });
     }
@@ -3547,40 +3566,6 @@ where
     }
 }
 
-fn register_usernames<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
-where
-    P: Usernames + Send + Sync + 'static,
-{
-    {
-        let host = host;
-        dispatcher.on_request(wire_table::USERNAMES_SEARCH, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
-            let host = host.clone();
-            Box::pin(async move {
-                let request: versioned::usernames::HostUsernamesSearchRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::usernames::HostUsernamesSearchError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::usernames::HostUsernamesSearchResponse, truapi::CallError<versioned::usernames::HostUsernamesSearchError>> = Err(error);
-                        return result.encode();
-                    }
-                };
-                let target_version = request.version();
-                let cx = CallContext::with_parts(request_id, cancel);
-                let result: Result<versioned::usernames::HostUsernamesSearchResponse, truapi::CallError<versioned::usernames::HostUsernamesSearchError>> =
-                    match host.search(&cx, request).await {
-                        Ok(response) => Ok(<versioned::usernames::HostUsernamesSearchResponse as truapi::versioned::FromLatest>::from_latest(
-                            truapi::versioned::IntoLatest::into_latest(response),
-                            target_version,
-                        )),
-                        Err(err) => Err(downgrade_call_error(err, target_version)),
-                    };
-                result.encode()
-            })
-        });
-    }
-}
-
 fn register_call_media<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
 where
     P: CallMedia + Send + Sync + 'static,
@@ -4247,7 +4232,7 @@ where
     }
     {
         let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
-        let host = host.clone();
+        let host = host;
         dispatcher.on_request(wire_table::WORKER_END_OPERATION, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
@@ -4270,40 +4255,6 @@ where
                 let result: Result<versioned::worker::HostWorkerEndOperationResponse, truapi::CallError<versioned::worker::HostWorkerEndOperationError>> =
                     match host.end_operation(&cx, request).await {
                         Ok(response) => Ok(<versioned::worker::HostWorkerEndOperationResponse as truapi::versioned::FromLatest>::from_latest(
-                            truapi::versioned::IntoLatest::into_latest(response),
-                            target_version,
-                        )),
-                        Err(err) => Err(downgrade_call_error(err, target_version)),
-                    };
-                result.encode()
-            })
-        });
-    }
-    {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
-        let host = host;
-        dispatcher.on_request(wire_table::WORKER_SET_WAKE_WATCHES, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
-            let host = host.clone();
-            Box::pin(async move {
-                let request: versioned::worker::HostWorkerSetWakeWatchesRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
-                    Ok(request) => request,
-                    Err(err) => {
-                        let error: truapi::CallError<versioned::worker::HostWorkerSetWakeWatchesError> =
-                            truapi::CallError::MalformedFrame { reason: err.to_string() };
-                        let result: Result<versioned::worker::HostWorkerSetWakeWatchesResponse, truapi::CallError<versioned::worker::HostWorkerSetWakeWatchesError>> = Err(error);
-                        return result.encode();
-                    }
-                };
-                let target_version = request.version();
-                let cx = CallContext::with_parts(request_id, cancel);
-                if !execution_allowed {
-                    let error: truapi::CallError<versioned::worker::HostWorkerSetWakeWatchesError> = truapi::CallError::Denied;
-                    let result: Result<versioned::worker::HostWorkerSetWakeWatchesResponse, truapi::CallError<versioned::worker::HostWorkerSetWakeWatchesError>> = Err(error);
-                    return result.encode();
-                }
-                let result: Result<versioned::worker::HostWorkerSetWakeWatchesResponse, truapi::CallError<versioned::worker::HostWorkerSetWakeWatchesError>> =
-                    match host.set_wake_watches(&cx, request).await {
-                        Ok(response) => Ok(<versioned::worker::HostWorkerSetWakeWatchesResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),

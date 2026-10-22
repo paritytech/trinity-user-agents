@@ -23,53 +23,6 @@ struct ChatInteractorUserActionTests {
         #expect(await nextCall() == .perform(.toggleReaction(messageId: "m1", emoji: "👍")))
     }
 
-    @Test func aRetrySendsTheFailedMessageAgain() async {
-        let interactor = makeInteractor()
-
-        interactor.retrySend(messageId: "local:1")
-
-        #expect(await nextCall() == .perform(.retry("local:1")))
-    }
-
-    @Test func aRefusedActionShowsTheReason() async {
-        engine.actionOutcome = .refused(reason: "Not now")
-        let interactor = makeInteractor()
-
-        interactor.toggleReaction(messageId: "m1", emoji: "👍")
-
-        #expect(await nextRefusal() == .refused(reason: "Not now"))
-    }
-
-    /// A refused text goes back to the presenter with its reply, so it returns to the input (PARITY D2).
-    @Test func aRefusedSendGivesBackItsTextAndReply() async {
-        engine.sendError = ChatUserActionRefusal(reason: "Too long")
-        let interactor = makeInteractor()
-
-        interactor.send(text: "hello", attachments: nil, replyToMessageId: "m1")
-
-        let refused = ChatRefusedSend(text: "hello", replyToMessageId: "m1", reason: "Too long")
-        #expect(await nextRefusal() == .refusedSend(refused))
-    }
-
-    @Test func aRefusedEditGivesBackItsText() async {
-        engine.sendError = ChatUserActionRefusal(reason: "Too long")
-        let interactor = makeInteractor()
-
-        interactor.sendEdit(messageId: "m2", newText: "longer")
-
-        let refused = ChatRefusedSend(text: "longer", editedMessageId: "m2", reason: "Too long")
-        #expect(await nextRefusal() == .refusedSend(refused))
-    }
-
-    @Test func aRefusedDeleteShowsADefaultText() async {
-        engine.sendError = ChatUserActionRefusal(reason: nil)
-        let interactor = makeInteractor()
-
-        interactor.deleteMessage(messageId: "m1")
-
-        #expect(await nextRefusal() == .refused(reason: nil))
-    }
-
     /// The source decides which message is the newest seen, so the interactor gives it every visible id.
     @Test func seenMessagesGoToTheSourceUnfiltered() async {
         let interactor = makeInteractor()
@@ -88,6 +41,20 @@ struct ChatInteractorUserActionTests {
         interactor.jump(to: "after")
 
         #expect(await nextCall() == .jump("after"))
+    }
+
+    /// A reaction of the contact that the user has not seen shows the scroll-to-reaction button until the user sees
+    /// its message, as a new reaction of the native chat does.
+    @Test func anUnseenReactionShowsTheScrollButtonUntilItsMessageIsSeen() async {
+        let state = ChatInteractorState()
+        let messages = [message("m1", status: .incoming(.seen)), message("m2", status: .incoming(.seen))]
+
+        let shown = await state.onSnapshot(MessageListSnapshot(messages: messages, unseenReactionTargets: ["m1"]))
+        #expect(shown.oldestNewReactionTargetMessageId == "m1")
+
+        _ = await state.noteSeen(messageIds: ["m1", "m2"])
+        let seen = await state.onSnapshot(MessageListSnapshot(messages: messages, unseenReactionTargets: ["m1"]))
+        #expect(seen.oldestNewReactionTargetMessageId == nil)
     }
 
     /// The "New messages" marker waits for the first page, so a loading window does not fix it.
@@ -140,17 +107,6 @@ private extension ChatInteractorUserActionTests {
     func nextCall() async -> RecordingChatEngine.Call? {
         for await call in engine.calls {
             return call
-        }
-        return nil
-    }
-
-    func nextRefusal() async -> RecordingChatInteractorOutput.Event? {
-        for await event in output.events {
-            switch event {
-            case .refused,
-                 .refusedSend: return event
-            default: continue
-            }
         }
         return nil
     }

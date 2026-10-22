@@ -1,31 +1,31 @@
 package io.paritytech.polkadotapp.feature_chats_impl.data.declarations
 
 import io.novasama.substrate_sdk_android.extensions.fromHex
+import io.novasama.substrate_sdk_android.extensions.toHexString
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.BinaryScale
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.decodeFromByteArray
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.database.model.ChatRoomDeclarationsLocal
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatInputConfigModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatInputPaymentModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatContactStateModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatPreviewReactionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallsModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomContactModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewTextModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
-import io.paritytech.polkadotapp.feature_chats_impl.domain.models.scale.ChatResourceLocal
-import io.paritytech.polkadotapp.feature_chats_impl.domain.models.scale.toDomain
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
+import kotlinx.serialization.encodeToByteArray
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
- * Backward compatibility of the SCALE values in `chat_room_declarations`. The config and the preview also
- * match the bytes of the Chat Extension v2 wire types.
+ * Backward compatibility of the SCALE values in `chat_room_declarations`. The config keeps its first stored layout.
  *
  * DO NOT modify the encoded hex values below: they are the frozen format that must always decode.
  */
@@ -33,15 +33,7 @@ class ChatRoomDeclarationsScaleConformanceTest {
     @Test
     fun `decode a declared config from encoded bytes`() {
         assertEquals(
-            ChatRoomConfigModel(
-                productSource = true,
-                reactionDetails = false,
-                participants = true,
-                messageActions = false,
-                allowedReactions = listOf("👍", "🔥"),
-                placeholder = "Ask me",
-                reportSeen = true,
-            ),
+            ChatRoomConfigModel(productSource = true, reactionDetails = false, reportSeen = true),
             decode<ChatRoomConfigLocal>(CONFIG).toDomain(),
         )
         assertEquals(ChatRoomConfigModel.HOST_DEFAULT, decode<ChatRoomConfigLocal>(CONFIG_DEFAULT).toDomain())
@@ -51,45 +43,65 @@ class ChatRoomDeclarationsScaleConformanceTest {
     fun `decode previews with each badge from encoded bytes`() {
         assertEquals(
             ChatRoomPreviewModel(
-                order = Order.PinToTop,
                 timestamp = 1_700_000_000_000,
                 badge = ChatRoomBadgeModel.Count(3),
-                text = ChatRoomPreviewTextModel("Bot is typing", ongoing = true),
+                lastMessage = null,
+                lastReaction = ChatPreviewReactionModel(emoji = "👍", byUser = false, message = null, removed = false),
+                unseenReactions = 2,
             ),
             decode<ChatRoomPreviewLocal>(PREVIEW).toDomain(),
-        )
-        assertEquals(
-            ChatRoomPreviewModel(Order.ByTimestamp, null, ChatRoomBadgeModel.Image(ChatResourceModel.Preimage(key(7))), null),
-            decode<ChatRoomPreviewLocal>(PREVIEW_IMAGE).toDomain(),
         )
         assertEquals(ChatRoomBadgeModel.Hidden, decode<ChatRoomPreviewLocal>(PREVIEW_HIDDEN).toDomain().badge)
     }
 
     @Test
-    fun `decode each footer and an avatar from encoded bytes`() {
-        assertEquals(
-            ChatRoomFooterModel.Input(
-                ChatInputConfigModel("Say", photo = true, video = false, file = true, payment = ChatInputPaymentModel.Enabled(key(2))),
-            ),
-            decode<ChatRoomFooterLocal>(FOOTER_INPUT).toDomain(),
+    fun `a preview encodes to the frozen bytes`() {
+        val preview = ChatRoomPreviewModel(
+            timestamp = null,
+            badge = ChatRoomBadgeModel.Hidden,
+            lastMessage = null,
+            lastReaction = null,
+            unseenReactions = 0,
         )
-        assertEquals(ChatRoomFooterModel.Empty, decode<ChatRoomFooterLocal>(FOOTER_EMPTY).toDomain())
-        assertEquals(ChatRoomFooterModel.Custom, decode<ChatRoomFooterLocal>(FOOTER_CUSTOM).toDomain())
+
+        assertEquals(PREVIEW_HIDDEN, preview.encode().toHexString())
+    }
+
+    @Test
+    fun `decode a contact from encoded bytes`() {
         assertEquals(
-            ChatResourceModel.Inline("image/webp", byteArrayOf(1, 2).toDataByteArray()),
-            decode<ChatResourceLocal>(AVATAR).toDomain(),
+            ChatRoomContactModel(account = key(7), username = "alice", state = ChatContactStateModel.ESTABLISHED),
+            decode<ChatRoomContactLocal>(CONTACT).toDomain(),
         )
     }
 
     @Test
     fun `a stored row reads back the declarations that were encoded into it`() {
+        val lastMessage = ProductRoomMessage(
+            messageId = "m1",
+            participantId = "contact",
+            timestamp = 5,
+            // A content with equality, so the whole declarations compare.
+            content = ChatMessage.Content.ContactAdded,
+            status = ProductMessageStatusModel.READ,
+            replyTo = null,
+            editedAt = 6,
+            reactions = emptyList(),
+            request = true,
+        )
         val declarations = ChatRoomDeclarations(
             config = ChatRoomConfigModel.HOST_DEFAULT.copy(reportSeen = true),
             configGeneration = 4,
-            metadata = ChatRoomMetadataModel("About", ChatResourceModel.Preimage(key(3))),
-            preview = ChatRoomPreviewModel(Order.ByTimestamp, null, ChatRoomBadgeModel.Hidden, null),
-            footer = ChatRoomFooterModel.Empty,
-            features = ChatRoomFeaturesModel.HOST_DEFAULT.copy(readAloud = true),
+            metadata = ChatRoomMetadataModel("About"),
+            preview = ChatRoomPreviewModel(
+                timestamp = 9,
+                badge = ChatRoomBadgeModel.Count(1),
+                lastMessage = lastMessage,
+                lastReaction = ChatPreviewReactionModel("🔥", byUser = true, message = lastMessage, removed = true),
+                unseenReactions = 0,
+            ),
+            features = ChatRoomFeaturesModel(calls = ChatRoomCallsModel(audio = true, video = true), hopAttachments = true),
+            contact = ChatRoomContactModel(key(1), username = null, state = ChatContactStateModel.OUTGOING),
         )
 
         val row = ChatRoomDeclarationsLocal(
@@ -97,26 +109,39 @@ class ChatRoomDeclarationsScaleConformanceTest {
             config = declarations.config!!.encode(),
             configGeneration = 4,
             description = "About",
-            avatar = declarations.metadata.encodeAvatar(),
             preview = declarations.preview!!.encode(),
-            footer = declarations.footer!!.encode(),
+            footer = null,
             features = declarations.features!!.encode(),
-            mutedUntil = null,
-            archived = false,
+            contact = declarations.contact!!.encode(),
         )
 
         assertEquals(declarations, row.toDomain())
     }
 
     @Test
+    fun `a preview message keeps its text`() {
+        val message = ProductRoomMessage("m1", "contact", 5, ChatMessage.Content.Text("hi"), ProductMessageStatusModel.SENT, null, null, emptyList(), false)
+        val preview = ChatRoomPreviewModel(timestamp = null, badge = null, lastMessage = message, lastReaction = null, unseenReactions = 0)
+
+        val decoded = decode<ChatRoomPreviewLocal>(preview.encode().toHexString()).toDomain()
+
+        assertEquals("hi", (decoded.lastMessage!!.content as ChatMessage.Content.Text).text)
+    }
+
+    @Test
     fun `a part that does not decode reads as not declared`() {
-        val row = ChatRoomDeclarationsLocal(byteArrayOf(1), byteArrayOf(9), 1, null, null, null, byteArrayOf(7), byteArrayOf(1, 9), null, false)
+        val row = ChatRoomDeclarationsLocal(byteArrayOf(1), byteArrayOf(9), 1, null, null, byteArrayOf(7), byteArrayOf(1, 9), byteArrayOf(1))
 
         val declarations = row.toDomain()
 
         assertNull(declarations.config)
-        assertNull(declarations.footer)
         assertNull(declarations.features)
+        assertNull(declarations.contact)
+    }
+
+    @Test
+    fun `the config keeps writing its first layout`() {
+        assertEquals(CONFIG_DEFAULT, BinaryScale.encodeToByteArray(ChatRoomConfigModel.HOST_DEFAULT.toLocal()).toHexString())
     }
 
     private inline fun <reified T> decode(hex: String): T = BinaryScale.decodeFromByteArray<T>(hex.fromHex())
@@ -126,12 +151,8 @@ class ChatRoomDeclarationsScaleConformanceTest {
     private companion object {
         const val CONFIG = "01000100010810f09f918d10f09f94a5011841736b206d6501"
         const val CONFIG_DEFAULT = "00000000000000"
-        const val PREVIEW = "01010068e5cf8b0100000101030000000134426f7420697320747970696e6701"
-        const val PREVIEW_IMAGE = "000001020180070707070707070707070707070707070707070707070707070707070707070700"
-        const val PREVIEW_HIDDEN = "0000010000"
-        const val FOOTER_INPUT = "00010c5361790100010100800202020202020202020202020202020202020202020202020202020202020202"
-        const val FOOTER_EMPTY = "01"
-        const val FOOTER_CUSTOM = "02"
-        const val AVATAR = "0028696d6167652f77656270080102"
+        const val PREVIEW = "010068e5cf8b010000010103000000000110f09f918d00000002000000"
+        const val PREVIEW_HIDDEN = "000100000000000000"
+        const val CONTACT = "8007070707070707070707070707070707070707070707070707070707070707070114616c69636503"
     }
 }

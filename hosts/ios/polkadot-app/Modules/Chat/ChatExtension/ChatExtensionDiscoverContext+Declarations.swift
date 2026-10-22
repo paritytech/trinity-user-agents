@@ -11,13 +11,6 @@ protocol ChatProductRoomDeclaring {
 
     /// Replaces the configuration of a room. A change of the message store discards the stored messages.
     func setRoomConfig(for chatBot: ChatExtensionBotProtocol, roomId: String, config: Chat.RoomConfig) async throws
-
-    /// Replaces the footer of a room, and keeps the footer of the first version in step with it.
-    func setRoomFooterConfig(
-        for chatBot: ChatExtensionBotProtocol,
-        roomId: String,
-        footer: Chat.RoomFooterConfig
-    ) async throws
 }
 
 extension ChatExtensionDiscoverContext {
@@ -67,19 +60,6 @@ extension ChatExtensionDiscoverContext {
                 using: context
             )
         }
-    }
-
-    func setRoomFooterConfig(
-        for chatBot: ChatExtensionBotProtocol,
-        roomId: String,
-        footer: Chat.RoomFooterConfig
-    ) async throws {
-        let chatId = try await requireRoom(of: chatBot, roomId: roomId)
-        try await saveDeclaration(Chat.RoomFooterConfigUpdate(chatId: chatId, footer: footer))
-
-        // The policy and the chat screen of the first version read this footer.
-        let legacyFooter: Chat.RoomFooter = footer == .empty ? .empty : .textInput
-        try await setRoomFooter(for: chatBot, roomId: roomId, footer: legacyFooter)
     }
 }
 

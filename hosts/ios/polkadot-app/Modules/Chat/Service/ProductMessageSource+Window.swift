@@ -129,33 +129,52 @@ extension ProductMessageSource {
         let ids = orderedIds
         let seenIndex = seenMessageId.flatMap { ids.firstIndex(of: $0) }
         var editedAt: [Chat.MessageId: Chat.Timestamp] = [:]
+        var replyPreviews: [Chat.MessageId: Chat.LocalMessage] = [:]
+        var unseenReactionTargets: [Chat.MessageId] = []
 
         let localMessages = ids.enumerated().compactMap { index, id -> Chat.LocalMessage? in
             guard let message = messages[id] else {
-                return nil
+                return uploads[id]?.localMessage(chatId: chatId)
             }
 
             if let edit = message.editedAt {
                 editedAt[id] = edit
             }
 
-            let isUnread: Bool =
+            if let replyTo = message.replyTo, messages[replyTo] == nil,
+               let quoted = message.replyPreviewMessage(chatId: chatId, extensionId: productId) {
+                replyPreviews[replyTo] = quoted
+            }
+
+            if message.hasUnseenReaction {
+                unseenReactionTargets.append(id)
+            }
+
+            // The user saw the message on this device before the product marked it read.
+            let isSeen: Bool =
                 if let seenIndex {
-                    index > seenIndex
+                    index <= seenIndex
                 } else if let seenTimestamp {
-                    message.timestamp > seenTimestamp
+                    message.timestamp <= seenTimestamp
                 } else {
                     false
                 }
 
-            return message.localMessage(chatId: chatId, extensionId: productId, isUnread: isUnread)
+            return message.localMessage(chatId: chatId, extensionId: productId, isSeen: isSeen)
+        }
+
+        if let downloads {
+            let incoming = localMessages.filter(\.status.isIncoming)
+            Task { await downloads.download(filesOf: incoming) }
         }
 
         subject.send(MessageListSnapshot(
             messages: localMessages,
             paging: paging,
             readiness: readiness,
-            editedAt: editedAt
+            editedAt: editedAt,
+            replyPreviews: replyPreviews,
+            unseenReactionTargets: unseenReactionTargets
         ))
     }
 
@@ -187,6 +206,32 @@ extension ProductMessageSource {
 }
 
 extension ChatMessage {
+    /// A reaction of the contact that the user has not seen yet.
+    var hasUnseenReaction: Bool {
+        reactions.contains(where: \.unseen)
+    }
+
+    /// The replied message as the room screen quotes it, when the window does not hold it.
+    func replyPreviewMessage(chatId: Chat.Id, extensionId: ChatExtension.Id) -> Chat.LocalMessage? {
+        guard let replyTo, let replyPreview else {
+            return nil
+        }
+
+        return ChatMessage(
+            messageId: replyTo,
+            origin: replyPreview.origin,
+            timestamp: timestamp,
+            body: replyPreview.body,
+            status: .read,
+            replyTo: nil,
+            replyPreview: nil,
+            editedAt: nil,
+            reactions: [],
+            request: false
+        )
+        .localMessage(chatId: chatId, extensionId: extensionId)
+    }
+
     /// Counts a reaction once for each participant. The user reaction sets `reactedByUser`.
     mutating func adjustReaction(_ emoji: String, by participantId: String, placed: Bool) {
         let isUser = participantId == productUserParticipantId
@@ -208,6 +253,8 @@ extension ChatMessage {
 
             if isUser {
                 summary.reactedByUser = placed
+            } else if placed {
+                summary.unseen = true
             }
 
             if summary.count == .zero {
@@ -216,7 +263,7 @@ extension ChatMessage {
                 summaries[index] = summary
             }
         } else if placed {
-            summaries.append(ChatReactionSummary(emoji: emoji, count: 1, reactedByUser: isUser))
+            summaries.append(ChatReactionSummary(emoji: emoji, count: 1, reactedByUser: isUser, unseen: !isUser))
         }
 
         reactions = summaries

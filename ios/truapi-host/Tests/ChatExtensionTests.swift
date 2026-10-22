@@ -3,9 +3,8 @@ import Testing
 @testable import TrUAPIHost
 
 struct ChatHostBridgeDefaultsTests {
-    /// A room that a product creates always carries a configuration and
-    /// metadata, so a host without the v2 requests must accept the parts that
-    /// it serves anyway, or no product can create a room.
+    /// A product may declare the configuration and metadata that a host
+    /// without the v2 requests serves anyway, so that host must accept them.
     @Test
     func defaultsAcceptTheDeclarationsOfANewRoom() async throws {
         let bridge: ChatHostBridge = FirstVersionChatHostBridge()
@@ -13,7 +12,7 @@ struct ChatHostBridgeDefaultsTests {
         try await bridge.setRoomConfig(roomId: "room", config: .hostDefault)
         try await bridge.setRoomMetadata(
             roomId: "room",
-            metadata: ChatRoomMetadata(name: "Room", avatar: nil, description: nil)
+            metadata: ChatRoomMetadata(name: "Room", description: nil)
         )
 
         #expect(try await bridge.roomConfig(roomId: "room") == .hostDefault)
@@ -35,7 +34,7 @@ struct ChatHostBridgeDefaultsTests {
         await #expect(throws: NativeChatFeedRejection.self) {
             try await bridge.updateFeed(
                 roomId: "room",
-                update: .deleted(messageId: "message"),
+                update: .statusChanged(messageId: "message", status: .read),
                 persist: true
             )
         }
@@ -52,8 +51,6 @@ struct ChatAdditionsTests {
 
         #expect(try await bridge.capabilities().isEmpty)
         #expect(try await bridge.roomFeatures(roomId: "room") == .hostDefault)
-        #expect(try await bridge.roomUserStates().isEmpty)
-        #expect(try await bridge.bots().isEmpty)
     }
 
     /// A change that the host cannot keep must fail, not disappear.
@@ -67,21 +64,29 @@ struct ChatAdditionsTests {
         await #expect(throws: HostRejection.self) {
             try await bridge.setRoomCall(roomId: "room", call: nil)
         }
+        await #expect(throws: HostRejection.self) {
+            try await bridge.setRoomContact(
+                roomId: "room",
+                contact: ChatRoomContact(account: Data(count: 32), username: "alice", state: .incoming)
+            )
+        }
     }
 
     @Test
-    func searchAnswerReachesTheCaller() async throws {
-        let hits = ProductChatSearchQueryItem(hits: [], next: "older")
+    func editHistoryAnswerReachesTheCaller() async throws {
+        let history = ProductChatEditHistoryQueryItem(revisions: [
+            ChatMessageRevision(editedAt: 1, text: "first"),
+            ChatMessageRevision(editedAt: 2, text: nil),
+        ])
 
-        let page = try await chatQuery(timeout: ChatQueryTimeout.search) { observer in
-            observer.onAnswer(answer: .search(page: hits))
+        let answer = try await chatQuery(timeout: ChatQueryTimeout.lookup) { observer in
+            observer.onAnswer(answer: .editHistory(history: history))
             return RecordingChatQuery()
         } answer: { answer in
-            if case let .search(page) = answer { page } else { nil }
+            if case let .editHistory(history) = answer { history } else { nil }
         }
 
-        #expect(page == hits)
-        #expect(ChatQueryTimeout.search == .seconds(10))
+        #expect(answer == history)
     }
 
     /// The core screens a room event before the product sees it, and keeps
@@ -96,19 +101,19 @@ struct ChatAdditionsTests {
         try runtime.publishChatRoomEvent(
             productId: "test.dot",
             roomId: "room",
-            event: .callRequested(video: true)
+            event: .callRequested(video: true, callId: "c1")
         )
         #expect(throws: HostRejection.self) {
             try runtime.publishChatRoomEvent(
                 productId: "test.dot",
                 roomId: "room",
-                event: .branchSelected(messageId: "message", index: 0)
+                event: .callSignal(callId: "call", signal: Data())
             )
         }
     }
 
     @Test
-    func wakeHoldsTheWorkerAndStagingNeedsADeclaredRoom() async throws {
+    func wakeHoldsTheWorkerAndHopStagingNeedsADeclaredRoom() async throws {
         let runtime = try TrUAPIHostRuntime(
             bridge: StubHostBridge(),
             runtimeConfig: TrUAPIWsBridgeTests.makeHostRuntimeConfig()
@@ -120,10 +125,9 @@ struct ChatAdditionsTests {
             return
         }
         await #expect(throws: NativeChatStageRejection.self) {
-            try await runtime.stageChatAttachment(
+            try await runtime.hopChatAttachment(
                 productId: "test.dot",
                 roomId: "room",
-                mimeType: "image/png",
                 bytes: Data([1])
             )
         }
@@ -216,7 +220,12 @@ struct ChatQueryTests {
 
     @Test
     func userActionTimeoutFollowsTheAction() {
-        let sent = ChatUserAction.newMessage(body: .text(text: "hi"), replyTo: nil)
+        let sent = ChatUserAction.newMessage(
+            body: .text(text: "hi"),
+            replyTo: nil,
+            messageId: nil,
+            timestamp: nil
+        )
         let seen = ChatUserAction.seen(messageId: "message")
 
         #expect(ChatQueryTimeout.timeout(for: sent) == .seconds(30))
@@ -247,7 +256,11 @@ struct ChatQueryTests {
             try await execution.chatMessagesQuery(request)
         }
         #expect(throws: ProductRuntimeError.self) {
-            try execution.publishChatEvent(roomId: "room", peer: "native", event: .roomOpened)
+            try execution.publishChatAction(HostChatActionSubscribeItem(
+                roomId: "room",
+                peer: "native",
+                payload: .messagePosted(.text(text: "hi"))
+            ))
         }
     }
 }

@@ -25,11 +25,17 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
             visibilityReporter: foregroundPresentationController
         )
 
+        let productRoomRouteHandler = ProductRoomPushRouteHandler(
+            moduleNavigator: ModuleNavigator(),
+            logger: Logger.shared,
+            visibilityReporter: foregroundPresentationController
+        )
+
         let deeplinkRouteHandler = DeeplinkPushRouteHandler()
 
         let pushHandler = PushHandler(
             routeBuilder: PushRouteBuilder(),
-            handlers: [chatRouteHandler, chatExtensionRouteHandler, deeplinkRouteHandler]
+            handlers: [chatRouteHandler, chatExtensionRouteHandler, productRoomRouteHandler, deeplinkRouteHandler]
         )
 
         let userNotificationService = UserNotificationService.shared

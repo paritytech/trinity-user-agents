@@ -78,11 +78,6 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
         return wakeOutcome
     }
 
-    /// The core of the stub references answers the push (A1).
-    func receiveWakePush(payload: String) async throws -> [PushWakeDelivery] {
-        try await references.handleWakePush(payload: payload)
-    }
-
     /// The foreground declarations and withdrawals of the handlers, in order (I5).
     var foregroundDeclarations: [String] { foregroundRecords.withLock { $0 } }
     /// The reports of the app state, in order.
@@ -184,15 +179,5 @@ final class StubWorkerReferences: TrUAPIWorkerReferencing, @unchecked Sendable {
     func wakeProduct(productId: ProductId, reason: ChatWakeReason) throws -> ChatWakeOutcome {
         records.withLock { $0.log.append("wake \(productId) \(reason.logName)") }
         return .held(untilMs: UInt64(Date().timeIntervalSince1970 * 1_000) + 30_000)
-    }
-
-    /// What ``handleWakePush(payload:)`` gives; it throws `PushWakeRejection.Stale` when nil.
-    var pushDeliveries: [PushWakeDelivery]? = []
-
-    /// Records the push in the log beside the requests (A1).
-    func handleWakePush(payload: String) async throws -> [PushWakeDelivery] {
-        records.withLock { $0.log.append("push \(payload)") }
-        guard let pushDeliveries else { throw PushWakeRejection.Stale }
-        return pushDeliveries
     }
 }

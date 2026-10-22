@@ -1,5 +1,9 @@
+import AsyncExtensions
 import Foundation
+import os
 import Testing
+import TrUAPIHost
+import WebRTC
 @testable import polkadot_app
 
 /// The signals of the call of a product room cross the product as opaque bytes, in both directions, and the call
@@ -50,6 +54,154 @@ struct AppCallMediaHostBridgeTests {
         #expect(await calls.stop(key) === signaler)
         #expect(await !calls.isRunning(key))
     }
+
+    /// The outgoing call screen opens at once under a call id that the host chose, and the product gets the call
+    /// under that id.
+    @Test func aCallOfTheUserOpensTheOutgoingCallScreenAtOnce() async throws {
+        let published = RecordingPublisher()
+        let presented = OSAllocatedUnfairLock<[CallRole]>(initialState: [])
+        let bridge = makeBridge(publisher: published) { role in presented.withLock { $0.append(role) } }
+
+        await bridge.startOutgoingCall(productId: "chat.dot", roomId: "dm-7", video: true)
+
+        guard case let .callRequested(video, callId) = try #require(published.events.first?.event) else {
+            Issue.record("expected a call request, got \(published.events)")
+            return
+        }
+        #expect(video)
+        #expect(UUID(uuidString: callId) != nil)
+        #expect(presented.withLock { $0 } == [.initiator])
+
+        // The product starts the media of the call that runs on the screen already.
+        try await bridge.startCallMedia(
+            productId: "chat.dot",
+            roomId: "dm-7",
+            callId: callId,
+            video: true,
+            offerer: true
+        )
+        #expect(presented.withLock { $0 } == [.initiator])
+    }
+
+    /// "Ringing" shows once a device of the contact read the offer message, whose id is the call id.
+    @Test func theOfferWatcherTellsOnceWhenTheOfferIsRead() async {
+        let reads = OSAllocatedUnfairLock(initialState: 0)
+        let watcher = ProductCallOfferWatcher(offerId: "c1") { reads.withLock { $0 += 1 } }
+
+        await watcher.apply(roomId: "dm-7", update: .statusChanged(messageId: "c1", status: .sent))
+        await watcher.apply(roomId: "dm-7", update: .statusChanged(messageId: "other", status: .read))
+        #expect(reads.withLock { $0 } == 0)
+
+        await watcher.apply(roomId: "dm-7", update: .statusChanged(messageId: "c1", status: .read))
+        await watcher.apply(roomId: "dm-7", update: .statusChanged(messageId: "c1", status: .read))
+        #expect(reads.withLock { $0 } == 1)
+    }
+
+    /// A second offer while a call runs is turned away, as the native chat turns it away.
+    @Test func anOfferDuringACallIsTurnedAway() async throws {
+        let published = RecordingPublisher()
+        let store = ChatRoomCallStore()
+        let bridge = makeBridge(publisher: published) { _ in }
+        bridge.followRinging(of: store) { true }
+
+        await bridge.startOutgoingCall(productId: "chat.dot", roomId: "dm-7", video: false)
+        try await Task.sleep(for: .milliseconds(20))
+        store.set(
+            .ringing(callId: "c2", video: false, caller: "contact"),
+            for: .chatExtension("chat.dot", roomId: "dm-8")
+        )
+
+        for _ in 0 ..< 200 where published.events.count < 2 {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        #expect(published.events.last?.event == .callAnswered(callId: "c2", accept: false))
+        #expect(published.events.last?.roomId == "dm-8")
+    }
+
+    /// A declined call that the product ends leaves no call behind, so the next offer rings.
+    @Test func aDeclinedCallEndsWhenTheProductEndsIt() async {
+        let calls = ProductCalls()
+        let key = ProductCalls.Key(productId: "chat.dot", roomId: "dm-7", callId: "c1")
+        let engine = ProductRingingCallEngine(inner: StubCallEngine()) { _ in }
+        _ = await calls.start(key, signaler: ProductCallSignaler(callId: "c1") { _ in }, ringing: engine)
+
+        await engine.endCall(notifiesRemote: true)
+        await calls.stopRinging(key)
+
+        #expect(await !calls.isRunning(key))
+        #expect(await !calls.hasCall(otherThan: ProductCalls.Key(productId: "chat.dot", roomId: "dm-8", callId: "c2")))
+    }
+
+    private func makeBridge(
+        publisher: RecordingPublisher,
+        presented: @escaping @Sendable (CallRole) -> Void
+    ) -> AppCallMediaHostBridge {
+        AppCallMediaHostBridge(
+            publisher: publisher,
+            feedListeners: ProductFeedListeners(),
+            makeEngine: { _, _, _ in StubCallEngine() },
+            present: { _, _, role, _, _ in presented(role) },
+            peer: { _, _ in CallPeer(name: "alice", accountId: Data(count: 32)) }
+        )
+    }
+}
+
+private final class RecordingPublisher: ChatRoomEventPublishing, @unchecked Sendable {
+    struct Published: Equatable {
+        let event: Chat.RoomEvent
+        let roomId: String
+    }
+
+    private let lock = NSLock()
+    private var recorded: [Published] = []
+
+    var events: [Published] {
+        lock.withLock { recorded }
+    }
+
+    func publish(_ event: Chat.RoomEvent, productId _: ChatExtension.Id, roomId: String) throws {
+        lock.withLock { recorded.append(Published(event: event, roomId: roomId)) }
+    }
+}
+
+private final class StubCallEngine: CallEngineProtocol, @unchecked Sendable {
+    func observeState() -> AnyAsyncSequence<CallEngineState> {
+        AsyncEmptySequence().eraseToAnyAsyncSequence()
+    }
+
+    func observeRemoteMediaState() -> AnyAsyncSequence<CallRemoteMediaState> {
+        AsyncEmptySequence().eraseToAnyAsyncSequence()
+    }
+
+    func connect() {}
+
+    func endCall(notifiesRemote _: Bool) async {}
+
+    func attach(localRenderer _: RTCVideoRenderer) {}
+
+    func attach(remoteRenderer _: RTCVideoRenderer) {}
+
+    func observeVideoState() -> AnyAsyncSequence<Bool> {
+        AsyncEmptySequence().eraseToAnyAsyncSequence()
+    }
+
+    func observeVideoCaptureFailure() -> AnyAsyncSequence<Void> {
+        AsyncEmptySequence().eraseToAnyAsyncSequence()
+    }
+
+    var isMuted: Bool {
+        get async { false }
+    }
+
+    func setMuted(_: Bool) async -> Bool {
+        false
+    }
+
+    var isVideoEnabled: Bool {
+        get async { false }
+    }
+
+    func setVideoEnabled(_: Bool) async {}
 }
 
 private final class RecordingEvents: @unchecked Sendable {

@@ -1,5 +1,6 @@
 import Foundation
 import Operation_iOS
+import os
 import Testing
 import TrUAPIHost
 @testable import polkadot_app
@@ -43,6 +44,21 @@ struct ChatRoomSourceContextTests {
         #expect(await source.snapshot.messages.map(\.messageId) == ["m1"])
     }
 
+    /// The product sets the configuration of its room after the room screen picked the source: the screen then
+    /// reads from the product.
+    @Test func aConfigurationAfterTheFirstPickChangesTheSource() async {
+        let store = OSAllocatedUnfairLock(initialState: ChatRoomPolicy.MessageStore.host)
+        let context = makeContext(policy: { [self] in policy(store: store.withLock { $0 }) })
+
+        #expect(await context.source() is CoreDataMessageSource)
+        #expect(await !context.refresh())
+
+        store.withLock { $0 = .product }
+        #expect(await context.refresh())
+        #expect(await context.source() is ProductMessageSource)
+        #expect(await !context.refresh())
+    }
+
     @Test func openAndCloseReachTheLifecycleOnce() async {
         let lifecycle = RecordingChatRoomLifecycle()
         let context = makeContext(policy: policy(store: .host), lifecycle: lifecycle)
@@ -77,6 +93,15 @@ private extension ChatRoomSourceContextTests {
         lifecycle: ChatRoomLifecycle = NoChatRoomLifecycle(),
         feedListeners: ProductFeedListeners = ProductFeedListeners()
     ) -> ChatRoomSourceContext {
+        makeContext(chatId: chatId, policy: { policy }, lifecycle: lifecycle, feedListeners: feedListeners)
+    }
+
+    func makeContext(
+        chatId: Chat.Id? = nil,
+        policy: @escaping @Sendable () -> ChatRoomPolicy,
+        lifecycle: ChatRoomLifecycle = NoChatRoomLifecycle(),
+        feedListeners: ProductFeedListeners = ProductFeedListeners()
+    ) -> ChatRoomSourceContext {
         let chatId = chatId ?? self.chatId
         let messageRepository: AnyDataProviderRepository<Chat.LocalMessage> = AnyDataProviderRepository(
             facade.createRepository(
@@ -100,11 +125,6 @@ private extension ChatRoomSourceContextTests {
                 sortDescriptors: [],
                 mapper: AnyCoreDataMapper(ChatMessageStatusUpdateMapper())
             )),
-            messageDeletionRepository: AnyDataProviderRepository(facade.createRepository(
-                filter: nil,
-                sortDescriptors: [],
-                mapper: AnyCoreDataMapper(ChatMessageDeletionMapper())
-            )),
             attachmentsUpdateRepository: AnyDataProviderRepository(facade.createRepository(
                 filter: nil,
                 sortDescriptors: [],
@@ -123,7 +143,7 @@ private extension ChatRoomSourceContextTests {
                 cache: ProductMessageCache(),
                 settings: .init(retryDelay: .milliseconds(1))
             ),
-            policy: { policy },
+            policy: { policy() },
             logger: StubLogger()
         )
     }
@@ -132,16 +152,11 @@ private extension ChatRoomSourceContextTests {
         let defaults = ChatRoomPolicy.defaults
         return ChatRoomPolicy(
             messageStore: store,
-            listPreview: defaults.listPreview,
             listBadge: defaults.listBadge,
-            listOrder: defaults.listOrder,
             reportsSeen: true,
-            messageMenu: defaults.messageMenu,
-            participants: defaults.participants,
             offersReactionDetails: defaults.offersReactionDetails,
             toolbar: defaults.toolbar,
             footer: defaults.footer,
-            placeholder: defaults.placeholder,
             hostAppliesUserActions: store == .host
         )
     }
@@ -154,8 +169,10 @@ private extension ChatRoomSourceContextTests {
             body: .text(text: id),
             status: .sent,
             replyTo: nil,
+            replyPreview: nil,
             editedAt: nil,
-            reactions: []
+            reactions: [],
+            request: false
         )
     }
 }

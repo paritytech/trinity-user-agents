@@ -6,12 +6,15 @@ import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_calls_api.domain.ProductCallMedia
 import io.paritytech.polkadotapp.feature_calls_api.domain.ProductCallSignals
 import io.paritytech.polkadotapp.feature_calls_api.domain.ProductMediaCall
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomDeclarationsRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.ReadOnlyChatRoomRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
+import io.paritytech.polkadotapp.feature_chats_api.domain.username.FallbackUsernameGenerator
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatId
+import timber.log.Timber
 import uniffi.truapi.ChatRoomEvent
 import uniffi.truapi.HostRejection
 import javax.inject.Inject
@@ -25,12 +28,16 @@ import javax.inject.Inject
 class AppCallMediaHostBridge @Inject constructor(
     private val callMedia: ProductCallMedia,
     private val rooms: ReadOnlyChatRoomRepository,
+    private val roomDeclarations: ChatRoomDeclarationsRepository,
+    private val fallbackUsernameGenerator: FallbackUsernameGenerator,
     // Lazy: the runtime provider installs this bridge.
     private val runtimeProvider: Lazy<TrUAPIHostRuntimeProvider>,
 ) : CallMediaHostBridge {
     override suspend fun startCallMedia(productId: String, roomId: String, callId: String, video: Boolean, offerer: Boolean) {
         val chatId = chatIdOf(productId, roomId)
-        val roomName = runCancellableCatching { rooms.getRoomMetadata(chatId).name }.getOrNull().orEmpty()
+        // A person chat calls with its contact, under the name the native chat gives the contact.
+        val roomName = roomDeclarations.get(chatId)?.contact?.let { it.username ?: fallbackUsernameGenerator.generateFromAccountId(it.account) }
+            ?: runCancellableCatching { rooms.getRoomMetadata(chatId).name }.getOrNull().orEmpty()
         val call = ProductMediaCall(chatId, callId, roomName, video, offerer)
         callMedia.start(call, RoomSignals(productId, roomId, callId)).onFailure {
             throw HostRejection.Rejected(it.message ?: "the call did not start")
@@ -57,9 +64,11 @@ class AppCallMediaHostBridge @Inject constructor(
 
         override suspend fun ended() = publish(ChatRoomEvent.CallEnded(callId))
 
+        // A call that ends while the runtime goes away has nobody to tell.
         private suspend fun publish(event: ChatRoomEvent) {
-            val runtime = runtimeProvider.get().runtime().getOrNull() ?: throw IllegalStateException("The host runtime is not running")
-            runtime.publishChatRoomEvent(productId, roomId, event)
+            runtimeProvider.get().runtime()
+                .mapCatching { it.publishChatRoomEvent(productId, roomId, event) }
+                .onFailure { Timber.w(it, "Product call %s: the event did not reach the product", callId) }
         }
     }
 }

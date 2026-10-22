@@ -85,8 +85,6 @@ internal fun PolkadotChatListItem(
                     preview = previewBody,
                     badge = chat.badge,
                     hasReaction = chat.hasReaction,
-                    isOngoing = chat.isOngoing,
-                    isMuted = chat.isMuted,
                 )
             }
         }
@@ -210,19 +208,6 @@ private fun PolkadotChatListItemPreview() {
                 )
                 PolkadotChatListItem(
                     chat = previewChat(
-                        username = "Sample product",
-                        preview = LastMessageUiModel.Text(
-                            timestamp = 0L,
-                            isIncoming = true,
-                            message = "Bot is typing",
-                        ),
-                        isOngoing = true,
-                    ),
-                    onClick = {},
-                    currentTimestamp = 0L,
-                )
-                PolkadotChatListItem(
-                    chat = previewChat(
                         username = "willow.glade",
                         preview = DraftPreviewUiModel(
                             timestamp = 0L,
@@ -243,7 +228,6 @@ private fun previewChat(
     isMuted: Boolean = false,
     hasReaction: Boolean = false,
     badge: ChatListUiState.Badge = ChatListUiState.Badge.None,
-    isOngoing: Boolean = false,
 ): ChatListUiState.ChatItem {
     return ChatListUiState.ChatItem(
         chatId = ChatId.fromRawValue(username.encodeToByteArray()),
@@ -255,6 +239,5 @@ private fun previewChat(
         preview = preview,
         isMuted = isMuted,
         hasReaction = hasReaction,
-        isOngoing = isOngoing,
     )
 }

@@ -41,6 +41,7 @@ class ChatEngineTest {
         productRoomDeclarer = mockk(),
         productFeedApplier = mockk(),
         productRoomAdditions = mockk(),
+        declarationsRepository = mockk(),
     )
 
     private val contactAccountId = ByteArray(32) { 1 }.intoAccountId()

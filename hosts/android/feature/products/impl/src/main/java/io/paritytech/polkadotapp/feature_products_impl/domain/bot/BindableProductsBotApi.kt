@@ -3,9 +3,9 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomContactModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
@@ -69,8 +69,8 @@ class BindableProductsBotApi(
     override suspend fun deleteRoom(chatIdParameter: ProductChatIdParameter): Result<Unit> =
         withChat { it.deleteRoom(chatIdParameter) }
 
-    override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, footer: ChatRoomFooterModel): Result<Unit> =
-        withChat { it.setRoomFooter(chatIdParameter, footer) }
+    override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, showsTextInput: Boolean): Result<Unit> =
+        withChat { it.setRoomFooter(chatIdParameter, showsTextInput) }
 
     override suspend fun applyFeedUpdate(chatIdParameter: ProductChatIdParameter, update: ProductFeedUpdateModel): Result<Unit> =
         withChat { it.applyFeedUpdate(chatIdParameter, update) }
@@ -83,6 +83,9 @@ class BindableProductsBotApi(
 
     override suspend fun setRoomCall(chatIdParameter: ProductChatIdParameter, call: ChatRoomCallModel?): Result<Unit> =
         withChat { it.setRoomCall(chatIdParameter, call) }
+
+    override suspend fun setRoomContact(chatIdParameter: ProductChatIdParameter, contact: ChatRoomContactModel): Result<Unit> =
+        withChat { it.setRoomContact(chatIdParameter, contact) }
 
     private suspend fun <T> withChat(call: suspend (ProductChatMessaging) -> Result<T>): Result<T> =
         chatSlot.tryUse().fold(

@@ -13,14 +13,12 @@ import type {
   Bytes32,
   GenericError,
   HostChatActionSubscribeItem,
-  HostChatRoomEventsSubscribeItem,
   HostRendererActionSubscribeItem,
   RendererNode,
-  V01HostChatActionSubscribeItem,
 } from "@parity/truapi";
 import {
+  HostChatActionSubscribeItem as HostChatActionSubscribeItemCodec,
   HostRendererActionSubscribeItem as HostRendererActionSubscribeItemCodec,
-  V01HostChatActionSubscribeItem as V01HostChatActionSubscribeItemCodec,
   HostWorkerBeginOperationResponse as HostWorkerBeginOperationResponseCodec,
   ProductRendererRenderRequest as ProductRendererRenderRequestCodec,
   RendererNode as RendererNodeCodec,
@@ -30,14 +28,6 @@ import {
   ProductContext as ProductContextCodec,
 } from "../generated/host-callbacks.js";
 import { createWasmRawCallbacks } from "../generated/host-callbacks-adapter.js";
-import {
-  createChatHostQueries,
-  encodeChatEvent,
-  encodeChatRoomEvent,
-  wakeArguments,
-  wakeOutcome,
-  type ChatQuerySink,
-} from "../chat-queries.js";
 import type { RawCallbacks } from "../generated/host-callbacks-adapter.js";
 import { isLoopbackWsUrl } from "../worker-protocol.js";
 import type {
@@ -285,23 +275,8 @@ interface RuntimeState {
     number,
     { resolve: () => void; reject: (error: Error) => void }
   >;
-  /** Wakes awaiting the worker's response. */
-  pendingWakes: Map<
-    number,
-    {
-      resolve: (untilMs: number | undefined) => void;
-      reject: (error: Error) => void;
-    }
-  >;
-  /** Attachment stagings awaiting the worker's response. */
-  pendingStages: Map<
-    number,
-    { resolve: (key: Uint8Array) => void; reject: (error: Error) => void }
-  >;
   /** Sinks for live renders, keyed by render id. */
   renders: Map<number, RenderEntry>;
-  /** Sinks for open chat queries, keyed by query id. */
-  chatQueries: Map<number, { coreId: number; sink: ChatQuerySink }>;
   /** Products whose worker the core currently wants, for late subscribers. */
   wantedWorkers: Set<string>;
   workerDemandListeners: Set<(change: WorkerDemandChange) => void>;
@@ -324,10 +299,7 @@ let nextDeviceEncryptionKeyRequestId = 0;
 let nextProductSubtreePublicKeyRequestId = 0;
 let nextSessionActivationRequestId = 0;
 let nextActionRequestId = 0;
-let nextWakeRequestId = 0;
-let nextStageRequestId = 0;
 let nextRenderId = 0;
-let nextChatQueryId = 0;
 
 function encodePermissionAuthorizationRequest(
   request: PermissionAuthorizationRequest,
@@ -920,14 +892,9 @@ function rejectPendingRuntimeRequests(state: RuntimeState, error: Error): void {
   rejectAll(state.pendingDeviceEncryptionKeys, error);
   rejectAll(state.pendingProductSubtreePublicKeys, error);
   rejectAll(state.pendingActions, error);
-  rejectAll(state.pendingWakes, error);
-  rejectAll(state.pendingStages, error);
   for (const renderId of [...state.renders.keys()]) {
     const sink = takeRender(state, renderId);
     if (sink) reportRenderFailure(sink, error);
-  }
-  for (const queryId of [...state.chatQueries.keys()]) {
-    takeChatQuery(state, queryId)?.onFailure(error.message);
   }
   for (const pending of state.pendingCores.values()) {
     pending.reject(error);
@@ -1103,10 +1070,7 @@ export function createWebWorkerPairingHostRuntime(
       pendingDeviceStatementKeys: new Map(),
       pendingDeviceEncryptionKeys: new Map(),
       pendingActions: new Map(),
-      pendingWakes: new Map(),
-      pendingStages: new Map(),
       renders: new Map(),
-      chatQueries: new Map(),
       wantedWorkers: new Set(),
       workerDemandListeners: new Set(),
       closedError: null,
@@ -1188,8 +1152,6 @@ export function createWebWorkerPairingHostRuntime(
           }
           break;
         case "publishChatActionResponse":
-        case "publishChatEventResponse":
-        case "publishChatRoomEventResponse":
         case "publishRendererActionResponse":
           settlePending(
             state.pendingActions,
@@ -1198,36 +1160,6 @@ export function createWebWorkerPairingHostRuntime(
               ? { ok: true, value: undefined }
               : { ok: false, error: msg.error },
           );
-          break;
-        case "wakeProductResponse":
-          settlePending(
-            state.pendingWakes,
-            msg.requestId,
-            msg.ok
-              ? { ok: true, value: msg.untilMs }
-              : { ok: false, error: msg.error },
-          );
-          break;
-        case "stageChatAttachmentResponse":
-          settlePending(
-            state.pendingStages,
-            msg.requestId,
-            msg.ok
-              ? { ok: true, value: msg.key }
-              : { ok: false, error: msg.error },
-          );
-          break;
-        case "chatQueryAnswer":
-          takeChatQuery(state, msg.queryId)?.onAnswer(msg.item);
-          break;
-        case "chatQueryRefusal":
-          takeChatQuery(state, msg.queryId)?.onRefusal(msg.error);
-          break;
-        case "chatQueryEnd":
-          takeChatQuery(state, msg.queryId)?.onEnd();
-          break;
-        case "chatQueryFailure":
-          takeChatQuery(state, msg.queryId)?.onFailure(msg.error);
           break;
         case "renderItem": {
           const sink = state.renders.get(msg.renderId);
@@ -1424,7 +1356,6 @@ function handleFrameError(
   // Renders left registered would never settle: the worker cancels them with
   // the core, so nothing further arrives to complete the sink.
   failRendersForCore(state, coreId, failure);
-  failChatQueriesForCore(state, coreId, failure);
   try {
     state.worker.postMessage({
       kind: "disposeCore",
@@ -1753,32 +1684,6 @@ function failRendersForCore(
 }
 
 /**
- * Remove one chat query from the ledger and give its sink. Only the first call
- * gives the sink, so each query settles once.
- */
-function takeChatQuery(
-  state: RuntimeState,
-  queryId: number,
-): ChatQuerySink | undefined {
-  const entry = state.chatQueries.get(queryId);
-  if (!entry) return undefined;
-  state.chatQueries.delete(queryId);
-  return entry.sink;
-}
-
-/** Settle and remove every chat query of one product connection. */
-function failChatQueriesForCore(
-  state: RuntimeState,
-  coreId: number,
-  error: Error,
-): void {
-  for (const [queryId, entry] of [...state.chatQueries]) {
-    if (entry.coreId !== coreId) continue;
-    takeChatQuery(state, queryId)?.onFailure(error.message);
-  }
-}
-
-/**
  * Post one host-authored action to the worker and settle on its response.
  * Encoding runs before registering, so a payload the codec rejects leaves no
  * pending entry behind.
@@ -1786,11 +1691,7 @@ function failChatQueriesForCore(
 function publishAction(
   state: RuntimeState,
   core: CoreState,
-  kind:
-    | "publishChatAction"
-    | "publishChatEvent"
-    | "publishChatRoomEvent"
-    | "publishRendererAction",
+  kind: "publishChatAction" | "publishRendererAction",
   encode: () => Uint8Array,
 ): Promise<void> {
   if (state.disposed || core.disposed) {
@@ -1816,37 +1717,7 @@ function buildProvider(
   core: CoreState,
   runtime: WorkerPairingHostRuntime,
 ): TrUApiProductProvider {
-  // The query starts in the worker. Its answer comes back as one of the
-  // `chatQuery*` messages, which settle the sink kept here.
-  const chatQueries = createChatHostQueries((name, request, sink) => {
-    if (state.disposed || core.disposed) {
-      throw new Error("product connection is closed");
-    }
-    const queryId = nextChatQueryId++;
-    state.chatQueries.set(queryId, { coreId: core.coreId, sink });
-    try {
-      state.worker.postMessage({
-        kind: "chatQueryStart",
-        coreId: core.coreId,
-        queryId,
-        name,
-        request,
-      } satisfies MainToWorker);
-    } catch (err) {
-      state.chatQueries.delete(queryId);
-      throw err;
-    }
-    return () => {
-      if (!state.chatQueries.delete(queryId)) return;
-      if (state.disposed) return;
-      state.worker.postMessage({
-        kind: "chatQueryStop",
-        queryId,
-      } satisfies MainToWorker);
-    };
-  });
   const provider: TrUApiProductProvider = {
-    ...chatQueries,
     postMessage(bytes: Uint8Array): void {
       if (state.disposed || core.disposed) return;
       if (debugLoggingEnabled(state)) {
@@ -1930,58 +1801,9 @@ function buildProvider(
       if (core.disposed) return;
       runtime.setLogLevel(level);
     },
-    publishChatAction(action: V01HostChatActionSubscribeItem): Promise<void> {
+    publishChatAction(action: HostChatActionSubscribeItem): Promise<void> {
       return publishAction(state, core, "publishChatAction", () =>
-        V01HostChatActionSubscribeItemCodec.enc(action),
-      );
-    },
-    publishChatEvent(item: HostChatActionSubscribeItem): Promise<void> {
-      return publishAction(state, core, "publishChatEvent", () =>
-        encodeChatEvent(item),
-      );
-    },
-    publishChatRoomEvent(item: HostChatRoomEventsSubscribeItem): Promise<void> {
-      return publishAction(state, core, "publishChatRoomEvent", () =>
-        encodeChatRoomEvent(item),
-      );
-    },
-    async wakeProduct(reason) {
-      if (state.disposed || core.disposed) {
-        throw new Error("product connection is closed");
-      }
-      const [roomId, watchId] = wakeArguments(reason);
-      const untilMs = await sendWorkerRequest<number | undefined>(
-        state,
-        state.pendingWakes,
-        () => nextWakeRequestId++,
-        undefined,
-        (requestId) => ({
-          kind: "wakeProduct",
-          coreId: core.coreId,
-          requestId,
-          roomId,
-          watchId,
-        }),
-      );
-      return wakeOutcome(untilMs);
-    },
-    stageChatAttachment(roomId, mimeType, bytes) {
-      if (state.disposed || core.disposed) {
-        return Promise.reject(new Error("product connection is closed"));
-      }
-      return sendWorkerRequest<Uint8Array>(
-        state,
-        state.pendingStages,
-        () => nextStageRequestId++,
-        new Uint8Array(),
-        (requestId) => ({
-          kind: "stageChatAttachment",
-          coreId: core.coreId,
-          requestId,
-          roomId,
-          mimeType,
-          bytes,
-        }),
+        HostChatActionSubscribeItemCodec.enc(action),
       );
     },
     publishRendererAction(
@@ -2041,11 +1863,6 @@ function buildProvider(
       // Renders left registered would never settle: the worker cancels them
       // with the core, so nothing further arrives to complete the sink.
       failRendersForCore(state, core.coreId, new Error("provider disposed"));
-      failChatQueriesForCore(
-        state,
-        core.coreId,
-        new Error("provider disposed"),
-      );
       state.worker.postMessage({
         kind: "disposeCore",
         coreId: core.coreId,

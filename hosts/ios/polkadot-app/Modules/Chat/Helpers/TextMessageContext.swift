@@ -15,8 +15,6 @@ struct TextMessageContext {
     let isEdited: Bool
     let canReply: Bool
     let inboxBubbleStyle: InboxBubbleStyle?
-    /// How the text of a product body draws. Nil for a person chat.
-    let productText: ChatMessageContainerConfiguration.ProductText?
 
     init(
         text: String,
@@ -30,8 +28,7 @@ struct TextMessageContext {
         messageReaction: ChatMessageContainerConfiguration.MessageReactionViewModel?,
         isEdited: Bool,
         canReply: Bool,
-        inboxBubbleStyle: InboxBubbleStyle? = nil,
-        productText: ChatMessageContainerConfiguration.ProductText? = nil
+        inboxBubbleStyle: InboxBubbleStyle? = nil
     ) {
         self.text = text
         self.attachments = attachments
@@ -45,7 +42,6 @@ struct TextMessageContext {
         self.isEdited = isEdited
         self.canReply = canReply
         self.inboxBubbleStyle = inboxBubbleStyle
-        self.productText = productText
     }
 
     var isAttachmentsOnly: Bool {

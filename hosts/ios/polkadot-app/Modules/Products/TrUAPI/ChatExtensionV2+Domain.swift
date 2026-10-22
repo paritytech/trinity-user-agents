@@ -3,67 +3,34 @@ import TrUAPIHost
 
 // Maps the Chat Extension v2 values of the bindings to the Swift domain values of the chat store, and back
 // where the core reads a value. The chat store and the notification extension do not link the bindings.
-//
-// In this module the name `ChatResource` is the resource type of the app, and the bindings module has an enum
-// with the name of the module. So this file never names the resource type of the bindings, and reads each resource
-// from the value that holds it.
 
 extension Chat.RoomConfig {
     init(_ config: ChatRoomConfig) {
         self.init(
             productSource: config.productSource,
             reactionDetails: config.reactionDetails,
-            participants: config.participants,
-            messageActions: config.messageActions,
-            allowedReactions: config.allowedReactions,
-            placeholder: config.placeholder,
             reportSeen: config.reportSeen
         )
     }
 
     var wireValue: ChatRoomConfig {
-        ChatRoomConfig(
-            productSource: productSource,
-            reactionDetails: reactionDetails,
-            participants: participants,
-            messageActions: messageActions,
-            allowedReactions: allowedReactions,
-            placeholder: placeholder,
-            reportSeen: reportSeen
-        )
-    }
-}
-
-extension Chat.ProductResource {
-    /// The store keeps no media type for a room image. The resolver reads the type from the bytes.
-    var roomImage: Chat.RoomImage {
-        switch self {
-        case let .inline(_, data): .inline(data)
-        case let .preimage(key): .preimage(key: key)
-        }
-    }
-}
-
-extension ChatRoomMetadata {
-    var avatarImage: Chat.RoomImage? {
-        switch avatar {
-        case let .inline(mimeType, bytes): Chat.ProductResource.inline(mimeType: mimeType, data: bytes).roomImage
-        case let .preimage(key): .preimage(key: key)
-        case .sealed,
-             .hop,
-             nil: nil
-        }
+        ChatRoomConfig(productSource: productSource, reactionDetails: reactionDetails, reportSeen: reportSeen)
     }
 }
 
 extension Chat.RoomPreview {
+    /// The preview with its last message as the native chat draws it. The status of a message of the contact says
+    /// whether the user saw it.
     init(_ preview: ChatRoomPreview) {
+        let badge = preview.badge.map(Chat.RoomBadge.init) ?? .hostDefault
+
         self.init(
-            order: preview.order == .pinToTop ? .pinToTop : .byTimestamp,
             timestamp: preview.timestamp.map { Int64(clamping: $0) },
-            badge: preview.badge.map(Chat.RoomBadge.init) ?? .hostDefault,
-            text: preview.text?.text,
-            ongoing: preview.text?.ongoing ?? false
+            badge: badge,
+            lastMessage: preview.lastMessage.map { $0.previewMessage() },
+            // The native chat list draws the heart for a reaction that the user did not see, and does not count it
+            // in the unread badge.
+            unseenReaction: preview.unseenReactions > 0
         )
     }
 }
@@ -73,49 +40,67 @@ extension Chat.RoomBadge {
         switch badge {
         case .hidden: self = .none
         case let .unreadCount(count): self = .unreadCount(Int32(clamping: count))
-        case let .image(.inline(mimeType, bytes)):
-            self = .image(Chat.ProductResource.inline(mimeType: mimeType, data: bytes).roomImage)
-        case let .image(.preimage(key)):
-            self = .image(.preimage(key: key))
-        case .image(.sealed), .image(.hop):
-            self = .none
         }
     }
 }
 
-extension Chat.ProductActionHandler {
-    init(_ handler: ChatActionHandler) {
-        switch handler {
-        case let .deeplink(url): self = .deeplink(url: url)
-        case .callback: self = .callback
+extension Chat.RoomContact {
+    init(_ contact: ChatRoomContact) {
+        self.init(account: contact.account, username: contact.username, state: State(contact.state))
+    }
+}
+
+extension Chat.RoomContact.State {
+    init(_ state: ChatContactState) {
+        switch state {
+        case .invite: self = .invite
+        case .outgoing: self = .outgoing
+        case .incoming: self = .incoming
+        case .established: self = .established
+        case .blocked: self = .blocked
+        case .peerLeft: self = .peerLeft
         }
     }
 }
 
-extension Chat.RoomInputConfig {
-    init(_ input: ChatInputConfig) {
-        let payment: Chat.RoomInputPayment? =
-            switch input.payment {
-            case let .enabled(destination): .enabled(destination: destination)
-            case nil: nil
-            }
-
+extension Chat.RoomFeatures {
+    init(_ features: ChatRoomFeatures) {
         self.init(
-            placeholder: input.placeholder,
-            photo: input.photo,
-            video: input.video,
-            file: input.file,
-            payment: payment
+            calls: features.calls.map { Chat.RoomCalls(audio: $0.audio, video: $0.video) },
+            hopAttachments: features.hopAttachments
+        )
+    }
+
+    var wireValue: ChatRoomFeatures {
+        ChatRoomFeatures(
+            calls: calls.map { ChatRoomCalls(audio: $0.audio, video: $0.video) },
+            hopAttachments: hopAttachments
         )
     }
 }
 
-extension Chat.RoomFooterConfig {
-    init(_ footer: ChatRoomFooter) {
-        switch footer {
-        case let .input(input): self = .input(Chat.RoomInputConfig(input))
-        case .empty: self = .empty
-        case .custom: self = .custom
+extension Chat.RoomCall {
+    init(_ call: ChatRoomCall) {
+        switch call {
+        case let .ringing(callId, video, caller):
+            self = .ringing(callId: callId, video: video, caller: caller)
+        case let .active(callId, video, startedAt):
+            self = .active(callId: callId, video: video, startedAt: startedAt)
+        }
+    }
+}
+
+extension Chat.RoomEvent {
+    var wireValue: ChatRoomEvent {
+        switch self {
+        case let .callRequested(video, callId):
+            .callRequested(video: video, callId: callId)
+        case let .callAnswered(callId, accept):
+            .callAnswered(callId: callId, accept: accept)
+        case let .callEnded(callId):
+            .callEnded(callId: callId)
+        case let .callSignal(callId, signal):
+            .callSignal(callId: callId, signal: signal)
         }
     }
 }

@@ -270,11 +270,11 @@ pub trait NativeChatCallbacks: Send + Sync {
 	/// Set what a product's native Chat room shows below its messages, and keep
 	/// it until the product sets another. The core has already checked the
 	/// product created the room. A room the product never set a footer on shows
-	/// the input with photo and video on.
+	/// the text input.
 	async fn set_room_footer(
 		&self,
 		room_id: String,
-		footer: truapi::latest::ChatRoomFooter,
+		footer: v01::ChatRoomFooter,
 	) -> Result<(), HostRejection>;
 
 	/// Return the current product-scoped native Chat room list.
@@ -288,14 +288,15 @@ pub trait NativeChatCallbacks: Send + Sync {
 		room_id: String,
 	) -> Result<truapi::latest::ChatRoomConfig, HostRejection>;
 
-	/// Keep the configuration a room was created with across restarts.
+	/// Replace the configuration of a room whole, and keep it across
+	/// restarts. The core has already checked the product hosts the room.
 	async fn set_room_config(
 		&self,
 		room_id: String,
 		config: truapi::latest::ChatRoomConfig,
 	) -> Result<(), HostRejection>;
 
-	/// Replace the name, avatar and description of a room.
+	/// Replace the name and description of a room.
 	async fn set_room_metadata(
 		&self,
 		room_id: String,
@@ -310,8 +311,7 @@ pub trait NativeChatCallbacks: Send + Sync {
 	) -> Result<(), HostRejection>;
 
 	/// Delete a room with its messages, cache and declarations, and close its
-	/// screen. Delete also, in the same change, each room whose features name
-	/// this room in `thread_of`.
+	/// screen.
 	async fn delete_room(&self, room_id: String) -> Result<(), HostRejection>;
 
 	/// Apply one change to the messages of a room. With `persist` the host
@@ -354,14 +354,14 @@ pub trait NativeChatCallbacks: Send + Sync {
 		call: Option<truapi::latest::ChatRoomCall>,
 	) -> Result<(), HostRejection>;
 
-	/// Return the state of each room of the product that the user muted or
-	/// archived.
-	async fn room_user_states(
+	/// Set the contact of a room and keep it across restarts. Draw the room
+	/// as the host's own person-to-person chat with that contact. The core
+	/// has already checked that the host lists `contact_rooms`.
+	async fn set_room_contact(
 		&self,
-	) -> Result<Vec<crate::platform::ChatRoomUserState>, HostRejection>;
-
-	/// Return the bot ids of the personas the product registered.
-	async fn bots(&self) -> Result<Vec<String>, HostRejection>;
+		room_id: String,
+		contact: truapi::latest::ChatRoomContact,
+	) -> Result<(), HostRejection>;
 }
 
 /// Native Pocket collection adapter. Hosts with a Pocket surface pass an
@@ -523,23 +523,6 @@ pub trait NativeBalanceCallbacks: Send + Sync {
 	) -> Result<u128, v01::HostPaymentBalanceSubscribeError>;
 }
 
-/// Native form of [`crate::runtime::WakeRelay`]: the push relay client of the
-/// host. Installed with [`NativeTrUApiHostRuntime::set_wake_relay`].
-///
-/// The host adds what identifies the device to its relay (the push token and
-/// the app id) and sends the registration to its relay endpoint. Only the
-/// core calls it.
-#[uniffi::export(rust, foreign)]
-#[async_trait::async_trait]
-pub trait NativeWakeRelayCallbacks: Send + Sync {
-	/// Replace the registration of this device with `registration`. An empty
-	/// topic list removes the registration.
-	async fn register_wake_topics(
-		&self,
-		registration: crate::runtime::WakeRelayRegistration,
-	) -> Result<(), HostRejection>;
-}
-
 /// Native form of [`crate::platform::PersonChatPlatform`], whose rules it
 /// follows. Installed with [`NativeTrUApiHostRuntime::set_person_chat_callbacks`].
 ///
@@ -572,21 +555,6 @@ pub trait NativePersonChatCallbacks: Send + Sync {
 
 	/// `product_id` imported the staged history.
 	async fn history_imported(&self, product_id: String) -> Result<(), HostRejection>;
-}
-
-/// Native form of [`crate::platform::UsernamesPlatform`], whose rules it
-/// follows. Installed with [`NativeTrUApiHostRuntime::set_usernames_callbacks`].
-///
-/// [`NativeTrUApiHostRuntime::set_usernames_callbacks`]: super::NativeTrUApiHostRuntime::set_usernames_callbacks
-#[uniffi::export(rust, foreign)]
-#[async_trait::async_trait]
-pub trait NativeUsernamesCallbacks: Send + Sync {
-	/// Find the usernames that start with `prefix`, on behalf of `product_id`.
-	async fn search_usernames(
-		&self,
-		product_id: String,
-		prefix: String,
-	) -> Result<Vec<String>, HostRejection>;
 }
 
 /// Native form of [`crate::platform::PushPlatform`], whose rules it follows.

@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.webrtc.IceCandidate
@@ -39,12 +40,17 @@ class ProductCallSessionTest {
         sdpCoder.encodeCandidates(listOf(IceCandidate("0", 0, "candidate:2 1 udp 1 $address 9 typ host")))
 
     @Test
-    fun `the offer goes to the product, and the call rings once it went`() = runTest {
+    fun `the offer goes to the product, and the call rings once a device of the contact read the offer`() = runTest {
         val offer = setup("actpass")
 
         session.sendOffer(call.callId, chatId, offer, withVideo = true)
 
         coVerify { signals.send(match { (coder.decode(it).single() as PeerSignal.Offer).setup.contentEquals(offer) }) }
+        // As the native call, which says "Ringing" only once the offer message is read (IS_READ).
+        assertFalse(session.observeOfferReadStatus(call.callId).first())
+
+        session.markOfferRead()
+
         assertTrue(session.observeOfferReadStatus(call.callId).first())
     }
 

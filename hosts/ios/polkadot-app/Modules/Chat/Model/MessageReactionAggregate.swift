@@ -1,4 +1,5 @@
 import Foundation
+import TrUAPIHost
 
 extension Chat {
     struct MessageReactionAggregate: Equatable {
@@ -219,4 +220,25 @@ extension Chat {
             ]
         )
     ]
+}
+
+extension Chat.MessageReactionAggregate {
+    /// The reactors with the times that a product room gives (`reactions_query`), oldest first. The participant id
+    /// `user` is the user, any other is the contact of the room. An emoji that the details miss keeps the reactors
+    /// that the room holds.
+    func reactors(with details: [ChatReactionDetail], contactOrigin: Chat.LocalMessage.Origin) -> [Reactor] {
+        let matching = details.filter { $0.emoji == emoji }
+        guard !matching.isEmpty else {
+            return reactors
+        }
+
+        return matching
+            .map { detail in
+                Reactor(
+                    origin: detail.participantId == productUserParticipantId ? .user : contactOrigin,
+                    timestamp: detail.timestamp
+                )
+            }
+            .sorted { $0.timestamp < $1.timestamp }
+    }
 }

@@ -2,20 +2,11 @@ import Foundation
 import PolkadotUI
 import Products
 
-/// The tree of one product body, from the render stream of the product.
-///
-/// The stream runs only while a view shows the body (02-DESIGN §5.2). The core holds the worker of the product for
-/// each open render stream, and the decoder keeps this view model for the life of the bot. A stream that opened
-/// when the body was decoded, and stayed open, kept the worker for the rest of the session. The last tree stays,
-/// so a body that comes back on screen shows it while a new stream opens.
 @Observable
 final class ProductWidgetViewModel: WidgetNodeProviding {
     @MainActor private(set) var node: CustomMessageWidgetNode?
 
-    private let roomId: String?
     private let messageId: String
-    private let messageType: String
-    private let messageData: Data
     private let runtime: ChatRuntimeProtocol
     private let tokenResolver: any WidgetDesignTokenResolving
     private let logger: LoggerProtocol
@@ -24,8 +15,6 @@ final class ProductWidgetViewModel: WidgetNodeProviding {
     /// reads as "never retried" even though the retry is on its way.
     private(set) var renderTask: Task<Void, Never>?
     private let retryDelay: Duration
-    /// The views that show the body now.
-    @MainActor private var visibleBodies = 0
 
     /// Streams opened for one body. The runtime retries the throws that precede
     /// a stream; this covers a stream that fails, or that ends before drawing.
@@ -44,44 +33,16 @@ final class ProductWidgetViewModel: WidgetNodeProviding {
         logger: LoggerProtocol,
         retryDelay: Duration = .seconds(1)
     ) {
-        self.roomId = roomId
         self.messageId = messageId
-        self.messageType = messageType
-        self.messageData = messageData
         self.runtime = runtime
         self.tokenResolver = tokenResolver
         self.logger = logger
         self.retryDelay = retryDelay
-    }
 
-    deinit {
-        renderTask?.cancel()
-    }
+        renderTask = Task { [weak self] in
+            guard let self else { return }
 
-    @MainActor
-    func bodyAppeared() {
-        visibleBodies += 1
-        guard renderTask == nil else { return }
-
-        renderTask = makeRenderTask()
-    }
-
-    @MainActor
-    func bodyDisappeared() {
-        visibleBodies = max(0, visibleBodies - 1)
-        guard visibleBodies == 0 else { return }
-
-        renderTask?.cancel()
-        renderTask = nil
-    }
-}
-
-private extension ProductWidgetViewModel {
-    func makeRenderTask() -> Task<Void, Never> {
-        Task { [weak self, roomId, messageId, messageType, messageData, retryDelay, logger] in
             for attempt in 1 ... Self.renderAttempts {
-                guard let self else { return }
-
                 // Republishing `node` from this same instance is what reaches the
                 // cell: it is observed, so nothing has to reconfigure it.
                 let outcome = await draw(
@@ -111,6 +72,12 @@ private extension ProductWidgetViewModel {
         }
     }
 
+    deinit {
+        renderTask?.cancel()
+    }
+}
+
+private extension ProductWidgetViewModel {
     enum RenderOutcome {
         /// The stream closed on its own. `drew` says whether it produced a tree
         /// first — a tree the host cannot map counts, since reopening maps it the

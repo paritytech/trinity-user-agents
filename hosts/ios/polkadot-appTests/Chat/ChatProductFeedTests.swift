@@ -70,24 +70,6 @@ struct ChatProductFeedTests {
         ])
     }
 
-    @Test func aMessageOfAnotherParticipantKeepsTheParticipant() async throws {
-        let bridge = try await openRoom()
-
-        try await bridge.updateFeed(
-            roomId: "lobby",
-            update: .new(message("m1", body: .text(text: "hi"), participant: "alice")),
-            persist: true
-        )
-        try await bridge.updateFeed(
-            roomId: "lobby",
-            update: .new(message("m2", body: .text(text: "hi"))),
-            persist: true
-        )
-
-        #expect(try await participant(of: "m1") == "alice")
-        #expect(try await participant(of: "m2") == nil)
-    }
-
     /// 02-DESIGN §13 item 6: a product cannot put words in the mouth of the user.
     @Test func aProductCannotPostAsTheUser() async throws {
         let bridge = try await openRoom()
@@ -165,28 +147,21 @@ struct ChatProductFeedTests {
         #expect(try await fixture.storedChat("lobby")?.message?.content == .text("final"))
     }
 
-    /// The product disables the buttons of an `Actions` message by an edit (02-DESIGN §6.3).
-    @Test func anEditCanChangeTheBodyKind() async throws {
+    /// A call that ends draws again in place, with no "edited" (`Replaced`).
+    @Test func aReplacedMessageDrawsAgainWithoutAnEdit() async throws {
         let bridge = try await openRoom()
-        let actions = ChatActions(text: "Pick", actions: [ChatAction(actionId: "a", title: "A")], layout: .column)
-        try await bridge.updateFeed(
-            roomId: "lobby",
-            update: .new(message("m1", body: .actions(actions))),
-            persist: true
-        )
+        let ringing = ChatCallRecord(video: false, answeredAt: nil, closed: nil)
+        try await bridge.updateFeed(roomId: "lobby", update: .new(message("m1", body: .call(ringing))), persist: true)
 
+        let ended = ChatCallRecord(video: true, answeredAt: nil, closed: ChatCallClose(at: 2, byUser: false))
         try await bridge.updateFeed(
             roomId: "lobby",
-            update: .edited(
-                messageId: "m1",
-                body: .actions(ChatActions(text: "Picked A", actions: [], layout: .column)),
-                editedAt: 1
-            ),
+            update: .replaced(message("m1", body: .call(ended))),
             persist: true
         )
 
         #expect(try await fixture.messages("lobby").map(\.content) == [
-            .productBody(.actions(.init(text: "Picked A", buttons: [], layout: .column)))
+            .call(.offer(.init(sdp: Data(), purpose: .video)))
         ])
     }
 
@@ -214,42 +189,6 @@ struct ChatProductFeedTests {
                 update: .edited(messageId: "m9", body: .text(text: "x"), editedAt: 1),
                 persist: true
             )
-        }
-    }
-
-    // MARK: - Deleted
-
-    @Test func aDeleteWritesTheTombstoneAndTheListShowsThePreviousMessage() async throws {
-        let bridge = try await openRoom()
-        try await bridge.updateFeed(
-            roomId: "lobby",
-            update: .new(message("m1", body: .text(text: "first"))),
-            persist: true
-        )
-        try await bridge.updateFeed(
-            roomId: "lobby",
-            update: .new(message("m2", body: .text(text: "second"))),
-            persist: true
-        )
-
-        try await bridge.updateFeed(roomId: "lobby", update: .deleted(messageId: "m2"), persist: true)
-        try await bridge.updateFeed(roomId: "lobby", update: .deleted(messageId: "m2"), persist: true)
-
-        #expect(try await fixture.messages("lobby").map(\.content) == [.text("first"), .deleted])
-        #expect(try await fixture.storedChat("lobby")?.message?.content == .text("first"))
-    }
-
-    /// 02-DESIGN §13 item 6: a product can delete any message of the room.
-    @Test func aProductCanDeleteAMessageOfTheUser() async throws {
-        let bridge = try await openRoom()
-        let user = fixture.userMessage(.text("oops"), roomId: "lobby")
-        try await fixture.save(user)
-
-        try await bridge.updateFeed(roomId: "lobby", update: .deleted(messageId: user.messageId), persist: true)
-
-        #expect(try await fixture.messages("lobby").map(\.content) == [.deleted])
-        await #expect(throws: NativeChatFeedRejection.UnknownMessage) {
-            try await bridge.updateFeed(roomId: "lobby", update: .deleted(messageId: "m9"), persist: true)
         }
     }
 
@@ -315,7 +254,7 @@ struct ChatProductFeedTests {
     @Test(arguments: [
         (ChatMessageStatus.sent, Chat.LocalMessage.Status.outgoing(.sent)),
         (.delivered, .outgoing(.delivered)),
-        (.read, .outgoing(.read)),
+        (.read, .outgoing(.delivered)),
         (.failed, .outgoing(.failed)),
         (.preparing, .outgoing(.new))
     ])
@@ -364,7 +303,11 @@ struct ChatProductFeedTests {
         let bridge = await fixture.bridge()
 
         await #expect(throws: NativeChatFeedRejection.self) {
-            try await bridge.updateFeed(roomId: "gone", update: .deleted(messageId: "m1"), persist: true)
+            try await bridge.updateFeed(
+                roomId: "gone",
+                update: .statusChanged(messageId: "m1", status: .sent),
+                persist: true
+            )
         }
     }
 
@@ -396,7 +339,8 @@ struct ChatProductFeedTests {
         listener = nil
 
         #expect(await listeners
-            .deliver(.deleted(messageId: "m1"), roomId: "lobby", to: fixture.chatId("lobby")) == false)
+            .deliver(.statusChanged(messageId: "m1", status: .sent), roomId: "lobby", to: fixture.chatId("lobby"))
+            == false)
         _ = registration
     }
 }
@@ -407,90 +351,76 @@ struct BodyCase: CustomTestStringConvertible, Sendable {
     let body: ChatMessageBody
     let content: Chat.LocalMessage.Content
 
-    private static let key = Data(repeating: 0xAB, count: 32)
-    private static let keySource = "preimage:" + String(repeating: "ab", count: 32)
-    private static let png = Data([0x89, 0x50])
-    private static let pngSource = "data:image/png;base64," + Data([0x89, 0x50]).base64EncodedString()
-
-    private static func meta(_ mimeType: String, size: UInt64? = nil) -> ChatMediaMeta {
-        ChatMediaMeta(mimeType: mimeType, sizeBytes: size, width: nil, height: nil, placeholder: nil, alt: nil)
+    private static func meta(_ mimeType: String, durationMs: UInt64? = nil) -> ChatMediaMeta {
+        ChatMediaMeta(
+            mimeType: mimeType,
+            sizeBytes: 3,
+            width: 4,
+            height: 5,
+            placeholder: "L",
+            alt: nil,
+            durationMs: durationMs
+        )
     }
+
+    private static let hop = TrUAPIChatResource.hop(
+        identifier: Data([1]),
+        ticket: Data([2]),
+        node: "wss://hop",
+        size: 3
+    )
+
+    private static let videoAttachment = Chat.LocalMessage.Content.Attachment.remoteDownloadable(.p2pMixnet(.init(
+        identifier: Data([1]),
+        claimTicket: Data([2]),
+        node: .wssUrl("wss://hop"),
+        meta: .video(.init(
+            general: .init(mimeType: "video/mp4", fileSize: 3),
+            duration: 61,
+            thumbnail: Data("L".utf8)
+        ))
+    )))
 
     static let all: [BodyCase] = [
         BodyCase(testDescription: "text", body: .text(text: "plain"), content: .text("plain")),
         BodyCase(
-            testDescription: "markdown",
+            testDescription: "caption without media",
             body: .richText(text: "**bold**", media: []),
-            content: .productBody(.richText(.init(text: "**bold**", media: [])))
+            content: .text("**bold**")
         ),
         BodyCase(
-            testDescription: "inline and preimage images and a video",
-            body: .richText(text: "look", media: [
-                .image(resource: .inline(mimeType: "image/png", bytes: png), meta: meta("image/png")),
-                .image(resource: .preimage(key: key), meta: meta("image/jpeg")),
-                .video(resource: .preimage(key: key), meta: meta("video/mp4"))
-            ]),
-            content: .productBody(.richText(.init(
-                text: "look",
-                media: [pngSource, keySource, keySource],
-                items: [
-                    .init(kind: .image, mimeType: "image/png", fileName: nil, sizeBytes: nil),
-                    .init(kind: .image, mimeType: "image/jpeg", fileName: nil, sizeBytes: nil),
-                    .init(kind: .video, mimeType: "video/mp4", fileName: nil, sizeBytes: nil)
-                ]
-            )))
+            testDescription: "photo",
+            body: .richText(text: "look", media: [.image(resource: hop, meta: meta("image/png"))]),
+            content: .richText(.init(text: "look", attachments: [.remoteDownloadable(.p2pMixnet(.init(
+                identifier: Data([1]),
+                claimTicket: Data([2]),
+                node: .wssUrl("wss://hop"),
+                meta: .image(.init(
+                    general: .init(mimeType: "image/png", fileSize: 3),
+                    width: 4,
+                    height: 5,
+                    thumbnail: Data("L".utf8)
+                ))
+            )))]))
+        ),
+        // The native chat keeps the length of a video in whole seconds.
+        BodyCase(
+            testDescription: "video",
+            body: .richText(text: nil, media: [.video(resource: hop, meta: meta("video/mp4", durationMs: 61_500))]),
+            content: .richText(.init(text: nil, attachments: [videoAttachment]))
         ),
         BodyCase(
-            testDescription: "file",
-            body: .richText(text: "report", media: [
-                .file(resource: .preimage(key: key), meta: meta("application/pdf", size: 2_048), fileName: "r.pdf")
-            ]),
-            content: .productBody(.file(.init(
-                url: keySource,
-                fileName: "r.pdf",
-                mimeType: "application/pdf",
-                sizeBytes: 2_048,
-                text: "report"
-            )))
+            testDescription: "accepted",
+            body: .event(.requestAccepted),
+            content: .chatAccepted(.init(messageId: ""))
         ),
-        // PARITY row 4: the media bubble draws a file among the images as a row.
+        BodyCase(testDescription: "contact added", body: .event(.contactAdded), content: .contactAdded),
+        BodyCase(testDescription: "left", body: .event(.leftChat), content: .leftChat),
+        BodyCase(testDescription: "unsupported", body: .event(.unsupported), content: .unsupported(nil)),
         BodyCase(
-            testDescription: "file among images",
-            body: .richText(text: nil, media: [
-                .image(resource: .inline(mimeType: "image/png", bytes: png), meta: meta("image/png")),
-                .file(resource: .preimage(key: key), meta: meta("application/pdf", size: 2_048), fileName: "r.pdf")
-            ]),
-            content: .productBody(.richText(.init(
-                text: nil,
-                media: [pngSource, keySource],
-                items: [
-                    .init(kind: .image, mimeType: "image/png", fileName: nil, sizeBytes: nil),
-                    .init(kind: .file, mimeType: "application/pdf", fileName: "r.pdf", sizeBytes: 2_048)
-                ]
-            )))
-        ),
-        BodyCase(
-            testDescription: "actions",
-            body: .actions(ChatActions(
-                text: "Pick",
-                actions: [ChatAction(actionId: "y", title: "Yes")],
-                layout: .grid
-            )),
-            content: .productBody(.actions(.init(
-                text: "Pick",
-                buttons: [.init(actionId: "y", title: "Yes")],
-                layout: .grid
-            )))
-        ),
-        BodyCase(
-            testDescription: "custom",
-            body: .custom(messageType: "score", payload: Data([1, 2]), previewText: "Score 2:1"),
-            content: .customRendered(.init(
-                decoderId: MessageDecoderIdentifier.product.rawValue,
-                data: Data([1, 2]),
-                identifier: "score",
-                alt: "Score 2:1"
-            ))
+            testDescription: "payment",
+            body: .payment(ChatPaymentRecord(amount: "42", legacy: false)),
+            content: .coinageSend(.init(totalValue: 42, coinKeys: []))
         )
     ]
 }
@@ -523,35 +453,14 @@ private extension ChatProductFeedTests {
             body: body,
             status: .sent,
             replyTo: replyTo,
+            replyPreview: nil,
             editedAt: nil,
-            reactions: []
+            reactions: [],
+            request: false
         )
-    }
-
-    func participant(of productMessageId: String) async throws -> String? {
-        let storedId = Chat.ProductMessageId.stored(productMessageId, in: fixture.chatId("lobby"))
-        return try await fixture.storageFacade.databaseService.performRead { context in
-            let entity: CDChatMessage? = try context.first(for: .chatMessage(with: storedId))
-            return entity?.originParticipantId
-        }
     }
 
     func reactions(of storedId: String) async throws -> [String] {
         try await fixture.messages("lobby").first { $0.messageId == storedId }?.reactions.map(\.emoji) ?? []
-    }
-}
-
-/// A product body keeps a preimage media item as a source string that the resource resolver reads back.
-struct ChatResourcePreimageSourceTests {
-    @Test func aPreimageSourceReadsBackAsItsKey() {
-        let key = Data([0x00, 0x7F, 0xAB, 0xFF])
-
-        #expect(ChatResource.preimageSource(key: key) == "preimage:007fabff")
-        #expect(ChatResource(source: "preimage:007fabff") == .preimage(key: key))
-    }
-
-    @Test(arguments: ["preimage:", "preimage:abc", "preimage:zz", "preimages:00"])
-    func aBrokenPreimageSourceIsNoResource(_ source: String) {
-        #expect(ChatResource(source: source) == nil)
     }
 }

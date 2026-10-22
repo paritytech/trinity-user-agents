@@ -18,7 +18,6 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.LastMessageSum
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toDomain
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toLocal
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toLocalType
-import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toSearchableContent
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
@@ -68,12 +67,6 @@ interface ChatMessageRepository {
 
     suspend fun shiftChatMessagesToTimestamp(chatId: ChatId, timestamp: Timestamp)
     suspend fun removeMessage(messageId: ChatMessageId)
-
-    /** Replaces the message with a hidden [ChatMessage.Content.Deleted] tombstone and drops its reactions and revisions. */
-    suspend fun markMessageDeleted(messageId: ChatMessageId)
-
-    /** The newest message that a room shows at or before [timestamp]. */
-    suspend fun getNewestVisibleMessageIdUpTo(chatId: ChatId, timestamp: Timestamp): ChatMessageId?
 
     suspend fun markMessagesAsReadUpToTimestamp(chatId: ChatId, timestamp: Timestamp)
     suspend fun markMessagesByTypesAsRead(chatId: ChatId, types: List<String>)
@@ -142,6 +135,11 @@ interface ChatMessageRepository {
     suspend fun unwindUnackedCompactions(chatId: ChatId)
 
     suspend fun searchMessages(query: String, chatIds: List<ChatId>): Result<List<ChatMessageSearchHit>>
+
+    companion object {
+        /** The most messages that a search finds. */
+        const val MESSAGE_SEARCH_LIMIT = 50
+    }
 }
 
 class RealChatMessageRepository @Inject constructor(
@@ -217,13 +215,7 @@ class RealChatMessageRepository @Inject constructor(
         val now = System.currentTimeMillis()
         val local = modifications.map { (id, content) ->
             val (contentSerialized, contentTypeLocal) = content.toLocal(customContentDecoder)
-            MessageContentUpdateLocal(
-                id = id,
-                content = contentSerialized,
-                type = contentTypeLocal,
-                updatedAt = now,
-                searchableContent = content.toSearchableContent(),
-            )
+            MessageContentUpdateLocal(id, contentSerialized, contentTypeLocal, updatedAt = now)
         }
         chatMessageDao.updateMessagesContents(local)
     }
@@ -270,14 +262,6 @@ class RealChatMessageRepository @Inject constructor(
     override suspend fun removeMessage(messageId: ChatMessageId) {
         chatMessageDao.remove(messageId)
     }
-
-    override suspend fun markMessageDeleted(messageId: ChatMessageId) {
-        val (content, _) = ChatMessage.Content.Deleted.toLocal(AlwaysFailCustomContentDecoder())
-        chatMessageDao.rewriteAsDeleted(messageId, content, updatedAt = System.currentTimeMillis())
-    }
-
-    override suspend fun getNewestVisibleMessageIdUpTo(chatId: ChatId, timestamp: Timestamp): ChatMessageId? =
-        chatMessageDao.getNewestVisibleMessageIdUpTo(chatId.toLocal(), timestamp)
 
     override suspend fun markMessagesAsReadUpToTimestamp(chatId: ChatId, timestamp: Timestamp) {
         chatMessageDao.markMessagesAsReadUpToTimestamp(chatId.toLocal(), timestamp)
@@ -452,7 +436,7 @@ class RealChatMessageRepository @Inject constructor(
         return runCatching {
             val rawChatIds = chatIds.map { it.value.value }
 
-            chatMessageDao.searchMessages(query.escapeLikeWildcards(), rawChatIds, MESSAGE_SEARCH_LIMIT).map { local ->
+            chatMessageDao.searchMessages(query.escapeLikeWildcards(), rawChatIds, ChatMessageRepository.MESSAGE_SEARCH_LIMIT).map { local ->
                 ChatMessageSearchHit(
                     chatId = ChatId.fromRawValue(local.chatId),
                     messageId = local.id,
@@ -469,5 +453,3 @@ private fun String.escapeLikeWildcards(): String {
         .replace("%", "\\%")
         .replace("_", "\\_")
 }
-
-private const val MESSAGE_SEARCH_LIMIT = 50

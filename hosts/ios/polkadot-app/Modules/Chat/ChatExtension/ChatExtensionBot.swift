@@ -93,11 +93,9 @@ class ChatExtensionBot {
             )
         case .customRendered,
              .file,
-             .productBody,
              .deviceAdded,
              .deviceRemoved,
-             .call,
-             .deleted:
+             .call:
             return .skipped
         }
     }

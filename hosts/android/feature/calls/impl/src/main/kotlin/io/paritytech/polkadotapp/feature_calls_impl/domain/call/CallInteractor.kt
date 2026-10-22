@@ -1,6 +1,6 @@
 package io.paritytech.polkadotapp.feature_calls_impl.domain.call
 
-import io.paritytech.polkadotapp.feature_calls_impl.product.RealProductCallMedia
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomDeclarationsRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.ContactDisplayProvider
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ContactAvatar
@@ -16,10 +16,17 @@ data class CallerDisplay(
 class CallInteractor @Inject constructor(
     private val contactDisplayProvider: ContactDisplayProvider,
     private val fallbackUsernameGenerator: FallbackUsernameGenerator,
-    private val productCallMedia: RealProductCallMedia,
+    private val roomDeclarations: ChatRoomDeclarationsRepository,
 ) {
     suspend fun getCallerDisplay(chatId: ChatId): CallerDisplay {
-        productCallMedia.roomName(chatId)?.let { return CallerDisplay(it, null) }
+        // A person chat of the chat product calls with its contact.
+        roomDeclarations.get(chatId)?.contact?.let { contact ->
+            val display = contactDisplayProvider.getContactDisplay(contact.account)
+            return CallerDisplay(
+                name = contact.username ?: display?.username ?: fallbackUsernameGenerator.generateFromAccountId(contact.account),
+                avatar = display?.avatar,
+            )
+        }
         val accountId = chatId.contactOrNull()?.contactAccountId ?: return CallerDisplay("", null)
         val display = contactDisplayProvider.getContactDisplay(accountId)
         return CallerDisplay(

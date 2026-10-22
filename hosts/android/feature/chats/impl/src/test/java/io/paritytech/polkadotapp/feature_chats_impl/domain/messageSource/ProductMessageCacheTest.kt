@@ -25,16 +25,18 @@ class ProductMessageCacheTest {
         cache.apply(room, ProductFeedUpdateModel.New(message("m4", 4)))
         val changed = ChatMessage.Content.Text("changed")
         cache.apply(room, ProductFeedUpdateModel.Edited("m1", changed, 9))
-        cache.apply(room, ProductFeedUpdateModel.Deleted("m2"))
+        cache.apply(room, ProductFeedUpdateModel.Replaced(message("m2", 2).copy(content = ChatMessage.Content.Text("replaced"))))
         cache.apply(room, ProductFeedUpdateModel.ReactionPlaced("m3", "c1", "👍"))
         cache.apply(room, ProductFeedUpdateModel.StatusChanged("m5", ProductMessageStatusModel.READ))
 
         val cached = cache.entry(room)!!
-        assertEquals(listOf("m1", "m3", "m4", "m5"), cached.messages.map { it.messageId })
+        assertEquals(listOf("m1", "m2", "m3", "m4", "m5"), cached.messages.map { it.messageId })
         assertSame(changed, cached.messages[0].content)
         assertEquals(9L, cached.messages[0].editedAt)
-        assertEquals(listOf(ProductReactionSummaryModel("👍", 1, false)), cached.messages[1].reactions)
-        assertEquals(ProductMessageStatusModel.READ, cached.messages[3].status)
+        assertEquals("replaced", (cached.messages[1].content as ChatMessage.Content.Text).text)
+        assertEquals(null, cached.messages[1].editedAt)
+        assertEquals(listOf(ProductReactionSummaryModel("👍", 1, false)), cached.messages[2].reactions)
+        assertEquals(ProductMessageStatusModel.READ, cached.messages[4].status)
         assertEquals("0", cached.next)
     }
 
@@ -77,6 +79,7 @@ class ProductMessageCacheTest {
             replyTo = null,
             editedAt = null,
             reactions = emptyList(),
+            request = false,
         )
     }
 }

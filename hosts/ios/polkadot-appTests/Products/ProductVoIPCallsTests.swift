@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Keystore_iOS
 import Testing
 import TrUAPIHost
@@ -27,19 +28,30 @@ struct ProductVoIPCallsTests {
     private static let text =
         "101f36f8c53c2d198a771dd74819c24e93548c5300f44446b1a9eb5aa17d89a71869be5057e20279b8df0a78155e57194fd14ec5b2c610d7c955f7059d7a45d5b3c7540dfe87"
 
-    private func calls() throws -> ProductVoIPCalls {
+    private func calls(contact: Chat.RoomContact.State = .established) throws -> ProductVoIPCalls {
         let routes = ProductPushRoutes(keychain: InMemoryKeychain())
         try routes.replaceChatRoutes(productId: "chat.paseo", routes: [
-            Self.pushId: ProductPushRoute(productId: "chat.paseo", roomId: "dm-ab", key: Self.key, chatTitle: "alice.01")
+            Self.pushId: ProductPushRoute(
+                productId: "chat.paseo",
+                roomId: "dm-ab",
+                key: Self.key,
+                chatTitle: "alice.01"
+            )
         ])
-        return ProductVoIPCalls(routes: routes)
+        let declarations = Chat.RoomDeclarations(
+            config: Chat.RoomConfig(productSource: true, reactionDetails: true, reportSeen: true),
+            configGeneration: 0,
+            preview: .hostDefault,
+            contact: Chat.RoomContact(account: Data(repeating: 1, count: 32), username: "alice.01", state: contact)
+        )
+        return ProductVoIPCalls(routes: routes, rooms: StubProductRooms(declarations: declarations))
     }
 
-    @Test func aProductOfferRingsUnderTheContactsNameAndTheAnswerReachesItsRoomOnce() throws {
+    @Test func aProductOfferRingsUnderTheContactsNameAndTheAnswerReachesItsRoomOnce() async throws {
         let calls = try calls()
         let publisher = RecordingPublisher()
 
-        let input = try #require(calls.input(pushId: Self.pushId.uppercased(), message: Self.offer))
+        let input = try #require(await calls.input(pushId: Self.pushId.uppercased(), message: Self.offer))
         #expect(input.name == "alice.01")
         #expect(input.hasVideo)
         #expect(calls.ringingCall == ProductVoIPCall(productId: "chat.paseo", roomId: "dm-ab", callId: "call-1"))
@@ -54,11 +66,46 @@ struct ProductVoIPCallsTests {
         #expect(published.first?.2 == "dm-ab")
     }
 
-    @Test func aPushThatIsNoOfferOrHasNoRouteDoesNotRing() throws {
+    @Test func aPushThatIsNoOfferOrHasNoRouteDoesNotRing() async throws {
         let calls = try calls()
 
-        #expect(calls.input(pushId: Self.pushId, message: Self.text) == nil)
-        #expect(calls.input(pushId: String(repeating: "ab", count: 32), message: Self.offer) == nil)
+        #expect(try await calls.input(pushId: Self.pushId, message: Self.text) == nil)
+        #expect(try await calls.input(pushId: String(repeating: "ab", count: 32), message: Self.offer) == nil)
+        #expect(calls.ringingCall == nil)
+    }
+
+    /// The native chat does not ring a call of a blocked contact.
+    @Test func anOfferOfABlockedContactDoesNotRing() async throws {
+        let calls = try calls(contact: .blocked)
+
+        await #expect(throws: ProductVoIPCallError.self) {
+            try await calls.input(pushId: Self.pushId, message: Self.offer)
+        }
+        #expect(calls.ringingCall == nil)
+    }
+
+    /// An offer that rings wakes the worker of the product, and the CallKit screen ends once when the product ends
+    /// the call that it rang, before the user answered.
+    @Test func theCallKitScreenEndsWhenTheCallerStops() async throws {
+        let calls = try calls()
+        let woken = OSAllocatedUnfairLock<[ProductVoIPCall]>(initialState: [])
+        calls.wakeWorker { call in woken.withLock { $0.append(call) } }
+        let chatId = Chat.Id.chatExtension("chat.paseo", roomId: "dm-ab")
+
+        _ = try await calls.input(pushId: Self.pushId, message: Self.offer)
+        for _ in 0 ..< 100 where woken.withLock(\.isEmpty) {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        #expect(woken.withLock { $0 } == [ProductVoIPCall(productId: "chat.paseo", roomId: "dm-ab", callId: "call-1")])
+
+        // A room without the call yet does not end the screen.
+        #expect(!calls.callerStopped(Chat.RoomCallChange(chatId: chatId, call: nil)))
+        #expect(!calls.callerStopped(Chat.RoomCallChange(
+            chatId: chatId,
+            call: .ringing(callId: "call-1", video: true, caller: "contact")
+        )))
+        #expect(calls.callerStopped(Chat.RoomCallChange(chatId: chatId, call: nil)))
+        #expect(!calls.callerStopped(Chat.RoomCallChange(chatId: chatId, call: nil)))
         #expect(calls.ringingCall == nil)
     }
 }

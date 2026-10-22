@@ -54,6 +54,25 @@ struct ProductMessageSourceSeenTests {
         await waitUntil { querying.actionRequests.count == 4 }
         #expect(querying.actionRequests.count >= 4)
     }
+
+    /// The first page of a room keeps the messages of the contact that the product gives as `Delivered` new, so
+    /// the screen draws the "Unread messages" separator above the first one, as the native chat does above the
+    /// welcome message of an incoming request.
+    @Test func theFirstPageKeepsUnseenMessagesNew() async throws {
+        let querying = ScriptedProductChatQuerying(
+            page: { _ in .init(messages: (1 ... 2).map { message($0) }, next: nil) }
+        )
+        let source = makeSource(querying)
+        await source.start()
+        await source.waitForFirstPage()
+
+        let snapshot = await source.snapshot
+        #expect(snapshot.messages.map(\.status) == [.incoming(.new), .incoming(.new)])
+
+        let model = await ChatInteractorState().onSnapshot(snapshot)
+        #expect(model.initiallyUnreadMessage == "m1")
+        #expect(querying.actionRequests.isEmpty)
+    }
 }
 
 private extension ProductMessageSourceSeenTests {
@@ -89,7 +108,9 @@ private func message(_ index: Int) -> ChatMessage {
         body: .text(text: "message \(index)"),
         status: .delivered,
         replyTo: nil,
+        replyPreview: nil,
         editedAt: nil,
-        reactions: []
+        reactions: [],
+        request: false
     )
 }

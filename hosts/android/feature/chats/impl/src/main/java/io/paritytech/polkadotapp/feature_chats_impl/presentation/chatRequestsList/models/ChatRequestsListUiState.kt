@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_chats_impl.presentation.chatRequestsLi
 
 import io.novasama.substrate_sdk_android.extensions.toHexString
 import io.paritytech.polkadotapp.common.domain.model.AccountId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatDisplayUiModel
 import kotlinx.collections.immutable.ImmutableList
 
@@ -13,7 +14,9 @@ data class ChatRequestsListUiState(
     data class ChatRequestItem(
         val accountId: AccountId,
         val display: ChatDisplayUiModel,
-        val timestamp: Long
+        val timestamp: Long,
+        /** The room of the chat product that holds the request, or null for a request of the native chat. */
+        val productRoom: ChatId?,
     ) {
         val uniqueKey: String = accountId.value.toHexString()
     }

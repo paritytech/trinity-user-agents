@@ -15,7 +15,6 @@ import kotlinx.serialization.encodeToByteArray
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Ignore
 import org.junit.Test
 
@@ -64,8 +63,12 @@ class ProductContentLocalEncodingTest {
     }
 
     @Test
-    fun `decode Deleted tombstone from encoded bytes`() {
-        assertTrue(decode(DELETED) is ChatMessageContentLocal.Deleted)
+    fun `a call of the chat product encodes to the frozen bytes and decodes back`() {
+        val call = ChatMessageContentLocal.ContactCall(video = true, answeredAt = 1_000, closedAt = 2_000, closedByUser = false)
+
+        assertEquals(CONTACT_CALL, BinaryScale.encodeToByteArray<ChatMessageContentLocal>(call).toHexString())
+        val decoded = decode(CONTACT_CALL) as ChatMessageContentLocal.ContactCall
+        assertEquals(listOf<Any?>(true, 1_000L, 2_000L, false), listOf(decoded.video, decoded.answeredAt, decoded.closedAt, decoded.closedByUser))
     }
 
     @Ignore("Run manually to print the hex of a new value")
@@ -99,7 +102,6 @@ class ProductContentLocalEncodingTest {
                     layout = ChatActionsLayoutLocal.GRID,
                 ),
             ),
-            "DELETED" to ChatMessageContentLocal.Deleted,
         )
         values.forEach { (name, value) ->
             println("$name = ${BinaryScale.encodeToByteArray<ChatMessageContentLocal>(value).toHexString()}")
@@ -114,6 +116,6 @@ class ProductContentLocalEncodingTest {
             "6170706c69636174696f6e2f706466000000000014612e70646601026468747470733a2f2f6578616d706c652e636f6d2f762e6d7034" +
             "24766964656f2f6d70340000000000"
         const val ACTIONS = "180101105069636b080c7965730c596573086e6f084e6f01"
-        const val DELETED = "19"
+        const val CONTACT_CALL = "1a0101e80300000000000001d00700000000000000"
     }
 }

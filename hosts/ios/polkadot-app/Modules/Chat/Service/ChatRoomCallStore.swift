@@ -32,13 +32,10 @@ extension Chat {
 /// Keeps the call of each product room in memory (07-LATER §11.2). A call tells what happens now, so the host does
 /// not keep it across a restart of the app.
 ///
-/// A ringing call goes after ``ringingLifetime``, the lifetime of the ringing banner. The core releases the worker
-/// hold of a ringing call after the same time (`CHAT_RINGING_HOLD_MS`).
+/// A ringing call stays until the product clears it or its worker stops: it rings until the caller ends it or the
+/// user answers, as the native chat rings. The core holds the worker of the product for as long.
 final class ChatRoomCallStore: ChatRoomCallStoring, @unchecked Sendable {
     static let shared = ChatRoomCallStore()
-
-    /// `CHAT_RINGING_HOLD_MS` of the core.
-    static let defaultRingingLifetime: Duration = .seconds(60)
 
     private struct State {
         var calls: [String: Chat.RoomCallChange] = [:]
@@ -46,12 +43,7 @@ final class ChatRoomCallStore: ChatRoomCallStoring, @unchecked Sendable {
         var changeObservers: [UUID: AsyncStream<Chat.RoomCallChange>.Continuation] = [:]
     }
 
-    let ringingLifetime: Duration
     private let state = OSAllocatedUnfairLock(uncheckedState: State())
-
-    init(ringingLifetime: Duration = ChatRoomCallStore.defaultRingingLifetime) {
-        self.ringingLifetime = ringingLifetime
-    }
 
     func set(_ call: Chat.RoomCall?, for chatId: Chat.Id) {
         let key = chatId.rawRepresentation
@@ -64,10 +56,6 @@ final class ChatRoomCallStore: ChatRoomCallStoring, @unchecked Sendable {
             for observer in state.changeObservers.values {
                 observer.yield(change)
             }
-        }
-
-        if case .ringing = call {
-            endRinging(call, of: chatId)
         }
     }
 
@@ -123,14 +111,6 @@ final class ChatRoomCallStore: ChatRoomCallStoring, @unchecked Sendable {
 }
 
 private extension ChatRoomCallStore {
-    /// Removes the ringing call after ``ringingLifetime``, when the room still rings with it.
-    func endRinging(_ call: Chat.RoomCall?, of chatId: Chat.Id) {
-        Task { [weak self, ringingLifetime] in
-            try? await Task.sleep(for: ringingLifetime)
-            self?.clear(call, of: chatId)
-        }
-    }
-
     /// Removes the call of the room when it is still `call`.
     func clear(_ call: Chat.RoomCall?, of chatId: Chat.Id) {
         let key = chatId.rawRepresentation

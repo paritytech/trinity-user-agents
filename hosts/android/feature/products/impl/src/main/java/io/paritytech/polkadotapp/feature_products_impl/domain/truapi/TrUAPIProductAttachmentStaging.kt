@@ -1,8 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import dagger.Lazy
-import io.paritytech.polkadotapp.common.domain.model.DataByteArray
-import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.extensionOrNull
@@ -24,9 +22,8 @@ import uniffi.truapi.NativeChatStageRejection
 import javax.inject.Inject
 
 /**
- * Stages the attachments of product rooms through `NativeTrUApiHostRuntime::chat_stage_attachment` (07-LATER §7).
- * The core reads the room declaration, asks for `PreimageSubmit` and pays from the Bulletin allowance of the product.
- * This class holds no key and opens no connection.
+ * Uploads the attachments of the rooms of the chat product to HOP through `NativeTrUApiHostRuntime::chat_hop_attachment`.
+ * The core reads the room declaration. This class holds no key and opens no connection.
  */
 class TrUAPIProductAttachmentStaging @Inject constructor(
     // Lazy: the runtime provider reaches the worker supervisor, which reaches the chat extensions.
@@ -57,53 +54,22 @@ class TrUAPIProductAttachmentStaging @Inject constructor(
         }
     }
 
-    override suspend fun stage(chatId: ChatId, mimeType: String, bytes: ByteArray): Result<DataByteArray> {
+    override suspend fun uploadToHop(
+        chatId: ChatId,
+        bytes: ByteArray,
+        progress: (sent: Long, total: Long) -> Unit,
+    ): Result<ChatResourceModel.Hop> {
         val (productId, room) = chatId.productRoom()
             ?: return Result.failure(ProductAttachmentStageException.NotDeclared())
         val runtime = runtimeProvider.get().runtime()
             .getOrElse { return Result.failure(ProductAttachmentStageException.SubmitFailed(it.message ?: it.toString())) }
 
         return try {
-            Result.success(runtime.stageChatAttachment(productId.value, room.value, mimeType, bytes).toDataByteArray())
-        } catch (rejection: NativeChatStageRejection) {
-            Result.failure(rejection.toModel())
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: Exception) {
-            Result.failure(ProductAttachmentStageException.SubmitFailed(error.message ?: error.toString()))
-        }
-    }
-
-    override suspend fun uploadToHop(chatId: ChatId, bytes: ByteArray): Result<ChatResourceModel.Hop> {
-        val (productId, room) = chatId.productRoom()
-            ?: return Result.failure(ProductAttachmentStageException.NotDeclared())
-        val runtime = runtimeProvider.get().runtime()
-            .getOrElse { return Result.failure(ProductAttachmentStageException.SubmitFailed(it.message ?: it.toString())) }
-
-        return try {
-            when (val resource = runtime.hopChatAttachment(productId.value, room.value, bytes).toModel()) {
+            when (val resource = runtime.hopChatAttachment(productId.value, room.value, bytes) { sent, total ->
+                progress(sent.toLong(), total.toLong())
+            }.toModel()) {
                 is ChatResourceModel.Hop -> Result.success(resource)
-                else -> Result.failure(ProductAttachmentStageException.SubmitFailed("the core gave no HOP resource"))
-            }
-        } catch (rejection: NativeChatStageRejection) {
-            Result.failure(rejection.toModel())
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: Exception) {
-            Result.failure(ProductAttachmentStageException.SubmitFailed(error.message ?: error.toString()))
-        }
-    }
-
-    override suspend fun seal(chatId: ChatId, bytes: ByteArray): Result<ChatResourceModel.Sealed> {
-        val (productId, room) = chatId.productRoom()
-            ?: return Result.failure(ProductAttachmentStageException.NotDeclared())
-        val runtime = runtimeProvider.get().runtime()
-            .getOrElse { return Result.failure(ProductAttachmentStageException.SubmitFailed(it.message ?: it.toString())) }
-
-        return try {
-            when (val resource = runtime.sealChatAttachment(productId.value, room.value, bytes).toModel()) {
-                is ChatResourceModel.Sealed -> Result.success(resource)
-                else -> Result.failure(ProductAttachmentStageException.SubmitFailed("the core gave no sealed resource"))
+                is ChatResourceModel.Url -> Result.failure(ProductAttachmentStageException.SubmitFailed("the core gave no HOP resource"))
             }
         } catch (rejection: NativeChatStageRejection) {
             Result.failure(rejection.toModel())
@@ -129,7 +95,5 @@ class TrUAPIProductAttachmentStaging @Inject constructor(
 fun NativeChatStageRejection.toModel(): ProductAttachmentStageException = when (this) {
     is NativeChatStageRejection.NotDeclared -> ProductAttachmentStageException.NotDeclared()
     is NativeChatStageRejection.TooLarge -> ProductAttachmentStageException.TooLarge(maxBytes.toLong())
-    is NativeChatStageRejection.PermissionDenied -> ProductAttachmentStageException.PermissionDenied()
-    is NativeChatStageRejection.AllowanceUnavailable -> ProductAttachmentStageException.AllowanceUnavailable(reason)
     is NativeChatStageRejection.SubmitFailed -> ProductAttachmentStageException.SubmitFailed(reason)
 }

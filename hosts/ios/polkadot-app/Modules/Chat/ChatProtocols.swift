@@ -15,10 +15,6 @@ protocol ChatViewProtocol: ControllerBackedProtocol {
     func showReactionDetails(viewModel: ReactionDetailsViewModel)
     /// Scrolls to the message now, or when it arrives in the window.
     func scrollToMessage(_ messageId: String)
-    /// Shows why an action of the user did not happen.
-    func showActionFailure(_ message: String)
-    /// Puts a refused text in the input again.
-    func restoreInput(text: String)
 }
 
 @MainActor
@@ -44,8 +40,6 @@ protocol ChatPresenterProtocol: AnyObject {
     func loadNewerMessages()
     /// The user tapped a reply quote whose message is not in the window.
     func jumpToMessage(_ messageId: String)
-    /// The user asked the product of the room again after it did not answer.
-    func retryRoom()
 }
 
 protocol ChatInteractorInputProtocol: AnyObject {
@@ -70,9 +64,6 @@ protocol ChatInteractorInputProtocol: AnyObject {
     func declineChatRequest()
     func processAction(_ action: Chat.Action)
     func isMicrophoneDenied() -> Bool
-    /// Sends a failed message of a product-source room again through `user_action` (P5.5).
-    func retrySend(messageId: Chat.MessageId)
-    func deleteMessage(messageId: Chat.MessageId)
     /// Asks the message source for the page before the window.
     func loadOlderMessages()
     /// Asks the message source for the page after the window.
@@ -83,8 +74,6 @@ protocol ChatInteractorInputProtocol: AnyObject {
     func openRoom()
     /// The room screen does not show the room anymore: a product room releases its product.
     func closeRoom()
-    /// Opens the room again and asks for the newest page, after the product did not answer (P5.7).
-    func retryRoom()
 }
 
 @MainActor
@@ -106,32 +95,6 @@ protocol ChatInteractorOutputProtocol: AnyObject {
 
     /// A jump ended. `found` is false when the room does not hold the message.
     func didJump(to messageId: Chat.MessageId, found: Bool)
-
-    /// The product refused an action of the user. The reason is for the user, when the product gave one.
-    func didRefuseUserAction(reason: String?)
-
-    /// The product refused a new message, a reply or an edit with this text. The text goes back into the input.
-    func didRefuseSend(_ refused: ChatRefusedSend)
-}
-
-extension ChatInteractorOutputProtocol {
-    func didJump(to _: Chat.MessageId, found _: Bool) {}
-
-    func didRefuseUserAction(reason _: String?) {}
-
-    func didRefuseSend(_ refused: ChatRefusedSend) {
-        didRefuseUserAction(reason: refused.reason)
-    }
-}
-
-/// A text that the product refused, with what the user did with it.
-struct ChatRefusedSend: Equatable {
-    let text: String
-    /// The message that the text replied to.
-    var replyToMessageId: String?
-    /// The message that the text edited.
-    var editedMessageId: String?
-    let reason: String?
 }
 
 @MainActor
@@ -163,13 +126,7 @@ protocol ChatWireframeProtocol: AnyObject, AlertPresentable {
 
     func dismissChat(from view: ControllerBackedProtocol?)
 
-    /// Asks the user to confirm the delete of a message.
-    func confirmDeleteMessage(from view: ControllerBackedProtocol?, onConfirm: @escaping () -> Void)
-
     func showDocument(at url: URL)
-
-    /// Opens an `http` or `https` address in the in-app browser after the user confirms.
-    func confirmOpenLink(_ url: URL, from view: ControllerBackedProtocol?)
 
     func showImagePicker(
         from view: ControllerBackedProtocol?,

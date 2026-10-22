@@ -6,12 +6,10 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.extensionOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedListener
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipant
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
@@ -31,7 +29,6 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
-import java.util.UUID
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -40,8 +37,12 @@ import kotlin.time.Duration.Companion.seconds
  *
  * The window opens on the newest page and pages older with the cursor of each page. The source never asks
  * `After`: it asks a dropped page again with its own `Before` request, and when the newest page comes back it
- * pages older until a page meets the window. Feed updates change the window in place. The actions of the user
- * go to the product through `user_action`, and the window shows their result before the answer arrives.
+ * pages older until a page meets the window. Feed updates change the window in place. The edits and reactions of the
+ * user go to the product through `user_action`, and the window shows their result before the answer arrives. The
+ * messages that the user sends go through the outbox of the room, which the room screen merges in.
+ *
+ * As the native chat, which reads its own database, the room shows no loading row and no failure: a page that did not
+ * arrive is asked again, silently, after a delay that grows with each failure.
  *
  * All the state changes run on one thread at a time, so the code between two suspension points is atomic.
  */
@@ -57,7 +58,7 @@ class ProductMessageSource(
     data class Settings(
         val pageSize: Int,
         val windowLimit: Int,
-        /** The wait before the one retry of a page that the product could not give. */
+        /** The wait before a page that the product could not give is asked again. It doubles with each failure. */
         val retryDelay: Duration,
         /** The most pages that one jump asks in each direction. */
         val jumpPageLimit: Int,
@@ -85,14 +86,20 @@ class ProductMessageSource(
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val confined = dispatcher.limitedParallelism(1)
     private val scope = CoroutineScope(SupervisorJob() + confined)
+
+    // A message, an edit or a reaction of the user reaches the product also when the user leaves the room at once, as
+    // the native chat keeps sending what the user sent. [close] does not cancel it.
+    private val userActions = CoroutineScope(SupervisorJob() + confined)
     private val extensionId = chatId.extensionOrNull()?.extensionId.orEmpty()
     private val window = ProductMessageWindow(settings.windowLimit)
 
     private var firstPageJob: Job? = null
     private var olderJob: Deferred<ChatPageOutcome>? = null
     private var newerJob: Deferred<ChatPageOutcome>? = null
-    private var olderFailed = false
-    private var newerFailed = false
+    private var olderFailures = 0
+    private var newerFailures = 0
+    private var newestFailures = 0
+    private var newestRetryJob: Job? = null
     private var readiness = ChatRoomReadiness.LOADING
     private var started = false
     private var seenToReport: String? = null
@@ -130,13 +137,13 @@ class ProductMessageSource(
         val anchor = window.olderAnchor ?: return@onSource ChatPageOutcome.End
 
         val job = scope.async {
+            delay(backoff(olderFailures))
             fetchOlder(anchor).also {
                 olderJob = null
                 emit()
             }
         }
         olderJob = job
-        olderFailed = false
         emit()
         job.await()
     }
@@ -146,13 +153,13 @@ class ProductMessageSource(
         val anchor = window.droppedNewer.lastOrNull() ?: return@onSource ChatPageOutcome.End
 
         val job = scope.async {
+            delay(backoff(newerFailures))
             fetchNewer(anchor).also {
                 newerJob = null
                 emit()
             }
         }
         newerJob = job
-        newerFailed = false
         emit()
         job.await()
     }
@@ -169,24 +176,24 @@ class ProductMessageSource(
 
     override suspend fun reload() {
         val job = onSource {
+            newestRetryJob?.cancel()
             firstPageJob?.cancel()
             scope.launch { loadNewestPage() }.also { firstPageJob = it }
         }
         job.join()
     }
 
-    override suspend fun perform(action: ChatSourceAction): ChatSourceActionOutcome = onSource {
-        when (action) {
-            is ChatSourceAction.Send -> send(action.content, action.replyTo)
-            is ChatSourceAction.Edit -> edit(action)
-            is ChatSourceAction.Delete -> delete(action.messageId)
-            is ChatSourceAction.ToggleReaction -> toggleReaction(action.messageId, action.emoji)
-            is ChatSourceAction.MarkSeen -> {
-                markSeen(action.messageIds)
-                ChatSourceActionOutcome.Done
-            }
-
-            is ChatSourceAction.Retry -> retry(action.messageId)
+    override suspend fun perform(action: ChatSourceAction): ChatSourceActionOutcome = when (action) {
+        // The outbox sends the message. As the native chat, the room then shows its newest messages.
+        ChatSourceAction.ShowNewest -> {
+            if (onSource { !window.isAtNewestEnd }) reload()
+            ChatSourceActionOutcome.Done
+        }
+        is ChatSourceAction.Edit -> userActions.async { edit(action) }.await()
+        is ChatSourceAction.ToggleReaction -> userActions.async { toggleReaction(action.messageId, action.emoji) }.await()
+        is ChatSourceAction.MarkSeen -> onSource {
+            markSeen(action.messageIds)
+            ChatSourceActionOutcome.Done
         }
     }
 
@@ -223,32 +230,54 @@ class ProductMessageSource(
         readiness = when (result) {
             is PageResult.Page -> {
                 window.replaceWith(result.item)
+                newestFailures = 0
                 ChatRoomReadiness.READY
             }
 
-            // 02-DESIGN §3.6: a page without an answer in time shows "could not load" and keeps the cached pages.
+            // The window keeps the cached pages, and the newest page is asked again later.
             PageResult.Failed -> ChatRoomReadiness.FAILED
             PageResult.NotAvailable, PageResult.Unavailable -> ChatRoomReadiness.UNAVAILABLE
         }
 
         emit()
         storeCache()
+        if (result !is PageResult.Page) retryNewestPageLater()
+    }
+
+    private fun retryNewestPageLater() {
+        val wait = backoff(++newestFailures)
+        newestRetryJob?.cancel()
+        newestRetryJob = scope.launch {
+            delay(wait)
+            firstPageJob = scope.launch { loadNewestPage() }
+        }
+    }
+
+    /** No wait before the first try, then [Settings.retryDelay], doubling with each failure up to [MAX_RETRY_DELAY]. */
+    private fun backoff(failures: Int): Duration {
+        if (failures <= 0) return Duration.ZERO
+        val doubled = settings.retryDelay * (1 shl (failures - 1).coerceAtMost(MAX_BACKOFF_SHIFT))
+        return doubled.coerceAtMost(MAX_RETRY_DELAY)
     }
 
     private suspend fun fetchOlder(anchor: ChatPageAnchorModel): ChatPageOutcome = when (val result = ask(anchor)) {
-        is PageResult.Page -> ChatPageOutcome.Appended(window.addOlder(anchor, result.item))
+        is PageResult.Page -> {
+            olderFailures = 0
+            ChatPageOutcome.Appended(window.addOlder(anchor, result.item))
+        }
+
         PageResult.NotAvailable -> {
             window.olderClosed = true
             ChatPageOutcome.End
         }
 
         PageResult.Failed -> {
-            olderFailed = true
+            olderFailures++
             ChatPageOutcome.Failed
         }
 
         PageResult.Unavailable -> {
-            olderFailed = true
+            olderFailures++
             readiness = ChatRoomReadiness.UNAVAILABLE
             ChatPageOutcome.Unavailable
         }
@@ -269,6 +298,7 @@ class ProductMessageSource(
 
                     val asksNewest = request == ChatPageAnchorModel.Before(null) && window.droppedNewer.size == 1
                     if (!asksNewest || window.meetsWindow(page)) {
+                        newerFailures = 0
                         return ChatPageOutcome.Appended(window.appendNewer(chunk, listOf(item)))
                     }
 
@@ -278,12 +308,12 @@ class ProductMessageSource(
 
                 PageResult.NotAvailable,
                 PageResult.Failed -> {
-                    newerFailed = true
+                    newerFailures++
                     return ChatPageOutcome.Failed
                 }
 
                 PageResult.Unavailable -> {
-                    newerFailed = true
+                    newerFailures++
                     readiness = ChatRoomReadiness.UNAVAILABLE
                     return ChatPageOutcome.Unavailable
                 }
@@ -291,6 +321,7 @@ class ProductMessageSource(
         }
 
         window.restartFromNewest()
+        newerFailures = 0
         return ChatPageOutcome.Appended(window.appendNewer(chunk, emptyList()))
     }
 
@@ -328,7 +359,7 @@ class ProductMessageSource(
         when (update) {
             is ProductFeedUpdateModel.New -> window.insertLive(update.message)
             is ProductFeedUpdateModel.Edited -> window.modify(update.messageId) { it.copy(content = update.content, editedAt = update.editedAt) }
-            is ProductFeedUpdateModel.Deleted -> window.remove(update.messageId)
+            is ProductFeedUpdateModel.Replaced -> window.modify(update.message.messageId) { update.message }
             is ProductFeedUpdateModel.ReactionPlaced ->
                 window.modify(update.messageId) { it.adjustReaction(update.emoji, update.participantId, placed = true) }
 
@@ -346,7 +377,8 @@ class ProductMessageSource(
     private suspend fun edit(action: ChatSourceAction.Edit): ChatSourceActionOutcome {
         val original = window.messages[action.messageId] ?: return ChatSourceActionOutcome.Refused(reason = null)
 
-        window.modify(action.messageId) { it.copy(content = action.content, editedAt = now()) }
+        val edited = (action.content as? ChatMessage.Content.Text)?.text?.let(original.content::withEditedText) ?: action.content
+        window.modify(action.messageId) { it.copy(content = edited, editedAt = now()) }
         return askAction(ChatUserActionModel.EditMessage(action.messageId, action.content)) { window.put(original) }
     }
 
@@ -354,19 +386,14 @@ class ProductMessageSource(
         val original = window.messages[messageId] ?: return ChatSourceActionOutcome.Refused(reason = null)
         val placed = original.reactions.none { it.emoji == emoji && it.reactedByUser }
 
-        window.modify(messageId) { it.adjustReaction(emoji, ProductParticipant.USER, placed) }
+        // As in a person chat, the user has one reaction on a message: a new emoji replaces the one before.
+        window.modify(messageId) { message ->
+            val others = message.reactions.filter { it.reactedByUser && it.emoji != emoji }.map { it.emoji }
+            others.fold(message) { changed, other -> changed.adjustReaction(other, ProductParticipant.USER, placed = false) }
+                .adjustReaction(emoji, ProductParticipant.USER, placed)
+        }
         val action = if (placed) ChatUserActionModel.ReactionPlaced(messageId, emoji) else ChatUserActionModel.ReactionRemoved(messageId, emoji)
         return askAction(action) { window.put(original) }
-    }
-
-    private suspend fun delete(messageId: ChatMessageId): ChatSourceActionOutcome {
-        val removed = window.remove(messageId)
-        emit()
-
-        // A message that the product never confirmed exists only in the window.
-        if (messageId.startsWith(LOCAL_ID_PREFIX)) return ChatSourceActionOutcome.Done
-
-        return askAction(ChatUserActionModel.DeleteMessage(messageId)) { removed?.let(window::putBack) }
     }
 
     /** Sends an action whose change the window shows already. [revert] undoes the change when the action fails. */
@@ -378,88 +405,8 @@ class ProductMessageSource(
 
         Timber.w(error, "A user action of a product room failed")
         revert()
-        noteUnavailable(error)
         emit()
         return ChatSourceActionOutcome.Refused((error as? ProductChatQueryException.Rejected)?.reason)
-    }
-
-    private suspend fun send(content: ChatMessage.Content, replyTo: String?): ChatSourceActionOutcome {
-        if (!window.isAtNewestEnd) reload()
-
-        val localId = LOCAL_ID_PREFIX + UUID.randomUUID()
-        window.messages[localId] = ProductRoomMessage(
-            messageId = localId,
-            participantId = ProductParticipant.USER,
-            timestamp = now(),
-            content = content,
-            status = ProductMessageStatusModel.PREPARING,
-            replyTo = replyTo,
-            editedAt = null,
-            reactions = emptyList(),
-        )
-        window.pending += localId
-
-        return deliver(localId)
-    }
-
-    /** Sends a pending message to the product, and replaces it with the message that the product made. */
-    private suspend fun deliver(localId: String): ChatSourceActionOutcome {
-        val message = window.messages[localId] ?: return ChatSourceActionOutcome.Refused(reason = null)
-        emit()
-
-        val result = querying.userAction(chatId, ChatUserActionModel.NewMessage(message.content, message.replyTo))
-        val error = result.exceptionOrNull()
-        if (error is CancellationException) throw error
-
-        val outcome = when {
-            error == null -> {
-                when (val answer = result.getOrNull()) {
-                    is ChatUserActionOutcome.MessageCreated -> {
-                        window.pending.remove(localId)
-                        window.messages.remove(localId)
-                        window.insertLive(answer.message)
-                    }
-
-                    else -> window.modify(localId) { it.copy(status = ProductMessageStatusModel.SENT) }
-                }
-                ChatSourceActionOutcome.Done
-            }
-
-            // 02-DESIGN §13 item 9: a rejected send goes away and the user sees the reason.
-            error is ProductChatQueryException.Rejected -> {
-                window.pending.remove(localId)
-                window.messages.remove(localId)
-                ChatSourceActionOutcome.Refused(error.reason)
-            }
-
-            else -> {
-                Timber.w(error, "A send to a product room failed")
-                window.modify(localId) { it.copy(status = ProductMessageStatusModel.FAILED) }
-                noteUnavailable(error)
-                ChatSourceActionOutcome.Failed
-            }
-        }
-
-        emit()
-        return outcome
-    }
-
-    private suspend fun retry(messageId: ChatMessageId): ChatSourceActionOutcome {
-        val message = window.messages[messageId]
-        if (message?.status != ProductMessageStatusModel.FAILED) return ChatSourceActionOutcome.Refused(reason = null)
-
-        window.modify(messageId) { it.copy(status = ProductMessageStatusModel.PREPARING) }
-
-        // The product never confirmed the message, so the host sends it again.
-        if (messageId in window.pending) return deliver(messageId)
-
-        return askAction(ChatUserActionModel.Retry(messageId)) {
-            window.modify(messageId) { it.copy(status = ProductMessageStatusModel.FAILED) }
-        }
-    }
-
-    private fun noteUnavailable(error: Throwable) {
-        if (isUnavailable(error)) readiness = ChatRoomReadiness.UNAVAILABLE
     }
 
     // endregion
@@ -469,7 +416,7 @@ class ProductMessageSource(
     /** Notes the newest of the messages as seen, and tells the product when it asks for `Seen`. */
     private fun markSeen(messageIds: Set<ChatMessageId>) {
         val ids = window.orderedIds
-        val newestIndex = ids.indexOfLast { it in messageIds && !it.startsWith(LOCAL_ID_PREFIX) }
+        val newestIndex = ids.indexOfLast { it in messageIds }
         val newest = ids.getOrNull(newestIndex)?.let { window.messages[it] } ?: return
 
         if (isNewer(newest, window.seenMessageId, window.seenTimestamp, ids)) {
@@ -523,17 +470,16 @@ class ProductMessageSource(
         state.value = window.snapshot(chatId, extensionId, paging(), readiness)
     }
 
+    // A page that failed is MORE again: the screen asks it when the user comes near its end, after the backoff.
     private fun paging(): ChatPagingState {
         val older = when {
             olderJob != null || (!window.hasFirstPage && readiness == ChatRoomReadiness.LOADING) -> ChatPagingState.Edge.LOADING
-            olderFailed -> ChatPagingState.Edge.FAILED
             window.olderAnchor != null -> ChatPagingState.Edge.MORE
             else -> ChatPagingState.Edge.END
         }
 
         val newer = when {
             newerJob != null -> ChatPagingState.Edge.LOADING
-            newerFailed -> ChatPagingState.Edge.FAILED
             window.droppedNewer.isNotEmpty() -> ChatPagingState.Edge.MORE
             else -> ChatPagingState.Edge.END
         }
@@ -546,7 +492,8 @@ class ProductMessageSource(
     }
 
     companion object {
-        const val LOCAL_ID_PREFIX = "local:"
+        private val MAX_RETRY_DELAY = 60.seconds
+        private const val MAX_BACKOFF_SHIFT = 6
 
         /** True for an error that means the worker of the product does not answer. */
         fun isUnavailable(error: Throwable?): Boolean = when (error) {

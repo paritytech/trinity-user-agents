@@ -17,7 +17,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductCha
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.FakeChatMessaging
-import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductRoomEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.flowOf
@@ -41,7 +40,7 @@ import uniffi.truapi.ProductChatUserActionItem
 import uniffi.truapi.ProductRuntimeException
 
 class TrUAPIChatWorkerRoomsTest {
-    private val productId = ProductId.fromStoredValue("game.dot")
+    private val productId = ProductId.fromStoredValue("chat.dot")
     private val room = ProductChatIdParameter("lobby")
     private val execution: TrUAPIProductExecution = mockk(relaxed = true)
     private val runtime: TrUAPIHostRuntime = mockk(relaxed = true)
@@ -64,6 +63,31 @@ class TrUAPIChatWorkerRoomsTest {
 
         verify(exactly = 1) { runtime.acquireWorker(productId.value) }
         verify(exactly = 1) { runtime.releaseWorker(productId.value) }
+    }
+
+    @Test
+    fun `another product holds its worker for the life of its chat, and its rooms and messages hold and wake nothing more`() = runTest {
+        val other = ProductId.fromStoredValue("game.dot")
+        val workers: TrUAPIWorkerSupervisor = mockk(relaxed = true)
+        every { workers.executionState(other) } returns flowOf(WorkerExecutionState.Running(execution))
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val worker = TrUAPIChatWorker(other, runtime, workers, FakeChatMessaging(), scope)
+
+        assertTrue(worker.openRoom(room).isSuccess)
+        worker.holdBriefly()
+        worker.onUserMessage(room, "hi")
+        worker.closeRoom(room)
+        advanceUntilIdle()
+
+        verify(exactly = 1) { runtime.acquireWorker(other.value) }
+        verify(exactly = 0) { runtime.releaseWorker(any()) }
+        verify(exactly = 0) { runtime.wakeProduct(any(), any()) }
+        verify(exactly = 0) { workers.restartIfFailed(any()) }
+
+        scope.cancel()
+        advanceUntilIdle()
+
+        verify(exactly = 1) { runtime.releaseWorker(other.value) }
     }
 
     @Test
@@ -104,10 +128,10 @@ class TrUAPIChatWorkerRoomsTest {
     }
 
     @Test
-    fun `an event without an open room wakes the worker instead of holding it`() = runTest {
+    fun `a message without an open room wakes the worker instead of holding it`() = runTest {
         val worker = worker()
 
-        worker.publishRoomEvent(room, ProductRoomEvent.MessagePosted("h1", ChatMessage.Content.Text("hi"), null))
+        worker.onUserMessage(room, "hi")
         runCurrent()
 
         verify(atLeast = 1) { runtime.wakeProduct(productId.value, ChatWakeReason.MessageInFlight("lobby")) }
@@ -172,11 +196,11 @@ class TrUAPIChatWorkerRoomsTest {
     fun `a new message goes to the product with its body`() = runTest {
         coEvery { execution.chatUserAction(any(), any()) } returns ProductChatUserActionItem.Acknowledged
 
-        worker().userAction(room, ChatUserActionModel.NewMessage(ChatMessage.Content.Text("hi"), replyTo = "m0"))
+        worker().userAction(room, ChatUserActionModel.NewMessage(ChatMessage.Content.Text("hi"), replyTo = "m0", messageId = "id-1", timestamp = 7))
 
         coVerify {
             execution.chatUserAction(
-                match { it.roomId == "lobby" && it.action == ChatUserAction.NewMessage(ChatMessageBody.Text("hi"), "m0") },
+                match { it.roomId == "lobby" && it.action == ChatUserAction.NewMessage(ChatMessageBody.Text("hi"), "m0", "id-1", 7uL) },
                 any(),
             )
         }
@@ -187,7 +211,7 @@ class TrUAPIChatWorkerRoomsTest {
         coEvery { execution.chatUserAction(any(), any()) } throws
             ChatQueryException.ActionRefused(uniffi.truapi.ProductChatUserActionError.Rejected("too long"))
 
-        val outcome = worker().userAction(room, ChatUserActionModel.DeleteMessage("m1"))
+        val outcome = worker().userAction(room, ChatUserActionModel.Seen("m1"))
 
         assertEquals("too long", (outcome.exceptionOrNull() as ProductChatQueryException.Rejected).reason)
     }

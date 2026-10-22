@@ -2,41 +2,28 @@ package io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy
 
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatRoomUserEvent
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
-import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
 import io.paritytech.polkadotapp.feature_chats_impl.domain.middleware.ChatExtensionRegistry
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import javax.inject.Inject
+import javax.inject.Singleton
 
-/** What the user does to the messages of a product room that the product must know (02-DESIGN §3.3.6, §3.3.9). */
+/** What the user does in a product room that the product must know (02-DESIGN §3.3.6, §3.3.9). */
+@Singleton
 class ProductRoomUserActions @Inject constructor(
     private val chatExtensionRegistry: ChatExtensionRegistry,
-    private val chatMessageRepository: ChatMessageRepository,
 ) {
-    suspend fun sendEvent(chatId: ChatId, event: ChatRoomUserEvent): Result<Unit> = runCatching {
-        val extension = checkNotNull(chatExtensionRegistry.getExtensionForChat(chatId)) { "No extension serves the room" }
-        extension.onUserEvent(chatId, event)
-    }
+    // As a native contact action, the action goes through also when the user leaves the screen before the answer.
+    private val actions = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    /**
-     * In a host-store room the host keeps a hidden tombstone of the message, so its id stays taken, and sends
-     * `UserDeleted` (02-DESIGN §19 item 4). In a product-source room the product deletes it
-     * through `user_action`.
-     */
-    suspend fun deleteMessage(chatId: ChatId, messageId: ChatMessageId, policy: ChatRoomPolicy): Result<Unit> {
-        if (!policy.hostAppliesUserActions) {
-            return productQuerying(chatId).flatMap { it.userAction(chatId, ChatUserActionModel.DeleteMessage(messageId)) }.map { }
-        }
-
-        return runCatching { chatMessageRepository.markMessageDeleted(messageId) }.flatMap { sendEvent(chatId, ChatRoomUserEvent.MessageDeleted(messageId)) }
-    }
-
-    /** Only a product-source room offers Retry (02-DESIGN §13 item 9). */
-    suspend fun retry(chatId: ChatId, messageId: ChatMessageId): Result<Unit> {
-        return productQuerying(chatId).flatMap { it.userAction(chatId, ChatUserActionModel.Retry(messageId)) }.map { }
-    }
+    /** An answer of the user to the contact of a room of the chat product: accept, decline, block, unblock or leave. */
+    suspend fun contactAction(chatId: ChatId, action: ChatUserActionModel): Result<Unit> = actions.async {
+        productQuerying(chatId).flatMap { it.userAction(chatId, action) }.map { }
+    }.await()
 
     private suspend fun productQuerying(chatId: ChatId): Result<ProductChatQuerying> = runCatching {
         val extension = checkNotNull(chatExtensionRegistry.getExtensionForChat(chatId)) { "No extension serves the room" }

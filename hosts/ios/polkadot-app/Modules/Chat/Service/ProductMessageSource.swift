@@ -53,9 +53,11 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
     let cache: ProductMessageCaching
     let settings: Settings
     let now: @Sendable () -> UInt64
-    /// The outbox of the attachments that the host stages (P10.3). Its entries of this room show at the end of the
-    /// window until the product has them.
-    let stager: ProductAttachmentStager?
+    /// The outbox of the messages of the user (P10.3). Its messages of this room show at the end of the window until
+    /// the product has them.
+    let outbox: ProductOutbox
+    /// Takes the photos and the videos of the contact that the window shows.
+    let downloads: ProductMediaDownloads?
     let logger: LoggerProtocol
 
     let subject: AsyncCurrentValueSubject<MessageListSnapshot>
@@ -66,7 +68,9 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
 
     var pages: [Page] = []
     var messages: [String: ChatMessage] = [:]
-    /// The messages that the user sent and the product did not confirm, oldest first.
+    /// The photos and the videos of the user on their way, by message id. Their ids are in ``pending``.
+    var uploads: [String: ProductOutgoingMessage] = [:]
+    /// The messages of the user in the outbox, which the product does not have yet, oldest first.
     var pending: [String] = []
     /// The pages that the window dropped at each end. The last page is next to the window.
     var droppedOlder: [ChatPageAnchor] = []
@@ -95,7 +99,8 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         cache: ProductMessageCaching = ProductMessageCache.shared,
         settings: Settings = Settings(),
         now: @escaping @Sendable () -> UInt64 = { Date().toChatTimestamp() },
-        stager: ProductAttachmentStager? = nil,
+        outbox: ProductOutbox? = nil,
+        downloads: ProductMediaDownloads? = nil,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.chatId = chatId
@@ -105,7 +110,9 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         self.cache = cache
         self.settings = settings
         self.now = now
-        self.stager = stager
+        // A room without the outbox of the app sends through an outbox of its own.
+        self.outbox = outbox ?? .inMemory(querying: querying, logger: logger)
+        self.downloads = downloads
         self.logger = logger
         subject = AsyncCurrentValueSubject(MessageListSnapshot(
             messages: [],
@@ -184,7 +191,7 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
             return .end
         }
 
-        let task = Task { await self.fetchOlder(anchor) }
+        let task = Task { await self.pausingAfterFailure(self.fetchOlder(anchor)) }
         olderTask = task
         olderFailed = false
         emit()
@@ -204,7 +211,7 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
             return .end
         }
 
-        let task = Task { await self.fetchNewer(anchor) }
+        let task = Task { await self.pausingAfterFailure(self.fetchNewer(anchor)) }
         newerTask = task
         newerFailed = false
         emit()
@@ -212,6 +219,20 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         let outcome = await task.value
         newerTask = nil
         emit()
+        return outcome
+    }
+
+    /// A page that failed keeps its end loading for `retryDelay`. The room screen shows no row for it and asks it
+    /// again when the user scrolls near the end, so it is asked again at most once in that time.
+    func pausingAfterFailure(_ outcome: ChatPageOutcome) async -> ChatPageOutcome {
+        switch outcome {
+        case .failed,
+             .unavailable:
+            try? await Task.sleep(for: settings.retryDelay)
+        case .appended,
+             .end:
+            break
+        }
         return outcome
     }
 
@@ -248,6 +269,18 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
 
     func perform(_ action: ChatSourceAction) async throws -> ChatSourceActionOutcome {
         switch action {
+        case let .send(.richText(richText)) where richText.attachments?.isEmpty == false:
+            return await sendMedia(richText)
+        case let .send(.edited(edit)):
+            return await perform(.editMessage(
+                messageId: edit.messageId,
+                body: editedBody(of: edit.messageId, text: edit.newContent.text ?? "")
+            ))
+        case let .send(.versionedChatRequest(request)):
+            guard let text = request.ensureV1().welcomeMessage?.text else {
+                throw ChatMessageSourceError.unsupported
+            }
+            return await send(text: text, replyTo: nil, request: true)
         case let .send(content):
             guard let userAction = content.productUserAction else {
                 throw ChatMessageSourceError.unsupported
@@ -256,15 +289,13 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         case let .markSeen(messageIds):
             markSeen(messageIds)
             return .done
-        case let .delete(messageId):
-            return await delete(messageId)
+        case let .contactAction(action):
+            return await ask(action.userAction) {}
         case let .toggleReaction(messageId, emoji):
             let hasReaction = messages[messageId]?.reactions.contains { $0.emoji == emoji && $0.reactedByUser } ?? false
             return await perform(hasReaction
                 ? .reactionRemoved(messageId: messageId, emoji: emoji)
                 : .reactionPlaced(messageId: messageId, emoji: emoji))
-        case let .retry(messageId):
-            return await retry(messageId)
         }
     }
 
@@ -280,8 +311,8 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
                 $0.body = body
                 $0.editedAt = editedAt
             }
-        case let .deleted(messageId):
-            remove(messageId)
+        case let .replaced(message):
+            modify(message.messageId) { $0 = message }
         case let .reactionPlaced(messageId, participantId, emoji):
             modify(messageId) { $0.adjustReaction(emoji, by: participantId, placed: true) }
         case let .reactionRemoved(messageId, participantId, emoji):

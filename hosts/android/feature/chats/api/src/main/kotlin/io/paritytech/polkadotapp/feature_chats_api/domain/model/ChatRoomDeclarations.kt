@@ -1,6 +1,8 @@
 package io.paritytech.polkadotapp.feature_chats_api.domain.model
 
+import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 
 /**
  * What a product declared for one of its rooms (Chat Extension v2). The host keeps it, so the chat
@@ -13,17 +15,14 @@ data class ChatRoomDeclarations(
     val configGeneration: Long,
     val metadata: ChatRoomMetadataModel,
     val preview: ChatRoomPreviewModel?,
-    val footer: ChatRoomFooterModel?,
     /** The features of the Chat Extension v2 additions. The host keeps them also when it does not serve them. */
     val features: ChatRoomFeaturesModel?,
+    /** The person the room is a conversation with. The host draws such a room as its own person chat. */
+    val contact: ChatRoomContactModel?,
 ) {
     /** The configuration that applies: the declared one, or the host default. */
     val effectiveConfig: ChatRoomConfigModel
         get() = config ?: ChatRoomConfigModel.HOST_DEFAULT
-
-    /** The footer that applies: the declared one, or the input of the host. */
-    val effectiveFooter: ChatRoomFooterModel
-        get() = footer ?: ChatRoomFooterModel.Input(ChatInputConfigModel.HOST_DEFAULT)
 
     /** The features that apply: the declared ones, or none. */
     val effectiveFeatures: ChatRoomFeaturesModel
@@ -33,10 +32,10 @@ data class ChatRoomDeclarations(
         val EMPTY = ChatRoomDeclarations(
             config = null,
             configGeneration = 0,
-            metadata = ChatRoomMetadataModel(description = null, avatar = null),
+            metadata = ChatRoomMetadataModel(description = null),
             preview = null,
-            footer = null,
             features = null,
+            contact = null,
         )
     }
 }
@@ -45,48 +44,42 @@ data class ChatRoomDeclarations(
 data class ChatRoomConfigModel(
     /** The product keeps the messages; the host keeps only a page cache. */
     val productSource: Boolean,
-    /** The host offers "who reacted" and asks the product for it. */
+    /** The product answers who reacted. This host does not show it. */
     val reactionDetails: Boolean,
-    /** The host asks the product for the participants. */
-    val participants: Boolean,
-    /** The host asks the product for the menu of a message. */
-    val messageActions: Boolean,
-    /** The emoji of the reaction picker. Null offers all emoji. */
-    val allowedReactions: List<String>?,
-    /** The text of a room without messages. Null shows the host text. */
-    val placeholder: String?,
     /** The product wants a `Seen` event for the messages that the user saw. */
     val reportSeen: Boolean,
 ) {
     companion object {
-        val HOST_DEFAULT = ChatRoomConfigModel(
-            productSource = false,
-            reactionDetails = false,
-            participants = false,
-            messageActions = false,
-            allowedReactions = null,
-            placeholder = null,
-            reportSeen = false,
-        )
+        val HOST_DEFAULT = ChatRoomConfigModel(productSource = false, reactionDetails = false, reportSeen = false)
     }
 }
 
-/** The description and the avatar of a room. The name stays with the room itself. */
-data class ChatRoomMetadataModel(
-    val description: String?,
-    /** Null draws the icon of the product. */
-    val avatar: ChatResourceModel?,
-)
+/** The description of a room. The name stays with the room itself. */
+data class ChatRoomMetadataModel(val description: String?)
 
 /** How a room shows in the chat list (`ChatRoomPreview`). */
 data class ChatRoomPreviewModel(
-    val order: Order,
     /** Milliseconds since the Unix epoch. Null uses the time of the last message. */
     val timestamp: Long?,
     /** Null keeps the unread count of the host. */
     val badge: ChatRoomBadgeModel?,
-    /** Null shows the last message. */
-    val text: ChatRoomPreviewTextModel?,
+    /** The newest message that the user sees in the room. The row draws its preview line from it. */
+    val lastMessage: ProductRoomMessage?,
+    /** The newest event of the room when it is a reaction newer than [lastMessage]. */
+    val lastReaction: ChatPreviewReactionModel?,
+    /** The number of reactions of the contact that the user did not see yet. */
+    val unseenReactions: Int,
+)
+
+/** A reaction that is the newest event of a room (`ChatPreviewReaction`). */
+data class ChatPreviewReactionModel(
+    val emoji: String,
+    /** True: the user reacted. False: the contact of the room did. */
+    val byUser: Boolean,
+    /** The message the reaction is on, when the product still has it. */
+    val message: ProductRoomMessage?,
+    /** The newest event is the removal of this reaction. */
+    val removed: Boolean,
 )
 
 sealed interface ChatRoomBadgeModel {
@@ -95,38 +88,38 @@ sealed interface ChatRoomBadgeModel {
 
     /** Zero shows no badge. */
     data class Count(val count: Int) : ChatRoomBadgeModel
-
-    data class Image(val resource: ChatResourceModel) : ChatRoomBadgeModel
 }
 
-data class ChatRoomPreviewTextModel(
-    val text: String,
-    /** The text shows as an activity that continues, for example "Alice is typing". */
-    val ongoing: Boolean,
+/** The person a room of the chat product is a conversation with (`ChatRoomContact`). */
+data class ChatRoomContactModel(
+    val account: AccountId,
+    val username: String?,
+    val state: ChatContactStateModel,
 )
 
-/** Bytes that a product gives for an avatar, an icon or a media item (`ChatResource`). */
+/** Where the conversation of a room with its contact stands (`ChatContactState`). */
+enum class ChatContactStateModel {
+    /** No request yet: the input is the invite composer. The room is not listed. */
+    INVITE,
+
+    /** The request of the user waits for the contact. */
+    OUTGOING,
+
+    /** The request of the contact waits for the user. The room is listed under the requests only. */
+    INCOMING,
+    ESTABLISHED,
+
+    /** The user blocked the contact. The room is not listed. */
+    BLOCKED,
+
+    /** The contact left the chat. */
+    PEER_LEFT,
+}
+
+/** Bytes that a product gives for a media item (`ChatResource`). */
 sealed interface ChatResourceModel {
-    data class Inline(val mimeType: String, val bytes: DataByteArray) : ChatResourceModel
-
-    /** The 32-byte key of a preimage that the host gets through the preimage lookup. */
-    data class Preimage(val key: DataByteArray) : ChatResourceModel
-
     /** An address of a v1 message body (`https` or `data:`). A v2 declaration never carries it. */
     data class Url(val url: String) : ChatResourceModel
-
-    /**
-     * A file that a host sealed (`sealed_attachments`): XChaCha20-Poly1305 of the file under [key] and [nonce], stored
-     * on the Bulletin chain as [parts], each the 32-byte key of one preimage. [size] is the length of the ciphertext and
-     * [digest] its SHA-512.
-     */
-    data class Sealed(
-        val parts: List<DataByteArray>,
-        val key: DataByteArray,
-        val nonce: DataByteArray,
-        val size: Long,
-        val digest: DataByteArray,
-    ) : ChatResourceModel
 
     /**
      * A file of the chat product in the HOP pool of the native chat: the root entry [identifier] on [node], claimed and
@@ -138,42 +131,4 @@ sealed interface ChatResourceModel {
         val node: String,
         val size: Long,
     ) : ChatResourceModel
-}
-
-/** What the host does when the user selects a product action (`ChatActionHandler`). */
-sealed interface ChatActionHandlerModel {
-    data class Deeplink(val url: String) : ChatActionHandlerModel
-
-    /** The host sends the event of the action to the product. */
-    data object Callback : ChatActionHandlerModel
-}
-
-/** What the room shows below its messages (`ChatRoomFooter`, second version). */
-sealed interface ChatRoomFooterModel {
-    data class Input(val config: ChatInputConfigModel) : ChatRoomFooterModel
-
-    data object Empty : ChatRoomFooterModel
-
-    /** The product draws the footer. */
-    data object Custom : ChatRoomFooterModel
-}
-
-/** The input below the messages (`ChatInputConfig`). */
-data class ChatInputConfigModel(
-    /** The hint text of the empty input. Null shows the host text. */
-    val placeholder: String?,
-    val photo: Boolean,
-    val video: Boolean,
-    val file: Boolean,
-    val payment: ChatInputPaymentModel?,
-) {
-    companion object {
-        /** The input of a room that declares nothing: photo and video on, file and payment off. */
-        val HOST_DEFAULT = ChatInputConfigModel(placeholder = null, photo = true, video = true, file = false, payment = null)
-    }
-}
-
-sealed interface ChatInputPaymentModel {
-    /** The 32 bytes of the account that gets the payment. */
-    data class Enabled(val destination: DataByteArray) : ChatInputPaymentModel
 }

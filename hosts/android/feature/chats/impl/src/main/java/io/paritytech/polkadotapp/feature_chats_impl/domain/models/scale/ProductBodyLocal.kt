@@ -4,7 +4,9 @@ import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.anno
 import kotlinx.serialization.Serializable
 
 // These types keep the field order of the Chat Extension v2 wire types (`v01::chat`), so a value that
-// has a wire twin encodes to the same bytes. Any change to them requires a content migration.
+// has a wire twin encodes to the same bytes. Any change to them requires a content migration. The kinds that
+// Chat Extension v2 no longer has (`Actions`, and the `Inline`, `Preimage` and `Sealed` resources) stay so that
+// stored messages still read; nothing writes them.
 
 @Serializable
 sealed interface ProductMessageBodyLocal {
@@ -36,6 +38,7 @@ sealed interface ChatMediaItemLocal {
     class File(val resource: ChatResourceLocal, val meta: ChatMediaMetaLocal, val fileName: String) : ChatMediaItemLocal
 }
 
+/** The wire meta ends with `duration_ms`, which a stored body does not keep: a video of a kept message has no length. */
 @Serializable
 class ChatMediaMetaLocal(
     val mimeType: String,

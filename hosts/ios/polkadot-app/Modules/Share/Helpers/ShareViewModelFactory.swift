@@ -52,6 +52,6 @@ final class ShareViewModelFactory: ShareViewModelFactoryProtocol {
             return .image(image)
         }
         let prefix = String(peerMetadata.name.prefix(1))
-        return .colored(text: prefix, colorSeed: chat.chatId.colorSeed)
+        return .colored(text: prefix, colorSeed: chat.avatarColorSeed)
     }
 }

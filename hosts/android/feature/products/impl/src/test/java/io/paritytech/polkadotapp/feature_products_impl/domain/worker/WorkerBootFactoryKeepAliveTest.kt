@@ -24,7 +24,7 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class WorkerBootFactoryKeepAliveTest {
-    private val productId = ProductId.fromStoredValue("verbosity.dot")
+    private val productId = ProductId.fromStoredValue("chat.dot")
     private val runtime = mockk<TrUAPIHostRuntime>(relaxed = true)
     private val supervisor = mockk<TrUAPIWorkerSupervisor>(relaxed = true) {
         every { executionState(productId) } returns emptyFlow()
@@ -41,9 +41,10 @@ class WorkerBootFactoryKeepAliveTest {
         },
     )
 
-    private suspend fun TestScope.bootAndDispose(keepAlive: WorkerKeepAlive) {
+    private suspend fun TestScope.bootAndDispose(keepAlive: WorkerKeepAlive, product: ProductId = productId) {
+        every { supervisor.executionState(product) } returns emptyFlow()
         val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
-        factory(keepAlive).boot(productId, BindableProductsBotApi(mockk(), mockk()), scope)
+        factory(keepAlive).boot(product, BindableProductsBotApi(mockk(), mockk()), scope)
         advanceUntilIdle()
         scope.cancel()
         advanceUntilIdle()
@@ -55,6 +56,13 @@ class WorkerBootFactoryKeepAliveTest {
 
         verify(exactly = 1) { supervisor.declareForegroundWorker(runtime, productId) }
         verify(exactly = 1) { supervisor.withdrawForegroundWorker(runtime, productId) }
+    }
+
+    @Test
+    fun `another product declares nothing, as it holds its worker for the life of its chat`() = runTest {
+        bootAndDispose(WorkerKeepAlive.FOREGROUND, ProductId.fromStoredValue("game.dot"))
+
+        verify(exactly = 0) { supervisor.declareForegroundWorker(any(), any()) }
     }
 
     @Test

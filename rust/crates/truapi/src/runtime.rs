@@ -31,7 +31,6 @@ mod payment_id;
 mod product_accounts;
 pub mod product_manifest;
 mod product_subtree;
-mod push_wake;
 mod renderer;
 mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
@@ -64,11 +63,9 @@ use std::{
 pub use actions::ActionChannel;
 use authority::{AuthorityCancelError, AuthoritySession};
 pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
-pub use call_holds::{CHAT_RINGING_HOLD_MS, ChatCallHolds};
-pub use chat::{ChatEventChannel, ChatHandler, ChatRoomEventHub, chat_platform_for};
-pub use chat_staging::{
-	CHAT_SEALED_AAD, ChatOpenRejection, ChatStageRejection, ChatStagingDeclarations,
-};
+pub use call_holds::ChatCallHolds;
+pub use chat::{ChatHandler, ChatRoomEventHub, chat_platform_for};
+pub use chat_staging::{ChatStageRejection, ChatStagingDeclarations};
 pub use contacts::ContactResolutionError;
 pub use host_session::HostSession;
 
@@ -82,10 +79,6 @@ use pairing_host::PairingHost;
 pub use pairing_host::PairingHost as PairingHostRole;
 use payment_id::host_funding_intent;
 use product_accounts::ProductAccounts;
-pub use push_wake::{
-	PushWakeDelivery, PushWakeOutcome, PushWakeRejection, PushWakes, WAKE_PUSH_PAYLOAD_KEY,
-	WakePush, WakeRelay, WakeRelayRegistration, statement_hash, wake_push_mac,
-};
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
 pub use signing_host::{LocalActivation, SigningHost as SigningHostRole, SigningHostSsoService};
@@ -344,7 +337,7 @@ pub struct ProductConnection {
 	/// concurrent operations per connection, so a connection shared with another
 	/// product makes those budgets collide.
 	chain: crate::chain_runtime::ChainRuntime,
-	chat: Arc<ChatEventChannel>,
+	chat: Arc<ActionChannel<truapi::versioned::chat::HostChatActionSubscribeItem>>,
 	renderer: Arc<ActionChannel<HostRendererActionSubscribeItem>>,
 	pocket_platform: Option<Arc<dyn crate::platform::PocketPlatform>>,
 	game_platform: Option<Arc<dyn crate::platform::GamePlatform>>,
@@ -367,18 +360,10 @@ impl Drop for ProductConnection {
 
 impl ProductConnection {
 	/// Whether the host published a renderer action, which only the user
-	/// causes, within the last [`USER_TAP_WINDOW_SECS`].
+	/// causes, within the last [`USER_TAP_WINDOW_SECS`]. A Worker may scan only
+	/// shortly after one, because it has no screen the user could be looking at.
 	pub fn recently_tapped(&self) -> bool {
 		self.renderer.published_within(USER_TAP_WINDOW_SECS)
-	}
-
-	/// Whether the user pressed something the host drew for the product
-	/// within the last [`USER_TAP_WINDOW_SECS`]: a renderer action, or a
-	/// button or menu entry of one of its rooms. A Worker may open the
-	/// scanner only shortly after one, because it has no screen the user could
-	/// be looking at.
-	pub fn recently_pressed(&self) -> bool {
-		self.recently_tapped() || self.chat.pressed_within(USER_TAP_WINDOW_SECS)
 	}
 
 	/// Role-neutral services shared with the owning host runtime.
@@ -589,14 +574,14 @@ impl ProductConnection {
 		self.chat.detach();
 	}
 
-	/// Buffer one host-authored Chat event for this connection's product,
+	/// Buffer one host-authored Chat action for this connection's product,
 	/// behind the same access policy as every other Chat entry point.
-	pub fn publish_chat_event(
+	pub fn publish_chat_action(
 		&self,
-		event: latest::HostChatActionSubscribeItem,
+		action: truapi::versioned::chat::HostChatActionSubscribeItem,
 	) -> Result<(), crate::host_core::ProductRuntimeError> {
 		self.native_chat_platform()?;
-		self.chat.publish(event, &self.services.spawner)
+		self.chat.publish(action)
 	}
 
 	/// Send one event about a room to this product, or keep it until the
@@ -839,7 +824,7 @@ impl ProductRuntimeHost {
 		let pairing_host = PairingHost::new(services.clone(), host_config);
 		let core_instance = services.next_core_instance();
 		let chain = services.chain.for_product(core_instance);
-		let chat = Arc::new(ChatEventChannel::default());
+		let chat = Arc::new(ActionChannel::chat());
 		let renderer = Arc::new(ActionChannel::renderer());
 		let connection = Arc::new(ProductConnection {
 			services,
@@ -1528,88 +1513,7 @@ fn pocket_field_error(error: ChatFieldError) -> CallError<latest::HostPocketRemo
 	CallError::Domain(latest::HostPocketRemoveCardError::Unknown { reason: error.to_string() })
 }
 
-/// Why the core did not store a preimage for a product.
-#[derive(Debug, PartialEq, Eq)]
-enum ProductPreimageError {
-	/// No Bulletin allowance could be had for the product.
-	Allowance(String),
-	/// The Bulletin chain did not store the value.
-	Submit(String),
-}
-
 impl ProductRuntimeHost {
-	/// Store `value` as a Bulletin preimage that the product's own allowance
-	/// for `session` pays for, by `submission_deadline`, and answer its key.
-	/// The allowance is extended first when it cannot hold `value`, and
-	/// refreshed once when the chain refuses it. A stored value goes to the
-	/// lookup cache, so a lookup right after it hits. The caller checks
-	/// `PreimageSubmit` first.
-	async fn store_product_preimage(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		value: Vec<u8>,
-		submission_deadline: Instant,
-	) -> Result<Vec<u8>, ProductPreimageError> {
-		let bulletin = &self.connection.services.bulletin;
-		let authority_cx = remote_authority_context_until(
-			cx,
-			PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-			submission_deadline,
-		);
-		let allowance = remote_authority_call(
-			&authority_cx,
-			self.accounts.bulletin_allowance_key(&authority_cx, session),
-		)
-		.await
-		.map_err(|err| ProductPreimageError::Allowance(bulletin_allowance_error_reason(err)))?;
-
-		#[cfg(feature = "test-host")]
-		if self.accounts.submits_preimages_locally() {
-			let key = preimage_key(&value);
-			self.connection.services.keep_local_preimage(key, value);
-			return Ok(key.to_vec());
-		}
-
-		let allowance = self
-			.bulletin_allowance_for(cx, submission_deadline, session, allowance, value.len() as u64)
-			.await
-			.map_err(ProductPreimageError::Allowance)?;
-		let key = match bulletin.submit_preimage(cx, submission_deadline, &allowance, &value).await
-		{
-			Ok(key) => key,
-			Err(bulletin_rpc::BulletinSubmitError::AllowanceRejected { phase }) => {
-				warn!(
-					product = %self.connection.product_id(),
-					%phase,
-					"Bulletin rejected the preimage allowance; extending it and resubmitting once"
-				);
-				let authority_cx = remote_authority_context_until(
-					cx,
-					PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-					submission_deadline,
-				);
-				let allowance = remote_authority_call(
-					&authority_cx,
-					self.accounts.refresh_bulletin_allowance_key(&authority_cx, session),
-				)
-				.await
-				.map_err(|err| {
-					ProductPreimageError::Allowance(bulletin_allowance_error_reason(err))
-				})?;
-				bulletin
-					.submit_preimage(cx, submission_deadline, &allowance, &value)
-					.await
-					.map_err(|err| ProductPreimageError::Submit(err.to_string()))?
-			},
-			Err(err) => return Err(ProductPreimageError::Submit(err.to_string())),
-		};
-		// Move the owned body into the lookup cache (no extra copy) so an
-		// immediate product lookup hits before the content backend has it.
-		self.prime_preimage_cache(&key, value);
-		Ok(key)
-	}
-
 	/// The product's Bulletin allowance key, authorized for `size` bytes: what
 	/// signs a HOP submit, since a node keeps an unclaimed entry on chain at
 	/// the signer's cost.

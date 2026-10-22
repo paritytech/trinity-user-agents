@@ -55,14 +55,6 @@ extension ChatRoomDeclarationUpdateMapper: CoreDataMapperProtocol {
     }
 }
 
-extension Chat.RoomDescriptionUpdate: ChatRoomDeclarationUpdating {
-    func apply(to entity: CDChatRoomMetadata) {
-        entity.roomDescription = description
-        entity.avatarKind = avatar.storedKind
-        entity.avatarRef = avatar.storedRef
-    }
-}
-
 extension Chat.RoomNameUpdate: ChatRoomDeclarationUpdating {
     func apply(to entity: CDChatRoomMetadata) {
         entity.name = name
@@ -77,20 +69,23 @@ extension Chat.RoomConfigUpdate: ChatRoomDeclarationUpdating {
 }
 
 extension Chat.RoomPreviewUpdate: ChatRoomDeclarationUpdating {
-    func apply(to entity: CDChatRoomMetadata) {
-        entity.previewOrder = preview.order.rawValue
+    func apply(to entity: CDChatRoomMetadata) throws {
         entity.previewTimestamp = preview.timestamp ?? 0
         entity.badgeKind = preview.badge.storedKind
         entity.badgeCount = preview.badge.storedCount
-        entity.badgeImageRef = preview.badge.storedImageRef
-        entity.previewText = preview.text
-        entity.previewOngoing = preview.ongoing
+        entity.previewMessage = try preview.lastMessage?.storedBytes()
+        entity.previewUnseenReaction = preview.unseenReaction
     }
 }
 
-extension Chat.RoomFooterConfigUpdate: ChatRoomDeclarationUpdating {
+extension Chat.RoomContactUpdate: ChatRoomDeclarationUpdating {
     func apply(to entity: CDChatRoomMetadata) throws {
-        entity.footerConfig = try footer.scaleEncoded()
+        entity.contact = try contact.storedBytes()
+
+        // The chat list observes `CDChat` only. This change of the chat makes the list draw the new state.
+        let key = #keyPath(CDChat.roomMetadata)
+        entity.chat?.willChangeValue(forKey: key)
+        entity.chat?.didChangeValue(forKey: key)
     }
 }
 
@@ -135,59 +130,24 @@ extension Chat.RoomDeclarations {
     /// A value whose bytes do not decode reads as not declared, so the room falls back to the host defaults.
     init(entity: CDChatRoomMetadata?) {
         self.init(
-            description: entity?.roomDescription,
-            avatar: Chat.RoomImage(avatarKind: entity?.avatarKind ?? 0, ref: entity?.avatarRef),
             config: entity?.config.flatMap(Chat.RoomConfig.decodedIfValid),
             configGeneration: entity?.configGeneration ?? 0,
             preview: entity.map(Chat.RoomPreview.init(entity:)) ?? .hostDefault,
-            footerConfig: entity?.footerConfig.flatMap(Chat.RoomFooterConfig.decodedIfValid),
             features: entity?.features.flatMap(Chat.RoomFeatures.decodedIfStored) ?? .hostDefault,
-            userState: entity.map(Chat.RoomUserState.init(entity:)) ?? .default
+            contact: entity?.contact.flatMap(Chat.RoomContact.decodedIfStored)
         )
     }
 }
 
 // MARK: - Stored forms
 
-/// The stored kinds of an avatar: 0 none, 1 inline bytes, 2 preimage key. `avatarRef` holds the bytes or the key.
-private extension Chat.RoomImage? {
-    var storedKind: Int16 {
-        switch self {
-        case .none: 0
-        case .inline: 1
-        case .preimage: 2
-        }
-    }
-
-    var storedRef: Data? {
-        switch self {
-        case .none: nil
-        case let .inline(data): data
-        case let .preimage(key): key
-        }
-    }
-}
-
-private extension Chat.RoomImage {
-    init?(avatarKind: Int16, ref: Data?) {
-        switch (avatarKind, ref) {
-        case let (1, .some(ref)): self = .inline(ref)
-        case let (2, .some(ref)): self = .preimage(key: ref)
-        default: return nil
-        }
-    }
-}
-
-/// The stored kinds of a badge: 0 host count, 1 none, 2 count, 3 preimage image, 4 inline image.
-/// `badgeImageRef` holds the key or the bytes of the image.
+/// The stored kinds of a badge: 0 host count, 1 none, 2 count.
 private extension Chat.RoomBadge {
     var storedKind: Int16 {
         switch self {
         case .hostDefault: 0
         case .none: 1
         case .unreadCount: 2
-        case .image(.preimage): 3
-        case .image(.inline): 4
         }
     }
 
@@ -195,22 +155,10 @@ private extension Chat.RoomBadge {
         if case let .unreadCount(count) = self { count } else { 0 }
     }
 
-    var storedImageRef: Data? {
-        switch self {
-        case let .image(.preimage(key)): key
-        case let .image(.inline(data)): data
-        case .hostDefault,
-             .none,
-             .unreadCount: nil
-        }
-    }
-
-    init(kind: Int16, count: Int32, imageRef: Data?) {
-        switch (kind, imageRef) {
-        case (1, _): self = .none
-        case (2, _): self = .unreadCount(count)
-        case let (3, .some(ref)): self = .image(.preimage(key: ref))
-        case let (4, .some(ref)): self = .image(.inline(ref))
+    init(kind: Int16, count: Int32) {
+        switch kind {
+        case 1: self = .none
+        case 2: self = .unreadCount(count)
         default: self = .hostDefault
         }
     }
@@ -220,19 +168,18 @@ private extension Chat.RoomBadge {
 private extension Chat.RoomPreview {
     init(entity: CDChatRoomMetadata) {
         self.init(
-            order: Order(rawValue: entity.previewOrder) ?? .byTimestamp,
             timestamp: entity.previewTimestamp == 0 ? nil : entity.previewTimestamp,
-            badge: Chat.RoomBadge(kind: entity.badgeKind, count: entity.badgeCount, imageRef: entity.badgeImageRef),
-            text: entity.previewText,
-            ongoing: entity.previewOngoing
+            badge: Chat.RoomBadge(kind: entity.badgeKind, count: entity.badgeCount),
+            lastMessage: entity.previewMessage.flatMap(Chat.RoomPreviewMessage.decodedIfStored),
+            unseenReaction: entity.previewUnseenReaction
         )
     }
 }
 
 // MARK: - SCALE forms
 
-// Each value has the SCALE layout of its Chat Extension v2 wire type (`v01` and, for the footer, `v02`), so
-// the stored bytes are the bytes that the core encodes. The field and variant order is a wire contract.
+// Each value has the SCALE layout of its Chat Extension v2 wire type (`v01`), so the stored bytes are the bytes
+// that the core encodes. The field and variant order is a wire contract.
 
 extension ScaleDecodable {
     /// The value that `data` holds, or nil when the bytes are not a complete value of this type.
@@ -249,132 +196,12 @@ extension Chat.RoomConfig: ScaleCodable {
     init(scaleDecoder: any ScaleDecoding) throws {
         productSource = try Bool(scaleDecoder: scaleDecoder)
         reactionDetails = try Bool(scaleDecoder: scaleDecoder)
-        participants = try Bool(scaleDecoder: scaleDecoder)
-        messageActions = try Bool(scaleDecoder: scaleDecoder)
-        allowedReactions = try ScaleOption<[String]>(scaleDecoder: scaleDecoder).value
-        placeholder = try ScaleOption<String>(scaleDecoder: scaleDecoder).value
         reportSeen = try Bool(scaleDecoder: scaleDecoder)
     }
 
     func encode(scaleEncoder: any ScaleEncoding) throws {
         try productSource.encode(scaleEncoder: scaleEncoder)
         try reactionDetails.encode(scaleEncoder: scaleEncoder)
-        try participants.encode(scaleEncoder: scaleEncoder)
-        try messageActions.encode(scaleEncoder: scaleEncoder)
-        try ScaleOption(value: allowedReactions).encode(scaleEncoder: scaleEncoder)
-        try ScaleOption(value: placeholder).encode(scaleEncoder: scaleEncoder)
         try reportSeen.encode(scaleEncoder: scaleEncoder)
-    }
-}
-
-extension Chat.ProductResource: ScaleCodable {
-    init(scaleDecoder: any ScaleDecoding) throws {
-        switch try UInt8(scaleDecoder: scaleDecoder) {
-        case 0:
-            let mimeType = try String(scaleDecoder: scaleDecoder)
-            self = try .inline(mimeType: mimeType, data: Data(scaleDecoder: scaleDecoder))
-        case 1:
-            self = try .preimage(key: Data(scaleDecoder: scaleDecoder))
-        default:
-            throw ScaleCodingError.unexpectedDecodedValue
-        }
-    }
-
-    func encode(scaleEncoder: any ScaleEncoding) throws {
-        switch self {
-        case let .inline(mimeType, data):
-            try UInt8(0).encode(scaleEncoder: scaleEncoder)
-            try mimeType.encode(scaleEncoder: scaleEncoder)
-            try data.encode(scaleEncoder: scaleEncoder)
-        case let .preimage(key):
-            try UInt8(1).encode(scaleEncoder: scaleEncoder)
-            try key.encode(scaleEncoder: scaleEncoder)
-        }
-    }
-}
-
-extension Chat.ProductActionHandler: ScaleCodable {
-    init(scaleDecoder: any ScaleDecoding) throws {
-        switch try UInt8(scaleDecoder: scaleDecoder) {
-        case 0: self = try .deeplink(url: String(scaleDecoder: scaleDecoder))
-        case 1: self = .callback
-        default: throw ScaleCodingError.unexpectedDecodedValue
-        }
-    }
-
-    func encode(scaleEncoder: any ScaleEncoding) throws {
-        switch self {
-        case let .deeplink(url):
-            try UInt8(0).encode(scaleEncoder: scaleEncoder)
-            try url.encode(scaleEncoder: scaleEncoder)
-        case .callback:
-            try UInt8(1).encode(scaleEncoder: scaleEncoder)
-        }
-    }
-}
-
-/// The wire destination is a `[u8; 32]`, which SCALE encodes as 32 bytes with no length prefix.
-extension Chat.RoomInputPayment: ScaleCodable {
-    private static let destinationLength = 32
-
-    init(scaleDecoder: any ScaleDecoding) throws {
-        guard try UInt8(scaleDecoder: scaleDecoder) == 0 else {
-            throw ScaleCodingError.unexpectedDecodedValue
-        }
-
-        self = try .enabled(destination: scaleDecoder.readAndConfirm(count: Self.destinationLength))
-    }
-
-    func encode(scaleEncoder: any ScaleEncoding) throws {
-        switch self {
-        case let .enabled(destination):
-            guard destination.count == Self.destinationLength else {
-                throw ScaleCodingError.unexpectedDecodedValue
-            }
-
-            try UInt8(0).encode(scaleEncoder: scaleEncoder)
-            scaleEncoder.appendRaw(data: destination)
-        }
-    }
-}
-
-extension Chat.RoomInputConfig: ScaleCodable {
-    init(scaleDecoder: any ScaleDecoding) throws {
-        placeholder = try ScaleOption<String>(scaleDecoder: scaleDecoder).value
-        photo = try Bool(scaleDecoder: scaleDecoder)
-        video = try Bool(scaleDecoder: scaleDecoder)
-        file = try Bool(scaleDecoder: scaleDecoder)
-        payment = try ScaleOption<Chat.RoomInputPayment>(scaleDecoder: scaleDecoder).value
-    }
-
-    func encode(scaleEncoder: any ScaleEncoding) throws {
-        try ScaleOption(value: placeholder).encode(scaleEncoder: scaleEncoder)
-        try photo.encode(scaleEncoder: scaleEncoder)
-        try video.encode(scaleEncoder: scaleEncoder)
-        try file.encode(scaleEncoder: scaleEncoder)
-        try ScaleOption(value: payment).encode(scaleEncoder: scaleEncoder)
-    }
-}
-
-extension Chat.RoomFooterConfig: ScaleCodable {
-    init(scaleDecoder: any ScaleDecoding) throws {
-        switch try UInt8(scaleDecoder: scaleDecoder) {
-        case 0: self = try .input(Chat.RoomInputConfig(scaleDecoder: scaleDecoder))
-        case 1: self = .empty
-        case 2: self = .custom
-        default: throw ScaleCodingError.unexpectedDecodedValue
-        }
-    }
-
-    func encode(scaleEncoder: any ScaleEncoding) throws {
-        switch self {
-        case let .input(input):
-            try UInt8(0).encode(scaleEncoder: scaleEncoder)
-            try input.encode(scaleEncoder: scaleEncoder)
-        case .empty:
-            try UInt8(1).encode(scaleEncoder: scaleEncoder)
-        case .custom:
-            try UInt8(2).encode(scaleEncoder: scaleEncoder)
-        }
     }
 }

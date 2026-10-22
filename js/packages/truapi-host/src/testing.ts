@@ -12,6 +12,7 @@ export {
 export type {
   ChainStatus,
   ChatMessageRecord,
+  ChatRoomDeclarations,
   MockFaults,
   MockHost,
   MockHostConfig,
@@ -20,29 +21,3 @@ export type {
   PermissionPolicy,
   SigningLogEntry,
 } from "./web/create-mock-host.js";
-export {
-  defaultChatRoomConfig,
-  defaultChatRoomFeatures,
-  MOCK_CHAT_FEATURE_NAMES,
-  MOCK_CHAT_INLINE_MAX_BYTES,
-  MOCK_CHAT_PAGE_SIZE,
-  MOCK_CHAT_PARTICIPANT_PAGE_SIZE,
-  MOCK_CHAT_PEER,
-  MOCK_CHAT_SEARCH_PAGE_SIZE,
-  MOCK_CHAT_TIMINGS,
-} from "./web/mock-chat.js";
-export type {
-  MockActionOutcome,
-  MockAttachmentOutcome,
-  MockChatAttachment,
-  MockChatFeedUpdate,
-  MockChatListRow,
-  MockChatNotice,
-  MockChatQueryRecord,
-  MockChatRoom,
-  MockChatRoomUserState,
-  MockChatTimings,
-  MockChatUser,
-  MockMessageMenu,
-  MockSendOutcome,
-} from "./web/mock-chat.js";

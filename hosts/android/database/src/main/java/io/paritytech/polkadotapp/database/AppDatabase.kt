@@ -13,7 +13,6 @@ import io.paritytech.polkadotapp.database.converters.IntListConverter
 import io.paritytech.polkadotapp.database.converters.LongMathConverters
 import io.paritytech.polkadotapp.database.dao.BrowserTabDao
 import io.paritytech.polkadotapp.database.dao.ChainDao
-import io.paritytech.polkadotapp.database.dao.ChatBotPersonaDao
 import io.paritytech.polkadotapp.database.dao.ChatBotStateDao
 import io.paritytech.polkadotapp.database.dao.ChatDraftDao
 import io.paritytech.polkadotapp.database.dao.ChatMessageCompactionDao
@@ -91,8 +90,8 @@ import io.paritytech.polkadotapp.database.migrations.Migration63To64
 import io.paritytech.polkadotapp.database.migrations.Migration65To66
 import io.paritytech.polkadotapp.database.migrations.Migration68To69
 import io.paritytech.polkadotapp.database.migrations.Migration69To70Spec
+import io.paritytech.polkadotapp.database.migrations.Migration73To74Spec
 import io.paritytech.polkadotapp.database.model.BrowserTabLocal
-import io.paritytech.polkadotapp.database.model.ChatBotPersonaLocal
 import io.paritytech.polkadotapp.database.model.ChatBotStateLocal
 import io.paritytech.polkadotapp.database.model.ChatDraftLocal
 import io.paritytech.polkadotapp.database.model.ChatMessageCompactionLinkLocal
@@ -148,7 +147,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainNodeLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
 
 @Database(
-    version = 73,
+    version = 74,
     entities = [
         ProductFundingOperationLocal::class,
         ChainLocal::class,
@@ -204,7 +203,6 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         PocketCardLocal::class,
         PocketCardFaceLocal::class,
         ChatRoomDeclarationsLocal::class,
-        ChatBotPersonaLocal::class,
     ],
     autoMigrations = [
         // Add ChatMessageReactionLocal
@@ -296,6 +294,9 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         // Add the room features and the user state to chat_room_declarations, and chat_bots
         // (Chat Extension v2 additions)
         AutoMigration(from = 72, to = 73),
+        // Add the contact of a room to chat_room_declarations, and drop the parts of Chat Extension v2 that the app
+        // does not draw any more: the avatar and the user state of a room, chat_bots and chat_messages.originParticipantId
+        AutoMigration(from = 73, to = 74, spec = Migration73To74Spec::class),
     ]
 )
 @TypeConverters(
@@ -414,8 +415,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun chatRoomDao(): ChatRoomDao
 
     abstract fun chatRoomDeclarationsDao(): ChatRoomDeclarationsDao
-
-    abstract fun chatBotPersonaDao(): ChatBotPersonaDao
 
     abstract fun fileUploadDao(): FileUploadDao
 

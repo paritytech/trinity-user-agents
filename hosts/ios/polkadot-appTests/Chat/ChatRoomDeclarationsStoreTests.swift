@@ -61,21 +61,6 @@ struct ChatRoomDeclarationsStoreTests {
         #expect(try await fixture.messages("lobby").count == 1)
     }
 
-    @Test func aFooterKeepsTheFooterOfTheFirstVersionInStep() async throws {
-        try await createRoom()
-
-        try await fixture.context.setRoomFooterConfig(for: fixture.bot, roomId: "lobby", footer: .empty)
-        var chat = try #require(try await fixture.storedChat("lobby"))
-        #expect(chat.roomFooter == .empty)
-        #expect(chat.roomDeclarations?.footerConfig == .empty)
-
-        let input = Chat.RoomInputConfig(placeholder: "Ask", photo: true, video: false, file: false, payment: nil)
-        try await fixture.context.setRoomFooterConfig(for: fixture.bot, roomId: "lobby", footer: .input(input))
-        chat = try #require(try await fixture.storedChat("lobby"))
-        #expect(chat.roomFooter == .textInput)
-        #expect(chat.roomDeclarations?.footerConfig == .input(input))
-    }
-
     @Test func eachDeclarationRefusesARoomThatDoesNotExist() async {
         let context = fixture.context
         let bot = fixture.bot
@@ -84,35 +69,16 @@ struct ChatRoomDeclarationsStoreTests {
         await #expect(throws: ChatRoomError.self) {
             try await context.setRoomConfig(for: bot, roomId: "gone", config: .hostDefault)
         }
-        await #expect(throws: ChatRoomError.self) {
-            try await context.setRoomFooterConfig(for: bot, roomId: "gone", footer: .empty)
-        }
     }
 }
 
 private extension ChatRoomDeclarationsStoreTests {
     var reportingSeen: Chat.RoomConfig {
-        Chat.RoomConfig(
-            productSource: false,
-            reactionDetails: false,
-            participants: false,
-            messageActions: false,
-            allowedReactions: nil,
-            placeholder: nil,
-            reportSeen: true
-        )
+        Chat.RoomConfig(productSource: false, reactionDetails: false, reportSeen: true)
     }
 
     var productSource: Chat.RoomConfig {
-        Chat.RoomConfig(
-            productSource: true,
-            reactionDetails: false,
-            participants: false,
-            messageActions: false,
-            allowedReactions: nil,
-            placeholder: nil,
-            reportSeen: false
-        )
+        Chat.RoomConfig(productSource: true, reactionDetails: false, reportSeen: false)
     }
 
     func createRoom() async throws {
@@ -120,30 +86,17 @@ private extension ChatRoomDeclarationsStoreTests {
     }
 }
 
-/// The bot of a product room reads the declarations and the newest seen message from the store.
+/// The bot of a product room reads the declarations from the store.
 struct ProductRoomReaderTests {
     private let fixture = ProductRoomFixture()
 
     @Test func theReaderGivesTheDeclarationsOfAStoredRoomOnly() async throws {
         let reader = ProductRoomReader(storageFacade: fixture.storageFacade)
         _ = try await fixture.context.createRoom(for: fixture.bot, roomId: "lobby", name: "Lobby", icon: nil)
-        let features = Chat.RoomFeatures(preimageAttachments: false, search: false, calls: nil, readAloud: true)
+        let features = Chat.RoomFeatures(calls: nil, hopAttachments: false)
         try await fixture.context.setRoomFeatures(for: fixture.bot, roomId: "lobby", features: features)
 
         #expect(await reader.declarations(of: fixture.chatId("lobby"))?.features == features)
         #expect(await reader.declarations(of: fixture.chatId("gone")) == nil)
-    }
-
-    @Test func theNewestMessageFollowsTheOrderOfTheRoom() async throws {
-        let reader = ProductRoomReader(storageFacade: fixture.storageFacade)
-        _ = try await fixture.context.createRoom(for: fixture.bot, roomId: "lobby", name: "Lobby", icon: nil)
-        for id in ["a", "b", "c"] {
-            try await fixture.save(fixture.userMessage(.text(id), roomId: "lobby", id: id))
-        }
-
-        #expect(await reader.newestMessageId(among: ["a", "b"], in: fixture.chatId("lobby")) == "b")
-        #expect(await reader.newestMessageId(among: ["c", "a"], in: fixture.chatId("lobby")) == "c")
-        #expect(await reader.newestMessageId(among: ["x"], in: fixture.chatId("lobby")) == nil)
-        #expect(await reader.newestMessageId(among: [], in: fixture.chatId("lobby")) == nil)
     }
 }

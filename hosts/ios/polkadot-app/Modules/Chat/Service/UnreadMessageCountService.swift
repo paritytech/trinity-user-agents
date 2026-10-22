@@ -19,17 +19,13 @@ import StructuredConcurrency
 ///   closed) increments the badge by 1.
 /// - a product room whose product sets its own badge counts that badge, not its rows. A product-source room has no
 ///   rows, so its `UnreadCount` badge is the only count it has (VERBOSITY-WASM-PRODUCT C4).
-/// - a product room that the user muted adds nothing, as its grey badge in the chat list says.
 final class UnreadMessageCountService {
     let databaseService: CoreDataServiceProtocol
-    let now: () -> Date
 
     init(
-        databaseService: CoreDataServiceProtocol = UserDataStorageFacade.shared.databaseService,
-        now: @escaping () -> Date = Date.init
+        databaseService: CoreDataServiceProtocol = UserDataStorageFacade.shared.databaseService
     ) {
         self.databaseService = databaseService
-        self.now = now
     }
 
     func totalUnreadBadgeMessageCount() async throws -> Int {
@@ -39,11 +35,10 @@ final class UnreadMessageCountService {
     /// `unsavedMessageId` names a message that was notified but not persisted (a stripped push);
     /// it counts as one more unread entry unless a row for it already exists.
     func totalUnreadBadgeMessageCount(unsavedMessageId: Chat.MessageId?) async throws -> Int {
-        let date = now()
-        return try await databaseService.performRead { context in
+        try await databaseService.performRead { context in
             let rows = try Self.fetchBadgeRows(in: context)
             let rooms = try Self.fetchBadgeRooms(in: context)
-            let savedCount = Self.badgeTotal(rows: rows, rooms: rooms, at: date)
+            let savedCount = Self.badgeTotal(rows: rows, rooms: rooms)
 
             guard let unsavedMessageId, try !Self.messageExists(unsavedMessageId, in: context) else {
                 return savedCount
@@ -65,41 +60,31 @@ struct UnreadBadgeRow: Hashable, Identifiable {
     }
 }
 
-/// What the app badge reads of a product room: the badge that its product sets and the mute of the user.
+/// What the app badge reads of a product room: the badge that its product sets.
 struct UnreadBadgeRoom: Equatable, Identifiable {
     let chatIdentifier: String
     /// True when the product sets the badge of the room. Then the rows of the room do not count.
     let setsOwnBadge: Bool
-    /// The `UnreadCount` badge of the product. Nil when the product sets another badge or none.
+    /// The `UnreadCount` badge of the product. Nil when the product sets no badge.
     let productCount: Int?
-    /// The stored mute: 0 is not muted, `Int64.max` is muted with no end.
-    let storedMutedUntil: Int64
 
     var identifier: String {
         chatIdentifier
-    }
-
-    func isMuted(at date: Date) -> Bool {
-        Chat.RoomUserState(mutedUntil: Chat.RoomUserState.mutedUntil(stored: storedMutedUntil), archived: false)
-            .isMuted(at: date)
     }
 }
 
 extension UnreadMessageCountService {
     /// The number of the app badge: one for each grouping id of the rows of the chats that count their rows, and
-    /// the `UnreadCount` badges of the product rooms. A room that the user muted adds nothing. A room whose product
-    /// sets the badge counts the badge, not its rows.
-    static func badgeTotal(rows: [UnreadBadgeRow], rooms: [UnreadBadgeRoom], at date: Date) -> Int {
-        let muted = Set(rooms.filter { $0.isMuted(at: date) }.map(\.chatIdentifier))
+    /// the `UnreadCount` badges of the product rooms. A room whose product sets the badge counts the badge, not its
+    /// rows.
+    static func badgeTotal(rows: [UnreadBadgeRow], rooms: [UnreadBadgeRoom]) -> Int {
         let ownBadge = Set(rooms.filter(\.setsOwnBadge).map(\.chatIdentifier))
         let counted = rows.filter { row in
             guard let chat = row.chatIdentifier else { return true }
-            return !muted.contains(chat) && !ownBadge.contains(chat)
+            return !ownBadge.contains(chat)
         }
         let groups = Set(counted.map { $0.groupingId ?? $0.messageId })
-        let productCount = rooms
-            .filter { !muted.contains($0.chatIdentifier) }
-            .reduce(0) { $0 + max($1.productCount ?? 0, 0) }
+        let productCount = rooms.reduce(0) { $0 + max($1.productCount ?? 0, 0) }
 
         return groups.count + productCount
     }
@@ -112,14 +97,13 @@ extension UnreadMessageCountService {
         ])
     }
 
-    /// The product rooms that change the app badge: a room whose product sets the badge, and a muted room.
+    /// The product rooms that change the app badge: a room whose product sets the badge.
     static func badgeRoomPredicate() -> NSPredicate {
         NSPredicate(
-            format: "%K != nil AND (%K != %d OR %K != 0)",
+            format: "%K != nil AND %K != %d",
             #keyPath(CDChatRoomMetadata.chat),
             #keyPath(CDChatRoomMetadata.badgeKind),
-            hostCountBadgeKind,
-            #keyPath(CDChatRoomMetadata.mutedUntil)
+            hostCountBadgeKind
         )
     }
 
@@ -131,8 +115,7 @@ extension UnreadMessageCountService {
         return UnreadBadgeRoom(
             chatIdentifier: chatIdentifier,
             setsOwnBadge: entity.badgeKind != hostCountBadgeKind,
-            productCount: entity.badgeKind == unreadCountBadgeKind ? Int(entity.badgeCount) : nil,
-            storedMutedUntil: entity.mutedUntil
+            productCount: entity.badgeKind == unreadCountBadgeKind ? Int(entity.badgeCount) : nil
         )
     }
 }
@@ -186,7 +169,6 @@ private extension UnreadMessageCountService {
         NSNumber(value: Int16(Chat.LocalMessage.Content.ContentType.reactionRemoved.rawValue)),
         NSNumber(value: Int16(Chat.LocalMessage.Content.ContentType.token.rawValue)),
         NSNumber(value: Int16(Chat.LocalMessage.Content.ContentType.deviceAdded.rawValue)),
-        NSNumber(value: Int16(Chat.LocalMessage.Content.ContentType.deviceRemoved.rawValue)),
-        NSNumber(value: Int16(Chat.LocalMessage.Content.ContentType.deleted.rawValue))
+        NSNumber(value: Int16(Chat.LocalMessage.Content.ContentType.deviceRemoved.rawValue))
     ]
 }

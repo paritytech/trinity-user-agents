@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,13 +9,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.platform.UriHandler
-import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -44,25 +38,12 @@ import io.paritytech.polkadotapp.feature_chats_api.presentation.model.*
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.ChatFeedContract
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.ChatFeed
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.ChatFeedToolbar
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.ChatRoomUnavailableLine
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.ReadAloudLine
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.dialog.MessageActionMenuDropdown
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.dialog.ReactionDetailsDialog
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.input.ChatInputRow
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.input.ProductCustomFooter
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.menu.ChatFeedMenu
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.messages.LocalChatFeedTimestampAnchor
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.*
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomAction
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductRoomUiState
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallAction
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallScreen
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallSlot
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.ProductRoomCallUiState
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.ChatRoomSearchBar
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.ChatRoomSearchResults
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.ChatRoomSearchUiState
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.RoomSearchAction
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.LocalChatFooterHeight
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.ChatMessageTimeFormatter
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.LocalChatMessageTimeFormatter
@@ -70,7 +51,6 @@ import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
-import io.paritytech.polkadotapp.common.R as RCommon
 
 private val ACTION_MENU_BLUR_RADIUS = 25.dp
 
@@ -86,9 +66,6 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
     val headerRenderer by contract.headerRenderer.collectAsStateWithLifecycle()
     val customAppearance by contract.customAppearance.collectAsStateWithLifecycle()
     val revealingMessageId by contract.revealingMessageId.collectAsStateWithLifecycle()
-    val roomState by contract.roomState.collectAsStateWithLifecycle()
-    val productRoomState by contract.productRoomState.collectAsStateWithLifecycle()
-    val roomSearchState by contract.roomSearchState.collectAsStateWithLifecycle()
     val popupState = contract.popupState.collectAsStateWithLifecycle().value
     var menuLayoutInfo by remember { mutableStateOf<MessageLayoutInfo?>(null) }
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -105,13 +82,9 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
 
     LifecycleStartEffect(Unit) {
         contract.onScreenStarted()
-        contract.onProductRoomAction(ProductRoomAction.Call(ProductRoomCallAction.ScreenShown(shown = true)))
 
         onStopOrDispose {
             contract.onScreenStopped()
-            // When the user leaves the room, the speech of its message stops (07-LATER §9.5).
-            contract.onProductRoomAction(ProductRoomAction.StopReadAloud)
-            contract.onProductRoomAction(ProductRoomAction.Call(ProductRoomCallAction.ScreenShown(shown = false)))
         }
     }
 
@@ -122,8 +95,6 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
             contract.setChatInactive()
         }
     }
-
-    BackHandler(enabled = roomSearchState.isActive) { contract.onRoomSearchAction(RoomSearchAction.Close) }
 
     ChatFeedScreenInternal(
         displayState = displayState,
@@ -136,11 +107,6 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         revealingMessageId = revealingMessageId,
         onMessageRevealComplete = contract::onMessageRevealComplete,
         toolbarActions = toolbarActions,
-        roomState = roomState,
-        productRoomState = productRoomState,
-        onProductRoomAction = contract::onProductRoomAction,
-        roomSearchState = roomSearchState,
-        onRoomSearchAction = contract::onRoomSearchAction,
         highlightEvents = contract.highlightEvents,
         scrollToPosition = contract.scrollToPosition,
         onBackClick = contract::onBackClick,
@@ -160,7 +126,6 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         onLoadOlderMessages = contract::onLoadOlderMessages,
         onLoadNewerMessages = contract::onLoadNewerMessages,
         onShowNewestMessages = contract::onShowNewestMessages,
-        onRetryRoom = contract::onRetryRoom,
         isActionMenuVisible = popupState is MessagePopUpUiState.ActionMenu,
         onMessageLongPress = { message, layoutInfo ->
             menuLayoutInfo = layoutInfo
@@ -175,13 +140,7 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         onLeaveChatRequest = contract::onLeaveChatRequest,
         onLeaveChatConfirm = contract::onLeaveChatConfirm,
         onBlockUserRequest = contract::onBlockUserRequest,
-        onBlockUserConfirm = contract::onBlockUserConfirm,
-        onDeleteMessageConfirm = contract::onDeleteMessageConfirm,
-        onProductLinkConfirm = { contract.onProductRoomAction(ProductRoomAction.OpenLink(it)) },
-        onPublicStorageNoticeAccept = contract::onPublicStorageNoticeAccept,
-        participants = productRoomState.participants.list,
-        participantSheet = productRoomState.participantSheet,
-        onProductRoomAction = contract::onProductRoomAction,
+        onBlockUserConfirm = contract::onBlockUserConfirm
     )
 
     when (popupState) {
@@ -217,12 +176,7 @@ private fun ChatFeedScreenInternal(
     revealingMessageId: ChatMessageId?,
     onMessageRevealComplete: (ChatMessageId) -> Unit,
     toolbarActions: ImmutableList<ChatToolbarAction>,
-    roomState: ChatRoomUiState,
-    productRoomState: ProductRoomUiState,
-    onProductRoomAction: (ProductRoomAction) -> Unit,
     highlightEvents: Flow<HighlightedMessage>,
-    roomSearchState: ChatRoomSearchUiState = ChatRoomSearchUiState(),
-    onRoomSearchAction: (RoomSearchAction) -> Unit = {},
     scrollToPosition: Flow<Int>,
     onBackClick: () -> Unit,
     onMessageChange: (String) -> Unit,
@@ -241,7 +195,6 @@ private fun ChatFeedScreenInternal(
     onLoadOlderMessages: () -> Unit,
     onLoadNewerMessages: () -> Unit,
     onShowNewestMessages: () -> Unit,
-    onRetryRoom: () -> Unit,
     isActionMenuVisible: Boolean,
     onMessageLongPress: (ChatMessageUiModel, MessageLayoutInfo) -> Unit
 ) {
@@ -264,47 +217,13 @@ private fun ChatFeedScreenInternal(
                 .blur(feedBlur)
         ) {
             ChatToolbarThemeScope(palette = customAppearance?.toolbarPalette) {
-                if (roomSearchState.isActive) {
-                    ChatRoomSearchBar(
-                        query = roomSearchState.query,
-                        onQueryChange = { onRoomSearchAction(RoomSearchAction.QueryChanged(it)) },
-                        onClose = { onRoomSearchAction(RoomSearchAction.Close) },
-                    )
-                } else {
-                    ChatFeedToolbar(
-                        displayState = displayState,
-                        toolbarActions = toolbarActions,
-                        subtitle = productRoomState.participants.count?.let { pluralStringResource(RCommon.plurals.chat_participants_count, it, it) }
-                            ?: roomState.subtitle,
-                        showAvatar = config.showAvatar,
-                        showsParticipants = productRoomState.participants.declared,
-                        onBack = onBackClick,
-                        onStartCallClick = onStartCallClick,
-                        onMenuClick = onMenuClick,
-                        onParticipantsClick = { onProductRoomAction(ProductRoomAction.ShowParticipants) },
-                        onSearchClick = if (roomSearchState.isAvailable) {
-                            { onRoomSearchAction(RoomSearchAction.Open) }
-                        } else {
-                            null
-                        },
-                        callButtons = productRoomState.call.buttons,
-                        onCallClick = { onProductRoomAction(ProductRoomAction.Call(ProductRoomCallAction.Request(it))) },
-                    )
-                }
-            }
-
-            ProductRoomCallSlot(call = productRoomState.call.call, onAction = { onProductRoomAction(ProductRoomAction.Call(it)) })
-            val screenCall = productRoomState.call.call as? ProductRoomCallUiState.Call.Active
-            if (productRoomState.call.showsCallScreen && screenCall != null) {
-                ProductRoomCallScreen(call = screenCall, roomName = username, onAction = { onProductRoomAction(ProductRoomAction.Call(it)) })
-            }
-
-            val readiness = chatMessagesLoadingState.dataOrNull?.readiness
-            if (readiness == ChatRoomReadinessUiState.UNAVAILABLE || readiness == ChatRoomReadinessUiState.FAILED) {
-                ChatRoomUnavailableLine(
-                    modifier = Modifier.fillMaxWidth(),
-                    isLoadFailure = readiness == ChatRoomReadinessUiState.FAILED,
-                    onRetry = onRetryRoom,
+                ChatFeedToolbar(
+                    displayState = displayState,
+                    toolbarActions = toolbarActions,
+                    showAvatar = config.showAvatar,
+                    onBack = onBackClick,
+                    onStartCallClick = onStartCallClick,
+                    onMenuClick = onMenuClick,
                 )
             }
 
@@ -313,9 +232,8 @@ private fun ChatFeedScreenInternal(
                     .fillMaxWidth()
                     .weight(1f)
             ) {
-                val uriHandler = rememberMessageLinkHandler(confirmsLinks = roomState.confirmsLinks, onProductRoomAction)
                 chatMessagesLoadingState.onLoaded {
-                    CompositionLocalProvider(LocalChatFooterHeight provides footerHeight, LocalUriHandler provides uriHandler) {
+                    CompositionLocalProvider(LocalChatFooterHeight provides footerHeight) {
                         ChatFeed(
                             chatMessagesState = it,
                             username = username,
@@ -334,73 +252,34 @@ private fun ChatFeedScreenInternal(
                             slideInNewMessages = customAppearance != null,
                             showNewMessagesSeparator = config.showNewMessagesSeparator,
                             dateSeparatorStyle = customAppearance?.dateSeparatorStyle,
-                            emptyPlaceholder = roomState.emptyPlaceholder,
                             onLoadOlderMessages = onLoadOlderMessages,
                             onLoadNewerMessages = onLoadNewerMessages,
                             onShowNewestMessages = onShowNewestMessages,
-                            authors = productRoomState.participants.authors,
-                            onAuthorClick = { onProductRoomAction(ProductRoomAction.SelectParticipant(it)) },
                         )
                     }
                 }
 
-                if (roomSearchState.isActive && roomSearchState.results != ChatRoomSearchUiState.Results.Idle) {
-                    ChatRoomSearchResults(
-                        results = roomSearchState.results,
-                        onSelect = { onRoomSearchAction(RoomSearchAction.Select(it.messageId)) },
-                        onLoadMore = { onRoomSearchAction(RoomSearchAction.LoadMore) },
-                    )
-                }
-
-                val density = LocalDensity.current
-                Column(
+                Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .onSizeChanged { footerHeight = with(density) { it.height.toDp() } }
                 ) {
-                    if (productRoomState.readingAloud) {
-                        ReadAloudLine(onStop = { onProductRoomAction(ProductRoomAction.StopReadAloud) })
-                    }
-
-                    val customFooter = productRoomState.customFooter
-                    if (customFooter != null) {
-                        ProductCustomFooter(renderer = customFooter, onHeightChanged = {})
-                    } else {
-                        ChatInputRow(
-                            inputState = chatInputUiState,
-                            username = username,
-                            onClearReply = onClearReply,
-                            onClearEdit = onClearEdit,
-                            onMessageChange = onMessageChange,
-                            onSendMessageClick = onSendMessageClick,
-                            onPayClick = onPayClick,
-                            onAttachClick = onAttachClick,
-                            onAcceptChatRequest = onAcceptChatRequest,
-                            onDeclineChatRequest = onDeclineChatRequest,
-                            onUnblockUserClick = onUnblockUserClick,
-                            onHeightChanged = {},
-                        )
-                    }
+                    ChatInputRow(
+                        inputState = chatInputUiState,
+                        username = username,
+                        onClearReply = onClearReply,
+                        onClearEdit = onClearEdit,
+                        onMessageChange = onMessageChange,
+                        onSendMessageClick = onSendMessageClick,
+                        onPayClick = onPayClick,
+                        onAttachClick = onAttachClick,
+                        onAcceptChatRequest = onAcceptChatRequest,
+                        onDeclineChatRequest = onDeclineChatRequest,
+                        onUnblockUserClick = onUnblockUserClick,
+                        onHeightChanged = { footerHeight = it },
+                    )
                 }
             }
-        }
-    }
-}
-
-/** In a room that confirms links, a tap on a link of a message asks the user to confirm the link first (02-DESIGN §6.1). */
-@Composable
-private fun rememberMessageLinkHandler(confirmsLinks: Boolean, onProductRoomAction: (ProductRoomAction) -> Unit): UriHandler {
-    val systemHandler = LocalUriHandler.current
-    val currentAction by rememberUpdatedState(onProductRoomAction)
-
-    return remember(confirmsLinks, systemHandler) {
-        if (confirmsLinks) {
-            object : UriHandler {
-                override fun openUri(uri: String) = currentAction(ProductRoomAction.ConfirmLink(uri))
-            }
-        } else {
-            systemHandler
         }
     }
 }
@@ -441,8 +320,7 @@ private fun ChatFeedPreview() {
                                     reactions = persistentListOf(),
                                     origin = ChatMessageOrigin.User,
                                     replyPreview = null,
-                                    isEdited = false,
-                                    isMarkdown = false
+                                    isEdited = false
                                 ),
                                 ChatMessageUiModel.Text(
                                     id = "2",
@@ -453,8 +331,7 @@ private fun ChatFeedPreview() {
                                     reactions = persistentListOf(),
                                     origin = ChatMessageOrigin.User,
                                     replyPreview = null,
-                                    isEdited = false,
-                                    isMarkdown = false
+                                    isEdited = false
                                 ),
                                 ChatMessageUiModel.ContactAdded(
                                     id = "3",
@@ -472,9 +349,6 @@ private fun ChatFeedPreview() {
                     revealingMessageId = null,
                     onMessageRevealComplete = {},
                     toolbarActions = persistentListOf(ChatToolbarAction.VIDEO_CALL),
-                    roomState = ChatRoomUiState.PersonChat,
-                    productRoomState = ProductRoomUiState.None,
-                    onProductRoomAction = {},
                     highlightEvents = emptyFlow(),
                     scrollToPosition = emptyFlow(),
                     onBackClick = {},
@@ -494,7 +368,6 @@ private fun ChatFeedPreview() {
                     onLoadOlderMessages = {},
                     onLoadNewerMessages = {},
                     onShowNewestMessages = {},
-                    onRetryRoom = {},
                     isActionMenuVisible = false,
                     onMessageLongPress = { _, _ -> }
                 )

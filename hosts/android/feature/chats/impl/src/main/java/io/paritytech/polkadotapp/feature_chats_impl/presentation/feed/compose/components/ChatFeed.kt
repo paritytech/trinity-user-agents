@@ -52,12 +52,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.co
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.separators.NewMessagesSeparator
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMessagesState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatPageEdgeUiState
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatRoomReadinessUiState
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.EmptyRoomPlaceholder
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatParticipantUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.utils.LocalChatFooterHeight
-import kotlinx.collections.immutable.ImmutableMap
-import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.flow.Flow
 import kotlin.math.abs
 
@@ -86,12 +81,9 @@ internal fun ChatFeed(
     slideInNewMessages: Boolean = false,
     showNewMessagesSeparator: Boolean = true,
     dateSeparatorStyle: ChatDateSeparatorStyle? = null,
-    emptyPlaceholder: EmptyRoomPlaceholder? = null,
     onLoadOlderMessages: () -> Unit = {},
     onLoadNewerMessages: () -> Unit = {},
     onShowNewestMessages: () -> Unit = {},
-    authors: ImmutableMap<ChatMessageId, ChatParticipantUiModel> = persistentMapOf(),
-    onAuthorClick: (participantId: String) -> Unit = {},
 ) {
     val footerHeight = LocalChatFooterHeight.current
     var initialMessageIds by remember { mutableStateOf<Set<ChatMessageId>?>(null) }
@@ -104,7 +96,7 @@ internal fun ChatFeed(
     //  When you will add a new item type - please consider more generic approach, that will generically isolate message indices
     //  without a need to rely on assumptions about items relative positioning (e.g. that footer always goes before all the messages)
     val newerPage = chatMessagesState.newerPage
-    val itemIndexOffset = (if (footerRenderer != null) 1 else 0) + (if (newerPage.showsRow) 1 else 0)
+    val itemIndexOffset = if (footerRenderer != null) 1 else 0
 
     val lazyListState = createLazyListStateForMessagesState(chatMessagesState, itemIndexOffset)
 
@@ -149,8 +141,6 @@ internal fun ChatFeed(
             reverseLayout = true
         ) {
             showFooterIfNeeded(footerRenderer)
-
-            newerPageRow(state = newerPage, onRetry = onLoadNewerMessages)
 
             itemsIndexed(
                 items = chatMessagesState.messages,
@@ -294,30 +284,6 @@ internal fun ChatFeed(
                             customBubbleStyle = customBubbleStyle,
                         )
 
-                        is ChatMessageUiModel.Actions -> ActionsMessage(
-                            modifier = messageModifier,
-                            message = message,
-                            showTimestamp = showTimestamps,
-                            grouping = grouping,
-                            isHighlighted = isHighlighted,
-                            canBeReplied = isInputEnabled,
-                            onMessageAction = onMessageAction,
-                            onLongPress = { layoutInfo -> onMessageLongPress(message, layoutInfo) },
-                            customBubbleStyle = customBubbleStyle,
-                        )
-
-                        is ChatMessageUiModel.ProductMedia -> ProductMediaMessage(
-                            modifier = messageModifier,
-                            message = message,
-                            showTimestamp = showTimestamps,
-                            grouping = grouping,
-                            isHighlighted = isHighlighted,
-                            canBeReplied = isInputEnabled,
-                            onMessageAction = onMessageAction,
-                            onLongPress = { layoutInfo -> onMessageLongPress(message, layoutInfo) },
-                            customBubbleStyle = customBubbleStyle,
-                        )
-
                         is ChatMessageUiModel.Custom<*> -> {
                             val drawingContext = MessageDrawingContext(
                                 grouping = grouping,
@@ -329,17 +295,6 @@ internal fun ChatFeed(
                                 .DrawMessage(message as ChatMessageUiModel.Custom<Any?>, drawingContext)
                         }
                     }
-                }
-
-                // The layout is reversed, so the author line that comes after the message draws above it.
-                val author = authors[message.id]
-                val olderAuthor = olderMessage?.let { authors[it.id] }
-                if (author != null && (!grouping.isTopAttached || olderAuthor?.participantId != author.participantId)) {
-                    ChatMessageAuthorLine(
-                        modifier = Modifier.padding(horizontal = PolkadotTheme.spacings.mediumIncreased),
-                        author = author,
-                        onClick = { onAuthorClick(author.participantId) },
-                    )
                 }
 
                 if (showGroupDateSeparator) {
@@ -360,22 +315,7 @@ internal fun ChatFeed(
                 }
             }
 
-            olderPageRow(state = chatMessagesState.olderPage, onRetry = onLoadOlderMessages)
-
             showHeaderIfNeeded(headerRenderer = headerRenderer)
-        }
-
-        val roomIsEmpty = chatMessagesState.messages.isEmpty() &&
-            chatMessagesState.olderPage == ChatPageEdgeUiState.END &&
-            chatMessagesState.readiness == ChatRoomReadinessUiState.READY
-        if (emptyPlaceholder != null && roomIsEmpty) {
-            EmptyRoomPlaceholderText(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .padding(horizontal = PolkadotTheme.spacings.large)
-                    .padding(bottom = footerHeight),
-                placeholder = emptyPlaceholder,
-            )
         }
 
         FloatingDateLabelOverlay(

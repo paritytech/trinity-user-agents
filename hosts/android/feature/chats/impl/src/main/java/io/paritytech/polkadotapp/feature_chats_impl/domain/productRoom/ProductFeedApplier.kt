@@ -45,7 +45,7 @@ class ProductFeedApplier @Inject constructor(
         when (update) {
             is ProductFeedUpdateModel.New -> addNew(extensionId, chatId, update.message, decoder, save)
             is ProductFeedUpdateModel.Edited -> edit(chatId, update, decoder)
-            is ProductFeedUpdateModel.Deleted -> delete(chatId, update.messageId, decoder)
+            is ProductFeedUpdateModel.Replaced -> replace(chatId, update.message, decoder)
             is ProductFeedUpdateModel.ReactionPlaced -> react(extensionId, chatId, update.messageId, update.participantId, update.emoji, decoder, placed = true)
             is ProductFeedUpdateModel.ReactionRemoved ->
                 react(extensionId, chatId, update.messageId, update.participantId, update.emoji, decoder, placed = false)
@@ -78,7 +78,6 @@ class ProductFeedApplier @Inject constructor(
                 content = message.content,
                 status = ChatMessage.Status.NEW,
                 replyToMessageId = message.replyTo?.let { find(chatId, it, decoder)?.id },
-                originParticipantId = message.participantId,
             ),
         )
     }
@@ -94,10 +93,12 @@ class ProductFeedApplier @Inject constructor(
         messageRevisionRepository.saveRevision(message.id, update.content, chatId, update.editedAt, decoder)
     }
 
-    private suspend fun delete(chatId: ChatId, messageId: String, decoder: CustomContentDecoder) {
-        val message = find(chatId, messageId, decoder) ?: throw ProductFeedRejection.UnknownMessage()
-        if (message.content is ChatMessage.Content.Deleted) return
-        chatMessageRepository.markMessageDeleted(message.id)
+    // A message that changed for another reason than an edit takes the new body in place and is not marked edited.
+    private suspend fun replace(chatId: ChatId, replacement: ProductRoomMessage, decoder: CustomContentDecoder) {
+        val message = requireLive(chatId, replacement.messageId, decoder)
+        if (message.origin !is ChatMessageOrigin.Extension) throw ProductFeedRejection.NotOwner()
+
+        chatMessageRepository.updateMessageContent(message.id, replacement.content, decoder)
     }
 
     // The reaction table keeps one row for each origin kind, so the participants of the product share one row an emoji.
@@ -127,9 +128,7 @@ class ProductFeedApplier @Inject constructor(
     }
 
     private suspend fun requireLive(chatId: ChatId, messageId: String, decoder: CustomContentDecoder): ChatMessage {
-        val message = find(chatId, messageId, decoder)
-        if (message == null || message.content is ChatMessage.Content.Deleted) throw ProductFeedRejection.UnknownMessage()
-        return message
+        return find(chatId, messageId, decoder) ?: throw ProductFeedRejection.UnknownMessage()
     }
 
     // A product id names a message of this room only, whatever the store holds under the same id elsewhere.

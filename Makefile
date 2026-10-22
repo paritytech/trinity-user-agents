@@ -199,8 +199,8 @@ ios-bootstrap: ## Generate everything hosts/ios needs before Xcode can load its 
 	@echo "hosts/ios can now be opened in Xcode."
 
 ios-build: ## Rebuild the local Rust package and the TestFlight-configured iOS simulator app.
-	@test -d "$(IOS_HOST)/polkadot-app.xcodeproj" || { \
-		echo "Missing iOS app at $(IOS_HOST); set IOS_HOST to polkadot-app-ios-v2 or hosts/ios"; \
+	@test -d "$(IOS_HOST)/.git" || { \
+		echo "Missing iOS checkout at $(IOS_HOST); set IOS_HOST to polkadot-app-ios-v2"; \
 		exit 1; \
 	}
 	./ios/truapi-host/scripts/rebuild.sh

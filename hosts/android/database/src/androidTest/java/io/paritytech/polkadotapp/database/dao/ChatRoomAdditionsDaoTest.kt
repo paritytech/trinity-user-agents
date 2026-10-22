@@ -34,24 +34,23 @@ class ChatRoomAdditionsDaoTest {
     }
 
     @Test
-    fun theUserStateKeepsTheDeclarationsOfTheRoom() = runBlocking<Unit> {
+    fun theContactKeepsTheDeclarationsOfTheRoom() = runBlocking<Unit> {
         val dao = database.chatRoomDeclarationsDao()
-        dao.setFeatures(room, byteArrayOf(1, 0, 0, 0, 0, 0))
+        dao.setFeatures(room, byteArrayOf(2, 0, 0))
 
-        dao.setUserState(room, mutedUntil = Long.MAX_VALUE, archived = true)
+        dao.setContact(room, byteArrayOf(7))
 
         val row = dao.get(room)!!
-        assertTrue(row.features!!.contentEquals(byteArrayOf(1, 0, 0, 0, 0, 0)))
-        assertEquals(Long.MAX_VALUE, row.mutedUntil)
-        assertEquals(listOf(Long.MAX_VALUE), dao.observeUserStates().first().map { it.mutedUntil })
+        assertTrue(row.features!!.contentEquals(byteArrayOf(2, 0, 0)))
+        assertTrue(row.contact!!.contentEquals(byteArrayOf(7)))
     }
 
     @Test
-    fun aRoomThatTheUserLeftAloneHasNoUserState() = runBlocking<Unit> {
+    fun onlyTheRoomsWithAContactAreListedAsContactRooms() = runBlocking<Unit> {
         val dao = database.chatRoomDeclarationsDao()
-        dao.setFeatures(room, byteArrayOf(1, 0, 0, 0, 0, 0))
-        dao.setUserState(otherRoom, mutedUntil = null, archived = false)
+        dao.setFeatures(room, byteArrayOf(2, 0, 0))
+        dao.setContact(otherRoom, byteArrayOf(7))
 
-        assertEquals(emptyList<Long?>(), dao.observeUserStates().first().map { it.mutedUntil })
+        assertEquals(listOf(otherRoom.toList()), dao.observeWithContact().first().map { it.chatId.toList() })
     }
 }

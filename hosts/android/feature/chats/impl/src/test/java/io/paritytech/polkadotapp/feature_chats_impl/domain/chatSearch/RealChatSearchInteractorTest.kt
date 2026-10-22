@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.chatSearch
 
+import io.mockk.coEvery
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPreview
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.search.ChatListSearchResult
@@ -10,7 +12,6 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatAvatar
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatDisplay
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatMessageSearchHit
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatSummaryBadge
-import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.domain.search.CompoundChatSearchResultProvider
 import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.StartChatDataUseCase
 import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.SubscribeActiveChatsUseCase
@@ -29,6 +30,12 @@ class RealChatSearchInteractorTest {
     private val compoundChatSearchResultProvider: CompoundChatSearchResultProvider = mock()
     private val startChatDataUseCase: StartChatDataUseCase = mock()
     private val chatSearchRecentsRepository: ChatSearchRecentsRepository = mock()
+    private val productRooms = mutableListOf<ChatId>()
+    private val productHits = mutableListOf<ChatMessageSearchHit>()
+    private val productRoomMessageSearch = mockk<ProductRoomMessageSearch> {
+        coEvery { productRooms(any()) } answers { firstArg<List<ChatId>>().filter { it in productRooms } }
+        coEvery { search(any(), any(), any()) } answers { productHits.toList() }
+    }
 
     private val sut = RealChatSearchInteractor(
         subscribeActiveChats = subscribeActiveChats,
@@ -36,7 +43,24 @@ class RealChatSearchInteractorTest {
         compoundChatSearchResultProvider = compoundChatSearchResultProvider,
         startChatDataUseCase = startChatDataUseCase,
         chatSearchRecentsRepository = chatSearchRecentsRepository,
+        productRoomMessageSearch = productRoomMessageSearch,
     )
+
+    @Test
+    fun `messages of a person chat of the chat product come from the product, newest first with the others`() = runBlocking<Unit> {
+        val nativeChat = chat(name = "alice.01")
+        val productChat = chat(name = "bob.01")
+        productRooms += productChat.id
+        productHits += messageHit(snippet = "meet at noon", chatId = productChat.id).copy(messageId = "p1", timestamp = 20L)
+        withMessages(Result.success(listOf(messageHit(snippet = "meet later", chatId = nativeChat.id).copy(timestamp = 10L))))
+        withApps(emptyList())
+
+        val messages = search("meet", chats = listOf(nativeChat, productChat)).assertSuccess()
+            .filterIsInstance<ChatListSearchResult.Message>()
+
+        assertEquals(listOf("bob.01", "alice.01"), messages.map { it.title })
+        verify(chatMessageRepository).searchMessages("meet", listOf(nativeChat.id))
+    }
 
     // region — search() pipeline (mocked sources) ---------------------------------------------
 
@@ -133,30 +157,6 @@ class RealChatSearchInteractorTest {
 
     // endregion
 
-    // region — product rooms (D29) -----------------------------------------------------------
-
-    @Test
-    fun `a product-source room matches by its title only and its product is never asked`() = runBlocking<Unit> {
-        val hostStore = chat(name = "Sample: host store", roomPolicy = ChatRoomPolicy.Defaults)
-        val productSource = chat(
-            name = "Sample: product source",
-            roomPolicy = ChatRoomPolicy.Defaults.copy(messageStore = ChatRoomPolicy.MessageStore.PRODUCT),
-        )
-        val person = chat(name = "alice.01")
-        withMessages(Result.success(emptyList()))
-        withApps(emptyList())
-
-        val results = search("sample", chats = listOf(hostStore, productSource, person)).assertSuccess()
-
-        verify(chatMessageRepository).searchMessages("sample", listOf(hostStore.id, person.id))
-        assertEquals(
-            listOf("Sample: host store", "Sample: product source"),
-            results.filterIsInstance<ChatListSearchResult.Chat>().map { it.title },
-        )
-    }
-
-    // endregion
-
     // region — test harness ------------------------------------------------------------------
 
     private fun search(
@@ -200,7 +200,6 @@ class RealChatSearchInteractorTest {
     private fun chat(
         name: String,
         chatId: ChatId = ChatId.fromRawValue(name.encodeToByteArray()),
-        roomPolicy: ChatRoomPolicy? = null,
     ): Chat {
         return Chat(
             id = chatId,
@@ -210,7 +209,6 @@ class RealChatSearchInteractorTest {
             unreadBadge = ChatSummaryBadge.None,
             hasUnseenReaction = false,
             customPreviewRenderer = null,
-            roomPolicy = roomPolicy,
         )
     }
 

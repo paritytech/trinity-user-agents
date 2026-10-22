@@ -17,14 +17,12 @@ protocol ProductChatMessaging: Sendable {
     func setRoomPreview(roomId: String, preview: Chat.RoomPreview) async throws
     /// Chat Extension v2 `delete_room`.
     func deleteRoom(roomId: String) async throws
-    /// Chat Extension v2 `set_room_metadata`, as Swift domain values.
-    func setRoomMetadata(roomId: String, name: String, description: String?, avatar: Chat.RoomImage?) async throws
+    /// Chat Extension v2 `set_room_metadata`: the name of the room. The native chat draws no description.
+    func setRoomMetadata(roomId: String, name: String) async throws
     /// What the product declared for a room. The core reads the configuration before each feed update.
     func roomDeclarations(roomId: String) async throws -> Chat.RoomDeclarations
     /// Chat Extension v2 `set_room_config`.
     func setRoomConfig(roomId: String, config: Chat.RoomConfig) async throws
-    /// Chat Extension v2 `set_room_footer`, second version.
-    func setRoomFooterConfig(roomId: String, footer: Chat.RoomFooterConfig) async throws
     /// Chat Extension v2 `update_feed` for a room that the host stores. Throws `Chat.ProductFeedError` for a
     /// refused update.
     func applyFeedUpdate(roomId: String, update: Chat.ProductFeedUpdate) async throws
@@ -34,12 +32,8 @@ protocol ProductChatMessaging: Sendable {
     func setRoomFeatures(roomId: String, features: Chat.RoomFeatures) async throws
     /// Chat Extension v2 additions `set_room_call`.
     func setRoomCall(roomId: String, call: Chat.RoomCall?) async throws
-    /// The rooms of the product that the user muted or archived.
-    func roomUserStates() async throws -> [Chat.RoomUserStateEntry]
-    /// The bot ids of the personas that the product registered.
-    func personaIds() async throws -> [String]
-    /// Chat Extension v2 additions `register_bot`: keeps a persona that the product speaks as (07-LATER §5).
-    func registerPersona(botId: String, name: String, icon: String?) async throws -> Chat.PersonaRegistration
+    /// Chat Extension v2 `set_room_contact`: the person the room is a conversation with.
+    func setRoomContact(roomId: String, contact: Chat.RoomContact) async throws
 }
 
 /// Serves those calls from a chat binding. Conformers differ only in where the
@@ -113,15 +107,9 @@ extension BoundProductChatMessaging {
         try await context.deleteRoom(for: bot, roomId: roomId)
     }
 
-    func setRoomMetadata(roomId: String, name: String, description: String?, avatar: Chat.RoomImage?) async throws {
+    func setRoomMetadata(roomId: String, name: String) async throws {
         let (context, bot) = try requireMessaging()
-        try await context.setRoomMetadata(
-            for: bot,
-            roomId: roomId,
-            name: name,
-            description: description,
-            avatar: avatar
-        )
+        try await context.setRoomMetadata(for: bot, roomId: roomId, name: name)
     }
 
     func roomDeclarations(roomId: String) async throws -> Chat.RoomDeclarations {
@@ -132,11 +120,6 @@ extension BoundProductChatMessaging {
     func setRoomConfig(roomId: String, config: Chat.RoomConfig) async throws {
         let (context, bot) = try requireMessaging()
         try await context.setRoomConfig(for: bot, roomId: roomId, config: config)
-    }
-
-    func setRoomFooterConfig(roomId: String, footer: Chat.RoomFooterConfig) async throws {
-        let (context, bot) = try requireMessaging()
-        try await context.setRoomFooterConfig(for: bot, roomId: roomId, footer: footer)
     }
 
     func applyFeedUpdate(roomId: String, update: Chat.ProductFeedUpdate) async throws {
@@ -159,19 +142,9 @@ extension BoundProductChatMessaging {
         try await context.setRoomCall(for: bot, roomId: roomId, call: call)
     }
 
-    func roomUserStates() async throws -> [Chat.RoomUserStateEntry] {
+    func setRoomContact(roomId: String, contact: Chat.RoomContact) async throws {
         let (context, bot) = try requireMessaging()
-        return try await context.roomUserStates(for: bot)
-    }
-
-    func personaIds() async throws -> [String] {
-        let (context, bot) = try requireMessaging()
-        return try await context.personaIds(for: bot)
-    }
-
-    func registerPersona(botId: String, name: String, icon: String?) async throws -> Chat.PersonaRegistration {
-        let (context, bot) = try requireMessaging()
-        return try await context.registerPersona(for: bot, botId: botId, name: name, icon: icon)
+        try await context.setRoomContact(for: bot, roomId: roomId, contact: contact)
     }
 }
 

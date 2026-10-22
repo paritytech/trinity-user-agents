@@ -9,12 +9,12 @@ import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime.WebViewRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductChatHostBridge
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductChatStoredState
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIChainDirectory
@@ -62,7 +62,6 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val webViewProviderFactory: ChatWebViewProvider.Factory,
     private val bootstrapInstaller: TrUAPIBootstrapInstaller,
     private val refCounter: Lazy<ProductWorkerRefCounter>,
-    private val chatStoredState: ProductChatStoredState,
     dispatchers: CoroutineDispatchers,
 ) {
     // `bootLosses` counts the renderers that stopped during a boot of this start chain.
@@ -104,11 +103,16 @@ class TrUAPIWorkerSupervisor @Inject constructor(
         }
     }
 
-    /** Starts again each worker whose last start failed. The app calls this in the foreground. */
+    /**
+     * Starts again each worker of the chat product whose last start failed. The app calls this in the foreground. The
+     * worker of any other product stays failed, as it did before the chat product.
+     */
     fun restartFailed() {
         scope.launch {
             transitions.withLock {
-                executionStates.value.filterValues { it is WorkerExecutionState.Failed }.keys.forEach { start(it) }
+                executionStates.value.filterValues { it is WorkerExecutionState.Failed }.keys
+                    .filter(ReservedProductIds::isChat)
+                    .forEach { start(it) }
             }
         }
     }
@@ -220,20 +224,22 @@ class TrUAPIWorkerSupervisor @Inject constructor(
 
     private fun chatBridge(productId: ProductId, script: ProductExecutable.Worker): ProductChatHostBridge? =
         if (script.includesChat) {
-            ProductChatHostBridge(productId, refCounter.get().chatMessaging(productId), chatStoredState)
+            ProductChatHostBridge(productId, refCounter.get().chatMessaging(productId))
         } else {
             null
         }
 
-    // The renderer takes the running script with it, and only a fresh boot runs the script again. A renderer
-    // that stops during the boot also gets a fresh boot. That boot waits for a page that does not come, and after
-    // its failure only a room that opens starts the worker again. Each start chain gets a limited number of
-    // these boots, so a renderer that always stops ends as a failed start.
+    // The renderer takes the running script with it, and only a fresh boot runs the script again. For the chat
+    // product, a renderer that stops during the boot also gets a fresh boot. That boot waits for a page that does
+    // not come, and after its failure only a room that opens starts the worker again. Each start chain gets a
+    // limited number of these boots, so a renderer that always stops ends as a failed start. The boot of any other
+    // product runs on to its own end, as before the chat product.
     private fun rebootAfterRendererLoss(productId: ProductId, worker: RunningWorker) {
         scope.launch {
             transitions.withLock {
                 if (workers[productId] !== worker) return@withLock
                 val booting = currentExecution(productId) == null
+                if (booting && !ReservedProductIds.isChat(productId)) return@withLock
                 stop(productId)
                 when {
                     !booting -> start(productId)

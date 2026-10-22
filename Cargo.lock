@@ -5661,6 +5661,7 @@ dependencies = [
  "hkdf",
  "itertools 0.14.0",
  "js-sys",
+ "jsonrpsee",
  "libc",
  "merlin",
  "nanoid",
@@ -5669,6 +5670,7 @@ dependencies = [
  "rand 0.8.7",
  "rusqlite",
  "rusqlite_migration",
+ "rustls",
  "scale-decode",
  "scale-info",
  "schnorrkel",
@@ -5700,6 +5702,7 @@ dependencies = [
  "wasm-bindgen-test",
  "web-sys",
  "web-time",
+ "webpki-roots 0.26.11",
  "x25519-dalek",
  "zeroize",
 ]
@@ -5758,7 +5761,6 @@ dependencies = [
  "tracing-subscriber",
  "trinity-stack",
  "truapi",
- "unicode-normalization",
  "unicode-width",
  "zeroize",
 ]

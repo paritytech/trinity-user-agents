@@ -5,9 +5,12 @@ import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.utils.flatMap
+import io.paritytech.polkadotapp.common.utils.mapToSet
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.repository.getWalletAccountIdIn
 import io.paritytech.polkadotapp.feature_chain_resources_api.data.repository.ResourcesRepository
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContacts
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isContactChat
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatSearchRecentsRepository
@@ -20,6 +23,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.SubscribeActi
 import io.paritytech.polkadotapp.feature_usernames_api.domain.model.FoundUser
 import io.paritytech.polkadotapp.feature_usernames_api.domain.usecase.SearchUsernamesUseCase
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 
@@ -45,6 +49,8 @@ class RealAddContactInteractor @Inject constructor(
     private val subscribeActiveChats: SubscribeActiveChatsUseCase,
     private val chatSearchRecentsRepository: ChatSearchRecentsRepository,
     private val contactsRepository: ContactsRepository,
+    private val personChatMode: PersonChatMode,
+    private val personChatContacts: PersonChatContacts,
 ) : AddContactInteractor {
     override suspend fun searchContacts(query: String): Result<List<ContactSearchResult>> {
         val ownAccountId = accountRepository.getWalletAccountIdIn(chainRegistry.getChain(knownChains.people))
@@ -77,12 +83,34 @@ class RealAddContactInteractor @Inject constructor(
         return startChatDataUseCase(contactAccountId)
     }
 
+    // While the chat product runs the chats, its contacts are the person chats.
     context(scope: ComputationalScope)
-    override fun observeRecentChats(): Flow<List<Chat>> = subscribeActiveChats()
-        .map { chats -> chats.filter { it.id.isContactChat() } }
+    override fun observeRecentChats(): Flow<List<Chat>> = if (personChatMode.isProductChat()) {
+        combine(subscribeActiveChats(), personChatContacts.observeContacts()) { chats, contacts ->
+            val accounts = contacts.associate { it.chatId to it.accountId }
+            chats.mapNotNull { chat ->
+                val account = accounts[chat.id] ?: return@mapNotNull null
+                Chat(
+                    id = chat.id,
+                    display = chat.display,
+                    preview = chat.preview,
+                    timestamp = chat.timestamp,
+                    unreadBadge = chat.unreadBadge,
+                    hasUnseenReaction = chat.hasUnseenReaction,
+                    customPreviewRenderer = chat.customPreviewRenderer,
+                    productContactAccountId = account,
+                )
+            }
+        }
+    } else {
+        subscribeActiveChats().map { chats -> chats.filter { it.id.isContactChat() } }
+    }
 
-    override fun observeBlockedAccountIds(): Flow<Set<AccountId>> = contactsRepository.subscribeBlockedContacts()
-        .map { contacts -> contacts.map { it.accountId }.toSet() }
+    override fun observeBlockedAccountIds(): Flow<Set<AccountId>> = if (personChatMode.isProductChat()) {
+        personChatContacts.observeContacts().map { contacts -> contacts.filter { it.blocked }.mapToSet { it.accountId } }
+    } else {
+        contactsRepository.subscribeBlockedContacts().map { contacts -> contacts.map { it.accountId }.toSet() }
+    }
 
     override suspend fun addRecent(chatId: ChatId) {
         chatSearchRecentsRepository.addRecent(chatId)

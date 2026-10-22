@@ -38,7 +38,7 @@ extension ShareInteractor: ShareInteractorInputProtocol {
         subscriptionTask = Task { [weak self, chatContactDataProviderFactory, productRooms, logger] in
             do {
                 let stream = chatContactDataProviderFactory.subscribeChatsWithPredicate(
-                    .chatWithNonBlockedContact()
+                    .listedChats(productChat: PersonChatMode.isProductChat)
                 )
                 for try await chats in stream {
                     let targets = chats.compactMap { chat -> ChatWithPeerMetadata? in

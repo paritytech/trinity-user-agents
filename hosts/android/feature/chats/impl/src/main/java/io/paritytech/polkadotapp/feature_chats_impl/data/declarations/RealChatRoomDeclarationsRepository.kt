@@ -4,9 +4,9 @@ import io.paritytech.polkadotapp.database.dao.ChatRoomDeclarationsDao
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomDeclarationsRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomContactModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toLocal
@@ -23,9 +23,9 @@ interface ChatRoomDeclarationsWriter {
 
     suspend fun setPreview(chatId: ChatId, preview: ChatRoomPreviewModel)
 
-    suspend fun setFooter(chatId: ChatId, footer: ChatRoomFooterModel)
-
     suspend fun setFeatures(chatId: ChatId, features: ChatRoomFeaturesModel)
+
+    suspend fun setContact(chatId: ChatId, contact: ChatRoomContactModel)
 
     suspend fun delete(chatId: ChatId)
 }
@@ -38,20 +38,24 @@ class RealChatRoomDeclarationsRepository @Inject constructor(
 
     override suspend fun get(chatId: ChatId): ChatRoomDeclarations? = dao.get(chatId.toLocal())?.toDomain()
 
+    override fun observeContactRooms(): Flow<Map<ChatId, ChatRoomDeclarations>> = dao.observeWithContact()
+        .map { rows -> rows.associate { ChatId.fromRawValue(it.chatId) to it.toDomain() } }
+        .distinctUntilChanged()
+
     override suspend fun setConfig(chatId: ChatId, config: ChatRoomConfigModel) =
         dao.setConfig(chatId.toLocal(), config.encode())
 
     override suspend fun setMetadata(chatId: ChatId, metadata: ChatRoomMetadataModel) =
-        dao.setMetadata(chatId.toLocal(), metadata.description, metadata.encodeAvatar())
+        dao.setMetadata(chatId.toLocal(), metadata.description)
 
     override suspend fun setPreview(chatId: ChatId, preview: ChatRoomPreviewModel) =
         dao.setPreview(chatId.toLocal(), preview.encode())
 
-    override suspend fun setFooter(chatId: ChatId, footer: ChatRoomFooterModel) =
-        dao.setFooter(chatId.toLocal(), footer.encode())
-
     override suspend fun setFeatures(chatId: ChatId, features: ChatRoomFeaturesModel) =
         dao.setFeatures(chatId.toLocal(), features.encode())
+
+    override suspend fun setContact(chatId: ChatId, contact: ChatRoomContactModel) =
+        dao.setContact(chatId.toLocal(), contact.encode())
 
     override suspend fun delete(chatId: ChatId) = dao.delete(chatId.toLocal())
 }

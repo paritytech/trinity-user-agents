@@ -165,7 +165,8 @@ private fun ChatRequestListItemPreview() {
                         username = "alice.polkadot",
                         avatarModel = AvatarUiModel.Mock.fromName("alice.polkadot")
                     ),
-                    timestamp = System.currentTimeMillis()
+                    timestamp = System.currentTimeMillis(),
+                    productRoom = null
                 ),
                 onClick = {},
                 onDeclineClick = {}

@@ -1348,7 +1348,6 @@ impl crate::platform::ChatPlatform for RecordingChatPlatform {
 		&self,
 		_product: &ProductContext,
 		request: truapi::latest::HostChatCreateRoomRequest,
-		_icon_url: String,
 	) -> Result<truapi::latest::HostChatCreateRoomResponse, truapi::latest::HostChatCreateRoomError>
 	{
 		self.created_rooms
@@ -8387,31 +8386,6 @@ fn a_worker_scans_only_shortly_after_the_user_taps_its_card() {
 }
 
 #[test]
-fn a_worker_scans_shortly_after_a_press_in_its_room_but_not_after_a_message() {
-	// A chat Worker offers a scan from a button or a command of its room. A
-	// posted message can come from another person, so it opens nothing.
-	let scanner = StubScannerPlatform::answering(HostScan::Dismissed);
-	let host = scanner_host_for(ProductExecutionKind::Worker, Some(scanner.clone()));
-	let posted = latest::HostChatActionSubscribeItem {
-		event: latest::ChatEvent::MessagePosted {
-			message_id: "m2".into(),
-			body: latest::ChatMessageBody::Text { text: "scan".into() },
-			reply_to: None,
-		},
-		..room_press()
-	};
-	host.connection.chat.publish(posted, &host.connection.services.spawner).unwrap();
-	assert_eq!(scan(&host), Err(CallError::Domain(v01::HostScannerScanError::NotVisible)));
-	assert!(scanner.asked().is_empty());
-
-	host.connection
-		.chat
-		.publish(room_press(), &host.connection.services.spawner)
-		.unwrap();
-	assert_eq!(scan(&host), Ok(v01::ScanOutcome::Dismissed));
-}
-
-#[test]
 fn each_host_answer_reaches_the_product_as_its_own_result() {
 	// `Unsupported` tells a product to use its own camera code, a dismissal is
 	// worth offering again, and a code the request does not accept never
@@ -9287,92 +9261,6 @@ fn a_payment_of_nothing_is_refused_before_the_host_sees_it() {
 	);
 }
 
-/// The user pressing a button of a message in a room of the product.
-fn room_press() -> latest::HostChatActionSubscribeItem {
-	latest::HostChatActionSubscribeItem {
-		room_id: "verbosity".into(),
-		peer: "native".into(),
-		event: latest::ChatEvent::ActionTriggered(latest::ActionTrigger {
-			message_id: "m1".into(),
-			action_id: "share".into(),
-			payload: None,
-		}),
-	}
-}
-
-/// A username directory that records what it was asked and finds `found`.
-struct StubUsernamesPlatform {
-	found: Vec<String>,
-	asked: Mutex<Vec<String>>,
-}
-
-#[truapi::async_trait]
-impl crate::platform::UsernamesPlatform for StubUsernamesPlatform {
-	async fn search_usernames(
-		&self,
-		product: &crate::platform::ProductContext,
-		prefix: &str,
-	) -> Result<Vec<String>, truapi::latest::GenericError> {
-		self.asked
-			.lock()
-			.unwrap()
-			.push(format!("{} searches {prefix}", product.product_id));
-		Ok(self.found.clone())
-	}
-}
-
-fn usernames_host(
-	kind: ProductExecutionKind,
-	directory: Arc<StubUsernamesPlatform>,
-) -> ProductRuntimeHost {
-	let host = scanner_host_for(kind, None);
-	host.connection.services.install_usernames_platform(directory);
-	host
-}
-
-fn search_usernames(
-	host: &ProductRuntimeHost,
-	prefix: &str,
-) -> Result<Vec<String>, CallError<v01::HostUsernamesSearchError>> {
-	use truapi::versioned::usernames as wire;
-	let result = futures::executor::block_on(truapi::api::Usernames::search(
-		host,
-		&CallContext::default(),
-		wire::HostUsernamesSearchRequest::V1(v01::HostUsernamesSearchRequest {
-			prefix: prefix.into(),
-		}),
-	));
-	match result {
-		Ok(wire::HostUsernamesSearchResponse::V1(response)) => Ok(response.usernames),
-		Err(CallError::Domain(wire::HostUsernamesSearchError::V1(error))) => {
-			Err(CallError::Domain(error))
-		},
-		Err(CallError::Unsupported) => Err(CallError::Unsupported),
-		Err(other) => panic!("unexpected search error: {other:?}"),
-	}
-}
-
-#[test]
-fn a_search_gives_only_usernames_and_at_most_twenty() {
-	// The host is not trusted with the limits: a product gets usernames only,
-	// each one time, and never more than the maximum.
-	let mut found = vec!["alice.1".to_string(), "alice.1".into(), "not a name".into()];
-	found.extend((2..40).map(|n| format!("alice.{n}")));
-	let directory = Arc::new(StubUsernamesPlatform { found, asked: Mutex::default() });
-	let host = usernames_host(ProductExecutionKind::Worker, directory.clone());
-	let expected: Vec<String> = (1..=20).map(|n| format!("alice.{n}")).collect();
-	assert_eq!(search_usernames(&host, " @Ali"), Ok(expected));
-	assert!(matches!(
-		search_usernames(&host, "a"),
-		Err(CallError::Domain(v01::HostUsernamesSearchError::InvalidRequest { .. }))
-	));
-	assert_eq!(*directory.asked.lock().unwrap(), ["greenmarket.dot searches ali"]);
-	assert_eq!(
-		search_usernames(&scanner_host_for(ProductExecutionKind::App, None), "ali"),
-		Err(CallError::Unsupported)
-	);
-}
-
 /// Call media that records what the core asked.
 #[derive(Default)]
 struct StubCallMedia {
@@ -9486,7 +9374,7 @@ fn call_media_starts_only_shortly_after_the_user_calls_or_accepts_in_that_room()
 		"greenmarket.dot",
 		latest::HostChatRoomEventsSubscribeItem {
 			room_id: "dm-7".into(),
-			event: latest::ChatRoomEvent::CallRequested { video: true },
+			event: latest::ChatRoomEvent::CallRequested { video: true, call_id: None },
 		},
 	);
 

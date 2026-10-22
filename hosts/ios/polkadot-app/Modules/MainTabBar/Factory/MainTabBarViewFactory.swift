@@ -131,9 +131,10 @@ enum MainTabBarViewFactory {
             flowState: spaFlowState
         )
 
-        #if targetEnvironment(simulator)
-            TrUAPIE2ENativeChat.startIfRequested(flowState: flowState, logger: Logger.shared)
-        #endif
+        // The contacts of the chat product open through its bot (HX2).
+        MainActor.assumeIsolated {
+            ProductContactChatOpener.shared.attach(registry: flowState.extensionsRegistry)
+        }
 
         return flowState
     }
@@ -166,17 +167,7 @@ enum MainTabBarViewFactory {
             coinageService: serviceCoordinator.coinageService,
             moduleNavigator: moduleNavigator
         )
-        // The room and Pocket handlers go first: they own the reserved `-` target,
-        // which the SPA handler would otherwise open as a product page.
         let productHandlers: [URLHandlingServiceProtocol] = [
-            ChatRoomLinkService(
-                storageFacade: UserDataStorageFacade.shared,
-                moduleNavigator: moduleNavigator,
-                linkOpener: ProductRoomLinkOpener(
-                    registry: flowState.extensionsRegistry,
-                    moduleNavigator: moduleNavigator
-                )
-            ),
             PocketOpenService.makeDefault(
                 flowState: flowState.flowState,
                 moduleNavigator: moduleNavigator

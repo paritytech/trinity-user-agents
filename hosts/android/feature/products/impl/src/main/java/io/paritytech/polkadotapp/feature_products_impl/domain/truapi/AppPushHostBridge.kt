@@ -3,6 +3,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 import io.novasama.substrate_sdk_android.extensions.fromHex
 import io.parity.truapi.PushHostBridge
 import io.paritytech.polkadotapp.common.data.os.OperatingSystem
+import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import io.paritytech.polkadotapp.tools_push_notifications_api.PushNotificationsHelper
 import uniffi.truapi.HostChatPushRoute
 import uniffi.truapi.HostPushDelivery
@@ -30,7 +32,10 @@ class AppPushHostBridge @Inject constructor(
     override suspend fun pushTokens(): HostPushTokens =
         HostPushTokens(service = HostPushService.FCM, token = pushNotifications.getCurrentToken(), voipToken = null)
 
+    // Only the chat product shows its pushes as person chats; another product's routes would claim pushes it never
+    // showed before the chat product.
     override suspend fun setChatPushRoutes(productId: String, routes: List<HostChatPushRoute>) {
+        if (!ReservedProductIds.isChat(ProductId.fromStoredValue(productId))) return
         chatRoutes.replace(productId, routes)
     }
 }

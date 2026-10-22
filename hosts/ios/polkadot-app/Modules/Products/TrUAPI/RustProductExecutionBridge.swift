@@ -70,15 +70,6 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func navigateTo(url: String) async throws {
-        // A product opens its own rooms only (02-DESIGN §13 item 15, P6.9).
-        if let room = ChatRoomLink(url) {
-            guard room.productId == dependencies.productId else {
-                throw HostNavigateToError.PermissionDenied
-            }
-            await MainActor.run { ModuleNavigator().openChat(room.chatId) }
-            return
-        }
-
         if let destination = dependencies.hostProvider.page(navigationDestination: url) {
             try await dependencies.navigationRouter.navigateTo(destination: destination)
         } else if let parsed = URL(string: url) {
@@ -92,16 +83,14 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         product _: ProductExecutionConfig,
         request: HostDevicePermissionRequest
     ) async throws -> TrUAPIPermissionDecision {
-        if request.isGrantedByE2EHarness { return .allowAlways }
-
-        return try await dependencies.permissionGuard.requestDevicePermissionDecision(
+        try await dependencies.permissionGuard.requestDevicePermissionDecision(
             productId: dependencies.productId,
             capability: request.deviceCapabilityType
         ).hostDecision
     }
 
     func devicePermissionStatus(request: HostDevicePermissionRequest) async throws -> DevicePermissionStatus {
-        request.isGrantedByE2EHarness ? .granted : await systemPermissionStatus(request)
+        await systemPermissionStatus(request)
     }
 
     func remotePermission(

@@ -389,27 +389,20 @@ withdrawn before it reaches the host, the absence of any permission prompt, and
 host failures.
 
 `Scanner` (`scan`) opens the host's own QR and barcode viewfinder (RFC
-"Host-drawn scanner"). The Android and iOS apps draw it. Both CLI host roles answer
+"Host-drawn scanner"). The Android app draws it. Both CLI host roles answer
 it from `TRUAPI_SCAN_TEXT`, or with a dismissal when it is unset, so the
 battery runs it. The playground's
 Diagnosis skips it, since dot.li has no viewfinder and answers `Unsupported`.
-
-Chat rooms that declare `sealed_attachments` get a user attachment above the
-inline bound as `ChatResource::Sealed` (RFC "Chat Extension v2 additions",
-"Sealed attachments"): the core encrypts it with a new key and stores the
-ciphertext in Bulletin parts that the product's allowance pays for, up to
-32 MiB. The iOS app seals through `sealChatAttachment` and opens sealed media
-itself, and so does the Android app. Both CLI host roles seal and list it; their chat
-page shows a sealed item as its size and parts. The web hosts do not list it.
 
 `ChatResource::Hop` names a file in the HOP pool of the native chat: the
 identifier of its root entry, the ticket that claims and opens it, the node
 that holds it, and its stated size, up to 128 MiB. Only media may be one. The
 chat product shows the photos and videos of native contacts with it. A native
 host gets the bytes with `openHopChatResource`, which claims them only from a
-node its `PersonChatPlatform` lists, keeps them, then calls
-`ackHopChatResource` with the entries so the node drops them; the iOS and
-Android apps keep opened files with their opened sealed files.
+node its `PersonChatPlatform` lists and reports the bytes received to an
+optional progress callback, keeps them, then calls `ackHopChatResource` with
+the entries so the node drops them; the iOS and Android apps keep the files
+they opened.
 
 A room of the chat product that declares `hop_attachments` sends user photos,
 videos and files that way too: the host passes the file to
@@ -417,13 +410,10 @@ videos and files that way too: the host passes the file to
 returns the `ChatResource::Hop` for the product. The core remembers each file
 it uploaded (`CoreStorageKey::HopUpload`) and never acks it, and the apps keep
 the bytes they sent, so showing one's own photo never drops it from the node
-before the contact claims it. `decode_chat_push` gives hosts the text of a
-person-chat push from the route key, for when no chat worker runs.
-
-`Usernames` (`usernames`) lets a product search the usernames of the network
-(RFC "Host username directory"). The iOS app searches with its chat contact
-search. The CLI host roles and dot.li have no directory and answer
-`Unsupported`, so the battery and the playground's Diagnosis skip it.
+before the contact claims it. `decode_chat_push` gives hosts what a
+person-chat push carries, from the route key, for when no chat worker runs: a
+call offer, or the kind of a message with what the host needs to word it in
+its own strings (`ChatPushContent`).
 
 `PersonChat` (`personChat`) serves the person-to-person chat product only, the
 `chat` label on any dotNS network, so the chat protocol of the iOS and Android
@@ -480,11 +470,17 @@ the last 180 seconds. The host gives its media signals to the product as
 iOS and Android apps run the WebRTC engine and the call screen of their native
 chat with the TURN relays of the backend. The other hosts answer `Unsupported`.
 
-`chat.onOpenLink` gives a chat product the text after `#` of a room link the
-user opened, `polkadot://<product>/-/chat/<room>#<payload>` or its web form
-`https://<name>.<root>.li/-/chat/<room>#<payload>` (RFC "Chat Extension v2
-additions", "Room link payloads"). The iOS app also reads a room link from its
-main scanner.
+A room of the chat product can have a contact (`chat.setRoomContact`, RFC
+"Chat Extension v2 additions", "Contact rooms"): the account, the username
+and where the conversation stands (`Invite`, `Outgoing`, `Incoming`,
+`Established`, `Blocked`, `PeerLeft`). A host that lists `contact_rooms` draws
+such a room as its own person-to-person chat, with its native header, menu,
+footers and bubbles, and reports accept, decline, block, unblock and leave as
+user actions. `chat.onOpenLink` gives the chat product what the user opened
+from an entry point of the host, such as a contact link, a scanned code or a
+username, `chat.onEditHistory` gives the earlier texts of a message for the
+host's edit history screen, and `chat.onSearchQuery` gives the messages of a
+room that match what the user typed, for the host's search.
 
 To run the playground locally in a plain browser tab, against a signing host on
 your own machine:
@@ -790,9 +786,8 @@ does not provision or pair a signer-bot user.
 To exercise the shared-core Chat path with the first-party TrUAPI Playground
 worker, build and serve the local product, install its worker into the
 simulator app's product storage, and open its native Chat application. The
-worker drives all five Chat methods and both Renderer methods. The iOS app
-keeps `register_bot` as a bot persona (Chat Extension v2 additions), so the
-launcher fails unless the `Chat/register_bot` row passes:
+worker drives all five Chat methods and both Renderer methods, so a host
+without bot registration reports that row red:
 
 ```bash
 make ios-chat-run
@@ -820,9 +815,9 @@ that product:
 make ios-chat-host-playground-run
 ```
 
-Run every integration with one iOS build using `make ios-chat-all`.
+Run both integrations with one iOS build using `make ios-chat-all`.
 
-The Android twin of `make ios-chat-run` runs the TrUAPI Playground worker
+The Android twin of that launcher runs the same TrUAPI Playground worker
 against the shared core inside a headless emulator, and writes its report to
 `playground/test-results/android-chat/diagnosis-report.md`:
 
@@ -844,10 +839,6 @@ Prerequisites:
 The `TRUAPI_ANDROID_E2E_*` environment variables override every default
 (device, APK, product, room, message, username, URL, report path); they
 mirror the iOS `TRUAPI_IOS_E2E_*` ones.
-
-Every chat host, the simulator and emulator switches and the known limits are
-listed in the Chat Extension v2 section of
-[docs/local-e2e-testing.md](docs/local-e2e-testing.md#8-chat-extension-v2).
 
 The public `host-playground` test list runs inside the native host apps; see [e2e/host-playground/README.md](e2e/host-playground/README.md).
 

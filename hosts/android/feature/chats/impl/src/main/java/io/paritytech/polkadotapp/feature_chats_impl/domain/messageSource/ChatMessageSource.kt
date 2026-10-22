@@ -48,6 +48,8 @@ data class ChatFeedSnapshot(
     val productStatuses: Map<ChatMessageId, ProductMessageStatusModel>,
     val paging: ChatPagingState,
     val readiness: ChatRoomReadiness,
+    /** The replied messages that [messages] does not hold, by id, drawn only as the quote of their replies. */
+    val replyQuotes: Map<ChatMessageId, ChatMessage> = emptyMap(),
 )
 
 /** What the room screen can ask at each end of the window. */
@@ -61,9 +63,6 @@ data class ChatPagingState(val older: Edge, val newer: Edge) {
 
         /** No more messages exist past this end. */
         END,
-
-        /** The last page for this end did not arrive. The room screen can ask again. */
-        FAILED,
     }
 
     companion object {
@@ -101,20 +100,16 @@ sealed interface ChatPageOutcome {
 
 /** An action of the user on the messages of a room. Ids are the ids of the window. */
 sealed interface ChatSourceAction {
-    data class Send(val content: ChatMessage.Content, val replyTo: ChatMessageId?) : ChatSourceAction
+    /** The user sent a message, which the outbox sends. The window shows the newest messages, as the native chat does. */
+    data object ShowNewest : ChatSourceAction
 
     data class Edit(val messageId: ChatMessageId, val content: ChatMessage.Content) : ChatSourceAction
-
-    data class Delete(val messageId: ChatMessageId) : ChatSourceAction
 
     /** Adds the reaction of the user, or removes it when the user has it. */
     data class ToggleReaction(val messageId: ChatMessageId, val emoji: String) : ChatSourceAction
 
     /** The user saw these messages. */
     data class MarkSeen(val messageIds: Set<ChatMessageId>) : ChatSourceAction
-
-    /** Sends a failed message again. */
-    data class Retry(val messageId: ChatMessageId) : ChatSourceAction
 }
 
 sealed interface ChatSourceActionOutcome {
@@ -122,7 +117,4 @@ sealed interface ChatSourceActionOutcome {
 
     /** The product refused the action, and the window shows the state before it. [reason] is for the user. */
     data class Refused(val reason: String?) : ChatSourceActionOutcome
-
-    /** The message stays in the window with the failed status. The user can retry it. */
-    data object Failed : ChatSourceActionOutcome
 }

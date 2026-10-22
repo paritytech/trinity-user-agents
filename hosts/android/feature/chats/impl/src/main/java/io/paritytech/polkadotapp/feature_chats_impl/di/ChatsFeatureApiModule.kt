@@ -16,6 +16,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.ChatMessageSender
 import io.paritytech.polkadotapp.feature_chats_api.domain.ContactChatSessionManager
 import io.paritytech.polkadotapp.feature_chats_api.domain.ContactDirectory
 import io.paritytech.polkadotapp.feature_chats_api.domain.ContactDisplayProvider
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatNotifications
 import io.paritytech.polkadotapp.feature_chats_api.domain.ReadOnlyChatRoomRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.chatRequest.ChatRequestServiceCoordinator
 import io.paritytech.polkadotapp.feature_chats_api.domain.devices.BroadcastDeviceLifecycleUseCase
@@ -46,6 +47,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.notifications.ChatMessa
 import io.paritytech.polkadotapp.feature_chats_impl.data.notifications.ChatPushNotificationHandler
 import io.paritytech.polkadotapp.feature_chats_impl.data.notifications.RealChatMessageNotificationSentRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.notifications.RealIncomingChatPushDecoder
+import io.paritytech.polkadotapp.feature_chats_impl.data.notifications.RealPersonChatNotifications
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatDraftRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageProcessingRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatMessageRepository
@@ -154,6 +156,9 @@ internal interface ChatsFeatureApiModule {
     @Binds
     @IntoSet
     fun bindNativePersonChatServices(impl: NativePersonChatServices): AppInitializer
+
+    @Binds
+    fun bindPersonChatNotifications(impl: RealPersonChatNotifications): PersonChatNotifications
 
     @Binds
     fun bindChatBroadcastUseCase(impl: RealChatBroadcastUseCase): ChatBroadcastUseCase

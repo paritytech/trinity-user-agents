@@ -3,7 +3,6 @@
 // declaration in `src/wasm/web/truapi_server.d.ts` types that module against
 // these interfaces so the worker can name it in a statically analysable import.
 
-import type { WasmChatQueryCore } from "./chat-queries.js";
 import type { PermissionAuthorizationRuntime } from "./worker-permission-authorization.js";
 
 /** Cancellable handle on one live render stream inside the core. */
@@ -12,48 +11,15 @@ export interface WorkerRendererSubscription {
   free(): void;
 }
 
-/**
- * One product-scoped core inside the worker. The chat query methods start one
- * query each: the core calls exactly one of the three callbacks, never during
- * the call, and a request the core refuses outright throws.
- */
-export interface WorkerProductRuntime extends WasmChatQueryCore {
+/** One product-scoped core inside the worker. */
+export interface WorkerProductRuntime {
   receiveFrame(frame: Uint8Array): Promise<void>;
   /** Drop cached contact handles after a contact is removed or blocked. */
   notifyContactsChanged(): void;
   dispose(): void;
   free(): void;
-  /**
-   * Publish one SCALE-encoded `HostChatActionSubscribeItem` of the first
-   * protocol version. Throws when the connection may not reach Chat.
-   */
+  /** Throws when the connection may not reach Chat. */
   publishChatAction(action: Uint8Array): void;
-  /**
-   * Publish one SCALE-encoded `HostChatActionSubscribeItem` of the current
-   * protocol version. Throws when the connection may not reach Chat.
-   */
-  publishChatEvent(event: Uint8Array): void;
-  /**
-   * Publish one SCALE-encoded `HostChatRoomEventsSubscribeItem`. Throws when
-   * the connection may not reach Chat, or the core refuses the event.
-   */
-  publishChatRoomEvent(item: Uint8Array): void;
-  /**
-   * Hold the worker of the product for a wake. No room: the product started.
-   * A room alone: a message is on its way to the room. A room and a watch: a
-   * notification arrived. Gives the end of the hold in milliseconds since the
-   * epoch, or `undefined` when the product used its notification wakes.
-   */
-  wakeProduct(roomId?: string, watchId?: string): number | undefined;
-  /**
-   * Store a user attachment as a preimage that the product pays for, and
-   * give its key. The core does not stage attachments yet, so it rejects.
-   */
-  stageChatAttachment(
-    roomId: string,
-    mimeType: string,
-    bytes: Uint8Array,
-  ): Promise<Uint8Array>;
   /**
    * Publish one action triggered inside a product-rendered body, as a
    * SCALE-encoded `HostRendererActionSubscribeItem`. Throws when the

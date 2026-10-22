@@ -4,29 +4,27 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import io.mockk.slot
-import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ProductMessageBody
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedRejection
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
-import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
-import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ChatCallClose
+import uniffi.truapi.ChatCallRecord
+import uniffi.truapi.ChatContactEvent
 import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageBody
-import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatMessageOrigin
 import uniffi.truapi.ChatMessageStatus
-import uniffi.truapi.ChatReaction
+import uniffi.truapi.ChatPaymentRecord
 import uniffi.truapi.ChatReactionSummary
-import uniffi.truapi.HostRejection
+import uniffi.truapi.ChatReplyPreview
 import uniffi.truapi.NativeChatFeedRejection
 import uniffi.truapi.ChatMessage as CoreChatMessage
 
@@ -36,7 +34,7 @@ class ProductChatHostBridgeFeedTest {
     private val productId = ProductId.fromStoredValue("game.dot")
     private val room = ProductChatIdParameter(ROOM)
     private val messaging: ProductChatMessaging = mockk()
-    private val bridge = ProductChatHostBridge(productId, messaging, mockk())
+    private val bridge = ProductChatHostBridge(productId, messaging)
 
     @Test
     fun `a stored new message keeps its product id, participant, time and status`() = runTest {
@@ -56,35 +54,53 @@ class ProductChatHostBridgeFeedTest {
     }
 
     @Test
-    fun `a custom body is drawn by the renderer of the product`() = runTest {
+    fun `a welcome text of a chat request draws as the native request message`() = runTest {
         val update = slot<ProductFeedUpdateModel>()
         coEvery { messaging.applyFeedUpdate(room, capture(update)) } returns Result.success(Unit)
 
-        bridge.updateFeed(ROOM, ChatFeedUpdate.Edited("m1", ChatMessageBody.Custom("card", byteArrayOf(4), "A card"), 3uL), persist = true)
+        bridge.updateFeed(ROOM, ChatFeedUpdate.New(coreMessage(ChatMessageBody.Text("hi"), request = true)), persist = true)
 
-        val edited = update.captured as ProductFeedUpdateModel.Edited
-        val custom = edited.content as ChatMessage.Content.Custom<*>
-        assertEquals(productId.toChatExtensionId(), custom.rendererId)
-        assertEquals(ProductsMessageContent("card", byteArrayOf(4).toDataByteArray(), "A card"), custom.content.getOrNull())
-        assertEquals(3L, edited.editedAt)
+        val message = (update.captured as ProductFeedUpdateModel.New).message
+        assertTrue(message.request)
+        val welcome = requireNotNull((message.content as ChatMessage.Content.ChatRequest).welcome)
+        assertEquals("hi", welcome.text)
     }
 
     @Test
-    fun `rich text keeps its media items`() = runTest {
+    fun `contact events, calls and payments draw as the rows of the native person chat`() {
+        assertEquals(ChatMessage.Content.ContactAdded, ChatMessageBody.Event(ChatContactEvent.CONTACT_ADDED).toContent())
+        assertEquals(ChatMessage.Content.LeftChat, ChatMessageBody.Event(ChatContactEvent.LEFT_CHAT).toContent())
+        assertTrue(ChatMessageBody.Event(ChatContactEvent.REQUEST_ACCEPTED).toContent() is ChatMessage.Content.ChatAccepted)
+        assertEquals(
+            ChatMessage.Content.ContactCall(video = true, answeredAt = 5, closedAt = 9, closedByUser = true),
+            ChatMessageBody.Call(ChatCallRecord(video = true, answeredAt = 5uL, closed = ChatCallClose(at = 9uL, byUser = true))).toContent(),
+        )
+        assertEquals(
+            ChatMessage.Content.ContactCall(video = false, answeredAt = null, closedAt = null, closedByUser = false),
+            ChatMessageBody.Call(ChatCallRecord(video = false, answeredAt = null, closed = null)).toContent(),
+        )
+        val payment = ChatMessageBody.Payment(ChatPaymentRecord(amount = "1000", legacy = false)).toContent()
+        assertEquals(1_000.toBigInteger(), (payment as ChatMessage.Content.CoinagePayment).totalValue.value)
+        // The native Android chat has no legacy Send message.
+        assertTrue(ChatMessageBody.Payment(ChatPaymentRecord(amount = "1000", legacy = true)).toContent() is ChatMessage.Content.Unsupported)
+    }
+
+    @Test
+    fun `rich text without media draws as a text message`() = runTest {
         val update = slot<ProductFeedUpdateModel>()
         coEvery { messaging.applyFeedUpdate(room, capture(update)) } returns Result.success(Unit)
 
         bridge.updateFeed(ROOM, ChatFeedUpdate.Edited("m1", ChatMessageBody.RichText("caption", emptyList()), 1uL), persist = true)
 
-        val body = ((update.captured as ProductFeedUpdateModel.Edited).content as ChatMessage.Content.ProductBody).body
-        assertEquals(ProductMessageBody.RichText("caption", emptyList()), body)
+        val content = (update.captured as ProductFeedUpdateModel.Edited).content
+        assertEquals("caption", (content as ChatMessage.Content.Text).text)
     }
 
     @Test
     fun `each refusal of the store reaches the product as its own rejection`() = runTest {
         suspend fun rejectionFor(failure: Throwable): Throwable? {
             coEvery { messaging.applyFeedUpdate(room, any()) } returns Result.failure(failure)
-            return runCatching { bridge.updateFeed(ROOM, ChatFeedUpdate.Deleted("m1"), persist = true) }.exceptionOrNull()
+            return runCatching { bridge.updateFeed(ROOM, ChatFeedUpdate.Replaced(coreMessage(ChatMessageBody.Text("hi"))), persist = true) }.exceptionOrNull()
         }
 
         assertTrue(rejectionFor(ProductFeedRejection.UnknownMessage()) is NativeChatFeedRejection.UnknownMessage)
@@ -105,36 +121,24 @@ class ProductChatHostBridgeFeedTest {
     }
 
     @Test
-    fun `a v1 reaction applies as a reaction of the product and answers the message it reacts to`() = runTest {
-        coEvery { messaging.applyFeedUpdate(room, any()) } returns Result.success(Unit)
-
-        val id = bridge.postMessage(ROOM, ChatMessageContent.Reaction(ChatReaction("m1", "👍")), alt = null)
-        bridge.postMessage(ROOM, ChatMessageContent.ReactionRemoved(ChatReaction("m1", "👍")), alt = null)
-
-        assertEquals("m1", id)
-        coVerify { messaging.applyFeedUpdate(room, ProductFeedUpdateModel.ReactionPlaced("m1", "product", "👍")) }
-        coVerify { messaging.applyFeedUpdate(room, ProductFeedUpdateModel.ReactionRemoved("m1", "product", "👍")) }
-    }
-
-    @Test
-    fun `a v1 reaction on a message the room does not hold is rejected`() = runTest {
-        coEvery { messaging.applyFeedUpdate(room, any()) } returns Result.failure(ProductFeedRejection.UnknownMessage())
-
-        val thrown = runCatching {
-            bridge.postMessage(ROOM, ChatMessageContent.Reaction(ChatReaction("m9", "👍")), alt = null)
-        }.exceptionOrNull()
-
-        assertTrue(thrown is HostRejection)
-    }
-
-    @Test
     fun `an update without a room is refused before the store`() = runTest {
-        val thrown = runCatching { bridge.updateFeed("", ChatFeedUpdate.Deleted("m1"), persist = true) }.exceptionOrNull()
+        val thrown = runCatching { bridge.updateFeed("", ChatFeedUpdate.StatusChanged("m1", ChatMessageStatus.READ), persist = true) }.exceptionOrNull()
 
         assertTrue(thrown is NativeChatFeedRejection.Rejected)
     }
 
-    private fun coreMessage(body: ChatMessageBody) = CoreChatMessage(
+    @Test
+    fun `a reply carries the quote of its replied message`() {
+        val reply = coreMessage(ChatMessageBody.Text("yes"))
+            .copy(replyPreview = ChatReplyPreview(ChatMessageOrigin("contact"), ChatMessageBody.Text("lunch?")))
+
+        val preview = requireNotNull(reply.toModel().replyPreview)
+
+        assertEquals("contact", preview.participantId)
+        assertEquals("lunch?", (preview.content as ChatMessage.Content.Text).text)
+    }
+
+    private fun coreMessage(body: ChatMessageBody, request: Boolean = false) = CoreChatMessage(
         messageId = "m1",
         origin = ChatMessageOrigin("alice"),
         timestamp = 9uL,
@@ -142,6 +146,8 @@ class ProductChatHostBridgeFeedTest {
         status = ChatMessageStatus.DELIVERED,
         replyTo = "parent",
         editedAt = null,
-        reactions = listOf(ChatReactionSummary("👍", 1u, false)),
+        reactions = listOf(ChatReactionSummary("👍", 1u, false, unseen = false)),
+        request = request,
+        replyPreview = null,
     )
 }

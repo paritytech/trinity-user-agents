@@ -21,9 +21,7 @@ data class ChatMessage(
     val origin: ChatMessageOrigin,
     val content: Content,
     val status: Status,
-    val replyToMessageId: String? = null,
-    /** The participant of a product room that wrote the message (Chat Extension v2). Null elsewhere. */
-    val originParticipantId: String? = null,
+    val replyToMessageId: String? = null
 ) : Identifiable {
     companion object {
         fun new(
@@ -165,10 +163,16 @@ data class ChatMessage(
         data class ProductBody(val body: ProductMessageBody) : Content
 
         /**
-         * What stays of a message that its product deleted. The host never shows it. It keeps the id taken, so a
-         * later change to the same id is refused.
+         * A call of a room of the chat product, as the product records it (`ChatCallRecord`). The time of the message is
+         * the time of the offer and its origin is the caller. Times are milliseconds since the Unix epoch.
          */
-        data object Deleted : Content
+        data class ContactCall(
+            val video: Boolean,
+            val answeredAt: Long?,
+            val closedAt: Long?,
+            /** True: the user ended or declined the call. */
+            val closedByUser: Boolean,
+        ) : Content
     }
 
     enum class Status(val deliveryRank: Int) {
@@ -270,8 +274,7 @@ fun Content.isInternal(): Boolean {
         this is Content.DataChannelClosed ||
         this is Content.DeviceAdded ||
         this is Content.DeviceRemoved ||
-        this is Content.CompactionCommit ||
-        this is Content.Deleted
+        this is Content.CompactionCommit
 }
 
 inline fun <reified T> ChatMessage.customContentOrNull(): T? {

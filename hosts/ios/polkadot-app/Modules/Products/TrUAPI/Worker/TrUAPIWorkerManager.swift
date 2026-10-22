@@ -33,11 +33,6 @@ protocol TrUAPIWorkerManaging: AnyObject, Sendable {
     @discardableResult
     func wake(_ productId: ProductId, reason: ChatWakeReason) async -> ChatWakeOutcome?
 
-    /// Gives a wake push of the push relay to the core, which wakes each product that watches its topic. For each
-    /// product that the core holds, a UIKit background task keeps the app active until the end of the hold
-    /// (VERBOSITY-WASM-PRODUCT A1). It throws when the core refuses the push.
-    func receiveWakePush(payload: String) async throws -> [PushWakeDelivery]
-
     /// Declares that the worker of the product runs while the app is in the foreground (VERBOSITY-WASM-PRODUCT I5).
     /// The core holds the worker while the host reports the app in the foreground. Pair each call with one
     /// ``withdrawForegroundWorker(for:)``.
@@ -202,23 +197,6 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         return outcome
     }
 
-    nonisolated func receiveWakePush(payload: String) async throws -> [PushWakeDelivery] {
-        let deliveries = try await references().handleWakePush(payload: payload)
-        for delivery in deliveries {
-            let productId = delivery.productId
-            guard case let .held(untilMs) = delivery.outcome else {
-                logger.info("[truapi] wake push for \(productId) on watch \(delivery.watchId): \(delivery.outcome)")
-                continue
-            }
-
-            await restartIfFaulted(productId)
-            let deadline = Date(timeIntervalSince1970: TimeInterval(untilMs) / 1_000)
-            await backgroundTasks.hold(productId: productId, until: deadline)
-            logger.info("[truapi] \(productId) woken by a push on watch \(delivery.watchId) until \(untilMs)")
-        }
-        return deliveries
-    }
-
     nonisolated func declareForegroundWorker(for productId: ProductId) {
         foregroundDeclarations.withLock { counts in
             counts[productId, default: 0] += 1
@@ -367,7 +345,10 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             bridge.start { [weak self] cards in
                 self?.publishCards(cards, of: productId)
             }
-            followFaults(of: runtime, productId: productId, boot: boot)
+            // Any other product keeps its worker after an uncaught error, as before the chat product.
+            if BundledChatProductResolver.isChatProduct(productId) {
+                followFaults(of: runtime, productId: productId, boot: boot)
+            }
         } catch {
             // Only a failure of the boot still holding the product: a stop may
             // already have cleared this one and a restart taken its place, and
@@ -395,7 +376,8 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         await worker.runtime.dispose()
     }
 
-    /// Stops the worker at its first uncaught error. The stream ends when the runtime goes, so the task ends too.
+    /// Stops the worker of the chat product at its first uncaught error. The stream ends when the runtime goes, so the
+    /// task ends too.
     private func followFaults(of runtime: TrUAPIWorkerRuntime, productId: ProductId, boot: Boot) {
         Task { [weak self] in
             for await message in runtime.faults {
@@ -443,7 +425,7 @@ extension ChatWakeReason {
         switch self {
         case .productStart: "product-start"
         case let .messageInFlight(roomId): "message-in-flight \(roomId)"
-        case let .notification(roomId, watchId): "notification \(roomId) \(watchId)"
+        case let .notification(roomId): "notification \(roomId)"
         }
     }
 }

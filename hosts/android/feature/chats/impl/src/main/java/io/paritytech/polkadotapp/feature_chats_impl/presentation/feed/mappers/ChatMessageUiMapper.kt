@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.mappers
 
+import android.net.Uri
 import io.paritytech.polkadotapp.common.utils.mapToSet
 import io.paritytech.polkadotapp.common.utils.nullIfEmpty
 import io.paritytech.polkadotapp.feature_calls_api.domain.models.ActiveCallState
@@ -9,26 +10,26 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageDirection
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReaction
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.MessageRevision
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.direction
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.isUser
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.previewText
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.EmojiReactionGroup
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessagePopUpUiState
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ReactionDetail
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ReplyPreview
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toRichText
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
-import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.ChatMenuActionsProvider
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.InputMessageRelation
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.MessagePopUpSelection
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.toUi
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ProductMessageMenuState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.CallResolutionContext
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.buildCallResolutionContext
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.resolveCallState
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.resolveContactCallState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.toCallPurposeUi
 import io.paritytech.polkadotapp.feature_chats_impl.utils.ChatMessageMappingHelper
 import kotlinx.collections.immutable.ImmutableList
@@ -39,7 +40,6 @@ import javax.inject.Inject
 class ChatMessageUiMapper @Inject constructor(
     private val helper: ChatMessageMappingHelper,
     private val chatMenuActionsProvider: ChatMenuActionsProvider,
-    private val productBodyUiMapper: ProductBodyUiMapper,
 ) {
     suspend fun map(
         messages: List<ChatMessage>,
@@ -48,12 +48,16 @@ class ChatMessageUiMapper @Inject constructor(
         revisions: Map<ChatMessageId, MessageRevision>,
         customMessageRenderers: Map<String, CustomChatMessageRenderer<*>> = emptyMap(),
         activeCall: ActiveCallState? = null,
-        /** The ticks that a product gave to the messages of the user. They replace the ticks of the host status. */
-        statusOverrides: Map<ChatMessageId, ChatMessageUiModel.Status> = emptyMap(),
-        /** Quote a replied message outside [messages] with a placeholder that the user can tap. */
-        quoteUnloadedReplies: Boolean = false,
+        /** The local files of the media of product messages that loaded. */
+        productMedia: Map<ChatResourceModel, Uri> = emptyMap(),
+        /** Replied messages that [messages] does not hold, for the quotes of their replies. */
+        replyQuotes: Map<ChatMessageId, ChatMessage> = emptyMap(),
     ): ImmutableList<ChatMessageUiModel> {
-        val messagesById: Map<String, ChatMessage> = messages.associateBy { it.id }
+        // A quote of a product message shows the media file that loaded, as the message does.
+        val messagesById: Map<String, ChatMessage> = (replyQuotes + messages.associateBy { it.id }).mapValues { (_, message) ->
+            val content = message.content
+            if (content is ChatMessage.Content.ProductBody) message.copy(content = content.toRichText(productMedia)) else message
+        }
         val callContext = buildCallResolutionContext(messages, activeCall)
 
         return messages.mapNotNull { message ->
@@ -81,8 +85,7 @@ class ChatMessageUiMapper @Inject constructor(
                 messageReactions = messageReactions,
                 customMessageRenderers = customMessageRenderers,
                 callContext = callContext,
-                statusOverride = statusOverrides[message.id],
-                quoteUnloadedReplies = quoteUnloadedReplies,
+                productMedia = productMedia,
             )
         }.toImmutableList()
     }
@@ -93,18 +96,9 @@ class ChatMessageUiMapper @Inject constructor(
         originDisplayResolver: MessageOriginDisplayResolver,
         messages: List<ChatMessageUiModel>,
         userInputState: ChatUserInputState,
-        roomPolicy: ChatRoomPolicy?,
-        productMenu: ProductMessageMenuState?,
     ): MessagePopUpUiState? {
         return when (selection.type) {
-            MessagePopUpSelection.Type.ACTIONS -> constructActionMenuPopUpState(
-                messageId = selection.messageId,
-                reactions = reactions,
-                messages = messages,
-                userInputState = userInputState,
-                roomPolicy = roomPolicy,
-                productMenu = productMenu?.takeIf { it.messageId == selection.messageId },
-            )
+            MessagePopUpSelection.Type.ACTIONS -> constructActionMenuPopUpState(selection.messageId, reactions, messages, userInputState)
             MessagePopUpSelection.Type.REACTION_DETAILS -> constructReactionDetailsPopUpState(selection.messageId, reactions, originDisplayResolver)
         }
     }
@@ -131,12 +125,6 @@ class ChatMessageUiMapper @Inject constructor(
             is ChatMessageUiModel.File -> ReplyPreview.Content.File(fileName = message.fileName, caption = message.text)
 
             is ChatMessageUiModel.CoinagePayment -> ReplyPreview.Content.Payment(message.amount, message.direction)
-
-            is ChatMessageUiModel.Actions -> ReplyPreview.Content.Text(message.text ?: message.buttons.firstOrNull()?.title ?: return null)
-
-            is ChatMessageUiModel.ProductMedia -> ReplyPreview.Content.Text(
-                message.text ?: message.media.firstNotNullOfOrNull { it.alt } ?: return null
-            )
 
             else -> return null
         }
@@ -175,11 +163,10 @@ class ChatMessageUiMapper @Inject constructor(
         messageReactions: ImmutableList<ChatMessageUiModel.Reaction>,
         customMessageRenderers: Map<String, CustomChatMessageRenderer<*>>,
         callContext: CallResolutionContext,
-        statusOverride: ChatMessageUiModel.Status?,
-        quoteUnloadedReplies: Boolean,
+        productMedia: Map<ChatResourceModel, Uri>,
     ): ChatMessageUiModel? {
         val direction = direction.toUi()
-        val status = statusOverride ?: status.toUi()
+        val status = status.toUi()
 
         return when (latestContent) {
             is ChatMessage.Content.Text -> mapText(
@@ -192,7 +179,6 @@ class ChatMessageUiMapper @Inject constructor(
                 revisions = revisions,
                 originDisplayResolver = originDisplayResolver,
                 mappingHelper = helper,
-                quoteUnloadedReplies = quoteUnloadedReplies,
                 messageReactions = messageReactions
             )
 
@@ -213,7 +199,6 @@ class ChatMessageUiMapper @Inject constructor(
                 revisions = revisions,
                 originDisplayResolver = originDisplayResolver,
                 mappingHelper = helper,
-                quoteUnloadedReplies = quoteUnloadedReplies,
                 messageReactions = messageReactions,
                 isEdited = isEdited
             )
@@ -249,25 +234,6 @@ class ChatMessageUiMapper @Inject constructor(
                 origin = origin,
             )
 
-            is ChatMessage.Content.ProductBody -> productBodyUiMapper.map(
-                message = this,
-                body = latestContent.body,
-                direction = direction,
-                status = status,
-                replyPreview = buildReplyPreview(
-                    message = this,
-                    allMessages = messagesById,
-                    revisions = revisions,
-                    originDisplayResolver = originDisplayResolver,
-                    mappingHelper = helper,
-                    quoteUnloadedReplies = quoteUnloadedReplies,
-                ),
-                reactions = messageReactions,
-                isEdited = isEdited,
-            )
-
-            is ChatMessage.Content.Deleted -> null
-
             is ChatMessage.Content.ChatRequest -> mapChatRequest(
                 message = this,
                 content = latestContent,
@@ -294,6 +260,29 @@ class ChatMessageUiMapper @Inject constructor(
                 origin = origin,
                 purpose = latestContent.purpose.toCallPurposeUi(),
                 state = resolveCallState(offer = this, callContext = callContext)
+            )
+
+            is ChatMessage.Content.ContactCall -> ChatMessageUiModel.Call(
+                id = id,
+                timestamp = timestamp,
+                direction = direction,
+                status = status,
+                origin = origin,
+                purpose = if (latestContent.video) ChatMessageUiModel.Call.Purpose.VIDEO_CALL else ChatMessageUiModel.Call.Purpose.AUDIO_CALL,
+                state = resolveContactCallState(offer = this, call = latestContent, activeCall = callContext.activeCall)
+            )
+
+            is ChatMessage.Content.ProductBody -> mapRichText(
+                message = this,
+                content = latestContent.toRichText(productMedia),
+                direction = direction,
+                status = status,
+                messagesById = messagesById,
+                revisions = revisions,
+                originDisplayResolver = originDisplayResolver,
+                mappingHelper = helper,
+                messageReactions = messageReactions,
+                isEdited = isEdited
             )
 
             is ChatMessage.Content.LeftChat,
@@ -342,8 +331,6 @@ class ChatMessageUiMapper @Inject constructor(
         reactions: Map<ChatMessageId, List<ChatMessageReaction>>,
         messages: List<ChatMessageUiModel>,
         userInputState: ChatUserInputState,
-        roomPolicy: ChatRoomPolicy?,
-        productMenu: ProductMessageMenuState?,
     ): MessagePopUpUiState.ActionMenu? {
         val messageReactions = reactions[messageId].orEmpty()
         val userReactedEmojis = messageReactions
@@ -353,19 +340,11 @@ class ChatMessageUiMapper @Inject constructor(
 
         val message = messages.find { it.id == messageId } ?: return null
 
-        val hostActions = chatMenuActionsProvider.getMessageActions(message, userInputState, roomPolicy)
-        val hostAllowsReactions = chatMenuActionsProvider.canLeaveMenuReactions(userInputState, roomPolicy)
-        val answer = productMenu as? ProductMessageMenuState.Answered
-
         return MessagePopUpUiState.ActionMenu(
             message = message,
             userReactedEmojis = userReactedEmojis,
-            canLeaveReactions = chatMenuActionsProvider.canLeaveReactions(hostAllowsReactions, answer?.menu),
-            allowedMenuActions = chatMenuActionsProvider
-                .applyProductMenu(hostActions, answer?.menu, answer?.icons.orEmpty())
-                .toImmutableList(),
-            allowedReactions = roomPolicy?.messageMenu?.allowedReactions?.toImmutableList(),
-            productActionsLoading = productMenu is ProductMessageMenuState.Loading,
+            canLeaveReactions = chatMenuActionsProvider.canLeaveMenuReactions(userInputState),
+            allowedMenuActions = chatMenuActionsProvider.getMessageActions(message, userInputState).toImmutableList(),
         )
     }
 }
@@ -398,16 +377,14 @@ private suspend fun mapText(
     revisions: Map<ChatMessageId, MessageRevision>,
     originDisplayResolver: MessageOriginDisplayResolver,
     mappingHelper: ChatMessageMappingHelper,
-    messageReactions: ImmutableList<ChatMessageUiModel.Reaction>,
-    quoteUnloadedReplies: Boolean,
+    messageReactions: ImmutableList<ChatMessageUiModel.Reaction>
 ): ChatMessageUiModel.Text {
     val replyPreview = buildReplyPreview(
         message = message,
         allMessages = messagesById,
         revisions = revisions,
         originDisplayResolver = originDisplayResolver,
-        mappingHelper = mappingHelper,
-        quoteUnloadedReplies = quoteUnloadedReplies,
+        mappingHelper = mappingHelper
     )
 
     return ChatMessageUiModel.Text(
@@ -419,8 +396,7 @@ private suspend fun mapText(
         replyPreview = replyPreview,
         reactions = messageReactions,
         origin = message.origin,
-        isEdited = isEdited,
-        isMarkdown = false
+        isEdited = isEdited
     )
 }
 
@@ -452,16 +428,14 @@ private suspend fun mapRichText(
     originDisplayResolver: MessageOriginDisplayResolver,
     mappingHelper: ChatMessageMappingHelper,
     isEdited: Boolean,
-    messageReactions: ImmutableList<ChatMessageUiModel.Reaction>,
-    quoteUnloadedReplies: Boolean,
+    messageReactions: ImmutableList<ChatMessageUiModel.Reaction>
 ): ChatMessageUiModel? {
     val replyPreview = buildReplyPreview(
         message = message,
         allMessages = messagesById,
         revisions = revisions,
         originDisplayResolver = originDisplayResolver,
-        mappingHelper = mappingHelper,
-        quoteUnloadedReplies = quoteUnloadedReplies,
+        mappingHelper = mappingHelper
     )
 
     return mapAttachmentToUi(
@@ -499,8 +473,7 @@ private fun mapAttachmentToUi(
             replyPreview = replyPreview,
             reactions = messageReactions,
             origin = message.origin,
-            isEdited = isEdited,
-            isMarkdown = false
+            isEdited = isEdited
         )
     }
 
@@ -602,11 +575,9 @@ private suspend fun buildReplyPreview(
     revisions: Map<ChatMessageId, MessageRevision>,
     originDisplayResolver: MessageOriginDisplayResolver,
     mappingHelper: ChatMessageMappingHelper,
-    quoteUnloadedReplies: Boolean,
 ): ReplyPreview? {
     val repliedId = message.replyToMessageId ?: return null
-    val repliedMessage = allMessages[repliedId]
-        ?: return if (quoteUnloadedReplies) ReplyPreview(messageId = repliedId, title = "", content = ReplyPreview.Content.Unloaded) else null
+    val repliedMessage = allMessages[repliedId] ?: return null
 
     val revision = revisions[repliedId]
     val content = revision?.content ?: repliedMessage.content
@@ -628,7 +599,7 @@ private suspend fun ChatMessage.Content.toReplyPreviewContent(
     is ChatMessage.Content.Text -> ReplyPreview.Content.Text(text)
     is ChatMessage.Content.ChatRequest -> welcome?.text?.let { ReplyPreview.Content.Text(it) }
     is ChatMessage.Content.RichText -> toReplyPreviewContent()
-    is ChatMessage.Content.ProductBody -> body.previewText()?.let { ReplyPreview.Content.Text(it) }
+    is ChatMessage.Content.ProductBody -> toRichText(productMedia = emptyMap()).toReplyPreviewContent()
     is ChatMessage.Content.CoinagePayment -> ReplyPreview.Content.Payment(mappingHelper.extractTokenAmount(this), direction.toUi())
 
     is ChatMessage.Content.ChatAccepted,
@@ -649,7 +620,7 @@ private suspend fun ChatMessage.Content.toReplyPreviewContent(
     is ChatMessage.Content.DeviceRemoved,
     is ChatMessage.Content.CompactionCommit,
     is ChatMessage.Content.CompactionUnavailable,
-    ChatMessage.Content.Deleted -> null
+    is ChatMessage.Content.ContactCall -> null
 }
 
 private fun ChatMessage.Content.RichText.toReplyPreviewContent(): ReplyPreview.Content {

@@ -12,7 +12,15 @@ import io.paritytech.polkadotapp.feature_calls_api.domain.OfferId
 import io.paritytech.polkadotapp.feature_calls_api.domain.models.CallDirection
 import io.paritytech.polkadotapp.feature_calls_impl.models.CallParams
 import io.paritytech.polkadotapp.feature_calls_impl.presentation.CallActivity
+import io.paritytech.polkadotapp.feature_calls_impl.product.RealProductCallMedia
+import io.paritytech.polkadotapp.feature_chats_api.domain.ChatRoomEventPublisher
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomEventModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.isExtensionChat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.util.UUID
 import javax.inject.Inject
@@ -21,7 +29,11 @@ class RealCallController @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val callStateTracker: CallStateTracker,
     private val incomingCallGate: IncomingCallGate,
+    private val roomEventPublisher: ChatRoomEventPublisher,
+    private val productCallMedia: RealProductCallMedia,
 ) : CallController {
+    private val answerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     override fun initiateCall(chatId: ChatId, callerName: String, withVideo: Boolean) {
         if (!hasRecordAudioPermission()) {
             Timber.w("initiateCall: RECORD_AUDIO not granted, aborting call setup")
@@ -34,6 +46,13 @@ class RealCallController @Inject constructor(
 
         context.startForegroundService(CallService.startCallIntent(context, params))
         context.startActivity(CallActivity.newIntent(context))
+
+        // The product of a person chat places the call under the id the host chose, which is also the id of its offer
+        // message. The session waits until the product starts the media of the call.
+        if (chatId.isExtensionChat()) {
+            productCallMedia.expectOutgoing(chatId, offerId)
+            answerScope.launch { roomEventPublisher.publish(chatId, ChatRoomEventModel.CallRequested(withVideo, callId = offerId)) }
+        }
     }
 
     override fun acceptCall(chatId: ChatId, offerId: OfferId, callerName: String, withVideo: Boolean) {
@@ -41,6 +60,11 @@ class RealCallController @Inject constructor(
             Timber.w("acceptCall: RECORD_AUDIO not granted, declining")
             context.startService(CallService.declineCallIntent(context))
             return
+        }
+
+        // The product of a person chat takes the answer and starts the media of the call, which the session waits for.
+        if (chatId.isExtensionChat()) {
+            answerScope.launch { roomEventPublisher.publish(chatId, ChatRoomEventModel.CallAnswered(offerId, accept = true)) }
         }
 
         val params = CallParams(chatId.value.value, offerId, callerName, CallDirection.Incoming, withVideo)

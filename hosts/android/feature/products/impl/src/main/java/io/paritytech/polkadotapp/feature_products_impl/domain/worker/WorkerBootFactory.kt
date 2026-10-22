@@ -71,9 +71,11 @@ class RealWorkerBootFactory @Inject constructor(
         return worker
     }
 
-    // A product whose manifest declares a foreground worker keeps it while the app is in the foreground, also with
-    // no room open, for as long as the product is booted (VERBOSITY-WASM-PRODUCT A2).
+    // The chat product, when its manifest declares a foreground worker, keeps it while the app is in the foreground,
+    // also with no room open, for as long as the product is booted (VERBOSITY-WASM-PRODUCT A2). Every other product
+    // holds its worker for the life of its chat.
     private suspend fun declareForegroundWorker(productId: ProductId, runtime: TrUAPIHostRuntime, scope: CoroutineScope) {
+        if (!ReservedProductIds.isChat(productId)) return
         val keepAlive = scriptResolver.resolveWorker(productId).getOrNull()?.keepAlive
         if (keepAlive != WorkerKeepAlive.FOREGROUND) return
         val workers = workerSupervisor.get()

@@ -1624,14 +1624,8 @@ mod tests {
 				"peer": "native",
 				"worker": {"configured": false, "connected": 0},
 				"timeouts": {"page": 10000, "send": 30000, "action": 10000, "query": 5000},
-				"capabilities": {
-					"features": crate::chat::CLI_CHAT_FEATURES,
-					"inlineAttachmentMaxBytes": 1024 * 1024,
-					"preimageAttachmentMaxBytes": 8 * 1024 * 1024,
-					"sealedAttachmentMaxBytes": 32 * 1024 * 1024,
-				},
+				"capabilities": { "features": crate::chat::CLI_CHAT_FEATURES },
 				"rooms": [],
-				"bots": [],
 				"messages": [],
 			})
 		);

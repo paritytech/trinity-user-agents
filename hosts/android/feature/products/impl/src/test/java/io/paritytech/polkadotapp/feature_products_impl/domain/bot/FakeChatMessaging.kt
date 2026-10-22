@@ -3,9 +3,9 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomContactModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFooterModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
@@ -23,7 +23,7 @@ class FakeChatMessaging(
         { _, _ -> notStubbed() },
 ) : ProductChatMessaging {
     val sentText = mutableListOf<Pair<String, String>>()
-    val footers = mutableListOf<Pair<ProductChatIdParameter, ChatRoomFooterModel>>()
+    val footers = mutableListOf<Pair<ProductChatIdParameter, Boolean>>()
 
     override suspend fun createRoom(request: CreateProductRoomRequest): Result<CreateProductRoomResult> =
         onCreateRoom(request)
@@ -51,8 +51,8 @@ class FakeChatMessaging(
 
     override suspend fun deleteRoom(chatIdParameter: ProductChatIdParameter) = notStubbed<Result<Unit>>()
 
-    override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, footer: ChatRoomFooterModel): Result<Unit> {
-        footers += chatIdParameter to footer
+    override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, showsTextInput: Boolean): Result<Unit> {
+        footers += chatIdParameter to showsTextInput
         return Result.success(Unit)
     }
 
@@ -65,6 +65,13 @@ class FakeChatMessaging(
         notStubbed<Result<Unit>>()
 
     override suspend fun setRoomCall(chatIdParameter: ProductChatIdParameter, call: ChatRoomCallModel?) = notStubbed<Result<Unit>>()
+
+    val contacts = mutableListOf<Pair<ProductChatIdParameter, ChatRoomContactModel>>()
+
+    override suspend fun setRoomContact(chatIdParameter: ProductChatIdParameter, contact: ChatRoomContactModel): Result<Unit> {
+        contacts += chatIdParameter to contact
+        return Result.success(Unit)
+    }
 
     var ringingClears = 0
 

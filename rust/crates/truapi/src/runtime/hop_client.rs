@@ -92,16 +92,28 @@ struct NativeHopTransport(subxt_rpcs::RpcClient);
 impl HopConnector for NativeHopConnector {
 	async fn connect(&self, url: &str) -> Result<Arc<dyn HopTransport>, HopCallError> {
 		let connect = async {
-			if url.starts_with("wss://") {
-				subxt_rpcs::client::RpcClient::from_url(url).await
-			} else {
-				subxt_rpcs::client::RpcClient::from_insecure_url(url).await
-			}
-			.map_err(|error| HopCallError::Transport(format!("cannot reach {url}: {error}")))
+			jsonrpsee::ws_client::WsClientBuilder::new()
+				.with_custom_cert_store(tls_config())
+				.build(url)
+				.await
+				.map(subxt_rpcs::client::RpcClient::new)
+				.map_err(|error| HopCallError::Transport(format!("cannot reach {url}: {error}")))
 		};
 		let client = bounded(connect, CONNECT_TIMEOUT, &format!("connecting to {url}")).await?;
 		Ok(Arc::new(NativeHopTransport(client)))
 	}
+}
+
+/// Webpki roots rather than the platform verifier: on Android the verifier needs
+/// a setup call from Java that a host's core library never gets.
+#[cfg(not(target_arch = "wasm32"))]
+fn tls_config() -> rustls::ClientConfig {
+	let roots = rustls::RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
+	rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+		.with_safe_default_protocol_versions()
+		.expect("the ring provider supports the default protocol versions")
+		.with_root_certificates(roots)
+		.with_no_client_auth()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -269,29 +281,44 @@ impl HopClient {
 	}
 
 	/// Uploads `data` as one file under `ticket`: chunk entries first, then the root.
-	/// Returns the identifier of the root.
+	/// Returns the identifier of the root. `progress` gets the bytes of the
+	/// file the node holds so far and its size: none before the first entry
+	/// goes, then after each chunk, and all of them once the root is in.
 	pub async fn upload(
 		&self,
 		ticket: &[u8; 32],
 		data: &[u8],
 		signer: &Sr25519Signer,
 		now_ms: u64,
+		mut progress: impl FnMut(u64, u64) + Send,
 	) -> Result<[u8; 32], HopCallError> {
 		let prepared = hop::prepare_upload(ticket, data).map_err(HopCallError::Transport)?;
 		let recipient = hop::ticket_keys(ticket).signer.public.to_bytes();
+		let total = data.len() as u64;
+		progress(0, total);
+		let mut sent = 0u64;
 		for chunk in &prepared.chunks {
 			self.submit(chunk, &recipient, signer, now_ms).await?;
+			sent = (sent + hop::HOP_CHUNK_BYTES as u64).min(total);
+			// The file is in only once its root is.
+			if sent < total {
+				progress(sent, total);
+			}
 		}
 		self.submit(&prepared.root, &recipient, signer, now_ms).await?;
+		progress(total, total);
 		Ok(prepared.identifier())
 	}
 
 	/// Downloads and opens the file `identifier` under `ticket`. Returns the
 	/// file and the identifiers of the pool entries an ack should drop.
+	/// `progress` gets the bytes of the file received so far and its size:
+	/// once the size is known, then after each chunk.
 	pub async fn download(
 		&self,
 		identifier: &[u8; 32],
 		ticket: &[u8; 32],
+		mut progress: impl FnMut(u64, u64) + Send,
 	) -> Result<(Vec<u8>, Vec<[u8; 32]>), HopCallError> {
 		let keys = hop::ticket_keys(ticket);
 		let (root, root_in_pool) = self.fetch(identifier, &keys).await?;
@@ -300,8 +327,12 @@ impl HopClient {
 			in_pool.push(*identifier);
 		}
 		match hop::open_root(ticket, &root).map_err(HopCallError::Transport)? {
-			HopPoolEntryV1::Inline(data) => Ok((data, in_pool)),
+			HopPoolEntryV1::Inline(data) => {
+				progress(data.len() as u64, data.len() as u64);
+				Ok((data, in_pool))
+			},
 			HopPoolEntryV1::Chunked { total_size, chunks } => {
+				progress(0, total_size);
 				let mut data = Vec::with_capacity(total_size as usize);
 				for chunk in chunks {
 					let chunk: [u8; 32] = chunk.try_into().map_err(|_| {
@@ -312,6 +343,7 @@ impl HopClient {
 						in_pool.push(chunk);
 					}
 					data.extend(hop::open_chunk(ticket, &entry).map_err(HopCallError::Transport)?);
+					progress(data.len() as u64, total_size);
 				}
 				if data.len() as u64 != total_size {
 					return Err(HopCallError::Transport(

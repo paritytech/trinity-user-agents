@@ -29,6 +29,7 @@ internal fun productMessage(
     replyTo = null,
     editedAt = null,
     reactions = emptyList(),
+    request = false,
 )
 
 /** The pages and user actions of a product, as a test writes them. It keeps every request. */

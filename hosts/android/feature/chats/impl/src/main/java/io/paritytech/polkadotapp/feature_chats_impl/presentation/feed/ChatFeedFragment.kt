@@ -12,13 +12,10 @@ import io.paritytech.polkadotapp.common.presentation.formatters.time.TimeFormatt
 import io.paritytech.polkadotapp.common.presentation.screens.BaseComposeFragment
 import io.paritytech.polkadotapp.common.utils.rememberCurrentTimeMillisWithDelay
 import io.paritytech.polkadotapp.feature_chats_api.presentation.transfer.LocalMultimediaMessageController
-import io.paritytech.polkadotapp.feature_chats_api.presentation.transfer.MultimediaMessageController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.ChatFeedScreen
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.messages.LocalChatFeedTimestampAnchor
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.ChatMessageTimeFormatter
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.LocalChatMessageTimeFormatter
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.LocalProductMediaController
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.resources.ProductMediaController
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import javax.inject.Inject
@@ -40,12 +37,6 @@ class ChatFeedFragment : BaseComposeFragment<ChatFeedViewModel>() {
     @Inject
     lateinit var timeFormatter: TimeFormatter
 
-    @Inject
-    lateinit var multimediaMessageController: MultimediaMessageController
-
-    @Inject
-    lateinit var productMediaController: ProductMediaController
-
     @Composable
     override fun Screen() {
         val anchorTimestamp by rememberCurrentTimeMillisWithDelay(1.minutes)
@@ -56,8 +47,8 @@ class ChatFeedFragment : BaseComposeFragment<ChatFeedViewModel>() {
             LocalTokenAmountFormatter provides tokenAmountFormatter,
             LocalInformationSizeFormatter provides informationSizeFormatter,
             LocalChatFeedTimestampAnchor provides anchorTimestamp,
-            LocalMultimediaMessageController provides multimediaMessageController,
-            LocalProductMediaController provides productMediaController,
+            // The transfers of the attachments of the native chat, and the media of product messages.
+            LocalMultimediaMessageController provides viewModel.productMedia
         ) {
             ChatFeedScreen(viewModel)
         }

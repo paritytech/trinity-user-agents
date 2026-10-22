@@ -40,7 +40,8 @@ extension ChatOpenService: URLHandlingServiceProtocol {
         }
 
         Task { @MainActor in
-            guard !shouldForce else {
+            // The chat product opens the chat with an account itself, and knows the account without the network.
+            guard !shouldForce, !(PersonChatMode.isProductChat && chatId.isPerson) else {
                 moduleNavigator.openChat(chatId)
                 return
             }

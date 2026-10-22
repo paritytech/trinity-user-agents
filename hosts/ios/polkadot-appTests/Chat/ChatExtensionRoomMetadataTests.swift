@@ -60,8 +60,8 @@ struct ChatExtensionRoomMetadataTests {
         try await savePlacedRoom(name: "Renamed")
 
         let declarations = try await storedDeclarations()
-        #expect(declarations?.description == "Weekly game")
-        #expect(declarations?.preview.text == "Your turn")
+        #expect(declarations?.contact == contact)
+        #expect(declarations?.preview.badge == .unreadCount(2))
         #expect(try await storedRoom()?.roomMetadata?.name == "Renamed")
     }
 
@@ -73,18 +73,10 @@ struct ChatExtensionRoomMetadataTests {
         #expect(chat.peerMetadata(using: StubRegistry(bot: bot)).icon == .image(pngData))
     }
 
-    /// A remote room icon loads through the chat resource resolver.
+    /// Drawing a remote room icon needs a fetch the chats list does not make.
     @Test
-    func aRoomWithARemoteIconLoadsItAsAResource() {
+    func aRoomWithARemoteIconShowsTheManifestIcon() {
         let chat = room(icon: "https://example.com/icon.png")
-
-        #expect(chat.peerMetadata(using: StubRegistry(bot: bot)).icon == .resource("https://example.com/icon.png"))
-    }
-
-    /// Only an inline image or an `https` URL is a room icon, so any other address keeps the manifest icon.
-    @Test
-    func aRoomWithAnotherAddressShowsTheManifestIcon() {
-        let chat = room(icon: "http://example.com/icon.png")
 
         #expect(chat.peerMetadata(using: StubRegistry(bot: bot)).icon == .product(domain: bot.identifier))
     }
@@ -128,20 +120,23 @@ private extension ChatExtensionRoomMetadataTests {
         try await chatRepository.saveOperation({ [chat] }, { [] }).asyncExecute()
     }
 
+    var contact: Chat.RoomContact {
+        Chat.RoomContact(account: Data(repeating: 3, count: 32), username: "alice", state: .established)
+    }
+
     func saveDeclarations() async throws {
-        let description = Chat.RoomDescriptionUpdate(chatId: chatId, description: "Weekly game", avatar: nil)
+        let contactUpdate = Chat.RoomContactUpdate(chatId: chatId, contact: contact)
         try await storageFacade.createRepository(mapper: AnyCoreDataMapper(
-            ChatRoomDeclarationUpdateMapper<Chat.RoomDescriptionUpdate>()
+            ChatRoomDeclarationUpdateMapper<Chat.RoomContactUpdate>()
         ))
-        .saveOperation({ [description] }, { [] })
+        .saveOperation({ [contactUpdate] }, { [] })
         .asyncExecute()
 
         let preview = Chat.RoomPreviewUpdate(chatId: chatId, preview: Chat.RoomPreview(
-            order: .byTimestamp,
             timestamp: nil,
-            badge: .hostDefault,
-            text: "Your turn",
-            ongoing: false
+            badge: .unreadCount(2),
+            lastMessage: nil,
+            unseenReaction: false
         ))
         try await storageFacade.createRepository(mapper: AnyCoreDataMapper(
             ChatRoomDeclarationUpdateMapper<Chat.RoomPreviewUpdate>()

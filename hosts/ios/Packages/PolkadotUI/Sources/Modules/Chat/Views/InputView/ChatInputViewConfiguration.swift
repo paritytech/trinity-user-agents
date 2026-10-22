@@ -34,11 +34,6 @@ public struct ChatInputViewConfiguration: ChatInputViewConfigurationProtocol, Eq
         self.sendAccessibilityId = sendAccessibilityId?.rawValue
     }
 
-    /// The hint of the empty input of a chat.
-    public static var defaultPlaceholder: String {
-        String(localized: .chatInputPlaceholder)
-    }
-
     public var activateOnAppear: Bool {
         false
     }

@@ -20,12 +20,17 @@ import javax.inject.Singleton
 class RealProductFeedListeners @Inject constructor(
     private val cache: ProductMessageCaching,
 ) : ProductFeedListeners {
-    private class Entry(val chatId: ChatId, val listener: ProductFeedListener)
+    private class Entry(val chatId: ChatId, val listener: ProductFeedListener, val showsRoom: Boolean)
 
     private val entries = MutableStateFlow<List<Entry>>(emptyList())
 
-    override fun register(chatId: ChatId, listener: ProductFeedListener): ProductFeedRegistration {
-        val entry = Entry(chatId, listener)
+    override fun register(chatId: ChatId, listener: ProductFeedListener): ProductFeedRegistration =
+        add(Entry(chatId, listener, showsRoom = true))
+
+    override fun watch(chatId: ChatId, listener: ProductFeedListener): ProductFeedRegistration =
+        add(Entry(chatId, listener, showsRoom = false))
+
+    private fun add(entry: Entry): ProductFeedRegistration {
         entries.update { it + entry }
         val cancelled = AtomicBoolean(false)
         return ProductFeedRegistration {
@@ -36,7 +41,8 @@ class RealProductFeedListeners @Inject constructor(
     override suspend fun deliver(chatId: ChatId, update: ProductFeedUpdateModel): Boolean {
         val listeners = entries.value.filter { it.chatId == chatId }
         listeners.forEach { it.listener.apply(chatId, update) }
-        if (listeners.isEmpty()) cache.apply(chatId, update)
-        return listeners.isNotEmpty()
+        val shown = listeners.any { it.showsRoom }
+        if (!shown) cache.apply(chatId, update)
+        return shown
     }
 }

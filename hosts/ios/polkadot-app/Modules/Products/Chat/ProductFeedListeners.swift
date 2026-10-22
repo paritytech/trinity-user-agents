@@ -48,14 +48,16 @@ final class ProductFeedListeners: @unchecked Sendable {
 
     private struct Entry {
         weak var listener: (any ProductFeedListening)?
+        /// A room screen shows the room. Other listeners only follow its updates, for example the call screen.
+        let showsRoom: Bool
     }
 
     private let entries = OSAllocatedUnfairLock(uncheckedState: [String: [UUID: Entry]]())
 
-    func register(_ listener: any ProductFeedListening, for chatId: Chat.Id) -> Registration {
+    func register(_ listener: any ProductFeedListening, for chatId: Chat.Id, showsRoom: Bool = true) -> Registration {
         let key = chatId.rawRepresentation
         let token = UUID()
-        entries.withLockUnchecked { $0[key, default: [:]][token] = Entry(listener: listener) }
+        entries.withLockUnchecked { $0[key, default: [:]][token] = Entry(listener: listener, showsRoom: showsRoom) }
 
         return Registration { [weak self] in
             self?.entries.withLockUnchecked { entries in
@@ -67,17 +69,18 @@ final class ProductFeedListeners: @unchecked Sendable {
         }
     }
 
-    /// Gives the update to each screen of the room, in turn. Gives false when no screen shows the room.
+    /// Gives the update to each listener of the room, in turn. Gives false when no screen shows the room.
     func deliver(_ update: ChatFeedUpdate, roomId: String, to chatId: Chat.Id) async -> Bool {
-        let listeners = entries.withLockUnchecked { entries in
-            (entries[chatId.rawRepresentation] ?? [:]).values.compactMap(\.listener)
+        let (listeners, showsRoom) = entries.withLockUnchecked { entries in
+            let roomEntries = (entries[chatId.rawRepresentation] ?? [:]).values.filter { $0.listener != nil }
+            return (roomEntries.compactMap(\.listener), roomEntries.contains(where: \.showsRoom))
         }
 
         for listener in listeners {
             await listener.apply(roomId: roomId, update: update)
         }
 
-        return !listeners.isEmpty
+        return showsRoom
     }
 
     /// Tells each screen of the room that the worker of its product stopped.

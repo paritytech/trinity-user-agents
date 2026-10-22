@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatExtensionId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 
@@ -21,20 +22,8 @@ internal class ProductMessageWindow(private val windowLimit: Int) {
         val ids: List<String>,
     )
 
-    /** A message that the window dropped for an action of the user, with its place. */
-    sealed interface RemovedMessage {
-        val message: ProductRoomMessage
-
-        data class Pending(override val message: ProductRoomMessage, val index: Int) : RemovedMessage
-
-        data class InPage(override val message: ProductRoomMessage, val anchor: ChatPageAnchorModel, val position: Int) : RemovedMessage
-    }
-
     val pages = mutableListOf<Page>()
     val messages = mutableMapOf<String, ProductRoomMessage>()
-
-    /** The messages that the user sent and the product did not confirm, the oldest first. */
-    val pending = mutableListOf<String>()
 
     /** The pages that the window dropped at each end. The last page is next to the window. */
     val droppedOlder = mutableListOf<ChatPageAnchorModel>()
@@ -55,7 +44,7 @@ internal class ProductMessageWindow(private val windowLimit: Int) {
         get() = pages.sumOf { it.ids.size }
 
     val orderedIds: List<String>
-        get() = pages.flatMap { it.ids } + pending
+        get() = pages.flatMap { it.ids }
 
     /** The request for the page before the window, or null when the room has no older message. */
     val olderAnchor: ChatPageAnchorModel?
@@ -65,10 +54,9 @@ internal class ProductMessageWindow(private val windowLimit: Int) {
             return if (hasFirstPage && !olderClosed && next != null) ChatPageAnchorModel.Before(next) else null
         }
 
-    fun contains(messageId: String): Boolean = pending.contains(messageId) || pages.any { messageId in it.ids }
+    fun contains(messageId: String): Boolean = pages.any { messageId in it.ids }
 
     fun replaceWith(item: ProductMessagesPage) {
-        val pendingMessages = pending.mapNotNull { messages[it] }
         messages.clear()
         droppedOlder.clear()
         droppedNewer.clear()
@@ -80,17 +68,9 @@ internal class ProductMessageWindow(private val windowLimit: Int) {
             messages[message.messageId] = message
             ids += message.messageId
         }
-        pendingMessages.forEach { messages[it.messageId] = it }
 
         pages.clear()
         pages += Page(anchor = ChatPageAnchorModel.Before(null), next = item.next, ids = ids)
-
-        val newest = item.messages.lastOrNull()
-        if (!hasFirstPage && seenMessageId == null && newest != null) {
-            // The first open of the room: the user saw what the room held before.
-            seenMessageId = newest.messageId
-            seenTimestamp = newest.timestamp
-        }
 
         hasFirstPage = true
         trimNewestMessages()
@@ -168,48 +148,6 @@ internal class ProductMessageWindow(private val windowLimit: Int) {
         if (messages.containsKey(message.messageId)) messages[message.messageId] = message
     }
 
-    /** Takes the message out of the window. The result can put it back. */
-    fun remove(messageId: String): RemovedMessage? {
-        val message = messages.remove(messageId) ?: return null
-
-        val pendingIndex = pending.indexOf(messageId)
-        if (pendingIndex != -1) {
-            pending.removeAt(pendingIndex)
-            return RemovedMessage.Pending(message, pendingIndex)
-        }
-
-        pages.forEachIndexed { pageIndex, page ->
-            val position = page.ids.indexOf(messageId)
-            if (position != -1) {
-                pages[pageIndex] = page.copy(ids = page.ids - messageId)
-                return RemovedMessage.InPage(message, page.anchor, position)
-            }
-        }
-
-        return null
-    }
-
-    fun putBack(removed: RemovedMessage) {
-        val message = removed.message
-
-        when (removed) {
-            is RemovedMessage.Pending -> {
-                messages[message.messageId] = message
-                pending.add(removed.index.coerceAtMost(pending.size), message.messageId)
-            }
-
-            is RemovedMessage.InPage -> {
-                val pageIndex = pages.indexOfFirst { it.anchor == removed.anchor }
-                if (pageIndex == -1) return
-
-                messages[message.messageId] = message
-                val ids = pages[pageIndex].ids.toMutableList()
-                ids.add(removed.position.coerceAtMost(ids.size), message.messageId)
-                pages[pageIndex] = pages[pageIndex].copy(ids = ids)
-            }
-        }
-    }
-
     fun restore(entry: ProductRoomCacheEntry) {
         entry.messages.forEach { messages[it.messageId] = it }
         pages.clear()
@@ -240,11 +178,14 @@ internal class ProductMessageWindow(private val windowLimit: Int) {
 
         return ChatFeedSnapshot(
             messages = windowMessages.asReversed().map { (index, message) ->
-                val isUnread = when {
-                    seenIndex != null -> index > seenIndex
-                    seenAt != null -> message.timestamp > seenAt
+                // The product reads an incoming message once the user saw it; until it says so, the screen keeps what the
+                // user saw here.
+                val seenHere = when {
+                    seenIndex != null -> index <= seenIndex
+                    seenAt != null -> message.timestamp <= seenAt
                     else -> false
                 }
+                val isUnread = message.status != ProductMessageStatusModel.READ && !seenHere
                 message.toChatMessage(chatId, extensionId, isUnread)
             },
             reactions = windowMessages.associate { (_, message) -> message.messageId to message.toReactions(extensionId) }
@@ -254,6 +195,10 @@ internal class ProductMessageWindow(private val windowLimit: Int) {
                 .associate { (_, message) -> message.messageId to message.status },
             paging = paging,
             readiness = readiness,
+            replyQuotes = windowMessages.mapNotNull { (_, message) ->
+                val repliedId = message.replyTo?.takeUnless { it in messages } ?: return@mapNotNull null
+                message.replyPreview?.let { repliedId to it.toQuotedMessage(repliedId, chatId, extensionId) }
+            }.toMap(),
         )
     }
 

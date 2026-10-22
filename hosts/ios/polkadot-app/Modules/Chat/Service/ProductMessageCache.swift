@@ -108,8 +108,8 @@ extension ProductRoomCacheEntry {
                 $0.body = body
                 $0.editedAt = editedAt
             }
-        case let .deleted(messageId):
-            messages.removeAll { $0.messageId == messageId }
+        case let .replaced(message):
+            Self.modify(&messages, message.messageId) { $0 = message }
         case let .reactionPlaced(messageId, participantId, emoji):
             Self.modify(&messages, messageId) { $0.adjustReaction(emoji, by: participantId, placed: true) }
         case let .reactionRemoved(messageId, participantId, emoji):

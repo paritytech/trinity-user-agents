@@ -17,9 +17,15 @@ fun interface ProductFeedRegistration {
  * again when it opens.
  */
 interface ProductFeedListeners {
-    /** Keeps [listener] until the registration is cancelled. */
+    /** Keeps [listener], a room screen, until the registration is cancelled. */
     fun register(chatId: ChatId, listener: ProductFeedListener): ProductFeedRegistration
 
-    /** Gives the update to each listener of the room, in turn. False when no listener takes it. */
+    /**
+     * Keeps [listener] until the registration is cancelled. It only watches the room, as the call screen that waits for
+     * its offer to be read, so the room still counts as not shown.
+     */
+    fun watch(chatId: ChatId, listener: ProductFeedListener): ProductFeedRegistration
+
+    /** Gives the update to each listener of the room, in turn. False when no room screen takes it. */
     suspend fun deliver(chatId: ChatId, update: ProductFeedUpdateModel): Boolean
 }

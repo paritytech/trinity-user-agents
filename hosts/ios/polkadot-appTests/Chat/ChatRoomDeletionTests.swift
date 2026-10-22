@@ -35,7 +35,7 @@ struct ChatRoomDeletionTests {
 
         let other = try await storedChat("other")
         #expect(other?.message?.messageId == kept.messageId)
-        #expect(other?.roomDeclarations?.description == "A room")
+        #expect(other?.roomContact == contact)
         #expect(try await history(for: kept.chatId).count == 1)
     }
 
@@ -56,29 +56,10 @@ struct ChatRoomDeletionTests {
         #expect(try await storedChat("lobby") == nil)
     }
 
-    @Test func theRemoverEvictsTheResourcesThatTheRoomReferenced() async throws {
-        let context = makeContext()
-        _ = try await fillRoom("lobby", in: context, icon: "https://example.com/v1.png")
-        let eviction = RecordingResourceEviction()
-        let remover = ChatRoomRemover(databaseService: facade.databaseService, resources: eviction)
-
-        let removed = try await remover.removeRoom(chatId("lobby"))
-
-        #expect(removed)
-        #expect(try await Set(eviction.evicted) == [
-            .preimage(key: avatarKey),
-            .inline(mimeType: "application/octet-stream", data: badgeBytes),
-            .address(#require(URL(string: "https://example.com/v1.png"))),
-            .address(#require(URL(string: "https://example.com/media.png")))
-        ])
-    }
-
     @Test func theRemoverReportsAChatThatDoesNotExist() async throws {
-        let eviction = RecordingResourceEviction()
-        let remover = ChatRoomRemover(databaseService: facade.databaseService, resources: eviction)
+        let remover = ChatRoomRemover(databaseService: facade.databaseService)
 
         #expect(try await !remover.removeRoom(chatId("missing")))
-        #expect(await eviction.evicted.isEmpty)
     }
 }
 
@@ -111,16 +92,7 @@ struct ChatInteractorRoomRemovalTests {
     }
 }
 
-private let avatarKey = Data(repeating: 2, count: 32)
-private let badgeBytes = Data([0x89, 0x50, 0x4E, 0x47])
-
-private actor RecordingResourceEviction: ChatResourceEvicting {
-    private(set) var evicted: [ChatResource] = []
-
-    func evict(_ resources: [ChatResource]) {
-        evicted.append(contentsOf: resources)
-    }
-}
+private let contact = Chat.RoomContact(account: Data(repeating: 2, count: 32), username: "alice", state: .established)
 
 private extension ChatRoomDeletionTests {
     func chatId(_ roomId: String) -> Chat.Id {
@@ -137,34 +109,23 @@ private extension ChatRoomDeletionTests {
         )
     }
 
-    /// A room with a message, a product body with media, a reaction, an unread mark, a history entry and
-    /// declarations.
+    /// A room with messages, a reaction, an unread mark, a history entry and declarations.
     func fillRoom(
         _ roomId: String,
         in context: ChatExtensionDiscoverContext,
         icon: String? = nil
     ) async throws -> Chat.LocalMessage {
         _ = try await context.createRoom(for: bot, roomId: roomId, name: "Room", icon: icon)
-        try await context.setRoomMetadata(
-            for: bot,
-            roomId: roomId,
-            name: "Room",
-            description: "A room",
-            avatar: .preimage(key: avatarKey)
-        )
+        try await context.setRoomMetadata(for: bot, roomId: roomId, name: "Room")
+        try await context.setRoomContact(for: bot, roomId: roomId, contact: contact)
         try await context.setRoomPreview(for: bot, roomId: roomId, preview: Chat.RoomPreview(
-            order: .byTimestamp,
             timestamp: nil,
-            badge: .image(.inline(badgeBytes)),
-            text: nil,
-            ongoing: false
+            badge: .unreadCount(1),
+            lastMessage: nil,
+            unseenReaction: false
         ))
 
-        let media = Chat.LocalMessage.newExtensionMessage(
-            bot.identifier,
-            roomId: roomId,
-            content: .productBody(.richText(.init(text: nil, media: ["https://example.com/media.png"])))
-        )
+        let media = Chat.LocalMessage.newExtensionMessage(bot.identifier, roomId: roomId, content: .text("first"))
         let message = Chat.LocalMessage.newExtensionMessage(bot.identifier, roomId: roomId, content: .text("hi"))
         let messages = AnyDataProviderRepository(facade.createRepository(mapper: AnyCoreDataMapper(
             ChatMessageEntityMapper(orderAllocator: InMemoryChatMessageOrderAllocator())

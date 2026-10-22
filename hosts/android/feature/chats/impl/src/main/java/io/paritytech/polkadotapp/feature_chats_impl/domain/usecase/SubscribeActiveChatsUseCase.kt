@@ -7,13 +7,16 @@ import io.paritytech.polkadotapp.common.utils.inBackground
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.mapToSet
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatMode
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatRooms
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtension
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatContactStateModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatExtensionId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatVariant
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ContactWithChatRequest
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.hasDeclinedIncomingRequest
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.hasPendingIncomingRequest
+import io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.outbox.ProductOutboxEntry
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactsRepository
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatDisplay.ChatDisplayGenerator
@@ -22,7 +25,9 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.Chat
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatDisplay
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatSummary
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.chatListOrder
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.withPendingMessage
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.withRoomPolicy
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.ProductAttachmentStager
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicyProvider
 import kotlinx.coroutines.flow.Flow
@@ -41,6 +46,8 @@ class SubscribeActiveChatsUseCase @Inject constructor(
     private val chatDisplayGenerator: ChatDisplayGenerator,
     private val roomPolicyProvider: ChatRoomPolicyProvider,
     private val personChatMode: PersonChatMode,
+    private val attachmentStager: ProductAttachmentStager,
+    private val personChatRooms: PersonChatRooms,
 ) {
     context(scope: ComputationalScope)
     operator fun invoke(): Flow<List<Chat>> = combineToPair(
@@ -50,15 +57,34 @@ class SubscribeActiveChatsUseCase @Inject constructor(
     ).flatMapLatest { (activeExtensions, contacts) ->
         val context = buildActiveChatsContext(activeExtensions, contacts)
 
-        withRoomPolicies(chatEngine.subscribeChatSummaries())
-            .map { (summaries, policies) ->
-                chatListOrder(summaries, policies.mapValues { it.value.listOrder }).mapNotNull { messageSummary ->
+        combineToPair(withRoomPolicies(chatEngine.subscribeChatSummaries()), pendingMessages())
+            .map { (summariesAndPolicies, pending) ->
+                val (summaries, policies) = summariesAndPolicies
+                // The person chats of the chat product sort by the time their product gives; the native chat keeps its order.
+                val ordered = if (personChatMode.isProductChat()) {
+                    val productTimestamps = policies.mapNotNull { (chatId, policy) ->
+                        val pendingAt = pending[chatId]?.createdAt
+                        listOfNotNull(policy.listTimestamp, pendingAt).maxOrNull()?.let { chatId to it }
+                    }.toMap()
+                    chatListOrder(summaries, productTimestamps)
+                } else {
+                    summaries
+                }
+                ordered.mapNotNull { messageSummary ->
                     val chatId = messageSummary.chatId
                     if (!context.isChatActive(chatId)) return@mapNotNull null
 
                     val policy = policies[chatId]
-                    val summary = messageSummary.withRoomPolicy(policy)
-                    val display = constructChatDisplay(chatId, summary, context.activeContactsById) ?: return@mapNotNull null
+                    // As the native chat lists its contacts: a request waits behind "New requests", and neither an invite
+                    // nor a blocked contact shows. A request that the user sent shows at once, as the native contact does.
+                    val requestSent = policy?.contact?.state == ChatContactStateModel.INVITE && pending[chatId]?.isFailed == false
+                    if (policy?.contact != null && !policy.isListedContactRoom && !requestSent) return@mapNotNull null
+                    // A room of the chat product is a person chat: it shows once its contact is declared.
+                    if (policy?.contact == null && personChatRooms.isPersonChatRoom(chatId)) return@mapNotNull null
+
+                    // As the native list shows a message it sends at once, a room shows its newest pending message.
+                    val summary = messageSummary.withRoomPolicy(policy).withPendingMessage(pending[chatId], policy, attachmentStager::preview)
+                    val display = constructChatDisplay(chatId, summary, policy, context.activeContactsById) ?: return@mapNotNull null
 
                     Chat(
                         id = chatId,
@@ -67,12 +93,14 @@ class SubscribeActiveChatsUseCase @Inject constructor(
                         timestamp = summary.timestamp,
                         unreadBadge = summary.badge,
                         hasUnseenReaction = summary.hasUnseenReaction,
-                        customPreviewRenderer = summary.customPreviewRenderer,
-                        roomPolicy = policy,
+                        customPreviewRenderer = summary.customPreviewRenderer
                     )
                 }
             }
     }.inBackground()
+
+    private fun pendingMessages(): Flow<Map<ChatId, ProductOutboxEntry>> =
+        if (personChatMode.isProductChat()) attachmentStager.observeNewest() else flowOf(emptyMap())
 
     context(scope: ComputationalScope)
     private fun withRoomPolicies(summaries: Flow<List<ChatSummary>>): Flow<Pair<List<ChatSummary>, Map<ChatId, ChatRoomPolicy>>> {
@@ -108,8 +136,12 @@ class SubscribeActiveChatsUseCase @Inject constructor(
     private suspend fun constructChatDisplay(
         chatId: ChatId,
         summary: ChatSummary,
+        policy: ChatRoomPolicy?,
         contactsById: Map<AccountId, ContactWithChatRequest>,
     ): ChatDisplay? {
+        // A room of the chat product shows its contact, as the native chat shows a contact.
+        policy?.contact?.let { return chatEngine.getContactRoomDisplay(it) }
+
         val defaultDisplay = constructDefaultChatDisplay(chatId, contactsById) ?: return null
 
         return chatDisplayGenerator.applyRoomMetadata(summary.roomMetadata, defaultDisplay)

@@ -844,7 +844,8 @@ mod hop {
 		};
 
 		let (bytes, entries) =
-			futures::executor::block_on(host.open_hop_chat_resource(&resource)).expect("open");
+			futures::executor::block_on(host.open_hop_chat_resource(&resource, |_, _| {}))
+				.expect("open");
 		assert_eq!(bytes, vec![5; 2_000]);
 		assert!(node.acked.lock().unwrap().is_empty(), "nothing is acked before the host keeps it");
 		// The sender shows its own photo too, and must not drop it before the contact claims it.
@@ -860,11 +861,72 @@ mod hop {
 			node: "wss://attacker.example".to_string(),
 			size: 2_000,
 		};
-		assert!(futures::executor::block_on(host.open_hop_chat_resource(&elsewhere)).is_err());
+		assert!(
+			futures::executor::block_on(host.open_hop_chat_resource(&elsewhere, |_, _| {}))
+				.is_err()
+		);
 		let other_product = chat_host_with_hop("coinflip.dot", node);
 		assert!(
-			futures::executor::block_on(other_product.open_hop_chat_resource(&resource)).is_err()
+			futures::executor::block_on(other_product.open_hop_chat_resource(&resource, |_, _| {}))
+				.is_err()
 		);
+	}
+
+	// The native progress ring of a photo follows its chunks as they arrive.
+	#[test]
+	fn a_room_follows_the_download_of_a_hop_file() {
+		let node = Arc::new(StandInHopNode::default());
+		let sender = chat_host_with_hop(CHAT_PRODUCT, node.clone());
+		let host = chat_host_with_hop(CHAT_PRODUCT, node);
+		let chunk = crate::host_logic::hop::HOP_CHUNK_BYTES as u64;
+		let total = chunk + 10;
+		let uploaded = hop_upload(&sender, vec![9; total as usize]).expect("upload");
+		let resource = truapi::latest::ChatResource::Hop {
+			identifier: uploaded.identifier.to_vec(),
+			ticket: uploaded.ticket.to_vec(),
+			node: uploaded.node.clone(),
+			size: total,
+		};
+
+		let mut reported = Vec::new();
+		futures::executor::block_on(
+			host.open_hop_chat_resource(&resource, |received, total| {
+				reported.push((received, total))
+			}),
+		)
+		.expect("open");
+
+		assert_eq!(reported, [(0, total), (chunk, total), (total, total)]);
+	}
+
+	// The native progress ring of a photo the user sends follows its chunks
+	// as the node takes them, and is full only once the file is in.
+	#[test]
+	fn a_room_follows_the_upload_of_a_hop_file() {
+		let node = Arc::new(StandInHopNode::default());
+		let hop_room =
+			truapi::latest::ChatRoomFeatures { hop_attachments: true, ..Default::default() };
+		let host = room_with_features(CHAT_PRODUCT, hop_room, node);
+		let chunk = crate::host_logic::hop::HOP_CHUNK_BYTES as u64;
+		let total = 2 * chunk + 10;
+
+		let mut reported = Vec::new();
+		futures::executor::block_on(host.hop_chat_attachment(
+			"main",
+			vec![5; total as usize],
+			|sent, total| reported.push((sent, total)),
+		))
+		.expect("upload");
+		assert_eq!(reported, [(0, total), (chunk, total), (2 * chunk, total), (total, total)]);
+
+		let mut reported = Vec::new();
+		futures::executor::block_on(host.hop_chat_attachment(
+			"main",
+			vec![5; 10],
+			|sent, total| reported.push((sent, total)),
+		))
+		.expect("upload");
+		assert_eq!(reported, [(0, 10), (10, 10)]);
 	}
 
 	/// A Worker connection of `product_id` whose room `main` has `features`,
@@ -906,25 +968,35 @@ mod hop {
 			truapi::latest::ChatRoomFeatures { hop_attachments: true, ..Default::default() };
 		let host = room_with_features(CHAT_PRODUCT, hop_room.clone(), node.clone());
 
-		let resource =
-			futures::executor::block_on(host.hop_chat_attachment("main", vec![3; 5_000]))
-				.expect("upload");
-		let truapi::latest::ChatResource::Hop { node: hop_node, size, .. } = &resource else {
-			panic!("a HOP room gets a HOP resource, got {resource:?}");
-		};
+		let resource = futures::executor::block_on(host.hop_chat_attachment(
+			"main",
+			vec![3; 5_000],
+			|_, _| {},
+		))
+		.expect("upload");
+		let truapi::latest::ChatResource::Hop { node: hop_node, size, .. } = &resource;
 		assert_eq!((hop_node.as_str(), *size), (HOP_NODE, 5_000));
 		let (bytes, _) =
-			futures::executor::block_on(host.open_hop_chat_resource(&resource)).expect("open");
+			futures::executor::block_on(host.open_hop_chat_resource(&resource, |_, _| {}))
+				.expect("open");
 		assert_eq!(bytes, vec![3; 5_000]);
 
 		let plain_room = room_with_features(CHAT_PRODUCT, Default::default(), node.clone());
 		assert_eq!(
-			futures::executor::block_on(plain_room.hop_chat_attachment("main", vec![3; 10])),
+			futures::executor::block_on(plain_room.hop_chat_attachment(
+				"main",
+				vec![3; 10],
+				|_, _| {}
+			)),
 			Err(crate::runtime::chat_staging::ChatStageRejection::NotDeclared)
 		);
 		let other_product = room_with_features("coinflip.dot", hop_room, node);
 		assert_eq!(
-			futures::executor::block_on(other_product.hop_chat_attachment("main", vec![3; 10])),
+			futures::executor::block_on(other_product.hop_chat_attachment(
+				"main",
+				vec![3; 10],
+				|_, _| {}
+			)),
 			Err(crate::runtime::chat_staging::ChatStageRejection::NotDeclared)
 		);
 	}

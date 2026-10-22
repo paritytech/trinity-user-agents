@@ -1,50 +1,33 @@
 package io.paritytech.polkadotapp.feature_chats_api.domain.productRoom
 
-import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 
-/**
- * Stores a user attachment of a product room as one Bulletin preimage through the TrUAPI core (07-LATER §7). The
- * product pays for it from its own Bulletin allowance. The core keeps the allowance key and does the network work.
- */
+/** Uploads a user attachment of a room of the chat product to HOP through the TrUAPI core. */
 interface ProductAttachmentStaging {
-    /**
-     * Runs [block] while the worker of the product of [chatId] runs. Through the worker, the core reads the features
-     * of the room and asks the user for `PreimageSubmit`, and the product answers the message that follows.
-     */
+    /** Runs [block] while the worker of the product of [chatId] runs, so the product answers the message that follows. */
     suspend fun <T> holdingWorker(chatId: ChatId, block: suspend () -> T): T
-
-    /** Gives the 32-byte key of the preimage, or a [ProductAttachmentStageException]. */
-    suspend fun stage(chatId: ChatId, mimeType: String, bytes: ByteArray): Result<DataByteArray>
-
-    /**
-     * Encrypts [bytes] with a new key and stores the ciphertext as Bulletin parts that the product pays for, in a room
-     * that declares `sealed_attachments`. Gives the resource that opens the file, or a [ProductAttachmentStageException].
-     */
-    suspend fun seal(chatId: ChatId, bytes: ByteArray): Result<ChatResourceModel.Sealed>
 
     /**
      * Uploads [bytes] to a HOP node as the native chat sends a file, in a room of the chat product that declares
-     * `hop_attachments`. Gives the resource that names the file, or a [ProductAttachmentStageException].
+     * `hop_attachments`. Gives the resource that names the file, or a [ProductAttachmentStageException]. [progress] gets
+     * the bytes that the node holds and the size of the file, after each part, as the native upload counts its chunks.
      */
-    suspend fun uploadToHop(chatId: ChatId, bytes: ByteArray): Result<ChatResourceModel.Hop>
+    suspend fun uploadToHop(
+        chatId: ChatId,
+        bytes: ByteArray,
+        progress: (sent: Long, total: Long) -> Unit = { _, _ -> },
+    ): Result<ChatResourceModel.Hop>
 }
 
-/** Why the core did not stage an attachment (`NativeChatStageRejection`). */
+/** Why the core did not upload an attachment (`NativeChatStageRejection`). */
 sealed class ProductAttachmentStageException(message: String) : Exception(message) {
-    /** The room does not declare `preimage_attachments`. */
-    class NotDeclared : ProductAttachmentStageException("the room does not declare preimage attachments")
+    /** The room does not declare `hop_attachments`. */
+    class NotDeclared : ProductAttachmentStageException("the room does not declare HOP attachments")
 
-    /** The attachment is larger than the core stages, or than one Bulletin transaction stores. */
+    /** The attachment is larger than the core uploads. */
     class TooLarge(val maxBytes: Long) : ProductAttachmentStageException("the attachment is larger than $maxBytes bytes")
 
-    /** The user refused `PreimageSubmit` for the product. */
-    class PermissionDenied : ProductAttachmentStageException("the user refused preimage submission for the product")
-
-    /** The product has no Bulletin allowance. */
-    class AllowanceUnavailable(val reason: String) : ProductAttachmentStageException("no Bulletin allowance: $reason")
-
-    /** The submission failed, or the core is not available. */
-    class SubmitFailed(val reason: String) : ProductAttachmentStageException("the submission failed: $reason")
+    /** The upload failed, or the core is not available. */
+    class SubmitFailed(val reason: String) : ProductAttachmentStageException("the upload failed: $reason")
 }

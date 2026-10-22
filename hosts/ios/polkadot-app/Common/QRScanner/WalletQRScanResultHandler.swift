@@ -8,29 +8,18 @@ final class WalletQRScanResultHandler {
 
     private let dsfinvkRouter: W3sDsfinvkRouting
     private let schemeNormalizer: DeeplinkSchemeNormalizing
-    private let linkHandler: DeferredLinkHandling
 
     init(
         dsfinvkRouter: W3sDsfinvkRouting,
-        schemeNormalizer: DeeplinkSchemeNormalizing = DeeplinkSchemeNormalizer(),
-        linkHandler: DeferredLinkHandling = DeferredLinkHandler.shared
+        schemeNormalizer: DeeplinkSchemeNormalizing = DeeplinkSchemeNormalizer()
     ) {
         self.dsfinvkRouter = dsfinvkRouter
         self.schemeNormalizer = schemeNormalizer
-        self.linkHandler = linkHandler
     }
 }
 
 extension WalletQRScanResultHandler: WalletQRScanDelegate {
     func walletQRScanDidReceiveURL(_ url: URL) {
-        // The system opens a web room link in the browser, so the app gives it to its own link handler.
-        if ChatRoomLink(url.absoluteString) != nil {
-            dismissPresented { [linkHandler] in
-                linkHandler.handle(with: url)
-            }
-            return
-        }
-
         let normalizedUrl = schemeNormalizer.normalize(url)
         // Dismiss the scanner first; otherwise the launcher modal stacks on top of it.
         dismissPresented {

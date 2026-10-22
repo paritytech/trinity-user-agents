@@ -73,7 +73,7 @@ extension ChatMessageEntityMapper: CoreDataMapperProtocol {
 
         let order = UInt64(bitPattern: entity.order)
 
-        var message = Chat.LocalMessage(
+        return Chat.LocalMessage(
             messageId: messageId,
             chatId: chatId,
             origin: origin,
@@ -86,8 +86,6 @@ extension ChatMessageEntityMapper: CoreDataMapperProtocol {
             relatedMessages: relatedMessages,
             order: order
         )
-        message.authorParticipantId = entity.originParticipantId
-        return message
     }
 
     func populate(
@@ -126,7 +124,6 @@ extension ChatMessageEntityMapper {
         }
 
         try populateContent(model.content, to: entity, using: context)
-        entity.searchableText = ChatSearchText.stored(for: model.content)
 
         if shouldMarkModified {
             entity.markModified()

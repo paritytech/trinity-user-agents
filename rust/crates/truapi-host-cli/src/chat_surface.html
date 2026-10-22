@@ -133,19 +133,11 @@ nav h2 { font: 600 11px var(--mono); letter-spacing: 0.12em; text-transform: upp
 }
 .avatar img { width: 100%; height: 100%; object-fit: cover; }
 .avatar.sm { width: 28px; height: 28px; border-radius: 8px; font-size: 12px; }
-.bots { margin-top: 18px; }
-.bot { display: flex; align-items: center; gap: 10px; padding: 6px 18px; color: var(--muted); font-size: 13px; }
-section { display: grid; grid-template-rows: auto auto auto 1fr auto; min-height: 0; }
+section { display: grid; grid-template-rows: auto auto 1fr auto; min-height: 0; }
 #callarea > div { display: flex; align-items: center; gap: 10px; padding: 8px 22px; border-bottom: 1px solid var(--line); font: 13px var(--ui); }
 #callbanner { background: rgba(92, 224, 160, 0.12); }
 #callbar { background: rgba(214, 255, 92, 0.1); }
 #callarea .spacer { flex: 1; }
-#searchbar { padding: 8px 22px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow-y: auto; }
-#searchbar input { font: 13px var(--ui); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
-#searchresults .hit { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; padding: 5px 2px; font: 12px var(--ui); }
-#searchresults .hit small { display: block; font: 10px var(--mono); color: var(--faint); }
-#searchresults mark { background: var(--accent); color: var(--accent-ink); }
-#speaking { display: flex; gap: 8px; align-items: center; font: 12px var(--ui); color: var(--ok); }
 .roomhead { padding: 12px 22px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; }
 .roomhead h1 { font: 500 19px var(--sans); margin: 0; }
 .roomhead code { font: 11px var(--mono); color: var(--faint); }
@@ -156,6 +148,7 @@ section { display: grid; grid-template-rows: auto auto auto 1fr auto; min-height
 .msg { display: flex; gap: 10px; align-items: flex-end; max-width: 72%; }
 .msg.fresh { animation: rise 0.18s ease-out; }
 .msg.person { align-self: flex-end; flex-direction: row-reverse; }
+.msg.event { align-self: center; max-width: none; }
 @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
 .bubble {
   background: var(--product); border: 1px solid var(--line);
@@ -169,9 +162,6 @@ section { display: grid; grid-template-rows: auto auto auto 1fr auto; min-height
 a { color: var(--accent); }
 .media { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .media img { max-width: 220px; max-height: 180px; border-radius: 8px; display: block; }
-.actions { display: flex; flex-direction: column; gap: 6px; margin-top: 9px; }
-.actions.grid { flex-direction: row; flex-wrap: wrap; }
-.actions button { font: 13px var(--ui); border-color: #3a424b; }
 .file { display: flex; gap: 10px; align-items: center; }
 .file .glyph { font: 600 10px var(--mono); padding: 8px 6px; border: 1px solid var(--line); border-radius: 6px; color: var(--muted); }
 .file small { display: block; font: 11px var(--mono); color: var(--muted); }
@@ -223,26 +213,18 @@ aside[hidden], section[hidden] { display: none; }
 .room .line { display: block; font: 12px var(--ui); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .room .line.ongoing { color: var(--ok); font-style: italic; }
 .badge { flex: none; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font: 600 11px/20px var(--mono); text-align: center; }
-.badge.img { padding: 0; background: none; width: 20px; }
-.badge.img img { width: 20px; height: 20px; border-radius: 5px; object-fit: cover; }
 .dots::after { content: ""; display: inline-block; width: 1.2em; text-align: left; animation: dots 1.2s steps(4) infinite; }
 @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
 .roomhead { flex-wrap: wrap; }
 .roomhead .titles { flex: 1; min-width: 0; }
 .roomhead .titles p { margin: 2px 0 0; font: 12px var(--ui); color: var(--muted); white-space: pre-wrap; }
 .caps { padding: 10px 14px; border-top: 1px solid var(--line); }
-.notes { padding: 10px 14px; border-top: 1px solid var(--line); }
-.notes .note-row { display: block; width: 100%; text-align: left; margin: 0 0 6px; padding: 6px 8px; font: 12px var(--ui); }
-.notes .note-row small { display: block; font: 10px var(--mono); color: var(--faint); }
-.room .muted { font: 11px var(--mono); color: var(--faint); }
-.badge.muted { background: var(--faint); color: var(--bg); }
-.archived-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 18px; border: 0; border-radius: 0; background: none; text-align: left; font: 12px var(--mono); color: var(--muted); }
-.room.archived { padding-left: 30px; }
-.userstate { display: flex; gap: 6px; }
+.room.hidden-room { opacity: 0.55; }
+#linkform { display: flex; flex-wrap: wrap; gap: 6px; }
+#linkform h2 { width: 100%; margin: 0; }
+#linkform input { flex: 1; min-width: 0; font: 12px var(--mono); color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
 .caps p { margin: 0; font: 11px var(--mono); color: var(--muted); overflow-wrap: anywhere; }
 .roomhead .features { display: block; font: 11px var(--mono); color: var(--muted); }
-.roomhead .people { font: 11px var(--mono); color: var(--muted); background: none; border: 0; padding: 0; text-decoration: underline dotted; }
-.menu img { width: 16px; height: 16px; border-radius: 3px; object-fit: cover; }
 .paging { align-self: center; font: 12px var(--mono); color: var(--muted); }
 .paging.err { color: var(--err); }
 .msg.other .who { display: block; font: 11px var(--mono); color: var(--accent); margin-bottom: 3px; }
@@ -256,18 +238,9 @@ aside[hidden], section[hidden] { display: none; }
 .person .meta { color: rgba(21, 26, 5, 0.6); }
 .meta .tick.Read { color: #2e7dff; }
 .meta .tick.Failed { color: var(--err); font-weight: 700; }
-.deleted .bubble { font-style: italic; color: var(--muted); background: transparent; border-style: dashed; }
 .reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .chip { font: 12px var(--ui); padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
 .chip.mine { border-color: var(--accent); color: var(--accent); }
-.md p { margin: 0 0 6px; }
-.md p:last-child { margin-bottom: 0; }
-.md ul, .md ol { margin: 4px 0 6px; padding-left: 20px; }
-.md blockquote { margin: 4px 0; padding-left: 8px; border-left: 3px solid var(--line); color: var(--muted); }
-.md pre { margin: 4px 0; padding: 6px 8px; background: var(--bg); border-radius: 6px; overflow-x: auto; font: 12px var(--mono); white-space: pre; }
-.md code { font: 12px var(--mono); background: rgba(255, 255, 255, 0.07); padding: 0 3px; border-radius: 3px; }
-.person .md code { background: rgba(0, 0, 0, 0.1); }
-.md .dropped { color: var(--muted); white-space: pre-wrap; font: 12px var(--mono); }
 .mediaitem { display: flex; flex-direction: column; gap: 3px; max-width: 260px; }
 .mediaitem small { font: 10px var(--mono); color: var(--muted); }
 .mediabox { display: grid; place-items: center; text-align: center; min-width: 160px; min-height: 90px; padding: 8px; border: 1px dashed var(--faint); border-radius: 8px; font: 11px var(--mono); color: var(--muted); background: rgba(0, 0, 0, 0.25); word-break: break-all; }
@@ -278,9 +251,6 @@ aside[hidden], section[hidden] { display: none; }
 .banner button { padding: 1px 7px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chips button { border-radius: 999px; }
-.attach { display: flex; gap: 4px; }
-.attach button { padding: 6px 8px; }
-.customfooter { border: 1px dashed var(--faint); border-radius: 10px; padding: 14px; text-align: center; font: 12px var(--mono); color: var(--muted); }
 .menu { position: fixed; z-index: 10; min-width: 200px; max-width: 320px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 5px 0; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
 .menu button { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; border: 0; border-radius: 0; background: none; padding: 6px 14px; font: 13px var(--ui); }
 .menu button.destructive { color: var(--err); }
@@ -313,29 +283,19 @@ aside[hidden], section[hidden] { display: none; }
   <nav id="rooms-pane">
     <h2>Rooms</h2>
     <div id="rooms"></div>
-    <div class="bots" id="botsBox" hidden><h2>Bots</h2><div id="bots"></div></div>
+    <form class="caps" id="linkform"><h2>Open link</h2><input id="linktext" type="text" placeholder="contact:&lt;hex&gt; or a username" spellcheck="false"><button id="linkopen" type="submit">Open</button></form>
     <div class="caps"><h2>Capabilities</h2><p id="capabilities">unknown</p></div>
-    <div class="notes" id="notesBox" hidden><h2>Notifications</h2><div id="notifications"></div></div>
   </nav>
   <div class="gutter" id="gutter-rooms" title="Drag to resize"></div>
   <section id="chat-pane">
     <div class="roomhead" id="roomhead"></div>
     <div id="callarea"></div>
-    <div id="searchbar" hidden>
-      <input id="searchtext" type="search" placeholder="Search this room" spellcheck="false">
-      <div id="searchresults"></div>
-    </div>
     <div id="thread"></div>
     <footer id="footer">
       <div class="composer">
-        <div id="speaking" hidden><span id="spokentext"></span><button id="stop-speaking" type="button">Stop</button></div>
         <div id="banner" class="banner" hidden></div>
-        <div id="customfooter" class="customfooter" hidden>Custom footer: the product draws it through Renderer::render, which this page does not run.</div>
+        <div id="contactfooter" hidden></div>
         <form class="compose" id="compose">
-          <span class="attach" id="attach"></span>
-          <input type="file" id="attach-photo" accept="image/*" hidden data-kind="Image">
-          <input type="file" id="attach-video" accept="video/*" hidden data-kind="Video">
-          <input type="file" id="attach-file" hidden data-kind="File">
           <textarea id="input" rows="1" placeholder="Message" disabled></textarea>
           <button id="send" type="submit" disabled>Send</button>
         </form>
@@ -362,25 +322,23 @@ aside[hidden], section[hidden] { display: none; }
 // Everything the host keeps arrives on the socket; everything the person does
 // leaves as one operation. Rooms the product keeps (productSource) are paged
 // from the product through the host, and the person's changes in them wait
-// for the product's answer.
+// for the product's answer. A room with a contact is a person-to-person chat:
+// its footer follows the contact state.
 const USER = "user";
 const PRODUCT = "product";
-// A product speaks as its persona `<id>` with the participant id `bot:<id>`.
-const PERSONA = "bot:";
+const CONTACT = "contact";
 const PAGE_SIZE = 40;
-const PEOPLE_PAGE = 100;
 const REACTIONS = ["\u{1F44D}", "❤️", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F64F}"];
-const MD_COLLAPSE = 4000;
+const TEXT_COLLAPSE = 4000;
 const params = new URLSearchParams(location.search);
 
 const state = {
   productId: "",
   worker: { configured: true, connected: 0 },
   timeouts: { page: 10000, send: 30000, action: 10000, query: 5000 },
-  // What the host lists in `capabilities`: feature names and attachment bounds.
-  capabilities: { features: [], inlineAttachmentMaxBytes: 0, preimageAttachmentMaxBytes: 0, sealedAttachmentMaxBytes: 0 },
+  // The feature names the host lists to the core.
+  capabilities: { features: [] },
   rooms: new Map(),
-  bots: [],
   // roomId -> messages in screen order (host store, or the product's pages plus updates).
   messages: new Map(),
   selected: params.get("room"),
@@ -391,21 +349,11 @@ const state = {
   paging: new Map(),
   // roomId -> sends the product did not answer yet: { tempId, text, replyTo, status, reqId }.
   temps: new Map(),
-  // roomId -> { count, list, next, loading, byId: Map, asked: Set }.
-  people: new Map(),
   seenSent: new Map(),
   // Messages already drawn once, as "roomId\nmessageId".
   drawn: new Set(),
   replyTo: null,
   editing: null,
-  // Whether the archived rooms show under their row.
-  showArchived: false,
-  // The notifications the host delivered, newest first.
-  notifications: [],
-  // The search of the open room: { roomId, text, hits, next, loading, unavailable }.
-  search: null,
-  // What "Read aloud" speaks now: { roomId, text }.
-  speaking: null,
   // callId -> when the page first saw it ring, in ms.
   ringingSince: new Map(),
 };
@@ -428,11 +376,6 @@ function safeUrl(url) {
   return /^(https?:|data:|blob:)/i.test(String(url || "")) ? String(url) : null;
 }
 
-function imageUrl(resource) {
-  if (!resource || resource.type !== "Inline") return null;
-  return /^data:image\//i.test(resource.dataUrl || "") ? resource.dataUrl : null;
-}
-
 function shortKey(key) {
   const k = String(key || "");
   return k.length > 18 ? `${k.slice(0, 10)}…${k.slice(-6)}` : k;
@@ -440,7 +383,7 @@ function shortKey(key) {
 
 function avatar(icon, name, small) {
   const box = el("span", small ? "avatar sm" : "avatar", (String(name || "?").trim()[0] || "?").toUpperCase());
-  const src = typeof icon === "string" ? safeUrl(icon) : imageUrl(icon);
+  const src = safeUrl(icon);
   if (src) {
     const img = el("img");
     img.alt = "";
@@ -450,8 +393,14 @@ function avatar(icon, name, small) {
   return box;
 }
 
+// A room with a contact shows the contact; any other room its own name.
+function roomName(room) {
+  if (room.contact) return room.contact.username || shortKey(room.contact.account);
+  return room.name;
+}
+
 function roomAvatar(room, small) {
-  return avatar(room.avatar && room.avatar.type === "Inline" ? room.avatar : room.icon, room.name, small);
+  return avatar(room.contact ? null : room.icon, roomName(room), small);
 }
 
 function link(url, label) {
@@ -461,7 +410,6 @@ function link(url, label) {
   a.href = href;
   a.target = "_blank";
   a.rel = "noopener noreferrer";
-  if (/^https?:/i.test(href)) a.onclick = (event) => { if (!confirm(`Open ${href}?`)) event.preventDefault(); };
   return a;
 }
 
@@ -510,88 +458,8 @@ function describeError(error) {
   return error.reason ? `${error.tag}: ${error.reason}` : error.tag;
 }
 
-// ---------------------------------------------------------------- Markdown
-
-// The subset of RFC 6.1: paragraphs, bold, italic, code, fenced code, lists,
-// blockquotes and https links. Headings draw as bold paragraphs; tables, raw
-// HTML and images drop to their text. Built from DOM nodes, never innerHTML.
-function inline(text, parent) {
-  const pattern = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\*[^*\n]+\*)|(!?\[[^\]\n]*\]\([^)\s]+\))/g;
-  let last = 0, match;
-  // Bare links in the text are links too.
-  const words = (chunk) => linkify(chunk, parent);
-  while ((match = pattern.exec(text))) {
-    if (match.index > last) words(text.slice(last, match.index));
-    const token = match[0];
-    if (match[1]) parent.appendChild(el("code", null, token.slice(1, -1)));
-    else if (match[2]) { const b = el("strong"); inline(token.slice(2, -2), b); parent.appendChild(b); }
-    else if (match[3]) { const i = el("em"); inline(token.slice(1, -1), i); parent.appendChild(i); }
-    else {
-      const parts = /^(!?)\[([^\]]*)\]\(([^)\s]+)\)$/.exec(token);
-      if (parts[1] === "!") parent.appendChild(document.createTextNode(parts[2]));
-      else if (/^https?:\/\//i.test(parts[3])) { const a = link(parts[3], parts[2] || parts[3]); a.title = parts[3]; parent.appendChild(a); }
-      else parent.appendChild(document.createTextNode(parts[2]));
-    }
-    last = match.index + token.length;
-  }
-  if (last < text.length) words(text.slice(last));
-}
-
-function markdown(source) {
-  const root = el("div", "md");
-  const lines = String(source).replace(/\r\n?/g, "\n").split("\n");
-  let i = 0;
-  const isTable = (line) => /^\s*\|.*\|\s*$/.test(line);
-  while (i < lines.length) {
-    const line = lines[i];
-    if (/^\s*$/.test(line)) { i++; continue; }
-    if (/^```/.test(line)) {
-      const code = [];
-      i++;
-      while (i < lines.length && !/^```/.test(lines[i])) code.push(lines[i++]);
-      i++;
-      root.appendChild(el("pre", null, code.join("\n")));
-      continue;
-    }
-    if (/^#{1,6}\s/.test(line)) {
-      const p = el("p"); const b = el("strong"); inline(line.replace(/^#{1,6}\s+/, ""), b); p.appendChild(b); root.appendChild(p);
-      i++;
-      continue;
-    }
-    if (/^\s*>/.test(line)) {
-      const quote = [];
-      while (i < lines.length && /^\s*>/.test(lines[i])) quote.push(lines[i++].replace(/^\s*>\s?/, ""));
-      const block = el("blockquote"); block.appendChild(markdown(quote.join("\n"))); root.appendChild(block);
-      continue;
-    }
-    if (/^\s*([-*+]|\d+[.)])\s+/.test(line)) {
-      const ordered = /^\s*\d+[.)]\s+/.test(line);
-      const list = el(ordered ? "ol" : "ul");
-      while (i < lines.length && /^\s*([-*+]|\d+[.)])\s+/.test(lines[i])) {
-        const item = el("li"); inline(lines[i].replace(/^\s*([-*+]|\d+[.)])\s+/, ""), item); list.appendChild(item); i++;
-      }
-      root.appendChild(list);
-      continue;
-    }
-    if (isTable(line)) {
-      const rows = [];
-      while (i < lines.length && isTable(lines[i])) rows.push(lines[i++]);
-      root.appendChild(el("div", "dropped", rows.join("\n")));
-      continue;
-    }
-    const para = [];
-    while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^(```|#{1,6}\s|\s*>|\s*([-*+]|\d+[.)])\s+)/.test(lines[i]) && !isTable(lines[i])) para.push(lines[i++]);
-    const p = el("p");
-    // Raw HTML is not drawn: it stays text, as everything here does.
-    inline(para.join("\n"), p);
-    p.style.whiteSpace = "pre-wrap";
-    root.appendChild(p);
-  }
-  return root;
-}
-
-// Text into `parent`, with its URLs as links that ask before they open. A
-// punctuation mark at the end of a URL stays text.
+// Text into `parent`, with its URLs as links. A punctuation mark at the end
+// of a URL stays text.
 function linkify(text, parent) {
   String(text).split(/(https?:\/\/[^\s<>"]+)/g).forEach((part, index) => {
     if (index % 2 === 0) { parent.appendChild(document.createTextNode(part)); return; }
@@ -607,7 +475,7 @@ function plainText(text) {
 }
 
 function collapsible(node, length) {
-  if (length <= MD_COLLAPSE) return node;
+  if (length <= TEXT_COLLAPSE) return node;
   const box = el("div");
   node.style.maxHeight = "220px";
   node.style.overflow = "hidden";
@@ -620,131 +488,50 @@ function collapsible(node, length) {
 
 // ------------------------------------------------------------------ bodies
 
+// A media item is a file in the HOP pool, which this page does not claim.
 function mediaNode(item) {
   const box = el("div", "mediaitem");
   box.dataset.media = item.kind;
   const meta = item.meta || {};
   const res = item.resource || {};
-  const caption = [meta.mimeType, humanSize(meta.sizeBytes), meta.width && meta.height ? `${meta.width}×${meta.height}` : null].filter(Boolean).join(" · ");
-  if (item.kind === "Image") {
-    const src = imageUrl(res);
-    if (src) {
-      const img = el("img");
-      img.alt = meta.alt || "";
-      img.title = meta.alt || "";
-      img.src = src;
-      if (meta.width) img.style.aspectRatio = `${meta.width} / ${meta.height || meta.width}`;
-      box.appendChild(img);
-    } else {
-      const placeholder = el("div", "mediabox", res.type === "Preimage"
-        ? `image from preimage ${shortKey(res.key)}\nnot fetched on the dev page`
-        : res.type === "Sealed"
-          ? `sealed image, ${humanSize(res.size)} in ${res.parts.length} parts\nnot opened on the dev page`
-          : `image (${res.mimeType || "unknown type"}) not drawn`);
-      placeholder.dataset.preimage = res.key || "";
-      placeholder.title = res.key || "";
-      box.appendChild(placeholder);
-    }
-  } else if (item.kind === "Video") {
-    const poster = el("div", "mediabox", `▶ video${meta.placeholder ? ` · poster ${meta.placeholder}` : ""}`);
-    box.appendChild(poster);
-    if (res.type === "Inline" && /^data:video\//i.test(res.dataUrl || "")) {
-      const play = el("button", null, "Play");
-      play.type = "button";
-      play.onclick = () => {
-        const video = el("video");
-        video.controls = true;
-        video.src = res.dataUrl;
-        poster.replaceWith(video);
-        play.remove();
-        video.play().catch(() => {});
-      };
-      box.appendChild(play);
-    } else if (res.type === "Preimage") {
-      poster.textContent += `\npreimage ${shortKey(res.key)}`;
-    } else if (res.type === "Sealed") {
-      poster.textContent += `\nsealed, ${humanSize(res.size)} in ${res.parts.length} parts`;
-    }
-  } else {
+  const where = `HOP file ${shortKey(res.identifier)} on ${res.node || "an unknown node"}, ${humanSize(meta.sizeBytes ?? res.size)}`;
+  if (item.kind === "File") {
     const file = el("div", "file");
     file.appendChild(el("span", "glyph", (String(meta.mimeType || "file").split("/")[1] || "file").slice(0, 4).toUpperCase()));
     const info = el("div");
-    if (res.type === "Inline") {
-      const a = el("a", null, item.fileName || "file");
-      a.href = res.dataUrl;
-      a.download = item.fileName || "file";
-      info.appendChild(a);
-    } else {
-      const where = res.type === "Sealed" ? `sealed in ${res.parts.length} parts` : `preimage ${shortKey(res.key)}`;
-      info.appendChild(el("span", null, `${item.fileName || "file"} (${where})`));
-    }
-    info.appendChild(el("small", null, `${meta.mimeType || "unknown"} · ${humanSize(meta.sizeBytes ?? res.size)}`));
+    info.appendChild(el("span", null, item.fileName || "file"));
+    info.appendChild(el("small", null, `${meta.mimeType || "unknown"} · ${where}`));
     file.appendChild(info);
     box.appendChild(file);
     return box;
   }
+  box.appendChild(el("div", "mediabox", `${item.kind === "Video" ? "▶ video" : "image"}\n${where}\nnot fetched on the dev page`));
+  const caption = [meta.mimeType, meta.width && meta.height ? `${meta.width}×${meta.height}` : null].filter(Boolean).join(" · ");
   if (meta.alt || caption) box.appendChild(el("small", null, [meta.alt, caption].filter(Boolean).join(" — ")));
-  return box;
-}
-
-// A first-version message, which can carry URL media and files.
-function legacyNode(c) {
-  const box = el("div");
-  if (c.type === "RichText") {
-    if (c.text != null) box.appendChild(plainText(c.text));
-    const media = el("div", "media");
-    for (const item of c.media || []) {
-      const src = safeUrl(item.url);
-      if (src && /^data:image\/|\.(png|jpe?g|gif|webp|svg|avif)(\?|#|$)/i.test(src)) {
-        const img = el("img"); img.alt = ""; img.src = src; media.appendChild(img);
-      } else media.appendChild(link(item.url, item.url));
-    }
-    if (media.childNodes.length) box.appendChild(media);
-  } else if (c.type === "File") {
-    const file = el("div", "file");
-    file.appendChild(el("span", "glyph", "FILE"));
-    const info = el("div");
-    info.appendChild(link(c.url, c.fileName || "file"));
-    info.appendChild(el("small", null, `${c.mimeType || "unknown"} · ${humanSize(c.sizeBytes)}`));
-    file.appendChild(info);
-    box.appendChild(file);
-    if (c.text != null) box.appendChild(plainText(c.text));
-  } else if (c.type === "Custom") {
-    box.appendChild(el("small", "unsupported", `custom ${c.messageType}: ${c.payloadHex || "(empty)"}`));
-  } else return null;
   return box;
 }
 
 function bodyNode(roomId, msg) {
   const b = msg.body || {};
-  if (msg.legacy) { const legacy = legacyNode(msg.legacy); if (legacy) return legacy; }
   const box = el("div", "body");
   box.dataset.body = b.type;
   if (b.type === "Text") {
     box.appendChild(collapsible(plainText(b.text), b.text.length));
   } else if (b.type === "RichText") {
-    if (b.text != null) box.appendChild(collapsible(markdown(b.text), b.text.length));
+    if (b.text != null) box.appendChild(collapsible(plainText(b.text), b.text.length));
     if ((b.media || []).length) {
       const media = el("div", "media");
       for (const item of b.media) media.appendChild(mediaNode(item));
       box.appendChild(media);
     }
-  } else if (b.type === "Actions") {
-    if (b.text != null) box.appendChild(plainText(b.text));
-    const row = el("div", b.layout === "Grid" ? "actions grid" : "actions");
-    for (const action of b.actions || []) {
-      const button = el("button", null, action.title);
-      button.type = "button";
-      button.dataset.action = action.actionId;
-      button.onclick = () => send({ op: "trigger", roomId, messageId: msg.messageId, actionId: action.actionId });
-      row.appendChild(button);
-    }
-    if (row.childNodes.length) box.appendChild(row);
-  } else if (b.type === "Custom") {
-    // This page runs no Renderer, so a custom body draws its preview text.
-    box.className = "body custom";
-    box.appendChild(el("div", "text", b.previewText || "Unsupported message"));
-    box.appendChild(el("small", null, `custom ${b.messageType}, drawn by Renderer::render on a phone`));
+  } else if (b.type === "Event") {
+    box.dataset.event = b.event;
+    box.appendChild(el("div", "text", b.text));
+  } else if (b.type === "Call") {
+    box.dataset.call = b.closed ? "closed" : b.answeredAt != null ? "answered" : "ringing";
+    box.appendChild(el("div", "text", `${b.video ? "\u{1F3A5}" : "\u{1F4DE}"} ${b.text}`));
+  } else if (b.type === "Payment") {
+    box.appendChild(el("div", "text", `\u{1F4B8} ${b.legacy ? "Transfer" : "Payment"} of ${b.amount}`));
   } else {
     box.appendChild(el("div", "text unsupported", `unsupported body: ${JSON.stringify(b)}`));
   }
@@ -753,7 +540,6 @@ function bodyNode(roomId, msg) {
 
 function quoteText(msg) {
   if (!msg) return null;
-  if (msg.deleted) return "deleted message";
   const b = msg.body || {};
   if (b.type === "RichText" && !b.text && (b.media || []).length) return `[${b.media[0].kind}]`;
   return String(msg.preview || "").split("\n")[0];
@@ -767,141 +553,92 @@ function messagesOf(roomId) {
   return state.messages.get(roomId);
 }
 function isSource(room) { return !!(room && room.config && room.config.productSource); }
+function contactState(room) { return room && room.contact ? room.contact.state : null; }
 
 function sortedRooms() {
   return [...state.rooms.values()].sort((a, b) => {
-    const pa = a.list && a.list.pinned ? 1 : 0, pb = b.list && b.list.pinned ? 1 : 0;
-    if (pa !== pb) return pb - pa;
     const ta = (a.list && a.list.timestamp) || 0, tb = (b.list && b.list.timestamp) || 0;
     if (ta !== tb) return tb - ta;
-    return String(a.name).localeCompare(String(b.name));
+    return String(roomName(a)).localeCompare(String(roomName(b)));
   });
 }
 
 function badgeNode(badge) {
-  if (!badge) return null;
-  if (badge.type === "UnreadCount") {
-    const node = el("span", "badge", badge.count);
-    node.dataset.badge = String(badge.count);
-    return node;
-  }
-  if (badge.type === "Image") {
-    const node = el("span", "badge img");
-    node.dataset.badge = "image";
-    const src = imageUrl(badge.resource);
-    if (src) { const img = el("img"); img.alt = ""; img.src = src; node.appendChild(img); }
-    else node.textContent = "•";
-    return node;
-  }
-  return null;
+  if (!badge || badge.type !== "UnreadCount") return null;
+  const node = el("span", "badge", badge.count);
+  node.dataset.badge = String(badge.count);
+  return node;
 }
 
-// The user's mute and archive state of a room; a mute whose end passed is
-// no mute.
-function isMuted(room) {
-  const until = room.userState && room.userState.mutedUntil;
-  return until != null && Number(until) > Date.now();
-}
-function isArchived(room) { return !!(room.userState && room.userState.archived); }
-
-function setUserState(room, change) {
-  const current = { mutedUntil: isMuted(room) ? room.userState.mutedUntil : null, archived: isArchived(room) };
-  const next = Object.assign(current, change);
-  const forever = next.mutedUntil === "forever" || (next.mutedUntil != null && Number(next.mutedUntil) >= Number.MAX_SAFE_INTEGER);
-  send({ op: "userState", roomId: room.roomId, mutedUntil: forever || next.mutedUntil == null ? null : Number(next.mutedUntil), mutedForever: forever, archived: next.archived });
-}
-
-// An "Archived" row at the top opens the rooms the user archived; a room
-// stays archived when a message arrives.
+// The requests of contacts first, under their own heading, then every other
+// room. A phone hides `Invite` and `Blocked` rooms; this page marks them.
 function renderRooms() {
   const list = $("rooms");
   list.textContent = "";
   const rooms = sortedRooms();
-  const archived = rooms.filter(isArchived);
-  if (archived.length) {
-    const row = el("button", "archived-row", `${state.showArchived ? "▾" : "▸"} Archived (${archived.length})`);
-    row.type = "button";
-    row.id = "archived";
-    row.onclick = () => { state.showArchived = !state.showArchived; renderRooms(); };
-    list.appendChild(row);
-    if (state.showArchived) for (const room of archived) list.appendChild(roomRow(room));
+  const requests = rooms.filter((room) => contactState(room) === "Incoming");
+  if (requests.length) {
+    list.appendChild(el("h2", null, `Requests (${requests.length})`));
+    for (const room of requests) list.appendChild(roomRow(room));
+    list.appendChild(el("h2", null, "Chats"));
   }
-  for (const room of rooms.filter((room) => !isArchived(room))) list.appendChild(roomRow(room));
-  renderBots();
+  for (const room of rooms.filter((room) => contactState(room) !== "Incoming")) list.appendChild(roomRow(room));
 }
-
 
 function roomRow(room) {
   const button = el("button", room.roomId === state.selected ? "room active" : "room");
   button.type = "button";
   button.dataset.roomId = room.roomId;
-  if (isArchived(room)) { button.dataset.archived = "true"; button.classList.add("archived"); }
-  if (isMuted(room)) button.dataset.muted = "true";
-  if (room.list && room.list.pinned) button.dataset.pinned = "true";
+  const contact = contactState(room);
+  if (contact) button.dataset.contact = contact;
+  if (contact === "Invite" || contact === "Blocked") button.classList.add("hidden-room");
   button.appendChild(roomAvatar(room));
   const text = el("span", "rowtext");
   const name = el("span", "rowname");
-  name.appendChild(el("b", null, room.name));
-  if (room.list && room.list.pinned) name.appendChild(el("span", "pin", "PIN"));
-  if (isMuted(room)) name.appendChild(el("span", "muted", "\u{1F507}"));
+  name.appendChild(el("b", null, roomName(room)));
+  if (contact && contact !== "Established") name.appendChild(el("span", "pin", contact));
+  if (room.list && room.list.unseenReactions > 0) name.appendChild(el("span", "pin", "\u{2764}\u{FE0F}"));
+  // A newer call the product names apart from the newest message: this page
+  // keeps the line on the message and marks the call beside the name.
+  if (room.list && room.list.lastCall) name.appendChild(el("span", "pin", room.list.lastCall.text));
   text.appendChild(name);
-  const line = ringing(room) ? { text: "Incoming call", ongoing: true } : room.list && room.list.text;
+  const reaction = room.list && room.list.lastReaction;
+  const line = ringing(room) ? "Incoming call"
+    : reaction ? `${reaction.byUser ? "You" : roomName(room)} ${reaction.removed ? "removed a reaction" : `reacted with ${reaction.emoji}`}`
+      : room.list && room.list.text != null ? `${room.list.origin === USER ? "You: " : ""}${room.list.text}` : null;
   if (line) {
-    const node = el("span", line.ongoing ? "line ongoing dots" : "line", line.text);
-    node.dataset.preview = line.text;
-    if (line.ongoing) node.dataset.ongoing = "true";
+    const node = el("span", "line", line);
+    node.dataset.preview = line;
     text.appendChild(node);
   } else {
     text.appendChild(el("span", "line", room.description || room.roomId));
   }
   button.appendChild(text);
   const badge = badgeNode(room.list && room.list.badge);
-  if (badge && isMuted(room)) badge.classList.add("muted");
   if (badge) button.appendChild(badge);
   button.onclick = () => selectRoom(room.roomId);
   return button;
 }
 
-function renderBots() {
-  const bots = $("bots");
-  bots.textContent = "";
-  $("botsBox").hidden = !state.bots.length;
-  for (const bot of state.bots) {
-    const row = el("div", "bot");
-    row.appendChild(avatar(bot.icon, bot.name, true));
-    row.appendChild(el("span", null, bot.name));
-    bots.appendChild(row);
-  }
-}
-
-// The room a notification's deeplink `polkadot://<product>/-/chat/<room>`
-// opens, or null.
-function roomOfLink(deeplink) {
-  const match = /^polkadot:\/\/([^/?#]+)\/-\/chat\/([^?#]+)/.exec(String(deeplink || ""));
-  if (!match || match[1].toLowerCase() !== String(state.productId).toLowerCase()) return null;
-  try { return decodeURIComponent(match[2]); } catch (_) { return null; }
-}
-
-function renderNotifications() {
-  const box = $("notifications");
-  box.textContent = "";
-  $("notesBox").hidden = !state.notifications.length;
-  for (const note of state.notifications) {
-    const row = el("button", "note-row", note.text);
-    row.type = "button";
-    row.dataset.notification = String(note.id);
-    const roomId = roomOfLink(note.deeplink);
-    if (roomId) row.dataset.room = roomId;
-    row.appendChild(el("small", null, `#${note.id} · ${clock(note.at)}${note.deeplink ? ` · ${note.deeplink}` : ""}`));
-    row.onclick = () => { if (roomId && state.rooms.has(roomId)) selectRoom(roomId); };
-    box.appendChild(row);
-  }
+// What the person opened from outside the chat, such as a contact link or a
+// username, goes to the product in the selected room, and the room the
+// product names opens.
+function openLink() {
+  const payload = $("linktext").value.trim();
+  const roomId = state.selected || (sortedRooms()[0] || {}).roomId;
+  if (!payload || !roomId) { setStatus("open link: no payload or no room", "warn"); return; }
+  ask("openLink", { roomId, payload }, (frame) => {
+    if (frame.error) { setStatus(`open link: ${describeError(frame.error)}`, "err"); return; }
+    $("linktext").value = "";
+    const next = frame.ok.roomId || roomId;
+    if (state.rooms.has(next)) selectRoom(next);
+    setStatus(`open link: the product shows ${next}`, "ok");
+  });
 }
 
 function selectRoom(roomId) {
   state.picked = true;
   if (state.selected === roomId && state.opened === roomId) return;
-  stopSpeaking();
   state.selected = roomId;
   state.replyTo = null;
   state.editing = null;
@@ -923,7 +660,6 @@ function openSelected() {
     state.paging.set(room.roomId, { next: undefined, loading: false, error: null, asked: new Set() });
     loadPage(room.roomId, null);
   }
-  if (room.config.participants) countPeople(room.roomId);
 }
 
 function loadPage(roomId, cursor) {
@@ -954,58 +690,12 @@ function loadPage(roomId, cursor) {
   });
 }
 
-function peopleOf(roomId) {
-  if (!state.people.has(roomId)) state.people.set(roomId, { count: null, list: [], next: undefined, loading: false, byId: new Map(), asked: new Set() });
-  return state.people.get(roomId);
-}
-
-function countPeople(roomId) {
-  const people = peopleOf(roomId);
-  ask("participants", { roomId, query: { type: "Count" } }, (frame) => {
-    people.count = frame.ok ? frame.ok.count : null;
-    if (frame.error) people.countError = frame.error;
-    if (roomId === state.selected) renderHeader2();
-  });
-}
-
-function resolveAuthors(roomId, ids) {
-  const room = roomOf(roomId);
-  if (!room || !room.config.participants) return;
-  const people = peopleOf(roomId);
-  const wanted = ids.filter((id) => id !== USER && id !== PRODUCT && !persona(id) && !people.byId.has(id) && !people.asked.has(id));
-  if (!wanted.length) return;
-  wanted.forEach((id) => people.asked.add(id));
-  ask("participants", { roomId, query: { type: "ByIds", participantIds: wanted.slice(0, 100) } }, (frame) => {
-    if (frame.ok && frame.ok.participants) for (const entry of frame.ok.participants) people.byId.set(entry.participantId, entry);
-    if (roomId === state.selected) renderRoom(false);
-  });
-}
-
-// The persona a `bot:<id>` participant names, which the host draws with no
-// participants query. A persona the product lists in its participants too
-// still draws as the persona.
-function persona(id) {
-  if (!String(id).startsWith(PERSONA)) return null;
-  const botId = id.slice(PERSONA.length);
-  return state.bots.find((bot) => bot.botId === botId) || { botId, name: botId, icon: "" };
-}
-
 function participantName(roomId, id) {
   if (id === USER) return "You";
   const room = roomOf(roomId);
+  if (id === CONTACT && room && room.contact) return roomName(room);
   if (id === PRODUCT) return room ? room.name : state.productId;
-  if (persona(id)) return persona(id).name;
-  const entry = state.people.has(roomId) ? state.people.get(roomId).byId.get(id) : null;
-  if (!entry) return id;
-  const p = entry.participant;
-  switch (p.kind) {
-    case "Person": return `Person #${p.personId}`;
-    case "LitePerson": return `Lite person ${shortKey(p.account)}`;
-    case "Contact": return `Contact ${shortKey(p.handle)}`;
-    case "Product": return p.productId;
-    case "Custom": return p.nickname;
-    default: return id;
-  }
+  return id;
 }
 
 // ------------------------------------------------------------- the room
@@ -1014,14 +704,11 @@ function statusTick(status) {
   return { Preparing: "◷", Sent: "✓", Delivered: "✓✓", Read: "✓✓", Failed: "⚠ failed" }[status] || status;
 }
 
-
-
-
-
 function renderMessage(room, msg, temp) {
   const roomId = room.roomId;
   const mine = msg.origin === USER;
-  const row = el("div", `msg ${mine ? "person" : msg.origin === PRODUCT ? "product" : "other"}${msg.deleted ? " deleted" : ""}`);
+  const kind = msg.body && msg.body.type === "Event" ? "event" : mine ? "person" : msg.origin === PRODUCT ? "product" : "other";
+  const row = el("div", `msg ${kind}`);
   // Only a message drawn for the first time rises in; a redraw stays still.
   const drawn = `${roomId}\n${msg.messageId}`;
   if (!state.drawn.has(drawn)) { state.drawn.add(drawn); row.classList.add("fresh"); }
@@ -1029,22 +716,16 @@ function renderMessage(room, msg, temp) {
   row.dataset.origin = msg.origin;
   row.dataset.status = msg.status;
   if (msg.editedAt != null) row.dataset.edited = "true";
+  if (msg.request) row.dataset.request = "true";
   if (temp) row.dataset.temp = "true";
-  if (!mine) {
-    if (msg.origin === PRODUCT) row.appendChild(roomAvatar(room, true));
-    else if (persona(msg.origin)) {
-      const bot = persona(msg.origin);
-      const icon = avatar(bot.icon, bot.name, true);
-      icon.dataset.persona = bot.botId;
-      row.appendChild(icon);
-    } else {
-      const entry = state.people.has(roomId) ? state.people.get(roomId).byId.get(msg.origin) : null;
-      const custom = entry && entry.participant.kind === "Custom" ? entry.participant.avatar : null;
-      row.appendChild(avatar(custom, participantName(roomId, msg.origin), true));
-    }
+  if (kind === "event") {
+    row.appendChild(el("span", "note", `${participantName(roomId, msg.origin)}: ${msg.body.text}`));
+    return row;
   }
+  if (!mine) row.appendChild(msg.origin === PRODUCT ? roomAvatar(room, true) : avatar(null, participantName(roomId, msg.origin), true));
   const bubble = el("div", "bubble");
   if (msg.origin !== USER && msg.origin !== PRODUCT) bubble.appendChild(el("span", "who", participantName(roomId, msg.origin)));
+  if (msg.request) bubble.appendChild(el("span", "who", mine ? "Request message sent" : "Request message"));
   if (msg.replyTo) {
     const target = messagesOf(roomId).find((m) => m.messageId === msg.replyTo);
     const quote = el("span", "quote", target ? quoteText(target) : `reply to ${msg.replyTo}`);
@@ -1052,9 +733,8 @@ function renderMessage(room, msg, temp) {
     quote.onclick = () => jumpTo(roomId, msg.replyTo);
     bubble.appendChild(quote);
   }
-  if (msg.deleted) bubble.appendChild(el("div", "text", "This message was deleted"));
-  else bubble.appendChild(bodyNode(roomId, msg));
-  if (!msg.deleted && (msg.reactions || []).length) {
+  bubble.appendChild(bodyNode(roomId, msg));
+  if ((msg.reactions || []).length) {
     const chips = el("div", "reactions");
     for (const reaction of msg.reactions) {
       const chip = el("button", reaction.reactedByUser ? "chip mine" : "chip", `${reaction.emoji} ${reaction.count}`);
@@ -1078,18 +758,24 @@ function renderMessage(room, msg, temp) {
   }
   bubble.appendChild(meta);
   row.appendChild(bubble);
-  if (!msg.deleted) {
-    const tools = el("span", "tools");
-    const more = el("button", null, "⋯");
-    more.type = "button";
-    more.title = "Message menu";
-    more.dataset.menu = msg.messageId;
-    more.onclick = (event) => openMessageMenu(room, msg, temp, event);
-    tools.appendChild(more);
-    row.appendChild(tools);
-    row.oncontextmenu = (event) => { event.preventDefault(); openMessageMenu(room, msg, temp, event); };
-  }
+  const tools = el("span", "tools");
+  const more = el("button", null, "⋯");
+  more.type = "button";
+  more.title = "Message menu";
+  more.dataset.menu = msg.messageId;
+  more.onclick = (event) => openMessageMenu(room, msg, temp, event);
+  tools.appendChild(more);
+  row.appendChild(tools);
+  row.oncontextmenu = (event) => { event.preventDefault(); openMessageMenu(room, msg, temp, event); };
   return row;
+}
+
+// One contact action of the person, through the product.
+function contactAction(room, action) {
+  ask("contact", { roomId: room.roomId, action }, (frame) => {
+    if (frame.error) setStatus(`${action}: ${describeError(frame.error)}`, "err");
+    else setStatus(`${action}: the product applied it`, "ok");
+  });
 }
 
 function renderHeader2() {
@@ -1102,19 +788,16 @@ function renderHeader2() {
   }
   head.appendChild(roomAvatar(room, true));
   const titles = el("div", "titles");
-  const h1 = el("h1", null, room.name);
+  const h1 = el("h1", null, roomName(room));
   h1.id = "roomname";
   titles.appendChild(h1);
-  if (room.description) { const p = el("p", null, room.description); p.id = "roomdescription"; titles.appendChild(p); }
-  const people = state.people.get(room.roomId);
-  const count = room.config.participants ? (people && people.count != null ? people.count : "…") : 2;
-  const peopleButton = el("button", "people", `${count} participants`);
-  peopleButton.type = "button";
-  peopleButton.id = "participants";
-  peopleButton.onclick = () => openPeople(room);
-  const sub = el("code", null, `${room.roomId} · ${isSource(room) ? "product source" : "host store"} · `);
-  sub.appendChild(peopleButton);
-  titles.appendChild(sub);
+  if (room.description && !room.contact) { const p = el("p", null, room.description); p.id = "roomdescription"; titles.appendChild(p); }
+  titles.appendChild(el("code", null, `${room.roomId} · ${isSource(room) ? "product source" : "host store"}`));
+  if (room.contact) {
+    const line = el("code", "features", `contact ${room.contact.state} · ${room.contact.account}`);
+    line.id = "roomcontact";
+    titles.appendChild(line);
+  }
   const features = declaredFeatures(room);
   if (features.length) {
     const line = el("code", "features", `features: ${features.join(", ")}`);
@@ -1122,29 +805,37 @@ function renderHeader2() {
     titles.appendChild(line);
   }
   head.appendChild(titles);
-  if (searchable(room)) {
-    const toggle = el("button", state.search && state.search.roomId === room.roomId ? "on" : null, "Search");
-    toggle.type = "button";
-    toggle.id = "search-toggle";
-    toggle.onclick = () => toggleSearch(room);
-    head.appendChild(toggle);
-  }
+  // A person-to-person chat offers calls once the contact is established.
   const calls = room.features && room.features.calls;
-  if (calls && state.capabilities.features.includes("call_buttons")) {
+  const callable = !room.contact || room.contact.state === "Established";
+  if (calls && callable && state.capabilities.features.includes("call_buttons")) {
     for (const [video, shown, label, id] of [[false, calls.audio, "\u{1F4DE}", "call-audio"], [true, calls.video, "\u{1F3A5}", "call-video"]]) {
       if (!shown) continue;
       const b = el("button", null, label);
       b.type = "button";
       b.id = id;
       b.title = video ? "Video call" : "Audio call";
-      b.onclick = () => send({ op: "callRequest", roomId: room.roomId, video });
+      b.onclick = () => send({ op: "callRequest", roomId: room.roomId, video, callId: crypto.randomUUID() });
       head.appendChild(b);
     }
+  }
+  if (room.contact) {
+    const menu = el("button", null, "Contact");
+    menu.type = "button";
+    menu.id = "contact-menu";
+    menu.onclick = (event) => {
+      const blocked = room.contact.state === "Blocked";
+      showMenu(event, [
+        menuItem(blocked ? "Unblock" : "Block User", () => contactAction(room, blocked ? "unblock" : "block"), { id: blocked ? "unblock" : "block", destructive: !blocked }),
+        menuItem("Leave chat", () => { if (confirm("Leave this chat?")) contactAction(room, "leave"); }, { id: "leave", destructive: true }),
+      ]);
+    };
+    head.appendChild(menu);
   }
   const wake = el("button", null, "Wake");
   wake.type = "button";
   wake.id = "wake";
-  wake.title = "Wake the product as a notification on watch dev for this room does";
+  wake.title = "Wake the product as a chat notification for this room does";
   wake.onclick = () => ask("wake", { roomId: room.roomId }, (frame) => {
     const outcome = frame.ok ? frame.ok.type : describeError(frame.error);
     document.body.dataset.wakeOutcome = outcome;
@@ -1153,7 +844,6 @@ function renderHeader2() {
     else setStatus(`wake: ${outcome}`, "err");
   });
   head.appendChild(wake);
-  head.appendChild(userStateNode(room));
 }
 
 // The call that rings in a room, until 60 s after the page first saw it.
@@ -1169,8 +859,8 @@ function elapsed(ms) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-// The ringing banner with Accept and Decline, or the call bar with its
-// timer, Open (for a call without a media session) and End.
+// The ringing call with Accept and Decline, or the active call with its
+// timer and End.
 function renderCall() {
   const area = $("callarea");
   area.textContent = "";
@@ -1184,7 +874,7 @@ function renderCall() {
     banner.id = "callbanner";
     banner.dataset.callId = call.callId;
     const caller = call.caller || PRODUCT;
-    banner.append(avatar(persona(caller) ? persona(caller).icon : null, participantName(room.roomId, caller), true),
+    banner.append(avatar(null, participantName(room.roomId, caller), true),
       el("span", null, `${participantName(room.roomId, caller)} is calling${call.video ? " (video)" : ""}`), el("span", "spacer"),
       button("Accept", "call-accept", () => answer(true)), button("Decline", "call-decline", () => answer(false)));
     area.appendChild(banner);
@@ -1193,121 +883,11 @@ function renderCall() {
     bar.id = "callbar";
     bar.dataset.callId = call.callId;
     bar.append(el("span", null, `${call.video ? "Video" : "Audio"} call`), el("span", "dots", elapsed(call.startedAt)), el("span", "spacer"));
-    if (!call.mediaSession) bar.appendChild(button("Open", "call-open", () => send({ op: "callOpen", roomId: room.roomId, callId: call.callId })));
     bar.appendChild(button("End", "call-end", () => send({ op: "callEnd", roomId: room.roomId, callId: call.callId })));
     area.appendChild(bar);
   }
 }
 setInterval(() => { renderCall(); if ([...state.rooms.values()].some((room) => room.call)) renderRooms(); }, 1000);
-
-// A room the host keeps is searched by the host. A room the product keeps
-// shows search only when it declares `search` and the host serves it.
-function searchable(room) {
-  if (!isSource(room)) return true;
-  return !!(room.features && room.features.search) && state.capabilities.features.includes("search");
-}
-
-function toggleSearch(room) {
-  state.search = state.search && state.search.roomId === room.roomId ? null : { roomId: room.roomId, text: "", hits: [], next: null, loading: false, unavailable: false };
-  $("searchtext").value = "";
-  renderSearch();
-  renderHeader2();
-  if (state.search) $("searchtext").focus();
-}
-
-let searchTimer = null;
-// The matches of the open room, asked 300 ms after the user stops typing.
-function runSearch(cursor) {
-  const search = state.search;
-  if (!search) return;
-  const text = $("searchtext").value.trim();
-  search.text = text;
-  if (!text) { search.hits = []; search.next = null; search.unavailable = false; renderSearch(); return; }
-  search.loading = true;
-  renderSearch();
-  ask("search", { roomId: search.roomId, text, cursor }, (frame) => {
-    if (state.search !== search || search.text !== text) return;
-    search.loading = false;
-    if (frame.error) {
-      search.unavailable = true;
-      search.hits = [];
-      search.next = null;
-    } else {
-      search.unavailable = false;
-      search.hits = cursor ? search.hits.concat(frame.ok.hits) : frame.ok.hits;
-      search.next = frame.ok.next;
-    }
-    renderSearch();
-  });
-}
-
-// The match highlighted in the line it is in.
-function highlighted(line, text) {
-  const box = el("span");
-  const fold = (value) => value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
-  const at = fold(line).indexOf(fold(text));
-  if (at < 0 || line.normalize("NFD").length !== line.length) { box.textContent = line; return box; }
-  box.append(document.createTextNode(line.slice(0, at)), el("mark", null, line.slice(at, at + text.length)), document.createTextNode(line.slice(at + text.length)));
-  return box;
-}
-
-function renderSearch() {
-  const bar = $("searchbar");
-  const search = state.search && state.search.roomId === state.selected ? state.search : null;
-  bar.hidden = !search;
-  const results = $("searchresults");
-  results.textContent = "";
-  delete results.dataset.unavailable;
-  delete results.dataset.answered;
-  if (!search) return;
-  if (search.loading) results.appendChild(el("span", "note", "searching…"));
-  // The text whose answer is on screen.
-  else results.dataset.answered = search.text;
-  if (search.unavailable) {
-    results.dataset.unavailable = "true";
-    results.appendChild(el("span", "note", "Search is not available"));
-    return;
-  }
-  for (const hit of search.hits) {
-    const row = el("button", "hit");
-    row.type = "button";
-    row.dataset.hit = hit.messageId;
-    row.appendChild(el("small", null, `${participantName(search.roomId, hit.origin)} · ${clock(hit.timestamp)}`));
-    row.appendChild(highlighted(String(hit.preview || "").split("\n")[0], search.text));
-    row.onclick = () => jumpTo(search.roomId, hit.messageId);
-    results.appendChild(row);
-  }
-  if (search.text && !search.loading && !search.hits.length) results.appendChild(el("span", "note", "no matches"));
-  if (search.next) {
-    const more = el("button", null, "Older matches");
-    more.type = "button";
-    more.id = "search-more";
-    more.onclick = () => runSearch(search.next);
-    results.appendChild(more);
-  }
-}
-
-// Mute and archive, kept by the host and told to the product with
-// `UserStateChanged`.
-function userStateNode(room) {
-  const box = el("div", "userstate");
-  if (!state.capabilities.features.includes("mute_archive")) return box;
-  const mute = el("button", null, isMuted(room) ? "Unmute" : "Mute");
-  mute.type = "button";
-  mute.id = "mute";
-  mute.onclick = (event) => {
-    if (isMuted(room)) { setUserState(room, { mutedUntil: null }); return; }
-    const hour = 60 * 60 * 1000;
-    showMenu(event, [["1 hour", hour], ["8 hours", 8 * hour], ["1 week", 7 * 24 * hour], ["Always", null]].map(([label, span]) =>
-      menuItem(label, () => setUserState(room, { mutedUntil: span == null ? "forever" : Date.now() + span }), { id: `mute-${label.replace(/\s+/g, "-").toLowerCase()}` })));
-  };
-  const archive = el("button", null, isArchived(room) ? "Unarchive" : "Archive");
-  archive.type = "button";
-  archive.id = "archive";
-  archive.onclick = () => setUserState(room, { archived: !isArchived(room) });
-  box.append(mute, archive);
-  return box;
-}
 
 // The optional features a room declares, each marked when this host does not
 // serve it: the host keeps such a feature and ignores it.
@@ -1316,38 +896,21 @@ function declaredFeatures(room) {
   const served = new Set(state.capabilities.features);
   const declared = [];
   const add = (label, name) => declared.push(served.has(name) ? label : `${label} (not served)`);
-  if (f.preimageAttachments) add("preimage attachments", "preimage_attachments");
-  if (f.sealedAttachments) add("sealed attachments", "sealed_attachments");
-  if (f.search) add("search", "search");
   if (f.calls && (f.calls.audio || f.calls.video)) {
     const kinds = [f.calls.audio && "audio", f.calls.video && "video"].filter(Boolean).join("+");
     add(`calls ${kinds}`, "call_buttons");
   }
-  if (f.readAloud) add("read aloud", "read_aloud");
+  if (f.hopAttachments) add("HOP attachments", "hop_attachments");
   return declared;
 }
 
 function renderCapabilities() {
-  const caps = state.capabilities;
-  const bytes = (n) => n >= 1024 * 1024 ? `${n / (1024 * 1024)} MiB` : `${n} B`;
-  $("capabilities").textContent =
-    `${caps.features.join(", ") || "none"} · inline ${bytes(caps.inlineAttachmentMaxBytes)} · preimage ${caps.preimageAttachmentMaxBytes ? bytes(caps.preimageAttachmentMaxBytes) : "none"} · sealed ${caps.sealedAttachmentMaxBytes ? bytes(caps.sealedAttachmentMaxBytes) : "none"}`;
+  $("capabilities").textContent = state.capabilities.features.join(", ") || "none";
 }
-
-function runHandler(handler, onCallback) {
-  if (handler.type === "Deeplink") {
-    if (confirm(`Open ${handler.url}?`)) {
-      if (/^https?:/i.test(handler.url)) window.open(handler.url, "_blank", "noopener");
-      else setStatus(`deeplink ${handler.url}: a phone navigates there`, "ok");
-    }
-  } else onCallback();
-}
-
 
 function renderRoom(forceBottom) {
   renderHeader2();
   renderCall();
-  renderSearch();
   const thread = $("thread");
   const pinned = forceBottom || thread.scrollHeight - thread.scrollTop - thread.clientHeight < 60;
   thread.textContent = "";
@@ -1379,11 +942,10 @@ function renderRoom(forceBottom) {
     if (line) thread.appendChild(line);
   }
   if (!messages.length && !temps.length) {
-    const empty = emptyState(room.config.placeholder != null ? room.config.placeholder : "No messages yet");
+    const empty = emptyState("No messages");
     empty.id = "placeholder";
     thread.appendChild(empty);
   }
-  resolveAuthors(room.roomId, [...new Set(messages.map((m) => m.origin))]);
   for (const msg of messages) thread.appendChild(renderMessage(room, msg, false));
   for (const temp of temps) {
     thread.appendChild(renderMessage(room, {
@@ -1421,7 +983,7 @@ function jumpTo(roomId, messageId, tries) {
 // The newest message on screen is reported once each time it changes.
 function reportSeen(room) {
   if (state.opened !== room.roomId || document.hidden) return;
-  const messages = messagesOf(room.roomId).filter((m) => !m.deleted);
+  const messages = messagesOf(room.roomId);
   const newest = messages[messages.length - 1];
   if (!newest || state.seenSent.get(room.roomId) === newest.messageId) return;
   state.seenSent.set(room.roomId, newest.messageId);
@@ -1430,38 +992,39 @@ function reportSeen(room) {
 
 // ---------------------------------------------------------------- footer
 
+// The footer of a contact state, which replaces the declared one until the
+// contact is established, or null.
+function contactFooter(room) {
+  const contact = room && room.contact;
+  if (!contact || contact.state === "Established" || contact.state === "Invite") return null;
+  const name = roomName(room);
+  const box = el("div", "banner");
+  box.dataset.contactState = contact.state;
+  const button = (label, action) => { const b = el("button", null, label); b.type = "button"; b.dataset.contactAction = action; b.onclick = () => contactAction(room, action); return b; };
+  if (contact.state === "Outgoing") box.appendChild(el("span", null, `Wait for ${name} to accept your request`));
+  else if (contact.state === "Incoming") box.append(el("span", null, `${name} wants to chat with you`), button("Decline", "decline"), button("Accept", "accept"));
+  else if (contact.state === "Blocked") box.append(el("span", null, `You blocked ${name}`), button("Unblock", "unblock"));
+  else if (contact.state === "PeerLeft") box.appendChild(el("span", null, `${name} left the chat`));
+  return box;
+}
+
 function renderFooter(room) {
   const input = $("input");
-  const footer = room ? room.footer || { type: "Input" } : null;
-  const inputShown = !!footer && footer.type === "Input";
+  const status = contactFooter(room);
+  const contactBox = $("contactfooter");
+  contactBox.textContent = "";
+  contactBox.hidden = !status;
+  if (status) contactBox.appendChild(status);
+  const footer = status ? { type: "Empty" } : room ? room.footer || { type: "TextInput" } : null;
+  const inputShown = !!footer && footer.type === "TextInput";
   $("compose").hidden = !inputShown;
-  $("customfooter").hidden = !(footer && footer.type === "Custom");
-  $("footer").hidden = !!footer && footer.type === "Empty";
-  $("footer").dataset.footer = footer ? footer.type : "";
+  $("footer").dataset.footer = status ? `contact:${room.contact.state}` : footer ? footer.type : "";
   input.disabled = !room;
   $("send").disabled = !room;
-  input.placeholder = inputShown && footer.placeholder ? footer.placeholder : "Message";
-  const attach = $("attach");
-  attach.textContent = "";
-  if (inputShown) {
-    for (const [key, label, glyph] of [["photo", "Photo", "\u{1F4F7}"], ["video", "Video", "\u{1F3A5}"], ["file", "File", "\u{1F4CE}"]]) {
-      if (!footer[key]) continue;
-      const b = el("button", null, glyph);
-      b.type = "button";
-      b.dataset.attach = key;
-      b.title = `${label}: inline up to ${humanSize(state.capabilities.inlineAttachmentMaxBytes)}, staged as a preimage above it where the room declares it`;
-      b.onclick = () => { const input = $(`attach-${key}`); input.value = ""; input.click(); };
-      attach.appendChild(b);
-    }
-    if (footer.payment) {
-      const b = el("button", null, "Pay");
-      b.type = "button";
-      b.dataset.attach = "payment";
-      b.title = `Payment to ${footer.payment.destination}: no payment path on the dev page`;
-      b.onclick = () => setStatus("this host has no payment path", "warn");
-      attach.appendChild(b);
-    }
-  }
+  // The invite composer: the first message is the welcome message of the request.
+  const invite = contactState(room) === "Invite";
+  input.placeholder = invite ? "Write a request message" : "Message";
+  if (invite) input.maxLength = 1000; else input.removeAttribute("maxlength");
   const banner = $("banner");
   banner.textContent = "";
   const target = state.editing || state.replyTo;
@@ -1476,43 +1039,15 @@ function renderFooter(room) {
   }
 }
 
-
-
 // ------------------------------------------------------------------ send
-
-// A photo, video or file of the user. Up to the inline bound it travels in
-// the message; above it the host stages it as a preimage, which the product
-// pays for, where the room declares `preimageAttachments`, or seals it as
-// encrypted parts where the room declares `sealedAttachments`. The core
-// refuses the rest, and then nothing is uploaded.
-function sendAttachment(room, kind, file) {
-  const caps = state.capabilities;
-  const staged = file.size > caps.inlineAttachmentMaxBytes;
-  const seals = Boolean(room.features && room.features.sealedAttachments) && caps.features.includes("sealed_attachments");
-  const bound = seals ? caps.sealedAttachmentMaxBytes
-    : caps.features.includes("preimage_attachments") ? caps.preimageAttachmentMaxBytes : caps.inlineAttachmentMaxBytes;
-  if (file.size > bound) {
-    setStatus(`not sent: ${file.name} is ${humanSize(file.size)}, above ${humanSize(bound)}`, "err");
-    return;
-  }
-  setStatus(`${staged ? (seals ? "sealing" : "staging") : "sending"} ${file.name} (${humanSize(file.size)})…`, "ok");
-  file.arrayBuffer().then((buffer) => {
-    const bytes = new Uint8Array(buffer);
-    let binary = "";
-    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-    ask("attach", { roomId: room.roomId, kind, mimeType: file.type || "application/octet-stream", fileName: file.name, data: btoa(binary) }, (frame) => {
-      if (frame.error) { setStatus(`not sent: ${describeError(frame.error)}`, "err"); return; }
-      if (frame.ok && frame.ok.message) upsertMessage(room.roomId, frame.ok.message);
-      setStatus(`${file.name} sent ${staged ? (seals ? "sealed" : "as a preimage") : "inline"}`, "ok");
-      if (room.roomId === state.selected) renderRoom(true);
-    });
-  });
-}
 
 function postText(room, text, replyTo) {
   if (isSource(room)) {
     // Drawn at once as Preparing; the product's MessageCreated replaces it.
-    const temp = { tempId: `local-${++tempSeq}`, text, replyTo, status: "Preparing", at: Date.now() };
+    // The product sends the message under the id and time the page chose.
+    const temp = {
+      tempId: `local-${++tempSeq}`, messageId: crypto.randomUUID(), text, replyTo, status: "Preparing", at: Date.now(),
+    };
     const temps = state.temps.get(room.roomId) || [];
     temps.push(temp);
     state.temps.set(room.roomId, temps);
@@ -1528,7 +1063,8 @@ function postText(room, text, replyTo) {
 
 function sendTemp(room, temp) {
   temp.status = "Preparing";
-  temp.reqId = ask("post", { roomId: room.roomId, text: temp.text, replyTo: temp.replyTo }, (frame) => {
+  const post = { roomId: room.roomId, text: temp.text, replyTo: temp.replyTo, messageId: temp.messageId, timestamp: temp.at };
+  temp.reqId = ask("post", post, (frame) => {
     const temps = state.temps.get(room.roomId) || [];
     if (frame.ok) {
       state.temps.set(room.roomId, temps.filter((t) => t !== temp));
@@ -1591,115 +1127,46 @@ function menuItem(label, onClick, options) {
   const b = el("button", options && options.destructive ? "destructive" : null);
   b.type = "button";
   if (options && options.id) b.dataset.item = options.id;
-  if (options && options.icon) { const src = imageUrl(options.icon); if (src) { const img = el("img"); img.alt = ""; img.src = src; b.appendChild(img); } }
   b.appendChild(document.createTextNode(label));
   b.onclick = () => { closeMenu(); onClick(); };
   return b;
 }
 
-function productItems(actions, onCallback) {
-  // Destructive entries draw red and last.
-  const ordered = [...actions].sort((a, b) => Number(a.destructive) - Number(b.destructive));
-  return ordered.map((action) => menuItem(action.label, () => runHandler(action.handler, () => onCallback(action)), { destructive: action.destructive, icon: action.icon, id: action.actionId }));
-}
-
-function builtInItems(room, msg, temp, hidden) {
+// Copy, reply, edit of an own text, the edit history, react and who reacted.
+// A send the product did not take offers Retry and Discard.
+function menuItems(room, msg, temp) {
   const items = [];
   const mine = msg.origin === USER;
-  const source = isSource(room);
   const text = msg.body && (msg.body.text != null ? msg.body.text : null);
-  const show = (name) => !hidden.includes(name);
   if (temp) {
     if (msg.status === "Failed") items.push(menuItem("Retry", () => sendTemp(room, temp), { id: "Retry" }));
-    items.push(menuItem("Delete", () => { state.temps.set(room.roomId, (state.temps.get(room.roomId) || []).filter((t) => t !== temp)); renderRoom(false); }, { id: "Delete", destructive: true }));
+    items.push(menuItem("Discard", () => { state.temps.set(room.roomId, (state.temps.get(room.roomId) || []).filter((t) => t !== temp)); renderRoom(false); }, { id: "Discard", destructive: true }));
     return items;
   }
-  if (show("Copy") && text) items.push(menuItem("Copy", () => navigator.clipboard.writeText(text).then(() => setStatus("copied", "ok"), () => setStatus("copy refused by the browser", "warn")), { id: "Copy" }));
-  if (show("Reply")) items.push(menuItem("Reply", () => { state.replyTo = msg.messageId; state.editing = null; renderFooter(room); $("input").focus(); }, { id: "Reply" }));
-  if (show("Edit") && mine && msg.body && msg.body.type === "Text") items.push(menuItem("Edit", () => { state.editing = msg.messageId; state.replyTo = null; $("input").value = msg.body.text; renderFooter(room); $("input").focus(); }, { id: "Edit" }));
-  if (show("Retry") && source && msg.status === "Failed") items.push(menuItem("Retry", () => ask("retry", { roomId: room.roomId, messageId: msg.messageId }, (frame) => { if (frame.error) setStatus(`retry: ${describeError(frame.error)}`, "err"); }), { id: "Retry" }));
-  const deletable = mine || (!source && msg.status === "Failed");
-  if (show("Delete") && deletable) items.push(menuItem("Delete", () => ask("delete", { roomId: room.roomId, messageId: msg.messageId }, (frame) => { if (frame.error) setStatus(`delete: ${describeError(frame.error)}`, "err"); }), { id: "Delete", destructive: true }));
-  if (show("React")) {
-    const picker = el("div", "picker");
-    picker.dataset.item = "React";
-    const allowed = room.config.allowedReactions || REACTIONS;
-    for (const emoji of allowed) {
-      const b = el("button", null, emoji);
-      b.type = "button";
-      b.dataset.emoji = emoji;
-      b.onclick = () => { closeMenu(); const held = (msg.reactions || []).find((r) => r.emoji === emoji && r.reactedByUser); react(room.roomId, msg, emoji, !held); };
-      picker.appendChild(b);
-    }
-    items.push(picker);
+  if (text) items.push(menuItem("Copy", () => navigator.clipboard.writeText(text).then(() => setStatus("copied", "ok"), () => setStatus("copy refused by the browser", "warn")), { id: "Copy" }));
+  items.push(menuItem("Reply", () => { state.replyTo = msg.messageId; state.editing = null; renderFooter(room); $("input").focus(); }, { id: "Reply" }));
+  if (mine && msg.body && (msg.body.type === "Text" || (msg.body.type === "RichText" && msg.body.text != null))) {
+    items.push(menuItem("Edit", () => { state.editing = msg.messageId; state.replyTo = null; $("input").value = msg.body.text; renderFooter(room); $("input").focus(); }, { id: "Edit" }));
   }
+  if (isSource(room) && msg.editedAt != null) items.push(menuItem("Edit history", () => editHistory(room.roomId, msg.messageId), { id: "EditHistory" }));
+  const picker = el("div", "picker");
+  picker.dataset.item = "React";
+  for (const emoji of REACTIONS) {
+    const b = el("button", null, emoji);
+    b.type = "button";
+    b.dataset.emoji = emoji;
+    b.onclick = () => { closeMenu(); const held = (msg.reactions || []).find((r) => r.emoji === emoji && r.reactedByUser); react(room.roomId, msg, emoji, !held); };
+    picker.appendChild(b);
+  }
+  items.push(picker);
   if (room.config.reactionDetails && (msg.reactions || []).length) items.push(menuItem("Who reacted", () => whoReacted(room.roomId, msg.messageId), { id: "WhoReacted" }));
-  const spoken = readAloudText(room, msg);
-  if (spoken) items.push(menuItem("Read aloud", () => speak(room, spoken), { id: "ReadAloud" }));
   return items;
 }
 
-// "Read aloud" is offered on text, Markdown read as plain text, and a custom
-// body's preview, where the room declares it and the host serves it.
-function readAloudText(room, msg) {
-  if (!(room.features && room.features.readAloud) || !state.capabilities.features.includes("read_aloud")) return null;
-  const b = msg.body || {};
-  if (b.type === "Text") return b.text;
-  if (b.type === "RichText" && b.text) return markdown(b.text).textContent;
-  if (b.type === "Custom") return b.previewText || null;
-  return null;
-}
-
-function speak(room, text) {
-  stopSpeaking();
-  state.speaking = { roomId: room.roomId, text };
-  document.body.dataset.lastSpoken = text;
-  if (window.speechSynthesis) {
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = navigator.language;
-    utterance.onend = () => { if (state.speaking && state.speaking.text === text) { state.speaking = null; renderSpeaking(); } };
-    window.speechSynthesis.speak(utterance);
-  }
-  renderSpeaking();
-}
-
-function stopSpeaking() {
-  if (window.speechSynthesis) window.speechSynthesis.cancel();
-  state.speaking = null;
-  renderSpeaking();
-}
-
-// A "Stop" line in the footer while the host speaks.
-function renderSpeaking() {
-  const line = $("speaking");
-  line.hidden = !state.speaking;
-  $("spokentext").textContent = state.speaking ? `Reading aloud: ${state.speaking.text}` : "";
-  line.dataset.spoken = state.speaking ? state.speaking.text : "";
-}
-
-// The built-in entries, then the product's own when the room asks for them.
 function openMessageMenu(room, msg, temp, event) {
   const position = { clientX: event.clientX, clientY: event.clientY, stopPropagation() {} };
   event.stopPropagation();
-  if (temp || !room.config.messageActions) {
-    showMenu(position, builtInItems(room, msg, temp, []));
-    return;
-  }
-  showMenu(position, [el("span", "note", "asking the product…")]);
-  ask("messageActions", { roomId: room.roomId, messageId: msg.messageId }, (frame) => {
-    let items;
-    const callback = (action) => send({ op: "messageAction", roomId: room.roomId, messageId: msg.messageId, actionId: action.actionId });
-    if (frame.ok && frame.ok.type === "Custom") items = productItems(frame.ok.actions, callback);
-    else if (frame.ok) {
-      items = builtInItems(room, msg, null, frame.ok.hidden || []);
-      if (frame.ok.actions.length) { items.push(el("hr")); items.push(...productItems(frame.ok.actions, callback)); }
-    } else {
-      // NotAvailable, a time-out or no worker: the host's own menu.
-      items = builtInItems(room, msg, null, []);
-      if (frame.error.tag !== "NotAvailable") items.push(el("span", "note", `menu: ${describeError(frame.error)}`));
-    }
-    showMenu(position, items);
-  });
+  showMenu(position, menuItems(room, msg, temp));
 }
 
 function whoReacted(roomId, messageId) {
@@ -1710,7 +1177,6 @@ function whoReacted(roomId, messageId) {
       openSheet("Who reacted", [el("span", "note", describeError(frame.error))]);
       return;
     }
-    resolveAuthors(roomId, frame.ok.reactions.map((r) => r.participantId));
     const rows = frame.ok.reactions.map((r) => {
       const row = el("div", "person-row");
       row.dataset.participant = r.participantId;
@@ -1722,6 +1188,20 @@ function whoReacted(roomId, messageId) {
   });
 }
 
+function editHistory(roomId, messageId) {
+  openSheet("Edit history", [el("span", "note", "asking the product…")]);
+  ask("editHistory", { roomId, messageId }, (frame) => {
+    if (frame.error) { openSheet("Edit history", [el("span", "note", describeError(frame.error))]); return; }
+    const rows = frame.ok.revisions.map((revision) => {
+      const row = el("div", "person-row");
+      row.appendChild(el("span", null, clock(revision.editedAt)));
+      row.appendChild(el("span", null, revision.text == null ? "(no text)" : revision.text));
+      return row;
+    });
+    openSheet("Edit history", rows.length ? rows : [el("span", "note", "no earlier text")]);
+  });
+}
+
 function closeSheet() { $("sheet").hidden = true; $("sheetbody").textContent = ""; }
 
 function openSheet(title, nodes) {
@@ -1730,90 +1210,6 @@ function openSheet(title, nodes) {
   body.appendChild(el("h3", null, title));
   for (const node of nodes) body.appendChild(node);
   $("sheet").hidden = false;
-}
-
-function describeParticipant(entry) {
-  const p = entry.participant;
-  switch (p.kind) {
-    case "Person": return `Person ${p.personId}`;
-    case "LitePerson": return `Lite person ${p.account}`;
-    case "Contact": return `Contact handle ${p.handle}`;
-    case "Product": return `Product ${p.productId}`;
-    case "Custom": return `Custom${p.avatar ? " with avatar" : ""}`;
-    default: return p.kind;
-  }
-}
-
-// The built-in entry of each participant kind (RFC defaults table).
-function builtInParticipant(entry) {
-  const p = entry.participant;
-  switch (p.kind) {
-    case "Person": return [menuItem("Open People profile", () => setStatus(`a phone opens the People profile of person ${p.personId}`, "ok"), { id: "builtin" })];
-    case "LitePerson": return [menuItem("Copy address", () => navigator.clipboard.writeText(p.account).then(() => setStatus("copied", "ok"), () => setStatus(p.account, "ok")), { id: "builtin" })];
-    case "Contact": return [menuItem("Open contact", () => setStatus("a phone opens the contact", "ok"), { id: "builtin" })];
-    case "Product": return [menuItem("Open product", () => setStatus(`a phone opens ${p.productId}`, "ok"), { id: "builtin" })];
-    default: return [];
-  }
-}
-
-function openParticipantMenu(room, entry, event) {
-  const position = { clientX: event.clientX, clientY: event.clientY, stopPropagation() {} };
-  event.stopPropagation();
-  const items = builtInParticipant(entry);
-  showMenu(position, items.length ? items : [el("span", "note", "no actions")]);
-}
-
-function personRow(room, entry) {
-  const row = el("button", "person-row");
-  row.type = "button";
-  row.dataset.participant = entry.participantId;
-  const p = entry.participant;
-  row.appendChild(avatar(p.kind === "Custom" ? p.avatar : null, participantName(room.roomId, entry.participantId), true));
-  const label = el("span", null, participantName(room.roomId, entry.participantId));
-  label.appendChild(el("small", null, `${entry.participantId} · ${describeParticipant(entry)}`));
-  row.appendChild(label);
-  row.onclick = (event) => openParticipantMenu(room, entry, event);
-  return row;
-}
-
-// The participants sheet: the two defaults, or the product's pages of 100.
-function openPeople(room) {
-  if (!room.config.participants) {
-    openSheet("2 participants", [
-      el("div", "person-row", "You (user)"),
-      el("div", "person-row", `${room.name} (product)`),
-    ]);
-    return;
-  }
-  const people = peopleOf(room.roomId);
-  const draw = () => {
-    const nodes = people.list.map((entry) => personRow(room, entry));
-    if (people.loading) nodes.push(el("span", "note", "loading…"));
-    else if (people.error) nodes.push(el("span", "note", describeError(people.error)));
-    else if (people.next) {
-      const more = el("button", null, "Load more");
-      more.type = "button";
-      more.id = "people-more";
-      more.onclick = () => page(people.next);
-      nodes.push(more);
-    }
-    openSheet(`${people.count != null ? people.count : people.list.length} participants`, nodes);
-  };
-  const page = (cursor) => {
-    people.loading = true;
-    draw();
-    ask("participants", { roomId: room.roomId, query: { type: "Page", cursor, pageSize: PEOPLE_PAGE } }, (frame) => {
-      people.loading = false;
-      people.error = frame.error || null;
-      if (frame.ok) {
-        for (const entry of frame.ok.participants) { people.list.push(entry); people.byId.set(entry.participantId, entry); }
-        people.next = frame.ok.next == null ? null : frame.ok.next;
-      }
-      draw();
-    });
-  };
-  if (people.next === undefined && !people.list.length) page(null);
-  else draw();
 }
 
 // -------------------------------------------------------------- protocol
@@ -1856,7 +1252,6 @@ function handle(frame) {
       if (frame.capabilities) state.capabilities = frame.capabilities;
       renderCapabilities();
       state.rooms = new Map((frame.rooms || []).map((room) => [room.roomId, room]));
-      state.bots = frame.bots || [];
       state.messages = new Map();
       for (const entry of frame.messages || []) upsertMessage(entry.roomId, entry.message);
       // A reconnected socket is a new screen: open the room again.
@@ -1885,16 +1280,6 @@ function handle(frame) {
       ensureSelection();
       renderRooms(); renderRoom(true);
       break;
-    case "notification":
-      state.notifications.unshift(Object.assign(strip(frame), { at: Date.now() }));
-      state.notifications.splice(20);
-      renderNotifications();
-      break;
-    case "bot":
-      state.bots = state.bots.filter((b) => b.botId !== frame.botId).concat([strip(frame)]);
-      renderRooms();
-      renderRoom(false);
-      break;
     case "message": {
       const room = state.rooms.get(frame.roomId);
       if (room && frame.list) room.list = frame.list;
@@ -1907,7 +1292,6 @@ function handle(frame) {
       break;
     }
     case "workers": {
-      const first = !state.worker.connected && frame.connected > 0;
       state.worker.connected = frame.connected;
       renderHeader();
       break;
@@ -1932,12 +1316,7 @@ function handle(frame) {
 }
 
 $("compose").onsubmit = (event) => { event.preventDefault(); submit(); };
-$("stop-speaking").onclick = () => stopSpeaking();
-$("searchtext").oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => runSearch(null), 300); };
-for (const key of ["photo", "video", "file"]) {
-  const input = $(`attach-${key}`);
-  input.onchange = () => { const room = roomOf(state.selected); if (room && input.files.length) sendAttachment(room, input.dataset.kind, input.files[0]); };
-}
+$("linkform").onsubmit = (event) => { event.preventDefault(); openLink(); };
 $("input").onkeydown = (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); submit(); }
   if (event.key === "Escape") { state.editing = null; state.replyTo = null; renderFooter(roomOf(state.selected)); }

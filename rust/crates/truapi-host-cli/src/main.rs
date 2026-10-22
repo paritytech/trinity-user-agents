@@ -41,7 +41,6 @@ mod stack;
 mod terminal_ui;
 mod transcript;
 mod update;
-mod wake_relay;
 
 use std::{
 	collections::HashMap,
@@ -340,14 +339,6 @@ enum Command {
 	/// Only works for a binary the installer put in place; a `cargo install`
 	/// copy or a source build is reported and left alone.
 	Update,
-	/// Run a reference push relay for wake pushes, for tests.
-	///
-	/// Hosts register a device, its key and its watched statement-store topics
-	/// at `POST /v1/registrations`. The relay follows the topics on the People
-	/// statement store and, for each new statement, writes a signed wake push
-	/// to a file or delivers it to a simulator with `xcrun simctl push`. It has
-	/// no APNs or FCM credentials.
-	WakeRelay(wake_relay::WakeRelayArgs),
 	/// Publish, check and bundle Trinity stack descriptors.
 	Stack {
 		#[command(subcommand)]
@@ -719,7 +710,6 @@ async fn dispatch(
 			);
 			Ok(())
 		},
-		Command::WakeRelay(args) => wake_relay::run(args).await,
 		Command::Stack { command } => stack::run(command).await,
 	}
 }
@@ -1755,12 +1745,13 @@ async fn start_signing_host(
 		}
 		signer = Some(explicit_signer);
 	}
-	// A dev surface serves its worker beside the default-kind app, so Chat and
-	// Pocket are installed for it; the core still denies both to an `App`.
-	let (chat, pocket) = match &args.dev_surface {
-		Some(surface) => (Some(surface.chat().clone()), pocket::CliPocketHost::from_env()),
-		None => (args.execution_kind.chat_host(), args.execution_kind.pocket_host()),
+	// A dev surface serves its worker beside the default-kind app, so Chat is
+	// installed for it; the core still denies Chat to an `App`.
+	let chat = match &args.dev_surface {
+		Some(surface) => Some(surface.chat().clone()),
+		None => args.execution_kind.chat_host(),
 	};
+	let pocket = args.execution_kind.pocket_host();
 	let (runtime, platform) = build_signing_runtime(
 		network,
 		storage_profile.path,
@@ -1868,9 +1859,6 @@ fn build_signing_runtime(
 		network.network_suffix.to_string(),
 	)
 	.context("invalid signing host config")?;
-	if let Some(chat) = &chat {
-		platform.show_notifications_on(chat.clone());
-	}
 	let status_host = platform.clone() as Arc<dyn PermissionStatusHost>;
 	let runtime = Arc::new(SigningHostRuntime::with_chat_platform(
 		platform.clone(),

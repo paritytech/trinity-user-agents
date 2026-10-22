@@ -20,20 +20,16 @@ import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.models.ChatListUiState
-import kotlinx.collections.immutable.toPersistentMap
+import kotlinx.collections.immutable.persistentMapOf
 
 private val PreviewIconSize = 16.dp
-private val OngoingIndicatorWidth = 18.dp
 private const val PREVIEW_ICON_ID = "previewIcon"
-private const val ONGOING_INDICATOR_ID = "ongoingIndicator"
 
 @Composable
 internal fun ChatItemBody(
     preview: ChatPreviewBody,
     badge: ChatListUiState.Badge,
     hasReaction: Boolean,
-    isOngoing: Boolean,
-    isMuted: Boolean = false,
 ) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
@@ -44,12 +40,8 @@ internal fun ChatItemBody(
 
         // Icon is inlined at the text start so wrapped lines flow under it (full width)
         // instead of staying indented past a sibling icon column.
-        val text = remember(preview, isOngoing) {
+        val text = remember(preview) {
             buildAnnotatedString {
-                if (isOngoing) {
-                    appendInlineContent(ONGOING_INDICATOR_ID, "…")
-                    append(" ")
-                }
                 if (previewIcon != null) {
                     appendInlineContent(PREVIEW_ICON_ID, "icon")
                     append(" ")
@@ -58,40 +50,25 @@ internal fun ChatItemBody(
             }
         }
 
-        val inlineContent = buildMap {
-            if (isOngoing) {
-                put(
-                    ONGOING_INDICATOR_ID,
-                    InlineTextContent(
-                        Placeholder(
-                            width = with(density) { OngoingIndicatorWidth.toSp() },
-                            height = with(density) { PreviewIconSize.toSp() },
-                            placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter,
-                        )
-                    ) {
-                        OngoingActivityIndicator()
-                    }
-                )
-            }
-            if (previewIcon != null) {
-                put(
-                    PREVIEW_ICON_ID,
-                    InlineTextContent(
-                        Placeholder(
-                            width = with(density) { PreviewIconSize.toSp() },
-                            height = with(density) { PreviewIconSize.toSp() },
-                            placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter,
-                        )
-                    ) {
-                        NovaIcon(
-                            modifier = Modifier.fillMaxSize(),
-                            imageVector = previewIcon,
-                            tint = PolkadotTheme.colors.fg.secondary,
-                        )
-                    }
-                )
-            }
-        }.toPersistentMap()
+        val inlineContent = if (previewIcon != null) {
+            persistentMapOf(
+                PREVIEW_ICON_ID to InlineTextContent(
+                    Placeholder(
+                        width = with(density) { PreviewIconSize.toSp() },
+                        height = with(density) { PreviewIconSize.toSp() },
+                        placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter,
+                    )
+                ) {
+                    NovaIcon(
+                        modifier = Modifier.fillMaxSize(),
+                        imageVector = previewIcon,
+                        tint = PolkadotTheme.colors.fg.secondary,
+                    )
+                }
+            )
+        } else {
+            persistentMapOf()
+        }
 
         NovaText(
             modifier = Modifier.weight(1f),
@@ -107,7 +84,6 @@ internal fun ChatItemBody(
             modifier = Modifier.padding(top = PolkadotTheme.spacings.tiny),
             badge = badge,
             hasReaction = hasReaction,
-            isMuted = isMuted,
         )
     }
 }

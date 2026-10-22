@@ -8,7 +8,6 @@ import androidx.room.Transaction
 import androidx.room.Update
 import io.paritytech.polkadotapp.database.model.ChatMessageLocal
 import io.paritytech.polkadotapp.database.model.ChatMessagePendingExpansionLocal
-import io.paritytech.polkadotapp.database.model.ChatMessageRoomSearchRow
 import io.paritytech.polkadotapp.database.model.ChatMessageSearchRow
 import io.paritytech.polkadotapp.database.model.TransferRetryStateLocal
 import kotlinx.coroutines.flow.Flow
@@ -103,8 +102,7 @@ abstract class ChatMessageDao {
         searchableContent = searchableContent,
         content = content,
         replyToMessageId = replyToMessageId,
-        isInternal = isInternal,
-        originParticipantId = originParticipantId,
+        isInternal = isInternal
     )
 
     private suspend fun getSortOrders(messageIds: List<String>): Map<String, Long> {
@@ -176,31 +174,6 @@ abstract class ChatMessageDao {
         limit: Int
     ): List<ChatMessageSearchRow>
 
-    /**
-     * The messages of one chat that can match an in-room search, newest first, older than the cursor
-     * ([beforeTimestamp], [beforeId]). A message matches the escaped [likeQuery] without ASCII case, or has a char
-     * outside printable ASCII; the caller then compares without case and diacritics. An edit row is not a message
-     * of the feed, so it is not a result.
-     */
-    @Query("""
-        SELECT id, timestamp, searchableContent, origintype AS originType, originParticipantId FROM chat_messages
-        WHERE chatId = :chatId
-            AND isInternal = 0
-            AND type != 'EDITED'
-            AND searchableContent != ''
-            AND (timestamp < :beforeTimestamp OR (timestamp = :beforeTimestamp AND id < :beforeId))
-            AND (searchableContent LIKE '%' || :likeQuery || '%' ESCAPE '\' OR searchableContent GLOB '*[^ -~]*')
-        ORDER BY timestamp DESC, id DESC
-        LIMIT :limit
-    """)
-    abstract suspend fun searchMessageCandidatesInChat(
-        chatId: ByteArray,
-        likeQuery: String,
-        beforeTimestamp: Long,
-        beforeId: String,
-        limit: Int,
-    ): List<ChatMessageRoomSearchRow>
-
     @Query("UPDATE chat_messages SET status = :newStatus, updatedAt = :updatedAt WHERE id = :messageId")
     abstract suspend fun updateStatus(messageId: String, newStatus: ChatMessageLocal.Status, updatedAt: Long): Int
 
@@ -265,32 +238,6 @@ abstract class ChatMessageDao {
     @Query("UPDATE chat_messages SET status = 'IS_READ' WHERE id = :messageId")
     abstract suspend fun markMessageAsRead(messageId: String)
 
-    @Query(
-        "UPDATE chat_messages SET content = :content, type = 'DELETED', isInternal = 1, status = 'IS_READ', " +
-            "searchableContent = '', updatedAt = :updatedAt WHERE id = :messageId"
-    )
-    protected abstract suspend fun rewriteRowAsDeleted(messageId: String, content: ByteArray, updatedAt: Long)
-
-    @Query("DELETE FROM chat_message_reactions WHERE messageId = :messageId")
-    protected abstract suspend fun deleteReactionsOf(messageId: String)
-
-    @Query("DELETE FROM message_revisions WHERE messageId = :messageId")
-    protected abstract suspend fun deleteRevisionsOf(messageId: String)
-
-    /** Keeps the row as a hidden tombstone, so its id stays taken, and drops its reactions and revisions. */
-    @Transaction
-    open suspend fun rewriteAsDeleted(messageId: String, content: ByteArray, updatedAt: Long) {
-        rewriteRowAsDeleted(messageId, content, updatedAt)
-        deleteReactionsOf(messageId)
-        deleteRevisionsOf(messageId)
-    }
-
-    @Query(
-        "SELECT id FROM chat_messages WHERE chatId = :chatId AND isInternal = 0 AND type != 'EDITED' AND timestamp <= :timestamp " +
-            "ORDER BY sortOrder DESC, timestamp DESC LIMIT 1"
-    )
-    abstract suspend fun getNewestVisibleMessageIdUpTo(chatId: ByteArray, timestamp: Long): String?
-
     @Query("SELECT * FROM chat_messages WHERE chatId = :chatId AND type = 'UNSUPPORTED'")
     abstract suspend fun getUnsupportedMessages(chatId: ByteArray): List<ChatMessageLocal>
 
@@ -350,9 +297,7 @@ abstract class ChatMessageDao {
         val id: String,
         val content: ByteArray?,
         val type: ChatMessageLocal.Type,
-        val updatedAt: Long,
-        // The search reads this column, so a new body replaces it too.
-        val searchableContent: String,
+        val updatedAt: Long
     )
 
     companion object {

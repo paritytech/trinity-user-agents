@@ -571,11 +571,6 @@ pub enum RenderContext {
 		/// Card id, as declared in the product's worker manifest.
 		card_id: String,
 	},
-	/// The footer of a chat room that set `ChatRoomFooter::Custom`.
-	ChatFooter {
-		/// The room.
-		room_id: String,
-	},
 }
 
 /// A body the host needs drawn.

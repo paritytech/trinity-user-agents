@@ -18,7 +18,11 @@ struct ChatHopFile: Sendable {
 
 /// Opens the HOP files of the chat product through the core, which claims them only from the app's HOP nodes.
 protocol ChatHopFileOpening: Sendable {
-    func open(_ resource: ChatHopResource) async throws -> ChatHopFile
+    /// Opens the file. `progress` gets the bytes received and the size of the file while they arrive.
+    func open(
+        _ resource: ChatHopResource,
+        progress: @escaping @Sendable (_ received: UInt64, _ total: UInt64) -> Void
+    ) async throws -> ChatHopFile
     /// Tells the node that the entries of an opened file were taken. Call it once the bytes are kept.
     func ack(_ resource: ChatHopResource, entries: [Data]) async throws
 }

@@ -5,25 +5,28 @@
 //
 // The helper speaks the protocol of the `/chat` page on its socket
 // `/chat/ws`: it keeps the rooms and the messages the host sends, and sends
-// the operations the page sends when a person types a message, presses a
-// button of a message, reads a page of a room that the worker keeps
-// (`productSource`), or edits, deletes, reacts to, sees and searches the
-// messages of such a room. A test of the JS worker of `--worker-bundle` uses
-// it to see what the worker draws and to answer it.
+// the operations the page sends when a person types a message, reads a page
+// of a room that the worker keeps
+// (`productSource`), edits, reacts to and sees the messages of such a room,
+// asks the edit history of one, opens a link such as `contact:<hex>` or a
+// username, or accepts, declines, blocks, unblocks or leaves the contact of a
+// room. A test of the JS worker of `--worker-bundle` uses it to see what the
+// worker draws and to answer it.
 //
 //   const chat = await ChatSocket.connect("http://127.0.0.1:9955/chat");
-//   await chat.waitForMessage("actions", (m) => messageText(m) === "Press a button");
-//   await chat.press("actions", menu.messageId, "yes");
-//   await chat.post("actions", "hello");
+//   await chat.openLink("chats", "contact:0a1b...");
+//   await chat.post("dm-0a1b...", "hello");
+//   await chat.waitForMessage("dm-0a1b...", (m) => messageText(m) === "hi");
 //   chat.close();
 //
 // From a terminal, with the same host:
 //
 //   node scripts/lib/cli-chat-socket.mjs 9955 rooms
-//   node scripts/lib/cli-chat-socket.mjs 9955 messages actions
-//   node scripts/lib/cli-chat-socket.mjs 9955 page notes
-//   node scripts/lib/cli-chat-socket.mjs 9955 post actions "hello"
-//   node scripts/lib/cli-chat-socket.mjs 9955 press actions m1 yes
+//   node scripts/lib/cli-chat-socket.mjs 9955 messages dm-7
+//   node scripts/lib/cli-chat-socket.mjs 9955 page dm-7
+//   node scripts/lib/cli-chat-socket.mjs 9955 post dm-7 "hello"
+//   node scripts/lib/cli-chat-socket.mjs 9955 open-link home contact:0a1b...
+//   node scripts/lib/cli-chat-socket.mjs 9955 contact dm-7 accept
 //   node scripts/lib/cli-chat-socket.mjs 9955 watch
 
 import { pathToFileURL } from "node:url";
@@ -31,6 +34,12 @@ import { waitFor } from "./process.mjs";
 
 /** Participant id of the person in a room the host keeps. */
 export const USER = "user";
+
+/** Participant id of the contact of a room. */
+export const CONTACT = "contact";
+
+/** What a person does about the contact of a room. */
+export const CONTACT_ACTIONS = ["accept", "decline", "block", "unblock", "leave"];
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -110,28 +119,15 @@ function upsert(chat, roomId, message) {
   chat.messages.set(roomId, list);
 }
 
-/** The text a person reads in `message`: the text of its body, if any. */
+/**
+ * The text a person reads in `message`: the text of its body, the line of an
+ * event or a call, or the amount of a payment.
+ */
 export function messageText(message) {
   const body = message?.body ?? {};
   if (typeof body.text === "string") return body.text;
-  if (body.type === "Custom") return body.previewText ?? "";
+  if (body.type === "Payment") return `Payment of ${body.amount}`;
   return "";
-}
-
-/**
- * The newest message of `messages` with a button that has the id or the
- * title `action`, as `{ message, action }`, or undefined.
- */
-export function findAction(messages, action) {
-  for (const message of [...messages].reverse()) {
-    if (message.deleted || message.body?.type !== "Actions") continue;
-    const found = message.body.actions.find(
-      (candidate) =>
-        candidate.actionId === action || candidate.title === action,
-    );
-    if (found) return { message, action: found };
-  }
-  return undefined;
 }
 
 /** One connection to the chat page socket of a host. */
@@ -272,6 +268,15 @@ export class ChatSocket {
   }
 
   /**
+   * The contact of `roomId`, `{ account, username, state }`, or null. The
+   * state is one of `Invite`, `Outgoing`, `Incoming`, `Established`,
+   * `Blocked` and `PeerLeft`.
+   */
+  contact(roomId) {
+    return this.chat.rooms.get(roomId)?.contact ?? null;
+  }
+
+  /**
    * Ask for one page of `roomId`, a room that the worker keeps, as the page
    * does when it opens the room or scrolls. The host asks the worker. Gives
    * the `ok` of the answer: `{ messages, next }`, oldest first.
@@ -295,10 +300,24 @@ export class ChatSocket {
    * Type `text` into `roomId` as the person. Gives the `ok` of the answer:
    * `{ type: "Posted", message, workers }` in a room the host keeps, and
    * `{ type: "MessageCreated", message }` in a room the worker keeps.
+   * `messageId` is the id the person's host chose for the message, and
+   * `timestamp` the time the person wrote it, in milliseconds since the Unix
+   * epoch: a worker that keeps the room sends the message under both.
    */
-  post(roomId, text, { replyTo, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  post(
+    roomId,
+    text,
+    { replyTo, messageId, timestamp, timeoutMs = DEFAULT_TIMEOUT_MS } = {},
+  ) {
     return this.#ask(
-      { op: "post", roomId, text, replyTo: replyTo ?? null },
+      {
+        op: "post",
+        roomId,
+        text,
+        replyTo: replyTo ?? null,
+        messageId: messageId ?? null,
+        timestamp: timestamp ?? null,
+      },
       timeoutMs,
     );
   }
@@ -311,9 +330,13 @@ export class ChatSocket {
     return this.#ask({ op: "edit", roomId, messageId, text }, timeoutMs);
   }
 
-  /** Delete the message `messageId` of `roomId`. Gives the `ok` of the answer. */
-  delete(roomId, messageId, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
-    return this.#ask({ op: "delete", roomId, messageId }, timeoutMs);
+  /**
+   * Ask the texts the message `messageId` of `roomId` had, as the person does
+   * from the message menu. Gives `{ revisions: [{ editedAt, text }] }`,
+   * oldest first.
+   */
+  editHistory(roomId, messageId, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+    return this.#ask({ op: "editHistory", roomId, messageId }, timeoutMs);
   }
 
   /**
@@ -338,47 +361,67 @@ export class ChatSocket {
   }
 
   /**
-   * Ask who the participants of `roomId` are: `{ type: "Count" }`,
-   * `{ type: "Page", cursor, pageSize }` or `{ type: "ByIds",
-   * participantIds }`. Gives the `ok` of the answer.
+   * Open `payload`, such as `contact:<hex>` or a username, as a person does
+   * from a link, a scanned code or the search of the host. The host gives it
+   * to the product with `roomId`, a room id of the product. Gives
+   * `{ roomId }`: the room the product shows next, or null for `roomId`.
    */
-  participants(roomId, query, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
-    return this.#ask({ op: "participants", roomId, query }, timeoutMs);
-  }
-
-  /** Search `roomId` for `text`. Gives the `ok` of the answer. */
-  search(
-    roomId,
-    text,
-    { cursor = null, timeoutMs = DEFAULT_TIMEOUT_MS } = {},
-  ) {
-    return this.#ask({ op: "search", roomId, text, cursor }, timeoutMs);
+  openLink(roomId, payload, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+    return this.#ask({ op: "openLink", roomId, payload }, timeoutMs);
   }
 
   /**
-   * Press the button `actionId` of the message `messageId` in `roomId`.
-   * Gives the `delivered` frame, with the number of workers.
+   * Run `action`, one of `CONTACT_ACTIONS`, on the contact of `roomId`, as
+   * the person does from the request banner or the header menu. The host
+   * refuses an action the contact state does not offer. Gives the `ok` of
+   * the product's answer.
    */
-  press(roomId, messageId, actionId, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
-    return this.#deliver(
-      { op: "trigger", roomId, messageId, actionId },
-      timeoutMs,
-    );
+  contactAction(roomId, action, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+    if (!CONTACT_ACTIONS.includes(action))
+      throw new Error(`unknown contact action ${action}`);
+    return this.#ask({ op: "contact", roomId, action }, timeoutMs);
+  }
+
+  /** Accept the chat request of the contact of `roomId`. */
+  accept(roomId, options) {
+    return this.contactAction(roomId, "accept", options);
+  }
+
+  /** Decline the chat request of the contact of `roomId`. */
+  decline(roomId, options) {
+    return this.contactAction(roomId, "decline", options);
+  }
+
+  /** Block the contact of `roomId`. */
+  block(roomId, options) {
+    return this.contactAction(roomId, "block", options);
+  }
+
+  /** Unblock the contact of `roomId`. */
+  unblock(roomId, options) {
+    return this.contactAction(roomId, "unblock", options);
+  }
+
+  /** Leave the chat with the contact of `roomId`. */
+  leave(roomId, options) {
+    return this.contactAction(roomId, "leave", options);
   }
 
   /**
-   * Press the button with the id or the title `action` of the newest
-   * message of `roomId` that has one. Gives the `delivered` frame.
+   * Wait until the contact of `roomId` is in `state`, and give the contact.
    */
-  pressNewest(roomId, action, options = {}) {
-    const found = findAction(this.messages(roomId), action);
-    if (!found)
-      throw new Error(`no message of ${roomId} has the button ${action}`);
-    return this.press(
-      roomId,
-      found.message.messageId,
-      found.action.actionId,
-      options,
+  waitForContact(roomId, state, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+    return waitFor(
+      () => {
+        const contact = this.contact(roomId);
+        return contact?.state === state ? contact : undefined;
+      },
+      {
+        timeoutMs,
+        intervalMs: 50,
+        message: () =>
+          `the contact of ${roomId} is not ${state} within ${timeoutMs} ms; it is ${JSON.stringify(this.contact(roomId))}`,
+      },
     );
   }
 
@@ -442,18 +485,15 @@ function withTimeout(promise, timeoutMs, what) {
 
 /** One line of a message for the terminal. */
 export function describeMessage(message) {
-  const buttons =
-    message.body?.type === "Actions"
-      ? ` [${message.body.actions.map((action) => action.actionId).join(", ")}]`
-      : "";
-  return `${message.messageId} ${message.origin}: ${messageText(message)}${buttons}`;
+  const request = message.request ? " (request)" : "";
+  return `${message.messageId} ${message.origin}${request}: ${messageText(message)}`;
 }
 
 async function main(argv) {
   const [target, command, ...rest] = argv;
   if (!target || !command) {
     console.error(
-      "usage: cli-chat-socket.mjs <port|url> rooms | messages <room> | page <room> | post <room> <text> | press <room> <message> <action> | watch",
+      "usage: cli-chat-socket.mjs <port|url> rooms | messages <room> | page <room> | post <room> <text> | open-link <room> <payload> | contact <room> <accept|decline|block|unblock|leave> | watch",
     );
     return 2;
   }
@@ -462,7 +502,9 @@ async function main(argv) {
     switch (command) {
       case "rooms":
         for (const room of chat.rooms())
-          console.log(`${room.roomId}\t${room.name}`);
+          console.log(
+            `${room.roomId}\t${room.name}${room.contact ? `\t${room.contact.state}\t${room.contact.username ?? room.contact.account}` : ""}`,
+          );
         break;
       case "messages":
         for (const message of chat.messages(rest[0]))
@@ -477,9 +519,12 @@ async function main(argv) {
           JSON.stringify(await chat.post(rest[0], rest.slice(1).join(" "))),
         );
         break;
-      case "press":
+      case "open-link":
+        console.log(JSON.stringify(await chat.openLink(rest[0], rest[1])));
+        break;
+      case "contact":
         console.log(
-          JSON.stringify(await chat.press(rest[0], rest[1], rest[2])),
+          JSON.stringify(await chat.contactAction(rest[0], rest[1])),
         );
         break;
       case "watch":

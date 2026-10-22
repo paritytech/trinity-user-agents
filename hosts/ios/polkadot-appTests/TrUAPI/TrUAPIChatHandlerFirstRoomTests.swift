@@ -8,7 +8,7 @@ import TrUAPIHost
 /// A product that has no room yet gets one wake at its start, so that it can make its rooms (W2 of 07-LATER §10.2,
 /// 06-OPEN-ITEMS O25). The core holds the worker for the wake and releases it, so the handler takes no request.
 struct TrUAPIChatHandlerFirstRoomTests {
-    private let product: ProductId = "test.dot"
+    private let product: ProductId = "chat.dot"
     private let execution = MockProductExecution()
     private let rooms = AsyncCurrentValueSubject<[RoomInfo]>([])
 
@@ -73,6 +73,23 @@ struct TrUAPIChatHandlerFirstRoomTests {
         try await Task.sleep(for: .milliseconds(100))
 
         #expect(workers.wakes.isEmpty)
+    }
+
+    /// Any other product holds its worker from the start of its bot to its dispose, as at the merge base, so its
+    /// bot posts and its cards draw while no room screen is open. It gets no start wake.
+    @Test func anotherProductHoldsItsWorkerForTheSession() async throws {
+        let game: ProductId = "game.dot"
+        let workers = StubWorkerManager()
+        workers.publish([game: execution])
+        let handler = TrUAPIChatHandler(productId: game, workers: workers, wakesAtStart: true)
+
+        try await handler.start(messagingSupport: .init(bot: nil, context: nil))
+        #expect(workers.references.acquired == [game])
+        #expect(workers.wakes.isEmpty)
+
+        await handler.dispose()
+        await handler.dispose()
+        #expect(workers.references.released == [game])
     }
 
     @Test func noWakeWhenTheWakeIsOff() async throws {

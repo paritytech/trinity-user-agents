@@ -16,8 +16,6 @@ final class ChatWireframe: ChatWireframeProtocol, ApplicationSettingsPresentable
     let videoPreviewPlayerFactory: VideoPreviewPlayerFactoryProtocol
 
     private var onAttachmentSelected: (([ChatAttachmentProviding]) -> Void)?
-    /// Picks the attachments of a product room (P6.7).
-    let productAttachmentPicker = ProductAttachmentPicker()
 
     var mediaPreviewActiveDataSources: [PhotoPreviewDataSource] = []
 
@@ -44,7 +42,7 @@ final class ChatWireframe: ChatWireframeProtocol, ApplicationSettingsPresentable
         chatMetadata: ChatMetadata
     ) {
         guard
-            case let .person(accountId) = chatMetadata.chatId,
+            let accountId = chatMetadata.chatId.accountId ?? chatMetadata.roomPolicy?.contact?.account,
             let destination = TransferAmountViewFactory.createChatTransfer(
                 for: chainAsset,
                 recipient: .init(accountId: accountId, username: chatMetadata.peerMetadata.name),
@@ -124,11 +122,7 @@ final class ChatWireframe: ChatWireframeProtocol, ApplicationSettingsPresentable
                 }
             case let .custom(action):
                 UIDeferredMenuElement.uncached { completion in
-                    let item = UIAction(
-                        title: action.titleProvider(),
-                        image: action.image,
-                        attributes: action.destructive ? .destructive : []
-                    ) { _ in
+                    let item = UIAction(title: action.titleProvider(), image: action.image) { _ in
                         action.handler()
                     }
                     completion([item])
@@ -149,23 +143,6 @@ final class ChatWireframe: ChatWireframeProtocol, ApplicationSettingsPresentable
 
     func dismissChat(from view: ControllerBackedProtocol?) {
         view?.controller.navigationController?.popViewController(animated: true)
-    }
-
-    func confirmDeleteMessage(from view: ControllerBackedProtocol?, onConfirm: @escaping () -> Void) {
-        let deleteAction = AlertPresentableAction(
-            title: String(localized: .ChatExtension.messageDelete),
-            style: .destructive,
-            handler: onConfirm
-        )
-
-        let viewModel = AlertPresentableViewModel(
-            title: String(localized: .ChatExtension.messageDeleteTitle),
-            message: nil,
-            actions: [deleteAction],
-            closeActionTitle: String(localized: .Common.cancel)
-        )
-
-        present(viewModel: viewModel, style: .alert, from: view)
     }
 
     func showDocument(at url: URL) {
@@ -235,30 +212,6 @@ final class ChatWireframe: ChatWireframeProtocol, ApplicationSettingsPresentable
 
 extension ChatWireframe: MediaPreviewPresentable {}
 
-extension ChatWireframe: WebPresentable {
-    func confirmOpenLink(_ url: URL, from view: ControllerBackedProtocol?) {
-        guard let scheme = url.scheme?.lowercased(), supportedSafariScheme.contains(scheme) else {
-            logger.warning("Chat link with an unsupported scheme was not opened")
-            return
-        }
-
-        let openTitle = String(localized: .ChatExtension.linkOpenAction)
-        let openAction = AlertPresentableAction(title: openTitle) { [weak self, weak view] in
-            guard let view else { return }
-            self?.showWeb(url: url, from: view, style: WebPresentableStyle(mode: .modal(.fullScreen)))
-        }
-
-        let viewModel = AlertPresentableViewModel(
-            title: String(localized: .ChatExtension.linkOpenTitle),
-            message: url.absoluteString,
-            actions: [openAction],
-            closeActionTitle: String(localized: .Common.cancel)
-        )
-
-        present(viewModel: viewModel, style: .alert, from: view)
-    }
-}
-
 extension ChatWireframe: PHPickerViewControllerDelegate {
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
         let providers: [ChatAttachmentProviding] = results.compactMap { result in
@@ -303,7 +256,7 @@ private extension ChatWireframe {
         chatMetadata: ChatMetadata,
         delegate: ChatMoreActionsDelegate
     ) {
-        guard case .person = chatMetadata.chatId else {
+        guard chatMetadata.chatId.isPerson || chatMetadata.roomPolicy?.contact != nil else {
             return
         }
 
@@ -323,7 +276,7 @@ private extension ChatWireframe {
         chatMetadata: ChatMetadata,
         delegate: ChatMoreActionsDelegate
     ) {
-        guard case .person = chatMetadata.chatId else {
+        guard chatMetadata.chatId.isPerson || chatMetadata.roomPolicy?.contact != nil else {
             return
         }
 

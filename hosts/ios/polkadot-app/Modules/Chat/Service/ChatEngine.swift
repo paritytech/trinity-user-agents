@@ -20,8 +20,6 @@ protocol ChatEngineProtocol {
     func chatMetadataStream() -> AnyAsyncSequence<ChatMetadata?>
     func footerStream() async throws -> AnyAsyncSequence<(any HashableContentConfiguration)?>?
     func processAction(_ action: Chat.Action) async
-    /// Replaces a message with the deleted tombstone and tells the extension of a product room.
-    func deleteMessage(_ messageId: Chat.MessageId) async throws
     /// Where the messages of the room live. The default is the host database.
     func messageStore() async -> ChatRoomPolicy.MessageStore
     /// Asks for the page before the window. The default window holds the whole room.
@@ -35,8 +33,9 @@ protocol ChatEngineProtocol {
     /// The room screen shows the room. A product room holds its product until `closeRoom`.
     func openRoom() async
     func closeRoom() async
-    /// Opens the room again and asks for the newest page, after the room became unavailable.
-    func retryRoom() async
+    /// Picks the message source again when the product changed where the messages of the room live since the
+    /// source was picked. Gives true when the source changed, so the screen subscribes to the new one.
+    func refreshMessageStore() async -> Bool
 }
 
 extension ChatEngineProtocol {
@@ -70,7 +69,9 @@ extension ChatEngineProtocol {
 
     func closeRoom() async {}
 
-    func retryRoom() async {}
+    func refreshMessageStore() async -> Bool {
+        false
+    }
 }
 
 enum ChatEngineError: Error {
@@ -88,8 +89,6 @@ final class ChatEngine {
     let chatRequestContext: ChatRequestEngineContext
     let leaveChatService: LeaveChatServicing
     let blockUserService: BlockUserServicing
-    /// The outbox of the attachments that the host stages (P10.3). It owns Retry and Delete of their messages.
-    let stager: ProductAttachmentStager
     let logger: LoggerProtocol
 
     init(
@@ -103,11 +102,9 @@ final class ChatEngine {
         leaveChatService: LeaveChatServicing,
         blockUserService: BlockUserServicing,
         productRoomServices: ProductRoomServices? = nil,
-        stager: ProductAttachmentStager = .shared,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.chatId = chatId
-        self.stager = stager
         self.chatRequestContext = chatRequestContext
         self.chatExtensionRegistry = chatExtensionRegistry
         self.settings = settings
@@ -148,14 +145,6 @@ final class ChatEngine {
             )
         )
 
-        let messageDeletionRepository = AnyDataProviderRepository(
-            storageFacade.createRepository(
-                filter: nil,
-                sortDescriptors: [],
-                mapper: AnyCoreDataMapper(ChatMessageDeletionMapper())
-            )
-        )
-
         chatRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
                 filter: nil,
@@ -171,7 +160,6 @@ final class ChatEngine {
             historyRepository: historyRepository,
             messageRepository: messageRepository,
             messageStatusUpdateRepository: messageStatusUpdateRepository,
-            messageDeletionRepository: messageDeletionRepository,
             attachmentsUpdateRepository: attachmentsUpdateRepository,
             logger: logger
         )
@@ -219,11 +207,7 @@ extension ChatEngine: ChatEngineProtocol {
     }
 
     func perform(_ action: ChatSourceAction) async throws -> ChatSourceActionOutcome {
-        // A failed attachment of the outbox stages again; the product never had its message.
-        if case let .retry(messageId) = action, chatId.roomId != nil, await stager.retry(messageId) {
-            return .done
-        }
-        return try await sourceContext.source().perform(action)
+        try await sourceContext.source().perform(action)
     }
 
     func openRoom() async {
@@ -234,8 +218,8 @@ extension ChatEngine: ChatEngineProtocol {
         await sourceContext.close()
     }
 
-    func retryRoom() async {
-        await sourceContext.retry()
+    func refreshMessageStore() async -> Bool {
+        await sourceContext.refresh()
     }
 
     func sendUserMessage(with content: Chat.LocalMessage.Content) async throws {
@@ -248,11 +232,6 @@ extension ChatEngine: ChatEngineProtocol {
 
     func markAsSeen(messageIds: Set<Chat.MessageId>) async throws {
         _ = try await sourceContext.source().perform(.markSeen(messageIds))
-
-        // A product-source room reports `Seen` through `user_action` from its source (02-DESIGN §13 item 11).
-        if await messageStore() == .host {
-            await reportSeen(messageIds)
-        }
     }
 
     func chatMetadataStream() -> AnyAsyncSequence<ChatMetadata?> {
@@ -285,6 +264,10 @@ extension ChatEngine: ChatEngineProtocol {
     }
 
     func leaveChat() async throws {
+        if chatId.roomId != nil {
+            return try await performRefusable(.contactAction(.leave))
+        }
+
         let chat = try await chatRepository
             .fetchOperation(
                 by: { [chatId] in chatId.rawRepresentation },
@@ -297,6 +280,10 @@ extension ChatEngine: ChatEngineProtocol {
     }
 
     func blockUser() async throws {
+        if chatId.roomId != nil {
+            return try await performRefusable(.contactAction(.block))
+        }
+
         guard case let .person(accountId) = chatId else {
             throw ChatEngineError.missingChat
         }
@@ -305,6 +292,10 @@ extension ChatEngine: ChatEngineProtocol {
     }
 
     func unblockUser() async throws {
+        if chatId.roomId != nil {
+            return try await performRefusable(.contactAction(.unblock))
+        }
+
         guard case let .person(accountId) = chatId else {
             throw ChatEngineError.missingChat
         }
@@ -313,39 +304,29 @@ extension ChatEngine: ChatEngineProtocol {
     }
 
     func acceptChatRequest() async throws {
+        if chatId.roomId != nil {
+            return try await performRefusable(.contactAction(.acceptRequest))
+        }
+
         try await chatRequestContext.acceptIncomingRequest(for: chatId)
     }
 
     func declineChatRequest() async throws {
+        if chatId.roomId != nil {
+            return try await performRefusable(.contactAction(.declineRequest))
+        }
+
         try await chatRequestContext.declineIncomingRequest(for: chatId)
     }
 
     func processAction(_ action: Chat.Action) async {
         let actionContext = ChatExtensionActionContext(
-            messageRepository: messageRepository,
-            chatId: chatId
+            messageRepository: messageRepository
         )
         let extensions = chatExtensionRegistry.getExtensions(for: chatId)
         for chatExtension in extensions {
             await chatExtension.process(action: action, context: actionContext)
         }
-    }
-
-    func deleteMessage(_ messageId: Chat.MessageId) async throws {
-        // An attachment of the outbox goes with its bytes. The product never had its message, so it is not told.
-        if chatId.roomId != nil, await stager.delete(messageId) {
-            return
-        }
-
-        try await performRefusable(.delete(messageId))
-
-        // A product-source room tells its product through `user_action` (02-DESIGN §13 item 11).
-        guard await messageStore() == .host, case let .chatExtension(extensionId, roomId) = chatId else {
-            return
-        }
-
-        let handler = chatExtensionRegistry.getChatExtensionBot(for: extensionId) as? ChatUserDeletionHandling
-        await handler?.userDeleted(messageId: messageId, roomId: roomId)
     }
 }
 
@@ -354,7 +335,7 @@ private extension ChatEngine {
         try await performRefusable(.send(content))
     }
 
-    /// Throws ``ChatUserActionRefusal`` when the product refuses the action, so the room screen shows why.
+    /// Throws ``ChatUserActionRefusal`` when the product refuses the action.
     func performRefusable(_ action: ChatSourceAction) async throws {
         if case let .refused(reason) = try await sourceContext.source().perform(action) {
             throw ChatUserActionRefusal(reason: reason)

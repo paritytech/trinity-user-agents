@@ -9,45 +9,40 @@ status: draft
 ## Summary
 
 [Chat Extension v2](chat-extension-v2.md) lets a product's Worker own the data of its chat rooms while the host draws
-them. This RFC adds what the base leaves out: a product can ask the host what it serves, declare optional features per
-room, put a call into a room, learn what the user does with these features, answer a search the host asks, and take the
-payload of a room link the user opens. `Chat` gains six methods, ids `22`, `23` and `25` to `28`, and no existing
-request, item or event of the base changes. The host also gains behaviour that needs no wire method:
-large attachments stored as preimages paid by the product, bounded worker wakes, bots as personas, and the user's own
-mute and archive state. This RFC names the base and does not change it, so the base can be accepted on its own.
+them. This RFC adds what the base leaves out: a product can declare optional features per room, put a call into a
+room, learn what the user does with these features, give a room a contact so that the host draws it as its own
+person-to-person chat, answer the edit history of a message and a search of a room's messages, and take what the user
+opened from an entry point of the host. `Chat` gains seven methods, ids `23` and `25` to `30`, and no existing request,
+item or event of the base changes its version. The host also gains behaviour that needs no wire method: attachments
+uploaded to the HOP pool of the person-to-person chat, and bounded worker wakes. This RFC names the base and does not
+change it, so the base can be accepted on its own.
 
 ## Motivation
 
-The base gives a product a complete chat room, and a product that wants more learns what a host serves only by failure:
+The base gives a product a complete chat room, but not everything a person chat needs:
 
-- A product cannot tell what a host serves before it declares a room. It learns from `Unsupported`, from a "this host
-  does not serve X" answer, or from `NotAvailable`, one call at a time. Hosts differ already: a host may not draw the
-  payment button, and a web host may serve none of Chat.
-- A user cannot send a file larger than 1 MiB into a product room. Every user attachment is inline.
 - A product-source room changes only while something holds the worker. A notification for the room cannot refresh its
   preview, and a reply sent just before the user closes the room may never reach the product.
-- The host can search only the rooms it stores. A product-source room has no search at all.
-- `register_bot` exists, but no host draws a bot, so a product cannot speak as more than one named voice in its rooms.
-- An accessible chat needs text read aloud. The base has no such action.
-- A call needs buttons in the room header, a ringing state and a call bar. The base has no call state, and the
-  [Realtime Media Sessions](https://github.com/paritytech/host-rust-core/blob/rfc/realtime-media-sessions/docs/rfcs/realtime-media-sessions.md)
-  design has no way to show a session inside a chat room.
-- The user cannot mute or archive a product room, and a product cannot respect a choice it never hears of.
-- A room link opens a room, but a product cannot be given anything with it. A chat product that shares an invitation,
-  a contact link or a ticket as a link has no way to receive it when someone else opens that link.
+- A call needs buttons in the room header and a ringing state, and the base has no call state.
+- The person chat product (`chat.<tld>`) keeps the conversations of the native person-to-person chat. Users expect the
+  room to look and behave as the native chat of their app: the contact's avatar and name, chat requests that wait for an
+  answer, blocking, call and payment bubbles, the edit history and search. The base draws a generic product room, and
+  the host's search cannot find messages it does not store.
+- A link, a QR code or a username that the user opens from the host means something to the chat product only, and the
+  host has no way to give it to the product.
 
 ## Approach
 
 The design has these parts:
 
 - **Rules**: what every addition follows.
-- **Trait**: the six new methods.
-- **Types**: the payloads of the new methods.
-- **Capabilities**: the feature names a host lists and what the core removes.
+- **Trait**: the new methods.
+- **Types**: the payloads of the new methods and the additions to the shared types.
+- **Capabilities**: the feature names a host gives the core and what the core removes.
 - **Room features and calls**: the rules of the new requests.
-- **Room events**: the second event stream and its snapshot.
-- **Features**: bots, mute and archive, preimage and sealed attachments, search, read aloud, wakes, calls and room link
-  payloads.
+- **Room events**: the second event stream.
+- **Contact rooms**: the contact of a room and how the host draws it.
+- **Features**: HOP attachments, wakes, calls, opened links, the edit history and search.
 - **Limits and timeouts**: the bounds the core enforces and the time the host waits.
 
 ### Rules
@@ -61,10 +56,10 @@ The design has these parts:
    and never a new version of an old one.
 3. **Everything new is opt-in per room**, through `ChatRoomFeatures` or a new request. A room that declares nothing
    draws as the base draws it.
-4. **Every feature is named in `capabilities`.** A host lists a feature only when it serves it end to end, and the core
-   removes a name it cannot back. A product that reads no capabilities still works: an unserved feature is stored and
+4. **Every feature has a name the host lists.** A host lists a feature to the core only when it serves it end to end,
+   and the core removes a name it cannot back. A product does not read the list: an unserved feature is stored and
    ignored, a live request for it is refused with `Unknown`, and an unserved query is never asked.
-5. **The host does all network work.** Storing a preimage, receiving a notification and carrying a call go through the
+5. **The host does all network work.** Uploading a file, receiving a notification and carrying a call go through the
    core and the host's own services. Nothing here gives a product a connection to a node, a statement store or a
    chain, and no product holds an allowance or chain key.
 6. **The core screens, hosts render.** The core enforces every bound of [Limits](#limits) before a host sees a value,
@@ -72,16 +67,11 @@ The design has these parts:
 
 ### Trait
 
-`Chat` keeps trait id `4` and every method of the base. The new methods take ids `22`, `23` and `25` to `28`, and every
-one has a default body that answers `unavailable`.
+`Chat` keeps trait id `4` and every method of the base. The new methods take ids `23` and `25` to `30`, and every one
+has a default body that answers `unavailable`.
 
 ```rust
     // ---- Product to host requests ------------------------------------------
-
-    /// The Chat features this host serves and its attachment bounds.
-    #[wire(id = 22)]
-    async fn capabilities(&self, cx: &CallContext, request: HostChatCapabilitiesRequest)
-        -> Result<HostChatCapabilitiesResponse, CallError<HostChatCapabilitiesError>>;
 
     /// Declare the optional features of a room. Persisted by the host;
     /// replaces the previous declaration whole.
@@ -95,133 +85,197 @@ one has a default body that answers `unavailable`.
         -> Result<HostChatSetRoomCallResponse, CallError<HostChatRoomError>>;
 
     /// What the user does with the added features of the product's rooms:
-    /// room state, wakes, calls. Starts with a snapshot of the
-    /// rooms the user muted or archived.
+    /// calls.
     #[wire(id = 26)]
     async fn room_events_subscribe(&self, cx: &CallContext, request: HostChatRoomEventsSubscribeRequest)
         -> Subscription<HostChatRoomEventsSubscribeItem, CallError<HostChatRoomEventsSubscribeError>>;
 
+    /// Set the person a room is a conversation with.
+    #[wire(id = 29)]
+    async fn set_room_contact(&self, cx: &CallContext, request: HostChatSetRoomContactRequest)
+        -> Result<HostChatSetRoomContactResponse, CallError<HostChatRoomError>>;
+
     // ---- Host to product queries -------------------------------------------
 
-    /// Messages of a product-source room that match what the user typed.
-    /// One item, then complete.
+    /// The messages of a product-source room that match what the user typed,
+    /// newest first. One item, then complete.
     #[wire(host_initiated, id = 27)]
     fn search_query(&self, cx: &CallContext, request: ProductChatSearchQueryRequest)
         -> Subscription<ProductChatSearchQueryItem, CallError<ProductChatQueryError>>;
 
-    /// The payload of a room link that the user opened. One item, then
+    /// What the user opened from an entry point of the host. One item, then
     /// complete.
     #[wire(host_initiated, id = 28)]
     fn open_link(&self, cx: &CallContext, request: ProductChatOpenLinkRequest)
         -> Subscription<ProductChatOpenLinkItem, CallError<ProductChatQueryError>>;
+
+    /// The texts one message of a product-source room had. One item, then
+    /// complete.
+    #[wire(host_initiated, id = 30)]
+    fn edit_history(&self, cx: &CallContext, request: ProductChatEditHistoryQueryRequest)
+        -> Subscription<ProductChatEditHistoryQueryItem, CallError<ProductChatQueryError>>;
 ```
 
 Versions of each leg:
 
-| Method                              | Leg       | Version                                    |
-| ----------------------------------- | --------- | ------------------------------------------ |
-| `22`, `23`, `25` to `28`            | All legs  | `V1`, first shape                          |
-| Every method of the base            | All legs  | Unchanged                                  |
-| `register_bot` (`1`)                | All legs  | Unchanged; the meaning is in [Bots](#bots) |
+| Method                            | Leg      | Version            |
+| --------------------------------- | -------- | ------------------ |
+| `23`, `25`-`30`                   | All legs | `V1`, first shape  |
+| Every method of the base          | All legs | Unchanged          |
 
-The responses of methods `23` and `25` are bare `V1` unit responses, as for the base's `set_room_*` requests. The
-requests of `22` and `26` carry no payload, and their errors are `V1` of `GenericError`.
+The responses of methods `23`, `25` and `29` are bare `V1` unit responses, as for the base's `set_room_*` requests.
+The request of `26` carries no payload, and its error is `V1` of `GenericError`.
 
 ### Types
 
-The new types reuse `ChatMessage`, `Bytes32`, `HostChatRoomError` and `ProductChatQueryError` of the base unchanged.
+The new types reuse `ChatMessage`, `Bytes32`, `HostChatRoomError` and `ProductChatQueryError` of the base.
 
 ```rust
-/// Request: `HostChatCapabilitiesRequest { V1 }`, no payload.
-pub struct HostChatCapabilitiesResponse {
-    /// Names of the features this host serves. A product ignores a name it
-    /// does not know.
-    pub features: Vec<String>,
-    /// Largest media item the host sends inline for the user.
-    pub inline_attachment_max_bytes: u32,
-    /// Largest attachment the host stores as a preimage; 0 when the host
-    /// does not list `preimage_attachments`.
-    pub preimage_attachment_max_bytes: u32,
-    /// Largest attachment the host seals; 0 when the host does not list
-    /// `sealed_attachments`.
-    pub sealed_attachment_max_bytes: u32,
-}
-// Error: `HostChatCapabilitiesError { V1 => GenericError }`.
-
 /// Call buttons in a room header.
 pub struct ChatRoomCalls { pub audio: bool, pub video: bool }
 
 /// Optional features of one room. Every field at its default selects the
 /// behaviour of the base.
 pub struct ChatRoomFeatures {
-    /// A user attachment above the inline bound is stored as a preimage paid
-    /// from the product's Bulletin allowance.
-    pub preimage_attachments: bool,
-    /// The product answers `search_query`. Read only for product-source rooms.
-    pub search: bool,
     /// Call buttons in the header; `None` shows none.
     pub calls: Option<ChatRoomCalls>,
-    /// The host offers "Read aloud" on text messages.
-    pub read_aloud: bool,
-    /// A user attachment above the inline bound is sealed: encrypted by the
-    /// core and stored in parts paid from the product's Bulletin allowance.
-    pub sealed_attachments: bool,
+    /// A user photo, video or file goes to a HOP node of the person-to-person
+    /// chat, and the product receives a `ChatResource::Hop`.
+    pub hop_attachments: bool,
 }
 pub struct HostChatSetRoomFeaturesRequest { pub room_id: String, pub features: ChatRoomFeatures }
 
 /// The call of a room.
 pub enum ChatRoomCall {
-    /// An incoming call the product received; the host rings in the room.
+    /// An incoming call the product received; the host rings.
     Ringing { call_id: String, video: bool, caller: Option<String> },
-    /// A call in progress. With `media_session`, the host presents that
-    /// session of the Media service; without, it shows the call bar only.
-    Active { call_id: String, video: bool, started_at: u64, media_session: Option<Bytes32> },
+    /// A call in progress.
+    Active { call_id: String, video: bool, started_at: u64 },
 }
 pub struct HostChatSetRoomCallRequest { pub room_id: String, pub call: Option<ChatRoomCall> }
 
 /// What the user does with the added features of a room.
 pub enum ChatRoomEvent {
-    /// The user muted, unmuted, archived or unarchived the room; also sent
-    /// for every muted or archived room when the subscription starts.
-    UserStateChanged { muted_until: Option<u64>, archived: bool },
-    /// The host holds the worker for a notification routed to this room.
-    Woken { watch_id: String },
-    /// The user pressed a call button of the header.
-    CallRequested { video: bool },
+    /// The user pressed a call button of the header. `call_id`: the id the host chose for the call.
+    CallRequested { video: bool, call_id: Option<String> },
     /// The user answered the ringing call.
     CallAnswered { call_id: String, accept: bool },
-    /// The user tapped the call bar of a call without a media session.
-    CallOpened { call_id: String },
-    /// The user pressed "End" on the call bar.
+    /// The user ended the call.
     CallEnded { call_id: String },
+    /// A media signal of the host's call engine for the other side.
+    CallSignal { call_id: String, signal: Vec<u8> },
 }
 // Request: `HostChatRoomEventsSubscribeRequest { V1 }`; error `{ V1 => GenericError }`.
 pub struct HostChatRoomEventsSubscribeItem { pub room_id: String, pub event: ChatRoomEvent }
 
+/// Where the conversation of a room with its contact stands.
+pub enum ChatContactState { Invite, Outgoing, Incoming, Established, Blocked, PeerLeft }
+
+/// The person a room is a conversation with.
+pub struct ChatRoomContact {
+    pub account: Bytes32,
+    pub username: Option<String>,
+    pub state: ChatContactState,
+}
+pub struct HostChatSetRoomContactRequest { pub room_id: String, pub contact: ChatRoomContact }
+
+pub struct ProductChatOpenLinkRequest {
+    /// A room of the product the host shows unless the product answers another.
+    pub room_id: String,
+    /// What the user opened. The host does not read it.
+    pub payload: String,
+}
+pub struct ProductChatOpenLinkItem {
+    /// The room the host shows next; `None` keeps the room of the request.
+    pub room_id: Option<String>,
+}
+
+pub struct ProductChatEditHistoryQueryRequest { pub room_id: String, pub message_id: String }
+/// One text a message had. The first text has the time of the message.
+pub struct ChatMessageRevision { pub edited_at: u64, pub text: Option<String> }
+pub struct ProductChatEditHistoryQueryItem {
+    /// Oldest first.
+    pub revisions: Vec<ChatMessageRevision>,
+}
+
 pub struct ProductChatSearchQueryRequest {
     pub room_id: String,
-    /// What the user typed; screened display text.
+    /// What the user typed.
     pub text: String,
-    /// `None` asks for the newest matches.
+    /// A cursor the product returned; `None` asks for the newest matches.
     pub cursor: Option<String>,
     pub page_size: u32,
 }
 pub struct ProductChatSearchQueryItem {
-    /// Newest first.
+    /// The matches, newest first.
     pub hits: Vec<ChatMessage>,
-    /// Cursor for older matches; `None` ends them.
+    /// Cursor for older matches; `None` ends the matches.
     pub next: Option<String>,
 }
+```
 
-pub struct ProductChatOpenLinkRequest {
-    /// The room the link names.
-    pub room_id: String,
-    /// The text after `#` in the link, percent-decoded. The host does not read it.
-    pub payload: String,
+The shared types of the base carry the contact rooms too. These are part of the base's types, and a host that does not
+list `contact_rooms` draws them with its generic strings:
+
+```rust
+pub struct ChatMessage {
+    // ...the fields of the base...
+    /// The message it replies to, as the host quotes it.
+    pub reply_preview: Option<ChatReplyPreview>,
+    /// The message is the welcome message of a chat request.
+    pub request: bool,
 }
-pub struct ProductChatOpenLinkItem {
-    /// The room the host shows next; `None` keeps the room of the link.
-    pub room_id: Option<String>,
+pub struct ChatReplyPreview { pub origin: ChatMessageOrigin, pub body: ChatMessageBody }
+
+pub struct ChatMediaMeta {
+    // ...the fields of the base...
+    /// Length of a video, in milliseconds.
+    pub duration_ms: Option<u64>,
+}
+
+pub struct ChatReactionSummary {
+    // ...the fields of the base...
+    /// The contact placed it and the user has not seen that reaction yet.
+    pub unseen: bool,
+}
+
+pub struct ChatReactionDetail {
+    // ...the fields of the base...
+    /// When the participant reacted, in milliseconds since the Unix epoch.
+    pub timestamp: u64,
+}
+
+pub enum ChatMessageBody {
+    Text { text: String },
+    RichText { text: Option<String>, media: Vec<ChatMediaItem> },
+    /// A line about the conversation, drawn as a row with no bubble.
+    Event(ChatContactEvent),
+    /// A call. The time of the message is the offer, its origin the caller.
+    Call(ChatCallRecord),
+    /// A payment. Its origin is the payer.
+    Payment(ChatPaymentRecord),
+}
+
+pub enum ChatContactEvent { RequestAccepted, ContactAdded, LeftChat, Unavailable, Unsupported }
+pub struct ChatCallClose { pub at: u64, pub by_user: bool }
+pub struct ChatCallRecord { pub video: bool, pub answered_at: Option<u64>, pub closed: Option<ChatCallClose> }
+pub struct ChatPaymentRecord { pub amount: u128, pub legacy: bool }
+
+pub enum ChatFeedUpdate {
+    // ...New, Edited, ReactionPlaced, ReactionRemoved, StatusChanged...
+    /// The message changed for a reason that is not an edit, for example its
+    /// call was answered or ended. The host draws it again in its place and
+    /// does not mark it edited.
+    Replaced(ChatMessage),
+}
+
+pub enum ChatUserAction {
+    // ...NewMessage, EditMessage, ReactionPlaced, ReactionRemoved, Seen...
+    AcceptRequest,
+    DeclineRequest,
+    Block,
+    Unblock,
+    Leave,
 }
 ```
 
@@ -229,348 +283,244 @@ As in the base, the variant order of every enum is part of the wire: a later add
 
 ### Capabilities
 
-`capabilities` answers stable feature names and two byte bounds. A host lists a name only when it serves the feature
-end to end on that build.
+A host gives the core stable feature names through the `chat_capabilities` callback of its chat platform. It lists a
+name only when it serves the feature end to end on that build. Products do not read the list.
 
-| Name                                                          | Feature                                                                                                   |
-| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `product_source_rooms`                                        | Product-source rooms with paging, optimistic sends, `messages_query` and `user_action`                    |
-| `reaction_details`, `participants`, `message_menus`           | The three lookup queries of the base                                                                      |
-| `custom_bodies`, `custom_footer`                              | `Custom` bodies and the `Custom` footer drawn through `Renderer::render`                                  |
-| `inline_attachments`                                          | The user's photos, videos and files sent inline, up to `inline_attachment_max_bytes`                      |
-| `payment_button`                                              | `ChatInputPayment` drawn and wired                                                                        |
-| `room_links`                                                  | `polkadot://<product>.<tld>/-/chat/<room>` opens the room                                                 |
-| `preimage_attachments`                                        | User attachments above the inline bound stored as preimages ([Preimage attachments](#preimage-attachments)) |
-| `sealed_attachments`                                          | User attachments above the inline bound sealed and stored in parts ([Sealed attachments](#sealed-attachments)) |
-| `search`                                                      | In-room search, and `search_query` for product-source rooms ([Search](#search))                           |
-| `bot_personas`                                                | Personas drawn for `bot:<bot_id>` participants ([Bots](#bots))                                            |
-| `mute_archive`                                                | The user's mute and archive of product rooms ([Mute and archive](#mute-and-archive))                      |
-| `read_aloud`                                                  | "Read aloud" in the message menu ([Read aloud](#read-aloud))                                               |
-| `wake`                                                        | Notification wakes and `Woken` events ([Wakes](#wakes))                                                   |
-| `call_buttons`                                                | Header buttons, `Ringing`, the call bar and the four call events ([Calls](#calls))                        |
-| `room_calls`                                                  | `Active { media_session: Some(_) }` presented by the host ([Calls](#calls))                               |
-| `room_link_payloads`                                          | The payload of an opened room link reaches the product ([Room link payloads](#room-link-payloads))         |
+| Name                   | Feature                                                                                  |
+| ---------------------- | ---------------------------------------------------------------------------------------- |
+| `product_source_rooms` | Product-source rooms with paging, optimistic sends, `messages_query` and `user_action`   |
+| `reaction_details`     | Who reacted, through `reactions_query`                                                   |
+| `hop_attachments`      | User attachments uploaded to HOP ([HOP attachments](#hop-attachments))                   |
+| `call_buttons`         | Header buttons, `Ringing` and the call events ([Calls](#calls))                          |
+| `contact_rooms`        | Rooms with a contact drawn as the host's person-to-person chat ([Contact rooms](#contact-rooms)) |
 
-The core answers the host's list minus what it cannot back: `custom_bodies` and `custom_footer` without a `Renderer`
-host, `room_calls` while the runtime serves no Media service, and `payment_button` until the footer payment path
-exists. It drops names it does not know. The bounds are core constants: 1 MiB inline, 8 MiB for a preimage, or 0 when
-`preimage_attachments` is not listed, and 32 MiB for a sealed attachment, or 0 when `sealed_attachments` is not listed. The Bulletin chain's own per-transaction bound can be lower; staging
-reports it.
-
-A product that wants a feature reads `capabilities` first and falls back when the name is missing. On a host that
-serves only the base, `capabilities` answers `unavailable`, and the product treats every added feature as missing.
+The core keeps the names of the host's list that it knows and can back: `hop_attachments` only when it backs HOP
+uploads, and `contact_rooms` only for the person chat product (the `chat` label on a dotNS network). It drops names it
+does not know, and uses the rest to refuse `set_room_call` without `call_buttons` and `set_room_contact` without
+`contact_rooms`.
 
 ### Room features and calls
 
 - **`set_room_features`** needs a room the product hosts, as every `set_room_*` request does. The host stores the
-  declaration whole, keyed by product and room, with a version byte, and keeps it across restarts. It stores a feature
-  it does not serve and ignores it, so a later host build applies it.
-- **`set_room_call`** needs a room the product hosts, at most two calls per second per room. `Ringing` and
-  `Active { media_session: None }` need `call_buttons`. `Active { media_session: Some(_) }` needs `room_calls` and a
-  live Media session that belongs to this product. Otherwise the core answers `Unknown` with a reason that names the
-  feature. `None` clears the call.
+  declaration whole, keyed by product and room, and keeps it across restarts. It stores a feature it does not serve and
+  ignores it, so a later host build applies it.
+- **`set_room_call`** needs a room the product hosts, at most two calls per second per room. `Ringing` and `Active`
+  need `call_buttons`; otherwise the core answers `Unknown` with a reason that names the feature. `None` clears the
+  call.
 
 ### Room events
 
-`room_events_subscribe` is a second product stream beside `action_subscribe`, so the base's `ChatEvent` keeps its
-version. Its items are what the user does with the added features: `UserStateChanged`, `Woken` and the four call
-events.
+`room_events_subscribe` is a second product stream beside `action_subscribe`, so the base's action item keeps its
+version. Its items are the call events.
 
-- When a subscription starts, the core sends `UserStateChanged` for every room the user muted or archived, then the
-  events queued while no one subscribed, then live events. A restarted worker therefore learns the user's state first.
+- When a subscription starts, the core sends the events queued while no one subscribed, then live events.
 - The core queues at most 64 events per product while no subscription is open, and drops the oldest beyond that. The
   queue is per product, not per connection, so an event published while the worker is stopped reaches its next start.
 - A second subscription on one connection replaces the first, as for `action_subscribe`.
 
-### Bots
+### Contact rooms
 
-A bot is a **persona**: a name and an icon the product speaks as in its own rooms.
+A room with a contact is a conversation with one person. The person chat product keeps the messages
+(`product_source`) and the host draws the room with its own person-to-person chat components and strings, so the room
+looks and behaves as the native chat of that host.
 
-- `register_bot { bot_id, name, icon }` stores a persona for the product. It answers `New` the first time and `Exists`
-  after, and a repeat replaces the name and icon. A product has at most 8 personas; the ninth is refused with the
-  catch-all error.
-- The participant id `bot:<bot_id>` is reserved, like `"user"` and `"product"`. The host draws it with the persona's
-  name and icon without a `participants_query`. A product writes as a persona with `origin.participant_id` set to
-  `bot:<bot_id>` in `update_feed` `New` and in `messages_query` pages.
-- The core refuses an origin `bot:<bot_id>` that is not a registered persona of the product, with `Unknown` and the
-  reason `unknown bot <bot_id>`.
-- `list_subscribe` never lists a room as `ChatRoomParticipation::Bot`. A bot in a person chat or in another product's
-  room stays out of scope: a person chat is end-to-end encrypted between people, and a product in it would read it.
-- A product that answers `participants_query` may still list `bot:` entries; the host prefers the persona for the name
-  and icon.
-- On a host without `bot_personas`, `register_bot` is refused as before, and a `bot:` origin draws as the product. The
-  product reads the capability and posts as `"product"`.
+- **`set_room_contact`** needs a room the product hosts and `contact_rooms`, at most five calls per second per room. It
+  replaces the contact whole, and the host keeps it across restarts. The core screens `username` as display text and
+  refuses an empty one.
+- **The contact.** The host draws the avatar of `account` and the `username`, and the header, menu, footer and banners
+  of the state. The participant id `"contact"` is the contact, beside `"user"` and `"product"`.
+- **The states.**
 
-### Mute and archive
+  | State         | The host shows                                                                                             |
+  | ------------- | ---------------------------------------------------------------------------------------------------------- |
+  | `Invite`      | No room in the list. The input is the invite composer, and the first `NewMessage` is the request's welcome message |
+  | `Outgoing`    | The room, with no input and a line that the request waits for the contact                                  |
+  | `Incoming`    | The room only behind the requests entry of the list, with the accept banner (Decline, Accept)               |
+  | `Established` | The room with the input and, when the room declares them, the call buttons                                 |
+  | `Blocked`     | No room in the list, and the blocked banner with Unblock                                                    |
+  | `PeerLeft`    | The room with the host's footer for a contact that left                                                    |
 
-Mute and archive are the user's choices for a product room, kept by the host. The product cannot set either.
-
-- `muted_until` is `None`, a time in milliseconds since the Unix epoch, or `u64::MAX` for always. The host offers one
-  hour, eight hours, one week and always.
-- A muted room shows a muted mark and a grey badge, and its notifications are suppressed: an immediate
-  `send_push_notification` whose deeplink is a room link of this product into a muted room answers `Ok` with an id and
-  shows nothing, as a silenced notification does today. A scheduled notification is checked when it fires where the
-  host controls firing; where the operating system fires it, it is not checked. A wake still runs, so the preview stays
-  fresh.
-- An archived room moves to an archived list and stays there when new messages arrive until the user unarchives it.
-  A product preview or badge on it is still stored. Deleting the room works as before.
-- The product learns both through `UserStateChanged`, live and as the snapshot at subscription start, and can stop
-  sending notifications to a muted room.
-- Person chats and host-placed rooms are not changed by this RFC. On a host without `mute_archive` nothing changes and
-  the product never receives the event.
+- **What the user does.** Accept, Decline, Block, Unblock and Leave reach the product as `user_action` with
+  `AcceptRequest`, `DeclineRequest`, `Block`, `Unblock` and `Leave`. The host asks for the confirmations its native
+  chat asks for before it sends one. The product answers `Acknowledged` and sets the new state with `set_room_contact`.
+- **Bubbles.** `Event` bodies are rows with the host's own strings: the request was accepted, the contact was added,
+  a participant left, messages could not be retrieved, or the message is of a kind this version of the product cannot
+  show. The origin says whose event it is. A `Call` body is the call bubble; the host works out the state its native
+  chat shows (calling, active, ended, cancelled, missed, declined) from `video`, `answered_at`, `closed`, the time of
+  the message and its origin. A `Payment` body is the transfer bubble, the legacy one when `legacy` is set. A message
+  with `request` set is the welcome message of a chat request.
+- **The preview.** `ChatRoomPreview` carries what the chat list needs: `timestamp` orders the rooms, newest first;
+  `badge` is the unread count; the host makes the preview line itself from `last_message`, or from `last_reaction`
+  when the newest event of the room is a reaction or, with `removed`, the removal of one; `last_call` is the newest
+  call message when it is not `last_message`, because a call message keeps the time of its offer while it is
+  answered and closed later: native iOS shows the call as the last message once its newest event (the close, else the
+  answer) is newer than `last_message`, and native Android keeps `last_message`, so each host applies its own rule;
+  and `unseen_reactions` counts the contact's reactions the user has not seen, which a host shows as the reaction mark
+  or adds to the unread count, as its native chat does.
+- **The input.** The host draws the input of its native chat for the contact state, whatever footer the room sets: the
+  invite composer, no input while a request waits, the input once the contact is established. It offers attachments
+  when the room declares `hop_attachments`, and its payment button where its native chat shows one.
+- **Sending.** A host may choose the id of a message the user sends, a UUID as its native chat makes them, and pass it
+  as `NewMessage.message_id`, with the time the user wrote it as `NewMessage.timestamp`. The product stores and sends
+  the message under that id and with that time, so the message keeps its id and time from the moment the user sent it,
+  and the host can act on it before the answer arrives. The core screens the id as every message id.
+- **Replies, media and reactions.** A reply carries `reply_preview`, so the host draws the quote without loading the
+  quoted message. `duration_ms` is the length of a video. A reaction summary with `unseen` set is a reaction of the
+  contact the user has not seen, and each entry of the who-reacted list carries the time of its reaction.
+- **Updates.** The product changes a call record with `ChatFeedUpdate::Replaced`, which redraws the message in its
+  place without marking it edited.
+- On a host without `contact_rooms` the core refuses `set_room_contact` with `Unknown`, and the room draws as a product
+  room of the base.
 
 ### Room notifications
 
-A notification of a product whose deeplink is a room link of the same product (`/-/chat/<room_id>`) is a notification
-of that room. The host shows it as it shows a notification of a person chat:
+A notification of a product whose deeplink names a room of the same product (`/-/chat/<room_id>`) is a notification of
+that room. The host shows it as it shows a notification of a person chat:
 
-- The title is the name of the room. The text is the text of the notification, so a product sends the message
-  alone, not the sender name before it. A notification that opens no room of the product that the host knows keeps
-  the title of other product notifications.
+- The title is the name of the room, or the contact of a contact room. The text is the text of the notification, so a
+  product sends the message alone, not the sender name before it. A notification that opens no room of the product
+  that the host knows keeps the title of other product notifications.
 - While the app is in the foreground, the host shows it as its in-app banner, except while that room is on screen or
-  where the host also hides person chat notifications (on iOS, the chat list). In the background the operating
-  system shows it.
-- A tap opens the room, as the room link does.
-- A muted room shows nothing (see Mute and archive).
+  where the host also hides person chat notifications. In the background the operating system shows it.
+- A tap opens the room.
 
 So a product sends a notification for each event that the user must know about, also while its worker runs in the
 foreground, and does not follow which room is on screen.
 
-### Preimage attachments
+### HOP attachments
 
-A room that declares `preimage_attachments` lets the user send an attachment above the inline bound. The host stores it
-as one preimage and sends the message with `ChatResource::Preimage { key }`, which every media item of the base can
-already carry. No wire method is added: the host stages the attachment through a runtime call of the core, so the
-worker need not run.
+A room of the person chat product that declares `hop_attachments` sends a user photo, video or file the way the native
+person-to-person chat sends it: the host gives the bytes to the core, which uploads them to a HOP node the host lists,
+signed with the product's Bulletin allowance account, and the message carries a `ChatResource::Hop` with the identifier,
+the ticket, the node and the size. The ticket opens the file, so a product sends the resource only through its own
+encrypted channel. No wire method is added.
 
-- **The product pays.** The preimage is submitted from the product's own Bulletin allowance account, as if the product
-  had called `Preimage::submit`. The user sends into the product's room, the product opted in, and allowances are
-  already partitioned per product ([RFC 0010](0010-allowance.md)). The host's own chat allowance is not used, because it
-  would link the product's traffic to the user's chat identity.
-- **Permission.** The core requires `PreimageSubmit` for the product, prompting when it is undecided, exactly as
-  `submit` does.
-- **Public storage.** Bulletin data is readable by anyone who has the key. Before the first staged upload for a
-  product, the host shows a one-time notice per product that files over the inline bound sent in that product are
-  stored on the public Bulletin chain. Declining keeps that attachment unsent. The attachment is not encrypted: a key
-  field would version every body type, against rule 1. A product that needs private files keeps the flag off.
-- **Bounds.** One preimage per attachment, at most 8 MiB and never above the Bulletin chain's per-transaction bound,
-  which the core reads at runtime from the `MaxTransactionSize` constant of the chain's `TransactionStorage` pallet.
-  There is no chunking. A refusal names the bound that held.
-- **The declaration the core reads.** The staging call carries the product and the room, not the room's features: a
-  host does not vouch for its own opt-in. The core reads the `preimage_attachments` flag from the last
-  `set_room_features` it accepted for the room in this runtime, which a `delete_room` forgets. When it has none, as after
-  a restart, it reads the features the host keeps through the chat adapter of the product's connection: the runtime's
-  own on a web host, the open Worker execution's on a native host, which also shows the `PreimageSubmit` prompt. With
-  neither, the room declares nothing and nothing is uploaded. The allowance key never leaves the core.
-- **Send flow.** In a product-source room the host draws the message `Preparing`, stages the attachment, then sends
-  `user_action { NewMessage }` with the preimage media item and its `ChatMediaMeta`. In a host-store room the host
-  stores the message `Preparing`, stages, then marks it `Sent` and publishes `MessagePosted`. A rejection or a time-out
-  marks the message `Failed`, with retry and delete.
-- The product receives a preimage item and fetches its bytes with `Preimage::lookup_subscribe` when it needs them.
-- Without the flag, the host keeps the 1 MiB inline rule. A host can make an attachment above the bound smaller
-  before it refuses it: the iOS host encodes a photo again as JPEG and scales it down, and exports a video at 640x480.
-  A product that encrypts its files declares `sealed_attachments` instead ([Sealed attachments](#sealed-attachments)).
-
-### Sealed attachments
-
-A room that declares `sealed_attachments` lets the user send an attachment above the inline bound that the Bulletin
-chain never holds in plain form. The host seals it through a runtime call of the core, and sends the message with a new
-resource:
-
-```rust
-pub enum ChatResource {
-    Inline { mime_type: String, bytes: Vec<u8> },
-    Preimage { key: Vec<u8> },
-    /// XChaCha20-Poly1305 of the bytes under `key` and `nonce`, with the
-    /// associated data `truapi/chat/sealed/v1`, cut into `parts` in order.
-    Sealed { parts: Vec<Vec<u8>>, key: Vec<u8>, nonce: Vec<u8>, size: u64, digest: Vec<u8> },
-}
-```
-
-- **Sealing.** The core makes a new 32-byte key and 24-byte nonce for each attachment, encrypts the bytes, cuts the
-  ciphertext into parts of at most one Bulletin transaction (the `MaxTransactionSize` it reads at runtime), and
-  submits each part from the product's Bulletin allowance under `PreimageSubmit`, as for a preimage attachment.
-  `size` is the length of the ciphertext and `digest` its SHA-512. At most 32 MiB and 64 parts.
-- **Who reads it.** The resource holds the key, so a product sends it only through its own encrypted channel; the
-  verbosity chat puts the parts and the key in the file description of its end-to-end encrypted message. A host that
-  draws a `Sealed` item reads the parts with its preimage lookup, checks each part against its key and the
-  ciphertext against `size` and `digest`, and decrypts. The core offers the same opening for hosts that draw through it.
-  A host keeps an opened file, so that it outlives the two weeks that the chain keeps the parts.
-- **No notice.** The chain holds only ciphertext, so the host shows no public-storage notice.
-- **The declaration.** As for preimage attachments: the core reads the flag from the last `set_room_features` it
-  accepted, else from the features the host keeps. A room that declares both kinds gets sealed attachments.
-- **Images and icons.** A `Sealed` resource is a media item only. The core refuses it as an avatar, an icon or a badge.
-- **Hosts.** The iOS and Android apps seal, open, and list the feature. The CLI host roles seal and list the
-  feature; their development page shows a sealed item as its size and parts, as it shows a preimage as its key. The web
-  hosts do not list the feature, and a product keeps the 1 MiB inline rule there.
-
-### Search
-
-- **In-room search, both room modes.** The host searches a host-store room in its own store. For a product-source room
-  that declares `search`, the host asks `search_query { text, cursor, page_size }` once the user stops typing, with a
-  page size of 30 and at most 50, and asks older pages with `next`. The core screens the answer as it screens a page of
-  `messages_query`, and holds at most `page_size` hits. `NotAvailable` or a time-out shows that search is not
-  available. A product-source room without `search` shows no search action.
-- The core asks `search_query` only for a product-source room that declares `search`; it answers `NotAvailable` itself
-  otherwise, without starting the worker.
-- **List search.** A search over the chat list shows the stored hits first. Then it asks `search_query` of the
-  product-source rooms that declare `search`, newest rooms first, at most 8 rooms with a page of 10, and only of a
-  product whose worker runs now, so a search never starts a worker. The hits that arrive within 4 s join the stored hits,
-  newest first; a room that fails or answers late gives none.
-- On a host without `search` the product's handler is never called.
-
-### Read aloud
-
-With `features.read_aloud`, the message menu gains a built-in "Read aloud" on `Text`, `RichText` and `Custom` with
-`preview_text`, spoken by the platform's text to speech in the host's locale. Leaving the room stops it. It is off
-unless the room declares it, and it is not a hideable built-in action, because `ChatBuiltInMessageAction` is a base
-enum that rule 1 does not reopen.
+- **The declaration the core reads.** The upload call carries the product and the room, not the room's features: a host
+  does not vouch for its own opt-in. The core reads the flag from the last `set_room_features` it accepted for the room
+  in this runtime, which a `delete_room` forgets. When it has none, as after a restart, it reads the features the host
+  keeps through the chat adapter of the product's connection. With neither, the room declares nothing and nothing is
+  uploaded.
+- **Bounds.** At most 128 MiB, the largest file the native chat sends.
+- **Progress.** The core reports the bytes the node holds and the size of the file as the upload goes, for the host's
+  progress ring: none before the first part, then after each part, and all of them once the file is in.
+- **Opening.** A host that draws a `Hop` item claims the bytes through the core, only from a node it lists, keeps them,
+  and then acks the entries so the node drops them. The core reports the bytes received and the size of the file as
+  they arrive, for the host's progress ring.
 
 ### Wakes
 
 A **wake** is a bounded hold: the host takes one worker reference for 30 s for a reason, and the product does what it
 needs in that time.
 
-| Source              | When                                                                                                       | Hold                              | Event                                   |
-| ------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------- | --------------------------------------- |
-| Message in flight   | A user message, a user action or a room event is sent to the product while no room screen holds the worker | 30 s                              | None: the product receives the message  |
-| Product start       | A chat product starts and owns no room yet                                                                 | 30 s, once                        | None                                    |
-| Notification        | An authenticated receiving event arrives on a watch of the product routed to `/-/chat/<room_id>`           | 30 s; at most 12 per product per rolling hour | `Woken { watch_id }` in that room |
+| Source            | When                                                                                                       | Hold                                          | Event                                  |
+| ----------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------- | -------------------------------------- |
+| Message in flight | A user message, a user action or a room event is sent to the product while no room screen holds the worker | 30 s                                          | None: the product receives the message |
+| Product start     | A chat product starts and owns no room yet                                                                 | 30 s, once                                    | None                                   |
+| Notification      | A chat push for a room of the product reaches the app                                                      | 30 s; at most 12 per product per rolling hour | None                                   |
 
 - A product has at most one wake reference; a new wake moves its deadline. The product extends past 30 s only with
   `Worker::begin_operation`, which the operating system may still end on a phone.
 - During a wake the product may do anything a running worker does: read the statement store through the host, update
-  its feed and preview, and send a notification with the room link as deeplink, which the host suppresses for a
-  muted room.
-- There are no scheduled wakeups and no periodic background refresh. A scheduled notification opens the room when
-  tapped, and the room screen holds the worker.
-- The push transport of a notification wake is the receiving layer's: a relay watches the product's channels for the
-  enrolled device and pushes, the core verifies the frames and calls the wake. The product never sees a push token or
-  a relay credential, and the app never reads the statement store outside the core.
-- `wake` is listed only where notification wakes work end to end. The other two sources need no capability: they are
-  how the host keeps the [Worker Lifecycle](worker-lifecycle.md) promise for a message in flight.
+  its feed and preview, and send a notification for the room.
+- There are no scheduled wakeups and no periodic background refresh.
+- A host wakes a product with `wake_product(product_id, reason)`, where the reason is `ProductStart`,
+  `MessageInFlight { room_id }` or `Notification { room_id }`. A notification wake over the hourly budget answers
+  `BudgetSpent` and holds nothing.
+- No source needs a feature name: wakes are how the host keeps the [Worker Lifecycle](worker-lifecycle.md) promise for
+  a message in flight and a chat push.
 
 ### Calls
 
-The chat side of a call is a room state the product sets and events the user produces; the media belongs to the Media
-service of Realtime Media Sessions.
+The chat side of a call is a room state the product sets and events the user produces; the audio and video run in the
+host's call engine ([Call media](call-media.md)).
 
-- **Buttons.** `features.calls { audio, video }` draws call buttons in the room header. A press sends
-  `CallRequested { video }`, and the product starts the call its own way.
-- **Ringing.** `set_room_call(Some(Ringing { .. }))` rings in the room with the caller's name and avatar, Accept and
-  Decline, and shows the call in the chat list and, with the app elsewhere, as an in-app banner or a notification.
-  Accept or Decline sends `CallAnswered { call_id, accept }`. The ringing clears on `set_room_call(None)` or after
-  60 s, the lifetime of a Media offer.
-- **Active.** `Active { .. }` shows a call bar with the elapsed time and End. Without a media session, a tap on the bar
-  sends `CallOpened` so the product opens its own call page, and End sends `CallEnded`. With `media_session`, a tap opens
-  the host's call screen, which presents that session itself: remote pictures, the self preview, and the device
-  controls of the host's Media backend. The product places no picture rectangles for a session bound to a room. End
-  ends the session and sends `CallEnded`.
+- **Buttons.** `features.calls { audio, video }` draws call buttons in the room header, in a contact room only while
+  the contact is `Established`. A press sends `CallRequested { video, call_id }`, and the product starts the call its
+  own way. When the host chose `call_id`, the product uses it as the id of the call and of the message that records
+  it, so the host shows its outgoing call screen at once and shows it ringing once that message's status is `Read`.
+- **Ringing.** `set_room_call(Some(Ringing { .. }))` rings with the host's incoming call screen. Accept or Decline sends
+  `CallAnswered { call_id, accept }`. The ringing clears on `set_room_call(None)`: a call rings until the caller ends
+  it or the user answers, as the native chat rings.
+- **Active.** `Active { .. }` shows the host's call screen. End sends `CallEnded`.
 - **Worker.** A room with a `Ringing` or `Active` call holds the worker until the call is cleared or the room is
-  deleted. The core keeps this hold, so every host gets it. A `Ringing` call holds it for at most 60 s, the time the host
-  rings before it clears the banner. If the worker stops, the host clears a ringing call; an active session lives on in
-  the Media service and the bar follows its state.
-- A product call rings only while the product's worker runs. Ringing a closed app needs notification wakes and the
-  platforms' native call screens, which this RFC leaves out.
-- `call_buttons` covers the buttons, ringing, the bar and the four events, so it ships before the Media service.
-  `room_calls` covers host-presented sessions and needs the Media service in the runtime, with the matching amendment
-  to the Realtime Media Sessions RFC: a session bound to a room is presented by the host, `set_surfaces` for it is
-  refused, and the core checks that the session belongs to the product that binds it.
+  deleted. The core keeps this hold, so every host gets it.
+- `call_buttons` covers the buttons, ringing and the events.
 
-### Room link payloads
+### Opened links
 
-A room link is `polkadot://<product>.<tld>/-/chat/<room_id>`, or its web form on a share host,
-`https://<name>.<root>.li/-/chat/<room_id>`, which a phone opens in the app. The text after `#` is a **payload** for
-the product. A product puts in it what it wants the person who opens the link to give it: a contact link, an
-invitation, a ticket. A browser does not send the fragment of a web link to a server, so the payload stays between the
-person who shares the link and the host of the person who opens it.
+The host gives the person chat product what the user opens from an entry point of the host and only the product reads:
+a contact link, a scanned code, a shared link or a username typed in the add-contact panel.
 
-- The host reads the room from the link and shows it, as for any room link, or the App of the product when it has no
-  such room yet. Then it asks the product `open_link { room_id, payload }` with the payload percent-decoded, and holds
-  the worker until the answer. The host does not read, show or store the payload.
-- The product answers the room the host shows next, or `None` to keep the room of the link. A product without a
-  handler answers `Unsupported`, and the user stays in the room of the link: a product built before this method keeps
-  working.
-- The core asks for any room of the product, needs no declaration, and answers `NotAvailable` itself for a room the
-  product does not have. It refuses an empty payload or one above the bound with `Unknown`, and refuses an answer that
-  names an invalid room.
-- Keep a link short. iOS cuts a link that another app or the system opens at 2,047 bytes, so a payload that makes the
-  link longer arrives cut. A product that needs more puts a short reference in the payload, such as a username, and
-  gives the long form another way, for example as text the user pastes.
-- An opened link is the user's choice, but the link can come from anyone. A product treats the payload as untrusted
-  input, and asks the user before it acts on it with an effect the user did not ask for, such as a connection.
-- A host scanner that reads a room link of a product, in either form, gives it to the link pipeline of the app, so a
-  QR code of a room link works from the main scanner of the host and from the camera of the phone.
+- The host asks `open_link { room_id, payload }`, where `room_id` is a room of the product it shows unless the product
+  answers another, and holds the worker until the answer. The host does not read, show or store the payload.
+- The product answers the room the host shows next, or `None` to keep the room of the request. A product without a
+  handler answers `Unsupported`.
+- The core asks for any room of the product and needs no declaration. It refuses an empty payload or one above the bound
+  with `Unknown`, and refuses an answer that names an invalid room.
+- The payload can come from anyone. A product treats it as untrusted input, and asks the user before it acts on it with
+  an effect the user did not ask for, such as a connection.
+
+### Edit history
+
+The host's message menu offers the edit history of an edited message. For a product-source room it asks
+`edit_history { room_id, message_id }`, and the product answers the texts the message had, oldest first, the first with
+the time of the message. The core answers `NotAvailable` itself for a room that is not product-source, and holds an
+answer to at most 100 texts.
+
+### Search
+
+The host's search covers the messages of a product-source room, which the host does not store. It asks
+`search_query { room_id, text, cursor, page_size }`, and the product answers the matching messages newest first, with a
+cursor for older matches. The host asks only for a room whose configuration sets `product_source`, and no feature name
+is needed. The core answers `NotAvailable` itself for any other room, refuses an empty `text` or a `page_size` above
+50, and holds an answer to `page_size` messages.
 
 ### Limits
 
 The core enforces these bounds before a host sees a value, with the identifier and display-text screening of the base:
 
-| Value                                                                                                                    | Bound                                                                                    |
-| ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| `features` names in `capabilities`                                                                                       | Identifier, at most 64 entries                                                           |
-| `call_id`, `watch_id`, `caller`, persona `bot:<bot_id>`                                                                  | Identifier, 256 bytes                                                                    |
-| Search `text`                                                                                                            | Display text, 1 grapheme to 256 bytes                                                    |
-| Search `page_size` the host asks                                                                                         | 1 to 50, host default 30; hits at most `page_size`                                       |
-| Search cursor                                                                                                            | 1 KiB                                                                                    |
-| Staged attachment                                                                                                        | 8 MiB, and not above the Bulletin chain's per-transaction bound                          |
-| Personas per product                                                                                                     | 8                                                                                        |
-| `set_room_call`                                                                                                          | 2 per second per room                                                                    |
-| Wake                                                                                                                     | 30 s per hold; at most 12 notification wakes per product per rolling hour                |
-| Room events queued with no subscriber                                                                                    | 64 per product, oldest dropped                                                           |
-| Room link `payload`                                                                                                      | 1 byte to 8 KiB of UTF-8                                                                 |
+| Value                                   | Bound                                                                     |
+| --------------------------------------- | ------------------------------------------------------------------------- |
+| `call_id`, `caller`                     | Identifier, 256 bytes                                                     |
+| `username` of a contact                 | Display text, 1 to 256 bytes                                              |
+| HOP attachment                          | 128 MiB                                                                   |
+| `set_room_call`                         | 2 per second per room                                                     |
+| `set_room_contact`                      | 5 per second per room                                                     |
+| Call `signal`                           | 1 byte to 64 KiB                                                          |
+| Wake                                    | 30 s per hold; at most 12 notification wakes per product per rolling hour |
+| Room events queued with no subscriber   | 64 per product, oldest dropped                                            |
+| Opened link `payload`                   | 1 byte to 8 KiB of UTF-8                                                  |
+| Edit history                            | 100 texts                                                                 |
+| Search `page_size`                      | 1 to 50 messages                                                          |
 
 A rate over its bound fails with `RateLimited`, and any other bound fails with `Unknown` naming the field.
 
 How long the host waits:
 
-| What                | Host waits                                                  | Then                                                 |
-| ------------------- | ----------------------------------------------------------- | ---------------------------------------------------- |
-| `search_query`      | 10 s                                                        | Shows that search is not available; the field stays  |
-| Staging a preimage  | The `Preimage::submit` time-out, 360 s                      | The message is `Failed` with retry                   |
-| Wake hold           | 30 s, extended only by the product's own `begin_operation` | Releases the reference                               |
-| `Ringing`           | The product's `set_room_call(None)`, or 60 s                | The ringing clears                                   |
-| `open_link`         | 90 s, without blocking the screen: the link can start the worker | Logs the failure; the user stays in the room of the link |
+| What           | Host waits                                                       | Then                                            |
+| -------------- | ---------------------------------------------------------------- | ----------------------------------------------- |
+| `edit_history` | 5 s                                                              | Shows that the history is not available         |
+| `search_query` | 10 s                                                             | Shows no matches from the room                  |
+| Wake hold      | 30 s, extended only by the product's own `begin_operation`       | Releases the reference                          |
+| `Ringing`      | The product's `set_room_call(None)`                              | The ringing clears                              |
+| `open_link`    | 90 s, without blocking the screen: the link can start the worker | Logs the failure; the user stays where they are |
 
 ## Trade-offs
 
-- **Methods, not versions.** Adding fields to `ChatMessage` as a `V2`, or new events to `ChatEvent` as a `V3`, gives
+- **Methods, not versions.** Adding fields to a request as a `V2`, or new events to the `action_subscribe` item, gives
   cleaner types, but the client always encodes the newest version and an older host cannot decode it. New methods keep
   every base call of a new product working on an older host.
-- **Names, not an enum.** `capabilities` answers strings, so a later feature needs no new version. A
-  `System::feature_supported` variant per feature, or a `host_info` `V2`, were dropped: the first versions a request
-  for each feature, the second versions a method every product calls. The call sits on `Chat` because only a Worker
-  uses chat.
-- **One features value.** `ChatRoomFeatures` is a new persisted declaration beside `ChatRoomConfig`. New fields in
-  `ChatRoomConfig` would need a `V2` and a storage migration on every host, because hosts store the configuration
-  without a version prefix.
-- **The product pays for staged attachments.** A host purse does not exist in RFC 0010, and the host's chat allowance
-  would link product traffic to the user's chat identity. A product that does not want to pay keeps the flag off.
-- **One public preimage per attachment.** Chunked uploads with a manifest, peer-to-peer handoff tickets and host-side
-  encryption were dropped for now: each needs a new body field or a new transport, and the one-time notice states that
-  the file is public.
-- **List search asks only running workers.** Asking every product while the user types in the list search would start
-  every worker on a keystroke. The list asks only the products whose worker runs, after the typing pause, with a limit
-  and a deadline; a product-source room of a stopped product matches by its name only.
-- **Calls before media.** Splitting `call_buttons` from `room_calls` lets the buttons, ringing and call bar ship
-  before the Media service is accepted. Waiting for the Media service, or letting a product place picture rectangles
-  in a chat screen, were dropped. Native call screens for a closed app are left out.
-- **Read aloud is opt-in.** It is off by default, so a product opts in per room.
+- **One features value.** `ChatRoomFeatures` is a persisted declaration beside `ChatRoomConfig`, so new features need no
+  change of the configuration that hosts store.
+- **The host draws the person chat.** A contact room could be a product room that the product draws through the
+  renderer. That would give the person chat a second look on every host. The contact and its state let each host reuse
+  its own native person chat, so the chat looks the same whether the native code or the product keeps the messages.
 - **Bounded wakes.** A worker kept alive while notifications are enabled, or a periodic background refresh, would
   break the Worker Lifecycle rule that a worker runs only while referenced. A 30 s hold with an hourly budget keeps a
   product from running in the background on its own.
 
 ## Open questions
 
-- **A push relay for product wakes.** Notification wakes need a relay that pushes to iOS and Android devices with the
-  apps' push credentials. Only browser push is wired today. Until a relay exists, hosts do not list `wake`.
-- **The receiving layer.** Notification wakes route a delivered receiving event to a room through the watch's route
-  `/-/chat/<room_id>`. That layer is not yet on the base branch, and its route field is assumed to carry this form.
-- **The Media service.** `room_calls` needs the Realtime Media Sessions RFC accepted with the host-presented amendment,
-  a final trait id, and native Media backends. Until then the core removes `room_calls`.
 - **Background reach on iOS.** A background push gives an iOS app about 30 s and the system throttles silent pushes.
   Whether a worker that is a headless web view boots and answers in that window is not measured, so a cold wake on iOS
   is best effort.
-- **Retention of staged attachments.** Bulletin data may be deleted after its retention period. A staged attachment
-  then draws as a missing preimage, as a product's own preimage does. Whether hosts or products renew it is not
-  settled.

@@ -9,8 +9,12 @@ struct ChatMetadata: Equatable {
     let chatId: Chat.Id
     let peerMetadata: Chat.PeerMetadata
     let state: State
-    /// The line under the name in the header, for example the description of a product room.
-    var subtitle: String?
     /// What a product room offers. Nil for a person chat.
     var roomPolicy: ChatRoomPolicy?
+
+    /// The seed of the color of the avatar. A room with a contact has the color of the native chat with that
+    /// account.
+    var colorSeed: String {
+        (roomPolicy?.contact?.personChatId ?? chatId).colorSeed
+    }
 }

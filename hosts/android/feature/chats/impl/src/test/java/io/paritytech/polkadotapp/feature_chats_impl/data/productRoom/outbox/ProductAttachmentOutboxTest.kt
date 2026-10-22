@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_chats_impl.data.productRoom.outbox
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMediaMetaModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatResourceModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -14,6 +15,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.util.UUID
 
 class ProductAttachmentOutboxTest {
     @get:Rule
@@ -28,39 +30,38 @@ class ProductAttachmentOutboxTest {
     @Test
     fun `an entry and its bytes stay after the process starts again`() = runBlocking {
         val bytes = ByteArray(3 * 1024 * 1024) { (it % 251).toByte() }
-        val added = outbox().add(room, draft(bytes, ProductAttachmentDraft.Kind.IMAGE), text = "a caption", replyTo = "reply-1", upload = ProductAttachmentUpload.PREIMAGE)
+        val added = outbox().add(room, draft(bytes, ProductAttachmentDraft.Kind.IMAGE), text = "a caption", replyTo = "reply-1")
 
         val reopened = outbox()
         val read = reopened.get(added.id)
 
         assertEquals(added, read)
-        assertTrue(ProductAttachmentOutbox.isOutboxId(added.id))
+        // The id is a UUID, as the native chat names its messages, so the product sends the message under it.
+        assertEquals(added.id, UUID.fromString(added.id).toString())
         assertArrayEquals(bytes, reopened.bytes(added.id))
         assertEquals(listOf(added), reopened.observe(room).first())
         assertEquals(emptyList<ProductOutboxEntry>(), reopened.observe(otherRoom).first())
     }
 
     @Test
-    fun `the key and each failure are kept`() = runBlocking {
+    fun `the HOP file and each failure are kept`() = runBlocking {
         val first = outbox()
-        val added = first.add(room, draft(ByteArray(10), ProductAttachmentDraft.Kind.FILE), text = null, replyTo = null, upload = ProductAttachmentUpload.PREIMAGE)
-        val key = ByteArray(32) { 7 }.toDataByteArray()
+        val added = first.add(room, draft(ByteArray(10), ProductAttachmentDraft.Kind.FILE), text = null, replyTo = null)
+        val hopFile = ChatResourceModel.Hop(ByteArray(32) { 7 }.toDataByteArray(), ByteArray(32) { 8 }.toDataByteArray(), "wss://hop.example", 10)
         val failures = listOf(
             ProductAttachmentFailure.TooLarge(2_097_152),
             ProductAttachmentFailure.NotDeclared,
-            ProductAttachmentFailure.PermissionDenied,
-            ProductAttachmentFailure.AllowanceUnavailable("no slot"),
             ProductAttachmentFailure.Failed("timeout"),
             ProductAttachmentFailure.Refused(null),
             ProductAttachmentFailure.Refused("not today"),
         )
 
         for (failure in failures) {
-            first.update(added.id) { it.copy(key = key, failure = failure) }
+            first.update(added.id) { it.copy(hopFile = hopFile, failure = failure) }
 
             val read = outbox().get(added.id)!!
             assertEquals(failure, read.failure)
-            assertArrayEquals(key.value, read.key!!.value)
+            assertEquals(hopFile, read.hopFile)
         }
 
         first.update(added.id) { it.copy(failure = null) }
@@ -70,7 +71,7 @@ class ProductAttachmentOutboxTest {
     @Test
     fun `remove deletes the bytes`() = runBlocking {
         val outbox = outbox()
-        val added = outbox.add(room, draft(ByteArray(10), ProductAttachmentDraft.Kind.VIDEO), text = null, replyTo = null, upload = ProductAttachmentUpload.PREIMAGE)
+        val added = outbox.add(room, draft(ByteArray(10), ProductAttachmentDraft.Kind.VIDEO), text = null, replyTo = null)
         assertTrue(outbox.bytesFile(added.id).isFile)
 
         outbox.remove(added.id)
@@ -84,11 +85,60 @@ class ProductAttachmentOutboxTest {
     @Test
     fun `an update of a removed entry does nothing`() = runBlocking {
         val outbox = outbox()
-        val added = outbox.add(room, draft(ByteArray(10), ProductAttachmentDraft.Kind.FILE), text = null, replyTo = null, upload = ProductAttachmentUpload.PREIMAGE)
+        val added = outbox.add(room, draft(ByteArray(10), ProductAttachmentDraft.Kind.FILE), text = null, replyTo = null)
         outbox.remove(added.id)
 
         assertNull(outbox.update(added.id) { it.copy(failure = ProductAttachmentFailure.NotDeclared) })
         assertEquals(emptyList<ProductOutboxEntry>(), outbox().all())
+    }
+
+    @Test
+    fun `an entry that an earlier build kept for a preimage is removed`() = runBlocking {
+        val added = outbox().add(room, draft(ByteArray(10), ProductAttachmentDraft.Kind.IMAGE), text = null, replyTo = null)
+        val entry = folder.root.resolve(added.id).resolve("entry.properties")
+        entry.writeText(entry.readText().replace("upload=HOP", "upload=PREIMAGE"))
+
+        assertEquals(emptyList<ProductOutboxEntry>(), outbox().all())
+    }
+
+    @Test
+    fun `a text message and what waits for it stay after the process starts again`() = runBlocking {
+        val first = outbox()
+        val added = first.addText(room, "hello", replyTo = "m0", request = true)
+        first.update(added.id) { it.copy(editedText = "hello there", editedAt = 77, reaction = "👍") }
+
+        val read = outbox().get(added.id)!!
+
+        assertTrue(read.isText)
+        assertEquals("hello", read.text)
+        assertEquals("m0", read.replyTo)
+        assertTrue(read.request)
+        assertEquals("hello there", read.editedText)
+        assertEquals(77L, read.editedAt)
+        assertEquals("👍", read.reaction)
+        assertNull(outbox().bytes(added.id))
+    }
+
+    @Test
+    fun `an entry of an earlier build loses the prefix of its id`() = runBlocking {
+        val added = outbox().add(room, draft(ByteArray(10), ProductAttachmentDraft.Kind.IMAGE), text = null, replyTo = null)
+        val entry = folder.root.resolve(added.id).resolve("entry.properties")
+        entry.writeText(entry.readText().replace("id=${added.id}", "id=outbox\\:${added.id}"))
+
+        val read = outbox().get(added.id)
+
+        assertEquals(added, read)
+    }
+
+    @Test
+    fun `remove only an unchanged entry`() = runBlocking {
+        val outbox = outbox()
+        val added = outbox.addText(room, "hello", replyTo = null, request = false)
+        outbox.update(added.id) { it.copy(reaction = "👍") }
+
+        assertFalse(outbox.removeIfUnchanged(added))
+        assertTrue(outbox.removeIfUnchanged(outbox.get(added.id)!!))
+        assertNull(outbox.get(added.id))
     }
 
     @Test

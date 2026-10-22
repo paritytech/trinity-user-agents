@@ -5,12 +5,14 @@ import TrUAPIHost
 // MARK: - User actions
 
 extension ProductMessageSource {
-    static let localIdPrefix = "local:"
-
     func perform(_ action: ChatUserAction) async -> ChatSourceActionOutcome {
         switch action {
-        case let .newMessage(body, replyTo):
-            return await send(body: body, replyTo: replyTo)
+        case let .newMessage(body, replyTo, _, _):
+            guard case let .text(text) = body else {
+                return .refused(reason: nil)
+            }
+
+            return await send(text: text, replyTo: replyTo)
         case let .editMessage(messageId, body):
             guard let original = messages[messageId] else {
                 return .refused(reason: nil)
@@ -20,7 +22,7 @@ extension ProductMessageSource {
                 $0.body = body
                 $0.editedAt = now()
             }
-            return await ask(action) { [weak self] in
+            return await ask(action, after: messageId) { [weak self] in
                 await self?.put(original)
             }
         case let .reactionPlaced(messageId, emoji),
@@ -30,15 +32,35 @@ extension ProductMessageSource {
             }
 
             let placed = if case .reactionPlaced = action { true } else { false }
-            modify(messageId) { $0.adjustReaction(emoji, by: productUserParticipantId, placed: placed) }
-            return await ask(action) { [weak self] in
+            modify(messageId) { message in
+                // The user has one reaction on a message: a new one replaces the one before, as in the native chat.
+                if placed {
+                    for other in message.reactions where other.reactedByUser && other.emoji != emoji {
+                        message.adjustReaction(other.emoji, by: productUserParticipantId, placed: false)
+                    }
+                }
+                message.adjustReaction(emoji, by: productUserParticipantId, placed: placed)
+            }
+            return await ask(action, after: messageId) { [weak self] in
                 await self?.put(original)
             }
-        case .deleteMessage,
-             .seen,
-             .retry:
+        case .seen,
+             .acceptRequest,
+             .declineRequest,
+             .block,
+             .unblock,
+             .leave:
             return await ask(action) {}
         }
+    }
+
+    /// The body of an edit: a text keeps its kind, and a caption keeps the media of its message.
+    func editedBody(of messageId: String, text: String) -> ChatMessageBody {
+        guard case let .richText(_, media)? = messages[messageId]?.body, !media.isEmpty else {
+            return .text(text: text)
+        }
+
+        return .richText(text: text, media: media)
     }
 
     func put(_ message: ChatMessage) {
@@ -47,6 +69,24 @@ extension ProductMessageSource {
         }
 
         messages[message.messageId] = message
+    }
+
+    /// Sends an action on a message whose change the window shows already. An action on a message of the user that
+    /// the outbox still holds goes once the product has the message.
+    func ask(
+        _ action: ChatUserAction,
+        after messageId: String,
+        revert: @escaping () async -> Void
+    ) async -> ChatSourceActionOutcome {
+        emit()
+
+        guard await waitUntilDelivered(messageId) else {
+            await revert()
+            emit()
+            return .refused(reason: nil)
+        }
+
+        return await ask(action, revert: revert)
     }
 
     /// Sends an action whose change the window shows already. `revert` undoes the change when the product
@@ -63,104 +103,6 @@ extension ProductMessageSource {
             noteUnavailable(after: error)
             emit()
             return .refused(reason: Self.reason(of: error))
-        }
-    }
-
-    func send(body: ChatMessageBody, replyTo: String?) async -> ChatSourceActionOutcome {
-        if !isAtNewestEnd {
-            await reload()
-        }
-
-        let localId = Self.localIdPrefix + UUID().uuidString
-        messages[localId] = ChatMessage(
-            messageId: localId,
-            origin: ChatMessageOrigin(participantId: productUserParticipantId),
-            timestamp: now(),
-            body: body,
-            status: .preparing,
-            replyTo: replyTo,
-            editedAt: nil,
-            reactions: []
-        )
-        pending.append(localId)
-
-        return await deliver(localId)
-    }
-
-    /// Sends a pending message to the product, and replaces it with the message that the product made.
-    func deliver(_ localId: String) async -> ChatSourceActionOutcome {
-        guard let message = messages[localId] else {
-            return .refused(reason: nil)
-        }
-
-        emit()
-
-        do {
-            let item = try await querying.userAction(ProductChatUserActionRequest(
-                roomId: roomId,
-                action: .newMessage(body: message.body, replyTo: message.replyTo)
-            ))
-
-            switch item {
-            case let .messageCreated(created):
-                pending.removeAll { $0 == localId }
-                messages[localId] = nil
-                insertLive(created)
-            case .acknowledged:
-                modify(localId) { $0.status = .sent }
-            }
-
-            emit()
-            return .done
-        } catch let ChatQueryError.actionRefused(.rejected(reason)) {
-            // 02-DESIGN §13 item 9: a rejected send goes away and the user sees the reason.
-            pending.removeAll { $0 == localId }
-            messages[localId] = nil
-            emit()
-            return .refused(reason: reason)
-        } catch {
-            logger.warning("Send to room \(roomId) failed: \(error)")
-            modify(localId) { $0.status = .failed }
-            noteUnavailable(after: error)
-            emit()
-            return .failed
-        }
-    }
-
-    func retry(_ messageId: String) async -> ChatSourceActionOutcome {
-        guard let message = messages[messageId], message.status == .failed else {
-            return .refused(reason: nil)
-        }
-
-        modify(messageId) { $0.status = .preparing }
-
-        if pending.contains(messageId) {
-            // The product never confirmed the message, so the host sends it again.
-            return await deliver(messageId)
-        }
-
-        return await ask(.retry(messageId: messageId)) { [weak self] in
-            await self?.markFailed(messageId)
-        }
-    }
-
-    func markFailed(_ messageId: String) {
-        modify(messageId) { $0.status = .failed }
-    }
-
-    func delete(_ messageId: String) async -> ChatSourceActionOutcome {
-        let removed = remove(messageId)
-        emit()
-
-        // A message that the product never confirmed exists only in the window.
-        guard !messageId.hasPrefix(Self.localIdPrefix) else {
-            return .done
-        }
-
-        return await ask(.deleteMessage(messageId: messageId)) { [weak self] in
-            if let removed {
-                await self?.putBack(removed)
-            }
         }
     }
 
@@ -190,7 +132,7 @@ extension ProductMessageSource {
     func markSeen(_ messageIds: Set<Chat.MessageId>) {
         let ids = orderedIds
         guard
-            let newestIndex = ids.lastIndex(where: { messageIds.contains($0) && !$0.hasPrefix(Self.localIdPrefix) }),
+            let newestIndex = ids.lastIndex(where: { messageIds.contains($0) && !pending.contains($0) }),
             let newest = messages[ids[newestIndex]]
         else {
             return
@@ -206,8 +148,15 @@ extension ProductMessageSource {
             return
         }
 
+        // The native chat marks the reactions of every message up to the newest seen one as seen. The product
+        // marks the reactions of the room seen with `Seen`.
+        // A message of the contact that the product still gives as unread goes again with the next `Seen`.
+        let seesUnread = ids[...newestIndex].contains { id in
+            guard let message = messages[id] else { return false }
+            return message.hasUnseenReaction || message.isUnreadByUser
+        }
         let reported = reportedSeenMessageId.flatMap { messages[$0] }
-        if isNewer(newest, than: reportedSeenMessageId, timestamp: reported?.timestamp, in: ids) {
+        if seesUnread || isNewer(newest, than: reportedSeenMessageId, timestamp: reported?.timestamp, in: ids) {
             if seenToReport != newest.messageId {
                 failedSeenAttempts = 0
             }
@@ -285,5 +234,17 @@ extension ProductMessageSource {
 
         try? await Task.sleep(for: settings.seenRetryDelay)
         reportSeenIfNeeded()
+    }
+}
+
+extension Chat.ContactAction {
+    var userAction: ChatUserAction {
+        switch self {
+        case .acceptRequest: .acceptRequest
+        case .declineRequest: .declineRequest
+        case .block: .block
+        case .unblock: .unblock
+        case .leave: .leave
+        }
     }
 }

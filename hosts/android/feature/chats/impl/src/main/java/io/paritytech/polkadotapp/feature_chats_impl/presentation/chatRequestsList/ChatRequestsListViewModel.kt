@@ -6,12 +6,11 @@ import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.inBackground
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.withLoading
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ContactWithRequestTimestamp
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatFeedPayload
 import io.paritytech.polkadotapp.feature_chats_impl.ChatsRouter
-import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
 import io.paritytech.polkadotapp.feature_chats_impl.domain.error.asChatRequestError
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatRequestsListInteractor
+import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.PendingChatRequest
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.chatRequestsList.models.ChatRequestDeclineConfirmationState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.chatRequestsList.models.ChatRequestsListUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.error.toPresentationError
@@ -28,10 +27,9 @@ import javax.inject.Inject
 class ChatRequestsListViewModel @Inject constructor(
     private val interactor: ChatRequestsListInteractor,
     private val router: ChatsRouter,
-    private val chatEngine: ChatEngine
 ) : BaseViewModel(), ChatRequestsListContract {
     override val state = interactor.subscribeChatRequests()
-        .map { contactsWithTimestamp -> contactsWithTimestamp.map { it.toRequestItem() }.toImmutableList() }
+        .map { requests -> requests.map { it.toRequestItem() }.toImmutableList() }
         .map { requests -> ChatRequestsListUiState(requests) }
         .withLoading()
         .inBackground()
@@ -44,7 +42,7 @@ class ChatRequestsListViewModel @Inject constructor(
     override val declineConfirmationState = MutableStateFlow(ChatRequestDeclineConfirmationState.Hidden)
 
     override fun onRequestClick(request: ChatRequestsListUiState.ChatRequestItem) {
-        val payload = ChatFeedPayload.existingContactChat(request.accountId)
+        val payload = request.productRoom?.let { ChatFeedPayload.existingChat(it) } ?: ChatFeedPayload.existingContactChat(request.accountId)
         router.openChatFeed(payload)
     }
 
@@ -59,7 +57,7 @@ class ChatRequestsListViewModel @Inject constructor(
 
     override fun onConfirmDeclineClick() = launchUnit {
         declineConfirmationState.value.requestItem?.let { request ->
-            interactor.declineRequest(request.accountId)
+            interactor.declineRequest(request.accountId, request.productRoom)
                 .onFailure { showPresentationError(it.asChatRequestError().toPresentationError()) }
         }
 
@@ -74,11 +72,12 @@ class ChatRequestsListViewModel @Inject constructor(
         router.back()
     }
 
-    private fun ContactWithRequestTimestamp.toRequestItem(): ChatRequestsListUiState.ChatRequestItem {
+    private fun PendingChatRequest.toRequestItem(): ChatRequestsListUiState.ChatRequestItem {
         return ChatRequestsListUiState.ChatRequestItem(
-            accountId = contact.accountId,
-            display = chatEngine.getContactChatDisplay(contact).toUi(),
-            timestamp = requestTimestamp
+            accountId = accountId,
+            display = display.toUi(),
+            timestamp = timestamp,
+            productRoom = productRoom,
         )
     }
 }

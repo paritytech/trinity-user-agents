@@ -60,7 +60,6 @@ pub mod signing;
 pub mod statement_store;
 pub mod system;
 pub mod theme;
-pub mod usernames;
 pub mod worker;
 
 #[cfg(test)]

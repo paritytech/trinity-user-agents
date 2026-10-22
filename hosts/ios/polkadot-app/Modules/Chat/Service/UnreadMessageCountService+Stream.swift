@@ -20,10 +20,8 @@ extension UnreadMessageCountService: UnreadMessageCountServicing {
             mapper: AnyCoreDataMapper(UnreadBadgeRoomMapper()),
             filter: Self.badgeRoomPredicate()
         )
-        let now = now
-
         return combineLatest(rows, rooms)
-            .map { rows, rooms in Self.badgeTotal(rows: rows, rooms: rooms, at: now()) }
+            .map { rows, rooms in Self.badgeTotal(rows: rows, rooms: rooms) }
             .removeDuplicates()
             .eraseToAnyAsyncSequence()
     }
@@ -54,7 +52,7 @@ final class UnreadBadgeRowMapper: CoreDataMapperProtocol {
     }
 }
 
-/// Reads the badge and the mute of a product room for the app badge. It writes nothing.
+/// Reads the badge of a product room for the app badge. It writes nothing.
 final class UnreadBadgeRoomMapper: CoreDataMapperProtocol {
     typealias DataProviderModel = UnreadBadgeRoom
     typealias CoreDataEntity = CDChatRoomMetadata

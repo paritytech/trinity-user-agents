@@ -43,13 +43,10 @@ pub enum ChatWakeReason {
 		/// The room of the message or the event.
 		room_id: String,
 	},
-	/// An authenticated notification arrived on a watch that the host routes
-	/// to this room.
+	/// A chat notification for this room arrived.
 	Notification {
 		/// The room.
 		room_id: String,
-		/// The watch that received the notification.
-		watch_id: String,
 	},
 }
 
@@ -142,8 +139,7 @@ impl ChatWakes {
 
 impl RuntimeServices {
 	/// Wake `product_id` for `reason`: hold its worker for
-	/// [`CHAT_WAKE_HOLD_MS`]. A notification wake also sends
-	/// `ChatRoomEvent::Woken` to the room.
+	/// [`CHAT_WAKE_HOLD_MS`].
 	pub fn wake_product(
 		self: &Arc<Self>,
 		product_id: &str,
@@ -168,9 +164,8 @@ impl RuntimeServices {
 			ChatWakeReason::MessageInFlight { room_id } => ChatWakeReason::MessageInFlight {
 				room_id: normalize_chat_identifier("roomId", &room_id)?,
 			},
-			ChatWakeReason::Notification { room_id, watch_id } => ChatWakeReason::Notification {
+			ChatWakeReason::Notification { room_id } => ChatWakeReason::Notification {
 				room_id: normalize_chat_identifier("roomId", &room_id)?,
-				watch_id: normalize_chat_identifier("watchId", &watch_id)?,
 			},
 		};
 		let notification = matches!(reason, ChatWakeReason::Notification { .. });
@@ -189,15 +184,6 @@ impl RuntimeServices {
 				services.worker_ledger.release(&product);
 			}
 		}));
-		if let ChatWakeReason::Notification { room_id, watch_id } = reason {
-			self.chat_room_events.publish(
-				product_id,
-				latest::HostChatRoomEventsSubscribeItem {
-					room_id,
-					event: latest::ChatRoomEvent::Woken { watch_id },
-				},
-			);
-		}
 		Ok(ChatWakeOutcome::Held { until_ms: start.until_ms })
 	}
 
@@ -279,7 +265,7 @@ mod tests {
 	}
 
 	fn notification() -> ChatWakeReason {
-		ChatWakeReason::Notification { room_id: "main".to_string(), watch_id: "w1".to_string() }
+		ChatWakeReason::Notification { room_id: "main".to_string() }
 	}
 
 	// S71: a hold keeps the worker for 30 s, and no longer, while the clock
@@ -342,8 +328,8 @@ mod tests {
 		references(&services, 0);
 	}
 
-	// S71: the thirteenth notification wake of an hour holds nothing and
-	// tells the room nothing; an hour after the first, one more is free.
+	// S71: the thirteenth notification wake of an hour holds nothing; an hour
+	// after the first, one more is free.
 	#[test]
 	fn the_budget_of_notification_wakes_holds_for_an_hour() {
 		let services = services();
@@ -364,15 +350,6 @@ mod tests {
 			services.wake_product_at(PRODUCT, notification(), HOUR_MS, clock.timer()),
 			Ok(ChatWakeOutcome::Held { until_ms: HOUR_MS + CHAT_WAKE_HOLD_MS })
 		);
-		// One `Woken` for each wake that held, none for the refused one.
-		let mut events = services
-			.chat_room_events
-			.subscribe::<truapi::latest::GenericError>(PRODUCT, Vec::new());
-		let mut woken = 0;
-		while let Some(Some(_)) = futures::StreamExt::next(&mut events).now_or_never() {
-			woken += 1;
-		}
-		assert_eq!(woken, CHAT_NOTIFICATION_WAKES_PER_HOUR + 1);
 	}
 
 	#[test]

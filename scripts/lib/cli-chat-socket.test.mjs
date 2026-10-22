@@ -8,30 +8,22 @@ import { test } from "node:test";
 import {
   ChatSocket,
   applyFrame,
+  describeMessage,
   emptyChat,
-  findAction,
   messageText,
   socketUrl,
 } from "./cli-chat-socket.mjs";
 
-const menu = {
-  messageId: "m1",
-  origin: "product",
-  body: {
-    type: "Actions",
-    text: "Press a button",
-    actions: [
-      { actionId: "yes", title: "YES" },
-      { actionId: "no", title: "NO" },
-    ],
-    layout: "Grid",
-  },
-};
 const text = (messageId, origin, value) => ({
   messageId,
   origin,
   body: { type: "Text", text: value },
 });
+const menu = {
+  messageId: "m1",
+  origin: "product",
+  body: { type: "RichText", text: "Press a button", media: [] },
+};
 
 test("every form of a target names the chat socket", () => {
   assert.equal(socketUrl(9955), "ws://127.0.0.1:9955/chat/ws");
@@ -87,15 +79,31 @@ test("frames build the chat as the page draws it", () => {
   assert.equal(chat.messages.get("actions"), undefined);
 });
 
-test("a button is found by its id or its title on the newest message", () => {
-  const older = { ...menu, messageId: "m0" };
-  const messages = [older, text("m1a", "user", "x"), menu];
-  assert.equal(findAction(messages, "yes").message.messageId, "m1");
-  assert.equal(findAction(messages, "NO").action.actionId, "no");
-  assert.equal(findAction(messages, "maybe"), undefined);
-  assert.equal(findAction([{ ...menu, deleted: true }], "yes"), undefined);
+test("a message reads as its text", () => {
   assert.equal(messageText(menu), "Press a button");
   assert.equal(messageText(text("m2", "user", "hi")), "hi");
+  assert.equal(describeMessage(menu), "m1 product: Press a button");
+});
+
+test("events, calls, payments and requests read as one line", () => {
+  const call = {
+    messageId: "c1",
+    origin: "contact",
+    body: { type: "Call", video: true, answeredAt: null, closed: null, text: "Video call, ringing" },
+  };
+  assert.equal(messageText(call), "Video call, ringing");
+  assert.equal(
+    messageText({ body: { type: "Event", event: "LeftChat", text: "Left the chat" } }),
+    "Left the chat",
+  );
+  assert.equal(
+    messageText({ body: { type: "Payment", amount: "340282366920938463463374607431768211455", legacy: false } }),
+    "Payment of 340282366920938463463374607431768211455",
+  );
+  assert.equal(
+    describeMessage({ ...text("r1", "user", "hi, it is me"), request: true }),
+    "r1 user (request): hi, it is me",
+  );
 });
 
 /**
@@ -203,34 +211,35 @@ test("the helper sends the operations of the page and matches each reply", async
     assert.deepEqual(chat.rooms(), [{ roomId: "actions", name: "Actions" }]);
     assert.deepEqual(chat.messages("actions"), [menu]);
 
-    const posted = await chat.post("actions", "hello");
+    const posted = await chat.post("actions", "hello", {
+      messageId: "m2",
+      timestamp: 1_767_225_600_000,
+    });
     assert.equal(posted.message.messageId, "m2");
     assert.equal(
       (await chat.waitForMessage("actions", "echo: hello")).messageId,
       "m3",
     );
 
-    assert.deepEqual(await chat.pressNewest("actions", "NO"), {
-      kind: "delivered",
-      op: "trigger",
-      workers: 1,
-    });
     assert.deepEqual(await chat.page("notes", { pageSize: 20 }), {
       messages: [text("n0", "product", "first")],
       next: null,
     });
-    assert.throws(
-      () => chat.pressNewest("actions", "maybe"),
-      /no message of actions/,
-    );
     await assert.rejects(
       chat.waitForMessage("actions", /never/, { timeoutMs: 100 }),
       /no message of actions matched/,
     );
 
     assert.deepEqual(host.received, [
-      { op: "post", roomId: "actions", text: "hello", replyTo: null, reqId: 1 },
-      { op: "trigger", roomId: "actions", messageId: "m1", actionId: "no" },
+      {
+        op: "post",
+        roomId: "actions",
+        text: "hello",
+        replyTo: null,
+        messageId: "m2",
+        timestamp: 1_767_225_600_000,
+        reqId: 1,
+      },
       {
         op: "messages",
         roomId: "notes",
@@ -250,25 +259,16 @@ test("the helper sends the message actions of a room that the worker keeps", asy
   const host = await fakeHost(
     {
       kind: "snapshot",
-      productId: "verbosity.dot",
+      productId: "chat.dot",
       rooms: [{ roomId: "dm-7", name: "bob" }],
       messages: [],
     },
     (op, send) => {
       const ok =
-        op.op === "participants"
-          ? { type: "Resolved", participants: [] }
-          : op.op === "search"
-            ? { hits: [], next: null }
-            : { type: "Acknowledged" };
-      if (op.op === "delete" && op.messageId === "i9")
-        send({
-          kind: "answer",
-          op: op.op,
-          reqId: op.reqId,
-          error: { tag: "Rejected", reason: "no message 9 in this chat" },
-        });
-      else send({ kind: "answer", op: op.op, reqId: op.reqId, ok });
+        op.op === "editHistory"
+          ? { revisions: [{ editedAt: 1, text: "hi" }] }
+          : { type: "Acknowledged" };
+      send({ kind: "answer", op: op.op, reqId: op.reqId, ok });
     },
   );
   const chat = await ChatSocket.connect(host.port);
@@ -279,13 +279,9 @@ test("the helper sends the message actions of a room that the worker keeps", asy
     await chat.react("dm-7", "i3", "👍");
     await chat.react("dm-7", "i3", "👍", { placed: false });
     await chat.seen("dm-7", "i3");
-    await chat.delete("dm-7", "i3");
-    await assert.rejects(chat.delete("dm-7", "i9"), /delete refused: no message 9/);
-    assert.deepEqual(
-      await chat.participants("dm-7", { type: "ByIds", participantIds: ["c7"] }),
-      { type: "Resolved", participants: [] },
-    );
-    assert.deepEqual(await chat.search("dm-7", "hi"), { hits: [], next: null });
+    assert.deepEqual(await chat.editHistory("dm-7", "i3"), {
+      revisions: [{ editedAt: 1, text: "hi" }],
+    });
     assert.deepEqual(
       host.received.map(({ reqId: _reqId, ...op }) => op),
       [
@@ -293,14 +289,65 @@ test("the helper sends the message actions of a room that the worker keeps", asy
         { op: "react", roomId: "dm-7", messageId: "i3", emoji: "👍", placed: true },
         { op: "react", roomId: "dm-7", messageId: "i3", emoji: "👍", placed: false },
         { op: "seen", roomId: "dm-7", messageId: "i3" },
-        { op: "delete", roomId: "dm-7", messageId: "i3" },
-        { op: "delete", roomId: "dm-7", messageId: "i9" },
-        {
-          op: "participants",
-          roomId: "dm-7",
-          query: { type: "ByIds", participantIds: ["c7"] },
-        },
-        { op: "search", roomId: "dm-7", text: "hi", cursor: null },
+        { op: "editHistory", roomId: "dm-7", messageId: "i3" },
+      ],
+    );
+  } finally {
+    chat.close();
+    host.close();
+  }
+});
+
+test("the helper opens links and runs the contact actions of a room", async () => {
+  const contact = (state) => ({
+    account: `0x${"07".repeat(32)}`,
+    username: "alice",
+    state,
+  });
+  const host = await fakeHost(
+    {
+      kind: "snapshot",
+      productId: "chat.dot",
+      rooms: [
+        { roomId: "home", name: "Chat" },
+        { roomId: "dm-7", name: "alice", contact: contact("Incoming") },
+      ],
+      messages: [],
+    },
+    (op, send) => {
+      if (op.op === "openLink") {
+        send({ kind: "answer", op: op.op, reqId: op.reqId, ok: { roomId: "dm-7" } });
+      } else if (op.action === "unblock") {
+        // The host refuses at once an action the state does not offer.
+        send({ kind: "error", reqId: op.reqId, message: "a contact in the state Established offers no Unblock" });
+      } else {
+        send({ kind: "answer", op: op.op, reqId: op.reqId, ok: { type: "Acknowledged" } });
+        if (op.action === "accept")
+          send({ kind: "room", roomId: "dm-7", name: "alice", contact: contact("Established") });
+      }
+    },
+  );
+  const chat = await ChatSocket.connect(host.port);
+  try {
+    assert.deepEqual(chat.contact("home"), null);
+    assert.equal(chat.contact("dm-7").state, "Incoming");
+    assert.deepEqual(await chat.openLink("home", `contact:${"07".repeat(32)}`), {
+      roomId: "dm-7",
+    });
+    assert.deepEqual(await chat.accept("dm-7"), { type: "Acknowledged" });
+    assert.equal((await chat.waitForContact("dm-7", "Established")).username, "alice");
+    await chat.block("dm-7");
+    await chat.leave("dm-7");
+    await assert.rejects(chat.unblock("dm-7"), /offers no Unblock/);
+    assert.throws(() => chat.contactAction("dm-7", "mute"), /unknown contact action/);
+    assert.deepEqual(
+      host.received.map(({ reqId: _reqId, ...op }) => op),
+      [
+        { op: "openLink", roomId: "home", payload: `contact:${"07".repeat(32)}` },
+        { op: "contact", roomId: "dm-7", action: "accept" },
+        { op: "contact", roomId: "dm-7", action: "block" },
+        { op: "contact", roomId: "dm-7", action: "leave" },
+        { op: "contact", roomId: "dm-7", action: "unblock" },
       ],
     );
   } finally {

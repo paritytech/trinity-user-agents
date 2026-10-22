@@ -37,9 +37,7 @@ struct HostPlacedRoomPlacer {
         // Bounded: this runs detached, so it must not outlive the reason it was started.
         guard let tld = await tldProvider.tldRetrying(attempts: Self.tldAttempts) else { return }
 
-        // The chat product is placed only on an install whose chats it runs (HX2).
-        let chatProduct = PersonChatMode.isProductChat
-        for hostPlaced in HostPlacedProducts.all where chatProduct || !hostPlaced.requiresCoreRuntime {
+        for hostPlaced in HostPlacedProducts.all where hostPlaced.placesRoom {
             await place(hostPlaced, tld: tld)
         }
     }

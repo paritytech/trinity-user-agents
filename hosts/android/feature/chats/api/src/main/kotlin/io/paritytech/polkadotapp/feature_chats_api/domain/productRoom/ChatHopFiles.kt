@@ -7,8 +7,11 @@ class ChatHopFile(val bytes: ByteArray, val entries: List<ByteArray>)
 
 /** Opens the HOP files of the chat product's rooms through the core, which claims them only from the app's HOP nodes. */
 interface ChatHopFiles {
-    /** The bytes of [resource]. A failure means the file is not available now; a later call tries again. */
-    suspend fun open(resource: ChatResourceModel.Hop): Result<ChatHopFile>
+    /**
+     * The bytes of [resource]. A failure means the file is not available now; a later call tries again. [progress] gets
+     * the bytes received and the total size, in order, while the file downloads.
+     */
+    suspend fun open(resource: ChatResourceModel.Hop, progress: ((received: Long, total: Long) -> Unit)? = null): Result<ChatHopFile>
 
     /** Tells the node that the [entries] of an opened file were taken. Call it once the bytes are kept. */
     suspend fun ack(resource: ChatResourceModel.Hop, entries: List<ByteArray>): Result<Unit>

@@ -12,7 +12,9 @@ final class PushRouteBuilder: PushRouteBuilding {
     }
 
     func route(from userInfo: [AnyHashable: Any]) -> PushNavigationRoute? {
-        if userInfo[PushNotificationKeys.pushId] != nil {
+        if let room = userInfo.productRoom {
+            .productRoom(productId: room.productId, roomId: room.roomId)
+        } else if userInfo[PushNotificationKeys.pushId] != nil {
             .contactChat(userInfo: userInfo)
         } else if let chatExtensionId = userInfo[PushNotificationKeys.chatExtensionId] as? ChatExtension.Id {
             .chatExtension(extensionId: chatExtensionId, userInfo: userInfo)
@@ -21,6 +23,19 @@ final class PushRouteBuilder: PushRouteBuilding {
         } else {
             nil
         }
+    }
+}
+
+extension [AnyHashable: Any] {
+    /// The room of the chat product that a notification opens.
+    var productRoom: (productId: String, roomId: String)? {
+        guard
+            let productId = self[PushNotificationKeys.productId] as? String,
+            let roomId = self[PushNotificationKeys.productRoomId] as? String
+        else {
+            return nil
+        }
+        return (productId, roomId)
     }
 }
 

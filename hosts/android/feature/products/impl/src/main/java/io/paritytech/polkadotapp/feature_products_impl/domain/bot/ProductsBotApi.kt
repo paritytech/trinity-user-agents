@@ -7,7 +7,6 @@ import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.DerivationIndex32
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
-import io.paritytech.polkadotapp.feature_chats_api.domain.model.ProductMessageBody
 import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.PaymentStatus
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.AllocatableResource
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.AllocationOutcome
@@ -51,9 +50,6 @@ sealed interface ProductBotMessage {
     data class Custom(val messageType: String, val data: DataByteArray, val alt: String? = null) : ProductBotMessage
 
     data class Text(val text: String) : ProductBotMessage
-
-    /** Rich text with media, or host-drawn buttons (Chat Extension v2 and the v1 `RichText`, `Actions`, `File`). */
-    data class Body(val body: ProductMessageBody) : ProductBotMessage
 }
 
 interface ProductsBotApi {

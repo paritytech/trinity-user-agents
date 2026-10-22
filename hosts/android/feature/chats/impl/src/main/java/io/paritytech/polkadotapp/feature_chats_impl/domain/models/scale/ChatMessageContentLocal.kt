@@ -142,9 +142,15 @@ sealed class ChatMessageContentLocal {
     @EnumIndex(24)
     class ProductBody(val body: ProductMessageBodyLocal) : ChatMessageContentLocal()
 
+    /** Index 25 belonged to the deleted messages of a product, which no store keeps any more. */
     @Serializable
-    @EnumIndex(25)
-    object Deleted : ChatMessageContentLocal()
+    @EnumIndex(26)
+    class ContactCall(
+        val video: Boolean,
+        val answeredAt: Long?,
+        val closedAt: Long?,
+        val closedByUser: Boolean,
+    ) : ChatMessageContentLocal()
 
     @Serializable
     @EnumIndex(255)

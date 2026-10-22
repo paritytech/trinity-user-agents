@@ -6,12 +6,9 @@ import io.parity.truapi.HOST_DEFAULT_CHAT_ROOM_FEATURES
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatHostCapabilities
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedRejection
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
-import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipant
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownChatRoomException
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
-import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import kotlinx.coroutines.flow.firstOrNull
@@ -19,29 +16,26 @@ import timber.log.Timber
 import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageContent
-import uniffi.truapi.ChatReaction
 import uniffi.truapi.ChatRoom
 import uniffi.truapi.ChatRoomCall
 import uniffi.truapi.ChatRoomConfig
+import uniffi.truapi.ChatRoomContact
 import uniffi.truapi.ChatRoomFeatures
 import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomMetadata
 import uniffi.truapi.ChatRoomPreview
 import uniffi.truapi.ChatRoomRegistrationStatus
-import uniffi.truapi.ChatRoomUserState
 import uniffi.truapi.HostRejection
 import uniffi.truapi.NativeChatFeedRejection
 
 /**
  * Answers the core's chat callbacks for one product against its chat binding. The core has checked
  * that the product hosts each room and screened every value; the empty-id checks keep a broken call
- * away from the chat store. The user state of the rooms and the bot personas come from [storedState],
- * so they are available also when no chat screen is bound.
+ * away from the chat store.
  */
 class ProductChatHostBridge(
     private val productId: ProductId,
     private val chatMessaging: ProductChatMessaging,
-    private val storedState: ProductChatStoredState,
 ) : ChatHostBridge {
     override suspend fun createRoom(roomId: String, name: String, icon: String): ChatRoomRegistrationStatus {
         if (roomId.isEmpty()) throw HostRejection.Rejected("a chat room needs an id")
@@ -52,24 +46,24 @@ class ProductChatHostBridge(
     }
 
     override suspend fun registerBot(botId: String, name: String, icon: String): ChatBotRegistrationStatus =
-        storedState.registerBot(productId, botId, name, icon)
+        throw HostRejection.Rejected("this host has no bot registry")
 
     override suspend fun postMessage(roomId: String, content: ChatMessageContent, alt: String?): String {
         if (roomId.isEmpty()) throw HostRejection.Rejected("a chat message needs a room")
-        val room = ProductChatIdParameter(roomId)
-        // A v1 reaction is a reaction of the product, applied as a feed update (02-DESIGN §13 item 10).
-        when (content) {
-            is ChatMessageContent.Reaction -> return postReaction(room, content.v1, placed = true)
-            is ChatMessageContent.ReactionRemoved -> return postReaction(room, content.v1, placed = false)
-            else -> Unit
-        }
         val message = content.toProductBotMessage(alt)
-            ?: throw HostRejection.Rejected("this host cannot apply a ${content.javaClass.simpleName} message")
-        return chatMessaging.sendMessage(room, message).orReject()
+            ?: throw HostRejection.Rejected(
+                "this host cannot render a ${content.javaClass.simpleName} message",
+            )
+        return chatMessaging.sendMessage(ProductChatIdParameter(roomId), message).orReject()
     }
 
     override suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter) {
-        chatMessaging.setRoomFooter(requireRoom(roomId), footer.toModel()).orReject()
+        if (roomId.isEmpty()) throw HostRejection.Rejected("a chat room needs an id")
+        val showsTextInput = when (footer) {
+            ChatRoomFooter.TEXT_INPUT -> true
+            ChatRoomFooter.EMPTY -> false
+        }
+        chatMessaging.setRoomFooter(ProductChatIdParameter(roomId), showsTextInput).orReject()
     }
 
     override suspend fun listRooms(): List<ChatRoom> =
@@ -101,7 +95,7 @@ class ProductChatHostBridge(
     override suspend fun updateFeed(roomId: String, update: ChatFeedUpdate, persist: Boolean) {
         if (roomId.isEmpty()) throw NativeChatFeedRejection.Rejected("a chat room needs an id")
         val room = ProductChatIdParameter(roomId)
-        val model = update.toModel(rendererId = productId.toChatExtensionId())
+        val model = update.toModel()
 
         if (!persist) {
             if (!chatMessaging.deliverLiveFeedUpdate(room, model)) Timber.d("truapi.chat.updateFeed for %s: no open room", roomId)
@@ -111,7 +105,6 @@ class ProductChatHostBridge(
         chatMessaging.applyFeedUpdate(room, model).getOrElse { throw it.toFeedRejection() }
     }
 
-    // The emulator launcher compares this line with what the product reads (04-TESTING S49).
     override suspend fun capabilities(): List<String> = ChatHostCapabilities.features
         .also { Timber.i("truapi.chat.capabilities %s: %s", productId.value, it.joinToString(",")) }
 
@@ -126,19 +119,8 @@ class ProductChatHostBridge(
         chatMessaging.setRoomCall(requireRoom(roomId), call?.toModel()).orReject()
     }
 
-    override suspend fun roomUserStates(): List<ChatRoomUserState> = storedState.roomUserStates(productId)
-
-    override suspend fun bots(): List<String> = storedState.botIds(productId)
-
-    // A reaction is no message of its own: the answer names the message that it reacts to.
-    private suspend fun postReaction(room: ProductChatIdParameter, reaction: ChatReaction, placed: Boolean): String {
-        val update = if (placed) {
-            ProductFeedUpdateModel.ReactionPlaced(reaction.messageId, ProductParticipant.PRODUCT, reaction.emoji)
-        } else {
-            ProductFeedUpdateModel.ReactionRemoved(reaction.messageId, ProductParticipant.PRODUCT, reaction.emoji)
-        }
-        chatMessaging.applyFeedUpdate(room, update).orReject()
-        return reaction.messageId
+    override suspend fun setRoomContact(roomId: String, contact: ChatRoomContact) {
+        chatMessaging.setRoomContact(requireRoom(roomId), contact.toModel()).orReject()
     }
 
     private fun requireRoom(roomId: String): ProductChatIdParameter {

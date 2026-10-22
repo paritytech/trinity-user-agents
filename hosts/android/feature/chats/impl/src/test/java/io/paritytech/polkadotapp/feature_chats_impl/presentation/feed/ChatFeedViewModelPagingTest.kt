@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed
 
-import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.mockk.coEvery
@@ -9,10 +8,9 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
-import io.paritytech.polkadotapp.feature_calls_api.domain.CallStateTracker
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
-import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatFeedPayload
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessageAction
 import io.paritytech.polkadotapp.feature_chats_impl.domain.interactors.ChatFeedInteractor
@@ -21,17 +19,10 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatPag
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatPagingState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomReadiness
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.draft.ChatDraftController
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.mappers.ChatMessageUiMapper
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatMessagesState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatPageEdgeUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models.ChatRoomReadinessUiState
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.ChatProductRoomController
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.FakeProductRoomAdditionsFeed
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.FakeReadAloudController
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.productRoom.call.callFactory
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.search.ChatRoomSearchController
-import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
@@ -61,12 +52,10 @@ class ChatFeedViewModelPagingTest {
         coEvery { loadOlderMessages(any()) } returns ChatPageOutcome.Appended(0)
         coEvery { loadNewerMessages(any()) } returns ChatPageOutcome.Appended(0)
         coEvery { jumpToMessage(any(), any()) } returns false
+        coEvery { isProductSource(roomId) } returns true
     }
     private val messageUiMapper = mockk<ChatMessageUiMapper> {
-        coEvery { map(any(), any(), any(), any(), any(), any(), any(), any()) } returns persistentListOf()
-    }
-    private val draftControllerFactory = mockk<ChatDraftController.Factory> {
-        every { create(any(), any(), any()) } returns mockk(relaxed = true)
+        coEvery { map(any(), any(), any(), any(), any(), any(), any()) } returns persistentListOf()
     }
 
     @Before
@@ -84,12 +73,12 @@ class ChatFeedViewModelPagingTest {
     @Test
     fun `the feed shows the paging and the readiness of the source`() = runBlocking<Unit> {
         val model = viewModel()
-        feed.value = snapshot(older = ChatPagingState.Edge.MORE, newer = ChatPagingState.Edge.FAILED, readiness = ChatRoomReadiness.UNAVAILABLE)
+        feed.value = snapshot(older = ChatPagingState.Edge.MORE, newer = ChatPagingState.Edge.LOADING, readiness = ChatRoomReadiness.UNAVAILABLE)
 
         val state = model.awaitMessagesState { it.readiness == ChatRoomReadinessUiState.UNAVAILABLE }
 
         assertEquals(ChatPageEdgeUiState.MORE, state.olderPage)
-        assertEquals(ChatPageEdgeUiState.FAILED, state.newerPage)
+        assertEquals(ChatPageEdgeUiState.LOADING, state.newerPage)
     }
 
     @Test
@@ -106,17 +95,6 @@ class ChatFeedViewModelPagingTest {
 
         model.onLoadOlderMessages()
         coVerify(timeout = 5_000) { interactor.loadOlderMessages(roomId) }
-    }
-
-    @Test
-    fun `a failed newer page can be asked again`() = runBlocking<Unit> {
-        val model = viewModel()
-        feed.value = snapshot(newer = ChatPagingState.Edge.FAILED, readiness = ChatRoomReadiness.READY)
-        model.awaitMessagesState { it.newerPage == ChatPageEdgeUiState.FAILED }
-
-        model.onLoadNewerMessages()
-
-        coVerify(timeout = 5_000) { interactor.loadNewerMessages(roomId) }
     }
 
     @Test
@@ -142,16 +120,28 @@ class ChatFeedViewModelPagingTest {
     }
 
     @Test
-    fun `the screen opens the room on start, closes it on stop and retries it`() = runBlocking<Unit> {
+    fun `a jump in a room that the host keeps waits for the message, as before the chat product`() = runBlocking<Unit> {
+        coEvery { interactor.isProductSource(roomId) } returns false
+        val model = viewModel()
+        feed.value = snapshot(readiness = ChatRoomReadiness.READY)
+        model.awaitMessagesState { it.readiness == ChatRoomReadinessUiState.READY }
+
+        model.onMessageAction(MessageAction.ReplyPreviewTap("m10"))
+
+        coVerify(timeout = 5_000) { interactor.isProductSource(roomId) }
+        coVerify(exactly = 0) { interactor.jumpToMessage(any(), any()) }
+    }
+
+    @Test
+    fun `the screen opens the room and sends its outbox on start, and closes it on stop`() = runBlocking<Unit> {
         val model = viewModel()
 
         model.onScreenStarted()
         model.onScreenStopped()
-        model.onRetryRoom()
 
         verify { interactor.openRoom(roomId) }
+        coVerify(timeout = 5_000) { interactor.resumeOutbox(roomId) }
         verify { interactor.closeRoom(roomId) }
-        verify { interactor.retryRoom(roomId) }
     }
 
     @Test
@@ -161,6 +151,18 @@ class ChatFeedViewModelPagingTest {
         model.clearForTest()
 
         verify { interactor.releaseRoom(roomId) }
+    }
+
+    @Test
+    fun `the new messages marker waits for the ready page to be mapped`() = runBlocking<Unit> {
+        coEvery { messageUiMapper.map(match { it.isNotEmpty() }, any(), any(), any(), any(), any(), any(), any()) } returns
+            persistentListOf(incomingText("m3"))
+        val model = viewModel()
+        feed.value = snapshot(readiness = ChatRoomReadiness.READY, messages = listOf(mockk(relaxed = true)))
+
+        val state = model.awaitMessagesState { it.messages.isNotEmpty() && it.firstNewMessageInfo != null }
+
+        assertEquals("m3", state.firstNewMessageInfo?.messageId)
     }
 
     @Test
@@ -186,8 +188,9 @@ class ChatFeedViewModelPagingTest {
         older: ChatPagingState.Edge = ChatPagingState.Edge.END,
         newer: ChatPagingState.Edge = ChatPagingState.Edge.END,
         readiness: ChatRoomReadiness,
+        messages: List<ChatMessage> = emptyList(),
     ) = ChatFeedSnapshot(
-        messages = emptyList(),
+        messages = messages,
         reactions = emptyMap(),
         revisions = emptyMap(),
         productStatuses = emptyMap(),
@@ -205,34 +208,7 @@ class ChatFeedViewModelPagingTest {
         reactions = persistentListOf(),
         origin = ChatMessageOrigin.Extension("ProductBot_weather"),
         isEdited = false,
-        isMarkdown = false,
     )
 
-    private fun viewModel() = createViewModel().also { models += it }
-
-    private fun createViewModel() = ChatFeedViewModel(
-        savedStateHandle = SavedStateHandle(mapOf(ChatFeedPayload::class.java.name to ChatFeedPayload.existingChat(roomId))),
-        router = mockk(relaxed = true),
-        interactor = interactor,
-        messageUiMapper = messageUiMapper,
-        clipboardService = mockk(relaxed = true),
-        menuActionsProvider = ChatMenuActionsProvider(),
-        permissionAsker = mockk(relaxed = true),
-        attachmentExecutor = mockk(relaxed = true),
-        dispatchers = TestCoroutineDispatchers(UnconfinedTestDispatcher()),
-        resourceResolver = mockk(relaxed = true),
-        productRoomFactory = ChatProductRoomController.Factory(
-            interactor,
-            mockk(relaxed = true),
-            mockk(relaxed = true),
-            mockk(relaxed = true),
-            mockk(relaxed = true),
-            FakeProductRoomAdditionsFeed(),
-            FakeReadAloudController(),
-            callFactory(),
-        ),
-        draftControllerFactory = draftControllerFactory,
-        callStateTracker = mockk<CallStateTracker> { every { observeActiveCall() } returns flowOf(null) },
-        roomSearchFactory = ChatRoomSearchController.Factory(mockk(relaxed = true)),
-    )
+    private fun viewModel() = chatFeedViewModel(roomId, interactor, messageUiMapper).also { models += it }
 }

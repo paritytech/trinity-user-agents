@@ -2,41 +2,27 @@
 //!
 //! A product rings or carries a call only while its worker runs, so a room
 //! whose call is `Ringing` or `Active` holds one worker reference until the
-//! product clears the call or deletes the room. A `Ringing` call holds for at
-//! most [`CHAT_RINGING_HOLD_MS`], the time a host rings before it clears the
-//! banner.
+//! product clears the call or deletes the room. A call rings until the caller
+//! ends it or the user answers, as the native chat rings.
 
-use core::time::Duration;
 use std::{
-	collections::HashMap,
+	collections::HashSet,
 	sync::{Arc, Mutex, PoisonError},
 };
 
-use futures::future::BoxFuture;
 use truapi::latest;
 
 use crate::runtime::RuntimeServices;
 
-/// The longest time a `Ringing` call holds the worker, in milliseconds.
-pub const CHAT_RINGING_HOLD_MS: u64 = 60_000;
-
-/// The rooms whose call holds a worker reference, by product and room, each
-/// with the generation of its call.
+/// The rooms whose call holds a worker reference, by product and room.
 #[derive(Default)]
 pub struct ChatCallHolds {
-	rooms: Mutex<HashMap<(String, String), u64>>,
-	generations: Mutex<u64>,
+	rooms: Mutex<HashSet<(String, String)>>,
 }
 
 impl ChatCallHolds {
-	fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(String, String), u64>> {
+	fn lock(&self) -> std::sync::MutexGuard<'_, HashSet<(String, String)>> {
 		self.rooms.lock().unwrap_or_else(PoisonError::into_inner)
-	}
-
-	fn next_generation(&self) -> u64 {
-		let mut generations = self.generations.lock().unwrap_or_else(PoisonError::into_inner);
-		*generations += 1;
-		*generations
 	}
 }
 
@@ -49,50 +35,20 @@ impl RuntimeServices {
 		room_id: &str,
 		call: Option<&latest::ChatRoomCall>,
 	) {
-		self.hold_chat_call_with(product_id, room_id, call, |hold| {
-			Box::pin(futures_timer::Delay::new(hold))
-		});
-	}
-
-	/// [`Self::hold_chat_call`] with `timer` making the wait of a `Ringing`
-	/// hold, so a test holds the clock still.
-	fn hold_chat_call_with(
-		self: &Arc<Self>,
-		product_id: &str,
-		room_id: &str,
-		call: Option<&latest::ChatRoomCall>,
-		timer: impl FnOnce(Duration) -> BoxFuture<'static, ()>,
-	) {
 		let key = (product_id.to_string(), room_id.to_string());
-		let Some(call) = call else {
-			if self.chat_call_holds.lock().remove(&key).is_some() {
-				self.worker_ledger.release(product_id);
+		if call.is_some() {
+			if self.chat_call_holds.lock().insert(key) {
+				self.worker_ledger.acquire(product_id);
 			}
-			return;
-		};
-		let generation = self.chat_call_holds.next_generation();
-		if self.chat_call_holds.lock().insert(key.clone(), generation).is_none() {
-			self.worker_ledger.acquire(product_id);
-		}
-		if matches!(call, latest::ChatRoomCall::Ringing { .. }) {
-			let services = self.clone();
-			let ring = timer(Duration::from_millis(CHAT_RINGING_HOLD_MS));
-			(self.spawner)(Box::pin(async move {
-				ring.await;
-				let mut rooms = services.chat_call_holds.lock();
-				if rooms.get(&key) == Some(&generation) {
-					rooms.remove(&key);
-					drop(rooms);
-					services.worker_ledger.release(&key.0);
-				}
-			}));
+		} else if self.chat_call_holds.lock().remove(&key) {
+			self.worker_ledger.release(product_id);
 		}
 	}
 }
 
 #[cfg(test)]
 mod tests {
-	use futures::{FutureExt, channel::oneshot};
+	use core::time::Duration;
 
 	use super::*;
 	use crate::test_support::{runtime_config, stub_platform, test_spawner};
@@ -127,17 +83,7 @@ mod tests {
 	}
 
 	fn active() -> latest::ChatRoomCall {
-		latest::ChatRoomCall::Active {
-			call_id: "c1".to_string(),
-			video: false,
-			started_at: 1,
-			media_session: None,
-		}
-	}
-
-	/// A timer that never ends, for a hold the test ends itself.
-	fn never(_: Duration) -> BoxFuture<'static, ()> {
-		futures::future::pending().boxed()
+		latest::ChatRoomCall::Active { call_id: "c1".to_string(), video: false, started_at: 1 }
 	}
 
 	// D31: a call holds the worker once, whatever its state, until cleared.
@@ -145,36 +91,26 @@ mod tests {
 	fn a_call_holds_the_worker_until_it_is_cleared() {
 		let services = services();
 
-		services.hold_chat_call_with(PRODUCT, "main", Some(&ringing()), never);
-		services.hold_chat_call_with(PRODUCT, "main", Some(&active()), never);
-		services.hold_chat_call_with(PRODUCT, "other", Some(&active()), never);
+		services.hold_chat_call(PRODUCT, "main", Some(&ringing()));
+		services.hold_chat_call(PRODUCT, "main", Some(&active()));
+		services.hold_chat_call(PRODUCT, "other", Some(&active()));
 		references(&services, 2);
-		services.hold_chat_call_with(PRODUCT, "main", None, never);
-		services.hold_chat_call_with(PRODUCT, "main", None, never);
+		services.hold_chat_call(PRODUCT, "main", None);
+		services.hold_chat_call(PRODUCT, "main", None);
 		references(&services, 1);
-		services.hold_chat_call_with(PRODUCT, "other", None, never);
+		services.hold_chat_call(PRODUCT, "other", None);
 		references(&services, 0);
 	}
 
-	// S73: a call that rings for 60 s without an answer holds no more; one
-	// that became active before keeps its hold.
+	// A call rings until the caller ends it, as the native chat rings: no time limit drops the
+	// hold.
 	#[test]
-	fn a_ringing_call_holds_for_sixty_seconds_at_most() {
+	fn a_ringing_call_holds_the_worker_until_it_is_cleared() {
 		let services = services();
-		let (ring, rang) = oneshot::channel::<()>();
-		services.hold_chat_call_with(PRODUCT, "main", Some(&ringing()), |hold| {
-			assert_eq!(hold, Duration::from_millis(CHAT_RINGING_HOLD_MS));
-			rang.map(drop).boxed()
-		});
-		references(&services, 1);
-		let _ = ring.send(());
-		references(&services, 0);
-
-		let (ring, rang) = oneshot::channel::<()>();
-		services.hold_chat_call_with(PRODUCT, "main", Some(&ringing()), |_| rang.map(drop).boxed());
-		services.hold_chat_call_with(PRODUCT, "main", Some(&active()), never);
-		let _ = ring.send(());
+		services.hold_chat_call(PRODUCT, "main", Some(&ringing()));
 		std::thread::sleep(Duration::from_millis(50));
-		assert_eq!(services.worker_ledger.count(PRODUCT), 1, "the active call keeps its hold");
+		assert_eq!(services.worker_ledger.count(PRODUCT), 1);
+		services.hold_chat_call(PRODUCT, "main", None);
+		references(&services, 0);
 	}
 }

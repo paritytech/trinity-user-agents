@@ -302,7 +302,7 @@ internal class ChatPushNotificationHandler @Inject constructor(
 
             is ChatMessage.Content.ProductBody -> content.body.previewText() ?: unsupportedText()
 
-            is ChatMessage.Content.Deleted -> null
+            is ChatMessage.Content.ContactCall -> null
         }
     }
 
@@ -342,5 +342,5 @@ internal fun ChatMessage.Content.isDisplayableAsPush(): Boolean = when (this) {
     is ChatMessage.Content.DeviceRemoved,
     is ChatMessage.Content.CompactionCommit,
     is ChatMessage.Content.CompactionUnavailable,
-    is ChatMessage.Content.Deleted -> false
+    is ChatMessage.Content.ContactCall -> false
 }

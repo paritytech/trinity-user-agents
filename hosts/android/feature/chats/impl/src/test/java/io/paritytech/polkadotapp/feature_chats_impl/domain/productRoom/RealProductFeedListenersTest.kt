@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedUpdateModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ProductMessageCache
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ProductMessageCacheTest
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ProductRoomCacheEntry
@@ -14,7 +15,7 @@ import org.junit.Test
 class RealProductFeedListenersTest {
     private val room = ChatId.forExtensionRoom("ProductBot_game.dot", "lobby")
     private val otherRoom = ChatId.forExtensionRoom("ProductBot_game.dot", "hall")
-    private val update = ProductFeedUpdateModel.Deleted("m1")
+    private val update = ProductFeedUpdateModel.StatusChanged("m1", ProductMessageStatusModel.READ)
     private val cache = ProductMessageCache()
     private val listeners = RealProductFeedListeners(cache)
 
@@ -49,6 +50,19 @@ class RealProductFeedListenersTest {
 
         assertEquals(listOf(first), screen)
         assertEquals(listOf("m2"), cache.entry(room)?.messages?.map { it.messageId })
+    }
+
+    @Test
+    fun `a watcher gets the updates, and the room still counts as not shown`() = runBlocking<Unit> {
+        cache.store(room, ProductRoomCacheEntry(emptyList(), next = null, seenMessageId = null, seenTimestamp = null, reportedSeenMessageId = null))
+        val watched = mutableListOf<ProductFeedUpdateModel>()
+        listeners.watch(room) { _, update -> watched += update }
+        val new = ProductFeedUpdateModel.New(ProductMessageCacheTest.message("m1", 1))
+
+        assertFalse(listeners.deliver(room, new))
+
+        assertEquals(listOf(new), watched)
+        assertEquals(listOf("m1"), cache.entry(room)?.messages?.map { it.messageId })
     }
 
     @Test

@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.Encry
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContact
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContacts
+import io.paritytech.polkadotapp.feature_chats_api.domain.personChatDisplayUsername
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
@@ -42,7 +43,7 @@ class ProductChatContacts @Inject constructor(private val preferences: Encrypted
 
     private fun toContact(stored: Stored) = PersonChatContact(
         accountId = stored.contact.accountId.toDataByteArray(),
-        username = stored.contact.username,
+        username = stored.contact.username?.let(::personChatDisplayUsername),
         chatId = ProductChatIdParameter(stored.contact.roomId)
             .toChatId(ProductId.fromStoredValue(stored.productId).toChatExtensionId()),
         blocked = stored.contact.blocked,

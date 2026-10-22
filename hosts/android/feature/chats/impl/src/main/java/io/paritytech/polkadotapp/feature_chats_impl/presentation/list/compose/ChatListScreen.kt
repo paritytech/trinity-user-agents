@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -13,11 +12,9 @@ import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.ChatListViewModel
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.ArchivedChatsHeader
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.ChatListContent
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.ChatListHeader
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.ChatListLoading
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.ChatMuteDurationSheet
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.IdleSearchEntry
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.SearchRevealContainer
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.rememberSearchRevealState
@@ -28,10 +25,6 @@ import kotlinx.collections.immutable.persistentListOf
 fun ChatListScreen() {
     val viewModel = hiltViewModel<ChatListViewModel>()
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val mutePicker by viewModel.mutePicker.collectAsStateWithLifecycle()
-    val showsArchived = (state as? LoadingState.Loaded)?.data?.showsArchived == true
-
-    BackHandler(enabled = showsArchived, onBack = viewModel::onArchivedBack)
 
     ChatListScreenInternal(
         loadingState = state,
@@ -39,31 +32,7 @@ fun ChatListScreen() {
         onChatClick = viewModel::onChatClick,
         onNewRequestsClick = viewModel::onNewRequestsClick,
         onSearchBarClick = viewModel::onSearchBarClick,
-        rowActions = ChatListRowActions(
-            onArchivedRowClick = viewModel::onArchivedRowClick,
-            onArchivedBack = viewModel::onArchivedBack,
-            onMuteToggle = viewModel::onMuteToggle,
-            onArchiveToggle = viewModel::onArchiveToggle,
-        ),
     )
-
-    ChatMuteDurationSheet(
-        isVisible = mutePicker != null,
-        onSelect = viewModel::onMuteDurationSelected,
-        onDismiss = viewModel::onMutePickerDismiss,
-    )
-}
-
-/** The actions of the mute and the archive of the product rooms in the list (07-LATER §6.2). */
-private class ChatListRowActions(
-    val onArchivedRowClick: () -> Unit,
-    val onArchivedBack: () -> Unit,
-    val onMuteToggle: (ChatListUiState.ChatItem) -> Unit,
-    val onArchiveToggle: (ChatListUiState.ChatItem) -> Unit,
-) {
-    companion object {
-        val None = ChatListRowActions({}, {}, {}, {})
-    }
 }
 
 @Composable
@@ -73,7 +42,6 @@ private fun ChatListScreenInternal(
     onChatClick: (ChatListUiState.ChatItem) -> Unit,
     onNewRequestsClick: () -> Unit,
     onSearchBarClick: () -> Unit,
-    rowActions: ChatListRowActions = ChatListRowActions.None,
 ) {
     val revealState = rememberSearchRevealState()
 
@@ -87,26 +55,17 @@ private fun ChatListScreenInternal(
             )
 
             when (loadingState) {
-                is LoadingState.Loaded -> {
-                    if (loadingState.data.showsArchived) {
-                        ArchivedChatsHeader(onBack = rowActions.onArchivedBack)
-                    }
-
-                    SearchRevealContainer(
-                        state = revealState,
-                        header = { IdleSearchEntry(onClick = onSearchBarClick) },
-                        content = {
-                            ChatListContent(
-                                state = loadingState.data,
-                                onChatClick = onChatClick,
-                                onNewRequestsClick = onNewRequestsClick,
-                                onArchivedRowClick = rowActions.onArchivedRowClick,
-                                onMuteToggle = rowActions.onMuteToggle,
-                                onArchiveToggle = rowActions.onArchiveToggle,
-                            )
-                        },
-                    )
-                }
+                is LoadingState.Loaded -> SearchRevealContainer(
+                    state = revealState,
+                    header = { IdleSearchEntry(onClick = onSearchBarClick) },
+                    content = {
+                        ChatListContent(
+                            state = loadingState.data,
+                            onChatClick = onChatClick,
+                            onNewRequestsClick = onNewRequestsClick
+                        )
+                    },
+                )
 
                 else -> ChatListLoading()
             }

@@ -11,11 +11,14 @@ enum SearchContactModuleFactory {
             return nil
         }
 
-        let localContactSearch = LocalContactSearchService(
-            repositoryFactory: ChatContactRepositoryFactory()
-        )
+        // The chat product runs the person chats on this install: its contacts fill the sections (HX2).
+        let productChat = PersonChatMode.isProductChat
+        let localContactSearch: LocalContactSearching = productChat
+            ? ProductContactSearch()
+            : LocalContactSearchService(repositoryFactory: ChatContactRepositoryFactory())
         let recentChatsProvider = RecentChatsProvider(
-            chatProvider: ChatContactDataProviderFactory()
+            chatProvider: ChatContactDataProviderFactory(),
+            productChat: productChat
         )
 
         let accountSearching: any AccountSearching<ContactSearchPayload, ContactSearchPayload> =

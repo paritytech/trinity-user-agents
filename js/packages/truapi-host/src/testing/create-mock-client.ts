@@ -20,7 +20,7 @@ import {
   createMessagePortProvider,
   createTransport,
 } from "@parity/truapi";
-import type { TrUApiClient, TrUApiTransport } from "@parity/truapi";
+import type { TrUApiClient } from "@parity/truapi";
 
 import {
   createMockHost,
@@ -29,16 +29,6 @@ import {
   type MockHostConfig,
 } from "../web/create-mock-host.js";
 import type { ProductRuntimeConfig } from "../runtime.js";
-import {
-  createChatHostQueries,
-  encodeChatEvent,
-  encodeChatRoomEvent,
-  wakeArguments,
-  wakeOutcome,
-  startWasmChatQuery,
-  type ChatHostRuntime,
-  type WasmChatQueryCore,
-} from "../chat-queries.js";
 import {
   resolveAccount,
   type DevAccount,
@@ -49,26 +39,8 @@ import {
 export interface MockClientOptions {
   /** Behaviour knobs forwarded to {@link createMockHost}. */
   mock?: MockHostConfig;
-  /**
-   * A mock host to use in place of a new one. A second client on the host of
-   * a first one plays a product restart: the rooms, storage and session data
-   * of the host stay. `mock` is then ignored.
-   */
-  host?: MockHost;
   /** Overrides merged into {@link mockRuntimeConfig}. */
   runtimeConfig?: Partial<ProductRuntimeConfig>;
-  /**
-   * Keep preimage submissions in the core instead of the Bulletin chain, so
-   * `preimage.submit` answers without a chain. Defaults to `false`: the mock
-   * chain is silent, and a submission waits.
-   */
-  submitPreimagesLocally?: boolean;
-  /**
-   * Answer resource allocation, such as the Bulletin allowance of a preimage
-   * submission, as granted without an allocation on chain. Defaults to
-   * `false`, so an allocation waits on the silent mock chain.
-   */
-  grantAllowances?: boolean;
   /** Account the host signs as. Defaults to `"alice"`. */
   account?: DevAccountName | DevAccount;
   /**
@@ -85,20 +57,8 @@ export interface MockClientOptions {
 export interface MockClient {
   /** The client a product uses -- the same object it gets in production. */
   client: TrUApiClient;
-  /**
-   * The transport under `client`, for a suite that sends frames the client
-   * does not make, such as a request at an earlier protocol version.
-   */
-  transport: TrUApiTransport;
   /** The mock host, exposing its recordings and control surface. */
   host: MockHost;
-  /**
-   * The chat surface of the host runtime: the chat queries, the event
-   * publication, wakes and attachment staging. The client attaches it to
-   * `host.chatUser`, so the mock host can play the user against this
-   * product.
-   */
-  chat: ChatHostRuntime;
   /** Tear down the core, the channel and the client. */
   dispose(): void;
 }
@@ -131,8 +91,8 @@ export async function createMockClient(
   const { createWasmRawCallbacks } =
     await import("../generated/host-callbacks-adapter.js");
 
-  const host = options.host ?? createMockHost(options.mock);
-  const { productId, executionKind, ...hostConfig } = mockRuntimeConfig(
+  const host = createMockHost(options.mock);
+  const { productId, ...hostConfig } = mockRuntimeConfig(
     options.runtimeConfig ?? {},
   );
   const runtime = new glue.WasmSigningHostRuntime(
@@ -144,9 +104,6 @@ export async function createMockClient(
     hostConfig,
   );
 
-  if (options.submitPreimagesLocally) runtime.setSubmitPreimagesLocally(true);
-  if (options.grantAllowances) runtime.setGrantAllowancesUnchecked(true);
-
   const account = resolveAccount(options.account ?? "alice");
   await runtime.activateLocalSession(account.entropy);
 
@@ -154,8 +111,7 @@ export async function createMockClient(
   // crossing here are the same bytes that cross an iframe boundary.
   const channel = new MessageChannel();
   const core = runtime.productRuntime(
-    // A chat product runs as a Worker; the default is an App.
-    executionKind === undefined ? { productId } : { productId, executionKind },
+    { productId },
     {
       emitFrame(frame: Uint8Array) {
         channel.port1.postMessage(frame);
@@ -172,34 +128,10 @@ export async function createMockClient(
   const transport = createTransport(provider);
   const client = createClient(transport);
 
-  // The queries call the core in this thread, as the worker runtime does in
-  // its own thread.
-  const chat: ChatHostRuntime = {
-    ...createChatHostQueries((name, request, sink) =>
-      startWasmChatQuery(core, name, request, sink),
-    ),
-    async publishChatEvent(item) {
-      core.publishChatEvent(encodeChatEvent(item));
-    },
-    async publishChatRoomEvent(item) {
-      core.publishChatRoomEvent(encodeChatRoomEvent(item));
-    },
-    async wakeProduct(reason) {
-      return wakeOutcome(core.wakeProduct(...wakeArguments(reason)));
-    },
-    stageChatAttachment(roomId, mimeType, bytes) {
-      return core.stageChatAttachment(roomId, mimeType, bytes);
-    },
-  };
-  const detachChat = host.chatUser.attach(chat);
-
   return {
     client,
-    transport,
     host,
-    chat,
     dispose() {
-      detachChat();
       provider.dispose();
       core.dispose();
       channel.port1.close();
@@ -210,27 +142,15 @@ export async function createMockClient(
 
 /** The subset of the generated signing runtime this module drives. */
 interface SigningRuntime {
-  setSubmitPreimagesLocally(local: boolean): void;
-  setGrantAllowancesUnchecked(granted: boolean): void;
   activateLocalSession(secret: Uint8Array): Promise<void>;
   productRuntime(
-    product: { productId: string; executionKind?: string },
+    product: { productId: string },
     sink: { emitFrame(frame: Uint8Array): void },
   ): ProductCore;
 }
 
 /** The subset of a per-product core this module drives. */
-interface ProductCore extends WasmChatQueryCore {
+interface ProductCore {
   receiveFrame(frame: Uint8Array): Promise<void>;
-  /** Throws when the connection may not reach Chat. */
-  publishChatEvent(event: Uint8Array): void;
-  /** Throws when the connection may not reach Chat. */
-  publishChatRoomEvent(item: Uint8Array): void;
-  wakeProduct(roomId?: string, watchId?: string): number | undefined;
-  stageChatAttachment(
-    roomId: string,
-    mimeType: string,
-    bytes: Uint8Array,
-  ): Promise<Uint8Array>;
   dispose(): void;
 }

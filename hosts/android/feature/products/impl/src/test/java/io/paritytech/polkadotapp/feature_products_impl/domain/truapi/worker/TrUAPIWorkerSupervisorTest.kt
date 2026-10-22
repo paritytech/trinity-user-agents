@@ -74,25 +74,38 @@ class TrUAPIWorkerSupervisorTest {
     // When the renderer stops before the page is ready, the boot waits for a page that does not come. The core
     // still wants the worker and sends no new start, so only the supervisor can boot it again.
     @Test
-    fun `a worker whose renderer died during the boot boots again`() = runTest {
+    fun `a chat product worker whose renderer died during the boot boots again`() = runTest {
+        pagesThatNeverFinish = 1
+        val supervisor = supervisor()
+
+        supervisor.onDemandChanged(CHAT_PRODUCT, WorkerDemand.START)
+        runCurrent()
+        rendererGoneListeners.getValue(providers.single()).forEach { it() }
+        advanceUntilIdle()
+
+        assertEquals(2, providers.size)
+        assertEquals(executions[1], supervisor.currentExecution(CHAT_PRODUCT))
+    }
+
+    @Test
+    fun `another product's boot runs on to its own end when its renderer dies, as before the chat product`() = runTest {
         pagesThatNeverFinish = 1
         val supervisor = supervisor()
 
         supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
         runCurrent()
         rendererGoneListeners.getValue(providers.single()).forEach { it() }
-        advanceUntilIdle()
+        runCurrent()
 
-        assertEquals(2, providers.size)
-        assertEquals(executions[1], supervisor.currentExecution(PRODUCT))
+        assertEquals(1, providers.size)
     }
 
     @Test
-    fun `a renderer that dies during each boot ends as a failed start`() = runTest {
+    fun `a chat product renderer that dies during each boot ends as a failed start`() = runTest {
         pagesThatNeverFinish = Int.MAX_VALUE
         val supervisor = supervisor()
 
-        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        supervisor.onDemandChanged(CHAT_PRODUCT, WorkerDemand.START)
         repeat(3) {
             runCurrent()
             rendererGoneListeners.getValue(providers.last()).forEach { it() }
@@ -100,7 +113,7 @@ class TrUAPIWorkerSupervisorTest {
         runCurrent()
 
         assertEquals(3, providers.size)
-        assertTrue(supervisor.executionState(PRODUCT).first() is WorkerExecutionState.Failed)
+        assertTrue(supervisor.executionState(CHAT_PRODUCT).first() is WorkerExecutionState.Failed)
     }
 
     @Test
@@ -145,7 +158,6 @@ class TrUAPIWorkerSupervisorTest {
         },
         bootstrapInstaller = mockk(relaxed = true),
         refCounter = { mockk(relaxed = true) },
-        chatStoredState = mockk(),
         dispatchers = testDispatchers(),
     )
 
@@ -173,6 +185,7 @@ class TrUAPIWorkerSupervisorTest {
 
     private companion object {
         val PRODUCT = ProductId.fromStoredValue("worker.paseo")
+        val CHAT_PRODUCT = ProductId.fromStoredValue("chat.paseo")
         const val SCRIPT_URL = "https://worker.paseo/worker.js"
     }
 }

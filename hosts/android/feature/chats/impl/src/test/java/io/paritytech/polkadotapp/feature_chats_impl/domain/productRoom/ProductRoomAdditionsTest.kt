@@ -6,6 +6,7 @@ import io.mockk.mockk
 import io.mockk.verify
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomCallsModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomFeaturesModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownChatRoomException
 import io.paritytech.polkadotapp.feature_chats_impl.data.declarations.ChatRoomCallWriter
@@ -30,9 +31,9 @@ class ProductRoomAdditionsTest {
     )
 
     @Test
-    fun `features of an own room are kept whole, also those that the host does not serve`() = runBlocking<Unit> {
+    fun `features of an own room are kept whole`() = runBlocking<Unit> {
         withRoomExisting(true)
-        val features = ChatRoomFeaturesModel.HOST_DEFAULT.copy(search = true, readAloud = true)
+        val features = ChatRoomFeaturesModel(calls = ChatRoomCallsModel(audio = true, video = false), hopAttachments = true)
 
         val result = additions.setFeatures(extensionId, room, features)
 

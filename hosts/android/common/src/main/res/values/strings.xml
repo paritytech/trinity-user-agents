@@ -264,8 +264,6 @@
     <string name="debug_menu_copy_deposit_account">Copy wallet account address</string>
     <string name="debug_menu_copy_deposit_mnemonic">Copy wallet mnemonic</string>
     <string name="debug_menu_product_bots">Product bots</string>
-    <string name="product_chat_push_call">Incoming call</string>
-    <string name="product_chat_push_video_call">Incoming video call</string>
     <string name="product_bot_management_title">Product bots</string>
     <string name="product_bot_management_add">Add product</string>
     <string name="product_bot_management_edit_title">Edit product</string>
@@ -666,22 +664,6 @@
     <string name="chat_search_recents_clear">CLEAR</string>
     <string name="chat_search_recent_menu_remove">Remove from Recents</string>
     <string name="chat_search_error_message">Search failed. Please try again</string>
-    <string name="chat_room_search">Search in chat</string>
-    <string name="chat_room_search_close">Close search</string>
-    <string name="chat_room_search_placeholder">Search messages</string>
-    <string name="chat_room_search_no_results">No messages found</string>
-    <string name="chat_room_search_not_available">Search is not available</string>
-    <string name="chat_search_author_you">You</string>
-
-    <string name="product_room_call_audio">Audio call</string>
-    <string name="product_room_call_video">Video call</string>
-    <string name="product_room_call_incoming">Incoming call</string>
-    <string name="product_room_call_incoming_video">Incoming video call</string>
-    <string name="product_room_call_accept">Accept</string>
-    <string name="product_room_call_decline">Decline</string>
-    <string name="product_room_call_bar">Call</string>
-    <string name="product_room_call_end">End</string>
-    <string name="product_room_call_media_unavailable">Media is not available yet</string>
 
     <string name="search_section_recent">RECENT</string>
     <string name="search_section_contacts">CONTACTS</string>
@@ -904,57 +886,7 @@
     <string name="chat_block_user_confirmation">They won\'t be able to send you a message request or call you.</string>
     <string name="common_block">Block</string>
     <string name="chat_blocked_user_notice">You won\'t receive any messages and requests until you unblock %1$s</string>
-    <string name="chat_delete_message_question">Delete message?</string>
-    <string name="chat_delete_message_confirmation">The message leaves this chat. You cannot undo this.</string>
-    <string name="chat_product_room_placeholder">No messages yet</string>
-    <string name="chat_message_show_more">Show more</string>
-    <string name="chat_message_video">Video</string>
-    <string name="chat_media_open_image">Open image</string>
-    <string name="chat_media_open_file">Open file</string>
-    <string name="chat_media_failed">Did not load. Tap to try again.</string>
-    <string name="chat_media_play_video">Play video</string>
-    <string name="chat_attach">Attach</string>
-    <plurals name="chat_reaction_count">
-        <item quantity="one">%1$s, %2$d reaction</item>
-        <item quantity="other">%1$s, %2$d reactions</item>
-    </plurals>
-    <string name="chat_reaction_yours">You reacted</string>
-    <string name="chat_reaction_toggle">Change your reaction</string>
-    <string name="chat_reaction_show_who">Show who reacted</string>
-    <string name="chat_participant_show">Show participant</string>
-    <string name="chat_message_too_long">The message is too long. Make it shorter and send it again.</string>
     <string name="chat_message_action_failed">The app did not take the action. Try again.</string>
-    <string name="chat_reply_earlier_message">Earlier message</string>
-    <string name="chat_feed_page_failed">Messages did not load. Tap to try again.</string>
-    <string name="chat_product_room_unavailable">The app does not answer. You see the messages that loaded before.</string>
-    <string name="chat_product_menu_loading">Loading…</string>
-    <string name="chat_product_link_question">Open this link?</string>
-    <string name="chat_product_link_open">Open</string>
-    <string name="chat_public_storage_notice_title">Files over 1 MB are public</string>
-    <string name="chat_public_storage_notice_message">Files over 1 MB sent in %1$s are stored on the public Bulletin chain, without encryption. Anyone with the link can read them.</string>
-    <string name="chat_public_storage_notice_send">Send</string>
-    <string name="chat_attachment_not_sent">The file was not sent: %1$s</string>
-    <string name="chat_attachment_not_sent_permission">The file was not sent. Allow the app to store files on the Bulletin chain, then retry.</string>
-    <string name="chat_participants_title">Participants</string>
-    <string name="chat_participants_failed">Participants did not load. Tap to try again.</string>
-    <plurals name="chat_participants_count">
-        <item quantity="one">%d participant</item>
-        <item quantity="other">%d participants</item>
-    </plurals>
-    <string name="chat_participant_person">Person #%1$s</string>
-    <string name="chat_participant_contact">Contact %1$s</string>
-    <string name="chat_participant_kind_product">App</string>
-    <string name="chat_participant_kind_person">Person</string>
-    <string name="chat_participant_kind_lite_person">Account</string>
-    <string name="chat_participant_kind_contact">Contact</string>
-    <string name="chat_participant_kind_guest">Guest</string>
-    <string name="chat_participant_kind_bot">Bot</string>
-    <string name="chat_read_aloud">Read aloud</string>
-    <string name="chat_read_aloud_speaking">Reading aloud</string>
-    <string name="chat_read_aloud_stop">Stop</string>
-    <string name="chat_read_aloud_unavailable">Read aloud is not available</string>
-    <string name="chat_participant_copy_address">Copy address</string>
-    <string name="chat_participant_open_product">Open app</string>
 
     <string name="notification_channel_name_video_game">Weekly game</string>
     <string name="notification_channel_description_video_game">Notifications about upcoming weekly games</string>
@@ -971,16 +903,6 @@
     <string name="product_chat_menu_remove_chat">Remove chat</string>
     <string name="product_chat_menu_remove_confirmation_text">Remove chat?</string>
     <string name="product_chat_menu_remove_confirmation_positive">Remove</string>
-    <string name="chat_room_mute">Mute</string>
-    <string name="chat_room_unmute">Unmute</string>
-    <string name="chat_room_archive">Archive</string>
-    <string name="chat_room_unarchive">Unarchive</string>
-    <string name="chat_room_mute_title">Mute notifications</string>
-    <string name="chat_room_mute_one_hour">For 1 hour</string>
-    <string name="chat_room_mute_eight_hours">For 8 hours</string>
-    <string name="chat_room_mute_one_week">For 1 week</string>
-    <string name="chat_room_mute_always">Always</string>
-    <string name="chat_list_archived">Archived</string>
 
     <string name="chain_health_state_connected">Connected</string>
     <string name="chain_health_state_not_producing">Not producing blocks</string>

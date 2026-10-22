@@ -6,6 +6,8 @@ import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContact
+import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatContacts
 import io.paritytech.polkadotapp.feature_chats_api.domain.PersonChatRooms
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
@@ -36,6 +38,9 @@ class StartChatDataUseCaseTest {
         personChatMode = mockk { every { isProductChat() } returns productChat },
         personChatRooms = mockk<PersonChatRooms> { every { homeRoom() } returns home },
         chatExtensionRegistry = registry,
+        personChatContacts = mockk<PersonChatContacts> {
+            coEvery { getContacts() } returns listOf(PersonChatContact(bob, "bob.01", bobRoom, blocked = false))
+        },
     )
 
     // The native chat does not run beside the chat product, so a chat started anywhere in the app opens in it (HX2).

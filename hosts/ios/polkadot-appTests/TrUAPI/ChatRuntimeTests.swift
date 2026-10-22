@@ -58,7 +58,7 @@ private final class FakeWorkerManager: ProductWorkerManaging, @unchecked Sendabl
     }
 }
 
-private let chatProduct: ProductId = "test.dot"
+private let chatProduct: ProductId = "chat.dot"
 
 private func makeRustRuntime(
     workers: StubWorkerManager,

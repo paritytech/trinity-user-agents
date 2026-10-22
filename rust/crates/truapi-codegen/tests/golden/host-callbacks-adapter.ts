@@ -17,6 +17,8 @@ import {
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
   HostChatSetRoomCallRequest,
+  HostChatSetRoomConfigRequest,
+  HostChatSetRoomContactRequest,
   HostChatSetRoomFeaturesRequest,
   HostChatSetRoomFooterRequest,
   HostChatSetRoomMetadataRequest,
@@ -39,9 +41,7 @@ import {
 import type { GenericError } from "@parity/truapi";
 import {
   AuthState,
-  ChatBotIds,
   ChatFeatureNames,
-  ChatRoomUserStates,
   CoreStorageKey,
   DevicePermissionStatus,
   HostChainSet,
@@ -69,7 +69,6 @@ export interface RawCallbacks {
   createChatRoom?(
     product: Uint8Array,
     request: Uint8Array,
-    iconUrl: string,
   ): Promise<Uint8Array>;
   registerChatBot?(
     product: Uint8Array,
@@ -86,6 +85,7 @@ export interface RawCallbacks {
     sendError: (error: GenericError) => void,
   ): (() => void) | void;
   readChatRoomConfig?(product: Uint8Array, roomId: string): Promise<Uint8Array>;
+  setChatRoomConfig?(product: Uint8Array, request: Uint8Array): Promise<void>;
   setChatRoomMetadata?(product: Uint8Array, request: Uint8Array): Promise<void>;
   setChatRoomPreview?(product: Uint8Array, request: Uint8Array): Promise<void>;
   deleteChatRoom?(product: Uint8Array, request: Uint8Array): Promise<void>;
@@ -101,8 +101,7 @@ export interface RawCallbacks {
   ): Promise<Uint8Array>;
   setChatRoomFeatures?(product: Uint8Array, request: Uint8Array): Promise<void>;
   setChatRoomCall?(product: Uint8Array, request: Uint8Array): Promise<void>;
-  readChatRoomUserStates?(product: Uint8Array): Promise<Uint8Array>;
-  readChatBots?(product: Uint8Array): Promise<Uint8Array>;
+  setChatRoomContact?(product: Uint8Array, request: Uint8Array): Promise<void>;
   contacts?(lookup: Uint8Array): Promise<Uint8Array>;
   pickContact?(product: Uint8Array): Promise<Uint8Array>;
   readCoreStorage(key: Uint8Array): Promise<Uint8Array | null | undefined>;
@@ -174,12 +173,11 @@ export function createWasmRawCallbacks(
     chainConnect: chainConnectAdapter(callbacks.chain),
     ...(chat
       ? {
-          createChatRoom: async (product, request, iconUrl) =>
+          createChatRoom: async (product, request) =>
             HostChatCreateRoomResponse.enc(
               await chat.createChatRoom(
                 ProductContext.dec(product),
                 HostChatCreateRoomRequest.dec(request),
-                iconUrl,
               ),
             ),
           registerChatBot: async (product, request) =>
@@ -213,6 +211,11 @@ export function createWasmRawCallbacks(
                 ProductContext.dec(product),
                 roomId,
               ),
+            ),
+          setChatRoomConfig: async (product, request) =>
+            await chat.setChatRoomConfig(
+              ProductContext.dec(product),
+              HostChatSetRoomConfigRequest.dec(request),
             ),
           setChatRoomMetadata: async (product, request) =>
             await chat.setChatRoomMetadata(
@@ -256,13 +259,10 @@ export function createWasmRawCallbacks(
               ProductContext.dec(product),
               HostChatSetRoomCallRequest.dec(request),
             ),
-          readChatRoomUserStates: async (product) =>
-            ChatRoomUserStates.enc(
-              await chat.readChatRoomUserStates(ProductContext.dec(product)),
-            ),
-          readChatBots: async (product) =>
-            ChatBotIds.enc(
-              await chat.readChatBots(ProductContext.dec(product)),
+          setChatRoomContact: async (product, request) =>
+            await chat.setChatRoomContact(
+              ProductContext.dec(product),
+              HostChatSetRoomContactRequest.dec(request),
             ),
         }
       : {}),

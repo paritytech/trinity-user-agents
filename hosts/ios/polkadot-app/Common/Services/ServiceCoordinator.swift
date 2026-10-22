@@ -307,21 +307,9 @@ extension ServiceCoordinator {
             logger: logger
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
-        // The seam of the room events: the mute and archive actions record through it (P10.10).
+        // The seam of the room events: the call buttons send through it (P10.7).
         let roomEventPublisher = TrUAPIChatRoomEventPublisher(runtimeProvider: truapiRuntimeProvider)
         RootDependencyLocator.setDependency(roomEventPublisher as ChatRoomEventPublishing)
-        let userStateRecorder = ChatRoomUserStateRecorder(
-            storageFacade: UserDataStorageFacade.shared,
-            publisher: roomEventPublisher,
-            logger: logger
-        )
-        RootDependencyLocator.setDependency(userStateRecorder as ChatRoomUserStateRecording)
-        RootDependencyLocator.setDependency(
-            ChatRoomUserStateService(
-                reader: ChatRoomUserStateReader(storageFacade: UserDataStorageFacade.shared),
-                recorder: userStateRecorder
-            ) as ChatRoomUserStateServicing
-        )
         CoreDurableRecoveryTask.shared.attach(
             truapiRuntimeProvider,
             executor: ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry)
@@ -417,6 +405,10 @@ extension ServiceCoordinator {
         RootDependencyLocator.setDependency(productWorkerFacade)
         // The share sheet of the SPA screen lists product rooms as targets.
         RootDependencyLocator.setDependency(ShareProductRooms(registry: chatExtensionsRegistry))
+        // The outbox sends the messages of the user in every product room through the bots of this registry. The
+        // messages that wait from before go now, as the native chat sends its waiting messages when it starts.
+        ProductOutboxDelivery.shared.attach(registry: chatExtensionsRegistry)
+        Task { await ProductOutbox.shared.resume() }
 
         let fiatOnrampConfiguration = MeldFiatOnrampConfiguration.prod
         let fiatOnrampStorage = FiatOnrampStorage()

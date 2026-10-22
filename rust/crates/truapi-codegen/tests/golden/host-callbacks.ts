@@ -39,6 +39,8 @@ import type {
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
   HostChatSetRoomCallRequest,
+  HostChatSetRoomConfigRequest,
+  HostChatSetRoomContactRequest,
   HostChatSetRoomFeaturesRequest,
   HostChatSetRoomFooterRequest,
   HostChatSetRoomMetadataRequest,
@@ -134,16 +136,6 @@ export type AuthState =
   | { tag: "Authenticating"; value?: undefined };
 
 /**
- * The bot ids of the personas of a product.
- */
-export interface ChatBotIds {
-  /**
-   * One bot id for each persona.
-   */
-  botIds: Array<string>;
-}
-
-/**
  * The Chat feature names a host lists.
  */
 export interface ChatFeatureNames {
@@ -151,38 +143,6 @@ export interface ChatFeatureNames {
    * Names from `CHAT_FEATURE_NAMES`.
    */
   names: Array<string>;
-}
-
-/**
- * The mute and archive state the user gave one room of a product.
- */
-export interface ChatRoomUserState {
-  /**
-   * The room.
-   */
-  roomId: string;
-
-  /**
-   * Milliseconds since the Unix epoch when the mute ends. `u64::MAX` mutes
-   * the room with no end. ``undefined``: the room is not muted.
-   */
-  mutedUntil?: bigint;
-
-  /**
-   * The room is in the archive of the user.
-   */
-  archived: boolean;
-}
-
-/**
- * The mute and archive state of each room of a product that the user muted
- * or archived.
- */
-export interface ChatRoomUserStates {
-  /**
-   * One entry for each such room.
-   */
-  rooms: Array<ChatRoomUserState>;
 }
 
 /**
@@ -293,12 +253,6 @@ export type CoreStorageKey =
    * as one versioned SCALE blob. Never trimmed.
    */
   | { tag: "FundingSessionPack"; value?: undefined }
-  /**
-   * The wake watches of every product and the key this device registers
-   * with its push relay. The key authenticates wake pushes, so hosts must
-   * keep this slot private to the install.
-   */
-  | { tag: "PushWakeRegistry"; value?: undefined }
   /**
    * A file this device uploaded to HOP for a contact of the chat product.
    * The core never acks such a file, so showing one's own photo cannot
@@ -1029,42 +983,11 @@ export const AuthState: S.Codec<AuthState> = S.lazy(
 );
 
 /**
- * The bot ids of the personas of a product.
- */
-export const ChatBotIds: S.Codec<ChatBotIds> = S.lazy(
-  (): S.Codec<ChatBotIds> =>
-    S.Struct({ botIds: S.Vector(S.str) }) as S.Codec<ChatBotIds>,
-);
-
-/**
  * The Chat feature names a host lists.
  */
 export const ChatFeatureNames: S.Codec<ChatFeatureNames> = S.lazy(
   (): S.Codec<ChatFeatureNames> =>
     S.Struct({ names: S.Vector(S.str) }) as S.Codec<ChatFeatureNames>,
-);
-
-/**
- * The mute and archive state the user gave one room of a product.
- */
-export const ChatRoomUserState: S.Codec<ChatRoomUserState> = S.lazy(
-  (): S.Codec<ChatRoomUserState> =>
-    S.Struct({
-      roomId: S.str,
-      mutedUntil: S.Option(S.u64),
-      archived: S.bool,
-    }) as S.Codec<ChatRoomUserState>,
-);
-
-/**
- * The mute and archive state of each room of a product that the user muted
- * or archived.
- */
-export const ChatRoomUserStates: S.Codec<ChatRoomUserStates> = S.lazy(
-  (): S.Codec<ChatRoomUserStates> =>
-    S.Struct({
-      rooms: S.Vector(ChatRoomUserState),
-    }) as S.Codec<ChatRoomUserStates>,
 );
 
 /**
@@ -1133,7 +1056,6 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
       FundingSessions: [13, S._void] as const,
       FundingSessionsUnreadable: [17, S._void] as const,
       FundingSessionPack: [18, S._void] as const,
-      PushWakeRegistry: [19, S._void] as const,
       HopUpload: [
         20,
         S.Struct({ identifier: S.Bytes(32) }) as S.Codec<{
@@ -1736,16 +1658,11 @@ export interface ChainProvider {
  */
 export interface ChatPlatform {
   /**
-   * Create or resolve a product-scoped native chat room. A room that exists
-   * keeps its stored declarations. `icon_url` is the `https` icon of a
-   * caller at the first protocol version, resolved by
-   * `validate_chat_icon`, or empty. The host draws it when the metadata
-   * has no avatar.
+   * Create or resolve a product-scoped native chat room.
    */
   createChatRoom(
     product: ProductContext,
     request: HostChatCreateRoomRequest,
-    iconUrl: string,
   ): Promise<HostChatCreateRoomResponse>;
 
   /**
@@ -1796,7 +1713,16 @@ export interface ChatPlatform {
   ): Promise<ChatRoomConfig>;
 
   /**
-   * Replace the name, avatar and description of a room.
+   * Replace the configuration of a room whole and keep it across restarts.
+   * The core has already checked the product hosts the room.
+   */
+  setChatRoomConfig?(
+    product: ProductContext,
+    request: HostChatSetRoomConfigRequest,
+  ): Promise<void>;
+
+  /**
+   * Replace the name and description of a room.
    */
   setChatRoomMetadata?(
     product: ProductContext,
@@ -1813,9 +1739,7 @@ export interface ChatPlatform {
 
   /**
    * Delete a room with its messages, cache and declarations, and close its
-   * screen. Delete also, in the same change, each room whose features name
-   * this room in `thread_of`, so that no thread stays hidden for ever. The
-   * core calls it only for a room the product hosts.
+   * screen. The core calls it only for a room the product hosts.
    */
   deleteChatRoom?(
     product: ProductContext,
@@ -1856,7 +1780,7 @@ export interface ChatPlatform {
    * Replace the optional features of a room whole and keep them across
    * restarts. The host keeps a feature it does not serve, so that a later
    * build of the host applies it. The core has already checked the product
-   * hosts the room, and the thread parent.
+   * hosts the room.
    */
   setChatRoomFeatures?(
     product: ProductContext,
@@ -1873,16 +1797,14 @@ export interface ChatPlatform {
   ): Promise<void>;
 
   /**
-   * The mute and archive state of each room of the product that the user
-   * muted or archived. The core sends it to a product when its
-   * `room_events_subscribe` starts.
+   * Set the contact of a room and keep it across restarts. The host draws
+   * the room as its own person-to-person chat with that contact. The core
+   * has already checked that the host serves `contact_rooms`.
    */
-  readChatRoomUserStates?(product: ProductContext): Promise<ChatRoomUserStates>;
-
-  /**
-   * The bot ids of the personas the product registered.
-   */
-  readChatBots?(product: ProductContext): Promise<ChatBotIds>;
+  setChatRoomContact?(
+    product: ProductContext,
+    request: HostChatSetRoomContactRequest,
+  ): Promise<void>;
 }
 
 /**
@@ -2607,22 +2529,6 @@ export interface UserConfirmation {
    * dismiss its prompt when that happens.
    */
   confirmUserAction(review: UserConfirmationReview): Promise<boolean>;
-}
-
-/**
- * Host-owned directory of the usernames of the network. Optional; a host
- * without one leaves every product search `Unsupported`.
- *
- * - Search the way the host's own contact search does, and give at most 20 usernames.
- */
-export interface UsernamesPlatform {
-  /**
-   * Find the usernames that start with `prefix`.
-   */
-  searchUsernames(
-    product: ProductContext,
-    prefix: string,
-  ): Promise<Array<string>>;
 }
 
 /**

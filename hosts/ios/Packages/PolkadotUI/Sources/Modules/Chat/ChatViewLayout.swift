@@ -14,8 +14,6 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
     private let chatInputHostView = ChatInputHostView()
     private let scrollDownButton = ScrollToBottomButton()
     private let scrollToReactionButton = ScrollToReactionButton()
-    private let placeholderView = ChatPlaceholderView()
-    private let roomStatusView = ChatRoomStatusView()
     private var currentInputViewHeight: CGFloat = 0
     private var currentKeyboardHeight: CGFloat = 0
 
@@ -24,10 +22,6 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
     private static let chatDayHeaderElementKind = "ChatDayHeaderElement"
     private static let footerSectionIdentifier = "FooterSection"
     private static let footerCellIdentifier = "ChatFooterCell"
-    static let olderPagingSectionIdentifier = "ChatPagingOlderSection"
-    static let newerPagingSectionIdentifier = "ChatPagingNewerSection"
-    static let olderPagingRowIdentifier = "ChatPagingOlderRow"
-    static let newerPagingRowIdentifier = "ChatPagingNewerRow"
 
     private var currentFooterConfiguration: (any HashableContentConfiguration)?
 
@@ -42,14 +36,12 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
     public var onReplyMessage: ((_ identifier: String) -> Void)?
     public var onScrollToBottomTap: (() -> Void)?
     public var onScrollToReactionTap: (() -> Void)?
-    /// The user scrolled near the oldest message of the window, or tapped a failed row there.
+    /// The user scrolled near the oldest message of the window.
     public var onLoadOlder: (() -> Void)?
-    /// The user scrolled near the newest message of the window, or tapped a failed row there.
+    /// The user scrolled near the newest message of the window.
     public var onLoadNewer: (() -> Void)?
     /// The user tapped a reply quote whose message is not in the window.
     public var onJumpToMessage: ((_ identifier: String) -> Void)?
-    /// The user asked the product of the room again after it did not answer.
-    public var onRetryRoom: (() -> Void)?
 
     var viewModel: ViewModel?
 
@@ -80,7 +72,6 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
         collectionView.backgroundColor = .clear
         collectionView.keyboardDismissMode = .interactive
         collectionView.delegate = self
-        collectionView.backgroundView = placeholderView
 
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboard))
         tapGesture.cancelsTouchesInView = false
@@ -106,15 +97,6 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
         scrollToReactionButton.snp.makeConstraints { make in
             make.trailing.equalTo(scrollDownButton)
             make.bottom.equalTo(scrollDownButton.snp.top).offset(-7)
-        }
-
-        addSubview(roomStatusView)
-        roomStatusView.onRetry = { [weak self] in
-            self?.onRetryRoom?()
-        }
-        roomStatusView.snp.makeConstraints {
-            $0.top.equalTo(safeAreaLayoutGuide.snp.top)
-            $0.leading.trailing.equalToSuperview()
         }
 
         setupScrollEdgeEffect()
@@ -146,10 +128,6 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
             ChatMessageMediaViewConfiguration.defaultReuseIdentifier,
             ChatRichTextMessageConfiguration.reuseIdentifier,
             SwiftUIContentConfiguration.defaultReuseIdentifier,
-            ChatPagingRowConfiguration.defaultReuseIdentifier,
-            // The media and the buttons of product bodies (Chat Extension v2).
-            ChatMediaStackView.reuseIdentifier,
-            ChatActionsMessageView.reuseIdentifier,
         ]
         .forEach {
             CollectionRegistration.registerCell(
@@ -221,7 +199,6 @@ public extension ChatViewLayout {
         let previousPaging = self.viewModel?.paging
         self.viewModel = viewModel
         resetPageRequests(from: previousPaging, to: viewModel.paging)
-        roomStatusView.status = viewModel.roomStatus
 
         if let inputConfiguration = viewModel.chatInputConfiguration {
             attachInputHostIfNeeded()
@@ -244,8 +221,6 @@ public extension ChatViewLayout {
         scrollDownButton.unreadCount = viewModel.scrollDownConfiguration.unreadCount
 
         centerItem.configuration = viewModel.headerConfiguration
-
-        placeholderView.text = viewModel.sections.isEmpty ? viewModel.placeholderText : nil
 
         updateView(
             sections: viewModel.sections,
@@ -322,22 +297,6 @@ public extension ChatViewLayout {
 
     func adoptToVisibleKeyboard(bottomInset: CGFloat) {
         updateContentInsets(bottomInset: bottomInset)
-    }
-
-    /// Moves the messages below a view over the top of the list, for example the call bar of a room. A list at its
-    /// top stays at its top, so the first message shows below the view.
-    func setTopOverlayInset(_ inset: CGFloat) {
-        guard collectionView.contentInset.top != inset else { return }
-
-        let oldTop = -collectionView.adjustedContentInset.top
-        let wasAtTop = collectionView.contentOffset.y <= oldTop + 1
-        collectionView.contentInset.top = inset
-        collectionView.verticalScrollIndicatorInsets.top = inset
-
-        let newTop = -collectionView.adjustedContentInset.top
-        if wasAtTop || collectionView.contentOffset.y < newTop {
-            collectionView.contentOffset.y = newTop
-        }
     }
 
     func adoptToHiddenKeyboard() {
@@ -444,16 +403,6 @@ private extension ChatViewLayout {
         var providers = [SectionProviderType]()
         var headerTexts = [String]()
 
-        if let olderRow = pagingRow(for: viewModel?.paging.older) {
-            providers.append(makePagingSection(
-                id: Self.olderPagingSectionIdentifier,
-                rowId: Self.olderPagingRowIdentifier,
-                configuration: olderRow
-            ))
-            // The paging section has no day header, so its text is never read.
-            headerTexts.append("")
-        }
-
         for section in sections {
             headerTexts.append(section.dateText)
 
@@ -477,14 +426,6 @@ private extension ChatViewLayout {
             ) { _, _ in layoutSection }
 
             providers.append(providerType)
-        }
-
-        if let newerRow = pagingRow(for: viewModel?.paging.newer) {
-            providers.append(makePagingSection(
-                id: Self.newerPagingSectionIdentifier,
-                rowId: Self.newerPagingRowIdentifier,
-                configuration: newerRow
-            ))
         }
 
         if let footer {
@@ -580,11 +521,12 @@ private extension ChatViewLayout {
         )
     }
 
-    /// The first scroll is done once the window has a message. A window that opens empty, while its first page
-    /// is on its way, keeps the first scroll for that page: else the page lands at the top of the screen, and
-    /// the window asks for older pages that the user did not scroll to.
+    /// The first scroll is done once the window has a message. A window that pages and opens empty, while its
+    /// first page is on its way, keeps the first scroll for that page: else the page lands at the top of the
+    /// screen, and the window asks for older pages that the user did not scroll to. A window that holds the whole
+    /// room is done at its first scroll.
     private func markInitialScrollDone() {
-        guard !(viewModel?.sections.isEmpty ?? true) else { return }
+        guard viewModel?.paging == .complete || !(viewModel?.sections.isEmpty ?? true) else { return }
 
         isInitialScrollDone = true
     }
@@ -796,11 +738,6 @@ public extension ChatViewLayout {
         focusTextField()
     }
 
-    /// Puts a refused text in the input again, so the user can change it and send it.
-    func restoreInputText(_ text: String) {
-        chatInputHostView.textInputInterface?.restoreText(text)
-    }
-
     func activateEdit(messageId: String, currentText: String) {
         clearReplyContext()
 
@@ -820,21 +757,6 @@ extension ChatViewLayout: UICollectionViewDelegate {
         updateScrollToReactionButtonVisibility()
         updateDayHeadersPinnedState(insideOf: scrollView)
         evaluatePaging()
-    }
-
-    public func collectionView(_: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        switch dataSource.itemIdentifier(for: indexPath) {
-        case Self.olderPagingRowIdentifier:
-            if case .failed = viewModel?.paging.older {
-                onLoadOlder?()
-            }
-        case Self.newerPagingRowIdentifier:
-            if case .failed = viewModel?.paging.newer {
-                onLoadNewer?()
-            }
-        default:
-            break
-        }
     }
 
     public func scrollViewDidEndScrollingAnimation(_: UIScrollView) {
@@ -970,9 +892,9 @@ extension ChatViewLayout {
             guard attr.representedElementCategory == .cell else {
                 return nil
             }
-            // Exclude footer and paging rows
+            // Exclude footer
             let identifier = dataSource.itemIdentifier(for: attr.indexPath)
-            guard let identifier, !Self.nonMessageItemIdentifiers.contains(identifier) else {
+            guard identifier != Self.footerCellIdentifier else {
                 return nil
             }
             return identifier
@@ -983,43 +905,7 @@ extension ChatViewLayout {
 // MARK: - Paging
 
 private extension ChatViewLayout {
-    static let nonMessageItemIdentifiers: Set<String> = [
-        footerCellIdentifier,
-        olderPagingRowIdentifier,
-        newerPagingRowIdentifier,
-    ]
-
-    func pagingRow(for edge: ViewModel.Paging.Edge?) -> ChatPagingRowConfiguration? {
-        switch edge {
-        case .loading:
-            ChatPagingRowConfiguration(state: .loading)
-        case let .failed(text):
-            ChatPagingRowConfiguration(state: .failed(text))
-        case .end,
-             .more,
-             .none:
-            nil
-        }
-    }
-
-    func makePagingSection(
-        id: String,
-        rowId: String,
-        configuration: ChatPagingRowConfiguration
-    ) -> SectionProviderType {
-        let itemProvider = ItemProviderType(
-            id: rowId,
-            configuration: configuration,
-            reuseIdentifier: ChatPagingRowConfiguration.defaultReuseIdentifier
-        )
-        return SectionProviderType(id: id, itemProviders: [itemProvider]) { _, _ in
-            let section = NSCollectionLayoutSection.autoHeightSingleItem(44)
-            section.contentInsets = .zero
-            return section
-        }
-    }
-
-    /// A request for a page ends when its end stops to show the loading row.
+    /// A request for a page ends when its end stops loading.
     func resetPageRequests(from _: ViewModel.Paging?, to paging: ViewModel.Paging) {
         if paging.older != .loading {
             olderPageRequested = false
@@ -1068,7 +954,7 @@ private extension ChatViewLayout {
         let candidates: [(String, CGFloat)] = collectionView.indexPathsForVisibleItems.compactMap { indexPath in
             guard
                 let identifier = dataSource.itemIdentifier(for: indexPath),
-                !Self.nonMessageItemIdentifiers.contains(identifier),
+                identifier != Self.footerCellIdentifier,
                 forcedAnchorIdentifier == nil || forcedAnchorIdentifier == identifier,
                 let attributes = collectionView.layoutAttributesForItem(at: indexPath),
                 attributes.frame.maxY > visibleTop

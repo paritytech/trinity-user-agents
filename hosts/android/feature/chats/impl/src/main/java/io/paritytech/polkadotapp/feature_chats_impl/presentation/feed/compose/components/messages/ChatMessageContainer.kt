@@ -94,8 +94,7 @@ fun ChatMessageContainer(
                                 }
                                 .padding(horizontal = PolkadotTheme.spacings.extraMedium),
                             reactions = reactions,
-                            onReactionClick = { emoji -> onMessageAction(MessageAction.Reaction(message, emoji)) },
-                            onReactionLongClick = { onMessageAction(MessageAction.ShowReactionDetails(message)) },
+                            onReactionClick = { emoji -> onMessageAction(MessageAction.Reaction(message, emoji)) }
                         )
                     }
                 }

@@ -19,8 +19,6 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
     struct RoomMetadataCall: Equatable {
         let roomId: String
         let name: String
-        let description: String?
-        let avatar: Chat.RoomImage?
     }
 
     private(set) var roomMetadata: [RoomMetadataCall] = []
@@ -30,7 +28,6 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
     var unknownRooms: Set<String> = []
     var declarations = Chat.RoomDeclarations(entity: nil)
     private(set) var roomConfigs: [(roomId: String, config: Chat.RoomConfig)] = []
-    private(set) var footerConfigs: [(roomId: String, footer: Chat.RoomFooterConfig)] = []
 
     func sendMessage(_ message: ProductBotMessage, roomId: String?) async throws -> String {
         if let sendMessageError { throw sendMessageError }
@@ -58,9 +55,9 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
         roomPreviews.append((roomId, preview))
     }
 
-    func setRoomMetadata(roomId: String, name: String, description: String?, avatar: Chat.RoomImage?) async throws {
+    func setRoomMetadata(roomId: String, name: String) async throws {
         try requireRoom(roomId)
-        roomMetadata.append(RoomMetadataCall(roomId: roomId, name: name, description: description, avatar: avatar))
+        roomMetadata.append(RoomMetadataCall(roomId: roomId, name: name))
     }
 
     func roomDeclarations(roomId: String) async throws -> Chat.RoomDeclarations {
@@ -71,11 +68,6 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
     func setRoomConfig(roomId: String, config: Chat.RoomConfig) async throws {
         try requireRoom(roomId)
         roomConfigs.append((roomId, config))
-    }
-
-    func setRoomFooterConfig(roomId: String, footer: Chat.RoomFooterConfig) async throws {
-        try requireRoom(roomId)
-        footerConfigs.append((roomId, footer))
     }
 
     var feedError: Error?
@@ -89,15 +81,7 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
 
     var features: [String: Chat.RoomFeatures] = [:]
     private(set) var calls: [(roomId: String, call: Chat.RoomCall?)] = []
-    var userStates: [Chat.RoomUserStateEntry] = []
-    var personas: [String] = []
-    struct PersonaCall: Equatable {
-        let botId: String
-        let name: String
-        let icon: String?
-    }
-
-    private(set) var registeredPersonas: [PersonaCall] = []
+    private(set) var contacts: [(roomId: String, contact: Chat.RoomContact)] = []
 
     func roomFeatures(roomId: String) async throws -> Chat.RoomFeatures {
         try requireRoom(roomId)
@@ -114,19 +98,9 @@ final class RecordingChatMessaging: ProductChatMessaging, @unchecked Sendable {
         calls.append((roomId, call))
     }
 
-    func roomUserStates() async throws -> [Chat.RoomUserStateEntry] {
-        userStates
-    }
-
-    func personaIds() async throws -> [String] {
-        personas
-    }
-
-    func registerPersona(botId: String, name: String, icon: String?) async throws -> Chat.PersonaRegistration {
-        registeredPersonas.append(.init(botId: botId, name: name, icon: icon))
-        guard !personas.contains(botId) else { return .exists }
-        personas.append(botId)
-        return .new
+    func setRoomContact(roomId: String, contact: Chat.RoomContact) async throws {
+        try requireRoom(roomId)
+        contacts.append((roomId, contact))
     }
 
     private func requireRoom(_ roomId: String) throws {

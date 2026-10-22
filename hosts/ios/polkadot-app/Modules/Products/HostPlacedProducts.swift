@@ -22,6 +22,10 @@ struct HostPlacedProduct: Sendable {
     /// Placed only when workers run on the core runtime, for a product that needs a service only
     /// the core serves (the chat product's `PersonChat`).
     var requiresCoreRuntime = false
+
+    /// The host draws a room for the product before it runs. The chat product has no room of its own: it draws
+    /// each contact as a person chat.
+    var placesRoom = true
 }
 
 enum HostPlacedProducts {
@@ -32,7 +36,8 @@ enum HostPlacedProducts {
             roomId: "chats",
             fallbackName: "Chats",
             productId: BuiltInProduct.chat(for:),
-            requiresCoreRuntime: true
+            requiresCoreRuntime: true,
+            placesRoom: false
         )
     ]
 

@@ -7,13 +7,22 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigi
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReaction
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReactionContent
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.MessageRevision
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ProductMessageBody
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductParticipant
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductReactionSummaryModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductReplyPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductRoomMessage
 
 internal val ProductRoomMessage.isFromUser: Boolean
     get() = participantId == ProductParticipant.USER
+
+/** The welcome text of a chat request draws as the native request message, also after an edit. */
+private val ProductRoomMessage.displayContent: ChatMessage.Content
+    get() = when (val content = content) {
+        is ChatMessage.Content.Text -> if (request) ChatMessage.Content.ChatRequest(ChatMessage.Content.RichText(content.text, emptyList())) else content
+        else -> content
+    }
 
 /** The status of a message of the product tells the room screen whether the user saw it. */
 internal fun ProductRoomMessage.toChatMessage(chatId: ChatId, extensionId: ChatExtensionId, isUnread: Boolean) = ChatMessage(
@@ -21,14 +30,24 @@ internal fun ProductRoomMessage.toChatMessage(chatId: ChatId, extensionId: ChatE
     chatId = chatId,
     timestamp = timestamp,
     origin = if (isFromUser) ChatMessageOrigin.User else ChatMessageOrigin.Extension(extensionId),
-    content = content,
+    content = displayContent,
     status = when {
         isFromUser -> status.toChatStatus()
         isUnread -> ChatMessage.Status.NEW
         else -> ChatMessage.Status.IS_READ
     },
     replyToMessageId = replyTo,
-    originParticipantId = participantId.takeUnless { isFromUser },
+)
+
+/** The replied message that a reply carries, for its quote. */
+internal fun ProductReplyPreviewModel.toQuotedMessage(messageId: String, chatId: ChatId, extensionId: ChatExtensionId) = ChatMessage(
+    id = messageId,
+    chatId = chatId,
+    timestamp = 0,
+    origin = if (participantId == ProductParticipant.USER) ChatMessageOrigin.User else ChatMessageOrigin.Extension(extensionId),
+    content = content,
+    status = ChatMessage.Status.IS_READ,
+    replyToMessageId = null,
 )
 
 /** One reaction for each count of a summary. The reaction of the user has the user as origin. */
@@ -43,12 +62,13 @@ internal fun ProductRoomMessage.toReactions(extensionId: ChatExtensionId): List<
 }
 
 internal fun ProductRoomMessage.toRevision(chatId: ChatId): MessageRevision? =
-    editedAt?.let { MessageRevision(messageId = messageId, content = content, chatId = chatId, timestamp = it) }
+    editedAt?.let { MessageRevision(messageId = messageId, content = displayContent, chatId = chatId, timestamp = it) }
 
 private fun ProductMessageStatusModel.toChatStatus(): ChatMessage.Status = when (this) {
     ProductMessageStatusModel.PREPARING -> ChatMessage.Status.NEW
-    ProductMessageStatusModel.SENT,
-    ProductMessageStatusModel.DELIVERED -> ChatMessage.Status.IS_SENT
+    ProductMessageStatusModel.SENT -> ChatMessage.Status.IS_SENT
+    // Native person chats have no separate "delivered": the double tick is a device of the contact that has it.
+    ProductMessageStatusModel.DELIVERED,
     ProductMessageStatusModel.READ -> ChatMessage.Status.IS_READ
     ProductMessageStatusModel.FAILED -> ChatMessage.Status.DELIVERY_FAILED
 }
@@ -73,4 +93,10 @@ internal fun ProductRoomMessage.adjustReaction(emoji: String, participantId: Str
     if (count == 0) changed.removeAt(index) else changed[index] = summary.copy(count = count, reactedByUser = reactedByUser)
 
     return copy(reactions = changed)
+}
+
+/** An edit is the text of a message: a message with media keeps its media and takes the text as caption. */
+internal fun ChatMessage.Content.withEditedText(text: String): ChatMessage.Content {
+    val body = (this as? ChatMessage.Content.ProductBody)?.body as? ProductMessageBody.RichText ?: return ChatMessage.Content.Text(text)
+    return ChatMessage.Content.ProductBody(body.copy(text = text))
 }

@@ -9,10 +9,6 @@ final class LegacyChatNavigationBarController: ChatNavigationBarControlling {
     private let titleView: ChatHeaderView
     private let onStartCall: (ChatCallType) -> Void
 
-    private var callItems: [UIBarButtonItem] = []
-    private var productToolbar: [UIBarButtonItem] = []
-    private var searchItem: UIBarButtonItem?
-
     private lazy var menuButton: UIButton = {
         let button = UIButton(type: .custom)
         button.showsMenuAsPrimaryAction = true
@@ -37,22 +33,7 @@ final class LegacyChatNavigationBarController: ChatNavigationBarControlling {
     }
 
     func apply(callActions: [ChatCallType]) {
-        callItems = ChatCallBarButtons.make(for: callActions, onStartCall: onStartCall)
-        refreshRightBarButtonItems()
-    }
-
-    func apply(productToolbar: [UIBarButtonItem]) {
-        self.productToolbar = productToolbar
-        refreshRightBarButtonItems()
-    }
-
-    func apply(searchItem: UIBarButtonItem?) {
-        self.searchItem = searchItem
-        refreshRightBarButtonItems()
-    }
-
-    private func refreshRightBarButtonItems() {
-        let items = productToolbar + [searchItem].compactMap { $0 } + callItems
+        let items = ChatCallBarButtons.make(for: callActions, onStartCall: onStartCall)
         navigationItem?.rightBarButtonItems = items.isEmpty ? nil : items
     }
 

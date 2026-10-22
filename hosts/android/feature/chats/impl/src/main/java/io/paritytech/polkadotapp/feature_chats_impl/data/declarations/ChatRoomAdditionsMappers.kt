@@ -10,34 +10,33 @@ import timber.log.Timber
 /** The version byte of the first stored shape of the additions. */
 private const val ADDITIONS_FORMAT_V1: Byte = 1
 
-fun ChatRoomFeaturesModel.encode(): ByteArray = byteArrayOf(ADDITIONS_FORMAT_V1) + BinaryScale.encodeToByteArray(toLocal())
+/** The version byte of the shape without the features that Chat Extension v2 dropped. */
+private const val ADDITIONS_FORMAT_V2: Byte = 2
+
+fun ChatRoomFeaturesModel.encode(): ByteArray = byteArrayOf(ADDITIONS_FORMAT_V2) + BinaryScale.encodeToByteArray(toLocal())
 
 // A value of another version or that does not decode reads as "not declared", so the host default applies.
 fun ByteArray.decodeFeatures(): ChatRoomFeaturesModel? {
-    if (firstOrNull() != ADDITIONS_FORMAT_V1) {
-        Timber.w("Cannot read the features of a chat room: version %s", firstOrNull())
-        return null
+    val body = copyOfRange(1, size.coerceAtLeast(1))
+    val decoded = when (firstOrNull()) {
+        ADDITIONS_FORMAT_V1 -> runCatching { BinaryScale.decodeFromByteArray<ChatRoomFeaturesLocalV1>(body).toDomain() }
+        ADDITIONS_FORMAT_V2 -> runCatching { BinaryScale.decodeFromByteArray<ChatRoomFeaturesLocal>(body).toDomain() }
+        else -> Result.failure(IllegalArgumentException("version ${firstOrNull()}"))
     }
-    return runCatching { BinaryScale.decodeFromByteArray<ChatRoomFeaturesLocal>(copyOfRange(1, size)) }
-        .onFailure { Timber.w(it, "Cannot decode the features of a chat room") }
-        .getOrNull()
-        ?.toDomain()
+    return decoded.onFailure { Timber.w(it, "Cannot decode the features of a chat room") }.getOrNull()
 }
 
 fun ChatRoomFeaturesModel.toLocal() = ChatRoomFeaturesLocal(
-    preimageAttachments = preimageAttachments,
-    search = search,
     calls = calls?.let { ChatRoomCallsLocal(it.audio, it.video) },
-    readAloud = readAloud,
-    sealedAttachments = sealedAttachments,
     hopAttachments = hopAttachments,
 )
 
 fun ChatRoomFeaturesLocal.toDomain() = ChatRoomFeaturesModel(
-    preimageAttachments = preimageAttachments,
-    search = search,
     calls = calls?.let { ChatRoomCallsModel(it.audio, it.video) },
-    readAloud = readAloud,
-    sealedAttachments = sealedAttachments,
+    hopAttachments = hopAttachments,
+)
+
+private fun ChatRoomFeaturesLocalV1.toDomain() = ChatRoomFeaturesModel(
+    calls = calls?.let { ChatRoomCallsModel(it.audio, it.video) },
     hopAttachments = hopAttachments,
 )

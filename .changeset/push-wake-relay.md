@@ -1,5 +1,0 @@
----
-"@parity/truapi-host": minor
----
-
-The core keeps the wake watches of every product in core storage (`CoreStorageKey.PushWakeRegistry`), so they stay while a worker is stopped and after a restart, and gives their topics with a key of the device to the host's push relay. A native host installs its relay client with `NativeTrUApiHostRuntime.set_wake_relay` (`NativeWakeRelayCallbacks.register_wake_topics`) and passes each wake push to `handle_wake_push`: the core checks the version, the keyed BLAKE2b-256 MAC, the age (at most 15 minutes) and replays, finds the products that watch the topic, and wakes each of them as a notification wake (`PushWakeDelivery`, `PushWakeOutcome`, `PushWakeRejection`). The product never sees the relay, the key or a push token. `truapi-host wake-relay` is a reference relay for tests: it follows the registered topics on the statement store and writes each wake push to a file or delivers it to a simulator with `xcrun simctl push`; it holds no APNs or FCM credentials.

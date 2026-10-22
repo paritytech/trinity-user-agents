@@ -12,7 +12,7 @@ protocol ChatProductFeedStoring: Sendable {
 /// Writes the feed updates of a product into the chat store, each in one transaction (02-DESIGN §3.3.4, P4.1).
 ///
 /// The store applies the ownership rules of 02-DESIGN §13 item 6: a product cannot write as the user and
-/// cannot edit a message of the user, but it can delete any message of its room. The rows go through
+/// cannot edit a message of the user. The rows go through
 /// `ChatMessageEntityMapper`, so the order, the last message of the chat and the unread marks stay correct.
 final class ChatProductFeedStore: ChatProductFeedStoring, @unchecked Sendable {
     private let databaseService: CoreDataServiceProtocol
@@ -61,8 +61,8 @@ private struct FeedWriter {
             try insert(message)
         case let .edited(messageId, content, editedAt):
             try edit(messageId, content: content, editedAt: editedAt)
-        case let .deleted(messageId):
-            try delete(messageId)
+        case let .replaced(message):
+            try replace(message)
         case let .reactionPlaced(messageId, participantId, emoji):
             try placeReaction(on: messageId, participantId: participantId, emoji: emoji)
         case let .reactionRemoved(messageId, participantId, emoji):
@@ -98,10 +98,19 @@ private extension FeedWriter {
 
         let entity = try context.insertNew(CDChatMessage.self)
         try mapper.populate(entity: entity, from: local, using: context)
+    }
 
-        if message.participantId != Chat.ProductParticipant.product {
-            entity.originParticipantId = message.participantId
+    /// Draws a message again in place, for example a call that ended. The message shows no "edited".
+    func replace(_ message: Chat.ProductFeedMessage) throws {
+        let entity = try requireLiveMessage(message.messageId)
+
+        let current = try mapper.transform(entity: entity)
+        guard current.origin == productOrigin else {
+            throw Chat.ProductFeedError.notOwner
         }
+
+        let newContent = try content(message.content, replyingTo: message.replyTo)
+        try mapper.populate(entity: entity, from: current.replacingContent(newContent), using: context)
     }
 
     /// A text that replies to a message of the room becomes a reply, so the bubble quotes the message. A reply
@@ -160,23 +169,6 @@ private extension FeedWriter {
 
         let entity = try context.first(for: .chatMessage(with: edit.messageId)) ?? context.insertNew(CDChatMessage.self)
         try mapper.populate(entity: entity, from: edit, using: context)
-    }
-
-    /// A delete is idempotent, and a product can delete any message of its room.
-    func delete(_ messageId: String) throws {
-        guard let entity = try find(messageId), let storedId = entity.messageId else {
-            throw Chat.ProductFeedError.unknownMessage
-        }
-
-        guard !entity.isTombstone else {
-            return
-        }
-
-        try ChatMessageDeletionMapper().populate(
-            entity: entity,
-            from: Chat.MessageDeletion(messageId: storedId),
-            using: context
-        )
     }
 
     func placeReaction(on messageId: String, participantId: String, emoji: String) throws {
@@ -246,7 +238,7 @@ private extension FeedWriter {
     }
 
     func requireLiveMessage(_ productMessageId: String) throws -> CDChatMessage {
-        guard let entity = try find(productMessageId), !entity.isTombstone else {
+        guard let entity = try find(productMessageId) else {
             throw Chat.ProductFeedError.unknownMessage
         }
 
@@ -258,12 +250,6 @@ private extension FeedWriter {
     func reactionIdentifier(_ message: CDChatMessage, participantId: String, emoji: String) -> String {
         let base = "\(message.messageId ?? "")_\(emoji)_\(productOrigin.rawType)"
         return participantId == Chat.ProductParticipant.product ? base : base + "_" + participantId
-    }
-}
-
-private extension CDChatMessage {
-    var isTombstone: Bool {
-        contentType == Int16(Chat.LocalMessage.Content.ContentType.deleted.rawValue)
     }
 }
 
@@ -289,8 +275,8 @@ private extension Chat.ProductMessageStatus {
         switch self {
         case .preparing: .new
         case .sent: .sent
-        case .delivered: .delivered
-        case .read: .read
+        case .delivered,
+             .read: .delivered
         case .failed: .failed
         }
     }

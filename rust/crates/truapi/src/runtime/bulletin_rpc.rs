@@ -40,17 +40,6 @@ use subxt::{
 use tracing::{instrument, warn};
 use truapi::CallContext;
 
-/// The constant of [`STORE_PALLET_NAME`] that bounds one stored value.
-const MAX_TRANSACTION_SIZE: &str = "MaxTransactionSize";
-
-/// The `MaxTransactionSize` of a Bulletin runtime, in bytes.
-fn max_transaction_size(metadata: &ArcMetadata) -> Option<u32> {
-	let constant = metadata
-		.pallet_by_name(STORE_PALLET_NAME)?
-		.constant_by_name(MAX_TRANSACTION_SIZE)?;
-	<u32 as parity_scale_codec::Decode>::decode(&mut constant.value()).ok()
-}
-
 /// Rebuild, re-sign, and retry once when the node definitively rejects a
 /// broadcast (`invalid`/`dropped`): nothing was included, so a fresh signing
 /// cannot double-store.
@@ -290,42 +279,6 @@ impl BulletinRpc {
 	fn with_allowance_block_wait_timeout(mut self, timeout: Duration) -> Self {
 		self.allowance_block_wait_timeout = timeout;
 		self
-	}
-
-	/// The largest value one `store` transaction takes, read from the
-	/// `MaxTransactionSize` constant of the chain's current runtime by
-	/// `deadline`.
-	pub async fn max_transaction_size(
-		&self,
-		deadline: Instant,
-	) -> Result<u32, BulletinSubmitError> {
-		let read = async {
-			let client = self
-				.chain
-				.online_client(&self.genesis_hash)
-				.await
-				.map_err(BulletinSubmitError::Host)?;
-			let at_block = client
-				.at_current_block()
-				.await
-				.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
-			max_transaction_size(&at_block.metadata()).ok_or_else(|| {
-				BulletinSubmitError::Host(RuntimeFailure::host_failure(
-					"bulletin_rpc.max_transaction_size",
-					format!(
-						"the Bulletin runtime declares no {STORE_PALLET_NAME}::{MAX_TRANSACTION_SIZE}"
-					),
-				))
-			})
-		}
-		.fuse();
-		let timeout =
-			futures_timer::Delay::new(deadline.saturating_duration_since(Instant::now())).fuse();
-		pin_mut!(read, timeout);
-		futures::select! {
-			result = read => result,
-			() = timeout => Err(BulletinSubmitError::Timeout { phase: SubmissionPhase::Connect }),
-		}
 	}
 
 	/// Submit `value` as a Bulletin preimage signed by `allowance`, returning
@@ -815,15 +768,6 @@ mod tests {
 	use super::*;
 	use crate::host_internal::extrinsic::tests::bulletin_metadata;
 	use subxt::metadata::ArcMetadata;
-
-	// The bound comes from the chain's own metadata: the fixture runtime
-	// stores at most 2 MiB in one transaction.
-	#[test]
-	fn the_transaction_bound_is_read_from_the_runtime_metadata() {
-		let metadata = ArcMetadata::from(bulletin_metadata());
-
-		assert_eq!(max_transaction_size(&metadata), Some(2 * 1024 * 1024));
-	}
 
 	#[test]
 	fn dry_run_classifies_allowance_rejections_for_retry() {

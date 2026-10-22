@@ -7,9 +7,9 @@
 //!
 //! The page speaks a JSON protocol on [`SOCKET_PATH`]. The host sends a
 //! snapshot, then every change to a room or a message. The page sends one
-//! operation per thing the person does. An operation that the product only
-//! hears about becomes a Chat event, which reaches every live worker through
-//! `chat.actionSubscribe()`. An operation that needs an answer from the
+//! operation per thing the person does. A message the person posts into a room
+//! the host keeps becomes a Chat action, which reaches every live worker
+//! through `chat.actionSubscribe()`. An operation that needs an answer from the
 //! product becomes one of the host-initiated queries, which the newest live
 //! worker answers within the time-outs of the RFC; the answer goes back to
 //! the page that asked, tagged with the page's request id.
@@ -22,7 +22,6 @@ use std::{
 };
 
 use anyhow::Result;
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures::future::BoxFuture;
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -34,35 +33,19 @@ use tokio::{
 };
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 use truapi::{
-	CallError, ChatStageRejection, ChatWakeOutcome, ChatWakeReason, ProductRuntime,
-	ProductRuntimeError, Subscription,
+	CallError, ChatWakeOutcome, ChatWakeReason, ProductRuntime, ProductRuntimeError, Subscription,
 	latest::{
-		ActionTrigger, ChatBuiltInMessageAction, ChatEvent, ChatMediaItem, ChatMediaMeta,
-		ChatMessage, ChatMessageBody, ChatMessageMenu, ChatPageAnchor, ChatParticipant,
-		ChatParticipantEntry, ChatParticipantsQuery, ChatProductAction, ChatResource, ChatRoomCall,
-		ChatRoomCalls, ChatRoomEvent, ChatUserAction, HostChatActionSubscribeItem,
-		HostChatRoomEventsSubscribeItem, ProductChatMessageActionsQueryItem,
-		ProductChatMessageActionsQueryRequest, ProductChatMessagesQueryItem,
-		ProductChatMessagesQueryRequest, ProductChatParticipantsQueryItem,
-		ProductChatParticipantsQueryRequest, ProductChatQueryError, ProductChatReactionsQueryItem,
-		ProductChatReactionsQueryRequest, ProductChatSearchQueryItem,
-		ProductChatSearchQueryRequest, ProductChatUserActionError, ProductChatUserActionItem,
-		ProductChatUserActionRequest,
+		ChatActionPayload, ChatContactState, ChatMessageBody, ChatMessageContent, ChatPageAnchor,
+		ChatRoomCall, ChatRoomCalls, ChatRoomEvent, ChatUserAction, HostChatActionSubscribeItem,
+		HostChatRoomEventsSubscribeItem, ProductChatEditHistoryQueryItem,
+		ProductChatEditHistoryQueryRequest, ProductChatMessagesQueryItem,
+		ProductChatMessagesQueryRequest, ProductChatOpenLinkItem, ProductChatOpenLinkRequest,
+		ProductChatQueryError, ProductChatReactionsQueryItem, ProductChatReactionsQueryRequest,
+		ProductChatUserActionError, ProductChatUserActionItem, ProductChatUserActionRequest,
 	},
 };
 
-use crate::chat::{
-	ChatSnapshot, CliChatHost, PRODUCT, USER, UserChange, handler_json, message_json, resource_json,
-};
-
-/// The watch a wake from the page names.
-const DEV_WATCH: &str = "dev";
-
-/// Matches of a room the host keeps on one search page.
-const HOST_SEARCH_PAGE: usize = 50;
-
-/// Matches the host asks a product for on one search page.
-const PRODUCT_SEARCH_PAGE: u32 = 30;
+use crate::chat::{ChatSnapshot, CliChatHost, contact_state_name, message_json};
 
 /// Path of the chat surface page.
 pub const PAGE_PATH: &str = "/chat";
@@ -106,7 +89,7 @@ pub type Query<Item, Error = ProductChatQueryError> = Subscription<Item, CallErr
 /// A worker connection the surface delivers events to and asks queries of.
 pub trait ChatWorker: Send + Sync {
 	/// Queue `item` for the product's `chat.actionSubscribe()`.
-	fn publish_chat_event(
+	fn publish_chat_action(
 		&self,
 		item: HostChatActionSubscribeItem,
 	) -> Result<(), ProductRuntimeError>;
@@ -129,17 +112,18 @@ pub trait ChatWorker: Send + Sync {
 		request: ProductChatReactionsQueryRequest,
 	) -> Result<Query<ProductChatReactionsQueryItem>, ProductRuntimeError>;
 
-	/// Ask about the participants of a room.
-	fn participants_query(
+	/// Ask the texts one message had.
+	fn edit_history(
 		&self,
-		request: ProductChatParticipantsQueryRequest,
-	) -> Result<Query<ProductChatParticipantsQueryItem>, ProductRuntimeError>;
+		request: ProductChatEditHistoryQueryRequest,
+	) -> Result<Query<ProductChatEditHistoryQueryItem>, ProductRuntimeError>;
 
-	/// Ask the menu of one message.
-	fn message_actions_query(
+	/// Give the product something the user opened, such as a contact link or
+	/// a username.
+	fn open_link(
 		&self,
-		request: ProductChatMessageActionsQueryRequest,
-	) -> Result<Query<ProductChatMessageActionsQueryItem>, ProductRuntimeError>;
+		request: ProductChatOpenLinkRequest,
+	) -> Result<Query<ProductChatOpenLinkItem>, ProductRuntimeError>;
 
 	/// Send one room event to the product's `chat.roomEventsSubscribe()`. The
 	/// core keeps it for the product until a connection subscribes.
@@ -151,39 +135,14 @@ pub trait ChatWorker: Send + Sync {
 	/// Hold the product's worker for a wake; see
 	/// `ProductRuntimeControl::wake_product`.
 	fn wake_product(&self, reason: ChatWakeReason) -> Result<ChatWakeOutcome, ProductRuntimeError>;
-
-	/// Ask the product for the messages of a room it keeps that match what
-	/// the user typed.
-	fn search_query(
-		&self,
-		request: ProductChatSearchQueryRequest,
-	) -> Result<Query<ProductChatSearchQueryItem>, ProductRuntimeError>;
-
-	/// Stage a user attachment of `room_id` as a preimage that the product's
-	/// Bulletin allowance pays for, through the core, and give its key.
-	fn stage_chat_attachment(
-		&self,
-		room_id: String,
-		mime_type: String,
-		bytes: Vec<u8>,
-	) -> BoxFuture<'static, Result<Vec<u8>, ChatStageRejection>>;
-
-	/// Seal a user attachment of `room_id` as encrypted Bulletin parts that
-	/// the product's allowance pays for, through the core, and give the
-	/// resource that opens it.
-	fn seal_chat_attachment(
-		&self,
-		room_id: String,
-		bytes: Vec<u8>,
-	) -> BoxFuture<'static, Result<ChatResource, ChatStageRejection>>;
 }
 
 impl ChatWorker for ProductRuntime {
-	fn publish_chat_event(
+	fn publish_chat_action(
 		&self,
 		item: HostChatActionSubscribeItem,
 	) -> Result<(), ProductRuntimeError> {
-		self.control().publish_chat_event(item)
+		self.control().publish_chat_action(item)
 	}
 
 	fn messages_query(
@@ -208,18 +167,18 @@ impl ChatWorker for ProductRuntime {
 		self.control().chat_reactions_query(request)
 	}
 
-	fn participants_query(
+	fn edit_history(
 		&self,
-		request: ProductChatParticipantsQueryRequest,
-	) -> Result<Query<ProductChatParticipantsQueryItem>, ProductRuntimeError> {
-		self.control().chat_participants_query(request)
+		request: ProductChatEditHistoryQueryRequest,
+	) -> Result<Query<ProductChatEditHistoryQueryItem>, ProductRuntimeError> {
+		self.control().chat_edit_history(request)
 	}
 
-	fn message_actions_query(
+	fn open_link(
 		&self,
-		request: ProductChatMessageActionsQueryRequest,
-	) -> Result<Query<ProductChatMessageActionsQueryItem>, ProductRuntimeError> {
-		self.control().chat_message_actions_query(request)
+		request: ProductChatOpenLinkRequest,
+	) -> Result<Query<ProductChatOpenLinkItem>, ProductRuntimeError> {
+		self.control().chat_open_link(request)
 	}
 
 	fn publish_chat_room_event(
@@ -231,32 +190,6 @@ impl ChatWorker for ProductRuntime {
 
 	fn wake_product(&self, reason: ChatWakeReason) -> Result<ChatWakeOutcome, ProductRuntimeError> {
 		self.control().wake_product(reason)
-	}
-
-	fn search_query(
-		&self,
-		request: ProductChatSearchQueryRequest,
-	) -> Result<Query<ProductChatSearchQueryItem>, ProductRuntimeError> {
-		self.control().chat_search_query(request)
-	}
-
-	fn stage_chat_attachment(
-		&self,
-		room_id: String,
-		mime_type: String,
-		bytes: Vec<u8>,
-	) -> BoxFuture<'static, Result<Vec<u8>, ChatStageRejection>> {
-		let control = self.control();
-		Box::pin(async move { control.stage_chat_attachment(&room_id, &mime_type, bytes).await })
-	}
-
-	fn seal_chat_attachment(
-		&self,
-		room_id: String,
-		bytes: Vec<u8>,
-	) -> BoxFuture<'static, Result<ChatResource, ChatStageRejection>> {
-		let control = self.control();
-		Box::pin(async move { control.seal_chat_attachment(&room_id, bytes).await })
 	}
 }
 
@@ -270,12 +203,10 @@ pub struct Timeouts {
 	pub send: Duration,
 	/// Every other `user_action`.
 	pub action: Duration,
-	/// `reactions_query`, `participants_query` and the two menu queries.
+	/// `reactions_query`, `edit_history` and `open_link`.
 	pub query: Duration,
 	/// The wait before the one retry of an `unavailable` interrupt.
 	pub retry: Duration,
-	/// `search_query`.
-	pub search: Duration,
 }
 
 impl Default for Timeouts {
@@ -286,7 +217,6 @@ impl Default for Timeouts {
 			action: Duration::from_secs(10),
 			query: Duration::from_secs(5),
 			retry: Duration::from_secs(1),
-			search: Duration::from_secs(10),
 		}
 	}
 }
@@ -323,13 +253,41 @@ impl Drop for WorkerAttachment {
 	}
 }
 
-/// What the page asks about the participants of a room.
-#[derive(Debug, Deserialize, PartialEq, Eq)]
-#[serde(tag = "type", rename_all_fields = "camelCase")]
-enum ParticipantsOp {
-	Count,
-	Page { cursor: Option<String>, page_size: u32 },
-	ByIds { participant_ids: Vec<String> },
+/// What the user does about the contact of a room.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+enum ContactAction {
+	Accept,
+	Decline,
+	Block,
+	Unblock,
+	Leave,
+}
+
+impl ContactAction {
+	/// The user action the product hears, when the contact is in a state that
+	/// offers this action.
+	fn user_action(self, state: ChatContactState) -> Result<ChatUserAction, String> {
+		let offered = match self {
+			Self::Accept | Self::Decline => state == ChatContactState::Incoming,
+			Self::Unblock => state == ChatContactState::Blocked,
+			Self::Block => state != ChatContactState::Blocked,
+			Self::Leave => true,
+		};
+		if !offered {
+			return Err(format!(
+				"a contact in the state {} offers no {self:?}",
+				contact_state_name(state)
+			));
+		}
+		Ok(match self {
+			Self::Accept => ChatUserAction::AcceptRequest,
+			Self::Decline => ChatUserAction::DeclineRequest,
+			Self::Block => ChatUserAction::Block,
+			Self::Unblock => ChatUserAction::Unblock,
+			Self::Leave => ChatUserAction::Leave,
+		})
+	}
 }
 
 /// An operation a page sends, tagged on `op`. `reqId` is the page's own
@@ -345,12 +303,13 @@ enum PageOp {
 		text: String,
 		#[serde(default)]
 		reply_to: Option<String>,
-	},
-	/// A press on a button of an `Actions` message.
-	Trigger {
-		room_id: String,
-		message_id: String,
-		action_id: String,
+		/// The id the page chose for the message, in a room the product keeps.
+		#[serde(default)]
+		message_id: Option<String>,
+		/// When the user wrote the message, in milliseconds since the Unix
+		/// epoch, in a room the product keeps.
+		#[serde(default)]
+		timestamp: Option<u64>,
 	},
 	Edit {
 		#[serde(default)]
@@ -358,12 +317,6 @@ enum PageOp {
 		room_id: String,
 		message_id: String,
 		text: String,
-	},
-	Delete {
-		#[serde(default)]
-		req_id: u64,
-		room_id: String,
-		message_id: String,
 	},
 	React {
 		#[serde(default)]
@@ -380,18 +333,6 @@ enum PageOp {
 		room_id: String,
 		message_id: String,
 	},
-	/// Send a `Failed` message again, in a room the product keeps.
-	Retry {
-		#[serde(default)]
-		req_id: u64,
-		room_id: String,
-		message_id: String,
-	},
-	MessageAction {
-		room_id: String,
-		message_id: String,
-		action_id: String,
-	},
 	/// One page of a room the product keeps.
 	Messages {
 		req_id: u64,
@@ -406,20 +347,35 @@ enum PageOp {
 		room_id: String,
 		message_id: String,
 	},
-	Participants {
-		req_id: u64,
-		room_id: String,
-		query: ParticipantsOp,
-	},
-	MessageActions {
+	/// The texts one message of a room the product keeps had.
+	EditHistory {
 		req_id: u64,
 		room_id: String,
 		message_id: String,
+	},
+	/// The user accepts, declines, blocks, unblocks or leaves the contact of
+	/// a room the product keeps.
+	Contact {
+		#[serde(default)]
+		req_id: u64,
+		room_id: String,
+		action: ContactAction,
+	},
+	/// The user opened something the product reads, such as a contact link or
+	/// a username, from an entry point of the host. `room_id` names the room
+	/// the host shows unless the product answers another.
+	OpenLink {
+		req_id: u64,
+		room_id: String,
+		payload: String,
 	},
 	/// The user pressed the audio or the video call button of the header.
 	CallRequest {
 		room_id: String,
 		video: bool,
+		/// The id the page chose for the call.
+		#[serde(default)]
+		call_id: Option<String>,
 	},
 	/// The user accepted or declined the call that rings.
 	CallAnswer {
@@ -427,67 +383,17 @@ enum PageOp {
 		call_id: String,
 		accept: bool,
 	},
-	/// The user tapped the call bar of a call without a media session.
-	CallOpen {
-		room_id: String,
-		call_id: String,
-	},
-	/// The user pressed "End" on the call bar.
+	/// The user ended the call.
 	CallEnd {
 		room_id: String,
 		call_id: String,
 	},
-	/// The development stand-in for a notification that arrived on watch
-	/// `dev` for the room: a notification wake of the product.
+	/// The development stand-in for a chat notification of the room: a
+	/// notification wake of the product.
 	Wake {
 		req_id: u64,
 		room_id: String,
 	},
-	/// The user searches a room: the host's own store, or `search_query` to
-	/// a room the product keeps that declares `search`.
-	Search {
-		req_id: u64,
-		room_id: String,
-		text: String,
-		#[serde(default)]
-		cursor: Option<String>,
-	},
-	/// The user sends a photo, a video or a file. One above the inline bound
-	/// is staged as a preimage through the core first.
-	Attach {
-		req_id: u64,
-		room_id: String,
-		kind: AttachmentKind,
-		mime_type: String,
-		#[serde(default)]
-		file_name: Option<String>,
-		/// The bytes, in base64.
-		data: String,
-		#[serde(default)]
-		width: Option<u32>,
-		#[serde(default)]
-		height: Option<u32>,
-	},
-	/// The user muted, unmuted, archived or unarchived the room.
-	/// `muted_forever` mutes the room with no end, a time a page cannot write
-	/// as a JSON number.
-	UserState {
-		room_id: String,
-		#[serde(default)]
-		muted_until: Option<u64>,
-		#[serde(default)]
-		muted_forever: bool,
-		#[serde(default)]
-		archived: bool,
-	},
-}
-
-/// What kind of media item an attachment is.
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
-enum AttachmentKind {
-	Image,
-	Video,
-	File,
 }
 
 /// The reply to one page operation: at once, or once the product answered.
@@ -677,14 +583,8 @@ impl ChatSurface {
 				"action": self.timeouts.action.as_millis() as u64,
 				"query": self.timeouts.query.as_millis() as u64,
 			},
-			"capabilities": {
-				"features": crate::chat::CLI_CHAT_FEATURES,
-				"inlineAttachmentMaxBytes": truapi::platform::CHAT_INLINE_MEDIA_MAX_BYTES,
-				"preimageAttachmentMaxBytes": truapi::platform::CHAT_PREIMAGE_ATTACHMENT_MAX_BYTES,
-				"sealedAttachmentMaxBytes": truapi::platform::CHAT_SEALED_ATTACHMENT_MAX_BYTES,
-			},
+			"capabilities": { "features": crate::chat::CLI_CHAT_FEATURES },
 			"rooms": snapshot.rooms,
-			"bots": snapshot.bots,
 			"messages": snapshot.messages,
 		})
 	}
@@ -707,24 +607,43 @@ impl ChatSurface {
 
 	fn apply_op(self: &Arc<Self>, op: &PageOp) -> Applied {
 		let room_id = op_room(op).to_string();
+		// The host asks the product about a link in any room id it names.
+		if let PageOp::OpenLink { req_id, payload, .. } = op {
+			let request = ProductChatOpenLinkRequest { room_id, payload: payload.clone() };
+			let surface = Arc::clone(self);
+			let req_id = *req_id;
+			return Applied::Later(Box::pin(async move {
+				let answer = surface
+					.ask(surface.timeouts.query, move |worker| worker.open_link(request.clone()))
+					.await;
+				answer_json(
+					"openLink",
+					req_id,
+					answer,
+					|item: &ProductChatOpenLinkItem| json!({ "roomId": item.room_id }),
+					query_error_json,
+				)
+			}));
+		}
 		let Some(config) = self.chat.room_config(&room_id) else {
 			return Applied::Now(unknown_room(&room_id));
 		};
 		let source = config.product_source;
-		let event = |event: ChatEvent| Applied::Now(self.deliver(op_name(op), &room_id, event));
+		let host_kept = || {
+			Applied::Now(error_reply(format!(
+				"the room {room_id:?} keeps its messages in the host, which takes edits and reactions from the product only"
+			)))
+		};
 		match op {
-			PageOp::Post { req_id, text, reply_to, .. } => self.post_body(
-				"post",
+			PageOp::Post { req_id, text, reply_to, message_id, timestamp, .. } => self.post_text(
 				*req_id,
 				room_id,
-				ChatMessageBody::Text { text: text.clone() },
+				text.clone(),
 				reply_to.clone(),
+				(message_id.clone(), *timestamp),
 				source,
 			),
-			PageOp::CallRequest { .. } |
-			PageOp::CallAnswer { .. } |
-			PageOp::CallOpen { .. } |
-			PageOp::CallEnd { .. } => {
+			PageOp::CallRequest { .. } | PageOp::CallAnswer { .. } | PageOp::CallEnd { .. } => {
 				let (buttons, call) = self.chat.room_call(&room_id).unwrap_or_default();
 				match call_event(op, buttons, call.as_ref()) {
 					Ok(event) => {
@@ -737,10 +656,7 @@ impl ChatSurface {
 				let Some(worker) = self.newest_worker() else {
 					return Applied::Now(error_reply("no worker is connected to wake".to_string()));
 				};
-				let reason = ChatWakeReason::Notification {
-					room_id: room_id.clone(),
-					watch_id: DEV_WATCH.to_string(),
-				};
+				let reason = ChatWakeReason::Notification { room_id: room_id.clone() };
 				Applied::Now(match worker.wake_product(reason) {
 					Ok(ChatWakeOutcome::Held { until_ms }) => {
 						answer_ok("wake", *req_id, json!({ "type": "Held", "untilMs": until_ms }))
@@ -751,190 +667,53 @@ impl ChatSurface {
 					Err(error) => error_reply(error.to_string()),
 				})
 			},
-			PageOp::Search { req_id, text, cursor, .. } => {
-				if !source {
-					let skip =
-						cursor.as_deref().and_then(|cursor| cursor.parse().ok()).unwrap_or(0);
-					return Applied::Now(
-						match self.chat.search_messages(&room_id, text, skip, HOST_SEARCH_PAGE) {
-							Ok((hits, more)) => answer_ok(
-								"search",
-								*req_id,
-								search_json(
-									&hits,
-									more.then(|| (skip + HOST_SEARCH_PAGE).to_string()),
-								),
-							),
-							Err(reason) => error_reply(reason),
-						},
-					);
-				}
-				let request = ProductChatSearchQueryRequest {
-					room_id,
-					text: text.clone(),
-					cursor: cursor.clone(),
-					page_size: PRODUCT_SEARCH_PAGE,
-				};
-				let surface = Arc::clone(self);
-				let req_id = *req_id;
-				Applied::Later(Box::pin(async move {
-					let answer = surface
-						.ask(surface.timeouts.search, move |worker| {
-							worker.search_query(request.clone())
-						})
-						.await;
-					answer_json(
-						"search",
-						req_id,
-						answer,
-						|item: &ProductChatSearchQueryItem| {
-							search_json(&item.hits, item.next.clone())
-						},
-						query_error_json,
-					)
-				}))
-			},
-			PageOp::Attach { req_id, kind, mime_type, file_name, data, width, height, .. } => {
-				let bytes = match BASE64.decode(data) {
-					Ok(bytes) => bytes,
-					Err(error) => {
-						return Applied::Now(error_reply(format!("attachment data: {error}")));
-					},
-				};
-				let surface = Arc::clone(self);
-				let (req_id, kind, mime_type) = (*req_id, *kind, mime_type.clone());
-				let (file_name, width, height) = (file_name.clone(), *width, *height);
-				Applied::Later(Box::pin(async move {
-					let meta = ChatMediaMeta {
-						mime_type: mime_type.clone(),
-						size_bytes: Some(bytes.len() as u64),
-						width,
-						height,
-						placeholder: None,
-						alt: None,
-					};
-					let resource =
-						match surface.attachment_resource(&room_id, &mime_type, bytes).await {
-							Ok(resource) => resource,
-							Err(reason) => return answer_refused("attach", req_id, reason),
-						};
-					let item = match kind {
-						AttachmentKind::Image => ChatMediaItem::Image { resource, meta },
-						AttachmentKind::Video => ChatMediaItem::Video { resource, meta },
-						AttachmentKind::File => ChatMediaItem::File {
-							resource,
-							meta,
-							file_name: file_name.unwrap_or_else(|| "file".to_string()),
-						},
-					};
-					let body = ChatMessageBody::RichText { text: None, media: vec![item] };
-					match surface.post_body("attach", req_id, room_id, body, None, source) {
-						Applied::Now(reply) => reply,
-						Applied::Later(answer) => answer.await,
-					}
-				}))
-			},
-			PageOp::Trigger { message_id, action_id, .. } => {
-				event(ChatEvent::ActionTriggered(ActionTrigger {
-					message_id: message_id.clone(),
-					action_id: action_id.clone(),
-					payload: None,
-				}))
-			},
 			PageOp::Edit { req_id, message_id, text, .. } => {
+				if !source {
+					return host_kept();
+				}
 				let body = ChatMessageBody::Text { text: text.clone() };
-				if source {
-					let action =
-						ChatUserAction::EditMessage { message_id: message_id.clone(), body };
-					return self.later_action("edit", *req_id, room_id, action);
-				}
-				let change =
-					UserChange::Edit { message_id: message_id.clone(), body: body.clone() };
-				self.host_change(
-					*req_id,
-					&room_id,
-					change,
-					ChatEvent::UserEdited { message_id: message_id.clone(), body },
-				)
-			},
-			PageOp::Delete { req_id, message_id, .. } => {
-				if source {
-					let action = ChatUserAction::DeleteMessage { message_id: message_id.clone() };
-					return self.later_action("delete", *req_id, room_id, action);
-				}
-				let change = UserChange::Delete { message_id: message_id.clone() };
-				self.host_change(
-					*req_id,
-					&room_id,
-					change,
-					ChatEvent::UserDeleted { message_id: message_id.clone() },
-				)
+				let action = ChatUserAction::EditMessage { message_id: message_id.clone(), body };
+				self.later_action("edit", *req_id, room_id, action)
 			},
 			PageOp::React { req_id, message_id, emoji, placed, .. } => {
-				if let Some(allowed) = &config.allowed_reactions &&
-					*placed && !allowed.contains(emoji)
-				{
-					return Applied::Now(error_reply(format!(
-						"the room does not offer the reaction {emoji}"
-					)));
+				if !source {
+					return host_kept();
 				}
-				if source {
-					let (message_id, emoji) = (message_id.clone(), emoji.clone());
-					let action = if *placed {
-						ChatUserAction::ReactionPlaced { message_id, emoji }
-					} else {
-						ChatUserAction::ReactionRemoved { message_id, emoji }
-					};
-					return self.later_action("react", *req_id, room_id, action);
-				}
-				let change = UserChange::React {
-					message_id: message_id.clone(),
-					emoji: emoji.clone(),
-					placed: *placed,
+				let (message_id, emoji) = (message_id.clone(), emoji.clone());
+				let action = if *placed {
+					ChatUserAction::ReactionPlaced { message_id, emoji }
+				} else {
+					ChatUserAction::ReactionRemoved { message_id, emoji }
 				};
-				self.host_change(
-					*req_id,
-					&room_id,
-					change,
-					ChatEvent::UserReacted {
-						message_id: message_id.clone(),
-						emoji: emoji.clone(),
-						placed: *placed,
-					},
-				)
+				self.later_action("react", *req_id, room_id, action)
 			},
 			PageOp::Seen { req_id, message_id, .. } => {
-				if source {
-					if !config.report_seen {
-						return Applied::Now(answer_ok("seen", *req_id, json!({ "type": "Kept" })));
-					}
+				if source && config.report_seen {
 					let action = ChatUserAction::Seen { message_id: message_id.clone() };
 					return self.later_action("seen", *req_id, room_id, action);
 				}
-				match self.chat.mark_seen(&room_id, message_id) {
-					Ok(true) => event(ChatEvent::Seen { message_id: message_id.clone() }),
-					Ok(false) => {
-						Applied::Now(answer_ok("seen", *req_id, json!({ "type": "Kept" })))
-					},
+				if !source && let Err(reason) = self.chat.mark_seen(&room_id, message_id) {
+					return Applied::Now(error_reply(reason));
+				}
+				Applied::Now(answer_ok("seen", *req_id, json!({ "type": "Kept" })))
+			},
+			PageOp::Contact { req_id, action, .. } => {
+				let Some(contact) = self.chat.room_contact(&room_id) else {
+					return Applied::Now(error_reply(format!(
+						"the room {room_id:?} has no contact"
+					)));
+				};
+				if !source {
+					return Applied::Now(error_reply(
+						"a contact room keeps its messages in the product".to_string(),
+					));
+				}
+				match action.user_action(contact.state) {
+					Ok(action) => self.later_action("contact", *req_id, room_id, action),
 					Err(reason) => Applied::Now(error_reply(reason)),
 				}
 			},
-			PageOp::Retry { req_id, message_id, .. } => {
-				if !source {
-					return Applied::Now(error_reply(
-						"retry exists only in a room the product keeps; delete the message instead"
-							.to_string(),
-					));
-				}
-				let action = ChatUserAction::Retry { message_id: message_id.clone() };
-				self.later_action("retry", *req_id, room_id, action)
-			},
-			PageOp::MessageAction { message_id, action_id, .. } => {
-				event(ChatEvent::MessageActionTriggered {
-					message_id: message_id.clone(),
-					action_id: action_id.clone(),
-				})
-			},
+			PageOp::OpenLink { .. } => unreachable!("answered above"),
 			PageOp::Messages { req_id, before, cursor, page_size, .. } => {
 				let cursor = cursor.clone();
 				let anchor = if *before {
@@ -977,65 +756,21 @@ impl ChatSurface {
 					answer_json("reactions", req_id, answer, reactions_json, query_error_json)
 				}))
 			},
-			PageOp::Participants { req_id, query, .. } => {
-				let query = match query {
-					ParticipantsOp::Count => ChatParticipantsQuery::Count,
-					ParticipantsOp::Page { cursor, page_size } => ChatParticipantsQuery::Page {
-						cursor: cursor.clone(),
-						page_size: *page_size,
-					},
-					// The reserved ids resolve without a question.
-					ParticipantsOp::ByIds { participant_ids } => ChatParticipantsQuery::ByIds {
-						participant_ids: participant_ids
-							.iter()
-							.filter(|id| *id != USER && *id != PRODUCT)
-							.cloned()
-							.collect(),
-					},
+			PageOp::EditHistory { req_id, message_id, .. } => {
+				let request = ProductChatEditHistoryQueryRequest {
+					room_id: room_id.clone(),
+					message_id: message_id.clone(),
 				};
-				let request =
-					ProductChatParticipantsQueryRequest { room_id: room_id.clone(), query };
 				let surface = Arc::clone(self);
 				let req_id = *req_id;
 				Applied::Later(Box::pin(async move {
 					let answer = surface
 						.ask(surface.timeouts.query, move |worker| {
-							worker.participants_query(request.clone())
+							worker.edit_history(request.clone())
 						})
 						.await;
-					answer_json("participants", req_id, answer, participants_json, query_error_json)
+					answer_json("editHistory", req_id, answer, edit_history_json, query_error_json)
 				}))
-			},
-			PageOp::MessageActions { req_id, message_id, .. } => {
-				let Some(message) = self.chat.message(&room_id, message_id) else {
-					return Applied::Now(error_reply(format!("unknown message {message_id:?}")));
-				};
-				let request =
-					ProductChatMessageActionsQueryRequest { room_id: room_id.clone(), message };
-				let surface = Arc::clone(self);
-				let req_id = *req_id;
-				Applied::Later(Box::pin(async move {
-					let answer = surface
-						.ask(surface.timeouts.query, move |worker| {
-							worker.message_actions_query(request.clone())
-						})
-						.await;
-					answer_json(
-						"messageActions",
-						req_id,
-						answer,
-						|item| message_menu_json(&item.menu),
-						query_error_json,
-					)
-				}))
-			},
-			PageOp::UserState { muted_until, muted_forever, archived, .. } => {
-				let muted_until = if *muted_forever { Some(u64::MAX) } else { *muted_until };
-				if let Err(reason) = self.chat.set_user_state(&room_id, muted_until, *archived) {
-					return Applied::Now(error_reply(reason));
-				}
-				let event = ChatRoomEvent::UserStateChanged { muted_until, archived: *archived };
-				Applied::Now(self.deliver_room_event("userState", &room_id, event))
 			},
 		}
 	}
@@ -1055,55 +790,34 @@ impl ChatSurface {
 		}
 	}
 
-	/// Apply a change the user made in a room the host keeps, then tell the
-	/// product.
-	fn host_change(
-		&self,
-		req_id: u64,
-		room_id: &str,
-		change: UserChange,
-		event: ChatEvent,
-	) -> Applied {
-		let name = match change {
-			UserChange::Edit { .. } => "edit",
-			UserChange::Delete { .. } => "delete",
-			UserChange::React { .. } => "react",
-		};
-		match self.chat.change_as_user(room_id, change) {
-			Ok(()) => {
-				let mut delivered = self.deliver(name, room_id, event);
-				delivered["reqId"] = Value::from(req_id);
-				Applied::Now(delivered)
-			},
-			Err(reason) => Applied::Now(error_reply(reason)),
-		}
-	}
-
-	/// Send a message of the user: a user action of a room the product keeps,
-	/// or a stored message and `MessagePosted` in a room the host keeps.
-	fn post_body(
+	/// Send a text of the user: a user action of a room the product keeps,
+	/// under the id and with the time the page chose, or a stored message and
+	/// `MessagePosted` in a room the host keeps.
+	fn post_text(
 		self: &Arc<Self>,
-		name: &'static str,
 		req_id: u64,
 		room_id: String,
-		body: ChatMessageBody,
+		text: String,
 		reply_to: Option<String>,
+		(message_id, timestamp): (Option<String>, Option<u64>),
 		source: bool,
 	) -> Applied {
+		let name = "post";
 		if source {
-			let action = ChatUserAction::NewMessage { body, reply_to };
+			let body = ChatMessageBody::Text { text };
+			let action = ChatUserAction::NewMessage { body, reply_to, message_id, timestamp };
 			return self.later_action(name, req_id, room_id, action);
 		}
 		// Stored first, so the user's message precedes any reply the worker
 		// posts to it.
-		match self.chat.post_user_message(&room_id, body.clone(), reply_to.clone()) {
+		let body = ChatMessageBody::Text { text: text.clone() };
+		match self.chat.post_user_message(&room_id, body, reply_to) {
 			Ok(message) => {
-				let posted = ChatEvent::MessagePosted {
-					message_id: message.message_id.clone(),
-					body,
-					reply_to,
-				};
+				let posted = ChatActionPayload::MessagePosted(ChatMessageContent::Text { text });
 				let delivered = self.deliver(name, &room_id, posted);
+				if delivered["kind"] == "error" {
+					return Applied::Now(delivered);
+				}
 				Applied::Now(answer_ok(
 					name,
 					req_id,
@@ -1116,36 +830,6 @@ impl ChatSurface {
 			},
 			Err(reason) => Applied::Now(error_reply(reason)),
 		}
-	}
-
-	/// The resource of an attachment: inline up to the inline bound, else a
-	/// preimage the core stages through the newest worker connection, or the
-	/// sealed parts in a room that declares `sealed_attachments`. A refusal
-	/// names why, and then nothing was uploaded.
-	async fn attachment_resource(
-		&self,
-		room_id: &str,
-		mime_type: &str,
-		bytes: Vec<u8>,
-	) -> Result<ChatResource, String> {
-		if bytes.len() <= truapi::platform::CHAT_INLINE_MEDIA_MAX_BYTES {
-			return Ok(ChatResource::Inline { mime_type: mime_type.to_string(), bytes });
-		}
-		let worker = self
-			.worker_by(Instant::now() + self.timeouts.send)
-			.await
-			.ok_or_else(|| "no worker is connected to stage the attachment".to_string())?;
-		if self.chat.seals_attachments(room_id) {
-			return worker
-				.seal_chat_attachment(room_id.to_string(), bytes)
-				.await
-				.map_err(|rejection| format!("not sealed: {rejection}"));
-		}
-		worker
-			.stage_chat_attachment(room_id.to_string(), mime_type.to_string(), bytes)
-			.await
-			.map(|key| ChatResource::Preimage { key })
-			.map_err(|rejection| format!("not staged: {rejection}"))
 	}
 
 	/// Send one user action of a room the product keeps, and apply the answer
@@ -1216,13 +900,13 @@ impl ChatSurface {
 		}
 	}
 
-	/// Deliver one event to every live worker. The answer is the `delivered`
+	/// Deliver one action to every live worker. The answer is the `delivered`
 	/// reply or the `error` reply.
-	fn deliver(&self, name: &str, room_id: &str, event: ChatEvent) -> Value {
+	fn deliver(&self, name: &str, room_id: &str, payload: ChatActionPayload) -> Value {
 		let item = HostChatActionSubscribeItem {
 			room_id: room_id.to_string(),
 			peer: PEER.to_string(),
-			event,
+			payload,
 		};
 		match self.publish(item) {
 			Ok(workers) => json!({ "kind": "delivered", "op": name, "workers": workers }),
@@ -1237,7 +921,7 @@ impl ChatSurface {
 		let mut accepted = 0;
 		let mut refusal = None;
 		for worker in workers {
-			match worker.publish_chat_event(item.clone()) {
+			match worker.publish_chat_action(item.clone()) {
 				Ok(()) => accepted += 1,
 				Err(error) => {
 					refusal.get_or_insert(error);
@@ -1251,25 +935,18 @@ impl ChatSurface {
 fn op_room(op: &PageOp) -> &str {
 	match op {
 		PageOp::Post { room_id, .. } |
-		PageOp::Trigger { room_id, .. } |
 		PageOp::Edit { room_id, .. } |
-		PageOp::Delete { room_id, .. } |
 		PageOp::React { room_id, .. } |
 		PageOp::Seen { room_id, .. } |
-		PageOp::Retry { room_id, .. } |
-		PageOp::MessageAction { room_id, .. } |
 		PageOp::Messages { room_id, .. } |
 		PageOp::Reactions { room_id, .. } |
-		PageOp::Participants { room_id, .. } |
-		PageOp::MessageActions { room_id, .. } |
-		PageOp::Attach { room_id, .. } |
-		PageOp::Search { room_id, .. } |
+		PageOp::EditHistory { room_id, .. } |
+		PageOp::Contact { room_id, .. } |
+		PageOp::OpenLink { room_id, .. } |
 		PageOp::Wake { room_id, .. } |
 		PageOp::CallRequest { room_id, .. } |
 		PageOp::CallAnswer { room_id, .. } |
-		PageOp::CallOpen { room_id, .. } |
-		PageOp::CallEnd { room_id, .. } |
-		PageOp::UserState { room_id, .. } => room_id,
+		PageOp::CallEnd { room_id, .. } => room_id,
 	}
 }
 
@@ -1277,16 +954,13 @@ fn op_req_id(op: &PageOp) -> Option<u64> {
 	match op {
 		PageOp::Post { req_id, .. } |
 		PageOp::Edit { req_id, .. } |
-		PageOp::Delete { req_id, .. } |
 		PageOp::React { req_id, .. } |
 		PageOp::Seen { req_id, .. } |
-		PageOp::Retry { req_id, .. } |
 		PageOp::Messages { req_id, .. } |
 		PageOp::Reactions { req_id, .. } |
-		PageOp::Participants { req_id, .. } |
-		PageOp::MessageActions { req_id, .. } |
-		PageOp::Attach { req_id, .. } |
-		PageOp::Search { req_id, .. } |
+		PageOp::EditHistory { req_id, .. } |
+		PageOp::Contact { req_id, .. } |
+		PageOp::OpenLink { req_id, .. } |
 		PageOp::Wake { req_id, .. } => Some(*req_id),
 		_ => None,
 	}
@@ -1295,25 +969,18 @@ fn op_req_id(op: &PageOp) -> Option<u64> {
 fn op_name(op: &PageOp) -> &'static str {
 	match op {
 		PageOp::Post { .. } => "post",
-		PageOp::Trigger { .. } => "trigger",
 		PageOp::Edit { .. } => "edit",
-		PageOp::Delete { .. } => "delete",
 		PageOp::React { .. } => "react",
 		PageOp::Seen { .. } => "seen",
-		PageOp::Retry { .. } => "retry",
-		PageOp::MessageAction { .. } => "messageAction",
 		PageOp::Messages { .. } => "messages",
 		PageOp::Reactions { .. } => "reactions",
-		PageOp::Participants { .. } => "participants",
-		PageOp::MessageActions { .. } => "messageActions",
-		PageOp::Attach { .. } => "attach",
-		PageOp::Search { .. } => "search",
+		PageOp::EditHistory { .. } => "editHistory",
+		PageOp::Contact { .. } => "contact",
+		PageOp::OpenLink { .. } => "openLink",
 		PageOp::Wake { .. } => "wake",
 		PageOp::CallRequest { .. } => "callRequest",
 		PageOp::CallAnswer { .. } => "callAnswer",
-		PageOp::CallOpen { .. } => "callOpen",
 		PageOp::CallEnd { .. } => "callEnd",
-		PageOp::UserState { .. } => "userState",
 	}
 }
 
@@ -1331,11 +998,6 @@ fn unknown_room(room_id: &str) -> Value {
 
 fn answer_ok(op: &str, req_id: u64, ok: Value) -> Value {
 	json!({ "kind": "answer", "op": op, "reqId": req_id, "ok": ok })
-}
-
-/// The `answer` reply of an operation the host refused, with why.
-fn answer_refused(op: &str, req_id: u64, reason: String) -> Value {
-	json!({ "kind": "answer", "op": op, "reqId": req_id, "error": { "tag": "Refused", "reason": reason } })
 }
 
 /// The `answer` reply of one query.
@@ -1388,14 +1050,14 @@ fn user_action_error_json(error: &ProductChatUserActionError) -> Value {
 }
 
 /// The room event of a call operation, when the room shows what it presses:
-/// the call button, the ringing call, or the call bar of an active call.
+/// the call button, the ringing call, or the active call.
 fn call_event(
 	op: &PageOp,
 	buttons: Option<ChatRoomCalls>,
 	call: Option<&ChatRoomCall>,
 ) -> Result<ChatRoomEvent, String> {
 	match (op, call) {
-		(PageOp::CallRequest { video, .. }, _) => {
+		(PageOp::CallRequest { video, call_id, .. }, _) => {
 			let shown =
 				buttons.is_some_and(|buttons| if *video { buttons.video } else { buttons.audio });
 			if !shown {
@@ -1404,7 +1066,7 @@ fn call_event(
 					if *video { "video" } else { "audio" }
 				));
 			}
-			Ok(ChatRoomEvent::CallRequested { video: *video })
+			Ok(ChatRoomEvent::CallRequested { video: *video, call_id: call_id.clone() })
 		},
 		(
 			PageOp::CallAnswer { call_id, accept, .. },
@@ -1412,10 +1074,6 @@ fn call_event(
 		) if call_id == ringing => {
 			Ok(ChatRoomEvent::CallAnswered { call_id: call_id.clone(), accept: *accept })
 		},
-		(
-			PageOp::CallOpen { call_id, .. },
-			Some(ChatRoomCall::Active { call_id: active, media_session: None, .. }),
-		) if call_id == active => Ok(ChatRoomEvent::CallOpened { call_id: call_id.clone() }),
 		(PageOp::CallEnd { call_id, .. }, Some(ChatRoomCall::Active { call_id: active, .. }))
 			if call_id == active =>
 		{
@@ -1423,11 +1081,6 @@ fn call_event(
 		},
 		_ => Err("the room shows no such call".to_string()),
 	}
-}
-
-/// One page of search matches, newest first, and the cursor of the next.
-fn search_json(hits: &[ChatMessage], next: Option<String>) -> Value {
-	json!({ "hits": hits.iter().map(message_json).collect::<Vec<_>>(), "next": next })
 }
 
 fn page_json(page: &ProductChatMessagesQueryItem) -> Value {
@@ -1455,78 +1108,13 @@ fn user_action_json(item: &ProductChatUserActionItem) -> Value {
 	}
 }
 
-fn participants_json(item: &ProductChatParticipantsQueryItem) -> Value {
-	let entries =
-		|entries: &[ChatParticipantEntry]| entries.iter().map(participant_json).collect::<Vec<_>>();
-	match item {
-		ProductChatParticipantsQueryItem::Count { count } => {
-			json!({ "type": "Count", "count": count })
-		},
-		ProductChatParticipantsQueryItem::Page { participants, next } => {
-			json!({ "type": "Page", "participants": entries(participants), "next": next })
-		},
-		ProductChatParticipantsQueryItem::Resolved { participants } => {
-			json!({ "type": "Resolved", "participants": entries(participants) })
-		},
-	}
-}
-
-/// The surface view of one participant, with what each kind draws from.
-fn participant_json(entry: &ChatParticipantEntry) -> Value {
-	let hex32 = |bytes: &[u8; 32]| format!("0x{}", hex::encode(bytes));
-	let participant = match &entry.participant {
-		ChatParticipant::Person { person_id } => json!({ "kind": "Person", "personId": person_id }),
-		ChatParticipant::LitePerson { account } => {
-			json!({ "kind": "LitePerson", "account": hex32(account) })
-		},
-		ChatParticipant::Contact { handle } => {
-			json!({ "kind": "Contact", "handle": hex32(&handle.bytes) })
-		},
-		ChatParticipant::Product { product_id } => {
-			json!({ "kind": "Product", "productId": product_id })
-		},
-		ChatParticipant::Custom { nickname, avatar } => json!({
-			"kind": "Custom",
-			"nickname": nickname,
-			"avatar": avatar.as_ref().map(resource_json),
-		}),
-	};
-	json!({ "participantId": entry.participant_id, "participant": participant })
-}
-
-fn product_action_json(action: &ChatProductAction) -> Value {
+fn edit_history_json(item: &ProductChatEditHistoryQueryItem) -> Value {
 	json!({
-		"actionId": action.action_id,
-		"label": action.label,
-		"icon": action.icon.as_ref().map(resource_json),
-		"destructive": action.destructive,
-		"handler": handler_json(&action.handler),
+		"revisions": item.revisions.iter().map(|revision| json!({
+			"editedAt": revision.edited_at,
+			"text": revision.text,
+		})).collect::<Vec<_>>(),
 	})
-}
-
-fn built_in_name(action: &ChatBuiltInMessageAction) -> &'static str {
-	match action {
-		ChatBuiltInMessageAction::Copy => "Copy",
-		ChatBuiltInMessageAction::Reply => "Reply",
-		ChatBuiltInMessageAction::Edit => "Edit",
-		ChatBuiltInMessageAction::Delete => "Delete",
-		ChatBuiltInMessageAction::React => "React",
-		ChatBuiltInMessageAction::Retry => "Retry",
-	}
-}
-
-fn message_menu_json(menu: &ChatMessageMenu) -> Value {
-	match menu {
-		ChatMessageMenu::Custom { actions } => json!({
-			"type": "Custom",
-			"actions": actions.iter().map(product_action_json).collect::<Vec<_>>(),
-		}),
-		ChatMessageMenu::ExtendBuiltIn { actions, hidden } => json!({
-			"type": "ExtendBuiltIn",
-			"actions": actions.iter().map(product_action_json).collect::<Vec<_>>(),
-			"hidden": hidden.iter().map(built_in_name).collect::<Vec<_>>(),
-		}),
-	}
 }
 
 #[cfg(test)]
@@ -1536,9 +1124,9 @@ mod tests {
 	use super::*;
 	use truapi::{
 		latest::{
-			ChatActionHandler, ChatFeedUpdate, ChatMessage, ChatMessageOrigin, ChatMessageStatus,
-			ChatReactionDetail, ChatRoomConfig, ChatRoomMetadata, HostChatCreateRoomRequest,
-			HostChatUpdateFeedRequest,
+			ChatMessage, ChatMessageOrigin, ChatMessageRevision, ChatMessageStatus,
+			ChatReactionDetail, ChatRoomConfig, ChatRoomContact, HostChatCreateRoomRequest,
+			HostChatSetRoomConfigRequest, HostChatSetRoomContactRequest,
 		},
 		platform::{ChatPlatform, ProductContext},
 	};
@@ -1555,15 +1143,9 @@ mod tests {
 		pages: Scripted<ProductChatMessagesQueryItem>,
 		actions: Scripted<ProductChatUserActionItem, ProductChatUserActionError>,
 		reactions: Scripted<ProductChatReactionsQueryItem>,
-		participants: Scripted<ProductChatParticipantsQueryItem>,
-		message_menus: Scripted<ProductChatMessageActionsQueryItem>,
-		searches: Scripted<ProductChatSearchQueryItem>,
+		histories: Scripted<ProductChatEditHistoryQueryItem>,
+		links: Scripted<ProductChatOpenLinkItem>,
 		room_events: Mutex<Vec<HostChatRoomEventsSubscribeItem>>,
-		/// What the worker staged, as `(room, size)`, and the refusal it
-		/// answers instead of a key.
-		staged: Mutex<Vec<(String, usize)>>,
-		sealed: Mutex<Vec<(String, usize)>>,
-		stage_refusal: Mutex<Option<ChatStageRejection>>,
 	}
 
 	fn scripted<Item: Send + 'static, Error: Send + 'static>(
@@ -1580,8 +1162,8 @@ mod tests {
 			self.received.lock().expect("not poisoned").clone()
 		}
 
-		fn events(&self) -> Vec<ChatEvent> {
-			self.received().into_iter().map(|item| item.event).collect()
+		fn payloads(&self) -> Vec<ChatActionPayload> {
+			self.received().into_iter().map(|item| item.payload).collect()
 		}
 
 		fn asked(&self) -> Vec<String> {
@@ -1601,7 +1183,7 @@ mod tests {
 	}
 
 	impl ChatWorker for FakeWorker {
-		fn publish_chat_event(
+		fn publish_chat_action(
 			&self,
 			item: HostChatActionSubscribeItem,
 		) -> Result<(), ProductRuntimeError> {
@@ -1634,20 +1216,20 @@ mod tests {
 			Ok(scripted(&self.reactions))
 		}
 
-		fn participants_query(
+		fn edit_history(
 			&self,
-			request: ProductChatParticipantsQueryRequest,
-		) -> Result<Query<ProductChatParticipantsQueryItem>, ProductRuntimeError> {
+			request: ProductChatEditHistoryQueryRequest,
+		) -> Result<Query<ProductChatEditHistoryQueryItem>, ProductRuntimeError> {
 			self.ask(request);
-			Ok(scripted(&self.participants))
+			Ok(scripted(&self.histories))
 		}
 
-		fn message_actions_query(
+		fn open_link(
 			&self,
-			request: ProductChatMessageActionsQueryRequest,
-		) -> Result<Query<ProductChatMessageActionsQueryItem>, ProductRuntimeError> {
+			request: ProductChatOpenLinkRequest,
+		) -> Result<Query<ProductChatOpenLinkItem>, ProductRuntimeError> {
 			self.ask(request);
-			Ok(scripted(&self.message_menus))
+			Ok(scripted(&self.links))
 		}
 
 		fn publish_chat_room_event(
@@ -1665,43 +1247,13 @@ mod tests {
 			self.ask(reason);
 			Ok(ChatWakeOutcome::Held { until_ms: 30_000 })
 		}
-
-		fn search_query(
-			&self,
-			request: ProductChatSearchQueryRequest,
-		) -> Result<Query<ProductChatSearchQueryItem>, ProductRuntimeError> {
-			self.ask(request);
-			Ok(scripted(&self.searches))
-		}
-
-		fn stage_chat_attachment(
-			&self,
-			room_id: String,
-			_mime_type: String,
-			bytes: Vec<u8>,
-		) -> BoxFuture<'static, Result<Vec<u8>, ChatStageRejection>> {
-			let refusal = self.stage_refusal.lock().expect("not poisoned").clone();
-			if refusal.is_none() {
-				self.staged.lock().expect("not poisoned").push((room_id, bytes.len()));
-			}
-			Box::pin(async move { refusal.map_or(Ok(vec![7; 32]), Err) })
-		}
-
-		fn seal_chat_attachment(
-			&self,
-			room_id: String,
-			bytes: Vec<u8>,
-		) -> BoxFuture<'static, Result<ChatResource, ChatStageRejection>> {
-			self.sealed.lock().expect("not poisoned").push((room_id, bytes.len()));
-			Box::pin(async { Ok(sealed_resource()) })
-		}
 	}
 
 	/// A worker connection the core refuses Chat to.
 	struct DeniedWorker;
 
 	impl ChatWorker for DeniedWorker {
-		fn publish_chat_event(
+		fn publish_chat_action(
 			&self,
 			_item: HostChatActionSubscribeItem,
 		) -> Result<(), ProductRuntimeError> {
@@ -1730,17 +1282,17 @@ mod tests {
 			Err(ProductRuntimeError::Denied)
 		}
 
-		fn participants_query(
+		fn edit_history(
 			&self,
-			_request: ProductChatParticipantsQueryRequest,
-		) -> Result<Query<ProductChatParticipantsQueryItem>, ProductRuntimeError> {
+			_request: ProductChatEditHistoryQueryRequest,
+		) -> Result<Query<ProductChatEditHistoryQueryItem>, ProductRuntimeError> {
 			Err(ProductRuntimeError::Denied)
 		}
 
-		fn message_actions_query(
+		fn open_link(
 			&self,
-			_request: ProductChatMessageActionsQueryRequest,
-		) -> Result<Query<ProductChatMessageActionsQueryItem>, ProductRuntimeError> {
+			_request: ProductChatOpenLinkRequest,
+		) -> Result<Query<ProductChatOpenLinkItem>, ProductRuntimeError> {
 			Err(ProductRuntimeError::Denied)
 		}
 
@@ -1757,30 +1309,6 @@ mod tests {
 		) -> Result<ChatWakeOutcome, ProductRuntimeError> {
 			Err(ProductRuntimeError::Denied)
 		}
-
-		fn search_query(
-			&self,
-			_request: ProductChatSearchQueryRequest,
-		) -> Result<Query<ProductChatSearchQueryItem>, ProductRuntimeError> {
-			Err(ProductRuntimeError::Denied)
-		}
-
-		fn stage_chat_attachment(
-			&self,
-			_room_id: String,
-			_mime_type: String,
-			_bytes: Vec<u8>,
-		) -> BoxFuture<'static, Result<Vec<u8>, ChatStageRejection>> {
-			Box::pin(async { Err(ChatStageRejection::NotDeclared) })
-		}
-
-		fn seal_chat_attachment(
-			&self,
-			_room_id: String,
-			_bytes: Vec<u8>,
-		) -> BoxFuture<'static, Result<ChatResource, ChatStageRejection>> {
-			Box::pin(async { Err(ChatStageRejection::NotDeclared) })
-		}
 	}
 
 	const SHORT: Timeouts = Timeouts {
@@ -1789,25 +1317,15 @@ mod tests {
 		action: Duration::from_millis(300),
 		query: Duration::from_millis(300),
 		retry: Duration::from_millis(20),
-		search: Duration::from_millis(300),
 	};
-
-	fn sealed_resource() -> ChatResource {
-		ChatResource::Sealed {
-			parts: vec![vec![1; 32], vec![2; 32]],
-			key: vec![3; 32],
-			nonce: vec![4; 24],
-			size: 3 * 1024 * 1024 + 16,
-			digest: vec![5; 64],
-		}
-	}
 
 	fn product() -> ProductContext {
 		ProductContext::new("chat.dot".to_string()).expect("valid product id")
 	}
 
 	/// A surface over the room `daily` the host keeps and the room `kept` the
-	/// product keeps and serves every query of.
+	/// product keeps and serves every query of, whose contact `alice` asked
+	/// the user for a chat.
 	fn surface(worker_bundle: Option<PathBuf>) -> Arc<ChatSurface> {
 		let chat = CliChatHost::new(None);
 		let create = |room_id: &str, name: &str, config: ChatRoomConfig| {
@@ -1815,33 +1333,41 @@ mod tests {
 				&product(),
 				HostChatCreateRoomRequest {
 					room_id: room_id.to_string(),
-					metadata: ChatRoomMetadata {
-						name: name.to_string(),
-						avatar: None,
-						description: None,
-					},
-					config,
-					preview: None,
+					name: name.to_string(),
+					icon: String::new(),
 				},
-				String::new(),
 			))
 			.expect("a new room is created");
+			futures::executor::block_on(chat.set_chat_room_config(
+				&product(),
+				HostChatSetRoomConfigRequest { room_id: room_id.to_string(), config },
+			))
+			.expect("the room takes its configuration");
 		};
 		create("daily", "Daily", ChatRoomConfig::default());
 		create(
 			"kept",
 			"Kept",
-			ChatRoomConfig {
-				product_source: true,
-				reaction_details: true,
-				participants: true,
-				message_actions: true,
-				report_seen: true,
-				allowed_reactions: Some(vec!["+1".to_string()]),
-				placeholder: None,
-			},
+			ChatRoomConfig { product_source: true, reaction_details: true, report_seen: true },
 		);
+		set_contact(&chat, ChatContactState::Incoming);
 		ChatSurface::with_timeouts(Arc::clone(&chat), worker_bundle, "chat.dot".to_string(), SHORT)
+	}
+
+	/// Give the room `kept` the contact `alice` in `state`.
+	fn set_contact(chat: &CliChatHost, state: ChatContactState) {
+		futures::executor::block_on(chat.set_chat_room_contact(
+			&product(),
+			HostChatSetRoomContactRequest {
+				room_id: "kept".to_string(),
+				contact: ChatRoomContact {
+					account: [7; 32],
+					username: Some("alice".to_string()),
+					state,
+				},
+			},
+		))
+		.expect("the room exists");
 	}
 
 	fn attach(surface: &Arc<ChatSurface>) -> (Arc<FakeWorker>, WorkerAttachment) {
@@ -1875,13 +1401,15 @@ mod tests {
 			body: ChatMessageBody::Text { text: message_id.to_string() },
 			status: ChatMessageStatus::Sent,
 			reply_to: None,
+			reply_preview: None,
 			edited_at: None,
 			reactions: Vec::new(),
+			request: false,
 		}
 	}
 
-	fn room_event(event: ChatEvent) -> HostChatActionSubscribeItem {
-		HostChatActionSubscribeItem { room_id: "daily".to_string(), peer: PEER.to_string(), event }
+	fn posted_text(text: &str) -> ChatActionPayload {
+		ChatActionPayload::MessagePosted(ChatMessageContent::Text { text: text.to_string() })
 	}
 
 	#[test]
@@ -1900,6 +1428,8 @@ mod tests {
 				room_id: "r".to_string(),
 				text: " hi ".to_string(),
 				reply_to: Some("m1".to_string()),
+				message_id: None,
+				timestamp: None,
 			})
 		);
 		assert_eq!(
@@ -1909,14 +1439,8 @@ mod tests {
 				room_id: "r".to_string(),
 				text: "hi".to_string(),
 				reply_to: None,
-			})
-		);
-		assert_eq!(
-			parse(r#"{"op":"trigger","roomId":"r","messageId":"m1","actionId":"claim"}"#),
-			Some(PageOp::Trigger {
-				room_id: "r".to_string(),
-				message_id: "m1".to_string(),
-				action_id: "claim".to_string(),
+				message_id: None,
+				timestamp: None,
 			})
 		);
 		assert_eq!(
@@ -1944,32 +1468,29 @@ mod tests {
 			})
 		);
 		assert_eq!(
-			parse(
-				r#"{"op":"participants","reqId":4,"roomId":"r","query":{"type":"Page","cursor":"100","pageSize":100}}"#
-			),
-			Some(PageOp::Participants {
+			parse(r#"{"op":"contact","reqId":4,"roomId":"r","action":"accept"}"#),
+			Some(PageOp::Contact {
 				req_id: 4,
 				room_id: "r".to_string(),
-				query: ParticipantsOp::Page { cursor: Some("100".to_string()), page_size: 100 },
+				action: ContactAction::Accept,
 			})
 		);
 		assert_eq!(
-			parse(
-				r#"{"op":"participants","reqId":5,"roomId":"r","query":{"type":"ByIds","participantIds":["p1"]}}"#
-			),
-			Some(PageOp::Participants {
+			parse(r#"{"op":"openLink","reqId":5,"roomId":"r","payload":"contact:0aff"}"#),
+			Some(PageOp::OpenLink {
 				req_id: 5,
 				room_id: "r".to_string(),
-				query: ParticipantsOp::ByIds { participant_ids: vec!["p1".to_string()] },
+				payload: "contact:0aff".to_string(),
 			})
 		);
+		assert!(parse(r#"{"op":"contact","roomId":"r","action":"mute"}"#).is_none());
 		assert!(parse(r#"{"op":"post","roomId":"r"}"#).is_none());
 		assert!(parse(r#"{"op":"messages","roomId":"r","before":true,"pageSize":40}"#).is_none());
 		assert!(parse(r#"{"op":"nope","roomId":"r"}"#).is_none());
 	}
 
 	/// A person's line in a room the host keeps is stored with a host id and
-	/// reaches every worker as `MessagePosted` with that id.
+	/// reaches every worker as `MessagePosted`.
 	#[test]
 	fn a_post_is_stored_and_reaches_every_worker_with_its_id() {
 		let surface = surface(None);
@@ -1986,13 +1507,8 @@ mod tests {
 		assert_eq!(reply["reqId"], 7);
 		assert_eq!(reply["ok"]["workers"], 2);
 		let message_id = reply["ok"]["message"]["messageId"].as_str().expect("an id").to_string();
-		let expected = room_event(ChatEvent::MessagePosted {
-			message_id: message_id.clone(),
-			body: ChatMessageBody::Text { text: " gm\n".to_string() },
-			reply_to: Some("m0".to_string()),
-		});
-		assert_eq!(first.received(), vec![expected.clone()]);
-		assert_eq!(second.received(), vec![expected]);
+		assert_eq!(first.payloads(), vec![posted_text(" gm\n")]);
+		assert_eq!(second.payloads(), vec![posted_text(" gm\n")]);
 		let message = events.try_recv().expect("the message event");
 		assert_eq!(message["message"]["origin"], "user");
 		assert_eq!(message["message"]["messageId"], message_id.as_str());
@@ -2006,45 +1522,16 @@ mod tests {
 		let (gone, attachment) = attach(&surface);
 		drop(attachment);
 
-		let reply =
-			now(&surface, json!({"op":"trigger","roomId":"daily","messageId":"m1","actionId":"a"}));
+		let reply = now(&surface, json!({"op":"post","reqId":1,"roomId":"daily","text":"hi"}));
 
-		assert_eq!(reply["workers"], 1);
+		assert_eq!(reply["ok"]["workers"], 1);
 		assert_eq!(kept.received().len(), 1);
 		assert!(gone.received().is_empty());
 		assert_eq!(surface.connected_workers(), 1);
 	}
 
 	#[test]
-	fn every_event_of_the_screen_carries_what_the_page_sent() {
-		let surface = surface(None);
-		let (worker, _attachment) = attach(&surface);
-		for op in [
-			json!({"op":"trigger","roomId":"daily","messageId":"m4","actionId":"claim"}),
-			json!({"op":"messageAction","roomId":"daily","messageId":"m4","actionId":"act-pin"}),
-		] {
-			assert_eq!(now(&surface, op.clone())["kind"], "delivered", "{op}");
-		}
-		assert_eq!(
-			worker.events(),
-			vec![
-				ChatEvent::ActionTriggered(ActionTrigger {
-					message_id: "m4".to_string(),
-					action_id: "claim".to_string(),
-					payload: None,
-				}),
-				ChatEvent::MessageActionTriggered {
-					message_id: "m4".to_string(),
-					action_id: "act-pin".to_string(),
-				},
-			]
-		);
-		// None of them is a message, so none takes a message id.
-		assert!(surface.chat().observe().0.messages.is_empty());
-	}
-
-	#[test]
-	fn the_users_changes_in_a_room_the_host_keeps_become_events() {
+	fn a_room_the_host_keeps_takes_no_edit_or_reaction_from_the_page() {
 		let surface = surface(None);
 		let (worker, _attachment) = attach(&surface);
 		let posted = now(&surface, json!({"op":"post","reqId":1,"roomId":"daily","text":"hi"}));
@@ -2059,38 +1546,12 @@ mod tests {
 			json!({"op":"react","reqId":3,"roomId":"daily","messageId":id,"emoji":"+1","placed":true}),
 		);
 		let seen = now(&surface, json!({"op":"seen","reqId":4,"roomId":"daily","messageId":id}));
-		let delete =
-			now(&surface, json!({"op":"delete","reqId":5,"roomId":"daily","messageId":id}));
 
-		assert_eq!((edit["kind"].clone(), edit["reqId"].clone()), (json!("delivered"), json!(2)));
-		assert_eq!(react["reqId"], 3);
-		// The room does not ask for seen reports, so the host only keeps it.
-		assert_eq!(seen, json!({"kind":"answer","op":"seen","reqId":4,"ok":{"type":"Kept"}}));
-		assert_eq!(delete["reqId"], 5);
-		assert_eq!(
-			worker.events()[1..],
-			[
-				ChatEvent::UserEdited {
-					message_id: id.clone(),
-					body: ChatMessageBody::Text { text: "hello".to_string() },
-				},
-				ChatEvent::UserReacted {
-					message_id: id.clone(),
-					emoji: "+1".to_string(),
-					placed: true
-				},
-				ChatEvent::UserDeleted { message_id: id.clone() },
-			]
-		);
 		// A refusal names the request it refuses.
-		let refused = now(
-			&surface,
-			json!({"op":"edit","reqId":6,"roomId":"daily","messageId":"nope","text":"x"}),
-		);
-		assert_eq!(refused["kind"], "error");
-		assert_eq!(refused["reqId"], 6);
-		let retry = now(&surface, json!({"op":"retry","reqId":8,"roomId":"daily","messageId":id}));
-		assert_eq!(retry["kind"], "error", "retry belongs to rooms the product keeps");
+		assert_eq!((edit["kind"].clone(), edit["reqId"].clone()), (json!("error"), json!(2)));
+		assert_eq!((react["kind"].clone(), react["reqId"].clone()), (json!("error"), json!(3)));
+		assert_eq!(seen, json!({"kind":"answer","op":"seen","reqId":4,"ok":{"type":"Kept"}}));
+		assert_eq!(worker.payloads(), vec![posted_text("hi")]);
 	}
 
 	#[tokio::test]
@@ -2104,8 +1565,11 @@ mod tests {
 			Ok(ProductChatUserActionItem::MessageCreated(created.clone())),
 		);
 
-		let reply =
-			run(&surface, json!({"op":"post","reqId":9,"roomId":"kept","text":"hello"})).await;
+		let reply = run(
+			&surface,
+			json!({"op":"post","reqId":9,"roomId":"kept","text":"hello","messageId":"kept-u-1","timestamp":1_767_225_600_000u64}),
+		)
+		.await;
 
 		assert_eq!(reply["kind"], "answer");
 		assert_eq!(reply["reqId"], 9);
@@ -2120,6 +1584,8 @@ mod tests {
 					action: ChatUserAction::NewMessage {
 						body: ChatMessageBody::Text { text: "hello".to_string() },
 						reply_to: None,
+						message_id: Some("kept-u-1".to_string()),
+						timestamp: Some(1_767_225_600_000),
 					},
 				}
 			)]
@@ -2206,6 +1672,7 @@ mod tests {
 				reactions: vec![ChatReactionDetail {
 					participant_id: "p1".to_string(),
 					emoji: "+1".to_string(),
+					timestamp: 1,
 				}],
 			}),
 		);
@@ -2220,84 +1687,103 @@ mod tests {
 		assert_eq!(closed["error"]["tag"], "Closed");
 	}
 
+	// The accept banner of an incoming request, and the menu of an
+	// established contact, reach the product as user actions; an action the
+	// state does not offer, or a room without a contact, does not.
 	#[tokio::test]
-	async fn participants_resolve_for_the_page() {
-		use truapi::latest::ChatParticipant;
+	async fn a_contact_action_is_a_user_action_the_state_offers() {
 		let surface = surface(None);
 		let (worker, _attachment) = attach(&surface);
-		FakeWorker::script(
-			&worker.participants,
-			Ok(ProductChatParticipantsQueryItem::Resolved {
-				participants: vec![ChatParticipantEntry {
-					participant_id: "p3".to_string(),
-					participant: ChatParticipant::Contact {
-						handle: truapi::latest::ContactHandle { bytes: [3; 32] },
-					},
-				}],
-			}),
-		);
+		for _ in 0..3 {
+			FakeWorker::script(&worker.actions, Ok(ProductChatUserActionItem::Acknowledged));
+		}
+		let contact = |req_id: u64, room_id: &str, action: &str| json!({"op":"contact","reqId":req_id,"roomId":room_id,"action":action});
 
-		let resolved = run(&surface, json!({"op":"participants","reqId":2,"roomId":"kept","query":{"type":"ByIds","participantIds":["user","p3","product"]}})).await;
-		assert_eq!(resolved["ok"]["type"], "Resolved");
-		assert_eq!(
-			resolved["ok"]["participants"][0],
-			json!({
-				"participantId": "p3",
-				"participant": { "kind": "Contact", "handle": format!("0x{}", "03".repeat(32)) },
-			})
-		);
-		// The reserved ids resolve without a question.
-		assert!(worker.asked()[0].contains(r#"participant_ids: ["p3"]"#), "{:?}", worker.asked());
+		let unblock = now(&surface, contact(1, "kept", "unblock"));
+		assert_eq!((unblock["kind"].clone(), unblock["reqId"].clone()), (json!("error"), json!(1)));
+		assert_eq!(now(&surface, contact(2, "daily", "accept"))["kind"], "error");
+		let accepted = run(&surface, contact(3, "kept", "accept")).await;
+		assert_eq!(accepted["ok"], json!({"type":"Acknowledged"}));
+
+		set_contact(surface.chat(), ChatContactState::Established);
+		assert_eq!(now(&surface, contact(4, "kept", "decline"))["kind"], "error");
+		assert_eq!(run(&surface, contact(5, "kept", "block")).await["op"], "contact");
+		set_contact(surface.chat(), ChatContactState::Blocked);
+		assert_eq!(run(&surface, contact(6, "kept", "unblock")).await["reqId"], 6);
+
+		let asked: Vec<_> = worker.asked();
+		assert_eq!(asked.len(), 3);
+		for (asked, action) in asked.iter().zip(["AcceptRequest", "Block", "Unblock"]) {
+			assert!(asked.ends_with(&format!("action: {action} }}")), "{asked}");
+		}
 	}
 
+	// The edit history of a message is the product's answer, oldest first.
 	#[tokio::test]
-	async fn a_message_menu_is_asked_with_the_message_the_host_holds() {
+	async fn the_edit_history_is_asked_of_the_product() {
 		let surface = surface(None);
 		let (worker, _attachment) = attach(&surface);
-		futures::executor::block_on(surface.chat().update_chat_feed(
-			&product(),
-			HostChatUpdateFeedRequest {
-				room_id: "daily".to_string(),
-				update: ChatFeedUpdate::New(product_message("p-1", "product")),
-			},
-			true,
-		))
-		.expect("stored");
 		FakeWorker::script(
-			&worker.message_menus,
-			Ok(ProductChatMessageActionsQueryItem {
-				menu: ChatMessageMenu::ExtendBuiltIn {
-					actions: vec![ChatProductAction {
-						action_id: "act-report".to_string(),
-						label: "Report".to_string(),
-						icon: None,
-						destructive: true,
-						handler: ChatActionHandler::Deeplink { url: "polkadot://x".to_string() },
-					}],
-					hidden: vec![ChatBuiltInMessageAction::Edit],
-				},
+			&worker.histories,
+			Ok(ProductChatEditHistoryQueryItem {
+				revisions: vec![
+					ChatMessageRevision { edited_at: 1, text: Some("first".to_string()) },
+					ChatMessageRevision { edited_at: 2, text: None },
+				],
 			}),
 		);
 
-		let menu = run(
+		let history =
+			run(&surface, json!({"op":"editHistory","reqId":1,"roomId":"kept","messageId":"s-1"}))
+				.await;
+
+		assert_eq!(
+			history["ok"],
+			json!({"revisions":[{"editedAt":1,"text":"first"},{"editedAt":2,"text":null}]})
+		);
+		assert_eq!(
+			worker.asked(),
+			[format!(
+				"{:?}",
+				ProductChatEditHistoryQueryRequest {
+					room_id: "kept".to_string(),
+					message_id: "s-1".to_string(),
+				}
+			)]
+		);
+	}
+
+	// A link reaches the product with the room the host names, any room, and
+	// the answer names the room the host shows next.
+	#[tokio::test]
+	async fn an_opened_link_is_asked_of_the_product() {
+		let surface = surface(None);
+		let (worker, _attachment) = attach(&surface);
+		FakeWorker::script(
+			&worker.links,
+			Ok(ProductChatOpenLinkItem { room_id: Some("kept".to_string()) }),
+		);
+
+		let opened = run(
 			&surface,
-			json!({"op":"messageActions","reqId":1,"roomId":"daily","messageId":"p-1"}),
+			json!({"op":"openLink","reqId":2,"roomId":"home","payload":"contact:0aff"}),
 		)
 		.await;
 
-		assert_eq!(menu["ok"]["type"], "ExtendBuiltIn");
-		assert_eq!(menu["ok"]["hidden"], json!(["Edit"]));
-		assert_eq!(menu["ok"]["actions"][0]["destructive"], true);
 		assert_eq!(
-			menu["ok"]["actions"][0]["handler"],
-			json!({"type":"Deeplink","url":"polkadot://x"})
+			opened,
+			json!({"kind":"answer","op":"openLink","reqId":2,"ok":{"roomId":"kept"}})
 		);
-		assert!(worker.asked()[0].contains(r#"message_id: "p-1""#));
-		let missing = now(
-			&surface,
-			json!({"op":"messageActions","reqId":2,"roomId":"daily","messageId":"nope"}),
+		assert_eq!(
+			worker.asked(),
+			[format!(
+				"{:?}",
+				ProductChatOpenLinkRequest {
+					room_id: "home".to_string(),
+					payload: "contact:0aff".to_string(),
+				}
+			)]
 		);
-		assert_eq!((missing["kind"].clone(), missing["reqId"].clone()), (json!("error"), json!(2)));
 	}
 
 	#[tokio::test]
@@ -2305,7 +1791,7 @@ mod tests {
 		let surface = surface(None);
 		let (worker, _attachment) = attach(&surface);
 		surface.chat().cache_page("kept", &[product_message("s-1", "user")]);
-		for _ in 0..4 {
+		for _ in 0..3 {
 			FakeWorker::script(&worker.actions, Ok(ProductChatUserActionItem::Acknowledged));
 		}
 
@@ -2316,28 +1802,20 @@ mod tests {
 		.await;
 		let seen =
 			run(&surface, json!({"op":"seen","reqId":2,"roomId":"kept","messageId":"s-1"})).await;
-		let retry =
-			run(&surface, json!({"op":"retry","reqId":3,"roomId":"kept","messageId":"s-1"})).await;
 		let edit = run(
 			&surface,
 			json!({"op":"edit","reqId":4,"roomId":"kept","messageId":"s-1","text":"new"}),
 		)
 		.await;
-		let refused = now(
-			&surface,
-			json!({"op":"react","reqId":5,"roomId":"kept","messageId":"s-1","emoji":"-1","placed":true}),
-		);
 
-		for reply in [&react, &seen, &retry, &edit] {
+		for reply in [&react, &seen, &edit] {
 			assert_eq!(reply["ok"], json!({"type":"Acknowledged"}), "{reply}");
 		}
-		assert_eq!(refused["kind"], "error", "the room offers only +1");
 		let actions: Vec<_> = worker.asked();
-		assert_eq!(actions.len(), 4);
+		assert_eq!(actions.len(), 3);
 		assert!(actions[0].contains("ReactionPlaced"));
 		assert!(actions[1].contains("Seen"));
-		assert!(actions[2].contains("Retry"));
-		assert!(actions[3].contains("EditMessage"));
+		assert!(actions[2].contains("EditMessage"));
 		let cached = surface.chat().message("kept", "s-1").expect("cached");
 		assert_eq!(cached.body, ChatMessageBody::Text { text: "new".to_string() });
 		assert!(cached.reactions[0].reacted_by_user);
@@ -2372,31 +1850,25 @@ mod tests {
 
 		let ask = json!({"op":"messages","reqId":41,"roomId":"kept","before":true,"pageSize":40});
 		page.send(Message::Text(ask.to_string())).await?;
-		let press = json!({"op":"trigger","roomId":"kept","messageId":"h-9","actionId":"go"});
-		page.send(Message::Text(press.to_string())).await?;
+		let post = json!({"op":"post","reqId":42,"roomId":"daily","text":"go"});
+		page.send(Message::Text(post.to_string())).await?;
+		let answer = |frames: &[Value], req_id: u64| {
+			frames
+				.iter()
+				.find(|frame| frame["kind"] == "answer" && frame["reqId"] == req_id)
+				.cloned()
+		};
 		let mut frames = Vec::new();
-		while frames.len() < 2 {
+		while answer(&frames, 41).is_none() || answer(&frames, 42).is_none() {
 			match page.next().await {
 				Some(Ok(Message::Text(text))) => frames.push(serde_json::from_str::<Value>(&text)?),
 				other => panic!("expected a frame, got {other:?}"),
 			}
 		}
-		let answer = frames.iter().find(|frame| frame["kind"] == "answer").expect("the answer");
-		assert_eq!(answer["reqId"], 41);
-		assert_eq!(answer["ok"]["messages"][0]["messageId"], "h-9");
-		assert!(
-			frames
-				.iter()
-				.any(|frame| frame["kind"] == "delivered" && frame["op"] == "trigger")
-		);
-		assert_eq!(
-			worker.events(),
-			vec![ChatEvent::ActionTriggered(ActionTrigger {
-				message_id: "h-9".to_string(),
-				action_id: "go".to_string(),
-				payload: None,
-			})]
-		);
+		let page_answer = answer(&frames, 41).expect("the answer");
+		assert_eq!(page_answer["ok"]["messages"][0]["messageId"], "h-9");
+		assert_eq!(answer(&frames, 42).expect("the answer")["ok"]["workers"], 1);
+		assert_eq!(worker.payloads(), vec![posted_text("go")]);
 
 		page.close(None).await?;
 		tokio::time::timeout(Duration::from_secs(1), server).await???;
@@ -2410,7 +1882,7 @@ mod tests {
 
 		for op in [
 			json!({"op":"post","roomId":"nope","text":"hi"}),
-			json!({"op":"trigger","roomId":"nope","messageId":"m1","actionId":"a"}),
+			json!({"op":"react","reqId":2,"roomId":"nope","messageId":"m1","emoji":"+1","placed":true}),
 			json!({"op":"messages","reqId":1,"roomId":"nope","before":true,"pageSize":40}),
 		] {
 			let reply = now(&surface, op.clone());
@@ -2428,13 +1900,13 @@ mod tests {
 	#[test]
 	fn delivered_counts_only_live_workers() {
 		let surface = surface(None);
-		let press = json!({"op":"trigger","roomId":"daily","messageId":"m1","actionId":"a"});
-		let reply = now(&surface, press.clone());
-		assert_eq!(reply, json!({"kind": "delivered", "op": "trigger", "workers": 0}));
+		let post = || json!({"op":"post","reqId":1,"roomId":"daily","text":"hi"});
+		let reply = now(&surface, post());
+		assert_eq!(reply["ok"]["workers"], 0);
 
 		let denied: Arc<dyn ChatWorker> = Arc::new(DeniedWorker);
 		let _denied = surface.attach_worker(&denied);
-		let reply = now(&surface, press);
+		let reply = now(&surface, post());
 		assert_eq!(reply["kind"], "error");
 		assert_eq!(reply["message"], ProductRuntimeError::Denied.to_string().as_str());
 	}
@@ -2484,8 +1956,7 @@ mod tests {
 		Ok(())
 	}
 
-	// S49: the page shows the features the host lists, as a product reads
-	// them from `capabilities`.
+	// S49: the page shows the features the host lists to the core.
 	#[test]
 	fn the_snapshot_lists_the_capabilities_of_the_page() {
 		let surface = surface(None);
@@ -2493,166 +1964,11 @@ mod tests {
 
 		assert_eq!(
 			surface.snapshot(snapshot, 0)["capabilities"],
-			json!({
-				"features": crate::chat::CLI_CHAT_FEATURES,
-				"inlineAttachmentMaxBytes": 1024 * 1024,
-				"preimageAttachmentMaxBytes": 8 * 1024 * 1024,
-				"sealedAttachmentMaxBytes": 32 * 1024 * 1024,
-			})
+			json!({ "features": crate::chat::CLI_CHAT_FEATURES })
 		);
 	}
 
-	// S57: an attachment up to the inline bound travels inline; one above it
-	// is staged through the worker's core and travels as its preimage key.
-	#[tokio::test]
-	async fn an_attachment_above_the_inline_bound_is_staged() {
-		let surface = surface(None);
-		let (worker, _attachment) = attach(&surface);
-		let attach_op = |size: usize| {
-			json!({
-				"op": "attach", "reqId": 4, "roomId": "daily", "kind": "File",
-				"mimeType": "application/pdf", "fileName": "big.pdf",
-				"data": BASE64.encode(vec![1u8; size]),
-			})
-		};
-
-		let small = run(&surface, attach_op(1024)).await;
-		let large = run(&surface, attach_op(3 * 1024 * 1024)).await;
-
-		assert_eq!(small["ok"]["message"]["body"]["media"][0]["resource"]["type"], "Inline");
-		assert_eq!(
-			large["ok"]["message"]["body"]["media"][0]["resource"],
-			json!({ "type": "Preimage", "key": format!("0x{}", "07".repeat(32)) })
-		);
-		assert_eq!(
-			large["ok"]["message"]["body"]["media"][0]["meta"]["sizeBytes"],
-			3 * 1024 * 1024
-		);
-		assert_eq!(
-			*worker.staged.lock().expect("not poisoned"),
-			[("daily".to_string(), 3 * 1024 * 1024)]
-		);
-		let posted: Vec<_> = worker
-			.events()
-			.into_iter()
-			.filter(|event| matches!(event, ChatEvent::MessagePosted { .. }))
-			.collect();
-		assert_eq!(posted.len(), 2, "both attachments reach the product");
-	}
-
-	// A room that declares `sealed_attachments` gets an attachment above the
-	// inline bound as its sealed parts, and the page never sees the key.
-	#[tokio::test]
-	async fn a_room_that_seals_sends_the_sealed_parts_without_the_key() {
-		let surface = surface(None);
-		let (worker, _attachment) = attach(&surface);
-		futures::executor::block_on(surface.chat().set_chat_room_features(
-			&product(),
-			truapi::latest::HostChatSetRoomFeaturesRequest {
-				room_id: "daily".to_string(),
-				features: truapi::latest::ChatRoomFeatures {
-					sealed_attachments: true,
-					..Default::default()
-				},
-			},
-		))
-		.expect("the room exists");
-
-		let large = run(
-			&surface,
-			json!({
-				"op": "attach", "reqId": 4, "roomId": "daily", "kind": "Image",
-				"mimeType": "image/jpeg", "fileName": "big.jpg",
-				"data": BASE64.encode(vec![1u8; 3 * 1024 * 1024]),
-			}),
-		)
-		.await;
-
-		assert_eq!(
-			large["ok"]["message"]["body"]["media"][0]["resource"],
-			json!({
-				"type": "Sealed",
-				"size": 3 * 1024 * 1024 + 16,
-				"parts": [format!("0x{}", "01".repeat(32)), format!("0x{}", "02".repeat(32))],
-			})
-		);
-		assert_eq!(
-			*worker.sealed.lock().expect("not poisoned"),
-			[("daily".to_string(), 3 * 1024 * 1024)]
-		);
-		assert!(worker.staged.lock().expect("not poisoned").is_empty());
-	}
-
-	// S61: the host searches a room it keeps itself, case and diacritics
-	// ignored, newest first; S62: a room the product keeps asks the product.
-	#[tokio::test]
-	async fn a_search_reads_the_store_or_asks_the_product() {
-		let surface = surface(None);
-		let (worker, _attachment) = attach(&surface);
-		for text in ["Café au lait", "plain", "CAFE noir"] {
-			surface
-				.chat()
-				.post_user_message("daily", ChatMessageBody::Text { text: text.to_string() }, None)
-				.expect("stored");
-		}
-
-		let stored = now(&surface, json!({"op":"search","reqId":1,"roomId":"daily","text":"cafe"}));
-		let texts: Vec<_> = stored["ok"]["hits"]
-			.as_array()
-			.expect("hits")
-			.iter()
-			.map(|hit| hit["body"]["text"].clone())
-			.collect();
-		assert_eq!(texts, [json!("CAFE noir"), json!("Café au lait")]);
-		assert_eq!(stored["ok"]["next"], Value::Null);
-		assert!(worker.asked().is_empty(), "the host asks no product for its own store");
-
-		FakeWorker::script(
-			&worker.searches,
-			Ok(ProductChatSearchQueryItem {
-				hits: vec![product_message("kept-9", "product")],
-				next: Some("8".to_string()),
-			}),
-		);
-		let kept = run(&surface, json!({"op":"search","reqId":2,"roomId":"kept","text":"x"})).await;
-		assert_eq!(kept["ok"]["hits"][0]["messageId"], "kept-9");
-		assert_eq!(kept["ok"]["next"], "8");
-		assert_eq!(
-			worker.asked(),
-			vec![format!(
-				"{:?}",
-				ProductChatSearchQueryRequest {
-					room_id: "kept".to_string(),
-					text: "x".to_string(),
-					cursor: None,
-					page_size: 30,
-				}
-			)]
-		);
-	}
-
-	// S58: a staging refusal posts nothing and tells the page why.
-	#[tokio::test]
-	async fn a_refused_staging_posts_nothing() {
-		let surface = surface(None);
-		let (worker, _attachment) = attach(&surface);
-		*worker.stage_refusal.lock().expect("not poisoned") = Some(ChatStageRejection::NotDeclared);
-		let op = json!({
-			"op": "attach", "reqId": 5, "roomId": "daily", "kind": "Image",
-			"mimeType": "image/png", "data": BASE64.encode(vec![1u8; 2 * 1024 * 1024]),
-		});
-
-		let reply = run(&surface, op).await;
-
-		assert_eq!(
-			reply["error"],
-			json!({ "tag": "Refused", "reason": "not staged: the room does not declare preimage attachments" })
-		);
-		assert!(worker.events().is_empty());
-		assert!(surface.chat().observe().0.messages.is_empty());
-	}
-
-	// S70: the page's Wake is a notification wake of watch `dev`.
+	// S70: the page's Wake is a notification wake of the room.
 	#[test]
 	fn the_wake_button_wakes_the_product_for_the_room() {
 		let surface = surface(None);
@@ -2664,18 +1980,12 @@ mod tests {
 		assert_eq!(reply["ok"], json!({ "type": "Held", "untilMs": 30_000 }));
 		assert_eq!(
 			worker.asked(),
-			[format!(
-				"{:?}",
-				ChatWakeReason::Notification {
-					room_id: "daily".to_string(),
-					watch_id: "dev".to_string()
-				}
-			)]
+			[format!("{:?}", ChatWakeReason::Notification { room_id: "daily".to_string() })]
 		);
 	}
 
-	// S72 to S74: a call button, an answer, the call bar and End reach the
-	// product only where the room shows them.
+	// S72 to S74: a call button, an answer and End reach the product only
+	// where the room shows them.
 	#[test]
 	fn the_call_controls_of_a_room_reach_the_product() {
 		let surface = surface(None);
@@ -2702,7 +2012,10 @@ mod tests {
 		))
 		.expect("the room exists");
 		assert_eq!(op(json!({"op":"callRequest","roomId":"daily","video":true})), "error");
-		assert_eq!(op(json!({"op":"callRequest","roomId":"daily","video":false})), "delivered");
+		assert_eq!(
+			op(json!({"op":"callRequest","roomId":"daily","video":false,"callId":"c1"})),
+			"delivered"
+		);
 		declare(Some(ChatRoomCall::Ringing {
 			call_id: "c1".to_string(),
 			video: false,
@@ -2716,9 +2029,7 @@ mod tests {
 			call_id: "c1".to_string(),
 			video: false,
 			started_at: 1,
-			media_session: None,
 		}));
-		assert_eq!(op(json!({"op":"callOpen","roomId":"daily","callId":"c1"})), "delivered");
 		assert_eq!(op(json!({"op":"callEnd","roomId":"daily","callId":"c2"})), "error");
 		assert_eq!(op(json!({"op":"callEnd","roomId":"daily","callId":"c1"})), "delivered");
 
@@ -2732,46 +2043,9 @@ mod tests {
 		assert_eq!(
 			events,
 			[
-				ChatRoomEvent::CallRequested { video: false },
+				ChatRoomEvent::CallRequested { video: false, call_id: Some("c1".to_string()) },
 				ChatRoomEvent::CallAnswered { call_id: "c1".to_string(), accept: true },
-				ChatRoomEvent::CallOpened { call_id: "c1".to_string() },
 				ChatRoomEvent::CallEnded { call_id: "c1".to_string() },
-			]
-		);
-	}
-
-	#[test]
-	fn the_user_state_of_a_room_reaches_the_product() {
-		let surface = surface(None);
-		let op = json!({"op":"userState","roomId":"daily","mutedUntil":5,"archived":true});
-
-		// Without a worker the state is kept and the page hears why the
-		// product did not.
-		assert_eq!(now(&surface, op.clone())["kind"], "error");
-		assert_eq!(surface.chat().user_states().len(), 1);
-
-		let (worker, _attachment) = attach(&surface);
-		assert_eq!(now(&surface, op)["kind"], "delivered");
-		// A page cannot write `u64::MAX` as a JSON number, so it asks for a
-		// mute with no end by name.
-		let forever =
-			json!({"op":"userState","roomId":"daily","mutedForever":true,"archived":false});
-		assert_eq!(now(&surface, forever)["kind"], "delivered");
-		assert_eq!(surface.chat().user_states()[0].muted_until, Some(u64::MAX));
-		assert_eq!(
-			*worker.room_events.lock().expect("not poisoned"),
-			[
-				HostChatRoomEventsSubscribeItem {
-					room_id: "daily".to_string(),
-					event: ChatRoomEvent::UserStateChanged { muted_until: Some(5), archived: true },
-				},
-				HostChatRoomEventsSubscribeItem {
-					room_id: "daily".to_string(),
-					event: ChatRoomEvent::UserStateChanged {
-						muted_until: Some(u64::MAX),
-						archived: false,
-					},
-				},
 			]
 		);
 	}

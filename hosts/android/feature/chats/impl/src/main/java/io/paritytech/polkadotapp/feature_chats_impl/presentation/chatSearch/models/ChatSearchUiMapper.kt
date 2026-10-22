@@ -123,7 +123,8 @@ private fun Chat?.toRowStatus(): ChatSearchRowStatus {
     if (this == null) return NoRowStatus
 
     return ChatSearchRowStatus(
-        isMuted = roomPolicy?.userState?.isMutedAt(System.currentTimeMillis()) == true,
+        // TODO: wire mute state from domain Chat once the field exists — mirrors ChatListViewModel.
+        isMuted = false,
         hasReaction = hasUnseenReaction,
         badge = unreadBadge.toBadgeUi(),
     )
@@ -131,9 +132,7 @@ private fun Chat?.toRowStatus(): ChatSearchRowStatus {
 
 private fun ChatSummaryBadge.toBadgeUi(): ChatListUiState.Badge {
     return when (this) {
-        // A search row does not load images, so a product badge image shows as no badge.
         is ChatSummaryBadge.Notification,
-        is ChatSummaryBadge.Image,
         is ChatSummaryBadge.None -> ChatListUiState.Badge.None
 
         is ChatSummaryBadge.Unread -> ChatListUiState.Badge.Unread(count)

@@ -8,7 +8,7 @@ import TrUAPIHost
 /// The room screen holds the worker of its product while it shows a room, and each query holds it while it runs
 /// (P5.4, 02-DESIGN §8.4 and D10; scenario S24).
 struct TrUAPIChatHandlerRoomTests {
-    private let product: ProductId = "test.dot"
+    private let product: ProductId = "chat.dot"
     private let execution = MockProductExecution()
 
     @Test func anOpenHoldsTheWorker() async throws {
@@ -19,7 +19,7 @@ struct TrUAPIChatHandlerRoomTests {
 
         #expect(workers.references.acquired == [product])
         #expect(workers.references.released.isEmpty)
-        #expect(execution.publishedChatEvents.isEmpty)
+        #expect(execution.publishedChatActions.isEmpty)
 
         await handler.dispose()
     }
@@ -31,7 +31,7 @@ struct TrUAPIChatHandlerRoomTests {
         try await handler.open(roomId: "source")
         await handler.close(roomId: "source")
 
-        #expect(execution.publishedChatEvents.isEmpty)
+        #expect(execution.publishedChatActions.isEmpty)
         #expect(workers.references.log == ["acquire \(product)", "release \(product)"])
 
         await handler.dispose()
@@ -44,7 +44,7 @@ struct TrUAPIChatHandlerRoomTests {
 
         await handler.close(roomId: "source")
 
-        #expect(execution.publishedChatEvents.isEmpty)
+        #expect(execution.publishedChatActions.isEmpty)
         #expect(workers.references.released.isEmpty)
 
         await handler.dispose()
@@ -78,7 +78,7 @@ struct TrUAPIChatHandlerRoomTests {
         await handler.close(roomId: "source")
 
         #expect(workers.references.log == ["acquire \(product)", "release \(product)"])
-        #expect(execution.publishedChatEvents.isEmpty)
+        #expect(execution.publishedChatActions.isEmpty)
 
         await handler.dispose()
     }
@@ -124,7 +124,7 @@ struct TrUAPIChatHandlerRoomTests {
         let workers = runningWorkers()
         let handler = makeHandler(workers)
         execution.userActionAnswer = .failure(ChatQueryError.actionRefused(.rejected(reason: "no")))
-        let action = ChatUserAction.newMessage(body: .text(text: "hi"), replyTo: nil)
+        let action = ChatUserAction.newMessage(body: .text(text: "hi"), replyTo: nil, messageId: nil, timestamp: nil)
 
         await #expect(throws: ChatQueryError.actionRefused(.rejected(reason: "no"))) {
             try await handler.userAction(ProductChatUserActionRequest(roomId: "source", action: action))

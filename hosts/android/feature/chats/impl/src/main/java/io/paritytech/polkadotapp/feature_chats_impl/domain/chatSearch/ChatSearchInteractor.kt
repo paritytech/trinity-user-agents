@@ -12,7 +12,6 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.Chat
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatMessageSearchHit
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.RecentChat
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.StartChatData
-import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicy
 import io.paritytech.polkadotapp.feature_chats_impl.domain.search.CompoundChatSearchResultProvider
 import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.StartChatDataUseCase
 import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.SubscribeActiveChatsUseCase
@@ -46,12 +45,13 @@ class RealChatSearchInteractor @Inject constructor(
     private val compoundChatSearchResultProvider: CompoundChatSearchResultProvider,
     private val startChatDataUseCase: StartChatDataUseCase,
     private val chatSearchRecentsRepository: ChatSearchRecentsRepository,
+    private val productRoomMessageSearch: ProductRoomMessageSearch,
 ) : ChatSearchInteractor {
     context(scope: ComputationalScope)
     override fun subscribeChats(): Flow<List<Chat>> = subscribeActiveChats()
 
     override suspend fun search(query: String, chats: List<Chat>): Result<List<ChatListSearchResult>> = coroutineScope {
-        val messagesDeferred = async { searchMessages(query, chats.hostStoreChatIds()) }
+        val messagesDeferred = async { searchMessages(query, chats.map { it.id }) }
         val appsDeferred = async { searchApps(query) }
 
         val messageHits = messagesDeferred.await().logFailure("ChatSearch.messages")
@@ -84,21 +84,25 @@ class RealChatSearchInteractor @Inject constructor(
         chatSearchRecentsRepository.clearRecents()
     }
 
+    // The product keeps the messages of its person chats, so it searches them; together the hits keep the native order.
     private suspend fun searchMessages(query: String, chatIds: List<ChatId>): Result<List<ChatMessageSearchHit>> {
-        return chatMessageRepository.searchMessages(query, chatIds)
+        val productRooms = productRoomMessageSearch.productRooms(chatIds)
+        if (productRooms.isEmpty()) return chatMessageRepository.searchMessages(query, chatIds)
+
+        return coroutineScope {
+            val productHits = async { productRoomMessageSearch.search(query, productRooms, ChatMessageRepository.MESSAGE_SEARCH_LIMIT) }
+            chatMessageRepository.searchMessages(query, chatIds - productRooms.toSet()).map { hostHits ->
+                (hostHits + productHits.await())
+                    .sortedByDescending { it.timestamp }
+                    .take(ChatMessageRepository.MESSAGE_SEARCH_LIMIT)
+            }
+        }
     }
 
     private suspend fun searchApps(query: String): List<ChatListSearchResult.App> {
         return compoundChatSearchResultProvider.search(query)
     }
 }
-
-/**
- * The chats whose messages the host keeps. A room whose product keeps the messages matches by its title only, so
- * the list search never asks a product and never starts its worker (D29).
- */
-internal fun List<Chat>.hostStoreChatIds(): List<ChatId> =
-    filter { it.roomPolicy?.messageStore != ChatRoomPolicy.MessageStore.PRODUCT }.map { it.id }
 
 internal fun mergeChatSearchResults(
     query: String,

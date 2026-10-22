@@ -41,8 +41,7 @@ fun ChatMessage.toLocal(
         content = contentData,
         chatId = chatId.toLocal(),
         replyToMessageId = replyToMessageId,
-        isInternal = content.isInternal(),
-        originParticipantId = originParticipantId,
+        isInternal = content.isInternal()
     )
 }
 
@@ -73,8 +72,7 @@ fun ChatMessageLocal.toDomain(
         origin = origin.toDomain(),
         content = content.toDomain(customContentDecoder),
         status = status.toDomain(),
-        replyToMessageId = replyToMessageId,
-        originParticipantId = originParticipantId,
+        replyToMessageId = replyToMessageId
     )
 }
 
@@ -134,7 +132,7 @@ internal fun ChatMessage.Content.toLocalType(): ChatMessageLocal.Type {
         is ChatMessage.Content.CompactionCommit -> ChatMessageLocal.Type.COMPACTION_COMMIT
         is ChatMessage.Content.CompactionUnavailable -> ChatMessageLocal.Type.COMPACTION_UNAVAILABLE
         is ChatMessage.Content.ProductBody -> ChatMessageLocal.Type.PRODUCT_BODY
-        is ChatMessage.Content.Deleted -> ChatMessageLocal.Type.DELETED
+        is ChatMessage.Content.ContactCall -> ChatMessageLocal.Type.CONTACT_CALL
     }
 }
 
@@ -163,7 +161,7 @@ internal fun KClass<out ChatMessage.Content>.toLocalType(): ChatMessageLocal.Typ
         ChatMessage.Content.CompactionCommit::class -> ChatMessageLocal.Type.COMPACTION_COMMIT
         ChatMessage.Content.CompactionUnavailable::class -> ChatMessageLocal.Type.COMPACTION_UNAVAILABLE
         ChatMessage.Content.ProductBody::class -> ChatMessageLocal.Type.PRODUCT_BODY
-        ChatMessage.Content.Deleted::class -> ChatMessageLocal.Type.DELETED
+        ChatMessage.Content.ContactCall::class -> ChatMessageLocal.Type.CONTACT_CALL
         else -> error("Unknown content type: $this")
     }
 }
@@ -194,7 +192,7 @@ internal fun ChatMessage.Content.toSearchableContent(): String {
         is ChatMessage.Content.DeviceChatAccepted,
         is ChatMessage.Content.CompactionCommit,
         is ChatMessage.Content.CompactionUnavailable,
-        ChatMessage.Content.Deleted -> ""
+        is ChatMessage.Content.ContactCall -> ""
     }
 }
 

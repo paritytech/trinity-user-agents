@@ -302,24 +302,6 @@ pub const CHAT_REACTIONS_QUERY: MethodIds = MethodIds {
     method_id: 18,
 };
 
-/// Wire discriminants for `chat_participants_query`.
-pub const CHAT_PARTICIPANTS_QUERY: MethodIds = MethodIds {
-    trait_id: 4,
-    method_id: 19,
-};
-
-/// Wire discriminants for `chat_message_actions_query`.
-pub const CHAT_MESSAGE_ACTIONS_QUERY: MethodIds = MethodIds {
-    trait_id: 4,
-    method_id: 20,
-};
-
-/// Wire discriminants for `chat_capabilities`.
-pub const CHAT_CAPABILITIES: MethodIds = MethodIds {
-    trait_id: 4,
-    method_id: 22,
-};
-
 /// Wire discriminants for `chat_set_room_features`.
 pub const CHAT_SET_ROOM_FEATURES: MethodIds = MethodIds {
     trait_id: 4,
@@ -348,6 +330,24 @@ pub const CHAT_SEARCH_QUERY: MethodIds = MethodIds {
 pub const CHAT_OPEN_LINK: MethodIds = MethodIds {
     trait_id: 4,
     method_id: 28,
+};
+
+/// Wire discriminants for `chat_set_room_contact`.
+pub const CHAT_SET_ROOM_CONTACT: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 29,
+};
+
+/// Wire discriminants for `chat_edit_history`.
+pub const CHAT_EDIT_HISTORY: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 30,
+};
+
+/// Wire discriminants for `chat_set_room_config`.
+pub const CHAT_SET_ROOM_CONFIG: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 31,
 };
 
 /// Wire discriminants for `coin_payment_create_purse`.
@@ -638,12 +638,6 @@ pub const WORKER_END_OPERATION: MethodIds = MethodIds {
     method_id: 1,
 };
 
-/// Wire discriminants for `worker_set_wake_watches`.
-pub const WORKER_SET_WAKE_WATCHES: MethodIds = MethodIds {
-    trait_id: 19,
-    method_id: 2,
-};
-
 /// Wire discriminants for `contacts_pick`.
 pub const CONTACTS_PICK: MethodIds = MethodIds {
     trait_id: 20,
@@ -756,12 +750,6 @@ pub const NFT_PURSE_REFUND: MethodIds = MethodIds {
 pub const NFT_PURSE_TRANSFER_ITEM: MethodIds = MethodIds {
     trait_id: 26,
     method_id: 11,
-};
-
-/// Wire discriminants for `usernames_search`.
-pub const USERNAMES_SEARCH: MethodIds = MethodIds {
-    trait_id: 27,
-    method_id: 0,
 };
 
 /// Wire discriminants for `call_media_start`.
@@ -1049,18 +1037,6 @@ pub const WIRE_TABLE: &[WireEntry] = &[
         kind: WireKind::Subscription(CHAT_REACTIONS_QUERY),
     },
     WireEntry {
-        method: "chat_participants_query",
-        kind: WireKind::Subscription(CHAT_PARTICIPANTS_QUERY),
-    },
-    WireEntry {
-        method: "chat_message_actions_query",
-        kind: WireKind::Subscription(CHAT_MESSAGE_ACTIONS_QUERY),
-    },
-    WireEntry {
-        method: "chat_capabilities",
-        kind: WireKind::Request(CHAT_CAPABILITIES),
-    },
-    WireEntry {
         method: "chat_set_room_features",
         kind: WireKind::Request(CHAT_SET_ROOM_FEATURES),
     },
@@ -1079,6 +1055,18 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "chat_open_link",
         kind: WireKind::Subscription(CHAT_OPEN_LINK),
+    },
+    WireEntry {
+        method: "chat_set_room_contact",
+        kind: WireKind::Request(CHAT_SET_ROOM_CONTACT),
+    },
+    WireEntry {
+        method: "chat_edit_history",
+        kind: WireKind::Subscription(CHAT_EDIT_HISTORY),
+    },
+    WireEntry {
+        method: "chat_set_room_config",
+        kind: WireKind::Request(CHAT_SET_ROOM_CONFIG),
     },
     WireEntry {
         method: "coin_payment_create_purse",
@@ -1273,10 +1261,6 @@ pub const WIRE_TABLE: &[WireEntry] = &[
         kind: WireKind::Request(WORKER_END_OPERATION),
     },
     WireEntry {
-        method: "worker_set_wake_watches",
-        kind: WireKind::Request(WORKER_SET_WAKE_WATCHES),
-    },
-    WireEntry {
         method: "contacts_pick",
         kind: WireKind::Request(CONTACTS_PICK),
     },
@@ -1351,10 +1335,6 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "nft_purse_transfer_item",
         kind: WireKind::Subscription(NFT_PURSE_TRANSFER_ITEM),
-    },
-    WireEntry {
-        method: "usernames_search",
-        kind: WireKind::Request(USERNAMES_SEARCH),
     },
     WireEntry {
         method: "call_media_start",

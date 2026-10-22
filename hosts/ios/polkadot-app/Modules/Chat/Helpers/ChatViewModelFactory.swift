@@ -39,13 +39,8 @@ final class ChatViewModelFactory {
     let attachmentViewModelFactory: ChatAttachmentViewModelMaking
     let productRepository: AnyDataProviderRepository<Product>
     let productNameCache: ProductNameCaching
-    let productMediaLoader: ChatImageLoader
-    /// Gives the poster of a video of a product body.
-    let productPosterLoader: ChatImageLoader
     let flowState: SPAFlowState
     let logger: LoggerProtocol
-    /// The parts of a product room that its product declares. Nil for a person chat.
-    weak var productRoom: ChatProductRoomPresenter?
 
     init(
         timeFormatter: TimestampFormatting = MessageTimestampFormatter(),
@@ -56,8 +51,6 @@ final class ChatViewModelFactory {
         attachmentViewModelFactory: ChatAttachmentViewModelMaking,
         productRepository: AnyDataProviderRepository<Product>,
         productNameCache: ProductNameCaching,
-        productMediaLoader: ChatImageLoader = .resources(),
-        productPosterLoader: ChatImageLoader = .videoPosters(),
         flowState: SPAFlowState,
         logger: LoggerProtocol = Logger.shared
     ) {
@@ -68,8 +61,6 @@ final class ChatViewModelFactory {
         self.attachmentViewModelFactory = attachmentViewModelFactory
         self.productRepository = productRepository
         self.productNameCache = productNameCache
-        self.productMediaLoader = productMediaLoader
-        self.productPosterLoader = productPosterLoader
         self.flowState = flowState
         self.logger = logger
         customDecodersById = customDecoders.reduce(into: [:]) {
@@ -85,12 +76,7 @@ extension ChatViewModelFactory: ChatViewModelMaking {
         actions: ChatViewModelActions,
         footerConfiguration: (any HashableContentConfiguration)?
     ) -> ChatViewLayout.ViewModel {
-        let headerMetadata = MainActor.assumeIsolated {
-            productRoom?.update(listModel: model, metadata: metadata)
-            return productRoomHeaderMetadata(metadata.chatMetadata)
-        }
-
-        let headerConfiguration = headerMetadata.chatContactInfo(
+        let headerConfiguration = metadata.chatMetadata.chatContactInfo(
             iconViewModelFactory: flowState.iconViewModelFactory
         )
 
@@ -118,14 +104,8 @@ extension ChatViewModelFactory: ChatViewModelMaking {
             scrollDownConfiguration: scrollDownConfiguration,
             scrollToReactionConfiguration: scrollToReactionConfiguration,
             sections: sections,
-            footerConfiguration: footerConfiguration,
-            placeholderText: productRoomPlaceholder(model: model, metadata: metadata, sections: sections)
+            footerConfiguration: footerConfiguration
         )
-    }
-
-    /// A product room shows the text of its product, or the host text, while it has no messages.
-    func placeholderText(for chatMetadata: ChatMetadata) -> String? {
-        chatMetadata.roomPolicy.map { $0.placeholder ?? String(localized: .ChatExtension.roomPlaceholder) }
     }
 
     func transferPreviewText(
@@ -148,8 +128,7 @@ extension ChatViewModelFactory: ChatViewModelMaking {
         case .token,
              .reacted,
              .reactionRemoved,
-             .edited,
-             .deleted:
+             .edited:
             return false
 
         case .call(.offer):
@@ -251,14 +230,16 @@ private extension ChatViewModelFactory {
             let reactions = model.reactionsByMessageId[message.messageId].map { convertToReactionViewModels($0) } ?? []
             let layoutContext = layoutContexts[message.messageId] ?? .standard
 
-            result.append(contentsOf: addingAuthor(of: message, to: convert(
-                message,
-                listModel: model,
-                metadata: metadata,
-                actions: actions,
-                reactions: reactions,
-                layoutContext: layoutContext
-            )))
+            result.append(
+                contentsOf: convert(
+                    message,
+                    listModel: model,
+                    metadata: metadata,
+                    actions: actions,
+                    reactions: reactions,
+                    layoutContext: layoutContext
+                )
+            )
         }
 
         return result
@@ -299,7 +280,6 @@ private extension ChatViewModelFactory {
             : nil
 
         let inboxBubbleStyle: InboxBubbleStyle? = nil
-        let reactionChoice = ChatReactionChoice.make(for: metadata.chatMetadata.roomPolicy)
 
         switch message.content {
         case let .text(text),
@@ -311,18 +291,14 @@ private extension ChatViewModelFactory {
                     messageActions: ChatMessageBubbleAction.textMessageActions(
                         for: status,
                         input: metadata.peerMetadata.input,
-                        isEdited: isEdited,
-                        offersRetry: metadata.chatMetadata.roomPolicy?.offersRetry ?? false,
-                        offersDelete: metadata.chatMetadata.roomPolicy?.offersDelete ?? false
+                        isEdited: isEdited
                     ),
                     status: status,
                     deliveryDate: deliveryDate,
                     layoutContext: layoutContext,
                     reactions: reactions,
                     actions: actions,
-                    inboxBubbleStyle: inboxBubbleStyle,
-                    productText: productText(of: message, text: latestEdit?.newText ?? text, actions: actions),
-                    reactionChoice: reactionChoice
+                    inboxBubbleStyle: inboxBubbleStyle
                 )
             ]
 
@@ -334,9 +310,7 @@ private extension ChatViewModelFactory {
                     messageActions: ChatMessageBubbleAction.textMessageActions(
                         for: status,
                         input: metadata.peerMetadata.input,
-                        isEdited: isEdited,
-                        offersRetry: metadata.chatMetadata.roomPolicy?.offersRetry ?? false,
-                        offersDelete: metadata.chatMetadata.roomPolicy?.offersDelete ?? false
+                        isEdited: isEdited
                     ),
                     status: status,
                     deliveryDate: deliveryDate,
@@ -344,8 +318,7 @@ private extension ChatViewModelFactory {
                     attachments: richText.attachments,
                     reactions: reactions,
                     actions: actions,
-                    inboxBubbleStyle: inboxBubbleStyle,
-                    reactionChoice: reactionChoice
+                    inboxBubbleStyle: inboxBubbleStyle
                 )
             ]
 
@@ -428,9 +401,7 @@ private extension ChatViewModelFactory {
                     messageActions: ChatMessageBubbleAction.textMessageActions(
                         for: status,
                         input: metadata.peerMetadata.input,
-                        isEdited: isEdited,
-                        offersRetry: metadata.chatMetadata.roomPolicy?.offersRetry ?? false,
-                        offersDelete: metadata.chatMetadata.roomPolicy?.offersDelete ?? false
+                        isEdited: isEdited
                     ),
                     status: status,
                     deliveryDate: deliveryDate,
@@ -438,9 +409,7 @@ private extension ChatViewModelFactory {
                     replyInfo: replyInfo,
                     reactions: reactions,
                     actions: actions,
-                    inboxBubbleStyle: inboxBubbleStyle,
-                    productText: productText(of: message, text: replyDisplayText, actions: actions),
-                    reactionChoice: reactionChoice
+                    inboxBubbleStyle: inboxBubbleStyle
                 )
             ]
 
@@ -539,62 +508,8 @@ private extension ChatViewModelFactory {
                 )
             ]
 
-        case .compactedMessages,
-             .deleted:
+        case .compactedMessages:
             return []
-
-        case let .productBody(body):
-            let context = ProductBodyRenderContext(
-                messageId: message.messageId,
-                status: status,
-                deliveryDate: deliveryDate,
-                layoutContext: layoutContext,
-                actions: actions,
-                offersDelete: metadata.chatMetadata.roomPolicy?.offersDelete ?? false,
-                canReply: metadata.peerMetadata.input.isInputField,
-                reactions: reactions,
-                reactionChoice: reactionChoice
-            )
-            return [productBodyConfiguration(body, context: context, metadata: metadata, reactions: reactions)]
-        }
-    }
-
-    func productBodyConfiguration(
-        _ body: Chat.LocalMessage.Content.ProductBody,
-        context: ProductBodyRenderContext,
-        metadata: MessageListMetadata,
-        reactions: [ReactionViewModel]
-    ) -> IdentifiableAnyContentConfiguration<ChatViewLayout.ItemIdentifierType> {
-        switch body {
-        case let .richText(richText) where !richText.media.isEmpty:
-            productMediaConfiguration(richText, context: context)
-        case let .file(file):
-            productFileConfiguration(file, context: context)
-        case let .actions(productActions):
-            productActionsConfiguration(productActions, context: context)
-        case let .notice(text):
-            .init(id: context.messageId, configuration: ChatInfoMessageConfiguration.notice(text))
-        case .richText:
-            textMessageConfiguration(
-                messageId: context.messageId,
-                text: body.text ?? "",
-                messageActions: ChatMessageBubbleAction.textMessageActions(
-                    for: context.status,
-                    input: metadata.peerMetadata.input,
-                    isEdited: false,
-                    offersDelete: context.offersDelete
-                ),
-                status: context.status,
-                deliveryDate: context.deliveryDate,
-                layoutContext: context.layoutContext,
-                reactions: reactions,
-                actions: context.actions,
-                productText: .markdown(
-                    openLink: context.actions?.openLink,
-                    collapse: productTextCollapse(of: context.messageId, text: body.text ?? "")
-                ),
-                reactionChoice: context.reactionChoice
-            )
         }
     }
 
@@ -604,16 +519,10 @@ private extension ChatViewModelFactory {
         listModel: MessageListModel,
         peerMetadata: Chat.PeerMetadata
     ) -> ChatMessageContainerConfiguration.ReplyInfo? {
-        guard let originalMessage = listModel.getMessage(by: replyContent.messageId) else {
-            // The quoted message can be outside the window of a product-source room. A tap on the quote pages
-            // to it (P5.3).
-            return listModel.holdsMessagesOutsideWindow
-                ? ChatMessageContainerConfiguration.ReplyInfo(
-                    username: peerMetadata.name,
-                    preview: String(localized: .chatReplyPlaceholder),
-                    messageId: replyContent.messageId
-                )
-                : nil
+        // The quoted message of a product-source room can be outside the window. A tap on the quote pages to it
+        // (P5.3).
+        guard let originalMessage = listModel.getQuotedMessage(by: replyContent.messageId) else {
+            return nil
         }
 
         let originalText: String
@@ -646,8 +555,6 @@ private extension ChatViewModelFactory {
                 originalText = content.welcomeMessage?.text ?? ""
             case let .versionedChatRequest(content):
                 originalText = content.ensureV1().welcomeMessage?.text ?? ""
-            case let .productBody(body):
-                originalText = body.replyPreview
             default:
                 return nil
             }
@@ -663,7 +570,7 @@ private extension ChatViewModelFactory {
 
         return ChatMessageContainerConfiguration.ReplyInfo(
             username: username,
-            preview: String(originalMessage.quoteText(originalText).prefix(Self.replyPreviewMaxLength)),
+            preview: String(originalText.prefix(Self.replyPreviewMaxLength)),
             messageId: replyContent.messageId
         )
     }
@@ -684,9 +591,7 @@ private extension ChatViewModelFactory {
         attachments: [Chat.LocalMessage.Content.Attachment]? = nil,
         reactions: [ReactionViewModel] = [],
         actions: ChatViewModelActions? = nil,
-        inboxBubbleStyle: InboxBubbleStyle? = nil,
-        productText: ChatMessageContainerConfiguration.ProductText? = nil,
-        reactionChoice: ChatReactionChoice? = .all
+        inboxBubbleStyle: InboxBubbleStyle? = nil
     ) -> IdentifiableAnyContentConfiguration<ChatViewLayout.ItemIdentifierType> {
         let (textAfterStrip, productLinkPreview) = resolveProductLinkPreview(
             text: text,
@@ -722,11 +627,30 @@ private extension ChatViewModelFactory {
                 nil
             }
 
-        let addReaction = canReact
-            ? addReactionViewModel(messageId: messageId, choice: reactionChoice, actions: actions)
+        let addReaction: ChatMessageContainerConfiguration.AddReactionViewModel? = canReact
+            ? .init(
+                quickEmojis: Chat.quickReactions,
+                allSections: Chat.allReactions.map { EmojiPickerInline.Section(title: $0.category, emojis: $0.emojis) },
+                onReactionTap: actions
+                    .map { action in
+                        { [messageId] emoji in action.toggleReaction(messageId, emoji) }
+                    }
+            )
             : nil
 
-        let messageReaction = messageReactionViewModel(messageId: messageId, reactions: reactions, actions: actions)
+        let messageReaction: ChatMessageContainerConfiguration.MessageReactionViewModel? = reactions.isEmpty
+            ? nil
+            : .init(
+                reactions: reactions,
+                onReactionTap: actions.map { action in { [messageId] emoji in
+                    action.toggleReaction(messageId, emoji)
+                }
+                },
+                onReactionLongPress: actions.map { action in { [messageId] in
+                    action.showReactionDetails(messageId)
+                }
+                }
+            )
 
         let context = TextMessageContext(
             text: resolvedText,
@@ -740,8 +664,7 @@ private extension ChatViewModelFactory {
             messageReaction: messageReaction,
             isEdited: isEdited,
             canReply: messageActions.contains(.reply),
-            inboxBubbleStyle: inboxBubbleStyle,
-            productText: productText
+            inboxBubbleStyle: inboxBubbleStyle
         )
 
         var configuration = makeTextMessageContainerConfiguration(context: context)
@@ -773,11 +696,17 @@ private extension ChatViewModelFactory {
         messageActions: [ChatMessageBubbleAction],
         actions: ChatViewModelActions
     ) -> () -> [UIMenuElement] {
-        makeMessageMenu(
-            messageId: messageId,
-            hostActions: withReadAloud(messageActions),
-            content: ChatMessageMenuContent(text: text, actions: actions)
-        )
+        { [text, messageId, actions] in
+            messageActions.compactMap { action in
+                switch action {
+                case .reply: UIAction.chatReply { actions.reply(messageId) }
+                case .edit: UIAction.chatEdit { actions.edit(messageId) }
+                case .copy: UIAction.chatCopy { actions.copy(text) }
+                case .reaction: nil
+                case .edited: UIAction.chatEditHistory { actions.showEditHistory(messageId) }
+                }
+            }
+        }
     }
 
     // swiftlint:disable:next function_parameter_count
@@ -1064,7 +993,6 @@ extension Chat.LocalMessage.Status.OutgoingStatus {
         case .new: .pending
         case .sent: .sent
         case .delivered: .delivered
-        case .read: .read
         case .failed: .failed
         }
     }

@@ -34,7 +34,8 @@ extension Chat {
     enum ProductFeedUpdate: Equatable {
         case new(ProductFeedMessage)
         case edited(messageId: String, content: LocalMessage.Content, editedAt: UInt64)
-        case deleted(messageId: String)
+        /// The message draws again in place, with no "edited".
+        case replaced(ProductFeedMessage)
         case reactionPlaced(messageId: String, participantId: String, emoji: String)
         case reactionRemoved(messageId: String, participantId: String, emoji: String)
         case statusChanged(messageId: String, status: ProductMessageStatus)
@@ -44,7 +45,7 @@ extension Chat {
     enum ProductFeedError: Error, Equatable {
         case unknownMessage
         case duplicateMessage
-        /// The product tried to write as the user, or to edit a message that it did not write.
+        /// The product tried to write as the user, or to change a message that it did not write.
         case notOwner
     }
 

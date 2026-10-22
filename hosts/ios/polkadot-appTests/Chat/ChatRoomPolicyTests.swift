@@ -13,23 +13,13 @@ struct ChatRoomPolicyTests {
         #expect(policy.hostAppliesUserActions)
     }
 
-    @Test func theListShowsTheLastMessageAndTheHostUnreadCount() {
-        #expect(policy.listPreview == .lastMessage)
+    @Test func theListShowsTheHostUnreadCount() {
         #expect(policy.listBadge == .hostUnreadCount)
         #expect(policy.listBadgeCount(hostUnreadCount: 3) == 3)
     }
 
     @Test func seenMessagesAreNotReported() {
         #expect(!policy.reportsSeen)
-    }
-
-    @Test func theMessageMenuHasEveryBuiltInAndAllEmoji() {
-        #expect(policy.messageMenu.builtIns == [.copy, .reply, .edit, .delete, .react, .retry])
-        #expect(policy.messageMenu.allowedReactions == nil)
-    }
-
-    @Test func theParticipantsAreTheUserAndTheProduct() {
-        #expect(policy.participants == [.user, .product])
     }
 
     @Test func whoReactedIsNotOffered() {
@@ -41,44 +31,25 @@ struct ChatRoomPolicyTests {
         #expect(makeBot().peerMetadata.moreActions.isEmpty)
     }
 
-    @Test func theFooterIsTheInputWithPhotoAndVideoOnly() {
-        let expected = ChatRoomPolicy.Input(
-            allowsPhoto: true,
-            allowsVideo: true,
-            allowsFile: false,
-            allowsPayment: false,
-            placeholder: nil
-        )
-
-        #expect(policy.footer == .input(expected))
+    @Test func theFooterIsTheInput() {
+        #expect(policy.footer == .input)
     }
 
-    /// Until P6.7 a product room cannot take an attachment, so the input shows no attachment button.
-    @Test func theInputShowsNoPaymentAndNoAttachmentButton() {
-        let expected = Chat.PeerMetadataInput.inputField(.init(canPay: false, canAttachFile: false))
-
-        #expect(policy.peerInput == expected)
-        #expect(makeBot().peerMetadata.input == expected)
+    /// A room without `hop_attachments` cannot take a photo or a video, so the input shows no attachment button.
+    @Test func theInputShowsNoAttachmentButtonWithoutHopAttachments() {
+        #expect(!policy.sendsMedia)
     }
 
     @Test func anEmptyFooterHidesTheInput() {
         let room = room(footer: .empty)
 
         #expect(room.roomPolicy?.footer == .empty)
-        #expect(room.roomPolicy?.peerInput == .empty)
+        #expect(room.peerMetadata(using: SingleBotRegistry(bot: makeBot())).input == .empty)
     }
 
     @Test(arguments: [nil, Chat.RoomFooter.textInput])
     func aRoomWithoutAnEmptyFooterKeepsTheDefaults(footer: Chat.RoomFooter?) {
         #expect(room(footer: footer).roomPolicy == policy)
-    }
-
-    @Test func theEmptyRoomTextIsTheHostText() {
-        #expect(policy.placeholder == nil)
-    }
-
-    @Test func theProductIsAskedNothing() {
-        #expect(policy.productQueries.isEmpty)
     }
 }
 
@@ -112,41 +83,21 @@ struct ChatRoomPolicyDeclarationsTests {
 
         #expect(policy.messageStore == .product)
         #expect(!policy.hostAppliesUserActions)
-        #expect(policy.offersRetry)
     }
 
-    @Test func theConfigurationSetsTheMenuThePlaceholderAndSeen() {
-        let policy = ChatRoomPolicy(footer: nil, declarations: declarations(config: Chat.RoomConfig(
-            productSource: false,
-            reactionDetails: true,
-            participants: true,
-            messageActions: true,
-            allowedReactions: ["👍", "🎉"],
-            placeholder: "Ask the bot",
-            reportSeen: true
-        )))
+    @Test func theConfigurationSetsSeenAndWhoReacted() {
+        let config = Chat.RoomConfig(productSource: false, reactionDetails: true, reportSeen: true)
+        let policy = ChatRoomPolicy(footer: nil, declarations: declarations(config: config))
 
         #expect(policy.messageStore == .host)
         #expect(policy.reportsSeen)
         #expect(policy.offersReactionDetails)
-        #expect(policy.messageMenu.allowedReactions == ["👍", "🎉"])
-        #expect(policy.placeholder == "Ask the bot")
-        #expect(policy.productQueries == [.participants, .messageActions])
-        #expect(!policy.offersRetry)
     }
 
-    @Test func theDeclaredInputSetsTheFooter() {
-        let input = Chat.RoomInputConfig(placeholder: "Type", photo: false, video: true, file: true, payment: nil)
-        let policy = ChatRoomPolicy(footer: .textInput, declarations: declarations(footer: .input(input)))
-
-        #expect(policy.footer == .input(ChatRoomPolicy.Input(
-            allowsPhoto: false,
-            allowsVideo: true,
-            allowsFile: true,
-            allowsPayment: false,
-            placeholder: "Type"
-        )))
-        #expect(ChatRoomPolicy(footer: .textInput, declarations: declarations(footer: .empty)).footer == .empty)
+    /// The footer is the one of `set_room_footer`, also for a room with declarations.
+    @Test func theFooterOfTheRoomSetsTheFooter() {
+        #expect(ChatRoomPolicy(footer: .textInput, declarations: declarations()).footer == .input)
+        #expect(ChatRoomPolicy(footer: .empty, declarations: declarations()).footer == .empty)
     }
 
     @Test func theGenerationComesFromTheStore() {
@@ -173,29 +124,13 @@ struct ChatRoomPolicyDeclarationsTests {
 
 private extension ChatRoomPolicyDeclarationsTests {
     func config(productSource: Bool) -> Chat.RoomConfig {
-        Chat.RoomConfig(
-            productSource: productSource,
-            reactionDetails: false,
-            participants: false,
-            messageActions: false,
-            allowedReactions: nil,
-            placeholder: nil,
-            reportSeen: false
-        )
+        Chat.RoomConfig(productSource: productSource, reactionDetails: false, reportSeen: false)
     }
 
     func declarations(
         config: Chat.RoomConfig? = nil,
-        footer: Chat.RoomFooterConfig? = nil,
         generation: Int64 = 0
     ) -> Chat.RoomDeclarations {
-        Chat.RoomDeclarations(
-            description: nil,
-            avatar: nil,
-            config: config,
-            configGeneration: generation,
-            preview: .hostDefault,
-            footerConfig: footer
-        )
+        Chat.RoomDeclarations(config: config, configGeneration: generation, preview: .hostDefault)
     }
 }
