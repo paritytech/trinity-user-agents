@@ -218,6 +218,7 @@ private final class RecordingWalletView: UIViewController, WalletMainViewProtoco
     func didReceive(titleViewModel _: NetworkStatusTitleView.ViewModel) {}
     func frame(of _: PocketCardKey) -> CGRect? { nil }
     func setOpenCard(_: PocketCardKey?) {}
+    func moveOpenCard(by _: CGSize, clearingPocket _: Bool, animated _: Bool) {}
 }
 
 @MainActor

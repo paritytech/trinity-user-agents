@@ -3424,6 +3424,18 @@
         }
       }
     },
+    "tab.settings.backupNeeded" : {
+      "comment" : "VoiceOver value of the Settings tab while the recovery phrase has no iCloud backup.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Backup needed"
+          }
+        }
+      }
+    },
     "tab.wallet" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -4,6 +4,9 @@
     "" : {
 
     },
+    " " : {
+
+    },
     " %@" : {
 
     },
@@ -1129,6 +1132,17 @@
         }
       }
     },
+    "searchContact.field.clear" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Clear search"
+          }
+        }
+      }
+    },
     "searchContact.field.placeholder" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1136,6 +1150,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Type username"
+          }
+        }
+      }
+    },
+    "searchContact.scanButton" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scan QR code"
           }
         }
       }
