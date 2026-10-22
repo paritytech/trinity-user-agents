@@ -46,7 +46,8 @@ final class ChatEngineFactory: ChatEngineFactoryProtocol {
         )
         let leaveChatService = LeaveChatService(
             outboxService: flowState.outboxService,
-            messageExchangeModeProvider: messageExchangeModeProvider
+            messageExchangeModeProvider: messageExchangeModeProvider,
+            productRepository: ProductRepositoryFactory().createRepository()
         )
         let blockUserService = BlockUserService()
 
