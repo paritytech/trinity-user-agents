@@ -199,11 +199,13 @@ jobs:
         uses: novasamatech/github-actions/send-release-notification@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5
         with:
           platform: iOS
-          # The template renders the heading either way, so an empty range says
-          # so rather than showing an empty list.
-          pr_list: ${{ needs.build_nightly.outputs.pr_list_markdown != ''
-            && needs.build_nightly.outputs.pr_list_markdown
-            || '- No pull requests merged since the last nightly.' }}
+          # The changelog lives on the simulator prerelease, whose notes list
+          # what merged since the previous one. The template renders this under
+          # its merged pull requests heading, as the one entry.
+          pr_list: |
+            ${{ needs.build_simulator.outputs.tag != ''
+              && format('- [Changelog for {0}]({1}/{2}/releases/tag/{0})', needs.build_simulator.outputs.tag, github.server_url, github.repository)
+              || '- No changelog link for this build: the simulator release did not publish.' }}
           release_info: |
             Nightly: ${{ needs.build_nightly.outputs.marketing_version }} (${{ needs.build_nightly.outputs.build_number }})
           # One entry per line, because there are two of them and they install
