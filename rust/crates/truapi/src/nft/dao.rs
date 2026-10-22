@@ -71,14 +71,10 @@ pub fn next_item_index(
 const INSERT_ITEM: &str = "INSERT INTO nft_item (key, purse, installation, idx)
 	VALUES (:key, :purse, :installation, :idx)";
 
-/// Records each of `keys` at the slot of the same position in `slots`.
-pub fn insert_items(
-	tx: &Transaction<'_>,
-	slots: &[ItemSlot],
-	keys: &[ItemKey],
-) -> Result<(), DbError> {
+/// Records each key at its slot.
+pub fn insert_items(tx: &Transaction<'_>, items: &[(ItemSlot, ItemKey)]) -> Result<(), DbError> {
 	let mut statement = tx.prepare_cached(INSERT_ITEM)?;
-	for (slot, key) in slots.iter().zip(keys) {
+	for (slot, key) in items {
 		statement.execute(named_params! {
 			":key": key.0,
 			":purse": slot.purse.0,

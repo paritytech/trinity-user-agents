@@ -933,7 +933,7 @@ impl SigningHostRuntime {
 		self.services.install_durable_engine(engine.clone());
 		forward_durable_work(&self.services, &engine);
 		engine.ensure_submissions_started();
-		let ledger = self.nft_ledger(db, installation);
+		let ledger = self.build_nft_ledger(db, installation);
 		self.services.install_nft_ledger(ledger.clone());
 		start_holding_tracker(&self.services, ledger);
 		true
@@ -941,7 +941,7 @@ impl SigningHostRuntime {
 
 	/// Layer 1 of NFT purses over `db`, deriving with the signing host.
 	#[cfg(not(target_arch = "wasm32"))]
-	fn nft_ledger(
+	fn build_nft_ledger(
 		&self,
 		db: crate::store::Db,
 		installation: Arc<dyn crate::installation::InstallationIdProvider>,

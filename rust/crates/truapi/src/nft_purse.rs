@@ -98,33 +98,26 @@ pub enum OwnerLookupError {
 /// Most keys one `create_items` call allocates (RFC).
 pub const MAX_ITEMS_PER_CALL: u32 = 1000;
 
-/// A number of items one `create_items` call may allocate, in
-/// `1..=`[`MAX_ITEMS_PER_CALL`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ItemCount(NonZeroU32);
+/// Largest page `query_purse` returns (RFC).
+pub const MAX_PAGE_SIZE: u32 = 100;
 
-impl ItemCount {
+/// A count in `1..=MAX`, as the RFC bounds the counts a call takes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CountUpTo<const MAX: u32>(NonZeroU32);
+
+impl<const MAX: u32> CountUpTo<MAX> {
 	/// `count`, or `None` when the RFC does not allow it.
 	pub fn new(count: u32) -> Option<Self> {
-		let count = NonZeroU32::new(count).filter(|count| count.get() <= MAX_ITEMS_PER_CALL)?;
+		let count = NonZeroU32::new(count).filter(|count| count.get() <= MAX)?;
 		Some(Self(count))
 	}
 }
 
-/// Largest page `query_purse` returns (RFC).
-pub const MAX_PAGE_SIZE: u32 = 100;
+/// How many items one `create_items` call may allocate.
+pub type ItemCount = CountUpTo<MAX_ITEMS_PER_CALL>;
 
-/// A page size `query_purse` accepts, in `1..=`[`MAX_PAGE_SIZE`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PageSize(NonZeroU32);
-
-impl PageSize {
-	/// `size`, or `None` when the RFC does not allow it.
-	pub fn new(size: u32) -> Option<Self> {
-		let size = NonZeroU32::new(size).filter(|size| size.get() <= MAX_PAGE_SIZE)?;
-		Some(Self(size))
-	}
-}
+/// A page size `query_purse` accepts.
+pub type PageSize = CountUpTo<MAX_PAGE_SIZE>;
 
 /// The RFC's purse calls, shared by every product.
 #[derive(Clone)]

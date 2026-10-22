@@ -24,11 +24,16 @@ pub const TEST_ENTROPY: [u8; 16] = [0x42; 16];
 /// A ledger over `db` that allocates under [`TEST_INSTALLATION`] and
 /// derives from [`TEST_ENTROPY`].
 pub fn test_ledger(db: Db) -> NftLedger {
-	NftLedger::new(NftLedgerDeps {
+	NftLedger::new(test_ledger_deps(db))
+}
+
+/// What [`test_ledger`] runs on, for tests that replace one part.
+pub fn test_ledger_deps(db: Db) -> NftLedgerDeps {
+	NftLedgerDeps {
 		db,
 		installation: Arc::new(FixedInstallation(TEST_INSTALLATION)),
 		keys: Arc::new(FixedEntropy(TEST_ENTROPY.to_vec())),
-	})
+	}
 }
 
 /// Always the same installation.

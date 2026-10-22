@@ -114,11 +114,7 @@ impl ProductRuntimeHost {
 		let out_of_range = CallError::Domain(latest::HostNftPurseCreateItemsError::CountOutOfRange);
 		let count = ItemCount::new(count).ok_or(out_of_range)?;
 		let purse = PurseId(purse.0);
-		let refusals = PurseRefusals {
-			denied: latest::HostNftPurseCreateItemsError::Denied,
-			other: latest::HostNftPurseCreateItemsError::Other,
-		};
-		self.require_purse_access(&purses, purse, refusals).await?;
+		self.require_purse_access(&purses, purse, CREATE_ITEMS_REFUSALS).await?;
 		let items = purses.create_items(purse, count).await.map_err(create_items_failure)?;
 		Ok(latest::HostNftPurseCreateItemsResponse { items })
 	}
@@ -137,11 +133,7 @@ impl ProductRuntimeHost {
 			CallError::Domain(latest::HostNftPurseQueryPurseError::PageSizeOutOfBounds);
 		let size = PageSize::new(page_size).ok_or(out_of_bounds)?;
 		let purse = PurseId(purse.0);
-		let refusals = PurseRefusals {
-			denied: latest::HostNftPurseQueryPurseError::Denied,
-			other: latest::HostNftPurseQueryPurseError::Other,
-		};
-		self.require_purse_access(&purses, purse, refusals).await?;
+		self.require_purse_access(&purses, purse, QUERY_PURSE_REFUSALS).await?;
 		let page = purses.query_purse(purse, page, size).await.map_err(host_failure)?;
 		Ok(latest::HostNftPurseQueryPurseResponse { page })
 	}
@@ -156,8 +148,7 @@ impl ProductRuntimeHost {
 		refusals: PurseRefusals<E>,
 	) -> Result<(), CallError<E>> {
 		let owner = purses.owner_of(purse).await.map_err(owner_lookup_failure)?;
-		let unknown = || CallError::Domain((refusals.other)(unknown_purse(purse)));
-		let owner = owner.ok_or_else(unknown)?;
+		let owner = owner.ok_or_else(|| refusals.unknown_purse(purse))?;
 		let Some(grant) = nft_purse::read_grant(self.connection.product_id(), &owner) else {
 			return Ok(());
 		};
@@ -173,12 +164,26 @@ struct PurseRefusals<E> {
 	other: fn(latest::GenericError) -> E,
 }
 
-fn unknown_purse(purse: PurseId) -> latest::GenericError {
-	latest::GenericError { reason: format!("purse {} does not exist", purse.0) }
+impl<E> PurseRefusals<E> {
+	/// The refusal of a purse that does not exist.
+	fn unknown_purse(&self, purse: PurseId) -> CallError<E> {
+		let reason = latest::GenericError { reason: format!("purse {} does not exist", purse.0) };
+		CallError::Domain((self.other)(reason))
+	}
 }
 
-/// Running out of indices is the product's error. Everything else is the
-/// host's.
+const CREATE_ITEMS_REFUSALS: PurseRefusals<latest::HostNftPurseCreateItemsError> = PurseRefusals {
+	denied: latest::HostNftPurseCreateItemsError::Denied,
+	other: latest::HostNftPurseCreateItemsError::Other,
+};
+
+const QUERY_PURSE_REFUSALS: PurseRefusals<latest::HostNftPurseQueryPurseError> = PurseRefusals {
+	denied: latest::HostNftPurseQueryPurseError::Denied,
+	other: latest::HostNftPurseQueryPurseError::Other,
+};
+
+/// An unknown purse or running out of indices is the product's error.
+/// Everything else is the host's.
 fn create_items_failure(
 	error: AllocateItemsError,
 ) -> CallError<latest::HostNftPurseCreateItemsError> {

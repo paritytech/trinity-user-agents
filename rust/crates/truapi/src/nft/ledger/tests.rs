@@ -11,7 +11,7 @@ use crate::{
 	nft::{
 		ItemSlot, item_keys_from_entropy,
 		keys::ItemIndex,
-		testing::{FixedEntropy, FixedInstallation, TEST_ENTROPY, TEST_INSTALLATION},
+		testing::{FixedInstallation, TEST_ENTROPY, TEST_INSTALLATION, test_ledger_deps},
 	},
 	platform::async_trait,
 	runtime::AuthorityError,
@@ -25,14 +25,6 @@ fn ledger_with_purse(deps: impl FnOnce(Db) -> NftLedgerDeps) -> (TempDir, NftLed
 	block_on(ledger.create_purse("tickets".to_owned(), PurseTag(b"tickets.dot".to_vec())))
 		.expect("purse is created");
 	(dir, ledger)
-}
-
-fn fixed_deps(db: Db) -> NftLedgerDeps {
-	NftLedgerDeps {
-		db,
-		installation: Arc::new(FixedInstallation(TEST_INSTALLATION)),
-		keys: Arc::new(FixedEntropy(TEST_ENTROPY.to_vec())),
-	}
 }
 
 fn allocate(ledger: &NftLedger, count: u32) -> Result<Vec<ItemKey>, AllocateItemsError> {
@@ -66,7 +58,7 @@ fn item_keys_follow_the_hard_path_nft_purse_installation_index() {
 /// Recovery scans indices from 0, so a purse's indices must have no gap.
 #[test]
 fn indices_run_on_from_one_allocation_to_the_next() {
-	let (_dir, ledger) = ledger_with_purse(fixed_deps);
+	let (_dir, ledger) = ledger_with_purse(test_ledger_deps);
 	let first = allocate(&ledger, 3).expect("first allocation");
 	let second = allocate(&ledger, 2).expect("second allocation");
 	assert_eq!([first, second].concat(), expected_keys(0..5));
@@ -75,7 +67,7 @@ fn indices_run_on_from_one_allocation_to_the_next() {
 /// Two allocations that race must not hand out one key twice.
 #[test]
 fn concurrent_allocations_never_share_an_index() {
-	let (_dir, ledger) = ledger_with_purse(fixed_deps);
+	let (_dir, ledger) = ledger_with_purse(test_ledger_deps);
 	let count = NonZeroU32::new(50).expect("count is positive");
 	let both = futures::future::join(
 		ledger.allocate_items(PurseId(0), count),
@@ -94,22 +86,23 @@ fn concurrent_allocations_never_share_an_index() {
 /// never derive the same key.
 #[test]
 fn another_installation_starts_its_own_indices() {
-	let (dir, ledger) = ledger_with_purse(fixed_deps);
+	let (_dir, ledger) = ledger_with_purse(test_ledger_deps);
 	allocate(&ledger, 2).expect("first installation allocates");
 	let other = InstallationId([0x2e; 32]);
 	let other_ledger = NftLedger::new(NftLedgerDeps {
 		installation: Arc::new(FixedInstallation(other)),
-		..fixed_deps(ledger.db.clone())
+		..test_ledger_deps(ledger.db.clone())
 	});
 	let allocated = allocate(&other_ledger, 1).expect("second installation allocates");
 	let slot = ItemSlot { purse: PurseId(0), installation: other, index: ItemIndex(0) };
 	assert_eq!(allocated, item_keys_from_entropy(&TEST_ENTROPY, &[slot]).expect("derives"));
-	drop(dir);
 }
 
+/// Items of a purse that does not exist would never be listed or tracked
+/// under an owner, so the product learns of its mistake instead.
 #[test]
 fn allocating_in_an_unknown_purse_is_refused() {
-	let (_dir, ledger) = ledger_with_purse(fixed_deps);
+	let (_dir, ledger) = ledger_with_purse(test_ledger_deps);
 	let count = NonZeroU32::new(1).expect("count is positive");
 	let refused = block_on(ledger.allocate_items(PurseId(7), count));
 	assert!(matches!(refused, Err(AllocateItemsError::UnknownPurse(PurseId(7)))));
@@ -119,28 +112,44 @@ fn allocating_in_an_unknown_purse_is_refused() {
 #[test]
 fn a_failed_derivation_writes_nothing() {
 	let (_dir, ledger) =
-		ledger_with_purse(|db| NftLedgerDeps { keys: Arc::new(SignedOut), ..fixed_deps(db) });
+		ledger_with_purse(|db| NftLedgerDeps { keys: Arc::new(SignedOut), ..test_ledger_deps(db) });
 	let refused = allocate(&ledger, 2);
 	assert!(matches!(refused, Err(AllocateItemsError::Derive(AuthorityError::Disconnected))));
-	let signed_in = NftLedger::new(fixed_deps(ledger.db.clone()));
+	let signed_in = NftLedger::new(test_ledger_deps(ledger.db.clone()));
 	assert_eq!(allocate(&signed_in, 1).expect("allocates"), expected_keys(0..1));
 }
 
+/// Without an installation there is no path to derive under, and guessing
+/// one would put keys where recovery never looks.
 #[test]
 fn an_unavailable_installation_is_reported() {
 	let (_dir, ledger) = ledger_with_purse(|db| NftLedgerDeps {
 		installation: Arc::new(NoInstallation),
-		..fixed_deps(db)
+		..test_ledger_deps(db)
 	});
 	let refused = allocate(&ledger, 1);
 	assert!(matches!(refused, Err(AllocateItemsError::Installation(_))));
+}
+
+/// A deriver that answers fewer keys than slots must not leave slots
+/// recorded without a key, or with another slot's key.
+#[test]
+fn a_short_derivation_writes_nothing() {
+	let (_dir, ledger) = ledger_with_purse(|db| NftLedgerDeps {
+		keys: Arc::new(OneKeyShort),
+		..test_ledger_deps(db)
+	});
+	let refused = allocate(&ledger, 2);
+	assert!(matches!(refused, Err(AllocateItemsError::DerivedKeyCount { slots: 2, derived: 1 })));
+	let whole = NftLedger::new(test_ledger_deps(ledger.db.clone()));
+	assert_eq!(allocate(&whole, 1).expect("allocates"), expected_keys(0..1));
 }
 
 /// Indices are `u32`, so a purse that has used nearly all of them refuses
 /// rather than wrapping around onto keys it already handed out.
 #[test]
 fn allocating_past_the_last_index_is_refused() {
-	let (_dir, ledger) = ledger_with_purse(fixed_deps);
+	let (_dir, ledger) = ledger_with_purse(test_ledger_deps);
 	let last_key = ItemKey([9; 32]);
 	let last = u32::MAX - 1;
 	block_on(ledger.db.write(move |tx| {
@@ -177,7 +186,7 @@ fn page(ledger: &NftLedger, index: u32, size: u32) -> ItemsPage {
 /// overlap or skip, and the last one says nothing follows.
 #[test]
 fn available_items_page_in_slot_order() {
-	let (_dir, ledger) = ledger_with_purse(fixed_deps);
+	let (_dir, ledger) = ledger_with_purse(test_ledger_deps);
 	let keys = allocate(&ledger, 5).expect("allocates");
 	hold(&ledger, &keys);
 
@@ -197,7 +206,7 @@ fn available_items_page_in_slot_order() {
 /// already gave one away is left out.
 #[test]
 fn keys_holding_nothing_are_not_available() {
-	let (_dir, ledger) = ledger_with_purse(fixed_deps);
+	let (_dir, ledger) = ledger_with_purse(test_ledger_deps);
 	let keys = allocate(&ledger, 3).expect("allocates");
 	hold(&ledger, &keys[1..2]);
 
@@ -210,6 +219,17 @@ struct SignedOut;
 impl ItemKeyDeriver for SignedOut {
 	fn derive_item_keys(&self, _slots: &[ItemSlot]) -> Result<Vec<ItemKey>, AuthorityError> {
 		Err(AuthorityError::Disconnected)
+	}
+}
+
+/// A deriver that drops the last key.
+struct OneKeyShort;
+
+impl ItemKeyDeriver for OneKeyShort {
+	fn derive_item_keys(&self, slots: &[ItemSlot]) -> Result<Vec<ItemKey>, AuthorityError> {
+		let mut keys = item_keys_from_entropy(&TEST_ENTROPY, slots).expect("test entropy derives");
+		keys.pop();
+		Ok(keys)
 	}
 }
 

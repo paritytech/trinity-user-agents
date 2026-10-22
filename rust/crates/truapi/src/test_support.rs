@@ -1132,18 +1132,13 @@ pub fn core_storage_test_key(key: CoreStorageKey) -> String {
 	format!("core:{}", hex::encode(key.encode()))
 }
 
-/// The installation every [`StubPlatform`] hands out.
-#[cfg(not(target_arch = "wasm32"))]
-pub const STUB_INSTALLATION: crate::installation::InstallationId =
-	crate::installation::InstallationId([0x1d; 32]);
-
 #[cfg(not(target_arch = "wasm32"))]
 #[crate::platform::async_trait]
 impl crate::installation::InstallationIdProvider for StubPlatform {
 	async fn current_installation(
 		&self,
 	) -> Result<crate::installation::InstallationId, v01::GenericError> {
-		Ok(STUB_INSTALLATION)
+		Ok(crate::nft::TEST_INSTALLATION)
 	}
 }
 

@@ -173,14 +173,7 @@ impl TrackerFixture {
 		let read = self.db.read(|conn| {
 			let mut statement = conn
 				.prepare("SELECT key, collection, item, instance FROM nft_holding ORDER BY key")?;
-			let rows = statement.query_map([], |row| {
-				let held = HeldItem {
-					collection: row.get("collection")?,
-					item: row.get("item")?,
-					instance: row.get::<_, i64>("instance")? as u64,
-				};
-				Ok((row.get("key")?, held))
-			})?;
+			let rows = statement.query_map([], holding_row)?;
 			Ok(rows.collect::<Result<Vec<_>, _>>()?)
 		});
 		block_on(read).expect("holdings are read")
@@ -196,6 +189,22 @@ impl TrackerFixture {
 	}
 }
 
+fn holding_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<([u8; 32], HeldItem)> {
+	let held = HeldItem {
+		collection: row.get("collection")?,
+		item: row.get("item")?,
+		instance: row.get::<_, i64>("instance")? as u64,
+	};
+	Ok((row.get("key")?, held))
+}
+
+impl OpenedWatch {
+	/// Reports `changed`, by key position, at block `number`.
+	fn report(&self, number: u64, changed: Vec<(usize, Option<Vec<u8>>)>) {
+		self.changes.unbounded_send(Ok(raw_changes_at(number, changed))).unwrap();
+	}
+}
+
 /// The key the node is asked for must be the one it stores the value
 /// under, and the bytes it answers must decode into the NFT the explorer
 /// shows for that account. Both were captured from the live chain.
@@ -203,27 +212,23 @@ impl TrackerFixture {
 fn a_captured_holding_is_watched_under_its_storage_key_and_cached() {
 	let mut fixture = tracker_after(|db| insert_item_key(db, holder(), 0));
 	let watch = fixture.next_watch();
-	watch
-		.changes
-		.unbounded_send(Ok(raw_changes_at(5, vec![(0, Some(HOLDER_NFT.to_vec()))])))
-		.unwrap();
+	watch.report(5, vec![(0, Some(HOLDER_NFT.to_vec()))]);
 
 	fixture.await_holdings(vec![(holder(), HOLDER_ITEM)]);
 	let storage_key = hex::decode(HOLDER_STORAGE_KEY_HEX).expect("the key is hex");
 	assert_eq!(watch.keys, vec![storage_key]);
 }
 
+/// A key whose NFT was sent on is no longer spendable, so `query_purse`
+/// must stop listing it.
 #[test]
 fn an_nft_moved_away_removes_the_holding() {
 	let mut fixture = tracker_after(|db| insert_item_key(db, holder(), 0));
 	let watch = fixture.next_watch();
-	watch
-		.changes
-		.unbounded_send(Ok(raw_changes_at(5, vec![(0, Some(HOLDER_NFT.to_vec()))])))
-		.unwrap();
+	watch.report(5, vec![(0, Some(HOLDER_NFT.to_vec()))]);
 	fixture.await_holdings(vec![(holder(), HOLDER_ITEM)]);
 
-	watch.changes.unbounded_send(Ok(raw_changes_at(6, vec![(0, None)]))).unwrap();
+	watch.report(6, vec![(0, None)]);
 
 	fixture.await_holdings(vec![]);
 }
@@ -240,10 +245,8 @@ fn a_change_that_keeps_the_nft_keeps_the_holding() {
 	let watch = fixture.next_watch();
 	let mut bumped = HOLDER_NFT.to_vec();
 	bumped[32] = 1;
-	let first = raw_changes_at(5, vec![(0, Some(HOLDER_NFT.to_vec())), (1, None)]);
-	watch.changes.unbounded_send(Ok(first)).unwrap();
-	let both = vec![(0, Some(bumped.clone())), (1, Some(bumped))];
-	watch.changes.unbounded_send(Ok(raw_changes_at(6, both))).unwrap();
+	watch.report(5, vec![(0, Some(HOLDER_NFT.to_vec())), (1, None)]);
+	watch.report(6, vec![(0, Some(bumped.clone())), (1, Some(bumped))]);
 
 	fixture.await_holdings(vec![(OTHER_KEY, HOLDER_ITEM), (holder(), HOLDER_ITEM)]);
 }
@@ -259,9 +262,11 @@ fn new_item_keys_are_watched_by_a_watch_of_their_own() {
 	let allocated = block_on(fixture.ledger.allocate_items(PurseId(0), count)).expect("allocates");
 	let second = fixture.next_watch();
 
-	let [ItemKey(new_key)] = allocated[..] else { panic!("one key") };
-	assert_eq!((first.keys.len(), second.keys.len()), (1, 1));
-	assert!(second.keys[0].ends_with(&new_key), "{:?}", second.keys);
+	let watched_owners = |watch: &OpenedWatch| -> Vec<Vec<u8>> {
+		watch.keys.iter().map(|key| key[key.len() - 32..].to_vec()).collect()
+	};
+	let expected = (vec![holder().to_vec()], vec![allocated[0].0.to_vec()]);
+	assert_eq!((watched_owners(&first), watched_owners(&second)), expected);
 }
 
 /// The cache survives a restart while the chain moves on, so the first
@@ -281,7 +286,7 @@ fn the_first_report_replaces_holdings_left_from_an_earlier_run() {
 	});
 	let watch = fixture.next_watch();
 
-	watch.changes.unbounded_send(Ok(raw_changes_at(9, vec![(0, None)]))).unwrap();
+	watch.report(9, vec![(0, None)]);
 
 	fixture.await_holdings(vec![]);
 }

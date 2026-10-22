@@ -34,6 +34,14 @@ pub enum AllocateItemsError {
 	/// Deriving a key failed, for example without a session.
 	#[error(transparent)]
 	Derive(#[from] AuthorityError),
+	/// The deriver answered a different number of keys than it was asked for.
+	#[error("derived {derived} keys for {slots} slots")]
+	DerivedKeyCount {
+		/// How many slots it was asked for.
+		slots: usize,
+		/// How many keys it gave.
+		derived: usize,
+	},
 	/// The database failed.
 	#[error(transparent)]
 	Db(#[from] DbError),
@@ -94,7 +102,7 @@ impl Allocation {
 
 /// Derives and records `allocation` in `tx`. The outer error is the
 /// database's; the inner one says why nothing was allocated.
-pub fn allocate_in(
+pub fn allocate_items_in(
 	tx: &Transaction<'_>,
 	allocation: Allocation,
 	keys: &dyn ItemKeyDeriver,
@@ -103,12 +111,27 @@ pub fn allocate_in(
 		Ok(slots) => slots,
 		Err(refused) => return Ok(Err(refused)),
 	};
-	let derived = match keys.derive_item_keys(&slots) {
-		Ok(derived) => derived,
-		Err(error) => return Ok(Err(error.into())),
+	let items = match derive_at(keys, slots) {
+		Ok(items) => items,
+		Err(refused) => return Ok(Err(refused)),
 	};
-	dao::insert_items(tx, &slots, &derived)?;
-	Ok(Ok(derived))
+	dao::insert_items(tx, &items)?;
+	Ok(Ok(items.into_iter().map(|(_, key)| key).collect()))
+}
+
+/// Each of `slots` with the key derived at it.
+fn derive_at(
+	keys: &dyn ItemKeyDeriver,
+	slots: Vec<ItemSlot>,
+) -> Result<Vec<(ItemSlot, ItemKey)>, AllocateItemsError> {
+	let derived = keys.derive_item_keys(&slots)?;
+	if derived.len() != slots.len() {
+		return Err(AllocateItemsError::DerivedKeyCount {
+			slots: slots.len(),
+			derived: derived.len(),
+		});
+	}
+	Ok(slots.into_iter().zip(derived).collect())
 }
 
 /// The next free slots for `allocation`, or why there are none.

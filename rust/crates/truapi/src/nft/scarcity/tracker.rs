@@ -1,7 +1,8 @@
 //! Keeps the ledger's holdings equal to `Scarcity::NftsByOwner` at the best
 //! block, for every item key.
 
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use core::fmt::Display;
+use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
 
 use futures::{
 	FutureExt, StreamExt,
@@ -26,6 +27,9 @@ const REWRITE_DELAY: Duration = Duration::from_secs(1);
 
 /// What one watch reports for the keys it covers.
 type HoldingChanges = DecodedEntryChanges<([u8; 32],), ScarcityNft>;
+
+/// One read of a watch: its changes, or why they could not be read.
+type WatchedRead = Result<HoldingChanges, StorageWatchError>;
 
 /// What the holding tracker runs on.
 pub struct HoldingTrackerDeps {
@@ -99,10 +103,7 @@ impl Tracking {
 	fn new_key_batches(&self) -> BoxStream<'static, Vec<ItemKey>> {
 		self.ledger
 			.observe_item_keys()
-			.filter_map(|read| {
-				let keys = read.inspect_err(|error| tracing::warn!(%error, "item keys unreadable"));
-				ready(keys.ok())
-			})
+			.filter_map(|read| ready(ok_or_warn(read, "item keys unreadable")))
 			.scan(HashSet::new(), |watched, keys| {
 				let new = find_new_keys(watched, keys);
 				watched.extend(new.iter().copied());
@@ -114,37 +115,32 @@ impl Tracking {
 
 	/// What `batch` holds at each best block, first every key and then the
 	/// keys that changed. A read that failed is logged and skipped, because
-	/// the next one reports the same keys again.
+	/// the watch reports the same keys again.
 	fn watch_batch(self, batch: Vec<ItemKey>) -> BoxStream<'static, HoldingChanges> {
 		stream::once(self.open_until_watching(batch))
 			.flatten()
-			.filter_map(|read| {
-				let changes = read.inspect_err(|error| tracing::warn!(%error, "holdings unread"));
-				ready(changes.ok())
-			})
+			.filter_map(|read| ready(ok_or_warn(read, "holdings unread")))
 			.boxed()
 	}
 
 	/// A watch over `batch`, trying again after [`REOPEN_DELAY`] while the
-	/// chain cannot open one.
-	async fn open_until_watching(
-		self,
-		batch: Vec<ItemKey>,
-	) -> BoxStream<'static, Result<HoldingChanges, StorageWatchError>> {
-		loop {
-			let opened = self.open_watch(&batch).await;
-			let opened = opened.inspect_err(|error| tracing::warn!(%error, "holdings unwatched"));
-			if let Ok(changes) = opened {
-				return changes;
-			}
-			futures_timer::Delay::new(REOPEN_DELAY).await;
+	/// chain cannot open one. Nothing, when the runtime has no such entry or
+	/// a key does not fit it, since trying again would fail the same way.
+	async fn open_until_watching(self, batch: Vec<ItemKey>) -> BoxStream<'static, WatchedRead> {
+		let open = || self.open_watch(&batch);
+		match retry_while(REOPEN_DELAY, "holdings unwatched", open, can_open_later).await {
+			Ok(changes) => changes,
+			Err(error) => {
+				tracing::error!(%error, "holdings cannot be watched on this runtime");
+				stream::empty().boxed()
+			},
 		}
 	}
 
 	async fn open_watch(
 		&self,
 		batch: &[ItemKey],
-	) -> Result<BoxStream<'static, Result<HoldingChanges, StorageWatchError>>, StorageWatchError> {
+	) -> Result<BoxStream<'static, WatchedRead>, StorageWatchError> {
 		let owners = batch.iter().map(|key| (key.0,)).collect();
 		let storage = self.storage.clone();
 		storage
@@ -156,18 +152,42 @@ impl Tracking {
 	/// while the write fails: the watch reports a key only when its value
 	/// changes, so a lost write would leave it stale.
 	async fn record(&self, changes: HoldingChanges) {
-		let holdings: Vec<_> =
-			changes.changed.into_iter().map(|((owner,), nft)| held_by(owner, nft)).collect();
-		loop {
-			let recorded = self.ledger.record_holdings(holdings.clone()).await;
-			let recorded =
-				recorded.inspect_err(|error| tracing::warn!(%error, "holdings unrecorded"));
-			if recorded.is_ok() {
-				return;
-			}
-			futures_timer::Delay::new(REWRITE_DELAY).await;
-		}
+		let holdings: Vec<_> = changes
+			.changed
+			.into_iter()
+			.map(|((owner,), nft)| holding_of(owner, nft))
+			.collect();
+		let write = || self.ledger.record_holdings(holdings.clone());
+		let always = |_: &_| true;
+		let _ = retry_while(REWRITE_DELAY, "holdings unrecorded", write, always).await;
 	}
+}
+
+/// Whether opening a watch that failed with `error` can succeed later.
+fn can_open_later(error: &StorageWatchError) -> bool {
+	!matches!(error, StorageWatchError::Incompatible { .. } | StorageWatchError::KeyEncoding { .. })
+}
+
+/// What `attempt` gives, trying again after `delay` while it fails with an
+/// error `retriable` accepts. Each failure is logged as `failed`.
+async fn retry_while<T, E: Display, Attempt: Future<Output = Result<T, E>>>(
+	delay: Duration,
+	failed: &'static str,
+	attempt: impl Fn() -> Attempt,
+	retriable: impl Fn(&E) -> bool,
+) -> Result<T, E> {
+	loop {
+		match attempt().await {
+			Err(error) if retriable(&error) => tracing::warn!(%error, "{failed}"),
+			outcome => return outcome,
+		}
+		futures_timer::Delay::new(delay).await;
+	}
+}
+
+/// `read`'s value, or `None` after logging its error as `failed`.
+fn ok_or_warn<T, E: Display>(read: Result<T, E>, failed: &'static str) -> Option<T> {
+	read.inspect_err(|error| tracing::warn!(%error, "{failed}")).ok()
 }
 
 /// The keys of `keys` not in `watched`.
@@ -175,7 +195,7 @@ fn find_new_keys(watched: &HashSet<ItemKey>, keys: Vec<ItemKey>) -> Vec<ItemKey>
 	keys.into_iter().filter(|key| !watched.contains(key)).collect()
 }
 
-fn held_by(owner: [u8; 32], nft: Option<ScarcityNft>) -> (ItemKey, Option<HeldItem>) {
+fn holding_of(owner: [u8; 32], nft: Option<ScarcityNft>) -> (ItemKey, Option<HeldItem>) {
 	(ItemKey(owner), nft.map(HeldItem::from))
 }
 
