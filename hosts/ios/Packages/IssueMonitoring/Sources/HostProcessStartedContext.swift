@@ -39,7 +39,7 @@ public struct HostProcessStartedContext: Sendable {
         ]
         var extras: [String: Any] = [
             "app.launch_id": appLaunchID.uuidString.lowercased(),
-            "event.monotonic_ms": processStartUptimeMilliseconds
+            "host.process_start_uptime_ms": processStartUptimeMilliseconds
         ]
 
         tags["host.native_app_version"] = appVersion

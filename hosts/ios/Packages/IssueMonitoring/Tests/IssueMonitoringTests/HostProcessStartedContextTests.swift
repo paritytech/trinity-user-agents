@@ -19,7 +19,7 @@ struct HostProcessStartedContextTests {
 
         #expect(context.eventName == "host.process.started")
         #expect(context.sentryFields.extras["app.launch_id"] as? String == launchID.uuidString.lowercased())
-        #expect(context.sentryFields.extras["event.monotonic_ms"] as? Double == 42.5)
+        #expect(context.sentryFields.extras["host.process_start_uptime_ms"] as? Double == 42.5)
         #expect(context.sentryFields.tags["host.native_app_version"] == "1.2.3")
         #expect(context.sentryFields.extras["host.app_build"] as? Int == 456)
         #expect(context.sentryFields.tags["host.app_variant"] == "nightly")
