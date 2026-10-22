@@ -10,10 +10,35 @@ on:
       releaseNotes:
         description: "Release notes for the distribution"
         required: true
+  # A develop build for testers after each merge that changes the app. A merge
+  # that changes neither the app nor what it is built from ships an identical
+  # app, so it builds nothing: the list matches what ios-pr.yml builds the app
+  # from, with this workflow and the actions it calls in place of ios-pr's own.
   pull_request:
     types: [closed]
     branches:
       - main
+    paths:
+      - "hosts/ios/**"
+      - "ios/**"
+      - "Package.swift"
+      - "Makefile"
+      - "nightly-toolchain"
+      - ".github/actions/rust-nightly/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "js/container/**"
+      - "scripts/**"
+      - "package.json"
+      - "package-lock.json"
+      - "rust/crates/truapi/**"
+      - "rust/crates/truapi-codegen/**"
+      - "rust/crates/truapi-macros/**"
+      - "rust/crates/truapi-provider/**"
+      - "rust/crates/uniffi-bindgen-cli/**"
+      - ".github/workflows/ios-firebase-debug-distribution.yml"
+      - ".github/actions/bootstrap-ios-core/**"
+      - ".github/actions/mac-preflight/**"
 
 env:
   IOS_BUNDLE_ID: "io.parity.polkadotapp.develop"
