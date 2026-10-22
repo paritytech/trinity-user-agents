@@ -12,7 +12,7 @@ use super::{
 	},
 	ledger::{NftLedger, NftLedgerDeps},
 	operation::nft_domain,
-	scarcity::MOVE_POLICY,
+	scarcity::TRANSFER_POLICY,
 };
 use crate::{
 	durable::{
@@ -39,20 +39,20 @@ pub fn test_ledger(db: Db) -> NftLedger {
 	NftLedger::new(test_ledger_deps(db))
 }
 
-/// What [`test_ledger`] runs on, for tests that replace one part. Moves are
+/// What [`test_ledger`] runs on, for tests that replace one part. Transfers are
 /// registered with an engine that never builds them.
 pub fn test_ledger_deps(db: Db) -> NftLedgerDeps {
 	NftLedgerDeps {
 		db: db.clone(),
 		installation: Arc::new(FixedInstallation(TEST_INSTALLATION)),
 		keys: Arc::new(FixedEntropy(TEST_ENTROPY.to_vec())),
-		durable: unbuilt_moves_engine(db),
+		durable: unbuilt_transfers_engine(db),
 	}
 }
 
-/// An engine over `db` that serves the NFT domain, whose moves stay waiting
+/// An engine over `db` that serves the NFT domain, whose transfers stay waiting
 /// to be built.
-pub fn unbuilt_moves_engine(db: Db) -> Arc<DurableTxEngine> {
+pub fn unbuilt_transfers_engine(db: Db) -> Arc<DurableTxEngine> {
 	let oracle = Arc::new(Unobservable(subxt::utils::H256::zero()));
 	let registry = DurableRegistry::new()
 		.with_domain(nft_domain(), oracle)
@@ -60,13 +60,13 @@ pub fn unbuilt_moves_engine(db: Db) -> Arc<DurableTxEngine> {
 	engine_on(db, registry)
 }
 
-/// A move policy that leaves every move waiting.
+/// A transfer policy that leaves every transfer waiting.
 struct NeverBuilds;
 
 #[async_trait]
 impl SubmissionPolicy for NeverBuilds {
 	fn id(&self) -> PolicyId {
-		PolicyId::new(MOVE_POLICY)
+		PolicyId::new(TRANSFER_POLICY)
 	}
 
 	fn can_retry(&self, _: &DurableTxEntry, _: &PolicyParams, _: VerdictFailureKind) -> bool {

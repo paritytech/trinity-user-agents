@@ -9,7 +9,7 @@ use subxt::{
 	utils::{AccountId32, H256},
 };
 
-use super::transfer::MoveRuntime;
+use super::transfer::TransferRuntime;
 use crate::{
 	chain::{ChainHeads, HashAndNumber, StorageWatchError, WatchedStorage},
 	nft::{HeldItem, ItemKey},
@@ -25,7 +25,7 @@ fn instance_holders() -> DynamicAddress<(u64,), AccountId32> {
 	dynamic("Scarcity", "Instances")
 }
 
-/// The `Scarcity::Locked` entry, naming the keys a failed move locked.
+/// The `Scarcity::Locked` entry, naming the keys a failed transfer locked.
 fn key_locks() -> DynamicAddress<(AccountId32,), ScarcityLock> {
 	dynamic("Scarcity", "Locked")
 }
@@ -50,7 +50,7 @@ pub struct ScarcityNft {
 	pub minted_at: u64,
 	/// Unix seconds of the last move.
 	pub last_moved: u64,
-	/// Revision a move must sign. Read fresh when a move is built, never
+	/// Revision a transfer must sign. Read fresh when a transfer is built, never
 	/// cached.
 	pub state_nonce: u64,
 	/// Fee-less moves already used.
@@ -63,10 +63,10 @@ impl From<ScarcityNft> for HeldItem {
 	}
 }
 
-/// A lock a failed move put on a key, decoded from `Scarcity::Locked`.
+/// A lock a failed transfer put on a key, decoded from `Scarcity::Locked`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, DecodeAsType)]
 struct ScarcityLock {
-	/// Failed moves so far, which double the lock each time.
+	/// Failed transfers so far, which double the lock each time.
 	retries: u8,
 	/// Chain time, in milliseconds, at which the lock ends.
 	until: u64,
@@ -101,22 +101,22 @@ pub trait ScarcityChain: Send + Sync {
 	/// The lock on each of `keys` at `at`, and the chain time of `at`.
 	async fn locks_at(&self, at: H256, keys: &[ItemKey]) -> Result<KeyLocks, StorageWatchError>;
 
-	/// Where moves built now stand: the finalized head they are born at, the
+	/// Where transfers built now stand: the finalized head they are born at, the
 	/// runtime they are signed for, and the best head their state is read at.
-	async fn move_context(&self) -> Result<MoveContext, StorageWatchError>;
+	async fn transfer_context(&self) -> Result<TransferContext, StorageWatchError>;
 }
 
-/// What a batch of moves is built against. State is read at the best head,
-/// where the tracker sees holdings, so a move is never judged on a finalized
+/// What a batch of transfers is built against. State is read at the best head,
+/// where the tracker sees holdings, so a transfer is never judged on a finalized
 /// block that does not hold its NFT yet. Its era is born at the finalized
 /// head, which no reorg removes.
 #[derive(Clone, Debug)]
-pub struct MoveContext {
-	/// The finalized head, where each move's era is born.
+pub struct TransferContext {
+	/// The finalized head, where each transfer's era is born.
 	pub birth: HashAndNumber,
 	/// The runtime at the birth block.
-	pub runtime: MoveRuntime,
-	/// The best head, where the state each move depends on is read.
+	pub runtime: TransferRuntime,
+	/// The best head, where the state each transfer depends on is read.
 	pub best: H256,
 }
 
@@ -177,17 +177,17 @@ impl ScarcityChain for ScarcityStorage {
 		Ok(KeyLocks { now, until })
 	}
 
-	async fn move_context(&self) -> Result<MoveContext, StorageWatchError> {
+	async fn transfer_context(&self) -> Result<TransferContext, StorageWatchError> {
 		let client = self.storage.client_at_finalized_head(self.genesis).await?;
 		let birth = HashAndNumber { hash: client.block_hash(), number: client.block_number() };
-		let runtime = MoveRuntime {
+		let runtime = TransferRuntime {
 			genesis: self.genesis,
 			spec_version: client.spec_version(),
 			transaction_version: client.transaction_version(),
 			metadata: client.metadata(),
 		};
 		let best = self.heads.heads(self.genesis).await?.best.hash;
-		Ok(MoveContext { birth, runtime, best })
+		Ok(TransferContext { birth, runtime, best })
 	}
 }
 

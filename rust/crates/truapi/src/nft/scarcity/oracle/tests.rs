@@ -5,8 +5,8 @@ use crate::{
 	chain::Mortality,
 	durable::{DomainId, DurableTxStatus, PolicyId, SubmissionPlan},
 	nft::scarcity::{
-		chain::{KeyLocks, MoveContext, ScarcityNft},
-		policy::MOVE_POLICY,
+		chain::{KeyLocks, ScarcityNft, TransferContext},
+		policy::TRANSFER_POLICY,
 	},
 };
 
@@ -46,13 +46,13 @@ impl ScarcityChain for InstanceHolders {
 		unreachable!("the oracle only asks who holds an instance")
 	}
 
-	async fn move_context(&self) -> Result<MoveContext, StorageWatchError> {
+	async fn transfer_context(&self) -> Result<TransferContext, StorageWatchError> {
 		unreachable!("the oracle only asks who holds an instance")
 	}
 }
 
-fn move_entry() -> DurableTxEntry {
-	let params = MoveParams { instance: INSTANCE, destination: DESTINATION, give_up_after: 0 };
+fn transfer_entry() -> DurableTxEntry {
+	let params = TransferParams { instance: INSTANCE, destination: DESTINATION, give_up_after: 0 };
 	DurableTxEntry {
 		id: DurableTxId(1),
 		domain: DomainId::new("nft"),
@@ -61,14 +61,17 @@ fn move_entry() -> DurableTxEntry {
 		mortality: Mortality::new(FINALIZED, 64).unwrap(),
 		status: DurableTxStatus::Pending,
 		scanned_to: None,
-		plan: Some(SubmissionPlan { policy: PolicyId::new(MOVE_POLICY), params: params.into() }),
+		plan: Some(SubmissionPlan {
+			policy: PolicyId::new(TRANSFER_POLICY),
+			params: params.into(),
+		}),
 	}
 }
 
-/// Whether the move is proven at the finalized head and at the best head.
+/// Whether the transfer is proven at the finalized head and at the best head.
 fn proven_at_both_heads(holders: InstanceHolders) -> (bool, bool) {
-	let oracle = ScarcityMoveOracle::new(Arc::new(holders), H256([0xab; 32]));
-	let entry = move_entry();
+	let oracle = ScarcityTransferOracle::new(Arc::new(holders), H256([0xab; 32]));
+	let entry = transfer_entry();
 	let heads = Heads { finalized: FINALIZED, best: BEST };
 	let view = LedgerView::new(vec![entry.clone()]);
 	let scope = block_on(oracle.open_pass(core::slice::from_ref(&entry), &view, &heads)).unwrap();
@@ -88,8 +91,8 @@ fn a_move_is_proven_at_each_head_where_its_instance_is_at_the_destination() {
 #[test]
 fn an_instance_anywhere_else_proves_nothing_either_way() {
 	let elsewhere = InstanceHolders { at_finalized: Some(ELSEWHERE), at_best: Some(ELSEWHERE) };
-	let entry = move_entry();
-	let oracle = ScarcityMoveOracle::new(Arc::new(elsewhere), H256([0xab; 32]));
+	let entry = transfer_entry();
+	let oracle = ScarcityTransferOracle::new(Arc::new(elsewhere), H256([0xab; 32]));
 	let heads = Heads { finalized: FINALIZED, best: BEST };
 	let view = LedgerView::new(vec![entry.clone()]);
 

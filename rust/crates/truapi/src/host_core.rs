@@ -1307,7 +1307,7 @@ fn start_durable_engine(
 }
 
 /// The durable transaction engine over `db`, reading and submitting through
-/// the runtime's chain connections. It serves NFT moves when an Asset Hub
+/// the runtime's chain connections. It serves NFT transfers when an Asset Hub
 /// genesis is configured.
 #[cfg(not(target_arch = "wasm32"))]
 fn durable_engine(
@@ -1334,7 +1334,7 @@ fn durable_engine(
 	})
 }
 
-/// The domains and policies the durable engine serves: NFT moves, on the
+/// The domains and policies the durable engine serves: NFT transfers, on the
 /// Asset Hub that runs the Scarcity pallet.
 #[cfg(not(target_arch = "wasm32"))]
 fn durable_registry(
@@ -1342,22 +1342,22 @@ fn durable_registry(
 	db: crate::store::Db,
 	signer: Arc<SigningHostRole>,
 ) -> crate::durable::DurableRegistry {
-	use crate::nft::{ScarcityMovesDeps, with_scarcity_moves};
+	use crate::nft::{ScarcityTransfersDeps, with_scarcity_transfers};
 
 	let registry = crate::durable::DurableRegistry::new();
 	let Some(genesis) = services.asset_hub_chain_genesis_hash() else {
-		tracing::warn!("no Asset Hub genesis configured, NFT moves are off");
+		tracing::warn!("no Asset Hub genesis configured, NFT transfers are off");
 		return registry;
 	};
 	let chain = Arc::new(services.chain.clone());
-	let deps = ScarcityMovesDeps {
+	let deps = ScarcityTransfersDeps {
 		db,
 		storage: chain.clone(),
 		heads: chain,
 		genesis: genesis.into(),
 		signer,
 	};
-	with_scarcity_moves(registry, deps)
+	with_scarcity_transfers(registry, deps)
 }
 
 /// Starts tracking what NFT item keys hold on Asset Hub, which runs the

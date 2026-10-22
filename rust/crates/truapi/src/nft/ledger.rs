@@ -13,11 +13,11 @@ use super::{
 	item::{AllocateItemsError, Allocation, ItemPage, PageRequest, allocate_items_in},
 	keys::{ItemKey, ItemKeyDeriver},
 	operation::{
-		DestinationKeys, MoveProgress, MoveRequest, OperationKey, StartOperationError, nft_domain,
-		plan_moves, progress_of, record_inputs,
+		DestinationKeys, OperationKey, StartOperationError, TransferProgress, TransferRequest,
+		nft_domain, plan_transfers, progress_of, record_inputs,
 	},
 	purse::{CreatePurseError, PurseId, PurseRecord, PurseTag},
-	scarcity::MOVE_POLICY,
+	scarcity::TRANSFER_POLICY,
 };
 use crate::{
 	durable::{DurableRequest, DurableTxEngine, PolicyId, RegistrationError},
@@ -33,7 +33,7 @@ pub struct NftLedgerDeps {
 	pub installation: Arc<dyn InstallationIdProvider>,
 	/// Derives the keys of new items.
 	pub keys: Arc<dyn ItemKeyDeriver>,
-	/// Registers and follows the moves of items.
+	/// Registers and follows the transfers of items.
 	pub durable: Arc<DurableTxEngine>,
 }
 
@@ -116,19 +116,19 @@ impl NftLedger {
 		dao::observe_item_keys(&self.db)
 	}
 
-	/// Registers the moves of `request` as one operation, in one write that
+	/// Registers the transfers of `request` as one operation, in one write that
 	/// checks every item is idle in its purse, allocates destination keys
-	/// and records what each move spends. Returns once they are registered.
-	pub async fn start_moves(
+	/// and records what each transfer spends. Returns once they are registered.
+	pub async fn start_transfers(
 		&self,
-		request: MoveRequest,
+		request: TransferRequest,
 	) -> Result<(), RegistrationError<StartOperationError>> {
 		if request.items.is_empty() {
 			return Err(RegistrationError::Hook(StartOperationError::NoItems));
 		}
 		let installation = self.current_installation().await?;
 		let items = request.items.clone();
-		let planned = self.planned_moves(request, installation);
+		let planned = self.planned_transfers(request, installation);
 		let record =
 			move |tx: &rusqlite::Transaction<'_>, ids: &[_]| record_inputs(tx, &items, ids);
 		self.durable.execute_with(planned, record).await.map(|_| ())
@@ -143,34 +143,34 @@ impl NftLedger {
 		installation.map_err(|error| RegistrationError::Hook(unavailable(error).into()))
 	}
 
-	/// `request` as a durable request whose moves are planned in its write.
-	fn planned_moves(
+	/// `request` as a durable request whose transfers are planned in its write.
+	fn planned_transfers(
 		&self,
-		request: MoveRequest,
+		request: TransferRequest,
 		installation: InstallationId,
 	) -> DurableRequest<StartOperationError> {
 		let group = Some(request.operation.group().clone());
 		let deriver = self.keys.clone();
 		let plan = move |tx: &rusqlite::Transaction<'_>| {
 			let keys = DestinationKeys { installation, deriver: deriver.as_ref() };
-			plan_moves(tx, &request, keys)
+			plan_transfers(tx, &request, keys)
 		};
-		DurableRequest::scheduled_in(nft_domain(), group, PolicyId::new(MOVE_POLICY), plan)
+		DurableRequest::scheduled_in(nft_domain(), group, PolicyId::new(TRANSFER_POLICY), plan)
 	}
 
-	/// Every move of `operation`, in registration order, now and after every
+	/// Every transfer of `operation`, in registration order, now and after every
 	/// change. Empty while no such operation exists.
 	pub fn observe_operation(
 		&self,
 		operation: &OperationKey,
-	) -> BoxStream<'static, Result<Vec<MoveProgress>, DbError>> {
+	) -> BoxStream<'static, Result<Vec<TransferProgress>, DbError>> {
 		let db = self.db.clone();
-		let read_progress = move |moves| {
+		let read_progress = move |transfers| {
 			let db = db.clone();
-			async move { db.read(move |conn| progress_of(conn, moves)).await }
+			async move { db.read(move |conn| progress_of(conn, transfers)).await }
 		};
-		let moves = self.durable.observe_group(&nft_domain(), operation.group());
-		moves.and_then(read_progress).boxed()
+		let transfers = self.durable.observe_group(&nft_domain(), operation.group());
+		transfers.and_then(read_progress).boxed()
 	}
 
 	/// The purse `item` belongs to, if it is one of ours.

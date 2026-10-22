@@ -24,9 +24,12 @@ pub use keys::{
 };
 pub use ledger::{NftLedger, NftLedgerDeps};
 pub use operation::{
-	MoveDestinations, MoveProgress, MoveRequest, MoveState, OperationKey, StartOperationError,
+	OperationKey, StartOperationError, TransferDestinations, TransferProgress, TransferRequest,
+	TransferState,
 };
 pub use purse::{CreatePurseError, PurseId, PurseRecord, PurseTag, UnknownPurse};
-pub use scarcity::{HoldingTracker, HoldingTrackerDeps, ScarcityMovesDeps, with_scarcity_moves};
+pub use scarcity::{
+	HoldingTracker, HoldingTrackerDeps, ScarcityTransfersDeps, with_scarcity_transfers,
+};
 #[cfg(test)]
 pub use testing::{TEST_INSTALLATION, insert_item_row, test_ledger};

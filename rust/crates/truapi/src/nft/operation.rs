@@ -1,5 +1,5 @@
-//! NFT operations: moves of items registered together under a caller's
-//! idempotency key, and where each move stands.
+//! NFT operations: transfers of items registered together under a caller's
+//! idempotency key, and where each transfer stands.
 
 use core::num::NonZeroU32;
 use std::collections::BTreeSet;
@@ -14,7 +14,7 @@ use super::{
 	item::{AllocateItemsError, Allocation, allocate_items_in},
 	keys::{ItemKey, ItemKeyDeriver},
 	purse::PurseId,
-	scarcity::{MOVE_WAIT_LIMIT_SECS, MoveParams},
+	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams},
 };
 use crate::{
 	durable::{
@@ -25,7 +25,7 @@ use crate::{
 	unix_time::current_unix_secs,
 };
 
-/// The durable domain NFT moves are registered under.
+/// The durable domain NFT transfers are registered under.
 pub fn nft_domain() -> DomainId {
 	DomainId::new("nft")
 }
@@ -42,7 +42,7 @@ impl OperationKey {
 		Self(GroupId::new(format!("nft-op:{}", hex::encode(digest))))
 	}
 
-	/// The durable group the operation's moves belong to.
+	/// The durable group the operation's transfers belong to.
 	pub fn group(&self) -> &GroupId {
 		&self.0
 	}
@@ -71,24 +71,24 @@ pub enum StartOperationError {
 	Db(#[from] DbError),
 }
 
-/// Where the moves of an operation take their items.
-pub enum MoveDestinations {
+/// Where the transfers of an operation take their items.
+pub enum TransferDestinations {
 	/// Fresh keys allocated in this purse, one per item.
 	AllocatedIn(PurseId),
 	/// This key, outside every purse. Only one item can go there.
 	Foreign(ItemKey),
 }
 
-/// Moves of `items`, each from its key in `from`, registered as one operation.
-pub struct MoveRequest {
+/// Transfers of `items`, each from its key in `from`, registered as one operation.
+pub struct TransferRequest {
 	/// The operation they form.
 	pub operation: OperationKey,
 	/// The purse every item is spent from.
 	pub from: PurseId,
-	/// The items, in the order their moves are registered.
+	/// The items, in the order their transfers are registered.
 	pub items: BTreeSet<ItemKey>,
 	/// Where they go.
-	pub destinations: MoveDestinations,
+	pub destinations: TransferDestinations,
 }
 
 /// What allocating destination keys needs: the installation they are
@@ -100,12 +100,12 @@ pub struct DestinationKeys<'a> {
 	pub deriver: &'a dyn ItemKeyDeriver,
 }
 
-/// Works out, inside the registration write, the params of each move of
+/// Works out, inside the registration write, the params of each transfer of
 /// `request`, or refuses: the operation exists, an item is not idle in
 /// `from`, or destination keys cannot be allocated.
-pub fn plan_moves(
+pub fn plan_transfers(
 	tx: &Transaction<'_>,
-	request: &MoveRequest,
+	request: &TransferRequest,
 	keys: DestinationKeys<'_>,
 ) -> Result<Vec<PolicyParams>, StartOperationError> {
 	if group_exists(tx, &nft_domain(), request.operation.group())? {
@@ -113,13 +113,15 @@ pub fn plan_moves(
 	}
 	let instances = idle_instances(tx, request.from, &request.items)?;
 	let destinations = match request.destinations {
-		MoveDestinations::AllocatedIn(purse) => allocate_destinations(tx, purse, &instances, keys)?,
-		MoveDestinations::Foreign(destination) => vec![destination],
+		TransferDestinations::AllocatedIn(purse) => {
+			allocate_destinations(tx, purse, &instances, keys)?
+		},
+		TransferDestinations::Foreign(destination) => vec![destination],
 	};
-	let give_up_after = current_unix_secs() + MOVE_WAIT_LIMIT_SECS;
-	let move_params =
-		|(instance, destination)| MoveParams { instance, destination, give_up_after }.into();
-	Ok(instances.into_iter().zip(destinations).map(move_params).collect())
+	let give_up_after = current_unix_secs() + TRANSFER_WAIT_LIMIT_SECS;
+	let transfer_params =
+		|(instance, destination)| TransferParams { instance, destination, give_up_after }.into();
+	Ok(instances.into_iter().zip(destinations).map(transfer_params).collect())
 }
 
 /// One fresh key in `purse` for each of `instances`.
@@ -150,7 +152,7 @@ fn idle_instances(
 	items.iter().map(idle_instance).collect()
 }
 
-/// Records that the move with each id of `ids` spends the item at the same
+/// Records that the transfer with each id of `ids` spends the item at the same
 /// position of `items`.
 pub fn record_inputs(
 	tx: &Transaction<'_>,
@@ -161,9 +163,9 @@ pub fn record_inputs(
 	Ok(dao::insert_inputs(tx, &inputs)?)
 }
 
-/// Where one move of an operation stands.
+/// Where one transfer of an operation stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct MoveProgress {
+pub struct TransferProgress {
 	/// Key the NFT leaves.
 	pub consumed: ItemKey,
 	/// Key the NFT goes to.
@@ -171,12 +173,12 @@ pub struct MoveProgress {
 	/// Hash of its latest attempt, once one was built.
 	pub tx_hash: Option<H256>,
 	/// Whether it waits, landed or failed.
-	pub state: MoveState,
+	pub state: TransferState,
 }
 
-/// Whether a move waits, landed or failed.
+/// Whether a transfer waits, landed or failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MoveState {
+pub enum TransferState {
 	/// Not built or not landed yet.
 	Waiting,
 	/// Landed at a block, finalized or not.
@@ -188,7 +190,7 @@ pub enum MoveState {
 	Failed,
 }
 
-impl From<DurableTxStatus> for MoveState {
+impl From<DurableTxStatus> for TransferState {
 	fn from(status: DurableTxStatus) -> Self {
 		match status {
 			DurableTxStatus::PendingSubmission | DurableTxStatus::Pending => Self::Waiting,
@@ -199,29 +201,30 @@ impl From<DurableTxStatus> for MoveState {
 	}
 }
 
-/// Where each of `moves` stands. A move whose spent key or params cannot be
+/// Where each of `transfers` stands. A transfer whose spent key or params cannot be
 /// read is an error: the operation's rows are written together.
 pub fn progress_of(
 	conn: &rusqlite::Connection,
-	moves: Vec<DurableTxState>,
-) -> Result<Vec<MoveProgress>, DbError> {
-	moves.into_iter().map(|state| move_progress(conn, state)).collect()
+	transfers: Vec<DurableTxState>,
+) -> Result<Vec<TransferProgress>, DbError> {
+	transfers.into_iter().map(|state| transfer_progress(conn, state)).collect()
 }
 
-fn move_progress(
+fn transfer_progress(
 	conn: &rusqlite::Connection,
 	state: DurableTxState,
-) -> Result<MoveProgress, DbError> {
+) -> Result<TransferProgress, DbError> {
 	let unreadable = |what: &str| DbError::Connection(format!("move {:?} has no {what}", state.id));
 	let (consumed, _) = dao::input_of(conn, state.id)?.ok_or_else(|| unreadable("spent key"))?;
 	let plan = state.plan.as_ref().ok_or_else(|| unreadable("plan"))?;
-	let params = MoveParams::try_from(&plan.params).map_err(|_| unreadable("move params"))?;
-	let state_of_move = MoveState::from(state.status);
-	Ok(MoveProgress {
+	let params =
+		TransferParams::try_from(&plan.params).map_err(|_| unreadable("transfer params"))?;
+	let state_of_transfer = TransferState::from(state.status);
+	Ok(TransferProgress {
 		consumed,
 		minted: params.destination,
 		tx_hash: state.tx_hash,
-		state: state_of_move,
+		state: state_of_transfer,
 	})
 }
 

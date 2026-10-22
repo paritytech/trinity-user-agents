@@ -42,16 +42,21 @@ fn operation(byte: u8) -> OperationKey {
 	OperationKey::new(b"product", [byte; 32])
 }
 
-fn rebalance(operation: OperationKey, items: &[ItemKey]) -> MoveRequest {
+fn rebalance(operation: OperationKey, items: &[ItemKey]) -> TransferRequest {
 	let items = items.iter().copied().collect();
-	MoveRequest { operation, from: FROM, items, destinations: MoveDestinations::AllocatedIn(TO) }
+	TransferRequest {
+		operation,
+		from: FROM,
+		items,
+		destinations: TransferDestinations::AllocatedIn(TO),
+	}
 }
 
 fn start(
 	purses: &Purses,
-	request: MoveRequest,
+	request: TransferRequest,
 ) -> Result<(), RegistrationError<StartOperationError>> {
-	block_on(purses.ledger.start_moves(request))
+	block_on(purses.ledger.start_transfers(request))
 }
 
 fn available(purses: &Purses, purse: PurseId) -> Vec<ItemKey> {
@@ -59,7 +64,7 @@ fn available(purses: &Purses, purse: PurseId) -> Vec<ItemKey> {
 	block_on(purses.ledger.available_items(purse, page)).unwrap().items
 }
 
-fn moves_of(purses: &Purses, operation: &OperationKey) -> Vec<MoveProgress> {
+fn transfers_of(purses: &Purses, operation: &OperationKey) -> Vec<TransferProgress> {
 	block_on(purses.ledger.observe_operation(operation).next()).unwrap().unwrap()
 }
 
@@ -70,7 +75,7 @@ fn item_rows(purses: &Purses) -> i64 {
 	block_on(purses.db.read(count)).unwrap()
 }
 
-fn set_move_status(purses: &Purses, status: &str) {
+fn set_transfer_status(purses: &Purses, status: &str) {
 	let status = status.to_owned();
 	let update = move |tx: &rusqlite::Transaction<'_>| {
 		tx.execute("UPDATE durable_tx SET status = ?1, failure_kind = 'REJECTED'", [status])?;
@@ -85,11 +90,11 @@ fn a_rebalance_registers_one_waiting_move_per_item_into_fresh_keys_of_the_destin
 
 	start(&purses, rebalance(operation(1), &purses.held)).unwrap();
 
-	let moves = moves_of(&purses, &operation(1));
-	let consumed: BTreeSet<_> = moves.iter().map(|progress| progress.consumed).collect();
-	let minted: Vec<_> = moves.iter().map(|progress| progress.minted).collect();
+	let transfers = transfers_of(&purses, &operation(1));
+	let consumed: BTreeSet<_> = transfers.iter().map(|progress| progress.consumed).collect();
+	let minted: Vec<_> = transfers.iter().map(|progress| progress.minted).collect();
 	assert_eq!(consumed, purses.held.iter().copied().collect());
-	assert!(moves.iter().all(|progress| progress.state == MoveState::Waiting));
+	assert!(transfers.iter().all(|progress| progress.state == TransferState::Waiting));
 	assert_eq!(item_rows(&purses), 4);
 	assert!(minted.iter().all(|key| !purses.held.contains(key)));
 }
@@ -108,10 +113,10 @@ fn an_item_is_available_again_once_its_move_failed() {
 	let purses = purses_holding(1);
 	start(&purses, rebalance(operation(1), &purses.held)).unwrap();
 
-	set_move_status(&purses, "FAILURE");
+	set_transfer_status(&purses, "FAILURE");
 
 	assert_eq!(available(&purses, FROM), purses.held);
-	assert_eq!(moves_of(&purses, &operation(1))[0].state, MoveState::Failed);
+	assert_eq!(transfers_of(&purses, &operation(1))[0].state, TransferState::Failed);
 }
 
 #[test]
@@ -140,7 +145,7 @@ fn a_second_registration_under_the_same_key_is_refused_and_writes_nothing() {
 	let again = start(&purses, rebalance(operation(1), &purses.held[1..]));
 
 	assert!(matches!(again, Err(RegistrationError::Hook(StartOperationError::OperationExists))));
-	assert_eq!(moves_of(&purses, &operation(1)).len(), 1);
+	assert_eq!(transfers_of(&purses, &operation(1)).len(), 1);
 	assert_eq!(item_rows(&purses), 3);
 }
 
@@ -168,7 +173,7 @@ fn a_refused_operation_allocates_no_destination_key() {
 		matches!(refused, Err(RegistrationError::Hook(StartOperationError::ItemNotFound(item))) if item == not_held)
 	);
 	assert_eq!(item_rows(&purses), 1);
-	assert_eq!(moves_of(&purses, &operation(1)), vec![]);
+	assert_eq!(transfers_of(&purses, &operation(1)), vec![]);
 }
 
 #[test]
@@ -176,29 +181,29 @@ fn two_identical_calls_at_once_register_one_operation() {
 	let purses = purses_holding(1);
 
 	let (first, second) = block_on(futures::future::join(
-		purses.ledger.start_moves(rebalance(operation(1), &purses.held)),
-		purses.ledger.start_moves(rebalance(operation(1), &purses.held)),
+		purses.ledger.start_transfers(rebalance(operation(1), &purses.held)),
+		purses.ledger.start_transfers(rebalance(operation(1), &purses.held)),
 	));
 
 	let refused = [&first, &second].iter().filter(|result| result.is_err()).count();
 	assert_eq!(refused, 1);
-	assert_eq!(moves_of(&purses, &operation(1)).len(), 1);
+	assert_eq!(transfers_of(&purses, &operation(1)).len(), 1);
 }
 
 #[test]
 fn a_transfer_moves_one_item_to_the_foreign_key_without_allocating() {
 	let purses = purses_holding(1);
-	let request = MoveRequest {
+	let request = TransferRequest {
 		operation: operation(1),
 		from: FROM,
 		items: purses.held.iter().copied().collect(),
-		destinations: MoveDestinations::Foreign(FOREIGN),
+		destinations: TransferDestinations::Foreign(FOREIGN),
 	};
 
 	start(&purses, request).unwrap();
 
-	let moves = moves_of(&purses, &operation(1));
-	assert_eq!(moves.iter().map(|progress| progress.minted).collect::<Vec<_>>(), vec![FOREIGN]);
+	let transfers = transfers_of(&purses, &operation(1));
+	assert_eq!(transfers.iter().map(|progress| progress.minted).collect::<Vec<_>>(), vec![FOREIGN]);
 	assert_eq!(item_rows(&purses), 1);
 }
 
@@ -206,7 +211,7 @@ fn a_transfer_moves_one_item_to_the_foreign_key_without_allocating() {
 fn an_operation_never_registered_has_no_moves() {
 	let purses = purses_holding(1);
 
-	assert_eq!(moves_of(&purses, &operation(9)), vec![]);
+	assert_eq!(transfers_of(&purses, &operation(9)), vec![]);
 }
 
 #[test]
@@ -214,7 +219,7 @@ fn the_same_idempotency_key_of_another_scope_is_another_operation() {
 	assert_ne!(OperationKey::new(b"one", [1; 32]), OperationKey::new(b"two", [1; 32]));
 }
 
-/// A move stops waiting a fixed time after it is registered, whatever
+/// A transfer stops waiting a fixed time after it is registered, whatever
 /// happens to the host meanwhile.
 #[test]
 fn each_move_is_registered_with_its_wait_limit() {
@@ -229,7 +234,7 @@ fn each_move_is_registered_with_its_wait_limit() {
 		})?)
 	};
 	let params = block_on(purses.db.read(stored)).unwrap();
-	let params = MoveParams::try_from(&crate::durable::PolicyParams(params)).unwrap();
+	let params = TransferParams::try_from(&crate::durable::PolicyParams(params)).unwrap();
 	let limit = params.give_up_after - before;
-	assert!((MOVE_WAIT_LIMIT_SECS..=MOVE_WAIT_LIMIT_SECS + 5).contains(&limit), "{limit}");
+	assert!((TRANSFER_WAIT_LIMIT_SECS..=TRANSFER_WAIT_LIMIT_SECS + 5).contains(&limit), "{limit}");
 }

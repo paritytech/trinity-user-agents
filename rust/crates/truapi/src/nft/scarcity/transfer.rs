@@ -1,4 +1,4 @@
-//! A fee-less `Scarcity::transfer`, signed by the item key it moves from.
+//! A fee-less `Scarcity::transfer`, signed by the item key it transfers from.
 
 use parity_scale_codec::{Compact, Encode};
 use subxt::{ArcMetadata, utils::H256};
@@ -12,23 +12,23 @@ use crate::{
 
 /// The transaction extension pipeline that carries `AsScarcity`, signed by
 /// `VerifyMultiSignature` rather than paid for.
-const MOVE_PIPELINE_VERSION: u8 = 1;
+const TRANSFER_PIPELINE_VERSION: u8 = 1;
 
-/// One NFT move: the instance at the source key, the revision it must sign,
+/// One NFT transfer: the instance at the source key, the revision it must sign,
 /// and the key it goes to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NftMove {
+pub struct NftTransfer {
 	/// The instance the source key holds.
 	pub instance: u64,
-	/// The instance's `state_nonce` now, which the move signs over.
+	/// The instance's `state_nonce` now, which the transfer signs over.
 	pub state_nonce: u64,
 	/// The key it goes to.
 	pub destination: ItemKey,
 }
 
-/// The runtime a move is signed for, as of the block its era is born at.
+/// The runtime a transfer is signed for, as of the block its era is born at.
 #[derive(Clone, Debug)]
-pub struct MoveRuntime {
+pub struct TransferRuntime {
 	/// Genesis of the chain.
 	pub genesis: H256,
 	/// Spec version at the birth block.
@@ -39,15 +39,15 @@ pub struct MoveRuntime {
 	pub metadata: ArcMetadata,
 }
 
-/// `nft_move` signed by `signer`, valid during `mortality`.
-pub fn sign_move(
+/// `nft_transfer` signed by `signer`, valid during `mortality`.
+pub fn sign_transfer(
 	signer: &Sr25519Signer,
-	runtime: &MoveRuntime,
-	nft_move: &NftMove,
+	runtime: &TransferRuntime,
+	nft_transfer: &NftTransfer,
 	mortality: Mortality,
 ) -> Result<MortalExtrinsic, LocalTransactionError> {
-	let call = transfer_call(&runtime.metadata, nft_move.destination)?;
-	let extensions = move_extensions(runtime, nft_move, mortality);
+	let call = transfer_call(&runtime.metadata, nft_transfer.destination)?;
+	let extensions = transfer_extensions(runtime, nft_transfer, mortality);
 	let genesis = runtime.genesis.0;
 	let metadata = runtime.metadata.clone();
 	let bytes = build_signed_extrinsic_v5(
@@ -55,7 +55,7 @@ pub fn sign_move(
 		genesis,
 		&call,
 		&extensions,
-		MOVE_PIPELINE_VERSION,
+		TRANSFER_PIPELINE_VERSION,
 		metadata,
 	)?;
 	Ok(MortalExtrinsic { extrinsic: EncodedExtrinsic::new(bytes), mortality })
@@ -73,17 +73,17 @@ fn transfer_call(
 	Ok([&[pallet.call_index(), call.index][..], &destination.0].concat())
 }
 
-/// Every extension of the move pipeline, by name. Only `AsScarcity` names the
-/// NFT; the rest say the move pays no fee and needs no account nonce.
-fn move_extensions(
-	runtime: &MoveRuntime,
-	nft_move: &NftMove,
+/// Every extension of the transfer pipeline, by name. Only `AsScarcity` names the
+/// NFT; the rest say the transfer pays no fee and needs no account nonce.
+fn transfer_extensions(
+	runtime: &TransferRuntime,
+	nft_transfer: &NftTransfer,
 	mortality: Mortality,
 ) -> Vec<TxPayloadExtension> {
 	let birth = mortality.birth().hash.0.to_vec();
 	vec![
 		extension("UnitTransactionExtension", Vec::new(), Vec::new()),
-		extension("AsScarcity", as_scarcity(nft_move), Vec::new()),
+		extension("AsScarcity", as_scarcity(nft_transfer), Vec::new()),
 		extension("AuthorizeCall", Vec::new(), Vec::new()),
 		extension("AsPgas", vec![0], Vec::new()),
 		extension("AsDotnsGateway", vec![0], Vec::new()),
@@ -109,9 +109,9 @@ enum AsScarcityInfo {
 	AsNft { instance: u64, state_nonce: u64 },
 }
 
-/// `AsScarcity`'s value for a move: `Some(AsNft { instance, state_nonce })`.
-fn as_scarcity(nft_move: &NftMove) -> Vec<u8> {
-	let NftMove { instance, state_nonce, .. } = *nft_move;
+/// `AsScarcity`'s value for a transfer: `Some(AsNft { instance, state_nonce })`.
+fn as_scarcity(nft_transfer: &NftTransfer) -> Vec<u8> {
+	let NftTransfer { instance, state_nonce, .. } = *nft_transfer;
 	Some(AsScarcityInfo::AsNft { instance, state_nonce }).encode()
 }
 

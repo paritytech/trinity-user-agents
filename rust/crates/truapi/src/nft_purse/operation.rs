@@ -1,4 +1,4 @@
-//! The RFC's chain operations over Layer 1 moves: registering a rebalance or
+//! The RFC's chain operations over Layer 1 transfers: registering a rebalance or
 //! a transfer under a product's idempotency key, and the status a product
 //! observes for it.
 
@@ -16,8 +16,8 @@ use super::{NftPurses, PurseOwner};
 use crate::{
 	durable::RegistrationError,
 	nft::{
-		ItemKey, MoveDestinations, MoveProgress, MoveRequest, MoveState, OperationKey, PurseId,
-		StartOperationError,
+		ItemKey, OperationKey, PurseId, StartOperationError, TransferDestinations,
+		TransferProgress, TransferRequest, TransferState,
 	},
 	platform::ProductId,
 	store::DbError,
@@ -27,7 +27,7 @@ use crate::{
 pub type StartError = RegistrationError<StartOperationError>;
 
 impl NftPurses {
-	/// Registers moving `keys` from `from` into fresh keys of `to`, as the
+	/// Registers transferring `keys` from `from` into fresh keys of `to`, as the
 	/// operation `caller` names `idempotency_key`. The caller asks for
 	/// [`drain_needs_confirmation`] first.
 	pub async fn rebalance(
@@ -40,13 +40,13 @@ impl NftPurses {
 	) -> Result<(), StartError> {
 		let items = keys.iter().map(|key| ItemKey(key.0)).collect();
 		let operation = operation_key(caller, idempotency_key);
-		let destinations = MoveDestinations::AllocatedIn(to);
+		let destinations = TransferDestinations::AllocatedIn(to);
 		self.ledger
-			.start_moves(MoveRequest { operation, from, items, destinations })
+			.start_transfers(TransferRequest { operation, from, items, destinations })
 			.await
 	}
 
-	/// Registers moving `item`, held in `from`, to `destination` outside the
+	/// Registers transferring `item`, held in `from`, to `destination` outside the
 	/// purses, as the operation `caller` names `idempotency_key`.
 	pub async fn transfer(
 		&self,
@@ -58,9 +58,9 @@ impl NftPurses {
 	) -> Result<(), StartError> {
 		let items = [ItemKey(item.0)].into_iter().collect();
 		let operation = operation_key(caller, idempotency_key);
-		let destinations = MoveDestinations::Foreign(ItemKey(destination.0));
+		let destinations = TransferDestinations::Foreign(ItemKey(destination.0));
 		self.ledger
-			.start_moves(MoveRequest { operation, from, items, destinations })
+			.start_transfers(TransferRequest { operation, from, items, destinations })
 			.await
 	}
 
@@ -78,7 +78,10 @@ impl NftPurses {
 		idempotency_key: NftPurseIdempotencyKey,
 	) -> BoxStream<'static, Result<Option<NftPurseStatus>, DbError>> {
 		let operation = operation_key(caller, idempotency_key);
-		let statuses = self.ledger.observe_operation(&operation).map(|moves| moves.map(status_of));
+		let statuses = self
+			.ledger
+			.observe_operation(&operation)
+			.map(|transfers| transfers.map(status_of));
 		statuses
 			.scan(StatusChanges::default(), |changes, status| ready(changes.next(status)))
 			.filter_map(ready)
@@ -97,50 +100,50 @@ fn operation_key(caller: &ProductId, idempotency_key: NftPurseIdempotencyKey) ->
 	OperationKey::new(caller.as_str().as_bytes(), idempotency_key.0)
 }
 
-/// The status of an operation whose moves stand as `moves`, or `None` when it
+/// The status of an operation whose transfers stand as `transfers`, or `None` when it
 /// has none.
-fn status_of(moves: Vec<MoveProgress>) -> Option<NftPurseStatus> {
-	(!moves.is_empty()).then(|| fold_status(&moves))
+fn status_of(transfers: Vec<TransferProgress>) -> Option<NftPurseStatus> {
+	(!transfers.is_empty()).then(|| fold_status(&transfers))
 }
 
-/// The RFC status of an operation whose moves stand as `moves`.
-fn fold_status(moves: &[MoveProgress]) -> NftPurseStatus {
-	let cleared: Vec<_> = moves.iter().filter_map(cleared_item).collect();
-	let failed: Vec<_> = moves
+/// The RFC status of an operation whose transfers stand as `transfers`.
+fn fold_status(transfers: &[TransferProgress]) -> NftPurseStatus {
+	let cleared: Vec<_> = transfers.iter().filter_map(cleared_item).collect();
+	let failed: Vec<_> = transfers
 		.iter()
-		.filter(|progress| progress.state == MoveState::Failed)
+		.filter(|progress| progress.state == TransferState::Failed)
 		.map(|progress| NftPurseItemKey(progress.consumed.0))
 		.collect();
 	let finalized =
-		|progress: &MoveProgress| progress.state == MoveState::Landed { finalized: true };
-	let settled = moves
+		|progress: &TransferProgress| progress.state == TransferState::Landed { finalized: true };
+	let settled = transfers
 		.iter()
-		.all(|progress| finalized(progress) || progress.state == MoveState::Failed);
+		.all(|progress| finalized(progress) || progress.state == TransferState::Failed);
 	match (settled, failed.is_empty(), cleared.is_empty()) {
 		(true, true, _) => {
-			NftPurseStatus::Cleared { reference: clearing_reference(moves), cleared }
+			NftPurseStatus::Cleared { reference: clearing_reference(transfers), cleared }
 		},
 		(true, false, _) => {
-			NftPurseStatus::Incomplete { reference: clearing_reference(moves), cleared, failed }
+			NftPurseStatus::Incomplete { reference: clearing_reference(transfers), cleared, failed }
 		},
 		(false, _, false) => NftPurseStatus::Clearing { cleared },
 		(false, _, true) => NftPurseStatus::InProgress,
 	}
 }
 
-/// `progress` as a cleared item, when its move landed.
-fn cleared_item(progress: &MoveProgress) -> Option<NftPurseClearedItem> {
-	let MoveState::Landed { finalized } = progress.state else { return None };
+/// `progress` as a cleared item, when its transfer landed.
+fn cleared_item(progress: &TransferProgress) -> Option<NftPurseClearedItem> {
+	let TransferState::Landed { finalized } = progress.state else { return None };
 	let consumed = NftPurseItemKey(progress.consumed.0);
 	Some(NftPurseClearedItem { consumed, minted: NftPurseItemKey(progress.minted.0), finalized })
 }
 
-/// The landed moves of `moves`, each with the transaction that moved it,
+/// The landed transfers of `transfers`, each with the transaction that transferred it,
 /// sorted by item, and their binary Merkle root.
-fn clearing_reference(moves: &[MoveProgress]) -> NftPurseClearingReference {
-	let mut leaves: Vec<_> = moves
+fn clearing_reference(transfers: &[TransferProgress]) -> NftPurseClearingReference {
+	let mut leaves: Vec<_> = transfers
 		.iter()
-		.filter(|progress| matches!(progress.state, MoveState::Landed { .. }))
+		.filter(|progress| matches!(progress.state, TransferState::Landed { .. }))
 		.filter_map(|progress| Some((NftPurseItemKey(progress.consumed.0), progress.tx_hash?.0)))
 		.collect();
 	leaves.sort_by_key(|(item, _)| item.0);

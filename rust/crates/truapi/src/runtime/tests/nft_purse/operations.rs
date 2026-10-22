@@ -162,7 +162,7 @@ fn a_key_not_in_the_source_purse_answers_item_not_found() {
 	assert_eq!(refused, Err(rebalance_refusal(v01::NftPurseRebalancePurseError::ItemNotFound)));
 }
 
-// Draining Root's purse moves the user's own items, so the user is asked on
+// Draining Root's purse transfers the user's own items, so the user is asked on
 // every call and a refusal leaves everything in place.
 #[test]
 fn draining_a_root_purse_asks_the_user_and_a_refusal_is_denied() {

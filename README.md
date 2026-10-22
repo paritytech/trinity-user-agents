@@ -281,17 +281,17 @@ purses: its own freely, Root's or another product's with the user's
 `//nft//<purse>//<installation>//<index>`, under the installation the host
 reports through `currentInstallation`. A tracker watches
 `Scarcity.NftsByOwner` on Asset Hub at the best block for every key, and
-`queryPurse` pages through the keys that hold an NFT and that no live move or
-handoff spends. The same grant covers both.
+`queryPurse` pages through the keys that hold an NFT and that no live transfer
+or handoff spends. The same grant covers both.
 
 `rebalancePurse` and `transferItem` register an operation under an idempotency
 key the product chooses and return; `observeOperationStatus` follows it by that
-key until it is `Cleared` or `Incomplete`. Each move is a scheduled durable
+key until it is `Cleared` or `Incomplete`. Each transfer is a scheduled durable
 transaction: a fee-less `Scarcity::transfer` signed by the item key when it is
 submitted, and proven landed when its instance is at the destination. What
-each move spends is recorded in `nft_consumption`, and a failed move frees its
-item again. Moving items out of Root's or another product's purse asks the user
-through the `NftPurseDrain` confirmation review. The cheque calls answer
+each transfer spends is recorded in `nft_consumption`, and a failed transfer
+frees its item again. Transferring items out of Root's or another product's
+purse asks the user through the `NftPurseDrain` confirmation review. The cheque calls answer
 unavailable for now. A host without a core database, such as the browser core,
 answers `Unsupported` to the served calls.
 

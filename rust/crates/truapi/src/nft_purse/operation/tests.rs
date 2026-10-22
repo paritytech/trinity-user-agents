@@ -6,8 +6,8 @@ fn key(byte: u8) -> ItemKey {
 	ItemKey([byte; 32])
 }
 
-fn progress(byte: u8, state: MoveState) -> MoveProgress {
-	MoveProgress {
+fn progress(byte: u8, state: TransferState) -> TransferProgress {
+	TransferProgress {
 		consumed: key(byte),
 		minted: key(byte + 100),
 		tx_hash: Some(H256([byte + 200; 32])),
@@ -15,20 +15,20 @@ fn progress(byte: u8, state: MoveState) -> MoveProgress {
 	}
 }
 
-fn waiting(byte: u8) -> MoveProgress {
-	MoveProgress { tx_hash: None, ..progress(byte, MoveState::Waiting) }
+fn waiting(byte: u8) -> TransferProgress {
+	TransferProgress { tx_hash: None, ..progress(byte, TransferState::Waiting) }
 }
 
-fn landed(byte: u8) -> MoveProgress {
-	progress(byte, MoveState::Landed { finalized: false })
+fn landed(byte: u8) -> TransferProgress {
+	progress(byte, TransferState::Landed { finalized: false })
 }
 
-fn finalized(byte: u8) -> MoveProgress {
-	progress(byte, MoveState::Landed { finalized: true })
+fn finalized(byte: u8) -> TransferProgress {
+	progress(byte, TransferState::Landed { finalized: true })
 }
 
-fn failed(byte: u8) -> MoveProgress {
-	progress(byte, MoveState::Failed)
+fn failed(byte: u8) -> TransferProgress {
+	progress(byte, TransferState::Failed)
 }
 
 fn cleared(byte: u8, finalized: bool) -> NftPurseClearedItem {
@@ -84,12 +84,12 @@ fn a_failure_beside_a_move_still_landing_is_not_terminal() {
 /// that crate's construction byte for byte.
 #[test]
 fn the_clearing_root_is_the_binary_merkle_root_of_the_encoded_leaves() {
-	let moves = [
-		MoveProgress { tx_hash: Some(H256([4; 32])), ..finalized(3) },
-		MoveProgress { tx_hash: Some(H256([2; 32])), ..finalized(1) },
+	let transfers = [
+		TransferProgress { tx_hash: Some(H256([4; 32])), ..finalized(3) },
+		TransferProgress { tx_hash: Some(H256([2; 32])), ..finalized(1) },
 	];
 
-	let reference = clearing_reference(&moves);
+	let reference = clearing_reference(&transfers);
 
 	let expected = "b4e4e38b8537fb079a236c1dce5c3b442dec0b44b42c04015ed0df9343aacf40";
 	assert_eq!(hex::encode(reference.root), expected);

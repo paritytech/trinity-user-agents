@@ -14,8 +14,8 @@ fn test_signer() -> Sr25519Signer {
 	Sr25519Signer::from_keypair(&keypair)
 }
 
-fn asset_hub_runtime() -> MoveRuntime {
-	MoveRuntime {
+fn asset_hub_runtime() -> TransferRuntime {
+	TransferRuntime {
 		genesis: H256([0xab; 32]),
 		spec_version: 3_004_000,
 		transaction_version: 22,
@@ -23,8 +23,8 @@ fn asset_hub_runtime() -> MoveRuntime {
 	}
 }
 
-fn test_move() -> NftMove {
-	NftMove { instance: 330, state_nonce: 7, destination: DESTINATION }
+fn test_transfer() -> NftTransfer {
+	NftTransfer { instance: 330, state_nonce: 7, destination: DESTINATION }
 }
 
 #[test]
@@ -33,7 +33,7 @@ fn a_move_is_a_signed_transfer_to_the_destination() {
 	let mortality = Mortality::new(BIRTH, 64).unwrap();
 	let runtime = asset_hub_runtime();
 
-	let signed = sign_move(&signer, &runtime, &test_move(), mortality).unwrap();
+	let signed = sign_transfer(&signer, &runtime, &test_transfer(), mortality).unwrap();
 
 	let bytes = signed.extrinsic.bytes();
 	let decoded =
@@ -51,7 +51,7 @@ fn a_move_acts_as_the_nft_it_names_without_fee_or_nonce() {
 	let mortality = Mortality::new(BIRTH, 64).unwrap();
 	let runtime = asset_hub_runtime();
 
-	let signed = sign_move(&signer, &runtime, &test_move(), mortality).unwrap();
+	let signed = sign_transfer(&signer, &runtime, &test_transfer(), mortality).unwrap();
 
 	let bytes = signed.extrinsic.bytes();
 	let decoded =

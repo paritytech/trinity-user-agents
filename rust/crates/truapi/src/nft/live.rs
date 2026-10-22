@@ -21,10 +21,10 @@ use subxt::{
 use truapi::latest::TxPayloadExtension;
 
 use super::{
-	ItemKey, MoveDestinations, MoveRequest, MoveState, NftLedger, NftLedgerDeps, OperationKey,
-	PageRequest, PurseId, PurseTag, ScarcityMovesDeps,
+	ItemKey, NftLedger, NftLedgerDeps, OperationKey, PageRequest, PurseId, PurseTag,
+	ScarcityTransfersDeps, TransferDestinations, TransferRequest, TransferState,
 	testing::{FixedEntropy, FixedInstallation, TEST_INSTALLATION},
-	with_scarcity_moves,
+	with_scarcity_transfers,
 };
 use crate::{
 	chain::{
@@ -175,14 +175,15 @@ fn live_purses(chain: &ChainRuntime, genesis: H256) -> LivePurses {
 	let keys = Arc::new(FixedEntropy(rand::random::<[u8; 16]>().to_vec()));
 	let storage: Arc<dyn WatchedStorage> = Arc::new(chain.clone());
 	let heads = Arc::new(chain.clone());
-	let moves = ScarcityMovesDeps {
+	let transfers = ScarcityTransfersDeps {
 		db: db.clone(),
 		storage: storage.clone(),
 		heads,
 		genesis,
 		signer: keys.clone(),
 	};
-	let engine = live_engine(chain, db.clone(), with_scarcity_moves(DurableRegistry::new(), moves));
+	let engine =
+		live_engine(chain, db.clone(), with_scarcity_transfers(DurableRegistry::new(), transfers));
 	let installation = Arc::new(FixedInstallation(TEST_INSTALLATION));
 	let ledger = NftLedger::new(NftLedgerDeps { db, installation, keys, durable: engine });
 	let tracking = super::HoldingTrackerDeps {
@@ -194,7 +195,7 @@ fn live_purses(chain: &ChainRuntime, genesis: H256) -> LivePurses {
 	LivePurses { _dir: dir, ledger, _tracker: HoldingTracker::start(tracking) }
 }
 
-/// An engine over the live chain that builds and settles moves on its own.
+/// An engine over the live chain that builds and settles transfers on its own.
 fn live_engine(
 	chain: &ChainRuntime,
 	db: crate::store::Db,
@@ -335,21 +336,21 @@ async fn items_minted_into_host_keys_rebalance_into_another_purse() {
 	let items = purses.ledger.allocate_items(from, count).await.unwrap();
 	let collection = owner.create_collection().await;
 
-	let moved = futures::FutureExt::catch_unwind(core::panic::AssertUnwindSafe(
+	let transferred = futures::FutureExt::catch_unwind(core::panic::AssertUnwindSafe(
 		rebalance_round_trip(&owner, &purses.ledger, collection, (from, to), &items),
 	))
 	.await;
 
 	let mut every_key = items.clone();
-	every_key.extend(moved.as_ref().map(|minted| minted.clone()).unwrap_or_default());
+	every_key.extend(transferred.as_ref().map(|minted| minted.clone()).unwrap_or_default());
 	owner.clean_up(collection, &every_key).await;
-	if let Err(panic) = moved {
+	if let Err(panic) = transferred {
 		std::panic::resume_unwind(panic);
 	}
 }
 
 /// Mints into `items`, waits for the tracker to list them, rebalances them
-/// from the first purse into the second, waits for every move to finalize
+/// from the first purse into the second, waits for every transfer to finalize
 /// and for the second purse to list the new keys. Returns those keys.
 async fn rebalance_round_trip(
 	owner: &CollectionOwner,
@@ -366,30 +367,41 @@ async fn rebalance_round_trip(
 	.await;
 
 	let operation = OperationKey::new(b"live", rand::random());
-	let request = MoveRequest {
+	let request = TransferRequest {
 		operation: operation.clone(),
 		from,
 		items: expected,
-		destinations: MoveDestinations::AllocatedIn(to),
+		destinations: TransferDestinations::AllocatedIn(to),
 	};
-	ledger.start_moves(request).await.expect("moves register");
-	let minted = wait_for_finalized_moves(ledger, &operation).await;
+	ledger.start_transfers(request).await.expect("transfers register");
+	let minted = wait_for_finalized_transfers(ledger, &operation).await;
 
 	let landed: BTreeSet<_> = minted.iter().copied().collect();
-	wait_for("the moved items", || async { (available(ledger, to).await == landed).then_some(()) })
-		.await;
+	wait_for("the transferred items", || async {
+		(available(ledger, to).await == landed).then_some(())
+	})
+	.await;
 	assert_eq!(available(ledger, from).await, BTreeSet::new());
 	minted
 }
 
-/// The destination of every move of `operation`, once each finalized.
-async fn wait_for_finalized_moves(ledger: &NftLedger, operation: &OperationKey) -> Vec<ItemKey> {
-	let mut moves = ledger.observe_operation(operation);
+/// The destination of every transfer of `operation`, once each finalized.
+async fn wait_for_finalized_transfers(
+	ledger: &NftLedger,
+	operation: &OperationKey,
+) -> Vec<ItemKey> {
+	let mut transfers = ledger.observe_operation(operation);
 	let finalized = async {
-		while let Some(read) = moves.next().await {
-			let progress = read.expect("moves read");
-			assert!(progress.iter().all(|step| step.state != MoveState::Failed), "{progress:?}");
-			if progress.iter().all(|step| step.state == MoveState::Landed { finalized: true }) {
+		while let Some(read) = transfers.next().await {
+			let progress = read.expect("transfers read");
+			assert!(
+				progress.iter().all(|step| step.state != TransferState::Failed),
+				"{progress:?}"
+			);
+			if progress
+				.iter()
+				.all(|step| step.state == TransferState::Landed { finalized: true })
+			{
 				return progress.into_iter().map(|step| step.minted).collect();
 			}
 		}
@@ -397,5 +409,5 @@ async fn wait_for_finalized_moves(ledger: &NftLedger, operation: &OperationKey) 
 	};
 	tokio::time::timeout(WAIT, finalized)
 		.await
-		.expect("every move finalizes in time")
+		.expect("every transfer finalizes in time")
 }
