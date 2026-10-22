@@ -11,7 +11,8 @@
 //! explicit null, and a key it leaves out is an error rather than an absent
 //! value. `System.LastRuntimeUpgrade` is watched with the keys, and metadata
 //! is fetched only when it changes. A subscription the node ends is opened
-//! again.
+//! again, over a new connection when the old one closed, and reports only the
+//! keys that changed meanwhile.
 
 use core::{
 	future::{Future, ready},
@@ -65,8 +66,7 @@ impl WatchedStorage for ChainRuntime {
 		head: WatchedHead,
 		keys: Vec<Vec<u8>>,
 	) -> Result<RawChangeStream, RuntimeFailure> {
-		let legacy = self.legacy(genesis).await?;
-		let reader = Arc::new(WatchedKeysReader::new(legacy, keys));
+		let reader = Arc::new(WatchedKeysReader::new(self.clone(), genesis, keys));
 		match head {
 			WatchedHead::Best => best_changes(reader).await,
 			WatchedHead::Finalized => self.finalized_changes(genesis, reader).await,

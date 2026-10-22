@@ -16,7 +16,7 @@ use crate::{
 		storage_watch::{StorageSnapshot, value_hash},
 		subxt_chain::{failure, numbered},
 	},
-	chain_runtime::{LegacyConnection, RuntimeFailure},
+	chain_runtime::{ChainRuntime, LegacyConnection, RuntimeFailure},
 };
 
 /// The keys one subscription notification changed, by position among the
@@ -27,12 +27,20 @@ struct ChangedKeysAtBlock {
 }
 
 /// Reads the watched keys, keeping the metadata of the runtime it last saw.
+///
+/// Each subscription and each snapshot read asks the chain for its
+/// connection, so a watch carries on over a new one after the old one closes.
 pub struct WatchedKeysReader {
-	legacy: LegacyConnection,
+	chain: ChainRuntime,
+	genesis: H256,
 	/// `System.LastRuntimeUpgrade`, then the watched keys.
 	keys: Vec<Vec<u8>>,
 	/// The position of each of `keys`, to place the keys a notification names.
 	position_by_key: HashMap<Vec<u8>, usize>,
+	/// The hash of each key's last reported value, `None` before the first
+	/// notification. Kept across subscriptions, so one opened again reports
+	/// only what changed meanwhile.
+	held_hashes: Mutex<Option<Vec<Option<[u8; 32]>>>>,
 	last_seen_runtime: Mutex<Option<LastSeenRuntime>>,
 }
 
@@ -43,13 +51,20 @@ struct LastSeenRuntime {
 }
 
 impl WatchedKeysReader {
-	/// A reader of `watched` over `legacy`.
-	pub fn new(legacy: LegacyConnection, watched: Vec<Vec<u8>>) -> Self {
+	/// A reader of `watched` on the chain with `genesis`.
+	pub fn new(chain: ChainRuntime, genesis: H256, watched: Vec<Vec<u8>>) -> Self {
 		let upgrade_key = encode_storage_key_prefix("System", "LastRuntimeUpgrade").to_vec();
 		let keys = [vec![upgrade_key], watched].concat();
 		let position_by_key =
 			keys.iter().cloned().enumerate().map(|(index, key)| (key, index)).collect();
-		Self { legacy, keys, position_by_key, last_seen_runtime: Mutex::new(None) }
+		Self {
+			chain,
+			genesis,
+			keys,
+			position_by_key,
+			held_hashes: Mutex::new(None),
+			last_seen_runtime: Mutex::new(None),
+		}
 	}
 
 	/// Every watched key at `at`, read in one `state_queryStorageAt` call.
@@ -57,8 +72,8 @@ impl WatchedKeysReader {
 		self: Arc<Self>,
 		at: HashAndNumber,
 	) -> Result<StorageSnapshot, RuntimeFailure> {
-		let queried_snapshot = self
-			.legacy
+		let legacy = self.chain.legacy(self.genesis).await?;
+		let queried_snapshot = legacy
 			.methods
 			.state_query_storage_at(self.keys.iter().map(Vec::as_slice), Some(at.hash))
 			.await
@@ -66,33 +81,25 @@ impl WatchedKeysReader {
 		let values_by_key = group_values_by_key(queried_snapshot);
 		let mut values = all_keys_answered_or_err(&self.keys, &values_by_key, at.hash)?;
 		let last_upgrade = values.remove(0);
-		let metadata = self.metadata_for_upgrade(last_upgrade, at).await?;
+		let metadata = self.metadata_for_upgrade(&legacy, last_upgrade, at).await?;
 		Ok(DecodableAtBlock { at, metadata, value: values })
 	}
 
-	/// A new `state_subscribeStorage` of the keys, as changes. Its first
-	/// notification must answer every key. A node also names keys a block
-	/// wrote with the value they already had; those are dropped here, and so
-	/// is a notification left with nothing.
+	/// A new `state_subscribeStorage` of the keys, as changes. The watch's
+	/// first notification must answer every key. A node also names keys a
+	/// block wrote with the value they already had; those are dropped here,
+	/// and so is a notification left with nothing.
 	pub async fn subscribe_to_changes(self: Arc<Self>) -> Result<RawChangeStream, RuntimeFailure> {
-		let subscription = self.open_storage_subscription().await?;
-		let finder = self.clone();
+		let legacy = self.chain.legacy(self.genesis).await?;
+		let subscription = self.open_storage_subscription(&legacy).await?;
+		let tracker = self.clone();
 		let changes = subscription
 			.map_err(|error| failure(STORAGE_WATCH, error))
-			.scan(None, move |held_hashes, change_set| {
-				let changed = change_set
-					.and_then(|change_set| {
-						finder.find_changed_keys(held_hashes.as_deref(), change_set)
-					})
-					.inspect(|changed| {
-						if let Some(changed) = changed {
-							record_hashes(held_hashes, finder.keys.len(), &changed.changed);
-						}
-					});
-				ready(Some(changed))
-			})
+			.and_then(move |change_set| ready(tracker.track_changed_keys(change_set)))
 			.try_filter_map(|changed| ready(Ok(changed)))
-			.and_then(move |changed| self.clone().enrich_raw_changes_with_metadata(changed))
+			.and_then(move |changed| {
+				self.clone().enrich_raw_changes_with_metadata(legacy.clone(), changed)
+			})
 			.boxed();
 		Ok(changes)
 	}
@@ -100,28 +107,43 @@ impl WatchedKeysReader {
 	/// A `state_subscribeStorage` of every one of the reader's keys.
 	async fn open_storage_subscription(
 		&self,
+		legacy: &LegacyConnection,
 	) -> Result<RpcSubscription<StorageChangeSet<H256>>, RuntimeFailure> {
 		let keys: Vec<String> =
 			self.keys.iter().map(|key| format!("0x{}", hex::encode(key))).collect();
-		self.legacy
+		legacy
 			.raw_rpc_client
 			.subscribe("state_subscribeStorage", rpc_params![keys], "state_unsubscribeStorage")
 			.await
 			.map_err(|error| failure(STORAGE_WATCH, error))
 	}
 
+	/// The keys `change_set` changed, whose values are held from then on.
+	fn track_changed_keys(
+		&self,
+		change_set: StorageChangeSet<H256>,
+	) -> Result<Option<ChangedKeysAtBlock>, RuntimeFailure> {
+		let mut held_hashes = self.held_hashes.lock();
+		let changed = self.find_changed_keys(held_hashes.as_deref(), change_set)?;
+		if let Some(changed) = &changed {
+			record_hashes(&mut held_hashes, self.keys.len(), &changed.changed);
+		}
+		Ok(changed)
+	}
+
 	/// `change_set` as changes to the watched keys, with the block number and
 	/// the metadata to decode them with.
 	async fn enrich_raw_changes_with_metadata(
 		self: Arc<Self>,
+		legacy: LegacyConnection,
 		change_set: ChangedKeysAtBlock,
 	) -> Result<RawStorageChanges, RuntimeFailure> {
-		let at = numbered(&self.legacy, change_set.block, STORAGE_WATCH).await?;
+		let at = numbered(&legacy, change_set.block, STORAGE_WATCH).await?;
 		let UpgradeAndWatched { last_upgrade, watched } =
 			separate_runtime_upgrade_and_watched(change_set.changed);
 		let metadata = match last_upgrade {
-			Some(last_upgrade) => self.metadata_for_upgrade(last_upgrade, at).await?,
-			None => self.cached_or_fetched_metadata(at).await?,
+			Some(last_upgrade) => self.metadata_for_upgrade(&legacy, last_upgrade, at).await?,
+			None => self.cached_or_fetched_metadata(&legacy, at).await?,
 		};
 		Ok(DecodableAtBlock { at, metadata, value: watched })
 	}
@@ -165,13 +187,14 @@ impl WatchedKeysReader {
 	/// `last_upgrade`, fetched at `at` unless the reader already has it.
 	async fn metadata_for_upgrade(
 		&self,
+		legacy: &LegacyConnection,
 		last_upgrade: Option<Vec<u8>>,
 		at: HashAndNumber,
 	) -> Result<ArcMetadata, RuntimeFailure> {
 		if let Some(metadata) = self.cached_metadata_for(last_upgrade.as_deref()) {
 			return Ok(metadata);
 		}
-		let metadata = fetch_metadata_at_block(&self.legacy, at, STORAGE_WATCH).await?;
+		let metadata = fetch_metadata_at_block(legacy, at, STORAGE_WATCH).await?;
 		if let Some(last_upgrade) = last_upgrade {
 			self.cache_runtime(last_upgrade, metadata.clone());
 		}
@@ -188,12 +211,13 @@ impl WatchedKeysReader {
 	/// Fetched at `at` on a chain without it.
 	async fn cached_or_fetched_metadata(
 		&self,
+		legacy: &LegacyConnection,
 		at: HashAndNumber,
 	) -> Result<ArcMetadata, RuntimeFailure> {
 		let known = self.last_seen_runtime.lock().as_ref().map(|known| known.metadata.clone());
 		match known {
 			Some(metadata) => Ok(metadata),
-			None => fetch_metadata_at_block(&self.legacy, at, STORAGE_WATCH).await,
+			None => fetch_metadata_at_block(legacy, at, STORAGE_WATCH).await,
 		}
 	}
 
