@@ -557,9 +557,6 @@ mod tests {
 	use super::*;
 	use crate::frame::{MESSAGE_TYPE_RECEIVE, MESSAGE_TYPE_REQUEST};
 	use std::sync::Mutex;
-	// Handlers take real request types: `HostInfoRequest` and
-	// `HostThemeSubscribeRequest` have one fieldless version, and
-	// `HostLocalStorageReadRequest` two.
 	use truapi::{
 		v02,
 		versioned::{
