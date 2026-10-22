@@ -215,8 +215,8 @@ function decodeProtocolError(
   try {
     decoded = PROTOCOL_ERROR.dec(payload);
   } catch (cause) {
-    // A version or error this build does not know comes from a newer peer.
-    // Its length is unknowable here, so the remaining bytes are not validated.
+    // An unknown version or error means a newer peer. We don't know its
+    // layout, so we don't check the rest.
     if (cause instanceof S.UnknownDiscriminantError) return undefined;
     throw new Error("Malformed protocol error payload: truncated", { cause });
   }
