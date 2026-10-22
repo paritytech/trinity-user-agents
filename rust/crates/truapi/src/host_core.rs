@@ -1257,7 +1257,10 @@ fn durable_engine(
 	services: &RuntimeServices,
 	db: crate::store::Db,
 ) -> Arc<crate::durable::DurableTxEngine> {
-	use crate::durable::{DurableDeps, DurableRegistry, DurableTxEngine, RealTimer};
+	use crate::{
+		durable::{DurableDeps, DurableRegistry, DurableTxEngine},
+		time::RealTimer,
+	};
 
 	let chain = Arc::new(services.chain.clone());
 	DurableTxEngine::new(DurableDeps {
