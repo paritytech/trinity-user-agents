@@ -1397,17 +1397,6 @@
         }
       }
     },
-    "coinageHideDetails" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Hide Details"
-          }
-        }
-      }
-    },
     "coinageLoading" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1415,17 +1404,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Clearing"
-          }
-        }
-      }
-    },
-    "coinageShowDetails" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Show Details"
           }
         }
       }
@@ -1448,6 +1426,116 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Total"
+          }
+        }
+      }
+    },
+    "coinageTraceHops" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Prior owners: %lld"
+          }
+        }
+      }
+    },
+    "coinageTraceQuality" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Coin Quality: %@"
+          }
+        }
+      }
+    },
+    "coinageTraceQualityFair" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fair"
+          }
+        }
+      }
+    },
+    "coinageTraceQualityGood" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Good"
+          }
+        }
+      }
+    },
+    "coinageTraceQualityHigh" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "High"
+          }
+        }
+      }
+    },
+    "coinageTraceQualityInfo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The degree to which the coin is indistinguishable from other coins"
+          }
+        }
+      }
+    },
+    "coinageTraceQualityInfoAside" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "(also known as fungibility)"
+          }
+        }
+      }
+    },
+    "coinageTraceQualityLow" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Low"
+          }
+        }
+      }
+    },
+    "coinageTraceQualityUnknown" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unknown"
+          }
+        }
+      }
+    },
+    "coinageTraceQualityVeryLow" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Very low"
           }
         }
       }
@@ -1525,6 +1613,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Please wait a moment and try again."
+          }
+        }
+      }
+    },
+    "currencyPicker.searchPlaceholder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search"
           }
         }
       }
@@ -2298,16 +2397,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Other options"
-          }
-        }
-      }
-    },
-    "polkadot://%@/-/pocket/add?card=%@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "polkadot://%1$@/-/pocket/add?card=%2$@"
           }
         }
       }
@@ -3335,6 +3424,18 @@
         }
       }
     },
+    "tab.settings.backupNeeded" : {
+      "comment" : "VoiceOver value of the Settings tab while the recovery phrase has no iCloud backup.",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Backup needed"
+          }
+        }
+      }
+    },
     "tab.wallet" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3650,17 +3751,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Wallet creation failed with error %@. Please, contact support"
-          }
-        }
-      }
-    },
-    "wallet.main.balanceCard" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@ Card"
           }
         }
       }

@@ -6,8 +6,8 @@ use std::sync::{
 use crate::platform::{
 	AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus, Features,
 	JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision, Permissions,
-	PreimageHost, ProductContext, ProductOperations, ProductStorage, ProviderError, ThemeHost,
-	UserConfirmation, UserConfirmationReview, async_trait,
+	PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage, ProviderError,
+	ThemeHost, UserConfirmation, UserConfirmationReview, async_trait,
 };
 use futures::{
 	channel::mpsc,
@@ -21,8 +21,8 @@ use crate::{DevicePairingObserver, PairedSsoPeer, host_logic::worker::WorkerTran
 use super::{
 	callbacks::{
 		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-		NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks, NativePocketRemoval,
-		NativeScannerCallbacks, NativeTopUpCallbacks,
+		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
+		NativePocketRemoval, NativeScannerCallbacks, NativeTopUpCallbacks,
 	},
 	errors::HostRejection,
 	events::NativeEventBus,
@@ -93,8 +93,8 @@ pub struct CallbackPlatform {
 }
 
 impl crate::host_logic::worker::WorkerDemandObserver for CallbackPlatform {
-	fn worker_demand_changed(&self, product_id: &str, transition: WorkerTransition) {
-		self.callbacks.worker_demand_changed(product_id.to_string(), transition);
+	fn worker_demand_changed(&self, product_id: &ProductId, transition: WorkerTransition) {
+		self.callbacks.worker_demand_changed(product_id.clone(), transition);
 	}
 }
 
@@ -374,6 +374,10 @@ impl JsonRpcConnection for NativeJsonRpcConnection {
 			return;
 		}
 		self.events.unregister_chain(self.id);
+		self.callbacks.on_core_log(
+			"truapi.native.callback.chain_closing".to_string(),
+			format!("connection {}", self.id),
+		);
 		if let Err(err) = self.callbacks.chain_close(self.id) {
 			self.callbacks.on_core_log(
 				"truapi.native.callback.chain_close_failed".to_string(),
@@ -387,6 +391,11 @@ impl Drop for NativeJsonRpcConnection {
 	fn drop(&mut self) {
 		self.close();
 	}
+}
+
+/// Lowercase hex for a genesis hash in a log line.
+fn hex_lower(bytes: &[u8]) -> String {
+	bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 #[async_trait]
@@ -417,6 +426,14 @@ impl ChainProvider for CallbackPlatform {
 				reason: "chain connection closed during setup".to_string(),
 			});
 		}
+		// The core opens one connection per chain per caller scope, so the
+		// count of these for one genesis hash is the count of live scopes
+		// using that chain. Logged on the host's own channel because the
+		// core's tracing level stays at ERROR unless a host raises it.
+		self.callbacks.on_core_log(
+			"truapi.native.callback.chain_connected".to_string(),
+			format!("connection {connection_id} for chain {}", hex_lower(&genesis_hash)),
+		);
 		Ok(Box::new(connection))
 	}
 }
@@ -656,6 +673,36 @@ impl crate::platform::GamePlatform for GameCallbackPlatform {
 	}
 }
 
+/// [`crate::platform::FundingPlatform`] served by host-provided
+/// [`NativeFundingCallbacks`].
+pub struct FundingCallbackPlatform {
+	/// Host funding overlay.
+	pub funding: Arc<dyn NativeFundingCallbacks>,
+}
+
+#[async_trait]
+impl crate::platform::FundingPlatform for FundingCallbackPlatform {
+	async fn present_funding(
+		&self,
+		product: Option<&ProductContext>,
+		session: crate::platform::FundingPresentation,
+	) -> Result<crate::platform::FundingPresentOutcome, v01::GenericError> {
+		self.funding
+			.present_funding(
+				product.map(|product| product.product_id.clone()),
+				session.intent,
+				session.direction,
+				session.amount,
+			)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem) {
+		self.funding.funding_session_changed(intent, status);
+	}
+}
+
 /// Rank of a terminal status.
 const TERMINAL_RANK: u8 = 3;
 
@@ -663,7 +710,7 @@ const TERMINAL_RANK: u8 = 3;
 /// following an id: each starts at the host's current status and shows every
 /// later one once, never stepping back, and ends at a terminal one.
 struct StatusRelay<T> {
-	followers: Mutex<Subscribers<(String, crate::Bytes32), T>>,
+	followers: Mutex<Subscribers<(ProductId, crate::Bytes32), T>>,
 	/// How far along a status is; [`TERMINAL_RANK`] ends a stream.
 	rank: fn(&T) -> u8,
 }
@@ -675,7 +722,7 @@ impl<T: Clone + Send + 'static> StatusRelay<T> {
 
 	/// Deliver a later `status` of `product_id`'s `id` to everyone following
 	/// it; a terminal one ends their streams.
-	fn notify(&self, product_id: String, id: crate::Bytes32, status: T) {
+	fn notify(&self, product_id: ProductId, id: crate::Bytes32, status: T) {
 		let terminal = (self.rank)(&status) == TERMINAL_RANK;
 		let mut followers = self.lock_followers();
 		let key = (product_id, id);
@@ -689,7 +736,7 @@ impl<T: Clone + Send + 'static> StatusRelay<T> {
 	/// now; an error ends the stream there.
 	fn follow<E: Send + 'static>(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 		id: crate::Bytes32,
 		current: impl FnOnce() -> Result<T, E>,
 	) -> BoxStream<'static, Result<T, E>> {
@@ -725,7 +772,7 @@ impl<T: Clone + Send + 'static> StatusRelay<T> {
 
 	fn lock_followers(
 		&self,
-	) -> std::sync::MutexGuard<'_, Subscribers<(String, crate::Bytes32), T>> {
+	) -> std::sync::MutexGuard<'_, Subscribers<(ProductId, crate::Bytes32), T>> {
 		self.followers.lock().expect("status followers mutex poisoned")
 	}
 }
@@ -748,7 +795,7 @@ impl TopUpCallbackPlatform {
 	/// following it; a terminal one ends their streams.
 	pub fn notify_status(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 		id: crate::Bytes32,
 		status: v01::HostPaymentTopUpStatusSubscribeItem,
 	) {
@@ -787,14 +834,13 @@ impl crate::platform::TopUpPlatform for TopUpCallbackPlatform {
 		Result<v01::HostPaymentTopUpStatusSubscribeItem, v01::HostPaymentTopUpStatusSubscribeError>,
 	> {
 		let product_id = product.product_id.clone();
-		self.statuses.follow(product_id.clone(), id, || {
-			match self.top_up.top_up_status(product_id, id) {
-				Ok(Some(status)) => Ok(status),
-				Ok(None) => Err(v01::HostPaymentTopUpStatusSubscribeError::TopUpNotFound),
-				Err(error) => Err(v01::HostPaymentTopUpStatusSubscribeError::Unknown {
+		self.statuses.follow(product.product_id.clone(), id, || {
+			self.top_up
+				.top_up_status(product_id, id)
+				.map_err(|error| v01::HostPaymentTopUpStatusSubscribeError::Unknown {
 					reason: error.to_string(),
-				}),
-			}
+				})?
+				.ok_or(v01::HostPaymentTopUpStatusSubscribeError::TopUpNotFound)
 		})
 	}
 }
@@ -817,7 +863,7 @@ impl PaymentCallbackPlatform {
 	/// following it; a terminal one ends their streams.
 	pub fn notify_status(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 		id: crate::Bytes32,
 		status: v01::HostPaymentStatusSubscribeItem,
 	) {
@@ -854,14 +900,13 @@ impl crate::platform::PaymentPlatform for PaymentCallbackPlatform {
 		Result<v01::HostPaymentStatusSubscribeItem, v01::HostPaymentStatusSubscribeError>,
 	> {
 		let product_id = product.product_id.clone();
-		self.statuses.follow(product_id.clone(), id, || {
-			match self.payments.payment_status(product_id, id) {
-				Ok(Some(status)) => Ok(status),
-				Ok(None) => Err(v01::HostPaymentStatusSubscribeError::PaymentNotFound),
-				Err(error) => {
-					Err(v01::HostPaymentStatusSubscribeError::Unknown { reason: error.to_string() })
-				},
-			}
+		self.statuses.follow(product.product_id.clone(), id, || {
+			self.payments
+				.payment_status(product_id, id)
+				.map_err(|error| v01::HostPaymentStatusSubscribeError::Unknown {
+					reason: error.to_string(),
+				})?
+				.ok_or(v01::HostPaymentStatusSubscribeError::PaymentNotFound)
 		})
 	}
 }
@@ -880,7 +925,8 @@ impl BalanceCallbackPlatform {
 		Self { balance, followers: Default::default() }
 	}
 
-	/// Deliver the new balance of `purse` to every product following it.
+	/// Deliver the new balance of `purse` to every product following it. The
+	/// core drops it for a product whose balance access was revoked.
 	pub fn notify_balance(&self, purse: Option<u32>, available: u128) {
 		self.lock_followers().send(&purse, &available);
 	}
@@ -940,7 +986,7 @@ mod status_relay_tests {
 	impl NativeTopUpCallbacks for Engine {
 		async fn top_up(
 			&self,
-			_product_id: String,
+			_product_id: ProductId,
 			_request: v01::HostPaymentTopUpRequest,
 		) -> Result<(), v01::HostPaymentTopUpError> {
 			Ok(())
@@ -948,7 +994,7 @@ mod status_relay_tests {
 
 		fn top_up_status(
 			&self,
-			_product_id: String,
+			_product_id: ProductId,
 			id: crate::Bytes32,
 		) -> Result<Option<v01::HostPaymentTopUpStatusSubscribeItem>, HostRejection> {
 			Ok(self.0.lock().expect("statuses").get(&id).cloned())
@@ -956,7 +1002,7 @@ mod status_relay_tests {
 	}
 
 	fn product() -> ProductContext {
-		ProductContext { product_id: "fund.dot".into(), execution_kind: Default::default() }
+		ProductContext::new(ProductId::for_test("fund.dot"))
 	}
 
 	// A follower sees the status the host holds now, then every status the
@@ -973,12 +1019,12 @@ mod status_relay_tests {
 		let missing = platform.subscribe_top_up_status(&product(), [2; 32]);
 
 		platform.notify_status(
-			"fund.dot".into(),
+			ProductId::for_test("fund.dot"),
 			[1; 32],
 			v01::HostPaymentTopUpStatusSubscribeItem::Claiming,
 		);
 		platform.notify_status(
-			"fund.dot".into(),
+			ProductId::for_test("fund.dot"),
 			[1; 32],
 			v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true },
 		);
@@ -1019,7 +1065,7 @@ mod status_relay_tests {
 			.insert([1; 32], v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true });
 		let core_pass = platform.subscribe_top_up_status(&product(), [1; 32]);
 		let verdict = v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true };
-		platform.notify_status("fund.dot".into(), [1; 32], verdict.clone());
+		platform.notify_status(ProductId::for_test("fund.dot"), [1; 32], verdict.clone());
 
 		assert_eq!(
 			(block_on(core_pass.collect::<Vec<_>>()), block_on(product_stream.collect::<Vec<_>>()),),
@@ -1048,7 +1094,7 @@ mod status_relay_tests {
 			v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: false },
 			v01::HostPaymentTopUpStatusSubscribeItem::NotClaimed,
 		] {
-			platform.notify_status("fund.dot".into(), [1; 32], status);
+			platform.notify_status(ProductId::for_test("fund.dot"), [1; 32], status);
 		}
 		let _ = platform.subscribe_top_up_status(&product(), [2; 32]);
 
@@ -1073,7 +1119,7 @@ mod status_relay_tests {
 	impl NativePaymentCallbacks for Payments {
 		async fn request_payment(
 			&self,
-			_product_id: String,
+			_product_id: ProductId,
 			_request: v01::HostPaymentRequest,
 		) -> Result<(), v01::HostPaymentError> {
 			Ok(())
@@ -1081,7 +1127,7 @@ mod status_relay_tests {
 
 		fn payment_status(
 			&self,
-			_product_id: String,
+			_product_id: ProductId,
 			id: crate::Bytes32,
 		) -> Result<Option<v01::HostPaymentStatusSubscribeItem>, HostRejection> {
 			Ok(self.0.lock().expect("statuses").get(&id).cloned())
@@ -1103,7 +1149,7 @@ mod status_relay_tests {
 		let followed = platform.subscribe_payment_status(&product(), [1; 32]);
 		let missing = platform.subscribe_payment_status(&product(), [2; 32]);
 		platform.notify_status(
-			"fund.dot".into(),
+			ProductId::for_test("fund.dot"),
 			[1; 32],
 			v01::HostPaymentStatusSubscribeItem::Completed,
 		);
@@ -1127,7 +1173,7 @@ mod status_relay_tests {
 	impl NativeBalanceCallbacks for Shared {
 		async fn balance(
 			&self,
-			_product_id: String,
+			_product_id: ProductId,
 			_purse: Option<u32>,
 		) -> Result<u128, v01::HostPaymentBalanceSubscribeError> {
 			Ok(self.0)

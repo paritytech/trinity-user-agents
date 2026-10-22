@@ -20,7 +20,7 @@ use crossterm::{
 	terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures_util::StreamExt;
-use qrcode::{Color as QrColor, QrCode};
+use qrcode::{QrCode, render::unicode::Dense1x2};
 use ratatui::{
 	Terminal,
 	backend::CrosstermBackend,
@@ -58,7 +58,6 @@ const MAX_VISIBLE_COMPLETIONS: usize = 8;
 const MOUSE_SCROLL_LINES: usize = 3;
 const COMPOSER_HORIZONTAL_PADDING: u16 = 1;
 const QR_INDENT: usize = 2;
-const QR_QUIET_ZONE: usize = 4;
 
 /// Choices presented for an action or a permission request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,44 +157,30 @@ enum FeedItem {
 	},
 }
 
+/// A QR code drawn two modules per cell with Unicode half blocks, quiet zone included.
 #[derive(Debug, PartialEq, Eq)]
 struct PairingQr {
-	side: usize,
-	modules: Vec<bool>,
+	rows: Vec<String>,
+}
+
+/// `text` as a QR code drawn two modules per cell with Unicode half blocks, quiet zone included.
+/// Dark modules are drawn, so the rows need dark-on-light colours to scan.
+pub fn qr_rows(text: &str) -> qrcode::types::QrResult<Vec<String>> {
+	let drawn = QrCode::new(text.as_bytes())?.render::<Dense1x2>().quiet_zone(true).build();
+	Ok(drawn.lines().map(str::to_owned).collect())
 }
 
 impl PairingQr {
 	fn encode(url: &str) -> qrcode::types::QrResult<Self> {
-		let code = QrCode::new(url.as_bytes())?;
-		Ok(Self {
-			side: code.width(),
-			modules: code.to_colors().into_iter().map(|color| color == QrColor::Dark).collect(),
-		})
-	}
-
-	fn module(&self, row: usize, column: usize) -> bool {
-		if row < QR_QUIET_ZONE ||
-			column < QR_QUIET_ZONE ||
-			row >= self.side + QR_QUIET_ZONE ||
-			column >= self.side + QR_QUIET_ZONE
-		{
-			return false;
-		}
-		let row = row - QR_QUIET_ZONE;
-		let column = column - QR_QUIET_ZONE;
-		self.modules[row * self.side + column]
-	}
-
-	fn rendered_side(&self) -> usize {
-		self.side + QR_QUIET_ZONE * 2
+		Ok(Self { rows: qr_rows(url)? })
 	}
 
 	fn rendered_width(&self) -> usize {
-		self.rendered_side()
+		self.rows.first().map_or(0, |row| row.chars().count())
 	}
 
 	fn rendered_height(&self) -> usize {
-		self.rendered_side().div_ceil(2)
+		self.rows.len()
 	}
 }
 
@@ -2601,7 +2586,7 @@ fn completion_window(total: usize, selected: usize, max_visible: usize) -> Range
 
 fn feed_item_cost(item: &FeedItem) -> (usize, usize) {
 	if let FeedItem::PairingQr(qr) = item {
-		return (qr.rendered_height(), qr.modules.len());
+		return (qr.rendered_height(), qr.rows.iter().map(String::len).sum());
 	}
 	let lines = feed_item_plain_lines(item);
 	let bytes = lines.iter().map(String::len).sum();
@@ -2699,10 +2684,8 @@ fn pairing_qr_lines(qr: &PairingQr, width: usize, height: usize) -> Vec<Line<'st
 	if width == 0 || height == 0 {
 		return Vec::new();
 	}
-	let rendered_side = qr.rendered_side();
-	let qr_width = qr.rendered_width();
+	let required_width = QR_INDENT + qr.rendered_width();
 	let required_height = qr.rendered_height();
-	let required_width = QR_INDENT + qr_width;
 	if width < required_width || height < required_height {
 		return vec![Line::from(Span::styled(
 			format!("  QR code needs {required_width} columns × {required_height} rows"),
@@ -2710,22 +2693,10 @@ fn pairing_qr_lines(qr: &PairingQr, width: usize, height: usize) -> Vec<Line<'st
 		))];
 	}
 	let qr_style = Style::default().fg(Color::Black).bg(Color::White);
-	(0..required_height)
-		.map(|terminal_row| {
-			let top_row = terminal_row * 2;
-			let bottom_row = top_row + 1;
-			let mut row = String::with_capacity(rendered_side);
-			for column in 0..rendered_side {
-				let top = qr.module(top_row, column);
-				let bottom = bottom_row < rendered_side && qr.module(bottom_row, column);
-				row.push(match (top, bottom) {
-					(true, true) => '█',
-					(true, false) => '▀',
-					(false, true) => '▄',
-					(false, false) => ' ',
-				});
-			}
-			Line::from(vec![Span::raw(" ".repeat(QR_INDENT)), Span::styled(row, qr_style)])
+	qr.rows
+		.iter()
+		.map(|row| {
+			Line::from(vec![Span::raw(" ".repeat(QR_INDENT)), Span::styled(row.clone(), qr_style)])
 		})
 		.collect()
 }
@@ -3021,6 +2992,10 @@ fn sso_metadata(event: &SsoEvent) -> Option<String> {
 mod tests {
 	use super::*;
 	use crossterm::event::MouseEvent;
+	use qrcode::Color as QrColor;
+
+	/// The quiet zone a QR code keeps around it, in modules.
+	const QR_QUIET_ZONE: usize = 4;
 	use ratatui::{backend::TestBackend, layout::Position};
 	use tracing_subscriber::layer::SubscriberExt;
 
@@ -3731,6 +3706,8 @@ mod tests {
 	fn pairing_deeplink_renders_a_high_contrast_qr_without_copying_it() {
 		let mut app = test_app();
 		let url = format!("polkadotapp://pair?handshake={}", "0123456789abcdef".repeat(13));
+		let rendered_side =
+			QrCode::new(url.as_bytes()).expect("encode QR").width() + QR_QUIET_ZONE * 2;
 
 		app.handle_system_event(SystemEvent::PairingDeeplink { url });
 
@@ -3744,14 +3721,6 @@ mod tests {
 			.iter()
 			.filter_map(|line| line.spans.iter().find(|span| span.style == qr_style))
 			.collect::<Vec<_>>();
-		let rendered_side = app
-			.entries
-			.iter()
-			.find_map(|item| match item {
-				FeedItem::PairingQr(qr) => Some(qr.side + QR_QUIET_ZONE * 2),
-				_ => None,
-			})
-			.expect("pairing QR is retained");
 		assert_eq!(qr_rows.len(), rendered_side.div_ceil(2));
 		assert!(qr_rows.iter().all(|row| text_display_width(&row.content) == rendered_side));
 		assert!(qr_rows.iter().any(|row| {
@@ -3775,15 +3744,7 @@ mod tests {
 	fn pairing_event_encodes_the_exact_deeplink() {
 		let mut app = test_app();
 		let url = "polkadotapp://pair?handshake=exact-payload".to_string();
-		let expected_code = QrCode::new(url.as_bytes()).expect("encode expected QR code");
-		let expected = PairingQr {
-			side: expected_code.width(),
-			modules: expected_code
-				.to_colors()
-				.into_iter()
-				.map(|color| color == QrColor::Dark)
-				.collect(),
-		};
+		let expected = PairingQr::encode(&url).expect("encode expected QR code");
 
 		app.handle_system_event(SystemEvent::PairingDeeplink { url });
 
@@ -3797,11 +3758,23 @@ mod tests {
 	#[test]
 	fn solid_qr_cells_preserve_every_module() {
 		let url = format!("polkadotapp://pair?handshake={}", "0123456789abcdef".repeat(13));
+		let code = QrCode::new(url.as_bytes()).expect("encode QR");
+		let side = code.width() + QR_QUIET_ZONE * 2;
+		let dark = code.to_colors();
+		let module = |row: usize, column: usize| {
+			let (row, column) =
+				(row.wrapping_sub(QR_QUIET_ZONE), column.wrapping_sub(QR_QUIET_ZONE));
+			row < code.width() &&
+				column < code.width() &&
+				dark[row * code.width() + column] == QrColor::Dark
+		};
 		let qr = PairingQr::encode(&url).expect("encode pairing QR");
 		let lines = pairing_qr_lines(&qr, 120, 120);
 
+		assert_eq!(lines.len(), side.div_ceil(2));
 		for (terminal_row, line) in lines.iter().enumerate() {
 			let row = line.spans.last().expect("QR row span").content.as_ref();
+			assert_eq!(row.chars().count(), side);
 			for (column, character) in row.chars().enumerate() {
 				let modules = match character {
 					'█' => [true, true],
@@ -3812,11 +3785,7 @@ mod tests {
 				};
 				assert_eq!(
 					modules,
-					[
-						qr.module(terminal_row * 2, column),
-						terminal_row * 2 + 1 < qr.rendered_side() &&
-							qr.module(terminal_row * 2 + 1, column),
-					]
+					[module(terminal_row * 2, column), module(terminal_row * 2 + 1, column)]
 				);
 			}
 		}
@@ -3877,7 +3846,7 @@ mod tests {
 
 	#[test]
 	fn larger_pairing_qr_reports_the_solid_renderer_dimensions() {
-		let oversized = PairingQr { side: 65, modules: vec![false; 65 * 65] };
+		let oversized = PairingQr { rows: vec![" ".repeat(73); 37] };
 
 		let lines = pairing_qr_lines(&oversized, 70, 36);
 		let rendered = lines

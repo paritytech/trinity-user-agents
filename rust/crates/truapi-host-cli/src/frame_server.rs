@@ -40,7 +40,7 @@ use crate::bootstrap;
 use truapi::{
 	ChannelId, DebugSink, FrameSink, PairingHostRuntime, ProductContext, ProductRuntime,
 	ProductRuntimeError, SigningHostRuntime,
-	platform::{ProductExecutionKind, RuntimeConfigValidationError},
+	platform::{ProductExecutionKind, ProductId, ProductIdError},
 };
 
 /// Pause after a failed `accept()` before trying again.
@@ -76,7 +76,7 @@ pub struct ProductSelection {
 /// The requested product does not identify a supported execution context.
 #[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
 #[display("invalid product id")]
-pub struct ProductSelectionError(RuntimeConfigValidationError);
+pub struct ProductSelectionError(ProductIdError);
 
 impl ProductSelection {
 	/// Validate and normalize the initial product id.
@@ -84,27 +84,28 @@ impl ProductSelection {
 		product_id: String,
 		execution_kind: ProductExecutionKind,
 	) -> Result<Arc<Self>, ProductSelectionError> {
-		let product = ProductContext::new_with_execution(product_id, execution_kind)?;
+		let product_id = product_id.parse::<ProductId>()?;
+		let product = ProductContext::new_with_execution(product_id, execution_kind);
 		let (current, _) = watch::channel(product);
 		Ok(Arc::new(Self { current, execution_kind }))
 	}
 
-	/// Return the normalized current product id.
-	pub fn current(&self) -> String {
+	/// The current product id.
+	pub fn current(&self) -> ProductId {
 		self.current.borrow().product_id.clone()
 	}
 
-	/// Select a validated product, returning whether the selection changed.
-	pub fn select(&self, product_id: String) -> Result<bool, ProductSelectionError> {
-		let product = ProductContext::new_with_execution(product_id, self.execution_kind)?;
-		Ok(self.current.send_if_modified(|current| {
+	/// Select a product, returning whether the selection changed.
+	pub fn select(&self, product_id: ProductId) -> bool {
+		let product = ProductContext::new_with_execution(product_id, self.execution_kind);
+		self.current.send_if_modified(|current| {
 			if current == &product {
 				false
 			} else {
 				*current = product;
 				true
 			}
-		}))
+		})
 	}
 
 	fn subscribe(&self) -> watch::Receiver<ProductContext> {
@@ -1074,11 +1075,21 @@ mod tests {
 	fn product_selection_validates_and_normalizes_ids() -> Result<()> {
 		let product = ProductSelection::new(" Dotli.DOT ".to_string(), ProductExecutionKind::App)?;
 
-		assert_eq!(product.current(), "dotli.dot");
-		assert!(product.select("localhost:3000".to_string())?);
-		assert_eq!(product.current(), "localhost:3000");
-		assert!(!product.select("LOCALHOST:3000".to_string())?);
-		assert!(product.select("example.com".to_string()).is_err());
+		assert_eq!(product.current().as_str(), "dotli.dot");
+		assert!(product.select(ProductId::for_test("localhost:3000")));
+		assert_eq!(product.current().as_str(), "localhost:3000");
+		assert!(!product.select(ProductId::for_test("LOCALHOST:3000")));
+		let error = ProductSelection::new("example.com".to_string(), ProductExecutionKind::App)
+			.err()
+			.expect("public DNS names are not product ids");
+		assert_eq!(
+			std::error::Error::source(&error).and_then(|source| source.downcast_ref()),
+			Some(&ProductIdError::Invalid { product_id: "example.com".to_string() })
+		);
+		assert_eq!(
+			format!("{:#}", anyhow::Error::new(error)),
+			"invalid product id: product_id must be a dotNS or localhost product identifier, got \"example.com\""
+		);
 		Ok(())
 	}
 
@@ -1087,10 +1098,10 @@ mod tests {
 		let product = ProductSelection::new("first.dot".to_string(), ProductExecutionKind::App)?;
 		let mut connection = product.subscribe();
 
-		assert!(product.select("second.dot".to_string())?);
+		assert!(product.select(ProductId::for_test("second.dot")));
 		connection.changed().await?;
-		assert_eq!(connection.borrow().product_id, "second.dot");
-		assert!(!product.select("SECOND.DOT".to_string())?);
+		assert_eq!(connection.borrow().product_id.as_str(), "second.dot");
+		assert!(!product.select(ProductId::for_test("SECOND.DOT")));
 		assert!(!connection.has_changed()?);
 		Ok(())
 	}
@@ -1264,10 +1275,8 @@ mod tests {
 		) -> Vec<u8> {
 			let ids = request_ids(method).expect("the method is in the wire table");
 			let frames = Arc::new(CapturedFrames::default());
-			let connection = runtime.product_runtime(
-				ProductContext::new(product.to_string()).expect("the product id is valid"),
-				frames.clone(),
-			);
+			let connection = runtime
+				.product_runtime(ProductContext::new(ProductId::for_test(product)), frames.clone());
 			let frame = ProtocolMessage {
 				request_id: "1".to_string(),
 				payload: Payload {
@@ -1459,7 +1468,7 @@ mod tests {
 		product_id: &str,
 	) -> Result<ProductRuntime> {
 		let product =
-			ProductContext::new_with_execution(product_id.into(), ProductExecutionKind::App)?;
+			ProductContext::new_with_execution(product_id.parse()?, ProductExecutionKind::App);
 		Ok(tapped.product_runtime(product, Arc::new(DiscardingFrameSink)))
 	}
 

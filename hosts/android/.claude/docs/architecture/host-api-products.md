@@ -321,10 +321,10 @@ Native runtime: `StorageHostCalls` provides a per-product key-value store namesp
 Spec: trinity-user-agents RFC "Pocket modality" (#609), core implementation #706, on top of Unified Renderer (#633) and
 Worker Lifecycle (#632). The host owns the collection and is its only writer; a product observes its own cards over
 the wire (`Pocket::list_subscribe`) and may remove one (`Pocket::remove_card`). There is no add call: a card enters
-when the user follows a `polkadotapp://<product>.<tld>/-/pocket/add?card=<id>` deeplink and approves the sheet.
-`/-/pocket/open?card=<id>` lands on the Pocket tab with that card expanded when the user holds it, `/-/pocket` alone on
-the tab, and `polkadotapp://pocket` reaches the tab from a link that names no product. The first path segment `-` is
-reserved for host-handled targets; `ProductSpaDeepLinkHandler` declines it.
+when the user follows a `polkadotapp://pocket/add?product=<product>.<tld>&card=<id>` deeplink and approves the sheet.
+`polkadotapp://pocket/open?product=<product>.<tld>&card=<id>` lands on the Pocket tab with that card expanded when the
+user holds it, and `polkadotapp://pocket` alone on the tab. A product's `navigateTo` uses the same links, which
+`PocketDeepLinkHandler` reads like any other app link. A product's own paths are App routes.
 
 Seams, all in `feature/products/api/.../domain/pocket/`:
 - `PocketCollection` — `observeCards()` and user removal. One pinned card, Humanity on the personhood product
@@ -364,6 +364,16 @@ Core side (`feature/products/impl/.../domain/truapi/`):
 
 Demo: `feature/products/product-sample/pocket-worker`, a worker on the core's own client that publishes one card,
 draws its face live and gives it up on its Remove button.
+
+### Host-placed chat
+
+The chat analogue of the pinned card. `HostPlacedProducts` (`feature/products/impl/.../domain/bot/external/`) names
+the products the host itself puts in chat, Jollity on the reserved game product, and `ProductExternalExtensionProvider`
+unions them with the installed chat products, placed first and listed once when the user also installed one. Nothing
+is written to the product tables, so nothing can uninstall them, and the product the registry sees never changes, so
+the worker is not restarted over a resolved name. A placed product's chat extension holds the worker like any other,
+and the product registers its rooms through its own `createRoom`. A host-placed chat is pinned above the rest
+(`ProductChatPreviewDelegate`, through `Order.PinToTop`, for the `PlacedByHost` origin) and its menu offers no removal.
 
 ---
 

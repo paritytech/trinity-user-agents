@@ -2365,7 +2365,24 @@ fn type_codec_expr_mode_qualified(
 		},
 		TypeDefKind::Enum(variants) => {
 			if is_unit_only_enum(ty) {
-				unit_enum_codec_expr(variants)
+				unit_enum_codec_expr(type_name, variants)
+			} else if variants.iter().any(|variant| variant.codec_index.is_some()) {
+				// `S.TaggedUnion` numbers variants by key order, so an enum that
+				// pins its SCALE indexes gets them written out.
+				let variants = variants
+					.iter()
+					.enumerate()
+					.map(|(position, variant)| {
+						Ok(format!(
+							"{}: [{}, {}] as const",
+							variant.name,
+							scale_discriminant(variant, position),
+							variant_codec_expr_mode(&variant.fields, qualified, ctx, mode)?
+						))
+					})
+					.collect::<Result<Vec<_>>>()?
+					.join(", ");
+				Ok(format!("S.indexedTaggedUnion({{{variants}}})"))
 			} else {
 				let variants = variants
 					.iter()
@@ -2404,7 +2421,26 @@ fn unit_enum_union_type(variants: &[VariantDef]) -> Result<String> {
 		.join(" | "))
 }
 
-fn unit_enum_codec_expr(variants: &[VariantDef]) -> Result<String> {
+/// The SCALE discriminant of the variant at `position`: its
+/// `#[codec(index = N)]` when it carries one, its position otherwise.
+fn scale_discriminant(variant: &VariantDef, position: usize) -> usize {
+	variant.codec_index.map_or(position, usize::from)
+}
+
+fn unit_enum_codec_expr(type_name: &str, variants: &[VariantDef]) -> Result<String> {
+	// `S.Status` numbers values by position, so a pinned index must match it.
+	if let Some((position, variant)) = variants
+		.iter()
+		.enumerate()
+		.find(|(position, variant)| scale_discriminant(variant, *position) != *position)
+	{
+		anyhow::bail!(
+			"unit-only enum `{type_name}` pins `{}` to index {} at position {position}; \
+			 declare its variants in index order",
+			variant.name,
+			scale_discriminant(variant, position),
+		);
+	}
 	Ok(format!(
 		"S.Status({})",
 		variants
@@ -2829,6 +2865,24 @@ fn to_camel_case(s: &str) -> String {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	fn unit_variant(name: &str, codec_index: Option<u8>) -> VariantDef {
+		VariantDef { name: name.to_string(), fields: VariantFields::Unit, docs: None, codec_index }
+	}
+
+	// A unit-only enum encodes by position, so an index pinned out of
+	// declaration order would ship the wrong byte; codegen refuses it.
+	#[test]
+	fn a_unit_enum_pinned_out_of_order_is_refused() {
+		let in_order = [unit_variant("A", Some(0)), unit_variant("B", Some(1))];
+		let out_of_order = [unit_variant("A", Some(1)), unit_variant("B", Some(0))];
+
+		assert_eq!(
+			unit_enum_codec_expr("Pinned", &in_order).expect("in order"),
+			"S.Status(\"A\", \"B\")"
+		);
+		assert!(unit_enum_codec_expr("Pinned", &out_of_order).is_err());
+	}
 
 	fn wire_attrs(id: Option<u8>) -> WireAttrs {
 		WireAttrs { id, ..WireAttrs::default() }

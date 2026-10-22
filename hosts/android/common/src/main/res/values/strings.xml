@@ -245,6 +245,13 @@
 
     <string name="settings_backup_not_backed_up">Not backed up.\nSet up a backup to stay protected</string>
 
+    <string name="settings_payments_backup">Payments backup</string>
+    <string name="settings_payments_backup_in_progress">In progress</string>
+    <string name="settings_payments_backup_delayed">Delayed</string>
+    <string name="settings_payments_backup_done">Done</string>
+
+    <string name="payments_setup_notice_message">We\'re still setting up payments. You can keep using them, but settlement will be delayed until setup is finished.</string>
+
     <string name="settings_backup_recovery_phrase_warning_title">View Private Key</string>
     <string name="settings_backup_recovery_phrase_warning_recommendation_1">Never share your recovery phrase or enter it into other apps or websites.</string>
     <string name="settings_backup_recovery_phrase_warning_recommendation_2">Anyone who has your recovery phrase can access your account.</string>
@@ -520,6 +527,9 @@
     <string name="chat_message_compaction_unavailable">Some messages could not be retrieved and are permanently unavailable.</string>
     <string name="chat_message_edited">Edited</string>
     <string name="chat_message_edited_time">Edited %s</string>
+    <string name="chat_echo_title">🔊 Echo</string>
+    <string name="chat_echo_watch_time">You watched this message for total of %s</string>
+    <string name="chat_echo_decode_failed">Failed to decode echo message</string>
     <string name="chat_edit_history">Edit history</string>
     <string name="chat_reply_to">Reply to %1$s</string>
 
@@ -737,7 +747,6 @@
     <string name="asset_details_transfer_button">Transfer</string>
     <string name="asset_details_actions_disabled">Actions will be available after you finish updating your balance</string>
     <string name="asset_details_backup_in_progress">Updating balance</string>
-    <string name="pocket_digital_dollar_account_backup_pending">Account backup is still in progress…</string>
     <string name="asset_details_backup_in_progress_subsequent">Continue updating balance</string>
     <string name="asset_details_balance_restored">Balance restored</string>
     <string name="asset_details_balance_restored_description">If it differs from the previous value, press Update until correct</string>
@@ -829,6 +838,7 @@
     <string name="products_message_custom_preview">Custom message</string>
     <string name="products_message_load_failed">Couldn\'t load this message.</string>
     <string name="products_message_render_failed">Couldn\'t display this message.</string>
+    <string name="products_widget_image_unavailable">This image is not available</string>
     <string name="product_settings_version">version %1$s</string>
     <string name="product_settings_created_by">created by %1$s</string>
     <string name="product_settings_section_privacy">Privacy &amp; Security</string>
@@ -873,7 +883,7 @@
     <string name="notification_channel_name_video_game">Weekly game</string>
     <string name="notification_channel_description_video_game">Notifications about upcoming weekly games</string>
     <string name="notification_channel_name_video_game_alarm">Weekly game urgent</string>
-    <string name="notification_channel_description_video_game_alarm">Urgent notifications when games are about to start</string>
+    <string name="notification_channel_description_video_game_alarm">Urgent notifications when games start</string>
 
     <string name="notification_channel_name_calls">Calls</string>
     <string name="notification_channel_description_calls">Notifications about incoming calls</string>
@@ -912,6 +922,8 @@
 
     <string name="pocket_digital_dollar_title">%1$s</string>
     <string name="pocket_digital_dollar_faucet_top_up">Faucet Top Up</string>
+    <string name="pocket_collectibles_open_button">View collectibles</string>
+    <string name="pocket_collectibles_title">Collectibles</string>
     <string name="pocket_action_get">Get</string>
     <string name="pocket_action_get_description">Add %1$s via bank, crypto or credit card</string>
     <string name="pocket_action_send_description">Move %1$s to your bank, crypto wallet or contacts</string>
@@ -920,6 +932,7 @@
     <string name="pocket_error_auto_fund_failed">Couldn\'t add test funds to this account. Try again.</string>
     <string name="pocket_error_share_coinage_logs_failed">Couldn\'t share the coinage logs. Try again.</string>
     <string name="pocket_pinned_card_humanity">Humanity</string>
+    <string name="host_placed_chat_jollity">Jollity</string>
     <string name="pocket_add_card_title">Add to Pocket</string>
     <string name="pocket_add_card_subtitle">%1$s wants to add a card to your Pocket. This is how it will look.</string>
     <string name="pocket_add_card_action">Add</string>

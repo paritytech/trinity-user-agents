@@ -19,10 +19,13 @@ mod capabilities;
 mod chat;
 pub mod contacts;
 mod dotns_lookup;
+mod funding;
+mod host_session;
 mod identity;
 pub mod login_failure;
 mod pairing_host;
 mod payment_id;
+mod product_accounts;
 pub mod product_manifest;
 mod product_subtree;
 mod renderer;
@@ -30,16 +33,19 @@ mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
 pub mod services;
 mod signing_host;
-/// Pairing flow for wallet login.
-pub mod sso_pairing;
 /// SSO remote request/response messaging over the statement store.
 pub mod sso_remote;
+mod sso_request_service;
+mod sso_responder_service;
 pub mod sso_service;
 /// Statement Store and Bulletin allowance allocation.
 pub mod statement_allowance;
 /// `StatementStore` surface: proofs plus submit and subscribe flows.
 pub mod statement_store;
 mod statement_store_rpc;
+#[cfg(feature = "test-host")]
+mod test_resource_controls;
+mod versioning;
 mod vrf;
 
 use core::{future::Future, time::Duration};
@@ -55,6 +61,7 @@ use authority::{AuthorityCancelError, AuthoritySession};
 pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
+pub use host_session::HostSession;
 
 /// The host's contact picker plus the key its handles are minted under:
 /// everything one `contacts.pick` call needs from the connection.
@@ -64,15 +71,16 @@ use futures::{FutureExt, StreamExt, pin_mut};
 #[cfg(test)]
 use pairing_host::PairingHost;
 pub use pairing_host::PairingHost as PairingHostRole;
+use payment_id::host_funding_intent;
+use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
-pub use signing_host::{
-	AnnouncedPairing, DevicePairingObserver, LocalActivation, MAX_PAIRING_METADATA_CHARS,
-	PairedSsoPeer, PairingProposal, PairingProposalMetadata, ResponderExit,
-	SigningHost as SigningHostRole, SigningHostSsoService, disconnect_paired_host,
-	establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
-	respond_to_pairing, resume_pairing,
+pub use signing_host::{LocalActivation, SigningHost as SigningHostRole, SigningHostSsoService};
+pub use sso_responder_service::{
+	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
+	PairingProposal, PairingProposalMetadata, ResponderExit, SsoResponderService,
 };
+use versioning::version;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
 pub use vrf::ring_vrf_member;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
@@ -80,9 +88,9 @@ pub use vrf::ring_vrf_member;
 use crate::platform::{
 	AccountAccessReview, ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision, Platform,
-	ProductContext, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
-	normalize_chat_identifier, normalize_product_identifier, validate_chat_icon,
-	validate_chat_message_content, validate_chat_name,
+	ProductContext, ProductId, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
+	normalize_chat_identifier, validate_chat_icon, validate_chat_message_content,
+	validate_chat_name,
 };
 pub use signing_host::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
@@ -90,7 +98,7 @@ pub use signing_host::TrackedStatementRenewalTarget;
 use tracing::{instrument, warn};
 use truapi::{
 	CallContext, CallError, CancellationReason, Subscription,
-	api::{Chat, Contacts, Pocket, Renderer},
+	api::{Chat, Contacts, Funding, Pocket, Renderer},
 	latest, v01,
 	versioned::{
 		IntoLatest,
@@ -104,6 +112,11 @@ use truapi::{
 			HostChatSetRoomFooterResponse,
 		},
 		contacts::{HostContactsPickError, HostContactsPickRequest, HostContactsPickResponse},
+		funding::{
+			HostFundingError, HostFundingRequest, HostFundingResponse,
+			HostFundingStatusSubscribeError, HostFundingStatusSubscribeItem,
+			HostFundingStatusSubscribeRequest,
+		},
 		pocket::{
 			HostPocketListSubscribeError, HostPocketListSubscribeItem,
 			HostPocketListSubscribeRequest, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
@@ -119,8 +132,6 @@ use truapi::{
 use web_time::Instant;
 
 #[cfg(test)]
-use crate::host_logic::session::SessionState;
-#[cfg(test)]
 use crate::subscription::Spawner;
 use crate::{
 	chain_runtime::RuntimeFailure,
@@ -134,7 +145,7 @@ use crate::{
 		product_account::{
 			derivation_index_bytes, derive_product_public_key, public_key_from_address,
 		},
-		session::SessionInfo,
+		session::{SessionInfo, SessionState},
 		sso::pairing::x25519_public_key,
 	},
 };
@@ -165,6 +176,10 @@ const PREIMAGE_SUBMIT_TIMEOUT: Duration = Duration::from_secs(360);
 /// end-to-end submit deadline may reduce it further.
 const PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT: Duration =
 	RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT;
+/// Cap on waiting for an extended Bulletin authorization to reach this host's
+/// Bulletin node. The claim is on chain once the extension returns, so only
+/// propagation is left, and the submit keeps the rest of its deadline.
+const PREIMAGE_BULLETIN_AUTHORIZATION_WAIT: Duration = Duration::from_secs(18);
 
 const LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON: &str =
 	"Account can't be derived from product account id";
@@ -300,6 +315,13 @@ fn authority_cancellation_error(cx: &CallContext, reason: CancellationReason) ->
 
 /// Product adapter for the generated TrUAPI dispatcher.
 pub struct ProductRuntimeHost {
+	connection: Arc<ProductConnection>,
+	accounts: ProductAccounts,
+	host_session: Arc<dyn HostSession>,
+}
+
+/// Per-connection adapters, permissions, channels and open operation demand.
+pub struct ProductConnection {
 	services: Arc<RuntimeServices>,
 	platform: Arc<dyn Platform>,
 	chat_platform: Option<Arc<dyn crate::platform::ChatPlatform>>,
@@ -307,11 +329,13 @@ pub struct ProductRuntimeHost {
 	permission_status: Option<Arc<dyn crate::platform::PermissionStatusHost>>,
 	/// Permission requests and consuming operations can arrive on different connections.
 	temporary_permissions: Arc<TemporaryPermissions>,
-	authority: Arc<dyn ProductAuthority>,
+	session_state: Arc<SessionState>,
 	product: ProductContext,
-	/// Stable per-product-runtime id used to scope long-lived chain follow
-	/// operation ids within one shared host runtime.
 	core_instance: u64,
+	/// This product runtime's own view of the chain. A node budgets follows and
+	/// concurrent operations per connection, so a connection shared with another
+	/// product makes those budgets collide.
+	chain: crate::chain_runtime::ChainRuntime,
 	chat: Arc<ActionChannel<HostChatActionSubscribeItem>>,
 	renderer: Arc<ActionChannel<HostRendererActionSubscribeItem>>,
 	pocket_platform: Option<Arc<dyn crate::platform::PocketPlatform>>,
@@ -325,40 +349,15 @@ pub struct ProductRuntimeHost {
 /// transient user activation.
 pub const USER_TAP_WINDOW_SECS: u64 = 5;
 
-impl Drop for ProductRuntimeHost {
+impl Drop for ProductConnection {
 	fn drop(&mut self) {
+		// This runtime owns its chain connections outright, so they go with it.
+		self.chain.release_scope();
 		self.release_open_operations();
 	}
 }
 
-impl ProductRuntimeHost {
-	/// Build a product-scoped dispatcher target from a long-lived host runtime
-	/// and the adapters scoped to this product connection.
-	pub fn from_services(
-		services: Arc<RuntimeServices>,
-		adapters: crate::host_core::ConnectionAdapters,
-		authority: Arc<dyn ProductAuthority>,
-		product: ProductContext,
-	) -> Self {
-		let core_instance = services.next_core_instance();
-		Self {
-			services,
-			platform: adapters.platform,
-			chat_platform: adapters.chat_platform,
-			permission_status: adapters.permission_status,
-			temporary_permissions: adapters.permission_grants,
-			authority,
-			product,
-			core_instance,
-			chat: adapters.chat,
-			renderer: adapters.renderer,
-			pocket_platform: adapters.pocket_platform,
-			expanded_card: adapters.expanded_card,
-			game_platform: adapters.game_platform,
-			open_operations: Mutex::new(HashSet::new()),
-		}
-	}
-
+impl ProductConnection {
 	/// Whether the host published a renderer action, which only the user
 	/// causes, within the last [`USER_TAP_WINDOW_SECS`]. A Worker may scan only
 	/// shortly after one, because it has no screen the user could be looking at.
@@ -380,6 +379,341 @@ impl ProductRuntimeHost {
 	/// Trusted executable kind attached to this product connection.
 	pub fn execution_kind(&self) -> crate::platform::ProductExecutionKind {
 		self.product.execution_kind
+	}
+
+	/// Whether this product holds `scope` over `target`: always over itself,
+	/// and over another product only as that product's manifest grants it.
+	async fn holds_cross_product_scope(&self, target: &ProductId, scope: Granted) -> bool {
+		if target == self.product_id() {
+			return true;
+		}
+		product_manifest::grants_scope(
+			&self.services,
+			&*self.platform,
+			self.product_id(),
+			target,
+			scope,
+		)
+		.await
+	}
+
+	fn product_id(&self) -> &ProductId {
+		&self.product.product_id
+	}
+
+	// Foreign reads must keep the authorized owner, not the calling product.
+	fn product_storage_key(&self, owner: &ProductId, key: String) -> String {
+		ProductStorageKey::new(owner.clone(), key).encode()
+	}
+
+	fn follow_id(&self, id: &str) -> String {
+		format!("c{}:{id}", self.core_instance)
+	}
+
+	/// Read stored authorization, including the current OS gate for device access.
+	#[instrument(skip_all, fields(runtime.method = "permissions.authorization_status"))]
+	pub async fn permission_authorization_status(
+		&self,
+		request: PermissionAuthorizationRequest,
+	) -> Result<PermissionAuthorizationStatus, latest::GenericError> {
+		let service = self.permissions_service();
+		service.authorization_status(&request).await
+	}
+
+	/// Read stored authorizations, including current OS gates for device access.
+	#[instrument(skip_all, fields(runtime.method = "permissions.authorization_statuses"))]
+	pub async fn permission_authorization_statuses(
+		&self,
+		requests: Vec<PermissionAuthorizationRequest>,
+	) -> Result<Vec<PermissionAuthorizationStatus>, latest::GenericError> {
+		let service = self.permissions_service();
+		service.authorization_statuses(&requests).await
+	}
+
+	/// Store authorization; `NotDetermined` clears the saved decision.
+	#[instrument(skip_all, fields(runtime.method = "permissions.set_authorization_status"))]
+	pub async fn set_permission_authorization_status(
+		&self,
+		request: PermissionAuthorizationRequest,
+		status: PermissionAuthorizationStatus,
+	) -> Result<(), latest::GenericError> {
+		let service = self.permissions_service();
+		service.set_authorization_status(&request, status).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "permissions.remote_authorization"))]
+	async fn remote_permission_authorization(
+		&self,
+		permission: latest::RemotePermission,
+	) -> Result<PermissionAuthorizationStatus, String> {
+		let service = self.permissions_service();
+		service
+			.authorize_remote(latest::RemotePermissionRequest { permission })
+			.await
+			.map_err(|err| format!("permission storage failed: {err:?}"))
+	}
+
+	/// Require remote authorization, prompting only when no decision is stored.
+	async fn require_remote_permission<E>(
+		&self,
+		permission: latest::RemotePermission,
+		denied_error: E,
+	) -> Result<(), CallError<E>> {
+		match self.remote_permission_authorization(permission).await {
+			Ok(PermissionAuthorizationStatus::Authorized) => Ok(()),
+			Ok(
+				PermissionAuthorizationStatus::Denied |
+				PermissionAuthorizationStatus::NotDetermined,
+			) => Err(CallError::Domain(denied_error)),
+			Err(reason) => Err(CallError::HostFailure { reason }),
+		}
+	}
+
+	async fn confirm_user_action_if_needed(
+		&self,
+		review: UserConfirmationReview,
+	) -> Result<bool, v01::GenericError> {
+		if self.product_id().has_trusted_remote_permissions() {
+			return Ok(true);
+		}
+		self.platform.confirm_user_action(review).await
+	}
+
+	/// Confirm a signature with one of `owner`'s accounts. When the account
+	/// belongs to another product, the user is asked once per kind and owning
+	/// product for the rest of this execution. Prompts open one at a time, and a
+	/// signature the user already approved never waits for one.
+	async fn confirm_signature(
+		&self,
+		kind: CrossProductSignatureKind,
+		owner: &ProductId,
+		review: impl FnOnce() -> UserConfirmationReview,
+	) -> Result<bool, v01::GenericError> {
+		if owner == self.product_id() {
+			return self.confirm_user_action_if_needed(review()).await;
+		}
+		let approval = cross_product_signature_key(self.product_id(), owner, kind);
+		let permissions = &self.temporary_permissions;
+		if permissions.authorize(&approval, false) {
+			return Ok(true);
+		}
+		let _prompt = permissions.signature_prompt().await;
+		if permissions.authorize(&approval, false) {
+			return Ok(true);
+		}
+		let approved = self.confirm_user_action_if_needed(review()).await?;
+		if approved {
+			permissions.grant(approval);
+		}
+		Ok(approved)
+	}
+
+	async fn require_chain_submit<E>(&self, denied_error: E) -> Result<(), CallError<E>> {
+		self.require_remote_permission(latest::RemotePermission::ChainSubmit, denied_error)
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "permissions.identity_disclosure_authorization"))]
+	async fn identity_disclosure_authorization(
+		&self,
+	) -> Result<PermissionAuthorizationStatus, String> {
+		let request = PermissionAuthorizationRequest::IdentityDisclosure;
+		let service = self.permissions_service();
+		let cached = service
+			.authorization_status(&request)
+			.await
+			.map_err(|err| format!("permission storage failed: {err:?}"))?;
+		if cached != PermissionAuthorizationStatus::NotDetermined {
+			return Ok(cached);
+		}
+
+		// A dismissed confirmation must not persist a refusal.
+		let decision = match self
+			.platform
+			.confirm_permission(UserConfirmationReview::IdentityDisclosure(
+				IdentityDisclosureReview { product_id: self.product_id().clone() },
+			))
+			.await
+		{
+			Ok(decision) => decision,
+			Err(_) => return Ok(PermissionAuthorizationStatus::NotDetermined),
+		};
+		let status = match decision {
+			PermissionDecision::AllowOnce => return Ok(PermissionAuthorizationStatus::Authorized),
+			PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
+			PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
+		};
+		service
+			.set_authorization_status(&request, status)
+			.await
+			.map_err(|err| format!("permission storage failed: {err:?}"))?;
+		Ok(status)
+	}
+
+	/// Chat access policy for this connection; see [`chat_platform_for`].
+	fn native_chat_platform(
+		&self,
+	) -> Result<Arc<dyn crate::platform::ChatPlatform>, crate::host_core::ProductRuntimeError> {
+		chat_platform_for(
+			self.product.execution_kind,
+			self.session_state.current().is_some(),
+			self.chat_platform.as_ref(),
+		)
+	}
+
+	fn chat_platform<E>(&self) -> Result<Arc<dyn crate::platform::ChatPlatform>, CallError<E>> {
+		self.native_chat_platform().map_err(|error| match error {
+			crate::host_core::ProductRuntimeError::Denied => CallError::Denied,
+			_ => CallError::Unsupported,
+		})
+	}
+
+	/// End this connection's Chat action stream.
+	pub fn detach_chat(&self) {
+		self.chat.detach();
+	}
+
+	/// Buffer one host-authored Chat action for this connection's product,
+	/// behind the same access policy as every other Chat entry point.
+	pub fn publish_chat_action(
+		&self,
+		action: truapi::versioned::chat::HostChatActionSubscribeItem,
+	) -> Result<(), crate::host_core::ProductRuntimeError> {
+		self.native_chat_platform()?;
+		self.chat.publish(action)
+	}
+
+	/// Renderer access policy for this connection; see [`renderer_access_for`].
+	pub fn renderer_access(&self) -> Result<(), crate::host_core::ProductRuntimeError> {
+		renderer_access_for(self.product.execution_kind)
+	}
+
+	/// Hold worker demand until the matching [`Self::release_worker_reference`].
+	pub fn acquire_worker_reference(&self) {
+		self.services.worker_ledger.acquire(&self.product.product_id);
+	}
+
+	/// Release one core-held reference on this connection's product worker.
+	pub fn release_worker_reference(&self) {
+		self.services.worker_ledger.release(&self.product.product_id);
+	}
+
+	/// Begin off-dispatch so cancellation cannot strand an unreported host operation.
+	async fn begin_operation_with_host(
+		&self,
+		label: String,
+	) -> Result<latest::HostWorkerBeginOperationResponse, latest::HostWorkerOperationError> {
+		let (tx, rx) = futures::channel::oneshot::channel();
+		let platform = self.platform.clone();
+		let product = self.product.clone();
+		(self.services.spawner)(Box::pin(async move {
+			let begun = platform.begin_operation(&product, label).await;
+			if let Err(Ok(response)) = tx.send(begun) {
+				let _ = platform.end_operation(&product, response.id).await;
+			}
+		}));
+		rx.await.unwrap_or_else(|_| {
+			Err(latest::HostWorkerOperationError::Unknown {
+				reason: "the host did not answer".to_string(),
+			})
+		})
+	}
+
+	/// Hold worker demand until this operation ends or the connection closes.
+	fn hold_worker_for_operation(&self, id: u32) {
+		if self.open_operations.lock().expect("open operations mutex poisoned").insert(id) {
+			self.acquire_worker_reference();
+		}
+	}
+
+	/// Release all operation demand immediately and schedule host cleanup.
+	/// Repeated calls leave already released operations alone.
+	pub fn release_open_operations(&self) {
+		let open = core::mem::take(
+			&mut *self.open_operations.lock().expect("open operations mutex poisoned"),
+		);
+		if open.is_empty() {
+			return;
+		}
+		for _ in &open {
+			self.release_worker_reference();
+		}
+		let platform = self.platform.clone();
+		let product = self.product.clone();
+		(self.services.spawner)(Box::pin(async move {
+			for id in open {
+				let _ = platform.end_operation(&product, id).await;
+			}
+		}));
+	}
+
+	/// Release one open operation's demand; unknown ids leave demand unchanged.
+	fn release_worker_for_operation(&self, id: u32) {
+		if self.open_operations.lock().expect("open operations mutex poisoned").remove(&id) {
+			self.release_worker_reference();
+		}
+	}
+
+	/// End the renderer action stream this connection's product is reading.
+	pub fn detach_renderer(&self) {
+		self.renderer.detach();
+	}
+
+	/// Buffer one renderer action for this connection's product.
+	pub fn publish_renderer_action(
+		&self,
+		item: HostRendererActionSubscribeItem,
+	) -> Result<(), crate::host_core::ProductRuntimeError> {
+		self.renderer_access()?;
+		self.renderer.publish(item)
+	}
+
+	fn pocket_platform<E>(&self) -> Result<Arc<dyn crate::platform::PocketPlatform>, CallError<E>> {
+		if self.product.execution_kind != crate::platform::ProductExecutionKind::Worker ||
+			self.session_state.current().is_none()
+		{
+			return Err(CallError::Denied);
+		}
+		self.pocket_platform.clone().ok_or(CallError::Unsupported)
+	}
+}
+
+impl ProductRuntimeHost {
+	/// Build a product-scoped dispatcher target from a long-lived host runtime
+	/// and the adapters scoped to this product connection.
+	pub fn from_services(
+		services: Arc<RuntimeServices>,
+		adapters: crate::host_core::ConnectionAdapters,
+		authority: Arc<dyn ProductAuthority>,
+		host_session: Arc<dyn HostSession>,
+		product: ProductContext,
+	) -> Self {
+		let core_instance = services.next_core_instance();
+		let chain = services.chain.for_product(core_instance);
+		let accounts = ProductAccounts::new(authority, product.clone());
+		let connection = Arc::new(ProductConnection {
+			services,
+			platform: adapters.platform,
+			chat_platform: adapters.chat_platform,
+			permission_status: adapters.permission_status,
+			temporary_permissions: adapters.permission_grants,
+			session_state: host_session.session_state(),
+			product,
+			core_instance,
+			chain,
+			chat: adapters.chat,
+			renderer: adapters.renderer,
+			pocket_platform: adapters.pocket_platform,
+			game_platform: adapters.game_platform,
+			expanded_card: adapters.expanded_card,
+			open_operations: Mutex::new(HashSet::new()),
+		});
+		Self { connection, accounts, host_session }
+	}
+
+	/// Shared connection state used by product control handles.
+	pub fn connection(&self) -> &Arc<ProductConnection> {
+		&self.connection
 	}
 
 	/// Test constructor building a standalone pairing-host runtime.
@@ -428,8 +762,7 @@ impl ProductRuntimeHost {
 		Self::new_pairing_for_tests(
 			platform,
 			Self::compat_host_config(),
-			ProductContext::new("unknown.dot".to_string())
-				.expect("compat product context is valid"),
+			ProductContext::new(ProductId::for_test("unknown.dot")),
 			spawner,
 		)
 		.0
@@ -444,8 +777,7 @@ impl ProductRuntimeHost {
 		Self::new_pairing_for_tests(
 			platform,
 			host_config,
-			ProductContext::new("unknown.dot".to_string())
-				.expect("compat product context is valid"),
+			ProductContext::new(ProductId::for_test("unknown.dot")),
 			spawner,
 		)
 	}
@@ -467,23 +799,30 @@ impl ProductRuntimeHost {
 		);
 		let pairing_host = PairingHost::new(services.clone(), host_config);
 		let core_instance = services.next_core_instance();
+		let chain = services.chain.for_product(core_instance);
 		let chat = Arc::new(ActionChannel::chat());
 		let renderer = Arc::new(ActionChannel::renderer());
-		let host = Self {
+		let connection = Arc::new(ProductConnection {
 			services,
 			platform,
 			chat_platform: None,
 			permission_status: None,
 			temporary_permissions: Arc::default(),
-			authority: pairing_host.clone(),
+			session_state: pairing_host.session().session_state(),
 			product,
 			core_instance,
+			chain,
 			chat,
 			renderer,
 			pocket_platform: None,
-			expanded_card: None,
 			game_platform: None,
+			expanded_card: None,
 			open_operations: Mutex::new(HashSet::new()),
+		});
+		let host = Self {
+			accounts: ProductAccounts::new(pairing_host.clone(), connection.product.clone()),
+			connection,
+			host_session: pairing_host.session().clone(),
 		};
 		(host, pairing_host)
 	}
@@ -491,7 +830,7 @@ impl ProductRuntimeHost {
 	/// Test-only access to the shared session-state holder.
 	#[cfg(test)]
 	pub fn test_session_state(&self) -> Arc<SessionState> {
-		self.authority.session_state()
+		self.host_session.session_state()
 	}
 
 	/// Seed the paired Account Holder's hard product subtree for unit tests.
@@ -499,111 +838,69 @@ impl ProductRuntimeHost {
 	pub fn test_cache_product_subtree(
 		&self,
 		session: &SessionInfo,
-		product_id: &str,
+		product_id: &ProductId,
 		public_key: [u8; 32],
 	) {
-		self.authority.cache_product_subtree_for_test(session, product_id, public_key);
+		self.accounts.cache_product_subtree_for_test(session, product_id, public_key);
 	}
 
 	/// Disconnect this runtime from its paired signing host.
 	#[cfg(test)]
 	#[instrument(skip_all, fields(runtime.method = "account.disconnect"))]
 	pub async fn disconnect(&self) {
-		self.authority.disconnect().await;
+		self.host_session.disconnect().await;
 	}
 
-	/// Resolve the canonical account owner this product may access.
-	pub async fn authorized_product_account(
-		&self,
-		dot_ns_identifier: &str,
-		cx: &CallContext,
-	) -> Option<String> {
-		let product_id = self.product_id();
-		if crate::platform::is_localhost_product_identifier(&product_id) {
-			return normalize_product_identifier(dot_ns_identifier).ok();
+	/// Whether this product may use `owner`'s accounts.
+	pub async fn may_use_product_account(&self, owner: &ProductId, cx: &CallContext) -> bool {
+		if self.connection.product_id().is_localhost() {
+			return true;
 		}
 		let cx = remote_authority_context(cx);
-		self.bounded_cross_product_scope_target(dot_ns_identifier, Granted::Context, &cx)
-			.await
+		self.holds_cross_product_scope_within(owner, Granted::Context, &cx).await
 	}
 
-	/// Resolve the grant within the caller's deadline and cancellation.
-	pub async fn bounded_cross_product_scope_target(
+	/// [`Self::holds_cross_product_scope`], answering `false` if the caller's
+	/// deadline passes or the call is cancelled first.
+	pub async fn holds_cross_product_scope_within(
 		&self,
-		target: &str,
+		target: &ProductId,
 		scope: Granted,
 		cx: &CallContext,
-	) -> Option<String> {
-		let lookup = self.cross_product_scope_target(target, scope).fuse();
+	) -> bool {
+		let lookup = self.connection.holds_cross_product_scope(target, scope).fuse();
 		let cancelled = cx.cancel().cancelled().fuse();
 		pin_mut!(lookup, cancelled);
 		let Some(budget) = cx.timeout() else {
 			return futures::select! {
 				resolved = lookup => resolved,
-				_ = cancelled => None,
+				_ = cancelled => false,
 			};
 		};
 		let deadline = futures_timer::Delay::new(budget).fuse();
 		pin_mut!(deadline);
 		futures::select! {
 			resolved = lookup => resolved,
-			_ = cancelled => None,
-			() = deadline => None,
+			_ = cancelled => false,
+			() = deadline => false,
 		}
-	}
-
-	/// Return the canonical target if this product has the requested access.
-	pub async fn cross_product_scope_target(&self, target: &str, scope: Granted) -> Option<String> {
-		let normalized = normalize_product_identifier(target).ok()?;
-		if normalized == self.product_id() {
-			return Some(normalized);
-		}
-		product_manifest::grants_scope(
-			&self.services,
-			&*self.platform,
-			&self.product_id(),
-			&normalized,
-			scope,
-		)
-		.await
-		.then_some(normalized)
-	}
-
-	fn normalize_product_account_id(
-		product_account_id: latest::ProductAccountId,
-	) -> Result<latest::ProductAccountId, ()> {
-		Ok(latest::ProductAccountId {
-			dot_ns_identifier: normalize_product_identifier(&product_account_id.dot_ns_identifier)
-				.map_err(|_| ())?,
-			derivation_index: product_account_id.derivation_index,
-		})
-	}
-
-	fn product_id(&self) -> String {
-		self.product.product_id.as_str().to_string()
 	}
 
 	async fn product_account_public_key(
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_account_id: &latest::ProductAccountId,
+		owner: &ProductId,
+		derivation_index: &latest::DerivationIndex,
 	) -> Result<[u8; 32], AuthorityError> {
 		let cx = remote_authority_context(cx);
 		let subtree = remote_authority_call(
 			&cx,
-			self.authority.product_subtree_public_key(
-				&cx,
-				session,
-				product_account_id.dot_ns_identifier.clone(),
-			),
+			self.accounts.product_subtree_public_key(session, &cx, owner),
 		)
 		.await?;
-		derive_product_public_key(
-			subtree,
-			derivation_index_bytes(&product_account_id.derivation_index),
-		)
-		.map_err(|err| AuthorityError::Unknown { reason: err.to_string() })
+		derive_product_public_key(subtree, derivation_index_bytes(derivation_index))
+			.map_err(|err| AuthorityError::Unknown { reason: err.to_string() })
 	}
 
 	async fn legacy_slot_zero_public_key(
@@ -614,166 +911,10 @@ impl ProductRuntimeHost {
 		self.product_account_public_key(
 			cx,
 			session,
-			&v01::ProductAccountId {
-				dot_ns_identifier: self.product_id(),
-				derivation_index: v01::DerivationIndex::Index(0),
-			},
+			self.connection.product_id(),
+			&v01::DerivationIndex::Index(0),
 		)
 		.await
-	}
-
-	fn product_storage_key(&self, owner: &str, key: String) -> String {
-		ProductStorageKey::new(owner, key)
-			.expect("storage key owner was already normalized")
-			.encode()
-	}
-
-	fn follow_id(&self, id: &str) -> String {
-		format!("c{}:{id}", self.core_instance)
-	}
-}
-
-impl ProductRuntimeHost {
-	/// Read stored authorization without prompting, including the device OS gate.
-	#[instrument(skip_all, fields(runtime.method = "permissions.authorization_status"))]
-	pub async fn permission_authorization_status(
-		&self,
-		request: PermissionAuthorizationRequest,
-	) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-		let service = self.permissions_service();
-		service.authorization_status(&request).await
-	}
-
-	/// Read stored authorizations without prompting, including device OS gates.
-	#[instrument(skip_all, fields(runtime.method = "permissions.authorization_statuses"))]
-	pub async fn permission_authorization_statuses(
-		&self,
-		requests: Vec<PermissionAuthorizationRequest>,
-	) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
-		let service = self.permissions_service();
-		service.authorization_statuses(&requests).await
-	}
-
-	/// Store authorization; `NotDetermined` clears the saved decision.
-	#[instrument(skip_all, fields(runtime.method = "permissions.set_authorization_status"))]
-	pub async fn set_permission_authorization_status(
-		&self,
-		request: PermissionAuthorizationRequest,
-		status: PermissionAuthorizationStatus,
-	) -> Result<(), v01::GenericError> {
-		let service = self.permissions_service();
-		service.set_authorization_status(&request, status).await
-	}
-
-	#[instrument(skip_all, fields(runtime.method = "permissions.remote_authorization"))]
-	async fn remote_permission_authorization(
-		&self,
-		permission: v01::RemotePermission,
-	) -> Result<PermissionAuthorizationStatus, String> {
-		let service = self.permissions_service();
-		service
-			.authorize_remote(v01::RemotePermissionRequest { permission })
-			.await
-			.map_err(|err| format!("permission storage failed: {err:?}"))
-	}
-
-	/// Require remote authorization, prompting only when no decision is stored.
-	pub async fn require_remote_permission<E>(
-		&self,
-		permission: v01::RemotePermission,
-		denied_error: E,
-	) -> Result<(), CallError<E>> {
-		match self.remote_permission_authorization(permission).await {
-			Ok(PermissionAuthorizationStatus::Authorized) => Ok(()),
-			Ok(
-				PermissionAuthorizationStatus::Denied |
-				PermissionAuthorizationStatus::NotDetermined,
-			) => Err(CallError::Domain(denied_error)),
-			Err(reason) => Err(CallError::HostFailure { reason }),
-		}
-	}
-
-	async fn confirm_product_action(
-		&self,
-		review: UserConfirmationReview,
-	) -> Result<bool, v01::GenericError> {
-		if crate::platform::has_trusted_remote_permissions(&self.product_id()) {
-			return Ok(true);
-		}
-		self.platform.confirm_user_action(review).await
-	}
-
-	/// Confirm a signature with `account`. When the account belongs to another
-	/// product, the user is asked once per kind and owning product for the rest
-	/// of this execution. Prompts open one at a time, and a signature the user
-	/// already approved never waits for one.
-	async fn confirm_signature(
-		&self,
-		kind: CrossProductSignatureKind,
-		account: &v01::ProductAccountId,
-		review: impl FnOnce() -> UserConfirmationReview,
-	) -> Result<bool, v01::GenericError> {
-		if account.dot_ns_identifier == self.product_id() {
-			return self.confirm_product_action(review()).await;
-		}
-		let approval =
-			cross_product_signature_key(&self.product_id(), &account.dot_ns_identifier, kind);
-		let permissions = &self.temporary_permissions;
-		if permissions.authorize(&approval, false) {
-			return Ok(true);
-		}
-		let _prompt = permissions.signature_prompt().await;
-		if permissions.authorize(&approval, false) {
-			return Ok(true);
-		}
-		let approved = self.confirm_product_action(review()).await?;
-		if approved {
-			permissions.grant(approval);
-		}
-		Ok(approved)
-	}
-
-	async fn require_chain_submit<E>(&self, denied_error: E) -> Result<(), CallError<E>> {
-		self.require_remote_permission(v01::RemotePermission::ChainSubmit, denied_error)
-			.await
-	}
-
-	#[instrument(skip_all, fields(runtime.method = "permissions.identity_disclosure_authorization"))]
-	async fn identity_disclosure_authorization(
-		&self,
-	) -> Result<PermissionAuthorizationStatus, String> {
-		let product_id = self.product_id();
-		let request = PermissionAuthorizationRequest::IdentityDisclosure;
-		let service = self.permissions_service();
-		let cached = service
-			.authorization_status(&request)
-			.await
-			.map_err(|err| format!("permission storage failed: {err:?}"))?;
-		if cached != PermissionAuthorizationStatus::NotDetermined {
-			return Ok(cached);
-		}
-
-		// A dismissed confirmation must not persist a refusal.
-		let decision = match self
-			.platform
-			.confirm_permission(UserConfirmationReview::IdentityDisclosure(
-				IdentityDisclosureReview { product_id: product_id.clone() },
-			))
-			.await
-		{
-			Ok(decision) => decision,
-			Err(_) => return Ok(PermissionAuthorizationStatus::NotDetermined),
-		};
-		let status = match decision {
-			PermissionDecision::AllowOnce => return Ok(PermissionAuthorizationStatus::Authorized),
-			PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
-			PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
-		};
-		service
-			.set_authorization_status(&request, status)
-			.await
-			.map_err(|err| format!("permission storage failed: {err:?}"))?;
-		Ok(status)
 	}
 
 	async fn classify_legacy_address_signer(
@@ -803,21 +944,116 @@ impl ProductRuntimeHost {
 		}
 		Err(LegacySignerError::Unavailable)
 	}
+
+	/// Replace declared contact handles with their accounts before review or signing.
+	pub async fn substitute_declared_contacts(
+		&self,
+		call_data: Vec<u8>,
+		declared: &[v01::ContactHandle],
+	) -> Result<Vec<u8>, ContactResolutionError> {
+		let cache = &self.connection.services.contact_handles;
+		let declared_bytes: Vec<[u8; 32]> = declared.iter().map(|handle| handle.bytes).collect();
+		if cache.has_undeclared_handle(&call_data, &declared_bytes) {
+			return Err(ContactResolutionError::UnknownContact);
+		}
+		if declared.is_empty() {
+			return Ok(call_data);
+		}
+		let (platform, handles) = self.contacts_picker().map_err(|error| match error {
+			CallError::Unsupported => ContactResolutionError::Unsupported,
+			CallError::Domain(v01::HostContactsPickError::NotConnected) => {
+				ContactResolutionError::NotConnected
+			},
+			CallError::Domain(v01::HostContactsPickError::Unknown { reason }) => {
+				ContactResolutionError::Host(reason)
+			},
+			other => ContactResolutionError::Host(format!("{other:?}")),
+		})?;
+		let mut resolved: Vec<([u8; 32], Option<[u8; 32]>)> = declared_bytes
+			.iter()
+			.map(|handle| (*handle, cache.get(handle, &handles)))
+			.collect();
+		// The host is asked only about handles the cache cannot answer, all
+		// of them in one lookup.
+		let misses: Vec<[u8; 32]> = resolved
+			.iter()
+			.filter(|(_, account)| account.is_none())
+			.map(|(handle, _)| *handle)
+			.collect();
+		if !misses.is_empty() {
+			let generation = cache.generation();
+			let lookup = crate::platform::HostContactLookup {
+				handle_key: handles.handle_key(),
+				handles: misses,
+			};
+			let matches = platform
+				.contacts(&lookup)
+				.await
+				.map_err(|error| ContactResolutionError::Host(error.reason))?;
+			// One answer per handle, or the answers cannot be paired up.
+			if matches.accounts.len() != lookup.handles.len() {
+				return Err(ContactResolutionError::Host(format!(
+					"contacts lookup answered {} of {} handles",
+					matches.accounts.len(),
+					lookup.handles.len()
+				)));
+			}
+			let mut answers = matches.accounts.into_iter();
+			for (handle, account) in resolved.iter_mut().filter(|(_, account)| account.is_none()) {
+				let answer = answers.next().expect("one answer per miss; qed");
+				// A host answer is checked, not trusted: an account that does
+				// not hash to its handle is treated as no contact at all.
+				*account = answer.filter(|account| handles.names(handle, account));
+				if let Some(account) = account {
+					cache.insert(*handle, *account, generation);
+				}
+			}
+		}
+		crate::host_logic::contact_substitution::substitute(&call_data, &resolved)
+			.map_err(|_| ContactResolutionError::UnknownContact)
+	}
+
+	/// The contact picker for this connection, plus the key its handles are
+	/// minted under.
+	///
+	/// Ordered so a host that serves no picker answers `Unsupported` without an
+	/// overlay ever being raised. There is no permission step: the user
+	/// selecting a contact is the consent.
+	fn contacts_picker(&self) -> Result<ContactsPicker, CallError<latest::HostContactsPickError>> {
+		// A capability the host does not serve is a framework answer; a
+		// missing session is one the product handles.
+		let platform =
+			self.connection.services.contacts_platform().ok_or(CallError::Unsupported)?;
+		let session = self
+			.accounts
+			.current_session()
+			.ok_or(CallError::Domain(latest::HostContactsPickError::NotConnected))?;
+		let handle_key =
+			self.accounts.contacts_handle_key(&session).map_err(|error| match error {
+				AuthorityError::Disconnected => {
+					CallError::Domain(latest::HostContactsPickError::NotConnected)
+				},
+				other => CallError::Domain(latest::HostContactsPickError::Unknown {
+					reason: other.to_string(),
+				}),
+			})?;
+		Ok((platform, crate::runtime::contacts::ContactHandles::from_handle_key(handle_key)))
+	}
 }
 
 async fn account_access_authorization(
 	platform: &dyn Platform,
-	requesting_product_id: &str,
-	target_product_id: &str,
+	requesting_product_id: &ProductId,
+	target_product_id: &ProductId,
 ) -> Result<PermissionAuthorizationStatus, AccountAccessAuthorizationError> {
 	if requesting_product_id == target_product_id ||
-		crate::platform::normalizes_to_trusted_remote_permissions(requesting_product_id)
+		requesting_product_id.has_trusted_remote_permissions()
 	{
 		return Ok(PermissionAuthorizationStatus::Authorized);
 	}
 
-	let target = crate::host_internal::product_manifest::bare_product_label(target_product_id);
-	let caller = crate::host_internal::product_manifest::bare_product_label(requesting_product_id);
+	let target = target_product_id.bare_label();
+	let caller = requesting_product_id.bare_label();
 	let cached = crate::host_internal::permissions::account_access_status(platform, caller, target)
 		.await
 		.map_err(AccountAccessAuthorizationError::PermissionStorage)?;
@@ -827,8 +1063,8 @@ async fn account_access_authorization(
 
 	let decision = platform
 		.confirm_permission(UserConfirmationReview::AccountAccess(AccountAccessReview {
-			requesting_product_id: requesting_product_id.to_string(),
-			target_product_id: target_product_id.to_string(),
+			requesting_product_id: requesting_product_id.clone(),
+			target_product_id: target_product_id.clone(),
 		}))
 		.await
 		.map_err(AccountAccessAuthorizationError::Confirmation)?;
@@ -1018,283 +1254,62 @@ fn transaction_call_error(err: AuthorityError) -> CallError<latest::HostCreateTr
 	})
 }
 
-impl ProductRuntimeHost {
-	/// Chat access policy for this connection; see [`chat_platform_for`].
-	pub fn native_chat_platform(
-		&self,
-	) -> Result<Arc<dyn crate::platform::ChatPlatform>, crate::host_core::ProductRuntimeError> {
-		chat_platform_for(
-			self.product.execution_kind,
-			self.authority.session_state().current().is_some(),
-			self.chat_platform.as_ref(),
-		)
-	}
-
-	fn chat_platform<E>(&self) -> Result<Arc<dyn crate::platform::ChatPlatform>, CallError<E>> {
-		self.native_chat_platform().map_err(|error| match error {
-			crate::host_core::ProductRuntimeError::Denied => CallError::Denied,
-			_ => CallError::Unsupported,
-		})
-	}
-
-	/// End this connection's Chat action stream.
-	pub fn detach_chat(&self) {
-		self.chat.detach();
-	}
-
-	/// Buffer one host-authored Chat action for this connection's product,
-	/// behind the same access policy as every other Chat entry point.
-	pub fn publish_chat_action(
-		&self,
-		action: truapi::versioned::chat::HostChatActionSubscribeItem,
-	) -> Result<(), crate::host_core::ProductRuntimeError> {
-		self.native_chat_platform()?;
-		self.chat.publish(action)
-	}
-
-	/// Renderer access policy for this connection; see [`renderer_access_for`].
-	pub fn renderer_access(&self) -> Result<(), crate::host_core::ProductRuntimeError> {
-		renderer_access_for(self.product.execution_kind)
-	}
-
-	/// Hold worker demand until the matching [`Self::release_worker_reference`].
-	pub fn acquire_worker_reference(&self) {
-		self.services.worker_ledger.acquire(&self.product.product_id);
-	}
-
-	/// Release one core-held reference on this connection's product worker.
-	pub fn release_worker_reference(&self) {
-		self.services.worker_ledger.release(&self.product.product_id);
-	}
-
-	/// Begin off-dispatch so cancellation cannot strand an unreported host operation.
-	pub async fn begin_operation_with_host(
-		&self,
-		label: String,
-	) -> Result<v01::HostWorkerBeginOperationResponse, v01::HostWorkerOperationError> {
-		let (tx, rx) = futures::channel::oneshot::channel();
-		let platform = self.platform.clone();
-		let product = self.product.clone();
-		(self.services.spawner)(Box::pin(async move {
-			let begun = platform.begin_operation(&product, label).await;
-			if let Err(Ok(response)) = tx.send(begun) {
-				let _ = platform.end_operation(&product, response.id).await;
-			}
-		}));
-		rx.await.unwrap_or_else(|_| {
-			Err(v01::HostWorkerOperationError::Unknown {
-				reason: "the host did not answer".to_string(),
-			})
-		})
-	}
-
-	/// Hold worker demand until this operation ends or the connection closes.
-	pub fn hold_worker_for_operation(&self, id: u32) {
-		if self.open_operations.lock().expect("open operations mutex poisoned").insert(id) {
-			self.acquire_worker_reference();
-		}
-	}
-
-	/// Release operation references and ask the host to end those operations.
-	pub fn release_open_operations(&self) {
-		let open = core::mem::take(
-			&mut *self.open_operations.lock().expect("open operations mutex poisoned"),
-		);
-		if open.is_empty() {
-			return;
-		}
-		for _ in &open {
-			self.release_worker_reference();
-		}
-		let platform = self.platform.clone();
-		let product = self.product.clone();
-		(self.services.spawner)(Box::pin(async move {
-			for id in open {
-				let _ = platform.end_operation(&product, id).await;
-			}
-		}));
-	}
-
-	/// Release one open operation's demand; unknown ids leave demand unchanged.
-	pub fn release_worker_for_operation(&self, id: u32) {
-		if self.open_operations.lock().expect("open operations mutex poisoned").remove(&id) {
-			self.release_worker_reference();
-		}
-	}
-
-	/// End the renderer action stream this connection's product is reading.
-	pub fn detach_renderer(&self) {
-		self.renderer.detach();
-	}
-
-	/// Buffer one renderer action for this connection's product.
-	pub fn publish_renderer_action(
-		&self,
-		item: HostRendererActionSubscribeItem,
-	) -> Result<(), crate::host_core::ProductRuntimeError> {
-		self.renderer_access()?;
-		self.renderer.publish(item)
-	}
-
-	fn pocket_platform<E>(&self) -> Result<Arc<dyn crate::platform::PocketPlatform>, CallError<E>> {
-		if self.product.execution_kind != crate::platform::ProductExecutionKind::Worker ||
-			self.authority.session_state().current().is_none()
-		{
-			return Err(CallError::Denied);
-		}
-		self.pocket_platform.clone().ok_or(CallError::Unsupported)
-	}
-
-	/// Replace declared contact handles with their accounts before review or signing.
-	pub async fn substitute_declared_contacts(
-		&self,
-		call_data: Vec<u8>,
-		declared: &[v01::ContactHandle],
-	) -> Result<Vec<u8>, ContactResolutionError> {
-		let cache = &self.services.contact_handles;
-		let declared_bytes: Vec<[u8; 32]> = declared.iter().map(|handle| handle.bytes).collect();
-		if cache.has_undeclared_handle(&call_data, &declared_bytes) {
-			return Err(ContactResolutionError::UnknownContact);
-		}
-		if declared.is_empty() {
-			return Ok(call_data);
-		}
-		let (platform, handles) = self.contacts_picker().map_err(|error| match error {
-			CallError::Unsupported => ContactResolutionError::Unsupported,
-			CallError::Domain(v01::HostContactsPickError::NotConnected) => {
-				ContactResolutionError::NotConnected
-			},
-			CallError::Domain(v01::HostContactsPickError::Unknown { reason }) => {
-				ContactResolutionError::Host(reason)
-			},
-			other => ContactResolutionError::Host(format!("{other:?}")),
-		})?;
-		let mut resolved: Vec<([u8; 32], Option<[u8; 32]>)> = declared_bytes
-			.iter()
-			.map(|handle| (*handle, cache.get(handle, &handles)))
-			.collect();
-		// The host is asked only about handles the cache cannot answer, all
-		// of them in one lookup.
-		let misses: Vec<[u8; 32]> = resolved
-			.iter()
-			.filter(|(_, account)| account.is_none())
-			.map(|(handle, _)| *handle)
-			.collect();
-		if !misses.is_empty() {
-			let generation = cache.generation();
-			let lookup = crate::platform::HostContactLookup {
-				handle_key: handles.handle_key(),
-				handles: misses,
-			};
-			let matches = platform
-				.contacts(&lookup)
-				.await
-				.map_err(|error| ContactResolutionError::Host(error.reason))?;
-			// One answer per handle, or the answers cannot be paired up.
-			if matches.accounts.len() != lookup.handles.len() {
-				return Err(ContactResolutionError::Host(format!(
-					"contacts lookup answered {} of {} handles",
-					matches.accounts.len(),
-					lookup.handles.len()
-				)));
-			}
-			let mut answers = matches.accounts.into_iter();
-			for (handle, account) in resolved.iter_mut().filter(|(_, account)| account.is_none()) {
-				let answer = answers.next().expect("one answer per miss; qed");
-				// A host answer is checked, not trusted: an account that does
-				// not hash to its handle is treated as no contact at all.
-				*account = answer.filter(|account| handles.names(handle, account));
-				if let Some(account) = account {
-					cache.insert(*handle, *account, generation);
-				}
-			}
-		}
-		crate::host_logic::contact_substitution::substitute(&call_data, &resolved)
-			.map_err(|_| ContactResolutionError::UnknownContact)
-	}
-
-	/// The contact picker for this connection, plus the key its handles are
-	/// minted under.
-	///
-	/// Ordered so a host that serves no picker answers `Unsupported` without an
-	/// overlay ever being raised. There is no permission step: the user
-	/// selecting a contact is the consent.
-	fn contacts_picker(&self) -> Result<ContactsPicker, CallError<v01::HostContactsPickError>> {
-		// A capability the host does not serve is a framework answer; a
-		// missing session is one the product handles.
-		let platform = self.services.contacts_platform().ok_or(CallError::Unsupported)?;
-		let session = self
-			.authority
-			.current_session()
-			.ok_or(CallError::Domain(v01::HostContactsPickError::NotConnected))?;
-		let handle_key =
-			self.authority.contacts_handle_key(&session).map_err(|error| match error {
-				AuthorityError::Disconnected => {
-					CallError::Domain(v01::HostContactsPickError::NotConnected)
-				},
-				other => CallError::Domain(v01::HostContactsPickError::Unknown {
-					reason: other.to_string(),
-				}),
-			})?;
-		Ok((platform, crate::runtime::contacts::ContactHandles::from_handle_key(handle_key)))
-	}
-}
-
 #[crate::platform::async_trait]
 impl Contacts for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "contacts.pick"))]
 	async fn pick(
 		&self,
 		cx: &CallContext,
-		_request: HostContactsPickRequest,
+		request: HostContactsPickRequest,
 	) -> Result<HostContactsPickResponse, CallError<HostContactsPickError>> {
-		let wrap = HostContactsPickError::V1;
-		let (platform, handles) =
-			self.contacts_picker().map_err(|error| contacts_error(error, wrap))?;
+		version(request)
+			.exec(|_request| async move {
+				let (platform, handles) = self.contacts_picker()?;
 
-		let unknown = |error: v01::GenericError| {
-			CallError::Domain(wrap(v01::HostContactsPickError::Unknown { reason: error.reason }))
-		};
+				let unknown = |error: latest::GenericError| {
+					CallError::Domain(latest::HostContactsPickError::Unknown {
+						reason: error.reason,
+					})
+				};
 
-		// Read before the picker opens: a removal signalled while the user is
-		// choosing must not be undone by caching their choice.
-		let generation = self.services.contact_handles.generation();
-		let outcome = match until_cancelled(cx, platform.pick_contact(&self.product))
+				// Read before the picker opens: a removal signalled while the user is
+				// choosing must not be undone by caching their choice.
+				let generation = self.connection.services.contact_handles.generation();
+				let outcome =
+					match until_cancelled(cx, platform.pick_contact(&self.connection.product))
+						.await
+						.map_err(|cancelled| {
+							CallError::Domain(latest::HostContactsPickError::Unknown {
+								reason: cancelled.to_string(),
+							})
+						})?
+						.map_err(unknown)?
+					{
+						crate::platform::HostContactPick::Picked { account } => {
+							let handle = handles.mint(&account);
+							self.connection
+								.services
+								.contact_handles
+								.insert(handle, account, generation);
+							latest::ContactPickOutcome::Picked {
+								handle: latest::ContactHandle { bytes: handle },
+							}
+						},
+						crate::platform::HostContactPick::Dismissed => {
+							latest::ContactPickOutcome::Dismissed
+						},
+						crate::platform::HostContactPick::NoContacts => {
+							latest::ContactPickOutcome::NoContacts
+						},
+						// A host that resolves contacts but cannot present them is a
+						// framework-level gap, not an outcome the user produced.
+						crate::platform::HostContactPick::Unsupported => {
+							return Err(CallError::Unsupported);
+						},
+					};
+				Ok(latest::HostContactsPickResponse { outcome })
+			})
 			.await
-			.map_err(|cancelled| {
-				CallError::Domain(wrap(v01::HostContactsPickError::Unknown {
-					reason: cancelled.to_string(),
-				}))
-			})?
-			.map_err(unknown)?
-		{
-			crate::platform::HostContactPick::Picked { account } => {
-				let handle = handles.mint(&account);
-				self.services.contact_handles.insert(handle, account, generation);
-				v01::ContactPickOutcome::Picked { handle: v01::ContactHandle { bytes: handle } }
-			},
-			crate::platform::HostContactPick::Dismissed => v01::ContactPickOutcome::Dismissed,
-			crate::platform::HostContactPick::NoContacts => v01::ContactPickOutcome::NoContacts,
-			// A host that resolves contacts but cannot present them is a
-			// framework-level gap, not an outcome the user produced.
-			crate::platform::HostContactPick::Unsupported => return Err(CallError::Unsupported),
-		};
-		Ok(HostContactsPickResponse::V1(v01::HostContactsPickResponse { outcome }))
-	}
-}
-
-/// Re-wrap a latest-payload picker error into its versioned envelope.
-fn contacts_error<E>(
-	error: CallError<v01::HostContactsPickError>,
-	wrap: fn(v01::HostContactsPickError) -> E,
-) -> CallError<E> {
-	match error {
-		CallError::Domain(domain) => CallError::Domain(wrap(domain)),
-		CallError::Denied => CallError::Denied,
-		CallError::Unsupported => CallError::Unsupported,
-		CallError::MalformedFrame { reason } => CallError::MalformedFrame { reason },
-		CallError::HostFailure { reason } => CallError::HostFailure { reason },
-		CallError::Cancelled => CallError::Cancelled,
 	}
 }
 
@@ -1306,19 +1321,21 @@ impl Chat for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostChatCreateRoomRequest,
 	) -> Result<HostChatCreateRoomResponse, CallError<HostChatCreateRoomError>> {
-		let platform = self.chat_platform()?;
-		let HostChatCreateRoomRequest::V1(mut request) = request;
-		request.room_id = normalize_chat_identifier("roomId", &request.room_id)
-			.map_err(chat_create_room_field_error)?;
-		request.name =
-			validate_chat_name("name", &request.name).map_err(chat_create_room_field_error)?;
-		request.icon =
-			validate_chat_icon("icon", &request.icon).map_err(chat_create_room_field_error)?;
-		platform
-			.create_chat_room(&self.product, request)
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.connection.chat_platform()?;
+				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
+					.map_err(chat_create_room_field_error)?;
+				request.name = validate_chat_name("name", &request.name)
+					.map_err(chat_create_room_field_error)?;
+				request.icon = validate_chat_icon("icon", &request.icon)
+					.map_err(chat_create_room_field_error)?;
+				platform
+					.create_chat_room(&self.connection.product, request)
+					.await
+					.map_err(CallError::Domain)
+			})
 			.await
-			.map(HostChatCreateRoomResponse::V1)
-			.map_err(|error| CallError::Domain(HostChatCreateRoomError::V1(error)))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.register_bot"))]
@@ -1327,41 +1344,48 @@ impl Chat for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostChatRegisterBotRequest,
 	) -> Result<HostChatRegisterBotResponse, CallError<HostChatRegisterBotError>> {
-		let platform = self.chat_platform()?;
-		let HostChatRegisterBotRequest::V1(mut request) = request;
-		request.bot_id = normalize_chat_identifier("botId", &request.bot_id)
-			.map_err(chat_register_bot_field_error)?;
-		request.name =
-			validate_chat_name("name", &request.name).map_err(chat_register_bot_field_error)?;
-		request.icon =
-			validate_chat_icon("icon", &request.icon).map_err(chat_register_bot_field_error)?;
-		platform
-			.register_chat_bot(&self.product, request)
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.connection.chat_platform()?;
+				request.bot_id = normalize_chat_identifier("botId", &request.bot_id)
+					.map_err(chat_register_bot_field_error)?;
+				request.name = validate_chat_name("name", &request.name)
+					.map_err(chat_register_bot_field_error)?;
+				request.icon = validate_chat_icon("icon", &request.icon)
+					.map_err(chat_register_bot_field_error)?;
+				platform
+					.register_chat_bot(&self.connection.product, request)
+					.await
+					.map_err(CallError::Domain)
+			})
 			.await
-			.map(HostChatRegisterBotResponse::V1)
-			.map_err(|error| CallError::Domain(HostChatRegisterBotError::V1(error)))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.list_subscribe"))]
 	async fn list_subscribe(
 		&self,
 		_cx: &CallContext,
-		_request: HostChatListSubscribeRequest,
+		request: HostChatListSubscribeRequest,
 	) -> Subscription<HostChatListSubscribeItem, CallError<HostChatListSubscribeError>> {
-		let platform = match self.chat_platform::<HostChatListSubscribeError>() {
-			Ok(platform) => platform,
-			Err(error) => return Subscription::interrupted(error),
-		};
-		Subscription::new(platform.subscribe_chat_rooms(&self.product).map(|item| match item {
-			Ok(item) => Ok(HostChatListSubscribeItem::V1(item)),
-			Err(error) => {
-				warn!(
-					reason = %error.reason,
-					"chat room list platform stream failed"
-				);
-				Err(CallError::HostFailure { reason: error.reason })
-			},
-		}))
+		version(request)
+			.exec(|()| async move {
+				let platform = match self.connection.chat_platform::<latest::GenericError>() {
+					Ok(platform) => platform,
+					Err(error) => return Subscription::interrupted(error),
+				};
+				Subscription::new(platform.subscribe_chat_rooms(&self.connection.product).map(
+					|item| {
+						item.map_err(|error| {
+							warn!(
+								reason = %error.reason,
+								"chat room list platform stream failed"
+							);
+							CallError::HostFailure { reason: error.reason }
+						})
+					},
+				))
+			})
+			.await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.post_message"))]
@@ -1370,28 +1394,32 @@ impl Chat for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostChatPostMessageRequest,
 	) -> Result<HostChatPostMessageResponse, CallError<HostChatPostMessageError>> {
-		let platform = self.chat_platform()?;
-		let mut request = request.into_latest();
-		// The same normalization create_room applied, so a product's own
-		// spelling of a room id still resolves to the stored room.
-		request.room_id =
-			normalize_chat_identifier("roomId", &request.room_id).map_err(chat_post_field_error)?;
-		// Content is product-authored and host-rendered, so it gets the same
-		// treatment the room fields get rather than reaching a host raw.
-		request.payload =
-			validate_chat_message_content(request.payload).map_err(chat_post_field_error)?;
-		request.alt = request
-			.alt
-			.map(|alt| validate_chat_name("alt", &alt))
-			.transpose()
-			.map_err(chat_post_field_error)?
-			.filter(|alt| !alt.is_empty())
-			.filter(|_| matches!(request.payload, truapi::latest::ChatMessageContent::Custom(_)));
-		platform
-			.post_chat_message(&self.product, request)
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.connection.chat_platform()?;
+				// The same normalization create_room applied, so a product's own
+				// spelling of a room id still resolves to the stored room.
+				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
+					.map_err(chat_post_field_error)?;
+				// Content is product-authored and host-rendered, so it gets the same
+				// treatment the room fields get rather than reaching a host raw.
+				request.payload = validate_chat_message_content(request.payload)
+					.map_err(chat_post_field_error)?;
+				request.alt = request
+					.alt
+					.map(|alt| validate_chat_name("alt", &alt))
+					.transpose()
+					.map_err(chat_post_field_error)?
+					.filter(|alt| !alt.is_empty())
+					.filter(|_| {
+						matches!(request.payload, truapi::latest::ChatMessageContent::Custom(_))
+					});
+				platform
+					.post_chat_message(&self.connection.product, request)
+					.await
+					.map_err(CallError::Domain)
+			})
 			.await
-			.map(HostChatPostMessageResponse::V2)
-			.map_err(|error| CallError::Domain(HostChatPostMessageError::V2(error)))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.set_room_footer"))]
@@ -1400,50 +1428,55 @@ impl Chat for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostChatSetRoomFooterRequest,
 	) -> Result<HostChatSetRoomFooterResponse, CallError<HostChatSetRoomFooterError>> {
-		let platform = self.chat_platform()?;
-		let HostChatSetRoomFooterRequest::V1(mut request) = request;
-		let failure = |reason: String| {
-			CallError::Domain(HostChatSetRoomFooterError::V1(
-				v01::HostChatSetRoomFooterError::Unknown { reason },
-			))
-		};
-		request.room_id = normalize_chat_identifier("roomId", &request.room_id)
-			.map_err(|error| failure(error.to_string()))?;
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.connection.chat_platform()?;
+				let failure = |reason: String| {
+					CallError::Domain(latest::HostChatSetRoomFooterError::Unknown { reason })
+				};
+				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
+					.map_err(|error| failure(error.to_string()))?;
 
-		// Checked here rather than by each host, so every host answers a room
-		// the product never created the same way.
-		let rooms = match platform.subscribe_chat_rooms(&self.product).next().await {
-			Some(Ok(item)) => item.rooms,
-			Some(Err(error)) => return Err(failure(error.reason)),
-			None => return Err(failure("the host published no room list".to_string())),
-		};
-		let created = rooms.iter().any(|room| {
-			room.room_id == request.room_id &&
-				room.participating_as == v01::ChatRoomParticipation::RoomHost
-		});
-		if !created {
-			return Err(CallError::Domain(HostChatSetRoomFooterError::V1(
-				v01::HostChatSetRoomFooterError::UnknownRoom,
-			)));
-		}
+				// Checked here rather than by each host, so every host answers a room
+				// the product never created the same way.
+				let rooms =
+					match platform.subscribe_chat_rooms(&self.connection.product).next().await {
+						Some(Ok(item)) => item.rooms,
+						Some(Err(error)) => return Err(failure(error.reason)),
+						None => return Err(failure("the host published no room list".to_string())),
+					};
+				let created = rooms.iter().any(|room| {
+					room.room_id == request.room_id &&
+						room.participating_as == latest::ChatRoomParticipation::RoomHost
+				});
+				if !created {
+					return Err(CallError::Domain(latest::HostChatSetRoomFooterError::UnknownRoom));
+				}
 
-		platform
-			.set_chat_room_footer(&self.product, request)
+				platform
+					.set_chat_room_footer(&self.connection.product, request)
+					.await
+					.map_err(|error| failure(error.reason))
+			})
 			.await
-			.map(|()| HostChatSetRoomFooterResponse::V1)
-			.map_err(|error| failure(error.reason))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "chat.action_subscribe"))]
 	async fn action_subscribe(
 		&self,
 		_cx: &CallContext,
-		_request: HostChatActionSubscribeRequest,
+		request: HostChatActionSubscribeRequest,
 	) -> Subscription<HostChatActionSubscribeItem, CallError<HostChatActionSubscribeError>> {
-		if let Err(error) = self.chat_platform::<HostChatActionSubscribeError>() {
-			return Subscription::interrupted(error);
-		}
-		self.chat.subscribe()
+		version(request)
+			.exec(|()| async move {
+				if let Err(error) = self.connection.chat_platform::<latest::GenericError>() {
+					return Subscription::interrupted(error);
+				}
+				Subscription::new(
+					self.connection.chat.subscribe().map(|item| item.map(IntoLatest::into_latest)),
+				)
+			})
+			.await
 	}
 }
 
@@ -1453,13 +1486,111 @@ impl Renderer for ProductRuntimeHost {
 	async fn action_subscribe(
 		&self,
 		_cx: &CallContext,
-		_request: HostRendererActionSubscribeRequest,
+		request: HostRendererActionSubscribeRequest,
 	) -> Subscription<HostRendererActionSubscribeItem, CallError<HostRendererActionSubscribeError>>
 	{
-		if self.renderer_access().is_err() {
-			return Subscription::interrupted(CallError::Denied);
-		}
-		self.renderer.subscribe()
+		version(request)
+			.exec(|()| async move {
+				if self.connection.renderer_access().is_err() {
+					return Subscription::interrupted(CallError::Denied);
+				}
+				Subscription::new(
+					self.connection
+						.renderer
+						.subscribe()
+						.map(|item| item.map(IntoLatest::into_latest)),
+				)
+			})
+			.await
+	}
+}
+
+#[truapi::async_trait]
+impl Funding for ProductRuntimeHost {
+	#[instrument(skip_all, fields(runtime.method = "funding.request"))]
+	async fn request(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingRequest,
+	) -> Result<HostFundingResponse, CallError<HostFundingError>> {
+		version(request)
+			.exec(|latest::HostFundingRequest { id, direction, amount }| async move {
+				// A capability the host does not serve is a framework answer; a
+				// missing session is one the product handles.
+				if self.connection.services.funding().platform().is_none() {
+					return Err(CallError::Unsupported);
+				}
+				if self.accounts.current_session().is_none() {
+					return Err(CallError::Domain(latest::HostFundingError::NotConnected));
+				}
+				self.connection
+					.services
+					.open_funding(
+						Some(&self.connection.product),
+						host_funding_intent(&self.connection.product, id),
+						direction,
+						amount,
+					)
+					.await
+					.map_err(|error| match error {
+						funding::OpenFundingError::Unsupported => CallError::Unsupported,
+						funding::OpenFundingError::Dismissed => {
+							CallError::Domain(latest::HostFundingError::Rejected)
+						},
+						funding::OpenFundingError::InvalidAmount => {
+							CallError::Domain(latest::HostFundingError::InvalidAmount)
+						},
+						funding::OpenFundingError::AlreadyExists => {
+							CallError::Domain(latest::HostFundingError::AlreadyExists)
+						},
+						funding::OpenFundingError::Stopped => {
+							CallError::HostFailure { reason: error.to_string() }
+						},
+						funding::OpenFundingError::Present(error) => {
+							CallError::HostFailure { reason: error.reason }
+						},
+						funding::OpenFundingError::Session(error) => {
+							CallError::HostFailure { reason: error.to_string() }
+						},
+					})?;
+				Ok(())
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "funding.status_subscribe"))]
+	async fn status_subscribe(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingStatusSubscribeRequest,
+	) -> Subscription<HostFundingStatusSubscribeItem, CallError<HostFundingStatusSubscribeError>> {
+		version(request)
+			.exec(|latest::HostFundingStatusSubscribeRequest { id }| async move {
+				let registry = self.connection.services.funding();
+				if registry.platform().is_none() {
+					return Subscription::interrupted(CallError::Unsupported);
+				}
+				if let Err(error) = self.require_session() {
+					return Subscription::interrupted(error);
+				}
+				let intent = host_funding_intent(&self.connection.product, id);
+				if let Err(error) = registry.load(&self.connection.services).await {
+					return Subscription::interrupted(CallError::HostFailure {
+						reason: error.to_string(),
+					});
+				}
+				// Another product's session reads as absent, so ids reveal nothing.
+				let owned = registry.owner(&intent).is_some_and(|owner| {
+					owner.as_ref() == Some(&self.connection.product.product_id)
+				});
+				match owned.then(|| registry.subscribe(&intent)).flatten() {
+					Some(stream) => Subscription::new(stream.map(Ok)),
+					None => Subscription::interrupted(CallError::Domain(
+						latest::HostFundingStatusSubscribeError::NotFound,
+					)),
+				}
+			})
+			.await
 	}
 }
 
@@ -1469,22 +1600,27 @@ impl Pocket for ProductRuntimeHost {
 	async fn list_subscribe(
 		&self,
 		_cx: &CallContext,
-		_request: HostPocketListSubscribeRequest,
+		request: HostPocketListSubscribeRequest,
 	) -> Subscription<HostPocketListSubscribeItem, CallError<HostPocketListSubscribeError>> {
-		let platform = match self.pocket_platform::<HostPocketListSubscribeError>() {
-			Ok(platform) => platform,
-			Err(error) => return Subscription::interrupted(error),
-		};
-		Subscription::new(platform.subscribe_pocket_cards(&self.product).map(|item| match item {
-			Ok(item) => Ok(HostPocketListSubscribeItem::V1(item)),
-			Err(error) => {
-				warn!(
-					reason = %error.reason,
-					"pocket card list platform stream failed"
-				);
-				Err(CallError::HostFailure { reason: error.reason })
-			},
-		}))
+		version(request)
+			.exec(|()| async move {
+				let platform = match self.connection.pocket_platform::<latest::GenericError>() {
+					Ok(platform) => platform,
+					Err(error) => return Subscription::interrupted(error),
+				};
+				Subscription::new(platform.subscribe_pocket_cards(&self.connection.product).map(
+					|item| {
+						item.map_err(|error| {
+							warn!(
+								reason = %error.reason,
+								"pocket card list platform stream failed"
+							);
+							CallError::HostFailure { reason: error.reason }
+						})
+					},
+				))
+			})
+			.await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "pocket.remove_card"))]
@@ -1493,36 +1629,34 @@ impl Pocket for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostPocketRemoveCardRequest,
 	) -> Result<HostPocketRemoveCardResponse, CallError<HostPocketRemoveCardError>> {
-		let platform = self.pocket_platform()?;
-		let HostPocketRemoveCardRequest::V1(mut request) = request;
-		// A card id is a product-chosen label the host renders in its own
-		// chrome, so it is screened before the host ever sees it: trimmed,
-		// NFC-normalized, and rejected if it carries characters that let two
-		// distinct ids render identically.
-		request.card_id =
-			normalize_chat_identifier("cardId", &request.card_id).map_err(pocket_field_error)?;
-		platform
-			.remove_pocket_card(&self.product, request)
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.connection.pocket_platform()?;
+				// A card id is a product-chosen label the host renders in its own
+				// chrome, so it is screened before the host ever sees it: trimmed,
+				// NFC-normalized, and rejected if it carries characters that let two
+				// distinct ids render identically.
+				request.card_id = normalize_chat_identifier("cardId", &request.card_id)
+					.map_err(pocket_field_error)?;
+				platform
+					.remove_pocket_card(&self.connection.product, request)
+					.await
+					.map_err(CallError::Domain)
+			})
 			.await
-			.map(|()| HostPocketRemoveCardResponse::V1)
-			.map_err(|error| CallError::Domain(HostPocketRemoveCardError::V1(error)))
 	}
 }
 
 /// Report a rejected card id as a removal domain error.
-fn pocket_field_error(error: ChatFieldError) -> CallError<HostPocketRemoveCardError> {
-	CallError::Domain(HostPocketRemoveCardError::V1(v01::HostPocketRemoveCardError::Unknown {
-		reason: error.to_string(),
-	}))
+fn pocket_field_error(error: ChatFieldError) -> CallError<latest::HostPocketRemoveCardError> {
+	CallError::Domain(latest::HostPocketRemoveCardError::Unknown { reason: error.to_string() })
 }
 
 /// Report a rejected chat bot field as a bot-registration domain error.
 fn chat_register_bot_field_error(
 	error: crate::platform::ChatFieldError,
-) -> CallError<HostChatRegisterBotError> {
-	CallError::Domain(HostChatRegisterBotError::V1(v01::HostChatRegisterBotError::Unknown {
-		reason: error.to_string(),
-	}))
+) -> CallError<latest::HostChatRegisterBotError> {
+	CallError::Domain(latest::HostChatRegisterBotError::Unknown { reason: error.to_string() })
 }
 
 /// Fields whose rejection a product resolves by sending less content, and the
@@ -1531,26 +1665,24 @@ const CHAT_SIZED_CONTENT_FIELDS: [&str; 2] = ["text", "payload"];
 
 /// Maps a rejected `post_message` field onto the wire error, reporting a size
 /// rejection as the size variant the protocol declares for it.
-fn chat_post_field_error(error: ChatFieldError) -> CallError<HostChatPostMessageError> {
+fn chat_post_field_error(error: ChatFieldError) -> CallError<latest::HostChatPostMessageError> {
 	let payload = match error {
 		// `MessageTooLarge` names no field, so it is reserved for the content
 		// a product shrinks by sending less. Every other rejection reports
 		// through `Unknown`, whose reason names the field and its limit.
 		ChatFieldError::TooLong { field, .. } if CHAT_SIZED_CONTENT_FIELDS.contains(&field) => {
-			v01::HostChatPostMessageError::MessageTooLarge
+			latest::HostChatPostMessageError::MessageTooLarge
 		},
-		error => v01::HostChatPostMessageError::Unknown { reason: error.to_string() },
+		error => latest::HostChatPostMessageError::Unknown { reason: error.to_string() },
 	};
-	CallError::Domain(HostChatPostMessageError::V2(payload))
+	CallError::Domain(payload)
 }
 
 /// Report a rejected chat room field as a room-creation domain error.
 fn chat_create_room_field_error(
 	error: crate::platform::ChatFieldError,
-) -> CallError<HostChatCreateRoomError> {
-	CallError::Domain(HostChatCreateRoomError::V1(v01::HostChatCreateRoomError::Unknown {
-		reason: error.to_string(),
-	}))
+) -> CallError<latest::HostChatCreateRoomError> {
+	CallError::Domain(latest::HostChatCreateRoomError::Unknown { reason: error.to_string() })
 }
 
 impl ProductRuntimeHost {
@@ -1558,7 +1690,7 @@ impl ProductRuntimeHost {
 	fn prime_preimage_cache(&self, key: &[u8], value: Vec<u8>) {
 		if let Ok(key_bytes) = <[u8; 32]>::try_from(key) {
 			debug_assert_eq!(key_bytes, preimage_key(&value));
-			self.services.cache_preimage(key_bytes, value);
+			self.connection.services.cache_preimage(key_bytes, value);
 		}
 	}
 }

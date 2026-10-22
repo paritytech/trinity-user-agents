@@ -83,9 +83,8 @@ impl<K: Eq + core::hash::Hash, S: Clone> Subscribers<K, S> {
 mod tests {
 	use super::*;
 
-	// Theme and locale subscribers used to be dropped only when a change was
-	// sent, so subscribe/drop cycles on an unchanged value piled up dead
-	// senders; registering now forgets them.
+	// Registering forgets the senders of streams already dropped, so
+	// subscribe/drop cycles on an unchanged value never pile up dead senders.
 	#[test]
 	fn a_dropped_stream_is_forgotten_on_the_next_registration() {
 		let mut subscribers = Subscribers::<(), u8>::default();

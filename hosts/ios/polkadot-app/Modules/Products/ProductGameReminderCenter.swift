@@ -22,9 +22,6 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
     /// How long before the start the countdown pill appears.
     static let pillLeadTime: TimeInterval = 5 * TimeInterval.secondsInMinute
 
-    /// How long before the start the alarm rings.
-    static let alarmLeadSeconds = 20
-
     struct Dependencies {
         let services: ProductGameReminderServicesMaking
         let settingsManager: SettingsManagerProtocol
@@ -202,11 +199,7 @@ private extension ProductGameReminderCenter {
         unused?.cancelReminder()
         store(next)
 
-        delivery.scheduleReminder(
-            gameDate: next.startsAt,
-            productId: next.productId,
-            timingSeconds: Self.alarmLeadSeconds
-        )
+        delivery.scheduleReminder(gameDate: next.startsAt, productId: next.productId)
     }
 
     /// Write-only: events are never removed, so a repeat for the same start adds nothing.

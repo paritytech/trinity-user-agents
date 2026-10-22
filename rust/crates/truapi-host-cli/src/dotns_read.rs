@@ -71,8 +71,9 @@ impl AssetHubReader {
 		account_id_value("DotnsGateway.LiteLabelOwner", value)
 	}
 
-	/// Usernames of `account` as recorded by the dotNS contracts.
-	pub async fn dotns_identity(&mut self, account: &[u8; 32]) -> Result<DotnsIdentity> {
+	/// Usernames of `account` as recorded by the dotNS contracts, or `None`
+	/// when none of its labels is a username.
+	pub async fn dotns_identity(&mut self, account: &[u8; 32]) -> Result<Option<DotnsIdentity>> {
 		let controller = self.pop_controller().await?;
 		let labels =
 			resolve_labels(self, &controller, account).await.map_err(anyhow::Error::msg)?;

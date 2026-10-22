@@ -63,7 +63,7 @@ final class SPAViewController: UIViewController, ViewHolder {
         setupTitleObservation()
         setupJSEngine()
 
-        if configuration.isBrowserTab {
+        if configuration.presentation == .browserTab {
             setupBrowserTabActions()
             setupChromeCollapse()
         }
@@ -138,6 +138,10 @@ private extension SPAViewController {
             self?.presenter.didInterceptNavigation(to: url)
         }
 
+        engine.onDeeplinkRequested = { [weak self] url in
+            self?.presenter.didRequestDeeplink(url)
+        }
+
         presenter.setup(engine: engine)
     }
 
@@ -146,7 +150,7 @@ private extension SPAViewController {
             setTitle(String(localized: .tabBrowse))
         }
 
-        if configuration.showMoreButton, !configuration.isBrowserTab {
+        if configuration.showMoreButton, configuration.presentation != .browserTab {
             setupMoreButton()
         }
     }
@@ -178,7 +182,7 @@ private extension SPAViewController {
         guard !didSetupWebViewLayout else { return }
         didSetupWebViewLayout = true
 
-        if configuration.isBrowserTab {
+        if configuration.presentation == .browserTab {
             rootView.setupBrowserTabLayout()
         } else if configuration.isRootScreen {
             rootView.setupRootLayout()

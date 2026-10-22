@@ -5,7 +5,7 @@ use std::{
 	path::{Path, PathBuf},
 };
 
-use truapi::platform::{RuntimeConfigValidationError, normalize_product_identifier};
+use truapi::platform::{ProductId, ProductIdError};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::{InvalidLogLevel, LogLevel, sessions};
@@ -16,7 +16,7 @@ pub enum ProductCommand {
 	/// Print the currently selected product.
 	Current,
 	/// Switch to the validated, normalized product id.
-	Switch(String),
+	Switch(ProductId),
 }
 
 /// Operation selected through `/devices`.
@@ -197,7 +197,7 @@ pub enum CommandParseError {
 	LogLevel(InvalidLogLevel),
 	/// The product cannot be used as a protocol identifier.
 	#[from]
-	Product(RuntimeConfigValidationError),
+	Product(ProductIdError),
 }
 
 /// Parse one slash command without invoking a shell.
@@ -289,7 +289,7 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, CommandParseError> {
 			if argument.is_empty() {
 				return Ok(ShellCommand::Product(ProductCommand::Current));
 			}
-			let product_id = normalize_product_identifier(argument)?;
+			let product_id = argument.parse::<ProductId>()?;
 			Ok(ShellCommand::Product(ProductCommand::Switch(product_id)))
 		},
 		"/session" => {
@@ -304,9 +304,7 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, CommandParseError> {
 					return Ok(ShellCommand::Session(SessionCommand::List));
 				},
 				"--clear" => {
-					let Some(name) = arguments.get(1) else {
-						return Err("usage: /session --clear <name>".into());
-					};
+					let name = arguments.get(1).ok_or("usage: /session --clear <name>")?;
 					if arguments.len() != 2 {
 						return Err("usage: /session --clear <name>".into());
 					}
@@ -952,7 +950,7 @@ mod tests {
 		assert_eq!(parse_command("/product"), Ok(ShellCommand::Product(ProductCommand::Current)));
 		assert_eq!(
 			parse_command("/product Dotli.DOT"),
-			Ok(ShellCommand::Product(ProductCommand::Switch("dotli.dot".to_string())))
+			Ok(ShellCommand::Product(ProductCommand::Switch(ProductId::for_test("dotli.dot"))))
 		);
 		assert_eq!(parse_command("/copy"), Ok(ShellCommand::Copy));
 		assert_eq!(parse_command("/renew"), Ok(ShellCommand::Renew));
@@ -1038,9 +1036,20 @@ mod tests {
 		assert!(parse_command(&format!("/devices --remove {DEVICE_ID} --force --force")).is_err());
 		assert!(parse_command("/devices --force").is_err());
 		assert!(parse_command("/devices --unknown").is_err());
-		assert!(parse_command("/log noisy").is_err());
-		assert!(parse_command("/product example.com").is_err());
-		assert!(parse_command("/session ../escape").is_err());
+		assert_eq!(
+			parse_command("/log noisy"),
+			Err(CommandParseError::LogLevel(InvalidLogLevel { value: "noisy".to_string() }))
+		);
+		assert_eq!(
+			parse_command("/product example.com"),
+			Err(CommandParseError::Product(ProductIdError::Invalid {
+				product_id: "example.com".to_string()
+			}))
+		);
+		assert_eq!(
+			parse_command("/session ../escape"),
+			Err(CommandParseError::Session(sessions::SessionNameError::FirstCharacter))
+		);
 		assert_eq!(
 			parse_command("/session --clear").unwrap_err().to_string(),
 			"usage: /session --clear <name>"
