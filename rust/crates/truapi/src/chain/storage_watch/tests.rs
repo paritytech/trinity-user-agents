@@ -1,7 +1,4 @@
-use std::sync::{
-	Arc, Mutex,
-	atomic::{AtomicUsize, Ordering},
-};
+use std::sync::{Arc, Mutex};
 
 use futures::{
 	StreamExt,
@@ -243,7 +240,7 @@ struct ScriptedWatchedStorage {
 	changes: Mutex<Option<UnboundedReceiver<Result<RawStorageChanges, RuntimeFailure>>>>,
 	requested: Mutex<Option<(WatchedHead, Vec<Vec<u8>>)>>,
 	/// How many more watches fail to open, as if the chain were unreachable.
-	unreachable_opens: AtomicUsize,
+	unreachable_opens: Mutex<usize>,
 	/// The clock a watch waits on between attempts, which the test moves.
 	timer: Arc<ManualTimer>,
 }
@@ -253,6 +250,14 @@ impl ScriptedWatchedStorage {
 		Self::unreachable_for(0)
 	}
 
+	/// Whether this watch still fails to open, counting it as one of those.
+	fn take_unreachable_open(&self) -> bool {
+		let mut left = self.unreachable_opens.lock().unwrap();
+		let unreachable = *left > 0;
+		*left = left.saturating_sub(1);
+		unreachable
+	}
+
 	/// A fake whose first `opens` watches fail to open.
 	fn unreachable_for(
 		opens: usize,
@@ -260,7 +265,7 @@ impl ScriptedWatchedStorage {
 		let (sender, receiver) = unbounded();
 		let (_node, _provider, chain) = serve(Node::new(3, 5));
 		let changes = Mutex::new(Some(receiver));
-		let unreachable_opens = AtomicUsize::new(opens);
+		let unreachable_opens = Mutex::new(opens);
 		let timer = Arc::new(ManualTimer::default());
 		let requested = Mutex::new(None);
 		let fake = Arc::new(Self { chain, changes, requested, unreachable_opens, timer });
@@ -274,10 +279,7 @@ impl WatchedStorage for ScriptedWatchedStorage {
 		&self,
 		genesis: H256,
 	) -> Result<OnlineClientAtBlock<SubstrateConfig>, RuntimeFailure> {
-		let unreachable =
-			self.unreachable_opens
-				.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1));
-		if unreachable.is_ok() {
+		if self.take_unreachable_open() {
 			return Err(RuntimeFailure::host_failure(
 				"test",
 				"the chain is unreachable".to_owned(),
