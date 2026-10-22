@@ -30,11 +30,11 @@ use truapi::{
 	latest as api,
 	platform::{
 		AuthState, ChainProvider, CoreStorage, CoreStorageKey, CreateTransactionReview,
-		DevicePermissionStatus, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
-		PermissionDecision, PermissionStatusHost, Permissions, PreimageHost, ProductContext,
-		ProductId, ProductOperations, ProductStorage, ProductStorageKey, ProviderError,
-		SessionUiInfo, SignPayloadReview, SignRawReview, ThemeHost, UserConfirmation,
-		UserConfirmationReview,
+		DevicePermissionStatus, Features, JsonRpcConnection, LocaleHost, Navigation,
+		NftPurseDrainDestination, Notifications, PermissionDecision, PermissionStatusHost,
+		Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
+		ProductStorageKey, ProviderError, SessionUiInfo, SignPayloadReview, SignRawReview,
+		ThemeHost, UserConfirmation, UserConfirmationReview,
 	},
 	v01,
 };
@@ -922,7 +922,25 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
                 review.product_id
             ),
         ),
+        UserConfirmationReview::NftPurseDrain(review) => (
+            "move NFT purse items",
+            format!(
+                "Product {} requested to move {} item(s) out of purse {}, owned by {}, to {}.",
+                review.calling_product_id,
+                review.item_count,
+                review.from_purse,
+                review.owner,
+                drain_destination(&review.destination),
+            ),
+        ),
     }
+}
+
+fn drain_destination(destination: &NftPurseDrainDestination) -> String {
+	match destination {
+		NftPurseDrainDestination::Purse { purse } => format!("purse {purse}"),
+		NftPurseDrainDestination::ExternalKey { key } => format!("key 0x{}", hex::encode(key)),
+	}
 }
 
 impl ThemeHost for CliPlatform {

@@ -9,16 +9,17 @@ use crate::{
 		HostNftPurseCreatePurseError, HostNftPurseCreatePurseRequest,
 		HostNftPurseCreatePurseResponse, HostNftPurseCreateReceiveKeyError,
 		HostNftPurseCreateReceiveKeyRequest, HostNftPurseCreateReceiveKeyResponse,
-		HostNftPurseDepositError, HostNftPurseDepositItem, HostNftPurseDepositRequest,
+		HostNftPurseDepositError, HostNftPurseDepositRequest, HostNftPurseDepositResponse,
 		HostNftPurseListPursesError, HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
 		HostNftPurseListenForPaymentError, HostNftPurseListenForPaymentItem,
-		HostNftPurseListenForPaymentRequest, HostNftPurseQueryPurseError,
-		HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
-		HostNftPurseRebalancePurseError, HostNftPurseRebalancePurseItem,
-		HostNftPurseRebalancePurseRequest, HostNftPurseRefundError, HostNftPurseRefundItem,
-		HostNftPurseRefundRequest, HostNftPurseRevokeChequeError, HostNftPurseRevokeChequeRequest,
+		HostNftPurseListenForPaymentRequest, HostNftPurseObserveOperationStatusError,
+		HostNftPurseObserveOperationStatusItem, HostNftPurseObserveOperationStatusRequest,
+		HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
+		HostNftPurseRebalancePurseError, HostNftPurseRebalancePurseRequest,
+		HostNftPurseRebalancePurseResponse, HostNftPurseRefundError, HostNftPurseRefundRequest,
+		HostNftPurseRefundResponse, HostNftPurseRevokeChequeError, HostNftPurseRevokeChequeRequest,
 		HostNftPurseRevokeChequeResponse, HostNftPurseTransferItemError,
-		HostNftPurseTransferItemItem, HostNftPurseTransferItemRequest,
+		HostNftPurseTransferItemRequest, HostNftPurseTransferItemResponse,
 	},
 	wire, wire_trait,
 };
@@ -27,8 +28,9 @@ use crate::{
 ///
 /// A product uses the purses it created without any check. Reading a purse
 /// owned by Root or another product needs the `NftPurseRead` permission for
-/// that owner; draining one asks the user to confirm each call. Long-running
-/// operations are subscriptions whose items are the RFC status updates.
+/// that owner; draining one asks the user to confirm each call. A chain
+/// operation returns once it is registered under the product's idempotency
+/// key, and `observe_operation_status` follows it.
 #[wire_trait(id = 26)]
 #[crate::async_trait]
 pub trait NftPurse: Send + Sync {
@@ -106,31 +108,25 @@ pub trait NftPurse: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// Move items from one purse to another.
+	/// Move items from one purse to fresh keys of another. Returns once the
+	/// moves are registered under the idempotency key.
 	///
 	/// ```ts
-	/// import { firstValueFrom, from } from "rxjs";
-	///
-	/// const status = await firstValueFrom(
-	///   from(
-	///     truapi.nftPurse.rebalancePurse({
-	///       request: {
-	///         from: 0,
-	///         to: 1,
-	///         keys: ["0x0000000000000000000000000000000000000000000000000000000000000000"],
-	///       },
-	///     }),
-	///   ),
-	/// );
-	/// console.log("rebalance status:", status);
+	/// const result = await truapi.nftPurse.rebalancePurse({
+	///   from: 0,
+	///   to: 1,
+	///   keys: ["0x0000000000000000000000000000000000000000000000000000000000000000"],
+	///   idempotencyKey: "0x0101010101010101010101010101010101010101010101010101010101010101",
+	/// });
+	/// assert(result.isOk(), "rebalancePurse failed:", result);
 	/// ```
 	#[wire(id = 4)]
 	async fn rebalance_purse(
 		&self,
 		_cx: &CallContext,
 		_request: HostNftPurseRebalancePurseRequest,
-	) -> Subscription<HostNftPurseRebalancePurseItem, CallError<HostNftPurseRebalancePurseError>> {
-		Subscription::interrupted(CallError::unavailable())
+	) -> Result<HostNftPurseRebalancePurseResponse, CallError<HostNftPurseRebalancePurseError>> {
+		Err(CallError::unavailable())
 	}
 
 	/// Create a one-time receive key for a payment into a purse.
@@ -216,11 +212,11 @@ pub trait NftPurse: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// Deposit a received cheque into a purse.
+	/// Deposit a received cheque into a purse. Returns once the deposit is
+	/// registered under the cheque id.
 	///
 	/// ```ts
 	/// import { type NftPurseCheque } from "@parity/truapi";
-	/// import { firstValueFrom, from } from "rxjs";
 	///
 	/// const cheque: NftPurseCheque = {
 	///   version: 0,
@@ -230,68 +226,83 @@ pub trait NftPurse: Send + Sync {
 	///   encryptedSecrets: "0x",
 	/// };
 	///
-	/// const status = await firstValueFrom(
-	///   from(truapi.nftPurse.deposit({ request: { cheque, to: 0 } })),
-	/// );
-	/// console.log("deposit status:", status);
+	/// const result = await truapi.nftPurse.deposit({ cheque, to: 0 });
+	/// assert(result.isOk(), "deposit failed:", result);
 	/// ```
 	#[wire(id = 9)]
 	async fn deposit(
 		&self,
 		_cx: &CallContext,
 		_request: HostNftPurseDepositRequest,
-	) -> Subscription<HostNftPurseDepositItem, CallError<HostNftPurseDepositError>> {
-		Subscription::interrupted(CallError::unavailable())
+	) -> Result<HostNftPurseDepositResponse, CallError<HostNftPurseDepositError>> {
+		Err(CallError::unavailable())
 	}
 
 	/// Return the items of a deposited cheque to their original keys.
+	/// Returns once the refund is registered under the cheque id.
 	///
 	/// ```ts
-	/// import { firstValueFrom, from } from "rxjs";
-	///
-	/// const status = await firstValueFrom(
-	///   from(
-	///     truapi.nftPurse.refund({
-	///       request: {
-	///         chequeId: "0x0000000000000000000000000000000000000000000000000000000000000000",
-	///       },
-	///     }),
-	///   ),
-	/// );
-	/// console.log("refund status:", status);
+	/// const result = await truapi.nftPurse.refund({
+	///   chequeId: "0x0000000000000000000000000000000000000000000000000000000000000000",
+	/// });
+	/// assert(result.isOk(), "refund failed:", result);
 	/// ```
 	#[wire(id = 10)]
 	async fn refund(
 		&self,
 		_cx: &CallContext,
 		_request: HostNftPurseRefundRequest,
-	) -> Subscription<HostNftPurseRefundItem, CallError<HostNftPurseRefundError>> {
-		Subscription::interrupted(CallError::unavailable())
+	) -> Result<HostNftPurseRefundResponse, CallError<HostNftPurseRefundError>> {
+		Err(CallError::unavailable())
 	}
 
-	/// Move one item to a key outside the purses.
+	/// Move one item to a key outside the purses. Returns once the move is
+	/// registered under the idempotency key.
 	///
 	/// ```ts
-	/// import { firstValueFrom, from } from "rxjs";
-	///
-	/// const status = await firstValueFrom(
-	///   from(
-	///     truapi.nftPurse.transferItem({
-	///       request: {
-	///         item: "0x0000000000000000000000000000000000000000000000000000000000000000",
-	///         destination: "0x0000000000000000000000000000000000000000000000000000000000000000",
-	///       },
-	///     }),
-	///   ),
-	/// );
-	/// console.log("transfer status:", status);
+	/// const result = await truapi.nftPurse.transferItem({
+	///   item: "0x0000000000000000000000000000000000000000000000000000000000000000",
+	///   destination: "0x0000000000000000000000000000000000000000000000000000000000000000",
+	///   idempotencyKey: "0x0202020202020202020202020202020202020202020202020202020202020202",
+	/// });
+	/// assert(result.isOk(), "transferItem failed:", result);
 	/// ```
 	#[wire(id = 11)]
 	async fn transfer_item(
 		&self,
 		_cx: &CallContext,
 		_request: HostNftPurseTransferItemRequest,
-	) -> Subscription<HostNftPurseTransferItemItem, CallError<HostNftPurseTransferItemError>> {
+	) -> Result<HostNftPurseTransferItemResponse, CallError<HostNftPurseTransferItemError>> {
+		Err(CallError::unavailable())
+	}
+
+	/// Follow an operation the calling product registered: a rebalance or
+	/// transfer by its idempotency key, a deposit or refund by its cheque
+	/// id. Ends after a terminal status.
+	///
+	/// ```ts
+	/// import { firstValueFrom, from } from "rxjs";
+	///
+	/// const status = await firstValueFrom(
+	///   from(
+	///     truapi.nftPurse.observeOperationStatus({
+	///       request: {
+	///         idempotencyKey: "0x0101010101010101010101010101010101010101010101010101010101010101",
+	///       },
+	///     }),
+	///   ),
+	/// );
+	/// console.log("operation status:", status);
+	/// ```
+	#[wire(id = 12)]
+	async fn observe_operation_status(
+		&self,
+		_cx: &CallContext,
+		_request: HostNftPurseObserveOperationStatusRequest,
+	) -> Subscription<
+		HostNftPurseObserveOperationStatusItem,
+		CallError<HostNftPurseObserveOperationStatusError>,
+	> {
 		Subscription::interrupted(CallError::unavailable())
 	}
 }

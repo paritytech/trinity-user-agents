@@ -1,8 +1,10 @@
 //! The NFT purse calls a host with a core database serves.
 
+mod operations;
+
 use tracing::instrument;
 use truapi::{
-	CallContext, CallError,
+	CallContext, CallError, Subscription,
 	api::NftPurse,
 	latest,
 	versioned::nft_purse::{
@@ -10,7 +12,12 @@ use truapi::{
 		HostNftPurseCreateItemsResponse, HostNftPurseCreatePurseError,
 		HostNftPurseCreatePurseRequest, HostNftPurseCreatePurseResponse,
 		HostNftPurseListPursesError, HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
-		HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
+		HostNftPurseObserveOperationStatusError, HostNftPurseObserveOperationStatusItem,
+		HostNftPurseObserveOperationStatusRequest, HostNftPurseQueryPurseError,
+		HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
+		HostNftPurseRebalancePurseError, HostNftPurseRebalancePurseRequest,
+		HostNftPurseRebalancePurseResponse, HostNftPurseTransferItemError,
+		HostNftPurseTransferItemRequest, HostNftPurseTransferItemResponse,
 	},
 };
 
@@ -63,6 +70,38 @@ impl NftPurse for ProductRuntimeHost {
 		request: HostNftPurseListPursesRequest,
 	) -> Result<HostNftPurseListPursesResponse, CallError<HostNftPurseListPursesError>> {
 		version(request).exec(|request| self.list_nft_purses(request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.rebalance_purse"))]
+	async fn rebalance_purse(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseRebalancePurseRequest,
+	) -> Result<HostNftPurseRebalancePurseResponse, CallError<HostNftPurseRebalancePurseError>> {
+		version(request).exec(|request| self.rebalance_nft_purse(request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.transfer_item"))]
+	async fn transfer_item(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseTransferItemRequest,
+	) -> Result<HostNftPurseTransferItemResponse, CallError<HostNftPurseTransferItemError>> {
+		version(request).exec(|request| self.transfer_nft_item(request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.observe_operation_status"))]
+	async fn observe_operation_status(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseObserveOperationStatusRequest,
+	) -> Subscription<
+		HostNftPurseObserveOperationStatusItem,
+		CallError<HostNftPurseObserveOperationStatusError>,
+	> {
+		version(request)
+			.exec(|request| async move { self.observe_nft_operation(request) })
+			.await
 	}
 }
 

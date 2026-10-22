@@ -21,6 +21,9 @@ pub use keys::{
 	ItemKey, ItemKeyDeriver, ItemSigner, ItemSlot, item_keys_from_entropy, item_signer_from_entropy,
 };
 pub use ledger::{NftLedger, NftLedgerDeps};
+pub use operation::{
+	MoveDestinations, MoveProgress, MoveRequest, MoveState, OperationKey, StartOperationError,
+};
 pub use purse::{CreatePurseError, PurseId, PurseRecord, PurseTag, UnknownPurse};
 pub use scarcity::{HoldingTracker, HoldingTrackerDeps, ScarcityMovesDeps, with_scarcity_moves};
 #[cfg(test)]

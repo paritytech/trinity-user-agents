@@ -29,12 +29,12 @@ use crate::platform::{
 	AccountAccessReview, AuthPresenter, AuthState, ChainProvider,
 	CoreStorage as PlatformCoreStorage, CoreStorageKey, CreateTransactionReview,
 	Features as PlatformFeatures, HostInfo, JsonRpcConnection, LocaleHost,
-	Navigation as PlatformNavigation, Notifications as PlatformNotifications, PairingHostConfig,
-	Permissions as PlatformPermissions, PlatformInfo, PreimageHost, ProductContext, ProductId,
-	ProductOperations as PlatformProductOperations, ProductStorage as PlatformProductStorage,
-	ProductSubtreeReview, ProviderError, ResourceAllocationReview, SignPayloadReview,
-	SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
-	UserConfirmationReview,
+	Navigation as PlatformNavigation, NftPurseDrainReview, Notifications as PlatformNotifications,
+	PairingHostConfig, Permissions as PlatformPermissions, PlatformInfo, PreimageHost,
+	ProductContext, ProductId, ProductOperations as PlatformProductOperations,
+	ProductStorage as PlatformProductStorage, ProductSubtreeReview, ProviderError,
+	ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
+	StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use futures::{
 	Stream,
@@ -124,6 +124,8 @@ pub struct StubPlatform {
 	/// pre-consent behavior where a cold own-account resolve was not gated.
 	pub product_subtree_denied: bool,
 	pub product_subtree_reviews: Arc<Mutex<Vec<ProductSubtreeReview>>>,
+	pub nft_purse_drain_confirmed: bool,
+	pub nft_purse_drain_reviews: Arc<Mutex<Vec<NftPurseDrainReview>>>,
 	pub identity_disclosure_confirmed: bool,
 	pub identity_disclosure_error: Option<&'static str>,
 	pub identity_disclosure_calls: Arc<AtomicUsize>,
@@ -1951,6 +1953,13 @@ impl UserConfirmation for StubPlatform {
 					.expect("product subtree review list mutex poisoned")
 					.push(review);
 				(None, !self.product_subtree_denied)
+			},
+			UserConfirmationReview::NftPurseDrain(review) => {
+				self.nft_purse_drain_reviews
+					.lock()
+					.expect("NFT purse drain review list mutex poisoned")
+					.push(review);
+				(None, self.nft_purse_drain_confirmed)
 			},
 		};
 		if let Some(reason) = error {

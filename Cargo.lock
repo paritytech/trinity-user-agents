@@ -719,6 +719,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "binary-merkle-tree"
+version = "16.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d532b8e9bc2f4d2e2aa50ec786042e62d8edbaaf547797d1377ebb1ca2e53a55"
+dependencies = [
+ "hash-db",
+ "parity-scale-codec",
+]
+
+[[package]]
 name = "bip39"
 version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2125,6 +2135,12 @@ dependencies = [
  "crunchy",
  "zerocopy",
 ]
+
+[[package]]
+name = "hash-db"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e7d7786361d7425ae2fe4f9e407eb0efaa0840f5212d109cc018c40c35c6ab4"
 
 [[package]]
 name = "hashbrown"
@@ -5649,6 +5665,7 @@ dependencies = [
  "async-sqlite",
  "async-trait",
  "base64",
+ "binary-merkle-tree",
  "blake2b_simd",
  "chacha20poly1305",
  "console_error_panic_hook",
@@ -5657,6 +5674,7 @@ dependencies = [
  "futures",
  "futures-timer",
  "getrandom 0.2.17",
+ "hash-db",
  "hex",
  "hkdf",
  "itertools 0.14.0",

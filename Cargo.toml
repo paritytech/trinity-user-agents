@@ -18,6 +18,7 @@ async-sqlite = { version = "0.6", default-features = false }
 arboard = { version = "3.6.1", default-features = false }
 async-trait = "0.1"
 base64 = "0.22"
+binary-merkle-tree = { version = "16.1.2", default-features = false }
 bip39 = "2"
 blake2b_simd = { version = "1", default-features = false }
 chacha20poly1305 = { version = "0.10", default-features = false }
@@ -35,6 +36,7 @@ futures = "0.3"
 futures-timer = "3"
 futures-util = "0.3"
 getrandom = "0.2"
+hash-db = { version = "0.16", default-features = false }
 hex = "0.4"
 hkdf = "0.12"
 image = { version = "0.25", default-features = false }

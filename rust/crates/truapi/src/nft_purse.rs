@@ -4,12 +4,16 @@
 //! needs; the capability handler asks for it, because the prompt belongs to the
 //! product connection.
 
+mod operation;
+
 use core::num::NonZeroU32;
 
 use truapi::latest::{
 	NFT_PURSE_MAX_NAME_BYTES, NftPurseId, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
 	NftPursePurse, RemotePermission,
 };
+
+pub use operation::{StartError, drain_needs_confirmation};
 
 use crate::{
 	nft::{
@@ -57,7 +61,8 @@ impl PurseOwner {
 		id.parse().ok().map(Self::Product)
 	}
 
-	fn to_wire(&self) -> NftPurseOwner {
+	/// The owner as the protocol names it.
+	pub fn to_wire(&self) -> NftPurseOwner {
 		match self {
 			Self::Root => NftPurseOwner::Root,
 			Self::Product(id) => NftPurseOwner::Product(id.as_str().to_owned()),

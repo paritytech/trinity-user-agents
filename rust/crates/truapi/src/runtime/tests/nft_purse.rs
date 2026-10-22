@@ -364,3 +364,5 @@ fn methods_of_later_stages_are_unavailable() {
 
 	assert_eq!(created, Err(CallError::unavailable()));
 }
+
+mod operations;
