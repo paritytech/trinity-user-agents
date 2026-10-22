@@ -368,24 +368,29 @@ impl Dispatcher {
 				},
 				Reservation::AlreadyWithdrawn => encode_cancelled_response(),
 				Reservation::Start(cancel) => {
-					// Refused before the handler runs, so no `Cancel` can land in
-					// between and the release has nothing to report.
 					if let Some(error) =
 						unsupported_version(entry.ids, entry.newest_version, &message.payload.value)
 					{
-						self.release_request(&request_id);
-						send_protocol_error(transport.as_ref(), request_id, error);
-						return;
-					}
-					let value =
-						(entry.handler)(request_id.clone(), message.payload.value, cancel).await;
-					// The single terminal `Response` is how a peer learns its
-					// cancel was heard, so it wins over whatever the handler
-					// returned.
-					if self.release_request(&request_id) {
-						encode_cancelled_response()
+						// If a `Cancel` arrived in the meantime, it wins, as it
+						// does after a handler runs.
+						if self.release_request(&request_id) {
+							encode_cancelled_response()
+						} else {
+							send_protocol_error(transport.as_ref(), request_id, error);
+							return;
+						}
 					} else {
-						value
+						let value =
+							(entry.handler)(request_id.clone(), message.payload.value, cancel)
+								.await;
+						// The single terminal `Response` is how a peer learns its
+						// cancel was heard, so it wins over whatever the handler
+						// returned.
+						if self.release_request(&request_id) {
+							encode_cancelled_response()
+						} else {
+							value
+						}
 					}
 				},
 			};
