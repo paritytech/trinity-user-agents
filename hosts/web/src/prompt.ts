@@ -14,6 +14,8 @@ export interface PromptRequest<T> {
   choices: PromptChoice<T>[];
   /** The answer when the prompt is dismissed without choosing, as with Escape. */
   dismissed: T;
+  /** `list` stacks the choices, one per line, for a choice among many. */
+  layout?: "list";
 }
 
 let queue: Promise<unknown> = Promise.resolve();
@@ -58,7 +60,8 @@ function show<T>(request: PromptRequest<T>): Promise<T> {
   dialog.append(fields);
 
   const actions = document.createElement("div");
-  actions.className = "prompt-actions";
+  actions.className =
+    request.layout === "list" ? "prompt-actions prompt-list" : "prompt-actions";
   dialog.append(actions);
   document.body.append(dialog);
 

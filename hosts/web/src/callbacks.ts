@@ -1,6 +1,7 @@
 import type {
   AuthState,
   ChatPlatform,
+  ContactsPlatform,
   PermissionDecision,
   PocketPlatform,
   ProductContext,
@@ -38,6 +39,8 @@ export interface HostCallbackOptions {
   chat?: Required<ChatPlatform>;
   /** The Pocket cards each product sees. Without it, Pocket is `Unsupported`. */
   pocket?: Required<PocketPlatform>;
+  /** The contact picker and handle lookup. Without it, Contacts is `Unsupported`. */
+  contacts?: Required<ContactsPlatform>;
 }
 
 const DECISIONS: PromptChoice<PermissionDecision>[] = [
@@ -50,9 +53,9 @@ const DECISIONS: PromptChoice<PermissionDecision>[] = [
  * The host side of the core: storage, chain access, and the prompts through
  * which the user answers what a product asks for.
  *
- * Contacts and live OS permission status are left out, so the core answers
- * those product calls `Unsupported`. Chat and Pocket are served when `chat`
- * and `pocket` are given.
+ * Live OS permission status is left out, so the core answers it
+ * `Unsupported`. Chat, Pocket and Contacts are served when `chat`, `pocket`
+ * and `contacts` are given.
  */
 export function createHostCallbacks(
   options: HostCallbackOptions,
@@ -67,6 +70,7 @@ export function createHostCallbacks(
     onPermissionDecided,
     chat,
     pocket,
+    contacts,
   } = options;
   const knownGenesis = new Set(
     network.supportedChains.chains.map((chain) =>
@@ -201,6 +205,7 @@ export function createHostCallbacks(
     },
     ...(chat ? { chat } : {}),
     ...(pocket ? { pocket } : {}),
+    ...(contacts ? { contacts } : {}),
   };
 }
 

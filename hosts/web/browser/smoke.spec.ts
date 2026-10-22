@@ -921,6 +921,177 @@ describe("product worker chat", () => {
   );
 });
 
+describe("contacts", () => {
+  const PRODUCT = "contacts.paseo";
+  /** A second BIP-39 test vector phrase, for a wallet with no contacts. It holds nothing. */
+  const EMPTY_MNEMONIC =
+    "legal winner thank year wave sausage worth useful legal winner thank yellow";
+  const WALLET_ID = "contacts-fixture-wallet";
+  const KIM = `0x${"4b".repeat(32)}`;
+  const SAM = `0x${"5a".repeat(32)}`;
+  const PENDING = `0x${"6c".repeat(32)}`;
+
+  /** A saved Nova chat record, in the shape `src/chat/store.ts` keeps: two accepted contacts and one request still waiting. */
+  const contact = (
+    account: string,
+    name: string,
+    state: "active" | "requested",
+  ) => ({
+    account,
+    chatKey: `0x${"cc".repeat(32)}`,
+    name,
+    state,
+    messages: [
+      {
+        id: `${name}-1`,
+        direction: "in",
+        kind: "text",
+        text: "hi",
+        at: 1,
+        status: "received",
+      },
+    ],
+    outbound: null,
+    expiry: { request: null, response: null },
+    acknowledged: null,
+  });
+  const RECORD = {
+    contacts: [
+      contact(KIM, "kim.01", "active"),
+      contact(SAM, "sam.01", "active"),
+      contact(PENDING, "pending.01", "requested"),
+    ],
+    requests: [],
+    declined: [],
+  };
+
+  interface ContactsWindow {
+    __contacts: {
+      pick(): Promise<{
+        outcome?: { tag: string; value?: unknown };
+        error?: unknown;
+      }>;
+    };
+  }
+
+  /** The contacts product's frame once its script ran, other than `previous`, which a new session replaces. */
+  async function contactsFrame(page: Page, previous?: Frame): Promise<Frame> {
+    const deadline = Date.now() + STEP_MS;
+    while (Date.now() < deadline) {
+      for (const frame of page.frames()) {
+        if (frame === previous || frame.isDetached()) continue;
+        if (!frame.url().startsWith(`${host.origin}/product/`)) continue;
+        const ready = await frame
+          .evaluate(() => "__contacts" in window)
+          .catch(() => false);
+        if (ready) return frame;
+      }
+      await page.waitForTimeout(200);
+    }
+    throw new Error("the contacts product did not start");
+  }
+
+  const pick = (frame: Frame) =>
+    frame.evaluate(() =>
+      (window as unknown as ContactsWindow).__contacts.pick(),
+    );
+
+  test(
+    "lets a product pick one of the wallet's chat contacts, and gives it a handle, never the list",
+    async () => {
+      const product = publishApp({
+        "index.html":
+          '<!doctype html><meta charset="utf-8"><title>contacts fixture</title><script type="module" src="/index.js"></script>',
+        "index.js": await buildFixture("contacts-product.ts"),
+      });
+      const context = await browser.newContext();
+      context.setDefaultTimeout(STEP_MS);
+      // No chain: chat starts from its saved record and reaches no one.
+      await context.routeWebSocket(/.*/, (socket) => socket.close());
+      await serveNames(context, [{ record: `app.${PRODUCT}`, app: product }]);
+      try {
+        const page = await openHost(context);
+        await page.evaluate(
+          ({ id, mnemonic, record }) => {
+            localStorage.setItem(
+              "truapi-web-signing-host:wallets:v1",
+              JSON.stringify([{ id, name: "Contacts fixture", mnemonic }]),
+            );
+            localStorage.setItem(
+              `truapi-web-signing-host:network:paseo:chat:${id}:v1`,
+              JSON.stringify(record),
+            );
+          },
+          { id: WALLET_ID, mnemonic: SYNTHETIC_MNEMONIC, record: RECORD },
+        );
+        await page.reload();
+        await page
+          .locator("#core-status")
+          .filter({ hasText: "Core ready" })
+          .waitFor({ state: "attached" });
+        await signInWith(page, SYNTHETIC_MNEMONIC);
+        await openAddress(page, PRODUCT);
+        const frame = await contactsFrame(page);
+
+        // The host draws the picker, names the product, and offers only accepted contacts.
+        const picked = pick(frame);
+        const picker = page.locator("dialog.prompt", {
+          hasText: "Choose a contact",
+        });
+        await picker.waitFor();
+        expect(await picker.innerText()).toContain(PRODUCT);
+        const offered = await picker
+          .locator(".prompt-list button")
+          .allInnerTexts();
+        expect(offered.map((label) => label.split(" · ")[0])).toEqual([
+          "kim.01",
+          "sam.01",
+          "Cancel",
+        ]);
+        if (process.env.CHAT_SCREENSHOTS)
+          await page.screenshot({
+            path: `${process.env.CHAT_SCREENSHOTS}/contact-picker.png`,
+          });
+        await picker.locator("button", { hasText: "kim.01" }).click();
+        const first = await picked;
+        expect(first.outcome?.tag).toBe("Picked");
+        const handle = JSON.stringify(first.outcome?.value);
+        expect(handle).toMatch(/"0x[0-9a-f]{64}"/);
+        // The product holds a handle, not the account or the name.
+        expect(handle).not.toContain(KIM.slice(2));
+        expect(handle).not.toContain("kim.01");
+
+        // The same person is the same handle; another person is another one.
+        const again = pick(frame);
+        await picker.locator("button", { hasText: "kim.01" }).click();
+        expect(JSON.stringify((await again).outcome?.value)).toBe(handle);
+        const other = pick(frame);
+        await picker.locator("button", { hasText: "sam.01" }).click();
+        expect(JSON.stringify((await other).outcome?.value)).not.toBe(handle);
+
+        // Cancel, or Escape, names nobody.
+        const cancelled = pick(frame);
+        await picker.locator("button", { hasText: "Cancel" }).click();
+        expect((await cancelled).outcome).toEqual({ tag: "Dismissed" });
+        const escaped = pick(frame);
+        await picker.waitFor();
+        await page.keyboard.press("Escape");
+        expect((await escaped).outcome).toEqual({ tag: "Dismissed" });
+
+        // A wallet with no chat contacts gets NoContacts, and no picker is drawn.
+        await signInWith(page, EMPTY_MNEMONIC);
+        await openAddress(page, PRODUCT);
+        const empty = await contactsFrame(page, frame);
+        expect((await pick(empty)).outcome).toEqual({ tag: "NoContacts" });
+        expect(await page.locator("dialog.prompt").count()).toBe(0);
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+});
+
 describe("Pocket's Humanity card", () => {
   const PRODUCT = "peopl.paseo";
   const WORKER = JSON.stringify({

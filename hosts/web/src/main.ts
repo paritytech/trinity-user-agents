@@ -85,6 +85,7 @@ import { resolveWidget } from "./widget.js";
 import { ChatScreen } from "./chat-screen.js";
 import { ChatInbox } from "./chat-inbox.js";
 import { startDraftWorker } from "./draft-chat.js";
+import { HostContacts, chooseContact } from "./contacts.js";
 import { ProductChat, productChatKey } from "./product-chat.js";
 import { ProductWorkers } from "./product-workers.js";
 import { resolveWorker } from "./worker-manifest.js";
@@ -224,6 +225,13 @@ const chatInbox = new ChatInbox({
   workerNames: () => productWorkers.names(),
   draftWorker: startDraftWorker,
   log,
+});
+/** The contact picker products open, over the session's chat contacts. */
+const hostContacts = new HostContacts({
+  list: () => chatInbox.contacts(),
+  onChange: (listener) => chatInbox.onChange(listener),
+  choose: chooseContact,
+  removed: () => runtime?.notifyContactsChanged(),
 });
 const chatScreen = new ChatScreen(
   element("chat-screen"),
@@ -1769,6 +1777,7 @@ async function boot(): Promise<void> {
     onPermissionDecided: refreshPermissionsSoon,
     chat: productChat.platform,
     pocket: pocketPlatform(connection.networkSuffix),
+    contacts: hostContacts.platform,
   });
   const worker = new Worker(new URL("./core-worker.ts", import.meta.url), {
     type: "module",

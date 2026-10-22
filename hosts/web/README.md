@@ -294,8 +294,8 @@ not TrUAPI, and is meant to show the boundary a native host could copy.
 - **What the screen gives back.** `send(conversation, text)`, `retry` of a failed message, and
   `markRead(conversation, message)` for the newest message whose end was actually on screen while the page was visible.
   Opening a conversation is not reading it. A provider without read state gets no `markRead` calls.
-- **Optional parts.** Requests to accept or decline, starting a conversation, an account of its own, and drawing
-  `Custom` messages. The screen shows each only for the providers that have it.
+- **Optional parts.** Requests to accept or decline, starting a conversation, an account of its own, drawing `Custom`
+  messages, and contacts for the [contact picker](#contacts). The screen shows each only for the providers that have it.
 - **Lifetime and stale replies.** `src/chat-inbox.ts` builds the providers when a session (wallet, network and identity)
   starts, and disposes all of them when it ends or changes. They run whichever screen or conversation is in front. The
   conversation view tags each read with its own token and the provider's epoch, and drops a reply that comes back after
@@ -417,6 +417,26 @@ only draws them. Nothing here is a protocol any host or product ships.
 - **Not covered.** Message edits, deletion, reactions, replies, attachments, participant lists, toolbar and message
   actions, and starting a conversation (the intended Contacts invitation is not settled). Delivery while the tab is
   closed: the worker runs only while the tab is open and the wallet is signed in.
+
+### Contacts
+
+The host serves TrUAPI Contacts (`src/contacts.ts`): `contacts.pick` opens a picker the host draws, and the core turns
+the person the user chose into a contact handle, as `docs/design/contacts-pick-end-to-end.md` describes. A product gets
+the handle only, never the list, a name or an account. No permission is asked: choosing someone is the consent.
+
+- **Who is offered.** The session's chat contacts, from the providers that offer them (`ChatProvider.contacts`). Today
+  that is Nova chat: its accepted contacts, not requests either side has not accepted yet, as on the native hosts.
+  Product rooms and the draft worker-owned chat offer none, because their peers are what a product says they are, and a
+  contact can become a payment recipient.
+- **Outcomes.** The picker names the requesting product and lists each contact as the host names them, with a short
+  account. Choosing one answers `Picked`; Cancel or Escape answers `Dismissed`; a session with no contacts answers
+  `NoContacts` and draws nothing. A contact that leaves while the picker is open is not an answer.
+- **Resolving handles.** When a transaction names a handle, the core asks the host which contact it hashes to
+  (BLAKE2b-256 keyed with the session's handle key over the account) and checks the answer itself. The host tells the
+  core when a contact leaves, including when the session ends, so a handle it cached stops resolving.
+- **Not served.** A contact list a product can read, labels for a picked handle, inviting someone who is not a contact
+  yet, and contacts from a worker's own chat. Paying a picked contact goes through the core's transaction path, which
+  the browser test does not reach.
 
 ### Differences from the native hosts
 
@@ -659,6 +679,11 @@ opens, so the light client reaches no chain. It checks that:
   and chat key as the core, has no on or off controls, lists the draft worker-owned chat once it is turned on, and stops
   at sign-out;
 - Pocket is drawn by the host as the native two cards, and gives the digital dollar no amount;
+- a product built from `browser/contacts-product.ts`, with a synthetic wallet whose saved Nova chat holds two accepted
+  contacts and one waiting request, and every socket closed: `contacts.pick` opens the host's picker naming the product
+  and offering only the two accepted contacts; choosing one gives the product a 32-byte handle that is neither the
+  account nor the name, the same handle again for the same person and another for the other; Cancel and Escape answer
+  `Dismissed`; and a wallet with no contacts gets `NoContacts` with no picker drawn;
 - a product worker, built from `browser/chat-worker.ts` and served from a stood-in Asset Hub and gateway, runs from its
   manifest, creates a room, posts text and a custom card, draws an image from its archive in the card, redraws the card
   when its button is pressed, answers what the user types, makes no request outside this host, shows in the inspector,
@@ -709,6 +734,7 @@ and layout on narrow screens.
   `capture.ts` keeps payloads when the user asks, `inspect.ts` decodes them, and `memory-rpc.ts` is the in-memory store
   tests use. `src/chat-screen.ts` draws the Chat screen, `src/chat-diagnostics-view.ts` the inspector's Chat tab and
   `src/chat-transport-view.ts` an event's payload layers.
+- `src/contacts.ts`: the contact picker and handle lookup.
 - `src/chat-provider.ts`: the interface between the Chat screen and its chats. `src/chat-inbox.ts`: the session's
   providers. `src/conversation-view.ts`: one conversation, for any provider. `src/nova-chat-provider.ts`,
   `src/product-room-provider.ts`: the Nova and product room providers. `src/draft-chat.ts`, `src/draft-chat-source.ts`,
@@ -727,11 +753,10 @@ and layout on narrow screens.
 - Gating of a product's own network, device or media requests. They follow the browser.
 - Byte-range requests and non-UTF-8 HTML from a name's archive.
 - Versioned hosted releases of this host, which would let a product be tested against a chosen TrUAPI version.
-- Contacts, a Coinage engine, and Chat beyond one device and text. The Pocket screen has no digital dollar balance, and
-  holds only the pinned Humanity card. The host passes no `contacts` or payment callbacks, so the core answers those
-  calls `Unsupported`. Chat has no phone pairing, history sync, multi-device envelopes, attachments, reactions or calls.
-  A contact picker needs `ContactsPlatform` (`contacts` and `pickContact`) and a list of contacts the host owns. Live OS
-  permission status is not provided either.
+- A Coinage engine, and Chat beyond one device and text. The Pocket screen has no digital dollar balance, and holds only
+  the pinned Humanity card. The host passes no payment callbacks, so the core answers those calls `Unsupported`. Chat
+  has no phone pairing, history sync, multi-device envelopes, attachments, reactions or calls. Live OS permission status
+  is not provided either.
 - Several products in front at once. One product is in front, and the others run hidden behind it.
 - Keeping held products across a reload or a session change.
 - Worker products beyond Chat and the Humanity card. A product opened in the address bar runs as `App`; a worker runs

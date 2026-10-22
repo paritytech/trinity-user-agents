@@ -65,6 +65,13 @@ export interface ChatProvider {
   readonly requests?: RequestInbox;
   /** The provider's own account and notes about it, for providers that have one. */
   account?(): ProviderAccount;
+  /**
+   * The people the user chats with here, for the host's contact picker.
+   * Only a provider whose peers' accounts the host itself established offers
+   * them: a contact can become a payment recipient, so a name or account a
+   * product asserted is not one.
+   */
+  contacts?(): readonly ChatContact[];
   subscribe(listener: (event: ProviderEvent) => void): () => void;
   /** Stop the provider. Nothing it started outlives this. */
   dispose(): void;
@@ -179,6 +186,13 @@ export interface RequestInbox {
   /** Accept a request. Resolves to the id of the conversation it opened. */
   accept(requestId: string): Promise<string>;
   decline(requestId: string): void;
+}
+
+export interface ChatContact {
+  /** The person's 32-byte account. */
+  account: HexString;
+  /** How the host names them in its own UI. Never given to a product. */
+  name: string;
 }
 
 export interface ProviderAccount {
