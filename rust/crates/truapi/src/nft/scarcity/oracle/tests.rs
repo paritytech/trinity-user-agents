@@ -37,9 +37,8 @@ impl ScarcityChain for InstanceHolders {
 		at: H256,
 		instances: &[u64],
 	) -> Result<Vec<Option<ItemKey>>, StorageWatchError> {
-		assert_eq!(instances, [INSTANCE]);
 		let holder = if at == FINALIZED.hash { self.at_finalized } else { self.at_best };
-		Ok(vec![holder])
+		Ok(instances.iter().map(|_| holder).collect())
 	}
 
 	async fn locks_at(&self, _: H256, _: &[ItemKey]) -> Result<KeyLocks, StorageWatchError> {
@@ -52,7 +51,18 @@ impl ScarcityChain for InstanceHolders {
 }
 
 fn transfer_entry() -> DurableTxEntry {
-	let params = TransferParams { instance: INSTANCE, destination: DESTINATION, give_up_after: 0 };
+	transfer_entry_into(true)
+}
+
+/// A transfer of [`INSTANCE`] to [`DESTINATION`], a key allocated for it or
+/// an outside one.
+fn transfer_entry_into(destination_is_fresh: bool) -> DurableTxEntry {
+	let params = TransferParams {
+		instance: INSTANCE,
+		destination: DESTINATION,
+		destination_is_fresh,
+		give_up_after: 0,
+	};
 	DurableTxEntry {
 		id: DurableTxId(1),
 		domain: DomainId::new("nft"),
@@ -80,7 +90,7 @@ fn proven_at_both_heads(holders: InstanceHolders) -> (bool, bool) {
 }
 
 #[test]
-fn a_move_is_proven_at_each_head_where_its_instance_is_at_the_destination() {
+fn a_transfer_is_proven_at_each_head_where_its_instance_is_at_the_destination() {
 	let landed_at_best = InstanceHolders { at_finalized: None, at_best: Some(DESTINATION) };
 	let finalized = InstanceHolders { at_finalized: Some(DESTINATION), at_best: Some(DESTINATION) };
 
@@ -100,4 +110,22 @@ fn an_instance_anywhere_else_proves_nothing_either_way() {
 
 	assert!(!scope.proven_completed(&entry, HeadKind::Best));
 	assert!(!scope.proven_not_completed(&entry, HeadKind::Finalized));
+}
+
+/// An outside key may have held the instance before the transfer, as when a
+/// product returns an NFT to whoever sent it, so the instance there proves
+/// nothing and the block search decides.
+#[test]
+fn the_instance_at_an_outside_destination_proves_nothing() {
+	let at_destination =
+		InstanceHolders { at_finalized: Some(DESTINATION), at_best: Some(DESTINATION) };
+	let entry = transfer_entry_into(false);
+	let oracle = ScarcityTransferOracle::new(Arc::new(at_destination), H256([0xab; 32]));
+	let heads = Heads { finalized: FINALIZED, best: BEST };
+	let view = LedgerView::new(vec![entry.clone()]);
+
+	let scope = block_on(oracle.open_pass(core::slice::from_ref(&entry), &view, &heads)).unwrap();
+
+	assert!(!scope.proven_completed(&entry, HeadKind::Finalized));
+	assert!(!scope.proven_completed(&entry, HeadKind::Best));
 }

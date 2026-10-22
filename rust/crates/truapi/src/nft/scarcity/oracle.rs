@@ -15,11 +15,13 @@ use crate::{
 
 const OPEN_PASS: &str = "scarcity_transfer_oracle";
 
-/// Decides NFT transfers from where their instances are. Only the key that holds
-/// an instance, or the collection owner, can transfer it, so the instance at a
-/// transfer's destination means the transfer landed. An instance anywhere else
-/// proves nothing, since it may have landed and transferred on: the engine's block
-/// search decides those.
+/// Decides NFT transfers into fresh keys from where their instances are.
+/// Only the key that holds an instance, or the collection owner, can transfer
+/// it, and nothing but this transfer can bring it to a key allocated for it,
+/// so the instance there means the transfer landed. An instance anywhere else
+/// proves nothing, since it may have landed and moved on, and neither does an
+/// outside destination, which may have held the instance before: the
+/// engine's block search decides those.
 pub struct ScarcityTransferOracle {
 	chain: Arc<dyn ScarcityChain>,
 	genesis: H256,
@@ -84,10 +86,11 @@ impl PassScope for LandedTransfers {
 	}
 }
 
-/// The transfer `entry` makes, when its plan names one.
+/// The transfer `entry` makes into a fresh key, when its plan names one.
 fn transfer_of(entry: &DurableTxEntry) -> Option<(DurableTxId, TransferParams)> {
 	let plan = entry.plan.as_ref()?;
-	TransferParams::try_from(&plan.params).ok().map(|params| (entry.id, params))
+	let params = TransferParams::try_from(&plan.params).ok()?;
+	params.destination_is_fresh.then_some((entry.id, params))
 }
 
 fn runtime_failure(error: StorageWatchError) -> RuntimeFailure {

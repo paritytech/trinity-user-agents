@@ -117,7 +117,7 @@ pub struct TransferContext {
 	/// The runtime at the birth block.
 	pub runtime: TransferRuntime,
 	/// The best head, where the state each transfer depends on is read.
-	pub best: H256,
+	pub best: HashAndNumber,
 }
 
 /// [`ScarcityChain`] over the storage and heads of the chain that runs the
@@ -186,7 +186,7 @@ impl ScarcityChain for ScarcityStorage {
 			transaction_version: client.transaction_version(),
 			metadata: client.metadata(),
 		};
-		let best = self.heads.heads(self.genesis).await?.best.hash;
+		let best = self.heads.heads(self.genesis).await?.best;
 		Ok(TransferContext { birth, runtime, best })
 	}
 }

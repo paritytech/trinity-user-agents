@@ -20,7 +20,7 @@ use crate::{
 
 const FINALIZED: HashAndNumber = HashAndNumber { hash: H256([0x0f; 32]), number: 2_138_796 };
 /// The best head, ahead of [`FINALIZED`]: an NFT minted there is held only here.
-const BEST: H256 = H256([0x0b; 32]);
+const BEST: HashAndNumber = HashAndNumber { hash: H256([0x0b; 32]), number: 2_138_800 };
 const DESTINATION: ItemKey = ItemKey([0x08; 32]);
 const INSTANCE: u64 = 330;
 const NOW: u64 = 1_700_000_000_000;
@@ -30,6 +30,9 @@ const NOW: u64 = 1_700_000_000_000;
 struct ScriptedScarcity {
 	held: HashMap<ItemKey, ScarcityNft>,
 	locked_until: HashMap<ItemKey, u64>,
+	/// How many blocks the best head runs past [`BEST`], as when finality
+	/// stalls.
+	best_ahead_by: u64,
 }
 
 #[async_trait::async_trait]
@@ -39,7 +42,7 @@ impl ScarcityChain for ScriptedScarcity {
 		at: H256,
 		keys: &[ItemKey],
 	) -> Result<Vec<Option<ScarcityNft>>, StorageWatchError> {
-		let held = |key: &ItemKey| self.held.get(key).copied().filter(|_| at == BEST);
+		let held = |key: &ItemKey| self.held.get(key).copied().filter(|_| at == BEST.hash);
 		Ok(keys.iter().map(held).collect())
 	}
 
@@ -52,7 +55,7 @@ impl ScarcityChain for ScriptedScarcity {
 	}
 
 	async fn locks_at(&self, at: H256, keys: &[ItemKey]) -> Result<KeyLocks, StorageWatchError> {
-		assert_eq!(at, BEST);
+		assert_eq!(at, BEST.hash);
 		let until = keys.iter().map(|key| self.locked_until.get(key).copied()).collect();
 		Ok(KeyLocks { now: NOW, until })
 	}
@@ -64,7 +67,8 @@ impl ScarcityChain for ScriptedScarcity {
 			transaction_version: 22,
 			metadata: asset_hub_metadata(),
 		};
-		Ok(TransferContext { birth: FINALIZED, runtime, best: BEST })
+		let best = HashAndNumber { number: BEST.number + self.best_ahead_by, ..BEST };
+		Ok(TransferContext { birth: FINALIZED, runtime, best })
 	}
 }
 
@@ -108,7 +112,12 @@ fn registered_transfer_until(attempts: u32, give_up_after: u64) -> RegisteredTra
 		Ok(id)
 	}))
 	.unwrap();
-	let params = TransferParams { instance: INSTANCE, destination: DESTINATION, give_up_after };
+	let params = TransferParams {
+		instance: INSTANCE,
+		destination: DESTINATION,
+		destination_is_fresh: true,
+		give_up_after,
+	};
 	let plan = SubmissionPlan { policy: PolicyId::new(TRANSFER_POLICY), params: params.into() };
 	let scheduled =
 		ScheduledDurableTx { id, domain: DomainId::new("nft"), group: None, plan, attempts };
@@ -237,18 +246,45 @@ fn a_move_is_given_up_after_its_last_attempt() {
 	assert_eq!(prepared, Some(Preparation::GiveUp));
 }
 
+/// Without a session nothing can be signed, so the transfer waits like any
+/// other, and its wait limit still frees the item if the user never returns.
 #[test]
-fn without_a_session_the_whole_batch_is_asked_again_later() {
+fn without_a_session_a_transfer_waits_until_its_limit() {
+	let waiting = registered_transfer(0);
+	let expired = registered_transfer_until(0, current_unix_secs() - 1);
+	let signed_out = |registered: &RegisteredTransfer| {
+		ScarcityTransferPolicy::new(ScarcityTransferPolicyDeps {
+			db: registered.db.clone(),
+			chain: Arc::new(holding(registered, held_nft(0))),
+			signer: Arc::new(SignedOut),
+		})
+	};
+	let prepare = |registered: &RegisteredTransfer| {
+		let batch = core::slice::from_ref(&registered.scheduled);
+		block_on(signed_out(registered).prepare(batch))
+			.unwrap()
+			.remove(&registered.scheduled.id)
+	};
+
+	assert_eq!(prepare(&waiting), None);
+	assert_eq!(prepare(&expired), Some(Preparation::GiveUp));
+}
+
+/// An era born at a finalized head that best has nearly outrun would die
+/// before landing and use up an attempt, so nothing is built until finality
+/// catches up.
+#[test]
+fn a_transfer_waits_while_finality_lags_too_far_behind() {
 	let registered = registered_transfer(0);
-	let policy = ScarcityTransferPolicy::new(ScarcityTransferPolicyDeps {
-		db: registered.db.clone(),
-		chain: Arc::new(holding(&registered, held_nft(0))),
-		signer: Arc::new(SignedOut),
-	});
+	let behind =
+		|blocks| ScriptedScarcity { best_ahead_by: blocks, ..holding(&registered, held_nft(0)) };
+	let lag_to_death = FINALIZED.number + TRANSFER_PERIOD / 2 - BEST.number;
 
-	let prepared = block_on(policy.prepare(core::slice::from_ref(&registered.scheduled)));
+	let stalled = prepare_one(&registered, behind(lag_to_death));
+	let lagging = prepare_one(&registered, behind(lag_to_death - 1));
 
-	assert!(prepared.is_err());
+	assert_eq!(stalled, None);
+	assert!(matches!(lagging, Some(Preparation::Ready(_))));
 }
 
 /// A signer with no session.

@@ -17,7 +17,7 @@ use crate::{
 		ScheduledDurableTx, SubmissionPolicy, VerdictFailureKind,
 	},
 	nft::{ItemKey, ItemSigner, ItemSlot, dao},
-	store::Db,
+	store::{Db, DbError},
 	unix_time::current_unix_secs,
 };
 
@@ -47,6 +47,10 @@ pub struct TransferParams {
 	pub instance: u64,
 	/// The key it goes to.
 	pub destination: ItemKey,
+	/// Whether `destination` was allocated for this transfer, so no instance
+	/// was ever there before it. Only then does the instance at the
+	/// destination prove the transfer landed.
+	pub destination_is_fresh: bool,
 	/// Unix time, in seconds of the host's clock, after which a transfer that
 	/// still waits is given up. Fixed at registration, so a restart never
 	/// extends it.
@@ -98,19 +102,46 @@ struct PlannedTransfer {
 	slot: ItemSlot,
 }
 
-/// What the chain says about each planned transfer, in the same order.
-struct ChainView {
-	sources: Vec<Option<ScarcityNft>>,
-	destinations: Vec<Option<ScarcityNft>>,
-	locks: KeyLocks,
+/// What the chain says about one planned transfer at the best head.
+#[derive(Clone, Copy)]
+struct TransferView {
+	/// What the source key holds.
+	source: Option<ScarcityNft>,
+	/// What the destination key holds.
+	destination: Option<ScarcityNft>,
+	/// Whether a failed transfer locked the source key.
+	locked: bool,
 }
 
-/// What to do with one transfer this time.
+/// What every transfer of one batch is built with.
+struct BatchBuild {
+	runtime: TransferRuntime,
+	mortality: Mortality,
+	/// The best head is so far past the finalized one that an era born there
+	/// would die before it could land, so nothing is built until finality
+	/// catches up.
+	finality_stalled: bool,
+	/// Unix time of the host's clock, which wait limits are measured in.
+	now: u64,
+}
+
+impl BatchBuild {
+	/// The build of transfers born at the finalized head of `context`.
+	fn born_at(context: TransferContext) -> Result<Self, PolicyError> {
+		let TransferContext { birth, runtime, best } = context;
+		let mortality = Mortality::new(birth, TRANSFER_PERIOD).map_err(policy_error)?;
+		let finality_stalled = best.number + TRANSFER_PERIOD / 2 >= mortality.death();
+		Ok(Self { runtime, mortality, finality_stalled, now: current_unix_secs() })
+	}
+}
+
+/// What the chain says to do with one transfer this time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TransferDecision {
 	/// It can never land.
 	GiveUp,
-	/// Its key is locked. It waits and is asked about again.
+	/// Its NFT is not at the source, or the source is locked. It waits and
+	/// is asked about again.
 	Wait,
 	/// Build it, signing over this revision of the instance.
 	Build { state_nonce: u64 },
@@ -133,11 +164,14 @@ impl SubmissionPolicy for ScarcityTransferPolicy {
 		batch: &[ScheduledDurableTx],
 	) -> Result<HashMap<DurableTxId, Preparation>, PolicyError> {
 		let (planned, unplanned) = self.read_planned_transfers(batch).await?;
-		let TransferContext { birth, runtime, best } =
-			self.deps.chain.transfer_context().await.map_err(policy_error)?;
-		let view = self.read_chain_view(best, &planned).await?;
-		let mortality = Mortality::new(birth, TRANSFER_PERIOD).map_err(policy_error)?;
-		let mut prepared = self.prepare_transfers(&planned, &view, &runtime, mortality)?;
+		let context = self.deps.chain.transfer_context().await.map_err(policy_error)?;
+		let views = self.read_transfer_views(context.best.hash, &planned).await?;
+		let build = BatchBuild::born_at(context)?;
+		let prepare_one = |(transfer, view): (&PlannedTransfer, TransferView)| {
+			self.preparation_of(transfer, view, &build).map(|answer| (transfer.id, answer))
+		};
+		let mut prepared: HashMap<_, _> =
+			planned.iter().zip(views).filter_map(prepare_one).collect();
 		prepared.extend(unplanned.into_iter().map(|id| (id, Preparation::GiveUp)));
 		Ok(prepared)
 	}
@@ -151,26 +185,16 @@ impl ScarcityTransferPolicy {
 		batch: &[ScheduledDurableTx],
 	) -> Result<(Vec<PlannedTransfer>, Vec<DurableTxId>), PolicyError> {
 		let batch = batch.to_vec();
-		let read = move |conn: &rusqlite::Connection| {
-			let mut planned = Vec::new();
-			let mut unplanned = Vec::new();
-			for scheduled in batch {
-				match planned_transfer(conn, &scheduled)? {
-					Some(planned_transfer) => planned.push(planned_transfer),
-					None => unplanned.push(scheduled.id),
-				}
-			}
-			Ok((planned, unplanned))
-		};
+		let read = move |conn: &rusqlite::Connection| split_planned(conn, batch);
 		self.deps.db.read(read).await.map_err(policy_error)
 	}
 
-	/// The sources, destinations and source locks of `planned` at `at`.
-	async fn read_chain_view(
+	/// What the chain holds at `at` for each of `planned`, in order.
+	async fn read_transfer_views(
 		&self,
 		at: H256,
 		planned: &[PlannedTransfer],
-	) -> Result<ChainView, PolicyError> {
+	) -> Result<Vec<TransferView>, PolicyError> {
 		let sources: Vec<ItemKey> = planned.iter().map(|planned| planned.source).collect();
 		let destinations: Vec<ItemKey> =
 			planned.iter().map(|planned| planned.params.destination).collect();
@@ -182,46 +206,73 @@ impl ScarcityTransferPolicy {
 		)
 		.await
 		.map_err(policy_error)?;
-		Ok(ChainView { sources: sources_held, destinations: destinations_held, locks })
+		Ok(zip_views(sources_held, destinations_held, locks))
 	}
 
-	/// What to do with each of `planned`. A transfer that waits is left out.
-	fn prepare_transfers(
+	/// The answer for `transfer`, or `None` while it waits. A transfer that
+	/// cannot be signed yet, as without a session, waits like any other, so
+	/// its wait limit still applies.
+	fn preparation_of(
 		&self,
-		planned: &[PlannedTransfer],
-		view: &ChainView,
-		runtime: &TransferRuntime,
-		mortality: Mortality,
-	) -> Result<HashMap<DurableTxId, Preparation>, PolicyError> {
-		let mut prepared = HashMap::new();
-		let now = current_unix_secs();
-		for (index, planned_transfer) in planned.iter().enumerate() {
-			let preparation = match decide_transfer(planned_transfer, view, index, now) {
-				TransferDecision::GiveUp => Preparation::GiveUp,
-				TransferDecision::Wait => continue,
-				TransferDecision::Build { state_nonce } => {
-					let signed = self.build(planned_transfer, state_nonce, runtime, mortality)?;
-					Preparation::Ready(signed)
-				},
-			};
-			prepared.insert(planned_transfer.id, preparation);
-		}
-		Ok(prepared)
+		transfer: &PlannedTransfer,
+		view: TransferView,
+		build: &BatchBuild,
+	) -> Option<Preparation> {
+		let ready = match decide_from_chain(transfer, view) {
+			TransferDecision::GiveUp => return Some(Preparation::GiveUp),
+			TransferDecision::Wait => None,
+			TransferDecision::Build { state_nonce } => {
+				self.ready_to_submit(transfer, state_nonce, build)
+			},
+		};
+		ready.or_else(|| give_up_after_limit(transfer, build.now))
 	}
 
-	/// `planned_transfer` signed by its source key. Fails without a session.
-	fn build(
+	/// `transfer` signed and ready, or `None` when finality stalled or it
+	/// could not be signed.
+	fn ready_to_submit(
 		&self,
-		planned_transfer: &PlannedTransfer,
+		transfer: &PlannedTransfer,
 		state_nonce: u64,
-		runtime: &TransferRuntime,
-		mortality: Mortality,
-	) -> Result<MortalExtrinsic, PolicyError> {
-		let signer = self.deps.signer.item_signer(planned_transfer.slot).map_err(policy_error)?;
-		let TransferParams { instance, destination, .. } = planned_transfer.params;
-		let nft_transfer = NftTransfer { instance, state_nonce, destination };
-		sign_transfer(&signer, runtime, &nft_transfer, mortality).map_err(policy_error)
+		build: &BatchBuild,
+	) -> Option<Preparation> {
+		if build.finality_stalled {
+			return None;
+		}
+		let signed = self.sign_planned_transfer(transfer, state_nonce, build);
+		let signed = signed.inspect_err(|error| tracing::warn!(%error, "NFT transfer not signed"));
+		signed.ok().map(Preparation::Ready)
 	}
+
+	/// `transfer` signed by its source key. Fails without a session.
+	fn sign_planned_transfer(
+		&self,
+		transfer: &PlannedTransfer,
+		state_nonce: u64,
+		build: &BatchBuild,
+	) -> Result<MortalExtrinsic, PolicyError> {
+		let signer = self.deps.signer.item_signer(transfer.slot).map_err(policy_error)?;
+		let TransferParams { instance, destination, .. } = transfer.params;
+		let nft_transfer = NftTransfer { instance, state_nonce, destination };
+		sign_transfer(&signer, &build.runtime, &nft_transfer, build.mortality).map_err(policy_error)
+	}
+}
+
+/// The transfers of `batch` with the key each spends, and the ids of rows
+/// that name no transfer.
+fn split_planned(
+	conn: &rusqlite::Connection,
+	batch: Vec<ScheduledDurableTx>,
+) -> Result<(Vec<PlannedTransfer>, Vec<DurableTxId>), DbError> {
+	let mut planned = Vec::new();
+	let mut unplanned = Vec::new();
+	for scheduled in batch {
+		match planned_transfer(conn, &scheduled)? {
+			Some(transfer) => planned.push(transfer),
+			None => unplanned.push(scheduled.id),
+		}
+	}
+	Ok((planned, unplanned))
 }
 
 /// `scheduled` with the key it spends, or `None` when it names no transfer: its
@@ -229,7 +280,7 @@ impl ScarcityTransferPolicy {
 fn planned_transfer(
 	conn: &rusqlite::Connection,
 	scheduled: &ScheduledDurableTx,
-) -> Result<Option<PlannedTransfer>, crate::store::DbError> {
+) -> Result<Option<PlannedTransfer>, DbError> {
 	let Ok(params) = TransferParams::try_from(&scheduled.plan.params) else { return Ok(None) };
 	let input = dao::input_of(conn, scheduled.id)?;
 	Ok(input.map(|(source, slot)| PlannedTransfer {
@@ -241,40 +292,37 @@ fn planned_transfer(
 	}))
 }
 
-/// What to do with the transfer at `index` of `view` at unix time `now`: what the
-/// chain says, except that a transfer waiting past its limit is given up.
-fn decide_transfer(
-	planned_transfer: &PlannedTransfer,
-	view: &ChainView,
-	index: usize,
-	now: u64,
-) -> TransferDecision {
-	let decision = decide_from_chain(planned_transfer, view, index);
-	let waited_too_long = now >= planned_transfer.params.give_up_after;
-	if decision == TransferDecision::Wait && waited_too_long {
-		return TransferDecision::GiveUp;
-	}
-	decision
+/// One view per transfer from the three reads, which answer in the same order.
+fn zip_views(
+	sources: Vec<Option<ScarcityNft>>,
+	destinations: Vec<Option<ScarcityNft>>,
+	locks: KeyLocks,
+) -> Vec<TransferView> {
+	let KeyLocks { now, until } = locks;
+	let locked = until.into_iter().map(move |until| until.is_some_and(|until| until > now));
+	let view = |((source, destination), locked)| TransferView { source, destination, locked };
+	sources.into_iter().zip(destinations).zip(locked).map(view).collect()
 }
 
-/// What the chain says about the transfer at `index` of `view`. A source that
-/// does not hold the instance waits, since a reorg can put it back; an
-/// occupied destination or a used-up move budget never changes.
-fn decide_from_chain(
-	planned_transfer: &PlannedTransfer,
-	view: &ChainView,
-	index: usize,
-) -> TransferDecision {
-	if planned_transfer.attempts >= MAX_ATTEMPTS || view.destinations[index].is_some() {
+/// [`Preparation::GiveUp`] once `transfer` waited past its limit, at unix
+/// time `now`.
+fn give_up_after_limit(transfer: &PlannedTransfer, now: u64) -> Option<Preparation> {
+	(now >= transfer.params.give_up_after).then_some(Preparation::GiveUp)
+}
+
+/// What the chain says about `transfer`. A source that does not hold the
+/// instance waits, since a reorg can put it back. An occupied destination
+/// fails at once, and so does a used-up move budget, which never refills.
+fn decide_from_chain(transfer: &PlannedTransfer, view: TransferView) -> TransferDecision {
+	if transfer.attempts >= MAX_ATTEMPTS || view.destination.is_some() {
 		return TransferDecision::GiveUp;
 	}
-	let held = view.sources[index].filter(|held| held.instance == planned_transfer.params.instance);
+	let held = view.source.filter(|held| held.instance == transfer.params.instance);
 	let Some(held) = held else { return TransferDecision::Wait };
 	if held.moves >= MAXIMUM_MOVES {
 		return TransferDecision::GiveUp;
 	}
-	let locked = view.locks.until[index].is_some_and(|until| until > view.locks.now);
-	if locked {
+	if view.locked {
 		return TransferDecision::Wait;
 	}
 	TransferDecision::Build { state_nonce: held.state_nonce }

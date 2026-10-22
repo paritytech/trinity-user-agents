@@ -112,15 +112,16 @@ pub fn plan_transfers(
 		return Err(StartOperationError::OperationExists);
 	}
 	let instances = idle_instances(tx, request.from, &request.items)?;
-	let destinations = match request.destinations {
+	let (destinations, destination_is_fresh) = match request.destinations {
 		TransferDestinations::AllocatedIn(purse) => {
-			allocate_destinations(tx, purse, &instances, keys)?
+			(allocate_destinations(tx, purse, &instances, keys)?, true)
 		},
-		TransferDestinations::Foreign(destination) => vec![destination],
+		TransferDestinations::Foreign(destination) => (vec![destination], false),
 	};
 	let give_up_after = current_unix_secs() + TRANSFER_WAIT_LIMIT_SECS;
-	let transfer_params =
-		|(instance, destination)| TransferParams { instance, destination, give_up_after }.into();
+	let transfer_params = |(instance, destination)| {
+		TransferParams { instance, destination, destination_is_fresh, give_up_after }.into()
+	};
 	Ok(instances.into_iter().zip(destinations).map(transfer_params).collect())
 }
 

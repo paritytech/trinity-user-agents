@@ -14,6 +14,7 @@ use truapi::latest::{
 
 use super::{NftPurses, PurseOwner};
 use crate::{
+	chain::take_until_inclusive,
 	durable::RegistrationError,
 	nft::{
 		ItemKey, OperationKey, PurseId, StartOperationError, TransferDestinations,
@@ -82,10 +83,11 @@ impl NftPurses {
 			.ledger
 			.observe_operation(&operation)
 			.map(|transfers| transfers.map(status_of));
-		statuses
-			.scan(StatusChanges::default(), |changes, status| ready(changes.next(status)))
+		let changes = statuses
+			.scan(LastStatus::default(), |last, read| ready(Some(last.report_if_changed(read))))
 			.filter_map(ready)
-			.boxed()
+			.boxed();
+		take_until_inclusive(changes, |read| read.as_ref().is_ok_and(is_terminal))
 	}
 }
 
@@ -165,36 +167,29 @@ impl hash_db::Hasher for ClearingHasher {
 	}
 }
 
-/// The statuses a product sees: each change once, and nothing after the
-/// first terminal one.
+/// The last status a product was shown, so a repeat is not shown again.
 #[derive(Default)]
-struct StatusChanges {
-	last: Option<Option<NftPurseStatus>>,
-	ended: bool,
-}
+struct LastStatus(Option<Option<NftPurseStatus>>);
 
-impl StatusChanges {
-	/// `None` ends the stream, `Some(None)` skips a repeat, and
-	/// `Some(Some(_))` passes `read` on.
-	fn next(
+impl LastStatus {
+	/// Returns `read` unless it repeats the last status shown, and remembers
+	/// it. A failed read is always returned.
+	fn report_if_changed(
 		&mut self,
 		read: Result<Option<NftPurseStatus>, DbError>,
-	) -> Option<Option<Result<Option<NftPurseStatus>, DbError>>> {
-		if self.ended {
+	) -> Option<Result<Option<NftPurseStatus>, DbError>> {
+		let Ok(status) = read else { return Some(read) };
+		if self.0.as_ref() == Some(&status) {
 			return None;
 		}
-		let Ok(status) = read else { return Some(Some(read)) };
-		if self.last.as_ref() == Some(&status) {
-			return Some(None);
-		}
-		self.ended = status.as_ref().is_some_and(is_terminal);
-		self.last = Some(status.clone());
-		Some(Some(Ok(status)))
+		self.0 = Some(status.clone());
+		Some(Ok(status))
 	}
 }
 
-fn is_terminal(status: &NftPurseStatus) -> bool {
-	matches!(status, NftPurseStatus::Cleared { .. } | NftPurseStatus::Incomplete { .. })
+/// Whether `status` is the operation's last: `Cleared` or `Incomplete`.
+fn is_terminal(status: &Option<NftPurseStatus>) -> bool {
+	matches!(status, Some(NftPurseStatus::Cleared { .. } | NftPurseStatus::Incomplete { .. }))
 }
 
 #[cfg(test)]

@@ -228,13 +228,38 @@ fn each_move_is_registered_with_its_wait_limit() {
 
 	start(&purses, rebalance(operation(1), &purses.held)).unwrap();
 
+	let params = stored_params(&purses);
+	let limit = params.give_up_after - before;
+	assert!((TRANSFER_WAIT_LIMIT_SECS..=TRANSFER_WAIT_LIMIT_SECS + 5).contains(&limit), "{limit}");
+}
+
+/// The one transfer's params, as the policy reads them back.
+fn stored_params(purses: &Purses) -> TransferParams {
 	let stored = |conn: &rusqlite::Connection| {
 		Ok(conn.query_row("SELECT policy_params FROM durable_tx", [], |row| {
 			row.get::<_, Vec<u8>>(0)
 		})?)
 	};
 	let params = block_on(purses.db.read(stored)).unwrap();
-	let params = TransferParams::try_from(&crate::durable::PolicyParams(params)).unwrap();
-	let limit = params.give_up_after - before;
-	assert!((TRANSFER_WAIT_LIMIT_SECS..=TRANSFER_WAIT_LIMIT_SECS + 5).contains(&limit), "{limit}");
+	TransferParams::try_from(&crate::durable::PolicyParams(params)).unwrap()
+}
+
+/// Only a key allocated for the transfer proves, by holding the instance,
+/// that the transfer landed; an outside key may have held it before.
+#[test]
+fn only_a_rebalance_marks_its_destination_fresh() {
+	let rebalanced = purses_holding(1);
+	start(&rebalanced, rebalance(operation(1), &rebalanced.held)).unwrap();
+	let sent_out = purses_holding(1);
+	let items = sent_out.held.iter().copied().collect();
+	let request = TransferRequest {
+		operation: operation(1),
+		from: FROM,
+		items,
+		destinations: TransferDestinations::Foreign(FOREIGN),
+	};
+	start(&sent_out, request).unwrap();
+
+	assert!(stored_params(&rebalanced).destination_is_fresh);
+	assert!(!stored_params(&sent_out).destination_is_fresh);
 }
