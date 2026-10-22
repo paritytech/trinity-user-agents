@@ -616,7 +616,7 @@ pub(super) async fn allocate_statement_store_allowance(
     product_id: &str,
     policy: OnExistingAllowancePolicy,
 ) -> Result<StatementStoreAllocation, AllowanceAllocationError> {
-    signing_host.require_current_session(session)?;
+    signing_host.require_current_product_session(session, product_id)?;
     let entropy = signing_host.root_entropy()?;
     let allowance =
         derive_sr25519_hard_path(&entropy, &["allowance", "statement-store", product_id])?;
@@ -637,7 +637,7 @@ pub(super) async fn allocate_statement_store_allowance(
         policy,
     )
     .await?;
-    signing_host.require_current_session(session)?;
+    signing_host.require_current_product_session(session, product_id)?;
     Ok(StatementStoreAllocation {
         secret: allowance.secret.to_bytes().to_vec(),
         period,

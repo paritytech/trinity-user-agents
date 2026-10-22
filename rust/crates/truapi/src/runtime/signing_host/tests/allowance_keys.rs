@@ -120,6 +120,23 @@ fn sent_rpc_count(platform: &StubPlatform) -> usize {
 	platform.sent_rpc.lock().expect("rpc list mutex poisoned").len()
 }
 
+/// The `WARN` events emitted while this is the thread's subscriber.
+#[derive(Clone, Default)]
+struct Warnings(Arc<std::sync::Mutex<Vec<String>>>);
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Warnings {
+	fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+		if *event.metadata().level() != tracing::Level::WARN {
+			return;
+		}
+		let mut fields = Vec::new();
+		event.record(&mut |field: &tracing::field::Field, value: &dyn core::fmt::Debug| {
+			fields.push(format!("{field}={value:?}"))
+		});
+		self.0.lock().expect("warnings mutex poisoned").push(fields.join(" "));
+	}
+}
+
 fn secret_key() -> StatementStoreAllowanceKey {
 	StatementStoreAllowanceKey::from_secret_bytes(SECRET.to_vec()).expect("64-byte secret")
 }
@@ -166,6 +183,29 @@ fn a_second_proof_in_the_same_session_sends_nothing_to_the_chain() {
 		(true, first.public_key, sent_after_first),
 		"the first proof must reach the chain, and a proof after it must not"
 	);
+}
+
+/// Product allowances are provisioned on demand for an authorized request and
+/// never renewed in the background, so issuing one must not ask the renewal
+/// ledger to keep it. The ledger refuses every product grant, so the attempt
+/// would only fail and log a warning on each allocation.
+#[test]
+fn issuing_an_allowance_does_not_register_it_for_background_renewal() {
+	use tracing_subscriber::layer::SubscriberExt as _;
+
+	let signing_host = active_signing_host(chain_with_allocated_slot());
+	let warnings = Warnings::default();
+
+	// With a single live dispatcher, tracing caches a callsite's interest from
+	// the first thread to reach it, which may be a parallel test without a
+	// subscriber. A second one makes it ask every live dispatcher instead.
+	let _second_dispatcher = tracing::Dispatch::new(tracing_subscriber::Registry::default());
+	tracing::subscriber::with_default(
+		tracing_subscriber::Registry::default().with(warnings.clone()),
+		|| allowance_key(&signing_host),
+	);
+
+	assert_eq!(*warnings.0.lock().expect("warnings mutex poisoned"), Vec::<String>::new());
 }
 
 #[test]
