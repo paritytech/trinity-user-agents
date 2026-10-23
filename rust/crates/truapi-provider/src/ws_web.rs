@@ -37,8 +37,7 @@ type SocketCallbacks = (
 /// the trait requires to be `Send`) can hold them across the handshake await.
 type StagedSocket = SendWrapper<(WebSocket, SocketCallbacks)>;
 
-/// Open a browser WebSocket connection to `url`. `responses()` yields the live
-/// stream once; later calls yield an ended stream.
+/// Open a browser WebSocket connection to `url`.
 pub async fn connect(url: Url) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
 	let (staged, handshake_rx, responses_tx, responses_rx) = open_socket(&url)?;
 
