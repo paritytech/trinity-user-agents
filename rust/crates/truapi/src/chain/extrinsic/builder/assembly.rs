@@ -21,7 +21,7 @@ use subxt::{
 	utils::{AccountId32, MultiAddress},
 };
 
-use super::ExtrinsicBuilder;
+use super::{ExtrinsicBuilder, RuntimeAtBirth};
 use crate::chain::{
 	EncodedExtrinsic, MortalExtrinsic, Mortality,
 	extrinsic::{
@@ -29,43 +29,100 @@ use crate::chain::{
 		extension::{ExtensionValueTypes, SuppliedExtension},
 		signature::{SubstrateSigner, VerifySignatureExtension},
 		version::{choose_extrinsic_version, pipeline_names},
-		well_known::{ChainValues, EncodedExtensionValues, well_known_extension, default_value_for_type},
+		well_known::{
+			ChainValues, EncodedExtensionValues, default_value_for_type, well_known_extension,
+		},
 	},
 };
 
 /// Builds the extrinsic `builder` describes.
 ///
-/// `host_extension_version` is the host's pipeline for this chain, if it
-/// builds the chain as V5. `account_nonce` is the signer's next index, read
-/// when the caller set no nonce.
-pub fn assemble(
+/// What the caller left unset is read only when needed:
+/// `host_extension_version` gives the host's pipeline for the chain when no
+/// version is pinned, and `account_nonce` gives the signer's next index when
+/// no nonce is set.
+pub async fn assemble<HostRead, NonceRead>(
 	builder: ExtrinsicBuilder<'_>,
-	host_extension_version: Option<u8>,
-	account_nonce: Option<u64>,
-) -> Result<MortalExtrinsic, ExtrinsicBuildError> {
-	let call = builder.call.ok_or(ExtrinsicBuildError::NoCall)??;
+	host_extension_version: impl FnOnce() -> HostRead,
+	account_nonce: impl FnOnce(AccountId32) -> NonceRead,
+) -> Result<MortalExtrinsic, ExtrinsicBuildError>
+where
+	HostRead: Future<Output = Result<Option<u8>, ExtrinsicBuildError>>,
+	NonceRead: Future<Output = Result<u64, ExtrinsicBuildError>>,
+{
 	let metadata = builder.runtime.metadata.clone();
-	let signed = builder.signature.is_some();
-	let version = choose_extrinsic_version(builder.version, host_extension_version, signed, &metadata)?;
-	check_format_supported(version, &metadata)?;
-	let (extensions, v4_signer) = place_signature(version, builder.extensions, builder.signature)?;
-	check_supplied_extensions(&extensions, version.extension_version(), &metadata)?;
-	let mortality = Mortality::new(builder.runtime.birth, builder.period)?;
-	let chain = ChainValues {
-		genesis: builder.runtime.genesis,
-		spec_version: builder.runtime.spec_version,
-		transaction_version: builder.runtime.transaction_version,
-		mortality,
-		nonce: builder.nonce.or(account_nonce).unwrap_or(0),
+	let signer = builder.signer();
+	let version = choose_extrinsic_version(
+		builder.version,
+		host_extension_version,
+		signer.is_some(),
+		&metadata,
+	)
+	.await?;
+	let nonce = choose_nonce(builder.nonce, signer, account_nonce).await?;
+	encode_extrinsic(builder, version, nonce)
+}
+
+/// The nonce `CheckNonce` carries: the caller's, else the signer's next index,
+/// else 0 for a build nobody signs.
+async fn choose_nonce<NonceRead>(
+	pinned: Option<u64>,
+	signer: Option<&SubstrateSigner>,
+	account_nonce: impl FnOnce(AccountId32) -> NonceRead,
+) -> Result<u64, ExtrinsicBuildError>
+where
+	NonceRead: Future<Output = Result<u64, ExtrinsicBuildError>>,
+{
+	if let Some(nonce) = pinned {
+		return Ok(nonce);
+	}
+	let Some(signer) = signer else {
+		return Ok(0);
 	};
+	account_nonce(signer.account_id()).await
+}
+
+/// Encodes the extrinsic once its version and nonce are settled.
+fn encode_extrinsic(
+	builder: ExtrinsicBuilder<'_>,
+	version: ExtrinsicVersion,
+	nonce: u64,
+) -> Result<MortalExtrinsic, ExtrinsicBuildError> {
+	let ExtrinsicBuilder { runtime, call, extensions, signature, period, .. } = builder;
+	let metadata = runtime.metadata.clone();
+	check_format_supported(version, &metadata)?;
+	let pending_call = call.ok_or(ExtrinsicBuildError::NoCall)?;
+	let call = pending_call(&metadata)?;
+	let (extensions, v4_signer) = supplied_extensions(version, extensions, signature, &metadata)?;
+	let mortality = Mortality::new(runtime.birth, period)?;
+	let chain = chain_values(&runtime, mortality, nonce);
 	let fold = PipelineFold { version, call: &call, chain, types: metadata.types() };
 	let encoded = fold.fill_pipeline(extensions, &metadata)?;
-	let parts = EncodedParts::new(&call, &encoded, version, &metadata)?;
-	let bytes = match v4_signer {
-		Some(signer) => parts.encode_v4(signer, &fold.implication_after(&encoded), &metadata),
-		None => parts.encode_v5(version.extension_version(), &metadata),
-	}?;
+	let bytes = fold.lay_out(&encoded, v4_signer, &metadata)?;
 	Ok(MortalExtrinsic { extrinsic: EncodedExtrinsic::new(bytes), mortality })
+}
+
+fn chain_values(runtime: &RuntimeAtBirth, mortality: Mortality, nonce: u64) -> ChainValues {
+	ChainValues {
+		genesis: runtime.genesis,
+		spec_version: runtime.spec_version,
+		transaction_version: runtime.transaction_version,
+		mortality,
+		nonce,
+	}
+}
+
+/// The supplied extensions the pipeline fills, with the signature placed for
+/// `version`, and the V4 signer if there is one.
+fn supplied_extensions<'a>(
+	version: ExtrinsicVersion,
+	extensions: Vec<SuppliedExtension<'a>>,
+	signature: Option<VerifySignatureExtension<'a>>,
+	metadata: &Metadata,
+) -> Result<(Vec<SuppliedExtension<'a>>, Option<&'a SubstrateSigner>), ExtrinsicBuildError> {
+	let (extensions, v4_signer) = place_signature(version, extensions, signature)?;
+	check_supplied_extensions(&extensions, version.extension_version(), metadata)?;
+	Ok((extensions, v4_signer))
 }
 
 /// Where the signature goes: a V5 extrinsic carries `VerifyMultiSignature` like
@@ -161,6 +218,10 @@ impl PipelineFold<'_> {
 
 	/// The implication an extension sees: for V5 the extension version, then
 	/// the call, then every later extension's explicit and implicit values.
+	///
+	/// frame-decode's signer payload encoders return only the hashed payload a
+	/// signature covers, while an extension may need the implication's
+	/// preimage, so the bytes are put together here.
 	fn implication_after(&self, later: &[EncodedExtension]) -> InheritedImplication {
 		let mut encoded = match self.version {
 			ExtrinsicVersion::V4 => Vec::new(),
@@ -184,12 +245,28 @@ impl PipelineFold<'_> {
 		supplied: Option<SuppliedExtension<'_>>,
 		implication: &InheritedImplication,
 	) -> Result<EncodedExtensionValues, ExtrinsicBuildError> {
-		let Some(extension) = supplied.or_else(|| well_known_extension(&declared.name, &self.chain))
+		let Some(extension) =
+			supplied.or_else(|| well_known_extension(&declared.name, &self.chain))
 		else {
 			return use_default_values_for_unset_extension(declared, self.types);
 		};
 		let types = ExtensionValueTypes { explicit: declared.id, implicit: declared.implicit_id };
 		(extension.encode)(implication, types, self.types)
+	}
+
+	/// The extrinsic's bytes: V4 signed by `v4_signer` over the whole
+	/// pipeline's implication, or V5 general.
+	fn lay_out(
+		&self,
+		encoded: &[EncodedExtension],
+		v4_signer: Option<&SubstrateSigner>,
+		metadata: &Metadata,
+	) -> Result<Vec<u8>, ExtrinsicBuildError> {
+		let parts = EncodedParts::new(self.call, encoded, self.version, metadata)?;
+		match v4_signer {
+			Some(signer) => parts.encode_v4(signer, &self.implication_after(encoded), metadata),
+			None => parts.encode_v5(self.version.extension_version(), metadata),
+		}
 	}
 }
 

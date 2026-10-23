@@ -13,9 +13,7 @@ pub enum ExtrinsicBuildError {
 	#[error("the host could not list its V5 chains: {0}")]
 	HostVersions(String),
 	/// The builder was given no call.
-	#[error(
-		"no call was given, expected one call through with_call, with_call_args or with_call_bytes"
-	)]
+	#[error("no call was given, expected one call through with_call or with_call_args")]
 	NoCall,
 	/// A call could not be encoded against the runtime's metadata.
 	#[error("call {pallet}.{call} does not encode against metadata: {reason}")]

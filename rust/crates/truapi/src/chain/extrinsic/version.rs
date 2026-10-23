@@ -27,21 +27,26 @@ impl ExtrinsicVersion {
 }
 
 /// The version a build uses: the caller's pin if there is one, else the
-/// host's default for the chain.
+/// host's default for the chain, which only then is read through
+/// `host_extension_version`.
 ///
 /// The host default follows the native hosts: a chain the host maps to a
 /// pipeline is V5 with that pipeline, unless the build is signed and the
 /// pipeline has no `VerifyMultiSignature`. Every other chain is V4.
-pub fn choose_extrinsic_version(
+pub async fn choose_extrinsic_version<HostRead>(
 	pinned: Option<ExtrinsicVersion>,
-	host_extension_version: Option<u8>,
+	host_extension_version: impl FnOnce() -> HostRead,
 	signed: bool,
 	metadata: &Metadata,
-) -> Result<ExtrinsicVersion, ExtrinsicBuildError> {
-	match pinned {
-		Some(version) => Ok(version),
-		None => host_default(host_extension_version, signed, metadata),
+) -> Result<ExtrinsicVersion, ExtrinsicBuildError>
+where
+	HostRead: Future<Output = Result<Option<u8>, ExtrinsicBuildError>>,
+{
+	if let Some(version) = pinned {
+		return Ok(version);
 	}
+	let host_extension_version = host_extension_version().await?;
+	host_default(host_extension_version, signed, metadata)
 }
 
 fn host_default(

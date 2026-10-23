@@ -1,10 +1,10 @@
 //! [`ExtrinsicBuilder`]: what a caller asks one extrinsic to contain.
 
 use subxt::{
-	ArcMetadata,
+	ArcMetadata, Metadata,
 	ext::{frame_decode::extrinsics::encode_call_data, scale_encode::EncodeAsFields},
 	tx::Payload,
-	utils::{AccountId32, H256},
+	utils::H256,
 };
 
 use super::{
@@ -38,13 +38,18 @@ pub struct RuntimeAtBirth {
 	pub metadata: ArcMetadata,
 }
 
+/// A call kept unencoded until the build is assembled, so the builder can hold
+/// calls of any argument type.
+type PendingCall<'a> =
+	Box<dyn FnOnce(&Metadata) -> Result<Vec<u8>, ExtrinsicBuildError> + Send + 'a>;
+
 /// What a caller asks one extrinsic to contain.
 ///
 /// The setters record what they are given. A problem with any of it, such as
 /// a call that does not encode, is the build's error.
 pub struct ExtrinsicBuilder<'a> {
 	runtime: RuntimeAtBirth,
-	call: Option<Result<Vec<u8>, ExtrinsicBuildError>>,
+	call: Option<PendingCall<'a>>,
 	extensions: Vec<SuppliedExtension<'a>>,
 	signature: Option<VerifySignatureExtension<'a>>,
 	nonce: Option<u64>,
@@ -65,24 +70,13 @@ pub fn start_build<'a>(runtime: RuntimeAtBirth) -> ExtrinsicBuilder<'a> {
 	}
 }
 
-/// Whether the caller pinned the extrinsic version, so the host's default is
-/// not needed.
-pub fn pins_version(builder: &ExtrinsicBuilder<'_>) -> bool {
-	builder.version.is_some()
-}
-
-/// The account whose next nonce the build has to read: the signer's, unless
-/// the caller set the nonce or there is no signer.
-pub fn account_needing_nonce(builder: &ExtrinsicBuilder<'_>) -> Option<AccountId32> {
-	let signer = builder.signature.as_ref()?.signer()?;
-	builder.nonce.is_none().then(|| signer.account_id())
-}
-
 impl<'a> ExtrinsicBuilder<'a> {
 	/// Sets the call from a subxt payload. Replaces any earlier call.
-	pub fn with_call(&mut self, call: impl Payload) -> &mut Self {
-		let encoded = self.encode_call(call.pallet_name(), call.call_name(), call.call_data());
-		self.call = Some(encoded);
+	pub fn with_call(&mut self, call: impl Payload + Send + 'a) -> &mut Self {
+		let pending: PendingCall<'a> = Box::new(move |metadata| {
+			encode_call(metadata, call.pallet_name(), call.call_name(), call.call_data())
+		});
+		self.call = Some(pending);
 		self
 	}
 
@@ -92,32 +86,12 @@ impl<'a> ExtrinsicBuilder<'a> {
 		&mut self,
 		pallet: &str,
 		call: &str,
-		args: impl EncodeAsFields,
+		args: impl EncodeAsFields + Send + 'a,
 	) -> &mut Self {
-		self.call = Some(self.encode_call(pallet, call, &args));
-		self
-	}
-
-	fn encode_call(
-		&self,
-		pallet: &str,
-		call: &str,
-		args: &impl EncodeAsFields,
-	) -> Result<Vec<u8>, ExtrinsicBuildError> {
-		let metadata = &self.runtime.metadata;
-		encode_call_data(pallet, call, args, &**metadata, metadata.types()).map_err(|error| {
-			ExtrinsicBuildError::Call {
-				pallet: pallet.to_string(),
-				call: call.to_string(),
-				reason: error.to_string(),
-			}
-		})
-	}
-
-	/// Sets an already-encoded call: pallet index, call index, arguments.
-	/// Replaces any earlier call.
-	pub fn with_call_bytes(&mut self, call: Vec<u8>) -> &mut Self {
-		self.call = Some(Ok(call));
+		let (pallet, call) = (pallet.to_string(), call.to_string());
+		let pending: PendingCall<'a> =
+			Box::new(move |metadata| encode_call(metadata, &pallet, &call, &args));
+		self.call = Some(pending);
 		self
 	}
 
@@ -158,4 +132,25 @@ impl<'a> ExtrinsicBuilder<'a> {
 	pub fn with_restrict_origins(&mut self, restrict: bool) -> &mut Self {
 		self.with_extension(restrict_origins(restrict))
 	}
+
+	/// The signer, when the build signs.
+	fn signer(&self) -> Option<&'a SubstrateSigner> {
+		self.signature.as_ref()?.signer()
+	}
+}
+
+/// The call `pallet.call` with `args`, encoded against `metadata`.
+fn encode_call(
+	metadata: &Metadata,
+	pallet: &str,
+	call: &str,
+	args: &impl EncodeAsFields,
+) -> Result<Vec<u8>, ExtrinsicBuildError> {
+	encode_call_data(pallet, call, args, metadata, metadata.types()).map_err(|error| {
+		ExtrinsicBuildError::Call {
+			pallet: pallet.to_string(),
+			call: call.to_string(),
+			reason: error.to_string(),
+		}
+	})
 }

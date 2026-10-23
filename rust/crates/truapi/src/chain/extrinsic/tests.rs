@@ -2,7 +2,12 @@
 //! with an independent builder: the statement allowance assembler, its
 //! implication, or subxt's own V4 transaction.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+	Arc, Mutex,
+	atomic::{AtomicUsize, Ordering},
+};
+
+use futures::executor::block_on;
 
 use parity_scale_codec::{Compact, Decode, Encode};
 use sp_crypto_hashing::blake2_256;
@@ -15,23 +20,23 @@ use subxt::{
 	},
 	dynamic::{Value, tx},
 	ext::{
-		frame_decode::extrinsics::{ExtrinsicTypeInfo, encode_call_data},
+		frame_decode::extrinsics::ExtrinsicTypeInfo,
 		scale_decode::DecodeAsType,
 		scale_encode::{EncodeAsType, Error as EncodeError, TypeResolver},
 	},
-	tx::Signer,
+	tx::{Payload, Signer},
 	utils::{AccountId32, H256, MultiSignature},
 };
 
 use super::{
-	ExtensionError, ExtrinsicBuildError, ExtrinsicVersion, InheritedImplication,
+	ExtensionError, ExtrinsicBuildError, ExtrinsicBuilder, ExtrinsicVersion, InheritedImplication,
 	TransactionExtension,
-	builder::{RuntimeAtBirth, account_needing_nonce, assemble, start_build},
+	builder::{RuntimeAtBirth, assemble, start_build},
 	version::choose_extrinsic_version,
 	well_known::default_value_for_type,
 };
 use crate::{
-	chain::HashAndNumber,
+	chain::{HashAndNumber, MortalExtrinsic},
 	host_internal::extrinsic::{
 		Sr25519Signer,
 		tests::{bulletin_chain_state, split_v4},
@@ -67,10 +72,22 @@ fn test_signer() -> Sr25519Signer {
 	Sr25519Signer::from_keypair(&keypair)
 }
 
-fn remark_call(metadata_bytes: &[u8]) -> Vec<u8> {
-	let metadata = Metadata::decode_from(metadata_bytes).unwrap();
-	let remark = tx("System", "remark", vec![Value::from_bytes([1, 2, 3])]);
-	encode_call_data("System", "remark", remark.call_data(), &metadata, metadata.types()).unwrap()
+fn remark() -> impl Payload + Send {
+	tx("System", "remark", vec![Value::from_bytes([1, 2, 3])])
+}
+
+/// Assembles `builder` offline: `host_extension_version` is the host's
+/// pipeline for the chain and `account_nonce` the signer's next index.
+fn assemble_offline(
+	builder: ExtrinsicBuilder<'_>,
+	host_extension_version: Option<u8>,
+	account_nonce: u64,
+) -> Result<MortalExtrinsic, ExtrinsicBuildError> {
+	block_on(assemble(
+		builder,
+		|| async move { Ok(host_extension_version) },
+		|_| async move { Ok(account_nonce) },
+	))
 }
 
 /// A value that is already encoded, written as it is whatever the type.
@@ -171,16 +188,15 @@ const AUTHORIZED_EXTRINSIC_HASH: &str =
 /// extension order, the authorizer's value in its place, then the call.
 #[test]
 fn an_authorized_extrinsic_has_the_reference_bytes() {
-	let call = remark_call(PEOPLE);
 	let extra = long_term_storage_claim_value();
 
 	let mut builder = start_build(runtime(PEOPLE));
 	builder
-		.with_call_bytes(call)
+		.with_call(remark())
 		.with_extension(FixedBytesExtension::explicit_only("AsResources", extra))
 		.with_extension(immortal())
 		.with_extrinsic_version(ExtrinsicVersion::V5 { extension_version: 0 });
-	let built = assemble(builder, None, None).unwrap();
+	let built = assemble_offline(builder, None, 0).unwrap();
 
 	assert_eq!(hex::encode(blake2_256(built.extrinsic.bytes())), AUTHORIZED_EXTRINSIC_HASH);
 }
@@ -191,13 +207,12 @@ fn an_authorized_extrinsic_has_the_reference_bytes() {
 /// The hash is the reference implication for this call after `AsResources`.
 #[test]
 fn an_authorizer_sees_the_implication_of_the_extensions_after_it() {
-	let call = remark_call(PEOPLE);
 	let expected = "d0b6630d1e1764486b2080946470856f3b00d9408d71d23ab48c40d3eaf2f043";
 	let seen = Arc::new(Mutex::new(None));
 
 	let mut builder = start_build(runtime(PEOPLE));
 	builder
-		.with_call_bytes(call)
+		.with_call(remark())
 		.with_extension(RecordingExtension {
 			name: "AsResources",
 			explicit: vec![0x00],
@@ -205,7 +220,7 @@ fn an_authorizer_sees_the_implication_of_the_extensions_after_it() {
 		})
 		.with_extension(immortal())
 		.with_extrinsic_version(ExtrinsicVersion::V5 { extension_version: 0 });
-	assemble(builder, None, None).unwrap();
+	assemble_offline(builder, None, 0).unwrap();
 
 	let implication_hash = seen.lock().unwrap().as_ref().map(InheritedImplication::hash);
 	assert_eq!(implication_hash.map(hex::encode).as_deref(), Some(expected));
@@ -245,16 +260,18 @@ fn bulletin_runtime() -> RuntimeAtBirth {
 fn build_bulletin_remark(
 	signer: &Sr25519Signer,
 	nonce_override: Option<u64>,
-	account_nonce: Option<u64>,
+	account_nonce: u64,
 ) -> Vec<u8> {
 	let mut builder = start_build(bulletin_runtime());
-	builder
-		.with_call(tx("System", "remark", vec![Value::from_bytes([1, 2, 3])]))
-		.with_signer(signer);
+	builder.with_call(remark()).with_signer(signer);
 	if let Some(nonce) = nonce_override {
 		builder.with_nonce(nonce);
 	}
-	assemble(builder, None, account_nonce).unwrap().extrinsic.bytes().to_vec()
+	assemble_offline(builder, None, account_nonce)
+		.unwrap()
+		.extrinsic
+		.bytes()
+		.to_vec()
 }
 
 /// Bulletin builds through subxt today; the builder must produce the same
@@ -262,7 +279,7 @@ fn build_bulletin_remark(
 #[test]
 fn a_signed_v4_extrinsic_matches_subxt() {
 	let signer = test_signer();
-	let built = build_bulletin_remark(&signer, None, Some(7));
+	let built = build_bulletin_remark(&signer, None, 7);
 	let (account, signature, _) = split_v4(&built);
 	let signature = MultiSignature::Sr25519(signature);
 
@@ -276,7 +293,7 @@ fn a_signed_v4_extrinsic_matches_subxt() {
 #[test]
 fn a_caller_nonce_overrides_the_account_nonce() {
 	let signer = test_signer();
-	let built = build_bulletin_remark(&signer, Some(5), Some(7));
+	let built = build_bulletin_remark(&signer, Some(5), 7);
 	let (account, signature, _) = split_v4(&built);
 
 	let (expected, _) =
@@ -300,19 +317,40 @@ fn verifies(signer: &Sr25519Signer, payload: &[u8], signature: &MultiSignature) 
 		.is_ok()
 }
 
+/// How many times assembling `builder` reads the signer's nonce.
+fn account_nonce_reads(builder: ExtrinsicBuilder<'_>) -> usize {
+	let reads = AtomicUsize::new(0);
+	let account_nonce = |_| {
+		reads.fetch_add(1, Ordering::SeqCst);
+		async { Ok(0) }
+	};
+	let _ = block_on(assemble(builder, || async { Ok(None) }, account_nonce));
+	reads.load(Ordering::SeqCst)
+}
+
 /// The pool nonce is read only when the build signs and the caller set none.
 #[test]
 fn only_a_signed_build_without_a_nonce_reads_the_account_nonce() {
 	let signer = test_signer();
 	let mut signed = start_build(bulletin_runtime());
-	signed.with_signer(&signer);
+	signed.with_call(remark()).with_signer(&signer);
 	let mut pinned = start_build(bulletin_runtime());
-	pinned.with_signer(&signer).with_nonce(1);
-	let unsigned = start_build(bulletin_runtime());
+	pinned.with_call(remark()).with_signer(&signer).with_nonce(1);
+	let mut unsigned = start_build(bulletin_runtime());
+	unsigned.with_call(remark());
 
-	assert_eq!(account_needing_nonce(&signed), Some(signer.account_id()));
-	assert_eq!(account_needing_nonce(&pinned), None);
-	assert_eq!(account_needing_nonce(&unsigned), None);
+	assert_eq!(account_nonce_reads(signed), 1);
+	assert_eq!(account_nonce_reads(pinned), 0);
+	assert_eq!(account_nonce_reads(unsigned), 0);
+}
+
+fn default_version(
+	host_extension_version: Option<u8>,
+	signed: bool,
+	metadata: &Metadata,
+) -> ExtrinsicVersion {
+	let host_read = || async move { Ok(host_extension_version) };
+	block_on(choose_extrinsic_version(None, host_read, signed, metadata)).unwrap()
 }
 
 /// The host's map decides the default exactly as the native hosts do.
@@ -320,18 +358,31 @@ fn only_a_signed_build_without_a_nonce_reads_the_account_nonce() {
 fn the_host_map_decides_the_default_version() {
 	let people = Metadata::decode_from(PEOPLE).unwrap();
 	let asset_hub = Metadata::decode_from(ASSET_HUB).unwrap();
+	let v5_zero = ExtrinsicVersion::V5 { extension_version: 0 };
 
-	assert_eq!(choose_extrinsic_version(None, None, true, &people).unwrap(), ExtrinsicVersion::V4);
-	assert_eq!(
-		choose_extrinsic_version(None, Some(0), true, &people).unwrap(),
-		ExtrinsicVersion::V5 { extension_version: 0 }
-	);
+	assert_eq!(default_version(None, true, &people), ExtrinsicVersion::V4);
+	assert_eq!(default_version(Some(0), true, &people), v5_zero);
 	// Asset Hub's pipeline 0 has no `VerifyMultiSignature`.
-	assert_eq!(choose_extrinsic_version(None, Some(0), true, &asset_hub).unwrap(), ExtrinsicVersion::V4);
-	assert_eq!(
-		choose_extrinsic_version(None, Some(0), false, &asset_hub).unwrap(),
-		ExtrinsicVersion::V5 { extension_version: 0 }
-	);
+	assert_eq!(default_version(Some(0), true, &asset_hub), ExtrinsicVersion::V4);
+	assert_eq!(default_version(Some(0), false, &asset_hub), v5_zero);
+}
+
+/// A pinned version never asks the host, so a host that cannot answer does
+/// not fail a build that does not need its answer.
+#[test]
+fn a_pinned_version_does_not_read_the_host() {
+	let people = Metadata::decode_from(PEOPLE).unwrap();
+	let reads = AtomicUsize::new(0);
+	let host_read = || {
+		reads.fetch_add(1, Ordering::SeqCst);
+		async { Ok(Some(0)) }
+	};
+
+	let version =
+		block_on(choose_extrinsic_version(Some(ExtrinsicVersion::V4), host_read, true, &people));
+
+	assert_eq!(version.unwrap(), ExtrinsicVersion::V4);
+	assert_eq!(reads.load(Ordering::SeqCst), 0);
 }
 
 fn build_error(
@@ -340,12 +391,12 @@ fn build_error(
 	setup: impl FnOnce(&mut super::ExtrinsicBuilder<'_>),
 ) -> ExtrinsicBuildError {
 	let mut builder = start_build(runtime(metadata_bytes));
-	builder.with_call_bytes(remark_call(metadata_bytes));
+	builder.with_call(remark());
 	if let Some(signer) = signer {
 		builder.with_signer(signer);
 	}
 	setup(&mut builder);
-	assemble(builder, None, Some(0)).unwrap_err()
+	assemble_offline(builder, None, 0).unwrap_err()
 }
 
 #[test]
@@ -406,7 +457,10 @@ fn an_extension_supplied_twice_is_refused() {
 fn a_value_that_does_not_match_its_type_is_refused() {
 	let signer = test_signer();
 	let error = build_error(PEOPLE, Some(&signer), |builder| {
-		builder.with_extension(FixedBytesExtension::explicit_only("RestrictOrigins", vec![0x00, 0x00]));
+		builder.with_extension(FixedBytesExtension::explicit_only(
+			"RestrictOrigins",
+			vec![0x00, 0x00],
+		));
 	});
 
 	assert!(matches!(
@@ -419,7 +473,7 @@ fn a_value_that_does_not_match_its_type_is_refused() {
 fn a_build_without_a_call_is_refused() {
 	let builder = start_build(runtime(PEOPLE));
 
-	assert!(matches!(assemble(builder, None, None), Err(ExtrinsicBuildError::NoCall)));
+	assert!(matches!(assemble_offline(builder, None, 0), Err(ExtrinsicBuildError::NoCall)));
 }
 
 /// The signature `VerifyMultiSignature` carries in a V5 `extrinsic` whose
@@ -445,7 +499,6 @@ fn v5_signature(extrinsic: &[u8], metadata: &Metadata) -> VerifySignatureDetails
 /// the reference implication after `VerifyMultiSignature` for this call.
 #[test]
 fn a_signed_v5_extrinsic_signs_the_implication_after_verify_multi_signature() {
-	let call = remark_call(PEOPLE);
 	let expected: [u8; 32] =
 		hex::decode("3cc30056f7aa6877d1486175e40187e291176e2034f267db36efcb5e95f63c3d")
 			.unwrap()
@@ -455,11 +508,11 @@ fn a_signed_v5_extrinsic_signs_the_implication_after_verify_multi_signature() {
 
 	let mut builder = start_build(runtime(PEOPLE));
 	builder
-		.with_call_bytes(call)
+		.with_call(remark())
 		.with_signer(&signer)
 		.with_nonce(0)
 		.with_extension(immortal());
-	let built = assemble(builder, Some(0), None).unwrap();
+	let built = assemble_offline(builder, Some(0), 0).unwrap();
 	let metadata = Metadata::decode_from(PEOPLE).unwrap();
 
 	let VerifySignatureDetails::Signed { signature, account } =
@@ -479,14 +532,14 @@ fn the_implication_carries_the_given_genesis() {
 	let seen = Arc::new(Mutex::new(None));
 	let mut builder = start_build(RuntimeAtBirth { genesis: configured, ..runtime(PEOPLE) });
 	builder
-		.with_call_bytes(remark_call(PEOPLE))
+		.with_call(remark())
 		.with_extension(RecordingExtension {
 			name: "AsResources",
 			explicit: vec![0x00],
 			seen: seen.clone(),
 		})
 		.with_extrinsic_version(ExtrinsicVersion::V5 { extension_version: 0 });
-	assemble(builder, None, None).unwrap();
+	assemble_offline(builder, None, 0).unwrap();
 
 	let implication = seen.lock().unwrap().clone().unwrap();
 	let carries_configured = implication
@@ -526,12 +579,12 @@ fn a_version_the_runtime_does_not_accept_is_refused() {
 	let v5 = ExtrinsicVersion::V5 { extension_version: 0 };
 	let mut builder = start_build(bulletin_runtime());
 	builder
-		.with_call(tx("System", "remark", vec![Value::from_bytes([1, 2, 3])]))
+		.with_call(remark())
 		.with_signer(&signer)
 		.with_nonce(0)
 		.with_extrinsic_version(v5);
 
-	let error = assemble(builder, None, None).unwrap_err();
+	let error = assemble_offline(builder, None, 0).unwrap_err();
 
 	assert!(
 		matches!(error, ExtrinsicBuildError::UnsupportedVersion { supported, .. } if supported == [4])

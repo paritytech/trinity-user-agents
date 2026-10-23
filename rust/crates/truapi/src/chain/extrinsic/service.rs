@@ -6,7 +6,7 @@ use subxt::utils::{AccountId32, H256};
 
 use super::{
 	ExtrinsicBuildError, ExtrinsicBuilder,
-	builder::{RuntimeAtBirth, account_needing_nonce, assemble, pins_version, start_build},
+	builder::{RuntimeAtBirth, assemble, start_build},
 	version_map::VersionMapCache,
 };
 use crate::{
@@ -76,24 +76,9 @@ impl ExtrinsicService {
 		let runtime = self.runtime_at_finalized_head(genesis).await?;
 		let mut builder = start_build(runtime);
 		build(&mut builder);
-		let nonce_account = account_needing_nonce(&builder);
-		let account_nonce = self.read_account_nonce(genesis, nonce_account).await?;
-		let host_extension_version =
-			self.read_host_default(genesis, pins_version(&builder)).await?;
-		assemble(builder, host_extension_version, account_nonce)
-	}
-
-	/// The host's pipeline for `genesis`, read only when the caller did not
-	/// pin a version, so a pinned build never depends on the host's answer.
-	async fn read_host_default(
-		&self,
-		genesis: H256,
-		pinned: bool,
-	) -> Result<Option<u8>, ExtrinsicBuildError> {
-		if pinned {
-			return Ok(None);
-		}
-		self.versions.host_extension_version(genesis).await
+		let host_extension_version = || self.versions.host_extension_version(genesis);
+		let account_nonce = |account| self.read_account_nonce(genesis, account);
+		assemble(builder, host_extension_version, account_nonce).await
 	}
 
 	async fn runtime_at_finalized_head(
@@ -110,15 +95,12 @@ impl ExtrinsicService {
 		})
 	}
 
-	/// The next nonce of `account`, the signer that needs one, if any.
+	/// The next nonce of the signer `account`.
 	async fn read_account_nonce(
 		&self,
 		genesis: H256,
-		account: Option<AccountId32>,
-	) -> Result<Option<u64>, ExtrinsicBuildError> {
-		let Some(account) = account else {
-			return Ok(None);
-		};
-		Ok(Some(self.nonces.next_nonce(genesis, &account).await?))
+		account: AccountId32,
+	) -> Result<u64, ExtrinsicBuildError> {
+		Ok(self.nonces.next_nonce(genesis, &account).await?)
 	}
 }
