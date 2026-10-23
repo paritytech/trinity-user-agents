@@ -1755,13 +1755,16 @@ the shared service-trait contract requires dispatch futures to be `Send`.
 
 Every chain connection opens a fresh WebSocket through `truapi-provider`'s
 WebSocket backend. Its queue depth, message size limit, keepalive interval and
-read timeout are constants in [`ws.rs`](../truapi-provider/src/ws.rs).
-`wss://` certificates are checked against bundled webpki root certificates, so
-the binary does not need a system certificate store.
+read timeout are constants in [`ws.rs`](../truapi-provider/src/ws.rs). The
+handshake uses jsonrpsee's default connect timeout. `wss://` certificates are
+checked against bundled webpki root certificates, so the binary does not need a
+system certificate store.
 
-Outgoing requests use a bounded queue. Incoming frames are read from the socket
-only when the response stream is polled, so none is dropped for lack of buffer
-space. Binary frames that are not valid UTF-8 are dropped with a warning.
+Outgoing requests use a bounded queue. `responses()` returns the live response
+stream on its first call; later calls return a stream that has already ended.
+Incoming frames are read from the socket only when that stream is polled, so
+none is dropped for lack of buffer space. Binary frames that are not valid
+UTF-8 are dropped with a warning.
 
 If no request has been sent for the keepalive interval, the connection sends a
 ping. If no frame arrives within the read timeout, not even a pong, the
