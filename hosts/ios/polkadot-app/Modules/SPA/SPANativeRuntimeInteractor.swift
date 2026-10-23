@@ -10,6 +10,7 @@ final class SPANativeRuntimeInteractor {
     private let nativeApi: ProductsNativeApiProtocol
     private let scriptsFactory: SPAScriptsMaking
     private let contentLoader: ProductContentLoading
+    private let presenceRegistry: ProductPresenceRegistering?
     private let schemeHandlerProxy: SchemeHandlerProxy
     private let configuration: SPAConfiguration
     private let logger: LoggerProtocol
@@ -27,6 +28,8 @@ final class SPANativeRuntimeInteractor {
     private var engineMonitor: JSEngineMonitor?
     // Held so the synchronous `hasChatEntry` can answer from the manifest without re-resolving.
     private var resolvedProduct: ResolvedProduct?
+    private var servedContent: DotNsResolvedContent?
+    private var presenceId: UUID?
 
     private var setupTask: Task<Void, Never>?
     private var openChatTask: Task<Void, Never>?
@@ -35,6 +38,7 @@ final class SPANativeRuntimeInteractor {
         nativeApi: ProductsNativeApiProtocol,
         scriptsFactory: SPAScriptsMaking,
         contentLoader: ProductContentLoading,
+        presenceRegistry: ProductPresenceRegistering?,
         schemeHandlerProxy: SchemeHandlerProxy,
         configuration: SPAConfiguration,
         logger: LoggerProtocol,
@@ -46,6 +50,7 @@ final class SPANativeRuntimeInteractor {
         self.nativeApi = nativeApi
         self.scriptsFactory = scriptsFactory
         self.contentLoader = contentLoader
+        self.presenceRegistry = presenceRegistry
         self.schemeHandlerProxy = schemeHandlerProxy
         self.configuration = configuration
         self.logger = logger
@@ -62,6 +67,10 @@ final class SPANativeRuntimeInteractor {
         workerToken?.unlock()
 
         engineMonitor?.stop()
+
+        if let presenceId, let presenceRegistry {
+            Task { @MainActor in presenceRegistry.unregister(presenceId) }
+        }
 
         Task { [containerBridge, jsEngine] in
             await containerBridge?.dispose()
@@ -86,6 +95,24 @@ extension SPANativeRuntimeInteractor: SPAInteractorInputProtocol {
         setupTask = Task { [weak self] in
             await self?.performSetup(engine: engine)
         }
+    }
+
+    func reloadLatestBuild() {
+        guard servedContent != nil else {
+            presenter?.didRestartLoading()
+            retry()
+            return
+        }
+
+        guard presenceRegistry?.applyPendingUpdate(of: productDomain) != true else { return }
+
+        serveAppliedBuild()
+    }
+
+    func checkForNewBuild() {
+        guard servedContent != nil else { return }
+
+        presenceRegistry?.requestRefresh(of: productDomain)
     }
 
     func hasChatEntry() -> Bool {
@@ -191,6 +218,7 @@ private extension SPANativeRuntimeInteractor {
             logger.debug("SPA: '\(domain)' content resolved to \(contentURL.path)")
 
             schemeHandlerProxy.setHandler(schemeHandler)
+            servedContent = content.appContent
 
             let scripts = try scriptsFactory.makeScripts()
             try await engine.initialize(with: scripts)
@@ -220,6 +248,7 @@ private extension SPANativeRuntimeInteractor {
 
             let initialURL = configuration.page.applied(to: productURL)
             presenter?.didRequestNavigation(to: initialURL)
+            registerPresence()
         } catch {
             guard !Task.isCancelled else { return }
             logger.error("SPA: Setup failed: \(error)")
@@ -238,5 +267,41 @@ private extension SPANativeRuntimeInteractor {
             entryRelativePath: ProductBundle.indexHTML,
             productFileProvider: fileProvider
         )
+    }
+}
+
+extension SPANativeRuntimeInteractor: SPAProductReloading {
+    func serveAppliedBuild() {
+        Task { [weak self] in
+            await self?.performServeAppliedBuild()
+        }
+    }
+}
+
+private extension SPANativeRuntimeInteractor {
+    var productDomain: ProductId {
+        configuration.page.host.toDotDomain()
+    }
+
+    func registerPresence() {
+        guard presenceId == nil else { return }
+
+        presenceId = presenceRegistry?.register(productId: productDomain, reloader: self)
+    }
+
+    func performServeAppliedBuild() async {
+        do {
+            let content = try await contentLoader.open(productDomain, policy: .untilCancelled)
+
+            if content.appContent != servedContent {
+                let schemeHandler = makeSchemeHandler(domain: productDomain, contentURL: content.appContent.localURL)
+                schemeHandlerProxy.setHandler(schemeHandler)
+                servedContent = content.appContent
+            }
+
+            presenter?.didRequestReload()
+        } catch {
+            logger.error("SPA: Failed to serve the applied build: \(error)")
+        }
     }
 }

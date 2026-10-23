@@ -5,6 +5,12 @@ public struct FetchedProductVersion: Equatable, Sendable {
     public let version: ProductVersion
     public let resolved: ResolvedProduct
     public let appContent: DotNsResolvedContent
+
+    public init(version: ProductVersion, resolved: ResolvedProduct, appContent: DotNsResolvedContent) {
+        self.version = version
+        self.resolved = resolved
+        self.appContent = appContent
+    }
 }
 
 public enum ProductUpdateFetchError: Error, Equatable {

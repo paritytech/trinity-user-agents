@@ -75,6 +75,14 @@ final class SPAViewController: UIViewController, ViewHolder {
         setupWebViewLayout()
     }
 
+    override func viewIsAppearing(_ animated: Bool) {
+        super.viewIsAppearing(animated)
+
+        guard isEnteringScreen else { return }
+
+        presenter.didBecomeVisible()
+    }
+
     override func updateContentUnavailableConfiguration(
         using _: UIContentUnavailableConfigurationState
     ) {
@@ -103,6 +111,11 @@ final class SPAViewController: UIViewController, ViewHolder {
 private extension SPAViewController {
     enum Constants {
         static let minimumLoadingDuration: TimeInterval = 0.5
+    }
+
+    var isEnteringScreen: Bool {
+        isMovingToParent || navigationController?.isMovingToParent == true
+            || isBeingPresented || navigationController?.isBeingPresented == true
     }
 
     func display(loadFailure content: ErrorContent) {
@@ -217,7 +230,7 @@ private extension SPAViewController {
             title: String(localized: .spaActionRefresh),
             image: UIImage(systemName: "arrow.clockwise")
         ) { [weak self] _ in
-            self?.reload()
+            self?.presenter.didTapRefresh()
         })
 
         elements.append(UIAction(

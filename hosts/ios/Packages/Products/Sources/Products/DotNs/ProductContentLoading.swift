@@ -29,6 +29,11 @@ public struct ProductUpdate: Equatable, Sendable {
     public let previous: ProductVersion
     public let latest: FetchedProductVersion
 
+    public init(previous: ProductVersion, latest: FetchedProductVersion) {
+        self.previous = previous
+        self.latest = latest
+    }
+
     public var productId: ProductId { latest.version.productId }
 }
 
@@ -36,6 +41,7 @@ public protocol ProductContentLoading: Sendable {
     func open(_ productId: ProductId, policy: ProductLoadPolicy) async throws -> ProductContent
     func refresh(_ productId: ProductId) async -> ProductUpdate?
     func apply(_ update: ProductUpdate) async
+    func pendingUpdates() async -> [ProductUpdate]
     func updates() -> AnyAsyncSequence<ProductUpdate>
 }
 

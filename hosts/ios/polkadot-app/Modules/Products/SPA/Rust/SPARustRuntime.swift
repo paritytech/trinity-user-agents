@@ -118,6 +118,23 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
         logger.debug("SPA(rust): runtime disposed for \(configuration.page.host.name)")
     }
+
+    func useLatestBuild() async throws {
+        try checkNotDisposed()
+
+        guard case .dotNs = configuration.contentSource, let servedContent else { return }
+
+        let content = try await contentLoader.open(configuration.page.host.toDotDomain(), policy: .untilCancelled)
+        try checkNotDisposed()
+
+        guard content.appContent != servedContent else { return }
+
+        _ = try await serve(content.appContent)
+    }
+
+    func servedBuild() -> DotNsResolvedContent? {
+        servedContent
+    }
 }
 
 private extension SPARustRuntime {

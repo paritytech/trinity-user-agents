@@ -45,7 +45,7 @@ public actor ProductContentLoader {
     private let updatesSubject = AsyncPassthroughSubject<ProductUpdate>()
 
     private var appliedVersions: [ProductId: ProductVersion] = [:]
-    private var pendingUpdates: [ProductId: ProductUpdate] = [:]
+    private var pendingByProduct: [ProductId: ProductUpdate] = [:]
     private var refreshTasks: [ProductId: Task<ProductUpdate?, Never>] = [:]
 
     public init(
@@ -103,7 +103,11 @@ extension ProductContentLoader: ProductContentLoading {
     public func apply(_ update: ProductUpdate) async {
         await cache.apply(update.latest.version)
         appliedVersions[update.productId] = update.latest.version
-        pendingUpdates[update.productId] = nil
+        pendingByProduct[update.productId] = nil
+    }
+
+    public func pendingUpdates() -> [ProductUpdate] {
+        Array(pendingByProduct.values)
     }
 
     public nonisolated func updates() -> AnyAsyncSequence<ProductUpdate> {
@@ -137,12 +141,12 @@ private extension ProductContentLoader {
             return nil
         }
 
-        guard fetched.version != applied, fetched.version != pendingUpdates[productId]?.latest.version else {
+        guard fetched.version != applied, fetched.version != pendingByProduct[productId]?.latest.version else {
             return nil
         }
 
         let update = ProductUpdate(previous: applied, latest: fetched)
-        pendingUpdates[productId] = update
+        pendingByProduct[productId] = update
         updatesSubject.send(update)
 
         return update
@@ -161,7 +165,7 @@ private extension ProductContentLoader {
 
         await cache.invalidate(cached.version)
         appliedVersions[cached.version.productId] = nil
-        pendingUpdates[cached.version.productId] = nil
+        pendingByProduct[cached.version.productId] = nil
     }
 
     func retrying<T: Sendable>(

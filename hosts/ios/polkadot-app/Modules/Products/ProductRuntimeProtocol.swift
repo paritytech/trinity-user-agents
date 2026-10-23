@@ -41,6 +41,8 @@ protocol ChatRuntimeProtocol: ProductRuntimeProtocol {
 
 protocol SPARuntimeProtocol: ProductRuntimeProtocol {
     func start(with engine: JSEngineProtocol) async throws -> URL
+    func useLatestBuild() async throws
+    func servedBuild() async -> DotNsResolvedContent?
 }
 
 /// One scripts protocol per surface (see `ChatScriptsMaking` in the Products
