@@ -303,7 +303,7 @@ missed:
 - **Report unserved chains as a real host does.** By default the mock reports
   every chain as supported and leaves an unserved one silent, so a product's
   "network unavailable" path hangs. New suites should pass
-  `mock: { featureSupported: "served" }`, which answers from the chains the
+  `mock: { onlyServedChains: true }`, which answers from the chains the
   suite declares. It becomes the default in a later breaking release.
 - **A chain's role comes from its `id`.** An id ending in `-asset-hub`,
   `-people` or `-bulletin` selects that role; anything else is a relay chain.

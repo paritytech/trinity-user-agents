@@ -229,7 +229,8 @@ pub struct MockConfig {
 	pub feature_supported: bool,
 	/// When set, `feature_supported` answers from `supported_chains`, as a real
 	/// host does, so a chain outside that set is unsupported. It becomes the
-	/// default in a later breaking release.
+	/// default in a later breaking release. The JS mock's `onlyServedChains` is
+	/// the same option.
 	pub only_served_chains: bool,
 	/// Theme emitted by `subscribe_theme`.
 	pub theme: latest::ThemeVariant,
