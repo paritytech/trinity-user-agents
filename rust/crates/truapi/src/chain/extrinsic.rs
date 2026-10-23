@@ -10,6 +10,7 @@ mod builder;
 mod error;
 mod extension;
 mod service;
+mod signature;
 mod version;
 mod version_map;
 mod well_known;

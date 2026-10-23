@@ -67,14 +67,6 @@ pub enum ExtrinsicBuildError {
 	/// A V4 extrinsic was requested without a signer.
 	#[error("a V4 extrinsic needs a signer, expected with_signer or a V5 version")]
 	UnsignedV4,
-	/// A signed V5 extrinsic was requested on a pipeline with no signature slot.
-	#[error(
-		"extension pipeline {extension_version} has no VerifyMultiSignature, so a signer cannot sign this V5 extrinsic"
-	)]
-	NoSignatureSlot {
-		/// The pipeline number.
-		extension_version: u8,
-	},
 	/// The caller supplied an extension the chosen pipeline does not list.
 	#[error(
 		"extension pipeline {extension_version} does not list {extension}; it lists {declared:?}"

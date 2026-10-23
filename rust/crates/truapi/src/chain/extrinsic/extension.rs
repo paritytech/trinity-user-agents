@@ -5,7 +5,7 @@ use scale_info::PortableRegistry;
 use sp_crypto_hashing::blake2_256;
 use subxt::ext::scale_encode::{EncodeAsType, Error as EncodeError, TypeResolver};
 
-use super::{ExtrinsicBuildError, well_known::SlotValues};
+use super::{ExtrinsicBuildError, ExtrinsicVersion, well_known::SlotValues};
 
 /// A transaction extension that a caller supplies to the builder.
 ///
@@ -39,12 +39,23 @@ pub trait TransactionExtension: Send {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InheritedImplication {
 	encoded: Vec<u8>,
+	version: ExtrinsicVersion,
 }
 
 impl InheritedImplication {
-	/// Wraps the implication bytes the builder assembled.
-	pub fn new(encoded: Vec<u8>) -> Self {
-		Self { encoded }
+	/// Wraps the implication bytes the builder assembled for `version`.
+	pub fn new(encoded: Vec<u8>, version: ExtrinsicVersion) -> Self {
+		Self { encoded, version }
+	}
+
+	/// What a signature covers: the hash of the implication for V5; for V4
+	/// the implication itself, hashed only when longer than 256 bytes.
+	pub fn signer_payload(&self) -> Vec<u8> {
+		let v4_short = matches!(self.version, ExtrinsicVersion::V4) && self.encoded.len() <= 256;
+		if v4_short {
+			return self.encoded.clone();
+		}
+		self.hash().to_vec()
 	}
 
 	/// The implication bytes.

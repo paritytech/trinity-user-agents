@@ -13,31 +13,24 @@ use subxt::{
 		frame_decode::extrinsics::{
 			ExtrinsicCallInfo, ExtrinsicExtensionInfo, ExtrinsicExtensionInfoArg,
 			ExtrinsicTypeInfo, TransactionExtensions, TransactionExtensionsError,
-			encode_v4_signed_with_info_to, encode_v4_signer_payload_with_info,
-			encode_v5_general_with_info_to,
+			encode_v4_signed_with_info_to, encode_v5_general_with_info_to,
 		},
 		scale_decode::visitor::{IgnoreVisitor, decode_with_visitor},
 		scale_encode::{EncodeAsFields, Error as ScaleEncodeError, FieldIter, TypeResolver},
 	},
-	tx::Signer,
-	utils::{AccountId32, MultiAddress, MultiSignature},
+	utils::{AccountId32, MultiAddress},
 };
 
 use super::ExtrinsicBuilder;
-use crate::{
-	chain::{
-		EncodedExtrinsic, MortalExtrinsic, Mortality,
-		extrinsic::{
-			ExtrinsicBuildError, ExtrinsicVersion, InheritedImplication,
-			extension::{SlotTypes, SuppliedExtension},
-			version::{choose_version, pipeline_declares, pipeline_names},
-			well_known::{
-				ChainValues, SlotValues, VERIFY_MULTI_SIGNATURE, unset_slot_value,
-				verify_signature_value, well_known_values,
-			},
-		},
+use crate::chain::{
+	EncodedExtrinsic, MortalExtrinsic, Mortality,
+	extrinsic::{
+		ExtrinsicBuildError, ExtrinsicVersion, InheritedImplication,
+		extension::{SlotTypes, SuppliedExtension},
+		signature::VerifySignatureExtension,
+		version::{choose_version, pipeline_names},
+		well_known::{ChainValues, SlotValues, unset_slot_value, well_known_values},
 	},
-	host_internal::extrinsic::Sr25519Signer,
 };
 
 /// Builds the extrinsic `builder` describes.
@@ -52,10 +45,12 @@ pub fn assemble(
 ) -> Result<MortalExtrinsic, ExtrinsicBuildError> {
 	let call = builder.call.ok_or(ExtrinsicBuildError::NoCall)??;
 	let metadata = builder.runtime.metadata.clone();
-	let signer = builder.signer;
-	let version =
-		choose_version(builder.version, host_extension_version, signer.is_some(), &metadata)?;
-	check_version_fits(version, signer.is_some(), &builder.extensions, &metadata)?;
+	let signed = builder.signature.is_some();
+	let version = choose_version(builder.version, host_extension_version, signed, &metadata)?;
+	check_format_supported(version, &metadata)?;
+	let (extensions, v4_signature) =
+		place_signature(version, builder.extensions, builder.signature)?;
+	check_supplied_extensions(&extensions, version.extension_version(), &metadata)?;
 	let mortality = Mortality::new(builder.runtime.birth, builder.period)?;
 	let chain = ChainValues {
 		genesis: builder.runtime.genesis,
@@ -65,27 +60,31 @@ pub fn assemble(
 		nonce: builder.nonce.or(account_nonce).unwrap_or(0),
 		restrict_origins: builder.restrict_origins,
 	};
-	let fold = PipelineFold { version, call: &call, signer, chain, types: metadata.types() };
-	let slots = fold.fill_pipeline(builder.extensions, &metadata)?;
-	let bytes = encode_extrinsic(version, &call, &slots, signer, &metadata)?;
+	let fold = PipelineFold { version, call: &call, chain, types: metadata.types() };
+	let slots = fold.fill_pipeline(extensions, &metadata)?;
+	let parts = EncodedParts::new(&call, &slots, version, &metadata)?;
+	let bytes = match v4_signature {
+		Some(signature) => parts.encode_v4(&signature, &fold.implication_after(&slots), &metadata),
+		None => parts.encode_v5(version.extension_version(), &metadata),
+	}?;
 	Ok(MortalExtrinsic { extrinsic: EncodedExtrinsic::new(bytes), mortality })
 }
 
-/// Rejects a version the runtime or the supplied extensions cannot be built
-/// with, and a signed V5 build whose pipeline cannot carry the signature.
-fn check_version_fits(
+/// Where the signature goes: a V5 extrinsic fills its `VerifyMultiSignature`
+/// slot with it like any extension; a V4 one takes it out of the pipeline to
+/// sign the preamble, and cannot be built without one.
+fn place_signature<'a>(
 	version: ExtrinsicVersion,
-	signed: bool,
-	supplied: &[SuppliedExtension<'_>],
-	metadata: &Metadata,
-) -> Result<(), ExtrinsicBuildError> {
-	check_format_supported(version, metadata)?;
-	let extension_version = version.extension_version();
-	let is_v5 = matches!(version, ExtrinsicVersion::V5 { .. });
-	if is_v5 && signed && !pipeline_declares(metadata, extension_version, VERIFY_MULTI_SIGNATURE)? {
-		return Err(ExtrinsicBuildError::NoSignatureSlot { extension_version });
+	mut extensions: Vec<SuppliedExtension<'a>>,
+	signature: Option<VerifySignatureExtension<'a>>,
+) -> Result<(Vec<SuppliedExtension<'a>>, Option<VerifySignatureExtension<'a>>), ExtrinsicBuildError>
+{
+	if let ExtrinsicVersion::V5 { .. } = version {
+		extensions.extend(signature.map(SuppliedExtension::new));
+		return Ok((extensions, None));
 	}
-	check_supplied_extensions(supplied, extension_version, metadata)
+	let signature = signature.ok_or(ExtrinsicBuildError::UnsignedV4)?;
+	Ok((extensions, Some(signature)))
 }
 
 fn check_format_supported(
@@ -139,7 +138,6 @@ struct Slot {
 struct PipelineFold<'f> {
 	version: ExtrinsicVersion,
 	call: &'f [u8],
-	signer: Option<&'f Sr25519Signer>,
 	chain: ChainValues,
 	types: &'f PortableRegistry,
 }
@@ -154,7 +152,7 @@ impl PipelineFold<'_> {
 		let pipeline = extension_info(metadata, self.version.extension_version())?;
 		let mut slots = VecDeque::with_capacity(pipeline.extension_ids.len());
 		for declared in pipeline.extension_ids.iter().rev() {
-			let implication = self.implication_after(&slots);
+			let implication = self.implication_after(slots.make_contiguous());
 			let position = supplied.iter().position(|extension| extension.name == declared.name);
 			let extension = position.map(|index| supplied.swap_remove(index));
 			let values = self.slot_values(declared, extension, &implication)?;
@@ -166,7 +164,7 @@ impl PipelineFold<'_> {
 
 	/// The implication an extension sees: for V5 the extension version, then
 	/// the call, then every later extension's explicit and implicit values.
-	fn implication_after(&self, later: &VecDeque<Slot>) -> InheritedImplication {
+	fn implication_after(&self, later: &[Slot]) -> InheritedImplication {
 		let mut encoded = match self.version {
 			ExtrinsicVersion::V4 => Vec::new(),
 			ExtrinsicVersion::V5 { extension_version } => vec![extension_version],
@@ -174,11 +172,11 @@ impl PipelineFold<'_> {
 		encoded.extend_from_slice(self.call);
 		later.iter().for_each(|slot| encoded.extend_from_slice(&slot.values.explicit));
 		later.iter().for_each(|slot| encoded.extend_from_slice(&slot.values.implicit));
-		InheritedImplication::new(encoded)
+		InheritedImplication::new(encoded, self.version)
 	}
 
-	/// A slot's values: the supplied extension's, else the signature's,
-	/// else a well-known value, else the type's unset default.
+	/// A slot's values: the supplied extension's, else a well-known value,
+	/// else the type's unset default.
 	fn slot_values(
 		&self,
 		declared: &ExtrinsicExtensionInfoArg<'_, u32>,
@@ -189,30 +187,10 @@ impl PipelineFold<'_> {
 			let types = SlotTypes { explicit: declared.id, implicit: declared.implicit_id };
 			return (extension.encode)(implication, types, self.types);
 		}
-		if declared.name == VERIFY_MULTI_SIGNATURE {
-			return self.signature_values(declared.id, implication);
-		}
-		if let Some(values) = well_known_values(&declared.name, &self.chain) {
+		if let Some(values) = well_known_values(declared, &self.chain, self.types)? {
 			return Ok(values);
 		}
 		unset_values(declared, self.types)
-	}
-
-	/// `VerifyMultiSignature`'s values: a signature over the implication in a
-	/// signed V5 build, else `Disabled`.
-	fn signature_values(
-		&self,
-		type_id: u32,
-		implication: &InheritedImplication,
-	) -> Result<SlotValues, ExtrinsicBuildError> {
-		let signature = match (self.version, self.signer) {
-			(ExtrinsicVersion::V5 { .. }, Some(signer)) => {
-				Some((signer.account_id(), signer.sign(&implication.hash())))
-			},
-			_ => None,
-		};
-		let explicit = verify_signature_value(signature, type_id, self.types)?;
-		Ok(SlotValues { explicit, implicit: Vec::new() })
 	}
 }
 
@@ -268,28 +246,6 @@ fn extension_info(
 	})
 }
 
-/// Lays out the extrinsic with frame-decode from the call and the computed
-/// slots, signing the V4 payload when the format is V4.
-fn encode_extrinsic(
-	version: ExtrinsicVersion,
-	call: &[u8],
-	slots: &[Slot],
-	signer: Option<&Sr25519Signer>,
-	metadata: &Metadata,
-) -> Result<Vec<u8>, ExtrinsicBuildError> {
-	let (call_info, args) = split_call(call, metadata)?;
-	let pipeline = extension_info(metadata, version.extension_version())?;
-	let parts =
-		EncodedParts { args: EncodedArgs(args), slots: ComputedSlots(slots), call_info, pipeline };
-	match (version, signer) {
-		(ExtrinsicVersion::V5 { extension_version }, _) => {
-			parts.encode_v5(extension_version, metadata)
-		},
-		(ExtrinsicVersion::V4, Some(signer)) => parts.encode_v4(signer, metadata),
-		(ExtrinsicVersion::V4, None) => Err(ExtrinsicBuildError::UnsignedV4),
-	}
-}
-
 /// The call's metadata and its argument bytes, after the pallet and call
 /// indices.
 fn split_call<'c>(
@@ -315,7 +271,20 @@ struct EncodedParts<'p> {
 	pipeline: ExtrinsicExtensionInfo<'p, u32>,
 }
 
-impl EncodedParts<'_> {
+impl<'p> EncodedParts<'p> {
+	/// The call and the computed slots, ready for frame-decode to lay out in
+	/// `version`'s format.
+	fn new(
+		call: &'p [u8],
+		slots: &'p [Slot],
+		version: ExtrinsicVersion,
+		metadata: &'p Metadata,
+	) -> Result<Self, ExtrinsicBuildError> {
+		let (call_info, args) = split_call(call, metadata)?;
+		let pipeline = extension_info(metadata, version.extension_version())?;
+		Ok(Self { args: EncodedArgs(args), slots: ComputedSlots(slots), call_info, pipeline })
+	}
+
 	fn encode_v5(
 		&self,
 		extension_version: u8,
@@ -335,20 +304,22 @@ impl EncodedParts<'_> {
 		Ok(out)
 	}
 
+	/// A V4 signed extrinsic, the preamble carrying `signature`'s signature
+	/// over the whole pipeline's implication.
 	fn encode_v4(
 		&self,
-		signer: &Sr25519Signer,
+		signature: &VerifySignatureExtension<'_>,
+		implication: &InheritedImplication,
 		metadata: &Metadata,
 	) -> Result<Vec<u8>, ExtrinsicBuildError> {
-		let signature = self.sign_v4_payload(signer, metadata)?;
-		let address = MultiAddress::<AccountId32, u32>::Id(signer.account_id());
+		let address = MultiAddress::<AccountId32, u32>::Id(signature.account());
 		let signature_info = metadata.extrinsic_signature_info().map_err(encode_error)?;
 		let mut out = Vec::new();
 		encode_v4_signed_with_info_to(
 			&self.args,
 			&self.slots,
 			&address,
-			&signature,
+			&signature.sign(implication),
 			metadata.types(),
 			&self.call_info,
 			&signature_info,
@@ -357,24 +328,6 @@ impl EncodedParts<'_> {
 		)
 		.map_err(encode_error)?;
 		Ok(out)
-	}
-
-	/// The signature over the V4 signer payload, which frame-decode hashes
-	/// when it is longer than 256 bytes.
-	fn sign_v4_payload(
-		&self,
-		signer: &Sr25519Signer,
-		metadata: &Metadata,
-	) -> Result<MultiSignature, ExtrinsicBuildError> {
-		let payload = encode_v4_signer_payload_with_info(
-			&self.args,
-			&self.slots,
-			metadata.types(),
-			&self.call_info,
-			&self.pipeline,
-		)
-		.map_err(encode_error)?;
-		Ok(signer.sign(&payload))
 	}
 }
 

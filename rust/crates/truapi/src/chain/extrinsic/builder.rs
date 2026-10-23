@@ -3,12 +3,13 @@
 use subxt::{
 	ArcMetadata,
 	ext::{frame_decode::extrinsics::encode_call_data, scale_encode::EncodeAsFields},
-	tx::{Payload, Signer},
+	tx::Payload,
 	utils::{AccountId32, H256},
 };
 
 use super::{
 	ExtrinsicBuildError, ExtrinsicVersion, TransactionExtension, extension::SuppliedExtension,
+	signature::VerifySignatureExtension,
 };
 use crate::{chain::HashAndNumber, host_internal::extrinsic::Sr25519Signer};
 
@@ -43,7 +44,7 @@ pub struct ExtrinsicBuilder<'a> {
 	runtime: RuntimeAtBirth,
 	call: Option<Result<Vec<u8>, ExtrinsicBuildError>>,
 	extensions: Vec<SuppliedExtension<'a>>,
-	signer: Option<&'a Sr25519Signer>,
+	signature: Option<VerifySignatureExtension<'a>>,
 	nonce: Option<u64>,
 	period: u64,
 	version: Option<ExtrinsicVersion>,
@@ -56,7 +57,7 @@ pub fn start_build<'a>(runtime: RuntimeAtBirth) -> ExtrinsicBuilder<'a> {
 		runtime,
 		call: None,
 		extensions: Vec::new(),
-		signer: None,
+		signature: None,
 		nonce: None,
 		period: DEFAULT_MORTALITY_PERIOD,
 		version: None,
@@ -73,7 +74,7 @@ pub fn pins_version(builder: &ExtrinsicBuilder<'_>) -> bool {
 /// The account whose next nonce the build has to read: the signer's, unless
 /// the caller set the nonce or there is no signer.
 pub fn account_needing_nonce(builder: &ExtrinsicBuilder<'_>) -> Option<AccountId32> {
-	builder.nonce.is_none().then_some(builder.signer?.account_id())
+	builder.nonce.is_none().then_some(builder.signature.as_ref()?.account())
 }
 
 impl<'a> ExtrinsicBuilder<'a> {
@@ -126,10 +127,10 @@ impl<'a> ExtrinsicBuilder<'a> {
 		self
 	}
 
-	/// Signs the extrinsic: through `VerifyMultiSignature` in V5, in the
-	/// preamble in V4.
+	/// Adds `VerifyMultiSignature`, signed by `signer`. A V5 extrinsic carries
+	/// it as an extension; a V4 one carries its signature in the preamble.
 	pub fn with_signer(&mut self, signer: &'a Sr25519Signer) -> &mut Self {
-		self.signer = Some(signer);
+		self.signature = Some(VerifySignatureExtension::new(signer));
 		self
 	}
 

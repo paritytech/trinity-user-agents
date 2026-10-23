@@ -5,10 +5,11 @@ use scale_info::{PortableRegistry, TypeDef};
 use subxt::{
 	config::{substrate::SubstrateConfig, transaction_extensions::VerifySignatureDetails},
 	ext::{
+		frame_decode::extrinsics::ExtrinsicExtensionInfoArg,
 		scale_decode::visitor::{IgnoreVisitor, decode_with_visitor},
 		scale_encode::EncodeAsType,
 	},
-	utils::{AccountId32, H256, MultiSignature},
+	utils::H256,
 };
 
 use super::error::ExtrinsicBuildError;
@@ -43,9 +44,22 @@ pub struct SlotValues {
 	pub implicit: Vec<u8>,
 }
 
-/// The values of an extension every caller would fill the same way, or
-/// `None` when `name` is not one of them.
-pub fn well_known_values(name: &str, chain: &ChainValues) -> Option<SlotValues> {
+/// The values of an unset extension every caller would fill the same way, or
+/// `None` when `declared` is not one of them. An unset `VerifyMultiSignature`
+/// is `Disabled`, leaving authorization to another extension.
+pub fn well_known_values(
+	declared: &ExtrinsicExtensionInfoArg<'_, u32>,
+	chain: &ChainValues,
+	types: &PortableRegistry,
+) -> Result<Option<SlotValues>, ExtrinsicBuildError> {
+	if declared.name == VERIFY_MULTI_SIGNATURE {
+		let explicit = disabled_signature(declared.id, types)?;
+		return Ok(Some(SlotValues { explicit, implicit: Vec::new() }));
+	}
+	Ok(constant_values(&declared.name, chain))
+}
+
+fn constant_values(name: &str, chain: &ChainValues) -> Option<SlotValues> {
 	let (explicit, implicit) = match name {
 		"CheckSpecVersion" => (Vec::new(), chain.spec_version.encode()),
 		"CheckTxVersion" => (Vec::new(), chain.transaction_version.encode()),
@@ -95,23 +109,18 @@ fn defaults_to_none(type_id: u32, types: &PortableRegistry) -> bool {
 	}
 }
 
-/// `VerifyMultiSignature`'s value: `Signed` when there is a signature, else
-/// `Disabled`, encoded by variant name against the runtime's type.
-pub fn verify_signature_value(
-	signature: Option<(AccountId32, MultiSignature)>,
+/// `VerifyMultiSignature`'s `Disabled` value, encoded by variant name
+/// against the runtime's type.
+fn disabled_signature(
 	type_id: u32,
 	types: &PortableRegistry,
 ) -> Result<Vec<u8>, ExtrinsicBuildError> {
-	let details = match signature {
-		Some((account, signature)) => {
-			VerifySignatureDetails::<SubstrateConfig>::Signed { signature, account }
-		},
-		None => VerifySignatureDetails::<SubstrateConfig>::Disabled,
-	};
-	details.encode_as_type(type_id, types).map_err(|error| {
-		ExtrinsicBuildError::Encode(format!(
-			"{VERIFY_MULTI_SIGNATURE} does not encode as metadata type {type_id}, expected a \
-				 Signed or Disabled variant: {error}"
-		))
-	})
+	VerifySignatureDetails::<SubstrateConfig>::Disabled
+		.encode_as_type(type_id, types)
+		.map_err(|error| ExtrinsicBuildError::ExtensionEncode {
+			extension: VERIFY_MULTI_SIGNATURE.to_string(),
+			slot: "explicit",
+			type_id,
+			reason: error.to_string(),
+		})
 }

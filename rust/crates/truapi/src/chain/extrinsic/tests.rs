@@ -304,7 +304,8 @@ fn a_v4_extrinsic_without_a_signer_is_refused() {
 	assert!(matches!(error, ExtrinsicBuildError::UnsignedV4));
 }
 
-/// Pinning a pipeline never drops the signature in silence.
+/// The signature is an ordinary extension, so a pipeline without its slot
+/// refuses it by name rather than dropping it in silence.
 #[test]
 fn a_signer_on_a_pipeline_without_a_signature_slot_is_refused() {
 	let signer = test_signer();
@@ -313,7 +314,11 @@ fn a_signer_on_a_pipeline_without_a_signature_slot_is_refused() {
 		builder.with_extrinsic_version(v5_zero);
 	});
 
-	assert!(matches!(error, ExtrinsicBuildError::NoSignatureSlot { extension_version: 0 }));
+	assert!(matches!(
+		error,
+		ExtrinsicBuildError::UndeclaredExtension { extension, extension_version: 0, .. }
+			if extension == "VerifyMultiSignature"
+	));
 }
 
 #[test]
