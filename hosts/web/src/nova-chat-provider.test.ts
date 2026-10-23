@@ -84,6 +84,19 @@ function fakeEngine(snapshot: ChatSnapshot) {
     },
     send: async (account, text) => void calls.push(`send ${account} ${text}`),
     retry: async (account) => void calls.push(`retry ${account}`),
+    react: async (account, messageId, emoji) =>
+      void calls.push(`react ${account} ${messageId} ${emoji}`),
+    block: async (account) => void calls.push(`block ${account}`),
+    unblock: async (account) => void calls.push(`unblock ${account}`),
+    leave: async (account) => void calls.push(`leave ${account}`),
+    fileProblem: () =>
+      "No HOP node is configured for this network, so files cannot be sent or fetched.",
+    fetchProblem: () => "No HOP node is configured for this network.",
+    sendFile: async () => {},
+    cancel: () => {},
+    fetchFile: async () => new Uint8Array(0),
+    sendCall: async () => "call-id",
+    onCall: () => () => {},
   };
   const change = () => {
     for (const listener of listeners) listener();
@@ -243,6 +256,65 @@ describe("Nova chat provider", () => {
     ]);
     const provider = new NovaChatProvider(fakeEngine(snapshot).engine);
     expect(provider.contacts()).toEqual([{ account: ADA, name: "ada.01" }]);
+  });
+
+  test("a blocked contact leaves the list and the picker, and shows under blocked", async () => {
+    const blocked = contact(BOB, "bob.01", [message("b1", "in", 2)]);
+    blocked.blocked = true;
+    const snapshot = snapshotWith([
+      contact(ADA, "ada.01", [message("m1", "in", 1)]),
+      blocked,
+    ]);
+    const { engine, calls } = fakeEngine(snapshot);
+    const provider = new NovaChatProvider(engine);
+    expect(provider.conversations().map((summary) => summary.id)).toEqual([
+      ADA,
+    ]);
+    expect(provider.blocked().map((summary) => summary.id)).toEqual([BOB]);
+    expect(provider.contacts()).toEqual([{ account: ADA, name: "ada.01" }]);
+    expect(provider.composer(BOB)).toEqual({
+      kind: "blocked",
+      reason: "You blocked this person.",
+    });
+    expect(provider.controls(ADA)).toEqual({ block: true, leave: true });
+    await provider.unblock(BOB);
+    await provider.leave(ADA);
+    await provider.react(ADA, "m1", "👍");
+    expect(calls).toEqual([
+      `unblock ${BOB}`,
+      `leave ${ADA}`,
+      `react ${ADA} m1 👍`,
+    ]);
+  });
+
+  test("shows reactions per emoji, a peer who left as a line, and stops the composer", async () => {
+    const left = contact(ADA, "ada.01", [
+      message("m1", "out", 1, {
+        reactions: [
+          { emoji: "👍", from: "peer" },
+          { emoji: "👍", from: "self" },
+          { emoji: "😂", from: "peer" },
+        ],
+      }),
+      message("l1", "in", 2, { kind: "left", text: "" }),
+    ]);
+    left.peerLeft = true;
+    const provider = new NovaChatProvider(
+      fakeEngine(snapshotWith([left])).engine,
+    );
+    const [reacted, line] = (await provider.timeline(ADA)).messages;
+    expect(reacted.reactions).toEqual([
+      { emoji: "👍", count: 2, self: true },
+      { emoji: "😂", count: 1, self: false },
+    ]);
+    // Reactions stop with the conversation, as sending does.
+    expect(reacted.reactable).toBeUndefined();
+    expect(line.content).toEqual({
+      tag: "System",
+      text: "ada.01 left the chat",
+    });
+    expect(provider.composer(ADA).kind).toBe("blocked");
+    expect(provider.conversations()[0].preview).toBe("Left the chat");
   });
 
   test("stays off, with the reason, when the core reports no identity for the session", () => {

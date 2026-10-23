@@ -9,6 +9,7 @@ import {
   readList,
   readOption,
   text,
+  u32,
   u64,
   utf8,
 } from "./codec.js";
@@ -29,8 +30,10 @@ import {
  * (Android `feature/chats` and `feature/statement-store`, iOS
  * `Modules/IncomingChatRequest` and `Modules/Chat`, vendored under `hosts/`).
  * No code is taken from them. Only the parts a host with one device needs are
- * here: first-contact requests, pairwise sessions, text and acceptance.
- * Multi-device envelopes are recognised and reported, not opened.
+ * here: first-contact requests, pairwise sessions, text, acceptance,
+ * reactions, leaving and attachments (the reference to a file sent through
+ * HOP, `./hop.ts`). Multi-device envelopes are recognised and reported,
+ * not opened.
  */
 
 const SLASH = utf8("/");
@@ -123,21 +126,115 @@ export interface OpenedRequest extends ChatRequest {
   peer: Uint8Array;
 }
 
-/** `RichTextContent`: optional text, then optional attachments, which this host never sends. */
-const encodeRichText = (value: string): Uint8Array =>
-  concat(option(value, text), Uint8Array.of(0));
+/** What a file is, as the sender describes it. A file name is not sent. */
+export type AttachmentMeta =
+  | { kind: "file"; mimeType: string; size: number }
+  | {
+      kind: "image";
+      mimeType: string;
+      size: number;
+      width: number;
+      height: number;
+      /** A BlurHash, as UTF-8, when the sender gave one. */
+      thumbnail: Uint8Array | null;
+    }
+  | {
+      kind: "video";
+      mimeType: string;
+      size: number;
+      /** As the sender gave it; the unit is not pinned down. */
+      duration: number;
+      thumbnail: Uint8Array | null;
+    };
+
+/**
+ * A file sent through HOP (`FileVariant::P2PMixnet`): the root entry's hash,
+ * the ticket that opens it, the node it was given to, and what it is. The
+ * ticket is a secret: whoever has it can fetch and read the file.
+ */
+export interface Attachment {
+  identifier: Uint8Array;
+  ticket: Uint8Array;
+  node: string;
+  meta: AttachmentMeta;
+}
+
+const FILE_META_TAG = { file: 0, image: 1, video: 2 } as const;
+
+function encodeAttachment(attachment: Attachment): Uint8Array {
+  const meta = attachment.meta;
+  const general = concat(text(meta.mimeType), u32(meta.size));
+  return concat(
+    Uint8Array.of(0),
+    bytes(attachment.identifier),
+    bytes(attachment.ticket),
+    Uint8Array.of(0),
+    text(attachment.node),
+    Uint8Array.of(FILE_META_TAG[meta.kind]),
+    general,
+    meta.kind === "image"
+      ? concat(u32(meta.width), u32(meta.height), option(meta.thumbnail, bytes))
+      : meta.kind === "video"
+        ? concat(u32(meta.duration), option(meta.thumbnail, bytes))
+        : new Uint8Array(0),
+  );
+}
+
+function readAttachment(reader: Reader): Attachment {
+  const variant = reader.u8();
+  if (variant !== 0) throw new UnsupportedContent(`file variant ${variant}`);
+  const identifier = readBytes(reader);
+  const ticket = readBytes(reader);
+  const endpoint = reader.u8();
+  if (endpoint !== 0) throw new UnsupportedContent(`node endpoint ${endpoint}`);
+  const node = reader.text();
+  const tag = reader.u8();
+  const mimeType = reader.text();
+  const size = reader.u32();
+  let meta: AttachmentMeta;
+  if (tag === FILE_META_TAG.file) meta = { kind: "file", mimeType, size };
+  else if (tag === FILE_META_TAG.image)
+    meta = {
+      kind: "image",
+      mimeType,
+      size,
+      width: reader.u32(),
+      height: reader.u32(),
+      thumbnail: readOption(reader, readBytes),
+    };
+  else if (tag === FILE_META_TAG.video)
+    meta = {
+      kind: "video",
+      mimeType,
+      size,
+      duration: reader.u32(),
+      thumbnail: readOption(reader, readBytes),
+    };
+  else throw new UnsupportedContent(`file meta ${tag}`);
+  return { identifier, ticket, node, meta };
+}
+
+/** `RichTextContent`: optional text, then an optional list of attachments. */
+const encodeRichText = (
+  value: string | null,
+  attachments: readonly Attachment[] = [],
+): Uint8Array =>
+  concat(
+    option(value, text),
+    option(attachments.length === 0 ? null : [...attachments], (items) =>
+      list(items, encodeAttachment),
+    ),
+  );
 
 function readRichText(reader: Reader): {
   text: string | null;
-  attachments: boolean;
+  attachments: Attachment[];
 } {
   const body = readOption(reader, (inner) => inner.text());
-  const attachments = readOption(reader, (inner) => {
-    // An attachment list cannot be skipped without its layout; stop here.
-    if (inner.compact() > 0) throw new UnsupportedContent("attachments");
-    return true;
-  });
-  return { text: body, attachments: attachments !== null };
+  const attachments = readOption(reader, (inner) =>
+    readList(inner, readAttachment),
+  );
+  return { text: body, attachments: attachments ?? [] };
 }
 
 /** A push token and the platform byte that names where it is delivered. */
@@ -159,7 +256,7 @@ export function encodeRequestMessage(request: ChatRequest): Uint8Array {
     u64(request.timestampMs),
     Uint8Array.of(0),
     Uint8Array.of(0),
-    option(request.content.welcome, encodeRichText),
+    option(request.content.welcome, (welcome) => encodeRichText(welcome)),
   );
 }
 
@@ -353,7 +450,27 @@ export type ControlContent =
 /** A chat message's content. Kinds this host does not handle keep their tag. */
 export type MessageContent =
   | { kind: "text"; text: string }
+  /** Text with files (kind 15, or a reply, kind 7). */
+  | { kind: "rich"; text: string | null; attachments: Attachment[] }
   | { kind: "accepted"; requestId: string }
+  /**
+   * A sender's emoji on one of the conversation's messages (kind 4), or its
+   * removal (kind 5). Removal names the same emoji it takes away.
+   */
+  | { kind: "reaction"; messageId: string; emoji: string; removed: boolean }
+  /**
+   * A call (kinds 8 to 11). The offer's message id is the call's id, which
+   * the other three name. The SDP bytes are a minimal setup (`./call-wire.ts`)
+   * for an offer or answer, and a list of compact candidates for kind 10.
+   */
+  | { kind: "call-offer"; sdp: Uint8Array; video: boolean }
+  | { kind: "call-answer"; offerId: string; sdp: Uint8Array }
+  | { kind: "call-candidates"; offerId: string; sdp: Uint8Array }
+  | { kind: "call-closed"; offerId: string }
+  /** The sender left the conversation (kind 13). It carries nothing. */
+  | { kind: "left" }
+  /** The sender added the peer as a contact again (kind 3). It carries nothing. */
+  | { kind: "contact-added" }
   | ({ kind: "control" } & ControlContent)
   | { kind: "other"; tag: number };
 
@@ -366,7 +483,15 @@ export interface ChatMessage {
 const CONTENT_TAG = {
   text: 0,
   token: 1,
+  contactAdded: 3,
+  reacted: 4,
+  reactionRemoved: 5,
   reply: 7,
+  callOffer: 8,
+  callAnswer: 9,
+  callCandidates: 10,
+  callClosed: 11,
+  leftChat: 13,
   chatAccepted: 14,
   richText: 15,
   deviceAdded: 17,
@@ -386,7 +511,10 @@ const readKey = (reader: Reader, what: string): Uint8Array =>
 
 class UnsupportedContent extends Error {}
 
-/** Encode `id || timestamp || 0x00 (version 1) || content`. Sends text and plain acceptance. */
+/**
+ * Encode `id || timestamp || 0x00 (version 1) || content`. Sends text, plain
+ * acceptance, reactions and leaving.
+ */
 export function encodeMessage(message: ChatMessage): Uint8Array {
   const head = concat(
     text(message.id),
@@ -406,6 +534,51 @@ export function encodeMessage(message: ChatMessage): Uint8Array {
         Uint8Array.of(CONTENT_TAG.chatAccepted),
         text(message.content.requestId),
       );
+    case "rich":
+      return concat(
+        head,
+        Uint8Array.of(CONTENT_TAG.richText),
+        encodeRichText(message.content.text, message.content.attachments),
+      );
+    case "reaction":
+      return concat(
+        head,
+        Uint8Array.of(
+          message.content.removed
+            ? CONTENT_TAG.reactionRemoved
+            : CONTENT_TAG.reacted,
+        ),
+        text(message.content.messageId),
+        text(message.content.emoji),
+      );
+    case "left":
+      return concat(head, Uint8Array.of(CONTENT_TAG.leftChat));
+    case "call-offer":
+      return concat(
+        head,
+        Uint8Array.of(CONTENT_TAG.callOffer),
+        bytes(message.content.sdp),
+        Uint8Array.of(message.content.video ? 1 : 0),
+      );
+    case "call-answer":
+    case "call-candidates":
+      return concat(
+        head,
+        Uint8Array.of(
+          message.content.kind === "call-answer"
+            ? CONTENT_TAG.callAnswer
+            : CONTENT_TAG.callCandidates,
+        ),
+        text(message.content.offerId),
+        bytes(message.content.sdp),
+      );
+    case "call-closed":
+      return concat(
+        head,
+        Uint8Array.of(CONTENT_TAG.callClosed),
+        text(message.content.offerId),
+      );
+    case "contact-added":
     case "control":
     case "other":
       throw new Error("this host does not send that kind of message");
@@ -473,21 +646,41 @@ function readContent(tag: number, reader: Reader): MessageContent {
     switch (tag) {
       case CONTENT_TAG.text:
         return { kind: "text", text: reader.text() };
-      case CONTENT_TAG.richText: {
-        const rich = readRichText(reader);
-        return rich.text === null
-          ? { kind: "other", tag }
-          : { kind: "text", text: rich.text };
-      }
-      case CONTENT_TAG.reply: {
+      case CONTENT_TAG.richText:
+        return richContent(tag, readRichText(reader));
+      case CONTENT_TAG.reply:
         reader.text();
-        const rich = readRichText(reader);
-        return rich.text === null
-          ? { kind: "other", tag }
-          : { kind: "text", text: rich.text };
-      }
+        return richContent(tag, readRichText(reader));
       case CONTENT_TAG.chatAccepted:
         return { kind: "accepted", requestId: reader.text() };
+      case CONTENT_TAG.reacted:
+      case CONTENT_TAG.reactionRemoved:
+        return {
+          kind: "reaction",
+          messageId: reader.text(),
+          emoji: reader.text(),
+          removed: tag === CONTENT_TAG.reactionRemoved,
+        };
+      case CONTENT_TAG.leftChat:
+        return { kind: "left" };
+      case CONTENT_TAG.callOffer: {
+        const sdp = readBytes(reader);
+        const purpose = reader.u8();
+        if (purpose > 1) throw new Error(`the call purpose is ${purpose}`);
+        return { kind: "call-offer", sdp, video: purpose === 1 };
+      }
+      case CONTENT_TAG.callAnswer:
+      case CONTENT_TAG.callCandidates:
+        return {
+          kind:
+            tag === CONTENT_TAG.callAnswer ? "call-answer" : "call-candidates",
+          offerId: reader.text(),
+          sdp: readBytes(reader),
+        };
+      case CONTENT_TAG.callClosed:
+        return { kind: "call-closed", offerId: reader.text() };
+      case CONTENT_TAG.contactAdded:
+        return { kind: "contact-added" };
       case CONTENT_TAG.token: {
         const token = readPushToken(reader);
         if (token.platform >= TOKEN_PLATFORM_NAMES.length)
@@ -519,6 +712,16 @@ function readContent(tag: number, reader: Reader): MessageContent {
     if (error instanceof UnsupportedContent) return { kind: "other", tag };
     throw error;
   }
+}
+
+function richContent(
+  tag: number,
+  rich: { text: string | null; attachments: Attachment[] },
+): MessageContent {
+  if (rich.attachments.length > 0) return { kind: "rich", ...rich };
+  return rich.text === null
+    ? { kind: "other", tag }
+    : { kind: "text", text: rich.text };
 }
 
 /** What a session statement carries once opened. */
@@ -562,6 +765,39 @@ export function decodeSessionData(encoded: Uint8Array): SessionData {
   else throw new Error(`the session data is tag ${tag}`);
   reader.finish();
   return data;
+}
+
+/**
+ * Session data with every attachment ticket in it overwritten with zeros,
+ * for diagnostics: a ticket opens its file, so it is never shown. Data that
+ * does not decode, or holds no attachment, comes back as it was.
+ */
+export function withoutTickets(plaintext: Uint8Array): Uint8Array {
+  let data: SessionData;
+  try {
+    data = decodeSessionData(plaintext);
+  } catch {
+    return plaintext;
+  }
+  if (data.kind !== "request") return plaintext;
+  const tickets: Uint8Array[] = [];
+  for (const encoded of data.messages) {
+    try {
+      const content = decodeMessage(encoded).content;
+      if (content.kind === "rich")
+        for (const attachment of content.attachments)
+          if (attachment.ticket.length > 0) tickets.push(attachment.ticket);
+    } catch {
+      // A message this host cannot read carries no ticket it knows of.
+    }
+  }
+  if (tickets.length === 0) return plaintext;
+  const out = plaintext.slice();
+  for (const ticket of tickets)
+    for (let at = 0; at + ticket.length <= out.length; at += 1)
+      if (equalBytes(out.subarray(at, at + ticket.length), ticket))
+        out.fill(0, at, at + ticket.length);
+  return out;
 }
 
 /** Seal encoded session data under the pair's agreed secret. */

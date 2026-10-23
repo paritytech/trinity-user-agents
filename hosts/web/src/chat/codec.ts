@@ -38,6 +38,14 @@ export const bytes = (value: Uint8Array): Uint8Array =>
 /** `String`: a compact length, then UTF-8. */
 export const text = (value: string): Uint8Array => bytes(utf8(value));
 
+export function u32(value: number): Uint8Array {
+  if (!Number.isInteger(value) || value < 0 || value >= 2 ** 32)
+    throw new RangeError(`${value} is not a u32`);
+  const out = new Uint8Array(4);
+  new DataView(out.buffer).setUint32(0, value, true);
+  return out;
+}
+
 export function u64(value: bigint): Uint8Array {
   const out = new Uint8Array(8);
   new DataView(out.buffer).setBigUint64(0, value, true);

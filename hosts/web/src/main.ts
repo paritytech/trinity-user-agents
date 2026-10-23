@@ -85,6 +85,7 @@ import { ChatScreen } from "./chat-screen.js";
 import { ChatInbox } from "./chat-inbox.js";
 import { startDraftWorker } from "./draft-chat.js";
 import { HostContacts, chooseContact } from "./contacts.js";
+import { accountProofs } from "./account-proofs.js";
 import { ProductChat, productChatKey } from "./product-chat.js";
 import { ProductWorkers } from "./product-workers.js";
 import { resolveWorker } from "./worker-manifest.js";
@@ -734,6 +735,11 @@ function syncChatSession(): void {
     username: fullUsername ?? liteUsername ?? undefined,
     chain: access.chain,
     genesis: access.genesis,
+    identityBackend: activeNetwork.identityBackend,
+    proofs: async (productId) => {
+      if (runtime === null) throw new Error("The core is not running.");
+      return accountProofs(runtime, productId);
+    },
   });
 }
 

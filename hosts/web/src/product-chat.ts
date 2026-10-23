@@ -66,6 +66,8 @@ export interface ProductMessage {
   content: ProductMessageContent;
   /** The emoji the product reacted to this message with, in the order it placed them. */
   reactions?: string[];
+  /** The user's emoji on this message, sent to the product as `MessagePosted(Reaction)`. */
+  userReaction?: string;
 }
 
 interface Record {
@@ -225,6 +227,33 @@ export class ProductChat {
       content: { tag: "Text", text },
     });
     this.changed(null);
+  }
+
+  /**
+   * Keep the user's emoji on one of the product's messages, or none, and
+   * return the one it replaces. Only the product's own messages take one:
+   * their ids are the ones the product knows.
+   */
+  setUserReaction(
+    productId: string,
+    roomId: string,
+    messageId: string,
+    emoji: string | null,
+  ): string | null {
+    this.requireScope();
+    const message = this.record.messages.find(
+      (entry) =>
+        sameRoom(productId, roomId)(entry) &&
+        entry.messageId === messageId &&
+        entry.direction === "in",
+    );
+    if (message === undefined)
+      throw new Error(`There is no product message ${messageId} here.`);
+    const previous = message.userReaction ?? null;
+    if (emoji === null) delete message.userReaction;
+    else message.userReaction = emoji;
+    this.changed(null);
+    return previous;
   }
 
   /** Forget every room and message of a product, as when its worker is removed. */

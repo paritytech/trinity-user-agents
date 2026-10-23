@@ -50,6 +50,29 @@ export interface ChatProvider {
     messageId: string,
     actionId: string,
   ): Promise<void>;
+  /**
+   * Set the user's reaction on a message, or take it away with `null`. The
+   * screen offers it only on messages marked {@link ChatMessage.reactable}.
+   * How many emoji one person keeps on a message is the provider's.
+   */
+  react?(
+    conversationId: string,
+    messageId: string,
+    emoji: string | null,
+  ): Promise<void>;
+  /** What the user can do to the conversation itself now. */
+  controls?(conversationId: string): ConversationControls;
+  /** Block the conversation's person. See {@link ConversationControls.block}. */
+  block?(conversationId: string): Promise<void>;
+  unblock?(conversationId: string): Promise<void>;
+  /** The conversations the user blocked, which the list leaves out. */
+  blocked?(): readonly ConversationSummary[];
+  /** Leave the conversation. See {@link ConversationControls.leave}. */
+  leave?(conversationId: string): Promise<void>;
+  /** Sending and opening files, for providers that move them. */
+  readonly files?: FileTransfer;
+  /** Audio and video calls, for providers that place them. */
+  readonly calls?: CallSupport;
   /** Send a failed message again, as the same message. */
   retry?(conversationId: string, messageId: string): Promise<void>;
   /**
@@ -81,6 +104,80 @@ export interface ChatProvider {
   subscribe(listener: (event: ProviderEvent) => void): () => void;
   /** Stop the provider. Nothing it started outlives this. */
   dispose(): void;
+}
+
+/** What a conversation offers now. A control that is absent or false is not shown. */
+export interface ConversationControls {
+  /**
+   * Blocking is local: the person is not told, their conversation leaves
+   * the list and the contact picker, and what they send is not read until
+   * they are unblocked.
+   */
+  block?: boolean;
+  /** Leaving tells the person, then takes the conversation off the list. */
+  leave?: boolean;
+}
+
+/** How a provider moves files. The bytes go through the provider, never a URL a message names. */
+export interface FileTransfer {
+  /** Why files cannot be sent in the conversation now, or null. */
+  blocked(conversationId: string): string | null;
+  /** The largest file accepted, in bytes. */
+  maxBytes: number;
+  /** Send `file` with `caption`. The message shows at once and fails if the upload does. */
+  send(conversationId: string, file: File, caption: string): Promise<void>;
+  /** Stop sending a message's file. */
+  cancel(conversationId: string, messageId: string): void;
+  /** Fetch one file of a message, checked and opened. */
+  open(
+    conversationId: string,
+    messageId: string,
+    index: number,
+    signal: AbortSignal,
+  ): Promise<Blob>;
+}
+
+/**
+ * How a provider places calls. It holds at most one call. The camera and
+ * microphone open only from {@link CallSupport.start} or
+ * {@link CallSupport.accept}, which the screen calls on a press, and close
+ * when the call ends.
+ */
+export interface CallSupport {
+  /** Why the conversation cannot be called now, or null. */
+  blocked(conversationId: string): string | null;
+  start(conversationId: string, video: boolean): Promise<void>;
+  current(): CallView | null;
+  accept(): Promise<void>;
+  /** Decline an incoming call, cancel an outgoing one, or hang up. */
+  hangUp(): void;
+  setMuted(muted: boolean): void;
+  setCamera(on: boolean): void;
+  /** Forget an ended call once the screen has shown how it ended. */
+  dismiss(): void;
+  subscribe(listener: () => void): () => void;
+}
+
+export interface CallView {
+  conversationId: string;
+  title: string;
+  video: boolean;
+  direction: "out" | "in";
+  state:
+    | "calling"
+    | "ringing"
+    | "incoming"
+    | "connecting"
+    | "connected"
+    | "ended";
+  problem: string | null;
+  muted: boolean;
+  cameraOn: boolean;
+  remoteCamera: boolean;
+  local: MediaStream | null;
+  remote: MediaStream | null;
+  /** About the call's relay, such as why there is none. Null when there is nothing to say. */
+  relay?: string | null;
 }
 
 export interface ProviderStatus {
@@ -147,7 +244,22 @@ export type MessageContent =
       messageType: string;
       payload: HexString;
       alt: string | null;
-    };
+    }
+  /** Files the provider moves itself, opened through {@link ChatProvider.files}. */
+  | { tag: "Attachments"; text: string | null; files: readonly MessageFile[] };
+
+export interface MessageFile {
+  /** Known for files this side sent; the wire may not carry one. */
+  name: string | null;
+  kind: "file" | "image" | "video";
+  mimeType: string;
+  /** As the sender gave it. */
+  sizeBytes: number;
+  width?: number;
+  height?: number;
+  /** Why the file cannot be opened here, or null when it can. */
+  unavailable: string | null;
+}
 
 /** The reactions on a message, one entry per emoji, as RFC 0002 aggregates them. */
 export interface MessageReaction {
@@ -168,6 +280,8 @@ export interface ChatMessage {
   problem?: string;
   content: MessageContent;
   reactions?: readonly MessageReaction[];
+  /** Whether the user can react to this message now, through {@link ChatProvider.react}. */
+  reactable?: boolean;
 }
 
 export interface TimelinePage {

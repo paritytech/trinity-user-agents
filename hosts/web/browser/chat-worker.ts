@@ -24,6 +24,8 @@ interface Seen {
   /** The id of the message with buttons, and the presses on them, as `messageId:actionId`. */
   buttons: string | null;
   triggered: string[];
+  /** The user's reactions, as `tag messageId emoji`. */
+  reactions: string[];
   errors: string[];
 }
 
@@ -35,6 +37,7 @@ const seen: Seen = {
   messages: [],
   buttons: null,
   triggered: [],
+  reactions: [],
   errors: [],
 };
 (window as unknown as { __fixture: Seen }).__fixture = seen;
@@ -107,6 +110,15 @@ client.chat.actionSubscribe().subscribe({
       const { messageId, actionId } = payload.value;
       seen.triggered.push(`${messageId}:${actionId}`);
       void post({ tag: "Text", value: { text: `chose: ${actionId}` } });
+      return;
+    }
+    if (
+      payload.tag === "MessagePosted" &&
+      (payload.value.tag === "Reaction" ||
+        payload.value.tag === "ReactionRemoved")
+    ) {
+      const { messageId, emoji } = payload.value.value;
+      seen.reactions.push(`${payload.value.tag} ${messageId} ${emoji}`);
       return;
     }
     if (payload.tag !== "MessagePosted" || payload.value.tag !== "Text") return;

@@ -8,7 +8,17 @@ import { CONTROL_TAGS } from "./protocol.js";
  * synced anywhere, so another device of the same identity does not see it.
  */
 
-export type MessageKind = "text" | "request" | "accepted" | "unsupported";
+/**
+ * `left`: one side left the conversation (a system line, kind 13). `call`:
+ * a call one side offered (kind 8), with what became of it.
+ */
+export type MessageKind =
+  | "text"
+  | "request"
+  | "accepted"
+  | "left"
+  | "call"
+  | "unsupported";
 
 export type MessageStatus =
   | "pending"
@@ -27,6 +37,67 @@ export interface StoredMessage {
   status: MessageStatus;
   /** Why a send failed, when it did. */
   problem?: string;
+  /** The emoji on this message, one entry per emoji and side. */
+  reactions?: StoredReaction[];
+  /** Files the message carries; `text` is then their caption, possibly empty. */
+  attachments?: StoredAttachment[];
+  /** For a `call` message: the call it offered, whose id is the message's. */
+  call?: StoredCall;
+}
+
+export interface StoredCall {
+  video: boolean;
+  /** The offer's minimal setup, as 0x hex, kept until the peer acknowledges it. */
+  setup?: HexString;
+  /** When the other side answered. */
+  answeredAt?: number;
+  /** Who ended the call, and when. */
+  closedBy?: "self" | "peer";
+  endedAt?: number;
+}
+
+/**
+ * A file a message carries, sent through HOP. The ticket opens the file, so
+ * it is kept with the message, as the message's text is, and never shown
+ * or reported.
+ */
+export interface StoredAttachment {
+  /** The root entry's hash, as 0x hex. Absent while this host is still uploading it. */
+  identifier?: HexString;
+  /** As 0x hex. Absent while this host is still uploading it. */
+  ticket?: HexString;
+  /** The HOP node the file was given to. */
+  node?: string;
+  kind: "file" | "image" | "video";
+  mimeType: string;
+  /** As the sender gave it. */
+  size: number;
+  width?: number;
+  height?: number;
+  duration?: number;
+  /** The file's name, for files this host sent: the wire does not carry one. */
+  name?: string;
+}
+
+export interface StoredReaction {
+  emoji: string;
+  from: "self" | "peer";
+}
+
+/**
+ * A message this host sends that is not a bubble, such as a reaction. It is
+ * kept until the peer acknowledges it, and sent again with every request
+ * until then.
+ */
+export interface PendingMessage {
+  id: string;
+  at: number;
+  content:
+    | { kind: "reaction"; messageId: string; emoji: string; removed: boolean }
+    /** A call's answer or candidates, with their bytes as 0x hex, or its end. */
+    | { kind: "call-answer"; offerId: string; sdp: HexString }
+    | { kind: "call-candidates"; offerId: string; sdp: HexString }
+    | { kind: "call-closed"; offerId: string };
 }
 
 export interface Contact {
@@ -42,6 +113,21 @@ export interface Contact {
   expiry: { request: string | null; response: string | null };
   /** The peer's last request this host acknowledged. */
   acknowledged: string | null;
+  /**
+   * The user blocked this person here. Nothing is sent to them about it:
+   * the chat leaves the list, its session is not followed, and nothing they
+   * send is read or acknowledged until the user unblocks them.
+   */
+  blocked?: boolean;
+  /** The peer said they left the chat (kind 13), and has not come back. */
+  peerLeft?: boolean;
+  /** Reactions and call signals sent and not acknowledged yet. */
+  pending?: PendingMessage[];
+  /**
+   * Ids of the peer's reactions and call signals already handled, newest
+   * last, so a delivery seen again changes nothing.
+   */
+  seenSignals?: string[];
 }
 
 export interface IncomingRequest {
@@ -61,9 +147,19 @@ export interface ChatRecord {
   requests: IncomingRequest[];
   /** Request ids this host declined, so a stored request does not come back. */
   declined: string[];
+  /**
+   * Conversations the user left, kept as they were and no longer shown or
+   * followed. A new request from the same person starts a new conversation.
+   */
+  left: Contact[];
 }
 
-const empty = (): ChatRecord => ({ contacts: [], requests: [], declined: [] });
+const empty = (): ChatRecord => ({
+  contacts: [],
+  requests: [],
+  declined: [],
+  left: [],
+});
 
 export const chatRecordKey = (network: string, walletId: string): string =>
   `truapi-web-signing-host:network:${network}:chat:${walletId}:v1`;
@@ -102,6 +198,7 @@ export function loadChatRecord(storage: Storage, key: string): ChatRecord {
       contacts: parsed.contacts.map(withoutControlPlaceholders),
       requests: parsed.requests,
       declined: Array.isArray(parsed.declined) ? parsed.declined : [],
+      left: Array.isArray(parsed.left) ? parsed.left : [],
     };
   } catch {
     storage.setItem(`${key}.unreadable`, raw);
