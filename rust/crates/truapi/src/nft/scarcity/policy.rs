@@ -28,10 +28,6 @@ pub const TRANSFER_POLICY: &str = "nft.scarcity.transfer";
 /// cannot loop forever.
 const MAX_ATTEMPTS: u32 = 5;
 
-/// Fee-less moves an instance allows between paid ones, the pallet's
-/// `MaximumMoves`. Paid moves are not built yet.
-const MAXIMUM_MOVES: u16 = 16;
-
 /// Blocks a transfer stays valid for after its birth.
 const TRANSFER_PERIOD: u64 = 64;
 
@@ -312,16 +308,13 @@ fn give_up_after_limit(transfer: &PlannedTransfer, now: u64) -> Option<Preparati
 
 /// What the chain says about `transfer`. A source that does not hold the
 /// instance waits, since a reorg can put it back. An occupied destination
-/// fails at once, and so does a used-up move budget, which never refills.
+/// fails at once.
 fn decide_from_chain(transfer: &PlannedTransfer, view: TransferView) -> TransferDecision {
 	if transfer.attempts >= MAX_ATTEMPTS || view.destination.is_some() {
 		return TransferDecision::GiveUp;
 	}
 	let held = view.source.filter(|held| held.instance == transfer.params.instance);
 	let Some(held) = held else { return TransferDecision::Wait };
-	if held.moves >= MAXIMUM_MOVES {
-		return TransferDecision::GiveUp;
-	}
 	if view.locked {
 		return TransferDecision::Wait;
 	}

@@ -74,8 +74,10 @@ fn transfer_call(
 	Ok([&indices[..], &destination.0].concat())
 }
 
-/// Every extension of the transfer pipeline, by name. Only `AsScarcity` names the
-/// NFT; the rest say the transfer pays no fee and needs no account nonce.
+/// The extensions of the transfer pipeline that carry bytes, by name. Only
+/// `AsScarcity` names the NFT; the rest say the transfer pays no fee and needs
+/// no account nonce. Extensions without value or implicit bytes are left out:
+/// the encoder never asks for them.
 fn transfer_extensions(
 	runtime: &TransferRuntime,
 	nft_transfer: &NftTransfer,
@@ -83,24 +85,17 @@ fn transfer_extensions(
 ) -> Vec<TxPayloadExtension> {
 	let birth = mortality.birth().hash.0.to_vec();
 	vec![
-		extension("UnitTransactionExtension", Vec::new(), Vec::new()),
 		extension("AsScarcity", as_scarcity(nft_transfer), Vec::new()),
-		extension("AuthorizeCall", Vec::new(), Vec::new()),
 		extension("AsPgas", vec![0], Vec::new()),
 		extension("AsDotnsGateway", vec![0], Vec::new()),
 		extension("RestrictOrigins", vec![0], Vec::new()),
-		extension("CheckNonZeroSender", Vec::new(), Vec::new()),
 		extension("CheckSpecVersion", Vec::new(), runtime.spec_version.encode()),
 		extension("CheckTxVersion", Vec::new(), runtime.transaction_version.encode()),
 		extension("CheckGenesis", Vec::new(), runtime.genesis.0.to_vec()),
 		extension("CheckMortality", mortality.era_bytes().to_vec(), birth),
 		extension("CheckNonce", Compact(0_u32).encode(), Vec::new()),
-		extension("CheckWeight", Vec::new(), Vec::new()),
 		extension("ChargeAssetTxPayment", vec![0, 0], Vec::new()),
-		extension("PrevalidateAttests", Vec::new(), Vec::new()),
 		extension("CheckMetadataHash", vec![0], vec![0]),
-		extension("EthSetOrigin", Vec::new(), Vec::new()),
-		extension("StorageWeightReclaim", Vec::new(), Vec::new()),
 	]
 }
 

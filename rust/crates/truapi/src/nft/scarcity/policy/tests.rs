@@ -73,7 +73,7 @@ impl ScarcityChain for ScriptedScarcity {
 }
 
 /// What the source key holds when the transfer is still possible.
-fn held_nft(moves: u16) -> ScarcityNft {
+fn held_nft() -> ScarcityNft {
 	ScarcityNft {
 		instance: INSTANCE,
 		collection: 27,
@@ -81,7 +81,7 @@ fn held_nft(moves: u16) -> ScarcityNft {
 		minted_at: 0,
 		last_moved: 0,
 		state_nonce: 3,
-		moves,
+		moves: 0,
 	}
 }
 
@@ -156,7 +156,7 @@ fn prepare_one(registered: &RegisteredTransfer, chain: ScriptedScarcity) -> Opti
 fn an_nft_held_at_the_best_head_is_built_born_at_the_finalized_head() {
 	let registered = registered_transfer(0);
 
-	let prepared = prepare_one(&registered, holding(&registered, held_nft(0)));
+	let prepared = prepare_one(&registered, holding(&registered, held_nft()));
 
 	let Some(Preparation::Ready(signed)) = prepared else { panic!("built: {prepared:?}") };
 	assert_eq!(signed.mortality, Mortality::new(FINALIZED, TRANSFER_PERIOD).unwrap());
@@ -167,7 +167,7 @@ fn an_nft_held_at_the_best_head_is_built_born_at_the_finalized_head() {
 #[test]
 fn a_key_that_does_not_hold_the_instance_waits_for_it() {
 	let registered = registered_transfer(0);
-	let moved_on = ScarcityNft { instance: INSTANCE + 1, ..held_nft(0) };
+	let moved_on = ScarcityNft { instance: INSTANCE + 1, ..held_nft() };
 
 	let gone = prepare_one(&registered, ScriptedScarcity::default());
 	let replaced = prepare_one(&registered, holding(&registered, moved_on));
@@ -181,7 +181,7 @@ fn a_key_that_does_not_hold_the_instance_waits_for_it() {
 #[test]
 fn a_move_still_waiting_past_its_limit_is_given_up() {
 	let expired = registered_transfer_until(0, current_unix_secs() - 1);
-	let mut locked = holding(&expired, held_nft(0));
+	let mut locked = holding(&expired, held_nft());
 	locked.locked_until.insert(expired.source, NOW + 1);
 
 	let without_nft = prepare_one(&expired, ScriptedScarcity::default());
@@ -196,25 +196,16 @@ fn a_move_still_waiting_past_its_limit_is_given_up() {
 fn a_move_past_its_limit_is_still_built_when_nothing_holds_it_back() {
 	let expired = registered_transfer_until(0, current_unix_secs() - 1);
 
-	let prepared = prepare_one(&expired, holding(&expired, held_nft(0)));
+	let prepared = prepare_one(&expired, holding(&expired, held_nft()));
 
 	assert!(matches!(prepared, Some(Preparation::Ready(_))));
 }
 
 #[test]
-fn an_nft_without_free_moves_left_is_given_up() {
-	let registered = registered_transfer(0);
-
-	let prepared = prepare_one(&registered, holding(&registered, held_nft(MAXIMUM_MOVES)));
-
-	assert_eq!(prepared, Some(Preparation::GiveUp));
-}
-
-#[test]
 fn an_occupied_destination_is_given_up() {
 	let registered = registered_transfer(0);
-	let mut chain = holding(&registered, held_nft(0));
-	chain.held.insert(DESTINATION, held_nft(0));
+	let mut chain = holding(&registered, held_nft());
+	chain.held.insert(DESTINATION, held_nft());
 
 	let prepared = prepare_one(&registered, chain);
 
@@ -225,7 +216,7 @@ fn an_occupied_destination_is_given_up() {
 fn a_locked_key_waits_until_its_lock_ends() {
 	let registered = registered_transfer(0);
 	let locked = |until| {
-		let mut chain = holding(&registered, held_nft(0));
+		let mut chain = holding(&registered, held_nft());
 		chain.locked_until.insert(registered.source, until);
 		chain
 	};
@@ -241,7 +232,7 @@ fn a_locked_key_waits_until_its_lock_ends() {
 fn a_move_is_given_up_after_its_last_attempt() {
 	let registered = registered_transfer(MAX_ATTEMPTS);
 
-	let prepared = prepare_one(&registered, holding(&registered, held_nft(0)));
+	let prepared = prepare_one(&registered, holding(&registered, held_nft()));
 
 	assert_eq!(prepared, Some(Preparation::GiveUp));
 }
@@ -255,7 +246,7 @@ fn without_a_session_a_transfer_waits_until_its_limit() {
 	let signed_out = |registered: &RegisteredTransfer| {
 		ScarcityTransferPolicy::new(ScarcityTransferPolicyDeps {
 			db: registered.db.clone(),
-			chain: Arc::new(holding(registered, held_nft(0))),
+			chain: Arc::new(holding(registered, held_nft())),
 			signer: Arc::new(SignedOut),
 		})
 	};
@@ -277,7 +268,7 @@ fn without_a_session_a_transfer_waits_until_its_limit() {
 fn a_transfer_waits_while_finality_lags_too_far_behind() {
 	let registered = registered_transfer(0);
 	let behind =
-		|blocks| ScriptedScarcity { best_ahead_by: blocks, ..holding(&registered, held_nft(0)) };
+		|blocks| ScriptedScarcity { best_ahead_by: blocks, ..holding(&registered, held_nft()) };
 	let lag_to_death = FINALIZED.number + TRANSFER_PERIOD / 2 - BEST.number;
 
 	let stalled = prepare_one(&registered, behind(lag_to_death));
