@@ -10,6 +10,8 @@ protocol PocketCardOrigin: AnyObject {
     func frame(of key: PocketCardKey) -> CGRect?
 
     /// The card whose screen is up, or nil once it has closed.
+    var openCard: PocketCardKey? { get }
+
     func setOpenCard(_ key: PocketCardKey?)
 
     /// Draws the open card `offset` away from its slot, and clears the rest of
@@ -69,10 +71,12 @@ final class PocketCardFlight: NSObject, UIViewControllerAnimatedTransitioning {
 
     func animateTransition(using context: UIViewControllerContextTransitioning) {
         let container = context.containerView
-        // The Pocket stays in the window under the card, so a close adds nothing.
         if opening {
-            presented.view.frame = context.finalFrame(for: presented)
-            container.addSubview(presented.view)
+            screen.view.frame = context.finalFrame(for: screen)
+            container.addSubview(screen.view)
+        } else if let pocket = context.viewController(forKey: .to) {
+            pocket.view.frame = context.finalFrame(for: pocket)
+            container.insertSubview(pocket.view, belowSubview: screen.view)
         }
 
         screen.beginFlight()
@@ -93,17 +97,13 @@ final class PocketCardFlight: NSObject, UIViewControllerAnimatedTransitioning {
 }
 
 private extension PocketCardFlight {
-    var presented: UIViewController {
-        screen.navigationController ?? screen
-    }
-
     func fly(_ context: UIViewControllerContextTransitioning, toSlot: CGPoint) {
         let lifted = CGSize(width: -toSlot.x, height: -toSlot.y)
 
         screen.setCardHidden(true)
         if opening {
             screen.moveCard(by: toSlot)
-            screen.setSurroundingsAlpha(0)
+            screen.setPageAlpha(0)
         } else {
             origin.moveOpenCard(by: lifted, clearingPocket: true, animated: false)
         }
@@ -111,7 +111,6 @@ private extension PocketCardFlight {
         let animator = PocketCardFlightTiming.makeAnimator()
         animator.addAnimations { [self] in
             screen.moveCard(by: opening ? .zero : toSlot)
-            screen.setBarAlpha(opening ? 1 : 0)
         }
         let pageFade = opening ? nil : UIViewPropertyAnimator(duration: Self.pageFadeOut, curve: .easeOut) { [self] in
             screen.setPageAlpha(0)
@@ -134,12 +133,12 @@ private extension PocketCardFlight {
         let container = context.containerView
         let backdrop = UIView(frame: container.bounds)
         backdrop.backgroundColor = .bgSurfaceMain
-        container.insertSubview(backdrop, belowSubview: presented.view)
+        container.insertSubview(backdrop, belowSubview: screen.view)
 
-        let fading: [UIView] = [presented.view, backdrop]
+        let fading: [UIView] = [screen.view, backdrop]
         let alpha: CGFloat = opening ? 1 : 0
         if opening {
-            screen.setSurroundingsAlpha(0)
+            screen.setPageAlpha(0)
             fading.forEach { $0.alpha = 0 }
         } else {
             origin.moveOpenCard(by: .zero, clearingPocket: false, animated: false)
@@ -147,7 +146,7 @@ private extension PocketCardFlight {
 
         let animator = PocketCardFlightTiming.makeAnimator()
         animator.addAnimations { [self] in
-            screen.setSurroundingsAlpha(alpha)
+            screen.setPageAlpha(alpha)
             fading.forEach { $0.alpha = alpha }
         }
         animator.addCompletion { [self] _ in
