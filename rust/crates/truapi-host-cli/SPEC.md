@@ -1795,25 +1795,15 @@ the shared service-trait contract requires dispatch futures to be `Send`.
 ### 14.3 Chain JSON-RPC
 
 Every chain connection opens a fresh WebSocket through `truapi-provider`'s
-WebSocket backend. The limits and timeouts described below are set in
-[`ws.rs`](../truapi-provider/src/ws.rs). The connect timeout is jsonrpsee's
-default. `wss://` certificates are checked against bundled webpki root
+WebSocket backend. [`ws.rs`](../truapi-provider/src/ws.rs) sets the limits and
+timeouts. `wss://` certificates are checked against bundled webpki root
 certificates, not the operating system's trust store.
 
-Outgoing requests use a bounded queue. `responses()` returns the live response
-stream on its first call; later calls return a stream that has already ended.
-Incoming frames are read from the socket only when that stream is polled, so
-none is dropped for lack of buffer space. Binary frames that are not valid
-UTF-8 are dropped with a warning.
-
-If no request has been sent for the keepalive interval, the connection sends a
-ping. If no frame arrives within the read timeout, not even a pong, the
-connection is treated as dead.
-
-The response stream ends when the socket closes or dies, a send fails, the
-queue is full, a message exceeds the size limit, or `close()` is called. The
-core's chain runtime then opens a new connection on its next call for that
-chain. `close()` and dropping the connection also close the socket.
+The connection sends a ping after the keepalive interval without an outgoing
+request, and is treated as dead if nothing arrives within the read timeout. The
+response stream ends when the socket closes or dies, a send fails, the queue
+fills, a message exceeds the size limit, or `close()` is called. The core's
+chain runtime then opens a new connection on its next call for that chain.
 
 ## 15. TrUAPI capability surface
 

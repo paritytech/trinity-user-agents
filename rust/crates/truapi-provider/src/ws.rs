@@ -40,7 +40,8 @@ const MAX_MESSAGE_BYTES: u32 = 64 * 1024 * 1024;
 /// Open a WebSocket connection to `url`.
 ///
 /// Requires an ambient tokio runtime; both the handshake and the spawned
-/// writer task run on it.
+/// writer task run on it. `responses()` yields the live stream once; later
+/// calls yield an ended stream.
 pub async fn connect(url: Url) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
 	if tokio::runtime::Handle::try_current().is_err() {
 		return Err(ProviderError::MissingRuntime);
