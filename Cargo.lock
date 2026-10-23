@@ -5441,12 +5441,8 @@ checksum = "edc5f74e248dc973e0dbb7b74c7e0d6fcc301c694ff50049504004ef4d0cdcd9"
 dependencies = [
  "futures-util",
  "log",
- "rustls",
- "rustls-pki-types",
  "tokio",
- "tokio-rustls",
  "tungstenite",
- "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -5752,12 +5748,12 @@ dependencies = [
  "tar",
  "tempfile",
  "tokio",
- "tokio-stream",
  "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
  "trinity-stack",
  "truapi",
+ "truapi-provider",
  "unicode-width",
  "zeroize",
 ]
@@ -5879,8 +5875,6 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.8.7",
- "rustls",
- "rustls-pki-types",
  "sha1",
  "thiserror 1.0.69",
  "utf-8",

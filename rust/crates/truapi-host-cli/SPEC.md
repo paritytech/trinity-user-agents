@@ -1794,14 +1794,17 @@ the shared service-trait contract requires dispatch futures to be `Send`.
 
 ### 14.3 Chain JSON-RPC
 
-Every chain connection opens a fresh WebSocket. Outgoing requests use an
-unbounded channel. Incoming text frames and UTF-8 binary frames enter a
-1,024-message broadcast buffer.
+Every chain connection opens a fresh WebSocket through `truapi-provider`'s
+WebSocket backend. [`ws.rs`](../truapi-provider/src/ws.rs) sets the limits and
+timeouts. `wss://` certificates are verified with the root certificates built
+into the binary. Certificate authorities added to the operating system are not
+used.
 
-The first response receiver is created before the reader task, preventing a
-fast initial RPC response from being lost. A lagged subscriber drops missed
-responses and emits a warning. `close()` prevents further sends; background
-socket tasks end when their channels or sockets close.
+The connection sends a ping after the keepalive interval without an outgoing
+request, and is treated as dead if nothing arrives within the read timeout. The
+response stream ends when the socket closes or dies, a send fails, the queue
+fills, a message exceeds the size limit, or `close()` is called. The core's
+chain runtime then opens a new connection on its next call for that chain.
 
 ## 15. TrUAPI capability surface
 

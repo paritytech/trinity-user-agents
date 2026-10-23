@@ -8,9 +8,10 @@
 //!
 //! Per-target backend matrix:
 //!
-//! - `ws` feature — `ChainSource::RpcNode`, a remote JSON-RPC node over WebSocket. On native
-//!   targets it runs on a jsonrpsee transport and needs an ambient tokio runtime; on `wasm32` the
-//!   same API is served by the browser's `WebSocket`.
+//! - `ws` feature — `ChainSource::RpcNode`, a remote JSON-RPC node over WebSocket, also reachable
+//!   without a registry through [`connect_rpc_node`]. On native targets it runs on a jsonrpsee
+//!   transport and needs an ambient tokio runtime; on `wasm32` the same API is served by the
+//!   browser's `WebSocket`.
 //! - `smoldot` feature — `ChainSource::LightClient`, an embedded [smoldot](https://github.com/paritytech/smoldot)
 //!   light client. On native targets it runs on smoldot's default platform (OS threads, TCP + plain
 //!   WebSocket dialing), which declines `wss`, so those bootnodes are reached through the loopback
@@ -58,6 +59,8 @@ pub mod platform;
 mod provider;
 #[cfg(feature = "smoldot")]
 mod storage;
+#[cfg(all(any(feature = "ws", feature = "smoldot"), not(target_arch = "wasm32")))]
+mod tls;
 #[cfg(all(feature = "ws", not(target_arch = "wasm32")))]
 mod ws;
 #[cfg(all(feature = "ws", target_arch = "wasm32"))]
@@ -81,6 +84,8 @@ pub use networks::{NetworkChains, known_networks};
 pub use provider::{EmbeddedChainProvider, EmbeddedChainProviderBuilder};
 #[cfg(feature = "smoldot")]
 pub use storage::{StorageClient, StorageClientError};
+#[cfg(feature = "ws")]
+pub use ws::connect as connect_rpc_node;
 
 #[cfg(all(feature = "uniffi", not(target_arch = "wasm32")))]
 uniffi::setup_scaffolding!();
