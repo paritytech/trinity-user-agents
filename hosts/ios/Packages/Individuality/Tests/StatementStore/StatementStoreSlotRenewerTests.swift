@@ -50,6 +50,7 @@ struct StatementStoreSlotRenewerTests {
             accountId: accountA,
             allocatedAt: Date(timeIntervalSince1970: 1_000),
             kind: .statementStore,
+            domain: .product,
             priority: .normal,
             latestRenewedPeriod: 99
         )
@@ -57,6 +58,7 @@ struct StatementStoreSlotRenewerTests {
             accountId: accountB,
             allocatedAt: Date(timeIntervalSince1970: 2_000),
             kind: .statementStore,
+            domain: .product,
             priority: .normal,
             latestRenewedPeriod: 99
         )
@@ -100,6 +102,7 @@ struct StatementStoreSlotRenewerTests {
             accountId: accountA,
             allocatedAt: Date(timeIntervalSince1970: 1_000),
             kind: .statementStore,
+            domain: .product,
             priority: .normal,
             latestRenewedPeriod: 99
         )
@@ -107,6 +110,7 @@ struct StatementStoreSlotRenewerTests {
             accountId: accountB,
             allocatedAt: Date(timeIntervalSince1970: 2_000),
             kind: .statementStore,
+            domain: .product,
             priority: .normal,
             latestRenewedPeriod: 99
         )
@@ -149,6 +153,7 @@ struct StatementStoreSlotRenewerTests {
             accountId: pgasAccount,
             allocatedAt: Date(timeIntervalSince1970: 1_000),
             kind: .pgas,
+            domain: .product,
             priority: .normal,
             latestRenewedPeriod: nil
         )
@@ -187,6 +192,7 @@ struct StatementStoreSlotRenewerTests {
             accountId: accountA,
             allocatedAt: Date(timeIntervalSince1970: 1_000),
             kind: .statementStore,
+            domain: .product,
             priority: .normal,
             latestRenewedPeriod: 99
         )
@@ -234,6 +240,7 @@ struct StatementStoreSlotRenewerTests {
             accountId: accountA,
             allocatedAt: Date(timeIntervalSince1970: 1_000),
             kind: .statementStore,
+            domain: .product,
             priority: .normal,
             latestRenewedPeriod: 99
         )
@@ -285,6 +292,7 @@ struct StatementStoreSlotRenewerTests {
             accountId: accountHigh,
             allocatedAt: Date(timeIntervalSince1970: 1_000),
             kind: .statementStore,
+            domain: .product,
             priority: .high,
             latestRenewedPeriod: 99
         )
@@ -293,6 +301,7 @@ struct StatementStoreSlotRenewerTests {
             accountId: accountNormal,
             allocatedAt: Date(timeIntervalSince1970: 2_000),
             kind: .statementStore,
+            domain: .product,
             priority: .normal,
             latestRenewedPeriod: 99
         )
@@ -333,6 +342,7 @@ struct StatementStoreSlotRenewerTests {
             accountId: accountA,
             allocatedAt: Date(timeIntervalSince1970: 1_000),
             kind: .statementStore,
+            domain: .product,
             priority: .normal,
             latestRenewedPeriod: 99
         )
@@ -340,6 +350,7 @@ struct StatementStoreSlotRenewerTests {
             accountId: accountB,
             allocatedAt: Date(timeIntervalSince1970: 2_000),
             kind: .statementStore,
+            domain: .product,
             priority: .normal,
             latestRenewedPeriod: 99
         )
