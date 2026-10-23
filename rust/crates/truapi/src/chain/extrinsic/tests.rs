@@ -32,6 +32,7 @@ use super::{
 	ExtensionError, ExtrinsicBuildError, ExtrinsicBuilder, ExtrinsicVersion, InheritedImplication,
 	TransactionExtension,
 	builder::{RuntimeAtBirth, assemble, start_build},
+	signature::VerifySignatureExtension,
 	version::choose_extrinsic_version,
 	well_known::default_value_for_type,
 };
@@ -280,6 +281,25 @@ fn build_bulletin_remark(
 fn a_signed_v4_extrinsic_matches_subxt() {
 	let signer = test_signer();
 	let built = build_bulletin_remark(&signer, None, 7);
+	let (account, signature, _) = split_v4(&built);
+	let signature = MultiSignature::Sr25519(signature);
+
+	let (expected, payload) = subxt_bulletin_v4(7, &AccountId32(account), &signature);
+
+	assert_eq!(built, expected);
+	assert!(verifies(&signer, &payload, &signature));
+}
+
+/// The signature is an ordinary extension wherever it was added: V4 finds it
+/// in the list and signs the preamble with it.
+#[test]
+fn a_v4_extrinsic_signs_with_a_signature_added_as_an_extension() {
+	let signer = test_signer();
+	let mut builder = start_build(bulletin_runtime());
+	builder
+		.with_call(remark())
+		.with_extension(VerifySignatureExtension::signed(&signer));
+	let built = assemble_offline(builder, None, 7).unwrap().extrinsic.bytes().to_vec();
 	let (account, signature, _) = split_v4(&built);
 	let signature = MultiSignature::Sr25519(signature);
 

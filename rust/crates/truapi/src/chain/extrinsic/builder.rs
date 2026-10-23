@@ -3,7 +3,7 @@
 use subxt::{
 	ArcMetadata, Metadata,
 	ext::{frame_decode::extrinsics::encode_call_data, scale_encode::EncodeAsFields},
-	tx::Payload,
+	tx::{Payload, StaticPayload},
 	utils::H256,
 };
 
@@ -11,7 +11,7 @@ use super::{
 	ExtrinsicBuildError, ExtrinsicVersion, TransactionExtension,
 	extension::SuppliedExtension,
 	signature::{SubstrateSigner, VerifySignatureExtension},
-	well_known::restrict_origins,
+	well_known::{VERIFY_MULTI_SIGNATURE, restrict_origins},
 };
 use crate::chain::HashAndNumber;
 
@@ -38,10 +38,25 @@ pub struct RuntimeAtBirth {
 	pub metadata: ArcMetadata,
 }
 
-/// A call kept unencoded until the build is assembled, so the builder can hold
-/// calls of any argument type.
-type PendingCall<'a> =
-	Box<dyn FnOnce(&Metadata) -> Result<Vec<u8>, ExtrinsicBuildError> + Send + 'a>;
+/// A call of any payload type, kept unencoded until the build is assembled.
+/// `Payload` cannot be boxed itself, since its call data type differs per call.
+trait AnyCall: Send {
+	/// The call encoded against `metadata`.
+	fn encode(&self, metadata: &Metadata) -> Result<Vec<u8>, ExtrinsicBuildError>;
+}
+
+impl<P: Payload + Send> AnyCall for P {
+	fn encode(&self, metadata: &Metadata) -> Result<Vec<u8>, ExtrinsicBuildError> {
+		let (pallet, call) = (self.pallet_name(), self.call_name());
+		encode_call_data(pallet, call, self.call_data(), metadata, metadata.types()).map_err(
+			|error| ExtrinsicBuildError::Call {
+				pallet: pallet.to_string(),
+				call: call.to_string(),
+				reason: error.to_string(),
+			},
+		)
+	}
+}
 
 /// What a caller asks one extrinsic to contain.
 ///
@@ -49,9 +64,8 @@ type PendingCall<'a> =
 /// a call that does not encode, is the build's error.
 pub struct ExtrinsicBuilder<'a> {
 	runtime: RuntimeAtBirth,
-	call: Option<PendingCall<'a>>,
+	call: Option<Box<dyn AnyCall + 'a>>,
 	extensions: Vec<SuppliedExtension<'a>>,
-	signature: Option<VerifySignatureExtension<'a>>,
 	nonce: Option<u64>,
 	period: u64,
 	version: Option<ExtrinsicVersion>,
@@ -63,7 +77,6 @@ pub fn start_build<'a>(runtime: RuntimeAtBirth) -> ExtrinsicBuilder<'a> {
 		runtime,
 		call: None,
 		extensions: Vec::new(),
-		signature: None,
 		nonce: None,
 		period: DEFAULT_MORTALITY_PERIOD,
 		version: None,
@@ -73,10 +86,7 @@ pub fn start_build<'a>(runtime: RuntimeAtBirth) -> ExtrinsicBuilder<'a> {
 impl<'a> ExtrinsicBuilder<'a> {
 	/// Sets the call from a subxt payload. Replaces any earlier call.
 	pub fn with_call(&mut self, call: impl Payload + Send + 'a) -> &mut Self {
-		let pending: PendingCall<'a> = Box::new(move |metadata| {
-			encode_call(metadata, call.pallet_name(), call.call_name(), call.call_data())
-		});
-		self.call = Some(pending);
+		self.call = Some(Box::new(call));
 		self
 	}
 
@@ -88,25 +98,20 @@ impl<'a> ExtrinsicBuilder<'a> {
 		call: &str,
 		args: impl EncodeAsFields + Send + 'a,
 	) -> &mut Self {
-		let (pallet, call) = (pallet.to_string(), call.to_string());
-		let pending: PendingCall<'a> =
-			Box::new(move |metadata| encode_call(metadata, &pallet, &call, &args));
-		self.call = Some(pending);
-		self
+		self.with_call(StaticPayload::new(pallet, call, args))
 	}
 
 	/// Supplies an extension's values. A supplied extension takes precedence
 	/// over any value the builder would fill in.
 	pub fn with_extension<E: TransactionExtension + 'a>(&mut self, extension: E) -> &mut Self {
-		self.extensions.push(SuppliedExtension::new(extension));
+		self.extensions.push(Box::new(extension));
 		self
 	}
 
 	/// Adds `VerifyMultiSignature`, signed by `signer`. A V5 extrinsic carries
 	/// it as an extension; a V4 one carries its signature in the preamble.
 	pub fn with_signer(&mut self, signer: &'a SubstrateSigner) -> &mut Self {
-		self.signature = Some(VerifySignatureExtension::signed(signer));
-		self
+		self.with_extension(VerifySignatureExtension::signed(signer))
 	}
 
 	/// Overrides the nonce. Without it, a signed build reads the signer's
@@ -133,24 +138,12 @@ impl<'a> ExtrinsicBuilder<'a> {
 		self.with_extension(restrict_origins(restrict))
 	}
 
-	/// The signer, when the build signs.
-	fn signer(&self) -> Option<&'a SubstrateSigner> {
-		self.signature.as_ref()?.signer()
+	/// The signer of the supplied `VerifyMultiSignature`, when the build signs.
+	fn signer(&self) -> Option<&SubstrateSigner> {
+		let signature = self
+			.extensions
+			.iter()
+			.find(|extension| extension.name() == VERIFY_MULTI_SIGNATURE)?;
+		signature.signer()
 	}
-}
-
-/// The call `pallet.call` with `args`, encoded against `metadata`.
-fn encode_call(
-	metadata: &Metadata,
-	pallet: &str,
-	call: &str,
-	args: &impl EncodeAsFields,
-) -> Result<Vec<u8>, ExtrinsicBuildError> {
-	encode_call_data(pallet, call, args, metadata, metadata.types()).map_err(|error| {
-		ExtrinsicBuildError::Call {
-			pallet: pallet.to_string(),
-			call: call.to_string(),
-			reason: error.to_string(),
-		}
-	})
 }

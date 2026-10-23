@@ -5,7 +5,10 @@ use scale_info::PortableRegistry;
 use sp_crypto_hashing::blake2_256;
 use subxt::ext::scale_encode::EncodeAsType;
 
-use super::{ExtrinsicBuildError, ExtrinsicVersion, well_known::EncodedExtensionValues};
+use super::{
+	ExtrinsicBuildError, ExtrinsicVersion, signature::SubstrateSigner,
+	well_known::EncodedExtensionValues,
+};
 
 /// A transaction extension that a caller supplies to the builder.
 ///
@@ -31,6 +34,12 @@ pub trait TransactionExtension: Send {
 		&self,
 		implication: &InheritedImplication,
 	) -> Result<Self::Explicit, ExtensionError>;
+
+	/// The signer whose signature this extension carries, if any. A V4
+	/// extrinsic takes it out of the pipeline and signs the preamble with it.
+	fn signer(&self) -> Option<&SubstrateSigner> {
+		None
+	}
 }
 
 /// The bytes an extension's explicit value may cover: for V5, the extension
@@ -97,38 +106,49 @@ pub struct ExtensionValueTypes {
 	pub implicit: u32,
 }
 
-/// A supplied extension with its values not yet encoded, so the builder can
-/// hold extensions of different types in one list. Both values encode once
-/// their types and the implication are known.
-pub struct SuppliedExtension<'a> {
+/// A supplied extension of any type, so the builder holds extensions of
+/// different types in one list and encodes each once the pipeline reaches it.
+/// `TransactionExtension` cannot be boxed itself: its value types differ per
+/// extension, and `EncodeAsType` is generic over the type resolver.
+pub trait AnyExtension: Send {
 	/// The extension's name in metadata.
-	pub name: String,
-	/// Encodes both values.
-	pub encode: EncodeExtensionValues<'a>,
+	fn name(&self) -> &str;
+
+	/// The signer whose signature the extension carries, if any.
+	fn signer(&self) -> Option<&SubstrateSigner>;
+
+	/// Encodes both values against their metadata types, the explicit one from
+	/// the implication.
+	fn encode(
+		&self,
+		implication: &InheritedImplication,
+		types: ExtensionValueTypes,
+		registry: &PortableRegistry,
+	) -> Result<EncodedExtensionValues, ExtrinsicBuildError>;
 }
 
-/// Encodes an extension's values against their metadata types, the explicit one
-/// from the implication.
-type EncodeExtensionValues<'a> = Box<
-	dyn FnOnce(
-			&InheritedImplication,
-			ExtensionValueTypes,
-			&PortableRegistry,
-		) -> Result<EncodedExtensionValues, ExtrinsicBuildError>
-		+ Send
-		+ 'a,
->;
+impl<E: TransactionExtension> AnyExtension for E {
+	fn name(&self) -> &str {
+		TransactionExtension::name(self)
+	}
 
-impl<'a> SuppliedExtension<'a> {
-	/// Holds `extension` until the builder reaches it in the pipeline.
-	pub fn new<E: TransactionExtension + 'a>(extension: E) -> Self {
-		let name = extension.name().to_string();
-		let encode: EncodeExtensionValues<'a> = Box::new(move |implication, types, registry| {
-			encode_extension_values(&extension, implication, types, registry)
-		});
-		Self { name, encode }
+	fn signer(&self) -> Option<&SubstrateSigner> {
+		TransactionExtension::signer(self)
+	}
+
+	fn encode(
+		&self,
+		implication: &InheritedImplication,
+		types: ExtensionValueTypes,
+		registry: &PortableRegistry,
+	) -> Result<EncodedExtensionValues, ExtrinsicBuildError> {
+		encode_extension_values(self, implication, types, registry)
 	}
 }
+
+/// An extension the caller or the builder supplied, held until the pipeline
+/// reaches it.
+pub type SuppliedExtension<'a> = Box<dyn AnyExtension + 'a>;
 
 fn encode_extension_values<E: TransactionExtension>(
 	extension: &E,

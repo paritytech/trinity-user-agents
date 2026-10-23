@@ -26,11 +26,12 @@ use crate::chain::{
 	EncodedExtrinsic, MortalExtrinsic, Mortality,
 	extrinsic::{
 		ExtrinsicBuildError, ExtrinsicVersion, InheritedImplication,
-		extension::{ExtensionValueTypes, SuppliedExtension},
-		signature::{SubstrateSigner, VerifySignatureExtension},
+		extension::{AnyExtension, ExtensionValueTypes, SuppliedExtension},
+		signature::SubstrateSigner,
 		version::{choose_extrinsic_version, pipeline_names},
 		well_known::{
-			ChainValues, EncodedExtensionValues, default_value_for_type, well_known_extension,
+			ChainValues, EncodedExtensionValues, VERIFY_MULTI_SIGNATURE, default_value_for_type,
+			well_known_extension,
 		},
 	},
 };
@@ -88,12 +89,13 @@ fn encode_extrinsic(
 	version: ExtrinsicVersion,
 	nonce: u64,
 ) -> Result<MortalExtrinsic, ExtrinsicBuildError> {
-	let ExtrinsicBuilder { runtime, call, extensions, signature, period, .. } = builder;
+	let ExtrinsicBuilder { runtime, call, extensions, period, .. } = builder;
 	let metadata = runtime.metadata.clone();
 	check_format_supported(version, &metadata)?;
 	let pending_call = call.ok_or(ExtrinsicBuildError::NoCall)?;
-	let call = pending_call(&metadata)?;
-	let (extensions, v4_signer) = supplied_extensions(version, extensions, signature, &metadata)?;
+	let call = pending_call.encode(&metadata)?;
+	let (extensions, v4_signature) = supplied_extensions(version, extensions, &metadata)?;
+	let v4_signer = v4_signature.as_deref().and_then(AnyExtension::signer);
 	let mortality = Mortality::new(runtime.birth, period)?;
 	let chain = chain_values(&runtime, mortality, nonce);
 	let fold = PipelineFold { version, call: &call, chain, types: metadata.types() };
@@ -112,33 +114,37 @@ fn chain_values(runtime: &RuntimeAtBirth, mortality: Mortality, nonce: u64) -> C
 	}
 }
 
-/// The supplied extensions the pipeline fills, with the signature placed for
-/// `version`, and the V4 signer if there is one.
+/// The supplied extensions the pipeline fills and, for V4, the signature
+/// taken out of them.
 fn supplied_extensions<'a>(
 	version: ExtrinsicVersion,
 	extensions: Vec<SuppliedExtension<'a>>,
-	signature: Option<VerifySignatureExtension<'a>>,
 	metadata: &Metadata,
-) -> Result<(Vec<SuppliedExtension<'a>>, Option<&'a SubstrateSigner>), ExtrinsicBuildError> {
-	let (extensions, v4_signer) = place_signature(version, extensions, signature)?;
+) -> Result<(Vec<SuppliedExtension<'a>>, Option<SuppliedExtension<'a>>), ExtrinsicBuildError> {
+	let (extensions, v4_signature) = take_v4_signature(version, extensions)?;
 	check_supplied_extensions(&extensions, version.extension_version(), metadata)?;
-	Ok((extensions, v4_signer))
+	Ok((extensions, v4_signature))
 }
 
-/// Where the signature goes: a V5 extrinsic carries `VerifyMultiSignature` like
-/// any extension; a V4 one takes its signer out of the pipeline to sign the
-/// preamble, and cannot be built without one.
-fn place_signature<'a>(
+/// A V5 extrinsic carries `VerifyMultiSignature` like any other extension. A
+/// V4 one takes it out of the pipeline to sign the preamble, which leaves the
+/// pipeline's own entry, if it declares one, disabled; it cannot be built
+/// without a signer.
+fn take_v4_signature(
 	version: ExtrinsicVersion,
-	mut extensions: Vec<SuppliedExtension<'a>>,
-	signature: Option<VerifySignatureExtension<'a>>,
-) -> Result<(Vec<SuppliedExtension<'a>>, Option<&'a SubstrateSigner>), ExtrinsicBuildError> {
+	mut extensions: Vec<SuppliedExtension<'_>>,
+) -> Result<(Vec<SuppliedExtension<'_>>, Option<SuppliedExtension<'_>>), ExtrinsicBuildError> {
 	if let ExtrinsicVersion::V5 { .. } = version {
-		extensions.extend(signature.map(SuppliedExtension::new));
 		return Ok((extensions, None));
 	}
-	let signer = signature.and_then(|signature| signature.signer());
-	Ok((extensions, Some(signer.ok_or(ExtrinsicBuildError::UnsignedV4)?)))
+	let position = extensions
+		.iter()
+		.position(|extension| extension.name() == VERIFY_MULTI_SIGNATURE);
+	let signature = position.map(|index| extensions.remove(index));
+	if signature.as_ref().and_then(|signature| signature.signer()).is_none() {
+		return Err(ExtrinsicBuildError::UnsignedV4);
+	}
+	Ok((extensions, signature))
 }
 
 fn check_format_supported(
@@ -166,14 +172,13 @@ fn check_supplied_extensions(
 	let declared = pipeline_names(metadata, extension_version)?;
 	let mut seen = BTreeSet::new();
 	for extension in supplied {
-		if !seen.insert(extension.name.as_str()) {
-			return Err(ExtrinsicBuildError::DuplicateExtension {
-				extension: extension.name.clone(),
-			});
+		let name = extension.name();
+		if !seen.insert(name) {
+			return Err(ExtrinsicBuildError::DuplicateExtension { extension: name.to_string() });
 		}
-		if !declared.contains(&extension.name) {
+		if !declared.iter().any(|declared_name| declared_name == name) {
 			return Err(ExtrinsicBuildError::UndeclaredExtension {
-				extension: extension.name.clone(),
+				extension: name.to_string(),
 				extension_version,
 				declared,
 			});
@@ -207,7 +212,7 @@ impl PipelineFold<'_> {
 		let mut encoded = VecDeque::with_capacity(pipeline.extension_ids.len());
 		for declared in pipeline.extension_ids.iter().rev() {
 			let implication = self.implication_after(encoded.make_contiguous());
-			let position = supplied.iter().position(|extension| extension.name == declared.name);
+			let position = supplied.iter().position(|extension| extension.name() == declared.name);
 			let extension = position.map(|index| supplied.swap_remove(index));
 			let values = self.extension_values(declared, extension, &implication)?;
 			check_value_shapes(declared, &values, self.types)?;
@@ -251,7 +256,7 @@ impl PipelineFold<'_> {
 			return use_default_values_for_unset_extension(declared, self.types);
 		};
 		let types = ExtensionValueTypes { explicit: declared.id, implicit: declared.implicit_id };
-		(extension.encode)(implication, types, self.types)
+		extension.encode(implication, types, self.types)
 	}
 
 	/// The extrinsic's bytes: V4 signed by `v4_signer` over the whole

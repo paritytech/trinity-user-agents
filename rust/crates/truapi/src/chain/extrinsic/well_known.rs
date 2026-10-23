@@ -149,17 +149,17 @@ pub fn restrict_origins(restrict: bool) -> ConstantExtension<(), bool> {
 /// The extension the builder adds for `name` when the caller leaves it
 /// unset, or `None` when `name` has no well-known default.
 pub fn well_known_extension(name: &str, chain: &ChainValues) -> Option<SuppliedExtension<'static>> {
-	let extension = match name {
-		"CheckSpecVersion" => SuppliedExtension::new(check_spec_version(chain.spec_version)),
-		"CheckTxVersion" => SuppliedExtension::new(check_tx_version(chain.transaction_version)),
-		"CheckGenesis" => SuppliedExtension::new(check_genesis(chain.genesis)),
-		"CheckMortality" => SuppliedExtension::new(check_mortality(chain.mortality)),
-		"CheckNonce" => SuppliedExtension::new(check_nonce(chain.nonce)),
-		"ChargeAssetTxPayment" => SuppliedExtension::new(charge_asset_tx_payment()),
-		"ChargeTransactionPayment" => SuppliedExtension::new(charge_transaction_payment()),
-		"CheckMetadataHash" => SuppliedExtension::new(check_metadata_hash_disabled()),
-		"RestrictOrigins" => SuppliedExtension::new(restrict_origins(false)),
-		VERIFY_MULTI_SIGNATURE => SuppliedExtension::new(VerifySignatureExtension::disabled()),
+	let extension: SuppliedExtension<'static> = match name {
+		"CheckSpecVersion" => Box::new(check_spec_version(chain.spec_version)),
+		"CheckTxVersion" => Box::new(check_tx_version(chain.transaction_version)),
+		"CheckGenesis" => Box::new(check_genesis(chain.genesis)),
+		"CheckMortality" => Box::new(check_mortality(chain.mortality)),
+		"CheckNonce" => Box::new(check_nonce(chain.nonce)),
+		"ChargeAssetTxPayment" => Box::new(charge_asset_tx_payment()),
+		"ChargeTransactionPayment" => Box::new(charge_transaction_payment()),
+		"CheckMetadataHash" => Box::new(check_metadata_hash_disabled()),
+		"RestrictOrigins" => Box::new(restrict_origins(false)),
+		VERIFY_MULTI_SIGNATURE => Box::new(VerifySignatureExtension::disabled()),
 		_ => return None,
 	};
 	Some(extension)

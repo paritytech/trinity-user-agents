@@ -32,11 +32,6 @@ impl<'a> VerifySignatureExtension<'a> {
 	pub fn disabled() -> Self {
 		Self { signer: None }
 	}
-
-	/// The signer, when this extension signs.
-	pub fn signer(&self) -> Option<&'a SubstrateSigner> {
-		self.signer
-	}
 }
 
 impl TransactionExtension for VerifySignatureExtension<'_> {
@@ -58,5 +53,9 @@ impl TransactionExtension for VerifySignatureExtension<'_> {
 		};
 		let signature = signer.sign(&implication.signer_payload());
 		Ok(VerifySignatureDetails::Signed { signature, account: signer.account_id() })
+	}
+
+	fn signer(&self) -> Option<&SubstrateSigner> {
+		self.signer
 	}
 }
