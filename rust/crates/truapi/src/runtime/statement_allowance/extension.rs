@@ -16,8 +16,12 @@
 use std::{collections::HashMap, sync::Mutex};
 
 use frame_metadata::{RuntimeMetadata, RuntimeMetadataPrefixed};
-use parity_scale_codec::{Compact, Decode, Encode};
-use scale_info::{PortableRegistry, TypeDef, TypeDefPrimitive, TypeDefVariant, form::PortableForm};
+#[cfg(test)]
+use parity_scale_codec::Encode;
+use parity_scale_codec::{Compact, Decode};
+#[cfg(test)]
+use scale_info::TypeDefPrimitive;
+use scale_info::{PortableRegistry, TypeDef, TypeDefVariant, form::PortableForm};
 use thiserror::Error;
 
 use super::{
@@ -157,7 +161,9 @@ pub enum MetadataError {
 	},
 }
 
-/// Chain state needed to fill the standard signed extensions.
+/// Chain state filling every extension at its resting value: a fixture for
+/// tests that need a complete extension list for a pipeline.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy)]
 pub struct ChainState {
 	/// Runtime `specVersion` (CheckSpecVersion implicit).
@@ -180,10 +186,12 @@ pub struct ChainState {
 struct ExtensionDef {
 	identifier: String,
 	extra_type: u32,
+	#[cfg(test)]
 	additional_signed_type: u32,
 }
 
 /// A signed extension encoded to its `extra` and `additional_signed` bytes.
+#[cfg(test)]
 pub struct EncodedExtension {
 	/// SCALE-encoded `extra` (goes into the extrinsic body).
 	pub extra: Vec<u8>,
@@ -303,6 +311,7 @@ macro_rules! collect_metadata {
 			.map(|e| ExtensionDef {
 				identifier: e.identifier.clone(),
 				extra_type: e.ty.id,
+				#[cfg(test)]
 				additional_signed_type: e.additional_signed.id,
 			})
 			.collect();
@@ -329,6 +338,7 @@ macro_rules! collect_metadata_v16 {
 			.map(|e| ExtensionDef {
 				identifier: e.identifier.clone(),
 				extra_type: e.ty.id,
+				#[cfg(test)]
 				additional_signed_type: e.implicit.id,
 			})
 			.collect();
@@ -660,6 +670,7 @@ impl Metadata {
 	}
 
 	/// Encode every signed extension in metadata order.
+	#[cfg(test)]
 	pub fn encode_signed_extensions(&self, state: &ChainState) -> Vec<EncodedExtension> {
 		self.extensions
 			.iter()
@@ -679,6 +690,7 @@ impl Metadata {
 	/// Encode a single extension's `(extra, additional_signed)`, mirroring the
 	/// signing-bot switch; unknown personhood extensions fall back to the
 	/// metadata type default (`Option` -> None, void -> empty).
+	#[cfg(test)]
 	fn encode_one(&self, ext: &ExtensionDef, state: &ChainState) -> (Vec<u8>, Vec<u8>) {
 		match ext.identifier.as_str() {
 			"CheckNonce" => (Compact(state.nonce).encode(), Vec::new()),
@@ -703,6 +715,7 @@ impl Metadata {
 	/// Encode the "disabled" default value for a metadata type: `Option` -> None
 	/// (`0x00`), void/empty tuple -> empty, enums -> first variant, primitives
 	/// -> zero. Matches signing-bot `defaultValueForType`.
+	#[cfg(test)]
 	fn encode_default(&self, type_id: u32) -> Vec<u8> {
 		let Some(ty) = self.registry.resolve(type_id) else {
 			return Vec::new();
@@ -758,46 +771,6 @@ impl Metadata {
 	}
 }
 
-/// Build the ring-VRF proof message for an `AsResources`-authorized call:
-/// `blake2b256(0x00 ‖ call ‖ Σ tail.extra ‖ Σ tail.additional_signed)`, where
-/// the tail is the extensions ordered strictly after `AsResources`. The leading
-/// byte is the General-transaction extension-version, taken from metadata so it
-/// matches the byte the extrinsic declares.
-pub fn build_proof_message(
-	metadata: &Metadata,
-	call_data: &[u8],
-	state: &ChainState,
-) -> Result<[u8; 32], StatementAllowanceError> {
-	build_proof_message_after_extension(metadata, call_data, state, AS_RESOURCES)
-}
-
-/// Same, for any authorizing extension: the tail is the extensions ordered
-/// strictly after `identifier`.
-pub fn build_proof_message_after_extension(
-	metadata: &Metadata,
-	call_data: &[u8],
-	state: &ChainState,
-	identifier: &str,
-) -> Result<[u8; 32], StatementAllowanceError> {
-	let all = metadata.encode_signed_extensions(state);
-	let tail_start = metadata
-		.extension_index(identifier)
-		.map(|i| i + 1)
-		.ok_or_else(|| MetadataError::MissingExtension { identifier: identifier.to_string() })?;
-	let tail = &all[tail_start..];
-
-	let mut payload = Vec::with_capacity(1 + call_data.len());
-	payload.push(metadata.extension_version());
-	payload.extend_from_slice(call_data);
-	for ext in tail {
-		payload.extend_from_slice(&ext.extra);
-	}
-	for ext in tail {
-		payload.extend_from_slice(&ext.additional_signed);
-	}
-	Ok(blake2b256(&payload))
-}
-
 /// BLAKE2b-256 of `message`.
 pub fn blake2b256(message: &[u8]) -> [u8; 32] {
 	blake2b_simd::Params::new()
@@ -824,15 +797,6 @@ mod tests {
 			nonce: 0,
 			restrict_origins: false,
 		}
-	}
-
-	/// `Resources.set_statement_store_account(period=7, seq=0, target=0)`.
-	fn fixture_call() -> Vec<u8> {
-		let mut call = vec![0x3f, 0x0a];
-		call.extend_from_slice(&7u32.to_le_bytes());
-		call.extend_from_slice(&0u32.to_le_bytes());
-		call.extend_from_slice(&[0u8; 32]);
-		call
 	}
 
 	/// V16 metadata captured from paseo-next-v2 (spec 3000000), the version the
@@ -920,13 +884,7 @@ mod tests {
 	#[test]
 	fn the_as_resources_wrappers_match_the_general_forms() {
 		let metadata = Metadata::decode(FIXTURE).unwrap();
-		let state = fixture_state();
-		let call = fixture_call();
 
-		assert_eq!(
-			build_proof_message(&metadata, &call, &state).unwrap(),
-			build_proof_message_after_extension(&metadata, &call, &state, AS_RESOURCES).unwrap(),
-		);
 		assert_eq!(
 			metadata
 				.as_resources_variant_indices(
@@ -1038,16 +996,6 @@ mod tests {
 
 		assert_eq!(metadata.extension_version(), 0);
 		assert_eq!(metadata.metadata_version(), 14);
-	}
-
-	#[test]
-	fn proof_message_matches_frozen_known_answer() {
-		let metadata = Metadata::decode(FIXTURE).unwrap();
-		let msg = build_proof_message(&metadata, &fixture_call(), &fixture_state()).unwrap();
-		assert_eq!(
-			hex::encode(msg),
-			"1d2e6d8d8f421b0857097c6076115507432d66fea47ebe0c3be282a369f6743c",
-		);
 	}
 
 	#[test]
@@ -1189,22 +1137,5 @@ mod tests {
 			]
 			.concat()
 		);
-	}
-
-	#[test]
-	fn dropping_the_version_byte_changes_the_hash() {
-		let metadata = Metadata::decode(FIXTURE).unwrap();
-		let state = fixture_state();
-		let call = fixture_call();
-		let all = metadata.encode_signed_extensions(&state);
-		let tail = &all[metadata.as_resources_index().unwrap() + 1..];
-		let mut without = call.clone();
-		for e in tail {
-			without.extend_from_slice(&e.extra);
-		}
-		for e in tail {
-			without.extend_from_slice(&e.additional_signed);
-		}
-		assert_ne!(build_proof_message(&metadata, &call, &state).unwrap(), blake2b256(&without),);
 	}
 }

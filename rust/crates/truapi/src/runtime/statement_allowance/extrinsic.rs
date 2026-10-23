@@ -1,8 +1,8 @@
-//! `Resources.set_statement_store_account` call + unsigned General (v5)
-//! extrinsic assembly. Mirrors signing-bot `allocation.ts` / `extrinsic-submit.ts`.
-//! Dispatch and variant indices are resolved by name from the fetched runtime
-//! metadata, so a re-indexed runtime fails loudly instead of encoding a wrong
-//! call.
+//! Call arguments and authorizer extension values for allowance extrinsics,
+//! which the core's `ExtrinsicService` assembles. Call arguments encode by
+//! name against metadata, and the authorizers' variant indices are resolved
+//! by name from the fetched runtime metadata, so a re-indexed runtime fails
+//! loudly instead of encoding a wrong call.
 
 use parity_scale_codec::{Decode, Encode};
 use subxt::ext::scale_encode::EncodeAsType;
@@ -10,11 +10,9 @@ use subxt::ext::scale_encode::EncodeAsType;
 use super::{
 	StatementAllowanceError,
 	collection::PersonhoodCollection,
-	extension::{AS_PGAS, AS_RESOURCES, ChainState, Metadata, MetadataError},
+	extension::{AS_PGAS, Metadata},
 };
 
-/// General-transaction preamble byte: `0b01` (General) | version 5.
-const GENERAL_V5_PREAMBLE: u8 = 0x45;
 /// `Option::Some` discriminant for the `AsResources` extension `extra`.
 const OPTION_SOME: u8 = 0x01;
 
@@ -77,38 +75,6 @@ struct ClaimPgasInfo {
 	day: u32,
 }
 
-/// Encode `Resources.set_statement_store_account(period, seq, target)`:
-/// `pallet ‖ call ‖ period_u32LE ‖ seq_u32LE ‖ target[32]`, with the dispatch
-/// indices resolved from `metadata`.
-pub fn build_set_statement_store_account_call(
-	metadata: &Metadata,
-	period: u32,
-	seq: u32,
-	target: &[u8; 32],
-) -> Result<Vec<u8>, StatementAllowanceError> {
-	let indices = metadata.call_indices("Resources", "set_statement_store_account")?;
-	let mut call = Vec::with_capacity(2 + 4 + 4 + 32);
-	call.extend_from_slice(&indices);
-	SetStatementStoreAccountCallArgs { period, seq, target_account: *target }.encode_to(&mut call);
-	Ok(call)
-}
-
-/// Encode `Resources.claim_long_term_storage(period, counter, account_id)`:
-/// `pallet ‖ call ‖ period_u32LE ‖ counter_u8 ‖ account_id[32]`, with the
-/// dispatch indices resolved from `metadata`.
-pub fn build_claim_long_term_storage_call(
-	metadata: &Metadata,
-	period: u32,
-	counter: u8,
-	account_id: &[u8; 32],
-) -> Result<Vec<u8>, StatementAllowanceError> {
-	let indices = metadata.call_indices("Resources", "claim_long_term_storage")?;
-	let mut call = Vec::with_capacity(2 + 4 + 1 + 32);
-	call.extend_from_slice(&indices);
-	ClaimLongTermStorageCallArgs { period, counter, account_id: *account_id }.encode_to(&mut call);
-	Ok(call)
-}
-
 /// Encode the `AsResources` extension `extra` for a statement-store allowance:
 /// `Some(RegisterStatementStoreAllowance { proof, ring_index, collection })`,
 /// with the variant indices resolved from `metadata`.
@@ -149,21 +115,6 @@ pub fn build_long_term_storage_extra(
 	Ok(extra)
 }
 
-/// Encode `Pgas.claim_pgas(slot_index, target)` on Asset Hub:
-/// `pallet ‖ call ‖ slot_index_u32LE ‖ target[32]`, with the dispatch indices
-/// resolved from `metadata`.
-pub fn build_claim_pgas_call(
-	metadata: &Metadata,
-	slot_index: u32,
-	target: &[u8; 32],
-) -> Result<Vec<u8>, StatementAllowanceError> {
-	let indices = metadata.call_indices("Pgas", "claim_pgas")?;
-	let mut call = Vec::with_capacity(2 + 4 + 32);
-	call.extend_from_slice(&indices);
-	ClaimPgasCallArgs { slot_index, target: *target }.encode_to(&mut call);
-	Ok(call)
-}
-
 /// Encode the `AsPgas` extension `extra` for a PGAS claim:
 /// `Some(Claim { proof, ring_index, revision, collection, day })`, with the
 /// variant indices resolved from `metadata`.
@@ -200,53 +151,6 @@ pub fn build_as_pgas_extra(
 	Ok(extra)
 }
 
-/// Assemble the unsigned General (v5) extrinsic:
-/// `compact(len) ‖ 0x45 ‖ 0x00 ‖ Σ(all extra, AsResources = Some(info)) ‖ call`.
-pub fn build_unsigned_extrinsic(
-	metadata: &Metadata,
-	state: &ChainState,
-	call_data: &[u8],
-	as_resources_extra: &[u8],
-) -> Result<Vec<u8>, StatementAllowanceError> {
-	build_unsigned_extrinsic_with_extra(
-		metadata,
-		state,
-		call_data,
-		AS_RESOURCES,
-		as_resources_extra,
-	)
-}
-
-/// Same, for any authorizing extension: every extension's `extra` in metadata
-/// order, with `identifier`'s replaced by `extra`.
-///
-/// The version byte comes from metadata, so an extension added here encodes for
-/// the pipeline the runtime declares rather than a compiled-in guess.
-pub fn build_unsigned_extrinsic_with_extra(
-	metadata: &Metadata,
-	state: &ChainState,
-	call_data: &[u8],
-	identifier: &str,
-	extra: &[u8],
-) -> Result<Vec<u8>, StatementAllowanceError> {
-	let all = metadata.encode_signed_extensions(state);
-	let authorizing_index = metadata
-		.extension_index(identifier)
-		.ok_or_else(|| MetadataError::MissingExtension { identifier: identifier.to_string() })?;
-
-	let mut body = vec![GENERAL_V5_PREAMBLE, metadata.extension_version()];
-	for (i, ext) in all.iter().enumerate() {
-		if i == authorizing_index {
-			body.extend_from_slice(extra);
-		} else {
-			body.extend_from_slice(&ext.extra);
-		}
-	}
-	body.extend_from_slice(call_data);
-
-	Ok(body.encode())
-}
-
 #[cfg(test)]
 mod tests {
 	use parity_scale_codec::Compact;
@@ -254,50 +158,6 @@ mod tests {
 	use super::{super::test_fixtures, *};
 
 	const FIXTURE: &[u8] = include_bytes!("../../../tests/fixtures/paseo-next-v2-metadata.scale");
-
-	fn fixture_state() -> ChainState {
-		ChainState {
-			spec_version: 1_000_000,
-			transaction_version: 1,
-			genesis_hash: [0xab; 32],
-			nonce: 0,
-			restrict_origins: false,
-		}
-	}
-
-	#[test]
-	fn call_layout_is_pallet_call_period_seq_target() {
-		let metadata = Metadata::decode(FIXTURE).unwrap();
-		let call = build_set_statement_store_account_call(&metadata, 7, 0, &[0u8; 32]).unwrap();
-		assert_eq!(
-			call,
-			[
-				vec![0x3f, 0x0a],
-				7u32.to_le_bytes().to_vec(),
-				0u32.to_le_bytes().to_vec(),
-				vec![0u8; 32],
-			]
-			.concat()
-		);
-		assert_eq!(
-			SetStatementStoreAccountCallArgs::decode(&mut &call[2..]).unwrap(),
-			SetStatementStoreAccountCallArgs { period: 7, seq: 0, target_account: [0; 32] }
-		);
-	}
-
-	#[test]
-	fn long_term_storage_call_layout_is_pallet_call_period_counter_account() {
-		let metadata = Metadata::decode(FIXTURE).unwrap();
-		let call = build_claim_long_term_storage_call(&metadata, 7, 3, &[0u8; 32]).unwrap();
-		assert_eq!(
-			call,
-			[vec![0x3f, 0x0c], 7u32.to_le_bytes().to_vec(), vec![3], vec![0u8; 32],].concat()
-		);
-		assert_eq!(
-			ClaimLongTermStorageCallArgs::decode(&mut &call[2..]).unwrap(),
-			ClaimLongTermStorageCallArgs { period: 7, counter: 3, account_id: [0; 32] }
-		);
-	}
 
 	/// The collection the extension declares is what the runtime verifies the
 	/// proof against, so each collection has to reach a distinct variant index
@@ -421,18 +281,6 @@ mod tests {
 		assert_ne!(people, lite, "the collection has to reach the payload");
 	}
 
-	/// The dispatch indices come from Asset Hub's metadata, so the call the claim
-	/// submits is only as right as the pallet the fixture declares.
-	#[test]
-	fn pgas_call_layout_is_pallet_call_slot_target() {
-		let metadata = test_fixtures::asset_hub();
-		let target = [0x33; 32];
-
-		let call = build_claim_pgas_call(metadata, 5, &target).unwrap();
-
-		assert_eq!(call, [vec![0x63, 0x00], 5u32.to_le_bytes().to_vec(), target.to_vec()].concat());
-	}
-
 	/// The `AsPgas::Claim` payload the live runtime declares. Encoding fewer
 	/// fields than the runtime expects is accepted locally and then panics inside
 	/// `validate_transaction`, which is how the missing `revision` on
@@ -500,70 +348,11 @@ mod tests {
 			}
 		);
 	}
-
-	/// The extrinsic declares an extension-pipeline version and the ring-VRF proof
-	/// is signed over a message beginning with the same byte. The runtime rebuilds
-	/// that message to verify, so the two must never diverge.
-	#[test]
-	fn the_body_and_the_proof_message_declare_the_same_extension_version() {
-		let metadata = Metadata::decode(FIXTURE).unwrap();
-		let call = build_set_statement_store_account_call(&metadata, 7, 0, &[0u8; 32]).unwrap();
-		let extra = build_as_resources_extra(
-			&metadata,
-			&[0xEE; 785],
-			0,
-			0,
-			PersonhoodCollection::LitePeople,
-		)
-		.unwrap();
-		let xt = build_unsigned_extrinsic(&metadata, &fixture_state(), &call, &extra).unwrap();
-
-		let body = &xt[compact_prefix_len(&xt)..];
-		assert_eq!(body[1], metadata.extension_version());
-		// `build_proof_message` prefixes the same byte; recomputing it with a
-		// different version would change the hash, so the frozen known-answer
-		// test alongside this one is what pins the pairing.
-		assert_eq!(metadata.extension_version(), 0, "the V14 fixture has no version map");
-	}
-
-	#[test]
-	fn extrinsic_has_general_v5_preamble_and_embeds_call() {
-		let metadata = Metadata::decode(FIXTURE).unwrap();
-		let call = build_set_statement_store_account_call(&metadata, 7, 0, &[0u8; 32]).unwrap();
-		let extra = build_as_resources_extra(
-			&metadata,
-			&[0xEE; 785],
-			0,
-			0,
-			PersonhoodCollection::LitePeople,
-		)
-		.unwrap();
-		let xt = build_unsigned_extrinsic(&metadata, &fixture_state(), &call, &extra).unwrap();
-
-		// Strip the compact length prefix and check the body head + tail.
-		let body = &xt[compact_prefix_len(&xt)..];
-		assert_eq!(&body[..2], &[GENERAL_V5_PREAMBLE, metadata.extension_version()]);
-		assert_eq!(&body[body.len() - call.len()..], &call[..]);
-		// The Some(info) extra appears verbatim in the body.
-		assert!(
-			body.windows(extra.len()).any(|w| w == extra),
-			"AsResources Some(info) extra should appear in the body",
-		);
-	}
-
-	/// Length of the SCALE compact prefix at the head of `xt`.
-	fn compact_prefix_len(xt: &[u8]) -> usize {
-		match xt[0] & 0b11 {
-			0b00 => 1,
-			0b01 => 2,
-			0b10 => 4,
-			_ => 5,
-		}
-	}
 }
 
-/// The typed call arguments encode against metadata by name; these pin that
-/// they produce the bytes the runtime has always received.
+/// The typed call arguments encode against metadata by name; these pin the
+/// bytes the removed positional encoders produced, which the runtime has
+/// always received.
 #[cfg(test)]
 mod typed_call_tests {
 	use subxt::{
@@ -588,8 +377,7 @@ mod typed_call_tests {
 		let args =
 			SetStatementStoreAccountCallArgs { period: 7, seq: 3, target_account: [0x22; 32] };
 		let expected =
-			build_set_statement_store_account_call(test_fixtures::people(), 7, 3, &[0x22; 32])
-				.unwrap();
+			"3f0a07000000030000002222222222222222222222222222222222222222222222222222222222222222";
 
 		let encoded = encode_typed(
 			test_fixtures::PEOPLE_METADATA,
@@ -598,14 +386,14 @@ mod typed_call_tests {
 			&args,
 		);
 
-		assert_eq!(encoded, expected);
+		assert_eq!(hex::encode(encoded), expected);
 	}
 
 	#[test]
 	fn the_long_term_storage_call_encodes_as_before() {
 		let args = ClaimLongTermStorageCallArgs { period: 9, counter: 2, account_id: [0x33; 32] };
 		let expected =
-			build_claim_long_term_storage_call(test_fixtures::people(), 9, 2, &[0x33; 32]).unwrap();
+			"3f0c09000000023333333333333333333333333333333333333333333333333333333333333333";
 
 		let encoded = encode_typed(
 			test_fixtures::PEOPLE_METADATA,
@@ -614,16 +402,17 @@ mod typed_call_tests {
 			&args,
 		);
 
-		assert_eq!(encoded, expected);
+		assert_eq!(hex::encode(encoded), expected);
 	}
 
 	#[test]
 	fn the_pgas_call_encodes_as_before() {
 		let args = ClaimPgasCallArgs { slot_index: 4, target: [0x44; 32] };
-		let expected = build_claim_pgas_call(test_fixtures::asset_hub(), 4, &[0x44; 32]).unwrap();
+		let expected =
+			"6300040000004444444444444444444444444444444444444444444444444444444444444444";
 
 		let encoded = encode_typed(test_fixtures::ASSET_HUB_METADATA, "Pgas", "claim_pgas", &args);
 
-		assert_eq!(encoded, expected);
+		assert_eq!(hex::encode(encoded), expected);
 	}
 }

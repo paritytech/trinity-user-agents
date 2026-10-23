@@ -54,7 +54,7 @@ use collection::PersonhoodCollection;
 use subxt::utils::H256;
 
 use crate::chain::ExtrinsicService;
-use extension::{AS_RESOURCES, ChainState, Metadata, MetadataError};
+use extension::{AS_RESOURCES, Metadata, MetadataError};
 use ring::RingParams;
 use rpc::RpcClient;
 use slot::{SlotError, SlotSelection};
@@ -231,19 +231,6 @@ pub async fn fetch_genesis_hash(rpc: &RpcClient) -> Result<[u8; 32], StatementAl
 	genesis
 		.try_into()
 		.map_err(|_| ChainStateError::GenesisHashLength { len }.into())
-}
-
-/// Fetch the chain state needed to fill the signed extensions.
-pub async fn fetch_chain_state(rpc: &RpcClient) -> Result<ChainState, StatementAllowanceError> {
-	let genesis_hash = fetch_genesis_hash(rpc).await?;
-	let (spec_version, transaction_version) = fetch_runtime_version(rpc).await?;
-	Ok(ChainState {
-		spec_version,
-		transaction_version,
-		genesis_hash,
-		nonce: 0,
-		restrict_origins: false,
-	})
 }
 
 /// An RPC client together with the genesis hash the host routes it by.

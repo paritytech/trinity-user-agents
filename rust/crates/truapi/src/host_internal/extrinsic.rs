@@ -1152,14 +1152,12 @@ pub mod tests {
 	}
 
 	/// The proof-authorized path must lay the body out exactly like the
-	/// hand-rolled assembler behind chain-accepted allowance extrinsics. Both
-	/// sides source values from `encode_signed_extensions`, so this pins the
-	/// layout — preamble, ordering, no spliced signature — not the values.
+	/// assembler behind chain-accepted allowance extrinsics. The hash pins the
+	/// 858 bytes that assembler produced from the same values: preamble,
+	/// ordering, no spliced signature.
 	#[test]
 	fn v5_proof_authorized_bytes_match_the_statement_allowance_assembler() {
-		use crate::runtime::statement_allowance::extrinsic::{
-			build_long_term_storage_extra, build_unsigned_extrinsic,
-		};
+		use crate::runtime::statement_allowance::extrinsic::build_long_term_storage_extra;
 
 		let metadata = Metadata::decode_from(FIXTURE_METADATA_BYTES).unwrap().arc();
 		let allowance_metadata = AllowanceMetadata::decode(FIXTURE_METADATA_BYTES).unwrap();
@@ -1174,9 +1172,6 @@ pub mod tests {
 			PersonhoodCollection::LitePeople,
 		)
 		.unwrap();
-		let expected =
-			build_unsigned_extrinsic(&allowance_metadata, &state, &call_data, &as_resources_extra)
-				.unwrap();
 
 		let as_resources_index = allowance_metadata.as_resources_index().unwrap();
 		let mut extensions = fixture_extensions(&allowance_metadata, &state);
@@ -1192,7 +1187,10 @@ pub mod tests {
 		)
 		.unwrap();
 
-		assert_eq!(transaction, expected);
+		assert_eq!(
+			hex::encode(sp_crypto_hashing::blake2_256(&transaction)),
+			"5d9c863271cc2aa0d8cdd9fece8098d356288b7ca346f3bb2c6b86330c178791"
+		);
 	}
 
 	/// A caller may also supply a `Signed` value; the host must not replace it.

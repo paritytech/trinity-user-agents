@@ -5,6 +5,7 @@
 use std::sync::{Arc, Mutex};
 
 use parity_scale_codec::{Compact, Decode};
+use sp_crypto_hashing::blake2_256;
 
 use subxt::{
 	Metadata,
@@ -34,11 +35,8 @@ use crate::{
 		tests::{bulletin_chain_state, split_v4},
 	},
 	runtime::statement_allowance::{
-		collection::PersonhoodCollection,
-		extension::{
-			ChainState, Metadata as AllowanceMetadata, build_proof_message_after_extension,
-		},
-		extrinsic::{build_long_term_storage_extra, build_unsigned_extrinsic},
+		collection::PersonhoodCollection, extension::Metadata as AllowanceMetadata,
+		extrinsic::build_long_term_storage_extra,
 	},
 };
 
@@ -75,16 +73,6 @@ fn remark_call(metadata_bytes: &[u8]) -> Vec<u8> {
 	let metadata = Metadata::decode_from(metadata_bytes).unwrap();
 	let remark = tx("System", "remark", vec![Value::from_bytes([1, 2, 3])]);
 	encode_call_data("System", "remark", remark.call_data(), &metadata, metadata.types()).unwrap()
-}
-
-fn allowance_state() -> ChainState {
-	ChainState {
-		spec_version: 1_000_000,
-		transaction_version: 1,
-		genesis_hash: GENESIS,
-		nonce: 0,
-		restrict_origins: false,
-	}
 }
 
 /// `CheckMortality` as the allowance assembler writes it: immortal, with the
@@ -124,14 +112,18 @@ impl TransactionExtension for RecordingExtension {
 	}
 }
 
-/// The proof-authorized bytes are what statement allowance submits today, so
-/// moving it onto the builder must not change a byte apart from the era.
+/// Blake2-256 of the 822 bytes the removed statement allowance assembler
+/// produced for this call and `AsResources` value with an immortal era.
+const ALLOWANCE_ASSEMBLER_BYTES_HASH: &str =
+	"98c8c0ea429d862856c9de737268cef03340fb77c3a4f0c39fb56e7125e494e2";
+
+/// The proof-authorized bytes are what statement allowance submitted before
+/// it moved onto the builder; with the same era nothing may differ.
 #[test]
-fn an_authorized_extrinsic_matches_the_allowance_assembler() {
+fn an_authorized_extrinsic_keeps_the_allowance_assembler_bytes() {
 	let allowance = AllowanceMetadata::decode(PEOPLE).unwrap();
 	let call = remark_call(PEOPLE);
 	let extra = long_term_storage_extra(&allowance);
-	let expected = build_unsigned_extrinsic(&allowance, &allowance_state(), &call, &extra).unwrap();
 
 	let mut builder = start_build(runtime(PEOPLE));
 	builder
@@ -141,18 +133,18 @@ fn an_authorized_extrinsic_matches_the_allowance_assembler() {
 		.with_extrinsic_version(ExtrinsicVersion::newest_declaring("AsResources"));
 	let built = assemble(builder, None, None).unwrap();
 
-	assert_eq!(built.extrinsic.bytes(), expected);
+	assert_eq!(hex::encode(blake2_256(built.extrinsic.bytes())), ALLOWANCE_ASSEMBLER_BYTES_HASH);
 }
 
 /// A ring proof covers exactly the extensions after its authorizer; one more
 /// or one fewer and the node rejects the proof.
+///
+/// The hash is what the removed allowance proof-message builder computed for
+/// this call after `AsResources`.
 #[test]
 fn an_authorizer_sees_the_implication_of_the_extensions_after_it() {
-	let allowance = AllowanceMetadata::decode(PEOPLE).unwrap();
 	let call = remark_call(PEOPLE);
-	let expected =
-		build_proof_message_after_extension(&allowance, &call, &allowance_state(), "AsResources")
-			.unwrap();
+	let expected = "d0b6630d1e1764486b2080946470856f3b00d9408d71d23ab48c40d3eaf2f043";
 	let seen = Arc::new(Mutex::new(None));
 
 	let mut builder = start_build(runtime(PEOPLE));
@@ -167,7 +159,8 @@ fn an_authorizer_sees_the_implication_of_the_extensions_after_it() {
 		.with_extrinsic_version(ExtrinsicVersion::newest_declaring("AsResources"));
 	assemble(builder, None, None).unwrap();
 
-	assert_eq!(seen.lock().unwrap().as_ref().map(InheritedImplication::hash), Some(expected));
+	let implication_hash = seen.lock().unwrap().as_ref().map(InheritedImplication::hash);
+	assert_eq!(implication_hash.map(hex::encode).as_deref(), Some(expected));
 }
 
 /// Signs `call` on Bulletin through subxt, reusing `signature` so the bytes
@@ -423,18 +416,16 @@ fn v5_signature(extrinsic: &[u8], metadata: &Metadata) -> VerifySignatureDetails
 }
 
 /// A V5 signature covers the extensions after `VerifyMultiSignature`, as the
-/// node recomputes them; signing anything else is a `BadProof`.
+/// node recomputes them; signing anything else is a `BadProof`. The hash is
+/// what the removed allowance proof-message builder computed for this cut.
 #[test]
 fn a_signed_v5_extrinsic_signs_the_implication_after_verify_multi_signature() {
-	let allowance = AllowanceMetadata::decode(PEOPLE).unwrap();
 	let call = remark_call(PEOPLE);
-	let expected = build_proof_message_after_extension(
-		&allowance,
-		&call,
-		&allowance_state(),
-		"VerifyMultiSignature",
-	)
-	.unwrap();
+	let expected: [u8; 32] =
+		hex::decode("3cc30056f7aa6877d1486175e40187e291176e2034f267db36efcb5e95f63c3d")
+			.unwrap()
+			.try_into()
+			.unwrap();
 	let signer = test_signer();
 
 	let mut builder = start_build(runtime(PEOPLE));
