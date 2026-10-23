@@ -34,7 +34,7 @@ use crate::{
 	host_logic::product_account::{derive_ring_vrf_domain_entropy, product_public_key_to_address},
 	runtime::{
 		authority::{
-			AuthoritySession, CreateTransactionAuthorityRequest, ProductAuthority,
+			AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest, ProductAuthority,
 			SignPayloadAuthorityRequest, SignRawAuthorityRequest,
 		},
 		sso_service::{Dispatch, SsoReply, SsoRequestContext},
@@ -280,14 +280,12 @@ impl SigningHostSsoService {
 				})
 			},
 			api::AllocatableResource::AutoSigning => {
-				let product_root_private_key = signing_host
-					.product_subtree_secret(calling_product_id)
-					.map_err(AllowanceAllocationError::Authority)?;
+				let product_root_private_key =
+					signing_host.product_subtree_secret(calling_product_id)?;
 				let root_entropy = signing_host.root_entropy()?;
 				let ring_vrf_domain_entropy =
 					derive_ring_vrf_domain_entropy(&root_entropy, calling_product_id)
-						.map_err(super::product_authority_error)
-						.map_err(AllowanceAllocationError::Authority)?;
+						.map_err(AuthorityError::from)?;
 				Ok(SsoAllocationOutcome::Allocated(SsoAllocatedResource::AutoSigning {
 					product_root_private_key,
 					ring_vrf_domain_entropy,

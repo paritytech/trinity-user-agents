@@ -16,6 +16,8 @@ use truapi::latest::{
 	HostAccountRingVrfSignRequest, ProductAccountId, RingLocation, RingLocationJunction,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+use allowance_renewal::StatementRenewalError;
 pub use allowance_renewal::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::TrackedStatementRenewalTarget;
@@ -43,9 +45,8 @@ use crate::{
 		entropy::derive_product_entropy,
 		features::genesis_for,
 		product_account::{
-			ProductAccountError, SR25519_SIGNING_CONTEXT, derivation_index_bytes,
-			derive_full_person_ring_vrf_entropy, derive_identity_keypair,
-			derive_lite_person_ring_vrf_entropy, derive_product_keypair,
+			SR25519_SIGNING_CONTEXT, derivation_index_bytes, derive_full_person_ring_vrf_entropy,
+			derive_identity_keypair, derive_lite_person_ring_vrf_entropy, derive_product_keypair,
 			derive_product_subtree_keypair, derive_ring_vrf_entropy,
 			derive_root_keypair_from_entropy, personhood_product_id,
 		},
@@ -306,10 +307,10 @@ impl SigningHost {
 
 	fn product_subtree_secret(&self, product_id: &ProductId) -> Result<[u8; 64], AuthorityError> {
 		let entropy = self.root_entropy()?;
-		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
+		let root = derive_root_keypair_from_entropy(&entropy)?;
 		derive_product_subtree_keypair(&root, product_id)
 			.map(|keypair| keypair.secret.to_bytes())
-			.map_err(product_authority_error)
+			.map_err(Into::into)
 	}
 
 	/// Paired-host requests the pairing host can still withdraw.
@@ -324,12 +325,12 @@ impl SigningHost {
 	) -> Result<(), AuthorityError> {
 		let (_, activation_generation) = self.require_current_session(session)?;
 		let entropy = self.root_entropy()?;
-		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
+		let root = derive_root_keypair_from_entropy(&entropy)?;
 		let owner = root.public.to_bytes();
 		if owner != session.public_key {
 			return Err(AuthorityError::Disconnected);
 		}
-		derive_product_subtree_keypair(&root, product_id).map_err(product_authority_error)?;
+		derive_product_subtree_keypair(&root, product_id)?;
 
 		let mut state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
 		if state.activation_generation != activation_generation {
@@ -401,9 +402,8 @@ impl SigningHost {
 		let Ok(entropy) = self.root_entropy() else {
 			return Ok(None);
 		};
-		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
-		let subtree =
-			derive_product_subtree_keypair(&root, product_id).map_err(product_authority_error)?;
+		let root = derive_root_keypair_from_entropy(&entropy)?;
+		let subtree = derive_product_subtree_keypair(&root, product_id)?;
 		Ok(Some(subtree.public.to_bytes()))
 	}
 
@@ -417,7 +417,7 @@ impl SigningHost {
 		account: &v01::ProductAccountId,
 	) -> Result<([u8; 32], schnorrkel::Keypair), AuthorityError> {
 		let entropy = self.root_entropy()?;
-		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
+		let root = derive_root_keypair_from_entropy(&entropy)?;
 		let owner = root.public.to_bytes();
 		derive_product_keypair(
 			&root,
@@ -425,7 +425,7 @@ impl SigningHost {
 			derivation_index_bytes(&account.derivation_index),
 		)
 		.map(|keypair| (owner, keypair))
-		.map_err(product_authority_error)
+		.map_err(Into::into)
 	}
 
 	fn product_keypair(
@@ -437,7 +437,7 @@ impl SigningHost {
 
 	fn identity_keypair(&self) -> Result<schnorrkel::Keypair, AuthorityError> {
 		let entropy = self.root_entropy()?;
-		derive_identity_keypair(&entropy, &self.network_suffix).map_err(product_authority_error)
+		derive_identity_keypair(&entropy, &self.network_suffix).map_err(Into::into)
 	}
 
 	fn install_local_session(&self, secret: Zeroizing<Vec<u8>>, session: SessionInfo) {
@@ -755,19 +755,19 @@ impl SigningHost {
 	pub async fn track_statement_renewal_targets(
 		&self,
 		targets: Vec<StatementRenewalTarget>,
-	) -> Result<(), String> {
+	) -> Result<(), StatementRenewalError> {
 		allowance_renewal::track(self, targets).await
 	}
 
 	/// Every statement account the ledger currently tracks.
 	pub async fn statement_renewal_targets(
 		&self,
-	) -> Result<Vec<TrackedStatementRenewalTarget>, String> {
+	) -> Result<Vec<TrackedStatementRenewalTarget>, StatementRenewalError> {
 		allowance_renewal::list(self).await
 	}
 
 	/// Root public key the active identity records its fixed entries under.
-	pub fn statement_renewal_owner_key(&self) -> Result<[u8; 32], String> {
+	pub fn statement_renewal_owner_key(&self) -> Result<[u8; 32], StatementRenewalError> {
 		allowance_renewal::active_owner_key(self)
 	}
 
@@ -775,14 +775,17 @@ impl SigningHost {
 	pub async fn untrack_statement_renewal_account(
 		&self,
 		account_id: &[u8; 32],
-	) -> Result<bool, String> {
+	) -> Result<bool, StatementRenewalError> {
 		allowance_renewal::untrack_account_for_signing_host(self, account_id).await
 	}
 
 	/// Run one statement-store renewal pass over the tracked targets.
 	pub async fn renew_statement_allowances(
 		&self,
-	) -> Result<crate::runtime::statement_allowance::renewal::StatementRenewalReport, String> {
+	) -> Result<
+		crate::runtime::statement_allowance::renewal::StatementRenewalReport,
+		StatementRenewalError,
+	> {
 		allowance_renewal::renew_now(&self.services, self).await
 	}
 
@@ -846,10 +849,10 @@ impl ProductAuthority for SigningHost {
 	) -> Result<[u8; 32], AuthorityError> {
 		self.require_current_session(session)?;
 		let entropy = self.root_entropy()?;
-		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
+		let root = derive_root_keypair_from_entropy(&entropy)?;
 		derive_product_subtree_keypair(&root, product_id)
 			.map(|keypair| keypair.public.to_bytes())
-			.map_err(product_authority_error)
+			.map_err(Into::into)
 	}
 
 	async fn subtree_resolution_reaches_account_holder(
@@ -1303,10 +1306,7 @@ impl ProductAuthority for SigningHost {
 		#[cfg(feature = "test-host")]
 		self.resource_controls
 			.refuse_withheld(&v01::AllocatableResource::StatementStoreAllowance)?;
-		let period = statement_allowance::slot::current_period(
-			allowance::current_unix_secs()
-				.map_err(allowance::AllowanceAllocationError::into_authority_error)?,
-		);
+		let period = statement_allowance::slot::current_period(allowance::current_unix_secs()?);
 		if let Some(key) = self
 			.local_grants
 			.lock()
@@ -1321,7 +1321,7 @@ impl ProductAuthority for SigningHost {
 			OnExistingAllowancePolicy::Ignore,
 		)
 		.await
-		.map_err(allowance::AllowanceAllocationError::into_authority_error)
+		.map_err(Into::into)
 	}
 
 	#[cfg(feature = "test-host")]
@@ -1354,8 +1354,7 @@ impl ProductAuthority for SigningHost {
 			product_id,
 			OnExistingAllowancePolicy::Ignore,
 		)
-		.await
-		.map_err(allowance::AllowanceAllocationError::into_authority_error)?;
+		.await?;
 		BulletinAllowanceKey::from_secret_bytes(secret)
 	}
 
@@ -1376,8 +1375,7 @@ impl ProductAuthority for SigningHost {
 			product_id,
 			OnExistingAllowancePolicy::Increase,
 		)
-		.await
-		.map_err(allowance::AllowanceAllocationError::into_authority_error)?;
+		.await?;
 		BulletinAllowanceKey::from_secret_bytes(secret)
 	}
 
@@ -1424,10 +1422,6 @@ fn local_session_validation_id(session: &SessionInfo, activation_generation: u64
 	id.extend_from_slice(b":activation:");
 	id.extend_from_slice(&activation_generation.to_le_bytes());
 	id
-}
-
-fn product_authority_error(err: ProductAccountError) -> AuthorityError {
-	AuthorityError::Unavailable { reason: err.to_string() }
 }
 
 #[cfg(test)]

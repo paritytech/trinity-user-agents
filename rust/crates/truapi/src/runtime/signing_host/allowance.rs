@@ -65,11 +65,11 @@ pub enum AllowanceAllocationError {
 	},
 }
 
-impl AllowanceAllocationError {
-	pub fn into_authority_error(self) -> AuthorityError {
-		match self {
-			Self::Authority(err) => err,
-			other => AuthorityError::Unavailable { reason: other.to_string() },
+impl From<AllowanceAllocationError> for AuthorityError {
+	fn from(error: AllowanceAllocationError) -> Self {
+		match error {
+			AllowanceAllocationError::Authority(err) => err,
+			other => Self::Unavailable { reason: other.to_string() },
 		}
 	}
 }
