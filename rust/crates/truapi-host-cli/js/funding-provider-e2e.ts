@@ -3,8 +3,8 @@
 // overlay offers it, the auto-accepting user picks it, so this script is both
 // the product requesting funds and the provider's worker serving them.
 //
-// The core calls the worker with `assign`, `cancel` and `settleCancel`, which
-// `ScriptedProvider` answers; the worker calls the core with `report` and
+// The core calls the worker with `quote`, `assign`, `cancel` and
+// `settleCancel`, which `ScriptedProvider` answers; the worker calls the core with `report` and
 // `presentFrame`. The battery acts as the user through the host's commands
 // (`actAsUser`), as a person at the terminal would.
 //
@@ -88,7 +88,8 @@ export type Plan = (
   session: FundingAssignment,
 ) => Promise<void>;
 
-/** The provider's worker: it takes every session the core assigns, runs the
+/** The provider's worker: it prices every ask one to one, takes every
+ *  session the core assigns, runs the
  *  plan set for its direction and amount, answers cancels with the answer
  *  set for the session, and settles accepted offers by ending the session.
  *  Every call is recorded, and every call is idempotent, as the core repeats
@@ -103,6 +104,21 @@ export class ScriptedProvider {
   private readonly failures: string[] = [];
 
   constructor(private readonly client: TrUApiClient) {
+    client.fundingProvider.onQuote(({ ask }, send) => {
+      send({
+        tag: "Quoted",
+        value: {
+          quote: {
+            quoteId: `q-${crypto.randomUUID()}`,
+            sendAmount: ask.amount,
+            receiveAmount: ask.amount,
+            providerFee: 0n,
+            networkFee: 0n,
+            etaSecs: 60n,
+          },
+        },
+      });
+    });
     client.fundingProvider.onAssign(({ session }, send) => {
       this.assigned.push(session);
       send(undefined);
@@ -298,18 +314,30 @@ export async function runProviderStart(
 
   await check("provider_assigned", async () => {
     inbound = await requestFunding(client, fundingLogPath, "In", IN_AMOUNT);
-    const { direction, amount, lastUpdate } =
+    const { direction, amount, lastUpdate, quote } =
       await provider.assignment(inbound);
     if (
       direction !== "In" ||
       amount !== IN_AMOUNT ||
-      lastUpdate !== undefined
+      lastUpdate !== undefined ||
+      !quote?.quoteId.startsWith("q-")
     ) {
       throw new Error(
-        `unexpected assignment ${stringify({ direction, amount, lastUpdate })}`,
+        `unexpected assignment ${stringify({ direction, amount, lastUpdate, quote })}`,
       );
     }
-    return "the core assigned the session to the provider's worker the user chose";
+    await waitForTranscript(
+      fundingLogPath,
+      (line) =>
+        line.kind === "presented" &&
+        line.intent === inbound &&
+        (line.providers ?? []).length > 0 &&
+        (line.quotes ?? []).some(
+          (row) => row.state === `Quoted:${quote.quoteId}`,
+        ),
+      `the provider and quote lists for ${inbound}`,
+    );
+    return "the host listed the provider, its worker quoted, and the core assigned it the session on that quote";
   });
 
   await check("provider_present_frame", async () => {

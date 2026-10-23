@@ -104,24 +104,25 @@ pub mod latest {
 		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
 		Dimensions, Effect, EffectProps, FundingAssignment, FundingCancelAnswer,
-		FundingCancelDecision, FundingDirection, FundingFailure, FundingFrameOutcome,
-		FundingFrameTarget, FundingUpdate, GenericError, HorizontalAlignment,
-		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
-		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
-		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
-		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
-		HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
-		NFT_PURSE_MAX_NAME_BYTES, NftPurseId, NftPurseOwner, NftPursePurse, OperationStartedResult,
-		PaymentTopUpSource, PocketCard, ProductAccount, ProductAccountId, ProductProofContext,
-		RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
-		RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
-		RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
-		RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, ResourceAllocationError,
-		RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi,
-		RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
-		StatementProof, StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps,
-		TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
-		VrfSignature,
+		FundingCancelDecision, FundingDeposit, FundingDirection, FundingFailure,
+		FundingFrameOutcome, FundingFrameTarget, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk,
+		FundingQuoteRefusal, FundingRail, FundingReceived, FundingUpdate, GenericError,
+		HorizontalAlignment, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
+		HostAccountGetError, HostAccountListRingVrfKeysRequest,
+		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
+		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
+		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
+		ImageSource, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseId, NftPurseOwner, NftPursePurse,
+		OperationStartedResult, PaymentTopUpSource, PocketCard, ProductAccount, ProductAccountId,
+		ProductProofContext, RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest,
+		RemotePermission, RemoteStatementStoreCreateProofError,
+		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
+		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
+		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
+		RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape,
+		SignedStatement, Size, Statement, StatementProof, StorageQueryItem, StorageQueryType,
+		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
+		TypographyStyle, VerticalAlignment, VrfSignature,
 	};
 
 	/// Latest payload type of a versioned envelope.
@@ -848,7 +849,7 @@ pub use runtime::contacts::contact_handle;
 #[cfg(feature = "runtime")]
 pub use runtime::login_failure::reports_exhausted_period;
 #[cfg(feature = "runtime")]
-pub use runtime::product_manifest::encode_cached_root_manifest;
+pub use runtime::product_manifest::{encode_cached_root_manifest, worker_manifest_cache_key};
 #[cfg(feature = "runtime")]
 pub use runtime::statement_allowance;
 #[cfg(feature = "runtime")]

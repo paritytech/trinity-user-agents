@@ -3,6 +3,9 @@
 use crate::v01;
 
 truapi_macros::versioned_type! {
+	pub enum ProductFundingQuoteRequest { V1 => v01::ProductFundingQuoteRequest }
+	pub enum ProductFundingQuoteItem { V1 => v01::FundingQuoteAnswer }
+	pub enum ProductFundingQuoteError { V1 => v01::GenericError }
 	pub enum ProductFundingAssignRequest { V1 => v01::ProductFundingAssignRequest }
 	pub enum ProductFundingAssignItem { V1 }
 	pub enum ProductFundingAssignError { V1 => v01::GenericError }

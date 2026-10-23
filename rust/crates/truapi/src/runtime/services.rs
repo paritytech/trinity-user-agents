@@ -59,6 +59,10 @@ pub struct RuntimeServices {
 	pocket_platform: OnceLock<Arc<dyn PocketPlatform>>,
 	/// Funding sessions shared by every product runtime of this host.
 	funding: Arc<crate::runtime::funding::FundingRegistry>,
+	/// Funding providers the host offers, kept current against dotNS.
+	funding_providers: crate::runtime::funding_providers::FundingProviders,
+	/// Recent funding quote answers and the quotes each session was offered.
+	funding_quotes: crate::runtime::funding_quotes::FundingQuotes,
 	/// Host top-up engine, installed once at startup by a host that claims
 	/// funds into the balance. Unset leaves every top-up `Unsupported`.
 	top_up_platform: OnceLock<Arc<dyn TopUpPlatform>>,
@@ -186,6 +190,8 @@ impl RuntimeServices {
 			permission_status: OnceLock::new(),
 			pocket_platform: OnceLock::new(),
 			funding: Arc::new(crate::runtime::funding::FundingRegistry::new(services.clone())),
+			funding_providers: Default::default(),
+			funding_quotes: Default::default(),
 			top_up_platform: OnceLock::new(),
 			payment_platform: OnceLock::new(),
 			balance_platform: OnceLock::new(),
@@ -258,6 +264,16 @@ impl RuntimeServices {
 	/// Funding sessions shared by every product runtime of this host.
 	pub fn funding(&self) -> &Arc<crate::runtime::funding::FundingRegistry> {
 		&self.funding
+	}
+
+	/// The funding providers the host offers.
+	pub fn funding_providers(&self) -> &crate::runtime::funding_providers::FundingProviders {
+		&self.funding_providers
+	}
+
+	/// Recent quote answers and the quotes each session was offered.
+	pub fn funding_quotes(&self) -> &crate::runtime::funding_quotes::FundingQuotes {
+		&self.funding_quotes
 	}
 
 	/// Install the host's top-up engine. Set-once; returns whether this call

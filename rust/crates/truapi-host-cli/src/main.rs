@@ -1715,6 +1715,7 @@ async fn start_signing_host(
 		pocket.clone(),
 	)?;
 	apply_local_product_grants(platform.as_ref(), network, &args.product_config).await?;
+	funding_host::offer_providers(&runtime, platform.as_ref()).await?;
 	let runtime_factory = frame_server::SwitchableSigningRuntime::new(runtime.clone());
 	let last_script = profile
 		.as_ref()

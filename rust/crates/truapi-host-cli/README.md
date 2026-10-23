@@ -770,11 +770,13 @@ Scripts under `js/scripts/` include:
   host and the product agree rather than resting on the product's word.
 
   The funding phase runs the signing host's funding overlay as a host app
-  would. `TRUAPI_FUNDING_PROVIDERS` names the providers the overlay offers,
-  here the phase's own product, which runs as a Worker and is both the product
-  asking for funds and the provider's worker serving them through
-  `onAssign`, `onCancel` and `onSettleCancel`. The auto-accepting user picks
-  the provider and accepts its cancel offers. The script acts as the user
+  would. `TRUAPI_FUNDING_PROVIDERS` names the providers the host offers, each
+  with a Worker manifest the CLI ships for it, here the phase's own product,
+  which runs as a Worker and is both the product asking for funds and the
+  provider's worker serving them through `onQuote`, `onAssign`, `onCancel`
+  and `onSettleCancel`. The overlay lists the providers serving a session and
+  their quotes; the auto-accepting user picks the first quote and accepts
+  cancel offers. The script acts as the user
   through the host's stdin, a pipe in `TRUAPI_FUNDING_USER`: with `--script`,
   a stdin that is not a terminal takes `/funding cancel <intent>` and
   `/approval manual|automatic`, so a case cancels a session or has the overlay

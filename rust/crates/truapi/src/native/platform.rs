@@ -721,6 +721,10 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem) {
 		self.funding.funding_session_changed(intent, status);
 	}
+
+	fn funding_quote_changed(&self, intent: String, row: crate::platform::FundingQuoteRow) {
+		self.funding.funding_quote_changed(intent, row);
+	}
 }
 
 /// Rank of a terminal status.

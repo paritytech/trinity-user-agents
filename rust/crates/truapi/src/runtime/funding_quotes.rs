@@ -1,0 +1,344 @@
+//! Live quotes for a funding session, asked of each candidate's worker.
+//!
+//! The host asks once per amount, rail and asset; the core sends the ask to
+//! every funding provider, on `serveSubscribe`, whatever its manifest says it
+//! serves, since a provider can serve more or less than it last published.
+//! The worker prices it from its own API and answers with `answerQuote`. Each
+//! provider's row resolves on its own: a provider that does not answer in time
+//! is unavailable, so a slow one never holds the list. What an answer shows
+//! about what the provider serves is kept for twelve hours and folded into the
+//! candidates.
+
+use std::{
+	collections::HashMap,
+	sync::{Arc, Mutex},
+};
+
+use core::time::Duration;
+
+use futures::{
+	future::{self, Either},
+	stream::{self, BoxStream, StreamExt},
+};
+use parity_scale_codec::Encode;
+use truapi::latest::{FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingQuoteRefusal};
+
+use super::{funding::lock, services::RuntimeServices};
+use crate::{
+	host_logic::{funding::FundingChoice, funding_providers::LearnedSupport},
+	platform::{FundingQuoteRow, FundingQuoteState, FundingQuoteUnavailable, ProductId},
+	unix_time::current_unix_millis,
+};
+
+/// How long a provider has to answer an ask.
+const QUOTE_DEADLINE: Duration = Duration::from_secs(10);
+/// How long a provider's answer is reused for the same ask, so editing the
+/// amount back and forth does not ask every provider again.
+const ANSWER_REUSE_MS: u64 = 30_000;
+
+/// A provider's answer and when it came.
+#[derive(Clone)]
+struct RecentAnswer {
+	at_ms: u64,
+	answer: FundingQuoteAnswer,
+}
+
+/// Recent answers, and the quotes each session was offered.
+#[derive(Default)]
+pub struct FundingQuotes {
+	/// Answers by provider and encoded ask, with when each came.
+	answers: Mutex<HashMap<(String, Vec<u8>), RecentAnswer>>,
+	/// Quotes offered by session and provider, with the rail and asset each
+	/// priced, so a selection can only name one the host was shown.
+	offered: Mutex<HashMap<(String, String), Vec<FundingChoice>>>,
+}
+
+impl FundingQuotes {
+	/// The quote `quote_id` that `provider_id` offered for session `intent`,
+	/// with what it priced, unless it expired by `now_ms`.
+	pub fn offered(
+		&self,
+		intent: &str,
+		provider_id: &str,
+		quote_id: &str,
+		now_ms: u64,
+	) -> Option<FundingChoice> {
+		lock(&self.offered)
+			.get(&(intent.to_string(), provider_id.to_string()))?
+			.iter()
+			.find(|choice| choice.quote.quote_id == quote_id && !expired(&choice.quote, now_ms))
+			.cloned()
+	}
+
+	/// Keep `quote` as offered for session `intent`, dropping the session's
+	/// quotes from `provider_id` that expired by `now_ms`.
+	fn offer(
+		&self,
+		intent: &str,
+		provider_id: &str,
+		quote: FundingQuote,
+		ask: &FundingQuoteAsk,
+		now_ms: u64,
+	) {
+		let mut offered = lock(&self.offered);
+		let choices = offered.entry((intent.to_string(), provider_id.to_string())).or_default();
+		choices
+			.retain(|kept| kept.quote.quote_id != quote.quote_id && !expired(&kept.quote, now_ms));
+		choices.push(FundingChoice { quote, rail: ask.rail, asset: ask.asset.clone() });
+	}
+
+	/// Drop the quotes offered for every session `quotable` rejects: one that
+	/// was assigned or ended can no longer be handed a quote.
+	pub fn retain_sessions(&self, quotable: impl Fn(&str) -> bool) {
+		lock(&self.offered).retain(|(intent, _), _| quotable(intent));
+	}
+
+	/// `provider_id`'s answer to the same ask, when it came recently and, if
+	/// it is a quote, has not expired.
+	fn reusable(
+		&self,
+		provider_id: &str,
+		ask: &FundingQuoteAsk,
+		now_ms: u64,
+	) -> Option<FundingQuoteAnswer> {
+		let RecentAnswer { at_ms, answer } =
+			lock(&self.answers).get(&(provider_id.to_string(), ask.encode()))?.clone();
+		let fresh = now_ms.saturating_sub(at_ms) < ANSWER_REUSE_MS;
+		let live = match &answer {
+			FundingQuoteAnswer::Quoted { quote } => !expired(quote, now_ms),
+			FundingQuoteAnswer::Refused { .. } => true,
+		};
+		(fresh && live).then_some(answer)
+	}
+
+	fn remember(
+		&self,
+		provider_id: &str,
+		ask: &FundingQuoteAsk,
+		now_ms: u64,
+		answer: FundingQuoteAnswer,
+	) {
+		let mut answers = lock(&self.answers);
+		answers.retain(|_, recent| now_ms.saturating_sub(recent.at_ms) < ANSWER_REUSE_MS);
+		answers.insert(
+			(provider_id.to_string(), ask.encode()),
+			RecentAnswer { at_ms: now_ms, answer },
+		);
+	}
+}
+
+impl RuntimeServices {
+	/// Ask every funding provider to price `ask` for session `intent`. Each
+	/// provider's row is first `Pending`, then `Quoted` or `Unavailable`. The
+	/// stream ends once every provider has answered or run out of time, and
+	/// never errors. Dropping it withdraws the asks still open and lets the
+	/// providers' workers go. The
+	/// ask's direction is the session's. Empty for a session the core does
+	/// not know or that ended.
+	pub fn get_funding_quote(
+		self: &Arc<Self>,
+		intent: &str,
+		ask: FundingQuoteAsk,
+	) -> BoxStream<'static, FundingQuoteRow> {
+		self.get_funding_quote_within(intent, ask, QUOTE_DEADLINE)
+	}
+
+	/// [`Self::get_funding_quote`] with `deadline` for each provider.
+	pub fn get_funding_quote_within(
+		self: &Arc<Self>,
+		intent: &str,
+		ask: FundingQuoteAsk,
+		deadline: Duration,
+	) -> BoxStream<'static, FundingQuoteRow> {
+		let Some(session) = self.funding().get(intent).filter(|session| !session.is_terminal())
+		else {
+			return stream::empty().boxed();
+		};
+		let ask = FundingQuoteAsk { direction: session.direction, ..ask };
+		self.refresh_funding_providers();
+		let rows: Vec<_> = self
+			.funding_providers()
+			.quote_targets()
+			.into_iter()
+			.map(|provider_id| {
+				let pending = FundingQuoteRow {
+					provider_id: provider_id.clone(),
+					state: FundingQuoteState::Pending,
+				};
+				let services = self.clone();
+				let intent = intent.to_string();
+				let ask = ask.clone();
+				stream::once(future::ready(pending))
+					.chain(stream::once(async move {
+						services.quote_one(&intent, &provider_id, ask, deadline).await
+					}))
+					.boxed()
+			})
+			.collect();
+		stream::select_all(rows).boxed()
+	}
+
+	/// Ask one provider, holding its worker while it answers.
+	async fn quote_one(
+		self: &Arc<Self>,
+		intent: &str,
+		provider_id: &str,
+		ask: FundingQuoteAsk,
+		deadline: Duration,
+	) -> FundingQuoteRow {
+		let quotes = &self.funding_quotes();
+		let answer = match quotes.reusable(provider_id, &ask, current_unix_millis()) {
+			Some(answer) => Some(answer),
+			None => {
+				let hold = WorkerHold::acquire(self, provider_id);
+				let funding = self.funding().clone();
+				let asked = {
+					let ask = ask.clone();
+					let provider_id = provider_id.to_string();
+					async move { funding.connected_link(&provider_id).await.quote(ask).await }
+				};
+				let timeout = futures_timer::Delay::new(deadline);
+				let answer = match future::select(Box::pin(asked), timeout).await {
+					Either::Left((answer, _)) => answer,
+					Either::Right(_) => None,
+				};
+				drop(hold);
+				if let Some(answer) = &answer {
+					let now_ms = current_unix_millis();
+					quotes.remember(provider_id, &ask, now_ms, answer.clone());
+					if let Some(supported) = shows_support(answer, ask.country.is_some()) {
+						self.learn_funding_support(LearnedSupport {
+							provider_id: provider_id.to_string(),
+							direction: ask.direction,
+							rail: ask.rail,
+							asset: ask.asset.clone(),
+							country: ask.country.clone(),
+							supported,
+							learned_at_ms: now_ms,
+						});
+					}
+				}
+				answer
+			},
+		};
+		let state = match answer {
+			None => FundingQuoteState::Unavailable { reason: FundingQuoteUnavailable::Timeout },
+			Some(FundingQuoteAnswer::Refused { reason }) => FundingQuoteState::Unavailable {
+				reason: FundingQuoteUnavailable::Refused { reason },
+			},
+			Some(FundingQuoteAnswer::Quoted { quote }) => {
+				quotes.offer(intent, provider_id, quote.clone(), &ask, current_unix_millis());
+				FundingQuoteState::Quoted { quote }
+			},
+		};
+		FundingQuoteRow { provider_id: provider_id.to_string(), state }
+	}
+}
+
+/// A reference on a provider's worker while the core asks it for a quote,
+/// released when dropped, so a quote stream dropped while it waits leaves
+/// none behind.
+struct WorkerHold<'a> {
+	services: &'a RuntimeServices,
+	provider: Option<ProductId>,
+}
+
+impl<'a> WorkerHold<'a> {
+	/// Hold `provider_id`'s worker, so the host runs it to answer.
+	fn acquire(services: &'a RuntimeServices, provider_id: &str) -> Self {
+		let provider = provider_id.parse::<ProductId>().ok();
+		if let Some(provider) = &provider {
+			services.worker_ledger.acquire(provider);
+		}
+		Self { services, provider }
+	}
+}
+
+impl Drop for WorkerHold<'_> {
+	fn drop(&mut self) {
+		if let Some(provider) = &self.provider {
+			self.services.worker_ledger.release(provider);
+		}
+	}
+}
+
+/// What an answer shows about whether the provider serves the ask: a quote,
+/// or a refusal of only the amount, means it does; refusing the country of
+/// an ask that named one means it does not there; anything else may pass and
+/// shows nothing. A country refusal for an ask without a country only says
+/// the provider needs one, not that it serves nowhere.
+fn shows_support(answer: &FundingQuoteAnswer, names_country: bool) -> Option<bool> {
+	match answer {
+		FundingQuoteAnswer::Quoted { .. } => Some(true),
+		FundingQuoteAnswer::Refused { reason } => match reason {
+			FundingQuoteRefusal::BelowMinimum { .. } | FundingQuoteRefusal::AboveMaximum { .. } => {
+				Some(true)
+			},
+			FundingQuoteRefusal::CountryUnsupported => names_country.then_some(false),
+			FundingQuoteRefusal::Unavailable | FundingQuoteRefusal::Other { .. } => None,
+		},
+	}
+}
+
+fn expired(quote: &FundingQuote, now_ms: u64) -> bool {
+	quote.expires_at.is_some_and(|expires_at| now_ms >= expires_at)
+}
+
+#[cfg(test)]
+mod tests {
+	use truapi::latest::{FundingDirection, FundingRail};
+
+	use super::*;
+
+	const NOW: u64 = 1_700_000_000_000;
+
+	fn quote(quote_id: &str, expires_at: Option<u64>) -> FundingQuote {
+		FundingQuote {
+			quote_id: quote_id.to_string(),
+			send_amount: 1_020,
+			receive_amount: 1_000,
+			provider_fee: 20,
+			network_fee: 0,
+			eta_secs: None,
+			expires_at,
+		}
+	}
+
+	// Refusing the country of an ask that named none says nothing about
+	// where the provider serves, so it must not be learned as a refusal
+	// everywhere, which would hide the provider from every user.
+	#[test]
+	fn only_an_ask_naming_a_country_learns_a_country_refusal() {
+		let refused =
+			FundingQuoteAnswer::Refused { reason: FundingQuoteRefusal::CountryUnsupported };
+
+		assert_eq!(
+			(shows_support(&refused, true), shows_support(&refused, false)),
+			(Some(false), None)
+		);
+	}
+
+	// A host asks again each time the user edits the amount, so a session's
+	// expired quotes are dropped rather than piling up while its overlay is
+	// open.
+	#[test]
+	fn offering_a_quote_drops_the_expired_ones() {
+		let quotes = FundingQuotes::default();
+		let ask = FundingQuoteAsk {
+			direction: FundingDirection::In,
+			rail: FundingRail::Card,
+			asset: "EUR".to_string(),
+			amount: 1_000,
+			country: None,
+		};
+		quotes.offer("fs_1", "ramp.dot", quote("expired", Some(NOW)), &ask, NOW - 1);
+		quotes.offer("fs_1", "ramp.dot", quote("live", None), &ask, NOW);
+
+		let kept: Vec<String> = lock(&quotes.offered)
+			.values()
+			.flatten()
+			.map(|choice| choice.quote.quote_id.clone())
+			.collect();
+		assert_eq!(kept, vec!["live".to_string()]);
+	}
+}
