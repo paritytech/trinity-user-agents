@@ -641,7 +641,9 @@ async fn wait_for_lite_username(
 				);
 				debug!("dotNS username poll {attempt}/{MAX_ATTEMPTS}: empty");
 			},
-			Err(err) => warn!(%err, "dotNS username poll attempt {attempt} failed"),
+			Err(err) => {
+				warn!(err = %format!("{err:#}"), "dotNS username poll attempt {attempt} failed")
+			},
 		}
 		if attempt < MAX_ATTEMPTS {
 			tokio::time::sleep(Duration::from_secs(4)).await;

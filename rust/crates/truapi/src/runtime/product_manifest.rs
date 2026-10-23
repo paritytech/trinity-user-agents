@@ -520,7 +520,9 @@ async fn root_manifest(
 	let genesis_hash = services.asset_hub_chain_genesis_hash()?;
 	let json = fetch_root_manifest(&services.chain, genesis_hash, target)
 		.await
-		.inspect_err(|reason| warn!(%target, %reason, "root manifest lookup failed"))
+		.inspect_err(
+			|reason| warn!(%target, reason = %reason.reason(), "root manifest lookup failed"),
+		)
 		.ok()?;
 	let _ = platform
 		.write_core_storage(

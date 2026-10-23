@@ -564,27 +564,25 @@ const CLAIM_PAGE_LIMIT: u64 = 16;
 const CLAIM_PAGE_MAX: u64 = 16;
 
 /// A failed dotNS lookup, retaining the operation and its underlying failure.
-#[derive(Debug, PartialEq, Eq, derive_more::Display, derive_more::Error, derive_more::From)]
+/// Use [`Self::reason`] for a complete diagnostic.
+#[derive(Debug, PartialEq, Eq, Error, derive_more::From)]
 pub enum DotnsError {
 	/// The chain could not serve a storage read.
-	#[display("{_0}")]
-	#[from]
-	Storage(#[error(not(source))] String),
+	#[error("{0}")]
+	#[from(String)]
+	Storage(String),
 	/// A contract view failed without an additional operation label.
-	#[display("{_0}")]
-	#[from]
-	View(#[error(source)] DotnsViewError),
+	#[error(transparent)]
+	#[from(DotnsViewError)]
+	View(DotnsViewError),
 	/// The controller's protocol registry could not be read.
-	#[display("DotnsPopController.protocolRegistry(): {_0}")]
-	ProtocolRegistry(DotnsCallError),
-	/// Username resolution could not call the controller's registry view.
-	#[display("DotnsPopController.protocolRegistry: {_0}")]
-	ProtocolRegistryView(DotnsViewError),
+	#[error("DotnsPopController.protocolRegistry()")]
+	ProtocolRegistry(#[source] DotnsCallError),
 	/// The gateway dispatcher could not identify its controller.
-	#[display("RootGatewayDispatcher.TARGET(): {_0}")]
-	DispatcherTarget(DotnsCallError),
+	#[error("RootGatewayDispatcher.TARGET()")]
+	DispatcherTarget(#[source] DotnsCallError),
 	/// A protocol component address could not be read.
-	#[display("ProtocolRegistry.get({name}): {source}")]
+	#[error("ProtocolRegistry.get({name})")]
 	ProtocolComponent {
 		/// Registry component being resolved.
 		name: String,
@@ -592,7 +590,7 @@ pub enum DotnsError {
 		source: DotnsCallError,
 	},
 	/// A label's proof-of-personhood issuance could not be determined.
-	#[display("DotnsPopController.isPopIssued({label}): {source}")]
+	#[error("DotnsPopController.isPopIssued({label})")]
 	IsPopIssued {
 		/// Label whose issuance is being checked.
 		label: String,
@@ -600,13 +598,13 @@ pub enum DotnsError {
 		source: DotnsCallError,
 	},
 	/// The user's label store could not be located.
-	#[display("StoreFactory.getLabelStore: {_0}")]
-	LabelStore(DotnsCallError),
+	#[error("StoreFactory.getLabelStore")]
+	LabelStore(#[source] DotnsCallError),
 	/// A label store could not serve a page of labels.
-	#[display("LabelStore.getLabels: {_0}")]
-	Labels(DotnsCallError),
+	#[error("LabelStore.getLabels")]
+	Labels(#[source] DotnsCallError),
 	/// A registrar could not determine whether a label already exists.
-	#[display("DotnsRegistrar.exists({label}): {source}")]
+	#[error("DotnsRegistrar.exists({label})")]
 	RegistrarExists {
 		/// Label whose availability is being checked.
 		label: String,
@@ -614,51 +612,61 @@ pub enum DotnsError {
 		source: DotnsCallError,
 	},
 	/// A pending-claim page could not be read.
-	#[display("DotnsPopController.pendingClaims: {_0}")]
-	PendingClaims(DotnsCallError),
+	#[error("DotnsPopController.pendingClaims")]
+	PendingClaims(#[source] DotnsCallError),
 	/// The network's top-level domain could not be read.
-	#[display("ProtocolRegistry.tld(): {_0}")]
-	Tld(DotnsCallError),
+	#[error("ProtocolRegistry.tld()")]
+	Tld(#[source] DotnsCallError),
 	/// The fallback top-level domain could not be checked.
-	#[display("DotnsRegistry.recordExists: {_0}")]
-	RecordExists(DotnsCallError),
+	#[error("DotnsRegistry.recordExists")]
+	RecordExists(#[source] DotnsCallError),
 	/// A name's content resolver could not be located.
-	#[display("DotnsRegistry.resolver(): {_0}")]
-	Resolver(DotnsCallError),
+	#[error("DotnsRegistry.resolver()")]
+	Resolver(#[source] DotnsCallError),
 	/// A product's manifest record could not be read.
-	#[display("ContentResolver.text(): {_0}")]
-	ManifestText(DotnsCallError),
+	#[error("ContentResolver.text()")]
+	ManifestText(#[source] DotnsCallError),
 	/// The stored dispatcher address has the wrong width.
-	#[display("DotnsGateway.DispatcherAddress is {actual} bytes")]
+	#[error("DotnsGateway.DispatcherAddress is {actual} bytes")]
 	DispatcherAddressLength {
 		/// Length of the stored address.
 		actual: usize,
 	},
 	/// The stored address implements neither supported controller interface.
-	#[display(
+	#[error(
 		"DotnsGateway.DispatcherAddress {} has neither protocolRegistry() nor TARGET()",
-		hex::encode(address)
+		hex::encode(.address)
 	)]
 	UnknownDispatcher {
 		/// Address that answered neither discovery call.
 		address: [u8; 20],
 	},
 	/// Neither the TLD view nor the fallback registry record identifies the network.
-	#[display(
+	#[error(
 		"ProtocolRegistry has no tld() view and the registry holds no record for {:?}; the network TLD cannot be determined",
 		crate::dotns_views::TLD_WITHOUT_VIEW
 	)]
 	MissingTld,
 }
 
+impl DotnsError {
+	/// Formats the operation and its cause chain for diagnostics.
+	pub fn reason(&self) -> String {
+		core::iter::successors(Some(self as &dyn core::error::Error), |error| error.source())
+			.map(ToString::to_string)
+			.collect::<Vec<_>>()
+			.join(": ")
+	}
+}
+
 /// A contract read failed during execution or decoding of its return data.
-#[derive(Debug, PartialEq, Eq, derive_more::Display, derive_more::Error, derive_more::From)]
+#[derive(Debug, PartialEq, Eq, Error, derive_more::From)]
 pub enum DotnsCallError {
 	/// The view failed before returning data to decode.
-	#[display("{_0}")]
+	#[error(transparent)]
 	View(DotnsViewError),
 	/// The view returned data that did not match the expected ABI shape.
-	#[display("{_0}")]
+	#[error(transparent)]
 	Decode(DotnsContractError),
 }
 
@@ -666,18 +674,18 @@ pub enum DotnsCallError {
 ///
 /// A revert is an answer from the contract (the view refused, or the address
 /// has no such function); anything else means the answer is unknown.
-#[derive(Debug, PartialEq, Eq, derive_more::Display, derive_more::Error, derive_more::From)]
+#[derive(Debug, PartialEq, Eq, Error, derive_more::From)]
 pub enum DotnsViewError {
 	/// The contract executed and reverted.
-	#[display("{_0}")]
+	#[error(transparent)]
 	Reverted(DotnsContractError),
 	/// The runtime rejected the call or returned an invalid contract result.
-	#[display("{_0}")]
+	#[error(transparent)]
 	Contract(DotnsContractError),
 	/// The view could not be dry-run or its output could not be decoded.
-	#[display("{_0}")]
-	#[from]
-	Failed(#[error(not(source))] String),
+	#[error("{0}")]
+	#[from(String)]
+	Failed(String),
 }
 
 /// Splits a `ReviveApi_call` output into return data, a revert, or a failure,
@@ -772,12 +780,10 @@ pub async fn resolve_labels<T: DotnsTransport + ?Sized>(
 
 	let mut labels = pending_claim_labels(transport, controller, &user).await?;
 
-	let registry_output = transport
-		.view(controller, call_no_args("protocolRegistry()"))
-		.await
-		.map_err(DotnsError::ProtocolRegistryView)?;
-	let registry = decode_address(&registry_output)
-		.map_err(|error| DotnsError::ProtocolRegistry(error.into()))?;
+	let registry =
+		read_view(transport, controller, call_no_args("protocolRegistry()"), decode_address)
+			.await
+			.map_err(DotnsError::ProtocolRegistry)?;
 
 	let factory = protocol_component(transport, &registry, "storeFactory").await?;
 
@@ -1487,6 +1493,8 @@ mod tests {
 				(self.target)()
 			} else if sel == selector("protocolRegistry()") {
 				(self.protocol_registry)()
+			} else if sel == selector("pendingClaims(address,uint256,uint256)") {
+				Ok(abi_pending_claims(&[]))
 			} else {
 				panic!("unscripted view {}", hex::encode(sel));
 			}
@@ -1554,23 +1562,33 @@ mod tests {
 		};
 		let err = futures::executor::block_on(discover_pop_controller(&mut transport))
 			.expect_err("failure");
-		assert!(err.to_string().contains("TARGET(): node unreachable"), "{err}");
-		assert!(
-			!err.to_string().contains("neither"),
-			"a node failure is not a wrong contract: {err}"
+		assert_eq!(
+			err,
+			DotnsError::DispatcherTarget(DotnsCallError::View(DotnsViewError::Failed(
+				"node unreachable".into()
+			)))
 		);
 	}
 
 	#[test]
-	fn discovery_propagates_a_transport_failure_instead_of_guessing() {
+	fn registry_reads_propagate_a_transport_failure_instead_of_guessing() {
 		let mut transport = ScriptedDiscovery {
 			stored: [0xcc; 20],
 			target: || panic!("must not fall back on a transport failure"),
 			protocol_registry: || Err(DotnsViewError::Failed("node unreachable".into())),
 		};
-		let err = futures::executor::block_on(discover_pop_controller(&mut transport))
-			.expect_err("failure");
-		assert!(err.to_string().contains("node unreachable"), "{err}");
+		for error in [
+			futures::executor::block_on(discover_pop_controller(&mut transport)).unwrap_err(),
+			futures::executor::block_on(resolve_labels(&mut transport, &[0xcc; 20], &[0xaa; 32]))
+				.unwrap_err(),
+		] {
+			assert_eq!(
+				error,
+				DotnsError::ProtocolRegistry(DotnsCallError::View(DotnsViewError::Failed(
+					"node unreachable".into()
+				)))
+			);
+		}
 	}
 
 	/// A transport answering views by selector: `tld()` with a scripted
@@ -1736,10 +1754,19 @@ mod tests {
 		] {
 			let error = view_output(&output).unwrap_err();
 			assert_eq!(error, expected);
-			let source = std::error::Error::source(&error)
-				.and_then(|source| source.downcast_ref::<DotnsContractError>())
-				.expect("contract failures retain their concrete cause");
-			assert_eq!((error.to_string(), source.to_string()), (message.into(), message.into()));
+			let error = DotnsError::ProtocolRegistry(DotnsCallError::View(error));
+			let chain = core::iter::successors(Some(&error as &dyn core::error::Error), |error| {
+				error.source()
+			})
+			.map(ToString::to_string)
+			.collect::<Vec<_>>();
+			assert_eq!(
+				(chain, error.reason()),
+				(
+					vec!["DotnsPopController.protocolRegistry()".to_string(), message.to_string()],
+					format!("DotnsPopController.protocolRegistry(): {message}")
+				)
+			);
 		}
 		let returned = contract_result(&{
 			let mut out = vec![0x00];

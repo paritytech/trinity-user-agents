@@ -75,16 +75,15 @@ impl AssetHubReader {
 	/// when none of its labels is a username.
 	pub async fn dotns_identity(&mut self, account: &[u8; 32]) -> Result<Option<DotnsIdentity>> {
 		let controller = self.pop_controller().await?;
-		let labels =
-			resolve_labels(self, &controller, account).await.map_err(anyhow::Error::msg)?;
-		classify_labels(self, &controller, labels).await.map_err(anyhow::Error::msg)
+		let labels = resolve_labels(self, &controller, account).await?;
+		Ok(classify_labels(self, &controller, labels).await?)
 	}
 
 	/// Whether the registrar would still mint `label` under the network TLD.
 	/// `false` once the name is registered, whichever flow minted it.
 	pub async fn label_available(&mut self, label: &str) -> Result<bool> {
 		let controller = self.pop_controller().await?;
-		label_available(self, &controller, label).await.map_err(anyhow::Error::msg)
+		Ok(label_available(self, &controller, label).await?)
 	}
 
 	/// `DotnsPopController` address, resolved once per reader. The env override
@@ -112,15 +111,12 @@ impl AssetHubReader {
 				});
 			}
 		}
-		discover_pop_controller(self)
-			.await
-			.map_err(anyhow::Error::msg)?
-			.with_context(|| {
-				format!(
-					"dotNS gateway has no reachable controller; set \
+		discover_pop_controller(self).await?.with_context(|| {
+			format!(
+				"dotNS gateway has no reachable controller; set \
                      {DOTNS_POP_CONTROLLER_ENV} to the DotnsPopController H160"
-				)
-			})
+			)
+		})
 	}
 
 	/// Dry-runs a contract view via the `ReviveApi_call` runtime API and returns

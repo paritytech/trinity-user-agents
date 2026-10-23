@@ -157,7 +157,7 @@ async fn lookup_with_retries(
 				warn!(
 					account = %hex::encode(account),
 					attempt,
-					%reason,
+					reason = %reason.reason(),
 					"dotNS {label} lookup failed"
 				);
 			},

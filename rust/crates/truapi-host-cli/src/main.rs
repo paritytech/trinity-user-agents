@@ -2384,8 +2384,9 @@ async fn announce_allowance_allocation(
 async fn report_pairing_failure(
 	session: &SigningHostSession,
 	announced: &AnnouncedPairing,
-	reason: String,
+	error: &anyhow::Error,
 ) {
+	let reason = pairing_failure_reason(error).to_string();
 	if let Err(error) = session.runtime.notify_pairing_failed(announced, reason).await {
 		terminal_ui::output_event(SystemEvent::SigningHostError {
 			reason: format!(
@@ -2393,6 +2394,14 @@ async fn report_pairing_failure(
 				error.reason
 			),
 		});
+	}
+}
+
+fn pairing_failure_reason(error: &anyhow::Error) -> &'static str {
+	if is_statement_slot_exhaustion(error) {
+		"No free StatementStore slot. Remove a paired device or wait for a new allowance period."
+	} else {
+		"Pairing failed. Check the signing host for details."
 	}
 }
 
@@ -2482,7 +2491,7 @@ async fn establish_paired_host(
 
 	if let Err(error) = prepare_pairing_response(session, &candidate, &existing).await {
 		if let Some(announced) = &announced {
-			report_pairing_failure(session, announced, format!("{error:#}")).await;
+			report_pairing_failure(session, announced, &error).await;
 		}
 		discard_new_pairing_candidate(session, &candidate, candidate_is_existing).await;
 		return Err(error);
@@ -2499,7 +2508,7 @@ async fn establish_paired_host(
 	.await;
 	if let Err(error) = result {
 		if let Some(announced) = &announced {
-			report_pairing_failure(session, announced, format!("{error:#}")).await;
+			report_pairing_failure(session, announced, &error).await;
 		}
 		discard_new_pairing_candidate(session, &candidate, candidate_is_existing).await;
 		return Err(error);
@@ -4432,6 +4441,35 @@ mod cli_tests {
 
 		assert_eq!(initial_session_name(&SigningHostArgs::default(), &catalog)?, "alice.01");
 		Ok(())
+	}
+
+	#[test]
+	fn allowance_exhaustion_is_recognized_through_operation_context() {
+		for (reason, expected) in [
+			("no free StatementStore slot in period 42 (max 3)", true),
+			("People chain is unavailable", false),
+		] {
+			let error = anyhow::anyhow!(reason).context("pairing allowance renewal failed");
+			assert_eq!(is_statement_slot_exhaustion(&error), expected);
+		}
+	}
+
+	#[test]
+	fn remote_pairing_failures_preserve_exhaustion_without_local_details() {
+		let errors = [
+			anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+				.context("write paired hosts /home/alice/private/paired-hosts.json"),
+			anyhow::anyhow!("no free StatementStore slot in period 42 (max 3)")
+				.context("pairing allowance renewal failed"),
+		];
+
+		assert_eq!(
+			errors.each_ref().map(pairing_failure_reason),
+			[
+				"Pairing failed. Check the signing host for details.",
+				"No free StatementStore slot. Remove a paired device or wait for a new allowance period.",
+			]
+		);
 	}
 
 	#[test]
