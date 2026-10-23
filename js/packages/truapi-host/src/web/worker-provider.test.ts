@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, jest } from "bun:test";
 import { err, ok } from "neverthrow";
 
 import {
@@ -1309,21 +1309,59 @@ describe("createWebWorkerPairingHostRuntime", () => {
     provider.dispose();
   });
 
-  it("rejects when init times out", async () => {
-    const worker = new FakeWorker();
-    const providerPromise = createProviderFromRuntime(
-      asWorker(worker),
-      makeHostCallbacks(),
-      {
-        runtimeConfig: runtimeConfig(),
-        initTimeoutMs: 20,
-      },
-    );
-    worker.emit({ kind: "loaded" });
-    await expect(providerPromise).rejects.toThrow(
-      /worker init timed out after 20ms/,
-    );
-    expect(worker.terminated).toBe(true);
+  it("terminates the worker when WASM loading times out", async () => {
+    jest.useFakeTimers();
+    try {
+      const worker = new FakeWorker();
+      const providerPromise = createProviderFromRuntime(
+        asWorker(worker),
+        makeHostCallbacks(),
+        {
+          runtimeConfig: runtimeConfig(),
+          initTimeoutMs: 20,
+        },
+      );
+      const initErrorPromise = providerPromise.catch(
+        (error: unknown) => error,
+      );
+
+      jest.advanceTimersByTime(20);
+      const initError = await initErrorPromise;
+      expect(initError).toEqual(
+        new Error("worker init timed out after 20ms while loading WASM"),
+      );
+      expect(worker.terminated).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("gives WASM loading and runtime initialization separate deadlines", async () => {
+    jest.useFakeTimers();
+    try {
+      const worker = new FakeWorker();
+      const providerPromise = createProviderFromRuntime(
+        asWorker(worker),
+        makeHostCallbacks(),
+        {
+          runtimeConfig: runtimeConfig(),
+          initTimeoutMs: 200,
+        },
+      );
+
+      jest.advanceTimersByTime(120);
+      worker.emit({ kind: "loaded" });
+      jest.advanceTimersByTime(120);
+      worker.emit({ kind: "ready" });
+      await Promise.resolve();
+      const createCore = lastMessageOfKind(worker, "createCore");
+      worker.emit({ kind: "coreReady", coreId: createCore.coreId });
+      await providerPromise;
+
+      expect(worker.terminated).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("rejects on messageerror during init", async () => {
