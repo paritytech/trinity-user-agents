@@ -43,6 +43,11 @@ private extension AppPermissionsViewModelFactory {
                 String(localized: .Products.appPermissionNetworkTitle),
                 String(localized: .Products.permissionBodyNetworkAccess(domain: domain))
             )
+        case let .networkAccessBundle(domains):
+            (
+                String(localized: .Products.appPermissionNetworkTitle),
+                String(localized: .Products.permissionBodyNetworkAccess(domain: domains.joined(separator: ", ")))
+            )
         case let .accountAccess(targetProductId):
             (
                 String(localized: .Products.appPermissionAccountTitle),
@@ -82,6 +87,21 @@ private extension AppPermissionsViewModelFactory {
                 String(localized: .Products.appPermissionUserIdentityTitle),
                 String(localized: .Products.permissionBodyUserIdentityAccess)
             )
+        case .chatAuthority:
+            (
+                String(localized: .Products.appPermissionChatAuthorityTitle),
+                String(localized: .Products.permissionBodyChatAuthority)
+            )
+        case .profileDisclosure:
+            (
+                String(localized: .Products.appPermissionProfileDisclosureTitle),
+                String(localized: .Products.permissionBodyProfileDisclosure)
+            )
+        case let .statementStoreAllowance(derivationIndex):
+            (
+                String(localized: .Products.appPermissionStatementStoreAllowanceTitle),
+                ProductPermission.statementStoreAllowanceDescription(derivationIndex: derivationIndex)
+            )
         case let .nftPurseRead(ownerProductId):
             (
                 String(localized: .Products.appPermissionNftPursesTitle),
@@ -117,6 +137,21 @@ private extension AppPermissionsViewModelFactory {
         case .openUrl: String(localized: .Products.permissionCapabilityDescriptionOpenUrl)
         case .biometrics: String(localized: .Products.permissionCapabilityDescriptionBiometrics)
         case .motion: String(localized: .Products.permissionCapabilityDescriptionMotion)
+        }
+    }
+}
+
+extension ProductPermission {
+    static func statementStoreAllowanceDescription(derivationIndex: ProductAccountSelector?) -> String {
+        switch derivationIndex {
+        case nil:
+            String(localized: .Products.permissionBodyStatementStoreAllowanceLegacy)
+        case let .index(index):
+            String(localized: .Products.permissionBodyStatementStoreAllowanceIndex(index: String(index)))
+        case let .raw(bytes):
+            String(localized: .Products.permissionBodyStatementStoreAllowanceRaw(
+                selector: "0x" + bytes.map { String(format: "%02x", $0) }.joined()
+            ))
         }
     }
 }

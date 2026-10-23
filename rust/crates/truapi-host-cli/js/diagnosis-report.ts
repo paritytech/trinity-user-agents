@@ -32,20 +32,36 @@ export function cliDiagnosisReportMetadata(
 }
 
 /**
- * Report metadata for the same CLI host exercising one modality's battery.
+ * Report metadata for the same CLI host serving a Chat execution.
  *
- * The aggregator picks the matrix from the parent directory, so a report
- * belongs under `diagnosis-reports/<modality, lowercase>/`; the title carries
- * the modality too, matching `chat/ios.md`.
+ * The aggregator picks the matrix from the parent directory, so a chat report
+ * belongs under `diagnosis-reports/chat/`; the title carries the modality too,
+ * matching `chat/ios.md`.
  */
-export function cliModalityDiagnosisReportMetadata(
+export function cliChatDiagnosisReportMetadata(
   role: string | undefined,
-  modality: "Chat" | "Pocket" | "Funding",
 ): CliDiagnosisReportMetadata {
   const spa = cliDiagnosisReportMetadata(role);
   return {
     filename: spa.filename,
-    title: spa.title.replace(/ Diagnosis$/, ` ${modality} Diagnosis`),
+    title: spa.title.replace(/ Diagnosis$/, " Chat Diagnosis"),
+  };
+}
+
+/**
+ * Report metadata for the same CLI host serving a Pocket execution.
+ *
+ * The aggregator picks the matrix from the parent directory, so a Pocket
+ * report belongs under `diagnosis-reports/pocket/`; the title carries the
+ * modality too.
+ */
+export function cliPocketDiagnosisReportMetadata(
+  role: string | undefined,
+): CliDiagnosisReportMetadata {
+  const spa = cliDiagnosisReportMetadata(role);
+  return {
+    filename: spa.filename,
+    title: spa.title.replace(/ Diagnosis$/, " Pocket Diagnosis"),
   };
 }
 

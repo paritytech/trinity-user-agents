@@ -14,14 +14,11 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runChatScreeningE2e } from "../chat-e2e.ts";
 import {
-  cliModalityDiagnosisReportMetadata,
+  cliChatDiagnosisReportMetadata,
   renderDiagnosisReport,
 } from "../diagnosis-report.ts";
 
-const report = cliModalityDiagnosisReportMetadata(
-  process.env.TRUAPI_CLI_HOST_ROLE,
-  "Chat",
-);
+const report = cliChatDiagnosisReportMetadata(process.env.TRUAPI_CLI_HOST_ROLE);
 const DEFAULT_REPORT_PATH = fileURLToPath(
   new URL(
     `../../../../../explorer/diagnosis-reports/chat/${report.filename}`,

@@ -9,6 +9,14 @@
 //! Async capability traits use `async_trait` so the combined [`Platform`]
 //! surface can be used as a trait object by the runtime.
 
+pub mod media;
+
+pub use media::{
+	MediaBackendCapabilities, MediaBackendCommand, MediaBackendEvent, MediaBackendPeerState,
+	MediaBackendResponse, MediaConsentRequest, MediaDescription, MediaDescriptionKind,
+	MediaIceCandidate, MediaPlatform, MediaRevocationSource, MediaRevokedPermission,
+};
+
 use std::collections::BTreeSet;
 
 use futures::stream::BoxStream;
@@ -27,28 +35,19 @@ use truapi::Bytes32;
 #[cfg(feature = "mock")]
 pub mod mock;
 
-pub use crate::{
-	dotns_name::{DOTNS_TLDS, MAX_DNS_LABEL_LEN, has_dotns_tld, is_dns_label},
-	product_id::{
-		PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError, REMOTE_PERMISSION_TRUSTED_LABELS,
-	},
-};
-
 use truapi::{
 	latest::{
-		AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage, ChatFile,
-		ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, CodeFormat, FundingDirection,
-		GenericError, HostChatCreateRoomError, HostChatCreateRoomRequest,
-		HostChatCreateRoomResponse, HostChatListSubscribeItem, HostChatPostMessageError,
-		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
-		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
-		HostDevicePermissionRequest, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
-		HostFundingStatusSubscribeItem, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
-		HostNavigateToError, HostPaymentBalanceSubscribeError, HostPaymentBalanceSubscribeItem,
-		HostPaymentError, HostPaymentRequest, HostPaymentStatusSubscribeError,
-		HostPaymentStatusSubscribeItem, HostPaymentTopUpError, HostPaymentTopUpRequest,
-		HostPaymentTopUpStatusSubscribeError, HostPaymentTopUpStatusSubscribeItem, HostPlatform,
+		AllocatableResource, AvatarRect, ChainIdentifier, ChatAction, ChatActions,
+		ChatCustomMessage, ChatFile, ChatMedia, ChatMessageContent, ChatReaction, ChatRichText,
+		CodeFormat, DerivationIndex, GenericError, HostChatCreateRoomError,
+		HostChatCreateRoomRequest, HostChatCreateRoomResponse, HostChatListSubscribeItem,
+		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
+		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
+		HostChatSetRoomFooterRequest, HostDevicePermissionRequest, HostFeatureSupportedRequest,
+		HostFeatureSupportedResponse, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
+		HostNativeChatAttachmentMetadata, HostNavigateToError, HostPlatform,
 		HostPocketListSubscribeItem, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
+		HostProfilePlaceContactAvatarsError, HostProfilePresentError, HostProfilePresentRequest,
 		HostPushNotificationRequest, HostPushNotificationResponse, HostScannerScanRequest,
 		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
 		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
@@ -122,6 +121,10 @@ pub struct SigningHostConfig {
 	/// ring-VRF keys. Must match the People chain's
 	/// `NetworkSuffix.NetworkSuffix` value used for proof contexts.
 	pub network_suffix: String,
+	/// Trusted Coinage asset instance for runtimes with instance-scoped assets.
+	/// Required by those runtimes; `None` preserves the legacy Coinage ABI.
+	/// This is not a purse derivation identifier.
+	pub coinage_instance_id: Option<u32>,
 }
 
 /// Product identity attached to one product-facing TrUAPI connection.
@@ -129,14 +132,18 @@ pub struct SigningHostConfig {
 /// A host may create multiple product runtimes from the same long-lived host
 /// runtime, each with its own product context.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+// `Decode` is hand-written below so decoding cannot bypass the validating
+// constructor. Not a doc comment: wire-type docs are emitted into the generated
+// host API, and this is a Rust-side implementation note.
+#[derive(Debug, Clone, PartialEq, Eq, Encode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ProductContext {
 	/// Product identifier used for account derivation and product-scoped
 	/// storage/permission namespaces.
 	///
 	/// Host-spec C.7 defines accepted product id forms:
 	/// <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/C-account-derivation.md?plain=1#L109-L128>
-	pub product_id: ProductId,
+	pub product_id: String,
 	/// Trusted kind of executable attached to this connection by the host.
 	pub execution_kind: ProductExecutionKind,
 }
@@ -251,6 +258,7 @@ impl SigningHostConfig {
 			bulletin_chain_genesis_hash,
 			asset_hub_chain_genesis_hash,
 			network_suffix,
+			coinage_instance_id: None,
 		})
 	}
 }
@@ -266,19 +274,221 @@ fn validate_network_suffix(network_suffix: &str) -> Result<(), RuntimeConfigVali
 }
 
 impl ProductContext {
-	/// A product context for an app.
-	pub fn new(product_id: ProductId) -> Self {
+	/// Build a product context, validating fields whose representation cannot
+	/// be made invalid by Rust types alone.
+	pub fn new(product_id: String) -> Result<Self, RuntimeConfigValidationError> {
 		Self::new_with_execution(product_id, ProductExecutionKind::App)
 	}
 
-	/// A product context for a host-selected executable kind.
-	pub fn new_with_execution(product_id: ProductId, execution_kind: ProductExecutionKind) -> Self {
-		Self { product_id, execution_kind }
+	/// Build a product context for a host-selected executable kind.
+	pub fn new_with_execution(
+		product_id: String,
+		execution_kind: ProductExecutionKind,
+	) -> Result<Self, RuntimeConfigValidationError> {
+		Ok(Self { product_id: normalize_product_identifier(&product_id)?, execution_kind })
+	}
+
+	/// Whether this is the game product, Jollity, on any dotNS network. A
+	/// subname such as `app.dim2.dot` is a different product.
+	pub fn is_game_product(&self) -> bool {
+		dotns_product_label(&self.product_id) == Some(GAME_PRODUCT_LABEL)
 	}
 }
 
+/// Decoding routes through [`ProductContext::new_with_execution`] so a frame
+/// off the wire cannot produce a context the constructor rejects. The runtime
+/// treats a `ProductContext` as already validated (product storage keys are
+/// built with `expect`), and derivation/storage scopes are keyed by
+/// `product_id`, so an unnormalized id would split one logical product across
+/// two scopes.
+impl Decode for ProductContext {
+	fn decode<I: parity_scale_codec::Input>(
+		input: &mut I,
+	) -> Result<Self, parity_scale_codec::Error> {
+		let product_id = String::decode(input)?;
+		let execution_kind = ProductExecutionKind::decode(input)?;
+		Self::new_with_execution(product_id, execution_kind)
+			.map_err(|_| "ProductContext.product_id is not an accepted product identifier".into())
+	}
+}
+
+/// Whether `identifier` is a product scope the core is allowed to derive for.
+pub fn is_product_identifier(identifier: &str) -> bool {
+	normalize_product_identifier(identifier).is_ok()
+}
+
+/// Top-level domains that dotNS deployments register product names under.
+/// Each network declares its own, so the set spans every network a host can
+/// be pointed at rather than just the production one.
+pub const DOTNS_TLDS: &[&str] = &["dot", "paseo", "testnet"];
+
+/// Whether `normalized` ends in one of [`DOTNS_TLDS`]. Expects an
+/// already-lowercased host with no trailing root dot.
+pub fn has_dotns_tld(normalized: &str) -> bool {
+	normalized.rsplit_once('.').is_some_and(|(_, tld)| DOTNS_TLDS.contains(&tld))
+}
+
+/// Blessed product labels across every network in [`DOTNS_TLDS`].
+///
+/// These products default to authorized except for device access. Explicit
+/// stored denials still govern their remote, identity and account permissions.
+/// Calling always requires explicit network/account-scoped consent.
+pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", GAME_PRODUCT_LABEL, "stash"];
+
+/// The bare label of the game product, Jollity, on every network.
+const GAME_PRODUCT_LABEL: &str = "dim2";
+
 /// Hosts available to every product unless a stored permission decision blocks them.
 pub const BLESSED_REMOTE_DOMAINS: &[&str] = &["fonts.googleapis.com", "fonts.gstatic.com"];
+
+/// Whether `product_id` defaults to ordinary remote permissions without prompting.
+///
+/// This never authorizes [`RemotePermission::Calling`], which requires scoped consent.
+///
+/// Expects the [`normalize_product_identifier`] form. Matches the whole label
+/// and nothing else: `peopl.dot` and `peopl.paseo` are trusted, while
+/// `app.peopl.dot` and any `localhost` identifier are separate products and are
+/// not. The label is only read out of an id that [`has_dotns_tld`] accepts, so a
+/// widened product-id policy cannot promote an arbitrary single-label host.
+pub fn has_trusted_remote_permissions(product_id: &str) -> bool {
+	dotns_product_label(product_id)
+		.is_some_and(|label| REMOTE_PERMISSION_TRUSTED_LABELS.contains(&label))
+}
+
+/// Everything before the TLD of a dotNS `product_id`: `dim2` for `dim2.dot`,
+/// `app.dim2` for `app.dim2.dot`. `None` when the id does not end in one of
+/// [`DOTNS_TLDS`], so a `localhost` id never yields a label.
+///
+/// Expects the [`normalize_product_identifier`] form.
+fn dotns_product_label(product_id: &str) -> Option<&str> {
+	if !has_dotns_tld(product_id) {
+		return None;
+	}
+	product_id.rsplit_once('.').map(|(label, _tld)| label)
+}
+
+/// Whether `product_id` in any accepted spelling defaults to ordinary remote
+/// permissions without prompting, excluding [`RemotePermission::Calling`].
+///
+/// [`has_trusted_remote_permissions`] reads the normalized form, which is what
+/// the core always holds. A host holds whatever spelling it received, so this
+/// normalizes first and answers `false` for an id that does not normalize at
+/// all: an unrecognised spelling is never read as trusted.
+///
+/// This identifies the default only; authorization still checks stored denials.
+pub fn normalizes_to_trusted_remote_permissions(product_id: &str) -> bool {
+	normalize_product_identifier(product_id)
+		.is_ok_and(|normalized| has_trusted_remote_permissions(&normalized))
+}
+
+/// The label a development product identifier is served under.
+const LOCALHOST_PRODUCT_LABEL: &str = "localhost";
+
+/// Whether `product_id` is a development localhost product identifier.
+///
+/// Exactly `localhost`, or `localhost:` followed by a port and nothing else.
+/// Hosts grant these a development wildcard, so the match is the whole
+/// identifier: a prefix test would also admit `localhost:8080.evil`, and a
+/// label test would admit a published `localhost.<tld>`, which
+/// [`normalize_product_identifier`] rejects for the same reason.
+pub fn is_localhost_product_identifier(product_id: &str) -> bool {
+	if product_id == LOCALHOST_PRODUCT_LABEL {
+		return true;
+	}
+	product_id
+		.strip_prefix("localhost:")
+		.is_some_and(|port| !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// Largest accepted product identifier, in bytes.
+///
+/// Bounds the size of one identifier, not how many exist: a manifest miss
+/// caches its answer keyed by the target and nothing evicts those entries.
+/// Matches the cap on product-supplied chat identifiers.
+pub const PRODUCT_ID_MAX_BYTES: usize = 256;
+
+/// Normalize product identifiers before derivation and policy checks.
+pub fn normalize_product_identifier(
+	product_id: &str,
+) -> Result<String, RuntimeConfigValidationError> {
+	let trimmed = product_id.trim();
+	require_non_empty("product_id", trimmed)?;
+	let normalized = trimmed.nfc().collect::<String>().to_lowercase();
+	// After normalizing, since NFC can change the length. Reported by length
+	// rather than by value: an id that trips this can be arbitrarily large.
+	if normalized.len() > PRODUCT_ID_MAX_BYTES {
+		return Err(RuntimeConfigValidationError::ProductIdTooLong {
+			limit: PRODUCT_ID_MAX_BYTES,
+			actual: normalized.len(),
+		});
+	}
+	if !has_well_formed_labels(&normalized) {
+		return Err(RuntimeConfigValidationError::InvalidProductId {
+			product_id: product_id.to_string(),
+		});
+	}
+	if is_localhost_product_identifier(&normalized) {
+		return Ok(normalized);
+	}
+	// `localhost` is reserved as a label, not only as a bare identifier. A
+	// product published as `localhost.<tld>` would otherwise be one string
+	// comparison away from whatever a host grants the development wildcard.
+	let reserves_localhost = normalized
+		.rsplit_once('.')
+		.is_some_and(|(label, _tld)| label == LOCALHOST_PRODUCT_LABEL);
+	if has_dotns_tld(&normalized) && !reserves_localhost {
+		Ok(normalized)
+	} else {
+		Err(RuntimeConfigValidationError::InvalidProductId { product_id: product_id.to_string() })
+	}
+}
+
+/// Whether every dot-separated label of a normalized id is well formed.
+///
+/// Only the suffix after the last `.` was ever inspected, so the rest of the id
+/// could be anything the transport carried. Three consequences, all reachable
+/// because a cross-product call takes this string from the wire where it is
+/// self-asserted:
+///
+/// - An empty label. `dim2..dot` and `.dot` both reduce to `""`, so distinct ids collapse onto one
+///   grant key and one manifest cache entry.
+/// - Control and format characters. A NUL or a right-to-left override survives into
+///   [`AccountAccessReview`], which renders the id verbatim in the only consent prompt this design
+///   has, and into every log line carrying it.
+/// - Whitespace and path separators, which let one product's id render like another's anywhere the
+///   comparison is not byte-exact.
+///
+/// Deliberately not an ASCII allowlist: dotNS names are internationalized, so
+/// `tést.dot` is a real id. What is rejected is the class of characters that
+/// carries no name and only confuses a reader or a key.
+fn has_well_formed_labels(normalized: &str) -> bool {
+	/// Zero-width and bidirectional formatting characters. Invisible in every
+	/// rendering, so they make two different ids look identical to a user.
+	fn is_invisible_format(c: char) -> bool {
+		matches!(c,
+            '\u{200b}'..='\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{feff}')
+	}
+	let label_ok = |label: &str| {
+		!label.is_empty() &&
+			!label.chars().any(|c| {
+				c.is_control() ||
+					c.is_whitespace() ||
+					is_invisible_format(c) ||
+					matches!(c, '/' | '\\')
+			})
+	};
+	if normalized == "localhost" {
+		return true;
+	}
+	if let Some(port) = normalized.strip_prefix("localhost:") {
+		return !port.is_empty() && port.chars().all(|c| c.is_ascii_digit());
+	}
+	normalized.split('.').all(label_ok)
+}
 
 /// Largest accepted length for a product-supplied chat identifier or display
 /// name, in bytes.
@@ -295,7 +505,8 @@ const ALLOWED_ICON_DATA_TYPES: [&str; 5] =
 
 /// Normalize a product-supplied chat room or bot identifier.
 ///
-/// Screened harder than a display name: an identifier is matched, not read, so it
+/// Screened harder than a display name, mirroring
+/// [`normalize_product_identifier`]: an identifier is matched, not read, so it
 /// also rejects the invisible characters a name legitimately needs — joiners,
 /// variation selectors, soft hyphens and non-ASCII spaces — which would
 /// otherwise let two distinct ids render identically.
@@ -735,9 +946,7 @@ fn require_non_empty(field: &'static str, value: &str) -> Result<(), RuntimeConf
 }
 
 /// Runtime config validation error.
-#[derive(
-	Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error, derive_more::From,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
 pub enum RuntimeConfigValidationError {
 	/// Required string field was empty or whitespace-only.
 	#[display("{field} must not be empty")]
@@ -763,15 +972,27 @@ pub enum RuntimeConfigValidationError {
 		/// Actual deeplink scheme value.
 		scheme: String,
 	},
-	/// Product id did not parse.
-	#[display("{_0}")]
-	#[from]
-	InvalidProductId(#[error(not(source))] ProductIdError),
+	/// Product id was not a dotNS or localhost product identifier.
+	#[display("product_id must be a dotNS or localhost product identifier, got {product_id:?}")]
+	InvalidProductId {
+		/// Actual product id value.
+		product_id: String,
+	},
 	/// Network suffix was not a supported dotNS TLD.
 	#[display("network_suffix must be a supported dotNS TLD, got {network_suffix:?}")]
 	InvalidNetworkSuffix {
 		/// Actual network suffix value.
 		network_suffix: String,
+	},
+	/// Product id was longer than [`PRODUCT_ID_MAX_BYTES`] after normalization.
+	///
+	/// Carries lengths rather than the id, which may be enormous.
+	#[display("product_id must be at most {limit} bytes, got {actual}")]
+	ProductIdTooLong {
+		/// Accepted maximum, in bytes.
+		limit: usize,
+		/// Normalized length, in bytes.
+		actual: usize,
 	},
 }
 
@@ -784,14 +1005,17 @@ const PRODUCT_STORAGE_KEY_PREFIX: &str = "truapi:product-storage:v1:";
 /// format.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductStorageKey {
-	product_id: ProductId,
+	product_id: String,
 	key: String,
 }
 
 impl ProductStorageKey {
-	/// Build a key owned by `product_id`.
-	pub fn new(product_id: ProductId, key: impl Into<String>) -> Self {
-		Self { product_id, key: key.into() }
+	/// Build a key with a validated, normalized product id.
+	pub fn new(
+		product_id: &str,
+		key: impl Into<String>,
+	) -> Result<Self, RuntimeConfigValidationError> {
+		Ok(Self { product_id: normalize_product_identifier(product_id)?, key: key.into() })
 	}
 
 	/// Decode the opaque key passed through [`ProductStorage`].
@@ -819,12 +1043,11 @@ impl ProductStorageKey {
 		let key = scoped
 			.get(product_length + 1..)
 			.ok_or_else(|| "product storage key splits a UTF-8 character".to_string())?;
-		let product_id = product_id.parse::<ProductId>().map_err(|error| error.to_string())?;
-		Ok(Self::new(product_id, key))
+		Self::new(product_id, key.to_string()).map_err(|error| error.to_string())
 	}
 
 	/// Product identifier owning this storage key.
-	pub fn product_id(&self) -> &ProductId {
+	pub fn product_id(&self) -> &str {
 		&self.product_id
 	}
 
@@ -837,7 +1060,7 @@ impl ProductStorageKey {
 	pub fn encode(&self) -> String {
 		format!(
 			"{PRODUCT_STORAGE_KEY_PREFIX}{}:{}:{}",
-			self.product_id.as_str().len(),
+			self.product_id.len(),
 			self.product_id,
 			self.key
 		)
@@ -901,6 +1124,46 @@ pub trait Navigation: Send + Sync {
 	async fn navigate_to(&self, url: String) -> Result<(), HostNavigateToError>;
 }
 
+/// Trusted host receiving scope, derived from verified artifact and account state.
+/// It must remain available after the product execution closes.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ReceivingAuthority {
+	/// Verified product identifier.
+	pub product_id: String,
+	/// Opaque stable account identity, encoded as 32-byte lowercase hex.
+	pub account: String,
+	/// Host-selected network environment.
+	pub environment: String,
+	/// Verified artifact digest, encoded as 32-byte lowercase hex.
+	pub artifact: String,
+	/// Host-selected receiving chain genesis, encoded as 32-byte lowercase hex.
+	pub genesis: String,
+	/// Host logout, account and artifact fence.
+	pub generation: u64,
+	/// Current OS notification permission.
+	pub os_permission: bool,
+	/// Whether the explicitly selected transport is ready.
+	pub transport_ready: bool,
+}
+
+/// Host-only durable registration awaiting transport synchronization.
+/// Routes and authority identifiers stay local, not in provider payloads.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ReceivingRegistration {
+	/// Trusted scope under which consent was recorded.
+	pub authority: ReceivingAuthority,
+	/// Durable local revision, distinct from provider token revisions.
+	pub revision: u64,
+	/// Whether this revision enrolls watches or revokes them.
+	pub enabled: bool,
+	/// Locally approved source filters and activation routes.
+	pub watches: Vec<crate::latest::ReceivingWatch>,
+	/// Whether this revision still needs synchronization.
+	pub sync_pending: bool,
+}
+
 /// Deliver push notifications.
 #[async_trait]
 pub trait Notifications: Send + Sync {
@@ -916,6 +1179,74 @@ pub trait Notifications: Send + Sync {
 	async fn cancel_notification(&self, id: u32) -> Result<(), GenericError> {
 		let _ = id;
 		Ok(())
+	}
+
+	/// Resolve trusted authority without prompting or consulting transport.
+	/// The resident platform returns current host scope, even with product UI closed.
+	/// A product execution's platform returns the immutable scope captured when
+	/// that verified execution opened, never a replacement artifact/account's scope.
+	/// Returning `None` explicitly advertises unsupported receiving.
+	async fn receiver_authority(
+		&self,
+		product_id: &str,
+	) -> Result<Option<ReceivingAuthority>, GenericError> {
+		let _ = product_id;
+		Ok(None)
+	}
+
+	/// Request distinct consent for this authority and full watch scope.
+	async fn receiver_consent(
+		&self,
+		authority: ReceivingAuthority,
+		watches: Vec<crate::latest::ReceivingWatch>,
+	) -> Result<bool, GenericError> {
+		let _ = (authority, watches);
+		Err(GenericError { reason: "background receiving unsupported".into() })
+	}
+
+	/// Wake the host's asynchronous synchronization loop, never await network I/O.
+	async fn receiver_changed(&self) -> Result<(), GenericError> {
+		Err(GenericError { reason: "background receiving unsupported".into() })
+	}
+
+	/// Forward receiving actions to the single host-owned receiver, if external.
+	/// The host must bind `product_id` to the trusted execution, not page input.
+	/// Payloads are latest SCALE requests for actions 2..7; the response encodes
+	/// `Result<latest response, HostNotificationReceivingError>` without a version tag.
+	/// `None` selects this runtime's resident engine. An unavailable external
+	/// owner must return an error, never `None`, to avoid a second persistent writer.
+	async fn receiver_command(
+		&self,
+		product_id: String,
+		action: u8,
+		payload: Vec<u8>,
+	) -> Result<Option<Vec<u8>>, GenericError> {
+		let _ = (product_id, action, payload);
+		Ok(None)
+	}
+
+	/// Return at most 32 pending activations, ordered by sequence, without
+	/// consuming them. The embedding host binds this platform to the verified
+	/// product, authenticated account and environment; none is caller input.
+	/// Destinations may be local absolute paths or HTTP(S)/`polkadot:` links.
+	/// They remain opaque product data, never host navigation authority. Reject
+	/// backslashes and control characters. Polling must not request permissions
+	/// or enroll a background receiver. A missing implementation is an error.
+	async fn activation_events(
+		&self,
+	) -> Result<truapi::v01::NotificationActivations, GenericError> {
+		Err(GenericError { reason: "notification activation is unsupported".to_string() })
+	}
+
+	/// Remove exactly this sequence from the bound activation queue after
+	/// successful product routing. Unknown sequences are idempotent; never
+	/// acknowledge another product/account/environment or a sequence range.
+	async fn acknowledge_activation(
+		&self,
+		request: truapi::v01::NotificationActivationAcknowledgeRequest,
+	) -> Result<(), GenericError> {
+		let _ = request;
+		Err(GenericError { reason: "notification activation is unsupported".to_string() })
 	}
 }
 
@@ -967,9 +1298,42 @@ pub enum PermissionAuthorizationRequest {
 		/// Product whose account context may be accessed.
 		target_product_id: String,
 	},
+	/// Product-scoped permission to bind and use wallet-held Chat identity authority.
+	#[codec(index = 4)]
+	ChatAuthority,
+	/// Product-scoped permission to ensure Statement Store quota, not increase it.
+	#[codec(index = 5)]
+	StatementStoreAllowance {
+		/// `None` selects the legacy allowance account; `Some` selects a product account.
+		derivation_index: Option<DerivationIndex>,
+	},
+	/// Product-scoped permission to disclose a profile reference to the user's
+	/// Chat contacts.
+	#[codec(index = 6)]
+	ProfileDisclosure,
+	/// Calling consent for this product's authenticated network and account.
+	///
+	/// The core resolves both fields from the active authority session, never
+	/// from product-supplied identity claims. Unscoped `Remote(Calling)` grants
+	/// do not authorize this request.
+	#[codec(index = 7)]
+	Calling {
+		/// Genesis hash of the authenticated network.
+		network: [u8; 32],
+		/// Product's authority-derived `Index(0)` sr25519 public key.
+		account: [u8; 32],
+	},
+	/// Bounded automatic Bulletin uploads for the rendered account. The core
+	/// rejects an account that is no longer active; product and network are host-owned.
+	#[codec(index = 8)]
+	AutomaticPreimageSubmit {
+		/// Root account whose automatic-upload decision is being edited.
+		root_public_key: Bytes32,
+	},
 	/// Product-scoped approval to make one kind of signature with another
 	/// product's accounts. It is held in memory only and ends when the product
 	/// execution closes.
+	#[codec(index = 9)]
 	CrossProductSignature {
 		/// Product whose accounts sign.
 		target_product_id: String,
@@ -1042,12 +1406,19 @@ pub trait CoreAdmin: Send + Sync {
 		requests: Vec<PermissionAuthorizationRequest>,
 	) -> Result<Vec<PermissionAuthorizationStatus>, GenericError>;
 
-	/// Update a stored permission authorization status. `NotDetermined` clears
-	/// the stored value so the next product request prompts again.
+	/// Update a stored permission authorization status. `NotDetermined` resets
+	/// the decision to ask again, retaining a tombstone against legacy re-import.
 	async fn set_permission_authorization_status(
 		&self,
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
+	) -> Result<(), GenericError>;
+
+	/// Re-read a stored product decision and fence revoked Media authorization.
+	/// Host-only, read-only, and never prompts or consults OS permission state.
+	async fn refresh_permission_authorization(
+		&self,
+		request: PermissionAuthorizationRequest,
 	) -> Result<(), GenericError>;
 
 	/// Read the active session's X25519 chat identity private key, for hosts
@@ -1101,7 +1472,7 @@ pub trait CoreAdmin: Send + Sync {
 	/// answer with `deriveProductAccountPublicKey`.
 	async fn get_product_subtree_public_key(
 		&self,
-		product_id: &ProductId,
+		product_id: String,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<Bytes32>, GenericError>;
 }
@@ -1153,6 +1524,368 @@ pub trait Features: Send + Sync {
 	/// Enumerate the chains this host serves (RFC 0026). The core resolves
 	/// `get_chain_info` requests against the returned set.
 	async fn supported_chains(&self) -> Result<HostChainSet, GenericError>;
+}
+
+/// Wallet and asset binding checked by the native service before every operation.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct NativeCoinageScope {
+	/// Authenticated root key of the wallet owning the main purse.
+	pub root_public_key: [u8; 32],
+	/// Genesis hash of the configured Coinage chain.
+	pub genesis_hash: [u8; 32],
+	/// Configured asset instance; None denotes a legacy single-asset runtime.
+	pub coinage_instance_id: Option<u32>,
+}
+
+/// Immutable, Host-authenticated outgoing intent. No field is a product display hint.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct NativeCoinagePaymentIntent {
+	/// Stable wallet-, network- and product-scoped operation identity.
+	pub operation_id: [u8; 32],
+	/// Authenticated calling product, not a guest-provided display name.
+	pub product_id: String,
+	/// Original caller request identifier, bound immutably to this intent.
+	pub request_id: String,
+	/// Recipient identity authenticated by the Host's Chat authority.
+	pub peer_identity: [u8; 32],
+	/// Independently resolved recipient name, when available.
+	pub recipient_username: Option<String>,
+	/// Positive recipient amount in cents of the configured Coinage asset.
+	pub amount_cents: u64,
+}
+
+/// Host-private bearer material. Never return this through the product API or log it.
+/// Raw amounts are canonical unsigned decimal u128 strings, avoiding FFI truncation.
+#[derive(Clone, PartialEq, Eq, Encode, Decode, zeroize::Zeroize)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct NativeCoinageMemo {
+	/// Validated 64-byte native sr25519 secret keys, confined to the trusted Host.
+	pub secret_keys: Vec<Vec<u8>>,
+	/// Exact total in canonical decimal raw chain units.
+	pub total_value_raw: String,
+}
+
+/// Durable native-wallet operations, not an alternative inventory ledger.
+#[derive(Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum NativeCoinageOperation {
+	/// Read trusted denomination metadata without selecting or allocating inventory.
+	Denomination,
+	/// Native trusted UI must review the exact intent and maximum debit before spending.
+	/// Replays must reuse persisted preparation, never allocate a second payment.
+	/// Before returning a memo, native custody must survive restart atomically with
+	/// transaction registration. Startup must never release these coins as provisional.
+	PreparePayment {
+		/// Exact request to review or replay from durable native custody.
+		intent: NativeCoinagePaymentIntent,
+	},
+	/// Called only after the authenticated Host durably accepts encrypted delivery.
+	/// Records transport acceptance; it is not the first durable native custody mark.
+	CommitHandoff {
+		/// Product whose ciphertext custody has been committed.
+		product_id: String,
+		/// Existing native payment being accepted, never a new allocation.
+		operation_id: [u8; 32],
+	},
+	/// Immutable public cards; do not initialize or claim an unrelated wallet.
+	Views {
+		/// Return public payments only for this authenticated product.
+		product_id: String,
+	},
+	/// Accepted ids come from the Host's durable ciphertext custody ledger.
+	PendingHandoffs {
+		/// Product whose native payments are being reconciled.
+		product_id: String,
+		/// Irreversible Host ciphertext custody evidence for acceptance repair.
+		accepted_operations: Vec<[u8; 32]>,
+	},
+	/// Read an existing recoverable handoff without approval, selection or spending.
+	ReadHandoff {
+		/// Product that originally obtained approval for this payment.
+		product_id: String,
+		/// Existing payment whose private memo is needed for encrypted replay.
+		operation_id: [u8; 32],
+	},
+	/// Peer acknowledgment is not monetary settlement.
+	NoteDelivery {
+		/// Product whose authenticated peer acknowledged the payment.
+		product_id: String,
+		/// Accepted outgoing payment; acknowledgment does not prove settlement.
+		operation_id: [u8; 32],
+	},
+	/// Resume already-owned work only; never authorize a fresh debit.
+	Reconcile,
+	/// Persist source custody before returning. Only finalized credit is successful.
+	/// Reordered sources reuse the same id; changed minimum or overlapping custody conflicts.
+	TopUp {
+		/// Authenticated product importing these source coins.
+		product_id: String,
+		/// Stable identity of the canonical source set in this wallet/product.
+		operation_id: [u8; 32],
+		/// Original immutable minimum in canonical decimal raw chain units.
+		/// Zero requests claim-all; it does not waive source completion or finality.
+		minimum_amount_raw: String,
+		/// Validated native bearer keys to place in durable incoming custody.
+		secret_keys: Vec<Vec<u8>>,
+	},
+}
+
+impl zeroize::Zeroize for NativeCoinageOperation {
+	fn zeroize(&mut self) {
+		if let Self::TopUp { secret_keys, .. } = self {
+			zeroize::Zeroize::zeroize(secret_keys);
+		}
+	}
+}
+
+/// One native operation with the immutable wallet/network scope to authenticate.
+#[derive(Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct NativeCoinageRequest {
+	/// Expected owner and asset, verified against the active native wallet.
+	pub scope: NativeCoinageScope,
+	/// Host-private command; incoming sources must never be logged.
+	pub operation: NativeCoinageOperation,
+}
+
+impl zeroize::Zeroize for NativeCoinageRequest {
+	fn zeroize(&mut self) {
+		zeroize::Zeroize::zeroize(&mut self.operation);
+	}
+}
+
+/// Sanitized failures. Never forward secret-bearing native exception descriptions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum NativeCoinageFailure {
+	/// The selected native owner, its durable store or its session is unavailable.
+	Unavailable,
+	/// The operation violates amount, identifier or protocol bounds.
+	InvalidRequest,
+	/// Incoming bearer material is invalid for native Coinage.
+	InvalidSource,
+	/// An identifier, source set or custody record has conflicting immutable fields.
+	OperationConflict,
+	/// The payment is absent or belongs to another product.
+	OperationNotFound,
+	/// Native inventory cannot fund the exact approved debit.
+	InsufficientBalance,
+	/// Trusted outgoing or privacy review was declined.
+	UserRejected,
+}
+
+/// Incoming settlement result; acceptance and best-head observations are not finality.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum NativeCoinageTopUpOutcome {
+	/// The original requested minimum has been credited at finality.
+	/// For a zero minimum, the source claim is terminal with positive finalized credit.
+	Cleared,
+	/// Terminal shortfall, expressed in raw chain units, not cents.
+	Partial {
+		/// Positive finalized raw-unit credit, strictly less than the original minimum.
+		credited_amount_raw: String,
+	},
+	/// Durable custody exists, but final credit has not been established.
+	Pending,
+	/// Terminal: none of the requested funds could be claimed.
+	NotClaimed,
+}
+
+/// Typed native results. Only the trusted Host may consume a Prepared memo.
+#[derive(Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum NativeCoinageResponse {
+	/// Trusted denomination metadata for the selected wallet/asset.
+	Denomination {
+		/// Positive raw chain units per Coinage cent, as canonical decimal u128.
+		cents_unit_raw: String,
+	},
+	/// Existing durable native preparation, or a terminal public payment.
+	Prepared {
+		/// Product-safe payment identity and current state.
+		payment: truapi::latest::HostNativeChatPayment,
+		/// Recoverable bearer material, absent when no handoff remains necessary.
+		memo: Option<NativeCoinageMemo>,
+	},
+	/// Product-scoped public payment cards, never a spendable balance.
+	Payments {
+		/// Durable payments belonging to the requested product.
+		payments: Vec<truapi::latest::HostNativeChatPayment>,
+	},
+	/// Result of an incoming custody operation.
+	TopUp {
+		/// Finalized settlement or explicit retained uncertainty.
+		outcome: NativeCoinageTopUpOutcome,
+	},
+	/// The requested metadata transition or recovery pass completed.
+	Done,
+	/// Sanitized domain rejection; cannot authorize another backend.
+	Failed {
+		/// Non-secret failure classification.
+		reason: NativeCoinageFailure,
+	},
+}
+
+impl zeroize::Zeroize for NativeCoinageResponse {
+	fn zeroize(&mut self) {
+		if let Self::Prepared { memo: Some(memo), .. } = self {
+			zeroize::Zeroize::zeroize(memo);
+		}
+	}
+}
+
+/// Optional native wallet service boundary, never exposed to products.
+///
+/// Injecting this service at runtime construction assigns native custody for
+/// the runtime's lifetime. Absence selects the built-in Rust wallet; native
+/// unavailability or failure never permits Rust fallback.
+#[async_trait]
+pub trait CoinageWalletHost: Send + Sync {
+	/// Invoke the selected native owner. An error never permits Rust fallback.
+	async fn native_coinage(
+		&self,
+		request: NativeCoinageRequest,
+	) -> Result<NativeCoinageResponse, GenericError>;
+}
+
+/// Trusted native Chat selection context; never passed to a product.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct NativeChatFilePickRequest {
+	/// Authenticated product requesting selection.
+	pub product_id: String,
+	/// Host-authenticated recipient identity.
+	pub peer_identity: [u8; 32],
+	/// Host-resolved recipient name, if available.
+	pub peer_username: Option<String>,
+	/// Maximum number of files the Host can accept.
+	pub max_files: u32,
+}
+
+/// Immutable Host-owned source and metadata derived from its actual bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct NativeChatPickedFile {
+	/// Opaque private handle surviving restart until explicitly released.
+	pub source_id: String,
+	/// Actual source size and native media metadata.
+	pub metadata: HostNativeChatAttachmentMetadata,
+}
+
+/// Trusted context for exporting a verified native Chat attachment.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct NativeChatFileExportRequest {
+	/// Authenticated product requesting presentation.
+	pub product_id: String,
+	/// Host-authenticated peer identity.
+	pub peer_identity: [u8; 32],
+	/// Host-resolved peer name, if available.
+	pub peer_username: Option<String>,
+	/// Verified attachment metadata, including the exact export size.
+	pub metadata: HostNativeChatAttachmentMetadata,
+}
+
+/// Host-private native Chat selection, immutable custody and safe export.
+///
+/// Handles, file bytes and destinations must never be exposed to products.
+/// Optional embedders without a backend must fail explicitly as unavailable.
+#[async_trait]
+pub trait NativeChatFilesHost: Send + Sync {
+	/// Present trusted selection and durably snapshot the selected files.
+	/// An empty result denotes user cancellation, not an unavailable backend.
+	async fn pick_chat_files(
+		&self,
+		request: NativeChatFilePickRequest,
+	) -> Result<Vec<NativeChatPickedFile>, GenericError>;
+
+	/// Read exactly `length` bytes from an immutable source. Reject lengths
+	/// above 2,000,000 and checked ranges extending beyond its actual u32 size.
+	async fn read_chat_file(
+		&self,
+		source_id: String,
+		offset: u64,
+		length: u32,
+	) -> Result<Vec<u8>, GenericError>;
+
+	/// Release durable source custody. Repeated release is harmless.
+	async fn release_chat_file(&self, source_id: String) -> Result<(), GenericError>;
+
+	/// Present trusted export consent and create a private partial output.
+	/// `None` denotes user cancellation. Never overwrite without consent.
+	async fn begin_chat_file_export(
+		&self,
+		request: NativeChatFileExportRequest,
+	) -> Result<Option<String>, GenericError>;
+
+	/// Append a bounded chunk at the exact current offset; never allow holes,
+	/// rewrites, or bytes beyond the declared export size.
+	async fn write_chat_file_export(
+		&self,
+		export_id: String,
+		offset: u64,
+		data: Vec<u8>,
+	) -> Result<(), GenericError>;
+
+	/// Publish only an exact-size completed output through safe native UI.
+	/// Never automatically execute HTML, SVG, scripts, or other active files.
+	async fn finish_chat_file_export(&self, export_id: String) -> Result<(), GenericError>;
+
+	/// Idempotently discard a partial output, never a completed user export.
+	async fn cancel_chat_file_export(&self, export_id: String) -> Result<(), GenericError>;
+}
+
+/// Host-private HOP transport for the configured Bulletin chain.
+///
+/// Endpoints are trusted host configuration, never product-supplied dialing
+/// instructions. Implementations must re-read their allowlist and enforce exact
+/// URL membership before opening a connection. An unconfigured host is
+/// explicitly unavailable; it must not fall back to a chain RPC endpoint.
+#[async_trait]
+pub trait HopProvider: Send + Sync {
+	/// Current exact WSS endpoints from the host's trusted Bulletin registry.
+	async fn allowed_hop_endpoints(
+		&self,
+		bulletin_genesis_hash: [u8; 32],
+	) -> Result<Vec<String>, GenericError> {
+		let _ = bulletin_genesis_hash;
+		Ok(Vec::new())
+	}
+
+	/// Open one private HOP connection, sharing the JSON-RPC lifecycle only.
+	/// The caller closes the returned lease when the private operation ends.
+	async fn connect_hop(
+		&self,
+		bulletin_genesis_hash: [u8; 32],
+		endpoint: String,
+	) -> Result<Box<dyn JsonRpcConnection>, GenericError> {
+		let _ = (bulletin_genesis_hash, endpoint);
+		Err(GenericError { reason: "HOP provider unavailable".to_string() })
+	}
+}
+
+/// Check an endpoint without normalizing it into a different allowlist entry.
+pub fn ensure_allowed_hop_endpoint(endpoint: &str, allowed: &[String]) -> Result<(), GenericError> {
+	let valid = endpoint.starts_with("wss://") &&
+		!endpoint.chars().any(|ch| ch.is_whitespace() || ch.is_control()) &&
+		!endpoint.contains(['#', '\\']) &&
+		!endpoint[6..].split(['/', '?']).next().unwrap_or_default().contains('@') &&
+		url::Url::parse(endpoint).is_ok_and(|url| {
+			url.scheme() == "wss" &&
+				url.host_str().is_some() &&
+				url.username().is_empty() &&
+				url.password().is_none() &&
+				url.fragment().is_none()
+		}) && allowed.iter().any(|entry| entry == endpoint);
+	if !valid {
+		return Err(GenericError {
+			reason: "HOP endpoint is not in the trusted Bulletin WSS allowlist".to_string(),
+		});
+	}
+	Ok(())
 }
 
 /// Core-owned host-private storage slots. Products never address these slots;
@@ -1221,7 +1954,7 @@ pub enum CoreStorageKey {
 		/// Stable host-derived SSO session id.
 		session_id: String,
 		/// Product whose hard subtree this key roots.
-		product_id: ProductId,
+		product_id: String,
 	},
 	/// Signing-host request replay state for one wallet and pairing peer.
 	///
@@ -1245,20 +1978,114 @@ pub enum CoreStorageKey {
 		/// Product whose manifest was cached, normalized.
 		product_id: String,
 	},
-	/// Funding sessions: every live one plus a bounded tail of settled ones,
-	/// as one versioned SCALE blob.
+	/// Encrypted main-purse inventory, operation journal, and claim recovery state.
+	///
+	/// This slot is wallet-owned, not product-owned, and must survive clearing a
+	/// product's data. Writes replace the entire value atomically.
 	#[codec(index = 13)]
-	FundingSessions,
-	/// Funding sessions or session pack blobs the core could not read, as a SCALE list of the
-	/// raw blobs, newest last, so a stored session is never overwritten
-	/// unread and a later bad blob does not replace an earlier one. Kept for
-	/// diagnosis only: the core never reads them back.
+	MainPurseCoinage {
+		/// Root public key identifying the wallet.
+		root_public_key: [u8; 32],
+		/// Chain whose Coinage inventory is recorded.
+		genesis_hash: [u8; 32],
+	},
+	/// Encrypted Host-owned native Chat device, peer roster, and migration state.
+	#[codec(index = 14)]
+	NativeChatDevice {
+		/// Wallet owning the Chat identity.
+		root_public_key: [u8; 32],
+		/// Host-selected Chat network.
+		genesis_hash: [u8; 32],
+		/// Authenticated product using the device.
+		product_id: String,
+	},
+	/// One encrypted, bounded native Chat attachment cache chunk.
+	/// Values use the Chat state's wallet-bound authenticated encryption.
+	#[codec(index = 15)]
+	NativeChatFileChunk {
+		/// Wallet owning the attachment.
+		root_public_key: [u8; 32],
+		/// Host-selected Chat network.
+		genesis_hash: [u8; 32],
+		/// Authenticated product using the device.
+		product_id: String,
+		/// Public opaque attachment identifier, not a source handle or ticket.
+		attachment_id: [u8; 32],
+		/// Exact chunk index within the authenticated file root.
+		chunk_index: u32,
+	},
+	/// Previously initialized Chat products to restore after this wallet unlocks.
+	///
+	/// This is a host-private wallet-owned index, not a permission grant. The
+	/// core rechecks each product's current grants before restoring reception.
+	#[codec(index = 16)]
+	NativeChatProducts {
+		/// Wallet owning the installed Chat devices.
+		root_public_key: [u8; 32],
+		/// Host-selected Chat network.
+		genesis_hash: [u8; 32],
+	},
+	/// The profile reference the user disclosed to their chat contacts on one
+	/// Chat network, with the product that disclosed it. Wallet-owned: one per
+	/// wallet and network, whichever product wrote it. The reference is a
+	/// bearer capability.
+	///
+	/// Known gap (docs/rfcs/profile-disclosure.md): one slot, so the last product to disclose
+	/// replaces the others.
 	#[codec(index = 17)]
-	FundingSessionsUnreadable,
-	/// Recorded funding sessions compacted out of the funding sessions blob,
-	/// as one versioned SCALE blob. Never trimmed.
+	ProfileDisclosure {
+		/// Wallet whose user disclosed the reference.
+		root_public_key: [u8; 32],
+		/// Host-selected Chat network the reference is relayed on.
+		genesis_hash: [u8; 32],
+	},
+	/// Profile references the contacts on one Chat product's roster disclosed,
+	/// the newest per contact, withdrawals included. Scoped like the
+	/// `NativeChatDevice` roster it shadows, and product-indexed so clearing
+	/// the product clears them. The references are bearer capabilities.
 	#[codec(index = 18)]
-	FundingSessionPack,
+	ProfileReferencesReceived {
+		/// Wallet owning the Chat identity the references were sent to.
+		root_public_key: [u8; 32],
+		/// Host-selected Chat network.
+		genesis_hash: [u8; 32],
+		/// Chat product whose contacts sent the references.
+		product_id: String,
+	},
+	/// Wallet-wide personal profile grants, including replay tombstones.
+	/// These bearer capabilities are independent of the receiving product.
+	#[codec(index = 19)]
+	ProfilePersonalReferencesReceived {
+		/// Wallet whose authenticated peers sent the references.
+		root_public_key: [u8; 32],
+		/// Host-selected Chat network.
+		genesis_hash: [u8; 32],
+	},
+	/// Versioned bounded receiving ledger, shared across product executions.
+	/// Host product/account deletion must invoke ReceivingService::revoke first.
+	#[codec(index = 20)]
+	NotificationReceiving,
+	/// Bounded upload consent and rolling quota. Revocation retains quota and
+	/// advances a generation so outstanding confirmations cannot restore it.
+	#[codec(index = 21)]
+	AutomaticPreimageUploads {
+		/// Authenticated requesting product.
+		product_id: String,
+		/// Root account that explicitly granted consent.
+		root_public_key: Bytes32,
+		/// Host-selected Bulletin network.
+		genesis_hash: Bytes32,
+	},
+	/// The host-channel keys this wallet's contacts handed over in a Chat
+	/// bootstrap frame, one per peer (seity `doc/HOST_CHANNEL_PLAN.md`).
+	/// Public keys only; the pair secret is derived on use.
+	#[codec(index = 22)]
+	HostChannelPeers {
+		/// Wallet whose contacts sent the keys.
+		root_public_key: [u8; 32],
+		/// Host-selected Chat network.
+		genesis_hash: [u8; 32],
+	},
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -1272,6 +2099,9 @@ pub struct CoreStorageKeyDescription {
 	pub kind: &'static str,
 	/// Product that owns this exact slot, when the key is product-indexed.
 	pub product_id: Option<String>,
+	/// Exact permission scope for an authorization slot, including inactive accounts.
+	/// No current authority, stored value, or secret material is consulted.
+	pub permission_request: Option<PermissionAuthorizationRequest>,
 }
 
 /// Failure to decode exactly one [`CoreStorageKey`].
@@ -1296,43 +2126,47 @@ pub fn describe_core_storage_key(
 	if !input.is_empty() {
 		return Err(CoreStorageKeyDescriptionError::TrailingBytes);
 	}
+	let mut permission_request = None;
 	let (kind, product_id) = match key {
 		CoreStorageKey::AuthSession => ("AuthSession", None),
 		CoreStorageKey::PairingDeviceIdentity => ("PairingDeviceIdentity", None),
-		CoreStorageKey::PermissionAuthorization { product_id, .. } => {
+		CoreStorageKey::PermissionAuthorization { product_id, request } => {
+			permission_request = Some(request);
 			("PermissionAuthorization", Some(product_id))
 		},
 		CoreStorageKey::AllowanceKeys { .. } => ("AllowanceKeys", None),
 		CoreStorageKey::LastProcessedPairingStatement => ("LastProcessedPairingStatement", None),
 		CoreStorageKey::AutoSigningKey { product_id } => ("AutoSigningKey", Some(product_id)),
-		CoreStorageKey::ProductSubtree { product_id, .. } => {
-			("ProductSubtree", Some(product_id.into()))
-		},
+		CoreStorageKey::ProductSubtree { product_id, .. } => ("ProductSubtree", Some(product_id)),
 		CoreStorageKey::AutoSigningKeys => ("AutoSigningKeys", None),
 		CoreStorageKey::RingVrfRegistry { .. } => ("RingVrfRegistry", None),
 		CoreStorageKey::StatementRenewalTargets => ("StatementRenewalTargets", None),
 		CoreStorageKey::DeviceEncryptionKey => ("DeviceEncryptionKey", None),
 		CoreStorageKey::SsoResponderRequestLedger { .. } => ("SsoResponderRequestLedger", None),
 		CoreStorageKey::ProductManifest { product_id } => ("ProductManifest", Some(product_id)),
-		CoreStorageKey::FundingSessions => ("FundingSessions", None),
-		CoreStorageKey::FundingSessionsUnreadable => ("FundingSessionsUnreadable", None),
-		CoreStorageKey::FundingSessionPack => ("FundingSessionPack", None),
+		CoreStorageKey::MainPurseCoinage { .. } => ("MainPurseCoinage", None),
+		CoreStorageKey::NativeChatDevice { .. } => ("NativeChatDevice", None),
+		CoreStorageKey::NativeChatProducts { .. } => ("NativeChatProducts", None),
+		CoreStorageKey::ProfileDisclosure { .. } => ("ProfileDisclosure", None),
+		CoreStorageKey::ProfileReferencesReceived { product_id, .. } => {
+			("ProfileReferencesReceived", Some(product_id))
+		},
+		CoreStorageKey::ProfilePersonalReferencesReceived { .. } => {
+			("ProfilePersonalReferencesReceived", None)
+		},
+		CoreStorageKey::HostChannelPeers { .. } => ("HostChannelPeers", None),
+		CoreStorageKey::NativeChatFileChunk { product_id, .. } => {
+			("NativeChatFileChunk", Some(product_id))
+		},
+		CoreStorageKey::NotificationReceiving => ("NotificationReceiving", None),
+		CoreStorageKey::AutomaticPreimageUploads { product_id, .. } => {
+			("AutomaticPreimageUploads", Some(product_id))
+		},
 	};
-	Ok(CoreStorageKeyDescription { kind, product_id })
+	Ok(CoreStorageKeyDescription { kind, product_id, permission_request })
 }
 
 impl CoreStorageKey {
-	/// Cache key for `product_id`'s root manifest.
-	///
-	/// Keyed by [`ProductId::bare_label`], which is what the lookup resolves on
-	/// the host's network, so `peopl.dot` and `app.peopl.dot` share one entry.
-	/// Keying by the full id would let a caller force a chain lookup and a
-	/// storage write for every subname it makes up. Code that seeds this cache
-	/// must use this key.
-	pub fn product_manifest(product_id: &ProductId) -> Self {
-		Self::ProductManifest { product_id: product_id.bare_label().to_string() }
-	}
-
 	/// Persisted authorization key for one product-scoped device permission.
 	pub fn device_permission_authorization(
 		product_id: &str,
@@ -1389,6 +2223,45 @@ impl CoreStorageKey {
 			request: PermissionAuthorizationRequest::AccountAccess {
 				target_product_id: target_product_id.to_string(),
 			},
+		}
+	}
+
+	/// Persisted authorization key for wallet-held Chat identity authority.
+	pub fn chat_authority_authorization(product_id: &str) -> Self {
+		Self::PermissionAuthorization {
+			product_id: product_id.to_string(),
+			request: PermissionAuthorizationRequest::ChatAuthority,
+		}
+	}
+
+	/// Persisted authorization for one statement allowance account selector.
+	pub fn statement_store_allowance_authorization(
+		product_id: &str,
+		derivation_index: Option<DerivationIndex>,
+	) -> Self {
+		Self::PermissionAuthorization {
+			product_id: product_id.to_string(),
+			request: PermissionAuthorizationRequest::StatementStoreAllowance { derivation_index },
+		}
+	}
+
+	/// Persisted authorization key for disclosing a profile reference to the
+	/// user's Chat contacts.
+	pub fn profile_disclosure_authorization(product_id: &str) -> Self {
+		Self::PermissionAuthorization {
+			product_id: product_id.to_string(),
+			request: PermissionAuthorizationRequest::ProfileDisclosure,
+		}
+	}
+
+	/// Persisted calling consent for one canonical product, network, and account.
+	///
+	/// Callers supply the authenticated network genesis and the product's
+	/// authority-derived `Index(0)` account, not product-provided selectors.
+	pub fn calling_authorization(product_id: &str, network: [u8; 32], account: [u8; 32]) -> Self {
+		Self::PermissionAuthorization {
+			product_id: product_id.to_string(),
+			request: PermissionAuthorizationRequest::Calling { network, account },
 		}
 	}
 }
@@ -1483,6 +2356,34 @@ fn canonical_remote_request(request: &RemotePermissionRequest) -> RemotePermissi
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn hop_dialing_requires_exact_secure_endpoint_membership() {
+		let allowed = vec!["wss://hop.example/rpc".to_string()];
+		assert!(ensure_allowed_hop_endpoint(&allowed[0], &allowed).is_ok());
+		for endpoint in [
+			"wss://hop.example/rpc/",
+			"wss://HOP.example/rpc",
+			"wss://hop.example:443/rpc",
+			"wss://hop.example/rpc?other=1",
+			"wss://hop.example.evil/rpc",
+		] {
+			assert!(ensure_allowed_hop_endpoint(endpoint, &allowed).is_err());
+		}
+		// Even malformed trusted configuration must not weaken the dial policy.
+		for endpoint in [
+			"ws://hop.example/rpc",
+			"https://hop.example/rpc",
+			"wss://user:secret@hop.example/rpc",
+			"wss://@hop.example/rpc",
+			"wss://hop.example\\rpc",
+			"wss://hop.example/rpc#fragment",
+			"wss://hop.example/\nrpc",
+			" wss://hop.example/rpc",
+		] {
+			assert!(ensure_allowed_hop_endpoint(endpoint, &[endpoint.to_string()]).is_err());
+		}
+	}
 
 	fn signing_host_config(
 		network_suffix: &str,
@@ -2044,10 +2945,9 @@ mod tests {
 		assert_eq!(ProductExecutionKind::Widget.encode(), [1]);
 		assert_eq!(ProductExecutionKind::Worker.encode(), [2]);
 
-		let context = ProductContext::new_with_execution(
-			ProductId::for_test("app.dot"),
-			ProductExecutionKind::Worker,
-		);
+		let context =
+			ProductContext::new_with_execution("app.dot".to_string(), ProductExecutionKind::Worker)
+				.expect("product id is valid");
 		assert_eq!(context.encode(), [28, b'a', b'p', b'p', b'.', b'd', b'o', b't', 2]);
 		assert_eq!(ProductContext::decode(&mut context.encode().as_slice()), Ok(context));
 	}
@@ -2073,8 +2973,175 @@ mod tests {
 		// constructor would produce rather than opening a second one.
 		let frame = ("App.DOT".to_string(), ProductExecutionKind::App).encode();
 		let decoded = ProductContext::decode(&mut frame.as_slice()).expect("product id normalizes");
-		assert_eq!(decoded.product_id.as_str(), "app.dot");
-		assert_eq!(decoded, ProductContext::new(ProductId::for_test("app.dot")));
+		assert_eq!(decoded.product_id, "app.dot");
+		assert_eq!(
+			decoded,
+			ProductContext::new("app.dot".to_string()).expect("product id is valid")
+		);
+	}
+
+	#[test]
+	fn trusted_remote_permission_labels_match_the_bare_product_label() {
+		for product_id in [
+			"peopl.dot",
+			"peopl.paseo",
+			"peopl.testnet",
+			"dim2.dot",
+			"dim2.paseo",
+			"dim2.testnet",
+			"stash.dot",
+		] {
+			assert!(
+				has_trusted_remote_permissions(product_id),
+				"{product_id} must hold remote permissions without a prompt"
+			);
+		}
+		for product_id in [
+			"app.peopl.dot",
+			"sub.dim2.paseo",
+			"app.dim2.testnet",
+			"dim2.com",
+			"notdim2.dot",
+			"peopl",
+			"peopl.com",
+			"peoplx.dot",
+			"my-peopl.dot",
+			"localhost",
+			"localhost:3000",
+			"",
+			"dot",
+		] {
+			assert!(
+				!has_trusted_remote_permissions(product_id),
+				"{product_id} is a separate product and must prompt"
+			);
+		}
+	}
+
+	#[test]
+	fn a_published_product_cannot_take_the_localhost_label() {
+		// Hosts grant a development wildcard to a localhost product, so the
+		// label must not be reachable from dotNS.
+		for product_id in ["localhost.dot", "localhost.paseo", "LOCALHOST.DOT"] {
+			assert!(
+				normalize_product_identifier(product_id).is_err(),
+				"{product_id} must not be a valid product identifier"
+			);
+			assert!(
+				!is_localhost_product_identifier(product_id),
+				"{product_id} must not read as the development wildcard"
+			);
+		}
+		for product_id in ["localhost", "localhost:3000"] {
+			assert!(is_localhost_product_identifier(product_id), "{product_id}");
+		}
+		// A prefix test would admit these; the whole identifier has to match.
+		for product_id in ["localhost:3000.evil.dot", "localhost:", "localhost:80a"] {
+			assert!(
+				!is_localhost_product_identifier(product_id),
+				"{product_id} must not read as the development wildcard"
+			);
+		}
+		// Still a normal product, sharing only the prefix.
+		assert!(normalize_product_identifier("localhosting.dot").is_ok());
+	}
+
+	#[test]
+	fn trusted_remote_permissions_normalize_the_spellings_a_host_holds() {
+		// Both the UniFFI and wasm exports answer through this, and a host
+		// holds an id in whatever spelling it received rather than the
+		// normalized form the core passes internally.
+		for product_id in
+			["peopl.dot", "PEOPL.DOT", "  peopl.dot  ", "dim2.paseo", " DIM2.TESTNET ", "stash.dot"]
+		{
+			assert!(
+				normalizes_to_trusted_remote_permissions(product_id),
+				"{product_id} is a first-party product in any accepted spelling"
+			);
+		}
+		for product_id in ["app.peopl.dot", "peopl", "notpeopl.dot", "localhost:3000", "", "   "] {
+			assert!(
+				!normalizes_to_trusted_remote_permissions(product_id),
+				"{product_id} must not be read as trusted"
+			);
+		}
+	}
+
+	#[test]
+	fn every_trusted_remote_permission_label_is_a_product_identifier() {
+		// A label that product-id validation rejects would never reach the
+		// permission engine, so the whitelist entry would be silently inert.
+		for label in REMOTE_PERMISSION_TRUSTED_LABELS {
+			for tld in DOTNS_TLDS {
+				let product_id = format!("{label}.{tld}");
+				assert!(
+					is_product_identifier(&product_id),
+					"{product_id} must be an accepted product identifier"
+				);
+				assert!(
+					has_trusted_remote_permissions(&product_id),
+					"{product_id} must be recognized as trusted"
+				);
+			}
+		}
+	}
+
+	#[test]
+	fn trusted_remote_permission_labels_are_bare_lowercase_labels() {
+		// The predicate compares against the label of an already-normalized id,
+		// so an entry carrying a TLD or an uppercase letter can never match.
+		for label in REMOTE_PERMISSION_TRUSTED_LABELS {
+			assert!(!label.contains('.'), "{label} must not carry a TLD");
+			assert_eq!(*label, label.to_lowercase(), "{label} must be lowercase");
+		}
+	}
+
+	#[test]
+	fn an_identifier_carrying_no_name_is_rejected() {
+		// Each of these reached the manifest grant key, the cache key, the only
+		// consent prompt in this design and every log line, because only the
+		// suffix after the last dot was ever inspected.
+		for id in [
+			"dim2\u{0}.dot",        // NUL, into a prompt rendered verbatim
+			"\u{202e}dim2.dot",     // right-to-left override
+			"dim2\u{200b}.dot",     // zero width space
+			"a b c.dot",            // whitespace
+			"../../etc/passwd.dot", // path separators
+			"dim2..dot",            // empty label: collapses onto other ids
+			".dot",                 // same empty label
+		] {
+			assert!(
+				normalize_product_identifier(id).is_err(),
+				"{id:?} carries no product name and must not normalize"
+			);
+		}
+	}
+
+	#[test]
+	fn an_internationalized_identifier_is_still_an_identifier() {
+		// The rejection above is a hazard list, not an ASCII allowlist: dotNS
+		// names are internationalized and these are real ids.
+		for id in ["Tést.DOT", "münchen.dot", "dim2-two.dot", "localhost:3000"] {
+			assert!(normalize_product_identifier(id).is_ok(), "{id:?} is a legitimate product id");
+		}
+	}
+
+	#[test]
+	fn an_overlong_product_id_is_not_an_identifier() {
+		// Only the suffix after the last `.` is checked, so every length of
+		// this is otherwise a valid, distinct, wire-supplied cache key.
+		let label = "a".repeat(PRODUCT_ID_MAX_BYTES);
+		let overlong = format!("{label}.dot");
+		assert!(overlong.len() > PRODUCT_ID_MAX_BYTES);
+		assert!(
+			!is_product_identifier(&overlong),
+			"a product id past the cap must be rejected, not stored"
+		);
+
+		// A huge id alone would pass with the cap off by any amount.
+		let at_cap = format!("{}.dot", "a".repeat(PRODUCT_ID_MAX_BYTES - 4));
+		assert_eq!(at_cap.len(), PRODUCT_ID_MAX_BYTES);
+		assert!(is_product_identifier(&at_cap), "an id exactly at the cap is still valid");
 	}
 
 	#[test]
@@ -2089,6 +3156,9 @@ mod tests {
 			Ok(CoreStorageKeyDescription {
 				kind: "PermissionAuthorization",
 				product_id: Some("product.dot".to_string()),
+				permission_request: Some(PermissionAuthorizationRequest::Device(
+					HostDevicePermissionRequest::Camera,
+				)),
 			})
 		);
 		for (key, kind, product_id) in [
@@ -2122,9 +3192,6 @@ mod tests {
 				"SsoResponderRequestLedger",
 				None,
 			),
-			(CoreStorageKey::FundingSessions, "FundingSessions", None),
-			(CoreStorageKey::FundingSessionsUnreadable, "FundingSessionsUnreadable", None),
-			(CoreStorageKey::FundingSessionPack, "FundingSessionPack", None),
 		] {
 			let description = describe_core_storage_key(&key.encode()).expect("valid key");
 			assert_eq!(description.kind, kind);
@@ -2166,6 +3233,14 @@ mod tests {
 		let account_access =
 			CoreStorageKey::account_access_authorization("product.dot", "target.dot");
 		let other_target = CoreStorageKey::account_access_authorization("product.dot", "other.dot");
+		let chat_authority = CoreStorageKey::chat_authority_authorization("product.dot");
+		let other_product_chat = CoreStorageKey::chat_authority_authorization("other.dot");
+		let jam_peers = |product_id: &str, genesis: [u8; 32]| {
+			CoreStorageKey::remote_permission_authorization(
+				product_id,
+				&RemotePermissionRequest { permission: RemotePermission::JamPeers { genesis } },
+			)
+		};
 
 		assert_ne!(camera, other_product);
 		assert_ne!(camera, remote);
@@ -2174,6 +3249,13 @@ mod tests {
 		assert_ne!(identity, other_product_identity);
 		assert_ne!(account_access, other_target);
 		assert_ne!(account_access, camera);
+		assert_ne!(chat_authority, identity);
+		assert_ne!(chat_authority, account_access);
+		assert_ne!(chat_authority, other_product_chat);
+		// A JAM peer decision is kept per product and per genesis.
+		assert_ne!(jam_peers("product.dot", [0x35; 32]), remote);
+		assert_ne!(jam_peers("product.dot", [0x35; 32]), jam_peers("product.dot", [0x36; 32]));
+		assert_ne!(jam_peers("product.dot", [0x35; 32]), jam_peers("other.dot", [0x35; 32]));
 	}
 
 	#[test]
@@ -2358,11 +3440,11 @@ mod tests {
 	fn review_discriminants_do_not_move() {
 		let discriminants = [
 			UserConfirmationReview::AccountAccess(AccountAccessReview {
-				requesting_product_id: ProductId::for_test("caller.dot"),
-				target_product_id: ProductId::for_test("target.dot"),
+				requesting_product_id: "caller.dot".to_string(),
+				target_product_id: "target.dot".to_string(),
 			}),
 			UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
-				product_id: ProductId::for_test("caller.dot"),
+				product_id: "caller.dot".to_string(),
 			}),
 		]
 		.map(|review| review.encode()[0]);
@@ -2380,11 +3462,10 @@ mod tests {
 /// they accumulate for the life of the install.
 ///
 /// [`describe_core_storage_key`] names the product owning a slot:
-/// [`CoreStorageKeyDescription::product_id`] is `Some` exactly for the
-/// product-indexed variants, which are `PermissionAuthorization`,
-/// `AutoSigningKey`, and `ProductSubtree`. Keying host storage by that value
-/// makes the sweep a prefix delete rather than a scan.
-// TODO: introduce SecretStorage to make protection a separate contract.
+/// [`CoreStorageKeyDescription::product_id`] is `Some` for product-indexed
+/// slots, including the encrypted attachment chunk cache. Wallet-owned state
+/// remains outside that sweep. Keying host storage by this metadata makes
+/// product removal a prefix delete rather than a scan.
 #[async_trait]
 pub trait CoreStorage: Send + Sync {
 	/// Read a core-owned value by typed slot.
@@ -2400,6 +3481,27 @@ pub trait CoreStorage: Send + Sync {
 
 	/// Clear a core-owned value by typed slot.
 	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError>;
+
+	/// Atomically replace exactly `expected` decoded bytes in this physical slot.
+	/// `None` differs from an empty value. Serialize with every write, clear and
+	/// compare-exchange across all cores sharing the store, through actual
+	/// persistence completion even if the requesting future is dropped.
+	/// On persisted success, `notify_on_success` enqueues `core_storage_changed`
+	/// before completion even if the requester was cancelled. Initial unanswered
+	/// snapshots pass false; explicit policy decisions pass true.
+	async fn compare_exchange_core_storage(
+		&self,
+		key: CoreStorageKey,
+		expected: Option<Vec<u8>>,
+		replacement: Vec<u8>,
+		notify_on_success: bool,
+	) -> Result<bool, GenericError>;
+
+	/// Nonblocking notification after an explicit policy decision or reset.
+	/// Queue deferred refreshes for every core group sharing the store and exact
+	/// product, including the writer. Never await or reenter a core here. Raw
+	/// writes/clears and CAS with `notify_on_success == false` must not emit this.
+	fn core_storage_changed(&self, key: CoreStorageKey);
 }
 
 /// Decoded session fields a host shell needs to render account UI without
@@ -2507,7 +3609,7 @@ pub enum SignPayloadReview {
 		/// relayed request, which carries no caller identity. A caller other
 		/// than the account's own product is acting under that product's
 		/// `context` grant, and the user is the one who has to see that.
-		calling_product_id: Option<ProductId>,
+		calling_product_id: Option<String>,
 		/// Signing request.
 		request: HostSignPayloadRequest,
 	},
@@ -2525,7 +3627,7 @@ pub enum SignRawReview {
 	Product {
 		/// Product that asked, when the request carries a caller. See
 		/// [`SignPayloadReview::Product`].
-		calling_product_id: Option<ProductId>,
+		calling_product_id: Option<String>,
 		/// Raw signing request.
 		request: HostSignRawRequest,
 		/// Whether the signer applies the `<Bytes>` transaction-payload protection.
@@ -2549,7 +3651,7 @@ pub enum SignRawReview {
 pub struct StatementStoreProductSignReview {
 	/// Product that asked, when the request carries a caller. See
 	/// [`SignPayloadReview::Product`].
-	pub calling_product_id: Option<ProductId>,
+	pub calling_product_id: Option<String>,
 	/// Product account that will sign the statement payload.
 	pub account: ProductAccountId,
 	/// Exact unsigned statement payload to be signed.
@@ -2564,7 +3666,7 @@ pub enum CreateTransactionReview {
 	Product {
 		/// Product that asked, when the request carries a caller. See
 		/// [`SignPayloadReview::Product`].
-		calling_product_id: Option<ProductId>,
+		calling_product_id: Option<String>,
 		/// Transaction request.
 		payload: ProductAccountTxPayload,
 	},
@@ -2577,7 +3679,7 @@ pub enum CreateTransactionReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct AccountAliasReview {
 	/// Product requesting the alias.
-	pub calling_product_id: ProductId,
+	pub calling_product_id: String,
 	/// Product-scoped context the alias is bound to.
 	pub context: ProductProofContext,
 	/// Ring the alias is derived against.
@@ -2589,7 +3691,7 @@ pub struct AccountAliasReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct CreateProofReview {
 	/// Product requesting the proof.
-	pub calling_product_id: ProductId,
+	pub calling_product_id: String,
 	/// Product-scoped context the proof's alias is bound to.
 	pub context: ProductProofContext,
 	/// Ring the proof is generated against.
@@ -2603,7 +3705,7 @@ pub struct CreateProofReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct SignVrfReview {
 	/// Product making the request.
-	pub calling_product_id: ProductId,
+	pub calling_product_id: String,
 	/// Product account and exact ordered transcript.
 	pub request: HostAccountSignVrfRequest,
 }
@@ -2615,7 +3717,7 @@ pub struct SignVrfReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ResourceAllocationReview {
 	/// Product the allocation is requested for.
-	pub calling_product_id: ProductId,
+	pub calling_product_id: String,
 	/// Resources to allocate.
 	pub resources: Vec<AllocatableResource>,
 }
@@ -2625,9 +3727,9 @@ pub struct ResourceAllocationReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct AccountAccessReview {
 	/// Product currently handling the request.
-	pub requesting_product_id: ProductId,
+	pub requesting_product_id: String,
 	/// Product whose account is being requested.
-	pub target_product_id: ProductId,
+	pub target_product_id: String,
 }
 
 /// Review shown before a product learns the user's primary identity.
@@ -2635,7 +3737,51 @@ pub struct AccountAccessReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct IdentityDisclosureReview {
 	/// Product currently handling the request.
-	pub product_id: ProductId,
+	pub product_id: String,
+}
+
+/// Review shown before a product binds or uses wallet-held Chat identity authority.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ChatAuthorityReview {
+	/// Product requesting the Chat identity operation.
+	pub product_id: String,
+}
+
+/// Review shown before a product discloses a profile reference to an app
+/// audience or selected contacts. Personal grants permit host rendering across
+/// recipient apps. This authorizes the product, not individual audience edits.
+/// The prompt names the product, never the contacts or the reference.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ProfileDisclosureReview {
+	/// Product asking to disclose the profile.
+	pub product_id: String,
+}
+
+/// Exact Host-resolved payment reviewed before debiting the user's main purse.
+///
+/// This review never grants a reusable spending permission. Chat authority and
+/// automatic product signing do not authorize it.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct MainPurseChatPaymentReview {
+	/// Authenticated product requesting this payment.
+	pub calling_product_id: String,
+	/// Recipient identity authenticated by the Host's native Chat session.
+	pub recipient_identity: [u8; 32],
+	/// Host-resolved username for that identity, never a product display label.
+	pub recipient_username: Option<String>,
+	/// Exact recipient amount in cents of the selected Coinage asset.
+	pub amount_cents: u64,
+	/// Maximum main-purse debit, including any approved fee, in the same cents.
+	pub max_debit_cents: u64,
+	/// Genesis hash of the Host-selected Coinage chain.
+	pub genesis_hash: [u8; 32],
+	/// Trusted Coinage asset instance; None denotes a legacy single-asset runtime.
+	pub coinage_instance_id: Option<u32>,
+	/// Immutable, wallet-scoped payment operation being authorized.
+	pub operation_id: [u8; 32],
 }
 
 /// Review shown before a product resolves its own account subtree over SSO,
@@ -2644,7 +3790,43 @@ pub struct IdentityDisclosureReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ProductSubtreeReview {
 	/// Product resolving its own account.
-	pub product_id: ProductId,
+	pub product_id: String,
+}
+
+/// Review shown before a preimage is submitted.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct PreimageSubmitReview {
+	/// Size of the preimage in bytes.
+	pub size: u64,
+	/// Authenticated product requesting this upload.
+	pub product_id: String,
+	/// Root account to which any durable approval is restricted.
+	pub root_public_key: Bytes32,
+	/// Host-selected Bulletin network covered by the approval.
+	pub genesis_hash: Bytes32,
+	/// Maximum bytes per automatically approved upload.
+	pub automatic_max_bytes: u64,
+	/// Maximum automatic upload attempts in the rolling window.
+	pub automatic_max_uploads: u32,
+	/// Length of the rolling automatic-upload window in seconds.
+	pub automatic_window_seconds: u32,
+}
+
+/// Immutable calling-consent context resolved by the trusted core.
+///
+/// Approval applies only to this exact canonical product, authenticated network,
+/// and authority-derived account. It neither grants camera/microphone access nor
+/// carries over to another account or network.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct CallingReview {
+	/// Canonical product requesting calling authority.
+	pub product_id: String,
+	/// Genesis hash of the authenticated network.
+	pub network: [u8; 32],
+	/// Product's authority-derived `Index(0)` sr25519 public key.
+	pub account: [u8; 32],
 }
 
 /// Review shown before a user-confirmed core action continues.
@@ -2668,8 +3850,9 @@ pub enum UserConfirmationReview {
 	IdentityDisclosure(IdentityDisclosureReview),
 	/// Allocate resources for the requesting product.
 	ResourceAllocation(ResourceAllocationReview),
-	// Index 8 stays unused so a host whose codec is older or newer than the
-	// core cannot decode one review as another.
+	/// Submit a preimage to the host-selected backend.
+	#[codec(index = 8)]
+	PreimageSubmit(PreimageSubmitReview),
 	/// Allow a product to access another product account.
 	#[codec(index = 9)]
 	AccountAccess(AccountAccessReview),
@@ -2679,6 +3862,15 @@ pub enum UserConfirmationReview {
 	/// Resolve a product's own account subtree over SSO.
 	#[codec(index = 11)]
 	ProductSubtree(ProductSubtreeReview),
+	/// Allow a product to bind and use wallet-held Chat identity authority.
+	ChatAuthority(ChatAuthorityReview),
+	/// Confirm this exact main-purse payment; never eligible for auto-approval.
+	MainPurseChatPayment(MainPurseChatPaymentReview),
+	/// Allow a product to disclose a profile reference to the user's Chat
+	/// contacts.
+	ProfileDisclosure(ProfileDisclosureReview),
+	/// Allow calling only in the immutable authenticated product/account/network scope.
+	Calling(CallingReview),
 }
 
 /// Local user confirmation UI for sensitive core-owned operations.
@@ -2689,8 +3881,10 @@ pub trait UserConfirmation: Send + Sync {
 		&self,
 		review: UserConfirmationReview,
 	) -> Result<PermissionDecision, GenericError> {
+		// A boolean upload approval has no explicit durable-consent choice.
+		let upload = matches!(review, UserConfirmationReview::PreimageSubmit(_));
 		Ok(if self.confirm_user_action(review).await? {
-			PermissionDecision::AllowAlways
+			if upload { PermissionDecision::AllowOnce } else { PermissionDecision::AllowAlways }
 		} else {
 			PermissionDecision::Deny
 		})
@@ -2715,10 +3909,34 @@ pub trait ThemeHost: Send + Sync {
 }
 
 /// Host locale source.
+#[async_trait]
 pub trait LocaleHost: Send + Sync {
 	/// Emits the currently selected locale immediately, then future changes.
 	fn subscribe_locale(&self)
 	-> BoxStream<'static, Result<HostLocaleSubscribeItem, GenericError>>;
+
+	/// Convert a bounded UTC batch using the supplied host locale snapshot.
+	async fn localize_timestamps(
+		&self,
+		_request: crate::latest::HostLocaleLocalizeTimestampsRequest,
+	) -> Result<crate::latest::HostLocaleLocalizeTimestampsResponse, GenericError> {
+		Err(GenericError { reason: "Local time conversion is unavailable".into() })
+	}
+}
+
+/// Optional host-authenticated username candidate source. The host owns backend
+/// configuration and credentials. Candidates are never ownership assertions:
+/// the core checks finalized dotNS ownership and the canonical People Chat key.
+#[async_trait]
+pub trait IdentityBackendHost: Send + Sync {
+	/// Return exact-name candidates on the specified People network. Reject
+	/// unavailable configuration/authentication and incomplete search results.
+	/// Neither a guest URL nor a backend display label crosses this boundary.
+	async fn identity_username_candidates(
+		&self,
+		username: String,
+		people_chain_genesis_hash: [u8; 32],
+	) -> Result<Vec<[u8; 32]>, GenericError>;
 }
 
 /// Host preimage backend. The core builds, signs, and submits the Bulletin
@@ -2799,122 +4017,6 @@ pub trait ChatPlatform: Send + Sync {
 	) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>>;
 }
 
-/// A funding session as the host overlay needs it to open on the right screen.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FundingPresentation {
-	/// Session id.
-	pub intent: String,
-	/// Which way value moves, which decides the screen the overlay opens on.
-	pub direction: FundingDirection,
-	/// Amount the caller asked for, or `None` to let the user choose.
-	pub amount: Option<u128>,
-}
-
-/// How the user left the funding overlay.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
-pub enum FundingPresentOutcome {
-	/// The user went ahead; the session runs on without the overlay.
-	Started,
-	/// The user closed the overlay before starting; the core discards the
-	/// session.
-	Dismissed,
-}
-
-/// Host-implemented funding surface: the native overlay a funding session
-/// runs in. Optional: a host that omits it leaves funding requests answered
-/// `Unsupported`.
-#[async_trait]
-pub trait FundingPlatform: Send + Sync {
-	/// Show the funding overlay for a session that `product` opened, or the
-	/// host itself when `product` is `None`.
-	async fn present_funding(
-		&self,
-		product: Option<&ProductContext>,
-		session: FundingPresentation,
-	) -> Result<FundingPresentOutcome, GenericError>;
-
-	/// Observe a session's status change, for host UI such as the in-flight
-	/// pill.
-	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
-		let _ = (intent, status);
-	}
-}
-
-/// Host-implemented balance view: what a payment request can spend right now,
-/// the figure the host checks a payment against. Optional: a host that omits
-/// it leaves balance subscriptions answered `Unsupported`.
-///
-/// The balance is the user's, per purse, not the product's: every product
-/// following a purse sees the same figure. The core asks for the product's
-/// balance access before calling here, and checks it again before passing on
-/// each balance the stream emits, so a revoked grant ends the stream with
-/// `PermissionDenied`.
-pub trait BalancePlatform: Send + Sync {
-	/// Emit the balance of `purse` (`None` for the main purse) now and on
-	/// every change.
-	fn subscribe_balance(
-		&self,
-		product: &ProductContext,
-		purse: Option<u32>,
-	) -> BoxStream<'static, Result<HostPaymentBalanceSubscribeItem, HostPaymentBalanceSubscribeError>>;
-}
-
-/// Host-implemented top-up engine: claims a source's funds into the user's
-/// balance through the host's coinage onboarding. Optional: a host that omits
-/// it leaves top-ups answered `Unsupported`.
-///
-/// The core validates the source keys and hashes the product into the id
-/// before calling, so ids never collide across products. The host owns
-/// retries, partial claims and persistence.
-#[async_trait]
-pub trait TopUpPlatform: Send + Sync {
-	/// Start a top-up. Returns once the host has accepted it.
-	async fn top_up(
-		&self,
-		product: &ProductContext,
-		request: HostPaymentTopUpRequest,
-	) -> Result<(), HostPaymentTopUpError>;
-
-	/// Emit a top-up's current status and every later one, ending after a
-	/// terminal status.
-	fn subscribe_top_up_status(
-		&self,
-		product: &ProductContext,
-		id: Bytes32,
-	) -> BoxStream<
-		'static,
-		Result<HostPaymentTopUpStatusSubscribeItem, HostPaymentTopUpStatusSubscribeError>,
-	>;
-}
-
-/// Host-implemented payment engine: pays from the user's balance to an
-/// account, once the user approves. Optional: a host that omits it leaves
-/// payment requests answered `Unsupported`.
-///
-/// The core hashes the product into the id before calling, so ids never
-/// collide across products. The host owns the approval sheet, the transfer
-/// and its persistence.
-#[async_trait]
-pub trait PaymentPlatform: Send + Sync {
-	/// Ask the user to approve `request`. Returns once the user has decided:
-	/// `Ok` when they authorized it and the host took it on; the payment's
-	/// outcome arrives through its status.
-	async fn request_payment(
-		&self,
-		product: &ProductContext,
-		request: HostPaymentRequest,
-	) -> Result<(), HostPaymentError>;
-
-	/// Emit a payment's current status and every later one, ending after a
-	/// terminal status.
-	fn subscribe_payment_status(
-		&self,
-		product: &ProductContext,
-		id: Bytes32,
-	) -> BoxStream<'static, Result<HostPaymentStatusSubscribeItem, HostPaymentStatusSubscribeError>>;
-}
-
 /// Host-implemented adapter through which product Pocket calls reach the
 /// host's card collection. Optional: a host that omits it leaves Pocket
 /// requests answered `Unsupported`. See [`OptionalPlatform`].
@@ -2936,6 +4038,156 @@ pub trait PocketPlatform: Send + Sync {
 		product: &ProductContext,
 		request: HostPocketRemoveCardRequest,
 	) -> Result<(), HostPocketRemoveCardError>;
+}
+
+/// Host-implemented adapter that shows a product-referenced profile in
+/// host-owned UI. Optional: a host that omits it leaves Profile requests
+/// answered `Unsupported`. See [`OptionalPlatform`].
+///
+/// The reference is a bearer capability. The host resolves, decrypts and
+/// renders it; profile bytes and the reference's key never return to the
+/// product. The core screens only the reference's shape, so parsing it and
+/// deciding what it may fetch are the host's.
+#[async_trait]
+pub trait ProfilePlatform: Send + Sync {
+	/// Take one presentation and return once it is shown, never waiting for
+	/// the user to dismiss it. Report an unparseable reference as
+	/// `InvalidReference`; show load and fetch failures in the UI instead.
+	async fn present_profile(
+		&self,
+		product: &ProductContext,
+		request: HostProfilePresentRequest,
+	) -> Result<(), HostProfilePresentError>;
+
+	/// Show a Chat contact's shared profile, or host-owned feedback when no
+	/// profile is shared. Return once it is shown, without waiting for dismissal.
+	/// Report an unparseable shared reference as `InvalidReference`.
+	///
+	/// The core holds this reference because it arrived over the
+	/// authenticated Chat channel from `peer_identity`'s own device, so the
+	/// host can name that contact as who shared it, rather than the product
+	/// that asked. It cannot vouch for more: the record behind the reference
+	/// is not signed by its owner, so a contact can forward someone else's
+	/// reference. The default presents a shared profile as
+	/// [`ProfilePlatform::present_profile`] would, without the contact, and
+	/// reports an error when empty-profile feedback is unsupported.
+	async fn present_contact_profile(
+		&self,
+		product: &ProductContext,
+		presented: PresentedContactProfile,
+	) -> Result<(), HostProfilePresentError> {
+		let shared = presented.shared.ok_or_else(|| HostProfilePresentError::Unknown {
+			reason: "Contact profile feedback is unavailable".to_string(),
+		})?;
+		self.present_profile(product, HostProfilePresentRequest { reference: shared.reference })
+			.await
+	}
+
+	/// Draw the contact avatars a product placed, on the host's own layer over
+	/// the product's surface, replacing what was drawn for it before; an empty
+	/// `avatars` clears it. The layer must let pointer input through to the
+	/// product and must never tell the product what it drew.
+	///
+	/// The core calls this again, with the product's last geometry, whenever
+	/// a contact on it shares, re-shares or withdraws a profile, and with no
+	/// avatars once
+	/// the product's connection goes away. Answer `Unsupported` if this host
+	/// cannot draw over the product; the product is told so. The default draws
+	/// nothing.
+	async fn place_contact_avatars(
+		&self,
+		product: &ProductContext,
+		placed: PlacedAvatars,
+	) -> Result<(), HostProfilePlaceContactAvatarsError> {
+		let _ = (product, placed);
+		Ok(())
+	}
+}
+
+/// Host-only presentation of a contact's shared profile or its absence.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct PresentedContactProfile {
+	/// The profile currently shared with the user. `None` means no received,
+	/// unretracted profile, never a storage or loading failure.
+	pub shared: Option<SharedContactProfile>,
+	/// The contact being presented. When shared, their authenticated Chat
+	/// device delivered the reference, not necessarily their own profile.
+	pub peer_identity: [u8; 32],
+	/// The contact's username, when the core knows one: the name its Chat
+	/// roster holds for `peer_identity`, verified when the contact was bound
+	/// or first authenticated, else the peer's verified dotNS name. Never a
+	/// name from the product. `None` when neither is known in time; show the
+	/// contact without a name then, never by address.
+	pub username: Option<String>,
+}
+
+/// A profile reference received from an authenticated Chat contact.
+#[derive(Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct SharedContactProfile {
+	/// The profile reference the contact disclosed. A bearer capability, as
+	/// in [`ProfilePlatform::present_profile`].
+	pub reference: String,
+	/// The share's freshness timestamp, as in [`PlacedAvatar::shared_at`].
+	/// Personal grants advance it monotonically across relay actors.
+	pub shared_at: u64,
+}
+
+impl core::fmt::Debug for SharedContactProfile {
+	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+		f.debug_struct("SharedContactProfile")
+			.field("reference", &"[REDACTED]")
+			.field("shared_at", &self.shared_at)
+			.finish()
+	}
+}
+
+/// The avatars the core found drawable in one product's placement: the slots
+/// whose contact shared a profile with the user, each with the reference that
+/// contact disclosed.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct PlacedAvatars {
+	/// Width of the product's surface, in the units of every rect.
+	pub surface_width: u32,
+	/// Height of the product's surface, in the same units.
+	pub surface_height: u32,
+	/// Avatars to draw, in the product's slot order.
+	pub avatars: Vec<PlacedAvatar>,
+}
+
+/// One avatar to draw over a product.
+#[derive(Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct PlacedAvatar {
+	/// The product's id for this on-screen avatar, stable across updates.
+	pub slot: u32,
+	/// Bounding box of the avatar circle, in surface units.
+	pub rect: AvatarRect,
+	/// Visible region the avatar is cut to, in surface units.
+	pub clip: AvatarRect,
+	/// The profile reference the contact disclosed. A bearer capability, as
+	/// in [`ProfilePlatform::present_profile`].
+	pub reference: String,
+	/// Freshness token for this reference. Contact shares use Unix
+	/// milliseconds, advanced monotonically for personal revisions even
+	/// across relay actors with different clocks. The own avatar uses the
+	/// disclosure revision. A changed token invalidates cached contents;
+	/// do not interpret an own-profile token as a wall-clock date.
+	pub shared_at: u64,
+}
+
+impl core::fmt::Debug for PlacedAvatar {
+	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+		f.debug_struct("PlacedAvatar")
+			.field("slot", &self.slot)
+			.field("rect", &self.rect)
+			.field("clip", &self.clip)
+			.field("reference", &"[REDACTED]")
+			.field("shared_at", &self.shared_at)
+			.finish()
+	}
 }
 
 /// Host-implemented adapter that holds a product's next-game reminder.
@@ -3117,6 +4369,57 @@ pub enum HostContactPick {
 	Unsupported,
 }
 
+/// Host-private initial selection for a multi-contact picker.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ContactSelection {
+	/// Resolved accounts to preselect, deduplicated and bounded to 256.
+	pub selected: Vec<Bytes32>,
+}
+
+/// The user's complete selection in a host-owned multi-contact picker.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum HostContactsPick {
+	/// Confirmed accounts, including an empty selection. Never sent to products.
+	Picked {
+		/// Chosen contact accounts, at most 256.
+		accounts: Vec<Bytes32>,
+	},
+	/// The user cancelled without changing the selection.
+	Dismissed,
+	/// There are no contacts to show.
+	NoContacts,
+	/// This host cannot present a multi-contact picker.
+	Unsupported,
+}
+
+/// One contact name to render in host-owned UI, without any Profile grant.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct PlacedContactLabel {
+	/// Stable, product-chosen placement id.
+	pub slot: u32,
+	/// Resolved contact account, never sent to the product.
+	pub account: Bytes32,
+	/// Name bounds in surface units.
+	pub rect: AvatarRect,
+	/// Visible region in surface units.
+	pub clip: AvatarRect,
+}
+
+/// Complete replacement of names drawn over one product connection.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct PlacedContactLabels {
+	/// Width of the product surface.
+	pub surface_width: u32,
+	/// Height of the product surface.
+	pub surface_height: u32,
+	/// Host-resolved names to draw. Empty clears the placement.
+	pub labels: Vec<PlacedContactLabel>,
+}
+
 /// Host-owned contact picker, drawn from the chat lists the host's chat
 /// extensions hold.
 ///
@@ -3147,11 +4450,7 @@ pub trait ContactsPlatform: Send + Sync {
 	/// implements [`Self::contacts`] alone still compiles and its products get
 	/// a truthful answer rather than a dismissal they would retry forever.
 	///
-	/// A JS host reaches the same answer by another route: the generated
-	/// surface types this method optional, but a capability group counts as
-	/// served only when every callback in it is present, so omitting this one
-	/// makes the whole group absent and `contacts.pick` answers `Unsupported`
-	/// before any of it is reached.
+	/// JS adapters apply the same unsupported default when the host omits UI.
 	///
 	/// The core cannot draw UI, so a selection has to come from the host; the
 	/// whole point is that the host renders the names rather than shipping
@@ -3163,6 +4462,32 @@ pub trait ContactsPlatform: Send + Sync {
 		_product: &ProductContext,
 	) -> Result<HostContactPick, GenericError> {
 		Ok(HostContactPick::Unsupported)
+	}
+
+	/// Edit the complete selection in host-owned UI. Cancellation is not an
+	/// empty confirmed selection. Accounts and names stay host-side.
+	async fn pick_contacts(
+		&self,
+		_product: &ProductContext,
+		_selection: ContactSelection,
+	) -> Result<HostContactsPick, GenericError> {
+		Ok(HostContactsPick::Unsupported)
+	}
+
+	/// Draw names from the host's contact directory, with an account fallback
+	/// when no username exists. Profile sharing must not affect labels.
+	///
+	/// Replace the connection's previous placement, and clear it on navigation
+	/// or disconnect. On directory invalidation, clear stale names and refresh
+	/// the live placement from current contacts. No per-contact result is returned.
+	/// Returns whether this host supports label placement, never whether any
+	/// individual contact resolved. JS adapters return false for omitted UI.
+	async fn place_contact_labels(
+		&self,
+		_product: &ProductContext,
+		_placed: PlacedContactLabels,
+	) -> Result<bool, truapi::latest::HostContactsPlaceLabelsError> {
+		Ok(false)
 	}
 }
 
@@ -3209,8 +4534,8 @@ pub trait ScannerPlatform: Send + Sync {
 }
 
 /// Combined platform interface. A host must provide every capability trait
-/// listed here. Members marked optional may be omitted; the core answers their
-/// product calls with `Unsupported`. See [`OptionalPlatform`].
+/// listed here. Optional capabilities are declared separately in
+/// [`OptionalPlatform`].
 pub trait Platform:
 	Navigation
 	+ Notifications
@@ -3219,6 +4544,8 @@ pub trait Platform:
 	+ ProductStorage
 	+ CoreStorage
 	+ ChainProvider
+	+ HopProvider
+	+ NativeChatFilesHost
 	+ AuthPresenter
 	+ UserConfirmation
 	+ ThemeHost
@@ -3236,6 +4563,8 @@ impl<T> Platform for T where
 		+ ProductStorage
 		+ CoreStorage
 		+ ChainProvider
+		+ HopProvider
+		+ NativeChatFilesHost
 		+ AuthPresenter
 		+ UserConfirmation
 		+ ThemeHost
@@ -3246,14 +4575,19 @@ impl<T> Platform for T where
 }
 
 /// Capability traits a host may serve but is not required to. A host that
-/// omits one is not broken: the core answers the corresponding product calls
-/// with `Unsupported`. Codegen reads this list to emit each capability as an
-/// optional group on the host-callback surface.
+/// omits one is not broken: the core normally answers the corresponding product
+/// calls with `Unsupported`. [`CoinageWalletHost`] is the exception: absence
+/// selects the built-in Rust wallet. Codegen reads this list to emit each
+/// capability as an optional group on the host-callback surface.
 pub trait OptionalPlatform:
 	ChatPlatform
 	+ ContactsPlatform
 	+ PermissionStatusHost
 	+ PocketPlatform
+	+ ProfilePlatform
+	+ IdentityBackendHost
+	+ CoinageWalletHost
+	+ MediaPlatform
 	+ GamePlatform
 	+ ScannerPlatform
 {
@@ -3264,6 +4598,10 @@ impl<T> OptionalPlatform for T where
 		+ ContactsPlatform
 		+ PermissionStatusHost
 		+ PocketPlatform
+		+ ProfilePlatform
+		+ IdentityBackendHost
+		+ CoinageWalletHost
+		+ MediaPlatform
 		+ GamePlatform
 		+ ScannerPlatform
 {

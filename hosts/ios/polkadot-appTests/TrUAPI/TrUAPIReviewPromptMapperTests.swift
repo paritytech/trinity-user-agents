@@ -4,10 +4,43 @@ import KeyDerivation
 import Products
 import SubstrateSdk
 import TrUAPIHost
+import UIKit
+import UIKitExt
+@testable import PolkadotUI
 @testable import polkadot_app
 
 struct TrUAPIReviewPromptMapperTests {
     let mapper = TrUAPIReviewPromptMapper()
+
+    @MainActor
+    @Test(arguments: [TrUAPIPermissionDecision.allowOnce, .allowAlways, .deny])
+    func profileDisclosureRoutesToExplicitNativeConsent(decision: TrUAPIPermissionDecision) async throws {
+        let facade = ProductRoutersFacade.worker()
+        let anchor = ProfilePermissionPresentationAnchor()
+        facade.setPresentationView(anchor)
+        let presenter = TrUAPIConfirmationPresenter(routerFacade: facade)
+        var pending: Task<TrUAPIPermissionDecision, Error>?
+        let controller = await withCheckedContinuation { continuation in
+            anchor.onPresent = { continuation.resume(returning: $0) }
+            pending = Task {
+                try await presenter.confirmPermission(
+                    review: .profileDisclosure(ProfileDisclosureReview(productId: "profile.dot")),
+                    from: "Profile"
+                )
+            }
+        }
+        let task = try #require(pending)
+        defer { task.cancel() }
+        let sheet = try #require(controller as? TitleDetailsSheetViewController)
+        let action: MessageSheetAction?
+        switch decision {
+        case .allowAlways: action = sheet.viewModel.mainAction
+        case .allowOnce: action = sheet.viewModel.secondaryAction
+        case .deny: action = sheet.viewModel.tertiaryAction
+        }
+        try #require(action).handler()
+        #expect(try await task.value == decision)
+    }
 
     @Test
     func mapsIdentityDisclosureToUserIdentityPermission() {
@@ -19,6 +52,16 @@ struct TrUAPIReviewPromptMapperTests {
             productId: "caller.dot",
             permissions: [.userIdentityAccess]
         ))
+    }
+
+    @Test
+    func mapsPreimageSubmitToActionWithRequesterAndSize() {
+        let request = mapper.makeActionRequest(
+            from: PreimageSubmitReview(size: 1_024),
+            requester: "caller.dot"
+        )
+
+        #expect(request == .preimageSubmit(productId: "caller.dot", size: 1_024))
     }
 
     @Test
@@ -96,7 +139,8 @@ struct TrUAPIReviewPromptMapperTests {
                 .statementStoreAllowance,
                 .bulletinAllowance,
                 .smartContractAllowance(.index(4)),
-                .autoSigning
+                .autoSigning,
+                .productStatementStoreAllowance(.index(7))
             ]
         ))
 
@@ -106,7 +150,8 @@ struct TrUAPIReviewPromptMapperTests {
                 .statementStoreAllowance,
                 .bulletInAllowance,
                 .smartContractAllowance(dest: .index(4)),
-                .autoSigning
+                .autoSigning,
+                .productStatementStoreAllowance(dest: .index(7))
             ]
         ))
     }
@@ -160,5 +205,20 @@ struct TrUAPIReviewPromptMapperTests {
 private extension TrUAPIReviewPromptMapperTests {
     static func makeRingLocation() -> TrUAPIHostRingLocation {
         TrUAPIHostRingLocation(chainId: Data(repeating: 0, count: 32), junctions: [])
+    }
+}
+
+@MainActor
+private final class ProfilePermissionPresentationAnchor: UIViewController, ControllerBackedProtocol {
+    var controller: UIViewController { self }
+    var onPresent: ((UIViewController) -> Void)?
+
+    override func present(
+        _ viewControllerToPresent: UIViewController,
+        animated _: Bool,
+        completion: (() -> Void)? = nil
+    ) {
+        onPresent?(viewControllerToPresent)
+        completion?()
     }
 }

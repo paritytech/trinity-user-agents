@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import ChainRegistry
+import Products
 import SubstrateSdk
 import TrUAPIHost
 @testable import polkadot_app
@@ -15,7 +16,7 @@ private func makeHostDefaults() -> UserDefaults {
 
 private func makeHostBridge(
     chainRegistry: ChainRegistryProtocol = MockChainRegistry(),
-    confirmationPresenter: MockConfirmationPresenter = MockConfirmationPresenter()
+    confirmationPresenter: any TrUAPIConfirmationPresenting = MockConfirmationPresenter()
 ) -> RustHostRuntimeBridge {
     let chainConnections = TrUAPIV2SpecConnectionPool(
         chainRegistry: chainRegistry,
@@ -25,9 +26,10 @@ private func makeHostBridge(
     )
     return RustHostRuntimeBridge(
         chainRegistry: chainRegistry,
-        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeHostDefaults()),
+        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeHostDefaults(), storageDomain: UUID().uuidString),
         chainConnections: chainConnections,
         confirmationPresenter: confirmationPresenter,
+        chatFiles: UnavailableNativeChatFiles(),
         logger: Logger.shared
     )
 }
@@ -111,6 +113,18 @@ struct RustHostRuntimeBridgeTests {
         #expect(presenter.receivedRequesterName == "host")
     }
 
+    @MainActor
+    @Test func profileDisclosureWithoutPresentationPropagatesWithoutDenial() async throws {
+        let presenter = TrUAPIConfirmationPresenter(routerFacade: ProductRoutersFacade.worker())
+        let bridge = makeHostBridge(confirmationPresenter: presenter)
+        let review = UserConfirmationReview.profileDisclosure(ProfileDisclosureReview(productId: "caller.dot"))
+
+        await #expect(throws: HostRejection.self) {
+            try await bridge.confirmPermission(review: review)
+        }
+        #expect(try await bridge.confirmUserAction(review: review) == false)
+    }
+
     /// Core storage is the real host-global backend: writes round-trip.
     @Test func coreStorageRoundTrips() throws {
         let bridge = makeHostBridge()
@@ -142,7 +156,7 @@ struct TrUAPIHostRuntimeProviderConfigTests {
                 secret: Data([0x01]),
                 liteUsername: nil,
                 networkSuffix: "paseo",
-                databaseDirectory: NSTemporaryDirectory()
+                coinageInstanceId: 7
             )
         }
     }

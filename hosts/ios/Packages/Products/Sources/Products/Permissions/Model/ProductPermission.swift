@@ -6,24 +6,38 @@ import Foundation
 public enum ProductPermission: Equatable, Sendable {
     public static let deviceCapabilityTypeName = "device_capability"
     public static let networkAccessTypeName = "network_access"
+    public static let networkAccessBundleTypeName = "network_access_bundle"
     public static let accountAccessTypeName = "account_access"
     public static let webRtcAccessTypeName = "webrtc_access"
     public static let chainSubmitAccessTypeName = "chain_submit"
     public static let preimageSubmitAccessTypeName = "preimage_submit"
     public static let balanceAccessTypeName = "balance_access"
     public static let statementSubmitAccessTypeName = "statement_submit"
+    public static let jamPeersAccessTypeName = "jam_peers"
     public static let userIdentityAccessTypeName = "user_identity_access"
+    public static let chatAuthorityTypeName = "chat_authority"
+    public static let profileDisclosureTypeName = "profile_disclosure"
+    public static let statementStoreAllowanceTypeName = "statement_store_allowance"
     public static let nftPurseReadTypeName = "nft_purse_read"
 
     case deviceCapability(DeviceCapabilityType)
     case networkAccess(domain: String)
+    /// Exact native domain-set decision; not equivalent to separate domain decisions.
+    case networkAccessBundle(domains: [String])
     case accountAccess(targetProductId: String)
     case balanceAccess
     case webRtcAccess
     case chainSubmitAccess
     case preimageSubmitAccess
     case statementSubmitAccess
+    /// Peer messaging access to the JAM network whose genesis header hash is
+    /// `genesis` (lowercase `0x`-prefixed hex).
+    case jamPeersAccess(genesis: String)
     case userIdentityAccess
+    case chatAuthority
+    case profileDisclosure
+    /// `nil` is the legacy allowance account, distinct from every product selector.
+    case statementStoreAllowance(derivationIndex: ProductAccountSelector?)
     /// Reading the NFT purses of another owner: a product, or the user's own account when `nil`.
     case nftPurseRead(ownerProductId: String?)
 
@@ -32,23 +46,30 @@ public enum ProductPermission: Equatable, Sendable {
     ///
     /// The distinction exists because the core grants a first-party product
     /// every remote permission without prompting, and nothing else. Device
-    /// capabilities, account access, balance and identity disclosure always
-    /// prompt, whoever asks, so they must not ride along on that trust.
+    /// capabilities, account access, balance, identity disclosure, Chat authority,
+    /// profile disclosure and Statement Store allowance always prompt, whoever asks,
+    /// so they must not ride along on that trust.
     public var isRemoteAccess: Bool {
         switch self {
-        case .networkAccess,
-             .webRtcAccess,
-             .chainSubmitAccess,
-             .preimageSubmitAccess,
+        case .networkAccess, .networkAccessBundle, .webRtcAccess, .chainSubmitAccess, .preimageSubmitAccess,
              .statementSubmitAccess:
             true
         case .deviceCapability,
              .accountAccess,
              .balanceAccess,
              .userIdentityAccess,
+             .chatAuthority,
+             .profileDisclosure,
+             .statementStoreAllowance,
              .nftPurseRead:
             false
         }
+    }
+
+    /// A JAM genesis as shown to the user: `0x`, its first 8 hex digits and `…`.
+    public static func shortGenesis(_ genesis: String) -> String {
+        let digits = genesis.hasPrefix("0x") ? genesis.dropFirst(2) : Substring(genesis)
+        return "0x\(digits.prefix(8))…"
     }
 
     public var typeName: String {
@@ -57,6 +78,8 @@ public enum ProductPermission: Equatable, Sendable {
             Self.deviceCapabilityTypeName
         case .networkAccess:
             Self.networkAccessTypeName
+        case .networkAccessBundle:
+            Self.networkAccessBundleTypeName
         case .accountAccess:
             Self.accountAccessTypeName
         case .balanceAccess:
@@ -69,8 +92,16 @@ public enum ProductPermission: Equatable, Sendable {
             Self.preimageSubmitAccessTypeName
         case .statementSubmitAccess:
             Self.statementSubmitAccessTypeName
+        case .jamPeersAccess:
+            Self.jamPeersAccessTypeName
         case .userIdentityAccess:
             Self.userIdentityAccessTypeName
+        case .chatAuthority:
+            Self.chatAuthorityTypeName
+        case .profileDisclosure:
+            Self.profileDisclosureTypeName
+        case .statementStoreAllowance:
+            Self.statementStoreAllowanceTypeName
         case .nftPurseRead:
             Self.nftPurseReadTypeName
         }
@@ -82,8 +113,19 @@ public enum ProductPermission: Equatable, Sendable {
             capability.rawValue
         case let .networkAccess(domain):
             domain
+        case let .networkAccessBundle(domains):
+            domains.joined(separator: "\n")
         case let .accountAccess(targetProductId):
             targetProductId
+        case let .statementStoreAllowance(derivationIndex):
+            switch derivationIndex {
+            case nil:
+                "legacy"
+            case let .index(index):
+                "index:\(index)"
+            case let .raw(bytes):
+                "raw:\(bytes.base64EncodedString())"
+            }
         case let .nftPurseRead(ownerProductId):
             ownerProductId ?? ""
         case .balanceAccess,
@@ -91,13 +133,15 @@ public enum ProductPermission: Equatable, Sendable {
              .chainSubmitAccess,
              .preimageSubmitAccess,
              .statementSubmitAccess,
-             .userIdentityAccess:
+             .userIdentityAccess,
+             .chatAuthority,
+             .profileDisclosure:
             ""
         }
     }
 
     /// Reconstruct a permission from its persisted `(typeName, key)` pair.
-    /// Returns `nil` for unknown type names or malformed device capability keys.
+    /// Returns `nil` for unknown type names or malformed capability/selector keys.
     public static func from(typeName: String, key: String) -> ProductPermission? {
         switch typeName {
         case deviceCapabilityTypeName:
@@ -105,6 +149,8 @@ public enum ProductPermission: Equatable, Sendable {
             return .deviceCapability(capability)
         case networkAccessTypeName:
             return .networkAccess(domain: key)
+        case networkAccessBundleTypeName:
+            return .networkAccessBundle(domains: key.components(separatedBy: "\n"))
         case accountAccessTypeName:
             return .accountAccess(targetProductId: key)
         case balanceAccessTypeName:
@@ -117,8 +163,26 @@ public enum ProductPermission: Equatable, Sendable {
             return .preimageSubmitAccess
         case statementSubmitAccessTypeName:
             return .statementSubmitAccess
+        case jamPeersAccessTypeName:
+            return .jamPeersAccess(genesis: key)
         case userIdentityAccessTypeName:
             return .userIdentityAccess
+        case chatAuthorityTypeName:
+            return .chatAuthority
+        case profileDisclosureTypeName:
+            return .profileDisclosure
+        case statementStoreAllowanceTypeName:
+            if key == "legacy" {
+                return .statementStoreAllowance(derivationIndex: nil)
+            }
+            if key.hasPrefix("index:"), let index = UInt32(key.dropFirst(6)) {
+                return .statementStoreAllowance(derivationIndex: .index(index))
+            }
+            if key.hasPrefix("raw:"), let bytes = Data(base64Encoded: String(key.dropFirst(4))),
+               bytes.count == 32 {
+                return .statementStoreAllowance(derivationIndex: .raw(bytes))
+            }
+            return nil
         case nftPurseReadTypeName:
             return .nftPurseRead(ownerProductId: key.isEmpty ? nil : key)
         default:

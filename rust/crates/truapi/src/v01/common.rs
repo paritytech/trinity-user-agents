@@ -1,3 +1,4 @@
+use alloc::string::String;
 use derive_more::{Display, Error, From};
 use parity_scale_codec::{Decode, Encode};
 

@@ -166,6 +166,12 @@ final class ServiceCoordinator {
 
 extension ServiceCoordinator: ServiceCoordinatorProtocol {}
 
+private extension ServiceCoordinator {
+    func isCurrentSetup(_ generation: UUID) -> Bool {
+        lifecycleLock.withLock { lifecycleGeneration == generation }
+    }
+}
+
 extension ServiceCoordinator {
     @MainActor
     // swiftlint:disable:next function_body_length
@@ -231,6 +237,10 @@ extension ServiceCoordinator {
             logger: logger
         )
 
+        guard let coinageServices = createCoinageServices() else {
+            return nil
+        }
+
         // Single process-wide TrUAPI runtime provider. Registered in the root
         // locator so the static SPA factory reaches the same instance the
         // chat bot factory does — one shared runtime across all products.
@@ -243,6 +253,8 @@ extension ServiceCoordinator {
             settingsManager: SettingsManager.shared,
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationRouterFacade: ProductRoutersFacade.sso(),
+            coinageService: coinageServices.coinageService,
+            storageFacade: UserDataStorageFacade.shared,
             logger: logger
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
@@ -266,18 +278,20 @@ extension ServiceCoordinator {
         // would let any chat service failing take every live card face with it,
         // silently.
         var pocket: ProductPocketService?
-        if let service = ProductPocketService.make() {
-            RootDependencyLocator.setDependency(service)
-            service.start(
-                runtimeProvider: truapiRuntimeProvider,
-                flowState: spaFlowState,
-                productFileProvider: productFileProvider,
-                chainRegistry: ChainRegistryFacade.sharedRegistry,
-                gameReminders: gameReminders,
-                themeManager: MainActor.assumeIsolated { ThemeManager.shared }
-            )
-            pocket = service
-        }
+        #if FEATURE_PRODUCTS
+            if let service = ProductPocketService.make() {
+                RootDependencyLocator.setDependency(service)
+                service.start(
+                    runtimeProvider: truapiRuntimeProvider,
+                    flowState: spaFlowState,
+                    productFileProvider: productFileProvider,
+                    chainRegistry: ChainRegistryFacade.sharedRegistry,
+                    gameReminders: gameReminders,
+                    themeManager: MainActor.assumeIsolated { ThemeManager.shared }
+                )
+                pocket = service
+            }
+        #endif
 
         guard
             let signInHostCoordinator = createSignInHostCoordinator(
@@ -288,9 +302,6 @@ extension ServiceCoordinator {
                 logger: logger
             ),
             let chatCoordinator = createChatCoordinator(factory: chatCoordinatorFactory, logger: logger),
-            let coinageServices = createCoinageServices(
-                allowanceManager: allowanceManagerFacade.smartContractManager
-            ),
             let depositService = createDepositService(
                 walletToFund: depositWallet,
                 walletToDeposit: depositWallet,

@@ -15,13 +15,12 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runPocketE2e } from "../pocket-e2e.ts";
 import {
-  cliModalityDiagnosisReportMetadata,
+  cliPocketDiagnosisReportMetadata,
   renderDiagnosisReport,
 } from "../diagnosis-report.ts";
 
-const report = cliModalityDiagnosisReportMetadata(
+const report = cliPocketDiagnosisReportMetadata(
   process.env.TRUAPI_CLI_HOST_ROLE,
-  "Pocket",
 );
 const DEFAULT_REPORT_PATH = fileURLToPath(
   new URL(

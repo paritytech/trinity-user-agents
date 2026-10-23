@@ -4,17 +4,19 @@ import Keystore_iOS
 import SubstrateSdk
 
 /// Keychain-backed ``IncomingPaymentSecretStoring`` — the encrypted store for a top-up's source
-/// material, the iOS counterpart of Android's encrypted preferences. One entry per operation, keyed
-/// by `groupId`, removed the moment a verdict is reached.
+/// material, the iOS counterpart of Android's encrypted preferences. Every read, write and removal
+/// is namespaced by the persisted root/chain/instance owner, then operation group.
+/// Legacy unscoped entries are deliberately untouched; their ownership is not provable.
 final class IncomingPaymentKeychainSecretStore: IncomingPaymentSecretStoring, @unchecked Sendable {
-    private static let keyPrefix = "topUpSource."
+    private let keyPrefix: String
 
     private let keychain: KeystoreProtocol
     private let logger: LoggerProtocol
 
-    init(keychain: KeystoreProtocol, logger: LoggerProtocol) {
+    init(keychain: KeystoreProtocol, logger: LoggerProtocol, ownerId: Data) {
         self.keychain = keychain
         self.logger = logger
+        keyPrefix = "topUpSource.v2." + ownerId.toHex() + "."
     }
 
     func save(groupId: CoinageTxGroupId, descriptor: IncomingPaymentSourceDescriptor) throws {
@@ -37,7 +39,7 @@ final class IncomingPaymentKeychainSecretStore: IncomingPaymentSecretStoring, @u
         do {
             return try JSONDecoder().decode(IncomingPaymentSourceDescriptor.self, from: data)
         } catch {
-            logger.error("Top-up secret for \(groupId) does not decode: \(error)")
+            logger.error("Top-up source could not be decoded")
             throw IncomingPaymentSecretStoreError.corrupted
         }
     }
@@ -46,11 +48,11 @@ final class IncomingPaymentKeychainSecretStore: IncomingPaymentSecretStoring, @u
         do {
             try keychain.deleteKeyIfExists(for: identifier(for: groupId))
         } catch {
-            logger.error("Top-up secret for \(groupId) could not be removed: \(error)")
+            logger.error("Top-up source could not be removed")
         }
     }
 
     private func identifier(for groupId: CoinageTxGroupId) -> String {
-        Self.keyPrefix + groupId
+        keyPrefix + groupId
     }
 }

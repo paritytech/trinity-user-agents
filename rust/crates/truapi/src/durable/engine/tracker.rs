@@ -13,13 +13,12 @@ use futures::{
 use subxt::{tx::ValidationResult, utils::H256};
 use tracing::{debug, warn};
 
-use super::{DurableTxEngine, verdict::write_verdict};
+use super::DurableTxEngine;
 use crate::{
 	chain::{DispatchOutcome, EncodedExtrinsic, HashAndNumber, MortalExtrinsic, WatchEvent},
 	durable::{
 		dao,
-		model::{DurableTxId, Verdict, VerdictFailureKind, VerdictStatus},
-		ownership::OwnershipClaim,
+		model::{DurableTxId, DurableTxStatus, FailureKind, Verdict},
 	},
 };
 
@@ -30,20 +29,16 @@ const SILENCE_TIMEOUT: Duration = Duration::from_secs(30);
 /// One attempt of a transaction, as a watch follows it.
 #[derive(Clone, Copy, Debug)]
 pub struct Attempt {
-	claim: OwnershipClaim,
+	id: DurableTxId,
 	genesis: H256,
 	tx_hash: H256,
 }
 
 impl Attempt {
-	/// The attempt `extrinsic` makes at the transaction `claim` owns, on the
-	/// chain with `genesis`.
-	pub fn new(claim: OwnershipClaim, genesis: H256, extrinsic: &MortalExtrinsic) -> Self {
-		Self { claim, genesis, tx_hash: extrinsic.extrinsic.hash() }
-	}
-
-	fn id(&self) -> DurableTxId {
-		self.claim.id()
+	/// The attempt `extrinsic` makes at transaction `id` on the chain with
+	/// `genesis`.
+	pub fn new(id: DurableTxId, genesis: H256, extrinsic: &MortalExtrinsic) -> Self {
+		Self { id, genesis, tx_hash: extrinsic.extrinsic.hash() }
 	}
 }
 
@@ -65,7 +60,7 @@ impl DurableTxEngine {
 		match self.submitter.submit_and_watch(attempt.genesis, extrinsic).await {
 			Ok(events) => self.follow(attempt, events).await,
 			Err(error) => {
-				warn!(id = attempt.id().0, %error, "durable transaction could not be submitted")
+				warn!(id = attempt.id.0, %error, "durable transaction could not be submitted")
 			},
 		}
 	}
@@ -73,8 +68,8 @@ impl DurableTxEngine {
 	/// Releases the attempt and, unless the watch decided it, hands the
 	/// transaction to recovery: a running loop, or else the host.
 	async fn finish_watch(&self, attempt: Attempt) {
-		self.ownership.release(attempt.claim);
-		if self.needs_recovery(attempt.id()).await && !self.recovery_wakes.wake() {
+		self.ownership.release(attempt.id, attempt.tx_hash);
+		if self.needs_recovery(attempt.id).await && !self.recovery_wakes.wake() {
 			self.host_wakes.wake();
 		}
 	}
@@ -88,8 +83,8 @@ impl DurableTxEngine {
 		let Ok(ValidationResult::Invalid(reason)) = validation else {
 			return true;
 		};
-		debug!(id = attempt.id().0, ?reason, "durable transaction refused before submission");
-		self.propose(attempt, VerdictStatus::Failure(VerdictFailureKind::Rejected).into())
+		debug!(id = attempt.id.0, ?reason, "durable transaction refused before submission");
+		self.propose(attempt, DurableTxStatus::Failure(FailureKind::Rejected).into())
 			.await;
 		false
 	}
@@ -114,7 +109,7 @@ impl DurableTxEngine {
 		match select(events.next(), self.timer.sleep(SILENCE_TIMEOUT)).await {
 			Either::Left((event, _)) => event,
 			Either::Right(_) => {
-				warn!(id = attempt.id().0, "durable submission watch fell silent");
+				warn!(id = attempt.id.0, "durable submission watch fell silent");
 				None
 			},
 		}
@@ -128,7 +123,7 @@ impl DurableTxEngine {
 		best: &mut Option<H256>,
 		event: WatchEvent,
 	) -> ControlFlow<()> {
-		debug!(id = attempt.id().0, ?event, "durable submission status");
+		debug!(id = attempt.id.0, ?event, "durable submission status");
 		match event {
 			WatchEvent::InBestBlock(hash) => self.on_best_block(attempt, best.insert(hash)).await,
 			WatchEvent::NoLongerInBestBlock => self.on_retraction(attempt, best.take()).await,
@@ -146,7 +141,7 @@ impl DurableTxEngine {
 	/// not final, so it proposes nothing.
 	async fn on_best_block(&self, attempt: Attempt, hash: &H256) {
 		if let Some((block, DispatchOutcome::Succeeded)) = self.outcome_at(attempt, *hash).await {
-			let success = VerdictStatus::PendingSuccess { at: block };
+			let success = DurableTxStatus::PendingSuccess { at: block };
 			self.propose(attempt, success.into()).await;
 		}
 	}
@@ -156,10 +151,10 @@ impl DurableTxEngine {
 	async fn on_finalized_block(&self, attempt: Attempt, hash: H256) -> ControlFlow<()> {
 		let status = match self.outcome_at(attempt, hash).await {
 			Some((block, DispatchOutcome::Succeeded)) => {
-				VerdictStatus::FinalizedSuccess { at: Some(block) }
+				DurableTxStatus::FinalizedSuccess { at: Some(block) }
 			},
 			Some((_, DispatchOutcome::Failed)) => {
-				VerdictStatus::Failure(VerdictFailureKind::DispatchFailed)
+				DurableTxStatus::Failure(FailureKind::DispatchFailed)
 			},
 			None => return ControlFlow::Break(()),
 		};
@@ -190,20 +185,20 @@ impl DurableTxEngine {
 		let Some(retracted) = retracted else {
 			return;
 		};
-		let id = attempt.id();
+		let id = attempt.id;
 		let Ok(Some(entry)) = self.db.read(move |conn| dao::entry(conn, id)).await else {
 			return;
 		};
 		let recorded = entry.status.success_block();
 		if recorded.map(|block| block.hash) == Some(retracted) {
-			self.propose(attempt, VerdictStatus::Pending.into()).await;
+			self.propose(attempt, DurableTxStatus::Pending.into()).await;
 		}
 	}
 
 	/// Writes `verdict` while the row still awaits one for the watched
 	/// attempt.
 	async fn propose(&self, attempt: Attempt, verdict: Verdict) {
-		let id = attempt.id();
+		let id = attempt.id;
 		let observed = match self.db.read(move |conn| dao::entry(conn, id)).await {
 			Ok(Some(observed)) => observed,
 			Ok(None) => return,
@@ -214,7 +209,7 @@ impl DurableTxEngine {
 		if !observed.status.awaits_verdict() || observed.tx_hash != attempt.tx_hash {
 			return;
 		}
-		if let Err(error) = write_verdict(self, &observed, verdict).await {
+		if let Err(error) = self.write_verdict(&observed, verdict).await {
 			warn!(id = id.0, %error, "durable proposal could not be written");
 		}
 	}
@@ -239,7 +234,7 @@ mod tests {
 		chain_runtime::RuntimeFailure,
 		durable::{
 			engine::DurableRequest,
-			model::{DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxStatus},
+			model::{DomainId, DurableTxEntry},
 		},
 	};
 	use std::sync::atomic::{AtomicUsize, Ordering};
@@ -249,7 +244,7 @@ mod tests {
 			oracle::{DurableRegistry, Unobservable},
 			testing::{
 				FakeChain, GENESIS, ManualTimer, block, block_hash, counting_spawner,
-				engine_with_spawner, extrinsic, without_plan,
+				engine_with_spawner, extrinsic,
 			},
 		},
 		test_support::wait_until,
@@ -309,9 +304,10 @@ mod tests {
 		);
 		let nudges = engine.recovery_wakes.subscribe();
 		let tx = extrinsic(1, 100, 64);
-		let id = block_on(engine.execute(
-			DurableRequest::presigned(test_domain(), None, without_plan(vec![tx.clone()])).unwrap(),
-		))
+		let id = block_on(
+			engine
+				.execute(DurableRequest::presigned(test_domain(), None, vec![tx.clone()]).unwrap()),
+		)
 		.unwrap()[0];
 		(Fixture { _dir: dir, chain, engine, timer, nudges, finished, id, tx }, events)
 	}
@@ -370,7 +366,7 @@ mod tests {
 
 		events.unbounded_send(WatchEvent::InFinalizedBlock(block_hash(125))).unwrap();
 
-		fixture.wait_for(DurableTxStatus::Failure(DurableTxFailureKind::DispatchFailed));
+		fixture.wait_for(DurableTxStatus::Failure(FailureKind::DispatchFailed));
 	}
 
 	/// The node rejects the extrinsic during validation, for example because
@@ -383,7 +379,7 @@ mod tests {
 			None
 		});
 
-		fixture.wait_for(DurableTxStatus::Failure(DurableTxFailureKind::Rejected));
+		fixture.wait_for(DurableTxStatus::Failure(FailureKind::Rejected));
 		fixture.wait_released();
 		assert_eq!(fixture.chain.state().submitted.len(), 0);
 		assert!(!fixture.nudged());

@@ -5,20 +5,26 @@ use futures::{
 use std::{collections::HashMap, sync::Mutex};
 use truapi::v01;
 
-use super::subscribers::Subscribers;
-
 /// Fans host notifications out to the product subscriptions and chain
 /// connections that wait on them.
 #[derive(Default)]
 pub struct NativeEventBus {
-	theme_changes: Mutex<Subscribers<(), Result<v01::HostThemeSubscribeItem, v01::GenericError>>>,
-	locale_changes: Mutex<Subscribers<(), Result<v01::HostLocaleSubscribeItem, v01::GenericError>>>,
+	theme_changes:
+		Mutex<Vec<mpsc::UnboundedSender<Result<v01::HostThemeSubscribeItem, v01::GenericError>>>>,
+	locale_changes: Mutex<
+		Vec<
+			mpsc::UnboundedSender<
+				Result<crate::latest::HostLocaleSubscribeItem, v01::GenericError>,
+			>,
+		>,
+	>,
 	preimage_changes: Mutex<Vec<PreimageSubscription>>,
 	storage_changes: Mutex<Vec<StorageSubscription>>,
 	chain_events: Mutex<NativeChainEvents>,
-	chat_room_changes: Mutex<Subscribers<(), v01::HostChatListSubscribeItem>>,
-	pocket_card_changes:
-		Mutex<Subscribers<(), Result<v01::HostPocketListSubscribeItem, v01::GenericError>>>,
+	chat_room_changes: Mutex<Vec<mpsc::UnboundedSender<v01::HostChatListSubscribeItem>>>,
+	pocket_card_changes: Mutex<
+		Vec<mpsc::UnboundedSender<Result<v01::HostPocketListSubscribeItem, v01::GenericError>>>,
+	>,
 }
 
 #[derive(Default)]
@@ -47,7 +53,7 @@ impl NativeEventBus {
 		self.theme_changes
 			.lock()
 			.expect("native theme subscribers mutex poisoned")
-			.register((), tx);
+			.push(tx);
 		stream::once(async move { current }).chain(rx).boxed()
 	}
 
@@ -56,28 +62,28 @@ impl NativeEventBus {
 		self.theme_changes
 			.lock()
 			.expect("native theme subscribers mutex poisoned")
-			.send(&(), &Ok(theme));
+			.retain(|tx| tx.unbounded_send(Ok(theme.clone())).is_ok());
 	}
 
 	/// Stream the locale: `current` first, then every host change.
 	pub fn subscribe_locale(
 		&self,
-		current: Result<v01::HostLocaleSubscribeItem, v01::GenericError>,
-	) -> BoxStream<'static, Result<v01::HostLocaleSubscribeItem, v01::GenericError>> {
+		current: Result<crate::latest::HostLocaleSubscribeItem, v01::GenericError>,
+	) -> BoxStream<'static, Result<crate::latest::HostLocaleSubscribeItem, v01::GenericError>> {
 		let (tx, rx) = mpsc::unbounded();
 		self.locale_changes
 			.lock()
 			.expect("native locale subscribers mutex poisoned")
-			.register((), tx);
+			.push(tx);
 		stream::once(async move { current }).chain(rx).boxed()
 	}
 
 	/// Deliver a host locale change to every live locale subscriber.
-	pub fn notify_locale_changed(&self, locale: v01::HostLocaleSubscribeItem) {
+	pub fn notify_locale_changed(&self, locale: crate::latest::HostLocaleSubscribeItem) {
 		self.locale_changes
 			.lock()
 			.expect("native locale subscribers mutex poisoned")
-			.send(&(), &Ok(locale));
+			.retain(|tx| tx.unbounded_send(Ok(locale.clone())).is_ok());
 	}
 
 	/// Stream later host changes to the preimage stored under `key`.
@@ -171,34 +177,11 @@ impl NativeEventBus {
 
 	/// End the response stream of a connection the host closed.
 	pub fn notify_chain_closed(&self, connection_id: u32) {
-		if !self.close_chain_if_registered(connection_id) {
-			// Native callbacks can close a connection before returning its ID.
-			self.note_early_chain_close();
-		}
-	}
-
-	/// End the response stream of `connection_id` and report whether this bus
-	/// was the one holding it.
-	///
-	/// A product execution reports a close to its own bus and to the shared
-	/// one, because either may hold the connection. Exactly one of them does,
-	/// so a miss here is routine and must not be mistaken for a close that
-	/// raced a connect: see [`Self::note_early_chain_close`].
-	pub fn close_chain_if_registered(&self, connection_id: u32) -> bool {
-		self.chain_events
-			.lock()
-			.expect("native chain subscribers mutex poisoned")
-			.responses
-			.remove(&connection_id)
-			.is_some()
-	}
-
-	/// Record that the host closed a connection whose id no bus recognised,
-	/// which is what a close arriving before `chain_connect` returns looks
-	/// like. Invalidates connects that read the generation before it.
-	pub fn note_early_chain_close(&self) {
 		let mut events = self.chain_events.lock().expect("native chain subscribers mutex poisoned");
-		events.early_close_generation = events.early_close_generation.wrapping_add(1);
+		if events.responses.remove(&connection_id).is_none() {
+			// Native callbacks can close a connection before returning its ID.
+			events.early_close_generation = events.early_close_generation.wrapping_add(1);
+		}
 	}
 
 	/// Stop routing responses for a connection the core closed.
@@ -214,10 +197,13 @@ impl NativeEventBus {
 	/// cannot be held across the host's await the way `subscribe_pocket_cards` does.
 	pub fn chat_room_changes(&self) -> BoxStream<'static, v01::HostChatListSubscribeItem> {
 		let (tx, rx) = mpsc::unbounded();
-		self.chat_room_changes
+		let mut subscribers = self
+			.chat_room_changes
 			.lock()
-			.expect("native Chat room subscribers mutex poisoned")
-			.register((), tx);
+			.expect("native Chat room subscribers mutex poisoned");
+		subscribers.retain(|tx| !tx.is_closed());
+		subscribers.push(tx);
+		drop(subscribers);
 		rx.boxed()
 	}
 
@@ -227,7 +213,7 @@ impl NativeEventBus {
 		self.chat_room_changes
 			.lock()
 			.expect("native Chat room subscribers mutex poisoned")
-			.send(&(), &item);
+			.retain(|tx| tx.unbounded_send(item.clone()).is_ok());
 	}
 
 	/// Subscribe to the host's card collection. `snapshot` reads the host's
@@ -246,7 +232,10 @@ impl NativeEventBus {
 			.lock()
 			.expect("native Pocket card subscribers mutex poisoned");
 		let current = snapshot();
-		subscribers.register((), tx);
+		// Subscribers are dropped when their product stops listening, and
+		// nothing else prunes them between notifications.
+		subscribers.retain(|tx| !tx.is_closed());
+		subscribers.push(tx);
 		drop(subscribers);
 		stream::once(async move { current }).chain(rx).boxed()
 	}
@@ -270,7 +259,7 @@ impl NativeEventBus {
 		self.pocket_card_changes
 			.lock()
 			.expect("native Pocket card subscribers mutex poisoned")
-			.send(&(), &item);
+			.retain(|tx| tx.unbounded_send(item.clone()).is_ok());
 	}
 }
 

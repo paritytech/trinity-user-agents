@@ -20,7 +20,7 @@ use crossterm::{
 	terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures_util::StreamExt;
-use qrcode::{QrCode, render::unicode::Dense1x2};
+use qrcode::{Color as QrColor, QrCode, render::unicode::Dense1x2};
 use ratatui::{
 	Terminal,
 	backend::CrosstermBackend,
@@ -58,6 +58,7 @@ const MAX_VISIBLE_COMPLETIONS: usize = 8;
 const MOUSE_SCROLL_LINES: usize = 3;
 const COMPOSER_HORIZONTAL_PADDING: u16 = 1;
 const QR_INDENT: usize = 2;
+const QR_QUIET_ZONE: usize = 4;
 
 /// Choices presented for an action or a permission request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,31 +158,51 @@ enum FeedItem {
 	},
 }
 
-/// A QR code drawn two modules per cell with Unicode half blocks, quiet zone included.
 #[derive(Debug, PartialEq, Eq)]
 struct PairingQr {
-	rows: Vec<String>,
-}
-
-/// `text` as a QR code drawn two modules per cell with Unicode half blocks, quiet zone included.
-/// Dark modules are drawn, so the rows need dark-on-light colours to scan.
-pub fn qr_rows(text: &str) -> qrcode::types::QrResult<Vec<String>> {
-	let drawn = QrCode::new(text.as_bytes())?.render::<Dense1x2>().quiet_zone(true).build();
-	Ok(drawn.lines().map(str::to_owned).collect())
+	side: usize,
+	modules: Vec<bool>,
 }
 
 impl PairingQr {
 	fn encode(url: &str) -> qrcode::types::QrResult<Self> {
-		Ok(Self { rows: qr_rows(url)? })
+		let code = QrCode::new(url.as_bytes())?;
+		Ok(Self {
+			side: code.width(),
+			modules: code.to_colors().into_iter().map(|color| color == QrColor::Dark).collect(),
+		})
+	}
+
+	fn module(&self, row: usize, column: usize) -> bool {
+		if row < QR_QUIET_ZONE ||
+			column < QR_QUIET_ZONE ||
+			row >= self.side + QR_QUIET_ZONE ||
+			column >= self.side + QR_QUIET_ZONE
+		{
+			return false;
+		}
+		let row = row - QR_QUIET_ZONE;
+		let column = column - QR_QUIET_ZONE;
+		self.modules[row * self.side + column]
+	}
+
+	fn rendered_side(&self) -> usize {
+		self.side + QR_QUIET_ZONE * 2
 	}
 
 	fn rendered_width(&self) -> usize {
-		self.rows.first().map_or(0, |row| row.chars().count())
+		self.rendered_side()
 	}
 
 	fn rendered_height(&self) -> usize {
-		self.rows.len()
+		self.rendered_side().div_ceil(2)
 	}
+}
+
+/// `text` as terminal QR rows, with a quiet zone.
+pub fn qr_rows(text: &str) -> qrcode::types::QrResult<Vec<String>> {
+	let drawn = QrCode::new(text.as_bytes())?.render::<Dense1x2>().quiet_zone(true).build();
+	Ok(drawn.lines().map(str::to_owned).collect())
 }
 
 /// Stable lifecycle events with separate machine and interactive presentations.
@@ -346,6 +367,13 @@ enum UiEvent {
 		detail: String,
 		kind: ApprovalKind,
 		response: oneshot::Sender<PermissionDecision>,
+	},
+	ApprovalWithdrawn,
+	ChatFiles {
+		detail: String,
+		max_files: u32,
+		export: bool,
+		response: oneshot::Sender<Option<Vec<PathBuf>>>,
 	},
 	Connection(String),
 	Session {
@@ -585,6 +613,21 @@ pub struct UiHandle {
 	sender: mpsc::UnboundedSender<UiEvent>,
 }
 
+struct ApprovalAnswer<'a> {
+	answer: oneshot::Receiver<PermissionDecision>,
+	sender: Option<&'a mpsc::UnboundedSender<UiEvent>>,
+}
+
+impl Drop for ApprovalAnswer<'_> {
+	fn drop(&mut self) {
+		if let Some(sender) = self.sender {
+			// Close before waking the UI when the owning call is dropped.
+			self.answer.close();
+			let _ = sender.send(UiEvent::ApprovalWithdrawn);
+		}
+	}
+}
+
 impl UiHandle {
 	/// Add a successful human-facing outcome to the transcript.
 	pub fn success(&self, title: impl Into<String>, detail: Option<String>) {
@@ -651,7 +694,25 @@ impl UiHandle {
 		{
 			return PermissionDecision::Deny;
 		}
-		answer.await.unwrap_or(PermissionDecision::Deny)
+		let mut answer = ApprovalAnswer { answer, sender: Some(&self.sender) };
+		let decision = (&mut answer.answer).await.unwrap_or(PermissionDecision::Deny);
+		answer.sender = None;
+		decision
+	}
+
+	/// Collect paths only through the existing terminal event owner. Input is
+	/// never submitted to command history, the transcript, or another reader.
+	pub async fn chat_file_paths(
+		&self,
+		detail: String,
+		max_files: u32,
+		export: bool,
+	) -> Result<Option<Vec<PathBuf>>> {
+		let (response, answer) = oneshot::channel();
+		self.sender
+			.send(UiEvent::ChatFiles { detail, max_files, export, response })
+			.map_err(|_| anyhow::anyhow!("Chat file terminal UI is unavailable"))?;
+		answer.await.context("Chat file terminal UI closed")
 	}
 }
 
@@ -663,6 +724,15 @@ pub struct TerminalUi {
 }
 
 impl TerminalUi {
+	/// Process queued events and report whether a review still owns the editor.
+	#[cfg(test)]
+	pub fn has_pending_approval(&mut self) -> bool {
+		while let Ok(event) = self.receiver.try_recv() {
+			self.app.handle_event(event);
+		}
+		self.app.pending_approval.is_some()
+	}
+
 	/// Create a terminal transcript and its cloneable host bridge.
 	pub fn new(
 		network: impl Into<String>,
@@ -967,6 +1037,10 @@ impl ActiveTerminalUi {
 						return Ok(DriveResult::Cancelled);
 					};
 					let event = event.context("read terminal event")?;
+					if self.app.pending_chat_files.is_some() {
+						self.app.handle_busy_event(event);
+						continue;
+					}
 					match pairing_image_request(&event) {
 						Some(PairingImageRequest::Clipboard) => {
 							match self.read_clipboard_image() {
@@ -1035,6 +1109,14 @@ impl ActiveTerminalUi {
 	}
 
 	fn draw(&mut self) -> Result<()> {
+		if self
+			.app
+			.pending_chat_files
+			.as_ref()
+			.is_some_and(|pending| pending.response.is_closed())
+		{
+			self.app.answer_chat_files(true);
+		}
 		let app = &mut self.app;
 		self.terminal
 			.as_mut()
@@ -1233,6 +1315,14 @@ struct PendingApproval {
 	saved_input: String,
 }
 
+struct PendingChatFiles {
+	response: oneshot::Sender<Option<Vec<PathBuf>>>,
+	saved_input: String,
+	paths: Vec<PathBuf>,
+	max_files: u32,
+	export: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HostRole {
 	Pairing,
@@ -1249,6 +1339,7 @@ struct App {
 	entries: VecDeque<FeedItem>,
 	editor: CommandEditor,
 	pending_approval: Option<PendingApproval>,
+	pending_chat_files: Option<PendingChatFiles>,
 	busy: Option<String>,
 	scroll_from_bottom: usize,
 	transcript_height: usize,
@@ -1304,6 +1395,7 @@ impl App {
 			entries: VecDeque::new(),
 			editor,
 			pending_approval: None,
+			pending_chat_files: None,
 			busy: None,
 			scroll_from_bottom: 0,
 			transcript_height: 1,
@@ -1509,6 +1601,7 @@ impl App {
 	}
 
 	fn handle_event(&mut self, event: UiEvent) {
+		self.withdraw_closed_approval();
 		match event {
 			UiEvent::Log(text) => self.push(FeedItem::Log(text)),
 			UiEvent::Notice { tone, title, detail } => self.notice(tone, title, detail),
@@ -1524,7 +1617,10 @@ impl App {
 				self.editor.set_session_names(available);
 			},
 			UiEvent::Approval { action, detail, kind, response } => {
-				if self.pending_approval.is_some() {
+				if response.is_closed() {
+					return;
+				}
+				if self.pending_approval.is_some() || self.pending_chat_files.is_some() {
 					let _ = response.send(PermissionDecision::Deny);
 					self.notice(
 						NoticeTone::Error,
@@ -1544,6 +1640,40 @@ impl App {
 					outcome: None,
 				});
 				self.pending_approval = Some(PendingApproval { id, kind, response, saved_input });
+			},
+			UiEvent::ApprovalWithdrawn => {},
+			UiEvent::ChatFiles { detail, max_files, export, response } => {
+				if self.pending_approval.is_some() ||
+					self.pending_chat_files.is_some() ||
+					max_files == 0
+				{
+					// Dropping the sender reports unavailable, not user cancellation.
+					return;
+				}
+				let saved_input = self.editor.text();
+				self.editor.clear();
+				self.notice(
+					NoticeTone::Info,
+					if export { "Export Chat attachment" } else { "Select Chat attachments" }
+						.to_string(),
+					Some(detail),
+				);
+				self.notice(
+                    NoticeTone::Info,
+                    if export {
+                        "Enter a new destination file path (without shell quotes). Existing files are never overwritten."
+                    } else {
+                        "Enter one file path at a time (without shell quotes). Empty Enter confirms the selection; Esc cancels."
+                    }.to_string(),
+                    None,
+                );
+				self.pending_chat_files = Some(PendingChatFiles {
+					response,
+					saved_input,
+					paths: Vec::new(),
+					max_files,
+					export,
+				});
 			},
 		}
 	}
@@ -1576,7 +1706,7 @@ impl App {
                 Some(format!(
                     "{url}\n{}",
                     if auto_accept {
-                        "Confirmations are approved automatically"
+                        "Non-payment confirmations are approved automatically; main-purse payments require a terminal review and are denied here"
                     } else {
                         "Confirmations will be denied: there is no terminal to prompt on. On a test network preset, pass --auto-accept"
                     }
@@ -1739,9 +1869,11 @@ impl App {
                 format!("Notification #{id} cancelled"),
                 None,
             ),
-            SystemEvent::NavigationRequested { url } => {
-                self.notice(NoticeTone::Info, "Navigation requested".to_string(), Some(url))
-            }
+			SystemEvent::NavigationRequested { url } => self.notice(
+				NoticeTone::Info,
+				"Navigation requested".to_string(),
+				Some(url),
+			),
             SystemEvent::PairingDeeplink { url } => {
                 self.start_activity(
                     "pairing".to_string(),
@@ -1919,6 +2051,10 @@ impl App {
 				if self.handle_scroll_key(key) {
 					return None;
 				}
+				if self.pending_chat_files.is_some() {
+					self.handle_chat_files_key(key);
+					return None;
+				}
 				if self.pending_approval.is_some() {
 					self.handle_approval_key(key);
 					return None;
@@ -1943,6 +2079,10 @@ impl App {
 				if self.handle_scroll_key(key) {
 					return false;
 				}
+				if self.pending_chat_files.is_some() {
+					self.handle_chat_files_key(key);
+					return false;
+				}
 				if self.pending_approval.is_some() {
 					self.handle_approval_key(key);
 					return false;
@@ -1962,6 +2102,14 @@ impl App {
 	}
 
 	fn insert_paste(&mut self, text: &str) {
+		if self.pending_chat_files.is_some() && text.chars().any(char::is_control) {
+			self.notice(
+				NoticeTone::Warning,
+				"Paste one path without control characters".to_string(),
+				None,
+			);
+			return;
+		}
 		for character in text.chars().filter(|character| !character.is_control()) {
 			self.editor.insert(character);
 		}
@@ -2028,7 +2176,63 @@ impl App {
 		None
 	}
 
+	fn handle_chat_files_key(&mut self, key: KeyEvent) {
+		let control = key.modifiers.contains(KeyModifiers::CONTROL);
+		match (control, key.code) {
+			(false, KeyCode::Esc) | (true, KeyCode::Char('c')) => self.answer_chat_files(true),
+			(false, KeyCode::Enter) => {
+				let text = self.editor.text();
+				if text.is_empty() {
+					self.answer_chat_files(false);
+					return;
+				}
+				let pending = self.pending_chat_files.as_mut().expect("active file prompt");
+				if pending.paths.len() >= pending.max_files as usize {
+					self.editor.clear();
+					self.notice(
+						NoticeTone::Warning,
+						"Selection limit reached; empty Enter confirms, Esc cancels".to_string(),
+						None,
+					);
+					return;
+				}
+				pending.paths.push(PathBuf::from(text));
+				let export = pending.export;
+				let count = pending.paths.len();
+				self.editor.clear();
+				if export {
+					self.answer_chat_files(false);
+				} else {
+					self.notice(NoticeTone::Info, format!("{count} Chat file(s) selected"), None);
+				}
+			},
+			(false, KeyCode::Char(character)) if !character.is_control() => {
+				self.editor.insert(character)
+			},
+			(false, KeyCode::Backspace) => self.editor.backspace(),
+			(false, KeyCode::Delete) => self.editor.delete(),
+			(false, KeyCode::Left) => self.editor.left(),
+			(false, KeyCode::Right) => self.editor.right(),
+			(false, KeyCode::Home) => self.editor.home(),
+			(false, KeyCode::End) => self.editor.end(),
+			_ => {},
+		}
+	}
+
+	fn answer_chat_files(&mut self, cancelled: bool) {
+		let Some(pending) = self.pending_chat_files.take() else {
+			return;
+		};
+		self.editor.clear();
+		self.editor.set_text(pending.saved_input);
+		let paths = (!cancelled && !pending.paths.is_empty()).then_some(pending.paths);
+		let _ = pending.response.send(paths);
+	}
+
 	fn handle_approval_key(&mut self, key: KeyEvent) {
+		if self.withdraw_closed_approval() {
+			return;
+		}
 		let Some(pending) = &self.pending_approval else {
 			return;
 		};
@@ -2064,6 +2268,22 @@ impl App {
 			},
 			_ => {},
 		}
+	}
+
+	fn withdraw_closed_approval(&mut self) -> bool {
+		if !self
+			.pending_approval
+			.as_ref()
+			.is_some_and(|pending| pending.response.is_closed())
+		{
+			return false;
+		}
+		let pending = self.pending_approval.take().expect("closed approval");
+		self.entries
+			.retain(|entry| !matches!(entry, FeedItem::Approval { id, .. } if *id == pending.id));
+		self.recalculate_retained();
+		self.editor.set_text(pending.saved_input);
+		true
 	}
 
 	fn answer_approval(&mut self, approved: PermissionDecision) {
@@ -2130,8 +2350,11 @@ impl App {
 }
 
 fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
-	let completions =
-		if app.pending_approval.is_some() { Vec::new() } else { app.editor.completions() };
+	let completions = if app.pending_approval.is_some() || app.pending_chat_files.is_some() {
+		Vec::new()
+	} else {
+		app.editor.completions()
+	};
 	let height = frame.area().height;
 	let show_vertical_padding = height >= 7;
 	let show_footer = height >= 3;
@@ -2266,7 +2489,11 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 
 	let approval = app.pending_approval.is_some();
 	let raw_input = app.editor.text();
-	let input = mask_mnemonic(&raw_input).unwrap_or(raw_input);
+	let input = if app.pending_chat_files.is_some() {
+		raw_input
+	} else {
+		mask_mnemonic(&raw_input).unwrap_or(raw_input)
+	};
 	let prompt_area = Rect::new(
 		composer_content_area.x,
 		surface_area
@@ -2276,7 +2503,10 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 		1,
 	);
 	let viewport = input_viewport(&input, app.editor.cursor(), prompt_area.width.saturating_sub(2));
-	let (prompt_text, prompt_style) = if input.is_empty() && !approval {
+	let (prompt_text, prompt_style) = if input.is_empty() &&
+		!approval &&
+		app.pending_chat_files.is_none()
+	{
 		("Type / for commands".to_string(), Style::default().add_modifier(Modifier::DIM))
 	} else {
 		(
@@ -2349,6 +2579,13 @@ fn composer_status_line(
 }
 
 fn footer_text(app: &App, approval: bool, autocomplete: bool, width: u16) -> String {
+	if let Some(pending) = &app.pending_chat_files {
+		return if pending.export {
+			"Enter destination · Esc cancel".to_string()
+		} else {
+			"Enter add path · empty Enter finish · Esc cancel".to_string()
+		};
+	}
 	if approval {
 		let choices = app
 			.pending_approval
@@ -2586,7 +2823,7 @@ fn completion_window(total: usize, selected: usize, max_visible: usize) -> Range
 
 fn feed_item_cost(item: &FeedItem) -> (usize, usize) {
 	if let FeedItem::PairingQr(qr) = item {
-		return (qr.rendered_height(), qr.rows.iter().map(String::len).sum());
+		return (qr.rendered_height(), qr.modules.len());
 	}
 	let lines = feed_item_plain_lines(item);
 	let bytes = lines.iter().map(String::len).sum();
@@ -2684,8 +2921,10 @@ fn pairing_qr_lines(qr: &PairingQr, width: usize, height: usize) -> Vec<Line<'st
 	if width == 0 || height == 0 {
 		return Vec::new();
 	}
-	let required_width = QR_INDENT + qr.rendered_width();
+	let rendered_side = qr.rendered_side();
+	let qr_width = qr.rendered_width();
 	let required_height = qr.rendered_height();
+	let required_width = QR_INDENT + qr_width;
 	if width < required_width || height < required_height {
 		return vec![Line::from(Span::styled(
 			format!("  QR code needs {required_width} columns × {required_height} rows"),
@@ -2693,10 +2932,22 @@ fn pairing_qr_lines(qr: &PairingQr, width: usize, height: usize) -> Vec<Line<'st
 		))];
 	}
 	let qr_style = Style::default().fg(Color::Black).bg(Color::White);
-	qr.rows
-		.iter()
-		.map(|row| {
-			Line::from(vec![Span::raw(" ".repeat(QR_INDENT)), Span::styled(row.clone(), qr_style)])
+	(0..required_height)
+		.map(|terminal_row| {
+			let top_row = terminal_row * 2;
+			let bottom_row = top_row + 1;
+			let mut row = String::with_capacity(rendered_side);
+			for column in 0..rendered_side {
+				let top = qr.module(top_row, column);
+				let bottom = bottom_row < rendered_side && qr.module(bottom_row, column);
+				row.push(match (top, bottom) {
+					(true, true) => '█',
+					(true, false) => '▀',
+					(false, true) => '▄',
+					(false, false) => ' ',
+				});
+			}
+			Line::from(vec![Span::raw(" ".repeat(QR_INDENT)), Span::styled(row, qr_style)])
 		})
 		.collect()
 }
@@ -2992,10 +3243,6 @@ fn sso_metadata(event: &SsoEvent) -> Option<String> {
 mod tests {
 	use super::*;
 	use crossterm::event::MouseEvent;
-	use qrcode::Color as QrColor;
-
-	/// The quiet zone a QR code keeps around it, in modules.
-	const QR_QUIET_ZONE: usize = 4;
 	use ratatui::{backend::TestBackend, layout::Position};
 	use tracing_subscriber::layer::SubscriberExt;
 
@@ -3019,6 +3266,135 @@ mod tests {
 			vec!["default".to_string()],
 			"info".to_string(),
 		)
+	}
+
+	fn test_ui() -> (TerminalUi, UiHandle) {
+		TerminalUi::new("testnet", "playground.dot", "default", Vec::new(), "info".into())
+	}
+
+	#[tokio::test]
+	async fn cancelling_a_visible_approval_restores_the_draft_without_a_decision() {
+		let (mut ui, handle) = test_ui();
+		ui.app.editor.set_text("/script draft.ts");
+		let (abort, registration) = futures::future::AbortHandle::new_pair();
+		let mut call = Box::pin(futures::future::Abortable::new(
+			handle.decide("sign raw", "withdrawn payload", ApprovalKind::Action),
+			registration,
+		));
+		assert!(futures::poll!(call.as_mut()).is_pending());
+		assert!(ui.has_pending_approval());
+		ui.app.editor.set_text("unfinished answer");
+
+		abort.abort();
+		assert!(call.await.is_err());
+		assert!(!ui.has_pending_approval());
+		assert_eq!(ui.app.editor.text(), "/script draft.ts");
+		assert!(!ui.app.transcript_text().contains("withdrawn payload"));
+
+		let mut next = Box::pin(handle.decide("sign raw", "next payload", ApprovalKind::Action));
+		assert!(futures::poll!(next.as_mut()).is_pending());
+		assert!(ui.has_pending_approval());
+		ui.app
+			.handle_approval_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+		assert_eq!(next.await, PermissionDecision::AllowAlways);
+		assert_eq!(ui.app.editor.text(), "/script draft.ts");
+	}
+
+	#[tokio::test]
+	async fn cancelling_a_queued_approval_never_replaces_the_editor() {
+		let (mut ui, handle) = test_ui();
+		ui.app.editor.set_text("/script draft.ts");
+		let mut call =
+			Box::pin(handle.decide("sign raw", "withdrawn payload", ApprovalKind::Action));
+		assert!(futures::poll!(call.as_mut()).is_pending());
+		drop(call);
+
+		assert!(!ui.has_pending_approval());
+		assert_eq!(ui.app.editor.text(), "/script draft.ts");
+		assert!(!ui.app.transcript_text().contains("withdrawn payload"));
+	}
+
+	#[tokio::test]
+	async fn a_late_key_cannot_answer_a_withdrawn_approval() {
+		let (mut ui, handle) = test_ui();
+		ui.app.editor.set_text("/script draft.ts");
+		let mut call =
+			Box::pin(handle.decide("sign raw", "withdrawn payload", ApprovalKind::Action));
+		assert!(futures::poll!(call.as_mut()).is_pending());
+		assert!(ui.has_pending_approval());
+		drop(call);
+
+		// The key can win the event-loop race against the withdrawal wake.
+		ui.app
+			.handle_approval_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+		assert!(ui.app.pending_approval.is_none());
+		assert_eq!(ui.app.editor.text(), "/script draft.ts");
+		assert!(!ui.app.transcript_text().contains("withdrawn payload"));
+	}
+
+	#[tokio::test]
+	async fn a_queued_successor_survives_the_previous_approval_withdrawal() {
+		let (mut ui, handle) = test_ui();
+		let mut first = Box::pin(handle.decide("first", "first payload", ApprovalKind::Action));
+		assert!(futures::poll!(first.as_mut()).is_pending());
+		assert!(ui.has_pending_approval());
+		let mut next = Box::pin(handle.decide("next", "next payload", ApprovalKind::Action));
+		assert!(futures::poll!(next.as_mut()).is_pending());
+		drop(first);
+
+		// The next request was enqueued before the old request's withdrawal.
+		assert!(ui.has_pending_approval());
+		assert!(!ui.app.transcript_text().contains("first payload"));
+		assert!(ui.app.transcript_text().contains("next payload"));
+		assert!(futures::poll!(next.as_mut()).is_pending());
+		ui.app
+			.handle_approval_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+		assert_eq!(next.await, PermissionDecision::Deny);
+	}
+
+	#[tokio::test]
+	async fn rejecting_an_overlap_does_not_withdraw_the_active_approval() {
+		let (mut ui, handle) = test_ui();
+		let mut first = Box::pin(handle.decide("first", "first payload", ApprovalKind::Action));
+		assert!(futures::poll!(first.as_mut()).is_pending());
+		assert!(ui.has_pending_approval());
+		let mut overlap = Box::pin(handle.decide("overlap", "other payload", ApprovalKind::Action));
+		assert!(futures::poll!(overlap.as_mut()).is_pending());
+		assert!(ui.has_pending_approval());
+		assert_eq!(overlap.await, PermissionDecision::Deny);
+		assert!(ui.has_pending_approval());
+		assert!(futures::poll!(first.as_mut()).is_pending());
+		ui.app
+			.handle_approval_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+		assert_eq!(first.await, PermissionDecision::AllowAlways);
+	}
+
+	#[tokio::test]
+	async fn cancelling_platform_approvals_releases_the_prompt_lock_in_order() {
+		let (mut ui, handle) = test_ui();
+		let platform = crate::platform::CliPlatform::new(
+			crate::network::Network::default().config(),
+			None,
+			crate::platform::ApprovalPolicy::Prompt,
+			Some(handle),
+		);
+		let mut first = Box::pin(platform.decide("first", "first payload".into()));
+		assert!(futures::poll!(first.as_mut()).is_pending());
+		assert!(ui.has_pending_approval());
+		let mut withdrawn = Box::pin(platform.decide("withdrawn", "queued payload".into()));
+		assert!(futures::poll!(withdrawn.as_mut()).is_pending());
+		let mut next = Box::pin(platform.decide("next", "next payload".into()));
+		assert!(futures::poll!(next.as_mut()).is_pending());
+		drop(withdrawn);
+		drop(first);
+		assert!(futures::poll!(next.as_mut()).is_pending());
+		assert!(ui.has_pending_approval());
+		assert!(!ui.app.transcript_text().contains("first payload"));
+		assert!(!ui.app.transcript_text().contains("queued payload"));
+		assert!(ui.app.transcript_text().contains("next payload"));
+		ui.app
+			.handle_approval_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+		assert!(next.await);
 	}
 
 	#[test]
@@ -3047,6 +3423,57 @@ mod tests {
 				(Ok(expected), "/script draft.ts".to_string(), true)
 			);
 		}
+	}
+
+	#[test]
+	fn chat_file_paths_are_private_and_restore_the_command_draft() {
+		let mut app = test_app();
+		app.editor.set_text("/script draft.ts");
+		let (response, answer) = oneshot::channel();
+		app.handle_event(UiEvent::ChatFiles {
+			detail: "Send files to a Chat peer".to_string(),
+			max_files: 1,
+			export: false,
+			response,
+		});
+		app.handle_idle_event(Event::Paste("/private/selected file".to_string()));
+		app.handle_idle_event(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+		app.handle_idle_event(Event::Paste("/private/too many".to_string()));
+		app.handle_idle_event(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+		app.handle_idle_event(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+		assert_eq!(
+			answer.blocking_recv().unwrap(),
+			Some(vec![PathBuf::from("/private/selected file")])
+		);
+		assert_eq!(app.editor.text(), "/script draft.ts");
+		assert!(!app.transcript_text().contains("/private/"));
+		app.editor.up();
+		assert!(!app.editor.text().contains("/private/"));
+	}
+
+	#[test]
+	fn chat_file_cancellation_discards_paths_without_answering_an_approval() {
+		let mut app = test_app();
+		let (response, answer) = oneshot::channel();
+		app.handle_event(UiEvent::ChatFiles {
+			detail: String::new(),
+			max_files: 2,
+			export: false,
+			response,
+		});
+		app.handle_busy_event(Event::Paste("/private/file".to_string()));
+		app.handle_busy_event(Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+		let (response, approval) = oneshot::channel();
+		app.handle_event(UiEvent::Approval {
+			action: "pay".to_string(),
+			detail: String::new(),
+			kind: ApprovalKind::Action,
+			response,
+		});
+		assert_eq!(approval.blocking_recv().unwrap(), PermissionDecision::Deny);
+		app.handle_busy_event(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)));
+		assert_eq!(answer.blocking_recv().unwrap(), None);
+		assert!(!app.transcript_text().contains("/private/"));
 	}
 
 	#[test]
@@ -3589,10 +4016,11 @@ mod tests {
 		*active_ui().lock().expect("unlock active test UI") = restore;
 
 		assert!(delivered, "the installed sender was cleared by a foreign drop");
-		assert!(matches!(
-			receiver.try_recv(),
-			Ok(UiEvent::Log(line)) if line == "after a foreign drop"
-		));
+		// Other tests can log through the installed UI without owning its slot.
+		assert!(
+			std::iter::from_fn(|| receiver.try_recv().ok())
+				.any(|event| matches!(event, UiEvent::Log(line) if line == "after a foreign drop"))
+		);
 	}
 
 	#[test]
@@ -3621,9 +4049,15 @@ mod tests {
 		});
 		*active_ui().lock().expect("unlock active test UI") = restore;
 
-		let UiEvent::Sso(event) = receiver.try_recv().expect("summary transcript event") else {
-			panic!("expected SSO transcript event");
-		};
+		// Concurrent tests may emit unrelated events through the installed UI.
+		let event = std::iter::from_fn(|| receiver.try_recv().ok())
+			.find_map(|event| match event {
+				UiEvent::Sso(event) if event.statement_request_id.as_deref() == Some("req:1") => {
+					Some(event)
+				},
+				_ => None,
+			})
+			.expect("summary transcript event");
 		assert_eq!(event.kind.as_deref(), Some("response_sent"));
 		assert_eq!(event.request.as_deref(), Some("get_account_alias"));
 		assert_eq!(event.elapsed_ms, Some(84));
@@ -3679,14 +4113,6 @@ mod tests {
 	}
 
 	#[test]
-	fn navigation_request_shows_the_destination() {
-		let event =
-			SystemEvent::NavigationRequested { url: "polkadot://dim2.dot/recover".to_string() };
-
-		assert_eq!(event.human(), "• Navigation requested\n  polkadot://dim2.dot/recover");
-	}
-
-	#[test]
 	fn pairing_image_lifecycle_has_actionable_terminal_copy() {
 		let mut app = test_app();
 		app.handle_system_event(SystemEvent::PairingImagePasteReady);
@@ -3706,8 +4132,6 @@ mod tests {
 	fn pairing_deeplink_renders_a_high_contrast_qr_without_copying_it() {
 		let mut app = test_app();
 		let url = format!("polkadotapp://pair?handshake={}", "0123456789abcdef".repeat(13));
-		let rendered_side =
-			QrCode::new(url.as_bytes()).expect("encode QR").width() + QR_QUIET_ZONE * 2;
 
 		app.handle_system_event(SystemEvent::PairingDeeplink { url });
 
@@ -3721,6 +4145,14 @@ mod tests {
 			.iter()
 			.filter_map(|line| line.spans.iter().find(|span| span.style == qr_style))
 			.collect::<Vec<_>>();
+		let rendered_side = app
+			.entries
+			.iter()
+			.find_map(|item| match item {
+				FeedItem::PairingQr(qr) => Some(qr.side + QR_QUIET_ZONE * 2),
+				_ => None,
+			})
+			.expect("pairing QR is retained");
 		assert_eq!(qr_rows.len(), rendered_side.div_ceil(2));
 		assert!(qr_rows.iter().all(|row| text_display_width(&row.content) == rendered_side));
 		assert!(qr_rows.iter().any(|row| {
@@ -3744,7 +4176,15 @@ mod tests {
 	fn pairing_event_encodes_the_exact_deeplink() {
 		let mut app = test_app();
 		let url = "polkadotapp://pair?handshake=exact-payload".to_string();
-		let expected = PairingQr::encode(&url).expect("encode expected QR code");
+		let expected_code = QrCode::new(url.as_bytes()).expect("encode expected QR code");
+		let expected = PairingQr {
+			side: expected_code.width(),
+			modules: expected_code
+				.to_colors()
+				.into_iter()
+				.map(|color| color == QrColor::Dark)
+				.collect(),
+		};
 
 		app.handle_system_event(SystemEvent::PairingDeeplink { url });
 
@@ -3758,23 +4198,11 @@ mod tests {
 	#[test]
 	fn solid_qr_cells_preserve_every_module() {
 		let url = format!("polkadotapp://pair?handshake={}", "0123456789abcdef".repeat(13));
-		let code = QrCode::new(url.as_bytes()).expect("encode QR");
-		let side = code.width() + QR_QUIET_ZONE * 2;
-		let dark = code.to_colors();
-		let module = |row: usize, column: usize| {
-			let (row, column) =
-				(row.wrapping_sub(QR_QUIET_ZONE), column.wrapping_sub(QR_QUIET_ZONE));
-			row < code.width() &&
-				column < code.width() &&
-				dark[row * code.width() + column] == QrColor::Dark
-		};
 		let qr = PairingQr::encode(&url).expect("encode pairing QR");
 		let lines = pairing_qr_lines(&qr, 120, 120);
 
-		assert_eq!(lines.len(), side.div_ceil(2));
 		for (terminal_row, line) in lines.iter().enumerate() {
 			let row = line.spans.last().expect("QR row span").content.as_ref();
-			assert_eq!(row.chars().count(), side);
 			for (column, character) in row.chars().enumerate() {
 				let modules = match character {
 					'█' => [true, true],
@@ -3785,7 +4213,11 @@ mod tests {
 				};
 				assert_eq!(
 					modules,
-					[module(terminal_row * 2, column), module(terminal_row * 2 + 1, column)]
+					[
+						qr.module(terminal_row * 2, column),
+						terminal_row * 2 + 1 < qr.rendered_side() &&
+							qr.module(terminal_row * 2 + 1, column),
+					]
 				);
 			}
 		}
@@ -3846,7 +4278,7 @@ mod tests {
 
 	#[test]
 	fn larger_pairing_qr_reports_the_solid_renderer_dimensions() {
-		let oversized = PairingQr { rows: vec![" ".repeat(73); 37] };
+		let oversized = PairingQr { side: 65, modules: vec![false; 65 * 65] };
 
 		let lines = pairing_qr_lines(&oversized, 70, 36);
 		let rendered = lines

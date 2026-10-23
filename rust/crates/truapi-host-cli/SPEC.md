@@ -229,8 +229,7 @@ The binary has `--help` and `--version`.
 ### 3.4 Self-update
 
 An install laid out by §3.2 keeps itself current. Every command except
-`update` and `stack`, which runs inside builds and publish jobs, spawns a
-background check that:
+`update` spawns a background check that:
 
 1. does nothing unless the running executable resolves inside
    `<root>/versions/`, so a `cargo install` copy or a source build is never
@@ -543,33 +542,6 @@ authorization requests share one WebSocket and Rust execution. `/script` imports
 the same web API permission wrappers
 into Bun. Dev preserves the app server URL, native assets and hot reload; no
 app proxy is involved.
-
-### 6.7 Top-level `stack`
-
-```sh
-truapi-host stack <keygen|publish|verify|bundle|link> [options]
-```
-
-`stack` works with Trinity stack descriptors as the
-[descriptor RFC](../../../docs/rfcs/trinity-stack-descriptor.md) defines them.
-Every rule comes from the `trinity-stack` crate, so the CLI accepts and refuses
-the same descriptors as `@parity/trinity-stack` and the host core. Refusals
-print the rule's code, such as `refused (bad-signature): ...`.
-
-| Subcommand | Behavior |
-| --- | --- |
-| `keygen --out <file>` | Creates `<file>` readable by its owner only, refusing an existing file, writes a new 0x-prefixed secret key and prints its public key. |
-| `publish <model> --generation <g> --out <dir>` | Renders the model as a `$v: 1` descriptor, checks it, signs it with `--signing-key-file` when given, and writes `<dir>/.well-known/trinity-stack.json`. With `--url` it checks the URL first and prints the stack's link. |
-| `verify <stack> [--key <k>]` | Reads a link, URL or local file and prints a JSON report: `signed`, `envelope`, `stale`, `expired` and the `descriptor`. Exits non-zero when a rule is broken or the stack is past `expiresAt`; a stale copy only reports. |
-| `bundle <stack> --key <k> --out <file>` | Fetches and verifies a signed stack and writes the copy a host build ships. The existing `<file>` counts as the stored copy, so a lower `sequence` is refused as a rollback, and an expired copy is refused. |
-| `link <url> [--key <k>]` | Prints the `polkadotapp://stack` link that carries the pointer, and its QR code. |
-
-`publish` keeps `sequence` in the `--state` file: unchanged content keeps it,
-and new content raises it to the larger of the previous one plus one and the
-current time in seconds. The state file is written before the descriptor, and
-both writes are atomic. Keep it outside anything a wipe deletes.
-
-Fetches refuse redirects, time out after ten seconds and read at most 1 MiB.
 
 ## 7. Product identifiers and switching
 
@@ -1728,12 +1700,7 @@ itself through the backend's `auth/challenges` → `auth/token` handshake
 account creation works here.
 
 There are no public endpoint override flags. `HOST_CLI_IDENTITY_BACKEND_BASE`
-replaces the identity backend base URL, and `HOST_CLI_PEOPLE_WS`,
-`HOST_CLI_ASSET_HUB_WS` and `HOST_CLI_BULLETIN_WS` replace a chain's URL for a fork
-of the preset's network, keeping its genesis hashes (§21). `HOST_CLI_LOCAL_NETWORK_CONFIG`
-replaces every chain endpoint, genesis hash and the identity backend together, loopback
-only, for a disposable local network that is not a fork (§21). The two cannot be set
-together.
+replaces only the identity backend base URL (§21).
 
 Every role the preset serves — People, Bulletin and Asset Hub — is always routed,
 because host internals require all three: statement-store traffic addressed to the
@@ -1745,6 +1712,14 @@ preset carries without serving them as a role, of which no preset has any.
 
 The all-zero SSO sentinel and every genesis hash not present in the active
 route map fall back to the People RPC.
+
+With `TRUAPI_LIGHT_CLIENT=1` the host's `ChainProvider` is the embedded light
+client from `truapi-provider` instead. It resolves every chain of the preset from
+the provider's bundled catalog by genesis hash, answers the all-zero sentinel from
+People, and keeps one idle connection open per chain so a chain stays synced and
+keeps its statement-store peers between the runtime's per-call connections. The
+direct RPC reads made during account setup and dotNS username lookup are unchanged,
+and HOP connections still go to the preset's WSS relays.
 
 A rustls ring crypto provider is installed at process startup for `wss://`
 connections.
@@ -2262,7 +2237,6 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `FORCE_COLOR` | Force battery reporter color in non-TTY output. |
 | `TRUAPI_BATTERY_REPORT_PATH` | Override battery report destination. |
 | `TRUAPI_APPROVALS_LOG` | Append one line per decided confirmation to this file. |
-| `TRUAPI_NAVIGATIONS_LOG` | Append one JSON line `{"url","at"}` (`at` in Unix milliseconds) per `navigate_to` destination the host accepted. Unset, nothing is written; set, a transcript that cannot be written fails that `navigate_to` call. The terminal UI shows each accepted destination either way. |
 
 ## 22. Current v0.1 operational constraints
 

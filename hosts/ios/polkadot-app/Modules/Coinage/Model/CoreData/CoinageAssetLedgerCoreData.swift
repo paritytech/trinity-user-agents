@@ -49,12 +49,25 @@ extension CoinageAssetLedgerCoreData {
     func registerAssets(
         _ registrations: [CoinageAssetRegistration],
         for ids: [CoinageTxId],
+        custody: NativeTransferCustody?,
+        authorization: (@Sendable () throws -> Void)?,
         in scope: any DurableTxRegistrationScope
     ) throws {
         guard let scope = scope as? CoreDataRegistrationScope else {
             throw DurableTxError.foreignRegistrationScope
         }
         let context = scope.context
+        guard registrations.count == ids.count else { throw NativeTransferCustodyError.invalidRecord }
+        if let custody {
+            guard try nativeRecord(custodyId: custody.custodyId, in: context) == nil else {
+                throw NativeTransferCustodyError.alreadyRegistered
+            }
+            guard let authorization else { throw NativeTransferCustodyError.invalidRecord }
+            try authorization()
+            try custody.validate(
+                registrations: registrations, transaction: CoinageTxValidationContext(context: context)
+            )
+        }
 
         // The batch is validated once, before any row is written — the validator rejects within-batch
         // conflicts itself, since these rows do not exist yet.
@@ -73,6 +86,9 @@ extension CoinageAssetLedgerCoreData {
                 using: context
             )
             CoinageTxAssetRows.touchRelatedAssets(of: entity)
+        }
+        if let custody {
+            try retain(custody, registrations: registrations, ids: ids, in: context)
         }
     }
 }
@@ -138,6 +154,112 @@ extension CoinageAssetLedgerCoreData {
             domainPredicate,
             NSPredicate(format: "%K == %@", #keyPath(CDDurableTx.groupId), groupId)
         ])
+    }
+}
+
+// MARK: - Native custody
+
+extension CoinageAssetLedgerCoreData {
+    func retainNativeTransfer(
+        _ custody: NativeTransferCustody, authorization: @escaping @Sendable () throws -> Void
+    ) async throws {
+        try await withTransaction { context in
+            guard try self.nativeRecord(custodyId: custody.custodyId, in: context) == nil else {
+                throw NativeTransferCustodyError.alreadyRegistered
+            }
+            try authorization()
+            try custody.validate(registrations: [], transaction: CoinageTxValidationContext(context: context))
+            try self.retain(custody, registrations: [], ids: [], in: context)
+        }
+    }
+
+    func retainedNativeTransfer(custodyId: String) async throws -> NativeTransferCustody? {
+        try await databaseService.perform { context in
+            guard let record = try self.nativeRecord(custodyId: custodyId, in: context) else { return nil }
+            guard let data = record.value(forKey: "payload") as? Data else {
+                throw NativeTransferCustodyError.incompleteRegistration
+            }
+            let saved = try JSONDecoder().decode(NativeCustodyRecord.self, from: data)
+            guard saved.custody.custodyId == custodyId, !saved.custody.entries.isEmpty else {
+                throw NativeTransferCustodyError.incompleteRegistration
+            }
+            for entry in saved.custody.entries {
+                let coin = try self.retainedCoin(entry, in: context)
+                guard coin.handoffMark == CoinHandoffMark.committed.rawValue else {
+                    throw NativeTransferCustodyError.incompleteRegistration
+                }
+            }
+            for transaction in saved.transactions {
+                guard let row: CDDurableTx = try context.first(
+                    for: NSPredicate(format: "identifier == %@", transaction.id.uuidString)
+                ), row.domainId == TxDomainId.coinage.rawValue else {
+                    throw NativeTransferCustodyError.incompleteRegistration
+                }
+                let inputs = try CoinageTxAssetRows.transformInputs(from: row.inputs).map(\.publicKey)
+                let outputs = try CoinageTxAssetRows.transformOutputs(from: row.outputs).map(\.publicKey)
+                guard inputs.count == transaction.inputs.count, Set(inputs) == Set(transaction.inputs),
+                      outputs.count == transaction.outputs.count, Set(outputs) == Set(transaction.outputs) else {
+                    throw NativeTransferCustodyError.incompleteRegistration
+                }
+            }
+            return saved.custody
+        }
+    }
+}
+
+private extension CoinageAssetLedgerCoreData {
+    struct NativeCustodyRecord: Codable {
+        struct Transaction: Codable {
+            let id: CoinageTxId
+            let inputs: [Data]
+            let outputs: [Data]
+        }
+
+        let custody: NativeTransferCustody
+        let transactions: [Transaction]
+    }
+
+    func nativeRecord(custodyId: String, in context: NSManagedObjectContext) throws -> NSManagedObject? {
+        let request = NSFetchRequest<NSManagedObject>(entityName: "CDNativeCoinageRecord")
+        request.predicate = NSPredicate(format: "identifier == %@", "coinage.native.custody." + custodyId)
+        request.fetchLimit = 2
+        let rows = try context.fetch(request)
+        guard rows.count <= 1 else { throw NativeTransferCustodyError.incompleteRegistration }
+        return rows.first
+    }
+
+    func retainedCoin(_ entry: NativeTransferCustody.Entry, in context: NSManagedObjectContext) throws -> CDCoin {
+        guard let coin: CDCoin = try context.first(
+            for: NSPredicate(format: "identifier == %@", Coin.identifier(for: entry.coinDerivationIndex))
+        ), coin.publicKey == entry.publicKey.toHex(), coin.exponent == entry.valueExponent else {
+            throw NativeTransferCustodyError.incompleteRegistration
+        }
+        return coin
+    }
+
+    /// Called only within the engine scope or the exact-match ledger transaction. No nested save.
+    func retain(
+        _ custody: NativeTransferCustody,
+        registrations: [CoinageAssetRegistration],
+        ids: [CoinageTxId],
+        in context: NSManagedObjectContext
+    ) throws {
+        let saved = NativeCustodyRecord(
+            custody: custody,
+            transactions: zip(ids, registrations).map {
+                NativeCustodyRecord.Transaction(
+                    id: $0.0, inputs: $0.1.inputs.map(\.publicKey), outputs: $0.1.outputs.map(\.publicKey)
+                )
+            }
+        )
+        let data = try JSONEncoder().encode(saved)
+        for entry in custody.entries {
+            let coin = try retainedCoin(entry, in: context)
+            coin.handoffMark = CoinHandoffMark.committed.rawValue
+        }
+        let record = NSEntityDescription.insertNewObject(forEntityName: "CDNativeCoinageRecord", into: context)
+        record.setValue("coinage.native.custody." + custody.custodyId, forKey: "identifier")
+        record.setValue(data, forKey: "payload")
     }
 }
 

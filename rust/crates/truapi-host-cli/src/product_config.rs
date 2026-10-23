@@ -28,10 +28,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
-use truapi::{
-	encode_cached_root_manifest,
-	platform::{CoreStorage, CoreStorageKey, ProductId},
-};
+use truapi::{encode_cached_root_manifest, platform::CoreStorage};
 
 /// The developer-authored config for one product.
 ///
@@ -42,10 +39,9 @@ use truapi::{
 #[derive(Debug, Clone, Deserialize)]
 pub struct LocalProductConfig {
 	/// The product's dotNS base name, e.g. `peopl.paseo`. The id its grants and
-	/// its storage are resolved under. A name that is not a product id fails
-	/// the read.
+	/// its storage are resolved under.
 	#[serde(rename = "productName")]
-	pub product_name: ProductId,
+	pub product_name: String,
 	/// Human-readable name, carried into the seeded manifest so what the host
 	/// resolves looks like what the publisher will write.
 	#[serde(rename = "displayName", default)]
@@ -73,7 +69,7 @@ impl LocalProductConfig {
 	fn root_manifest_json(&self) -> String {
 		let trusted = serde_json::to_string(&self.trusted_products)
 			.expect("a map of strings to strings always serializes");
-		let display = self.display_name.as_deref().unwrap_or(self.product_name.as_str());
+		let display = self.display_name.as_deref().unwrap_or(&self.product_name);
 		let display = serde_json::to_string(display).expect("a string always serializes");
 		format!(
 			r#"{{"$v":1,"displayName":{display},"description":"Served locally by truapi-host.","icon":{{"cid":"","format":"png"}},"trustedProducts":{trusted}}}"#
@@ -126,7 +122,7 @@ pub async fn apply(
 	for config in configs {
 		platform
 			.write_core_storage(
-				CoreStorageKey::product_manifest(&config.product_name),
+				truapi::manifest_cache_key(&config.product_name),
 				encode_cached_root_manifest(Some(&config.root_manifest_json()), now_secs),
 			)
 			.await
@@ -155,19 +151,6 @@ mod tests {
 		let parsed = config(r#"{"productName":"dim2.paseo"}"#);
 		assert_eq!(parsed.product_name, "dim2.paseo");
 		assert!(parsed.trusted_products.is_empty());
-	}
-
-	#[test]
-	fn the_product_name_is_normalized_like_any_product_id() {
-		let parsed = config(r#"{"productName":" DIM2.Paseo "}"#);
-		assert_eq!(parsed.product_name, "dim2.paseo");
-	}
-
-	#[test]
-	fn a_product_name_that_is_not_a_product_id_fails_the_read_and_names_the_value() {
-		let error = serde_json::from_str::<LocalProductConfig>(r#"{"productName":"example.com"}"#)
-			.expect_err("example.com is not a product id");
-		assert!(error.to_string().contains(r#""example.com""#), "{error}");
 	}
 
 	#[test]

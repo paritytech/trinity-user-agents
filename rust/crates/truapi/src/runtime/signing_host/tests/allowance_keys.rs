@@ -10,7 +10,6 @@ use truapi::{
 };
 
 use crate::{
-	host_internal::sso_messages::OnExistingAllowancePolicy,
 	host_logic::{
 		product_account::{derive_full_person_ring_vrf_entropy, derive_sr25519_hard_path},
 		statement_store::SUBMIT_STATEMENT_METHOD,
@@ -30,7 +29,11 @@ fn chain_with_allocated_slot() -> Arc<StubPlatform> {
 	let allowance =
 		derive_sr25519_hard_path(&ENTROPY, &["allowance", "statement-store", PRODUCT_ID])
 			.expect("allowance derivation succeeds");
-	let slot_entry = (allowance.public.to_bytes(), 0u32, 0u64).encode();
+	chain_with_allocated_target(allowance.public.to_bytes())
+}
+
+fn chain_with_allocated_target(target: [u8; 32]) -> Arc<StubPlatform> {
+	let slot_entry = (target, 0u32, 0u64).encode();
 	let people_row = slot::testing::slot_row(
 		derive_full_person_ring_vrf_entropy(&ENTROPY, TEST_NETWORK_SUFFIX),
 		TEST_NETWORK_SUFFIX.as_bytes(),
@@ -78,10 +81,9 @@ fn allowance_key(signing_host: &SigningHostRole) -> StatementStoreAllowanceKey {
 	futures::executor::block_on(async {
 		let session = signing_host.current_session().expect("a session is active");
 		let cx = CallContext::default();
-		let product_id = ProductId::for_test(PRODUCT_ID);
 		futures::select! {
 			result = signing_host
-				.statement_store_allowance_key(&cx, &session, &product_id)
+				.statement_store_allowance_key(&cx, &session, PRODUCT_ID.to_string())
 				.fuse() => result,
 			_ = futures_timer::Delay::new(std::time::Duration::from_secs(30)).fuse() => {
 				panic!("the proof blocked on a chain read")
@@ -95,6 +97,23 @@ fn sent_rpc_count(platform: &StubPlatform) -> usize {
 	platform.sent_rpc.lock().expect("rpc list mutex poisoned").len()
 }
 
+/// The `WARN` events emitted while this is the thread's subscriber.
+#[derive(Clone, Default)]
+struct Warnings(Arc<std::sync::Mutex<Vec<String>>>);
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Warnings {
+	fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+		if *event.metadata().level() != tracing::Level::WARN {
+			return;
+		}
+		let mut fields = Vec::new();
+		event.record(&mut |field: &tracing::field::Field, value: &dyn core::fmt::Debug| {
+			fields.push(format!("{field}={value:?}"))
+		});
+		self.0.lock().expect("warnings mutex poisoned").push(fields.join(" "));
+	}
+}
+
 fn secret_key() -> StatementStoreAllowanceKey {
 	StatementStoreAllowanceKey::from_secret_bytes(SECRET.to_vec()).expect("64-byte secret")
 }
@@ -105,7 +124,7 @@ fn remember(signing_host: &SigningHostRole, product_id: &str, period: u32) {
 		.lock()
 		.expect("local AutoSigning grant mutex poisoned")
 		.statement_allowance_keys
-		.insert(ProductId::for_test(product_id), (period, secret_key()));
+		.insert(product_id.to_string(), (period, secret_key()));
 }
 
 fn current_generation(signing_host: &SigningHostRole) -> u64 {
@@ -113,7 +132,7 @@ fn current_generation(signing_host: &SigningHostRole) -> u64 {
 		.local_grants
 		.lock()
 		.expect("local AutoSigning grant mutex poisoned")
-		.activation_generation
+		.generation
 }
 
 fn remembered(signing_host: &SigningHostRole, product_id: &str, period: u32) -> Option<[u8; 64]> {
@@ -122,72 +141,9 @@ fn remembered(signing_host: &SigningHostRole, product_id: &str, period: u32) -> 
 		.lock()
 		.expect("local AutoSigning grant mutex poisoned");
 	state
-		.statement_allowance_key(
-			state.activation_generation,
-			&ProductId::for_test(product_id),
-			period,
-		)
+		.statement_allowance_key(state.generation, product_id, period)
 		.expect("the generation is current")
 		.map(|key| key.secret)
-}
-
-/// An existing statement-store allowance must be served without resolving a
-/// ring or submitting anything. The cache and the scan are covered on their
-/// own; this pins the composition, so removing the early return fails here
-/// rather than passing quietly.
-#[test]
-fn an_existing_allowance_is_served_without_touching_the_ring() {
-	let allowance =
-		derive_sr25519_hard_path(&ENTROPY, &["allowance", "statement-store", PRODUCT_ID])
-			.expect("allowance derivation succeeds");
-	let platform = chain_with_allocated_slot();
-	let signing_host = active_signing_host(platform.clone());
-
-	// Bounded, because the failure mode of losing the early return is a
-	// wait on a chain read the stub deliberately does not answer — an
-	// unbounded test would hang instead of reporting. The bound is generous
-	// because it is catching a hang, not asserting latency.
-	let allocation = futures::executor::block_on(async {
-		let session = signing_host.current_session().unwrap();
-		let product_id = ProductId::for_test(PRODUCT_ID);
-		futures::select! {
-			result = super::super::allowance::allocate_statement_store_allowance(
-				&signing_host.services,
-				&signing_host,
-				&session,
-				&product_id,
-				OnExistingAllowancePolicy::Ignore,
-			)
-			.fuse() => result,
-			_ = futures_timer::Delay::new(std::time::Duration::from_secs(30)).fuse() => {
-				panic!("allocation blocked on a chain read it should not have made")
-			}
-		}
-	})
-	.expect("an existing allowance is returned");
-
-	assert_eq!(allocation.secret, allowance.secret.to_bytes().to_vec());
-
-	let sent = platform.sent_rpc.lock().expect("rpc list mutex poisoned");
-	let methods: Vec<String> = sent
-		.iter()
-		.filter_map(|request| {
-			let value: serde_json::Value = serde_json::from_str(request).ok()?;
-			value.get("method")?.as_str().map(ToString::to_string)
-		})
-		.collect();
-
-	// `find_including_rings` opens with `chain_getFinalizedHead`, so none of
-	// these means no ring was resolved.
-	assert_eq!(
-		methods.iter().filter(|method| *method == "chain_getFinalizedHead").count(),
-		0,
-		"a ring was resolved for an allowance already in place: {methods:?}"
-	);
-	assert!(
-		!methods.iter().any(|method| method.starts_with("author_submit")),
-		"an extrinsic was submitted for an allowance already in place: {methods:?}"
-	);
 }
 
 #[test]
@@ -204,6 +160,29 @@ fn a_second_proof_in_the_same_session_sends_nothing_to_the_chain() {
 		(true, first.public_key, sent_after_first),
 		"the first proof must reach the chain, and a proof after it must not"
 	);
+}
+
+/// Product allowances are provisioned on demand for an authorized request and
+/// never renewed in the background, so issuing one must not ask the renewal
+/// ledger to keep it. The ledger refuses every product grant, so the attempt
+/// would only fail and log a warning on each allocation.
+#[test]
+fn issuing_an_allowance_does_not_register_it_for_background_renewal() {
+	use tracing_subscriber::layer::SubscriberExt as _;
+
+	let signing_host = active_signing_host(chain_with_allocated_slot());
+	let warnings = Warnings::default();
+
+	// With a single live dispatcher, tracing caches a callsite's interest from
+	// the first thread to reach it, which may be a parallel test without a
+	// subscriber. A second one makes it ask every live dispatcher instead.
+	let _second_dispatcher = tracing::Dispatch::new(tracing_subscriber::Registry::default());
+	tracing::subscriber::with_default(
+		tracing_subscriber::Registry::default().with(warnings.clone()),
+		|| allowance_key(&signing_host),
+	);
+
+	assert_eq!(*warnings.0.lock().expect("warnings mutex poisoned"), Vec::<String>::new());
 }
 
 #[test]
@@ -243,7 +222,8 @@ fn clearing_a_product_forgets_only_its_key() {
 	remember(&signing_host, PRODUCT_ID, PERIOD);
 	remember(&signing_host, "other.dot", PERIOD);
 
-	signing_host.clear_product_state(&ProductId::for_test(PRODUCT_ID));
+	futures::executor::block_on(signing_host.clear_product_state(PRODUCT_ID))
+		.expect("the product id is valid");
 
 	assert_eq!(
 		(
@@ -253,6 +233,153 @@ fn clearing_a_product_forgets_only_its_key() {
 		(None, Some(SECRET)),
 		"clearing a product's state must forget its key and keep the others"
 	);
+}
+
+#[test]
+fn clearing_another_product_preserves_in_flight_allowance_authority() {
+	for previously_bound in [false, true] {
+		let platform = chain_with_allocated_slot();
+		let signing_host = active_signing_host(platform.clone());
+		futures::executor::block_on(async {
+			if previously_bound {
+				signing_host.clear_product_state("other.dot").await.unwrap();
+			}
+			let (release, gate) = futures::channel::oneshot::channel();
+			*platform.rpc_method_responses_gate.lock().unwrap() = Some(gate);
+			let session = signing_host.current_session().unwrap();
+			let cx = CallContext::default();
+			let allocation =
+				signing_host.statement_store_allowance_key(&cx, &session, PRODUCT_ID.to_string());
+			futures::pin_mut!(allocation);
+			assert!(allocation.as_mut().now_or_never().is_none());
+			signing_host.clear_product_state("other.dot").await.unwrap();
+			release.send(()).unwrap();
+			let key = futures::select! {
+				result = allocation.fuse() => result,
+				_ = futures_timer::Delay::new(std::time::Duration::from_secs(30)).fuse() => {
+					panic!("the allocation blocked after releasing the chain response")
+				}
+			}
+			.expect("clearing another product must not disconnect this allocation");
+			let expected =
+				derive_sr25519_hard_path(&ENTROPY, &["allowance", "statement-store", PRODUCT_ID])
+					.unwrap();
+			assert_eq!(key.public_key, expected.public.to_bytes());
+		});
+	}
+}
+
+#[test]
+fn product_and_account_revocation_fence_in_flight_allowance_keys() {
+	for change in
+		[AuthorityChange::ClearProduct, AuthorityChange::Reactivate, AuthorityChange::Disconnect]
+	{
+		let platform = chain_with_allocated_slot();
+		let signing_host = active_signing_host(platform.clone());
+		futures::executor::block_on(async {
+			let (release, gate) = futures::channel::oneshot::channel();
+			*platform.rpc_method_responses_gate.lock().unwrap() = Some(gate);
+			let session = signing_host.current_session().unwrap();
+			let cx = CallContext::default();
+			let allocation =
+				signing_host.statement_store_allowance_key(&cx, &session, PRODUCT_ID.to_string());
+			futures::pin_mut!(allocation);
+			assert!(allocation.as_mut().now_or_never().is_none());
+			change.apply(&signing_host).await;
+			release.send(()).unwrap();
+			let result = futures::select! {
+				result = allocation.fuse() => result,
+				_ = futures_timer::Delay::new(std::time::Duration::from_secs(30)).fuse() => {
+					panic!("the allocation blocked after releasing the chain response")
+				}
+			};
+			assert!(matches!(result, Err(AuthorityError::Disconnected)), "{change:?}: {result:?}");
+			assert_eq!(
+				remembered(
+					&signing_host,
+					PRODUCT_ID,
+					slot::current_period(crate::unix_time::current_unix_secs())
+				),
+				None
+			);
+		});
+	}
+}
+
+#[test]
+fn raw_product_allowance_revalidates_only_its_product_and_account() {
+	use super::super::sso_responder::allocate_product_statement_store_allowance;
+	use crate::host_internal::sso_messages::OnExistingAllowancePolicy;
+
+	for change in AuthorityChange::ALL {
+		let account = v01::ProductAccountId {
+			dot_ns_identifier: PRODUCT_ID.parse().expect("valid product ID"),
+			derivation_index: v01::DerivationIndex::Raw([0x44; 32]),
+		};
+		let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
+		let target =
+			derive_product_keypair(&root, PRODUCT_ID, [0x44; 32]).unwrap().public.to_bytes();
+		let platform = chain_with_allocated_target(target);
+		let (services, signing_host) = signing_runtime_with_platform(platform.clone());
+		futures::executor::block_on(async {
+			signing_host.activate_local_session(ENTROPY.to_vec()).await.unwrap();
+			let (release, gate) = futures::channel::oneshot::channel();
+			*platform.rpc_method_responses_gate.lock().unwrap() = Some(gate);
+			let session = signing_host.current_session().unwrap();
+			let allocation = allocate_product_statement_store_allowance(
+				&services,
+				&signing_host,
+				&session,
+				PRODUCT_ID,
+				&account.derivation_index,
+				OnExistingAllowancePolicy::Ignore,
+			);
+			futures::pin_mut!(allocation);
+			assert!(allocation.as_mut().now_or_never().is_none());
+			change.apply(&signing_host).await;
+			release.send(()).unwrap();
+			let result = futures::select! {
+				result = allocation.fuse() => result,
+				_ = futures_timer::Delay::new(std::time::Duration::from_secs(30)).fuse() => {
+					panic!("the raw allocation blocked after releasing the chain response")
+				}
+			}
+			.map_err(|error| error.into_authority_error());
+			let expected = if matches!(change, AuthorityChange::ClearOtherProduct) {
+				Ok(())
+			} else {
+				Err(AuthorityError::Disconnected)
+			};
+			assert_eq!(result, expected, "{change:?}");
+		});
+	}
+}
+
+#[test]
+fn product_revocation_fences_allowance_cache_commits() {
+	let signing_host = active_signing_host(Arc::new(StubPlatform::default()));
+	let stale_generation = current_generation(&signing_host);
+	futures::executor::block_on(signing_host.clear_product_state(PRODUCT_ID)).unwrap();
+	let result = signing_host.local_grants.lock().unwrap().remember_statement_allowance_key(
+		stale_generation,
+		PRODUCT_ID.to_string(),
+		PERIOD,
+		secret_key(),
+	);
+	assert_eq!(
+		(result, remembered(&signing_host, PRODUCT_ID, PERIOD)),
+		(Err(AuthorityError::Disconnected), None)
+	);
+
+	let fresh_generation = current_generation(&signing_host);
+	futures::executor::block_on(signing_host.clear_product_state("unrelated.dot")).unwrap();
+	let result = signing_host.local_grants.lock().unwrap().remember_statement_allowance_key(
+		fresh_generation,
+		PRODUCT_ID.to_string(),
+		PERIOD,
+		secret_key(),
+	);
+	assert_eq!((result, remembered(&signing_host, PRODUCT_ID, PERIOD)), (Ok(()), Some(SECRET)));
 }
 
 #[test]
@@ -269,11 +396,7 @@ fn a_replaced_session_is_not_served_the_new_sessions_key() {
 				.local_grants
 				.lock()
 				.expect("local AutoSigning grant mutex poisoned")
-				.statement_allowance_key(
-					stale_generation,
-					&ProductId::for_test(PRODUCT_ID),
-					PERIOD
-				),
+				.statement_allowance_key(stale_generation, PRODUCT_ID, PERIOD),
 			Err(AuthorityError::Disconnected)
 		),
 		"a request validated under the replaced session was served a key"
@@ -293,7 +416,7 @@ fn a_key_allocated_under_a_replaced_session_is_not_remembered() {
 		.expect("local AutoSigning grant mutex poisoned")
 		.remember_statement_allowance_key(
 			stale_generation,
-			ProductId::for_test(PRODUCT_ID),
+			PRODUCT_ID.to_string(),
 			PERIOD,
 			secret_key(),
 		);
@@ -401,135 +524,5 @@ fn another_rejection_keeps_the_key() {
 		remembered(&signing_host, PRODUCT_ID, PERIOD),
 		Some(SECRET),
 		"a rejection that says nothing about the allowance must not evict the key"
-	);
-}
-
-fn sent_methods(platform: &StubPlatform) -> Vec<String> {
-	platform
-		.sent_rpc
-		.lock()
-		.expect("rpc list mutex poisoned")
-		.iter()
-		.map(|request| {
-			let request: serde_json::Value = serde_json::from_str(request).unwrap();
-			request["method"].as_str().unwrap().to_string()
-		})
-		.collect()
-}
-
-/// A Bulletin `Authorizations` entry for one transaction with `remaining` bytes left.
-fn bulletin_authorization(remaining: u64) -> String {
-	let entry = (0u32, 1u32, 0u64, 0u64, remaining, 100u32).encode();
-	format!(r#""0x{}""#, hex::encode(entry))
-}
-
-/// A payload the authorization cannot hold is extended before it is signed,
-/// rather than signed, rejected by the chain and signed again.
-#[test]
-fn a_preimage_larger_than_the_bulletin_authorization_extends_it_before_submitting() {
-	let header = r#"{"number":"0x1"}"#.to_string();
-	let platform = Arc::new(StubPlatform {
-		remote_permission_decisions: std::sync::Mutex::new(
-			[crate::platform::PermissionDecision::AllowAlways].into(),
-		),
-		rpc_method_responses: vec![
-			("state_getStorage", bulletin_authorization(4)),
-			("state_getStorage", bulletin_authorization(4)),
-			("state_getStorage", bulletin_authorization(4)),
-			("chain_getHeader", header.clone()),
-			("chain_getHeader", header.clone()),
-			("chain_getHeader", header),
-		],
-		// The People chain is unreachable, so the extension itself fails.
-		unreachable_genesis: Some([0; 32]),
-		..Default::default()
-	});
-	let (services, signing_host) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
-		.expect("activation succeeds");
-	let runtime = product_runtime(services, signing_host);
-
-	let cx = CallContext::default();
-	let submitted = futures::executor::block_on(async {
-		futures::select! {
-			result = truapi::api::Preimage::submit(
-				&runtime,
-				&cx,
-				truapi::versioned::preimage::RemotePreimageSubmitRequest::V1(
-					b"longer than four bytes".to_vec(),
-				),
-			).fuse() => result.is_ok(),
-			() = futures_timer::Delay::new(std::time::Duration::from_secs(5)).fuse() => {
-				panic!("the submission waited on an unscripted chain read")
-			},
-		}
-	});
-	assert_eq!(
-		(submitted, sent_methods(&platform)),
-		(
-			false,
-			["state_getStorage", "chain_getHeader"]
-				.repeat(3)
-				.iter()
-				.map(|method| method.to_string())
-				.collect()
-		),
-	);
-}
-
-/// A payload the authorization already holds goes straight to the submit,
-/// without asking for more.
-#[test]
-fn a_preimage_the_bulletin_authorization_holds_is_submitted_without_extending_it() {
-	let header = r#"{"number":"0x1"}"#.to_string();
-	let platform = Arc::new(StubPlatform {
-		remote_permission_decisions: std::sync::Mutex::new(
-			[crate::platform::PermissionDecision::AllowAlways].into(),
-		),
-		rpc_method_responses: vec![
-			("state_getStorage", bulletin_authorization(64)),
-			("state_getStorage", bulletin_authorization(64)),
-			("chain_getHeader", header.clone()),
-			("chain_getHeader", header),
-			("chainHead_v1_follow", "null".to_string()),
-		],
-		unreachable_genesis: Some([0; 32]),
-		..Default::default()
-	});
-	let (services, signing_host) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
-		.expect("activation succeeds");
-	let runtime = product_runtime(services, signing_host);
-
-	let cx = CallContext::default();
-	let submitted = futures::executor::block_on(async {
-		futures::select! {
-			result = truapi::api::Preimage::submit(
-				&runtime,
-				&cx,
-				truapi::versioned::preimage::RemotePreimageSubmitRequest::V1(b"fits".to_vec()),
-			).fuse() => result.is_ok(),
-			() = futures_timer::Delay::new(std::time::Duration::from_secs(5)).fuse() => {
-				panic!("the submission waited on an unscripted chain read")
-			},
-		}
-	});
-
-	// The scripted Bulletin node drops the follow subscription, so the submit
-	// itself fails; the two authorization reads before it are what matter.
-	assert_eq!(
-		(submitted, sent_methods(&platform)),
-		(
-			false,
-			[
-				"state_getStorage",
-				"chain_getHeader",
-				"state_getStorage",
-				"chain_getHeader",
-				"chainHead_v1_follow",
-			]
-			.map(String::from)
-			.to_vec()
-		),
 	);
 }

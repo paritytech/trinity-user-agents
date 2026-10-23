@@ -115,8 +115,8 @@ describe("sandbox iframe MessagePort handshake", () => {
         const sandbox = await importSandbox();
 
         expect(sandbox.getClientSync()).not.toBeNull();
-        expect(currentWindow.parentPostMessage.mock.calls).toEqual([
-            [{ type: "truapi-ready" }, "https://host.example"],
+        expect(currentWindow.parentPostMessage.mock.calls.map(([, origin]) => origin)).toEqual([
+            "https://host.example",
         ]);
 
         const wrongSource = trackChannel();
@@ -156,7 +156,7 @@ describe("sandbox iframe MessagePort handshake", () => {
         expect(currentWindow.listeners.size).toBe(0);
     });
 
-    it("retries ready until the host transfers a port, then stops", async () => {
+    it("retries one connection identity until adoption and uses a new identity after reload", async () => {
         currentWindow = installFakeIframeWindow({
             referrer: "https://host.example/product",
         });
@@ -165,6 +165,11 @@ describe("sandbox iframe MessagePort handshake", () => {
         expect(sandbox.getClientSync()).not.toBeNull();
         currentWindow.runIntervals();
         expect(currentWindow.parentPostMessage.mock.calls).toHaveLength(2);
+        const firstReady = currentWindow.parentPostMessage.mock.calls[0]![0] as { connectionId: string };
+        const retriedReady = currentWindow.parentPostMessage.mock.calls[1]![0] as { connectionId: string };
+        expect(typeof firstReady.connectionId).toBe("string");
+        expect(firstReady.connectionId).not.toBe("");
+        expect(retriedReady.connectionId).toBe(firstReady.connectionId);
 
         const accepted = trackChannel();
         currentWindow.dispatch({
@@ -177,6 +182,14 @@ describe("sandbox iframe MessagePort handshake", () => {
 
         expect(currentWindow.parentPostMessage.mock.calls).toHaveLength(2);
         expect(currentWindow.listeners.size).toBe(0);
+
+        currentWindow.restore();
+        currentWindow = installFakeIframeWindow({ referrer: "https://host.example/product" });
+        const reloaded = await importSandbox();
+        expect(reloaded.getClientSync()).not.toBeNull();
+        const newReady = currentWindow.parentPostMessage.mock.calls[0]![0] as { connectionId: string };
+        expect(typeof newReady.connectionId).toBe("string");
+        expect(newReady.connectionId).not.toBe(firstReady.connectionId);
     });
 
     it('treats a masked "null" ancestor origin as hidden and pings with the wildcard', async () => {
@@ -186,9 +199,7 @@ describe("sandbox iframe MessagePort handshake", () => {
         const sandbox = await importSandbox();
 
         expect(sandbox.getClientSync()).not.toBeNull();
-        expect(currentWindow.parentPostMessage.mock.calls).toEqual([
-            [{ type: "truapi-ready" }, "*"],
-        ]);
+        expect(currentWindow.parentPostMessage.mock.calls.map(([, origin]) => origin)).toEqual(["*"]);
 
         const accepted = trackChannel();
         currentWindow.dispatch({
@@ -207,9 +218,7 @@ describe("sandbox iframe MessagePort handshake", () => {
         const sandbox = await importSandbox();
 
         expect(sandbox.getClientSync()).not.toBeNull();
-        expect(currentWindow.parentPostMessage.mock.calls).toEqual([
-            [{ type: "truapi-ready" }, "*"],
-        ]);
+        expect(currentWindow.parentPostMessage.mock.calls.map(([, origin]) => origin)).toEqual(["*"]);
 
         const wrongSource = trackChannel();
         currentWindow.dispatch({
@@ -584,8 +593,8 @@ describe("sandbox after the pipe closes", () => {
         closePipe(channel.port1);
         sandbox.getClientSync();
 
-        expect(harness.parentPostMessage.mock.calls).toEqual([
-            [{ type: "truapi-ready" }, "https://host.example"],
+        expect(harness.parentPostMessage.mock.calls.map(([, origin]) => origin)).toEqual([
+            "https://host.example",
         ]);
     });
 

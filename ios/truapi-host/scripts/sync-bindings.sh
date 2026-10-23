@@ -13,13 +13,20 @@ PACKAGE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TRUAPI_ROOT="$(cd "$PACKAGE_ROOT/../.." && pwd)"
 UNIFFI_OUT="$TRUAPI_ROOT/target/uniffi-swift-out"
 
-NAMESPACES="truapi"
+NAMESPACES="truapi truapi_platform truapi_server"
 
 if [ ! -d "$UNIFFI_OUT" ]; then
     echo "error: $UNIFFI_OUT is missing." >&2
     echo "Run 'make uniffi' at the repo root first; this script only copies." >&2
     exit 66
 fi
+
+# SwiftPM compiles every Swift source in this directory, including bindings
+# left by the former server/platform namespaces.
+rm -f "$PACKAGE_ROOT/Sources/TrUAPIHost/truapi_server.swift" \
+    "$PACKAGE_ROOT/Sources/TrUAPIHost/truapi_platform.swift"
+rm -rf "$PACKAGE_ROOT/Sources/truapi_serverFFI" \
+    "$PACKAGE_ROOT/Sources/truapi_platformFFI"
 
 for namespace in $NAMESPACES; do
     mkdir -p "$PACKAGE_ROOT/Sources/TrUAPIHost" \

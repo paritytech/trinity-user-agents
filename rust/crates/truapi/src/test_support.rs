@@ -26,15 +26,16 @@ use crate::{
 };
 
 use crate::platform::{
-	AccountAccessReview, AuthPresenter, AuthState, ChainProvider,
+	AccountAccessReview, AuthPresenter, AuthState, ChainProvider, ChatAuthorityReview,
 	CoreStorage as PlatformCoreStorage, CoreStorageKey, CreateTransactionReview,
-	Features as PlatformFeatures, HostInfo, JsonRpcConnection, LocaleHost,
-	Navigation as PlatformNavigation, Notifications as PlatformNotifications, PairingHostConfig,
-	Permissions as PlatformPermissions, PlatformInfo, PreimageHost, ProductContext, ProductId,
-	ProductOperations as PlatformProductOperations, ProductStorage as PlatformProductStorage,
-	ProductSubtreeReview, ProviderError, ResourceAllocationReview, SignPayloadReview,
-	SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
-	UserConfirmationReview,
+	Features as PlatformFeatures, HopProvider, HostInfo, JsonRpcConnection, LocaleHost,
+	MainPurseChatPaymentReview, NativeChatFileExportRequest, NativeChatFilePickRequest,
+	NativeChatFilesHost, NativeChatPickedFile, Navigation as PlatformNavigation,
+	Notifications as PlatformNotifications, PairingHostConfig, Permissions as PlatformPermissions,
+	PlatformInfo, PreimageHost, ProductContext, ProductOperations as PlatformProductOperations,
+	ProductStorage as PlatformProductStorage, ProductSubtreeReview, ProfileDisclosureReview,
+	ProviderError, ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
+	StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use futures::{
 	Stream,
@@ -86,6 +87,54 @@ pub fn immediate_spawner() -> Spawner {
 	Arc::new(futures::executor::block_on)
 }
 
+/// A profile host that records every contact avatar placement it is handed,
+/// by product, and answers each with `answer`, `Ok` when unset.
+#[derive(Default)]
+pub(crate) struct RecordingAvatarHost {
+	pub(crate) placed: Mutex<Vec<(String, crate::platform::PlacedAvatars)>>,
+	pub(crate) answer: Option<v01::HostProfilePlaceContactAvatarsError>,
+}
+
+impl RecordingAvatarHost {
+	/// Every placement handed over so far, oldest first.
+	pub(crate) fn placements(&self) -> Vec<(String, crate::platform::PlacedAvatars)> {
+		self.placed.lock().expect("placed mutex poisoned").clone()
+	}
+
+	/// Block until the host has been handed `count` placements, then return
+	/// them. Redraws and clears run on background tasks.
+	pub(crate) fn wait_for(&self, count: usize) -> Vec<(String, crate::platform::PlacedAvatars)> {
+		wait_until(
+			|| self.placements().len() >= count,
+			"the host was not handed the expected avatar placements",
+		);
+		self.placements()
+	}
+}
+
+#[crate::platform::async_trait]
+impl crate::platform::ProfilePlatform for RecordingAvatarHost {
+	async fn present_profile(
+		&self,
+		_product: &ProductContext,
+		_request: v01::HostProfilePresentRequest,
+	) -> Result<(), v01::HostProfilePresentError> {
+		Ok(())
+	}
+
+	async fn place_contact_avatars(
+		&self,
+		product: &ProductContext,
+		placed: crate::platform::PlacedAvatars,
+	) -> Result<(), v01::HostProfilePlaceContactAvatarsError> {
+		self.placed
+			.lock()
+			.expect("placed mutex poisoned")
+			.push((product.product_id.clone(), placed));
+		self.answer.clone().map_or(Ok(()), Err)
+	}
+}
+
 /// Test hook invoked after each recorded auth state.
 pub type AuthStateHook = Arc<dyn Fn(&AuthState) + Send + Sync>;
 /// Test hook invoked after an auth-session write is recorded.
@@ -96,6 +145,9 @@ pub type StorageWriteHook = Arc<dyn Fn() + Send + Sync>;
 /// can exercise its delegation paths without pulling in a real backend.
 #[derive(Default)]
 pub struct StubPlatform {
+	pub native_chat_files: Option<Arc<dyn NativeChatFilesHost>>,
+	pub guard_main_purse_storage: bool,
+	pub main_purse_storage_accesses: AtomicUsize,
 	pub device_permission_decisions:
 		Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
 	pub device_permission_requests: Mutex<Vec<v01::HostDevicePermissionRequest>>,
@@ -104,6 +156,7 @@ pub struct StubPlatform {
 	pub remote_permission_denied: bool,
 	pub remote_permission_decisions:
 		Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
+	pub remote_permission_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
 	/// Every `remote_permission` request, in order, so a test can assert which
 	/// domains reached the prompt and that a stored grant suppresses a re-ask.
 	pub remote_permission_requests: Arc<Mutex<Vec<v01::RemotePermissionRequest>>>,
@@ -120,13 +173,35 @@ pub struct StubPlatform {
 	/// Permission answers retain their lifetime separately from action confirmations.
 	pub permission_confirmation_decisions:
 		Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
+	pub preimage_reviews: parking_lot::Mutex<Vec<crate::platform::PreimageSubmitReview>>,
+	pub preimage_confirmation_gate:
+		parking_lot::Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+	/// Pause a captured consent read to exercise independent runtime writers.
+	pub preimage_read_gate: parking_lot::Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
 	/// Inverted so the derived default (`false`) approves, matching the
 	/// pre-consent behavior where a cold own-account resolve was not gated.
+	pub profile_disclosure_confirmed: bool,
+	pub profile_disclosure_error: Option<&'static str>,
+	pub profile_disclosure_reviews: Arc<Mutex<Vec<ProfileDisclosureReview>>>,
 	pub product_subtree_denied: bool,
 	pub product_subtree_reviews: Arc<Mutex<Vec<ProductSubtreeReview>>>,
 	pub identity_disclosure_confirmed: bool,
 	pub identity_disclosure_error: Option<&'static str>,
 	pub identity_disclosure_calls: Arc<AtomicUsize>,
+	pub chat_authority_confirmed: bool,
+	pub chat_authority_error: Option<&'static str>,
+	pub chat_authority_reviews: Arc<parking_lot::Mutex<Vec<ChatAuthorityReview>>>,
+	/// One-shot payment decisions are independent of every reusable permission.
+	/// The derived default denies spending.
+	pub main_purse_chat_payment_confirmed: bool,
+	pub main_purse_chat_payment_error: Option<&'static str>,
+	pub main_purse_chat_payment_reviews: Arc<Mutex<Vec<MainPurseChatPaymentReview>>>,
+	/// Pause disclosure consent to exercise session changes while the UI awaits.
+	pub identity_disclosure_confirmation_gate:
+		parking_lot::Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+	pub calling_confirmed: bool,
+	pub calling_error: Option<&'static str>,
+	pub calling_reviews: Arc<Mutex<Vec<crate::platform::CallingReview>>>,
 	pub sign_payload_confirmed: bool,
 	/// Every `SignPayload` review passed to `confirm_user_action`, in order.
 	/// Empty proves an AutoSigning grant suppressed the prompt.
@@ -155,7 +230,11 @@ pub struct StubPlatform {
 		Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
 	/// Every `ResourceAllocation` review passed to `confirm_user_action`, in order.
 	pub resource_allocation_reviews: Arc<Mutex<Vec<ResourceAllocationReview>>>,
+	pub preimage_submit_denied: bool,
+	pub preimage_submit_reviews:
+		Arc<parking_lot::Mutex<Vec<crate::platform::PreimageSubmitReview>>>,
 	pub session_blob: Option<Vec<u8>>,
+	pub session_storage: Mutex<Option<Option<Vec<u8>>>>,
 	pub session_error: Option<&'static str>,
 	pub session_clears: Arc<Mutex<usize>>,
 	pub session_writes: Arc<Mutex<Vec<Vec<u8>>>>,
@@ -184,6 +263,12 @@ pub struct StubPlatform {
 	pub notification_id: u32,
 	pub pushed_notifications: Arc<Mutex<Vec<v01::HostPushNotificationRequest>>>,
 	pub cancelled_notifications: Arc<Mutex<Vec<u32>>>,
+	pub notification_activations: Option<v01::NotificationActivations>,
+	pub receiving_authority: parking_lot::Mutex<Option<crate::platform::ReceivingAuthority>>,
+	pub receiving_consent: AtomicBool,
+	pub receiving_prompts: AtomicUsize,
+	pub receiving_consent_gate: parking_lot::Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+	pub receiving_write_failure: AtomicBool,
 	pub sent_rpc: Arc<Mutex<Vec<String>>>,
 	pub rpc_responses: Vec<String>,
 	/// Responses keyed by JSON-RPC method, answered as each request arrives with
@@ -204,6 +289,8 @@ pub struct StubPlatform {
 	/// hashes a host is configured with are same-typed `[u8; 32]` passed
 	/// positionally, so a transposed pair still connects and still answers.
 	pub chain_connects: Arc<Mutex<Vec<[u8; 32]>>>,
+	/// Host-private, no-network HOP script. Unconfigured fixtures fail closed.
+	pub hop_provider: Option<Arc<dyn HopProvider>>,
 	/// When set, `connect` fails with this reason.
 	pub chain_connect_error: Option<&'static str>,
 	/// When set, `connect` to this one chain fails, while every other chain
@@ -218,6 +305,9 @@ pub struct StubPlatform {
 	/// Hold every core-storage read pending forever, standing in for a host
 	/// callback that is never answered.
 	pub core_storage_pending: bool,
+	/// Pause the next matching core read until its test releases it.
+	pub core_storage_read_gate:
+		parking_lot::Mutex<Option<(String, futures::channel::oneshot::Receiver<()>)>>,
 	pub chain_connect_pending: bool,
 	/// Set when a `chain_connect_pending` connect future is dropped.
 	pub pending_connect_dropped: Arc<AtomicBool>,
@@ -225,6 +315,10 @@ pub struct StubPlatform {
 	/// forged value to exercise the in-core integrity check.
 	pub preimage_lookup_value: Option<Vec<u8>>,
 	pub local_storage: Arc<Mutex<std::collections::HashMap<String, Vec<u8>>>>,
+	/// Mutable per-slot faults let lifecycle tests recover without replacing
+	/// the backing platform (and thereby bypassing process-local ownership).
+	pub core_read_failures: parking_lot::Mutex<std::collections::HashSet<String>>,
+	pub core_write_failures: parking_lot::Mutex<std::collections::HashSet<String>>,
 	/// Every product storage write that reached the platform, in order, so a
 	/// test can see which writes the core skipped.
 	pub local_storage_writes: Arc<Mutex<Vec<StorageWrite>>>,
@@ -233,9 +327,9 @@ pub struct StubPlatform {
 	pub storage_subscribers: Arc<Mutex<Vec<(String, StorageChangeSender)>>>,
 	/// Every `begin_operation` as `(product_id, label)`, in order. The
 	/// returned id is the call's 1-based position.
-	pub begun_operations: Arc<Mutex<Vec<(ProductId, String)>>>,
+	pub begun_operations: Arc<Mutex<Vec<(String, String)>>>,
 	/// Every `end_operation` as `(product_id, id)`, in order.
-	pub ended_operations: Arc<Mutex<Vec<(ProductId, u32)>>>,
+	pub ended_operations: Arc<Mutex<Vec<(String, u32)>>>,
 	/// Held open by a test so `begin_operation` is still in flight while the
 	/// dispatch awaiting it goes away.
 	pub begin_operation_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
@@ -243,12 +337,9 @@ pub struct StubPlatform {
 	/// reason, standing in for a host that drops the operation and still
 	/// reports an error.
 	pub end_operation_error: Option<&'static str>,
+	pub core_storage_changes: Arc<Mutex<Vec<CoreStorageKey>>>,
 	/// When set, product/core storage reads fail with this reason.
 	pub local_storage_error: Option<&'static str>,
-	/// When set, core-storage writes and clears fail with this reason. Unlike
-	/// `local_storage_error` a test can set it mid-flow, after the reads it
-	/// needs have succeeded.
-	pub core_storage_write_error: Mutex<Option<&'static str>>,
 	/// When set, only `PermissionAuthorization` reads fail. Narrower than
 	/// `local_storage_error`, which fails every key: a test that needs the
 	/// manifest cache to answer while the stored permission decision is
@@ -356,7 +447,7 @@ pub fn runtime_config(product_id: &str) -> (PairingHostConfig, ProductContext) {
 			"polkadotapp".to_string(),
 		)
 		.expect("test host runtime config is valid"),
-		ProductContext::new(ProductId::for_test(product_id)),
+		ProductContext::new(product_id.to_string()).expect("test product context is valid"),
 	)
 }
 
@@ -811,7 +902,7 @@ pub fn sign_raw_legacy_response_message(
 /// canonical decimal form of `index`.
 pub fn account_id(identifier: &str, index: u32) -> v01::ProductAccountId {
 	v01::ProductAccountId {
-		dot_ns_identifier: ProductId::for_test(identifier),
+		dot_ns_identifier: identifier.parse().expect("valid product ID"),
 		derivation_index: v01::DerivationIndex::Index(index),
 	}
 }
@@ -841,7 +932,7 @@ pub fn ring_location_fixture() -> v01::RingLocation {
 pub fn account_alias_request(product_id: &str) -> HostAccountGetAliasRequest {
 	HostAccountGetAliasRequest::V1(v01::HostAccountGetAliasRequest {
 		key_handle: v01::ProductAccountId {
-			dot_ns_identifier: ProductId::for_test(product_id),
+			dot_ns_identifier: product_id.parse().expect("valid product ID"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 		context: product_proof_context(product_id),
@@ -853,7 +944,7 @@ pub fn account_alias_request(product_id: &str) -> HostAccountGetAliasRequest {
 pub fn create_proof_request(product_id: &str) -> HostAccountCreateProofRequest {
 	HostAccountCreateProofRequest::V1(v01::HostAccountCreateProofRequest {
 		key_handle: v01::ProductAccountId {
-			dot_ns_identifier: ProductId::for_test(product_id),
+			dot_ns_identifier: product_id.parse().expect("valid product ID"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 		context: product_proof_context(product_id),
@@ -1050,14 +1141,38 @@ impl PlatformCoreStorage for StubPlatform {
 		&self,
 		key: CoreStorageKey,
 	) -> Result<Option<Vec<u8>>, v01::GenericError> {
+		self.check_coinage_storage(&key)?;
+		if self.core_read_failures.lock().contains(&core_storage_test_key(key.clone())) {
+			return Err(v01::GenericError { reason: "injected core read failure".into() });
+		}
 		if self.core_storage_pending {
 			futures::future::pending::<()>().await;
+		}
+		let gate = {
+			let mut pending = self.core_storage_read_gate.lock();
+			if pending
+				.as_ref()
+				.is_some_and(|(slot, _)| *slot == core_storage_test_key(key.clone()))
+			{
+				pending.take().map(|(_, gate)| gate)
+			} else {
+				None
+			}
+		};
+		if let Some(gate) = gate {
+			let _ = gate.await;
 		}
 		if let CoreStorageKey::AuthSession = key {
 			if let Some(reason) = self.session_error {
 				return Err(v01::GenericError { reason: reason.to_string() });
 			}
-			return Ok(self.session_blob.clone());
+			return Ok(self
+				.session_storage
+				.lock()
+				.expect("session storage mutex poisoned")
+				.as_ref()
+				.unwrap_or(&self.session_blob)
+				.clone());
 		}
 		if let Some(reason) = self.local_storage_error {
 			return Err(v01::GenericError { reason: reason.to_string() });
@@ -1067,12 +1182,19 @@ impl PlatformCoreStorage for StubPlatform {
 		{
 			return Err(v01::GenericError { reason: reason.to_string() });
 		}
-		Ok(self
+		let value = self
 			.local_storage
 			.lock()
 			.expect("local storage mutex poisoned")
-			.get(&core_storage_test_key(key))
-			.cloned())
+			.get(&core_storage_test_key(key.clone()))
+			.cloned();
+		if matches!(key, CoreStorageKey::AutomaticPreimageUploads { .. }) {
+			let gate = self.preimage_read_gate.lock().take();
+			if let Some(gate) = gate {
+				let _ = gate.await;
+			}
+		}
+		Ok(value)
 	}
 
 	async fn write_core_storage(
@@ -1080,11 +1202,23 @@ impl PlatformCoreStorage for StubPlatform {
 		key: CoreStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), v01::GenericError> {
+		self.check_coinage_storage(&key)?;
+		if self.core_write_failures.lock().contains(&core_storage_test_key(key.clone())) {
+			return Err(v01::GenericError { reason: "injected core write failure".into() });
+		}
+		if key == CoreStorageKey::NotificationReceiving &&
+			self.receiving_write_failure.load(Ordering::SeqCst)
+		{
+			return Err(v01::GenericError { reason: "receiving storage unavailable".to_owned() });
+		}
 		if let CoreStorageKey::AuthSession = key {
+			let mut storage = self.session_storage.lock().expect("session storage mutex poisoned");
+			*storage = Some(Some(value.clone()));
 			self.session_writes
 				.lock()
 				.expect("session write list mutex poisoned")
 				.push(value);
+			drop(storage);
 			let hook = self
 				.on_auth_session_write
 				.lock()
@@ -1095,10 +1229,7 @@ impl PlatformCoreStorage for StubPlatform {
 			}
 			return Ok(());
 		}
-		if let Some(reason) = self
-			.local_storage_error
-			.or(*self.core_storage_write_error.lock().expect("write error mutex poisoned"))
-		{
+		if let Some(reason) = self.local_storage_error {
 			return Err(v01::GenericError { reason: reason.to_string() });
 		}
 		self.local_storage
@@ -1109,14 +1240,14 @@ impl PlatformCoreStorage for StubPlatform {
 	}
 
 	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
+		self.check_coinage_storage(&key)?;
 		if let CoreStorageKey::AuthSession = key {
+			let mut storage = self.session_storage.lock().expect("session storage mutex poisoned");
+			*storage = Some(None);
 			*self.session_clears.lock().expect("session clear counter mutex poisoned") += 1;
 			return Ok(());
 		}
-		if let Some(reason) = self
-			.local_storage_error
-			.or(*self.core_storage_write_error.lock().expect("write error mutex poisoned"))
-		{
+		if let Some(reason) = self.local_storage_error {
 			return Err(v01::GenericError { reason: reason.to_string() });
 		}
 		self.local_storage
@@ -1124,6 +1255,76 @@ impl PlatformCoreStorage for StubPlatform {
 			.expect("local storage mutex poisoned")
 			.remove(&core_storage_test_key(key));
 		Ok(())
+	}
+
+	async fn compare_exchange_core_storage(
+		&self,
+		key: CoreStorageKey,
+		expected: Option<Vec<u8>>,
+		replacement: Vec<u8>,
+		notify_on_success: bool,
+	) -> Result<bool, v01::GenericError> {
+		self.check_coinage_storage(&key)?;
+		if self.core_read_failures.lock().contains(&core_storage_test_key(key.clone())) {
+			return Err(v01::GenericError { reason: "injected core read failure".into() });
+		}
+		if self.core_write_failures.lock().contains(&core_storage_test_key(key.clone())) {
+			return Err(v01::GenericError { reason: "injected core write failure".into() });
+		}
+		if let CoreStorageKey::AuthSession = key {
+			if let Some(reason) = self.session_error {
+				return Err(v01::GenericError { reason: reason.into() });
+			}
+			{
+				let mut storage =
+					self.session_storage.lock().expect("session storage mutex poisoned");
+				if storage.as_ref().unwrap_or(&self.session_blob) != &expected {
+					return Ok(false);
+				}
+				*storage = Some(Some(replacement.clone()));
+				self.session_writes
+					.lock()
+					.expect("session write list mutex poisoned")
+					.push(replacement);
+				if notify_on_success {
+					self.core_storage_changed(key);
+				}
+			}
+			let hook = self
+				.on_auth_session_write
+				.lock()
+				.expect("auth session write hook mutex poisoned")
+				.clone();
+			if let Some(hook) = hook {
+				hook();
+			}
+			return Ok(true);
+		}
+		if let Some(reason) = self.local_storage_error {
+			return Err(v01::GenericError { reason: reason.into() });
+		}
+		if let (CoreStorageKey::PermissionAuthorization { .. }, Some(reason)) =
+			(&key, self.permission_storage_error)
+		{
+			return Err(v01::GenericError { reason: reason.into() });
+		}
+		let encoded = core_storage_test_key(key.clone());
+		let mut storage = self.local_storage.lock().expect("local storage mutex poisoned");
+		if storage.get(&encoded) != expected.as_ref() {
+			return Ok(false);
+		}
+		storage.insert(encoded, replacement);
+		if notify_on_success {
+			self.core_storage_changed(key);
+		}
+		Ok(true)
+	}
+
+	fn core_storage_changed(&self, key: CoreStorageKey) {
+		self.core_storage_changes
+			.lock()
+			.expect("storage changes mutex poisoned")
+			.push(key);
 	}
 }
 
@@ -1142,6 +1343,26 @@ impl PlatformNavigation for StubPlatform {
 
 #[crate::platform::async_trait]
 impl PlatformNotifications for StubPlatform {
+	async fn receiver_authority(
+		&self,
+		product_id: &str,
+	) -> Result<Option<crate::platform::ReceivingAuthority>, v01::GenericError> {
+		Ok(self.receiving_authority.lock().clone().filter(|a| a.product_id == product_id))
+	}
+
+	async fn receiver_consent(
+		&self,
+		_authority: crate::platform::ReceivingAuthority,
+		_watches: Vec<crate::latest::ReceivingWatch>,
+	) -> Result<bool, v01::GenericError> {
+		self.receiving_prompts.fetch_add(1, Ordering::SeqCst);
+		let gate = self.receiving_consent_gate.lock().take();
+		if let Some(gate) = gate {
+			let _ = gate.await;
+		}
+		Ok(self.receiving_consent.load(Ordering::SeqCst))
+	}
+
 	async fn push_notification(
 		&self,
 		notification: v01::HostPushNotificationRequest,
@@ -1159,6 +1380,12 @@ impl PlatformNotifications for StubPlatform {
 			.expect("notification cancellation list mutex poisoned")
 			.push(id);
 		Ok(())
+	}
+
+	async fn activation_events(&self) -> Result<v01::NotificationActivations, v01::GenericError> {
+		self.notification_activations.clone().ok_or_else(|| v01::GenericError {
+			reason: "notification activation is unsupported".to_string(),
+		})
 	}
 }
 
@@ -1198,6 +1425,10 @@ impl PlatformPermissions for StubPlatform {
 			.lock()
 			.expect("remote permission list mutex poisoned")
 			.push(request);
+		let gate = self.remote_permission_gate.lock().unwrap().take();
+		if let Some(gate) = gate {
+			let _ = gate.await;
+		}
 		if let Some(decision) = self
 			.remote_permission_decisions
 			.lock()
@@ -1242,9 +1473,10 @@ impl PlatformFeatures for StubPlatform {
 
 struct RecordingConnection {
 	sent: Arc<Mutex<Vec<String>>>,
-	all_sent: Arc<Mutex<Vec<String>>>,
 	responses: Vec<String>,
 	method_responses: Vec<(&'static str, String)>,
+	/// Method scripts must not replay requests from a previously closed connection.
+	method_requests: Arc<Mutex<Vec<String>>>,
 	method_responses_gate: Arc<Mutex<Option<futures::channel::oneshot::Receiver<()>>>>,
 	sso_response_script: Option<SsoResponseScript>,
 	auth_states: Arc<Mutex<Vec<AuthState>>>,
@@ -1389,7 +1621,12 @@ fn sso_scripted_responses(
 
 impl JsonRpcConnection for RecordingConnection {
 	fn send(&self, request: String) {
-		self.all_sent.lock().expect("rpc list mutex poisoned").push(request.clone());
+		if !self.method_responses.is_empty() {
+			self.method_requests
+				.lock()
+				.expect("connection rpc list mutex poisoned")
+				.push(request.clone());
+		}
 		self.sent.lock().expect("rpc list mutex poisoned").push(request);
 	}
 	fn responses(&self) -> BoxStream<'static, String> {
@@ -1547,7 +1784,8 @@ impl JsonRpcConnection for RecordingConnection {
 			return sso_scripted_responses(self.sent.clone(), script);
 		}
 		if !self.method_responses.is_empty() {
-			let answers = method_keyed_responses(self.sent.clone(), self.method_responses.clone());
+			let answers =
+				method_keyed_responses(self.method_requests.clone(), self.method_responses.clone());
 			let gate = self
 				.method_responses_gate
 				.lock()
@@ -1696,57 +1934,6 @@ fn method_keyed_responses_do_not_replay_an_exhausted_answer() {
 	});
 }
 
-fn assert_rpc_responses_are_connection_local(platform: StubPlatform) {
-	use futures::FutureExt;
-
-	futures::executor::block_on(async {
-		let first = platform.connect([0xaa; 32]).await.unwrap();
-		let second = platform.connect([0xaa; 32]).await.unwrap();
-		let mut first_responses = first.responses();
-		let mut second_responses = second.responses();
-		let mut expected_requests = Vec::new();
-
-		for index in 1..=2 {
-			let request = format!(
-				r#"{{"jsonrpc":"2.0","id":"truapi:{index}","method":"state_getStorage","params":[]}}"#
-			);
-			let response =
-				format!(r#"{{"jsonrpc":"2.0","id":"truapi:{index}","result":"0x0{index}"}}"#);
-			first.send(request.clone());
-			assert_eq!(first_responses.next().await, Some(response.clone()));
-			assert_eq!(second_responses.next().now_or_never(), None);
-
-			second.send(request.clone());
-			assert_eq!(second_responses.next().await, Some(response));
-			expected_requests.extend([request.clone(), request]);
-		}
-
-		assert_eq!(*platform.sent_rpc.lock().unwrap(), expected_requests);
-	});
-}
-
-#[test]
-fn scripted_rpc_responses_wait_for_their_own_connection_request() {
-	assert_rpc_responses_are_connection_local(StubPlatform {
-		rpc_responses: vec![
-			r#"{"jsonrpc":"2.0","id":"truapi:1","result":"0x01"}"#.to_string(),
-			r#"{"jsonrpc":"2.0","id":"truapi:2","result":"0x02"}"#.to_string(),
-		],
-		..Default::default()
-	});
-}
-
-#[test]
-fn method_keyed_rpc_responses_count_requests_per_connection() {
-	assert_rpc_responses_are_connection_local(StubPlatform {
-		rpc_method_responses: vec![
-			("state_getStorage", r#""0x01""#.to_string()),
-			("state_getStorage", r#""0x02""#.to_string()),
-		],
-		..Default::default()
-	});
-}
-
 async fn wait_for_matching_request_id(sent: Arc<Mutex<Vec<String>>>, response: &str) {
 	let Some(id) = json_rpc_id(response) else {
 		return;
@@ -1783,6 +1970,18 @@ impl Drop for DropFlagGuard {
 	}
 }
 
+impl StubPlatform {
+	fn check_coinage_storage(&self, key: &CoreStorageKey) -> Result<(), v01::GenericError> {
+		if matches!(key, CoreStorageKey::MainPurseCoinage { .. }) {
+			self.main_purse_storage_accesses.fetch_add(1, Ordering::SeqCst);
+			if self.guard_main_purse_storage {
+				return Err(v01::GenericError { reason: "Native Coinage owns main purse".into() });
+			}
+		}
+		Ok(())
+	}
+}
+
 #[crate::platform::async_trait]
 impl ChainProvider for StubPlatform {
 	async fn connect(
@@ -1806,10 +2005,10 @@ impl ChainProvider for StubPlatform {
 			futures::future::pending::<()>().await;
 		}
 		Ok(Box::new(RecordingConnection {
-			sent: Arc::default(),
-			all_sent: self.sent_rpc.clone(),
+			sent: self.sent_rpc.clone(),
 			responses: self.rpc_responses.clone(),
 			method_responses: self.rpc_method_responses.clone(),
+			method_requests: Arc::default(),
 			method_responses_gate: self.rpc_method_responses_gate.clone(),
 			sso_response_script: self.sso_response_script.clone(),
 			auth_states: self.auth_states.clone(),
@@ -1820,6 +2019,87 @@ impl ChainProvider for StubPlatform {
 			pairing_silent_after_subscribe: self.pairing_silent_after_subscribe,
 			chain_responses_end: self.chain_responses_end,
 		}))
+	}
+}
+
+#[crate::platform::async_trait]
+impl HopProvider for StubPlatform {
+	async fn allowed_hop_endpoints(
+		&self,
+		bulletin_genesis_hash: [u8; 32],
+	) -> Result<Vec<String>, v01::GenericError> {
+		match &self.hop_provider {
+			Some(provider) => provider.allowed_hop_endpoints(bulletin_genesis_hash).await,
+			None => Ok(Vec::new()),
+		}
+	}
+
+	async fn connect_hop(
+		&self,
+		bulletin_genesis_hash: [u8; 32],
+		endpoint: String,
+	) -> Result<Box<dyn JsonRpcConnection>, v01::GenericError> {
+		let provider = self.hop_provider.as_ref().ok_or_else(|| v01::GenericError {
+			reason: "HOP provider unavailable in this fixture".to_string(),
+		})?;
+		let allowed = provider.allowed_hop_endpoints(bulletin_genesis_hash).await?;
+		crate::platform::ensure_allowed_hop_endpoint(&endpoint, &allowed)?;
+		provider.connect_hop(bulletin_genesis_hash, endpoint).await
+	}
+}
+
+#[crate::platform::async_trait]
+impl NativeChatFilesHost for StubPlatform {
+	async fn pick_chat_files(
+		&self,
+		request: NativeChatFilePickRequest,
+	) -> Result<Vec<NativeChatPickedFile>, v01::GenericError> {
+		self.chat_files_backend()?.pick_chat_files(request).await
+	}
+
+	async fn read_chat_file(
+		&self,
+		source_id: String,
+		offset: u64,
+		length: u32,
+	) -> Result<Vec<u8>, v01::GenericError> {
+		self.chat_files_backend()?.read_chat_file(source_id, offset, length).await
+	}
+
+	async fn release_chat_file(&self, source_id: String) -> Result<(), v01::GenericError> {
+		self.chat_files_backend()?.release_chat_file(source_id).await
+	}
+
+	async fn begin_chat_file_export(
+		&self,
+		request: NativeChatFileExportRequest,
+	) -> Result<Option<String>, v01::GenericError> {
+		self.chat_files_backend()?.begin_chat_file_export(request).await
+	}
+
+	async fn write_chat_file_export(
+		&self,
+		export_id: String,
+		offset: u64,
+		data: Vec<u8>,
+	) -> Result<(), v01::GenericError> {
+		self.chat_files_backend()?.write_chat_file_export(export_id, offset, data).await
+	}
+
+	async fn finish_chat_file_export(&self, export_id: String) -> Result<(), v01::GenericError> {
+		self.chat_files_backend()?.finish_chat_file_export(export_id).await
+	}
+
+	async fn cancel_chat_file_export(&self, export_id: String) -> Result<(), v01::GenericError> {
+		self.chat_files_backend()?.cancel_chat_file_export(export_id).await
+	}
+}
+
+impl StubPlatform {
+	fn chat_files_backend(&self) -> Result<&dyn NativeChatFilesHost, v01::GenericError> {
+		self.native_chat_files.as_deref().ok_or_else(|| v01::GenericError {
+			reason: "native Chat files unavailable in this fixture".into(),
+		})
 	}
 }
 
@@ -1842,6 +2122,7 @@ impl UserConfirmation for StubPlatform {
 		&self,
 		review: UserConfirmationReview,
 	) -> Result<crate::platform::PermissionDecision, v01::GenericError> {
+		let upload = matches!(review, UserConfirmationReview::PreimageSubmit(_));
 		let confirmed = self.confirm_user_action(review).await?;
 		Ok(self
 			.permission_confirmation_decisions
@@ -1849,7 +2130,11 @@ impl UserConfirmation for StubPlatform {
 			.expect("permission confirmation mutex poisoned")
 			.pop_front()
 			.unwrap_or(if confirmed {
-				crate::platform::PermissionDecision::AllowAlways
+				if upload {
+					crate::platform::PermissionDecision::AllowOnce
+				} else {
+					crate::platform::PermissionDecision::AllowAlways
+				}
 			} else {
 				crate::platform::PermissionDecision::Deny
 			}))
@@ -1918,7 +2203,29 @@ impl UserConfirmation for StubPlatform {
 			},
 			UserConfirmationReview::IdentityDisclosure(_) => {
 				self.identity_disclosure_calls.fetch_add(1, Ordering::SeqCst);
+				let gate = self.identity_disclosure_confirmation_gate.lock().take();
+				if let Some(gate) = gate {
+					gate.await.expect("identity disclosure gate was released");
+				}
 				(self.identity_disclosure_error, self.identity_disclosure_confirmed)
+			},
+			UserConfirmationReview::ChatAuthority(review) => {
+				self.chat_authority_reviews.lock().push(review);
+				(self.chat_authority_error, self.chat_authority_confirmed)
+			},
+			UserConfirmationReview::MainPurseChatPayment(review) => {
+				self.main_purse_chat_payment_reviews
+					.lock()
+					.expect("main purse payment review list mutex poisoned")
+					.push(review);
+				(self.main_purse_chat_payment_error, self.main_purse_chat_payment_confirmed)
+			},
+			UserConfirmationReview::Calling(review) => {
+				self.calling_reviews
+					.lock()
+					.expect("calling review list mutex poisoned")
+					.push(review);
+				(self.calling_error, self.calling_confirmed)
 			},
 			UserConfirmationReview::ResourceAllocation(review) => {
 				self.resource_allocation_reviews
@@ -1935,12 +2242,28 @@ impl UserConfirmation for StubPlatform {
 				}
 				(self.resource_allocation_error, self.resource_allocation_confirmed)
 			},
+			UserConfirmationReview::PreimageSubmit(review) => {
+				self.preimage_submit_reviews.lock().push(review.clone());
+				self.preimage_reviews.lock().push(review);
+				let gate = self.preimage_confirmation_gate.lock().take();
+				if let Some(gate) = gate {
+					let _ = gate.await;
+				}
+				(None, !self.preimage_submit_denied)
+			},
 			UserConfirmationReview::ProductSubtree(review) => {
 				self.product_subtree_reviews
 					.lock()
 					.expect("product subtree review list mutex poisoned")
 					.push(review);
 				(None, !self.product_subtree_denied)
+			},
+			UserConfirmationReview::ProfileDisclosure(review) => {
+				self.profile_disclosure_reviews
+					.lock()
+					.expect("profile disclosure review list mutex poisoned")
+					.push(review);
+				(self.profile_disclosure_error, self.profile_disclosure_confirmed)
 			},
 		};
 		if let Some(reason) = error {
@@ -1971,9 +2294,12 @@ impl ThemeHost for StubPlatform {
 impl LocaleHost for StubPlatform {
 	fn subscribe_locale(
 		&self,
-	) -> BoxStream<'static, Result<v01::HostLocaleSubscribeItem, v01::GenericError>> {
+	) -> BoxStream<'static, Result<crate::latest::HostLocaleSubscribeItem, v01::GenericError>> {
 		Box::pin(stream::once(async {
-			Ok(v01::HostLocaleSubscribeItem { language_tag: "zh-Hans".to_string() })
+			Ok(crate::latest::HostLocaleSubscribeItem {
+				time_zone: None,
+				language_tag: "zh-Hans".to_string(),
+			})
 		}))
 	}
 }
@@ -1986,5 +2312,59 @@ impl PreimageHost for StubPlatform {
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, v01::GenericError>> {
 		let value = self.preimage_lookup_value.clone();
 		Box::pin(stream::once(async move { Ok(value) }))
+	}
+}
+
+#[cfg(test)]
+mod payment_review_tests {
+	use super::*;
+
+	fn payment_review() -> UserConfirmationReview {
+		UserConfirmationReview::MainPurseChatPayment(MainPurseChatPaymentReview {
+			calling_product_id: "chat.paseo".to_string(),
+			recipient_identity: [1; 32],
+			recipient_username: Some("recipient.paseo".to_string()),
+			amount_cents: 125,
+			max_debit_cents: 130,
+			genesis_hash: [2; 32],
+			coinage_instance_id: None,
+			operation_id: [3; 32],
+		})
+	}
+
+	#[test]
+	fn reusable_approvals_never_authorize_main_purse_payments() {
+		let platform = StubPlatform {
+			chat_authority_confirmed: true,
+			sign_payload_confirmed: true,
+			sign_raw_confirmed: true,
+			create_transaction_confirmed: true,
+			resource_allocation_confirmed: true,
+			..Default::default()
+		};
+		assert_eq!(
+			futures::executor::block_on(platform.confirm_user_action(payment_review())),
+			Ok(false)
+		);
+	}
+
+	#[test]
+	fn payment_approval_is_explicit_and_prompt_errors_fail_closed() {
+		let mut platform =
+			StubPlatform { main_purse_chat_payment_confirmed: true, ..Default::default() };
+		assert_eq!(
+			futures::executor::block_on(platform.confirm_user_action(payment_review())),
+			Ok(true)
+		);
+		platform.main_purse_chat_payment_error = Some("prompt unavailable");
+		assert!(
+			futures::executor::block_on(platform.confirm_user_action(payment_review())).is_err()
+		);
+		platform.main_purse_chat_payment_error = None;
+		platform.main_purse_chat_payment_confirmed = false;
+		assert_eq!(
+			futures::executor::block_on(platform.confirm_user_action(payment_review())),
+			Ok(false)
+		);
 	}
 }

@@ -19,17 +19,20 @@ use truapi::api::{
     CoinPayment,
     Contacts,
     Entropy,
+    JamPeerTransport,
     ExpandedCard,
     Funding,
     Game,
     LocalStorage,
     Locale,
+    Media,
     NftPurse,
     Notifications,
     Payment,
     Permissions,
     Pocket,
     Preimage,
+    Profile,
     Renderer,
     ResourceAllocation,
     Scanner,
@@ -61,17 +64,20 @@ where
     register_coin_payment(dispatcher, host.clone());
     register_contacts(dispatcher, host.clone());
     register_entropy(dispatcher, host.clone());
+    register_jam_peer_transport(dispatcher, host.clone());
     register_expanded_card(dispatcher, host.clone());
     register_funding(dispatcher, host.clone());
     register_game(dispatcher, host.clone());
     register_local_storage(dispatcher, host.clone());
     register_locale(dispatcher, host.clone());
+    register_media(dispatcher, host.clone());
     register_nft_purse(dispatcher, host.clone());
     register_notifications(dispatcher, host.clone());
     register_payment(dispatcher, host.clone());
     register_permissions(dispatcher, host.clone());
     register_pocket(dispatcher, host.clone());
     register_preimage(dispatcher, host.clone());
+    register_profile(dispatcher, host.clone());
     register_renderer(dispatcher, host.clone());
     register_resource_allocation(dispatcher, host.clone());
     register_scanner(dispatcher, host.clone());
@@ -318,6 +324,34 @@ where
                 let result: Result<versioned::account::HostAccountRingVrfSignResponse, truapi::CallError<versioned::account::HostAccountRingVrfSignError>> =
                     match host.ring_vrf_sign(&cx, request).await {
                         Ok(response) => Ok(<versioned::account::HostAccountRingVrfSignResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::ACCOUNT_PRODUCT_DEVICE_CHAT, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::account::HostProductDeviceChatRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::account::HostProductDeviceChatError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::account::HostProductDeviceChatResponse, truapi::CallError<versioned::account::HostProductDeviceChatError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::account::HostProductDeviceChatResponse, truapi::CallError<versioned::account::HostProductDeviceChatError>> =
+                    match host.product_device_chat(&cx, request).await {
+                        Ok(response) => Ok(<versioned::account::HostProductDeviceChatResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),
@@ -1314,7 +1348,7 @@ where
     P: Contacts + Send + Sync + 'static,
 {
     {
-        let host = host;
+        let host = host.clone();
         dispatcher.on_request(wire_table::CONTACTS_PICK, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
@@ -1332,6 +1366,62 @@ where
                 let result: Result<versioned::contacts::HostContactsPickResponse, truapi::CallError<versioned::contacts::HostContactsPickError>> =
                     match host.pick(&cx, request).await {
                         Ok(response) => Ok(<versioned::contacts::HostContactsPickResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::CONTACTS_PICK_MANY, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::contacts::HostContactsPickManyRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::contacts::HostContactsPickManyError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::contacts::HostContactsPickManyResponse, truapi::CallError<versioned::contacts::HostContactsPickManyError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::contacts::HostContactsPickManyResponse, truapi::CallError<versioned::contacts::HostContactsPickManyError>> =
+                    match host.pick_many(&cx, request).await {
+                        Ok(response) => Ok(<versioned::contacts::HostContactsPickManyResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_request(wire_table::CONTACTS_PLACE_LABELS, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::contacts::HostContactsPlaceLabelsRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::contacts::HostContactsPlaceLabelsError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::contacts::HostContactsPlaceLabelsResponse, truapi::CallError<versioned::contacts::HostContactsPlaceLabelsError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::contacts::HostContactsPlaceLabelsResponse, truapi::CallError<versioned::contacts::HostContactsPlaceLabelsError>> =
+                    match host.place_labels(&cx, request).await {
+                        Ok(response) => Ok(<versioned::contacts::HostContactsPlaceLabelsResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),
@@ -1366,6 +1456,208 @@ where
                 let result: Result<versioned::entropy::HostDeriveEntropyResponse, truapi::CallError<versioned::entropy::HostDeriveEntropyError>> =
                     match host.derive(&cx, request).await {
                         Ok(response) => Ok(<versioned::entropy::HostDeriveEntropyResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+}
+
+fn register_jam_peer_transport<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
+where
+    P: JamPeerTransport + Send + Sync + 'static,
+{
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::JAM_PEER_TRANSPORT_DIAL, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::jam_peer_transport::HostJamPeerTransportDialRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportDialError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::jam_peer_transport::HostJamPeerTransportDialResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportDialError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::jam_peer_transport::HostJamPeerTransportDialResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportDialError>> =
+                    match host.dial(&cx, request).await {
+                        Ok(response) => Ok(<versioned::jam_peer_transport::HostJamPeerTransportDialResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::JAM_PEER_TRANSPORT_OPEN, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::jam_peer_transport::HostJamPeerTransportOpenRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportOpenError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::jam_peer_transport::HostJamPeerTransportOpenResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportOpenError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::jam_peer_transport::HostJamPeerTransportOpenResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportOpenError>> =
+                    match host.open(&cx, request).await {
+                        Ok(response) => Ok(<versioned::jam_peer_transport::HostJamPeerTransportOpenResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::JAM_PEER_TRANSPORT_SEND, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::jam_peer_transport::HostJamPeerTransportSendRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportSendError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::jam_peer_transport::HostJamPeerTransportSendResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportSendError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::jam_peer_transport::HostJamPeerTransportSendResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportSendError>> =
+                    match host.send(&cx, request).await {
+                        Ok(response) => Ok(<versioned::jam_peer_transport::HostJamPeerTransportSendResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::JAM_PEER_TRANSPORT_RECV, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::jam_peer_transport::HostJamPeerTransportRecvRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportRecvError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::jam_peer_transport::HostJamPeerTransportRecvResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportRecvError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::jam_peer_transport::HostJamPeerTransportRecvResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportRecvError>> =
+                    match host.recv(&cx, request).await {
+                        Ok(response) => Ok(<versioned::jam_peer_transport::HostJamPeerTransportRecvResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::JAM_PEER_TRANSPORT_RESET, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::jam_peer_transport::HostJamPeerTransportResetRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportResetError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::jam_peer_transport::HostJamPeerTransportResetResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportResetError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::jam_peer_transport::HostJamPeerTransportResetResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportResetError>> =
+                    match host.reset(&cx, request).await {
+                        Ok(response) => Ok(<versioned::jam_peer_transport::HostJamPeerTransportResetResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::JAM_PEER_TRANSPORT_CLOSE, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::jam_peer_transport::HostJamPeerTransportCloseRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportCloseError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::jam_peer_transport::HostJamPeerTransportCloseResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportCloseError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::jam_peer_transport::HostJamPeerTransportCloseResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportCloseError>> =
+                    match host.close(&cx, request).await {
+                        Ok(response) => Ok(<versioned::jam_peer_transport::HostJamPeerTransportCloseResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_request(wire_table::JAM_PEER_TRANSPORT_EVENTS, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::jam_peer_transport::HostJamPeerTransportEventsRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportEventsError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::jam_peer_transport::HostJamPeerTransportEventsResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportEventsError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::jam_peer_transport::HostJamPeerTransportEventsResponse, truapi::CallError<versioned::jam_peer_transport::HostJamPeerTransportEventsError>> =
+                    match host.events(&cx, request).await {
+                        Ok(response) => Ok(<versioned::jam_peer_transport::HostJamPeerTransportEventsResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),
@@ -1672,7 +1964,7 @@ where
     P: Locale + Send + Sync + 'static,
 {
     {
-        let host = host;
+        let host = host.clone();
         dispatcher.on_subscription(wire_table::LOCALE_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
             let host = host.clone();
             Box::pin(async move {
@@ -1700,6 +1992,352 @@ where
                     },
                 );
                 Ok(subscription_stream(stream))
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_request(wire_table::LOCALE_LOCALIZE_TIMESTAMPS, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::locale::HostLocaleLocalizeTimestampsRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::locale::HostLocaleLocalizeTimestampsError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::locale::HostLocaleLocalizeTimestampsResponse, truapi::CallError<versioned::locale::HostLocaleLocalizeTimestampsError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::locale::HostLocaleLocalizeTimestampsResponse, truapi::CallError<versioned::locale::HostLocaleLocalizeTimestampsError>> =
+                    match host.localize_timestamps(&cx, request).await {
+                        Ok(response) => Ok(<versioned::locale::HostLocaleLocalizeTimestampsResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+}
+
+fn register_media<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
+where
+    P: Media + Send + Sync + 'static,
+{
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::MEDIA_GET_CAPABILITIES, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::media::HostMediaGetCapabilitiesRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::media::HostMediaGetCapabilitiesError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::media::HostMediaGetCapabilitiesResponse, truapi::CallError<versioned::media::HostMediaGetCapabilitiesError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::media::HostMediaGetCapabilitiesResponse, truapi::CallError<versioned::media::HostMediaGetCapabilitiesError>> =
+                    match host.get_capabilities(&cx, request).await {
+                        Ok(response) => Ok(<versioned::media::HostMediaGetCapabilitiesResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_subscription(wire_table::MEDIA_SESSION_SUBSCRIBE, move |request_id: String, bytes: Vec<u8>| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::media::HostMediaSessionSubscribeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::media::HostMediaSessionSubscribeError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        return Err(subscription_interrupt(error));
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_request_id(request_id);
+                let stream = host.session_subscribe(&cx, request).await;
+                let stream = futures::StreamExt::map(
+                    stream,
+                    move |item: Result<versioned::media::HostMediaSessionSubscribeItem, truapi::CallError<versioned::media::HostMediaSessionSubscribeError>>| {
+                        item.map(|item| {
+                            <versioned::media::HostMediaSessionSubscribeItem as truapi::versioned::FromLatest>::from_latest(
+                                truapi::versioned::IntoLatest::into_latest(item),
+                                target_version,
+                            )
+                        })
+                        .map_err(|error| downgrade_call_error(error, target_version))
+                    },
+                );
+                Ok(subscription_stream(stream))
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::MEDIA_CREATE_SESSION, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::media::HostMediaCreateSessionRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::media::HostMediaCreateSessionError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::media::HostMediaCreateSessionResponse, truapi::CallError<versioned::media::HostMediaCreateSessionError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::media::HostMediaCreateSessionResponse, truapi::CallError<versioned::media::HostMediaCreateSessionError>> =
+                    match host.create_session(&cx, request).await {
+                        Ok(response) => Ok(<versioned::media::HostMediaCreateSessionResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::MEDIA_ADD_PARTICIPANT, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::media::HostMediaAddParticipantRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::media::HostMediaAddParticipantError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::media::HostMediaAddParticipantResponse, truapi::CallError<versioned::media::HostMediaAddParticipantError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::media::HostMediaAddParticipantResponse, truapi::CallError<versioned::media::HostMediaAddParticipantError>> =
+                    match host.add_participant(&cx, request).await {
+                        Ok(response) => Ok(<versioned::media::HostMediaAddParticipantResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::MEDIA_RESPOND_INCOMING, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::media::HostMediaRespondIncomingRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::media::HostMediaRespondIncomingError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::media::HostMediaRespondIncomingResponse, truapi::CallError<versioned::media::HostMediaRespondIncomingError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::media::HostMediaRespondIncomingResponse, truapi::CallError<versioned::media::HostMediaRespondIncomingError>> =
+                    match host.respond_incoming(&cx, request).await {
+                        Ok(response) => Ok(<versioned::media::HostMediaRespondIncomingResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::MEDIA_REMOVE_PARTICIPANT, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::media::HostMediaRemoveParticipantRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::media::HostMediaRemoveParticipantError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::media::HostMediaRemoveParticipantResponse, truapi::CallError<versioned::media::HostMediaRemoveParticipantError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::media::HostMediaRemoveParticipantResponse, truapi::CallError<versioned::media::HostMediaRemoveParticipantError>> =
+                    match host.remove_participant(&cx, request).await {
+                        Ok(response) => Ok(<versioned::media::HostMediaRemoveParticipantResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::MEDIA_SET_LOCAL_TRACKS, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::media::HostMediaSetLocalTracksRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::media::HostMediaSetLocalTracksError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::media::HostMediaSetLocalTracksResponse, truapi::CallError<versioned::media::HostMediaSetLocalTracksError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::media::HostMediaSetLocalTracksResponse, truapi::CallError<versioned::media::HostMediaSetLocalTracksError>> =
+                    match host.set_local_tracks(&cx, request).await {
+                        Ok(response) => Ok(<versioned::media::HostMediaSetLocalTracksResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::MEDIA_SET_SURFACES, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::media::HostMediaSetSurfacesRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::media::HostMediaSetSurfacesError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::media::HostMediaSetSurfacesResponse, truapi::CallError<versioned::media::HostMediaSetSurfacesError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::media::HostMediaSetSurfacesResponse, truapi::CallError<versioned::media::HostMediaSetSurfacesError>> =
+                    match host.set_surfaces(&cx, request).await {
+                        Ok(response) => Ok(<versioned::media::HostMediaSetSurfacesResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::MEDIA_END_SESSION, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::media::HostMediaEndSessionRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::media::HostMediaEndSessionError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::media::HostMediaEndSessionResponse, truapi::CallError<versioned::media::HostMediaEndSessionError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::media::HostMediaEndSessionResponse, truapi::CallError<versioned::media::HostMediaEndSessionError>> =
+                    match host.end_session(&cx, request).await {
+                        Ok(response) => Ok(<versioned::media::HostMediaEndSessionResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::MEDIA_GET_OPERATION, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::media::HostMediaGetOperationRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::media::HostMediaGetOperationError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::media::HostMediaGetOperationResponse, truapi::CallError<versioned::media::HostMediaGetOperationError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::media::HostMediaGetOperationResponse, truapi::CallError<versioned::media::HostMediaGetOperationError>> =
+                    match host.get_operation(&cx, request).await {
+                        Ok(response) => Ok(<versioned::media::HostMediaGetOperationResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_request(wire_table::MEDIA_CANCEL_OPERATION, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::media::HostMediaCancelOperationRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::media::HostMediaCancelOperationError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::media::HostMediaCancelOperationResponse, truapi::CallError<versioned::media::HostMediaCancelOperationError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::media::HostMediaCancelOperationResponse, truapi::CallError<versioned::media::HostMediaCancelOperationError>> =
+                    match host.cancel_operation(&cx, request).await {
+                        Ok(response) => Ok(<versioned::media::HostMediaCancelOperationResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
             })
         });
     }
@@ -2100,7 +2738,7 @@ where
         });
     }
     {
-        let host = host;
+        let host = host.clone();
         dispatcher.on_request(wire_table::NOTIFICATIONS_CANCEL_PUSH_NOTIFICATION, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
@@ -2118,6 +2756,230 @@ where
                 let result: Result<versioned::notifications::HostPushNotificationCancelResponse, truapi::CallError<versioned::notifications::HostPushNotificationCancelError>> =
                     match host.cancel_push_notification(&cx, request).await {
                         Ok(response) => Ok(<versioned::notifications::HostPushNotificationCancelResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::NOTIFICATIONS_RECEIVER_STATUS, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::notifications::HostNotificationReceiverStatusRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::notifications::HostNotificationReceivingError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::notifications::HostNotificationReceiverStatusResponse, truapi::CallError<versioned::notifications::HostNotificationReceivingError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::notifications::HostNotificationReceiverStatusResponse, truapi::CallError<versioned::notifications::HostNotificationReceivingError>> =
+                    match host.receiver_status(&cx, request).await {
+                        Ok(response) => Ok(<versioned::notifications::HostNotificationReceiverStatusResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::NOTIFICATIONS_REPLACE_RECEIVER, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::notifications::HostNotificationReplaceReceiverRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::notifications::HostNotificationReceivingError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::notifications::HostNotificationReplaceReceiverResponse, truapi::CallError<versioned::notifications::HostNotificationReceivingError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::notifications::HostNotificationReplaceReceiverResponse, truapi::CallError<versioned::notifications::HostNotificationReceivingError>> =
+                    match host.replace_receiver(&cx, request).await {
+                        Ok(response) => Ok(<versioned::notifications::HostNotificationReplaceReceiverResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::NOTIFICATIONS_DISABLE_RECEIVER, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::notifications::HostNotificationDisableReceiverRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::notifications::HostNotificationReceivingError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::notifications::HostNotificationDisableReceiverResponse, truapi::CallError<versioned::notifications::HostNotificationReceivingError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::notifications::HostNotificationDisableReceiverResponse, truapi::CallError<versioned::notifications::HostNotificationReceivingError>> =
+                    match host.disable_receiver(&cx, request).await {
+                        Ok(response) => Ok(<versioned::notifications::HostNotificationDisableReceiverResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::NOTIFICATIONS_RECORD_RECEIPT, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::notifications::HostNotificationRecordReceiptRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::notifications::HostNotificationReceivingError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::notifications::HostNotificationRecordReceiptResponse, truapi::CallError<versioned::notifications::HostNotificationReceivingError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::notifications::HostNotificationRecordReceiptResponse, truapi::CallError<versioned::notifications::HostNotificationReceivingError>> =
+                    match host.record_receipt(&cx, request).await {
+                        Ok(response) => Ok(<versioned::notifications::HostNotificationRecordReceiptResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::NOTIFICATIONS_RECEIVER_EVENTS, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::notifications::HostNotificationReceiverEventsRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::notifications::HostNotificationReceivingError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::notifications::HostNotificationReceiverEventsResponse, truapi::CallError<versioned::notifications::HostNotificationReceivingError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::notifications::HostNotificationReceiverEventsResponse, truapi::CallError<versioned::notifications::HostNotificationReceivingError>> =
+                    match host.receiver_events(&cx, request).await {
+                        Ok(response) => Ok(<versioned::notifications::HostNotificationReceiverEventsResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::NOTIFICATIONS_ACKNOWLEDGE_RECEIVER_EVENT, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::notifications::HostNotificationAcknowledgeReceiverEventRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::notifications::HostNotificationReceivingError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::notifications::HostNotificationAcknowledgeReceiverEventResponse, truapi::CallError<versioned::notifications::HostNotificationReceivingError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::notifications::HostNotificationAcknowledgeReceiverEventResponse, truapi::CallError<versioned::notifications::HostNotificationReceivingError>> =
+                    match host.acknowledge_receiver_event(&cx, request).await {
+                        Ok(response) => Ok(<versioned::notifications::HostNotificationAcknowledgeReceiverEventResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::NOTIFICATIONS_ACTIVATION_EVENTS, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::notifications::NotificationActivationEventsRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::notifications::NotificationActivationEventsError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::notifications::NotificationActivationEventsResponse, truapi::CallError<versioned::notifications::NotificationActivationEventsError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::notifications::NotificationActivationEventsResponse, truapi::CallError<versioned::notifications::NotificationActivationEventsError>> =
+                    match host.activation_events(&cx, request).await {
+                        Ok(response) => Ok(<versioned::notifications::NotificationActivationEventsResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_request(wire_table::NOTIFICATIONS_ACKNOWLEDGE_ACTIVATION, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::notifications::NotificationActivationAcknowledgeRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::notifications::NotificationActivationAcknowledgeError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::notifications::NotificationActivationAcknowledgeResponse, truapi::CallError<versioned::notifications::NotificationActivationAcknowledgeError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::notifications::NotificationActivationAcknowledgeResponse, truapi::CallError<versioned::notifications::NotificationActivationAcknowledgeError>> =
+                    match host.acknowledge_activation(&cx, request).await {
+                        Ok(response) => Ok(<versioned::notifications::NotificationActivationAcknowledgeResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),
@@ -2537,6 +3399,208 @@ where
                 let result: Result<versioned::preimage::RemotePreimageSubmitResponse, truapi::CallError<versioned::preimage::RemotePreimageSubmitError>> =
                     match host.submit(&cx, request).await {
                         Ok(response) => Ok(<versioned::preimage::RemotePreimageSubmitResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+}
+
+fn register_profile<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
+where
+    P: Profile + Send + Sync + 'static,
+{
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::PROFILE_PRESENT, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::profile::HostProfilePresentRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::profile::HostProfilePresentError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::profile::HostProfilePresentResponse, truapi::CallError<versioned::profile::HostProfilePresentError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::profile::HostProfilePresentResponse, truapi::CallError<versioned::profile::HostProfilePresentError>> =
+                    match host.present(&cx, request).await {
+                        Ok(response) => Ok(<versioned::profile::HostProfilePresentResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::PROFILE_DISCLOSE, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::profile::HostProfileDiscloseRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::profile::HostProfileDiscloseError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::profile::HostProfileDiscloseResponse, truapi::CallError<versioned::profile::HostProfileDiscloseError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::profile::HostProfileDiscloseResponse, truapi::CallError<versioned::profile::HostProfileDiscloseError>> =
+                    match host.disclose(&cx, request).await {
+                        Ok(response) => Ok(<versioned::profile::HostProfileDiscloseResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::PROFILE_RETRACT, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::profile::HostProfileRetractRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::profile::HostProfileRetractError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::profile::HostProfileRetractResponse, truapi::CallError<versioned::profile::HostProfileRetractError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::profile::HostProfileRetractResponse, truapi::CallError<versioned::profile::HostProfileRetractError>> =
+                    match host.retract(&cx, request).await {
+                        Ok(response) => Ok(<versioned::profile::HostProfileRetractResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::PROFILE_PRESENT_CONTACT, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::profile::HostProfilePresentContactRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::profile::HostProfilePresentContactError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::profile::HostProfilePresentContactResponse, truapi::CallError<versioned::profile::HostProfilePresentContactError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::profile::HostProfilePresentContactResponse, truapi::CallError<versioned::profile::HostProfilePresentContactError>> =
+                    match host.present_contact(&cx, request).await {
+                        Ok(response) => Ok(<versioned::profile::HostProfilePresentContactResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::PROFILE_PLACE_CONTACT_AVATARS, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::profile::HostProfilePlaceContactAvatarsRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::profile::HostProfilePlaceContactAvatarsError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::profile::HostProfilePlaceContactAvatarsResponse, truapi::CallError<versioned::profile::HostProfilePlaceContactAvatarsError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::profile::HostProfilePlaceContactAvatarsResponse, truapi::CallError<versioned::profile::HostProfilePlaceContactAvatarsError>> =
+                    match host.place_contact_avatars(&cx, request).await {
+                        Ok(response) => Ok(<versioned::profile::HostProfilePlaceContactAvatarsResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::PROFILE_OWN_STATUS, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::profile::HostProfileOwnStatusRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::profile::HostProfileOwnStatusError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::profile::HostProfileOwnStatusResponse, truapi::CallError<versioned::profile::HostProfileOwnStatusError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::profile::HostProfileOwnStatusResponse, truapi::CallError<versioned::profile::HostProfileOwnStatusError>> =
+                    match host.own_status(&cx, request).await {
+                        Ok(response) => Ok(<versioned::profile::HostProfileOwnStatusResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_request(wire_table::PROFILE_PRESENT_OWN, move |request_id: String, bytes: Vec<u8>, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let request: versioned::profile::HostProfilePresentOwnRequest = match DecodeAll::decode_all(&mut &bytes[..]) {
+                    Ok(request) => request,
+                    Err(err) => {
+                        let error: truapi::CallError<versioned::profile::HostProfilePresentOwnError> =
+                            truapi::CallError::MalformedFrame { reason: err.to_string() };
+                        let result: Result<versioned::profile::HostProfilePresentOwnResponse, truapi::CallError<versioned::profile::HostProfilePresentOwnError>> = Err(error);
+                        return result.encode();
+                    }
+                };
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::profile::HostProfilePresentOwnResponse, truapi::CallError<versioned::profile::HostProfilePresentOwnError>> =
+                    match host.present_own(&cx, request).await {
+                        Ok(response) => Ok(<versioned::profile::HostProfilePresentOwnResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),

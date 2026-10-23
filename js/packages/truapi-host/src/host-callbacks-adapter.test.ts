@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { err, ok } from "neverthrow";
+import { hexToBytes, str, Vector } from "@parity/truapi/scale";
 
 import {
   HostChatCreateRoomRequest,
@@ -11,6 +12,9 @@ import {
   HostPushNotificationResponse,
   HostThemeSubscribeItem,
   RemotePermissionRequest,
+  ReceivingWatch,
+  ReceivingReceiptKind,
+  HostNotificationReceiptResult,
 } from "@parity/truapi";
 import type {
   GenericError,
@@ -20,15 +24,25 @@ import type {
 } from "@parity/truapi";
 
 import { createWasmRawCallbacks } from "./generated/host-callbacks-adapter.js";
+import { profileHostAdapter } from "./adapter-support.js";
 import {
   AuthState,
   CoreStorageKey,
+  NativeChatFilePickRequest,
+  NativeChatFileExportRequest,
+  NativeChatPickedFile,
+  NativeCoinageRequest,
+  NativeCoinageResponse,
+  ReceivingAuthority,
   PermissionDecision,
+  PlacedAvatars,
+  PresentedContactProfile,
   ProductContext,
   ProductExecutionKind,
   UserConfirmationReview,
 } from "./generated/host-callbacks.js";
 import { makeHostCallbacks, settle } from "./test-support.js";
+import { createNotificationReceiverCallbacks } from "./runtime.js";
 
 // The generated `createWasmRawCallbacks` adapter speaks the symmetric SCALE
 // byte boundary: codec-typed requests arrive as `Uint8Array` and are decoded
@@ -36,46 +50,6 @@ import { makeHostCallbacks, settle } from "./test-support.js";
 // `Uint8Array`. Primitives, strings and byte blobs pass through unchanged.
 
 const GENESIS = `0x${"11".repeat(32)}` as `0x${string}`;
-
-it("preserves one-use permission decisions across the WASM callback", async () => {
-  const review = {
-    tag: "IdentityDisclosure" as const,
-    value: { productId: "playground.dot" },
-  };
-  for (const decision of ["AllowOnce", "AllowAlways", "Deny"] as const) {
-    const reviews: UserConfirmationReview[] = [];
-    const raw = createWasmRawCallbacks(
-      makeHostCallbacks({
-        userConfirmation: {
-          confirmPermission: async (request) => {
-            reviews.push(request);
-            return decision;
-          },
-        },
-      }),
-    );
-    const encoded = await raw.confirmPermission(
-      UserConfirmationReview.enc(review),
-    );
-    expect({ decision: PermissionDecision.dec(encoded), reviews }).toEqual({
-      decision,
-      reviews: [review],
-    });
-  }
-});
-
-const defaultTheme = (variant: ThemeVariant): HostThemeSubscribeItemValue => ({
-  name: { tag: "Default" },
-  variant,
-});
-
-const namedTheme = (
-  name: string,
-  variant: ThemeVariant,
-): HostThemeSubscribeItemValue => ({
-  name: { tag: "Custom", value: name },
-  variant,
-});
 const PRODUCT_ACCOUNT = {
   dotNsIdentifier: "playground.dot",
   derivationIndex: { tag: "Index" as const, value: 0 },
@@ -105,7 +79,329 @@ const SIGN_PAYLOAD: HostSignPayloadData = {
   mode: undefined,
 };
 
+it("keeps receiving state at its native SCALE slot rather than another host capability's slot", () => {
+  expect(CoreStorageKey.enc({ tag: "NotificationReceiving" })).toEqual(
+    new Uint8Array([20]),
+  );
+  expect(CoreStorageKey.dec(new Uint8Array([20])).tag).toBe(
+    "NotificationReceiving",
+  );
+});
+
+it("preserves one-use permission decisions across the WASM callback", async () => {
+  const review = {
+    tag: "IdentityDisclosure" as const,
+    value: { productId: "playground.dot" },
+  };
+  for (const decision of ["AllowOnce", "AllowAlways", "Deny"] as const) {
+    const reviews: UserConfirmationReview[] = [];
+    const raw = createWasmRawCallbacks(
+      makeHostCallbacks({
+        userConfirmation: {
+          confirmPermission: async (request) => {
+            reviews.push(request);
+            return decision;
+          },
+        },
+      }),
+    );
+    const encoded = await raw.confirmPermission(
+      UserConfirmationReview.enc(review),
+    );
+    expect({ decision: PermissionDecision.dec(encoded), reviews }).toEqual({
+      decision,
+      reviews: [review],
+    });
+  }
+});
+
+it("keeps receiving authority host-owned and preserves forever mute across SCALE", async () => {
+  const authority: ReceivingAuthority = {
+    productId: "playground.dot",
+    account: "11".repeat(32),
+    environment: "paseo",
+    artifact: "22".repeat(32),
+    genesis: "33".repeat(32),
+    generation: 7n,
+    osPermission: true,
+    transportReady: false,
+  };
+  const watches: ReceivingWatch[] = [
+    {
+      id: "group",
+      genesis: authority.genesis,
+      channel: "44".repeat(32),
+      topics: ["55".repeat(32)],
+      senders: ["66".repeat(32)],
+      expiresAt: 1_800_000_000_000n,
+      mutedUntil: (1n << 64n) - 1n,
+      route: "/group",
+    },
+  ];
+  const calls: unknown[] = [];
+  const raw = createWasmRawCallbacks(
+    makeHostCallbacks({
+      notifications: {
+        receiverAuthority: async (productId) => {
+          calls.push(productId);
+          return authority;
+        },
+        receiverConsent: async (scope, policies) => {
+          calls.push({ scope, policies });
+          return false;
+        },
+        receiverCommand: async (productId, action, payload) => {
+          calls.push({ productId, action, payload });
+          throw new Error("owner unavailable");
+        },
+      },
+    }),
+  );
+  const encoded = await raw.receiverAuthority("playground.dot");
+  expect(ReceivingAuthority.dec(encoded!)).toEqual(authority);
+  expect(
+    await raw.receiverConsent(
+      ReceivingAuthority.enc(authority),
+      Vector(ReceivingWatch).enc(watches),
+    ),
+  ).toBe(false);
+  const payload = new Uint8Array([1, 2]);
+  await expect(
+    raw.receiverCommand("playground.dot", 4, payload),
+  ).rejects.toThrow("owner unavailable");
+  expect(calls).toEqual([
+    "playground.dot",
+    { scope: authority, policies: watches },
+    { productId: "playground.dot", action: 4, payload },
+  ]);
+});
+
+it("does not claim receiving support when callbacks are absent", async () => {
+  const raw = createWasmRawCallbacks(makeHostCallbacks());
+  expect(await raw.receiverAuthority("playground.dot")).toBeUndefined();
+  expect(
+    await raw.receiverCommand("playground.dot", 2, new Uint8Array()),
+  ).toBeUndefined();
+  await expect(raw.receiverChanged()).rejects.toThrow(
+    "background receiving unsupported",
+  );
+  const standalone = createNotificationReceiverCallbacks({
+    readReceivingState: () => undefined,
+    writeReceivingState: () => {
+      throw new Error("storage unavailable");
+    },
+  });
+  expect(await standalone.receiverAuthority("playground.dot")).toBeUndefined();
+  await expect(
+    standalone.receiverConsent(new Uint8Array(), new Uint8Array()),
+  ).rejects.toThrow("background receiving unsupported");
+  await expect(standalone.receiverChanged()).rejects.toThrow(
+    "background receiving unsupported",
+  );
+  await expect(
+    standalone.writeReceivingState(new Uint8Array()),
+  ).rejects.toThrow("storage unavailable");
+});
+
+it("preserves confirmed versus pending display in the receipt wire payload", () => {
+  expect(ReceivingReceiptKind.enc("Foreground")).toEqual(new Uint8Array([0]));
+  expect(ReceivingReceiptKind.enc("Read")).toEqual(new Uint8Array([1]));
+  expect(ReceivingReceiptKind.enc("Displayed")).toEqual(new Uint8Array([2]));
+  expect(
+    HostNotificationReceiptResult.enc({
+      displayed: false,
+      displayPending: true,
+    }),
+  ).toEqual(new Uint8Array([0, 1]));
+  expect(HostNotificationReceiptResult.dec(new Uint8Array([1, 0]))).toEqual({
+    displayed: true,
+    displayPending: false,
+  });
+});
+
+const defaultTheme = (variant: ThemeVariant): HostThemeSubscribeItemValue => ({
+  name: { tag: "Default" },
+  variant,
+});
+
+const namedTheme = (
+  name: string,
+  variant: ThemeVariant,
+): HostThemeSubscribeItemValue => ({
+  name: { tag: "Custom", value: name },
+  variant,
+});
+
 describe("createWasmRawCallbacks", () => {
+  it("leaves the native callback absent for the built-in Rust wallet", () => {
+    const raw = createWasmRawCallbacks(makeHostCallbacks());
+    expect(raw.nativeCoinage).toBeUndefined();
+  });
+
+  it("rejects malformed native registration rather than enabling the Rust wallet", () => {
+    for (const coinageWallet of [null, false, {}, { nativeCoinage: 1 }]) {
+      expect(() =>
+        createWasmRawCallbacks({
+          ...makeHostCallbacks(),
+          coinageWallet: coinageWallet as never,
+        }),
+      ).toThrow();
+    }
+  });
+
+  it("keeps the registered native wallet after rejection or infrastructure failure", async () => {
+    const host = makeHostCallbacks({
+      coinageWallet: {
+        nativeCoinage: async (request) => {
+          if (request.operation.tag === "Reconcile")
+            throw new Error("private native memo bearer material");
+          return { tag: "Failed", value: { reason: "Unavailable" } };
+        },
+      },
+    });
+    const native = createWasmRawCallbacks(host);
+    const request = NativeCoinageRequest.enc({
+      scope: {
+        rootPublicKey: new Uint8Array(32),
+        genesisHash: new Uint8Array(32),
+      },
+      operation: { tag: "Denomination" },
+    });
+    expect(
+      NativeCoinageResponse.dec(await native.nativeCoinage!(request)),
+    ).toEqual({
+      tag: "Failed",
+      value: { reason: "Unavailable" },
+    });
+    const infrastructureFailure = native.nativeCoinage!(
+      NativeCoinageRequest.enc({
+        scope: {
+          rootPublicKey: new Uint8Array(32),
+          genesisHash: new Uint8Array(32),
+        },
+        operation: { tag: "Reconcile" },
+      }),
+    );
+    await expect(infrastructureFailure).rejects.toThrow();
+    await infrastructureFailure.catch((error: Error) => {
+      expect(error.message).not.toContain("bearer material");
+    });
+    // Neither mutation of the source group nor failure changes the captured service.
+    host.coinageWallet!.nativeCoinage = async () => ({ tag: "Done" });
+    host.coinageWallet = undefined;
+    expect(
+      NativeCoinageResponse.dec(await native.nativeCoinage!(request)),
+    ).toEqual({
+      tag: "Failed",
+      value: { reason: "Unavailable" },
+    });
+  });
+
+  it("fails every file operation closed when the embedding has no custody backend", async () => {
+    const raw = createWasmRawCallbacks(makeHostCallbacks());
+    const context = {
+      productId: "chat.dot",
+      peerIdentity: new Uint8Array(32),
+      peerUsername: undefined,
+    };
+    const pick = NativeChatFilePickRequest.enc({ ...context, maxFiles: 1 });
+    const save = NativeChatFileExportRequest.enc({
+      ...context,
+      metadata: {
+        mimeType: "application/octet-stream",
+        sizeBytes: 0,
+        kind: { tag: "File" },
+      },
+    });
+    for (const operation of [
+      () => raw.pickChatFiles(pick),
+      () => raw.readChatFile("source", 0n, 0),
+      () => raw.releaseChatFile("source"),
+      () => raw.beginChatFileExport(save),
+      () => raw.writeChatFileExport("export", 0n, new Uint8Array()),
+      () => raw.finishChatFileExport("export"),
+      () => raw.cancelChatFileExport("export"),
+    ]) {
+      await expect(operation()).rejects.toThrow();
+    }
+  });
+
+  it("distinguishes explicit file cancellation from unavailable custody", async () => {
+    const raw = createWasmRawCallbacks(
+      makeHostCallbacks({
+        nativeChatFiles: {
+          pickChatFiles: async () => [],
+          beginChatFileExport: async () => undefined,
+        },
+      }),
+    );
+    const context = {
+      productId: "chat.dot",
+      peerIdentity: new Uint8Array(32),
+      peerUsername: undefined,
+    };
+    expect(
+      Vector(NativeChatPickedFile).dec(
+        await raw.pickChatFiles(
+          NativeChatFilePickRequest.enc({ ...context, maxFiles: 1 }),
+        ),
+      ),
+    ).toEqual([]);
+    const cancelled = await raw.beginChatFileExport(
+      NativeChatFileExportRequest.enc({
+        ...context,
+        metadata: {
+          mimeType: "application/octet-stream",
+          sizeBytes: 0,
+          kind: { tag: "File" },
+        },
+      }),
+    );
+    expect(cancelled == null).toBe(true);
+  });
+
+  it("does not invent an identity search provider for hosts that omit it", () => {
+    const raw = createWasmRawCallbacks(makeHostCallbacks());
+    expect(raw.identityUsernameCandidates).toBeUndefined();
+  });
+
+  it("encodes username candidate accounts as one SCALE vector", async () => {
+    const first = new Uint8Array(32).fill(0x11);
+    const second = new Uint8Array(32).fill(0x22);
+    const raw = createWasmRawCallbacks(
+      makeHostCallbacks({
+        identityBackend: {
+          identityUsernameCandidates: async () => [first, second],
+        },
+      }),
+    );
+
+    expect(
+      await raw.identityUsernameCandidates!("alice", new Uint8Array(32)),
+    ).toEqual(new Uint8Array([8, ...first, ...second]));
+  });
+
+  it("keeps backend failure distinct from a successful empty search", async () => {
+    const raw = createWasmRawCallbacks(
+      makeHostCallbacks({
+        identityBackend: {
+          identityUsernameCandidates: async (username) => {
+            if (username === "unavailable")
+              throw new Error("authentication expired");
+            return [];
+          },
+        },
+      }),
+    );
+
+    await expect(
+      raw.identityUsernameCandidates!("unavailable", new Uint8Array(32)),
+    ).rejects.toThrow("authentication expired");
+    expect(
+      await raw.identityUsernameCandidates!("absent", new Uint8Array(32)),
+    ).toEqual(new Uint8Array([0]));
+  });
+
   it("decodes requests and encodes typed responses", async () => {
     const writes: [string, number[]][] = [];
     const clears: string[] = [];
@@ -281,6 +577,12 @@ describe("createWasmRawCallbacks", () => {
                 return (
                   review.value.resources[0]?.tag === "StatementStoreAllowance"
                 );
+              case "PreimageSubmit":
+                calls.push([
+                  "confirmUserAction:PreimageSubmit",
+                  review.value.size,
+                ]);
+                return review.value.size === 42n;
               default:
                 return false;
             }
@@ -421,6 +723,22 @@ describe("createWasmRawCallbacks", () => {
         }),
       ),
     ).toBe(true);
+    expect(
+      await raw.confirmUserAction?.(
+        UserConfirmationReview.enc({
+          tag: "PreimageSubmit",
+          value: {
+            size: 42n,
+            productId: "playground.dot",
+            rootPublicKey: GENESIS,
+            genesisHash: GENESIS,
+            automaticMaxBytes: 262144n,
+            automaticMaxUploads: 4,
+            automaticWindowSeconds: 3600,
+          },
+        }),
+      ),
+    ).toBe(true);
 
     await settle();
 
@@ -433,6 +751,7 @@ describe("createWasmRawCallbacks", () => {
       ],
       ["writeCoreStorage", { tag: "AuthSession", value: undefined }, [3, 2, 1]],
       ["clearCoreStorage", { tag: "AuthSession", value: undefined }],
+      ["confirmUserAction:PreimageSubmit", 42n],
     ]);
 
     disposePreimages?.();
@@ -601,6 +920,260 @@ describe("createWasmRawCallbacks", () => {
     expect(received).toEqual(responses);
     connection!.close();
     expect(closes).toBe(1);
+  });
+
+  it("keeps an unconfigured HOP provider unavailable", async () => {
+    const raw = createWasmRawCallbacks(makeHostCallbacks());
+    expect(
+      Vector(str).dec(await raw.allowedHopEndpoints(hexToBytes(GENESIS))),
+    ).toEqual([]);
+    await expect(
+      raw.hopConnect(GENESIS, "wss://hop.example", () => {}),
+    ).rejects.toThrow();
+  });
+
+  it("requires an exact current trusted WSS endpoint before dialing HOP", async () => {
+    const endpoint = "wss://hop.example/rpc";
+    let allowed = [
+      endpoint,
+      "ws://hop.example/rpc",
+      "wss://user@hop.example/rpc",
+      "wss://hop.example/rpc#fragment",
+    ];
+    const dials: string[] = [];
+    const sent: string[] = [];
+    const received: string[] = [];
+    let closes = 0;
+    let closed = 0;
+    const raw = createWasmRawCallbacks(
+      makeHostCallbacks({
+        hop: {
+          async allowedHopEndpoints(genesis) {
+            expect(genesis).toEqual(hexToBytes(GENESIS));
+            return allowed;
+          },
+          async connectHop(genesis, url) {
+            expect(genesis).toEqual(hexToBytes(GENESIS));
+            dials.push(url);
+            return {
+              send: (request) => sent.push(request),
+              async *responses() {
+                yield '{"id":1,"result":"ok"}';
+              },
+              close() {
+                closes += 1;
+              },
+            };
+          },
+        },
+      }),
+    );
+    expect(
+      Vector(str).dec(await raw.allowedHopEndpoints(hexToBytes(GENESIS))),
+    ).toEqual(allowed);
+    for (const denied of [
+      "wss://HOP.example/rpc",
+      "wss://other.example/rpc",
+      ...allowed.slice(1),
+    ]) {
+      await expect(raw.hopConnect(GENESIS, denied, () => {})).rejects.toThrow();
+    }
+    const connection = await raw.hopConnect(
+      GENESIS,
+      endpoint,
+      (response) => received.push(response),
+      () => {
+        closed += 1;
+      },
+    );
+    connection!.send('{"id":1,"method":"hop_info"}');
+    await settle();
+    expect(dials).toEqual([endpoint]);
+    expect(sent).toEqual(['{"id":1,"method":"hop_info"}']);
+    expect(received).toEqual(['{"id":1,"result":"ok"}']);
+    expect(closes).toBe(1);
+    expect(closed).toBe(1);
+    connection!.close();
+    expect(closes).toBe(1);
+    expect(() => connection!.send("{}")).toThrow();
+    allowed = [];
+    await expect(raw.hopConnect(GENESIS, endpoint, () => {})).rejects.toThrow();
+    expect(dials).toEqual([endpoint]);
+  });
+
+  it("drops responses arriving after a connection is closed", async () => {
+    const next = Promise.withResolvers<IteratorResult<string>>();
+    let closes = 0;
+    let returns = 0;
+    const raw = createWasmRawCallbacks(
+      makeHostCallbacks({
+        chain: {
+          async connect() {
+            return {
+              send() {},
+              responses: () => ({
+                [Symbol.asyncIterator]: () => ({
+                  next: () => next.promise,
+                  async return() {
+                    returns += 1;
+                    return { done: true, value: undefined };
+                  },
+                }),
+              }),
+              close() {
+                closes += 1;
+              },
+            };
+          },
+        },
+      }),
+    );
+    const received: string[] = [];
+    const connection = await raw.chainConnect(GENESIS, (response) =>
+      received.push(response),
+    );
+    connection!.close();
+    connection!.close();
+    next.resolve({ done: false, value: "late response" });
+    await settle();
+    expect(received).toEqual([]);
+    expect(closes).toBe(1);
+    expect(returns).toBe(1);
+  });
+
+  describe("contact profile presentation", () => {
+    const product = ProductContext.enc({
+      productId: "egui-chat.dot",
+      executionKind: "App",
+    });
+    const presented = {
+      shared: {
+        reference: "seity-contacts:v1:ab",
+        sharedAt: 1_700_000_000_500n,
+      },
+      peerIdentity: new Uint8Array(32).fill(0xa1),
+      username: "alice.01",
+    };
+
+    const placed = { surfaceWidth: 640, surfaceHeight: 480, avatars: [] };
+
+    it("keeps an absent profile group absent", () => {
+      expect(profileHostAdapter(undefined)).toBeUndefined();
+      const raw = createWasmRawCallbacks({
+        ...makeHostCallbacks(),
+        profile: undefined,
+      });
+      expect(raw.presentProfile).toBeUndefined();
+      expect(raw.presentContactProfile).toBeUndefined();
+      expect(raw.placeContactAvatars).toBeUndefined();
+    });
+
+    it("normalizes missing placement without replacing contact presentation or its receiver", async () => {
+      const host = {
+        presentations: [] as PresentedContactProfile[],
+        async presentProfile() {
+          throw new Error("Contact presentation must not use the fallback");
+        },
+        async presentContactProfile(
+          presentationProduct: ProductContext,
+          contact: PresentedContactProfile,
+        ) {
+          expect(presentationProduct).toEqual(ProductContext.dec(product));
+          this.presentations.push(contact);
+        },
+      };
+      const raw = createWasmRawCallbacks({
+        ...makeHostCallbacks(),
+        profile: host as never,
+      });
+      await raw.presentContactProfile!(
+        product,
+        PresentedContactProfile.enc(presented),
+      );
+      await raw.presentContactProfile!(
+        product,
+        PresentedContactProfile.enc({ ...presented, shared: undefined }),
+      );
+      await expect(
+        raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)),
+      ).resolves.toBeUndefined();
+      expect(host.presentations).toEqual([
+        presented,
+        { ...presented, shared: undefined },
+      ]);
+    });
+
+    it("preserves placement and its receiver when only contact presentation is missing", async () => {
+      const host = {
+        placements: [] as PlacedAvatars[],
+        async presentProfile() {},
+        async placeContactAvatars(
+          placementProduct: ProductContext,
+          placement: PlacedAvatars,
+        ) {
+          expect(placementProduct).toEqual(ProductContext.dec(product));
+          this.placements.push(placement);
+        },
+      };
+      const raw = createWasmRawCallbacks({
+        ...makeHostCallbacks(),
+        profile: host as never,
+      });
+      await raw.placeContactAvatars!(product, PlacedAvatars.enc(placed));
+      expect(host.placements).toEqual([placed]);
+    });
+
+    it("returns complete adapters unchanged and preserves callback failures", async () => {
+      const failure = new Error("Overlay unavailable");
+      const host = {
+        failure,
+        async presentProfile() {},
+        async presentContactProfile() {},
+        async placeContactAvatars() {
+          throw this.failure;
+        },
+      };
+      expect(profileHostAdapter(host)).toBe(host);
+      const raw = createWasmRawCallbacks({
+        ...makeHostCallbacks(),
+        profile: host,
+      });
+      await expect(
+        raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)),
+      ).rejects.toBe(failure);
+    });
+
+    it("preserves shared profiles without fabricating a reference for empty feedback on older hosts", async () => {
+      const references: string[] = [];
+      const legacy = {
+        references,
+        async presentProfile(
+          _product: unknown,
+          request: { reference: string },
+        ) {
+          this.references.push(request.reference);
+        },
+      };
+      const raw = createWasmRawCallbacks({
+        ...makeHostCallbacks(),
+        profile: legacy as never,
+      });
+
+      await raw.presentContactProfile!(
+        product,
+        PresentedContactProfile.enc(presented),
+      );
+      await expect(
+        raw.presentContactProfile!(
+          product,
+          PresentedContactProfile.enc({ ...presented, shared: undefined }),
+        ),
+      ).rejects.toThrow("Contact profile feedback is unavailable");
+      expect(references).toEqual([presented.shared.reference]);
+      await expect(
+        raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)),
+      ).resolves.toBeUndefined();
+    });
   });
 });
 

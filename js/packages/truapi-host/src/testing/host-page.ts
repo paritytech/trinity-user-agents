@@ -26,7 +26,7 @@
 import { DerivationIndex } from "@parity/truapi";
 
 import { createIframeHost } from "../web/create-iframe-host.js";
-import { createWebWorkerPairingHostRuntime } from "../web/create-worker-host-runtime.js";
+import { createWebWorkerSigningHostRuntime } from "../web/create-worker-host-runtime.js";
 import {
   createMockHost,
   mockRuntimeConfig,
@@ -258,7 +258,7 @@ export async function startTestHost(
     worker = new Worker(options.workerUrl ?? "/test-host-worker.js", {
       type: "module",
     });
-    workerRuntime = (await createWebWorkerPairingHostRuntime(
+    workerRuntime = (await createWebWorkerSigningHostRuntime(
       worker,
       host.callbacks,
       { hostConfig: hostConfig as never, role: "signing" },

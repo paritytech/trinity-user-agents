@@ -20,7 +20,7 @@ android {
         versionCode = computeVersionCode()
         versionName = computeVersionName()
 
-        testInstrumentationRunner = "io.paritytech.polkadotapp.app.HiltTestRunner"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         manifestPlaceholders["appName"] = localProperties.readSecretOrThrow("APPLICATION_NAME")
         manifestPlaceholders["sentryDsn"] = localProperties.readSecretOrNull("SENTRY_DSN") ?: ""
@@ -196,14 +196,12 @@ dependencies {
     androidTestImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.test.runner)
-    androidTestImplementation(libs.androidx.work.testing)
-    androidTestImplementation(libs.hilt.android.testing)
+    androidTestImplementation(project(":bindings:truapi-host"))
     androidTestImplementation(libs.mockk.android) {
         // JUnit 4 runs these tests; mockk's JUnit 5 jars only collide when the test APK is packaged.
         exclude(group = "org.junit.jupiter")
         exclude(group = "org.junit.platform")
     }
-    kspAndroidTest(libs.hilt.android.compiler)
 }
 
 sentry {

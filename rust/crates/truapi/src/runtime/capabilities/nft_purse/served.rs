@@ -5,24 +5,32 @@ use truapi::{
 	CallContext, CallError,
 	api::NftPurse,
 	latest,
-	versioned::nft_purse::{
-		HostNftPurseCreatePurseError, HostNftPurseCreatePurseRequest,
-		HostNftPurseCreatePurseResponse, HostNftPurseListPursesError,
-		HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
+	versioned::{
+		FromLatest, IntoLatest, Versioned,
+		nft_purse::{
+			HostNftPurseCreatePurseError, HostNftPurseCreatePurseRequest,
+			HostNftPurseCreatePurseResponse, HostNftPurseListPursesError,
+			HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
+		},
 	},
 };
 
+use super::super::from_latest_error;
 use crate::{
 	nft::CreatePurseError,
 	nft_purse::{self, CreateProductPurseError, NftPurses, PurseOwner},
-	runtime::{ProductConnection, ProductRuntimeHost, versioning::version},
+	runtime::ProductRuntimeHost,
 	store::DbError,
 };
 
-impl ProductConnection {
+impl ProductRuntimeHost {
 	/// NFT purses, or `Unsupported` when the host configured no core database.
 	fn nft_purses<E>(&self) -> Result<NftPurses, CallError<E>> {
 		self.services.nft_purses().ok_or(CallError::Unsupported)
+	}
+
+	fn require_session<E>(&self) -> Result<(), CallError<E>> {
+		self.authority.current_session().map(|_| ()).ok_or(CallError::Denied)
 	}
 }
 
@@ -34,7 +42,11 @@ impl NftPurse for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostNftPurseCreatePurseRequest,
 	) -> Result<HostNftPurseCreatePurseResponse, CallError<HostNftPurseCreatePurseError>> {
-		version(request).exec(|request| self.create_nft_purse(request)).await
+		let version = request.version();
+		self.create_nft_purse(request.into_latest())
+			.await
+			.map(|response| HostNftPurseCreatePurseResponse::from_latest(response, version))
+			.map_err(|error| from_latest_error(error, version))
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "nft_purse.list_purses"))]
@@ -43,7 +55,11 @@ impl NftPurse for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostNftPurseListPursesRequest,
 	) -> Result<HostNftPurseListPursesResponse, CallError<HostNftPurseListPursesError>> {
-		version(request).exec(|request| self.list_nft_purses(request)).await
+		let version = request.version();
+		self.list_nft_purses(request.into_latest())
+			.await
+			.map(|response| HostNftPurseListPursesResponse::from_latest(response, version))
+			.map_err(|error| from_latest_error(error, version))
 	}
 }
 
@@ -53,9 +69,10 @@ impl ProductRuntimeHost {
 		request: latest::HostNftPurseCreatePurseRequest,
 	) -> Result<latest::HostNftPurseCreatePurseResponse, CallError<latest::GenericError>> {
 		self.require_session()?;
-		let purses = self.connection.nft_purses()?;
+		let purses = self.nft_purses()?;
+		let caller = self.product_id().parse()?;
 		let latest::HostNftPurseCreatePurseRequest { name } = request;
-		let created = purses.create_purse(self.connection.product_id(), name).await;
+		let created = purses.create_purse(&caller, name).await;
 		let purse = created.map_err(create_purse_failure)?;
 		Ok(latest::HostNftPurseCreatePurseResponse { purse: latest::NftPurseId(purse.0) })
 	}
@@ -68,12 +85,13 @@ impl ProductRuntimeHost {
 		CallError<latest::HostNftPurseListPursesError>,
 	> {
 		self.require_session()?;
-		let purses = self.connection.nft_purses()?;
+		let purses = self.nft_purses()?;
+		let caller = self.product_id().parse()?;
 		let latest::HostNftPurseListPursesRequest { owner } = request;
 		let owner = PurseOwner::parse(&owner)?;
-		if let Some(grant) = nft_purse::read_grant(self.connection.product_id(), &owner) {
+		if let Some(grant) = nft_purse::read_grant(&caller, &owner) {
 			let denied = latest::HostNftPurseListPursesError::Denied;
-			self.connection.require_remote_permission(grant, denied).await?;
+			self.require_remote_permission(grant, denied).await?;
 		}
 		let listed = purses.list_purses(&owner).await.map_err(host_failure)?;
 		Ok(latest::HostNftPurseListPursesResponse { purses: listed })

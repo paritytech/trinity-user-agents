@@ -1,13 +1,11 @@
 import DurableTransactions
 import Foundation
 
-/// The result of preparing a transfer: the memo to hand to the transport, and the two things that must
-/// become durable at exactly the moment that memo does — the handoff, and the payment's transactions.
+/// The memo to hand to the transport and its idempotent handoff commit handle.
 ///
-/// Nothing has been built or submitted yet. ``commit(in:)`` runs inside the transaction that writes
-/// whatever carries the keys, so a crash either keeps all of it or none of it; the transactions are
-/// built by their policies once that transaction commits. A payment whose keys never left calls
-/// ``abandon()`` instead, and the coins are free again immediately rather than on the next launch.
+/// Ordinary transfers reserve provisionally: commit after the carrying payload is durable, or a
+/// relaunch releases the reservation. Native-custody transfers have already committed their marks
+/// and derivation journal atomically before returning; their keys remain recoverable across relaunch.
 public struct PreparedTransfer {
     public let memo: TransferMemo
     public let handoffCommit: any CoinageHandoffCommit

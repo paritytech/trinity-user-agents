@@ -20,12 +20,7 @@ use crate::{
 
 type Responder = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
 
-/// One connection's response sender. The provider and the connection hold the
-/// same slot rather than a clone each, so dropping it through either ends that
-/// connection's stream.
 type SenderSlot = Mutex<Option<fut_mpsc::UnboundedSender<String>>>;
-
-/// One connection's response stream, taken once by whoever reads it.
 type ReceiverSlot = Mutex<Option<fut_mpsc::UnboundedReceiver<String>>>;
 
 /// Provider that echoes a canned response for every request it sees,
@@ -66,7 +61,7 @@ impl ScriptedProvider {
 		F: Fn(&str) -> Vec<String> + Send + Sync + 'static,
 	{
 		let (tx, rx) = fut_mpsc::unbounded();
-		let first: Arc<SenderSlot> = Arc::new(Mutex::new(Some(tx)));
+		let first = Arc::new(Mutex::new(Some(tx)));
 		Self {
 			respond: Arc::new(respond),
 			sent: Arc::new(Mutex::new(Vec::new())),
@@ -81,10 +76,8 @@ impl ScriptedProvider {
 struct ScriptedConnection {
 	respond: Responder,
 	sent: Arc<Mutex<Vec<String>>>,
-	/// This connection's own sender, so an answer goes back on the socket that
-	/// asked rather than on whichever one connected first.
-	sender: Arc<SenderSlot>,
-	receiver: ReceiverSlot,
+	sender: Arc<Mutex<Option<fut_mpsc::UnboundedSender<String>>>>,
+	receiver: Mutex<Option<fut_mpsc::UnboundedReceiver<String>>>,
 }
 
 impl JsonRpcConnection for ScriptedConnection {
@@ -98,12 +91,13 @@ impl JsonRpcConnection for ScriptedConnection {
 		}
 	}
 	fn responses(&self) -> BoxStream<'static, String> {
-		self.receiver
+		let rx = self
+			.receiver
 			.lock()
 			.unwrap()
 			.take()
-			.expect("ScriptedConnection::responses called twice")
-			.boxed()
+			.expect("ScriptedConnection::responses called twice");
+		rx.boxed()
 	}
 
 	fn close(&self) {

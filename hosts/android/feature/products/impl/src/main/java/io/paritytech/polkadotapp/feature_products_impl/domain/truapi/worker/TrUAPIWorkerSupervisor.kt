@@ -136,17 +136,18 @@ class TrUAPIWorkerSupervisor @Inject constructor(
         }.getOrElse { return Result.failure(it) }
         provider.addOnWebViewDestroyedListener { rebootAfterRendererLoss(productId, worker) }
 
-        return hostBridgeFactory.create(worker.scope)
+        val bridge = hostBridgeFactory.create(worker.scope)
+        provider.bindTrUAPILifecycle(bridge)
+        return bridge
             .attach(
                 runtime,
                 productId,
                 chainDirectory.resolve(),
                 ignoredNavigation(),
                 ProductExecutionKind.WORKER,
-                chat = if (script.includesChat) {
-                    ProductChatHostBridge(productId, refCounter.get().chatMessaging(productId))
-                } else {
-                    null
+                onPermissionRevoked = {
+                    provider.disposeRevokedExecution()
+                    scope.launch { transitions.withLock { stop(productId) } }
                 },
             ) { bootstrap -> provider.addWebViewSetup(installBootstrap(bootstrap)) }
             .flatMap { execution ->

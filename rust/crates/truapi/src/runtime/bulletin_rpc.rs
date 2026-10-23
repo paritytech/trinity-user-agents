@@ -1,8 +1,8 @@
 //! In-core Bulletin preimage submission over the shared Subxt client.
 //!
 //! One submission at a time: build + sign the `TransactionStorage.store`
-//! extrinsic at a best block no older than the finalized block its mortality is
-//! anchored to, dry-run it at that best block via Subxt's typed transaction
+//! extrinsic with finalized mortality and best-block metadata and nonce,
+//! dry-run it at the best block via Subxt's typed transaction
 //! validation, then submit through Subxt's transaction watch and classify the
 //! dispatch outcome from the inclusion block's events.
 
@@ -16,7 +16,8 @@ use crate::{
 	chain_runtime::{ChainRuntime, RuntimeFailure},
 	host_internal::{
 		bulletin::{
-			STORE_PALLET_NAME, allowance_signer, build_signed_store_transaction, preimage_key,
+			MORTAL_PERIOD_BLOCKS, STORE_PALLET_NAME, allowance_signer,
+			build_signed_store_transaction, preimage_key,
 		},
 		extrinsic::Sr25519Signer,
 	},
@@ -25,7 +26,7 @@ use crate::{
 use futures::{FutureExt, pin_mut};
 use subxt::{
 	OnlineClient,
-	client::{Block, Blocks, OnlineClientAtBlock, OnlineClientAtBlockImpl},
+	client::{Block, Blocks, OnlineClientAtBlockImpl},
 	config::{HashFor, substrate::SubstrateConfig},
 	error::{
 		DispatchError, TransactionEventsError, TransactionProgressError, TransactionStatusError,
@@ -68,13 +69,11 @@ const INCLUSION_RECHECK_BLOCKS: usize = 3;
 const INCLUSION_RECHECK_BLOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(20);
 #[cfg(test)]
 const INCLUSION_RECHECK_BLOCK_WAIT_TIMEOUT: Duration = Duration::from_millis(25);
-/// Bound on each wait for the next block while picking the head: the first
-/// replayed block, and each block read on until the head reaches finality.
+/// Budget for the best-block stream to replay the current chain head.
 const INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(10);
 /// Quiet window after which the newest replayed block is taken as the head.
-/// The replay delivers the initialized finalized blocks first, oldest first,
-/// and any known best block right after; active chains never need the full
-/// window.
+/// The replay delivers the initialized finalized block first and any known
+/// best block right after; active chains never need the full window.
 #[cfg(not(test))]
 const BEST_BLOCK_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(test)]
@@ -133,6 +132,9 @@ pub enum BulletinSubmitError {
 	/// The runtime could not determine transaction validity.
 	#[display("unknown transaction validity: {_0:?}")]
 	UnknownTransaction(#[error(not(source))] TransactionUnknown),
+	/// Finality has fallen outside the fixed mortality window.
+	#[display("Bulletin finalized checkpoint {finalized} is too old for best block {best}")]
+	MortalityCheckpointTooOld { finalized: u64, best: u64 },
 	/// The allowance account was rejected; refresh + one retry may help.
 	#[display("allowance rejected: {phase}")]
 	AllowanceRejected { phase: AllowanceRejectionPhase },
@@ -268,6 +270,12 @@ impl BulletinRpc {
 		}
 	}
 
+	/// Configured Bulletin identity, used by the allowance reader and to select trusted HOP
+	/// endpoints.
+	pub(crate) fn genesis_hash(&self) -> [u8; 32] {
+		self.genesis_hash
+	}
+
 	/// Open a raw RPC client over the configured Bulletin chain.
 	pub async fn client(
 		&self,
@@ -360,9 +368,7 @@ impl BulletinRpc {
 		self.enter_phase(SubmissionPhase::Build);
 		let signer =
 			allowance_signer(allowance).map_err(BulletinSubmitError::InvalidAllowanceKey)?;
-		let signed = self
-			.build_signed_and_dry_run(&mut best_blocks, head, &finalized, &signer, value)
-			.await?;
+		let signed = self.build_signed_and_dry_run(&mut best_blocks, head, &signer, value).await?;
 		drop(best_blocks);
 
 		self.enter_phase(SubmissionPhase::Watch);
@@ -421,7 +427,6 @@ impl BulletinRpc {
 		&self,
 		best_blocks: &mut Blocks<SubstrateConfig>,
 		head: Block<SubstrateConfig>,
-		finalized: &OnlineClientAtBlock<SubstrateConfig>,
 		signer: &Sr25519Signer,
 		value: &[u8],
 	) -> Result<SignedStore, BulletinSubmitError> {
@@ -430,9 +435,31 @@ impl BulletinRpc {
 		let mut allowance_rejection_started = None;
 		loop {
 			self.enter_phase(SubmissionPhase::Build);
-			let at_block = block.at().await?;
-			let signed =
-				build_signed_store_transaction(&at_block, finalized, signer, value).await?;
+			let at_block = block
+				.at()
+				.await
+				.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+			let finalized = at_block
+				.online_client()
+				.at_current_block()
+				.await
+				.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+			// Finality can advance while the previously selected best block
+			// is being read. Never sign against state older than the anchor.
+			let signing_state = if finalized.block_number() >= at_block.block_number() {
+				&finalized
+			} else {
+				&at_block
+			};
+			if signing_state.block_number() - finalized.block_number() >= MORTAL_PERIOD_BLOCKS {
+				return Err(BulletinSubmitError::MortalityCheckpointTooOld {
+					finalized: finalized.block_number(),
+					best: signing_state.block_number(),
+				});
+			}
+			let signed = build_signed_store_transaction(signing_state, &finalized, signer, value)
+				.await
+				.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
 
 			self.enter_phase(SubmissionPhase::DryRun);
 			let validity = signed.validate().await?;
@@ -520,10 +547,10 @@ impl BulletinRpc {
 /// finalized blocks arrive first, oldest first, followed by the newest known
 /// best block. Returns the newest block seen during one bounded
 /// [`BEST_BLOCK_TIMEOUT`] replay window, read on until it reaches
-/// `finalized_number`. The transaction is anchored at that finalized block, and
-/// a head behind it would validate against an earlier birth block and read a
-/// stale nonce. The window's deadline is absolute so a continuously advancing
-/// best-block stream cannot keep initialization alive forever.
+/// `finalized_number`. The transaction is anchored at a fresh finalized block,
+/// and a head behind it would validate against stale state. The window's
+/// deadline is absolute so a continuously advancing best-block stream cannot
+/// keep initialization alive forever.
 async fn initial_best_block(
 	blocks: &mut Blocks<SubstrateConfig>,
 	finalized_number: u64,
@@ -915,14 +942,13 @@ mod tests {
 		use async_trait::async_trait;
 		use futures::{StreamExt, channel::mpsc, stream::BoxStream};
 		use parity_scale_codec::{Compact, Decode, Encode};
+		use parking_lot::Mutex;
 		use schnorrkel::{PublicKey, Signature};
 		use serde_json::{Value as JsonValue, json};
-		use std::{
-			collections::VecDeque,
-			sync::{Arc, Mutex},
-		};
+		use std::{collections::VecDeque, sync::Arc};
 		use subxt::{
 			config::DefaultExtrinsicParamsBuilder,
+			ext::scale_value::Value as ScaleValue,
 			utils::{Era, H256},
 		};
 
@@ -956,10 +982,9 @@ mod tests {
 			next_transaction: usize,
 			next_best_block: usize,
 			current_best_hash: String,
+			best_block_number: Option<u32>,
 			advance_best_block_after_rejection: bool,
 			stall_headers: bool,
-			replayed_finalized_blocks: usize,
-			replay_header_delay: Option<Duration>,
 			last_transaction: Option<String>,
 			omit_transaction_from_next_body: bool,
 		}
@@ -990,10 +1015,9 @@ mod tests {
 						next_transaction: 0,
 						next_best_block: 0,
 						current_best_hash: BLOCK_HASH.to_string(),
+						best_block_number: None,
 						advance_best_block_after_rejection: false,
 						stall_headers,
-						replayed_finalized_blocks: 0,
-						replay_header_delay: None,
 						last_transaction: None,
 						omit_transaction_from_next_body: false,
 					})),
@@ -1006,21 +1030,8 @@ mod tests {
 
 			fn with_best_blocks(self, count: usize) -> Self {
 				{
-					let mut state = self.state.lock().unwrap();
+					let mut state = self.state.lock();
 					state.next_best_block = count;
-					state.current_best_hash = scripted_block_hash(count);
-				}
-				self
-			}
-
-			/// The follow subscription initializes with `count` finalized blocks after
-			/// the first, whose headers answer only after `delay`, so the best-block
-			/// replay can close on an older finalized block than the latest one.
-			fn with_lagging_finalized_replay(self, count: usize, delay: Duration) -> Self {
-				{
-					let mut state = self.state.lock().unwrap();
-					state.replayed_finalized_blocks = count;
-					state.replay_header_delay = Some(delay);
 					state.current_best_hash = scripted_block_hash(count);
 				}
 				self
@@ -1031,13 +1042,23 @@ mod tests {
 				self
 			}
 
+			fn with_best_block(self, number: u32) -> Self {
+				{
+					let mut state = self.state.lock();
+					state.best_block_number = Some(number);
+					state.next_best_block = 1;
+					state.current_best_hash = scripted_block_hash(1);
+				}
+				self
+			}
+
 			fn with_validation_outcomes(
 				self,
 				outcomes: impl IntoIterator<Item = ValidationOutcome>,
 				advance_best_block_after_rejection: bool,
 			) -> Self {
 				{
-					let mut state = self.state.lock().unwrap();
+					let mut state = self.state.lock();
 					state.validation_outcomes = outcomes.into_iter().collect();
 					state.advance_best_block_after_rejection = advance_best_block_after_rejection;
 				}
@@ -1047,7 +1068,6 @@ mod tests {
 			fn method_count(&self, method: &str) -> usize {
 				self.sent
 					.lock()
-					.unwrap()
 					.iter()
 					.filter(|request| {
 						serde_json::from_str::<JsonValue>(request)
@@ -1066,7 +1086,6 @@ mod tests {
 			fn submitted_transactions(&self) -> Vec<String> {
 				self.sent
 					.lock()
-					.unwrap()
 					.iter()
 					.filter_map(|request| {
 						let value: JsonValue = serde_json::from_str(request).ok()?;
@@ -1081,7 +1100,6 @@ mod tests {
 			fn runtime_call_blocks(&self, runtime_method: &str) -> Vec<H256> {
 				self.sent
 					.lock()
-					.unwrap()
 					.iter()
 					.filter_map(|request| {
 						let request: JsonValue = serde_json::from_str(request).unwrap();
@@ -1095,7 +1113,6 @@ mod tests {
 			fn runtime_call_count(&self, runtime_method: &str) -> usize {
 				self.sent
 					.lock()
-					.unwrap()
 					.iter()
 					.filter(|request| {
 						serde_json::from_str::<JsonValue>(request)
@@ -1128,38 +1145,21 @@ mod tests {
 
 		impl JsonRpcConnection for BulletinScriptedConnection {
 			fn send(&self, request: String) {
-				self.sent.lock().unwrap().push(request.clone());
-				let mut state = self.state.lock().unwrap();
-				let delay = state.replay_header_delay.filter(|_| {
-					let request: JsonValue = serde_json::from_str(&request).unwrap();
-					request["method"] == "chainHead_v1_header" && request["params"][1] != BLOCK_HASH
-				});
-				let frames = scripted_frames(&request, &self.events, &mut state);
-				drop(state);
-				let Some(sender) = self.sender.lock().unwrap().clone() else { return };
-				let deliver = move || {
-					// A delayed frame can outlive the test that requested it.
+				self.sent.lock().push(request.clone());
+				let frames = scripted_frames(&request, &self.events, &mut self.state.lock());
+				if let Some(sender) = self.sender.lock().as_ref() {
 					for frame in frames {
-						let _ = sender.unbounded_send(frame);
+						sender.unbounded_send(frame).unwrap();
 					}
-				};
-				match delay {
-					Some(delay) => {
-						std::thread::spawn(move || {
-							std::thread::sleep(delay);
-							deliver();
-						});
-					},
-					None => deliver(),
 				}
 			}
 
 			fn responses(&self) -> BoxStream<'static, String> {
-				self.receiver.lock().unwrap().take().expect("responses called once").boxed()
+				self.receiver.lock().take().expect("responses called once").boxed()
 			}
 
 			fn close(&self) {
-				self.sender.lock().unwrap().take();
+				self.sender.lock().take();
 			}
 		}
 
@@ -1173,7 +1173,7 @@ mod tests {
 					state: self.state.clone(),
 					sent: self.sent.clone(),
 					sender: self.sender.clone(),
-					receiver: Mutex::new(self.receiver.lock().unwrap().take()),
+					receiver: Mutex::new(self.receiver.lock().take()),
 					events: self.events.clone(),
 				}))
 			}
@@ -1201,9 +1201,7 @@ mod tests {
 						response(json!(FOLLOW_ID)),
 						follow_event(json!({
 							"event": "initialized",
-							"finalizedBlockHashes": std::iter::once(BLOCK_HASH.to_string())
-								.chain((1..=state.replayed_finalized_blocks).map(scripted_block_hash))
-								.collect::<Vec<_>>(),
+							"finalizedBlockHashes": [BLOCK_HASH],
 							"finalizedBlockRuntime": null
 						})),
 					];
@@ -1226,6 +1224,8 @@ mod tests {
 					let hash = request["params"][1].as_str().unwrap();
 					let number = if hash == BLOCK_HASH || hash == INCLUDED_HASH {
 						1
+					} else if let Some(number) = state.best_block_number {
+						number
 					} else {
 						u32::from_str_radix(hash.trim_start_matches("0x"), 16).unwrap() + 1
 					};
@@ -1288,8 +1288,8 @@ mod tests {
 					let status = match outcome {
 						TransactionOutcome::Included => {
 							json!({
-								"event": "bestChainBlockIncluded",
-								"block": {"hash": INCLUDED_HASH, "index": "0"}
+							"event": "bestChainBlockIncluded",
+							"block": {"hash": INCLUDED_HASH, "index": "0"}
 							})
 						},
 						TransactionOutcome::IncludedWithMissingBody => {
@@ -1534,36 +1534,6 @@ mod tests {
 		}
 
 		#[test]
-		fn submit_preimage_builds_at_the_finalized_anchor_when_the_replay_lags_it() {
-			let provider = Arc::new(
-				BulletinScriptedProvider::new([TransactionOutcome::Included])
-					.with_lagging_finalized_replay(3, Duration::from_millis(50)),
-			);
-			let finalized_hash: H256 = scripted_block_hash(3).parse().unwrap();
-			let value = b"lagging replay";
-
-			futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(5),
-				&allowance_fixture(),
-				value,
-			))
-			.unwrap();
-
-			let transactions = provider.submitted_transactions();
-			let transaction = hex::decode(transactions[0].trim_start_matches("0x")).unwrap();
-			assert!(store_signature_verifies_at(&transaction, value, finalized_hash));
-			assert_eq!(
-				provider.runtime_call_blocks("AccountNonceApi_account_nonce"),
-				vec![finalized_hash]
-			);
-			assert_eq!(
-				provider.runtime_call_blocks("TaggedTransactionQueue_validate_transaction"),
-				vec![finalized_hash]
-			);
-		}
-
-		#[test]
 		fn submit_preimage_drives_subxt_happy_path() {
 			let provider = Arc::new(BulletinScriptedProvider::new([TransactionOutcome::Included]));
 			let value = b"scripted bulletin happy path";
@@ -1582,6 +1552,72 @@ mod tests {
 			);
 			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 1);
 			assert_eq!(provider.method_count("chainHead_v1_storage"), 1);
+		}
+
+		#[test]
+		fn submit_uses_best_nonce_with_finalized_mortality_checkpoint() {
+			let provider = Arc::new(
+				BulletinScriptedProvider::new([TransactionOutcome::Included]).with_best_block(2),
+			);
+			let value = b"survives an abandoned best-block checkpoint";
+			let key = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
+				&CallContext::default(),
+				Instant::now() + Duration::from_secs(2),
+				&allowance_fixture(),
+				value,
+			))
+			.unwrap();
+			assert_eq!(key, preimage_key(value));
+
+			let transactions = provider.submitted_transactions();
+			assert_eq!(transactions.len(), 1);
+			let encoded = hex::decode(transactions[0].trim_start_matches("0x")).unwrap();
+			let (account, signature, _) = split_v4(&encoded);
+			let state = OfflineChainState {
+				genesis_hash: [0x42; 32],
+				spec_version: 1,
+				transaction_version: 1,
+				..bulletin_chain_state()
+			};
+			let client = state.client_at(2).unwrap();
+			let params = DefaultExtrinsicParamsBuilder::<SubstrateConfig>::new()
+				.nonce(7)
+				.mortal_from_unchecked(MORTAL_PERIOD_BLOCKS, 1, H256([0x11; 32]))
+				.build();
+			let payload =
+				subxt::dynamic::tx(STORE_PALLET_NAME, "store", vec![ScaleValue::from_bytes(value)]);
+			let expected = client
+				.tx()
+				.create_v4_signable_offline(&payload, params)
+				.unwrap()
+				.signer_payload()
+				.unwrap();
+			// This signature cannot verify with the stale finalized nonce (0)
+			// or the unfinalized best hash, even though dry-run accepted both.
+			PublicKey::from_bytes(&account)
+				.unwrap()
+				.verify_simple(
+					SR25519_SIGNING_CONTEXT,
+					&expected,
+					&Signature::from_bytes(&signature).unwrap(),
+				)
+				.unwrap();
+		}
+
+		#[test]
+		fn submit_refuses_a_checkpoint_outside_the_mortality_window() {
+			let provider = Arc::new(BulletinScriptedProvider::new([]).with_best_block(65));
+			let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
+				&CallContext::default(),
+				Instant::now() + Duration::from_secs(2),
+				&allowance_fixture(),
+				b"expired checkpoint",
+			));
+			assert!(matches!(
+				result,
+				Err(BulletinSubmitError::MortalityCheckpointTooOld { finalized: 1, best: 65 })
+			));
+			assert!(provider.submitted_transactions().is_empty());
 		}
 
 		#[test]

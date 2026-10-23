@@ -5,6 +5,7 @@
 // platform-local types cross as SCALE bytes (`.enc`/`.dec`); strings,
 // primitives and byte blobs pass through unchanged.
 
+import * as S from "@parity/truapi/scale";
 import {
   HostChatCreateRoomRequest,
   HostChatCreateRoomResponse,
@@ -18,34 +19,68 @@ import {
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
   HostLocalStorageChangeItem,
+  HostLocaleLocalizeTimestampsRequest,
+  HostLocaleLocalizeTimestampsResponse,
   HostLocaleSubscribeItem,
   HostPocketListSubscribeItem,
   HostPocketRemoveCardRequest,
+  HostProfilePresentRequest,
   HostPushNotificationRequest,
   HostPushNotificationResponse,
   HostScannerScanRequest,
   HostThemeSubscribeItem,
   HostWorkerBeginOperationResponse,
+  NotificationActivationAcknowledgeRequest,
+  NotificationActivations,
+  ReceivingWatch,
   RemotePermissionRequest,
 } from "@parity/truapi";
 import type { GenericError } from "@parity/truapi";
 import {
   AuthState,
+  ContactSelection,
   CoreStorageKey,
   DevicePermissionStatus,
   HostChainSet,
   HostContactLookup,
   HostContactMatches,
   HostContactPick,
+  HostContactsPick,
   HostScan,
+  MediaBackendCapabilities,
+  MediaBackendCommand,
+  MediaBackendEvent,
+  MediaBackendResponse,
+  NativeChatFileExportRequest,
+  NativeChatFilePickRequest,
+  NativeChatPickedFile,
+  NativeCoinageRequest,
+  NativeCoinageResponse,
   PermissionDecision,
+  PlacedAvatars,
+  PlacedContactLabels,
+  PresentedContactProfile,
   ProductContext,
+  ReceivingAuthority,
   UserConfirmationReview,
 } from "./host-callbacks.js";
 import type { RequiredHostCallbacks } from "./host-callbacks.js";
 
-import type { ChainConnect } from "../runtime.js";
-import { chainConnectAdapter, driveResultStream } from "../adapter-support.js";
+import type { ChainConnect, HopConnect } from "../runtime.js";
+import {
+  chainConnectAdapter,
+  coinageWalletHostAdapter,
+  contactsHostAdapter,
+  driveResultStream,
+  hopConnectAdapter,
+  profileHostAdapter,
+  unavailableHopProvider,
+  unavailableNativeChatFilesHost,
+} from "../adapter-support.js";
+
+const allowedHopEndpointsResultCodec = S.Vector(S.str);
+const identityUsernameCandidatesResultCodec = S.Vector(S.Bytes(32));
+const pickChatFilesResultCodec = S.Vector(NativeChatPickedFile);
 
 /**
  * Byte-oriented callback surface the WASM core invokes. Members of an
@@ -53,7 +88,7 @@ import { chainConnectAdapter, driveResultStream } from "../adapter-support.js";
  * the core then answers the matching product calls with `Unsupported`.
  */
 export interface RawCallbacks {
-  authStateChanged(state: Uint8Array): void;
+  authStateChanged?(state: Uint8Array): void;
   chainConnect: ChainConnect;
   createChatRoom?(
     product: Uint8Array,
@@ -73,22 +108,85 @@ export interface RawCallbacks {
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
   ): (() => void) | void;
+  nativeCoinage?(request: Uint8Array): Promise<Uint8Array>;
   contacts?(lookup: Uint8Array): Promise<Uint8Array>;
   pickContact?(product: Uint8Array): Promise<Uint8Array>;
+  pickContacts?(
+    product: Uint8Array,
+    selection: Uint8Array,
+  ): Promise<Uint8Array>;
+  placeContactLabels?(
+    product: Uint8Array,
+    placed: Uint8Array,
+  ): Promise<boolean>;
   readCoreStorage(key: Uint8Array): Promise<Uint8Array | null | undefined>;
   writeCoreStorage(key: Uint8Array, value: Uint8Array): Promise<void>;
   clearCoreStorage(key: Uint8Array): Promise<void>;
+  compareExchangeCoreStorage(
+    key: Uint8Array,
+    expected: Uint8Array | null | undefined,
+    replacement: Uint8Array,
+    notifyOnSuccess: boolean,
+  ): Promise<boolean>;
+  coreStorageChanged(key: Uint8Array): void;
   featureSupported(request: Uint8Array): Promise<Uint8Array>;
   supportedChains(): Promise<Uint8Array>;
   scheduleGameReminder?(product: Uint8Array, startsAt: bigint): Promise<void>;
   cancelGameReminder?(product: Uint8Array): Promise<void>;
+  allowedHopEndpoints?(bulletinGenesisHash: Uint8Array): Promise<Uint8Array>;
+  hopConnect?: HopConnect;
+  identityUsernameCandidates?(
+    username: string,
+    peopleChainGenesisHash: Uint8Array,
+  ): Promise<Uint8Array>;
   subscribeLocale(
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
   ): (() => void) | void;
+  localizeTimestamps?(request: Uint8Array): Promise<Uint8Array>;
+  mediaBackendCapabilities?(product: Uint8Array): Promise<Uint8Array>;
+  mediaBackendEvents?(
+    product: Uint8Array,
+    runtimeId: bigint,
+    sendItem: (item?: Uint8Array) => void,
+    sendError: (error: GenericError) => void,
+  ): (() => void) | void;
+  mediaBackendCommand?(
+    product: Uint8Array,
+    runtimeId: bigint,
+    command: Uint8Array,
+  ): Promise<Uint8Array>;
+  pickChatFiles(request: Uint8Array): Promise<Uint8Array>;
+  readChatFile(
+    sourceId: string,
+    offset: bigint,
+    length: number,
+  ): Promise<Uint8Array>;
+  releaseChatFile(sourceId: string): Promise<void>;
+  beginChatFileExport(request: Uint8Array): Promise<string | null | undefined>;
+  writeChatFileExport(
+    exportId: string,
+    offset: bigint,
+    data: Uint8Array,
+  ): Promise<void>;
+  finishChatFileExport(exportId: string): Promise<void>;
+  cancelChatFileExport(exportId: string): Promise<void>;
   navigateTo(url: string): Promise<void>;
   pushNotification(notification: Uint8Array): Promise<Uint8Array>;
-  cancelNotification(id: number): Promise<void>;
+  cancelNotification?(id: number): Promise<void>;
+  receiverAuthority?(productId: string): Promise<Uint8Array | null | undefined>;
+  receiverConsent?(
+    authority: Uint8Array,
+    watches: Uint8Array,
+  ): Promise<boolean>;
+  receiverChanged?(): Promise<void>;
+  receiverCommand?(
+    productId: string,
+    action: number,
+    payload: Uint8Array,
+  ): Promise<Uint8Array | null | undefined>;
+  activationEvents?(): Promise<Uint8Array>;
+  acknowledgeActivation?(request: Uint8Array): Promise<void>;
   devicePermissionStatus?(request: Uint8Array): Promise<Uint8Array>;
   devicePermission(
     product: Uint8Array,
@@ -119,12 +217,18 @@ export interface RawCallbacks {
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
   ): (() => void) | void;
+  presentProfile?(product: Uint8Array, request: Uint8Array): Promise<void>;
+  presentContactProfile?(
+    product: Uint8Array,
+    presented: Uint8Array,
+  ): Promise<void>;
+  placeContactAvatars?(product: Uint8Array, placed: Uint8Array): Promise<void>;
   scanCode?(product: Uint8Array, request: Uint8Array): Promise<Uint8Array>;
   subscribeTheme(
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
   ): (() => void) | void;
-  confirmPermission(review: Uint8Array): Promise<Uint8Array>;
+  confirmPermission?(review: Uint8Array): Promise<Uint8Array>;
   confirmUserAction(review: Uint8Array): Promise<boolean>;
 }
 /** Adapt typed host callbacks into the raw SCALE callback surface the
@@ -133,14 +237,29 @@ export function createWasmRawCallbacks(
   callbacks: RequiredHostCallbacks,
 ): RawCallbacks {
   const chat = callbacks.chat;
-  const contacts = callbacks.contacts;
+  const coinageWallet = coinageWalletHostAdapter(callbacks.coinageWallet);
+  const contacts = contactsHostAdapter(callbacks.contacts);
   const game = callbacks.game;
+  const identityBackend = callbacks.identityBackend;
+  const media = callbacks.media;
   const permissionStatus = callbacks.permissionStatus;
   const pocket = callbacks.pocket;
+  const profile = profileHostAdapter(callbacks.profile);
   const scanner = callbacks.scanner;
+  const auth = callbacks.auth;
+  const locale = callbacks.locale;
+  const notifications = callbacks.notifications;
+  const userConfirmation = callbacks.userConfirmation;
+  const hop = { ...unavailableHopProvider, ...callbacks.hop };
+  const nativeChatFiles =
+    callbacks.nativeChatFiles ?? unavailableNativeChatFilesHost;
   return {
-    authStateChanged: async (state) =>
-      await callbacks.auth.authStateChanged(AuthState.dec(state)),
+    ...(typeof auth.authStateChanged === "function"
+      ? {
+          authStateChanged: async (state) =>
+            await auth.authStateChanged!(AuthState.dec(state)),
+        }
+      : {}),
     chainConnect: chainConnectAdapter(callbacks.chain),
     ...(chat
       ? {
@@ -178,6 +297,16 @@ export function createWasmRawCallbacks(
             ),
         }
       : {}),
+    ...(coinageWallet
+      ? {
+          nativeCoinage: async (request) =>
+            NativeCoinageResponse.enc(
+              await coinageWallet.nativeCoinage(
+                NativeCoinageRequest.dec(request),
+              ),
+            ),
+        }
+      : {}),
     ...(contacts
       ? {
           contacts: async (lookup) =>
@@ -186,7 +315,19 @@ export function createWasmRawCallbacks(
             ),
           pickContact: async (product) =>
             HostContactPick.enc(
-              await contacts.pickContact(ProductContext.dec(product)),
+              await contacts.pickContact!(ProductContext.dec(product)),
+            ),
+          pickContacts: async (product, selection) =>
+            HostContactsPick.enc(
+              await contacts.pickContacts!(
+                ProductContext.dec(product),
+                ContactSelection.dec(selection),
+              ),
+            ),
+          placeContactLabels: async (product, placed) =>
+            await contacts.placeContactLabels!(
+              ProductContext.dec(product),
+              PlacedContactLabels.dec(placed),
             ),
         }
       : {}),
@@ -199,6 +340,20 @@ export function createWasmRawCallbacks(
       ),
     clearCoreStorage: async (key) =>
       await callbacks.coreStorage.clearCoreStorage(CoreStorageKey.dec(key)),
+    compareExchangeCoreStorage: async (
+      key,
+      expected,
+      replacement,
+      notifyOnSuccess,
+    ) =>
+      await callbacks.coreStorage.compareExchangeCoreStorage(
+        CoreStorageKey.dec(key),
+        expected ?? undefined,
+        replacement,
+        notifyOnSuccess,
+      ),
+    coreStorageChanged: async (key) =>
+      await callbacks.coreStorage.coreStorageChanged(CoreStorageKey.dec(key)),
     featureSupported: async (request) =>
       HostFeatureSupportedResponse.enc(
         await callbacks.features.featureSupported(
@@ -218,12 +373,94 @@ export function createWasmRawCallbacks(
             await game.cancelGameReminder(ProductContext.dec(product)),
         }
       : {}),
+    ...(typeof hop.allowedHopEndpoints === "function"
+      ? {
+          allowedHopEndpoints: async (bulletinGenesisHash) =>
+            allowedHopEndpointsResultCodec.enc(
+              await hop.allowedHopEndpoints!(bulletinGenesisHash),
+            ),
+        }
+      : {}),
+    ...(typeof hop.connectHop === "function"
+      ? {
+          hopConnect: hopConnectAdapter(hop),
+        }
+      : {}),
+    ...(identityBackend
+      ? {
+          identityUsernameCandidates: async (
+            username,
+            peopleChainGenesisHash,
+          ) =>
+            identityUsernameCandidatesResultCodec.enc(
+              await identityBackend.identityUsernameCandidates(
+                username,
+                peopleChainGenesisHash,
+              ),
+            ),
+        }
+      : {}),
     subscribeLocale: (sendItem, sendError) =>
       driveResultStream(
         callbacks.locale.subscribeLocale(),
         (item) => sendItem(HostLocaleSubscribeItem.enc(item)),
         sendError,
       ),
+    ...(typeof locale.localizeTimestamps === "function"
+      ? {
+          localizeTimestamps: async (request) =>
+            HostLocaleLocalizeTimestampsResponse.enc(
+              await locale.localizeTimestamps!(
+                HostLocaleLocalizeTimestampsRequest.dec(request),
+              ),
+            ),
+        }
+      : {}),
+    ...(typeof media?.mediaBackendCapabilities === "function" &&
+    typeof media?.mediaBackendEvents === "function" &&
+    typeof media?.mediaBackendCommand === "function"
+      ? {
+          mediaBackendCapabilities: async (product) =>
+            MediaBackendCapabilities.enc(
+              await media.mediaBackendCapabilities(ProductContext.dec(product)),
+            ),
+          mediaBackendEvents: (product, runtimeId, sendItem, sendError) =>
+            driveResultStream(
+              media.mediaBackendEvents(ProductContext.dec(product), runtimeId),
+              (item) => sendItem(MediaBackendEvent.enc(item)),
+              sendError,
+              true,
+            ),
+          mediaBackendCommand: async (product, runtimeId, command) =>
+            MediaBackendResponse.enc(
+              await media.mediaBackendCommand(
+                ProductContext.dec(product),
+                runtimeId,
+                MediaBackendCommand.dec(command),
+              ),
+            ),
+        }
+      : {}),
+    pickChatFiles: async (request) =>
+      pickChatFilesResultCodec.enc(
+        await nativeChatFiles.pickChatFiles(
+          NativeChatFilePickRequest.dec(request),
+        ),
+      ),
+    readChatFile: async (sourceId, offset, length) =>
+      await nativeChatFiles.readChatFile(sourceId, offset, length),
+    releaseChatFile: async (sourceId) =>
+      await nativeChatFiles.releaseChatFile(sourceId),
+    beginChatFileExport: async (request) =>
+      await nativeChatFiles.beginChatFileExport(
+        NativeChatFileExportRequest.dec(request),
+      ),
+    writeChatFileExport: async (exportId, offset, data) =>
+      await nativeChatFiles.writeChatFileExport(exportId, offset, data),
+    finishChatFileExport: async (exportId) =>
+      await nativeChatFiles.finishChatFileExport(exportId),
+    cancelChatFileExport: async (exportId) =>
+      await nativeChatFiles.cancelChatFileExport(exportId),
     navigateTo: async (url) => await callbacks.navigation.navigateTo(url),
     pushNotification: async (notification) =>
       HostPushNotificationResponse.enc(
@@ -231,8 +468,56 @@ export function createWasmRawCallbacks(
           HostPushNotificationRequest.dec(notification),
         ),
       ),
-    cancelNotification: async (id) =>
-      await callbacks.notifications.cancelNotification(id),
+    ...(typeof notifications.cancelNotification === "function"
+      ? {
+          cancelNotification: async (id) =>
+            await notifications.cancelNotification!(id),
+        }
+      : {}),
+    ...(typeof notifications.receiverAuthority === "function"
+      ? {
+          receiverAuthority: async (productId) => {
+            const value = await notifications.receiverAuthority!(productId);
+            return value == null ? undefined : ReceivingAuthority.enc(value);
+          },
+        }
+      : {}),
+    ...(typeof notifications.receiverConsent === "function"
+      ? {
+          receiverConsent: async (authority, watches) =>
+            await notifications.receiverConsent!(
+              ReceivingAuthority.dec(authority),
+              S.Vector(ReceivingWatch).dec(watches),
+            ),
+        }
+      : {}),
+    ...(typeof notifications.receiverChanged === "function"
+      ? {
+          receiverChanged: async () => await notifications.receiverChanged!(),
+        }
+      : {}),
+    ...(typeof notifications.receiverCommand === "function"
+      ? {
+          receiverCommand: async (productId, action, payload) =>
+            await notifications.receiverCommand!(productId, action, payload),
+        }
+      : {}),
+    ...(typeof notifications.activationEvents === "function"
+      ? {
+          activationEvents: async () =>
+            NotificationActivations.enc(
+              await notifications.activationEvents!(),
+            ),
+        }
+      : {}),
+    ...(typeof notifications.acknowledgeActivation === "function"
+      ? {
+          acknowledgeActivation: async (request) =>
+            await notifications.acknowledgeActivation!(
+              NotificationActivationAcknowledgeRequest.dec(request),
+            ),
+        }
+      : {}),
     ...(permissionStatus
       ? {
           devicePermissionStatus: async (request) =>
@@ -300,6 +585,25 @@ export function createWasmRawCallbacks(
         (item) => sendItem(HostLocalStorageChangeItem.enc(item)),
         sendError,
       ),
+    ...(profile
+      ? {
+          presentProfile: async (product, request) =>
+            await profile.presentProfile(
+              ProductContext.dec(product),
+              HostProfilePresentRequest.dec(request),
+            ),
+          presentContactProfile: async (product, presented) =>
+            await profile.presentContactProfile!(
+              ProductContext.dec(product),
+              PresentedContactProfile.dec(presented),
+            ),
+          placeContactAvatars: async (product, placed) =>
+            await profile.placeContactAvatars!(
+              ProductContext.dec(product),
+              PlacedAvatars.dec(placed),
+            ),
+        }
+      : {}),
     ...(scanner
       ? {
           scanCode: async (product, request) =>
@@ -317,12 +621,16 @@ export function createWasmRawCallbacks(
         (item) => sendItem(HostThemeSubscribeItem.enc(item)),
         sendError,
       ),
-    confirmPermission: async (review) =>
-      PermissionDecision.enc(
-        await callbacks.userConfirmation.confirmPermission(
-          UserConfirmationReview.dec(review),
-        ),
-      ),
+    ...(typeof userConfirmation.confirmPermission === "function"
+      ? {
+          confirmPermission: async (review) =>
+            PermissionDecision.enc(
+              await userConfirmation.confirmPermission!(
+                UserConfirmationReview.dec(review),
+              ),
+            ),
+        }
+      : {}),
     confirmUserAction: async (review) =>
       await callbacks.userConfirmation.confirmUserAction(
         UserConfirmationReview.dec(review),

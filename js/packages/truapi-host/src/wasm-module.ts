@@ -4,6 +4,10 @@
 // these interfaces so the worker can name it in a statically analysable import.
 
 import type { PermissionAuthorizationRuntime } from "./worker-permission-authorization.js";
+import type { LocalIdentity } from "./worker-protocol.js";
+import type { WalletAllowanceSnapshot } from "./wallet-allowances.js";
+import type { NativeChatContactsSnapshot } from "./runtime.js";
+import type { RawNotificationReceiver, RawReceivingRuntime } from "./runtime.js";
 
 /** Cancellable handle on one live render stream inside the core. */
 export interface WorkerRendererSubscription {
@@ -45,14 +49,22 @@ export interface WorkerProductRuntime {
 /** What the host does with a product's worker after demand on it changed. */
 export type WorkerTransition = "Start" | "Stop";
 
-/** The long-lived runtime product cores are created from, in either role. */
-export interface WorkerHostRuntime extends PermissionAuthorizationRuntime {
+/** Runtime operations shared by paired and browser-local signing hosts. */
+export interface WorkerHostRuntime extends PermissionAuthorizationRuntime, RawReceivingRuntime {
   productRuntime(
     product: unknown,
     coreCallbacks: unknown,
+    platformCallbacks?: unknown,
   ): WorkerProductRuntime;
   disconnectSession(): Promise<void>;
   notifyContactsChanged(): void;
+  sessionChatIdentityKey(): Uint8Array | undefined;
+  deviceEncryptionKey(): Promise<Uint8Array>;
+  productSubtreePublicKey(
+    productId: string,
+    timeoutMs?: number,
+  ): Promise<Uint8Array | undefined>;
+  clearProductState(productId: string): Promise<void>;
   /** Only on a core built with `test-host`. */
   setSubmitPreimagesLocally?(local: boolean): void;
   /**
@@ -67,56 +79,68 @@ export interface WorkerHostRuntime extends PermissionAuthorizationRuntime {
   free(): void;
 }
 
-/** The pairing-host runtime: the user's keys live in a paired wallet. */
+/** The long-lived pairing-host runtime product cores are created from. */
 export interface WorkerPairingHostRuntime extends WorkerHostRuntime {
+  getNativeChatContacts(): Promise<NativeChatContactsSnapshot>;
   cancelPairing(): void;
   notifySessionStoreChanged(): void;
-  sessionChatIdentityKey(): Uint8Array | undefined;
   deviceStatementKey(): Uint8Array | undefined;
-  deviceEncryptionKey(): Promise<Uint8Array>;
-  productSubtreePublicKey(
-    productId: string,
-    timeoutMs?: number,
-  ): Promise<Uint8Array | undefined>;
   activateStoredSession(): Promise<void>;
   activateExternalSession(blob: Uint8Array): Promise<void>;
   resetSessionState(): Promise<void>;
 }
 
 /**
- * The signing-host runtime, present only in the `testing` WASM bundle.
+ * A browser-local signing host activated from caller-owned entropy.
  *
  * A signing host owns the user's keys and establishes sessions from local
- * entropy rather than by pairing with a wallet. The production `web` bundle is
- * built without it on purpose, so this is optional on the module surface.
+ * entropy rather than by pairing with a wallet. It is present only in a core
+ * built with `wasm-signing-host`: the testing bundle or a production `web`
+ * bundle built with `--signing-host`. The constructor is otherwise absent.
  */
 export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
-  /** Derived from the active session root, so it never waits. */
-  productSubtreePublicKey(productId: string): Uint8Array | undefined;
+
   activateLocalSession(secret: Uint8Array): Promise<void>;
-  /** Only on a core built with `wasm-signing-host`. */
+  /** Only on a core built with the non-production `test-host` feature. */
   setGrantAllowancesUnchecked?(granted: boolean): void;
-  /** Only on a core built with `wasm-signing-host`. */
+  /** Only on a core built with the non-production `test-host` feature. */
   setWithheldResources?(tags: string[]): void;
   /**
    * Activate and give the session a display name, which is what
-   * `account.get_user_id` answers with. Optional: a core built before this
-   * entry point existed exposes only {@link activateLocalSession}.
+   * `account.get_user_id` answers with.
    */
-  activateLocalSessionWithIdentity?(
+  activateLocalSessionWithIdentity(
     secret: Uint8Array,
-    liteUsername?: string | null,
+    liteUsername?: string,
   ): Promise<void>;
+  localIdentityContext(): { activationId: string; identityAccountId: string };
+  localIdentityAuthProof(
+    activationId: string,
+    challenge: Uint8Array,
+  ): Uint8Array;
+  localLiteRegistrationBody(
+    activationId: string,
+    usernameBase: string,
+    verifier: Uint8Array,
+  ): Promise<string>;
+  refreshLocalIdentity(activationId: string): Promise<LocalIdentity>;
+  getWalletAllowanceSnapshot(
+    activationId: string,
+    productIds: string[],
+  ): Promise<WalletAllowanceSnapshot>;
+  getNativeChatContacts(): Promise<NativeChatContactsSnapshot>;
 }
 
 /** Module surface the wasm-pack glue exports. */
 export interface WasmModuleShape {
   default: (input?: unknown) => Promise<unknown>;
+  /** Wallet-free receiver for the host's single durable service-worker owner. */
+  WasmNotificationReceiver: new (callbacks: unknown) => RawNotificationReceiver;
   WasmPairingHostRuntime: new (
     callbacks: unknown,
     hostConfig: unknown,
   ) => WorkerPairingHostRuntime;
-  /** Only in the `testing` bundle; see {@link WorkerSigningHostRuntime}. */
+  /** Only with `wasm-signing-host`; see {@link WorkerSigningHostRuntime}. */
   WasmSigningHostRuntime?: new (
     callbacks: unknown,
     hostConfig: unknown,
@@ -126,6 +150,8 @@ export interface WasmModuleShape {
     runtimeConfig: unknown,
   ) => WorkerProductRuntime;
   setLogLevel?: (level: string) => void;
+  /** Canonical Rust classifier; hosts must not maintain another trusted-label list. */
+  hasTrustedRemotePermissions: (productId: string) => boolean;
   /**
    * Derive a product account public key from that product's hard-subtree
    * public key and a SCALE-encoded `DerivationIndex`. Pure: no runtime or

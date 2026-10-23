@@ -35,7 +35,26 @@ If you experience problems with any product or service that was built on or depl
 - **Manual backups** — Keep your account stored only in the secure enclave storage locally.
 - **Customization** — Fully customizable UI design system with 5 default themes.
 
+### Native profile permission settings
+
+Profile sharing is a separate, product-scoped permission, not part of Chat
+identity authority or trusted outbound network access. Native settings enumerate
+its canonical grant or denial and revoke that exact permission; the persisted
+`profile_disclosure` case has an empty key. Revocation invalidates pending consent
+and one-time grants without changing another product's authority. A failed write
+leaves the existing settings row and authority intact.
+
+Profile disclosure reviews use the native permission prompt and preserve explicit
+allow-once, allow-always and deny choices. Missing presentation or cancellation
+throws instead of recording a user denial. Runtime/session consent checks remain
+authoritative.
+
 ## Getting started
+
+For the in-tree Host build and Chat product, follow the
+[Mac simulator runbook](../../docs/chat-ios-simulator.md). It covers the CI
+preview install, local builds, matching product versions, and safe coexistence
+testing with built-in Chat.
 
 <details>
 <summary>Prerequisites</summary>
@@ -92,6 +111,15 @@ xcodebuild test -project polkadot-app.xcodeproj -scheme polkadot-appTests \
   -destination 'platform=iOS Simulator,name=iPhone 16'
 ```
 
+The iOS CI test job runs `RUN_IN_CI=true bundle exec fastlane run_unit_tests`
+from `hosts/ios`. It retains the `.xcresult` bundle, raw xcodebuild log,
+simulator logs, and available crash reports in
+`test-artifacts-<run-id>-<attempt>` for three days, even when tests fail.
+The job log also contains the `xcresulttool` test summary and test list.
+Download the artifact from the workflow run and open its `.xcresult` in Xcode
+to inspect individual failures and diagnostics. `debug:true` adds raw console
+output without changing whether test failures fail the job.
+
 ## How it works
 
 Polkadot iOS is a self-custodial superapp: your keys are created on your phone, stay on your phone, and everything else — identity, chat, payments, apps — is built on top of them using Polkadot's public chains instead of company servers.
@@ -105,15 +133,22 @@ Polkadot iOS is a self-custodial superapp: your keys are created on your phone, 
 5. **Runs Polkadot apps inside the app.** Type a `.dot` name and the app fetches the dApp's content (published on the Bulletin Chain and addressed via DotNS) and runs it in a sandbox. Each dApp gets its own permissions — network, camera, signing, storage — that you grant and revoke per app.
 6. **Works as one account across devices.** Pair with Polkadot Desktop or Polkadot Web by scanning a QR code: your phone becomes the signer that approves their transactions, and contacts and chats sync between devices over the same encrypted channels.
 
+App permission settings use the shared Rust runtime's canonical authorization records. Chat identity authority and Statement Store allowance are separate permissions, not statement-submission or trusted-network grants. Allowance settings retain the exact legacy account (`None`), product index, or raw 32-byte product selector; each can be displayed and revoked independently. Legacy permission rows never override a core denial or revocation, and settings keep a grant visible until the runtime acknowledges its removal. This revision's native selector contract is `Index`/`Raw`, not a chain-genesis selector.
+
+Consent prompts and app settings share permission descriptions and icon metadata, including the exact Statement Store allowance selector. Canonical authorization conversion separates remote permissions from device, identity, Chat and allowance permissions; raw allowance selectors still require exactly 32 bytes. The permission-presentation refactor received Linux Swift syntax parsing and structural mapping checks only. The macOS app build, unit tests and unchanged warning ratchet must pass in CI before this revision is considered iOS-qualified.
+
 ### What it doesn't do
 
 - There is no custodian, and nobody (including the developers) can freeze, recover, or move your account. If you lose your device and have no backup, the account is gone.
 - It does **not** route your chats and calls through any 1st or 3rd party messaging servers — messages travel through the public chain, voice and video calls go peer-to-peer.
 - It is **not** a production-hardened product — treat it as a reference implementation (see the warning at the top).
+- Seity profile-disclosure consent has no native prompt yet. Its permission callback returns an error, leaving an unanswered authorization `NotDetermined` rather than recording a user denial. Single-action confirmation still fails closed.
 
 ### Under the hood
 
 Built with **UIKit** and programmatic layout (no Storyboards), using **VIPER** for every feature module: code is split between the main app target and 28 local Swift packages under [`Packages/`](./Packages) with `AppDependencies` as the root package, chain access goes through [substrate-sdk-ios](https://github.com/novasamatech/substrate-sdk-ios) (JSON-RPC, storage subscriptions, extrinsics), and local data lives in CoreData.
+
+Permission prompts and revocation settings share the `ProductPermission` presentation metadata so capability descriptions stay consistent. JAM peer consent displays the full network genesis and remains scoped to that network and product; it does not grant accounts or signing.
 
 This repository ships a **GitHub Actions + Fastlane CI/CD setup** — PR build and
 tests, plus maintainer-gated TestFlight and Firebase App Distribution. Build-time

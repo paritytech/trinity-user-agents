@@ -5,12 +5,12 @@
 //! product connection.
 
 use truapi::latest::{
-	NFT_PURSE_MAX_NAME_BYTES, NftPurseId, NftPurseOwner, NftPursePurse, RemotePermission,
+	NFT_PURSE_MAX_NAME_BYTES, NftPurseId, NftPurseOwner, NftPursePurse, ProductId, ProductIdError,
+	RemotePermission,
 };
 
 use crate::{
 	nft::{CreatePurseError, NftLedger, PurseId, PurseRecord, PurseTag},
-	platform::{ProductId, ProductIdError},
 	store::{Db, DbError},
 };
 

@@ -212,27 +212,19 @@ private extension ClaimCoinsService {
     }
 
     /// Reports the group on every ledger update until nothing in it is live, then returns what it
-    /// settled on. An empty group is already settled — a first attempt, nothing to wait for. A stream
-    /// that fails settles on the last states seen; a valuation failure propagates.
+    /// settled on. An empty group is already settled — a first attempt, nothing to wait for. A failed
+    /// or prematurely ended stream has no verdict: unresolved claims must be resumed, not retried.
     func awaitKnownOperationsSettled(
         groupId: CoinageTxGroupId,
         coins: Set<PublicKey>,
         context: DenominationBreakdownContext,
         report: @Sendable (CoinageTransferDetection) -> Void
     ) async throws -> [CoinageTxEntry] {
-        var last: [CoinageTxEntry] = []
-        do {
-            for try await states in txService.subscribeOperationGroupStatuses(groupId) {
-                last = states
-                try await report(toProgress(states, coins: coins, context: context))
-                if states.allSatisfy({ !$0.status.isLive }) { break }
-            }
-        } catch let error as ClaimValuationError {
-            throw error
-        } catch {
-            logger?.error("Claim group-status stream failed group=\(groupId): \(error)")
+        for try await states in txService.subscribeOperationGroupStatuses(groupId) {
+            try await report(toProgress(states, coins: coins, context: context))
+            if states.allSatisfy({ !$0.status.isLive }) { return states }
         }
-        return last
+        throw CoinageGroupObservationError.endedBeforeSettlement
     }
 
     func submit(
@@ -347,8 +339,10 @@ private extension ClaimCoinsService {
         let outstanding = coins.subtracting(arrived.receivedPublicKeys())
 
         if outstanding.isEmpty {
-            let finalized = coins.subtracting(states.finalizedSuccess().receivedPublicKeys()).isEmpty
-            return try await .claimed(amount: valueMinted(by: arrived, context: context), finalized: finalized)
+            let finalizedStates = states.finalizedSuccess()
+            let finalized = coins.subtracting(finalizedStates.receivedPublicKeys()).isEmpty
+            let value = try await valueMinted(by: finalized ? finalizedStates : arrived, context: context)
+            return .claimed(amount: value, finalized: finalized)
         }
 
         // One waiting to be built again has not failed — announcing a shortfall there would call a
@@ -367,17 +361,13 @@ private extension ClaimCoinsService {
         coins: Set<PublicKey>,
         context: DenominationBreakdownContext
     ) async throws -> CoinageTransferDetection {
-        let arrived = states.filter(\.status.isArrived)
-        let notArrived = coins.subtracting(arrived.receivedPublicKeys())
-
-        if notArrived.isEmpty {
-            let finalized = coins.subtracting(states.finalizedSuccess().receivedPublicKeys()).isEmpty
-            return try await .claimed(amount: valueMinted(by: arrived, context: context), finalized: finalized)
+        let finalized = states.finalizedSuccess()
+        let value = try await valueMinted(by: finalized, context: context)
+        guard value > 0 else { return .notClaimed }
+        if coins.isSubset(of: finalized.receivedPublicKeys()) {
+            return .claimed(amount: value, finalized: true)
         }
-        if !arrived.isEmpty {
-            return try await .claimedPartially(claimed: valueMinted(by: arrived, context: context))
-        }
-        return .notClaimed
+        return .claimedPartially(claimed: value)
     }
 
     /// The planks minted by `entries` — their output coins valued against the denomination context.

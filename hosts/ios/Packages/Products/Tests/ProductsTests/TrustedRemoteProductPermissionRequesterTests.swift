@@ -25,7 +25,8 @@ struct TrustedRemoteProductPermissionRequesterTests {
         .webRtcAccess,
         .chainSubmitAccess,
         .preimageSubmitAccess,
-        .statementSubmitAccess
+        .statementSubmitAccess,
+        .jamPeersAccess(genesis: "0x10c123f0" + String(repeating: "0", count: 56))
     ]
 
     /// The core grants a first-party product every remote permission without
@@ -44,13 +45,19 @@ struct TrustedRemoteProductPermissionRequesterTests {
 
     /// The whole point of the narrower wrapper: trust for outbound access is not
     /// trust for the camera, another product's account, or the user's identity.
-    @Test("A trusted product still prompts for everything that is not remote access")
+    @Test("A trusted product still prompts outside remote access and notifications")
     func trustedProductStillPromptsForTheRest() async {
         for permission: ProductPermission in [
             .deviceCapability(.camera),
+            .deviceCapability(.microphone),
             .accountAccess(targetProductId: "other.dot"),
             .balanceAccess,
-            .userIdentityAccess
+            .userIdentityAccess,
+            .chatAuthority,
+            .profileDisclosure,
+            .statementStoreAllowance(derivationIndex: nil),
+            .statementStoreAllowance(derivationIndex: .index(7)),
+            .statementStoreAllowance(derivationIndex: .raw(Data(repeating: 9, count: 32)))
         ] {
             let (sut, wrapped) = makeSUT()
 
@@ -99,6 +106,17 @@ struct TrustedRemoteProductPermissionRequesterTests {
             permissions: [.networkAccess(domain: "example.com"), .deviceCapability(.camera)]
         )
 
+        #expect(decision == .deny)
+        #expect(wrapped.promptBatchedCalls.count == 1)
+    }
+
+    @Test("Trusted remote batches cannot implicitly grant profile disclosure")
+    func profileDisclosureInRemoteBatchStillPrompts() async {
+        let (sut, wrapped) = makeSUT()
+        let decision = await sut.promptBatched(
+            productId: trusted,
+            permissions: Self.remotePermissions + [.profileDisclosure]
+        )
         #expect(decision == .deny)
         #expect(wrapped.promptBatchedCalls.count == 1)
     }

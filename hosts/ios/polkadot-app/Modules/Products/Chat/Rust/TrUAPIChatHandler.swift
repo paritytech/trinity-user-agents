@@ -31,28 +31,37 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         case untypedBody
     }
 
-    private let productId: ProductId
-    private let workers: any TrUAPIWorkerManaging
-    /// The product's own chat surface and routers, which outlive any one worker.
-    private let context: ProductWorkerContext
+    private let productUrl: URL
+    /// Opened in `start`, not in `init`: the core's worker registry is keyed by
+    /// product id and evicts the previous entry, so a bot rebuilt before it
+    /// starts would close the execution the live one is about to use.
+    private let makeExecutionModel: @MainActor @Sendable (any ProductChatMessaging) throws
+        -> RustRuntimeEnvironment.ExecutionModel
+    private var executionModel: RustRuntimeEnvironment.ExecutionModel?
+    /// Bound for as long as the chat surface is alive, like the shared worker's
+    /// native api.
+    private let chatSurface = ProductChatSurface()
+    // Set once in init and only read from the MainActor-isolated `attach`;
+    // all facade mutation happens behind its own @MainActor method.
+    private nonisolated(unsafe) let routers: ProductRoutersFacadeProtocol
+    private let engineFactory: @Sendable () -> JSEngineProtocol
     private let renderStartupWindow: Duration
     private let logger: LoggerProtocol
 
-    /// How often a cell asks again while the product is still coming up. The
-    /// worker's own refusals are waited out by ``renderWhenConnected``; this
-    /// one covers the window before there is a worker to ask at all.
-    private static let renderRetryInterval = Duration.milliseconds(25)
-
-    /// What this session holds of the product's worker request, so dispose
-    /// gives back exactly what start asked for and never more.
-    private var request = WorkerRequest.none
+    private var engine: JSEngineProtocol?
+    private var engineMonitor: JSEngineMonitor?
+    private var revocationObserver: ProductExecutionRevocationObserver?
+    private var moduleBridge: JSESModuleBridge?
     private var roomsForwardingTask: Task<Void, Never>?
     private var started = false
     private var disposed = false
 
     init(
-        productId: ProductId,
-        workers: any TrUAPIWorkerManaging,
+        productUrl: URL,
+        makeExecutionModel: @MainActor @Sendable @escaping (any ProductChatMessaging) throws
+            -> RustRuntimeEnvironment.ExecutionModel,
+        routers: ProductRoutersFacadeProtocol,
+        engineFactory: @Sendable @escaping () -> JSEngineProtocol,
         renderStartupWindow: Duration = .seconds(5),
         logger: LoggerProtocol = Logger.shared
     ) {
@@ -172,6 +181,7 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         // Flipped before the first suspension: any start resuming after this
         // point observes it and unwinds.
         disposed = true
+        revocationObserver = nil
 
         roomsForwardingTask?.cancel()
         roomsForwardingTask = nil
@@ -181,11 +191,14 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         // because the surface is the product's and another runtime may hold it.
         context.chat.unbind(owner: self)
 
-        // A release, not a close. The product's cards may still be asking for
-        // the same worker, and the core stops it once the last request goes.
-        releaseWorker()
+        await executionModel?.media.close()
+        await destroyEngineResources()
 
-        logger.debug("Rust chat runtime disposed for: \(productId)")
+        if let executionModel {
+            await executionModel.close()
+        }
+
+        logger.debug("Rust chat runtime disposed for: \(productUrl)")
     }
 }
 
@@ -197,17 +210,63 @@ private extension TrUAPIChatHandler {
         // surface with no binding.
         context.chat.bind(messagingSupport, owner: self)
 
-        request = .asking
+        let model = try await makeExecutionModel(chatSurface)
+        guard !disposed else {
+            await model.close()
+            throw CancellationError()
+        }
+        executionModel = model
+        revocationObserver = ProductExecutionRevocationObserver(execution: model.execution) { [weak self] in
+            await self?.dispose()
+        }
+        startRoomsForwarding(chatMessaging: chatSurface, execution: model.execution)
 
-        // Returns once the worker is up, because everything the bot does next,
-        // its welcome message first of all, is published through the execution.
+        let bootstrapScript = try model.startBridge()
+        let scriptsFactory = RustRuntimeScriptsFactory(bootstrapScript: bootstrapScript)
+        let jsEngine = try await bootEngine(
+            scripts: scriptsFactory.makeScripts(),
+            media: model.media
+        )
+        try checkNotDisposed()
+
+        let modBridge = JSESModuleBridge(engine: jsEngine)
+        await modBridge.install()
+
+        try checkNotDisposed()
+        moduleBridge = modBridge
+
+        try await modBridge.executeScript(url: productUrl)
+
+        logger.debug("Rust chat runtime started for: \(productUrl)")
+    }
+
+    func bootEngine(
+        scripts: [JSEngineScript],
+        media: NativeMediaBackend
+    ) async throws -> JSEngineProtocol {
+        let jsEngine = engineFactory()
         do {
-            _ = try await workers.ensureWorker(for: productId)
+            await jsEngine.registerJSDeviceCapabilityHandler { _ in .denied }
+            try checkNotDisposed()
+            try await jsEngine.initialize(with: scripts)
+            guard await jsEngine.getState() == .ready else {
+                throw ScriptExecutorError.engineInitFailed
+            }
+            try checkNotDisposed()
         } catch {
             settleRequest()
             throw error
         }
-        settleRequest()
+        await media.watchEngine {
+            switch await jsEngine.getState() {
+            case .destroyed, .error: return false
+            default: return true
+            }
+        }
+        guard !disposed else {
+            await jsEngine.destroy()
+            throw CancellationError()
+        }
 
         try checkNotDisposed()
         startRoomsForwarding()
@@ -232,7 +291,7 @@ private extension TrUAPIChatHandler {
     }
 
     func checkNotDisposed() throws {
-        guard !disposed else { throw CancellationError() }
+        guard !disposed, executionModel?.execution.isClosed() != true else { throw CancellationError() }
     }
 
     /// A persisted message can decode before the product attaches. `ProductMessageDecoder`

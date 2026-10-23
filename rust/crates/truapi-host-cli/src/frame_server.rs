@@ -40,7 +40,8 @@ use crate::bootstrap;
 use truapi::{
 	ChannelId, DebugSink, FrameSink, PairingHostRuntime, ProductContext, ProductRuntime,
 	ProductRuntimeError, SigningHostRuntime,
-	platform::{ProductExecutionKind, ProductId, ProductIdError},
+	latest::{ProductId, ProductIdError},
+	platform::ProductExecutionKind,
 };
 
 /// Pause after a failed `accept()` before trying again.
@@ -85,27 +86,31 @@ impl ProductSelection {
 		execution_kind: ProductExecutionKind,
 	) -> Result<Arc<Self>, ProductSelectionError> {
 		let product_id = product_id.parse::<ProductId>()?;
-		let product = ProductContext::new_with_execution(product_id, execution_kind);
+		let product = ProductContext::new_with_execution(product_id.to_string(), execution_kind)
+			.expect("a parsed product id is a valid product context");
 		let (current, _) = watch::channel(product);
 		Ok(Arc::new(Self { current, execution_kind }))
 	}
 
-	/// The current product id.
-	pub fn current(&self) -> ProductId {
-		self.current.borrow().product_id.clone()
+	/// Return the normalized current product id.
+	pub fn current(&self) -> String {
+		self.current.borrow().product_id.to_string()
 	}
 
-	/// Select a product, returning whether the selection changed.
-	pub fn select(&self, product_id: ProductId) -> bool {
-		let product = ProductContext::new_with_execution(product_id, self.execution_kind);
-		self.current.send_if_modified(|current| {
+	/// Select a validated product, returning whether the selection changed.
+	pub fn select(&self, product_id: String) -> Result<bool> {
+		let product_id = product_id.parse::<ProductId>()?;
+		let product =
+			ProductContext::new_with_execution(product_id.to_string(), self.execution_kind)
+				.expect("a parsed product id is a valid product context");
+		Ok(self.current.send_if_modified(|current| {
 			if current == &product {
 				false
 			} else {
 				*current = product;
 				true
 			}
-		})
+		}))
 	}
 
 	fn subscribe(&self) -> watch::Receiver<ProductContext> {
@@ -122,6 +127,9 @@ pub trait ProductRuntimeFactory: Send + Sync + 'static {
 	}
 }
 
+// async-trait's generated boxed Future is already must-use; newer Clippy
+// otherwise reports the macro's duplicate annotation on this private trait.
+#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 trait ConnectionRuntime: Send + Sync + 'static {
 	async fn receive_frame(&self, frame: Vec<u8>) -> Result<(), ProductRuntimeError>;
@@ -750,6 +758,7 @@ mod tests {
 		second_dispatch_finished: Notify,
 		dispatch_cancelled: Arc<AtomicBool>,
 		dispose_calls: AtomicUsize,
+		ui: Option<crate::terminal_ui::UiHandle>,
 	}
 
 	struct DispatchCancellation(Arc<AtomicBool>);
@@ -769,7 +778,12 @@ mod tests {
 			}
 			let _cancellation = DispatchCancellation(self.dispatch_cancelled.clone());
 			self.dispatch_started.notify_one();
-			std::future::pending().await
+			if let Some(ui) = &self.ui {
+				ui.confirm("sign raw", "pending product payload").await;
+				Ok(())
+			} else {
+				std::future::pending().await
+			}
 		}
 
 		fn dispose(&self) {
@@ -990,7 +1004,14 @@ mod tests {
 	async fn disconnect_cancels_pending_dispatch_and_disposes_runtime() -> Result<()> {
 		let listener = TcpListener::bind("127.0.0.1:0").await?;
 		let address = listener.local_addr()?;
-		let runtime = Arc::new(PendingRuntime::default());
+		let (mut ui, handle) = crate::terminal_ui::TerminalUi::new(
+			"testnet",
+			"localhost:3000",
+			"default",
+			Vec::new(),
+			"info".into(),
+		);
+		let runtime = Arc::new(PendingRuntime { ui: Some(handle), ..PendingRuntime::default() });
 		let server_runtime = runtime.clone();
 		let product = ProductSelection::new("localhost:3000".into(), ProductExecutionKind::App)?;
 		let product_updates = product.subscribe();
@@ -1015,12 +1036,14 @@ mod tests {
 		let (mut websocket, _) = client_async("ws://localhost/", stream).await?;
 		websocket.send(Message::Binary(vec![0])).await?;
 		tokio::time::timeout(Duration::from_secs(1), runtime.dispatch_started.notified()).await?;
+		assert!(ui.has_pending_approval());
 		websocket.send(Message::Binary(vec![1])).await?;
 		tokio::time::timeout(Duration::from_secs(1), runtime.second_dispatch_finished.notified())
 			.await?;
 		drop(websocket);
 
 		tokio::time::timeout(Duration::from_secs(1), server).await???;
+		assert!(!ui.has_pending_approval());
 		assert_eq!(
 			(
 				runtime.dispose_calls.load(Ordering::SeqCst),
@@ -1075,10 +1098,10 @@ mod tests {
 	fn product_selection_validates_and_normalizes_ids() -> Result<()> {
 		let product = ProductSelection::new(" Dotli.DOT ".to_string(), ProductExecutionKind::App)?;
 
-		assert_eq!(product.current().as_str(), "dotli.dot");
-		assert!(product.select(ProductId::for_test("localhost:3000")));
-		assert_eq!(product.current().as_str(), "localhost:3000");
-		assert!(!product.select(ProductId::for_test("LOCALHOST:3000")));
+		assert_eq!(product.current(), "dotli.dot");
+		assert!(product.select("localhost:3000".to_string())?);
+		assert_eq!(product.current(), "localhost:3000");
+		assert!(!product.select("LOCALHOST:3000".to_string())?);
 		let error = ProductSelection::new("example.com".to_string(), ProductExecutionKind::App)
 			.err()
 			.expect("public DNS names are not product ids");
@@ -1098,10 +1121,10 @@ mod tests {
 		let product = ProductSelection::new("first.dot".to_string(), ProductExecutionKind::App)?;
 		let mut connection = product.subscribe();
 
-		assert!(product.select(ProductId::for_test("second.dot")));
+		assert!(product.select("second.dot".to_string())?);
 		connection.changed().await?;
-		assert_eq!(connection.borrow().product_id.as_str(), "second.dot");
-		assert!(!product.select(ProductId::for_test("SECOND.DOT")));
+		assert_eq!(connection.borrow().product_id, "second.dot");
+		assert!(!product.select("SECOND.DOT".to_string())?);
 		assert!(!connection.has_changed()?);
 		Ok(())
 	}
@@ -1275,8 +1298,10 @@ mod tests {
 		) -> Vec<u8> {
 			let ids = request_ids(method).expect("the method is in the wire table");
 			let frames = Arc::new(CapturedFrames::default());
-			let connection = runtime
-				.product_runtime(ProductContext::new(ProductId::for_test(product)), frames.clone());
+			let connection = runtime.product_runtime(
+				ProductContext::new(product.to_string()).expect("the product id is valid"),
+				frames.clone(),
+			);
 			let frame = ProtocolMessage {
 				request_id: "1".to_string(),
 				payload: Payload {
@@ -1468,7 +1493,7 @@ mod tests {
 		product_id: &str,
 	) -> Result<ProductRuntime> {
 		let product =
-			ProductContext::new_with_execution(product_id.parse()?, ProductExecutionKind::App);
+			ProductContext::new_with_execution(product_id.into(), ProductExecutionKind::App)?;
 		Ok(tapped.product_runtime(product, Arc::new(DiscardingFrameSink)))
 	}
 

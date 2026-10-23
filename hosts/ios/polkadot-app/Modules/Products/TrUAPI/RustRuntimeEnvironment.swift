@@ -28,6 +28,15 @@ struct RustRuntimeEnvironment {
         let execution: TrUAPIProductExecutionProtocol
         let chainConnections: TrUAPIChainConnecting
         let osPermissionAsker: OSPermissionAsking
+        let bridge: RustProductExecutionBridge
+
+        @MainActor
+        func close() {
+            bridge.detach()
+            execution.stopWsBridge()
+            execution.close()
+            chainConnections.closeAll()
+        }
 
         /// Start the localhost ws-bridge and return the bootstrap script to
         /// inject. Called from the runtime's `start`; opening the execution
@@ -46,7 +55,19 @@ struct RustRuntimeEnvironment {
     /// in the runtime's `start` via ``ExecutionModel/startBridge()``. The
     /// execution retains the bridge (callback retainer) and the bridge retains
     /// the pool, so holding `ExecutionModel` pins the whole chain.
-    func makeSPAExecution(
+    @MainActor
+    func makeSPAExecution(productId: ProductId, routers: ProductRoutersFacadeProtocol) throws -> ExecutionModel {
+        try makeExecution(productId: productId, routers: routers, kind: .app)
+    }
+
+    /// Open a background-only worker without installing Chat-specific APIs.
+    func makeWorkerExecution(productId: ProductId, routers: ProductRoutersFacadeProtocol) throws -> ExecutionModel {
+        try makeExecution(productId: productId, routers: routers, kind: .worker)
+    }
+
+    /// Open a chat execution for `productId`. Mirrors ``makeSPAExecution``.
+    @MainActor
+    func makeChatExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
         cardFace: (any ExpandedCardFaceShowing)?
@@ -82,15 +103,14 @@ enum ExecutionPurpose {
 }
 
 private extension RustRuntimeEnvironment {
+    @MainActor
     func makeExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
         purpose: ExecutionPurpose
     ) throws -> ExecutionModel {
-        let chainConnections = TrUAPIV2SpecConnectionPool(
+        let chainConnections = TrUAPIChainConnectionPool(
             chainRegistry: chainRegistry,
-            applicationHandler: ApplicationHandler(),
-            dateProvider: NowDateProvider(),
             logger: logger
         )
 
@@ -105,11 +125,10 @@ private extension RustRuntimeEnvironment {
         let bridges = purpose.makeBridges(dependencies: dependencies)
 
         let execution = try runtime.openProductExecution(
-            bridge: bridges.host,
-            configuration: ProductExecutionConfig(productId: productId, executionKind: purpose.executionKind),
-            chat: bridges.chat,
-            pocket: purpose.pocket,
-            game: gameReminders == nil ? nil : bridges.host
+            bridge: bridge,
+            configuration: ProductExecutionConfig(productId: productId, executionKind: kind),
+            chat: chatBridge,
+            media: bridge.media
         )
 
         bridges.host.attach(execution)
@@ -117,7 +136,8 @@ private extension RustRuntimeEnvironment {
         return ExecutionModel(
             execution: execution,
             chainConnections: chainConnections,
-            osPermissionAsker: osPermissionAsker
+            osPermissionAsker: osPermissionAsker,
+            bridge: bridge
         )
     }
 
@@ -144,6 +164,7 @@ private extension RustRuntimeEnvironment {
             productStorage: TrUAPILocalStorage.createProductLocalStorage(productId: productId),
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: routers),
+            chatFiles: TrUAPINativeChatFiles.shared,
             preimageCache: TrUAPIPreimageCache { [logger, ipfsFetcher] key in
                 do {
                     return try await ipfsFetcher.lookupBy(rawHash: key)

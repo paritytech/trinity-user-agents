@@ -15,30 +15,36 @@ class RemotePermissionHandler @Inject constructor(
     override suspend fun isGranted(productId: ProductId, permission: RemotePermission): Boolean {
         return when (permission) {
             is RemotePermission.NetworkAccess -> networkAccessHandler.isGranted(productId, permission)
+            is RemotePermission.NetworkAccessSet,
             is RemotePermission.WebRtcAccess,
             is RemotePermission.ChainSubmitAccess,
             is RemotePermission.StatementSubmitAccess,
-            is RemotePermission.PreimageSubmitAccess -> repository.isGranted(productId, permission)
+            is RemotePermission.PreimageSubmitAccess,
+            is RemotePermission.JamPeersAccess -> repository.isGranted(productId, permission)
         }
     }
 
     override suspend fun request(productId: ProductId, permission: RemotePermission): Boolean {
         return when (permission) {
             is RemotePermission.NetworkAccess -> networkAccessHandler.request(productId, permission)
+            is RemotePermission.NetworkAccessSet,
             is RemotePermission.WebRtcAccess,
             is RemotePermission.ChainSubmitAccess,
             is RemotePermission.StatementSubmitAccess,
-            is RemotePermission.PreimageSubmitAccess -> requestSimple(productId, permission)
+            is RemotePermission.PreimageSubmitAccess,
+            is RemotePermission.JamPeersAccess -> requestSimple(productId, permission)
         }
     }
 
     override suspend fun revoke(productId: ProductId, permission: RemotePermission) {
         when (permission) {
             is RemotePermission.NetworkAccess -> networkAccessHandler.revoke(productId, permission)
+            is RemotePermission.NetworkAccessSet,
             is RemotePermission.WebRtcAccess,
             is RemotePermission.ChainSubmitAccess,
             is RemotePermission.StatementSubmitAccess,
-            is RemotePermission.PreimageSubmitAccess -> repository.revoke(productId, permission)
+            is RemotePermission.PreimageSubmitAccess,
+            is RemotePermission.JamPeersAccess -> repository.revoke(productId, permission)
         }
     }
 

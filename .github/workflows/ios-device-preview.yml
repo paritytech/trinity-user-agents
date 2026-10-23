@@ -51,11 +51,10 @@ jobs:
     # already building. Never from a fork, because the Parity machines are
     # persistent and shared, and a label once set keeps every later push running.
     if: >-
-      github.event.pull_request.head.repo.full_name == github.repository
-      && ((github.event.action == 'labeled'
-           && github.event.label.name == 'ios-device-build')
-          || (github.event.action == 'synchronize'
-              && contains(github.event.pull_request.labels.*.name, 'ios-device-build')))
+      (github.event.action == 'labeled'
+       && github.event.label.name == 'ios-device-build')
+      || (github.event.action == 'synchronize'
+          && contains(github.event.pull_request.labels.*.name, 'ios-device-build'))
     runs-on: parity-macos
     timeout-minutes: 45
     steps:

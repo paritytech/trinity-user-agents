@@ -32,9 +32,22 @@ fun TrUAPIConfirmation.Prompt.toUiState(): TrUAPIConfirmationUiState = when (thi
         RCommon.string.truapi_confirm_title_identity_disclosure,
     )
 
+    is TrUAPIConfirmation.ChatAuthority -> build(
+        RCommon.string.truapi_confirm_title_chat_authority,
+    )
+
+    is TrUAPIConfirmation.ProfileDisclosure -> build(
+        RCommon.string.truapi_confirm_title_profile_disclosure,
+    )
+
     is TrUAPIConfirmation.ResourceAllocation -> build(
         RCommon.string.truapi_confirm_title_resource_allocation,
         *resources.map { detail(RCommon.string.truapi_confirm_label_resource, it) }.toTypedArray(),
+    )
+
+    is TrUAPIConfirmation.PreimageSubmit -> build(
+        RCommon.string.truapi_confirm_title_preimage_submit,
+        detail(RCommon.string.truapi_confirm_label_payload_size, "$sizeBytes"),
     )
 
     is TrUAPIConfirmation.AccountAccess -> build(
@@ -45,6 +58,24 @@ fun TrUAPIConfirmation.Prompt.toUiState(): TrUAPIConfirmationUiState = when (thi
     is TrUAPIConfirmation.ProductSubtree -> build(
         RCommon.string.truapi_confirm_title_product_subtree,
     )
+    is TrUAPIConfirmation.Calling -> build(
+        RCommon.string.truapi_confirm_title_calling,
+        detail(RCommon.string.truapi_confirm_label_chain, network),
+        detail(RCommon.string.truapi_confirm_label_signer, account),
+    )
+    is TrUAPIConfirmation.ChatAuthority -> build(
+        RCommon.string.truapi_confirm_title_chat_authority,
+        detailRes(RCommon.string.truapi_confirm_label_request, RCommon.string.truapi_confirm_chat_authority_details),
+    )
+    is TrUAPIConfirmation.MainPurseChatPayment -> build(
+        RCommon.string.truapi_confirm_title_main_purse_payment,
+        detail(RCommon.string.truapi_confirm_label_recipient, recipient),
+        detail(RCommon.string.truapi_confirm_label_amount_cents, amountCents.toString()),
+        detail(RCommon.string.truapi_confirm_label_max_debit_cents, maxDebitCents.toString()),
+        detail(RCommon.string.truapi_confirm_label_chain, chain),
+        detail(RCommon.string.truapi_confirm_label_asset_instance, assetInstance),
+        detail(RCommon.string.truapi_confirm_label_operation, operationId),
+    )
 }
 
 private fun TrUAPIConfirmation.Prompt.build(
@@ -54,6 +85,7 @@ private fun TrUAPIConfirmation.Prompt.build(
     titleRes = titleRes,
     productId = requesterProductId,
     details = details.toList().toImmutableList(),
+    allowsAutomaticUploads = this is TrUAPIConfirmation.PreimageSubmit,
 )
 
 private fun detail(labelRes: Int, value: String) =

@@ -19,8 +19,8 @@ carrying `!` first and mark it `Breaking:`. A breaking change titled without
 
 - **type** is one of `feat`, `fix`, `perf`, `refactor`, `docs`, `test`,
   `build`, `ci`, `chore`, `style`, `revert`, `release`.
-- **scope** is optional and names the area: a crate (`truapi-server`), a
-  package (`truapi-host`), a host (`ios`, `android`, `hosts`), or `cli`.
+- **scope** is optional and names the area: a crate (`truapi`), a package
+  (`truapi-host`), a host (`ios`, `android`, `hosts`), or `cli`.
 - **`!`** marks a breaking change. It goes after the scope, before the colon.
 - **subject** starts lowercase, describes what the change does, and has no
   trailing period.
@@ -38,7 +38,7 @@ Some pull requests have a fixed shape:
   lifecycle's `Backport:` ones, are not checked.
 
 ```
-feat(truapi-server): withdraw a call before it prompts
+feat(truapi): withdraw a call before it prompts
 fix(ios): conform the chat bridge's inert host provider
 refactor(truapi)!: rename Provider type to WireProvider
 chore(hosts)!: backport 13 commits into hosts/ios

@@ -27,7 +27,8 @@ public extension CoinageService {
     ///   - durable: The shared durability layer; coinage registers its oracle and its policies with it
     ///   - chainViewFactory: Pinned chain views for reads outside the engine
     ///   - assetLedger: Coinage's half of the ledger (asset rows, handoff marks)
-    ///   - rootEntropyManager: Manager for root entropy (key derivation)
+    ///   - lifecycle: Root-bound lifecycle shared with the native origin factory
+    ///   - keystore: Keystore for key management
     ///   - logger: Logger for diagnostic output
     ///   - installation: What registering this installation and recovering the previous ones needs
     /// - Returns: A configured CoinageServicing instance
@@ -42,7 +43,8 @@ public extension CoinageService {
         durable: DurableTxServices,
         chainViewFactory: any PinnedChainViewFactoryProtocol,
         assetLedger: any CoinageAssetLedgerProtocol,
-        rootEntropyManager: RootEntropyManaging,
+        lifecycle: CoinageLifecycle,
+        keystore: KeystoreProtocol,
         applicationStateStreamFactory: ApplicationStateStreamFactory,
         externalPaymentStore: ExternalPaymentStoring,
         incomingPaymentStore: IncomingPaymentStoring,
@@ -68,11 +70,12 @@ public extension CoinageService {
         let trackedVoucherRepository = databaseFactory.makeTrackedVoucherRepository()
         let voucherRepository = databaseFactory.makeVoucherRepository()
 
-        let installationRepository = databaseFactory.makeInstallationRepository()
-        let currentInstallationStore = installation.currentInstallationStore
-        let coinKeypairFactory = CoinKeypairFactory(entropyManager: rootEntropyManager)
-        let voucherKeypairFactory = VoucherKeypairFactory(entropyManager: rootEntropyManager)
-        // One allocator per Coinage instance: each serialises its own reserve-then-save.
+        let voucherIndexstore = VoucherIndexstore(storage: keystore)
+        let coinsIndexstore = CoinIndexstore(storage: keystore)
+        let coinKeypairFactory = CoinKeypairFactory(entropyManager: lifecycle)
+        let voucherKeypairFactory = VoucherKeypairFactory(entropyManager: lifecycle)
+        // One allocator per Coinage instance: actor isolation serialises the index counter only
+        // within a single instance.
         let coinAllocator = CoinAllocator(
             installationStore: currentInstallationStore,
             coinRepository: coinRepository,
@@ -140,7 +143,9 @@ public extension CoinageService {
             for: .coinage
         )
 
-        let txService = CoinageTxService(engine: durable.txService, ledger: assetLedger, logger: logger)
+        let txService = CoinageTxService(
+            engine: durableEngine, ledger: assetLedger, logger: logger, lifecycle: lifecycle
+        )
 
         let voucherLoaderFactory = VoucherLoaderFactory(
             instanceId: instanceId,
@@ -189,38 +194,6 @@ public extension CoinageService {
             memoBuilder: memoBuilder,
             recyclerLoader: readinessLoader,
             txService: txService,
-            logger: logger
-        )
-
-        let dataStoreRepository = AccountDataStoreRepository(
-            accountKeys: DataStoreAccountKeys(entropyManager: rootEntropyManager),
-            reviveApi: installation.reviveApi,
-            logger: logger
-        )
-        durable.oracles.register(
-            CoinageInstallationRegistrationOracle.make(
-                chainId: installation.chainId,
-                dataStoreRepository: dataStoreRepository,
-                logger: logger
-            ),
-            for: .coinageInstallation
-        )
-        let installationRegistrar = CoinageInstallationRegistrar(
-            currentInstallationStore: currentInstallationStore,
-            configProvider: installation.configProvider,
-            engine: durable.txService,
-            submitter: InstallationRegistrationSubmitter(
-                dataStoreRepository: dataStoreRepository,
-                reviveApi: installation.reviveApi,
-                pgasProvisioner: installation.pgasProvisioner,
-                feeEstimator: installation.feeEstimator,
-                callArguments: RuntimeReviveCallArguments(runtimeService: installation.runtimeService),
-                chainId: installation.chainId,
-                originFactory: originFactory,
-                engine: durable.txService,
-                logger: logger
-            ),
-            backgroundExecutor: backgroundExecutor,
             logger: logger
         )
 
@@ -406,7 +379,7 @@ public extension CoinageService {
         )
 
         let incomingPaymentSourceResolver = IncomingPaymentSourceResolver(
-            entropyManager: rootEntropyManager,
+            entropyManager: lifecycle,
             snKeyFactory: SNKeyFactory()
         )
 
@@ -424,7 +397,9 @@ public extension CoinageService {
             ),
             acknowledger: incomingPaymentAcknowledger,
             instanceId: instanceId,
-            logger: logger
+            logger: logger,
+            lifecycle: lifecycle,
+            ownerId: lifecycle.ownerId(chainId: chain.chainId, instanceId: instanceId)
         )
 
         let coinageService = CoinageService(
@@ -450,7 +425,8 @@ public extension CoinageService {
             recoveryService: recoveryService,
             installationRegistrar: installationRegistrar,
             incomingPaymentService: incomingPaymentService,
-            logger: logger
+            logger: logger,
+            lifecycle: lifecycle
         )
 
         return coinageService

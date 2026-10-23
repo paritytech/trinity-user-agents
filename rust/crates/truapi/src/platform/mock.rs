@@ -45,10 +45,11 @@ use truapi::latest;
 
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
-	HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision,
-	Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
-	ProviderError, ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview,
-	async_trait,
+	HopProvider, HostScan, JsonRpcConnection, LocaleHost, NativeChatFileExportRequest,
+	NativeChatFilePickRequest, NativeChatFilesHost, NativeChatPickedFile, Navigation,
+	Notifications, PermissionDecision, Permissions, PreimageHost, ProductContext,
+	ProductOperations, ProductStorage, ProviderError, ScannerPlatform, ThemeHost, UserConfirmation,
+	UserConfirmationReview, async_trait,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -84,6 +85,8 @@ pub enum ConfirmKind {
 	CreateProof,
 	/// [`UserConfirmationReview::ResourceAllocation`].
 	ResourceAllocation,
+	/// [`UserConfirmationReview::PreimageSubmit`].
+	PreimageSubmit,
 	/// [`UserConfirmationReview::IdentityDisclosure`].
 	IdentityDisclosure,
 	/// [`UserConfirmationReview::AccountAccess`].
@@ -94,6 +97,14 @@ pub enum ConfirmKind {
 	SignVrf,
 	/// [`UserConfirmationReview::ProductSubtree`].
 	ProductSubtree,
+	/// [`UserConfirmationReview::ChatAuthority`].
+	ChatAuthority,
+	/// [`UserConfirmationReview::MainPurseChatPayment`].
+	MainPurseChatPayment,
+	/// [`UserConfirmationReview::ProfileDisclosure`].
+	ProfileDisclosure,
+	/// [`UserConfirmationReview::Calling`].
+	Calling,
 }
 
 impl ConfirmKind {
@@ -105,6 +116,7 @@ impl ConfirmKind {
 			UserConfirmationReview::AccountAlias(_) => ConfirmKind::AccountAlias,
 			UserConfirmationReview::CreateProof(_) => ConfirmKind::CreateProof,
 			UserConfirmationReview::ResourceAllocation(_) => ConfirmKind::ResourceAllocation,
+			UserConfirmationReview::PreimageSubmit(_) => ConfirmKind::PreimageSubmit,
 			UserConfirmationReview::IdentityDisclosure(_) => ConfirmKind::IdentityDisclosure,
 			UserConfirmationReview::AccountAccess(_) => ConfirmKind::AccountAccess,
 			UserConfirmationReview::StatementStoreProductSign(_) => {
@@ -112,6 +124,10 @@ impl ConfirmKind {
 			},
 			UserConfirmationReview::SignVrf(_) => ConfirmKind::SignVrf,
 			UserConfirmationReview::ProductSubtree(_) => ConfirmKind::ProductSubtree,
+			UserConfirmationReview::ChatAuthority(_) => ConfirmKind::ChatAuthority,
+			UserConfirmationReview::MainPurseChatPayment(_) => ConfirmKind::MainPurseChatPayment,
+			UserConfirmationReview::ProfileDisclosure(_) => ConfirmKind::ProfileDisclosure,
+			UserConfirmationReview::Calling(_) => ConfirmKind::Calling,
 		}
 	}
 }
@@ -129,7 +145,7 @@ pub enum PermissionKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenOperation {
 	/// Product that began it.
-	pub product_id: ProductId,
+	pub product_id: String,
 	/// Id the mock handed back, unique among this product's open operations.
 	pub id: u32,
 	/// Label the product gave, empty when it gave none.
@@ -267,6 +283,7 @@ impl Default for MockConfig {
 pub struct MockPlatform {
 	config: Arc<MockConfig>,
 	storage: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+	core_storage_changes: Arc<Mutex<Vec<CoreStorageKey>>>,
 	preimages: Arc<Mutex<HashMap<Vec<u8>, Vec<u8>>>>,
 	navigations: Arc<Mutex<Vec<String>>>,
 	notifications: Arc<Mutex<Vec<latest::HostPushNotificationRequest>>>,
@@ -324,6 +341,7 @@ impl MockPlatform {
 		Self {
 			config: Arc::new(config),
 			storage: Arc::new(Mutex::new(HashMap::new())),
+			core_storage_changes: Arc::new(Mutex::new(Vec::new())),
 			preimages: Arc::new(Mutex::new(HashMap::new())),
 			navigations: Arc::new(Mutex::new(Vec::new())),
 			notifications: Arc::new(Mutex::new(Vec::new())),
@@ -354,6 +372,12 @@ impl MockPlatform {
 	/// URLs the core asked the host to open, in order.
 	pub fn navigations(&self) -> Vec<String> {
 		self.navigations.lock().expect("navigations poisoned").clone()
+	}
+
+	/// Explicit core-storage policy notifications queued across every clone.
+	/// Raw writes and clears do not appear here.
+	pub fn core_storage_changes(&self) -> Vec<CoreStorageKey> {
+		self.core_storage_changes.lock().expect("core storage changes poisoned").clone()
 	}
 
 	/// Notifications the core asked the host to show, in order.
@@ -408,7 +432,7 @@ impl MockPlatform {
 	///
 	/// The key is the permission's SCALE variant tag -- `"Camera"`, or
 	/// `"Remote"` for a [`latest::RemotePermission::Remote`] whatever domains
-	/// it names.
+	/// it names, `"JamPeers"` whatever genesis.
 	pub fn grant_permission(&self, permission: impl Into<String>) {
 		self.permission_decisions
 			.lock()
@@ -734,12 +758,68 @@ fn core_key(key: &CoreStorageKey) -> String {
 				hex_key(peer_encryption_public_key)
 			)
 		},
+		CoreStorageKey::MainPurseCoinage { root_public_key, genesis_hash } => format!(
+			"core:main-purse-coinage:{}:{}",
+			hex_key(root_public_key),
+			hex_key(genesis_hash)
+		),
+		CoreStorageKey::NativeChatDevice { root_public_key, genesis_hash, product_id } => format!(
+			"core:native-chat-device:{}:{}:{product_id}",
+			hex_key(root_public_key),
+			hex_key(genesis_hash)
+		),
+		CoreStorageKey::NativeChatProducts { root_public_key, genesis_hash } => format!(
+			"core:native-chat-products:{}:{}",
+			hex_key(root_public_key),
+			hex_key(genesis_hash)
+		),
+		CoreStorageKey::ProfileDisclosure { root_public_key, genesis_hash } => format!(
+			"core:profile-disclosure:{}:{}",
+			hex_key(root_public_key),
+			hex_key(genesis_hash)
+		),
+		CoreStorageKey::ProfileReferencesReceived { root_public_key, genesis_hash, product_id } => {
+			format!(
+				"core:profile-references-received:{}:{}:{product_id}",
+				hex_key(root_public_key),
+				hex_key(genesis_hash)
+			)
+		},
+		CoreStorageKey::ProfilePersonalReferencesReceived { root_public_key, genesis_hash } => {
+			format!(
+				"core:profile-personal-references-received:{}:{}",
+				hex_key(root_public_key),
+				hex_key(genesis_hash)
+			)
+		},
+		CoreStorageKey::HostChannelPeers { root_public_key, genesis_hash } => format!(
+			"core:host-channel-peers:{}:{}",
+			hex_key(root_public_key),
+			hex_key(genesis_hash)
+		),
+		CoreStorageKey::NativeChatFileChunk {
+			root_public_key,
+			genesis_hash,
+			product_id,
+			attachment_id,
+			chunk_index,
+		} => format!(
+			"core:native-chat-file-chunk:{}:{}:{product_id}:{}:{chunk_index}",
+			hex_key(root_public_key),
+			hex_key(genesis_hash),
+			hex_key(attachment_id)
+		),
 		CoreStorageKey::ProductManifest { product_id } => {
 			format!("core:product-manifest:{product_id}")
 		},
-		CoreStorageKey::FundingSessions => "core:funding-sessions".to_string(),
-		CoreStorageKey::FundingSessionsUnreadable => "core:funding-sessions-unreadable".to_string(),
-		CoreStorageKey::FundingSessionPack => "core:funding-session-pack".to_string(),
+		CoreStorageKey::NotificationReceiving => "core:notification-receiving".to_string(),
+		CoreStorageKey::AutomaticPreimageUploads { product_id, root_public_key, genesis_hash } => {
+			format!(
+				"core:automatic-preimage-uploads:{}:{}:{product_id}",
+				hex_key(root_public_key),
+				hex_key(genesis_hash)
+			)
+		},
 		CoreStorageKey::AllowanceKeys { session_id } => {
 			format!("core:allowance-keys:{session_id}")
 		},
@@ -853,6 +933,35 @@ impl CoreStorage for MockPlatform {
 		}
 		self.storage.lock().expect("storage poisoned").remove(&core_key(&key));
 		Ok(())
+	}
+
+	async fn compare_exchange_core_storage(
+		&self,
+		key: CoreStorageKey,
+		expected: Option<Vec<u8>>,
+		replacement: Vec<u8>,
+		notify_on_success: bool,
+	) -> Result<bool, latest::GenericError> {
+		if let Some(reason) = &self.config.faults.storage_error {
+			return Err(latest::GenericError { reason: reason.clone() });
+		}
+		let mut storage = self.storage.lock().expect("storage poisoned");
+		let slot = core_key(&key);
+		if storage.get(&slot) != expected.as_ref() {
+			return Ok(false);
+		}
+		storage.insert(slot, replacement);
+		if notify_on_success {
+			self.core_storage_changed(key);
+		}
+		Ok(true)
+	}
+
+	fn core_storage_changed(&self, key: CoreStorageKey) {
+		self.core_storage_changes
+			.lock()
+			.expect("core storage changes poisoned")
+			.push(key);
 	}
 }
 
@@ -1096,8 +1205,10 @@ impl LocaleHost for MockPlatform {
 	fn subscribe_locale(
 		&self,
 	) -> BoxStream<'static, Result<latest::HostLocaleSubscribeItem, latest::GenericError>> {
-		let item =
-			latest::HostLocaleSubscribeItem { language_tag: self.config.language_tag.clone() };
+		let item = latest::HostLocaleSubscribeItem {
+			language_tag: self.config.language_tag.clone(),
+			time_zone: None,
+		};
 		Box::pin(
 			stream::once(async move {
 				Ok::<latest::HostLocaleSubscribeItem, latest::GenericError>(item)
@@ -1151,6 +1262,66 @@ impl ProductOperations for MockPlatform {
 			.retain(|open| open.id != id || open.product_id != product.product_id);
 		Ok(())
 	}
+}
+
+#[async_trait]
+impl NativeChatFilesHost for MockPlatform {
+	async fn pick_chat_files(
+		&self,
+		_request: NativeChatFilePickRequest,
+	) -> Result<Vec<NativeChatPickedFile>, latest::GenericError> {
+		Err(native_chat_files_unavailable())
+	}
+
+	async fn read_chat_file(
+		&self,
+		_source_id: String,
+		_offset: u64,
+		_length: u32,
+	) -> Result<Vec<u8>, latest::GenericError> {
+		Err(native_chat_files_unavailable())
+	}
+
+	async fn release_chat_file(&self, _source_id: String) -> Result<(), latest::GenericError> {
+		Err(native_chat_files_unavailable())
+	}
+
+	async fn begin_chat_file_export(
+		&self,
+		_request: NativeChatFileExportRequest,
+	) -> Result<Option<String>, latest::GenericError> {
+		Err(native_chat_files_unavailable())
+	}
+
+	async fn write_chat_file_export(
+		&self,
+		_export_id: String,
+		_offset: u64,
+		_data: Vec<u8>,
+	) -> Result<(), latest::GenericError> {
+		Err(native_chat_files_unavailable())
+	}
+
+	async fn finish_chat_file_export(
+		&self,
+		_export_id: String,
+	) -> Result<(), latest::GenericError> {
+		Err(native_chat_files_unavailable())
+	}
+
+	async fn cancel_chat_file_export(
+		&self,
+		_export_id: String,
+	) -> Result<(), latest::GenericError> {
+		Err(native_chat_files_unavailable())
+	}
+}
+
+#[async_trait]
+impl HopProvider for MockPlatform {}
+
+fn native_chat_files_unavailable() -> latest::GenericError {
+	latest::GenericError { reason: "native chat files unavailable".to_string() }
 }
 
 #[async_trait]
@@ -1301,7 +1472,7 @@ mod tests {
 
 	fn resource_review() -> UserConfirmationReview {
 		UserConfirmationReview::ResourceAllocation(crate::platform::ResourceAllocationReview {
-			calling_product_id: crate::platform::ProductId::for_test("mock.dot"),
+			calling_product_id: "mock.dot".to_string(),
 			resources: vec![],
 		})
 	}
@@ -1333,6 +1504,48 @@ mod tests {
 		);
 		block_on(p.clear_core_storage(CoreStorageKey::AuthSession)).unwrap();
 		assert_eq!(block_on(p.read_core_storage(CoreStorageKey::AuthSession)).unwrap(), None);
+	}
+
+	#[test]
+	fn automatic_preimage_storage_is_scoped_by_product_root_and_genesis() {
+		let p = MockPlatform::new();
+		let keys = [
+			("mock.dot", [0xab; 32], [0xcd; 32]),
+			("other.dot", [0xab; 32], [0xcd; 32]),
+			("mock.dot", [0xef; 32], [0xcd; 32]),
+			("mock.dot", [0xab; 32], [0xef; 32]),
+		]
+		.map(|(product_id, root_public_key, genesis_hash)| {
+			CoreStorageKey::AutomaticPreimageUploads {
+				product_id: product_id.to_string(),
+				root_public_key,
+				genesis_hash,
+			}
+		});
+		for (value, key) in (1u8..).zip(&keys) {
+			block_on(p.write_core_storage(key.clone(), vec![value])).unwrap();
+		}
+		for (value, key) in (1u8..).zip(&keys) {
+			assert_eq!(block_on(p.read_core_storage(key.clone())).unwrap(), Some(vec![value]));
+		}
+	}
+
+	#[test]
+	fn native_chat_file_chunks_have_independent_storage_slots() {
+		let platform = MockPlatform::new();
+		let key = |chunk_index| CoreStorageKey::NativeChatFileChunk {
+			root_public_key: [1; 32],
+			genesis_hash: [2; 32],
+			product_id: "chat.dot".into(),
+			attachment_id: [3; 32],
+			chunk_index,
+		};
+		block_on(platform.write_core_storage(key(0), vec![10])).unwrap();
+		block_on(platform.write_core_storage(key(1), vec![20])).unwrap();
+		assert_eq!(block_on(platform.read_core_storage(key(0))).unwrap(), Some(vec![10]),);
+		assert_eq!(block_on(platform.read_core_storage(key(1))).unwrap(), Some(vec![20]),);
+		block_on(platform.clear_core_storage(key(0))).unwrap();
+		assert_eq!(block_on(platform.read_core_storage(key(1))).unwrap(), Some(vec![20]),);
 	}
 
 	#[test]
@@ -1511,13 +1724,13 @@ mod tests {
 	fn an_operation_is_open_until_its_own_product_ends_it() {
 		let p = MockPlatform::new();
 		let mine = mock_product();
-		let theirs = ProductContext::new(ProductId::for_test("other.dot"));
+		let theirs = ProductContext::new("other.dot".to_string()).expect("product id is valid");
 
 		let id = block_on(p.begin_operation(&mine, "sync".into())).expect("begin succeeds").id;
 		assert_eq!(
 			p.open_operations(),
 			vec![OpenOperation {
-				product_id: crate::platform::ProductId::for_test("mock.dot"),
+				product_id: "mock.dot".to_string(),
 				id,
 				label: "sync".to_string(),
 			}]
@@ -1674,7 +1887,7 @@ mod tests {
 
 	fn allocation_review(product: &str) -> UserConfirmationReview {
 		UserConfirmationReview::ResourceAllocation(crate::platform::ResourceAllocationReview {
-			calling_product_id: crate::platform::ProductId::for_test(product),
+			calling_product_id: product.to_string(),
 			resources: vec![],
 		})
 	}
@@ -1706,7 +1919,7 @@ mod tests {
 			vec![ConfirmKind::ResourceAllocation; 2],
 			"the kind view should see two identical kinds",
 		);
-		let products: Vec<crate::platform::ProductId> = p
+		let products: Vec<String> = p
 			.reviews()
 			.into_iter()
 			.map(|review| match review {
@@ -1714,13 +1927,7 @@ mod tests {
 				other => panic!("unexpected review {other:?}"),
 			})
 			.collect();
-		assert_eq!(
-			products,
-			vec![
-				crate::platform::ProductId::for_test("first.dot"),
-				crate::platform::ProductId::for_test("second.dot")
-			]
-		);
+		assert_eq!(products, vec!["first.dot", "second.dot"]);
 	}
 
 	#[test]
@@ -1819,7 +2026,7 @@ mod tests {
 	}
 
 	fn mock_product() -> ProductContext {
-		ProductContext::new(ProductId::for_test("mock.dot"))
+		ProductContext::new("mock.dot".to_string()).expect("product context is valid")
 	}
 
 	fn create_room(p: &MockPlatform, room_id: &str) -> latest::ChatRoomRegistrationStatus {

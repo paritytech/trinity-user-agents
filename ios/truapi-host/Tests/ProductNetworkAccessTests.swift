@@ -7,12 +7,14 @@ import UIKit
 import WebKit
 @testable import TrUAPIHost
 
-@Suite(.serialized)
+@Suite(.serialized, WebKitReady())
 @MainActor
 struct ProductNetworkAccessTests {
     @Test(.timeLimit(.minutes(1)))
     func retainedClientAndFetchRecoverWithoutLifecycleCallbacks() async throws {
-        let product = try await NetworkTestProduct.open(initialScripts: ["""
+        let product = try await NetworkTestProduct.open(authorizedPermissions: [
+            .remote(RemotePermissionRequest(permission: .remote(domains: ["127.0.0.1"])))
+        ], initialScripts: ["""
             const NativeSocket = WebSocket;
             const closeSocket = NativeSocket.prototype.close;
             window.WebSocket = new Proxy(NativeSocket, {
@@ -24,10 +26,6 @@ struct ProductNetworkAccessTests {
             });
             """])
         defer { product.close() }
-        try product.execution.setPermissionAuthorizationStatus(
-            request: .remote(RemotePermissionRequest(permission: .remote(domains: ["127.0.0.1"]))),
-            status: .authorized
-        )
         let remote = product.server.url(host: "127.0.0.1", path: "/allowed")
         let result = try await withNetworkTestTimeout("retained client recovery") {
             try await product.webView.callAsyncJavaScript("""
@@ -75,7 +73,10 @@ struct ProductNetworkAccessTests {
         let permission = PermissionAuthorizationRequest.remote(
             RemotePermissionRequest(permission: .remote(domains: ["127.0.0.1"]))
         )
-        try product.execution.setPermissionAuthorizationStatus(request: permission, status: .authorized)
+        try await product.runtime.setPermissionAuthorizationStatus(
+            productId: "network.paseo", request: permission, status: .authorized
+        )
+        #expect(!product.execution.isClosed())
         #expect(try await fetch(product.webView, remote) == "allowed")
         #expect(product.server.requests(path: "/allowed") == 1)
 
@@ -83,8 +84,13 @@ struct ProductNetworkAccessTests {
         #expect(try await fetch(product.webView, redirect) == "allowed")
         #expect(product.server.requests(path: "/blocked") == 1)
 
-        try product.execution.setPermissionAuthorizationStatus(request: permission, status: .denied)
-        #expect(try await fetch(product.webView, remote) == "denied")
+        try await product.runtime.setPermissionAuthorizationStatus(
+            productId: "network.paseo", request: permission, status: .denied
+        )
+        #expect(product.execution.isClosed())
+        let deniedProduct = try await product.reopen()
+        defer { deniedProduct.closeExecution() }
+        #expect(try await fetch(deniedProduct.webView, remote) == "denied")
         #expect(product.server.requests(path: "/allowed") == 1)
     }
 
@@ -101,70 +107,91 @@ struct ProductNetworkAccessTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func allowOnceAuthorizesOneWebRtcConnection() async throws {
+    func genericNetworkGrantsNeverExposeRawPeerConnections() async throws {
         let product = try await NetworkTestProduct.open(
-            bridge: StubHostBridge(remoteDecisions: [.allowOnce, .deny])
+            bridge: StubHostBridge(remoteDecisions: [.allowAlways])
         )
         defer { product.close() }
 
-        let decisions = try await withNetworkTestTimeout("WebRTC permission") {
-            try await product.webView.callAsyncJavaScript("""
-                const first = new RTCPeerConnection({ iceServers: [] });
-                const second = new RTCPeerConnection({ iceServers: [] });
-                try {
-                  const offers = [await first.createOffer(), await first.createOffer()];
-                  let secondDecision = 'allowed';
-                  try { await second.createOffer(); } catch { secondDecision = 'denied'; }
-                  return [...offers.map(offer => offer.type), secondDecision];
-                } finally {
-                  first.close();
-                  second.close();
-                }
-                """, arguments: [:], in: nil, contentWorld: .page) as? [String]
+        for freshDocument in [false, true] {
+            if freshDocument {
+                try await product.execution.setPermissionAuthorizationStatus(
+                    request: .remote(RemotePermissionRequest(permission: .remote(domains: ["127.0.0.1"]))),
+                    status: .authorized
+                )
+                try await product.navigationDelegate.load(
+                    product.webView, url: product.server.url(host: "localhost", path: "/product")
+                )
+            }
+            let constructed = try await withNetworkTestTimeout("raw WebRTC denial") {
+                try await product.webView.callAsyncJavaScript("""
+                    const constructed = [];
+                    for (const name of ['RTCPeerConnection', 'webkitRTCPeerConnection', 'mozRTCPeerConnection']) {
+                      try {
+                        const peer = new window[name]({ iceServers: [] });
+                        constructed.push(name);
+                        peer.close();
+                      } catch {}
+                    }
+                    return constructed;
+                    """, arguments: [:], in: nil, contentWorld: .page) as? [String]
+            }
+            #expect(constructed == [])
         }
-
-        #expect(decisions == ["offer", "offer", "denied"])
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func allowOnceReachesStubbedMediaCaptureOnlyOnce() async throws {
-        let bridge = StubHostBridge(deviceDecisions: [.allowOnce, .allowOnce, .deny])
+    func productCaptureNeverConsumesNativeMediaConsent() async throws {
+        let bridge = StubHostBridge(deviceDecisions: [.allowAlways, .allowAlways])
         let product = try await NetworkTestProduct.open(bridge: bridge, initialScripts: ["""
-            window.__testMediaCalls = [];
-            Object.defineProperty(Object.getPrototypeOf(navigator.mediaDevices), 'getUserMedia', {
-              configurable: true,
-              writable: true,
-              value: async function(constraints) {
-                window.__testMediaCalls.push({ audio: !!constraints.audio, video: !!constraints.video });
-                return { getTracks: () => [] };
-              }
-            });
+            window.__testMediaCalls = 0;
+            for (const name of ['getUserMedia', 'getDisplayMedia']) {
+              Object.defineProperty(Object.getPrototypeOf(navigator.mediaDevices), name, {
+                configurable: true,
+                writable: true,
+                value: async function() {
+                  window.__testMediaCalls++;
+                  return { getTracks: () => [] };
+                }
+              });
+            }
             """])
         defer { product.close() }
 
-        let result = try await withNetworkTestTimeout("media permission") {
-            try await product.webView.callAsyncJavaScript("""
-                if (typeof navigator.mediaDevices?.getUserMedia !== 'function') {
-                  throw new Error('Media capture API is not exposed');
+        for freshDocument in [false, true] {
+            if freshDocument {
+                for device in [HostDevicePermissionRequest.camera, .microphone] {
+                    try await product.execution.setPermissionAuthorizationStatus(
+                        request: .device(device), status: .authorized
+                    )
                 }
-                const decisions = [];
-                for (let attempt = 0; attempt < 2; attempt++) {
-                  try {
-                    await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-                    decisions.push('allowed');
-                  } catch (error) {
-                    if (!(error instanceof DOMException) || error.name !== 'NotAllowedError') throw error;
-                    decisions.push('denied');
-                  }
-                }
-                return JSON.stringify({ decisions, captures: window.__testMediaCalls });
-                """, arguments: [:], in: nil, contentWorld: .page) as? String
+                try await product.navigationDelegate.load(
+                    product.webView, url: product.server.url(host: "localhost", path: "/product")
+                )
+            }
+            let result = try await withNetworkTestTimeout("raw capture denial") {
+                try await product.webView.callAsyncJavaScript("""
+                    let streams = 0;
+                    const attempts = [
+                      () => navigator.mediaDevices.getUserMedia({ audio: true }),
+                      () => navigator.mediaDevices.getUserMedia({ video: true }),
+                      () => navigator.mediaDevices.getDisplayMedia({ video: true }),
+                    ];
+                    for (const acquire of attempts) {
+                      try {
+                        const stream = await acquire();
+                        if (stream) {
+                          streams++;
+                          for (const track of stream.getTracks()) track.stop();
+                        }
+                      } catch {}
+                    }
+                    return [streams, window.__testMediaCalls];
+                    """, arguments: [:], in: nil, contentWorld: .page) as? [Int]
+            }
+            #expect(result == [0, 0])
+            #expect(bridge.requestedDevicePermissions.isEmpty)
         }
-
-        #expect(result == """
-            {"decisions":["allowed","denied"],"captures":[{"audio":true,"video":true}]}
-            """)
-        #expect(bridge.requestedDevicePermissions == [.camera, .microphone, .camera])
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -198,6 +225,86 @@ struct ProductNetworkAccessTests {
                 arguments: ["url": url.absoluteString], in: nil, contentWorld: .page
             ) as? String ?? "evaluation failed"
         }
+    }
+}
+
+/// Booting the simulator does not launch WebKit's lazy auxiliary processes.
+/// Prepare only stock WebKit, once per suite, before any SDK runtime or scripts.
+private struct WebKitReady: SuiteTrait, TestScoping {
+    let isRecursive = false
+
+    func provideScope(
+        for _: Test, testCase _: Test.Case?, performing function: @Sendable () async throws -> Void
+    ) async throws {
+        try await Self.withReadyWebKit(performing: function)
+    }
+
+    @MainActor
+    private static func withReadyWebKit(performing function: @Sendable () async throws -> Void) async throws {
+        let server = try await NetworkTestServer.start()
+        defer { server.stop() }
+        let probe = WebKitReadinessProbe()
+        let configuration = WKWebViewConfiguration()
+        configuration.preferences.isFraudulentWebsiteWarningEnabled = false
+        configuration.userContentController.add(probe, name: "webkitReady")
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = probe
+        let window = try NetworkTestWindow(webView)
+        defer {
+            webView.stopLoading()
+            webView.navigationDelegate = nil
+            configuration.userContentController.removeScriptMessageHandler(forName: "webkitReady")
+            window.close()
+        }
+
+        let started = ContinuousClock.now
+        print("WebKit prerequisite: waiting for stock loopback navigation and JavaScript")
+        try await probe.load(webView, url: server.url(host: "localhost", path: "/webkit-ready"))
+        print("WebKit prerequisite: ready after \(started.duration(to: .now))")
+        // Keep the probe alive, but every test still creates a fresh product
+        // WKWebView, runtime and bridge under its unchanged operation deadlines.
+        try await function()
+    }
+}
+
+@MainActor
+private final class WebKitReadinessProbe: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+    private let ready = AsyncThrowingStream<Void, Error>.makeStream()
+
+    func load(_ webView: WKWebView, url: URL) async throws {
+        let timeout = Task {
+            try await Task.sleep(for: .seconds(60))
+            ready.continuation.finish(throwing: NetworkTestTimeout(
+                stage: "stock WebKit readiness (60-second suite prerequisite, before SDK startup)"
+            ))
+        }
+        defer {
+            timeout.cancel()
+            ready.continuation.finish()
+        }
+        webView.load(URLRequest(url: url))
+        var iterator = ready.stream.makeAsyncIterator()
+        guard try await iterator.next() != nil else { throw CancellationError() }
+    }
+
+    func userContentController(_: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.frameInfo.isMainFrame, message.body as? String == "webkit-ready" else { return }
+        ready.continuation.yield(())
+        ready.continuation.finish()
+    }
+
+    func webView(_: WKWebView, didFailProvisionalNavigation _: WKNavigation!, withError error: Error) {
+        ready.continuation.finish(throwing: error)
+    }
+
+    func webView(_: WKWebView, didFail _: WKNavigation!, withError error: Error) {
+        ready.continuation.finish(throwing: error)
+    }
+
+    func webViewWebContentProcessDidTerminate(_: WKWebView) {
+        ready.continuation.finish(throwing: NSError(
+            domain: WKError.errorDomain, code: WKError.Code.webContentProcessTerminated.rawValue
+        ))
     }
 }
 
@@ -258,6 +365,8 @@ private final class NetworkTestWindow {
 @MainActor
 private struct NetworkTestProduct {
     let server: NetworkTestServer
+    let runtime: TrUAPIHostRuntime
+    let bridge: StubHostBridge
     let execution: TrUAPIProductExecution
     let webView: WKWebView
     let window: NetworkTestWindow
@@ -265,6 +374,7 @@ private struct NetworkTestProduct {
 
     static func open(
         bridge: StubHostBridge = StubHostBridge(),
+        authorizedPermissions: [PermissionAuthorizationRequest] = [],
         initialScripts: [String] = []
     ) async throws -> NetworkTestProduct {
         let server = try await NetworkTestServer.start()
@@ -275,10 +385,29 @@ private struct NetworkTestProduct {
                 assetHubChainGenesisHash: Data(repeating: 1, count: 32), networkSuffix: "paseo",
                 databaseDirectory: temporaryDatabaseDirectory()
             ))
-            let execution = try runtime.openProductExecution(
-                bridge: bridge,
-                configuration: ProductExecutionConfig(productId: "network.paseo", executionKind: .app)
-            )
+            for permission in authorizedPermissions {
+                try await runtime.setPermissionAuthorizationStatus(
+                    productId: "network.paseo", request: permission, status: .authorized
+                )
+            }
+            return try await open(server: server, runtime: runtime, bridge: bridge, initialScripts: initialScripts)
+        } catch {
+            server.stop()
+            throw error
+        }
+    }
+
+    private static func open(
+        server: NetworkTestServer,
+        runtime: TrUAPIHostRuntime,
+        bridge: StubHostBridge,
+        initialScripts: [String]
+    ) async throws -> NetworkTestProduct {
+        let execution = try runtime.openProductExecution(
+            bridge: bridge,
+            configuration: ProductExecutionConfig(productId: "network.paseo", executionKind: .app)
+        )
+        do {
             let ready = ProductPageReady()
             let configuration = WKWebViewConfiguration()
             // Local fixtures must not wait for Safari's Safe Browsing database.
@@ -300,49 +429,74 @@ private struct NetworkTestProduct {
                 #expect(webView.configuration.websiteDataStore.isPersistent)
                 try await ready.load(webView, url: server.url(host: "localhost", path: "/product"))
                 return NetworkTestProduct(
-                    server: server, execution: execution, webView: webView, window: window, navigationDelegate: ready
+                    server: server, runtime: runtime, bridge: bridge, execution: execution,
+                    webView: webView, window: window, navigationDelegate: ready
                 )
             } catch {
+                print("Product page failed: url=\(webView.url?.absoluteString ?? "none"), "
+                    + "loading=\(webView.isLoading), progress=\(webView.estimatedProgress), "
+                    + "requests=\(server.requests(path: "/product")), error=\(error)")
                 window.close()
-                execution.close()
                 throw error
             }
         } catch {
-            server.stop()
+            execution.close()
             throw error
         }
     }
 
-    func close() {
+    func reopen() async throws -> NetworkTestProduct {
+        closeExecution()
+        return try await Self.open(server: server, runtime: runtime, bridge: bridge, initialScripts: [])
+    }
+
+    func closeExecution() {
         webView.stopLoading()
         window.close()
         execution.close()
+    }
+
+    func close() {
+        closeExecution()
         server.stop()
     }
 }
 
 @MainActor
 private final class ProductPageReady: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
-    private var onReady: (() -> Void)?
+    private var readiness: AsyncThrowingStream<Void, Error>.Continuation?
 
     func load(_ webView: WKWebView, url: URL) async throws {
-        let ready = AsyncStream<Void>.makeStream()
-        onReady = {
-            ready.continuation.yield(())
+        let ready = AsyncThrowingStream<Void, Error>.makeStream()
+        readiness = ready.continuation
+        defer {
+            readiness = nil
             ready.continuation.finish()
         }
-        defer { onReady = nil }
         webView.load(URLRequest(url: url))
         try await withNetworkTestTimeout("page ready \(url.absoluteString)") {
             var iterator = ready.stream.makeAsyncIterator()
-            guard await iterator.next() != nil else { throw CancellationError() }
+            guard try await iterator.next() != nil else { throw CancellationError() }
         }
     }
 
     func userContentController(_: WKUserContentController, didReceive _: WKScriptMessage) {
-        let callback = onReady
-        onReady = nil
-        callback?()
+        readiness?.yield(())
+        readiness?.finish()
+    }
+
+    func webView(_: WKWebView, didFailProvisionalNavigation _: WKNavigation!, withError error: Error) {
+        readiness?.finish(throwing: error)
+    }
+
+    func webView(_: WKWebView, didFail _: WKNavigation!, withError error: Error) {
+        readiness?.finish(throwing: error)
+    }
+
+    func webViewWebContentProcessDidTerminate(_: WKWebView) {
+        readiness?.finish(throwing: NSError(
+            domain: WKError.errorDomain, code: WKError.Code.webContentProcessTerminated.rawValue
+        ))
     }
 }
 
@@ -422,6 +576,8 @@ private final class NetworkTestServer: @unchecked Sendable {
             var body = "allowed"
             if path == "/product" {
                 body = "<script>window.webkit.messageHandlers.testReady.postMessage('ready')</script>"
+            } else if path == "/webkit-ready" {
+                body = "<script>window.webkit.messageHandlers.webkitReady.postMessage('webkit-ready')</script>"
             } else if path == "/style.css" {
                 headers = "Access-Control-Allow-Origin: *\r\nContent-Type: text/css\r\nCache-Control: no-store\r\n"
                 body = "body { color: green; }"

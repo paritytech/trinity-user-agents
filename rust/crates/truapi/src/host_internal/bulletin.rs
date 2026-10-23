@@ -20,7 +20,7 @@ pub const STORE_PALLET_NAME: &str = "TransactionStorage";
 pub const STORE_CALL_NAME: &str = "store";
 
 /// Mortality window for store transactions.
-const MORTAL_PERIOD_BLOCKS: u64 = 64;
+pub(crate) const MORTAL_PERIOD_BLOCKS: u64 = 64;
 
 /// Preimage key: blake2b-256 of the raw preimage bytes.
 pub fn preimage_key(value: &[u8]) -> [u8; 32] {

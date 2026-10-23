@@ -8,20 +8,33 @@ import * as S from "@parity/truapi/scale";
 
 import {
   AllocatableResource,
+  AvatarRect,
   Bytes32,
   ChainIdentifier,
   CodeFormat,
-  FundingDirection,
+  DerivationIndex,
   HostAccountSignVrfRequest,
   HostDevicePermissionRequest,
+  HostNativeChatAttachmentMetadata,
+  HostNativeChatPayment,
   HostSignPayloadRequest,
   HostSignPayloadWithLegacyAccountRequest,
   HostSignRawRequest,
   HostSignRawWithLegacyAccountRequest,
   LegacyAccountTxPayload,
+  MediaLocalState,
+  MediaLocalTracks,
+  MediaOperationFailure,
+  MediaOperationId,
+  MediaParticipantId,
+  MediaRemoteState,
+  MediaSessionId,
+  MediaSurface,
+  MediaViewport,
   ProductAccountId,
   ProductAccountTxPayload,
   ProductProofContext,
+  ReceivingWatch,
   RemotePermissionRequest,
   RingLocation,
 } from "@parity/truapi";
@@ -38,24 +51,20 @@ import type {
   HostChatSetRoomFooterRequest,
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
-  HostFundingStatusSubscribeItem,
   HostLocalStorageChangeItem,
+  HostLocaleLocalizeTimestampsRequest,
+  HostLocaleLocalizeTimestampsResponse,
   HostLocaleSubscribeItem,
-  HostPaymentBalanceSubscribeError,
-  HostPaymentBalanceSubscribeItem,
-  HostPaymentRequest,
-  HostPaymentStatusSubscribeError,
-  HostPaymentStatusSubscribeItem,
-  HostPaymentTopUpRequest,
-  HostPaymentTopUpStatusSubscribeError,
-  HostPaymentTopUpStatusSubscribeItem,
   HostPocketListSubscribeItem,
   HostPocketRemoveCardRequest,
+  HostProfilePresentRequest,
   HostPushNotificationRequest,
   HostPushNotificationResponse,
   HostScannerScanRequest,
   HostThemeSubscribeItem,
   HostWorkerBeginOperationResponse,
+  NotificationActivationAcknowledgeRequest,
+  NotificationActivations,
   Result,
 } from "@parity/truapi";
 
@@ -124,6 +133,50 @@ export type AuthState =
    * in-progress presentation until a terminal state is emitted.
    */
   | { tag: "Authenticating"; value?: undefined };
+
+/**
+ * Immutable calling-consent context resolved by the trusted core.
+ *
+ * Approval applies only to this exact canonical product, authenticated network,
+ * and authority-derived account. It neither grants camera/microphone access nor
+ * carries over to another account or network.
+ */
+export interface CallingReview {
+  /**
+   * Canonical product requesting calling authority.
+   */
+  productId: string;
+
+  /**
+   * Genesis hash of the authenticated network.
+   */
+  network: Uint8Array;
+
+  /**
+   * Product's authority-derived `Index(0)` sr25519 public key.
+   */
+  account: Uint8Array;
+}
+
+/**
+ * Review shown before a product binds or uses wallet-held Chat identity authority.
+ */
+export interface ChatAuthorityReview {
+  /**
+   * Product requesting the Chat identity operation.
+   */
+  productId: string;
+}
+
+/**
+ * Host-private initial selection for a multi-contact picker.
+ */
+export interface ContactSelection {
+  /**
+   * Resolved accounts to preselect, deduplicated and bounded to 256.
+   */
+  selected: Array<Bytes32>;
+}
 
 /**
  * Core-owned host-private storage slots. Products never address these slots;
@@ -217,22 +270,111 @@ export type CoreStorageKey =
    */
   | { tag: "ProductManifest"; value: { productId: string } }
   /**
-   * Funding sessions: every live one plus a bounded tail of settled ones,
-   * as one versioned SCALE blob.
+   * Encrypted main-purse inventory, operation journal, and claim recovery state.
+   *
+   * This slot is wallet-owned, not product-owned, and must survive clearing a
+   * product's data. Writes replace the entire value atomically.
    */
-  | { tag: "FundingSessions"; value?: undefined }
+  | {
+      tag: "MainPurseCoinage";
+      value: { rootPublicKey: Uint8Array; genesisHash: Uint8Array };
+    }
   /**
-   * Funding sessions or session pack blobs the core could not read, as a SCALE list of the
-   * raw blobs, newest last, so a stored session is never overwritten
-   * unread and a later bad blob does not replace an earlier one. Kept for
-   * diagnosis only: the core never reads them back.
+   * Encrypted Host-owned native Chat device, peer roster, and migration state.
    */
-  | { tag: "FundingSessionsUnreadable"; value?: undefined }
+  | {
+      tag: "NativeChatDevice";
+      value: {
+        rootPublicKey: Uint8Array;
+        genesisHash: Uint8Array;
+        productId: string;
+      };
+    }
   /**
-   * Recorded funding sessions compacted out of the funding sessions blob,
-   * as one versioned SCALE blob. Never trimmed.
+   * One encrypted, bounded native Chat attachment cache chunk.
+   * Values use the Chat state's wallet-bound authenticated encryption.
    */
-  | { tag: "FundingSessionPack"; value?: undefined };
+  | {
+      tag: "NativeChatFileChunk";
+      value: {
+        rootPublicKey: Uint8Array;
+        genesisHash: Uint8Array;
+        productId: string;
+        attachmentId: Uint8Array;
+        chunkIndex: number;
+      };
+    }
+  /**
+   * Previously initialized Chat products to restore after this wallet unlocks.
+   *
+   * This is a host-private wallet-owned index, not a permission grant. The
+   * core rechecks each product's current grants before restoring reception.
+   */
+  | {
+      tag: "NativeChatProducts";
+      value: { rootPublicKey: Uint8Array; genesisHash: Uint8Array };
+    }
+  /**
+   * The profile reference the user disclosed to their chat contacts on one
+   * Chat network, with the product that disclosed it. Wallet-owned: one per
+   * wallet and network, whichever product wrote it. The reference is a
+   * bearer capability.
+   *
+   * Known gap (docs/rfcs/profile-disclosure.md): one slot, so the last product to disclose
+   * replaces the others.
+   */
+  | {
+      tag: "ProfileDisclosure";
+      value: { rootPublicKey: Uint8Array; genesisHash: Uint8Array };
+    }
+  /**
+   * Profile references the contacts on one Chat product's roster disclosed,
+   * the newest per contact, withdrawals included. Scoped like the
+   * `NativeChatDevice` roster it shadows, and product-indexed so clearing
+   * the product clears them. The references are bearer capabilities.
+   */
+  | {
+      tag: "ProfileReferencesReceived";
+      value: {
+        rootPublicKey: Uint8Array;
+        genesisHash: Uint8Array;
+        productId: string;
+      };
+    }
+  /**
+   * Wallet-wide personal profile grants, including replay tombstones.
+   * These bearer capabilities are independent of the receiving product.
+   */
+  | {
+      tag: "ProfilePersonalReferencesReceived";
+      value: { rootPublicKey: Uint8Array; genesisHash: Uint8Array };
+    }
+  /**
+   * Versioned bounded receiving ledger, shared across product executions.
+   * Host product/account deletion must invoke ReceivingService::revoke first.
+   */
+  | { tag: "NotificationReceiving"; value?: undefined }
+  /**
+   * Bounded upload consent and rolling quota. Revocation retains quota and
+   * advances a generation so outstanding confirmations cannot restore it.
+   */
+  | {
+      tag: "AutomaticPreimageUploads";
+      value: {
+        productId: string;
+        rootPublicKey: Bytes32;
+        genesisHash: Bytes32;
+      };
+    }
+  /**
+   * The host-channel keys this wallet's contacts handed over in a Chat
+   * bootstrap frame, one per peer (seity `doc/HOST_CHANNEL_PLAN.md`).
+   * Public keys only; the pair secret is derived on use.
+   */
+  | {
+      tag: "HostChannelPeers";
+      value: { rootPublicKey: Uint8Array; genesisHash: Uint8Array };
+    };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -309,31 +451,6 @@ export type ExpandedCardFaceOutcome =
   | "NotPresented"
   | "UserMoving"
   | "Unsupported";
-
-/**
- * How the user left the funding overlay.
- */
-export type FundingPresentOutcome = "Started" | "Dismissed";
-
-/**
- * A funding session as the host overlay needs it to open on the right screen.
- */
-export interface FundingPresentation {
-  /**
-   * Session id.
-   */
-  intent: string;
-
-  /**
-   * Which way value moves, which decides the screen the overlay opens on.
-   */
-  direction: FundingDirection;
-
-  /**
-   * Amount the caller asked for, or ``undefined`` to let the user choose.
-   */
-  amount?: bigint;
-}
 
 /**
  * One chain a host serves: a protocol chain role mapped to the concrete
@@ -429,6 +546,27 @@ export type HostContactPick =
   | { tag: "Unsupported"; value?: undefined };
 
 /**
+ * The user's complete selection in a host-owned multi-contact picker.
+ */
+export type HostContactsPick =
+  /**
+   * Confirmed accounts, including an empty selection. Never sent to products.
+   */
+  | { tag: "Picked"; value: { accounts: Array<Bytes32> } }
+  /**
+   * The user cancelled without changing the selection.
+   */
+  | { tag: "Dismissed"; value?: undefined }
+  /**
+   * There are no contacts to show.
+   */
+  | { tag: "NoContacts"; value?: undefined }
+  /**
+   * This host cannot present a multi-contact picker.
+   */
+  | { tag: "Unsupported"; value?: undefined };
+
+/**
  * How the host's scanner ended.
  */
 export type HostScan =
@@ -469,6 +607,681 @@ export interface IdentityDisclosureReview {
 export type LoginFailureKind = "NoFreeAllowanceSlots" | "Other";
 
 /**
+ * Exact Host-resolved payment reviewed before debiting the user's main purse.
+ *
+ * This review never grants a reusable spending permission. Chat authority and
+ * automatic product signing do not authorize it.
+ */
+export interface MainPurseChatPaymentReview {
+  /**
+   * Authenticated product requesting this payment.
+   */
+  callingProductId: string;
+
+  /**
+   * Recipient identity authenticated by the Host's native Chat session.
+   */
+  recipientIdentity: Uint8Array;
+
+  /**
+   * Host-resolved username for that identity, never a product display label.
+   */
+  recipientUsername?: string;
+
+  /**
+   * Exact recipient amount in cents of the selected Coinage asset.
+   */
+  amountCents: bigint;
+
+  /**
+   * Maximum main-purse debit, including any approved fee, in the same cents.
+   */
+  maxDebitCents: bigint;
+
+  /**
+   * Genesis hash of the Host-selected Coinage chain.
+   */
+  genesisHash: Uint8Array;
+
+  /**
+   * Trusted Coinage asset instance; `undefined` denotes a legacy single-asset runtime.
+   */
+  coinageInstanceId?: number;
+
+  /**
+   * Immutable, wallet-scoped payment operation being authorized.
+   */
+  operationId: Uint8Array;
+}
+
+/**
+ * Complete backend availability and simultaneous live-resource limits.
+ *
+ * `supported` is true only when every mandatory facility is implemented,
+ * including microphone/camera capture, screen picking, RTC, audio playback and
+ * routing, trusted indicators, and unreadable compositing. Runtime device
+ * absence or user denial does not mean a facility is unimplemented. There are
+ * deliberately no per-facility public support flags.
+ */
+export interface MediaBackendCapabilities {
+  /**
+   * Whether the backend implements the complete Media contract.
+   */
+  supported: boolean;
+
+  /**
+   * Maximum simultaneous local sessions; at least one when supported.
+   */
+  maxSessions: number;
+
+  /**
+   * Remote endpoints per session, excluding the local endpoint; at least five.
+   */
+  maxRemoteParticipants: number;
+
+  /**
+   * Pictures per session; at least twice the total endpoint capacity.
+   */
+  maxSurfacesPerSession: number;
+}
+
+/**
+ * Trusted operations scoped by the method's product and runtime parameters.
+ *
+ * IDs are core-admitted handles, not globally addressable resources. The
+ * backend must fence delayed callbacks and release capture obtained after an
+ * operation was cancelled, superseded, or its session/runtime was closed.
+ */
+export type MediaBackendCommand =
+  /**
+   * Prepare a local session and authorized capture with a trusted pending
+   * indicator. Returns `Done`; does not attach/send tracks, create peers,
+   * or publish committed state before `CommitOperation`.
+   */
+  | {
+      tag: "OpenSession";
+      value: {
+        sessionId: MediaSessionId;
+        operationId: MediaOperationId;
+        tracks: MediaLocalTracks;
+      };
+    }
+  /**
+   * Prepare replacement capture without attaching/sending the new tracks
+   * or publishing committed state. Returns `Done`. A newer revision
+   * supersedes uncommitted work; failed or cancelled acquisition preserves
+   * the last committed intent until `CommitOperation`.
+   */
+  | {
+      tag: "SetTracks";
+      value: {
+        sessionId: MediaSessionId;
+        operationId: MediaOperationId;
+        intentRevision: bigint;
+        tracks: MediaLocalTracks;
+      };
+    }
+  /**
+   * Cancel pending picker/device work, drop prepared capture, and stop
+   * late-acquired resources. The core dispatches this only if cancellation
+   * won before its commit decision; it must not undo committed state.
+   */
+  | { tag: "CancelOperation"; value: { operationId: MediaOperationId } }
+  /**
+   * Stop capture/sending, clear surfaces, and release session resources.
+   * Cleanup is idempotent and must not ask permission or allocate quota.
+   */
+  | { tag: "CloseSession"; value: { sessionId: MediaSessionId } }
+  /**
+   * Create one participant's connection; local descriptions/candidates are
+   * returned through the trusted event stream, never through product frames.
+   */
+  | {
+      tag: "CreatePeer";
+      value: {
+        sessionId: MediaSessionId;
+        participantId: MediaParticipantId;
+        offerer: boolean;
+      };
+    }
+  /**
+   * Apply a description delivered by core-authenticated signaling.
+   */
+  | {
+      tag: "ApplyDescription";
+      value: {
+        sessionId: MediaSessionId;
+        participantId: MediaParticipantId;
+        description: MediaDescription;
+      };
+    }
+  /**
+   * Apply a candidate delivered by core-authenticated signaling.
+   */
+  | {
+      tag: "AddIceCandidate";
+      value: {
+        sessionId: MediaSessionId;
+        participantId: MediaParticipantId;
+        candidate: MediaIceCandidate;
+      };
+    }
+  /**
+   * Idempotently close and release one participant's connection.
+   */
+  | {
+      tag: "RemovePeer";
+      value: { sessionId: MediaSessionId; participantId: MediaParticipantId };
+    }
+  /**
+   * Atomically replace this session's pictures for the current viewport.
+   * An empty list clears its surfaces; no product-readable frame is returned.
+   */
+  | {
+      tag: "SetSurfaces";
+      value: {
+        sessionId: MediaSessionId;
+        viewportRevision: bigint;
+        layoutRevision: bigint;
+        surfaces: Array<MediaSurface>;
+      };
+    }
+  /**
+   * Idempotently release every resource owned by this product runtime and
+   * fence all late work so it cannot recreate capture, peers, or surfaces.
+   */
+  | { tag: "CloseRuntime"; value?: undefined }
+  /**
+   * Apply prepared tracks to all peer senders atomically, stop replaced/off
+   * tracks, and return `LocalState`. The core records its commit decision
+   * before dispatch; later cancellation waits for the committed/failed
+   * outcome and must never report the operation as cancelled.
+   */
+  | { tag: "CommitOperation"; value: { operationId: MediaOperationId } }
+  /**
+   * Present an operation-scoped trusted consent prompt only when the core
+   * has no stored decision. CancelOperation/CloseRuntime must dismiss it;
+   * a late answer must never prepare capture or write a permission grant.
+   */
+  | {
+      tag: "RequestConsent";
+      value: { operationId: MediaOperationId; request: MediaConsentRequest };
+    };
+
+/**
+ * Trusted events scoped to the product/runtime that opened the stream.
+ *
+ * The core converts observations into public lifecycle events. Descriptions
+ * and candidates go exclusively to core-authenticated signaling; they must
+ * never become product events, error diagnostics, or product debug logs.
+ */
+export type MediaBackendEvent =
+  /**
+   * Current host rendering attachment; ``undefined`` also clears its surfaces.
+   */
+  | { tag: "ViewportChanged"; value: { viewport?: MediaViewport } }
+  /**
+   * Observed capture state, fenced by the accepted track intent revision.
+   */
+  | {
+      tag: "LocalStateChanged";
+      value: {
+        sessionId: MediaSessionId;
+        intentRevision: bigint;
+        state: MediaLocalState;
+      };
+    }
+  /**
+   * Observed connectivity, not inferred media quality.
+   */
+  | {
+      tag: "PeerStateChanged";
+      value: {
+        sessionId: MediaSessionId;
+        participantId: MediaParticipantId;
+        state: MediaBackendPeerState;
+      };
+    }
+  /**
+   * Observed remote track availability.
+   */
+  | {
+      tag: "RemoteStateChanged";
+      value: {
+        sessionId: MediaSessionId;
+        participantId: MediaParticipantId;
+        state: MediaRemoteState;
+      };
+    }
+  /**
+   * Locally generated description for authenticated signaling.
+   */
+  | {
+      tag: "Description";
+      value: {
+        sessionId: MediaSessionId;
+        participantId: MediaParticipantId;
+        description: MediaDescription;
+      };
+    }
+  /**
+   * Locally generated candidate for authenticated signaling.
+   */
+  | {
+      tag: "IceCandidate";
+      value: {
+        sessionId: MediaSessionId;
+        participantId: MediaParticipantId;
+        candidate: MediaIceCandidate;
+      };
+    }
+  /**
+   * Trusted screen-stop control invalidated prior pending screen intent.
+   */
+  | { tag: "ScreenStopped"; value: { sessionId: MediaSessionId } }
+  /**
+   * Trusted host hangup control ended the session.
+   */
+  | { tag: "HostEnded"; value: { sessionId: MediaSessionId } }
+  /**
+   * End affected sessions without silently downgrading capture. Only an
+   * explicit product-setting withdrawal changes the persisted core grant.
+   */
+  | {
+      tag: "PermissionRevoked";
+      value: {
+        permission: MediaRevokedPermission;
+        source: MediaRevocationSource;
+      };
+    };
+
+/**
+ * Backend-observed connection state for one remote endpoint.
+ */
+export type MediaBackendPeerState =
+  | "Connecting"
+  | "Connected"
+  | "Reconnecting"
+  | "Failed"
+  | "Closed";
+
+/**
+ * Bounded result of a trusted backend command, without diagnostic strings.
+ */
+export type MediaBackendResponse =
+  /**
+   * Command completed without publishing new committed capture state.
+   */
+  | { tag: "Done"; value?: undefined }
+  /**
+   * Accepted capture intent's currently observed device state.
+   */
+  | { tag: "LocalState"; value: { state: MediaLocalState } }
+  /**
+   * Expected refusal or domain failure, such as picker cancellation or a
+   * missing device. Unexpected callback/IPC errors remain `GenericError`
+   * and are sanitized to `HostFailure` by the core.
+   */
+  | { tag: "Rejected"; value: { failure: MediaOperationFailure } }
+  /**
+   * A genuine user decision. Dismissal/cancellation is a rejected response,
+   * never a remembered denial; only the core persists this answer.
+   */
+  | { tag: "Consent"; value: { granted: boolean } };
+
+/**
+ * User decision presented by trusted host UI for one cancellable operation.
+ * The core alone reads and persists grants; these prompts never delegate
+ * browser capture permission or media objects into the product realm.
+ */
+export type MediaConsentRequest =
+  /**
+   * Calling under the immutable active authority.
+   */
+  | { tag: "Calling"; value: { network: Uint8Array; account: Uint8Array } }
+  /**
+   * Host-owned microphone capture, not raw product capture.
+   */
+  | { tag: "Microphone"; value?: undefined }
+  /**
+   * Host-owned camera capture, not raw product capture.
+   */
+  | { tag: "Camera"; value?: undefined };
+
+/**
+ * Host-only session description; Debug never includes SDP.
+ */
+export interface MediaDescription {
+  /**
+   * Negotiation role of this description.
+   */
+  kind: MediaDescriptionKind;
+
+  /**
+   * Sensitive transport description for trusted host signaling only.
+   */
+  sdp: string;
+}
+
+/**
+ * Negotiation role of a host-only description.
+ */
+export type MediaDescriptionKind = "Offer" | "Answer";
+
+/**
+ * Host-only ICE candidate; Debug never includes candidate or media-ID strings.
+ */
+export interface MediaIceCandidate {
+  /**
+   * Sensitive connectivity data for trusted host signaling only.
+   */
+  candidate: string;
+
+  /**
+   * Optional media section identifier.
+   */
+  mid?: string;
+
+  /**
+   * Optional media section index.
+   */
+  mlineIndex?: number;
+}
+
+/**
+ * OS gating must not overwrite a separately remembered product decision.
+ */
+export type MediaRevocationSource = "Product" | "OperatingSystem";
+
+/**
+ * Revocation observations; screen stopping is not a permission revocation.
+ */
+export type MediaRevokedPermission = "Calling" | "Microphone" | "Camera";
+
+/**
+ * Trusted context for exporting a verified native Chat attachment.
+ */
+export interface NativeChatFileExportRequest {
+  /**
+   * Authenticated product requesting presentation.
+   */
+  productId: string;
+
+  /**
+   * Host-authenticated peer identity.
+   */
+  peerIdentity: Uint8Array;
+
+  /**
+   * Host-resolved peer name, if available.
+   */
+  peerUsername?: string;
+
+  /**
+   * Verified attachment metadata, including the exact export size.
+   */
+  metadata: HostNativeChatAttachmentMetadata;
+}
+
+/**
+ * Trusted native Chat selection context; never passed to a product.
+ */
+export interface NativeChatFilePickRequest {
+  /**
+   * Authenticated product requesting selection.
+   */
+  productId: string;
+
+  /**
+   * Host-authenticated recipient identity.
+   */
+  peerIdentity: Uint8Array;
+
+  /**
+   * Host-resolved recipient name, if available.
+   */
+  peerUsername?: string;
+
+  /**
+   * Maximum number of files the Host can accept.
+   */
+  maxFiles: number;
+}
+
+/**
+ * Immutable Host-owned source and metadata derived from its actual bytes.
+ */
+export interface NativeChatPickedFile {
+  /**
+   * Opaque private handle surviving restart until explicitly released.
+   */
+  sourceId: string;
+
+  /**
+   * Actual source size and native media metadata.
+   */
+  metadata: HostNativeChatAttachmentMetadata;
+}
+
+/**
+ * Sanitized failures. Never forward secret-bearing native exception descriptions.
+ */
+export type NativeCoinageFailure =
+  | "Unavailable"
+  | "InvalidRequest"
+  | "InvalidSource"
+  | "OperationConflict"
+  | "OperationNotFound"
+  | "InsufficientBalance"
+  | "UserRejected";
+
+/**
+ * Host-private bearer material. Never return this through the product API or log it.
+ * Raw amounts are canonical unsigned decimal u128 strings, avoiding FFI truncation.
+ */
+export interface NativeCoinageMemo {
+  /**
+   * Validated 64-byte native sr25519 secret keys, confined to the trusted Host.
+   */
+  secretKeys: Array<Uint8Array>;
+
+  /**
+   * Exact total in canonical decimal raw chain units.
+   */
+  totalValueRaw: string;
+}
+
+/**
+ * Durable native-wallet operations, not an alternative inventory ledger.
+ */
+export type NativeCoinageOperation =
+  /**
+   * Read trusted denomination metadata without selecting or allocating inventory.
+   */
+  | { tag: "Denomination"; value?: undefined }
+  /**
+   * Native trusted UI must review the exact intent and maximum debit before spending.
+   * Replays must reuse persisted preparation, never allocate a second payment.
+   * Before returning a memo, native custody must survive restart atomically with
+   * transaction registration. Startup must never release these coins as provisional.
+   */
+  | { tag: "PreparePayment"; value: { intent: NativeCoinagePaymentIntent } }
+  /**
+   * Called only after the authenticated Host durably accepts encrypted delivery.
+   * Records transport acceptance; it is not the first durable native custody mark.
+   */
+  | {
+      tag: "CommitHandoff";
+      value: { productId: string; operationId: Uint8Array };
+    }
+  /**
+   * Immutable public cards; do not initialize or claim an unrelated wallet.
+   */
+  | { tag: "Views"; value: { productId: string } }
+  /**
+   * Accepted ids come from the Host's durable ciphertext custody ledger.
+   */
+  | {
+      tag: "PendingHandoffs";
+      value: { productId: string; acceptedOperations: Array<Uint8Array> };
+    }
+  /**
+   * Read an existing recoverable handoff without approval, selection or spending.
+   */
+  | {
+      tag: "ReadHandoff";
+      value: { productId: string; operationId: Uint8Array };
+    }
+  /**
+   * Peer acknowledgment is not monetary settlement.
+   */
+  | {
+      tag: "NoteDelivery";
+      value: { productId: string; operationId: Uint8Array };
+    }
+  /**
+   * Resume already-owned work only; never authorize a fresh debit.
+   */
+  | { tag: "Reconcile"; value?: undefined }
+  /**
+   * Persist source custody before returning. Only finalized credit is successful.
+   * Reordered sources reuse the same id; changed minimum or overlapping custody conflicts.
+   */
+  | {
+      tag: "TopUp";
+      value: {
+        productId: string;
+        operationId: Uint8Array;
+        minimumAmountRaw: string;
+        secretKeys: Array<Uint8Array>;
+      };
+    };
+
+/**
+ * Immutable, Host-authenticated outgoing intent. No field is a product display hint.
+ */
+export interface NativeCoinagePaymentIntent {
+  /**
+   * Stable wallet-, network- and product-scoped operation identity.
+   */
+  operationId: Uint8Array;
+
+  /**
+   * Authenticated calling product, not a guest-provided display name.
+   */
+  productId: string;
+
+  /**
+   * Original caller request identifier, bound immutably to this intent.
+   */
+  requestId: string;
+
+  /**
+   * Recipient identity authenticated by the Host's Chat authority.
+   */
+  peerIdentity: Uint8Array;
+
+  /**
+   * Independently resolved recipient name, when available.
+   */
+  recipientUsername?: string;
+
+  /**
+   * Positive recipient amount in cents of the configured Coinage asset.
+   */
+  amountCents: bigint;
+}
+
+/**
+ * One native operation with the immutable wallet/network scope to authenticate.
+ */
+export interface NativeCoinageRequest {
+  /**
+   * Expected owner and asset, verified against the active native wallet.
+   */
+  scope: NativeCoinageScope;
+
+  /**
+   * Host-private command; incoming sources must never be logged.
+   */
+  operation: NativeCoinageOperation;
+}
+
+/**
+ * Typed native results. Only the trusted Host may consume a Prepared memo.
+ */
+export type NativeCoinageResponse =
+  /**
+   * Trusted denomination metadata for the selected wallet/asset.
+   */
+  | { tag: "Denomination"; value: { centsUnitRaw: string } }
+  /**
+   * Existing durable native preparation, or a terminal public payment.
+   */
+  | {
+      tag: "Prepared";
+      value: { payment: HostNativeChatPayment; memo?: NativeCoinageMemo };
+    }
+  /**
+   * Product-scoped public payment cards, never a spendable balance.
+   */
+  | { tag: "Payments"; value: { payments: Array<HostNativeChatPayment> } }
+  /**
+   * Result of an incoming custody operation.
+   */
+  | { tag: "TopUp"; value: { outcome: NativeCoinageTopUpOutcome } }
+  /**
+   * The requested metadata transition or recovery pass completed.
+   */
+  | { tag: "Done"; value?: undefined }
+  /**
+   * Sanitized domain rejection; cannot authorize another backend.
+   */
+  | { tag: "Failed"; value: { reason: NativeCoinageFailure } };
+
+/**
+ * Wallet and asset binding checked by the native service before every operation.
+ */
+export interface NativeCoinageScope {
+  /**
+   * Authenticated root key of the wallet owning the main purse.
+   */
+  rootPublicKey: Uint8Array;
+
+  /**
+   * Genesis hash of the configured Coinage chain.
+   */
+  genesisHash: Uint8Array;
+
+  /**
+   * Configured asset instance; `undefined` denotes a legacy single-asset runtime.
+   */
+  coinageInstanceId?: number;
+}
+
+/**
+ * Incoming settlement result; acceptance and best-head observations are not finality.
+ */
+export type NativeCoinageTopUpOutcome =
+  /**
+   * The original requested minimum has been credited at finality.
+   * For a zero minimum, the source claim is terminal with positive finalized credit.
+   */
+  | { tag: "Cleared"; value?: undefined }
+  /**
+   * Terminal shortfall, expressed in raw chain units, not cents.
+   */
+  | { tag: "Partial"; value: { creditedAmountRaw: string } }
+  /**
+   * Durable custody exists, but final credit has not been established.
+   */
+  | { tag: "Pending"; value?: undefined }
+  /**
+   * Terminal: none of the requested funds could be claimed.
+   */
+  | { tag: "NotClaimed"; value?: undefined };
+
+/**
  * Permission request whose authorization status can be inspected or updated
  * by host administration UI.
  */
@@ -489,6 +1302,35 @@ export type PermissionAuthorizationRequest =
    * Product-scoped permission to access another product's account context.
    */
   | { tag: "AccountAccess"; value: { targetProductId: string } }
+  /**
+   * Product-scoped permission to bind and use wallet-held Chat identity authority.
+   */
+  | { tag: "ChatAuthority"; value?: undefined }
+  /**
+   * Product-scoped permission to ensure Statement Store quota, not increase it.
+   */
+  | {
+      tag: "StatementStoreAllowance";
+      value: { derivationIndex?: DerivationIndex };
+    }
+  /**
+   * Product-scoped permission to disclose a profile reference to the user's
+   * Chat contacts.
+   */
+  | { tag: "ProfileDisclosure"; value?: undefined }
+  /**
+   * Calling consent for this product's authenticated network and account.
+   *
+   * The core resolves both fields from the active authority session, never
+   * from product-supplied identity claims. Unscoped `Remote(Calling)` grants
+   * do not authorize this request.
+   */
+  | { tag: "Calling"; value: { network: Uint8Array; account: Uint8Array } }
+  /**
+   * Bounded automatic Bulletin uploads for the rendered account. The core
+   * rejects an account that is no longer active; product and network are host-owned.
+   */
+  | { tag: "AutomaticPreimageSubmit"; value: { rootPublicKey: Bytes32 } }
   /**
    * Product-scoped approval to make one kind of signature with another
    * product's accounts. It is held in memory only and ends when the product
@@ -514,6 +1356,174 @@ export type PermissionAuthorizationStatus =
  * User decision including how long an authorization should last.
  */
 export type PermissionDecision = "AllowOnce" | "AllowAlways" | "Deny";
+
+/**
+ * One avatar to draw over a product.
+ */
+export interface PlacedAvatar {
+  /**
+   * The product's id for this on-screen avatar, stable across updates.
+   */
+  slot: number;
+
+  /**
+   * Bounding box of the avatar circle, in surface units.
+   */
+  rect: AvatarRect;
+
+  /**
+   * Visible region the avatar is cut to, in surface units.
+   */
+  clip: AvatarRect;
+
+  /**
+   * The profile reference the contact disclosed. A bearer capability, as
+   * in `ProfilePlatform::present_profile`.
+   */
+  reference: string;
+
+  /**
+   * Freshness token for this reference. Contact shares use Unix
+   * milliseconds, advanced monotonically for personal revisions even
+   * across relay actors with different clocks. The own avatar uses the
+   * disclosure revision. A changed token invalidates cached contents;
+   * do not interpret an own-profile token as a wall-clock date.
+   */
+  sharedAt: bigint;
+}
+
+/**
+ * The avatars the core found drawable in one product's placement: the slots
+ * whose contact shared a profile with the user, each with the reference that
+ * contact disclosed.
+ */
+export interface PlacedAvatars {
+  /**
+   * Width of the product's surface, in the units of every rect.
+   */
+  surfaceWidth: number;
+
+  /**
+   * Height of the product's surface, in the same units.
+   */
+  surfaceHeight: number;
+
+  /**
+   * Avatars to draw, in the product's slot order.
+   */
+  avatars: Array<PlacedAvatar>;
+}
+
+/**
+ * One contact name to render in host-owned UI, without any Profile grant.
+ */
+export interface PlacedContactLabel {
+  /**
+   * Stable, product-chosen placement id.
+   */
+  slot: number;
+
+  /**
+   * Resolved contact account, never sent to the product.
+   */
+  account: Bytes32;
+
+  /**
+   * Name bounds in surface units.
+   */
+  rect: AvatarRect;
+
+  /**
+   * Visible region in surface units.
+   */
+  clip: AvatarRect;
+}
+
+/**
+ * Complete replacement of names drawn over one product connection.
+ */
+export interface PlacedContactLabels {
+  /**
+   * Width of the product surface.
+   */
+  surfaceWidth: number;
+
+  /**
+   * Height of the product surface.
+   */
+  surfaceHeight: number;
+
+  /**
+   * Host-resolved names to draw. Empty clears the placement.
+   */
+  labels: Array<PlacedContactLabel>;
+}
+
+/**
+ * Review shown before a preimage is submitted.
+ */
+export interface PreimageSubmitReview {
+  /**
+   * Size of the preimage in bytes.
+   */
+  size: bigint;
+
+  /**
+   * Authenticated product requesting this upload.
+   */
+  productId: string;
+
+  /**
+   * Root account to which any durable approval is restricted.
+   */
+  rootPublicKey: Bytes32;
+
+  /**
+   * Host-selected Bulletin network covered by the approval.
+   */
+  genesisHash: Bytes32;
+
+  /**
+   * Maximum bytes per automatically approved upload.
+   */
+  automaticMaxBytes: bigint;
+
+  /**
+   * Maximum automatic upload attempts in the rolling window.
+   */
+  automaticMaxUploads: number;
+
+  /**
+   * Length of the rolling automatic-upload window in seconds.
+   */
+  automaticWindowSeconds: number;
+}
+
+/**
+ * Host-only presentation of a contact's shared profile or its absence.
+ */
+export interface PresentedContactProfile {
+  /**
+   * The profile currently shared with the user. ``undefined`` means no received,
+   * unretracted profile, never a storage or loading failure.
+   */
+  shared?: SharedContactProfile;
+
+  /**
+   * The contact being presented. When shared, their authenticated Chat
+   * device delivered the reference, not necessarily their own profile.
+   */
+  peerIdentity: Uint8Array;
+
+  /**
+   * The contact's username, when the core knows one: the name its Chat
+   * roster holds for `peer_identity`, verified when the contact was bound
+   * or first authenticated, else the peer's verified dotNS name. Never a
+   * name from the product. ``undefined`` when neither is known in time; show the
+   * contact without a name then, never by address.
+   */
+  username?: string;
+}
 
 /**
  * Product identity attached to one product-facing TrUAPI connection.
@@ -557,6 +1567,96 @@ export interface ProductSubtreeReview {
    * Product resolving its own account.
    */
   productId: string;
+}
+
+/**
+ * Review shown before a product discloses a profile reference to an app
+ * audience or selected contacts. Personal grants permit host rendering across
+ * recipient apps. This authorizes the product, not individual audience edits.
+ * The prompt names the product, never the contacts or the reference.
+ */
+export interface ProfileDisclosureReview {
+  /**
+   * Product asking to disclose the profile.
+   */
+  productId: string;
+}
+
+/**
+ * Trusted host receiving scope, derived from verified artifact and account state.
+ * It must remain available after the product execution closes.
+ */
+export interface ReceivingAuthority {
+  /**
+   * Verified product identifier.
+   */
+  productId: string;
+
+  /**
+   * Opaque stable account identity, encoded as 32-byte lowercase hex.
+   */
+  account: string;
+
+  /**
+   * Host-selected network environment.
+   */
+  environment: string;
+
+  /**
+   * Verified artifact digest, encoded as 32-byte lowercase hex.
+   */
+  artifact: string;
+
+  /**
+   * Host-selected receiving chain genesis, encoded as 32-byte lowercase hex.
+   */
+  genesis: string;
+
+  /**
+   * Host logout, account and artifact fence.
+   */
+  generation: bigint;
+
+  /**
+   * Current OS notification permission.
+   */
+  osPermission: boolean;
+
+  /**
+   * Whether the explicitly selected transport is ready.
+   */
+  transportReady: boolean;
+}
+
+/**
+ * Host-only durable registration awaiting transport synchronization.
+ * Routes and authority identifiers stay local, not in provider payloads.
+ */
+export interface ReceivingRegistration {
+  /**
+   * Trusted scope under which consent was recorded.
+   */
+  authority: ReceivingAuthority;
+
+  /**
+   * Durable local revision, distinct from provider token revisions.
+   */
+  revision: bigint;
+
+  /**
+   * Whether this revision enrolls watches or revokes them.
+   */
+  enabled: boolean;
+
+  /**
+   * Locally approved source filters and activation routes.
+   */
+  watches: Array<ReceivingWatch>;
+
+  /**
+   * Whether this revision still needs synchronization.
+   */
+  syncPending: boolean;
 }
 
 /**
@@ -628,6 +1728,23 @@ export interface SessionUiInfo {
    * Fully qualified username from the dotNS identity record on Asset Hub.
    */
   fullUsername?: string;
+}
+
+/**
+ * A profile reference received from an authenticated Chat contact.
+ */
+export interface SharedContactProfile {
+  /**
+   * The profile reference the contact disclosed. A bearer capability, as
+   * in `ProfilePlatform::present_profile`.
+   */
+  reference: string;
+
+  /**
+   * The share's freshness timestamp, as in `PlacedAvatar::shared_at`.
+   * Personal grants advance it monotonically across relay actors.
+   */
+  sharedAt: bigint;
 }
 
 /**
@@ -750,6 +1867,10 @@ export type UserConfirmationReview =
    */
   | { tag: "ResourceAllocation"; value: ResourceAllocationReview }
   /**
+   * Submit a preimage to the host-selected backend.
+   */
+  | { tag: "PreimageSubmit"; value: PreimageSubmitReview }
+  /**
    * Allow a product to access another product account.
    */
   | { tag: "AccountAccess"; value: AccountAccessReview }
@@ -760,7 +1881,24 @@ export type UserConfirmationReview =
   /**
    * Resolve a product's own account subtree over SSO.
    */
-  | { tag: "ProductSubtree"; value: ProductSubtreeReview };
+  | { tag: "ProductSubtree"; value: ProductSubtreeReview }
+  /**
+   * Allow a product to bind and use wallet-held Chat identity authority.
+   */
+  | { tag: "ChatAuthority"; value: ChatAuthorityReview }
+  /**
+   * Confirm this exact main-purse payment; never eligible for auto-approval.
+   */
+  | { tag: "MainPurseChatPayment"; value: MainPurseChatPaymentReview }
+  /**
+   * Allow a product to disclose a profile reference to the user's Chat
+   * contacts.
+   */
+  | { tag: "ProfileDisclosure"; value: ProfileDisclosureReview }
+  /**
+   * Allow calling only in the immutable authenticated product/account/network scope.
+   */
+  | { tag: "Calling"; value: CallingReview };
 
 /**
  * Review shown before a product asks to access another product account.
@@ -805,6 +1943,38 @@ export const AuthState: S.Codec<AuthState> = S.lazy(
 );
 
 /**
+ * Immutable calling-consent context resolved by the trusted core.
+ *
+ * Approval applies only to this exact canonical product, authenticated network,
+ * and authority-derived account. It neither grants camera/microphone access nor
+ * carries over to another account or network.
+ */
+export const CallingReview: S.Codec<CallingReview> = S.lazy(
+  (): S.Codec<CallingReview> =>
+    S.Struct({
+      productId: S.str,
+      network: S.Bytes(32),
+      account: S.Bytes(32),
+    }) as S.Codec<CallingReview>,
+);
+
+/**
+ * Review shown before a product binds or uses wallet-held Chat identity authority.
+ */
+export const ChatAuthorityReview: S.Codec<ChatAuthorityReview> = S.lazy(
+  (): S.Codec<ChatAuthorityReview> =>
+    S.Struct({ productId: S.str }) as S.Codec<ChatAuthorityReview>,
+);
+
+/**
+ * Host-private initial selection for a multi-contact picker.
+ */
+export const ContactSelection: S.Codec<ContactSelection> = S.lazy(
+  (): S.Codec<ContactSelection> =>
+    S.Struct({ selected: S.Vector(Bytes32) }) as S.Codec<ContactSelection>,
+);
+
+/**
  * Core-owned host-private storage slots. Products never address these slots;
  * the host chooses the backing store for each slot.
  *
@@ -813,63 +1983,106 @@ export const AuthState: S.Codec<AuthState> = S.lazy(
  */
 export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
   (): S.Codec<CoreStorageKey> =>
-    S.indexedTaggedUnion({
-      AuthSession: [0, S._void] as const,
-      PairingDeviceIdentity: [1, S._void] as const,
-      PermissionAuthorization: [
-        2,
-        S.Struct({
-          productId: S.str,
-          request: PermissionAuthorizationRequest,
-        }) as S.Codec<{
-          productId: string;
-          request: PermissionAuthorizationRequest;
-        }>,
-      ] as const,
-      AllowanceKeys: [
-        3,
-        S.Struct({ sessionId: S.str }) as S.Codec<{ sessionId: string }>,
-      ] as const,
-      LastProcessedPairingStatement: [4, S._void] as const,
-      AutoSigningKey: [
-        5,
-        S.Struct({ productId: S.str }) as S.Codec<{ productId: string }>,
-      ] as const,
-      AutoSigningKeys: [6, S._void] as const,
-      RingVrfRegistry: [
-        7,
-        S.Struct({ rootPublicKey: S.Bytes(32) }) as S.Codec<{
-          rootPublicKey: Uint8Array;
-        }>,
-      ] as const,
-      StatementRenewalTargets: [8, S._void] as const,
-      DeviceEncryptionKey: [9, S._void] as const,
-      ProductSubtree: [
-        10,
-        S.Struct({ sessionId: S.str, productId: S.str }) as S.Codec<{
-          sessionId: string;
-          productId: string;
-        }>,
-      ] as const,
-      SsoResponderRequestLedger: [
-        11,
-        S.Struct({
-          rootPublicKey: S.Bytes(32),
-          peerStatementAccountId: S.Bytes(32),
-          peerEncryptionPublicKey: S.Bytes(32),
-        }) as S.Codec<{
-          rootPublicKey: Uint8Array;
-          peerStatementAccountId: Uint8Array;
-          peerEncryptionPublicKey: Uint8Array;
-        }>,
-      ] as const,
-      ProductManifest: [
-        12,
-        S.Struct({ productId: S.str }) as S.Codec<{ productId: string }>,
-      ] as const,
-      FundingSessions: [13, S._void] as const,
-      FundingSessionsUnreadable: [17, S._void] as const,
-      FundingSessionPack: [18, S._void] as const,
+    S.TaggedUnion({
+      AuthSession: S._void,
+      PairingDeviceIdentity: S._void,
+      PermissionAuthorization: S.Struct({
+        productId: S.str,
+        request: PermissionAuthorizationRequest,
+      }) as S.Codec<{
+        productId: string;
+        request: PermissionAuthorizationRequest;
+      }>,
+      AllowanceKeys: S.Struct({ sessionId: S.str }) as S.Codec<{
+        sessionId: string;
+      }>,
+      LastProcessedPairingStatement: S._void,
+      AutoSigningKey: S.Struct({ productId: S.str }) as S.Codec<{
+        productId: string;
+      }>,
+      AutoSigningKeys: S._void,
+      RingVrfRegistry: S.Struct({ rootPublicKey: S.Bytes(32) }) as S.Codec<{
+        rootPublicKey: Uint8Array;
+      }>,
+      StatementRenewalTargets: S._void,
+      DeviceEncryptionKey: S._void,
+      ProductSubtree: S.Struct({
+        sessionId: S.str,
+        productId: S.str,
+      }) as S.Codec<{ sessionId: string; productId: string }>,
+      SsoResponderRequestLedger: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        peerStatementAccountId: S.Bytes(32),
+        peerEncryptionPublicKey: S.Bytes(32),
+      }) as S.Codec<{
+        rootPublicKey: Uint8Array;
+        peerStatementAccountId: Uint8Array;
+        peerEncryptionPublicKey: Uint8Array;
+      }>,
+      ProductManifest: S.Struct({ productId: S.str }) as S.Codec<{
+        productId: string;
+      }>,
+      MainPurseCoinage: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        genesisHash: S.Bytes(32),
+      }) as S.Codec<{ rootPublicKey: Uint8Array; genesisHash: Uint8Array }>,
+      NativeChatDevice: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        genesisHash: S.Bytes(32),
+        productId: S.str,
+      }) as S.Codec<{
+        rootPublicKey: Uint8Array;
+        genesisHash: Uint8Array;
+        productId: string;
+      }>,
+      NativeChatFileChunk: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        genesisHash: S.Bytes(32),
+        productId: S.str,
+        attachmentId: S.Bytes(32),
+        chunkIndex: S.u32,
+      }) as S.Codec<{
+        rootPublicKey: Uint8Array;
+        genesisHash: Uint8Array;
+        productId: string;
+        attachmentId: Uint8Array;
+        chunkIndex: number;
+      }>,
+      NativeChatProducts: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        genesisHash: S.Bytes(32),
+      }) as S.Codec<{ rootPublicKey: Uint8Array; genesisHash: Uint8Array }>,
+      ProfileDisclosure: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        genesisHash: S.Bytes(32),
+      }) as S.Codec<{ rootPublicKey: Uint8Array; genesisHash: Uint8Array }>,
+      ProfileReferencesReceived: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        genesisHash: S.Bytes(32),
+        productId: S.str,
+      }) as S.Codec<{
+        rootPublicKey: Uint8Array;
+        genesisHash: Uint8Array;
+        productId: string;
+      }>,
+      ProfilePersonalReferencesReceived: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        genesisHash: S.Bytes(32),
+      }) as S.Codec<{ rootPublicKey: Uint8Array; genesisHash: Uint8Array }>,
+      NotificationReceiving: S._void,
+      AutomaticPreimageUploads: S.Struct({
+        productId: S.str,
+        rootPublicKey: Bytes32,
+        genesisHash: Bytes32,
+      }) as S.Codec<{
+        productId: string;
+        rootPublicKey: Bytes32;
+        genesisHash: Bytes32;
+      }>,
+      HostChannelPeers: S.Struct({
+        rootPublicKey: S.Bytes(32),
+        genesisHash: S.Bytes(32),
+      }) as S.Codec<{ rootPublicKey: Uint8Array; genesisHash: Uint8Array }>,
     }),
 );
 
@@ -934,25 +2147,6 @@ export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
 export const ExpandedCardFaceOutcome: S.Codec<ExpandedCardFaceOutcome> = S.lazy(
   (): S.Codec<ExpandedCardFaceOutcome> =>
     S.Status("Applied", "NotPresented", "UserMoving", "Unsupported"),
-);
-
-/**
- * How the user left the funding overlay.
- */
-export const FundingPresentOutcome: S.Codec<FundingPresentOutcome> = S.lazy(
-  (): S.Codec<FundingPresentOutcome> => S.Status("Started", "Dismissed"),
-);
-
-/**
- * A funding session as the host overlay needs it to open on the right screen.
- */
-export const FundingPresentation: S.Codec<FundingPresentation> = S.lazy(
-  (): S.Codec<FundingPresentation> =>
-    S.Struct({
-      intent: S.str,
-      direction: FundingDirection,
-      amount: S.Option(S.u128),
-    }) as S.Codec<FundingPresentation>,
 );
 
 /**
@@ -1021,6 +2215,21 @@ export const HostContactPick: S.Codec<HostContactPick> = S.lazy(
 );
 
 /**
+ * The user's complete selection in a host-owned multi-contact picker.
+ */
+export const HostContactsPick: S.Codec<HostContactsPick> = S.lazy(
+  (): S.Codec<HostContactsPick> =>
+    S.TaggedUnion({
+      Picked: S.Struct({ accounts: S.Vector(Bytes32) }) as S.Codec<{
+        accounts: Array<Bytes32>;
+      }>,
+      Dismissed: S._void,
+      NoContacts: S._void,
+      Unsupported: S._void,
+    }),
+);
+
+/**
  * How the host's scanner ended.
  */
 export const HostScan: S.Codec<HostScan> = S.lazy(
@@ -1054,6 +2263,499 @@ export const LoginFailureKind: S.Codec<LoginFailureKind> = S.lazy(
 );
 
 /**
+ * Exact Host-resolved payment reviewed before debiting the user's main purse.
+ *
+ * This review never grants a reusable spending permission. Chat authority and
+ * automatic product signing do not authorize it.
+ */
+export const MainPurseChatPaymentReview: S.Codec<MainPurseChatPaymentReview> =
+  S.lazy(
+    (): S.Codec<MainPurseChatPaymentReview> =>
+      S.Struct({
+        callingProductId: S.str,
+        recipientIdentity: S.Bytes(32),
+        recipientUsername: S.Option(S.str),
+        amountCents: S.u64,
+        maxDebitCents: S.u64,
+        genesisHash: S.Bytes(32),
+        coinageInstanceId: S.Option(S.u32),
+        operationId: S.Bytes(32),
+      }) as S.Codec<MainPurseChatPaymentReview>,
+  );
+
+/**
+ * Complete backend availability and simultaneous live-resource limits.
+ *
+ * `supported` is true only when every mandatory facility is implemented,
+ * including microphone/camera capture, screen picking, RTC, audio playback and
+ * routing, trusted indicators, and unreadable compositing. Runtime device
+ * absence or user denial does not mean a facility is unimplemented. There are
+ * deliberately no per-facility public support flags.
+ */
+export const MediaBackendCapabilities: S.Codec<MediaBackendCapabilities> =
+  S.lazy(
+    (): S.Codec<MediaBackendCapabilities> =>
+      S.Struct({
+        supported: S.bool,
+        maxSessions: S.u16,
+        maxRemoteParticipants: S.u16,
+        maxSurfacesPerSession: S.u16,
+      }) as S.Codec<MediaBackendCapabilities>,
+  );
+
+/**
+ * Trusted operations scoped by the method's product and runtime parameters.
+ *
+ * IDs are core-admitted handles, not globally addressable resources. The
+ * backend must fence delayed callbacks and release capture obtained after an
+ * operation was cancelled, superseded, or its session/runtime was closed.
+ */
+export const MediaBackendCommand: S.Codec<MediaBackendCommand> = S.lazy(
+  (): S.Codec<MediaBackendCommand> =>
+    S.TaggedUnion({
+      OpenSession: S.Struct({
+        sessionId: MediaSessionId,
+        operationId: MediaOperationId,
+        tracks: MediaLocalTracks,
+      }) as S.Codec<{
+        sessionId: MediaSessionId;
+        operationId: MediaOperationId;
+        tracks: MediaLocalTracks;
+      }>,
+      SetTracks: S.Struct({
+        sessionId: MediaSessionId,
+        operationId: MediaOperationId,
+        intentRevision: S.u64,
+        tracks: MediaLocalTracks,
+      }) as S.Codec<{
+        sessionId: MediaSessionId;
+        operationId: MediaOperationId;
+        intentRevision: bigint;
+        tracks: MediaLocalTracks;
+      }>,
+      CancelOperation: S.Struct({ operationId: MediaOperationId }) as S.Codec<{
+        operationId: MediaOperationId;
+      }>,
+      CloseSession: S.Struct({ sessionId: MediaSessionId }) as S.Codec<{
+        sessionId: MediaSessionId;
+      }>,
+      CreatePeer: S.Struct({
+        sessionId: MediaSessionId,
+        participantId: MediaParticipantId,
+        offerer: S.bool,
+      }) as S.Codec<{
+        sessionId: MediaSessionId;
+        participantId: MediaParticipantId;
+        offerer: boolean;
+      }>,
+      ApplyDescription: S.Struct({
+        sessionId: MediaSessionId,
+        participantId: MediaParticipantId,
+        description: MediaDescription,
+      }) as S.Codec<{
+        sessionId: MediaSessionId;
+        participantId: MediaParticipantId;
+        description: MediaDescription;
+      }>,
+      AddIceCandidate: S.Struct({
+        sessionId: MediaSessionId,
+        participantId: MediaParticipantId,
+        candidate: MediaIceCandidate,
+      }) as S.Codec<{
+        sessionId: MediaSessionId;
+        participantId: MediaParticipantId;
+        candidate: MediaIceCandidate;
+      }>,
+      RemovePeer: S.Struct({
+        sessionId: MediaSessionId,
+        participantId: MediaParticipantId,
+      }) as S.Codec<{
+        sessionId: MediaSessionId;
+        participantId: MediaParticipantId;
+      }>,
+      SetSurfaces: S.Struct({
+        sessionId: MediaSessionId,
+        viewportRevision: S.u64,
+        layoutRevision: S.u64,
+        surfaces: S.Vector(MediaSurface),
+      }) as S.Codec<{
+        sessionId: MediaSessionId;
+        viewportRevision: bigint;
+        layoutRevision: bigint;
+        surfaces: Array<MediaSurface>;
+      }>,
+      CloseRuntime: S._void,
+      CommitOperation: S.Struct({ operationId: MediaOperationId }) as S.Codec<{
+        operationId: MediaOperationId;
+      }>,
+      RequestConsent: S.Struct({
+        operationId: MediaOperationId,
+        request: MediaConsentRequest,
+      }) as S.Codec<{
+        operationId: MediaOperationId;
+        request: MediaConsentRequest;
+      }>,
+    }),
+);
+
+/**
+ * Trusted events scoped to the product/runtime that opened the stream.
+ *
+ * The core converts observations into public lifecycle events. Descriptions
+ * and candidates go exclusively to core-authenticated signaling; they must
+ * never become product events, error diagnostics, or product debug logs.
+ */
+export const MediaBackendEvent: S.Codec<MediaBackendEvent> = S.lazy(
+  (): S.Codec<MediaBackendEvent> =>
+    S.TaggedUnion({
+      ViewportChanged: S.Struct({
+        viewport: S.Option(MediaViewport),
+      }) as S.Codec<{ viewport?: MediaViewport }>,
+      LocalStateChanged: S.Struct({
+        sessionId: MediaSessionId,
+        intentRevision: S.u64,
+        state: MediaLocalState,
+      }) as S.Codec<{
+        sessionId: MediaSessionId;
+        intentRevision: bigint;
+        state: MediaLocalState;
+      }>,
+      PeerStateChanged: S.Struct({
+        sessionId: MediaSessionId,
+        participantId: MediaParticipantId,
+        state: MediaBackendPeerState,
+      }) as S.Codec<{
+        sessionId: MediaSessionId;
+        participantId: MediaParticipantId;
+        state: MediaBackendPeerState;
+      }>,
+      RemoteStateChanged: S.Struct({
+        sessionId: MediaSessionId,
+        participantId: MediaParticipantId,
+        state: MediaRemoteState,
+      }) as S.Codec<{
+        sessionId: MediaSessionId;
+        participantId: MediaParticipantId;
+        state: MediaRemoteState;
+      }>,
+      Description: S.Struct({
+        sessionId: MediaSessionId,
+        participantId: MediaParticipantId,
+        description: MediaDescription,
+      }) as S.Codec<{
+        sessionId: MediaSessionId;
+        participantId: MediaParticipantId;
+        description: MediaDescription;
+      }>,
+      IceCandidate: S.Struct({
+        sessionId: MediaSessionId,
+        participantId: MediaParticipantId,
+        candidate: MediaIceCandidate,
+      }) as S.Codec<{
+        sessionId: MediaSessionId;
+        participantId: MediaParticipantId;
+        candidate: MediaIceCandidate;
+      }>,
+      ScreenStopped: S.Struct({ sessionId: MediaSessionId }) as S.Codec<{
+        sessionId: MediaSessionId;
+      }>,
+      HostEnded: S.Struct({ sessionId: MediaSessionId }) as S.Codec<{
+        sessionId: MediaSessionId;
+      }>,
+      PermissionRevoked: S.Struct({
+        permission: MediaRevokedPermission,
+        source: MediaRevocationSource,
+      }) as S.Codec<{
+        permission: MediaRevokedPermission;
+        source: MediaRevocationSource;
+      }>,
+    }),
+);
+
+/**
+ * Backend-observed connection state for one remote endpoint.
+ */
+export const MediaBackendPeerState: S.Codec<MediaBackendPeerState> = S.lazy(
+  (): S.Codec<MediaBackendPeerState> =>
+    S.Status("Connecting", "Connected", "Reconnecting", "Failed", "Closed"),
+);
+
+/**
+ * Bounded result of a trusted backend command, without diagnostic strings.
+ */
+export const MediaBackendResponse: S.Codec<MediaBackendResponse> = S.lazy(
+  (): S.Codec<MediaBackendResponse> =>
+    S.TaggedUnion({
+      Done: S._void,
+      LocalState: S.Struct({ state: MediaLocalState }) as S.Codec<{
+        state: MediaLocalState;
+      }>,
+      Rejected: S.Struct({ failure: MediaOperationFailure }) as S.Codec<{
+        failure: MediaOperationFailure;
+      }>,
+      Consent: S.Struct({ granted: S.bool }) as S.Codec<{ granted: boolean }>,
+    }),
+);
+
+/**
+ * User decision presented by trusted host UI for one cancellable operation.
+ * The core alone reads and persists grants; these prompts never delegate
+ * browser capture permission or media objects into the product realm.
+ */
+export const MediaConsentRequest: S.Codec<MediaConsentRequest> = S.lazy(
+  (): S.Codec<MediaConsentRequest> =>
+    S.TaggedUnion({
+      Calling: S.Struct({
+        network: S.Bytes(32),
+        account: S.Bytes(32),
+      }) as S.Codec<{ network: Uint8Array; account: Uint8Array }>,
+      Microphone: S._void,
+      Camera: S._void,
+    }),
+);
+
+/**
+ * Host-only session description; Debug never includes SDP.
+ */
+export const MediaDescription: S.Codec<MediaDescription> = S.lazy(
+  (): S.Codec<MediaDescription> =>
+    S.Struct({
+      kind: MediaDescriptionKind,
+      sdp: S.str,
+    }) as S.Codec<MediaDescription>,
+);
+
+/**
+ * Negotiation role of a host-only description.
+ */
+export const MediaDescriptionKind: S.Codec<MediaDescriptionKind> = S.lazy(
+  (): S.Codec<MediaDescriptionKind> => S.Status("Offer", "Answer"),
+);
+
+/**
+ * Host-only ICE candidate; Debug never includes candidate or media-ID strings.
+ */
+export const MediaIceCandidate: S.Codec<MediaIceCandidate> = S.lazy(
+  (): S.Codec<MediaIceCandidate> =>
+    S.Struct({
+      candidate: S.str,
+      mid: S.Option(S.str),
+      mlineIndex: S.Option(S.u16),
+    }) as S.Codec<MediaIceCandidate>,
+);
+
+/**
+ * OS gating must not overwrite a separately remembered product decision.
+ */
+export const MediaRevocationSource: S.Codec<MediaRevocationSource> = S.lazy(
+  (): S.Codec<MediaRevocationSource> => S.Status("Product", "OperatingSystem"),
+);
+
+/**
+ * Revocation observations; screen stopping is not a permission revocation.
+ */
+export const MediaRevokedPermission: S.Codec<MediaRevokedPermission> = S.lazy(
+  (): S.Codec<MediaRevokedPermission> =>
+    S.Status("Calling", "Microphone", "Camera"),
+);
+
+/**
+ * Trusted context for exporting a verified native Chat attachment.
+ */
+export const NativeChatFileExportRequest: S.Codec<NativeChatFileExportRequest> =
+  S.lazy(
+    (): S.Codec<NativeChatFileExportRequest> =>
+      S.Struct({
+        productId: S.str,
+        peerIdentity: S.Bytes(32),
+        peerUsername: S.Option(S.str),
+        metadata: HostNativeChatAttachmentMetadata,
+      }) as S.Codec<NativeChatFileExportRequest>,
+  );
+
+/**
+ * Trusted native Chat selection context; never passed to a product.
+ */
+export const NativeChatFilePickRequest: S.Codec<NativeChatFilePickRequest> =
+  S.lazy(
+    (): S.Codec<NativeChatFilePickRequest> =>
+      S.Struct({
+        productId: S.str,
+        peerIdentity: S.Bytes(32),
+        peerUsername: S.Option(S.str),
+        maxFiles: S.u32,
+      }) as S.Codec<NativeChatFilePickRequest>,
+  );
+
+/**
+ * Immutable Host-owned source and metadata derived from its actual bytes.
+ */
+export const NativeChatPickedFile: S.Codec<NativeChatPickedFile> = S.lazy(
+  (): S.Codec<NativeChatPickedFile> =>
+    S.Struct({
+      sourceId: S.str,
+      metadata: HostNativeChatAttachmentMetadata,
+    }) as S.Codec<NativeChatPickedFile>,
+);
+
+/**
+ * Sanitized failures. Never forward secret-bearing native exception descriptions.
+ */
+export const NativeCoinageFailure: S.Codec<NativeCoinageFailure> = S.lazy(
+  (): S.Codec<NativeCoinageFailure> =>
+    S.Status(
+      "Unavailable",
+      "InvalidRequest",
+      "InvalidSource",
+      "OperationConflict",
+      "OperationNotFound",
+      "InsufficientBalance",
+      "UserRejected",
+    ),
+);
+
+/**
+ * Host-private bearer material. Never return this through the product API or log it.
+ * Raw amounts are canonical unsigned decimal u128 strings, avoiding FFI truncation.
+ */
+export const NativeCoinageMemo: S.Codec<NativeCoinageMemo> = S.lazy(
+  (): S.Codec<NativeCoinageMemo> =>
+    S.Struct({
+      secretKeys: S.Vector(S.Bytes()),
+      totalValueRaw: S.str,
+    }) as S.Codec<NativeCoinageMemo>,
+);
+
+/**
+ * Durable native-wallet operations, not an alternative inventory ledger.
+ */
+export const NativeCoinageOperation: S.Codec<NativeCoinageOperation> = S.lazy(
+  (): S.Codec<NativeCoinageOperation> =>
+    S.TaggedUnion({
+      Denomination: S._void,
+      PreparePayment: S.Struct({
+        intent: NativeCoinagePaymentIntent,
+      }) as S.Codec<{ intent: NativeCoinagePaymentIntent }>,
+      CommitHandoff: S.Struct({
+        productId: S.str,
+        operationId: S.Bytes(32),
+      }) as S.Codec<{ productId: string; operationId: Uint8Array }>,
+      Views: S.Struct({ productId: S.str }) as S.Codec<{ productId: string }>,
+      PendingHandoffs: S.Struct({
+        productId: S.str,
+        acceptedOperations: S.Vector(S.Bytes(32)),
+      }) as S.Codec<{
+        productId: string;
+        acceptedOperations: Array<Uint8Array>;
+      }>,
+      ReadHandoff: S.Struct({
+        productId: S.str,
+        operationId: S.Bytes(32),
+      }) as S.Codec<{ productId: string; operationId: Uint8Array }>,
+      NoteDelivery: S.Struct({
+        productId: S.str,
+        operationId: S.Bytes(32),
+      }) as S.Codec<{ productId: string; operationId: Uint8Array }>,
+      Reconcile: S._void,
+      TopUp: S.Struct({
+        productId: S.str,
+        operationId: S.Bytes(32),
+        minimumAmountRaw: S.str,
+        secretKeys: S.Vector(S.Bytes()),
+      }) as S.Codec<{
+        productId: string;
+        operationId: Uint8Array;
+        minimumAmountRaw: string;
+        secretKeys: Array<Uint8Array>;
+      }>,
+    }),
+);
+
+/**
+ * Immutable, Host-authenticated outgoing intent. No field is a product display hint.
+ */
+export const NativeCoinagePaymentIntent: S.Codec<NativeCoinagePaymentIntent> =
+  S.lazy(
+    (): S.Codec<NativeCoinagePaymentIntent> =>
+      S.Struct({
+        operationId: S.Bytes(32),
+        productId: S.str,
+        requestId: S.str,
+        peerIdentity: S.Bytes(32),
+        recipientUsername: S.Option(S.str),
+        amountCents: S.u64,
+      }) as S.Codec<NativeCoinagePaymentIntent>,
+  );
+
+/**
+ * One native operation with the immutable wallet/network scope to authenticate.
+ */
+export const NativeCoinageRequest: S.Codec<NativeCoinageRequest> = S.lazy(
+  (): S.Codec<NativeCoinageRequest> =>
+    S.Struct({
+      scope: NativeCoinageScope,
+      operation: NativeCoinageOperation,
+    }) as S.Codec<NativeCoinageRequest>,
+);
+
+/**
+ * Typed native results. Only the trusted Host may consume a Prepared memo.
+ */
+export const NativeCoinageResponse: S.Codec<NativeCoinageResponse> = S.lazy(
+  (): S.Codec<NativeCoinageResponse> =>
+    S.TaggedUnion({
+      Denomination: S.Struct({ centsUnitRaw: S.str }) as S.Codec<{
+        centsUnitRaw: string;
+      }>,
+      Prepared: S.Struct({
+        payment: HostNativeChatPayment,
+        memo: S.Option(NativeCoinageMemo),
+      }) as S.Codec<{
+        payment: HostNativeChatPayment;
+        memo?: NativeCoinageMemo;
+      }>,
+      Payments: S.Struct({
+        payments: S.Vector(HostNativeChatPayment),
+      }) as S.Codec<{ payments: Array<HostNativeChatPayment> }>,
+      TopUp: S.Struct({ outcome: NativeCoinageTopUpOutcome }) as S.Codec<{
+        outcome: NativeCoinageTopUpOutcome;
+      }>,
+      Done: S._void,
+      Failed: S.Struct({ reason: NativeCoinageFailure }) as S.Codec<{
+        reason: NativeCoinageFailure;
+      }>,
+    }),
+);
+
+/**
+ * Wallet and asset binding checked by the native service before every operation.
+ */
+export const NativeCoinageScope: S.Codec<NativeCoinageScope> = S.lazy(
+  (): S.Codec<NativeCoinageScope> =>
+    S.Struct({
+      rootPublicKey: S.Bytes(32),
+      genesisHash: S.Bytes(32),
+      coinageInstanceId: S.Option(S.u32),
+    }) as S.Codec<NativeCoinageScope>,
+);
+
+/**
+ * Incoming settlement result; acceptance and best-head observations are not finality.
+ */
+export const NativeCoinageTopUpOutcome: S.Codec<NativeCoinageTopUpOutcome> =
+  S.lazy(
+    (): S.Codec<NativeCoinageTopUpOutcome> =>
+      S.TaggedUnion({
+        Cleared: S._void,
+        Partial: S.Struct({ creditedAmountRaw: S.str }) as S.Codec<{
+          creditedAmountRaw: string;
+        }>,
+        Pending: S._void,
+        NotClaimed: S._void,
+      }),
+  );
+
+/**
  * Permission request whose authorization status can be inspected or updated
  * by host administration UI.
  */
@@ -1067,6 +2769,18 @@ export const PermissionAuthorizationRequest: S.Codec<PermissionAuthorizationRequ
         AccountAccess: S.Struct({ targetProductId: S.str }) as S.Codec<{
           targetProductId: string;
         }>,
+        ChatAuthority: S._void,
+        StatementStoreAllowance: S.Struct({
+          derivationIndex: S.Option(DerivationIndex),
+        }) as S.Codec<{ derivationIndex?: DerivationIndex }>,
+        ProfileDisclosure: S._void,
+        Calling: S.Struct({
+          network: S.Bytes(32),
+          account: S.Bytes(32),
+        }) as S.Codec<{ network: Uint8Array; account: Uint8Array }>,
+        AutomaticPreimageSubmit: S.Struct({
+          rootPublicKey: Bytes32,
+        }) as S.Codec<{ rootPublicKey: Bytes32 }>,
         CrossProductSignature: S.Struct({
           targetProductId: S.str,
           kind: CrossProductSignatureKind,
@@ -1095,6 +2809,87 @@ export const PermissionAuthorizationStatus: S.Codec<PermissionAuthorizationStatu
 export const PermissionDecision: S.Codec<PermissionDecision> = S.lazy(
   (): S.Codec<PermissionDecision> =>
     S.Status("AllowOnce", "AllowAlways", "Deny"),
+);
+
+/**
+ * One avatar to draw over a product.
+ */
+export const PlacedAvatar: S.Codec<PlacedAvatar> = S.lazy(
+  (): S.Codec<PlacedAvatar> =>
+    S.Struct({
+      slot: S.u32,
+      rect: AvatarRect,
+      clip: AvatarRect,
+      reference: S.str,
+      sharedAt: S.u64,
+    }) as S.Codec<PlacedAvatar>,
+);
+
+/**
+ * The avatars the core found drawable in one product's placement: the slots
+ * whose contact shared a profile with the user, each with the reference that
+ * contact disclosed.
+ */
+export const PlacedAvatars: S.Codec<PlacedAvatars> = S.lazy(
+  (): S.Codec<PlacedAvatars> =>
+    S.Struct({
+      surfaceWidth: S.u32,
+      surfaceHeight: S.u32,
+      avatars: S.Vector(PlacedAvatar),
+    }) as S.Codec<PlacedAvatars>,
+);
+
+/**
+ * One contact name to render in host-owned UI, without any Profile grant.
+ */
+export const PlacedContactLabel: S.Codec<PlacedContactLabel> = S.lazy(
+  (): S.Codec<PlacedContactLabel> =>
+    S.Struct({
+      slot: S.u32,
+      account: Bytes32,
+      rect: AvatarRect,
+      clip: AvatarRect,
+    }) as S.Codec<PlacedContactLabel>,
+);
+
+/**
+ * Complete replacement of names drawn over one product connection.
+ */
+export const PlacedContactLabels: S.Codec<PlacedContactLabels> = S.lazy(
+  (): S.Codec<PlacedContactLabels> =>
+    S.Struct({
+      surfaceWidth: S.u32,
+      surfaceHeight: S.u32,
+      labels: S.Vector(PlacedContactLabel),
+    }) as S.Codec<PlacedContactLabels>,
+);
+
+/**
+ * Review shown before a preimage is submitted.
+ */
+export const PreimageSubmitReview: S.Codec<PreimageSubmitReview> = S.lazy(
+  (): S.Codec<PreimageSubmitReview> =>
+    S.Struct({
+      size: S.u64,
+      productId: S.str,
+      rootPublicKey: Bytes32,
+      genesisHash: Bytes32,
+      automaticMaxBytes: S.u64,
+      automaticMaxUploads: S.u32,
+      automaticWindowSeconds: S.u32,
+    }) as S.Codec<PreimageSubmitReview>,
+);
+
+/**
+ * Host-only presentation of a contact's shared profile or its absence.
+ */
+export const PresentedContactProfile: S.Codec<PresentedContactProfile> = S.lazy(
+  (): S.Codec<PresentedContactProfile> =>
+    S.Struct({
+      shared: S.Option(SharedContactProfile),
+      peerIdentity: S.Bytes(32),
+      username: S.Option(S.str),
+    }) as S.Codec<PresentedContactProfile>,
 );
 
 /**
@@ -1134,6 +2929,50 @@ export const ProductSubtreeReview: S.Codec<ProductSubtreeReview> = S.lazy(
 );
 
 /**
+ * Review shown before a product discloses a profile reference to an app
+ * audience or selected contacts. Personal grants permit host rendering across
+ * recipient apps. This authorizes the product, not individual audience edits.
+ * The prompt names the product, never the contacts or the reference.
+ */
+export const ProfileDisclosureReview: S.Codec<ProfileDisclosureReview> = S.lazy(
+  (): S.Codec<ProfileDisclosureReview> =>
+    S.Struct({ productId: S.str }) as S.Codec<ProfileDisclosureReview>,
+);
+
+/**
+ * Trusted host receiving scope, derived from verified artifact and account state.
+ * It must remain available after the product execution closes.
+ */
+export const ReceivingAuthority: S.Codec<ReceivingAuthority> = S.lazy(
+  (): S.Codec<ReceivingAuthority> =>
+    S.Struct({
+      productId: S.str,
+      account: S.str,
+      environment: S.str,
+      artifact: S.str,
+      genesis: S.str,
+      generation: S.u64,
+      osPermission: S.bool,
+      transportReady: S.bool,
+    }) as S.Codec<ReceivingAuthority>,
+);
+
+/**
+ * Host-only durable registration awaiting transport synchronization.
+ * Routes and authority identifiers stay local, not in provider payloads.
+ */
+export const ReceivingRegistration: S.Codec<ReceivingRegistration> = S.lazy(
+  (): S.Codec<ReceivingRegistration> =>
+    S.Struct({
+      authority: ReceivingAuthority,
+      revision: S.u64,
+      enabled: S.bool,
+      watches: S.Vector(ReceivingWatch),
+      syncPending: S.bool,
+    }) as S.Codec<ReceivingRegistration>,
+);
+
+/**
  * Review shown before allocating resources for a product. Names the
  * beneficiary product so the user knows which product receives the
  * (signing-capable) allowance key they are approving.
@@ -1163,6 +3002,17 @@ export const SessionUiInfo: S.Codec<SessionUiInfo> = S.lazy(
       liteUsername: S.Option(S.str),
       fullUsername: S.Option(S.str),
     }) as S.Codec<SessionUiInfo>,
+);
+
+/**
+ * A profile reference received from an authenticated Chat contact.
+ */
+export const SharedContactProfile: S.Codec<SharedContactProfile> = S.lazy(
+  (): S.Codec<SharedContactProfile> =>
+    S.Struct({
+      reference: S.str,
+      sharedAt: S.u64,
+    }) as S.Codec<SharedContactProfile>,
 );
 
 /**
@@ -1241,18 +3091,23 @@ export const StatementStoreProductSignReview: S.Codec<StatementStoreProductSignR
  */
 export const UserConfirmationReview: S.Codec<UserConfirmationReview> = S.lazy(
   (): S.Codec<UserConfirmationReview> =>
-    S.indexedTaggedUnion({
-      SignPayload: [0, SignPayloadReview] as const,
-      SignRaw: [1, SignRawReview] as const,
-      StatementStoreProductSign: [2, StatementStoreProductSignReview] as const,
-      CreateTransaction: [3, CreateTransactionReview] as const,
-      AccountAlias: [4, AccountAliasReview] as const,
-      CreateProof: [5, CreateProofReview] as const,
-      IdentityDisclosure: [6, IdentityDisclosureReview] as const,
-      ResourceAllocation: [7, ResourceAllocationReview] as const,
-      AccountAccess: [9, AccountAccessReview] as const,
-      SignVrf: [10, SignVrfReview] as const,
-      ProductSubtree: [11, ProductSubtreeReview] as const,
+    S.TaggedUnion({
+      SignPayload: SignPayloadReview,
+      SignRaw: SignRawReview,
+      StatementStoreProductSign: StatementStoreProductSignReview,
+      CreateTransaction: CreateTransactionReview,
+      AccountAlias: AccountAliasReview,
+      CreateProof: CreateProofReview,
+      IdentityDisclosure: IdentityDisclosureReview,
+      ResourceAllocation: ResourceAllocationReview,
+      PreimageSubmit: PreimageSubmitReview,
+      AccountAccess: AccountAccessReview,
+      SignVrf: SignVrfReview,
+      ProductSubtree: ProductSubtreeReview,
+      ChatAuthority: ChatAuthorityReview,
+      MainPurseChatPayment: MainPurseChatPaymentReview,
+      ProfileDisclosure: ProfileDisclosureReview,
+      Calling: CallingReview,
     }),
 );
 
@@ -1268,30 +3123,6 @@ export interface AuthPresenter {
    * no auth UI.
    */
   authStateChanged?(state: AuthState): void;
-}
-
-/**
- * Host-implemented balance view: what a payment request can spend right now,
- * the figure the host checks a payment against. Optional: a host that omits
- * it leaves balance subscriptions answered `Unsupported`.
- *
- * The balance is the user's, per purse, not the product's: every product
- * following a purse sees the same figure. The core asks for the product's
- * balance access before calling here, and checks it again before passing on
- * each balance the stream emits, so a revoked grant ends the stream with
- * `PermissionDenied`.
- */
-export interface BalancePlatform {
-  /**
-   * Emit the balance of `purse` (``undefined`` for the main purse) now and on
-   * every change.
-   */
-  subscribeBalance(
-    product: ProductContext,
-    purse: number | undefined,
-  ): AsyncIterable<
-    Result<HostPaymentBalanceSubscribeItem, HostPaymentBalanceSubscribeError>
-  >;
 }
 
 /**
@@ -1384,6 +3215,20 @@ export interface ChatPlatform {
 }
 
 /**
+ * Optional native wallet service boundary, never exposed to products.
+ *
+ * Injecting this service at runtime construction assigns native custody for
+ * the runtime's lifetime. Absence selects the built-in Rust wallet; native
+ * unavailability or failure never permits Rust fallback.
+ */
+export interface CoinageWalletHost {
+  /**
+   * Invoke the selected native owner. An error never permits Rust fallback.
+   */
+  nativeCoinage(request: NativeCoinageRequest): Promise<NativeCoinageResponse>;
+}
+
+/**
  * Host-owned contact picker, drawn from the chat lists the host's chat
  * extensions hold.
  *
@@ -1414,11 +3259,7 @@ export interface ContactsPlatform {
    * implements `Self::contacts` alone still compiles and its products get
    * a truthful answer rather than a dismissal they would retry forever.
    *
-   * A JS host reaches the same answer by another route: the generated
-   * surface types this method optional, but a capability group counts as
-   * served only when every callback in it is present, so omitting this one
-   * makes the whole group absent and `contacts.pick` answers `Unsupported`
-   * before any of it is reached.
+   * JS adapters apply the same unsupported default when the host omits UI.
    *
    * The core cannot draw UI, so a selection has to come from the host; the
    * whole point is that the host renders the names rather than shipping
@@ -1427,6 +3268,30 @@ export interface ContactsPlatform {
    * `HostContactPick::NoContacts` instead of drawing an empty overlay.
    */
   pickContact?(product: ProductContext): Promise<HostContactPick>;
+
+  /**
+   * Edit the complete selection in host-owned UI. Cancellation is not an
+   * empty confirmed selection. Accounts and names stay host-side.
+   */
+  pickContacts?(
+    product: ProductContext,
+    selection: ContactSelection,
+  ): Promise<HostContactsPick>;
+
+  /**
+   * Draw names from the host's contact directory, with an account fallback
+   * when no username exists. Profile sharing must not affect labels.
+   *
+   * Replace the connection's previous placement, and clear it on navigation
+   * or disconnect. On directory invalidation, clear stale names and refresh
+   * the live placement from current contacts. No per-contact result is returned.
+   * Returns whether this host supports label placement, never whether any
+   * individual contact resolved. JS adapters return false for omitted UI.
+   */
+  placeContactLabels?(
+    product: ProductContext,
+    placed: PlacedContactLabels,
+  ): Promise<boolean>;
 }
 
 /**
@@ -1467,12 +3332,20 @@ export interface CoreAdmin {
   ): Promise<Array<PermissionAuthorizationStatus>>;
 
   /**
-   * Update a stored permission authorization status. `NotDetermined` clears
-   * the stored value so the next product request prompts again.
+   * Update a stored permission authorization status. `NotDetermined` resets
+   * the decision to ask again, retaining a tombstone against legacy re-import.
    */
   setPermissionAuthorizationStatus(
     request: PermissionAuthorizationRequest,
     status: PermissionAuthorizationStatus,
+  ): Promise<void>;
+
+  /**
+   * Re-read a stored product decision and fence revoked Media authorization.
+   * Host-only, read-only, and never prompts or consults OS permission state.
+   */
+  refreshPermissionAuthorization(
+    request: PermissionAuthorizationRequest,
   ): Promise<void>;
 
   /**
@@ -1548,10 +3421,10 @@ export interface CoreAdmin {
  * they accumulate for the life of the install.
  *
  * `describe_core_storage_key` names the product owning a slot:
- * `CoreStorageKeyDescription::product_id` is `Some` exactly for the
- * product-indexed variants, which are `PermissionAuthorization`,
- * `AutoSigningKey`, and `ProductSubtree`. Keying host storage by that value
- * makes the sweep a prefix delete rather than a scan.
+ * `CoreStorageKeyDescription::product_id` is `Some` for product-indexed
+ * slots, including the encrypted attachment chunk cache. Wallet-owned state
+ * remains outside that sweep. Keying host storage by this metadata makes
+ * product removal a prefix delete rather than a scan.
  */
 export interface CoreStorage {
   /**
@@ -1568,6 +3441,30 @@ export interface CoreStorage {
    * Clear a core-owned value by typed slot.
    */
   clearCoreStorage(key: CoreStorageKey): Promise<void>;
+
+  /**
+   * Atomically replace exactly `expected` decoded bytes in this physical slot.
+   * ``undefined`` differs from an empty value. Serialize with every write, clear and
+   * compare-exchange across all cores sharing the store, through actual
+   * persistence completion even if the requesting future is dropped.
+   * On persisted success, `notify_on_success` enqueues `core_storage_changed`
+   * before completion even if the requester was cancelled. Initial unanswered
+   * snapshots pass false; explicit policy decisions pass true.
+   */
+  compareExchangeCoreStorage(
+    key: CoreStorageKey,
+    expected: Uint8Array | undefined,
+    replacement: Uint8Array,
+    notifyOnSuccess: boolean,
+  ): Promise<boolean>;
+
+  /**
+   * Nonblocking notification after an explicit policy decision or reset.
+   * Queue deferred refreshes for every core group sharing the store and exact
+   * product, including the writer. Never await or reenter a core here. Raw
+   * writes/clears and CAS with `notify_on_success == false` must not emit this.
+   */
+  coreStorageChanged(key: CoreStorageKey): void;
 }
 
 /**
@@ -1604,31 +3501,6 @@ export interface Features {
 }
 
 /**
- * Host-implemented funding surface: the native overlay a funding session
- * runs in. Optional: a host that omits it leaves funding requests answered
- * `Unsupported`.
- */
-export interface FundingPlatform {
-  /**
-   * Show the funding overlay for a session that `product` opened, or the
-   * host itself when `product` is ``undefined``.
-   */
-  presentFunding(
-    product: ProductContext | undefined,
-    session: FundingPresentation,
-  ): Promise<FundingPresentOutcome>;
-
-  /**
-   * Observe a session's status change, for host UI such as the in-flight
-   * pill.
-   */
-  fundingSessionChanged?(
-    intent: string,
-    status: HostFundingStatusSubscribeItem,
-  ): void;
-}
-
-/**
  * Host-implemented adapter that holds a product's next-game reminder.
  * Optional: a host that omits it leaves Game requests answered `Unsupported`.
  * See `OptionalPlatform`.
@@ -1657,6 +3529,47 @@ export interface GamePlatform {
    * Drop the product's reminder. Idempotent: dropping none succeeds.
    */
   cancelGameReminder(product: ProductContext): Promise<void>;
+}
+
+/**
+ * Host-private HOP transport for the configured Bulletin chain.
+ *
+ * Endpoints are trusted host configuration, never product-supplied dialing
+ * instructions. Implementations must re-read their allowlist and enforce exact
+ * URL membership before opening a connection. An unconfigured host is
+ * explicitly unavailable; it must not fall back to a chain RPC endpoint.
+ */
+export interface HopProvider {
+  /**
+   * Current exact WSS endpoints from the host's trusted Bulletin registry.
+   */
+  allowedHopEndpoints?(bulletinGenesisHash: Uint8Array): Promise<Array<string>>;
+
+  /**
+   * Open one private HOP connection, sharing the JSON-RPC lifecycle only.
+   * The caller closes the returned lease when the private operation ends.
+   */
+  connectHop?(
+    bulletinGenesisHash: Uint8Array,
+    endpoint: string,
+  ): Promise<JsonRpcConnection>;
+}
+
+/**
+ * Optional host-authenticated username candidate source. The host owns backend
+ * configuration and credentials. Candidates are never ownership assertions:
+ * the core checks finalized dotNS ownership and the canonical People Chat key.
+ */
+export interface IdentityBackendHost {
+  /**
+   * Return exact-name candidates on the specified People network. Reject
+   * unavailable configuration/authentication and incomplete search results.
+   * Neither a guest URL nor a backend display label crosses this boundary.
+   */
+  identityUsernameCandidates(
+    username: string,
+    peopleChainGenesisHash: Uint8Array,
+  ): Promise<Array<Uint8Array>>;
 }
 
 /**
@@ -1692,6 +3605,115 @@ export interface LocaleHost {
   subscribeLocale(): AsyncIterable<
     Result<HostLocaleSubscribeItem, GenericError>
   >;
+
+  /**
+   * Convert a bounded UTC batch using the supplied host locale snapshot.
+   */
+  localizeTimestamps?(
+    request: HostLocaleLocalizeTimestampsRequest,
+  ): Promise<HostLocaleLocalizeTimestampsResponse>;
+}
+
+/**
+ * Optional complete Media backend, reachable only by the trusted runtime.
+ *
+ * The runtime supplies the authenticated product and its own runtime identity;
+ * commands cannot choose a different owner. Implementations must isolate all
+ * resources and event streams by both values. The core owns all public
+ * admission, resource budgets, permission, operation, and signaling authority.
+ *
+ * A host without every mandatory facility omits this entire capability or
+ * reports `supported: false`; the core answers public calls `Unsupported`.
+ * See `crate::platform::OptionalPlatform`. Generic backend failures must be sanitized
+ * and must never contain SDP, candidates, relay credentials, or device IDs.
+ */
+export interface MediaPlatform {
+  /**
+   * Probe complete backend availability without prompting or capturing.
+   */
+  mediaBackendCapabilities(
+    product: ProductContext,
+  ): Promise<MediaBackendCapabilities>;
+
+  /**
+   * Observe only this runtime's backend state. Emit its current viewport
+   * first. Dropping an event listener does not implicitly close sessions;
+   * runtime destruction explicitly issues `CloseRuntime`.
+   */
+  mediaBackendEvents(
+    product: ProductContext,
+    runtimeId: bigint,
+  ): AsyncIterable<Result<MediaBackendEvent, GenericError>>;
+
+  /**
+   * Execute one admitted command. Cancellation and teardown must remain
+   * actionable while a picker or other capture operation is pending.
+   */
+  mediaBackendCommand(
+    product: ProductContext,
+    runtimeId: bigint,
+    command: MediaBackendCommand,
+  ): Promise<MediaBackendResponse>;
+}
+
+/**
+ * Host-private native Chat selection, immutable custody and safe export.
+ *
+ * Handles, file bytes and destinations must never be exposed to products.
+ * Optional embedders without a backend must fail explicitly as unavailable.
+ */
+export interface NativeChatFilesHost {
+  /**
+   * Present trusted selection and durably snapshot the selected files.
+   * An empty result denotes user cancellation, not an unavailable backend.
+   */
+  pickChatFiles(
+    request: NativeChatFilePickRequest,
+  ): Promise<Array<NativeChatPickedFile>>;
+
+  /**
+   * Read exactly `length` bytes from an immutable source. Reject lengths
+   * above 2,000,000 and checked ranges extending beyond its actual u32 size.
+   */
+  readChatFile(
+    sourceId: string,
+    offset: bigint,
+    length: number,
+  ): Promise<Uint8Array>;
+
+  /**
+   * Release durable source custody. Repeated release is harmless.
+   */
+  releaseChatFile(sourceId: string): Promise<void>;
+
+  /**
+   * Present trusted export consent and create a private partial output.
+   * ``undefined`` denotes user cancellation. Never overwrite without consent.
+   */
+  beginChatFileExport(
+    request: NativeChatFileExportRequest,
+  ): Promise<string | undefined>;
+
+  /**
+   * Append a bounded chunk at the exact current offset; never allow holes,
+   * rewrites, or bytes beyond the declared export size.
+   */
+  writeChatFileExport(
+    exportId: string,
+    offset: bigint,
+    data: Uint8Array,
+  ): Promise<void>;
+
+  /**
+   * Publish only an exact-size completed output through safe native UI.
+   * Never automatically execute HTML, SVG, scripts, or other active files.
+   */
+  finishChatFileExport(exportId: string): Promise<void>;
+
+  /**
+   * Idempotently discard a partial output, never a completed user export.
+   */
+  cancelChatFileExport(exportId: string): Promise<void>;
 }
 
 /**
@@ -1723,6 +3745,64 @@ export interface Notifications {
    * unknown id still returns `success`.
    */
   cancelNotification?(id: number): Promise<void>;
+
+  /**
+   * Resolve trusted authority without prompting or consulting transport.
+   * The resident platform returns current host scope, even with product UI closed.
+   * A product execution's platform returns the immutable scope captured when
+   * that verified execution opened, never a replacement artifact/account's scope.
+   * Returning ``undefined`` explicitly advertises unsupported receiving.
+   */
+  receiverAuthority?(
+    productId: string,
+  ): Promise<ReceivingAuthority | undefined>;
+
+  /**
+   * Request distinct consent for this authority and full watch scope.
+   */
+  receiverConsent?(
+    authority: ReceivingAuthority,
+    watches: Array<ReceivingWatch>,
+  ): Promise<boolean>;
+
+  /**
+   * Wake the host's asynchronous synchronization loop, never await network I/O.
+   */
+  receiverChanged?(): Promise<void>;
+
+  /**
+   * Forward receiving actions to the single host-owned receiver, if external.
+   * The host must bind `product_id` to the trusted execution, not page input.
+   * Payloads are latest SCALE requests for actions 2..7; the response encodes
+   * `Result<latest response, HostNotificationReceivingError>` without a version tag.
+   * ``undefined`` selects this runtime's resident engine. An unavailable external
+   * owner must return an error, never ``undefined``, to avoid a second persistent writer.
+   */
+  receiverCommand?(
+    productId: string,
+    action: number,
+    payload: Uint8Array,
+  ): Promise<Uint8Array | undefined>;
+
+  /**
+   * Return at most 32 pending activations, ordered by sequence, without
+   * consuming them. The embedding host binds this platform to the verified
+   * product, authenticated account and environment; none is caller input.
+   * Destinations may be local absolute paths or HTTP(S)/`polkadot:` links.
+   * They remain opaque product data, never host navigation authority. Reject
+   * backslashes and control characters. Polling must not request permissions
+   * or enroll a background receiver. A missing implementation is an error.
+   */
+  activationEvents?(): Promise<NotificationActivations>;
+
+  /**
+   * Remove exactly this sequence from the bound activation queue after
+   * successful product routing. Unknown sequences are idempotent; never
+   * acknowledge another product/account/environment or a sequence range.
+   */
+  acknowledgeActivation?(
+    request: NotificationActivationAcknowledgeRequest,
+  ): Promise<void>;
 }
 
 /**
@@ -1741,38 +3821,6 @@ export interface PairingHostAdmin {
    * decoding that blob into live `SessionState` / `AuthState`.
    */
   notifySessionStoreChanged(): void;
-}
-
-/**
- * Host-implemented payment engine: pays from the user's balance to an
- * account, once the user approves. Optional: a host that omits it leaves
- * payment requests answered `Unsupported`.
- *
- * The core hashes the product into the id before calling, so ids never
- * collide across products. The host owns the approval sheet, the transfer
- * and its persistence.
- */
-export interface PaymentPlatform {
-  /**
-   * Ask the user to approve `request`. Returns once the user has decided:
-   * `Ok` when they authorized it and the host took it on; the payment's
-   * outcome arrives through its status.
-   */
-  requestPayment(
-    product: ProductContext,
-    request: HostPaymentRequest,
-  ): Promise<void>;
-
-  /**
-   * Emit a payment's current status and every later one, ending after a
-   * terminal status.
-   */
-  subscribePaymentStatus(
-    product: ProductContext,
-    id: Bytes32,
-  ): AsyncIterable<
-    Result<HostPaymentStatusSubscribeItem, HostPaymentStatusSubscribeError>
-  >;
 }
 
 /**
@@ -1939,6 +3987,65 @@ export interface ProductStorage {
 }
 
 /**
+ * Host-implemented adapter that shows a product-referenced profile in
+ * host-owned UI. Optional: a host that omits it leaves Profile requests
+ * answered `Unsupported`. See `OptionalPlatform`.
+ *
+ * The reference is a bearer capability. The host resolves, decrypts and
+ * renders it; profile bytes and the reference's key never return to the
+ * product. The core screens only the reference's shape, so parsing it and
+ * deciding what it may fetch are the host's.
+ */
+export interface ProfilePlatform {
+  /**
+   * Take one presentation and return once it is shown, never waiting for
+   * the user to dismiss it. Report an unparseable reference as
+   * `InvalidReference`; show load and fetch failures in the UI instead.
+   */
+  presentProfile(
+    product: ProductContext,
+    request: HostProfilePresentRequest,
+  ): Promise<void>;
+
+  /**
+   * Show a Chat contact's shared profile, or host-owned feedback when no
+   * profile is shared. Return once it is shown, without waiting for dismissal.
+   * Report an unparseable shared reference as `InvalidReference`.
+   *
+   * The core holds this reference because it arrived over the
+   * authenticated Chat channel from `peer_identity`'s own device, so the
+   * host can name that contact as who shared it, rather than the product
+   * that asked. It cannot vouch for more: the record behind the reference
+   * is not signed by its owner, so a contact can forward someone else's
+   * reference. The default presents a shared profile as
+   * `ProfilePlatform::present_profile` would, without the contact, and
+   * reports an error when empty-profile feedback is unsupported.
+   */
+  presentContactProfile?(
+    product: ProductContext,
+    presented: PresentedContactProfile,
+  ): Promise<void>;
+
+  /**
+   * Draw the contact avatars a product placed, on the host's own layer over
+   * the product's surface, replacing what was drawn for it before; an empty
+   * `avatars` clears it. The layer must let pointer input through to the
+   * product and must never tell the product what it drew.
+   *
+   * The core calls this again, with the product's last geometry, whenever
+   * a contact on it shares, re-shares or withdraws a profile, and with no
+   * avatars once
+   * the product's connection goes away. Answer `Unsupported` if this host
+   * cannot draw over the product; the product is told so. The default draws
+   * nothing.
+   */
+  placeContactAvatars?(
+    product: ProductContext,
+    placed: PlacedAvatars,
+  ): Promise<void>;
+}
+
+/**
  * Host-owned viewfinder for QR codes and barcodes. Optional. The Swift and
  * Kotlin bridges and the JS `scanner` callbacks follow the same rules.
  *
@@ -1972,39 +4079,6 @@ export interface ThemeHost {
 }
 
 /**
- * Host-implemented top-up engine: claims a source's funds into the user's
- * balance through the host's coinage onboarding. Optional: a host that omits
- * it leaves top-ups answered `Unsupported`.
- *
- * The core validates the source keys and hashes the product into the id
- * before calling, so ids never collide across products. The host owns
- * retries, partial claims and persistence.
- */
-export interface TopUpPlatform {
-  /**
-   * Start a top-up. Returns once the host has accepted it.
-   */
-  topUp(
-    product: ProductContext,
-    request: HostPaymentTopUpRequest,
-  ): Promise<void>;
-
-  /**
-   * Emit a top-up's current status and every later one, ending after a
-   * terminal status.
-   */
-  subscribeTopUpStatus(
-    product: ProductContext,
-    id: Bytes32,
-  ): AsyncIterable<
-    Result<
-      HostPaymentTopUpStatusSubscribeItem,
-      HostPaymentTopUpStatusSubscribeError
-    >
-  >;
-}
-
-/**
  * Local user confirmation UI for sensitive core-owned operations.
  */
 export interface UserConfirmation {
@@ -2027,8 +4101,8 @@ export interface UserConfirmation {
 
 /**
  * Combined platform interface. A host must provide every capability trait
- * listed here. Members marked optional may be omitted; the core answers their
- * product calls with `Unsupported`. See `OptionalPlatform`.
+ * listed here. Optional capabilities are declared separately in
+ * `OptionalPlatform`.
  */
 export interface HostCallbacks {
   navigation: Navigation;
@@ -2038,6 +4112,8 @@ export interface HostCallbacks {
   productStorage: ProductStorage;
   coreStorage: CoreStorage;
   chain: ChainProvider;
+  hop?: HopProvider;
+  nativeChatFiles?: NativeChatFilesHost;
   auth: AuthPresenter;
   userConfirmation: UserConfirmation;
   theme: ThemeHost;
@@ -2045,31 +4121,41 @@ export interface HostCallbacks {
   preimage: PreimageHost;
   productOperations: ProductOperations;
   chat?: ChatPlatform;
+  coinageWallet?: CoinageWalletHost;
   contacts?: ContactsPlatform;
   game?: GamePlatform;
+  identityBackend?: IdentityBackendHost;
+  media?: MediaPlatform;
   permissionStatus?: PermissionStatusHost;
   pocket?: PocketPlatform;
+  profile?: ProfilePlatform;
   scanner?: ScannerPlatform;
 }
 
 export interface RequiredHostCallbacks {
   navigation: Required<Navigation>;
-  notifications: Required<Notifications>;
+  notifications: Notifications;
   permissions: Required<Permissions>;
   features: Required<Features>;
   productStorage: Required<ProductStorage>;
   coreStorage: Required<CoreStorage>;
   chain: Required<ChainProvider>;
-  auth: Required<AuthPresenter>;
-  userConfirmation: Required<UserConfirmation>;
+  hop?: HopProvider;
+  nativeChatFiles?: Required<NativeChatFilesHost>;
+  auth: AuthPresenter;
+  userConfirmation: UserConfirmation;
   theme: Required<ThemeHost>;
-  locale: Required<LocaleHost>;
+  locale: LocaleHost;
   preimage: Required<PreimageHost>;
   productOperations: Required<ProductOperations>;
   chat?: Required<ChatPlatform>;
-  contacts?: Required<ContactsPlatform>;
+  coinageWallet?: Required<CoinageWalletHost>;
+  contacts?: ContactsPlatform;
   game?: Required<GamePlatform>;
+  identityBackend?: Required<IdentityBackendHost>;
+  media?: Required<MediaPlatform>;
   permissionStatus?: Required<PermissionStatusHost>;
   pocket?: Required<PocketPlatform>;
+  profile?: ProfilePlatform;
   scanner?: Required<ScannerPlatform>;
 }

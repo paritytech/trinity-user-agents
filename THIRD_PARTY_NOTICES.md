@@ -57,3 +57,21 @@ Regenerate:
 ( cd playground && npx license-checker-rseidelsohn --summary )
 ( cd explorer   && npx license-checker-rseidelsohn --summary )
 ```
+
+### Bundled playground fonts
+
+The playground serves unmodified font files through `next/font/local`, avoiding
+build-time Google Fonts CSS requests. These assets are separate from the npm
+dependency summaries above and retain the SIL Open Font License 1.1.
+
+All files come from [`google/fonts` revision
+`23e54b51ddffbc7713c583748e3bd86f62b1fa4a`](https://github.com/google/fonts/tree/23e54b51ddffbc7713c583748e3bd86f62b1fa4a):
+
+| Family | Upstream files | Bundled licence and copyright notice |
+|--------|----------------|--------------------------------------|
+| Instrument Serif | `ofl/instrumentserif/InstrumentSerif-Regular.ttf`, `InstrumentSerif-Italic.ttf` | [InstrumentSerif-OFL.txt](playground/public/fonts/InstrumentSerif-OFL.txt) |
+| Geist | `ofl/geist/Geist[wght].ttf` | [Geist-OFL.txt](playground/public/fonts/Geist-OFL.txt) |
+| JetBrains Mono | `ofl/jetbrainsmono/JetBrainsMono[wght].ttf` | [JetBrainsMono-OFL.txt](playground/public/fonts/JetBrainsMono-OFL.txt) |
+
+The font files live in `playground/src/app/fonts/`; the licence notices are also
+included in the deployed site's `/fonts/` directory.

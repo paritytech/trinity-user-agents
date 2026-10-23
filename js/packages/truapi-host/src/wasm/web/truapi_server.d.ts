@@ -11,8 +11,11 @@ declare const init: WasmModuleShape["default"];
 export default init;
 
 export const WasmPairingHostRuntime: WasmModuleShape["WasmPairingHostRuntime"];
+export const WasmSigningHostRuntime: WasmModuleShape["WasmSigningHostRuntime"];
 export const WasmProductRuntime: WasmModuleShape["WasmProductRuntime"];
+export const WasmNotificationReceiver: WasmModuleShape["WasmNotificationReceiver"];
 export const setLogLevel: (level: string) => void;
+export const hasTrustedRemotePermissions: WasmModuleShape["hasTrustedRemotePermissions"];
 export const deriveProductAccountPublicKey: WasmModuleShape["deriveProductAccountPublicKey"];
 export const productAccountAddress: WasmModuleShape["productAccountAddress"];
 export const wireSchemaHash: () => string;

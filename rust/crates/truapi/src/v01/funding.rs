@@ -1,3 +1,5 @@
+use alloc::string::String;
+
 use parity_scale_codec::{Decode, Encode};
 
 /// Which way value crosses the boundary between the user's Polkadot balance

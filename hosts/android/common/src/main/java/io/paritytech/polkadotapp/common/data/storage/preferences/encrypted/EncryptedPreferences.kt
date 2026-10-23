@@ -3,6 +3,8 @@ package io.paritytech.polkadotapp.common.data.storage.preferences.encrypted
 import kotlinx.coroutines.flow.Flow
 
 interface EncryptedPreferences {
+    fun keys(): Set<String>
+
     fun putEncryptedString(
         field: String,
         value: String,

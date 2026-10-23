@@ -2,9 +2,12 @@
 //! traits with `Send + Sync + 'static` bounds and remains object-safe via
 //! `async_trait`.
 
-use truapi::platform::{
-	HostIdentity, HostInfo, PairingHostConfig, Platform, PlatformInfo, ProductId, ProductIdError,
-	ProductStorageKey, RuntimeConfigValidationError,
+use truapi::{
+	latest::{ProductId, ProductIdError},
+	platform::{
+		HostIdentity, HostInfo, PairingHostConfig, Platform, PlatformInfo, ProductStorageKey,
+		RuntimeConfigValidationError,
+	},
 };
 
 fn _assert_platform_bounds<T: Platform + Send + Sync + 'static>() {}
@@ -133,14 +136,12 @@ fn product_id_validation_cases() {
 
 #[test]
 fn product_storage_key_round_trips_scopes_and_arbitrary_keys() {
-	let key = ProductStorageKey::new(
-		"Test.DOT".parse::<ProductId>().expect("valid product key"),
-		"settings:theme",
-	);
+	let key =
+		ProductStorageKey::new("Test.DOT", "settings:theme").expect("valid product storage key");
 	let encoded = key.encode();
 	let decoded = ProductStorageKey::decode(&encoded).expect("decode product key");
 
-	assert_eq!(decoded.product_id().as_str(), "test.dot");
+	assert_eq!(decoded.product_id(), "test.dot");
 	assert_eq!(decoded.key(), "settings:theme");
 	assert_eq!(decoded, key);
 	assert!(ProductStorageKey::decode("unknown:key").is_err());

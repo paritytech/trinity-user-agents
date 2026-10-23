@@ -20,8 +20,6 @@ use tokio::{
 	process::Command,
 };
 
-use truapi::platform::ProductId;
-
 use crate::{
 	script_project,
 	terminal_ui::{self, SystemEvent, UiHandle},
@@ -146,7 +144,7 @@ fn parse_editor(specification: &str) -> Result<(String, Vec<String>)> {
 /// prompts share the terminal. Returns the child's exit status.
 pub async fn run(
 	frame_url: &str,
-	product_id: &ProductId,
+	product_id: &str,
 	script: &Path,
 	host_role: ScriptHostRole,
 ) -> Result<ExitStatus> {
@@ -163,7 +161,7 @@ pub async fn run(
 /// Run a product script with stdout and stderr streamed into the terminal UI.
 pub async fn run_captured(
 	frame_url: &str,
-	product_id: &ProductId,
+	product_id: &str,
 	script: &Path,
 	ui: UiHandle,
 	host_role: ScriptHostRole,
@@ -204,7 +202,7 @@ pub async fn capture(mut command: Command, ui: UiHandle) -> Result<ExitStatus> {
 
 fn command(
 	frame_url: &str,
-	product_id: &ProductId,
+	product_id: &str,
 	script: &Path,
 	host_role: ScriptHostRole,
 ) -> Result<Command> {
@@ -226,7 +224,7 @@ fn command(
 	let mut command = bun_command(&runner, &directory)?;
 	command
 		.env("TRUAPI_FRAME_URL", frame_url)
-		.env("TRUAPI_PRODUCT_ID", product_id.as_str())
+		.env("TRUAPI_PRODUCT_ID", product_id)
 		.env("TRUAPI_SCRIPT", &script)
 		.env("TRUAPI_CLI_HOST_ROLE", host_role.as_env_value());
 	Ok(command)
@@ -425,12 +423,8 @@ console.log(JSON.stringify({
 		fs::write(&script, "console.log('hello');\n")?;
 
 		let runner = runner_path().canonicalize()?;
-		let command = command(
-			"ws://127.0.0.1:1234",
-			&ProductId::for_test("example.dot"),
-			&script,
-			ScriptHostRole::SigningHost,
-		)?;
+		let command =
+			command("ws://127.0.0.1:1234", "example.dot", &script, ScriptHostRole::SigningHost)?;
 		let command = command.as_std();
 		assert_eq!(command.get_program(), std::ffi::OsStr::new("bun"));
 		assert_eq!(
@@ -459,7 +453,7 @@ console.log(JSON.stringify({
 		if let Some(script) = std::env::var_os("TRUAPI_TEST_SCRIPT") {
 			let command = command(
 				"ws://127.0.0.1:1234",
-				&ProductId::for_test("example.dot"),
+				"example.dot",
 				Path::new(&script),
 				ScriptHostRole::PairingHost,
 			)?;
@@ -494,24 +488,21 @@ console.log(JSON.stringify({
 		let script = project.path().join("script.ts");
 		fs::write(&script, "console.log('hello');\n")?;
 
-		let command = command(
-			"ws://127.0.0.1:1234",
-			&ProductId::for_test("example.dot"),
-			&script,
-			ScriptHostRole::SigningHost,
-		)?;
+		let command =
+			command("ws://127.0.0.1:1234", "example.dot", &script, ScriptHostRole::SigningHost)?;
 
 		assert_eq!(
 			command
 				.as_std()
 				.get_envs()
 				.find_map(|(key, value)| { (key == "TRUAPI_SCRIPT_CWD").then_some(value) }),
-			Some(Some(project.path().as_os_str()))
+			Some(Some(fs::canonicalize(project.path())?.as_os_str()))
 		);
 		Ok(())
 	}
 
 	#[test]
+
 	fn editor_command_accepts_quoted_arguments_without_a_shell() -> Result<()> {
 		let (program, arguments) = parse_editor("code --wait \"profile one\"")?;
 

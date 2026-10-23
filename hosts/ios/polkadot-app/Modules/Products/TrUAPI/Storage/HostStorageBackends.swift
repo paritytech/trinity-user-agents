@@ -25,27 +25,53 @@ final class ProductStorageBackend: HostStorageBackend, @unchecked Sendable {
     }
 }
 
-/// Adapts the host-global core ``TrUAPILocalStoring`` to
-/// `HostCoreStorageBackend`. Core keys are SCALE-encoded `Data`; they are
-/// hex-encoded for the underlying String-keyed store. Plain Swift errors
-/// surface as `HostRejection`.
+/// Adapts core-private SCALE keys. Existing slots retain their UserDefaults
+/// backing; wallet-state slots use atomic, synced files outside product storage.
+/// Plain Swift errors (including ambiguous durable writes) become HostRejection.
 final class CoreStorageBackend: HostCoreStorageBackend, @unchecked Sendable {
     private let storage: TrUAPILocalStoring
+    var storageIdentifier: String { storage.storageIdentifier }
 
     init(storage: TrUAPILocalStoring) {
         self.storage = storage
     }
 
     func read(key: Data) throws -> Data? {
-        try withHostRejection { try storage.read(key: key.toHex()) }
+        if TrUAPIWalletStorage.owns(key) {
+            return try withHostRejection { try TrUAPIWalletStorage.shared.read(key: key) }
+        }
+        return try withHostRejection { try storage.read(key: key.toHex()) }
     }
 
     func write(key: Data, value: Data) throws {
+        if TrUAPIWalletStorage.owns(key) {
+            return try withHostRejection { try TrUAPIWalletStorage.shared.write(key: key, value: value) }
+        }
         try withHostRejection { try storage.write(key: key.toHex(), value: value) }
+        notifyPermissionChange(key: key)
+    }
+
+    func keys() throws -> [Data] {
+        try withHostRejection {
+            try storage.keys().map { try Data(hexString: $0) }
+        }
     }
 
     func clear(key: Data) throws {
+        if TrUAPIWalletStorage.owns(key) {
+            return try withHostRejection { try TrUAPIWalletStorage.shared.clear(key: key) }
+        }
         try withHostRejection { try storage.clear(key: key.toHex()) }
+        notifyPermissionChange(key: key)
+    }
+
+    // UI metadata observation only; cross-core policy refresh is exclusively
+    // driven by explicit policy-change intent, never raw writes or Ask stamping.
+    private func notifyPermissionChange(key: Data) {
+        guard let description = try? nativeDescribeCoreStorageKey(encoded: key),
+              description.permissionRequest != nil, let productId = description.productId else { return }
+        NotificationCenter.default.post(name: TrUAPIMediaPermissionSettings.didChange,
+            object: nil, userInfo: ["productId": productId])
     }
 }
 

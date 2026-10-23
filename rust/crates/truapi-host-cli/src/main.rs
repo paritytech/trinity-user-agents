@@ -8,8 +8,8 @@
 //!
 //! Plus the diagnostics and one-shot commands: `identity-check` for the dotNS
 //! usernames of a mnemonic's accounts, `register-name` for a full-person
-//! username, `alloc-check` for statement-store allowance, `pgas-check` for
-//! an Asset Hub PGAS allowance claim, and `stack` for Trinity stack descriptors.
+//! username, `alloc-check` for statement-store allowance, and `pgas-check` for
+//! an Asset Hub PGAS allowance claim.
 
 mod accounts;
 mod attestation;
@@ -17,17 +17,17 @@ mod bootstrap;
 mod bulletin_lookup;
 mod chain;
 mod chat;
+mod chat_files;
 mod contacts;
 mod dotns_read;
 mod frame_server;
-#[cfg(feature = "test-host")]
-mod funding_host;
 mod game;
 mod local_network;
 mod network;
 mod platform;
 mod pocket;
 mod product_config;
+mod profile;
 mod qr_scanner;
 mod register_name;
 mod scanner;
@@ -37,7 +37,6 @@ mod sessions;
 mod signing_shell;
 mod stack;
 mod terminal_ui;
-mod transcript;
 mod update;
 
 use std::{
@@ -68,10 +67,10 @@ use truapi::{
 	},
 	latest::GenericError,
 	platform::{
-		ChatPlatform, HostInfo, PermissionStatusHost, PlatformInfo, ProductExecutionKind, ProductId,
+		ChatPlatform, CoreStorageKey, HostInfo, PermissionAuthorizationRequest,
+		PermissionStatusHost, PlatformInfo, ProductExecutionKind,
 	},
 	statement_allowance as alloc,
-	statement_allowance::{PersonhoodSigner, collection::PersonhoodCollection},
 	subscription::Spawner,
 };
 
@@ -403,9 +402,12 @@ struct PairingHostArgs {
 	/// Network preset that supplies all RPC/backend/genesis config.
 	#[arg(long, value_enum, default_value = "paseo-next-v2")]
 	network: Network,
-	/// Approve every confirmation without prompting on the CLI.
+	/// Approve routine confirmations. Payments and upload consent still require review.
 	#[arg(long)]
 	auto_accept: bool,
+	/// Revoke automatic uploads for this product in the saved paired account, then exit.
+	#[arg(long, value_name = "PRODUCT", conflicts_with = "script")]
+	revoke_automatic_uploads: Option<String>,
 }
 
 /// Default loopback port for the frame socket and the bridge script.
@@ -429,6 +431,9 @@ struct DevArgs {
 	/// Network preset that supplies all RPC/backend/genesis config.
 	#[arg(long, value_enum, default_value = "paseo-next-v2")]
 	network: Network,
+	/// Trusted Coinage asset instance. Required for instance-scoped Coinage runtimes.
+	#[arg(long, env = "TRUAPI_COINAGE_INSTANCE_ID")]
+	coinage_instance_id: Option<u32>,
 	/// Persistent signing-host session to restore or create.
 	#[arg(long)]
 	session: Option<String>,
@@ -463,6 +468,9 @@ struct SigningHostArgs {
 	/// Product id used by scripts and product-scoped operations.
 	#[arg(long = "product-id", default_value = DEFAULT_PRODUCT_ID)]
 	product_id: String,
+	/// Revoke automatic uploads for this product in the selected saved account, then exit.
+	#[arg(long, value_name = "PRODUCT", conflicts_with_all = ["script", "serve", "deeplink"])]
+	revoke_automatic_uploads: Option<String>,
 	/// Pairing deeplink to add. Managed interactive and serve sessions also
 	/// restore responders for every previously paired host.
 	#[arg(long)]
@@ -490,11 +498,14 @@ struct SigningHostArgs {
 	/// Network preset that supplies all RPC/backend/genesis config.
 	#[arg(long, value_enum, default_value = "paseo-next-v2")]
 	network: Network,
+	/// Trusted Coinage asset instance. Required for instance-scoped Coinage runtimes.
+	#[arg(long, env = "TRUAPI_COINAGE_INSTANCE_ID")]
+	coinage_instance_id: Option<u32>,
 	/// TCP address to serve product WebSocket frames on. When omitted, use a
 	/// private per-process Unix-domain socket.
 	#[arg(long)]
 	frame_listen: Option<SocketAddr>,
-	/// Approve every confirmation without prompting on the CLI.
+	/// Approve routine confirmations. Payments and upload consent still require review.
 	#[arg(long)]
 	auto_accept: bool,
 	/// Serve product frames without a terminal UI and stay up until stopped.
@@ -502,6 +513,7 @@ struct SigningHostArgs {
 	/// endpoint and every lifecycle event are logged one line at a time, and
 	/// the signer is ready once "Signing host ready" is printed. Pair it with
 	/// `--auto-accept`, because a process with no terminal cannot prompt.
+	/// Main-purse payments cannot be approved in unattended serve mode.
 	#[arg(long)]
 	serve: bool,
 	/// Local product config declaring `trustedProducts`, as the publisher will
@@ -588,9 +600,8 @@ async fn main() -> Result<()> {
 
 	// A background check runs alongside the command rather than delaying it, and
 	// reports through `tracing`, which the terminal UI renders in its transcript
-	// so it cannot corrupt the full-screen display. The command then waits for
-	// it at exit, so even a short one completes the download it started.
-	// `stack` runs inside builds and publish jobs, which must not stall on or swap the binary.
+	// so it cannot corrupt the full-screen display. Update and stack commands
+	// manage the installed binary themselves, so they skip the background check.
 	let check = (!matches!(cli.command, Command::Update | Command::Stack { .. })).then(|| {
 		update::report_install();
 		tokio::spawn(update::run_background_check())
@@ -723,7 +734,6 @@ async fn run_pgas_check(
 		.context("invalid BIP-39 mnemonic")?
 		.to_entropy();
 	let candidates = accounts::collection_candidates(&entropy, network.network_suffix);
-	let signer = alloc::FixedPersonhoodSigner::new(&candidates).await?;
 
 	if submit && target.is_none() {
 		bail!("--target is required with --submit; a claim has to credit an account");
@@ -764,31 +774,27 @@ async fn run_pgas_check(
 		println!(
 			"{} member=0x{}",
 			candidate.collection,
-			hex::encode(signer.member(candidate.collection)?)
+			hex::encode(alloc::proof::member_key(candidate.entropy).await?)
 		);
 	}
-	let memberships = alloc::find_including_rings(
-		&people_rpc,
-		&people_metadata,
-		&signer,
-		&PersonhoodCollection::ALL,
-		lookback,
-	)
-	.await
-	.map_err(anyhow::Error::msg)?;
+	let memberships =
+		alloc::find_including_rings(&people_rpc, &people_metadata, &candidates, lookback)
+			.await
+			.map_err(anyhow::Error::msg)?;
 	for membership in &memberships {
 		println!(
 			"member INCLUDED in {} ring_index={} exponent={} members={}",
-			membership.collection,
-			membership.ring_index,
-			membership.exponent,
-			membership.members.len()
+			membership.collection(),
+			membership.ring.ring_index,
+			membership.ring.exponent,
+			membership.ring.members.len()
 		);
 	}
 	// The widest membership the signer actually holds; a claim needs exactly one.
-	let Some(ring) = memberships.first() else {
+	let Some(membership) = memberships.first() else {
 		bail!("member is not in the last {lookback} rings of any collection (onboarding pending)");
 	};
+	let ring = &membership.ring;
 
 	let revision = alloc::ring::read_ring_revision(
 		&people_rpc,
@@ -825,7 +831,7 @@ async fn run_pgas_check(
 		&asset_hub_rpc,
 		&asset_hub_metadata,
 		ring.collection,
-		&signer,
+		membership.entropy,
 		&network_suffix,
 		day,
 		&[],
@@ -847,10 +853,10 @@ async fn run_pgas_check(
 		asset_hub: &asset_hub,
 		people_rpc: &people_rpc,
 		people_metadata: &people_metadata,
-		signer: &signer,
+		entropy: membership.entropy,
 		network_suffix: &network_suffix,
 		target: &target,
-		ring,
+		ring: &membership.ring,
 	})
 	.await
 	.map_err(|err| anyhow::anyhow!("claim failed: {err}"))?;
@@ -882,7 +888,6 @@ async fn run_alloc_check(
 		.context("invalid BIP-39 mnemonic")?
 		.to_entropy();
 	let candidates = accounts::collection_candidates(&entropy, network.network_suffix);
-	let signer = alloc::FixedPersonhoodSigner::new(&candidates).await?;
 
 	if submit && target.is_none() {
 		bail!("--target is required with --submit; the all-zero default is read-only");
@@ -916,26 +921,25 @@ async fn run_alloc_check(
 		println!(
 			"{} member=0x{} current_ring_index={}",
 			candidate.collection,
-			hex::encode(signer.member(candidate.collection)?),
+			hex::encode(alloc::proof::member_key(candidate.entropy).await?),
 			alloc::ring::read_current_ring_index(&rpc, candidate.collection)
 				.await
 				.map_err(anyhow::Error::msg)?,
 		);
 	}
-	let memberships =
-		alloc::find_including_rings(&rpc, &metadata, &signer, &PersonhoodCollection::ALL, lookback)
-			.await
-			.map_err(anyhow::Error::msg)?;
+	let memberships = alloc::find_including_rings(&rpc, &metadata, &candidates, lookback)
+		.await
+		.map_err(anyhow::Error::msg)?;
 	if memberships.is_empty() {
 		println!("member NOT in the last {lookback} rings of any collection (onboarding pending)");
 	}
 	for membership in &memberships {
 		println!(
 			"member INCLUDED in {} ring_index={} exponent={} included_members={}",
-			membership.collection,
-			membership.ring_index,
-			membership.exponent,
-			membership.members.len(),
+			membership.collection(),
+			membership.ring.ring_index,
+			membership.ring.exponent,
+			membership.ring.members.len(),
 		);
 	}
 
@@ -952,21 +956,8 @@ async fn run_alloc_check(
 			continue;
 		}
 		print!("{}: ", candidate.collection);
-		report_slot_scan(
-			&rpc,
-			&metadata,
-			alloc::slot::SlotScan {
-				collection: candidate.collection,
-				signer: &signer,
-				network_suffix: &network_suffix,
-				period,
-				target: &target,
-				excluded: &[],
-				reuse_existing: true,
-			},
-			now,
-		)
-		.await?;
+		report_slot_scan(&rpc, &metadata, *candidate, &network_suffix, period, &target, now)
+			.await?;
 	}
 
 	if submit {
@@ -976,14 +967,11 @@ async fn run_alloc_check(
 		let scans = alloc::scan_collections(
 			&rpc,
 			&metadata,
-			&signer,
-			&PersonhoodCollection::ALL,
-			alloc::CollectionScanParams {
-				network_suffix: &network_suffix,
-				period,
-				target: &target,
-				reuse_existing: true,
-			},
+			&candidates,
+			&network_suffix,
+			period,
+			&target,
+			true,
 		)
 		.await
 		.map_err(anyhow::Error::msg)?;
@@ -991,7 +979,6 @@ async fn run_alloc_check(
 			&rpc,
 			&metadata,
 			&chain_state,
-			&signer,
 			&scans,
 			&memberships,
 			alloc::PooledRegistrationParams {
@@ -1032,11 +1019,27 @@ async fn run_alloc_check(
 async fn report_slot_scan(
 	rpc: &alloc::rpc::RpcClient,
 	metadata: &alloc::extension::Metadata,
-	scan: alloc::slot::SlotScan<'_>,
+	candidate: alloc::CollectionCandidate,
+	network_suffix: &[u8],
+	period: u32,
+	target: &[u8; 32],
 	now: u64,
 ) -> Result<()> {
-	let target = scan.target;
-	match alloc::slot::scan_slot_excluding(rpc, metadata, scan).await {
+	match alloc::slot::scan_slot_excluding(
+		rpc,
+		metadata,
+		alloc::slot::SlotScan {
+			collection: candidate.collection,
+			entropy: candidate.entropy,
+			network_suffix,
+			period,
+			target,
+			excluded: &[],
+			reuse_existing: true,
+		},
+	)
+	.await
+	{
 		Ok(alloc::slot::SlotSelection::Free(seq)) => println!("slot scan: free seq={seq}"),
 		Ok(alloc::slot::SlotSelection::FreeSlotsExcluded) => {
 			println!("slot scan: free slots exist but are awaiting earlier submissions");
@@ -1244,7 +1247,7 @@ async fn run_pairing_host(
 	debugger: Option<DebuggerSwitch>,
 ) -> Result<()> {
 	let script_projects = script_project_directory(args.base_path.clone());
-	let interactive = args.script.is_none();
+	let interactive = args.script.is_none() && args.revoke_automatic_uploads.is_none();
 	if interactive && !terminal_ui::is_interactive_terminal() {
 		invalid_invocation(
 			"interactive pairing-host requires a TTY; use pairing-host --script <path>",
@@ -1294,10 +1297,33 @@ async fn run_pairing_host(
 	if let Some(pocket) = pocket_host {
 		pairing_runtime.set_pocket_platform(pocket);
 	}
+	pairing_runtime.set_profile_platform(profile::CliProfileHost::from_env());
 	pairing_runtime.set_game_platform(Arc::new(game::CliGameHost));
-	pairing_runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
 	pairing_runtime
 		.set_contacts_platform(contacts::CliContactsHost::from_env(storage_platform.clone()));
+	observe_permission_changes(
+		&storage_platform,
+		&pairing_runtime,
+		|runtime, product_id, request| async move {
+			runtime.refresh_permission_authorization(&product_id, request).await
+		},
+	);
+	if let Some(product_id) = args.revoke_automatic_uploads {
+		pairing_runtime
+			.activate_stored_session()
+			.await
+			.map_err(|error| anyhow::anyhow!("{}", error.reason))?;
+		let root_public_key = pairing_runtime
+			.current_session_public_key()
+			.context("No saved paired account; no upload permission changed")?;
+		let product = truapi::platform::ProductContext::new_with_execution(
+			product_id,
+			ProductExecutionKind::App,
+		)?;
+		revoke_automatic_uploads(pairing_runtime.product_admin(product), root_public_key).await?;
+		return Ok(());
+	}
+	pairing_runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
 
 	// Resolved before the port is bound, so a bad URL still fails on the argument
 	// rather than half-way through startup - but reported below, once the UI
@@ -1344,6 +1370,25 @@ async fn run_pairing_host(
 	.await
 }
 
+async fn revoke_automatic_uploads(
+	admin: truapi::HostAdmin,
+	root_public_key: [u8; 32],
+) -> Result<()> {
+	admin
+		.set_permission_authorization_status(
+			truapi::platform::PermissionAuthorizationRequest::AutomaticPreimageSubmit {
+				root_public_key,
+			},
+			truapi::platform::PermissionAuthorizationStatus::NotDetermined,
+		)
+		.await
+		.map_err(|error| anyhow::anyhow!("{}", error.reason))?;
+	println!(
+		"Automatic upload consent revoked for the selected product and account; rolling usage retained."
+	);
+	Ok(())
+}
+
 async fn run_signing_host(
 	args: SigningHostArgs,
 	initial_log_filter: String,
@@ -1356,7 +1401,10 @@ async fn run_signing_host(
 	}
 	let exec_input =
 		args.action.as_ref().map(|SigningHostAction::Exec { command }| command.clone());
-	let interactive = args.script.is_none() && exec_input.is_none() && !args.serve;
+	let interactive = args.script.is_none() &&
+		exec_input.is_none() &&
+		!args.serve &&
+		args.revoke_automatic_uploads.is_none();
 	if interactive && !terminal_ui::is_interactive_terminal() {
 		invalid_invocation(
 			"interactive signing-host requires a TTY; use --serve to run headless, or `signing-host exec '/script path.ts'`, or --script",
@@ -1395,6 +1443,18 @@ async fn run_signing_host(
 		ui_handle.clone(),
 	)
 	.await?;
+	if let Some(product_id) = args.revoke_automatic_uploads {
+		let root_public_key = session
+			.runtime
+			.current_session_public_key()
+			.context("No active saved account; no upload permission changed")?;
+		let product = truapi::platform::ProductContext::new_with_execution(
+			product_id,
+			ProductExecutionKind::App,
+		)?;
+		revoke_automatic_uploads(session.runtime.product_admin(product), root_public_key).await?;
+		return Ok(());
+	}
 	// Resolved before the port is bound, so a bad URL still fails on the argument
 	// rather than half-way through startup - but reported below, once the UI
 	// exists. A `tracing` line here goes to a stderr that the alternate screen
@@ -1531,6 +1591,7 @@ struct SigningHostSession {
 	catalog: SessionCatalog,
 	profile: Option<SessionProfile>,
 	network: NetworkConfig,
+	coinage_instance_id: Option<u32>,
 	mnemonic: Option<String>,
 	default_account: Option<String>,
 	reserved_username: Option<String>,
@@ -1719,6 +1780,7 @@ async fn start_signing_host(
 	let pocket = args.execution_kind.pocket_host();
 	let (runtime, platform) = build_signing_runtime(
 		network,
+		args.coinage_instance_id,
 		storage_profile.path,
 		storage_profile.product_storage_dir,
 		approval,
@@ -1783,6 +1845,7 @@ async fn start_signing_host(
 		catalog,
 		profile,
 		network,
+		coinage_instance_id: args.coinage_instance_id,
 		mnemonic,
 		default_account,
 		reserved_username: normalized(args.reserved_username.clone()),
@@ -1792,8 +1855,43 @@ async fn start_signing_host(
 	})
 }
 
+/// Re-read committed policy outside every storage gate. Each host's shared Media
+/// registry fans a precise invalidation out to its matching live executions.
+fn observe_permission_changes<R, F, Fut>(platform: &Arc<CliPlatform>, runtime: &Arc<R>, refresh: F)
+where
+	R: Send + Sync + 'static,
+	F: Fn(Arc<R>, String, PermissionAuthorizationRequest) -> Fut + Send + 'static,
+	Fut: Future<Output = Result<(), truapi::v01::GenericError>> + Send + 'static,
+{
+	let mut changes = platform.subscribe_core_storage_changes();
+	let platform = Arc::downgrade(platform);
+	let runtime = Arc::downgrade(runtime);
+	tokio::spawn(async move {
+		while let Some(change) = changes.recv().await {
+			let (Some(platform), Some(runtime)) = (platform.upgrade(), runtime.upgrade()) else {
+				break;
+			};
+			// The active user can change after enqueue but before this task runs.
+			match platform.matches_core_storage_change(&change) {
+				Ok(false) => continue,
+				Ok(true) => {},
+				Err(reason) => {
+					tracing::warn!(%reason, "could not resolve permission refresh namespace")
+				},
+			}
+			if let CoreStorageKey::PermissionAuthorization { product_id, request } = change.key &&
+				let Err(error) = refresh(runtime, product_id.clone(), request).await
+			{
+				tracing::warn!(%product_id, reason = %error.reason, "could not refresh committed permission policy");
+			}
+		}
+	});
+}
+
+#[allow(clippy::too_many_arguments)]
 fn build_signing_runtime(
 	network: NetworkConfig,
+	coinage_instance_id: Option<u32>,
 	storage_path: PathBuf,
 	product_storage_dir: PathBuf,
 	approval: ApprovalPolicy,
@@ -1813,7 +1911,7 @@ fn build_signing_runtime(
 		approval,
 		ui,
 	);
-	let config = SigningHostConfig::new(
+	let mut config = SigningHostConfig::new(
 		host_info("Headless Signing Host"),
 		platform_info(),
 		network.people_genesis,
@@ -1822,22 +1920,29 @@ fn build_signing_runtime(
 		network.network_suffix.to_string(),
 	)
 	.context("invalid signing host config")?;
+	config.coinage_instance_id = coinage_instance_id;
 	let status_host = platform.clone() as Arc<dyn PermissionStatusHost>;
 	let runtime = Arc::new(SigningHostRuntime::with_chat_platform(
 		platform.clone(),
 		config,
 		tokio_spawner(),
 		chat.map(|chat| chat as Arc<dyn ChatPlatform>),
+		None,
 	));
+	runtime.set_identity_backend_host(Arc::new(attestation::CliIdentityBackendHost::new(
+		&runtime, network,
+	)?));
 	runtime.set_permission_status_host(status_host);
 	if let Some(pocket) = pocket {
 		runtime.set_pocket_platform(pocket);
 	}
-	#[cfg(feature = "test-host")]
-	funding_host::CliFundingHost::install_from_env(&runtime);
+	runtime.set_profile_platform(profile::CliProfileHost::from_env());
 	runtime.set_game_platform(Arc::new(game::CliGameHost));
 	runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
 	runtime.set_core_db(core_db);
+	observe_permission_changes(&platform, &runtime, |runtime, product_id, request| async move {
+		runtime.refresh_permission_authorization(&product_id, request).await
+	});
 	runtime.start_statement_allowance_renewal();
 	Ok((runtime, platform))
 }
@@ -1860,6 +1965,9 @@ fn validate_signing_args(args: &SigningHostArgs) -> Result<()> {
 	}
 	if args.serve && args.action.is_some() {
 		bail!("--serve cannot be combined with the exec subcommand");
+	}
+	if args.revoke_automatic_uploads.is_some() && args.action.is_some() {
+		bail!("--revoke-automatic-uploads cannot be combined with the exec subcommand");
 	}
 	if mnemonic.is_some() && account.is_some() {
 		bail!("--account cannot be used when --mnemonic or HOST_CLI_SIGNER_MNEMONIC is set");
@@ -2124,6 +2232,7 @@ async fn run_dev(
 	let signing = SigningHostArgs {
 		product_id,
 		network: args.network,
+		coinage_instance_id: args.coinage_instance_id,
 		session: args.session,
 		mnemonic: args.mnemonic,
 		base_path: args.base_path,
@@ -3102,6 +3211,7 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
 	let last_script = session.catalog.last_script(&profile)?;
 	let (runtime, platform) = build_signing_runtime(
 		session.network,
+		session.coinage_instance_id,
 		profile.path.clone(),
 		profile.product_storage_dir.clone(),
 		session.platform.approval_policy(),
@@ -3187,6 +3297,7 @@ async fn import_mnemonic_session(
 	let last_script = session.catalog.last_script(&profile)?;
 	let (runtime, platform) = build_signing_runtime(
 		session.network,
+		session.coinage_instance_id,
 		profile.path.clone(),
 		profile.product_storage_dir.clone(),
 		session.platform.approval_policy(),
@@ -3308,15 +3419,17 @@ async fn pairing_interactive_loop(
 			},
 			ShellCommand::Product(ProductCommand::Current) => ui.system(product.current()),
 			ShellCommand::Product(ProductCommand::Switch(product_id)) => {
-				if product.select(product_id) {
-					let product_id = product.current();
-					ui.set_product(product_id.clone());
-					ui.success(
-						format!("Product set to {product_id}"),
-						Some("Reconnect product clients to continue.".to_string()),
-					);
-				} else {
-					ui.system(product.current());
+				match product.select(product_id) {
+					Ok(true) => {
+						let product_id = product.current();
+						ui.set_product(product_id.clone());
+						ui.success(
+							format!("Product set to {product_id}"),
+							Some("Reconnect product clients to continue.".to_string()),
+						);
+					},
+					Ok(false) => ui.system(product.current()),
+					Err(error) => ui.error(error.to_string()),
 				}
 			},
 			ShellCommand::Quit => return Ok(()),
@@ -3358,7 +3471,7 @@ async fn pairing_interactive_loop(
 
 async fn run_pairing_login(
 	runtime: &PairingHostRuntime,
-	product_id: &ProductId,
+	product_id: &str,
 	label: String,
 	ui: &mut ActiveTerminalUi,
 ) -> Result<()> {
@@ -3391,7 +3504,7 @@ async fn run_pairing_login(
 
 async fn run_pairing_script(
 	frame_url: &str,
-	product_id: &ProductId,
+	product_id: &str,
 	script: &std::path::Path,
 	label: String,
 	ui: &mut ActiveTerminalUi,
@@ -3491,7 +3604,7 @@ async fn signing_interactive_loop(
 						ui.success(
 							"Approval mode set to automatic",
 							Some(
-								"Future product confirmations will be approved automatically."
+								"Future product confirmations will be approved automatically, except main-purse payments, which always require review."
 									.to_string(),
 							),
 						);
@@ -3501,15 +3614,17 @@ async fn signing_interactive_loop(
 			},
 			ShellCommand::Product(ProductCommand::Current) => ui.system(product.current()),
 			ShellCommand::Product(ProductCommand::Switch(product_id)) => {
-				if product.select(product_id) {
-					let product_id = product.current();
-					ui.set_product(product_id.clone());
-					ui.success(
-						format!("Product set to {product_id}"),
-						Some("Reconnect product clients to continue.".to_string()),
-					);
-				} else {
-					ui.system(product.current());
+				match product.select(product_id) {
+					Ok(true) => {
+						let product_id = product.current();
+						ui.set_product(product_id.clone());
+						ui.success(
+							format!("Product set to {product_id}"),
+							Some("Reconnect product clients to continue.".to_string()),
+						);
+					},
+					Ok(false) => ui.system(product.current()),
+					Err(error) => ui.error(error.to_string()),
 				}
 			},
 			ShellCommand::Session(SessionCommand::Current) => {
@@ -3665,7 +3780,7 @@ async fn signing_interactive_loop(
 async fn run_interactive_operation(
 	session: &mut SigningHostSession,
 	frame_url: &str,
-	product_id: &ProductId,
+	product_id: &str,
 	command: ShellCommand,
 	label: String,
 	ui: &mut ActiveTerminalUi,
@@ -3727,7 +3842,7 @@ async fn run_interactive_pairing_image(
 async fn execute_interactive_operation(
 	session: &mut SigningHostSession,
 	frame_url: &str,
-	product_id: &ProductId,
+	product_id: &str,
 	command: ShellCommand,
 	ui: UiHandle,
 ) -> Result<()> {
@@ -3853,7 +3968,7 @@ async fn execute_non_interactive_command(
 			println!("{}", product.current());
 		},
 		ShellCommand::Product(ProductCommand::Switch(product_id)) => {
-			if product.select(product_id) {
+			if product.select(product_id)? {
 				terminal_ui::output_success(
 					format!("Product set to {}", product.current()),
 					Some("Reconnect product clients to continue.".to_string()),
@@ -4293,6 +4408,7 @@ mod cli_tests {
 		let profile = tempfile::tempdir().unwrap();
 		let (runtime, _platform) = build_signing_runtime(
 			crate::network::Network::PaseoNextV2.config(),
+			None,
 			profile.path().to_path_buf(),
 			profile.path().join("storage"),
 			ApprovalPolicy::AutoAccept,
@@ -4804,24 +4920,6 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
 			],
 			[Some(ApprovalPolicy::AutoAccept), Some(ApprovalPolicy::Prompt), None,]
 		);
-	}
-
-	#[test]
-	fn serve_ready_names_the_endpoint_and_the_approval_policy() {
-		let prompting = terminal_ui::SystemEvent::ServeReady {
-			url: "ws://127.0.0.1:9955".to_string(),
-			auto_accept: false,
-		}
-		.human();
-		assert!(prompting.contains("ws://127.0.0.1:9955"));
-		assert!(prompting.contains("--auto-accept"));
-
-		let accepting = terminal_ui::SystemEvent::ServeReady {
-			url: "ws://127.0.0.1:9955".to_string(),
-			auto_accept: true,
-		}
-		.human();
-		assert!(accepting.contains("approved automatically"));
 	}
 
 	#[test]

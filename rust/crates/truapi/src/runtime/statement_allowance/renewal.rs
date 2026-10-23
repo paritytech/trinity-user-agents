@@ -8,7 +8,7 @@
 //! on `paseo-next-v2` as of 2026-08-15. This module is the
 //! chain-pure pass: given already-resolved targets, register each for the
 //! requested period. Scheduling and target persistence live in
-//! `signing_host::wallet_account_holder::allowance_renewal`.
+//! `signing_host::allowance_renewal`.
 //!
 //! A host owns the schedule. The core answers when the next pass is due and what
 //! a pass achieved; it never asks to be woken, because the period arithmetic a
@@ -33,7 +33,7 @@ use futures::lock::Mutex;
 use tracing::{debug, info, warn};
 
 use super::{
-	CollectionScanParams, PersonhoodSigner, PooledRegistrationParams, RegistrationOutcome,
+	CollectionCandidate, CollectionMembership, PooledRegistrationParams, RegistrationOutcome,
 	StatementAllowanceError, allocated_in,
 	collection::PersonhoodCollection,
 	extension::{ChainState, Metadata},
@@ -155,13 +155,11 @@ pub struct RenewalChainContext<'a> {
 	pub network_suffix: &'a [u8],
 	/// Every collection the host can derive aliases for, so an allowance already
 	/// held in a collection whose ring cannot currently be proved is still seen.
-	pub collections: &'a [PersonhoodCollection],
-	/// Authorizes each synchronous alias and proof in this pass.
-	pub signer: &'a dyn PersonhoodSigner,
+	pub candidates: &'a [CollectionCandidate],
 	/// Every collection the host can prove membership in, widest budget first.
 	/// Renewal pools slots across all of them, so a device with full personhood
 	/// renews against the combined budget rather than one collection's share.
-	pub memberships: &'a [super::ring::RingParams],
+	pub memberships: &'a [CollectionMembership],
 }
 
 /// Register every target for `period`, continuing past per-target failures
@@ -191,14 +189,11 @@ pub async fn renew_targets(
 			scan_collections(
 				context.rpc,
 				context.metadata,
-				context.signer,
-				context.collections,
-				CollectionScanParams {
-					network_suffix: context.network_suffix,
-					period,
-					target: &target.account_id,
-					reuse_existing: true,
-				},
+				context.candidates,
+				context.network_suffix,
+				period,
+				&target.account_id,
+				true,
 			)
 			.await
 			.map_err(RenewalFailure::from)
@@ -227,14 +222,11 @@ pub async fn renew_targets(
 				scan_collections(
 					context.rpc,
 					context.metadata,
-					context.signer,
-					context.collections,
-					CollectionScanParams {
-						network_suffix: context.network_suffix,
-						period,
-						target: &target.account_id,
-						reuse_existing: true,
-					},
+					context.candidates,
+					context.network_suffix,
+					period,
+					&target.account_id,
+					true,
 				)
 				.await
 				.map_err(RenewalFailure::from)
@@ -245,7 +237,6 @@ pub async fn renew_targets(
 						context.rpc,
 						context.metadata,
 						context.chain_state,
-						context.signer,
 						&scans,
 						context.memberships,
 						PooledRegistrationParams {
@@ -381,12 +372,11 @@ mod tests {
 		use subxt_rpcs::RpcClient as HostRpcClient;
 
 		use crate::runtime::statement_allowance::{
-			FixedPersonhoodSigner,
+			CollectionMembership,
 			extension::ChainState,
 			proof,
 			ring::RingParams,
 			rpc::{RpcClient, testing::ScriptedRpc},
-			slot::testing::lite_people,
 			test_fixtures,
 		};
 
@@ -411,12 +401,15 @@ mod tests {
 		let entropy = [0x11; 32];
 		// One collection, so this stays a test of cross-target protection rather
 		// than of pooling; pooling has its own tests.
-		let memberships = [RingParams {
-			collection: PersonhoodCollection::LitePeople,
-			members: vec![proof::member_key_now(entropy)],
-			exponent: 9,
-			ring_index: 0,
-			block_hash: "0xfinal".to_string(),
+		let memberships = [CollectionMembership {
+			entropy,
+			ring: RingParams {
+				collection: PersonhoodCollection::LitePeople,
+				members: vec![proof::member_key_now(entropy)],
+				exponent: 9,
+				ring_index: 0,
+				block_hash: "0xfinal".to_string(),
+			},
 		}];
 		let targets = [target_with("first", [0xa1; 32]), target_with("second", [0xa2; 32])];
 
@@ -441,15 +434,14 @@ mod tests {
 		scripted.script_subscription([r#"{"inBlock":"0xb10d"}"#]);
 		let rpc = RpcClient::new(HostRpcClient::new(scripted));
 
-		let candidates = lite_people(entropy);
-		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
+		let candidates =
+			[CollectionCandidate { collection: PersonhoodCollection::LitePeople, entropy }];
 		let context = RenewalChainContext {
 			rpc: &rpc,
 			metadata,
 			chain_state: &chain_state,
 			network_suffix: b"paseo",
-			signer: &signer,
-			collections: &[PersonhoodCollection::LitePeople],
+			candidates: &candidates,
 			memberships: &memberships,
 		};
 		let lock = Mutex::new(());
@@ -478,12 +470,11 @@ mod tests {
 		use subxt_rpcs::RpcClient as HostRpcClient;
 
 		use crate::runtime::statement_allowance::{
-			FixedPersonhoodSigner,
+			CollectionMembership,
 			extension::ChainState,
 			proof,
 			ring::RingParams,
 			rpc::{RpcClient, testing::ScriptedRpc},
-			slot::testing::lite_people,
 			test_fixtures,
 		};
 
@@ -502,12 +493,15 @@ mod tests {
 			restrict_origins: false,
 		};
 		let entropy = [0x11; 32];
-		let memberships = [RingParams {
-			collection: PersonhoodCollection::LitePeople,
-			members: vec![proof::member_key_now(entropy)],
-			exponent: 9,
-			ring_index: 0,
-			block_hash: "0xfinal".to_string(),
+		let memberships = [CollectionMembership {
+			entropy,
+			ring: RingParams {
+				collection: PersonhoodCollection::LitePeople,
+				members: vec![proof::member_key_now(entropy)],
+				exponent: 9,
+				ring_index: 0,
+				block_hash: "0xfinal".to_string(),
+			},
 		}];
 		let targets = [target_with("first", [0xa1; 32]), target_with("second", [0xa2; 32])];
 
@@ -524,15 +518,14 @@ mod tests {
 		scripted.script_subscription([r#"{"inBlock":"0xb10d"}"#]);
 		let rpc = RpcClient::new(HostRpcClient::new(scripted));
 
-		let candidates = lite_people(entropy);
-		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
+		let candidates =
+			[CollectionCandidate { collection: PersonhoodCollection::LitePeople, entropy }];
 		let context = RenewalChainContext {
 			rpc: &rpc,
 			metadata,
 			chain_state: &chain_state,
 			network_suffix: b"paseo",
-			signer: &signer,
-			collections: &[PersonhoodCollection::LitePeople],
+			candidates: &candidates,
 			memberships: &memberships,
 		};
 		let report =
@@ -570,12 +563,11 @@ mod tests {
 		use subxt_rpcs::RpcClient as HostRpcClient;
 
 		use crate::runtime::statement_allowance::{
-			FixedPersonhoodSigner,
+			CollectionMembership,
 			extension::ChainState,
 			proof,
 			ring::RingParams,
 			rpc::{RpcClient, testing::ScriptedRpc},
-			slot::testing::lite_people,
 			test_fixtures,
 		};
 
@@ -597,12 +589,15 @@ mod tests {
 			restrict_origins: false,
 		};
 		let entropy = [0x11; 32];
-		let memberships = [RingParams {
-			collection: PersonhoodCollection::LitePeople,
-			members: vec![proof::member_key_now(entropy)],
-			exponent: 9,
-			ring_index: 0,
-			block_hash: "0xfinal".to_string(),
+		let memberships = [CollectionMembership {
+			entropy,
+			ring: RingParams {
+				collection: PersonhoodCollection::LitePeople,
+				members: vec![proof::member_key_now(entropy)],
+				exponent: 9,
+				ring_index: 0,
+				block_hash: "0xfinal".to_string(),
+			},
 		}];
 		let new_target = target_with("new", [0xa1; 32]);
 		let existing_target = target_with("existing", [0xa2; 32]);
@@ -620,15 +615,14 @@ mod tests {
 		scripted.script_subscription([r#"{"inBlock":"0xb10c"}"#]);
 		let rpc = RpcClient::new(HostRpcClient::new(scripted));
 
-		let candidates = lite_people(entropy);
-		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
+		let candidates =
+			[CollectionCandidate { collection: PersonhoodCollection::LitePeople, entropy }];
 		let context = RenewalChainContext {
 			rpc: &rpc,
 			metadata,
 			chain_state: &chain_state,
 			network_suffix: b"paseo",
-			signer: &signer,
-			collections: &[PersonhoodCollection::LitePeople],
+			candidates: &candidates,
 			memberships: &memberships,
 		};
 		let lock = Mutex::new(());

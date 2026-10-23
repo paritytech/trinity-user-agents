@@ -2,7 +2,7 @@ import Foundation
 import TrUAPIHost
 
 /// Test double for one product execution. Records ws-bridge lifecycle and
-/// chain notify-backs; unused notify surfaces are inert.
+/// chain/theme notify-backs; unused notify surfaces are inert.
 final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sendable {
     private(set) var startWsBridgeCallCount = 0
     private(set) var stopWsBridgeCallCount = 0
@@ -94,9 +94,11 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         stopWsBridgeCallCount += 1
     }
 
+    func isClosed() -> Bool { closeCallCount > 0 }
+
     func close() {
         closeCallCount += 1
-        closeSignal.yield()
+        onClose?()
     }
 
     func publishChatAction(_ item: HostChatActionSubscribeItem) throws {
@@ -132,11 +134,6 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         return permissionStatus
     }
 
-    func authorizeDevicePermission(_ request: HostDevicePermissionRequest) async throws -> Bool {
-        devicePermissionRequests.append(request)
-        return devicePermissionGranted
-    }
-
     func setPermissionAuthorizationStatus(
         request _: PermissionAuthorizationRequest,
         status _: PermissionAuthorizationStatus
@@ -144,7 +141,6 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
 
     func notifyThemeChanged(theme: HostThemeSubscribeItem) {
         themeChanges.append(theme)
-        themeSignal.yield()
     }
 
     func notifyLocaleChanged(locale _: HostLocaleSubscribeItem) {}

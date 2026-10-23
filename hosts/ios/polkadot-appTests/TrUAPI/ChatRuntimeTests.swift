@@ -256,6 +256,22 @@ struct ChatRuntimeTests {
         #expect(execution.publishedChatActions.isEmpty)
     }
 
+    @Test func rustRuntimeDeniesDirectProductCapture() async throws {
+        let execution = MockProductExecution()
+        let engine = MockJSEngine()
+        let runtime = makeRustRuntime(execution: execution, engine: engine)
+
+        try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+
+        #expect(execution.permissionRequests.isEmpty)
+
+        let capture = try #require(engine.deviceCapabilityHandler)
+        #expect(try await capture(.camera) == .denied)
+        #expect(try await capture(.microphone) == .denied)
+
+        await runtime.dispose()
+    }
+
     @Test func rustRuntimeRetriesRenderUntilTheProductAttaches() async throws {
         let execution = MockProductExecution()
         execution.renderErrors = [
