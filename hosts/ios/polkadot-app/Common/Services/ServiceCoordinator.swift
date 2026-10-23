@@ -17,9 +17,10 @@ import FoundationExt
 import Individuality
 import UniqueDevice
 import ChainRegistry
+import StructuredConcurrency
 import DesignSystem
 
-protocol ServiceCoordinatorProtocol: ApplicationServiceProtocol {
+protocol ServiceCoordinatorProtocol: DashboardServicesCoordinating {
     var depositService: DepositServiceProtocol { get }
     var polkadotHandshakeService: PolkadotHandshakeServicing { get }
     var chatExtensionsRegistry: ChatExtensionsRegistering { get }
@@ -37,6 +38,7 @@ protocol ServiceCoordinatorProtocol: ApplicationServiceProtocol {
     var networkStatusService: NetworkStatusProviding { get }
     var chainStatusProvider: ChainStatusProviding { get }
     var truapiRuntimeProvider: TrUAPIHostRuntimeProviding { get }
+    var durabilityRenewal: StatementDurabilityRenewing { get }
 }
 
 final class ServiceCoordinator {
@@ -61,7 +63,8 @@ final class ServiceCoordinator {
     let notificationBadgeSyncService: NotificationBadgeSyncService
     let accountManager: ProductsAccountManaging
     let allowanceManagerFacade: AllowanceManagerFacade
-    let allowanceRenewalService: AllowanceRenewalService
+    let statementRenewalLoop: StatementRenewalLoop
+    let durabilityRenewal: StatementDurabilityRenewing
     let turnService: TURNCredentialsProviding
     let deviceSyncService: DeviceSyncServicing
     let networkStatusService: NetworkStatusProviding
@@ -75,6 +78,10 @@ final class ServiceCoordinator {
 
     // Retained so the weakly-held dependency-locator entry stays alive for the product host.
     let paymentsSupport: PaymentsSupport
+
+    // Lifecycle state, touched only from the main actor by DashboardServicesManager.
+    var durabilityStart: Task<Bool, Never>?
+    var interactiveStart: Task<Void, Never>?
 
     var coinageService: CoinageServicing {
         paymentsSupport.coinageService
@@ -100,7 +107,8 @@ final class ServiceCoordinator {
         notificationBadgeSyncService: NotificationBadgeSyncService,
         accountManager: ProductsAccountManaging,
         allowanceManagerFacade: AllowanceManagerFacade,
-        allowanceRenewalService: AllowanceRenewalService,
+        statementRenewalLoop: StatementRenewalLoop,
+        durabilityRenewal: StatementDurabilityRenewing,
         paymentsSupport: PaymentsSupport,
         turnService: TURNCredentialsProviding,
         deviceSyncService: DeviceSyncServicing,
@@ -130,7 +138,8 @@ final class ServiceCoordinator {
         self.notificationBadgeSyncService = notificationBadgeSyncService
         self.accountManager = accountManager
         self.allowanceManagerFacade = allowanceManagerFacade
-        self.allowanceRenewalService = allowanceRenewalService
+        self.statementRenewalLoop = statementRenewalLoop
+        self.durabilityRenewal = durabilityRenewal
         self.deviceSyncService = deviceSyncService
         self.networkStatusService = networkStatusService
         self.chainStatusProvider = chainStatusProvider
@@ -143,82 +152,12 @@ final class ServiceCoordinator {
     }
 }
 
-extension ServiceCoordinator: ServiceCoordinatorProtocol {
-    func setup() {
-        // Keep the cached TLD warm on each launch without blocking.
-        tldProvider.refresh()
-
-        chatCoordinator.setup()
-        productWorkerFacade.setup()
-        chatExtensionsRegistry.discover()
-        chatRequestCoordinator.setup()
-        attachmentUploadService.setup()
-        attachmentDownloadService.setup()
-        notificationBadgeSyncService.setup()
-        messageExpansionService.start()
-        allowanceRenewalService.setup()
-
-        Task {
-            await chainStatusProvider.start()
-            await signInHostCoordinator.setup()
-            await setupDeviceSyncService()
-
-            // Setup coinage service with main asset from chain
-            let chainRegistry = ChainRegistryFacade.sharedRegistry
-            let mainAssetId = AppConfig.Assets.mainAsset
-
-            guard
-                let chain = chainRegistry.getChain(for: mainAssetId.chainId),
-                let asset = chain.asset(for: mainAssetId.assetId)
-            else {
-                assertionFailure()
-                return
-            }
-            do {
-                try await coinageService.setup(with: asset)
-            } catch {
-                logger.error("Coinage service setup failed: \(error)")
-                return
-            }
-            // After coinage setup, which releases uncommitted handoffs the first pass must not see.
-            durableTransactionEngine.txService.start()
-            // Recovering backup 1st
-            await coinageTransferMonitor.setup()
-            await w3sPaymentTracking.setup()
-            await depositService.setup()
-        }
-    }
-
-    func throttle() {
-        chatCoordinator.throttle()
-        chatRequestCoordinator.throttle()
-        attachmentUploadService.throttle()
-        attachmentDownloadService.throttle()
-        notificationBadgeSyncService.throttle()
-        allowanceRenewalService.throttle()
-
-        messageExpansionService.stop()
-        durableTransactionEngine.txService.stop()
-
-        // The workers and the product behind an opened card belong to this
-        // session's runtime provider, so they go with the session rather than
-        // waiting for a tap that may come after another user has signed in.
-        pocket?.stop()
-
-        Task {
-            await deviceSyncService.throttle()
-            await coinageTransferMonitor.throttle()
-            await w3sPaymentTracking.throttle()
-            await signInHostCoordinator.throttle()
-            await depositService.throttle()
-        }
-    }
-}
+extension ServiceCoordinator: ServiceCoordinatorProtocol {}
 
 extension ServiceCoordinator {
     @MainActor
     // swiftlint:disable:next function_body_length
-    static func createDefault(spaFlowState: SPAFlowState) -> ServiceCoordinatorProtocol? {
+    static func createDefault(spaFlowState: SPAFlowState) -> ServiceCoordinator? {
         let walletRepo: WalletManagerRepositoryProtocol = .shared
 
         // The dashboard is only reachable after onboarding cached the TLD, so built-in accounts
@@ -237,8 +176,11 @@ extension ServiceCoordinator {
         }
 
         let statementStoreMonitor = StatementStoreActivityMonitor()
+        let identitySigningFallback = NonPrivateSigningFallback.makeDefault()
         let chatCoordinatorFactory = MessageExchangeCoordinatorFactory(
             bulletInManager: allowanceManagerFacade.bulletInManager,
+            statementAccountFunding: allowanceManagerFacade.sssManager,
+            identitySigningFallback: identitySigningFallback,
             statementStoreMonitor: statementStoreMonitor
         )
 
@@ -312,20 +254,18 @@ extension ServiceCoordinator {
         // would let any chat service failing take every live card face with it,
         // silently.
         var pocket: ProductPocketService?
-        #if FEATURE_PRODUCTS
-            if let service = ProductPocketService.make() {
-                RootDependencyLocator.setDependency(service)
-                service.start(
-                    runtimeProvider: truapiRuntimeProvider,
-                    flowState: spaFlowState,
-                    productFileProvider: productFileProvider,
-                    chainRegistry: ChainRegistryFacade.sharedRegistry,
-                    gameReminders: gameReminders,
-                    themeManager: MainActor.assumeIsolated { ThemeManager.shared }
-                )
-                pocket = service
-            }
-        #endif
+        if let service = ProductPocketService.make() {
+            RootDependencyLocator.setDependency(service)
+            service.start(
+                runtimeProvider: truapiRuntimeProvider,
+                flowState: spaFlowState,
+                productFileProvider: productFileProvider,
+                chainRegistry: ChainRegistryFacade.sharedRegistry,
+                gameReminders: gameReminders,
+                themeManager: MainActor.assumeIsolated { ThemeManager.shared }
+            )
+            pocket = service
+        }
 
         guard
             let signInHostCoordinator = createSignInHostCoordinator(
@@ -363,7 +303,18 @@ extension ServiceCoordinator {
             return nil
         }
 
-        let chatRequestCoordinator = createChatRequestCoordinator(notificationAllocator: notificationAllocator)
+        let chatRequestServiceFactory = createChatRequestServiceFactory(
+            notificationAllocator: notificationAllocator,
+            signingFallback: identitySigningFallback
+        )
+        let durabilityRenewal = StatementDurabilityRenewalService(
+            allowances: allowanceManagerFacade,
+            renewers: chatRequestServiceFactory,
+            issues: StatementRenewalIssueDiagnostics.make(reporter: IssueReportingFacade.shared),
+            sharedRun: SharedRun(cancelledValue: .cancelled),
+            logger: logger
+        )
+        let chatRequestCoordinator = createChatRequestCoordinator(serviceFactory: chatRequestServiceFactory)
         let audioSessionManager = AudioSessionManager()
 
         let paymentsSupport = PaymentsSupport(coinageService: coinageServices.coinageService)
@@ -409,10 +360,9 @@ extension ServiceCoordinator {
         let notificationBadgeSyncService = NotificationBadgeSyncService(logger: logger)
 
         let messageExpansionService = createCompactedMessageExpansionService(logger: logger)
-        let allowanceRenewalService = AllowanceRenewalService(
-            managerFacade: allowanceManagerFacade,
-            appStateStreamFactory: ApplicationStateStreamFactory(),
-            logger: logger
+        let statementRenewalLoop = StatementRenewalLoop(
+            durabilityRenewal: durabilityRenewal,
+            backgroundExecutor: ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry)
         )
 
         let networkStatusService = NetworkStatusService(
@@ -473,7 +423,8 @@ extension ServiceCoordinator {
             notificationBadgeSyncService: notificationBadgeSyncService,
             accountManager: accountManager,
             allowanceManagerFacade: allowanceManagerFacade,
-            allowanceRenewalService: allowanceRenewalService,
+            statementRenewalLoop: statementRenewalLoop,
+            durabilityRenewal: durabilityRenewal,
             paymentsSupport: paymentsSupport,
             turnService: turnService,
             deviceSyncService: deviceSyncService,
@@ -526,13 +477,30 @@ private extension ServiceCoordinator {
 }
 
 private extension ServiceCoordinator {
+    static func createChatRequestServiceFactory(
+        notificationAllocator: NotificationStatementAccountAllocating,
+        signingFallback: NonPrivateSigningFallbacking
+    ) -> ChatRequestServiceFactory {
+        ChatRequestServiceFactory(
+            remoteContactResolver: CompoundRemoteContactResolver(
+                resolvers: [
+                    remoteAccountOperation(chatChainId: AppConfig.Chains.assethubChain)
+                ],
+                logger: Logger.shared
+            ),
+            notificationAllocator: notificationAllocator,
+            signingFallback: signingFallback,
+            backgroundExecutor: ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry),
+            issueReporter: IssueReportingFacade.shared
+        )
+    }
+
     static func createChatRequestCoordinator(
-        notificationAllocator: NotificationStatementAccountAllocating
+        serviceFactory: ChatRequestServiceFactory
     ) -> ChatRequestCoordinatorServicing {
         let storageFacade = UserDataStorageFacade.shared
         let operationQueue = OperationManagerFacade.sharedDefaultQueue
         let logger = Logger.shared
-        let backgroundExecutor = ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry)
 
         return ChatRequestCoordinatorService(
             contactsProviderFactory: ChatContactDataProviderFactory(
@@ -545,19 +513,8 @@ private extension ServiceCoordinator {
                 operationQueue: operationQueue,
                 logger: logger
             ),
-            serviceFactory: ChatRequestServiceFactory(
-                remoteContactResolver: CompoundRemoteContactResolver(
-                    resolvers: [
-                        remoteAccountOperation(chatChainId: AppConfig.Chains.usernameChain)
-                    ],
-                    logger: Logger.shared
-                ),
-                notificationAllocator: notificationAllocator,
-                backgroundExecutor: backgroundExecutor,
-                issueReporter: IssueReportingFacade.shared
-            ),
-            backgroundExecutor: backgroundExecutor,
-            logger: Logger.shared
+            serviceFactory: serviceFactory,
+            logger: logger
         )
     }
 

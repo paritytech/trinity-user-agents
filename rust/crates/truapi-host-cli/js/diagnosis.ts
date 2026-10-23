@@ -28,6 +28,10 @@ const SKIPPED_SERVICES = new Map<string, string>([
     "Game",
     "Game serves only the game product; the truapi runtime tests cover it",
   ],
+  [
+    "Nft Purse",
+    "NFT purses serve two methods so far, and only on a signing host; the truapi runtime tests cover them",
+  ],
 ]);
 const LONG_TIMEOUT_METHODS = new Set([
   "Account/get_account",

@@ -11,7 +11,7 @@ final class ChatMessageCompactor: MessageCompacting, @unchecked Sendable {
 
     private let nodeProvider: HOPNodeProviding
     private let loaderFactory: HOPFileLoaderMaking
-    private let proofWallet: WalletManaging
+    private let signerProvider: AttachmentsSenderProviding
     private let allowanceManager: AllowanceManaging
     private let logger: LoggerProtocol
     private let maxAttempts: Int
@@ -20,7 +20,7 @@ final class ChatMessageCompactor: MessageCompacting, @unchecked Sendable {
     init(
         nodeProvider: HOPNodeProviding,
         loaderFactory: HOPFileLoaderMaking,
-        proofWallet: WalletManaging,
+        signerProvider: AttachmentsSenderProviding,
         allowanceManager: AllowanceManaging,
         maxAttempts: Int = 3,
         retryDelay: Duration = .seconds(2),
@@ -28,7 +28,7 @@ final class ChatMessageCompactor: MessageCompacting, @unchecked Sendable {
     ) {
         self.nodeProvider = nodeProvider
         self.loaderFactory = loaderFactory
-        self.proofWallet = proofWallet
+        self.signerProvider = signerProvider
         self.allowanceManager = allowanceManager
         self.maxAttempts = maxAttempts
         self.retryDelay = retryDelay
@@ -60,8 +60,15 @@ private extension ChatMessageCompactor {
         let recipients = try FileRecipients(ticket: ticket)
         let loader = try loaderFactory.makeLoader(for: node)
 
+        let proofWallet = try await signerProvider.getWallet()
+
         let accountId = try proofWallet.getRawPublicKey()
-        try await allowanceManager.allocate(accountId: accountId, policy: .ignore, priority: .normal)
+        try await allowanceManager.allocate(
+            accountId: accountId,
+            policy: .ignore,
+            priority: .normal,
+            domain: .chat
+        )
 
         let sender = try SenderProofProvider(sender: proofWallet.getMultiSigner()) { [proofWallet] data in
             try proofWallet.sign(data: data)

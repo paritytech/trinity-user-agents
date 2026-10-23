@@ -1,5 +1,6 @@
 import Foundation
 import AsyncExtensions
+import Products
 
 protocol ChatExtensionStoring: AnyObject {
     var delegate: ChatExtensionDelegate? { get set }
@@ -7,6 +8,9 @@ protocol ChatExtensionStoring: AnyObject {
     var allExtensions: [ChatExtending] { get }
 
     func getChatExtensionBot(for extensionId: ChatExtension.Id) -> ChatExtensionBotProtocol?
+
+    /// The product listed under this id, whether or not its bot is built yet.
+    func product(for extensionId: ChatExtension.Id) -> Product?
 
     func startObserving()
 }
@@ -18,6 +22,7 @@ final class ChatExtensionStore: ChatExtensionStoring {
     private let productBotProvider: ProductBotProviding
 
     private let lock = NSLock()
+    private var products: [ChatExtension.Id: Product] = [:]
     private var productBots: [ChatExtension.Id: ProductBot] = [:]
     private var observationTask: Task<Void, Never>?
 
@@ -56,12 +61,19 @@ final class ChatExtensionStore: ChatExtensionStoring {
         return bot
     }
 
+    func product(for extensionId: ChatExtension.Id) -> Product? {
+        lock.lock()
+        let product = products[extensionId]
+        lock.unlock()
+        return product
+    }
+
     func startObserving() {
         observationTask = Task { [weak self, productBotProvider] in
             do {
-                for try await incomingBots in productBotProvider.observeBots() {
+                for try await event in productBotProvider.observeBots() {
                     guard !Task.isCancelled else { return }
-                    self?.diffAndApply(incomingBots)
+                    self?.apply(event)
                 }
             } catch {
                 // Stream completed with error — observation stops
@@ -71,33 +83,34 @@ final class ChatExtensionStore: ChatExtensionStoring {
 
     // MARK: - Private
 
-    private func diffAndApply(_ incomingBots: [ProductBot]) {
-        let incomingById = Dictionary(
-            incomingBots.map { ($0.identifier, $0) },
+    private func apply(_ event: ProductBotEvent) {
+        switch event {
+        case let .listed(products):
+            apply(listed: products)
+        case let .botBuilt(bot):
+            apply(built: bot)
+        }
+    }
+
+    /// A product is enabled when it is listed, so the list draws its rows at once, and loses its
+    /// rows and its bot when it leaves.
+    private func apply(listed incoming: [Product]) {
+        let incomingProducts = Dictionary(
+            incoming.map { ($0.extensionId, $0) },
             uniquingKeysWith: { _, last in last }
         )
 
-        let added: [ProductBot]
-        let removed: [ProductBot]
-
         lock.lock()
 
-        let existingIds = Set(productBots.keys)
-        let incomingIds = Set(incomingById.keys)
+        let removedIds = Set(products.keys).subtracting(incomingProducts.keys)
+        let addedIds = Set(incomingProducts.keys).subtracting(products.keys)
+        products = incomingProducts
 
-        let addedIds = incomingIds.subtracting(existingIds)
-        let removedIds = existingIds.subtracting(incomingIds)
-
-        removed = removedIds.compactMap { productBots.removeValue(forKey: $0) }
-        added = addedIds.compactMap { incomingById[$0] }
-
-        for bot in added {
-            productBots[bot.identifier] = bot
-        }
+        let removedBots = removedIds.compactMap { productBots.removeValue(forKey: $0) }
 
         lock.unlock()
 
-        for bot in removed {
+        for bot in removedBots {
             Task { await bot.dispose() }
         }
 
@@ -108,5 +121,28 @@ final class ChatExtensionStore: ChatExtensionStoring {
         if !removedIds.isEmpty {
             delegate?.didDisableExtensions(removedIds)
         }
+    }
+
+    /// The bot takes its product's rows over, so the product is enabled again and the list
+    /// redraws them with the bot's metadata. A product keeps the bot it already has, since
+    /// swapping one would drop the worker it drives, and a bot built for a product that left
+    /// the list is dropped.
+    private func apply(built bot: ProductBot) {
+        lock.lock()
+
+        let takesOver = products[bot.identifier] != nil && productBots[bot.identifier] == nil
+
+        if takesOver {
+            productBots[bot.identifier] = bot
+        }
+
+        lock.unlock()
+
+        guard takesOver else {
+            Task { await bot.dispose() }
+            return
+        }
+
+        delegate?.didEnableExtensions([bot.identifier])
     }
 }

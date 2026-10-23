@@ -26,6 +26,11 @@ public enum BuiltInProduct {
         product(for: "uid", tld: tld)
     }
 
+    /// Chat — per-chat statement and upload accounts.
+    public static func chat(for tld: String) -> String {
+        product(for: "chat", tld: tld)
+    }
+
     /// Personhood — ring-VRF key domain for full/light person keys.
     public static func personhood(for tld: String) -> String {
         product(for: "peopl", tld: tld)

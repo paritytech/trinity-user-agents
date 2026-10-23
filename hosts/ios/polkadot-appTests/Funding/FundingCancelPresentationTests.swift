@@ -43,8 +43,7 @@ struct FundingCancelPresentationTests {
     }
 
     @Test
-    func anOfferThatChangedOrCameTooLateSaysSo() {
-        #expect(FundingCancelPresentation.after(CancelConfirmation.changed) == String(localized: .Funding.offerChanged))
+    func anOfferThatCameTooLateSaysSo() {
         #expect(FundingCancelPresentation.after(CancelConfirmation.tooLate) == String(localized: .Funding.offerTooLate))
     }
 

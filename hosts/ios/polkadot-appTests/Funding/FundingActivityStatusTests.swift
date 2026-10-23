@@ -117,7 +117,6 @@ private extension FundingActivityStatusTests {
             updates: [],
             started: [],
             choice: FundingChoice(quote: quote, rail: .bank, asset: "EUR", network: nil),
-            saved: nil,
             refund: nil
         )
     }

@@ -134,6 +134,28 @@ extension WalletMainViewController: WalletMainViewProtocol {
         rootView.viewModel.openPocketCard = key
     }
 
+    func moveOpenCard(by offset: CGSize, clearingPocket: Bool, animated: Bool) {
+        let viewModel = rootView.viewModel
+        withTransaction(Transaction(animation: animated ? PocketCardFlightTiming.animation : nil)) {
+            viewModel.openPocketCardOffset = offset
+            viewModel.isPocketCleared = clearingPocket
+        }
+
+        // The navigation bar itself must stay opaque: at no alpha it leaves the safe area and the Pocket jumps up.
+        let chromeAlpha: CGFloat = clearingPocket ? 0 : 1
+        let fadeChrome = { [weak self] in
+            self?.titleView?.alpha = chromeAlpha
+            UIApplication.shared.mainTabBarController?.setChromeAlpha(chromeAlpha)
+        }
+        if animated {
+            let animator = PocketCardFlightTiming.makeAnimator()
+            animator.addAnimations(fadeChrome)
+            animator.startAnimation()
+        } else {
+            fadeChrome()
+        }
+    }
+
     @objc
     func didTapShare() {
         identityDetailsScene.share()

@@ -65,29 +65,23 @@ public struct AssetDetailsBalanceCard: View {
     }
 }
 
-/// The card's face on its own, at the wallet's proportions: the Purse header
-/// draws it as a thumbnail once the card has shrunk away.
+/// The card's face on its own, at the wallet's proportions: the leather wallet, lit by the phone's
+/// motion. The Purse header draws it as a thumbnail once the card has shrunk away.
 public struct CashCardFace: View {
     public init() {}
 
     public var body: some View {
-        RoundedRectangle(cornerRadius: CashCardFace.cornerRadius)
-            .fill(CashCardFace.fallback)
-            .overlay {
-                Image(.cashCardWallet)
-                    .resizable()
-                    .scaledToFill()
-            }
-            .clipShape(RoundedRectangle(cornerRadius: CashCardFace.cornerRadius))
+        Image(.walletLeather)
+            .resizable()
+            .scaledToFit()
+            .walletLeather(CashCardFace.wallet)
             .aspectRatio(CashCardFace.aspectRatio, contentMode: .fit)
     }
 
-    /// The wallet artwork's own proportions, 366 by 239 points.
-    public static let aspectRatio: CGFloat = 366 / 239
-    /// The corner radius at full size, 366 points wide.
-    public static let cornerRadius: CGFloat = 23.26
-    /// Shown while the artwork loads, and behind any of its transparent edge.
-    public static let fallback = Color(red: 0x3A / 255, green: 0x24 / 255, blue: 0x17 / 255)
+    /// The wallet artwork and where its brass button sits.
+    public static let wallet = WalletLeatherImage.cashWallet
+    /// The wallet artwork's own proportions.
+    public static let aspectRatio: CGFloat = wallet.aspectRatio
 }
 
 public extension AssetDetailsBalanceCard {

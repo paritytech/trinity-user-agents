@@ -3,6 +3,7 @@
     <entity name="CDAllowanceRecord" representedClassName="CDAllowanceRecord" syncable="YES" codeGenerationType="class">
         <attribute name="accountId" optional="YES" attributeType="Binary"/>
         <attribute name="allocatedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="domain" optional="NO" attributeType="Integer 16" defaultValueString="2" usesScalarValueType="YES"/>
         <attribute name="identifier" optional="YES" attributeType="String"/>
         <attribute name="kind" optional="NO" attributeType="Integer 16" defaultValueString="-1" usesScalarValueType="YES"/>
         <attribute name="latestRenewedPeriod" optional="NO" attributeType="Integer 64" defaultValueString="-1" usesScalarValueType="YES"/>
@@ -46,6 +47,15 @@
         <attribute name="chatId" optional="YES" attributeType="String"/>
         <attribute name="extensionId" optional="YES" attributeType="String"/>
         <attribute name="identifier" optional="YES" attributeType="String"/>
+    </entity>
+    <entity name="CDChatIdentitySigningConsent" representedClassName="CDChatIdentitySigningConsent" syncable="YES" codeGenerationType="class">
+        <attribute name="grantedAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="identifier" attributeType="String"/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="identifier"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
     </entity>
     <entity name="CDChatMessage" representedClassName="CDChatMessage" syncable="YES" codeGenerationType="class">
         <attribute name="compactionId" optional="YES" attributeType="String"/>
@@ -96,7 +106,6 @@
         <relationship name="message" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatMessage" inverseName="reactions" inverseEntity="CDChatMessage"/>
     </entity>
     <entity name="CDChatRequest" representedClassName="CDChatRequest" syncable="YES" codeGenerationType="class">
-        <attribute name="anonymousDeliveryPeriod" optional="YES" attributeType="Integer 32" usesScalarValueType="NO"/>
         <attribute name="contactId" optional="YES" attributeType="String"/>
         <attribute name="identifier" optional="YES" attributeType="String"/>
         <attribute name="status" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
@@ -123,34 +132,6 @@
         <attribute name="encryptionPublicKey" attributeType="Binary"/>
         <attribute name="statementAccountId" attributeType="Binary"/>
         <relationship name="contact" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatContact" inverseName="devices" inverseEntity="CDChatContact"/>
-    </entity>
-    <entity name="CDFundingRecord" representedClassName="CDFundingRecord" syncable="YES" codeGenerationType="class">
-        <attribute name="asset" optional="YES" attributeType="String"/>
-        <attribute name="direction" attributeType="String"/>
-        <attribute name="failureCode" optional="YES" attributeType="String"/>
-        <attribute name="failureMessage" optional="YES" attributeType="String"/>
-        <attribute name="identifier" attributeType="String"/>
-        <attribute name="openedAt" attributeType="Date" usesScalarValueType="NO"/>
-        <attribute name="outcome" attributeType="String"/>
-        <attribute name="paidAmount" optional="YES" attributeType="String"/>
-        <attribute name="paidAsset" optional="YES" attributeType="String"/>
-        <attribute name="paidDecimals" optional="YES" attributeType="Integer 16" usesScalarValueType="NO"/>
-        <attribute name="paidNetwork" optional="YES" attributeType="String"/>
-        <attribute name="payout" optional="YES" attributeType="String"/>
-        <attribute name="payoutReason" optional="YES" attributeType="String"/>
-        <attribute name="providerId" optional="YES" attributeType="String"/>
-        <attribute name="rail" optional="YES" attributeType="String"/>
-        <attribute name="reference" optional="YES" attributeType="String"/>
-        <attribute name="refundedAmount" optional="YES" attributeType="String"/>
-        <attribute name="requestedAmount" optional="YES" attributeType="String"/>
-        <attribute name="settledAmount" optional="YES" attributeType="String"/>
-        <attribute name="settledAt" attributeType="Date" usesScalarValueType="NO"/>
-        <attribute name="transactionId" optional="YES" attributeType="String"/>
-        <uniquenessConstraints>
-            <uniquenessConstraint>
-                <constraint value="identifier"/>
-            </uniquenessConstraint>
-        </uniquenessConstraints>
     </entity>
     <entity name="CDIncomingPayment" representedClassName="CDIncomingPayment" syncable="YES" codeGenerationType="class">
         <attribute name="actualClaimed" optional="YES" attributeType="String"/>
@@ -394,6 +375,15 @@
         <attribute name="firstAttemptAt" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="status" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
         <relationship name="message" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDChatMessage" inverseName="incomingTransferState" inverseEntity="CDChatMessage"/>
+    </entity>
+    <entity name="CDOutgoingStatementPublication" representedClassName="CDOutgoingStatementPublication" syncable="YES" codeGenerationType="class">
+        <attribute name="period" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="statementId" attributeType="String"/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="statementId"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
     </entity>
     <entity name="CDOutgoingTransferState" representedClassName="CDOutgoingTransferState" syncable="YES" codeGenerationType="class">
         <attribute name="actualValue" optional="YES" attributeType="String"/>

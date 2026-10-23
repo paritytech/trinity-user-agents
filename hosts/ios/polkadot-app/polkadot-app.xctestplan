@@ -129,6 +129,13 @@
     },
     {
       "target" : {
+        "containerPath" : "container:Packages\/StatementDelivery",
+        "identifier" : "StatementDeliveryTests",
+        "name" : "StatementDeliveryTests"
+      }
+    },
+    {
+      "target" : {
         "containerPath" : "container:Packages\/ChainRegistry",
         "identifier" : "ChainRegistryTests",
         "name" : "ChainRegistryTests"

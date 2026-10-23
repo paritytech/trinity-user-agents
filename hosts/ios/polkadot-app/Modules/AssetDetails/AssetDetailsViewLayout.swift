@@ -18,6 +18,13 @@ struct AssetDetailsView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    #if DEBUG
+        /// Which holdings the coins draw, for reviewing the depiction. Debug builds only.
+        @State private var testDataMode = CoinageTestDataMode.live
+        /// Plain or varied coins, while the two are being compared. Debug builds only.
+        @State private var coinSet = CoinageScene.CoinSet.shipped
+    #endif
+
     init(
         viewModel: AssetDetailsViewModelProtocol = AssetDetailsViewModel(),
         isExpanded: Bool = false,
@@ -94,10 +101,22 @@ struct AssetDetailsView: View {
                     }
                 }
                 .zIndex(1)
-                if let breakdown = viewModel.coinageBreakdown,
-                   viewModel.balanceCardModel != nil {
-                    CoinageBalanceBreakdownView(breakdown: breakdown, topInset: Self.panelTuck)
-                }
+                #if DEBUG
+                    // The panel stays on a wallet that holds no coinage, which is where the test
+                    // sets are most useful.
+                    if viewModel.balanceCardModel != nil {
+                        PurseTotalPanel(
+                            breakdown: testDataMode.applied(to: viewModel.coinageBreakdown ?? .testDataPlaceholder),
+                            topInset: Self.panelTuck,
+                            coinSet: coinSet
+                        )
+                    }
+                #else
+                    if let breakdown = viewModel.coinageBreakdown,
+                       viewModel.balanceCardModel != nil {
+                        PurseTotalPanel(breakdown: breakdown, topInset: Self.panelTuck)
+                    }
+                #endif
             }
             FundingActivityView(
                 cash: cash,
@@ -105,7 +124,7 @@ struct AssetDetailsView: View {
                 center: fundingCenter
             )
 
-            #if TESTNET_FEATURE
+            #if DEBUG || TESTNET_FEATURE
                 HStack {
                     VStack { Divider().background(Color.fgPrimary) }
                     Text(verbatim: "Debug features")
@@ -113,7 +132,15 @@ struct AssetDetailsView: View {
                         .foregroundStyle(Color.fgPrimary)
                     VStack { Divider().background(Color.fgPrimary) }
                 }
+            #endif
 
+            #if DEBUG
+                CoinageTestDataSwitch(mode: $testDataMode)
+
+                CoinageCoinSetSwitch(set: $coinSet)
+            #endif
+
+            #if TESTNET_FEATURE
                 testnetTopUpButton()
             #endif
         }
@@ -239,10 +266,12 @@ struct AssetDetailsView: View {
 }
 
 /// Total, the coins it is made of, and how much of it is still clearing.
-private struct CoinageBalanceBreakdownView: View {
+private struct PurseTotalPanel: View {
     let breakdown: CoinageBalanceBreakdownViewModel
     /// How far the panel sits under the tiles above it.
     var topInset: CGFloat = 0
+    /// Plain or varied coins, while the two are being compared.
+    var coinSet: CoinageScene.CoinSet = .shipped
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -263,7 +292,7 @@ private struct CoinageBalanceBreakdownView: View {
 
             // Nothing held, nothing to draw: no strip to reserve height for and no split to show.
             if !breakdown.strip.isEmpty {
-                CoinageCoinsView(coins: breakdown.strip, isExpanded: false, metrics: $coinMetrics)
+                CoinageCoinsView(coins: breakdown.strip, isExpanded: false, coinSet: coinSet, metrics: $coinMetrics)
                     .frame(height: CoinageStripLayout.Options().height, alignment: .top)
                     .clipped()
 

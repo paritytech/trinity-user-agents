@@ -12,17 +12,6 @@
         }
       }
     },
-    "offer.changed" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The provider changed its offer. Review the new terms."
-          }
-        }
-      }
-    },
     "offer.tooLate" : {
       "extractionState" : "manual",
       "localizations" : {

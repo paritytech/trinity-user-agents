@@ -168,8 +168,8 @@ struct PublishedPocketCardsTests {
                 await PocketCardFaceOnOpen.faceShown(for: loyaltyKey, cards: cards, timeout: .seconds(5), clock: clock)
             }
 
-            try await withTimeout(.seconds(5)) { await clock.resumeSleep(for: .seconds(5)) }
-            let faceShown = try await withTimeout(.seconds(5)) {
+            try await withTimeout(.hangGuard) { await clock.resumeSleep(for: .seconds(5)) }
+            let faceShown = try await withTimeout(.hangGuard) {
                 await withTaskCancellationHandler { await opening.value } onCancel: { opening.cancel() }
             }
 

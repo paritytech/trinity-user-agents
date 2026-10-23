@@ -29,7 +29,6 @@ enum FundingCancelPresentation {
         case .declined: nil
         case .lapsed: String(localized: .Funding.offerLapsed)
         case .noOffer: String(localized: .Funding.offerNone)
-        case .changed: String(localized: .Funding.offerChanged)
         case .tooLate: String(localized: .Funding.offerTooLate)
         }
     }

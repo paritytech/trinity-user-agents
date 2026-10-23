@@ -18,7 +18,7 @@ class ProductsMessageRendererDescriptionTest {
         every { getString(RCommon.string.products_message_custom_preview) } returns "Custom message"
     }
     private val product = Product(ProductId.fromStoredValue("dim2.dot"), "Jollity", icon = null)
-    private val renderer = ProductsMessageRenderer(context, product, RecordingWorker())
+    private val renderer = ProductsMessageRenderer(context, product, RecordingWorker(), mockk())
 
     @Test
     fun `a custom message is described by the alt the product gave it`() = runTest {

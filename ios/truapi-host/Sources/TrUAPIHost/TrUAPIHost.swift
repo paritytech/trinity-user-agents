@@ -1123,8 +1123,8 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     }
 
     /// Answer the provider's cancel offer on session `intent`: the terms the
-    /// user accepted, as they were shown, or `nil` to decline. Terms that no
-    /// longer match the offer accept nothing and answer `.changed`.
+    /// user accepted, as they were shown, or `nil` to decline. Terms other
+    /// than the offer's accept nothing and answer `.noOffer`.
     @discardableResult
     public func confirmFundingCancel(intent: String, terms: CancelTerms?) async throws -> CancelConfirmation {
         try await inner.confirmFundingCancel(intent: intent, terms: terms)
@@ -1212,8 +1212,8 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
 
     /// Report a later status of `productId`'s top-up `id` to the products
     /// following it. A terminal status ends their streams.
-    public func notifyTopUpStatus(productId: String, id: Data, status: HostPaymentTopUpStatusSubscribeItem) {
-        inner.notifyTopUpStatus(productId: productId, id: id, status: status)
+    public func notifyTopUpStatus(productId: String, id: Data, status: HostPaymentTopUpStatusSubscribeItem) throws {
+        try inner.notifyTopUpStatus(productId: productId, id: id, status: status)
     }
 
     /// Install the host's payment engine. Set-once; answers whether this call
@@ -1228,8 +1228,8 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
 
     /// Report a later status of `productId`'s payment `id` to the products
     /// following it. A terminal status ends their streams.
-    public func notifyPaymentStatus(productId: String, id: Data, status: HostPaymentStatusSubscribeItem) {
-        inner.notifyPaymentStatus(productId: productId, id: id, status: status)
+    public func notifyPaymentStatus(productId: String, id: Data, status: HostPaymentStatusSubscribeItem) throws {
+        try inner.notifyPaymentStatus(productId: productId, id: id, status: status)
     }
 
     /// Install the host's balance view. Set-once; answers whether this call
