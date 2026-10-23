@@ -229,7 +229,8 @@ The binary has `--help` and `--version`.
 ### 3.4 Self-update
 
 An install laid out by §3.2 keeps itself current. Every command except
-`update` spawns a background check that:
+`update` and `stack`, which runs inside builds and publish jobs, spawns a
+background check that:
 
 1. does nothing unless the running executable resolves inside
    `<root>/versions/`, so a `cargo install` copy or a source build is never
@@ -287,6 +288,9 @@ Commands:
 | `register-name` | Register a full-person username via `DotnsGateway.register_name`. |
 | `alloc-check` | Inspect or submit Statement Store allowance registration. |
 | `pgas-check` | Inspect or submit an Asset Hub PGAS allowance claim. |
+| `attest` | Attest a given mnemonic's identity, wait for its ring membership, and print it as JSON. Test network presets only. |
+| `local-network-check` | Validate the local-network file and print the resolved routing as JSON. |
+| `stack` | Create, publish, check and bundle Trinity stack descriptors (section 6.7). |
 
 ### 4.1 Global logging option
 
@@ -496,6 +500,7 @@ truapi-host dev [options] [-- <development-command>...]
 `dev` is the plain-browser development topology built on the signing host. It
 needs no TTY, ensures and activates a signer, auto-accepts confirmations, binds
 the loopback frame server and browser bridge, then starts the wrapped command.
+Because it auto-accepts, it refuses a preset whose identities are real (§14.1).
 When no command follows `--`, it serves the host until stopped.
 
 | Option | Default | Behavior |
@@ -538,6 +543,33 @@ authorization requests share one WebSocket and Rust execution. `/script` imports
 the same web API permission wrappers
 into Bun. Dev preserves the app server URL, native assets and hot reload; no
 app proxy is involved.
+
+### 6.7 Top-level `stack`
+
+```sh
+truapi-host stack <keygen|publish|verify|bundle|link> [options]
+```
+
+`stack` works with Trinity stack descriptors as the
+[descriptor RFC](../../../docs/rfcs/trinity-stack-descriptor.md) defines them.
+Every rule comes from the `trinity-stack` crate, so the CLI accepts and refuses
+the same descriptors as `@parity/trinity-stack` and the host core. Refusals
+print the rule's code, such as `refused (bad-signature): ...`.
+
+| Subcommand | Behavior |
+| --- | --- |
+| `keygen --out <file>` | Creates `<file>` readable by its owner only, refusing an existing file, writes a new 0x-prefixed secret key and prints its public key. |
+| `publish <model> --generation <g> --out <dir>` | Renders the model as a `$v: 1` descriptor, checks it, signs it with `--signing-key-file` when given, and writes `<dir>/.well-known/trinity-stack.json`. With `--url` it checks the URL first and prints the stack's link. |
+| `verify <stack> [--key <k>]` | Reads a link, URL or local file and prints a JSON report: `signed`, `envelope`, `stale`, `expired` and the `descriptor`. Exits non-zero when a rule is broken or the stack is past `expiresAt`; a stale copy only reports. |
+| `bundle <stack> --key <k> --out <file>` | Fetches and verifies a signed stack and writes the copy a host build ships. The existing `<file>` counts as the stored copy, so a lower `sequence` is refused as a rollback, and an expired copy is refused. |
+| `link <url> [--key <k>]` | Prints the `polkadotapp://stack` link that carries the pointer, and its QR code. |
+
+`publish` keeps `sequence` in the `--state` file: unchanged content keeps it,
+and new content raises it to the larger of the previous one plus one and the
+current time in seconds. The state file is written before the descriptor, and
+both writes are atomic. Keep it outside anything a wipe deletes.
+
+Fetches refuse redirects, time out after ten seconds and read at most 1 MiB.
 
 ## 7. Product identifiers and switching
 
@@ -1608,14 +1640,31 @@ core, product, and current selection files.
 
 ### 14.1 Network presets
 
-`--network` selects one of two presets. `paseo-next-v2` is the default. Every
-preset is a test network; the account store keeps BIP-39 entropy for
-disposable test identities only.
+`--network` selects one of three presets. `paseo-next-v2` is the default.
+`paseo-next-v2` and `previewnet` are test networks whose identities are
+disposable, so the account store may keep their BIP-39 entropy. `polkadot` is
+mainnet, and its identities are real.
+
+A preset whose identities are real never writes to the account store: it signs
+only with `--mnemonic` or `HOST_CLI_SIGNER_MNEMONIC`, and refuses auto accounts,
+stored accounts and mnemonic imports. It refuses automatic approval
+(`--auto-accept`, `/approval automatic` and `dev`), so a local page cannot get a
+real identity's signature without a prompt. It also refuses `--product-config`,
+whose seeded grants are never prompted for and persist in the core database, and
+`attest`.
+
+A test preset never routes to a real-identity preset's chains. Every endpoint a
+`HOST_CLI_*_WS` override or `HOST_CLI_LOCAL_NETWORK_CONFIG` reroutes must report
+the genesis it is routed as, and a route carrying a real-identity preset's
+genesis is refused, because a fork keeps its source's genesis and a signature
+made against it is valid on the source network.
 
 Auto-account onboarding (§12.3) needs an identity backend that records the
-lite username on the dotNS gateway. Each preset points at its matching dotSpark
-identity backend, and the CLI reports the complete backend response when
-registration fails.
+lite username on the dotNS gateway. Each test preset points at its matching
+dotSpark identity backend, and the CLI reports the complete backend response
+when registration fails. `polkadot` ships no identity backend: a command that
+needs one fails with an error naming `HOST_CLI_IDENTITY_BACKEND_BASE` until that
+variable supplies it.
 
 #### `paseo-next-v2`
 
@@ -1645,9 +1694,32 @@ on-chain testing.
 | Asset Hub RPC | `wss://previewnet.substrate.dev/asset-hub` |
 | Asset Hub genesis | `0xbac97e23fc8f4bccae72a98f8aeb2bcab20bf755862304e4b46ad6473456e896` |
 
+#### `polkadot`
+
+Polkadot mainnet. Its identities are real (above). Reserved identities derive
+under `.dot`.
+
+| Purpose | Value |
+| --- | --- |
+| Identity backend | none; set `HOST_CLI_IDENTITY_BACKEND_BASE` |
+| People RPC | `wss://polkadot-people-rpc.polkadot.io` |
+| People genesis | `0x67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008` |
+| Bulletin RPC | `wss://bulletin-rpc.polkadot.io` |
+| Bulletin genesis | `0x2761c95259d59e55ae3daf756c1413b46e45a5a2987299f8ef8e5d8e4776cbc4` |
+| Asset Hub RPC | `wss://polkadot-asset-hub-rpc.polkadot.io` |
+| Asset Hub genesis | `0x68d56f15f85d3136970ec16946040bc1752654e906147f7e43e9d539d7c3de2f` |
+| `DotnsPopController` | `0xA06d1CB1e3FedFF7b5dFa779b4Cc61703F8A46A1` |
+
+The dotNS addresses come from `deployments/polkadot/420420419.json` in
+paritytech/dotns, vendored as `deployments/polkadot-420420419.json`. Username
+reads discover the controller from `DotnsGateway.DispatcherAddress` as on the
+test presets; while Polkadot Asset Hub leaves that unset (referendum 1955 sets
+it), the CLI's own reads fall back to the manifest's controller. The gateway
+cannot issue names until the dispatcher is set.
+
 Sessions are per network (`SessionCatalog::new` keys on the preset id), so a
-signer provisioned on one preset is not visible from the other. Two presets means
-two identities on one machine, which is deliberate: the lite username and the
+signer provisioned on one preset is not visible from another. Each preset means
+its own identity on one machine, which is deliberate: the lite username and the
 statement-store allowance are per chain.
 
 The backend's username routes are bearer-gated; the CLI mints the access token
@@ -1656,7 +1728,12 @@ itself through the backend's `auth/challenges` → `auth/token` handshake
 account creation works here.
 
 There are no public endpoint override flags. `HOST_CLI_IDENTITY_BACKEND_BASE`
-replaces only the identity backend base URL (§21).
+replaces the identity backend base URL, and `HOST_CLI_PEOPLE_WS`,
+`HOST_CLI_ASSET_HUB_WS` and `HOST_CLI_BULLETIN_WS` replace a chain's URL for a fork
+of the preset's network, keeping its genesis hashes (§21). `HOST_CLI_LOCAL_NETWORK_CONFIG`
+replaces every chain endpoint, genesis hash and the identity backend together, loopback
+only, for a disposable local network that is not a fork (§21). The two cannot be set
+together.
 
 Every role the preset serves — People, Bulletin and Asset Hub — is always routed,
 because host internals require all three: statement-store traffic addressed to the
@@ -1664,7 +1741,7 @@ People genesis, preimage submission, and PGAS claims plus dotNS username reads
 respectively. The SSO sentinel is
 a separate case — it is an unmapped genesis and reaches People through the fallback
 below, not through People's own route. `E2E_LIVE_CHAIN=1` only widens routing to endpoints the
-preset carries without serving them as a role, of which neither preset has any.
+preset carries without serving them as a role, of which no preset has any.
 
 The all-zero SSO sentinel and every genesis hash not present in the active
 route map fall back to the People RPC.
@@ -1914,7 +1991,8 @@ only product and message length.
   <redacted summary>
 ```
 
-It does not bypass product-id validation or core authorization rules.
+It does not bypass product-id validation or core authorization rules. It is
+refused on a preset whose identities are real (§14.1).
 
 ### 17.3 Sensitive state and output
 
@@ -1924,7 +2002,7 @@ Transcript copies and submitted-command dividers redact it.
 
 Mnemonics are never intentionally printed, but auto-managed mnemonics are
 stored in plaintext `accounts.json`. That file is local test secret material,
-not production custody.
+not production custody, so only disposable-identity presets (§14.1) write it.
 
 `debug` and especially `trace` can include decoded product payloads and
 transport metadata. Do not publish trace logs from sensitive test accounts
@@ -2030,7 +2108,8 @@ The command derives and queries two accounts:
 
 - root; and
 - RFC-0022 `//product//uid.<tld>/index_bytes(0)`, `<tld>` being the selected
-  network's dotNS TLD (`paseo` for `paseo-next-v2`, `testnet` for `previewnet`).
+  network's dotNS TLD (`paseo` for `paseo-next-v2`, `testnet` for `previewnet`,
+  `dot` for `polkadot`).
 
 For each it prints one of:
 
@@ -2165,10 +2244,12 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `TRUAPI_HOST_BIN_DIR` | Directory the installer puts the `PATH` symlink in. |
 | `TRUAPI_HOST_VERSION` | Version the installer installs, instead of the current stable one. |
 | `TRUAPI_HOST_RELEASE_BASE_URL` | Release host for the installer and the updater, for mirrors and tests. |
-| `HOST_CLI_SIGNER_MNEMONIC` | Mnemonic for `dev`, `signing-host`, `identity-check`, `register-name`, `alloc-check` and `pgas-check` when `--mnemonic` is omitted. |
-| `HOST_CLI_IDENTITY_BACKEND_BASE` | Identity backend base URL override, including `/api/v1`, for instance a local backend. Chain endpoints stay on the preset. |
+| `HOST_CLI_SIGNER_MNEMONIC` | Mnemonic for `dev`, `signing-host`, `identity-check`, `register-name`, `alloc-check`, `pgas-check` and `attest` when `--mnemonic` is omitted. |
+| `HOST_CLI_IDENTITY_BACKEND_BASE` | Identity backend base URL override, including `/api/v1`, for instance a local backend. |
+| `HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS`, `HOST_CLI_BULLETIN_WS` | A chain's `ws://` or `wss://` URL override, for a fork of the preset's network. Genesis hashes stay the preset's, which a fork keeps, and each overridden endpoint must report that genesis before a command runs. A test preset is also refused when a route carries a real-identity preset's genesis (§14.1). Blank keeps the preset. Cannot be set together with `HOST_CLI_LOCAL_NETWORK_CONFIG` or `TRUAPI_LIGHT_CLIENT=1`. |
+| `HOST_CLI_LOCAL_NETWORK_CONFIG` | Path of a JSON file that routes every chain role (People, Asset Hub, Bulletin) and the identity backend of the selected preset to loopback endpoints with their own genesis hashes, keeping the preset's product namespace; see `docs/local-network.md`. Takes precedence over `HOST_CLI_IDENTITY_BACKEND_BASE`. Unset or blank, the presets are unchanged; an invalid file is an error, and so is setting it together with `TRUAPI_LIGHT_CLIENT=1` or with a `HOST_CLI_*_WS` chain override. `truapi-host local-network-check` validates it without contacting a chain. |
 | `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `uid.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
-| `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. The controller is `0xCC932348606cc1f3318cADeC5A5Cd2CA447f8a4b` on paseo-next-v2 and previewnet; `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |
+| `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. The controller is `0xCC932348606cc1f3318cADeC5A5Cd2CA447f8a4b` on paseo-next-v2 and previewnet; the polkadot preset carries its own (§14.1). `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |
 | `XDG_STATE_HOME` | Preferred default state parent. |
 | `HOME` | Fallback default state parent. |
 | `VISUAL` | Preferred script editor. |

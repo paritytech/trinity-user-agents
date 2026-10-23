@@ -34,7 +34,9 @@ use crate::{
 		funding::FundingChoice,
 		funding_providers::{LearnedLimit, LearnedSupport},
 	},
-	platform::{FundingQuoteList, FundingQuoteRow, FundingQuoteState, FundingQuoteUnavailable},
+	platform::{
+		FundingQuoteList, FundingQuoteRow, FundingQuoteState, FundingQuoteUnavailable, ProductId,
+	},
 	unix_time::current_unix_millis,
 };
 
@@ -381,13 +383,19 @@ impl RuntimeServices {
 		let answer = match quotes.reusable(provider_id, &ask, current_unix_millis()) {
 			Some(answer) => Some(answer),
 			None => {
-				let pending = PendingQuote::ask(self, provider_id, ask.clone());
-				let timeout = futures_timer::Delay::new(deadline);
-				let answer = match future::select(pending.answered, timeout).await {
-					Either::Left((Ok(answer), _)) => Some(answer),
-					_ => None,
+				let hold = WorkerHold::acquire(self, provider_id);
+				let funding = self.funding().clone();
+				let asked = {
+					let ask = ask.clone();
+					let provider_id = provider_id.to_string();
+					async move { funding.connected_link(&provider_id).await.quote(ask).await }
 				};
-				drop(pending.release);
+				let timeout = futures_timer::Delay::new(deadline);
+				let answer = match future::select(Box::pin(asked), timeout).await {
+					Either::Left((answer, _)) => answer,
+					Either::Right(_) => None,
+				};
+				drop(hold);
 				if let Some(answer) = &answer {
 					let now_ms = current_unix_millis();
 					quotes.remember(provider_id, &ask, now_ms, answer.clone());
@@ -426,34 +434,30 @@ impl RuntimeServices {
 	}
 }
 
-/// An ask sent to a provider: the receiver of its answer, and the hold on
-/// the provider's worker.
-struct PendingQuote<'a> {
-	answered: futures::channel::oneshot::Receiver<FundingQuoteAnswer>,
-	release: AskRelease<'a>,
-}
-
-/// Withdraws an ask and releases the provider's worker when dropped, so a
-/// quote stream dropped while it waits leaves neither behind.
-struct AskRelease<'a> {
+/// A reference on a provider's worker while the core asks it for a quote,
+/// released when dropped, so a quote stream dropped while it waits leaves
+/// none behind.
+struct WorkerHold<'a> {
 	services: &'a RuntimeServices,
-	provider_id: &'a str,
-	ask_id: String,
+	provider: Option<ProductId>,
 }
 
-impl<'a> PendingQuote<'a> {
-	/// Hold `provider_id`'s worker and send it `ask`.
-	fn ask(services: &'a RuntimeServices, provider_id: &'a str, ask: FundingQuoteAsk) -> Self {
-		services.worker_ledger.acquire(provider_id);
-		let (ask_id, answered) = services.funding().ask_quote(provider_id, ask);
-		Self { answered, release: AskRelease { services, provider_id, ask_id } }
+impl<'a> WorkerHold<'a> {
+	/// Hold `provider_id`'s worker, so the host runs it to answer.
+	fn acquire(services: &'a RuntimeServices, provider_id: &str) -> Self {
+		let provider = provider_id.parse::<ProductId>().ok();
+		if let Some(provider) = &provider {
+			services.worker_ledger.acquire(provider);
+		}
+		Self { services, provider }
 	}
 }
 
-impl Drop for AskRelease<'_> {
+impl Drop for WorkerHold<'_> {
 	fn drop(&mut self) {
-		self.services.funding().withdraw_ask(&self.ask_id);
-		self.services.worker_ledger.release(self.provider_id);
+		if let Some(provider) = &self.provider {
+			self.services.worker_ledger.release(provider);
+		}
 	}
 }
 

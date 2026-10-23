@@ -28,18 +28,14 @@ enum TabBarVisibilityPolicy {
             return .shown
         }
 
-        #if FEATURE_PRODUCTS
-            switch override {
-            case .folded:
-                return .folded
-            case .shown:
-                return .shown
-            case .none:
-                return state(for: derived)
-            }
-        #else
-            return .hidden
-        #endif
+        switch override {
+        case .folded:
+            return .folded
+        case .shown:
+            return .shown
+        case .none:
+            return state(for: derived)
+        }
     }
 
     static func contributesClearance(isTabRoot: Bool) -> Bool {

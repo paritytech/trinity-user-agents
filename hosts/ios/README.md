@@ -57,6 +57,9 @@ cd polkadot-ios-community
 # Scaffold gitignored secret files from templates and generate build-time config.
 ./Runscripts/setup-secrets.sh
 
+# Block commits that add a hardcoded UI string.
+git config core.hooksPath Runscripts/hooks
+
 open polkadot-app.xcodeproj
 ```
 

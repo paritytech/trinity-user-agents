@@ -6,11 +6,9 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoMap
-import dagger.multibindings.IntoSet
 import io.paritytech.polkadotapp.chains.network.updaters.system.UpdateSystemFactory
 import io.paritytech.polkadotapp.common.data.storage.SingleValueStorageFactory
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
-import io.paritytech.polkadotapp.common.presentation.tabs.TabWarningProvider
 import io.paritytech.polkadotapp.feature_coinage_api.data.updaters.CoinageUpdateSystem
 import io.paritytech.polkadotapp.feature_coinage_api.domain.CoinsInteractor
 import io.paritytech.polkadotapp.feature_coinage_api.domain.RecyclerVouchersInteractor
@@ -88,10 +86,10 @@ import io.paritytech.polkadotapp.feature_coinage_impl.domain.externalPayment.rep
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.externalPayment.usecase.RealUnloadRecyclerIntoExternalAssetUseCase
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.externalPayment.usecase.UnloadRecyclerIntoExternalAssetUseCase
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.installation.COINAGE_INSTALLATION_DOMAIN_ID
-import io.paritytech.polkadotapp.feature_coinage_impl.domain.installation.CoinageBackupTabWarningProvider
-import io.paritytech.polkadotapp.feature_coinage_impl.domain.installation.CoinageInstallationRegistrar
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.installation.CoinageInstallationRegistrationOracle
+import io.paritytech.polkadotapp.feature_coinage_impl.domain.installation.CurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.installation.InstallationRegistrationSubmitter
+import io.paritytech.polkadotapp.feature_coinage_impl.domain.installation.RealCurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.installation.RealInstallationRegistrationSubmitter
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.model.CoinageTransaction
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.model.CoinageTransactionFactory
@@ -238,16 +236,15 @@ interface CoinageFeatureModule {
     fun bindInstallationRegistrationSubmitter(impl: RealInstallationRegistrationSubmitter): InstallationRegistrationSubmitter
 
     @Binds
-    fun bindCoinageAccountBackupObserver(impl: CoinageInstallationRegistrar): CoinageAccountBackupObserver
+    fun bindCoinageAccountBackupObserver(impl: RealCurrentInstallationProvider): CoinageAccountBackupObserver
+
+    @Binds
+    fun bindCurrentInstallationProvider(impl: RealCurrentInstallationProvider): CurrentInstallationProvider
 
     @Binds
     @IntoMap
     @TxDomainKey(COINAGE_INSTALLATION_DOMAIN_ID)
     fun bindCoinageInstallationRegistrationOracle(impl: CoinageInstallationRegistrationOracle): TxCompletionOracle
-
-    @Binds
-    @IntoSet
-    fun bindCoinageBackupTabWarningProvider(impl: CoinageBackupTabWarningProvider): TabWarningProvider
 
     @Binds
     fun bindVoucherRepository(impl: RealVoucherRepository): VoucherRepository
