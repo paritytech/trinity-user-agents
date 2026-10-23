@@ -18,10 +18,10 @@ use subxt::{
 		scale_decode::visitor::{IgnoreVisitor, decode_with_visitor},
 		scale_encode::{EncodeAsFields, Error as ScaleEncodeError, FieldIter, TypeResolver},
 	},
-	utils::{AccountId32, MultiAddress},
+	utils::{AccountId32, H256, MultiAddress},
 };
 
-use super::{ExtrinsicBuilder, RuntimeAtBirth};
+use super::{BuildSource, ExtrinsicBuilder, RuntimeAtBirth};
 use crate::chain::{
 	EncodedExtrinsic, MortalExtrinsic, Mortality,
 	extrinsic::{
@@ -36,60 +36,49 @@ use crate::chain::{
 	},
 };
 
-/// Builds the extrinsic `builder` describes.
+/// Builds the extrinsic `builder` describes, born at `runtime`.
 ///
-/// What the caller left unset is read only when needed:
-/// `host_extension_version` gives the host's pipeline for the chain when no
-/// version is pinned, and `account_nonce` gives the signer's next index when
-/// no nonce is set.
-pub async fn assemble<HostRead, NonceRead>(
+/// It reads from the builder's source only what the caller left unset: the
+/// host's pipeline when no version is pinned, and the signer's next nonce
+/// when no nonce is set.
+pub async fn assemble(
 	builder: ExtrinsicBuilder<'_>,
-	host_extension_version: impl FnOnce() -> HostRead,
-	account_nonce: impl FnOnce(AccountId32) -> NonceRead,
-) -> Result<MortalExtrinsic, ExtrinsicBuildError>
-where
-	HostRead: Future<Output = Result<Option<u8>, ExtrinsicBuildError>>,
-	NonceRead: Future<Output = Result<u64, ExtrinsicBuildError>>,
-{
-	let metadata = builder.runtime.metadata.clone();
-	let signer = builder.signer();
-	let version = choose_extrinsic_version(
-		builder.version,
-		host_extension_version,
-		signer.is_some(),
-		&metadata,
-	)
-	.await?;
-	let nonce = choose_nonce(builder.nonce, signer, account_nonce).await?;
-	encode_extrinsic(builder, version, nonce)
+	runtime: RuntimeAtBirth,
+) -> Result<MortalExtrinsic, ExtrinsicBuildError> {
+	let (source, genesis, signer) = (builder.source, builder.genesis, builder.signer());
+	let signed = signer.is_some();
+	let version =
+		choose_extrinsic_version(builder.version, source, genesis, signed, &runtime.metadata)
+			.await?;
+	let nonce = choose_nonce(builder.nonce, signer, source, genesis).await?;
+	encode_extrinsic(builder, runtime, version, nonce)
 }
 
-/// The nonce `CheckNonce` carries: the caller's, else the signer's next index,
-/// else 0 for a build nobody signs.
-async fn choose_nonce<NonceRead>(
+/// The nonce `CheckNonce` carries: the caller's, else the signer's next index
+/// read from `source`, else 0 for a build nobody signs.
+async fn choose_nonce(
 	pinned: Option<u64>,
 	signer: Option<&SubstrateSigner>,
-	account_nonce: impl FnOnce(AccountId32) -> NonceRead,
-) -> Result<u64, ExtrinsicBuildError>
-where
-	NonceRead: Future<Output = Result<u64, ExtrinsicBuildError>>,
-{
+	source: &dyn BuildSource,
+	genesis: H256,
+) -> Result<u64, ExtrinsicBuildError> {
 	if let Some(nonce) = pinned {
 		return Ok(nonce);
 	}
 	let Some(signer) = signer else {
 		return Ok(0);
 	};
-	account_nonce(signer.account_id()).await
+	source.account_nonce(genesis, signer.account_id()).await
 }
 
 /// Encodes the extrinsic once its version and nonce are settled.
 fn encode_extrinsic(
 	builder: ExtrinsicBuilder<'_>,
+	runtime: RuntimeAtBirth,
 	version: ExtrinsicVersion,
 	nonce: u64,
 ) -> Result<MortalExtrinsic, ExtrinsicBuildError> {
-	let ExtrinsicBuilder { runtime, call, extensions, period, .. } = builder;
+	let ExtrinsicBuilder { genesis, call, extensions, period, .. } = builder;
 	let metadata = runtime.metadata.clone();
 	check_format_supported(version, &metadata)?;
 	let pending_call = call.ok_or(ExtrinsicBuildError::NoCall)?;
@@ -97,16 +86,21 @@ fn encode_extrinsic(
 	let (extensions, v4_signature) = supplied_extensions(version, extensions, &metadata)?;
 	let v4_signer = v4_signature.as_deref().and_then(AnyExtension::signer);
 	let mortality = Mortality::new(runtime.birth, period)?;
-	let chain = chain_values(&runtime, mortality, nonce);
+	let chain = chain_values(genesis, &runtime, mortality, nonce);
 	let fold = PipelineFold { version, call: &call, chain, types: metadata.types() };
 	let encoded = fold.fill_pipeline(extensions, &metadata)?;
-	let bytes = fold.lay_out(&encoded, v4_signer, &metadata)?;
+	let bytes = fold.extrinsic_bytes(&encoded, v4_signer, &metadata)?;
 	Ok(MortalExtrinsic { extrinsic: EncodedExtrinsic::new(bytes), mortality })
 }
 
-fn chain_values(runtime: &RuntimeAtBirth, mortality: Mortality, nonce: u64) -> ChainValues {
+fn chain_values(
+	genesis: H256,
+	runtime: &RuntimeAtBirth,
+	mortality: Mortality,
+	nonce: u64,
+) -> ChainValues {
 	ChainValues {
-		genesis: runtime.genesis,
+		genesis,
 		spec_version: runtime.spec_version,
 		transaction_version: runtime.transaction_version,
 		mortality,
@@ -261,7 +255,7 @@ impl PipelineFold<'_> {
 
 	/// The extrinsic's bytes: V4 signed by `v4_signer` over the whole
 	/// pipeline's implication, or V5 general.
-	fn lay_out(
+	fn extrinsic_bytes(
 		&self,
 		encoded: &[EncodedExtension],
 		v4_signer: Option<&SubstrateSigner>,

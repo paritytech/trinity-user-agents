@@ -59,11 +59,10 @@ pub async fn build_signed_store_transaction(
 	data: &[u8],
 ) -> Result<MortalExtrinsic, ExtrinsicBuildError> {
 	extrinsics
-		.build_mortal_extrinsic(genesis, |builder| {
-			builder
-				.with_call_args(STORE_PALLET_NAME, STORE_CALL_NAME, StoreCallData(data))
-				.with_signer(signer);
-		})
+		.build_mortal_extrinsic(genesis)
+		.with_call_args(STORE_PALLET_NAME, STORE_CALL_NAME, StoreCallData(data))
+		.with_signer(signer)
+		.build()
 		.await
 }
 

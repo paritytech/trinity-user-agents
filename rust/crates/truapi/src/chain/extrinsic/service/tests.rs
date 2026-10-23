@@ -69,14 +69,14 @@ fn build_remark(
 	signer: &Sr25519Signer,
 	nonce: Option<u64>,
 ) -> Result<MortalExtrinsic, ExtrinsicBuildError> {
-	block_on(service.build_mortal_extrinsic(GENESIS, |builder| {
-		builder
-			.with_call(tx("System", "remark", vec![Value::from_bytes([1, 2, 3])]))
-			.with_signer(signer);
-		if let Some(nonce) = nonce {
-			builder.with_nonce(nonce);
-		}
-	}))
+	let mut builder = service
+		.build_mortal_extrinsic(GENESIS)
+		.with_call(tx("System", "remark", vec![Value::from_bytes([1, 2, 3])]))
+		.with_signer(signer);
+	if let Some(nonce) = nonce {
+		builder = builder.with_nonce(nonce);
+	}
+	block_on(builder.build())
 }
 
 /// The nonce `CheckNonce` carries in a Bulletin V4 extrinsic: right after
@@ -180,13 +180,13 @@ fn a_pinned_build_does_not_read_the_host_map() {
 	let signer = test_signer();
 	let v4 = ExtrinsicVersion::V4;
 
-	let built = block_on(service.build_mortal_extrinsic(GENESIS, |builder| {
-		builder
-			.with_call(tx("System", "remark", vec![Value::from_bytes([1, 2, 3])]))
-			.with_signer(&signer)
-			.with_nonce(0)
-			.with_extrinsic_version(v4);
-	}));
+	let builder = service
+		.build_mortal_extrinsic(GENESIS)
+		.with_call(tx("System", "remark", vec![Value::from_bytes([1, 2, 3])]))
+		.with_signer(&signer)
+		.with_nonce(0)
+		.with_extrinsic_version(v4);
+	let built = block_on(builder.build());
 
 	assert!(built.is_ok());
 	assert_eq!(host.reads(), 0);

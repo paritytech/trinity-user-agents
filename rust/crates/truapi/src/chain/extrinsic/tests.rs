@@ -2,10 +2,7 @@
 //! with an independent builder: the statement allowance assembler, its
 //! implication, or subxt's own V4 transaction.
 
-use std::sync::{
-	Arc, Mutex,
-	atomic::{AtomicUsize, Ordering},
-};
+use std::sync::{Arc, Mutex};
 
 use futures::executor::block_on;
 
@@ -30,14 +27,11 @@ use subxt::{
 
 use super::{
 	ExtensionError, ExtrinsicBuildError, ExtrinsicBuilder, ExtrinsicVersion, InheritedImplication,
-	TransactionExtension,
-	builder::{RuntimeAtBirth, assemble, start_build},
-	signature::VerifySignatureExtension,
-	version::choose_extrinsic_version,
-	well_known::default_value_for_type,
+	TransactionExtension, builder::RuntimeAtBirth, signature::VerifySignatureExtension,
+	version::choose_extrinsic_version, well_known::default_value_for_type,
 };
 use crate::{
-	chain::{HashAndNumber, MortalExtrinsic},
+	chain::{HashAndNumber, MortalExtrinsic, extrinsic::tests::offline_source::OfflineSource},
 	host_internal::extrinsic::{
 		Sr25519Signer,
 		tests::{bulletin_chain_state, split_v4},
@@ -56,9 +50,10 @@ const ASSET_HUB: &[u8] = include_bytes!(concat!(
 const GENESIS: [u8; 32] = [0xab; 32];
 const BIRTH: HashAndNumber = HashAndNumber { hash: H256([0x11; 32]), number: 100 };
 
+mod offline_source;
+
 fn runtime(metadata_bytes: &[u8]) -> RuntimeAtBirth {
 	RuntimeAtBirth {
-		genesis: H256(GENESIS),
 		birth: BIRTH,
 		spec_version: 1_000_000,
 		transaction_version: 1,
@@ -77,18 +72,18 @@ fn remark() -> impl Payload + Send {
 	tx("System", "remark", vec![Value::from_bytes([1, 2, 3])])
 }
 
-/// Assembles `builder` offline: `host_extension_version` is the host's
-/// pipeline for the chain and `account_nonce` the signer's next index.
-fn assemble_offline(
-	builder: ExtrinsicBuilder<'_>,
-	host_extension_version: Option<u8>,
-	account_nonce: u64,
-) -> Result<MortalExtrinsic, ExtrinsicBuildError> {
-	block_on(assemble(
-		builder,
-		|| async move { Ok(host_extension_version) },
-		|_| async move { Ok(account_nonce) },
-	))
+/// A source for a chain running the People runtime.
+fn people() -> OfflineSource {
+	OfflineSource::new(H256(GENESIS), runtime(PEOPLE))
+}
+
+/// A source for the Bulletin fixture chain.
+fn bulletin() -> OfflineSource {
+	OfflineSource::new(H256(bulletin_chain_state().genesis_hash), bulletin_runtime())
+}
+
+fn build_offline(builder: ExtrinsicBuilder<'_>) -> Result<MortalExtrinsic, ExtrinsicBuildError> {
+	block_on(builder.build())
 }
 
 /// A value that is already encoded, written as it is whatever the type.
@@ -191,13 +186,14 @@ const AUTHORIZED_EXTRINSIC_HASH: &str =
 fn an_authorized_extrinsic_has_the_reference_bytes() {
 	let extra = long_term_storage_claim_value();
 
-	let mut builder = start_build(runtime(PEOPLE));
-	builder
+	let source = people();
+	let builder = source
+		.start_build()
 		.with_call(remark())
 		.with_extension(FixedBytesExtension::explicit_only("AsResources", extra))
 		.with_extension(immortal())
 		.with_extrinsic_version(ExtrinsicVersion::V5 { extension_version: 0 });
-	let built = assemble_offline(builder, None, 0).unwrap();
+	let built = build_offline(builder).unwrap();
 
 	assert_eq!(hex::encode(blake2_256(built.extrinsic.bytes())), AUTHORIZED_EXTRINSIC_HASH);
 }
@@ -211,8 +207,9 @@ fn an_authorizer_sees_the_implication_of_the_extensions_after_it() {
 	let expected = "d0b6630d1e1764486b2080946470856f3b00d9408d71d23ab48c40d3eaf2f043";
 	let seen = Arc::new(Mutex::new(None));
 
-	let mut builder = start_build(runtime(PEOPLE));
-	builder
+	let source = people();
+	let builder = source
+		.start_build()
 		.with_call(remark())
 		.with_extension(RecordingExtension {
 			name: "AsResources",
@@ -221,7 +218,7 @@ fn an_authorizer_sees_the_implication_of_the_extensions_after_it() {
 		})
 		.with_extension(immortal())
 		.with_extrinsic_version(ExtrinsicVersion::V5 { extension_version: 0 });
-	assemble_offline(builder, None, 0).unwrap();
+	build_offline(builder).unwrap();
 
 	let implication_hash = seen.lock().unwrap().as_ref().map(InheritedImplication::hash);
 	assert_eq!(implication_hash.map(hex::encode).as_deref(), Some(expected));
@@ -250,7 +247,6 @@ fn subxt_bulletin_v4(
 fn bulletin_runtime() -> RuntimeAtBirth {
 	let state = bulletin_chain_state();
 	RuntimeAtBirth {
-		genesis: H256(state.genesis_hash),
 		birth: BIRTH,
 		spec_version: state.spec_version,
 		transaction_version: state.transaction_version,
@@ -263,16 +259,12 @@ fn build_bulletin_remark(
 	nonce_override: Option<u64>,
 	account_nonce: u64,
 ) -> Vec<u8> {
-	let mut builder = start_build(bulletin_runtime());
-	builder.with_call(remark()).with_signer(signer);
+	let source = bulletin().with_account_nonce(account_nonce);
+	let mut builder = source.start_build().with_call(remark()).with_signer(signer);
 	if let Some(nonce) = nonce_override {
-		builder.with_nonce(nonce);
+		builder = builder.with_nonce(nonce);
 	}
-	assemble_offline(builder, None, account_nonce)
-		.unwrap()
-		.extrinsic
-		.bytes()
-		.to_vec()
+	build_offline(builder).unwrap().extrinsic.bytes().to_vec()
 }
 
 /// Bulletin builds through subxt today; the builder must produce the same
@@ -295,11 +287,12 @@ fn a_signed_v4_extrinsic_matches_subxt() {
 #[test]
 fn a_v4_extrinsic_signs_with_a_signature_added_as_an_extension() {
 	let signer = test_signer();
-	let mut builder = start_build(bulletin_runtime());
-	builder
+	let source = bulletin().with_account_nonce(7);
+	let builder = source
+		.start_build()
 		.with_call(remark())
 		.with_extension(VerifySignatureExtension::signed(&signer));
-	let built = assemble_offline(builder, None, 7).unwrap().extrinsic.bytes().to_vec();
+	let built = build_offline(builder).unwrap().extrinsic.bytes().to_vec();
 	let (account, signature, _) = split_v4(&built);
 	let signature = MultiSignature::Sr25519(signature);
 
@@ -337,91 +330,84 @@ fn verifies(signer: &Sr25519Signer, payload: &[u8], signature: &MultiSignature) 
 		.is_ok()
 }
 
-/// How many times assembling `builder` reads the signer's nonce.
-fn account_nonce_reads(builder: ExtrinsicBuilder<'_>) -> usize {
-	let reads = AtomicUsize::new(0);
-	let account_nonce = |_| {
-		reads.fetch_add(1, Ordering::SeqCst);
-		async { Ok(0) }
-	};
-	let _ = block_on(assemble(builder, || async { Ok(None) }, account_nonce));
-	reads.load(Ordering::SeqCst)
+/// How many times building `builder` reads the signer's nonce from `source`.
+fn account_nonce_reads(source: &OfflineSource, builder: ExtrinsicBuilder<'_>) -> usize {
+	let _ = build_offline(builder);
+	source.nonce_reads()
 }
 
 /// The pool nonce is read only when the build signs and the caller set none.
 #[test]
 fn only_a_signed_build_without_a_nonce_reads_the_account_nonce() {
 	let signer = test_signer();
-	let mut signed = start_build(bulletin_runtime());
-	signed.with_call(remark()).with_signer(&signer);
-	let mut pinned = start_build(bulletin_runtime());
-	pinned.with_call(remark()).with_signer(&signer).with_nonce(1);
-	let mut unsigned = start_build(bulletin_runtime());
-	unsigned.with_call(remark());
+	let (signed, pinned, unsigned) = (bulletin(), bulletin(), bulletin());
 
-	assert_eq!(account_nonce_reads(signed), 1);
-	assert_eq!(account_nonce_reads(pinned), 0);
-	assert_eq!(account_nonce_reads(unsigned), 0);
+	let signed_builder = signed.start_build().with_call(remark()).with_signer(&signer);
+	let signed_reads = account_nonce_reads(&signed, signed_builder);
+	let pinned_builder =
+		pinned.start_build().with_call(remark()).with_signer(&signer).with_nonce(1);
+	let pinned_reads = account_nonce_reads(&pinned, pinned_builder);
+	let unsigned_reads = account_nonce_reads(&unsigned, unsigned.start_build().with_call(remark()));
+
+	assert_eq!(signed_reads, 1);
+	assert_eq!(pinned_reads, 0);
+	assert_eq!(unsigned_reads, 0);
 }
 
 fn default_version(
 	host_extension_version: Option<u8>,
 	signed: bool,
-	metadata: &Metadata,
+	metadata_bytes: &[u8],
 ) -> ExtrinsicVersion {
-	let host_read = || async move { Ok(host_extension_version) };
-	block_on(choose_extrinsic_version(None, host_read, signed, metadata)).unwrap()
+	let source = OfflineSource::new(H256(GENESIS), runtime(metadata_bytes))
+		.with_host_extension_version(host_extension_version);
+	let metadata = Metadata::decode_from(metadata_bytes).unwrap();
+	let version = choose_extrinsic_version(None, &source, H256(GENESIS), signed, &metadata);
+	block_on(version).unwrap()
 }
 
 /// The host's map decides the default exactly as the native hosts do.
 #[test]
 fn the_host_map_decides_the_default_version() {
-	let people = Metadata::decode_from(PEOPLE).unwrap();
-	let asset_hub = Metadata::decode_from(ASSET_HUB).unwrap();
 	let v5_zero = ExtrinsicVersion::V5 { extension_version: 0 };
 
-	assert_eq!(default_version(None, true, &people), ExtrinsicVersion::V4);
-	assert_eq!(default_version(Some(0), true, &people), v5_zero);
+	assert_eq!(default_version(None, true, PEOPLE), ExtrinsicVersion::V4);
+	assert_eq!(default_version(Some(0), true, PEOPLE), v5_zero);
 	// Asset Hub's pipeline 0 has no `VerifyMultiSignature`.
-	assert_eq!(default_version(Some(0), true, &asset_hub), ExtrinsicVersion::V4);
-	assert_eq!(default_version(Some(0), false, &asset_hub), v5_zero);
+	assert_eq!(default_version(Some(0), true, ASSET_HUB), ExtrinsicVersion::V4);
+	assert_eq!(default_version(Some(0), false, ASSET_HUB), v5_zero);
 }
 
 /// A pinned version never asks the host, so a host that cannot answer does
 /// not fail a build that does not need its answer.
 #[test]
 fn a_pinned_version_does_not_read_the_host() {
-	let people = Metadata::decode_from(PEOPLE).unwrap();
-	let reads = AtomicUsize::new(0);
-	let host_read = || {
-		reads.fetch_add(1, Ordering::SeqCst);
-		async { Ok(Some(0)) }
-	};
+	let source = people().with_host_extension_version(Some(0));
+	let metadata = Metadata::decode_from(PEOPLE).unwrap();
+	let pinned = Some(ExtrinsicVersion::V4);
 
-	let version =
-		block_on(choose_extrinsic_version(Some(ExtrinsicVersion::V4), host_read, true, &people));
+	let version = choose_extrinsic_version(pinned, &source, H256(GENESIS), true, &metadata);
 
-	assert_eq!(version.unwrap(), ExtrinsicVersion::V4);
-	assert_eq!(reads.load(Ordering::SeqCst), 0);
+	assert_eq!(block_on(version).unwrap(), ExtrinsicVersion::V4);
+	assert_eq!(source.host_reads(), 0);
 }
 
 fn build_error(
 	metadata_bytes: &[u8],
 	signer: Option<&Sr25519Signer>,
-	setup: impl FnOnce(&mut super::ExtrinsicBuilder<'_>),
+	setup: impl FnOnce(ExtrinsicBuilder<'_>) -> ExtrinsicBuilder<'_>,
 ) -> ExtrinsicBuildError {
-	let mut builder = start_build(runtime(metadata_bytes));
-	builder.with_call(remark());
+	let source = OfflineSource::new(H256(GENESIS), runtime(metadata_bytes));
+	let mut builder = source.start_build().with_call(remark());
 	if let Some(signer) = signer {
-		builder.with_signer(signer);
+		builder = builder.with_signer(signer);
 	}
-	setup(&mut builder);
-	assemble_offline(builder, None, 0).unwrap_err()
+	build_offline(setup(builder)).unwrap_err()
 }
 
 #[test]
 fn a_v4_extrinsic_without_a_signer_is_refused() {
-	let error = build_error(PEOPLE, None, |_| {});
+	let error = build_error(PEOPLE, None, |builder| builder);
 
 	assert!(matches!(error, ExtrinsicBuildError::UnsignedV4));
 }
@@ -432,9 +418,8 @@ fn a_v4_extrinsic_without_a_signer_is_refused() {
 fn a_signer_on_a_pipeline_without_verify_multi_signature_is_refused() {
 	let signer = test_signer();
 	let v5_zero = ExtrinsicVersion::V5 { extension_version: 0 };
-	let error = build_error(ASSET_HUB, Some(&signer), |builder| {
-		builder.with_extrinsic_version(v5_zero);
-	});
+	let error =
+		build_error(ASSET_HUB, Some(&signer), |builder| builder.with_extrinsic_version(v5_zero));
 
 	assert!(matches!(
 		error,
@@ -449,7 +434,7 @@ fn an_extension_the_pipeline_does_not_list_is_refused() {
 	let error = build_error(ASSET_HUB, None, |builder| {
 		builder
 			.with_extension(FixedBytesExtension::explicit_only("AsPgas", vec![0x00]))
-			.with_extrinsic_version(pgas_v0);
+			.with_extrinsic_version(pgas_v0)
 	});
 
 	assert!(
@@ -463,7 +448,7 @@ fn an_extension_supplied_twice_is_refused() {
 	let error = build_error(PEOPLE, Some(&signer), |builder| {
 		builder
 			.with_extension(FixedBytesExtension::explicit_only("RestrictOrigins", vec![0x01]))
-			.with_extension(FixedBytesExtension::explicit_only("RestrictOrigins", vec![0x00]));
+			.with_extension(FixedBytesExtension::explicit_only("RestrictOrigins", vec![0x00]))
 	});
 
 	assert!(
@@ -477,10 +462,8 @@ fn an_extension_supplied_twice_is_refused() {
 fn a_value_that_does_not_match_its_type_is_refused() {
 	let signer = test_signer();
 	let error = build_error(PEOPLE, Some(&signer), |builder| {
-		builder.with_extension(FixedBytesExtension::explicit_only(
-			"RestrictOrigins",
-			vec![0x00, 0x00],
-		));
+		builder
+			.with_extension(FixedBytesExtension::explicit_only("RestrictOrigins", vec![0x00, 0x00]))
 	});
 
 	assert!(matches!(
@@ -491,9 +474,9 @@ fn a_value_that_does_not_match_its_type_is_refused() {
 
 #[test]
 fn a_build_without_a_call_is_refused() {
-	let builder = start_build(runtime(PEOPLE));
+	let source = people();
 
-	assert!(matches!(assemble_offline(builder, None, 0), Err(ExtrinsicBuildError::NoCall)));
+	assert!(matches!(build_offline(source.start_build()), Err(ExtrinsicBuildError::NoCall)));
 }
 
 /// The signature `VerifyMultiSignature` carries in a V5 `extrinsic` whose
@@ -526,13 +509,14 @@ fn a_signed_v5_extrinsic_signs_the_implication_after_verify_multi_signature() {
 			.unwrap();
 	let signer = test_signer();
 
-	let mut builder = start_build(runtime(PEOPLE));
-	builder
+	let source = people().with_host_extension_version(Some(0));
+	let builder = source
+		.start_build()
 		.with_call(remark())
 		.with_signer(&signer)
 		.with_nonce(0)
 		.with_extension(immortal());
-	let built = assemble_offline(builder, Some(0), 0).unwrap();
+	let built = build_offline(builder).unwrap();
 	let metadata = Metadata::decode_from(PEOPLE).unwrap();
 
 	let VerifySignatureDetails::Signed { signature, account } =
@@ -550,8 +534,9 @@ fn a_signed_v5_extrinsic_signs_the_implication_after_verify_multi_signature() {
 fn the_implication_carries_the_given_genesis() {
 	let configured = H256([0x5c; 32]);
 	let seen = Arc::new(Mutex::new(None));
-	let mut builder = start_build(RuntimeAtBirth { genesis: configured, ..runtime(PEOPLE) });
-	builder
+	let source = OfflineSource::new(configured, runtime(PEOPLE));
+	let builder = source
+		.start_build()
 		.with_call(remark())
 		.with_extension(RecordingExtension {
 			name: "AsResources",
@@ -559,7 +544,7 @@ fn the_implication_carries_the_given_genesis() {
 			seen: seen.clone(),
 		})
 		.with_extrinsic_version(ExtrinsicVersion::V5 { extension_version: 0 });
-	assemble_offline(builder, None, 0).unwrap();
+	build_offline(builder).unwrap();
 
 	let implication = seen.lock().unwrap().clone().unwrap();
 	let carries_configured = implication
@@ -597,14 +582,15 @@ fn only_empty_and_option_extensions_have_an_unset_default() {
 fn a_version_the_runtime_does_not_accept_is_refused() {
 	let signer = test_signer();
 	let v5 = ExtrinsicVersion::V5 { extension_version: 0 };
-	let mut builder = start_build(bulletin_runtime());
-	builder
+	let source = bulletin();
+	let builder = source
+		.start_build()
 		.with_call(remark())
 		.with_signer(&signer)
 		.with_nonce(0)
 		.with_extrinsic_version(v5);
 
-	let error = assemble_offline(builder, None, 0).unwrap_err();
+	let error = build_offline(builder).unwrap_err();
 
 	assert!(
 		matches!(error, ExtrinsicBuildError::UnsupportedVersion { supported, .. } if supported == [4])

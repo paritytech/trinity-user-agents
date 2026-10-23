@@ -4,7 +4,7 @@ use subxt::{
 	ArcMetadata, Metadata,
 	ext::{frame_decode::extrinsics::encode_call_data, scale_encode::EncodeAsFields},
 	tx::{Payload, StaticPayload},
-	utils::H256,
+	utils::{AccountId32, H256},
 };
 
 use super::{
@@ -13,11 +13,11 @@ use super::{
 	signature::{SubstrateSigner, VerifySignatureExtension},
 	well_known::{VERIFY_MULTI_SIGNATURE, restrict_origins},
 };
-use crate::chain::HashAndNumber;
+use crate::chain::{HashAndNumber, MortalExtrinsic};
 
 mod assembly;
 
-pub use assembly::assemble;
+use assembly::assemble;
 
 /// How many blocks an extrinsic stays valid for unless the caller says
 /// otherwise.
@@ -26,8 +26,6 @@ pub const DEFAULT_MORTALITY_PERIOD: u64 = 64;
 /// The runtime at the block a build is born at.
 #[derive(Clone, Debug)]
 pub struct RuntimeAtBirth {
-	/// The genesis hash the caller configured, never one a node reports.
-	pub genesis: H256,
 	/// The block the extrinsic's era starts at.
 	pub birth: HashAndNumber,
 	/// The runtime's spec version at the birth block.
@@ -36,6 +34,31 @@ pub struct RuntimeAtBirth {
 	pub transaction_version: u32,
 	/// The runtime's metadata at the birth block.
 	pub metadata: ArcMetadata,
+}
+
+/// What a build reads from the chain and the host.
+#[async_trait::async_trait]
+pub trait BuildSource: Sync {
+	/// The runtime at the chain's finalized head, which the extrinsic is born
+	/// at.
+	async fn runtime_at_finalized_head(
+		&self,
+		genesis: H256,
+	) -> Result<RuntimeAtBirth, ExtrinsicBuildError>;
+
+	/// The host's pipeline for the chain, or `None` when the host builds it
+	/// as V4.
+	async fn host_extension_version(
+		&self,
+		genesis: H256,
+	) -> Result<Option<u8>, ExtrinsicBuildError>;
+
+	/// The next nonce of the signer `account`.
+	async fn account_nonce(
+		&self,
+		genesis: H256,
+		account: AccountId32,
+	) -> Result<u64, ExtrinsicBuildError>;
 }
 
 /// A call of any payload type, kept unencoded until the build is assembled.
@@ -63,7 +86,9 @@ impl<P: Payload + Send> AnyCall for P {
 /// The setters record what they are given. A problem with any of it, such as
 /// a call that does not encode, is the build's error.
 pub struct ExtrinsicBuilder<'a> {
-	runtime: RuntimeAtBirth,
+	source: &'a dyn BuildSource,
+	/// The genesis hash the caller configured, never one a node reports.
+	genesis: H256,
 	call: Option<Box<dyn AnyCall + 'a>>,
 	extensions: Vec<SuppliedExtension<'a>>,
 	nonce: Option<u64>,
@@ -71,10 +96,12 @@ pub struct ExtrinsicBuilder<'a> {
 	version: Option<ExtrinsicVersion>,
 }
 
-/// A builder for an extrinsic born at `runtime`'s birth block.
-pub fn start_build<'a>(runtime: RuntimeAtBirth) -> ExtrinsicBuilder<'a> {
+/// A builder for an extrinsic on the chain `genesis`, which reads what it
+/// needs from `source` when built.
+pub fn start_build(source: &dyn BuildSource, genesis: H256) -> ExtrinsicBuilder<'_> {
 	ExtrinsicBuilder {
-		runtime,
+		source,
+		genesis,
 		call: None,
 		extensions: Vec::new(),
 		nonce: None,
@@ -85,7 +112,7 @@ pub fn start_build<'a>(runtime: RuntimeAtBirth) -> ExtrinsicBuilder<'a> {
 
 impl<'a> ExtrinsicBuilder<'a> {
 	/// Sets the call from a subxt payload. Replaces any earlier call.
-	pub fn with_call(&mut self, call: impl Payload + Send + 'a) -> &mut Self {
+	pub fn with_call(mut self, call: impl Payload + Send + 'a) -> Self {
 		self.call = Some(Box::new(call));
 		self
 	}
@@ -93,49 +120,55 @@ impl<'a> ExtrinsicBuilder<'a> {
 	/// Sets the call `pallet.call` with arguments encoded against metadata.
 	/// Replaces any earlier call.
 	pub fn with_call_args(
-		&mut self,
+		self,
 		pallet: &str,
 		call: &str,
 		args: impl EncodeAsFields + Send + 'a,
-	) -> &mut Self {
+	) -> Self {
 		self.with_call(StaticPayload::new(pallet, call, args))
 	}
 
 	/// Supplies an extension's values. A supplied extension takes precedence
 	/// over any value the builder would fill in.
-	pub fn with_extension<E: TransactionExtension + 'a>(&mut self, extension: E) -> &mut Self {
+	pub fn with_extension<E: TransactionExtension + 'a>(mut self, extension: E) -> Self {
 		self.extensions.push(Box::new(extension));
 		self
 	}
 
 	/// Adds `VerifyMultiSignature`, signed by `signer`. A V5 extrinsic carries
 	/// it as an extension; a V4 one carries its signature in the preamble.
-	pub fn with_signer(&mut self, signer: &'a SubstrateSigner) -> &mut Self {
+	pub fn with_signer(self, signer: &'a SubstrateSigner) -> Self {
 		self.with_extension(VerifySignatureExtension::signed(signer))
 	}
 
 	/// Overrides the nonce. Without it, a signed build reads the signer's
 	/// next index from the transaction pool, and an unsigned one uses 0.
-	pub fn with_nonce(&mut self, nonce: u64) -> &mut Self {
+	pub fn with_nonce(mut self, nonce: u64) -> Self {
 		self.nonce = Some(nonce);
 		self
 	}
 
 	/// Overrides how many blocks the extrinsic stays valid for.
-	pub fn with_mortality_period(&mut self, period: u64) -> &mut Self {
+	pub fn with_mortality_period(mut self, period: u64) -> Self {
 		self.period = period;
 		self
 	}
 
 	/// Pins the extrinsic version instead of taking the host's default.
-	pub fn with_extrinsic_version(&mut self, version: ExtrinsicVersion) -> &mut Self {
+	pub fn with_extrinsic_version(mut self, version: ExtrinsicVersion) -> Self {
 		self.version = Some(version);
 		self
 	}
 
 	/// Sets `RestrictOrigins`, which is unrestricted unless set.
-	pub fn with_restrict_origins(&mut self, restrict: bool) -> &mut Self {
+	pub fn with_restrict_origins(self, restrict: bool) -> Self {
 		self.with_extension(restrict_origins(restrict))
+	}
+
+	/// Builds the extrinsic, mortal from the chain's finalized head.
+	pub async fn build(self) -> Result<MortalExtrinsic, ExtrinsicBuildError> {
+		let runtime = self.source.runtime_at_finalized_head(self.genesis).await?;
+		assemble(self, runtime).await
 	}
 
 	/// The signer of the supplied `VerifyMultiSignature`, when the build signs.

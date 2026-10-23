@@ -252,11 +252,10 @@ pub async fn claim_pgas(
 		let call = extrinsic::ClaimPgasCallArgs { slot_index, target: *target };
 		let claim = asset_hub_target
 			.extrinsics
-			.build_mortal_extrinsic(asset_hub_target.genesis, |builder| {
-				builder
-					.with_call_args("Pgas", "claim_pgas", call)
-					.with_extension(super::AsPgasExtension::new(proof, day));
-			})
+			.build_mortal_extrinsic(asset_hub_target.genesis)
+			.with_call_args("Pgas", "claim_pgas", call)
+			.with_extension(super::AsPgasExtension::new(proof, day))
+			.build()
 			.await?;
 
 		match asset_hub_rpc.submit_and_watch(claim.extrinsic.bytes()).await {

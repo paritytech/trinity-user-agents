@@ -193,12 +193,11 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 		RegisterNameCallArgs { who: who_public, label: config.label.as_bytes().to_vec(), link };
 	let extrinsics = crate::extrinsic_service(&config.network);
 	let extrinsic = extrinsics
-		.build_mortal_extrinsic(H256(config.network.asset_hub_genesis), |builder| {
-			builder
-				.with_call_args("DotnsGateway", "register_name", call)
-				.with_extension(authorizer)
-				.with_restrict_origins(true);
-		})
+		.build_mortal_extrinsic(H256(config.network.asset_hub_genesis))
+		.with_call_args("DotnsGateway", "register_name", call)
+		.with_extension(authorizer)
+		.with_restrict_origins(true)
+		.build()
 		.await?;
 
 	let block = ah_rpc.submit_and_watch(extrinsic.extrinsic.bytes()).await?;

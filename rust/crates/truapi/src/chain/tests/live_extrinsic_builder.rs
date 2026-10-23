@@ -144,11 +144,10 @@ async fn a_statement_store_registration_is_judged_by_people() {
 	let call = SetStatementStoreAccountCallArgs { period: 1, seq: 0, target_account: [0x22; 32] };
 
 	let built = extrinsics
-		.build_mortal_extrinsic(PEOPLE.genesis(), |builder| {
-			builder
-				.with_call_args("Resources", "set_statement_store_account", call)
-				.with_extension(AsResourcesExtension::statement_store_allowance(proof));
-		})
+		.build_mortal_extrinsic(PEOPLE.genesis())
+		.with_call_args("Resources", "set_statement_store_account", call)
+		.with_extension(AsResourcesExtension::statement_store_allowance(proof))
+		.build()
 		.await
 		.expect("build");
 
@@ -166,11 +165,10 @@ async fn a_pgas_claim_is_judged_by_asset_hub() {
 	let call = ClaimPgasCallArgs { slot_index: 0, target: [0x22; 32] };
 
 	let built = extrinsics
-		.build_mortal_extrinsic(ASSET_HUB.genesis(), |builder| {
-			builder
-				.with_call_args("Pgas", "claim_pgas", call)
-				.with_extension(AsPgasExtension::new(proof, 1));
-		})
+		.build_mortal_extrinsic(ASSET_HUB.genesis())
+		.with_call_args("Pgas", "claim_pgas", call)
+		.with_extension(AsPgasExtension::new(proof, 1))
+		.build()
 		.await
 		.expect("build");
 
@@ -199,12 +197,11 @@ async fn a_dotns_registration_is_judged_by_asset_hub() {
 	};
 
 	let built = extrinsics
-		.build_mortal_extrinsic(ASSET_HUB.genesis(), |builder| {
-			builder
-				.with_call_args("DotnsGateway", "register_name", call)
-				.with_extension(authorizer)
-				.with_restrict_origins(true);
-		})
+		.build_mortal_extrinsic(ASSET_HUB.genesis())
+		.with_call_args("DotnsGateway", "register_name", call)
+		.with_extension(authorizer)
+		.with_restrict_origins(true)
+		.build()
 		.await
 		.expect("build");
 

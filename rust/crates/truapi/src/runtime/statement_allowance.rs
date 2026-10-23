@@ -673,11 +673,10 @@ async fn register_statement_account(
 		};
 		let extrinsic = target_chain
 			.extrinsics
-			.build_mortal_extrinsic(target_chain.genesis, |builder| {
-				builder
-					.with_call_args(RESOURCES_PALLET, "set_statement_store_account", call)
-					.with_extension(AsResourcesExtension::statement_store_allowance(proof));
-			})
+			.build_mortal_extrinsic(target_chain.genesis)
+			.with_call_args(RESOURCES_PALLET, "set_statement_store_account", call)
+			.with_extension(AsResourcesExtension::statement_store_allowance(proof))
+			.build()
 			.await?;
 
 		match rpc.submit_and_watch(extrinsic.extrinsic.bytes()).await {
@@ -1010,11 +1009,10 @@ pub async fn claim_long_term_storage(
 		let call = extrinsic::ClaimLongTermStorageCallArgs { period, counter, account_id: *target };
 		let extrinsic = target_chain
 			.extrinsics
-			.build_mortal_extrinsic(target_chain.genesis, |builder| {
-				builder
-					.with_call_args(RESOURCES_PALLET, "claim_long_term_storage", call)
-					.with_extension(AsResourcesExtension::long_term_storage(proof));
-			})
+			.build_mortal_extrinsic(target_chain.genesis)
+			.with_call_args(RESOURCES_PALLET, "claim_long_term_storage", call)
+			.with_extension(AsResourcesExtension::long_term_storage(proof))
+			.build()
 			.await?;
 		debug!(
 			period,

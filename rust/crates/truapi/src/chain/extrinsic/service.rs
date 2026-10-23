@@ -6,11 +6,11 @@ use subxt::utils::{AccountId32, H256};
 
 use super::{
 	ExtrinsicBuildError, ExtrinsicBuilder,
-	builder::{RuntimeAtBirth, assemble, start_build},
+	builder::{BuildSource, RuntimeAtBirth, start_build},
 	version_map::VersionMapCache,
 };
 use crate::{
-	chain::{AccountNonces, HashAndNumber, MortalExtrinsic, WatchedStorage},
+	chain::{AccountNonces, HashAndNumber, WatchedStorage},
 	chain_runtime::{ChainRuntime, HostChainProvider},
 	platform::{ChainProvider, ExtrinsicVersionHost},
 	subscription::Spawner,
@@ -65,29 +65,22 @@ impl ExtrinsicService {
 		})
 	}
 
-	/// Builds the extrinsic `build` describes on the chain `genesis`, mortal
-	/// from the chain's finalized head. `genesis` is what the extrinsic
+	/// Starts an extrinsic on the chain `genesis`. Building it makes it
+	/// mortal from the chain's finalized head. `genesis` is what the extrinsic
 	/// signs, whatever the node reports.
-	pub async fn build_mortal_extrinsic<'a>(
-		&self,
-		genesis: H256,
-		build: impl FnOnce(&mut ExtrinsicBuilder<'a>),
-	) -> Result<MortalExtrinsic, ExtrinsicBuildError> {
-		let runtime = self.runtime_at_finalized_head(genesis).await?;
-		let mut builder = start_build(runtime);
-		build(&mut builder);
-		let host_extension_version = || self.versions.host_extension_version(genesis);
-		let account_nonce = |account| self.read_account_nonce(genesis, account);
-		assemble(builder, host_extension_version, account_nonce).await
+	pub fn build_mortal_extrinsic(&self, genesis: H256) -> ExtrinsicBuilder<'_> {
+		start_build(self, genesis)
 	}
+}
 
+#[async_trait::async_trait]
+impl BuildSource for ExtrinsicService {
 	async fn runtime_at_finalized_head(
 		&self,
 		genesis: H256,
 	) -> Result<RuntimeAtBirth, ExtrinsicBuildError> {
 		let client = self.storage.client_at_finalized_head(genesis).await?;
 		Ok(RuntimeAtBirth {
-			genesis,
 			birth: HashAndNumber { hash: client.block_hash(), number: client.block_number() },
 			spec_version: client.spec_version(),
 			transaction_version: client.transaction_version(),
@@ -95,8 +88,14 @@ impl ExtrinsicService {
 		})
 	}
 
-	/// The next nonce of the signer `account`.
-	async fn read_account_nonce(
+	async fn host_extension_version(
+		&self,
+		genesis: H256,
+	) -> Result<Option<u8>, ExtrinsicBuildError> {
+		self.versions.host_extension_version(genesis).await
+	}
+
+	async fn account_nonce(
 		&self,
 		genesis: H256,
 		account: AccountId32,

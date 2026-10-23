@@ -1,8 +1,8 @@
 //! Which extrinsic format and extension pipeline a build uses.
 
-use subxt::{Metadata, ext::frame_decode::extrinsics::ExtrinsicTypeInfo};
+use subxt::{Metadata, ext::frame_decode::extrinsics::ExtrinsicTypeInfo, utils::H256};
 
-use super::{error::ExtrinsicBuildError, well_known::VERIFY_MULTI_SIGNATURE};
+use super::{builder::BuildSource, error::ExtrinsicBuildError, well_known::VERIFY_MULTI_SIGNATURE};
 
 /// The extrinsic format and, for V5, the extension pipeline it uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,25 +27,23 @@ impl ExtrinsicVersion {
 }
 
 /// The version a build uses: the caller's pin if there is one, else the
-/// host's default for the chain, which only then is read through
-/// `host_extension_version`.
+/// host's default for the chain `genesis`, which only then is read from
+/// `source`.
 ///
 /// The host default follows the native hosts: a chain the host maps to a
 /// pipeline is V5 with that pipeline, unless the build is signed and the
 /// pipeline has no `VerifyMultiSignature`. Every other chain is V4.
-pub async fn choose_extrinsic_version<HostRead>(
+pub async fn choose_extrinsic_version(
 	pinned: Option<ExtrinsicVersion>,
-	host_extension_version: impl FnOnce() -> HostRead,
+	source: &dyn BuildSource,
+	genesis: H256,
 	signed: bool,
 	metadata: &Metadata,
-) -> Result<ExtrinsicVersion, ExtrinsicBuildError>
-where
-	HostRead: Future<Output = Result<Option<u8>, ExtrinsicBuildError>>,
-{
+) -> Result<ExtrinsicVersion, ExtrinsicBuildError> {
 	if let Some(version) = pinned {
 		return Ok(version);
 	}
-	let host_extension_version = host_extension_version().await?;
+	let host_extension_version = source.host_extension_version(genesis).await?;
 	host_default(host_extension_version, signed, metadata)
 }
 
