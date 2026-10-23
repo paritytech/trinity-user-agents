@@ -57,12 +57,26 @@ val truapiDir: String = run {
     }
 }
 
+val truapiHostVersion: String = File(truapiDir, "rust/crates/truapi/Cargo.toml")
+    .readLines()
+    .firstNotNullOfOrNull { line ->
+        Regex("""^version\s*=\s*"([^"]+)"$""")
+            .matchEntire(line.trim())
+            ?.groupValues
+            ?.get(1)
+    }
+    ?: error("rust/crates/truapi/Cargo.toml has no package version")
+
 // Generated source root that `syncHostShell` populates with truapi's canonical
 // `io.parity.truapi` shell.
 val hostShellDir: Provider<Directory> = layout.buildDirectory.dir("truapi-shell")
 
 android {
     namespace = "io.parity.truapi"
+
+    defaultConfig {
+        buildConfigString("TRUAPI_HOST_VERSION", truapiHostVersion)
+    }
 
     sourceSets {
         getByName("main") {
