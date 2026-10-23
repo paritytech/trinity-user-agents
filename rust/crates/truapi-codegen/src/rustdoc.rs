@@ -2,7 +2,7 @@
 
 use std::{
 	cmp::Ordering,
-	collections::{BTreeMap, HashMap},
+	collections::{BTreeMap, HashMap, HashSet},
 };
 
 use anyhow::{Context, Result, bail};
@@ -265,12 +265,18 @@ struct ItemCandidate {
 	kind: String,
 }
 
+/// This crate's newtypes over a private `String`. rustdoc omits the field, so
+/// codegen emits them as `str`.
+const STRING_NEWTYPES: &[&str] = &["ProductId"];
+
 /// Maps rustdoc item ids and full paths to the output type names used in
 /// generated code, disambiguated when several types share a simple name.
 #[derive(Debug, Default)]
 pub struct NameContext {
 	by_item_id: HashMap<String, String>,
 	by_path: HashMap<String, String>,
+	/// Item ids of the [`STRING_NEWTYPES`], which resolve to `str`.
+	string_newtypes: HashSet<String>,
 }
 
 impl NameContext {
@@ -308,7 +314,7 @@ pub fn parse(json: &str) -> Result<Crate> {
 pub fn extract_api(krate: &Crate) -> Result<ApiDefinition> {
 	let trait_candidates = collect_public_candidates(krate, &["trait"]);
 	let type_candidates = collect_public_candidates(krate, &["struct", "enum", "type_alias"]);
-	let names = build_name_context(&type_candidates);
+	let names = build_name_context(krate, &type_candidates);
 	let public_trait_order = extract_public_trait_order(krate)?;
 
 	let mut traits = Vec::new();
@@ -370,7 +376,9 @@ pub fn extract_api(krate: &Crate) -> Result<ApiDefinition> {
 		}
 
 		for candidate in candidates {
-			if should_skip_type_candidate(&name, &candidate) {
+			if should_skip_type_candidate(&name, &candidate) ||
+				names.string_newtypes.contains(&candidate.item_id)
+			{
 				continue;
 			}
 			let item = krate
@@ -473,6 +481,7 @@ fn should_skip_type_name(name: &str) -> bool {
 			"FrameworkOnlyError" |
 			"Infallible" |
 			"LatestOf" |
+			"ProductIdError" |
 			"RequestId" |
 			"RuntimeFailure" |
 			"RuntimeFailureKind"
@@ -513,11 +522,33 @@ pub fn protocol_name_context(krate: &Crate) -> NameContext {
 			ctx.by_path.insert(candidate.path.join("::"), output_name);
 		}
 	}
+	ctx.string_newtypes = string_newtype_ids(krate);
 	ctx
 }
 
-fn build_name_context(type_candidates: &BTreeMap<String, Vec<ItemCandidate>>) -> NameContext {
-	let mut ctx = NameContext::default();
+fn string_newtype_ids(krate: &Crate) -> HashSet<String> {
+	krate
+		.paths
+		.iter()
+		.filter(|(_, item_path)| is_string_newtype(item_path))
+		.map(|(item_id, _)| item_id.clone())
+		.collect()
+}
+
+fn is_string_newtype(item_path: &ItemPath) -> bool {
+	item_path.crate_id == 0 &&
+		item_path
+			.path
+			.last()
+			.is_some_and(|name| STRING_NEWTYPES.contains(&name.as_str()))
+}
+
+fn build_name_context(
+	krate: &Crate,
+	type_candidates: &BTreeMap<String, Vec<ItemCandidate>>,
+) -> NameContext {
+	let mut ctx =
+		NameContext { string_newtypes: string_newtype_ids(krate), ..NameContext::default() };
 	for (simple_name, candidates) in type_candidates {
 		let candidates = candidates
 			.iter()
@@ -1038,6 +1069,10 @@ pub fn resolve_type(ty: &serde_json::Value, names: &NameContext) -> Result<TypeR
 			.get("path")
 			.and_then(|value| value.as_str())
 			.with_context(|| format!("resolved_path missing path in {}", summarize_json(ty)))?;
+		let resolved_id = resolved.get("id").and_then(|id| value_id(id).ok());
+		if resolved_id.as_ref().is_some_and(|id| names.string_newtypes.contains(id)) {
+			return Ok(TypeRef::Primitive("str".to_string()));
+		}
 		let name = raw_name.rsplit("::").next().unwrap_or(raw_name);
 		let args = resolve_resolved_path_args(resolved, names)?;
 
@@ -1067,9 +1102,7 @@ pub fn resolve_type(ty: &serde_json::Value, names: &NameContext) -> Result<TypeR
 			},
 			"Box" => expect_single_arg("Box", args),
 			_ => Ok(TypeRef::Named {
-				name: resolved
-					.get("id")
-					.and_then(|id| value_id(id).ok())
+				name: resolved_id
 					.map(|id| names.name_for_item(&id, path_suffix(raw_name)))
 					.unwrap_or_else(|| names.name_for_path(raw_name)),
 				args,

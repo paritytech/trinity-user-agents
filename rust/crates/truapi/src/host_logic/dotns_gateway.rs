@@ -19,7 +19,10 @@ use sp_crypto_hashing::{blake2_128, blake2_256, keccak_256, twox_128};
 use thiserror::Error;
 use tracing::warn;
 
-use crate::dotns_views::{call_string, network_tld, tld_node};
+use crate::{
+	dotns_views::{call_string, network_tld, tld_node},
+	platform::{MAX_DNS_LABEL_LEN, is_dns_label},
+};
 
 /// Ring-VRF context for `register_name` proofs.
 ///
@@ -404,13 +407,42 @@ fn word_u64(data: &[u8], index: usize) -> Result<u64, DotnsContractError> {
 	Ok(u64::from_be_bytes(bytes[24..].try_into().expect("8-byte tail of a 32-byte word; qed")))
 }
 
-/// Usernames of one account as recorded by the dotNS contracts.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// Usernames of one account as recorded by the dotNS contracts. Holds at least
+/// one of the two; [`classify_labels`] is the only constructor.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DotnsIdentity {
+	lite_username: Option<String>,
+	full_username: Option<String>,
+}
+
+impl DotnsIdentity {
 	/// Dotted lite username (`alice.01`), if any.
-	pub lite_username: Option<String>,
+	pub fn lite_username(&self) -> Option<&str> {
+		self.lite_username.as_deref()
+	}
+
 	/// Full-person username, if any.
-	pub full_username: Option<String>,
+	pub fn full_username(&self) -> Option<&str> {
+		self.full_username.as_deref()
+	}
+
+	/// Preferred display username: full over lite.
+	pub fn primary_username(&self) -> &str {
+		self.full_username
+			.as_deref()
+			.or(self.lite_username.as_deref())
+			.expect("classify_labels only builds an identity with a username; qed")
+	}
+
+	/// The dotted lite username, if any.
+	pub fn into_lite_username(self) -> Option<String> {
+		self.lite_username
+	}
+
+	/// The `(lite, full)` usernames, at least one of them `Some`.
+	pub fn into_usernames(self) -> (Option<String>, Option<String>) {
+		(self.lite_username, self.full_username)
+	}
 }
 
 /// Classifies bare contract labels into lite and full usernames.
@@ -425,18 +457,18 @@ pub struct DotnsIdentity {
 /// control characters, markup, other dotted strings — is skipped before the
 /// provenance read, so no unscreened contract string is even asked about.
 /// First hit per slot wins. Labels are expected bare: [`resolve_labels`]
-/// strips the network TLD.
+/// strips the network TLD. Returns `None` when no label becomes a username.
 pub async fn classify_labels<T, I>(
 	transport: &mut T,
 	controller: &[u8; 20],
 	labels: I,
-) -> Result<DotnsIdentity, String>
+) -> Result<Option<DotnsIdentity>, String>
 where
 	T: DotnsTransport + ?Sized,
 	I: IntoIterator,
 	I::Item: AsRef<str>,
 {
-	let mut identity = DotnsIdentity::default();
+	let (mut lite_username, mut full_username) = (None, None);
 	for label in labels {
 		let label = label.as_ref();
 		let shape_ok = is_dotted_lite_username(label) || is_dns_label(label);
@@ -447,12 +479,13 @@ where
 			continue;
 		}
 		if is_dotted_lite_username(label) {
-			identity.lite_username.get_or_insert_with(|| label.to_string());
+			lite_username.get_or_insert_with(|| label.to_string());
 		} else {
-			identity.full_username.get_or_insert_with(|| label.to_string());
+			full_username.get_or_insert_with(|| label.to_string());
 		}
 	}
-	Ok(identity)
+	let has_username = lite_username.is_some() || full_username.is_some();
+	Ok(has_username.then_some(DotnsIdentity { lite_username, full_username }))
 }
 
 /// Whether the PoP controller issued `label`, per
@@ -467,20 +500,6 @@ pub async fn is_pop_issued<T: DotnsTransport + ?Sized>(
 		.await
 		.map_err(|err| format!("DotnsPopController.isPopIssued({label}): {err}"))?;
 	decode_bool(&output).map_err(|err| format!("DotnsPopController.isPopIssued({label}): {err}"))
-}
-
-/// RFC 1035 label bound the contracts enforce (`StringUtils.MAX_DNS_LABEL_OCTETS`).
-const MAX_DNS_LABEL_LEN: usize = 63;
-
-/// A canonical DNS label: lowercase ASCII letters, digits and hyphens, neither
-/// starting nor ending with a hyphen, at most 63 octets
-/// (`StringUtils._isDnsLabel`).
-pub fn is_dns_label(value: &str) -> bool {
-	!value.is_empty() &&
-		value.len() <= MAX_DNS_LABEL_LEN &&
-		!value.starts_with('-') &&
-		!value.ends_with('-') &&
-		value.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
 /// The dotted lite shape: a letters-only stem, one dot, exactly two digits
@@ -650,9 +669,8 @@ pub async fn discover_pop_controller<T: DotnsTransport + ?Sized>(
 ///
 /// Two sources are merged. The controller's pending claims hold gateway-minted
 /// names the user has not settled into a `LabelStore` yet (`claimLabelStore`);
-/// those come first. A claim older than the controller's `reservationDuration`
-/// is lapsed — `claimLabelStore` skips it and `expirePendingClaim` will sweep
-/// it — so it is not a username here either, whether or not it has been swept. The user's
+/// those come first. A pending claim never lapses: the controller settles a
+/// claim of any age, so its `mintedAt` is not consulted. The user's
 /// `LabelStore`, when deployed, holds every name written for them: gateway names once settled, plus
 /// public registrations and incoming transfers. Store labels carry the network TLD
 /// (`alice01.paseo`), which is stripped here; subnames (`app.alice`) are dropped.
@@ -786,9 +804,9 @@ pub async fn label_available<T: DotnsTransport + ?Sized>(
 }
 
 /// Gateway-minted labels of `user` still waiting for `claimLabelStore`, paged
-/// out of `DotnsPopController.pendingClaims(address,uint256,uint256)`, without
-/// the entries that have lapsed (`mintedAt + reservationDuration < now`, the
-/// controller's own `_isExpired`; `now` is `Timestamp.Now` at the pinned block).
+/// out of `DotnsPopController.pendingClaims(address,uint256,uint256)`. Every
+/// entry counts, whatever its `mintedAt`: the controller no longer expires
+/// pending claims and settles one of any age.
 async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
 	transport: &mut T,
 	controller: &[u8; 20],
@@ -836,38 +854,7 @@ async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
 			);
 		}
 	}
-	if claims.is_empty() {
-		return Ok(Vec::new());
-	}
-	let duration_output =
-		transport
-			.view(controller, call_no_args("reservationDuration()"))
-			.await
-			.map_err(|err| format!("DotnsPopController.reservationDuration: {err}"))?;
-	let duration = decode_u64(&duration_output)
-		.map_err(|err| format!("DotnsPopController.reservationDuration: {err}"))?;
-	let now = chain_time_secs(transport).await?;
-	Ok(claims
-		.into_iter()
-		.filter(|(_, minted_at)| !claim_lapsed(*minted_at, duration, now))
-		.map(|(label, _)| label)
-		.collect())
-}
-
-/// Whether a pending claim minted at `minted_at` has lapsed at chain time
-/// `now`, mirroring `DotnsPopController._isExpired`.
-fn claim_lapsed(minted_at: u64, duration: u64, now: u64) -> bool {
-	minted_at.saturating_add(duration) < now
-}
-
-/// Asset Hub chain time in Unix seconds, from `Timestamp.Now` (milliseconds).
-async fn chain_time_secs<T: DotnsTransport + ?Sized>(transport: &mut T) -> Result<u64, String> {
-	let value = transport.storage(timestamp_now_key()).await?.ok_or("Timestamp.Now is unset")?;
-	let millis: [u8; 8] = value
-		.as_slice()
-		.try_into()
-		.map_err(|_| "Timestamp.Now is not a u64".to_string())?;
-	Ok(u64::from_le_bytes(millis) / 1000)
+	Ok(claims.into_iter().map(|(label, _)| label).collect())
 }
 
 /// `DotnsGateway.DispatcherAddress` storage key.
@@ -1192,14 +1179,6 @@ mod tests {
 		assert!(decode_bool(&high).is_err());
 	}
 
-	#[test]
-	fn a_pending_claim_lapses_after_the_reservation_duration() {
-		// DotnsPopController._isExpired: mintedAt + reservationDuration < now.
-		assert!(!claim_lapsed(1_000, 100, 1_100));
-		assert!(claim_lapsed(1_000, 100, 1_101));
-		assert!(!claim_lapsed(u64::MAX, 100, u64::MAX));
-	}
-
 	struct RevertingSecondClaimPage {
 		first_page: Vec<(String, u64)>,
 		pending_calls: usize,
@@ -1208,8 +1187,7 @@ mod tests {
 	#[crate::platform::async_trait]
 	impl DotnsTransport for RevertingSecondClaimPage {
 		async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
-			assert_eq!(key, timestamp_now_key());
-			Ok(Some(100_000u64.to_le_bytes().to_vec()))
+			panic!("unscripted storage read {}", hex::encode(key));
 		}
 
 		async fn view(
@@ -1230,9 +1208,6 @@ mod tests {
 				return Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
 					detail: "offset past end".to_string(),
 				}));
-			}
-			if function == selector("reservationDuration()") {
-				return Ok(abi_word(100).to_vec());
 			}
 			panic!("unscripted view {}", hex::encode(function));
 		}
@@ -1287,92 +1262,98 @@ mod tests {
 					Ok(word.to_vec())
 				}
 			}
+			let identity = |lite: Option<&str>, full: Option<&str>| {
+				Some(DotnsIdentity {
+					lite_username: lite.map(str::to_owned),
+					full_username: full.map(str::to_owned),
+				})
+			};
 			let controller = [0xAA; 20];
 			let mut all = IssuedAll { denied: vec![] };
 
-			let identity =
-				classify_labels(&mut all, &controller, ["alice.01", "myproject"]).await.unwrap();
-			assert_eq!(identity.lite_username.as_deref(), Some("alice.01"));
-			assert_eq!(identity.full_username.as_deref(), Some("myproject"));
+			assert_eq!(
+				classify_labels(&mut all, &controller, ["alice.01", "myproject"]).await.unwrap(),
+				identity(Some("alice.01"), Some("myproject"))
+			);
 
 			// The lite stem is letters only (`isLitePersonLabel`): a digit or
 			// hyphen in the stem is not a lite label. The flat spelling is an
 			// ordinary label, and dotted non-lite labels are subnames.
-			let identity = classify_labels(
-				&mut all,
-				&controller,
-				["app.web3app", "sub.alice.01", "aé.01", "a2b.34", "-x.01", "alice01"],
-			)
-			.await
-			.unwrap();
-			assert_eq!(identity.lite_username, None);
-			assert_eq!(identity.full_username.as_deref(), Some("alice01"));
+			assert_eq!(
+				classify_labels(
+					&mut all,
+					&controller,
+					["app.web3app", "sub.alice.01", "aé.01", "a2b.34", "-x.01", "alice01"],
+				)
+				.await
+				.unwrap(),
+				identity(None, Some("alice01"))
+			);
 
 			assert_eq!(
 				classify_labels(&mut all, &controller, Vec::<String>::new()).await.unwrap(),
-				DotnsIdentity::default()
+				None
 			);
 
 			// Provenance gates every slot: a perfectly shaped label the
 			// controller did not issue is skipped.
 			let mut denying = IssuedAll { denied: vec!["app.42", "squatter"] };
-			let identity = classify_labels(
-				&mut denying,
-				&controller,
-				["app.42", "squatter", "alice.01", "myproject"],
-			)
-			.await
-			.unwrap();
-			assert_eq!(identity.lite_username.as_deref(), Some("alice.01"));
-			assert_eq!(identity.full_username.as_deref(), Some("myproject"));
+			assert_eq!(
+				classify_labels(
+					&mut denying,
+					&controller,
+					["app.42", "squatter", "alice.01", "myproject"],
+				)
+				.await
+				.unwrap(),
+				identity(Some("alice.01"), Some("myproject"))
+			);
+			// An account whose labels are all unissued has no identity.
+			assert_eq!(
+				classify_labels(&mut denying, &controller, ["app.42", "squatter"])
+					.await
+					.unwrap(),
+				None
+			);
 
 			// Hostile store data is dropped before the provenance read: the
 			// transport panics on storage and asserts the selector, so reaching
 			// it with garbage would fail loudly.
-			let identity = classify_labels(
-				&mut all,
-				&controller,
-				[
-					"a".repeat(5000),
-					"admin\r\nx".to_string(),
-					"a\0b".to_string(),
-					"\x1b[31mred\x1b[0m".to_string(),
-					"<img src=x onerror=alert(1)>".to_string(),
-					"Upper".to_string(),
-				],
-			)
-			.await
-			.unwrap();
-			assert_eq!(identity, DotnsIdentity::default());
+			assert_eq!(
+				classify_labels(
+					&mut all,
+					&controller,
+					[
+						"a".repeat(5000),
+						"admin\r\nx".to_string(),
+						"a\0b".to_string(),
+						"\x1b[31mred\x1b[0m".to_string(),
+						"<img src=x onerror=alert(1)>".to_string(),
+						"Upper".to_string(),
+					],
+				)
+				.await
+				.unwrap(),
+				None
+			);
 
 			// The 63-octet DNS bound is the cut-off for full labels; the lite
 			// dotted form is capped by the 32-byte gateway bound.
-			assert!(
-				classify_labels(&mut all, &controller, ["a".repeat(63)])
-					.await
-					.unwrap()
-					.full_username
-					.is_some()
+			let longest = "a".repeat(63);
+			assert_eq!(
+				classify_labels(&mut all, &controller, [longest.as_str()]).await.unwrap(),
+				identity(None, Some(&longest))
 			);
-			assert!(
-				classify_labels(&mut all, &controller, ["a".repeat(64)])
-					.await
-					.unwrap()
-					.full_username
-					.is_none()
+			assert_eq!(
+				classify_labels(&mut all, &controller, ["a".repeat(64)]).await.unwrap(),
+				None
 			);
 			let oversized = format!("{}.01", "a".repeat(30));
-			assert_eq!(
-				classify_labels(&mut all, &controller, [oversized]).await.unwrap(),
-				DotnsIdentity::default()
-			);
+			assert_eq!(classify_labels(&mut all, &controller, [oversized]).await.unwrap(), None);
 
 			// One digit after the dot is not lite format; three digits neither.
 			for wrong in ["alice.1", "alice.012"] {
-				assert_eq!(
-					classify_labels(&mut all, &controller, [wrong]).await.unwrap(),
-					DotnsIdentity::default()
-				);
+				assert_eq!(classify_labels(&mut all, &controller, [wrong]).await.unwrap(), None);
 			}
 		});
 	}

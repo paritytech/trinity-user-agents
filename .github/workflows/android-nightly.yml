@@ -69,7 +69,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -98,7 +98,7 @@ jobs:
       tag: ${{ steps.release-tag.outputs.tag }}
       vanilla: ${{ steps.build.outputs.vanilla }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -152,7 +152,7 @@ jobs:
           TERMS_OF_USE_URL: ${{ vars.TERMS_OF_USE_URL }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
-          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN_ANDROID }}
           # Both fall back to an example.com placeholder rather than failing, so
           # omitting them ships those defaults in an artifact people test with.
           GAME_RESULTS_FALLBACK_URL: ${{ vars.GAME_RESULTS_FALLBACK_URL }}
@@ -339,7 +339,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ steps.release-tag.outputs.tag }}
           name: ${{ steps.release-tag.outputs.name }}
@@ -451,9 +451,30 @@ jobs:
           done
 
 
+  # The commit this nightly built, with its results added to the prerelease. Never fails the night.
+  e2e:
+    name: host-playground e2e
+    needs: nightly
+    uses: ./.github/workflows/host-playground-e2e.yml
+    with:
+      platform: android
+      release_tag: ${{ needs.nightly.outputs.tag }}
+    secrets:
+      GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+      CI_GITHUB_KEYSTORE_KEY_FILE: ${{ secrets.CI_GITHUB_KEYSTORE_KEY_FILE }}
+      CI_KEYSTORE_PASS: ${{ secrets.CI_KEYSTORE_PASS }}
+      CI_KEYSTORE_KEY_ALIAS: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
+      CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
+      FIRESTORE_DATABASE_ID: ${{ secrets.FIRESTORE_DATABASE_ID }}
+      GOOGLE_OAUTH_ID: ${{ secrets.GOOGLE_OAUTH_ID }}
+      GOOGLE_PROJECT_ID: ${{ secrets.GOOGLE_PROJECT_ID }}
+      NIGHTLY_FUNDING_MNEMONIC: ${{ secrets.NIGHTLY_FUNDING_MNEMONIC }}
+      E2E_ANDROID_MNEMONIC: ${{ secrets.E2E_ANDROID_MNEMONIC }}
+    permissions:
+      contents: write
+
   # Announced the way the iOS nightly is, through the same relay and into the
   # same room.
-
   send-release-notification:
     name: Send Release Notification
     runs-on: ubuntu-latest

@@ -69,9 +69,7 @@ enum SettingsViewModel {
         private static var securityCells: [CellType] {
             var cells: [CellType] = [.backup, .paymentsBackup]
 
-            #if FEATURE_PRODUCTS
-                cells.append(.apps)
-            #endif
+            cells.append(.apps)
 
             #if FEATURE_SIGN_IN
                 cells.append(.linkedDevices)

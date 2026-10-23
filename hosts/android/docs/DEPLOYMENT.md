@@ -213,6 +213,7 @@ without it. JSON values are stored as Remote Config strings.
 | `coinage_instance_id` | string (unsigned integer) | Coinage | `feature/coinage` | Instance id of the Coinage deployment. |
 | `account_data_store_config` | JSON object | Coinage | `feature/coinage` | `{ "contractAddress": "0x…" }` — the account data store contract. |
 | `payment_asset_config` | JSON object | payment asset branding (optional) | `feature/tokens` — `RealPaymentAssetBrandProvider` | `{ "symbol": "CASH", "iconSquareUrl": "https://…/square.svg", "iconWideUrl": "https://…/wide.svg" }` — the payment asset's symbol and logos: a square mark for amounts and chat payments, a wide mark-plus-wordmark for the balance card, as absolute `http(s)` URLs (SVG or PNG). Every field is optional; anything missing or failing to load falls back to `CURRENCY_SYMBOL` and the built-in mark. The last activated value applies at start-up and the object is re-read right after the first sync; logos load on display through the app image loader and are cached by URL, so publish a changed logo under a new URL. |
+| `collectibles_enabled` | boolean | collectibles (optional) | `feature/wallet` | Feature gate for the Collectibles card on the Pocket tab. The card opens the `stash` product on the network's dotNS suffix. |
 
 A chain descriptor in `chains` / `chains_v2` is a JSON object deserialised into
 `chains/src/main/java/io/paritytech/polkadotapp/chains/multiNetwork/chain/remote/model/ChainRemote.kt`
@@ -373,7 +374,7 @@ instead. Change them there if your fork needs a different cut.
 | Field | `debug` | `nightly` | `safetynet` | `release` | Effect |
 |-------|---------|-----------|-------------|-----------|--------|
 | `TESTNET_ENVIRONMENT` | `TESTNET` | `NIGHTLY` | `NIGHTLY` | `PRODUCTION` | Chain environment. Only `PRODUCTION` reads the `chains` Remote Config key; the others read `chains_v2` (§4.1). Also enables the faucet top-up outside `PRODUCTION`. |
-| `SAFETY_MODE` | off | off | on | on | On hides the full feature set: arbitrary `.dot` products, browse tab, full tab bar, all chat extensions, linked devices, product settings, personhood. |
+| `SAFETY_MODE` | off | off | on | on | On hides the full feature set: arbitrary `.dot` products, browse tab, full tab bar, all chat extensions, linked devices, product settings, personhood, collectibles. |
 | `TAB_BAR_CONNECTIVITY_INDICATOR` | off | off | on | on | Chain-health indicators in the tab bar. |
 | `COINAGE_DEBUG_FEATURES` | on | on | on | off | "Debug features" card under the balance card (breakdown, faucet top-up, log sharing). |
 | `TESTNET_FUND_ENABLED` | on | on | on | off | Log-sharing action on the Coinage card. |

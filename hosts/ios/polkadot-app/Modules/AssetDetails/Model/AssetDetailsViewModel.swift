@@ -13,6 +13,8 @@ struct CoinageBalanceBreakdownViewModel {
     let symbol: String
     /// Every holding, in display order, drawn as coins. Clearing leads.
     let strip: [CoinageScene.Coin]
+    /// What each coin says about itself when tapped, by the coin's id.
+    let traces: [String: CoinageCoinTrace]
 }
 
 protocol AssetDetailsViewModelProtocol: Observation.Observable {
