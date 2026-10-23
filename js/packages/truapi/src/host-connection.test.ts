@@ -347,32 +347,6 @@ describe("shared SDK host connection", () => {
         expect(delivered).toEqual({ received: [message], errors: [] });
     });
 
-    // Only a stream the host had started is reopened. One the reset caught before
-    // its start reached the host is closed without dialling again, so a host that
-    // stays away cannot keep the client reconnecting for it.
-    it("closes without reconnecting a renderer action stream that a reset caught before it started", async () => {
-        const createProvider = createWebSocketProviderFactory();
-        let connects = 0;
-        const fixture = host((url) => {
-            connects += 1;
-            return createProvider(url);
-        });
-        fixture.answer(false);
-        const errors: unknown[] = [];
-        fixture.connection.client.renderer
-            .actionSubscribe()
-            .subscribe({ error: (error) => errors.push(error.cause) });
-        await until(() => fixture.sockets.length === 1);
-
-        fixture.sockets[0]!.close();
-        await until(() => errors.length === 1);
-
-        expect({ error: (errors[0] as Error).name, connects }).toEqual({
-            error: "ConnectionResetError",
-            connects: 1,
-        });
-    });
-
     it("keeps legacy replies separate and does not replace the legacy port after a disconnect", async () => {
         const { connection, sockets, frames } = host();
         const port = connection.legacyPort;
@@ -564,6 +538,42 @@ describe("shared SDK connection failure timing", () => {
         fixture.sockets[2]!.open();
         await untilPrepared(() => fixture.statuses.at(-1) === "connected");
         expect(fixture.sockets).toHaveLength(3);
+    });
+
+    // On resume the product can notice the dead socket before the host has
+    // rebound its listener, so the first reconnect is refused. That must not end
+    // a stream the host buffers for: it waits for the connection the retry brings
+    // up, starts there, and dials nothing of its own.
+    it("keeps a reopening stream through a refused reconnect and starts it on the next connection", async () => {
+        visibleDocument();
+        const fixture = controlledHost();
+        const errors: unknown[] = [];
+        fixture.connection.client.renderer
+            .actionSubscribe()
+            .subscribe({ error: (error) => errors.push(error) });
+        const starts = (socket: number) =>
+            fixture.sockets[socket]!.sent.filter(
+                (message) =>
+                    message.payload.traitId === W.RENDERER_ACTION_SUBSCRIBE.trait &&
+                    message.payload.methodId === W.RENDERER_ACTION_SUBSCRIBE.method &&
+                    message.payload.messageType === MESSAGE_TYPE_START,
+            );
+        fixture.sockets[0]!.open();
+        await untilPrepared(() => starts(0).length === 1);
+
+        fixture.sockets[0]!.close();
+        fixture.advance(0);
+        fixture.sockets[1]!.close();
+        await untilPrepared(() => fixture.statuses.at(-1) === "disconnected");
+        fixture.advance(250);
+        fixture.sockets[2]!.open();
+        await untilPrepared(() => starts(2).length === 1);
+
+        expect({
+            errors,
+            sockets: fixture.sockets.length,
+            sameStream: starts(2)[0]!.requestId === starts(0)[0]!.requestId,
+        }).toEqual({ errors: [], sockets: 3, sameStream: true });
     });
 
     // A host that stays unreachable must not keep a visible page dialing.

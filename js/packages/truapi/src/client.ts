@@ -238,6 +238,9 @@ export function createTransport(
       payload: Uint8Array;
       reopenOnReset: boolean;
       sent: boolean;
+      // The start in flight. Its answer is ignored once a reset or a newer
+      // start replaces it, so two starts never both send `Start`.
+      startAttempt?: object;
       onReceive: (payload: Uint8Array) => void;
       onInterrupt?: (payload: Uint8Array) => void;
       onClose?: (error: Error) => void;
@@ -329,16 +332,16 @@ export function createTransport(
   }
 
   /**
-   * Interrupt current operations, keeping the streams that asked to be reopened
-   * and starting them on the next connection. Only a stream whose start the
-   * host received is kept, so a host that never comes back closes it on the
-   * next reset instead of reopening it forever. The restart waits a microtask,
-   * so the provider finishes retiring the connection that just ended first.
+   * Interrupt current operations, keeping the streams that reopen on reset.
+   * They wait, unsent, for the provider's next ready connection, so a reset
+   * that lands while the host is still rebinding its listener cannot end
+   * them, and they never dial on their own. A provider that cannot report
+   * readiness has nothing to wait for, so its streams close as any other.
    */
   function resetOperations(error: Error) {
-    const reopening = [...subscriptions].filter(
-      ([, subscription]) => subscription.reopenOnReset && subscription.sent,
-    );
+    const reopening = provider.subscribeReady
+      ? [...subscriptions].filter(([, subscription]) => subscription.reopenOnReset)
+      : [];
     for (const [requestId] of reopening) subscriptions.delete(requestId);
     interruptOperations(error);
     for (const [requestId, subscription] of reopening) {
@@ -349,11 +352,17 @@ export function createTransport(
         continue;
       }
       subscription.sent = false;
+      subscription.startAttempt = undefined;
       subscriptions.set(requestId, subscription);
     }
-    void Promise.resolve().then(() => {
-      for (const [requestId] of reopening) startSubscription(requestId);
-    });
+  }
+
+  /** Start every stream that is waiting for a connection to reopen on. */
+  function startWaitingSubscriptions() {
+    if (closedError) return;
+    for (const [requestId, subscription] of subscriptions) {
+      if (subscription.reopenOnReset && !subscription.sent) startSubscription(requestId);
+    }
   }
 
   /** Close permanently; a provider reset only interrupts current operations. */
@@ -371,6 +380,7 @@ export function createTransport(
   const unsubscribeReset = provider.subscribeReset?.((error) => {
     if (!closedError) resetOperations(error);
   });
+  const unsubscribeReady = provider.subscribeReady?.(startWaitingSubscriptions);
 
   const unsubscribeMessage = provider.subscribe((message) => {
     if (closedError) {
@@ -659,15 +669,22 @@ export function createTransport(
     }
   }
 
-  /** Send a subscription's `Start` once the connection is ready, or close it if it never is. */
+  /**
+   * Send a subscription's `Start` once the connection is ready. If the
+   * connection fails first, a stream that reopens on reset waits for the next
+   * one; any other stream closes.
+   */
   function startSubscription(requestId: string) {
     const subscription = subscriptions.get(requestId);
-    if (!subscription) return;
+    if (!subscription || subscription.sent || subscription.startAttempt) return;
+    const attempt = {};
+    subscription.startAttempt = attempt;
+    const isLatestAttempt = () =>
+      subscriptions.get(requestId) === subscription && subscription.startAttempt === attempt;
     prepare(
       subscription.ids,
       () => {
-        if (subscriptions.get(requestId) !== subscription) return;
-        subscription.sent = true;
+        if (!isLatestAttempt()) return;
         send({
           requestId,
           payload: {
@@ -677,9 +694,13 @@ export function createTransport(
             value: subscription.payload,
           },
         });
+        subscription.startAttempt = undefined;
+        subscription.sent = true;
       },
       (error) => {
-        if (subscriptions.get(requestId) !== subscription) return;
+        if (!isLatestAttempt()) return;
+        subscription.startAttempt = undefined;
+        if (subscription.reopenOnReset) return;
         subscriptions.delete(requestId);
         subscription.onClose?.(toError(error));
       },
@@ -1033,6 +1054,7 @@ export function createTransport(
         unsubscribeMessage();
         unsubscribeClose?.();
         unsubscribeReset?.();
+        unsubscribeReady?.();
       }
     },
   };
