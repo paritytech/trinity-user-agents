@@ -1,0 +1,54 @@
+{
+  "$v": 1,
+  "appVersion": [0, 1, 0],
+  "kind": "worker",
+  "entrypoint": "index.js",
+  "includes": {
+    "funding": {
+      "routes": [
+        {
+          "mode": "CARD",
+          "directions": ["In", "Out"],
+          "assets": ["EUR"],
+          "countries": [
+            "AT",
+            "BE",
+            "CH",
+            "DE",
+            "ES",
+            "FR",
+            "GB",
+            "IE",
+            "IT",
+            "NL",
+            "PT"
+          ]
+        },
+        {
+          "mode": "BANK",
+          "directions": ["In", "Out"],
+          "assets": ["EUR"],
+          "countries": [
+            "AT",
+            "BE",
+            "CH",
+            "DE",
+            "ES",
+            "FR",
+            "GB",
+            "IE",
+            "IT",
+            "NL",
+            "PT"
+          ]
+        },
+        {
+          "mode": "CRYPTO",
+          "directions": ["In", "Out"],
+          "assets": ["PAS", "USDT", "USDC", "CASH"],
+          "networks": ["polkadot"]
+        }
+      ]
+    }
+  }
+}

@@ -70,6 +70,8 @@ ios/truapi-host/           TrUAPIHost Swift package over the truapi UniFFI core;
                            SPM manifest at the repo root (Package.swift), rebuild via
                            ios/truapi-host/scripts/rebuild.sh
 playground/                Next.js interactive playground; deploys to the truapi-playground dotNS label
+products/fundtest/         reference funding provider (Worker + App) for Paseo Next v2; imports
+                           getcash-community's packages from a pinned checkout under its vendor/
 hosts/ios/                 iOS host app; resolves the core from this tree
 hosts/android/             Android host app
 hosts/imports.json         source repository and imported revision per host,

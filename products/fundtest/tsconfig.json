@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["bun", "vite/client"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "@getsome/*": ["./vendor/getcash-community/packages/*/src/index.ts"],
+      "@getcash/lib/*": ["./vendor/getcash-community/lib/*"],
+      "@polkadot-api/descriptors": ["./vendor/papi/descriptors/dist/index.d.ts"]
+    }
+  },
+  "include": ["worker", "app/src", "shared", "test", "*.ts"]
+}
