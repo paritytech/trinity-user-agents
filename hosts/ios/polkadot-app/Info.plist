@@ -8,6 +8,7 @@
 	<string>$(APP_MAIN_BUNDLE).MediaBroadcastExtension</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).statement-renewal</string>
 		<string>io.novatech.truapi.durable.recovery</string>
 	</array>
 	<key>BrandAppGroup</key>
@@ -32,6 +33,8 @@
 	<string>$(BRAND_SHARE_ROOT)</string>
 	<key>BrandTermsHost</key>
 	<string>$(BRAND_TERMS_HOST)</string>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

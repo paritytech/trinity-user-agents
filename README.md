@@ -227,14 +227,15 @@ Device permissions, identity disclosure, account access and Chat authority retai
 
 ```
 rust/crates/
-  truapi/                Rust traits, versioned envelopes, and latest payload re-exports
-  truapi-client/         generated transport-neutral no-std client codecs and execution catalogs
+  truapi/                Canonical protocol definitions and the host runtime
+  truapi-client/         Generated transport-neutral no-std client codecs and execution catalogs
   truapi-codegen/        rustdoc JSON to TypeScript client + Rust dispatcher
-  truapi-macros/         #[wire(id = N)] proc-macro
-  truapi-platform/       Host syscall traits used by truapi-server (storage, navigation, consent, ...)
+  truapi-macros/         #[wire(id = N)] and #[wire_trait(id = N)] proc macros
   truapi-provider/       Network provider backends (WebSocket RPC or smoldot light-client)
-  truapi-server/         Host runtime: dispatcher, typed SCALE logic, chain signing, WASM surface
-  truapi-polkavm-host/   Optional native composition of truapi-server and a pinned PolkaVM runtime
+  truapi-chat-v2/        Native Chat protocol and state model
+  truapi-coinage/        Native coinage and payment primitives
+  truapi-verifiable/     Lazily loaded browser ring-VRF implementation
+  trinity-stack/         Trinity stack descriptor parser, verifier, and vectors
 js/packages/
   truapi/                  @parity/truapi TypeScript client
   truapi-host/            @parity/truapi-host: WASM-backed host runtime; entries `.`
@@ -268,6 +269,8 @@ scripts/refresh-host-import.sh
 scripts/battery.sh         Run the generated battery against both headless CLI host roles,
                            plus the Pocket phase a Worker execution serves
 scripts/bundle-size.mjs    Measure the JS and WASM the truapi-* packages ship, against a baseline
+scripts/ci-gates.py        Evaluate .github/hosts.json, what each host is built from, into the
+                           ci.yml change gates
 ```
 
 The PolkaVM application runtime, GPU/UI wire contracts, and browser runtime
@@ -402,6 +405,17 @@ The host keeps recovery alive. `durableWorkChanged(pending: true)` asks it to
 run a background task that awaits `runDurableRecovery()`, which returns once
 nothing is live: a WorkManager worker on Android, a `BGProcessingTask` on iOS.
 
+### NFT purses
+
+Native signing hosts serve the `NftPurse` API from the
+[NFT purses RFC](https://github.com/paritytech/trinity-user-agents/pull/1495) over
+the core database. A product creates purses it owns and lists any owner's
+purses: its own freely, Root's or another product's with the user's
+`NftPurseRead` grant for that owner. Every user has the Root-owned main purse.
+Calls that need items on chain answer unavailable for now. A host without a
+core database, such as the browser core, answers `Unsupported` to the two
+served calls.
+
 ### Trinity stack descriptors
 
 A stack descriptor describes one deployment of chains and services, as
@@ -466,6 +480,9 @@ Rust linting treats correctness and complexity diagnostics as errors, and public
 
 Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
 
+Rust helpers retain typed errors for pairing, dotNS lookups, and allowance renewal. Shared `From` conversions support `?`, and dotNS diagnostics render each cause once. CLI filesystem and session errors retain concrete causes and their operation or path. Pairing failures sent to another host contain a public reason, including allowance exhaustion; local paths and detailed causes remain in the signing host's diagnostics.
+
+The runtime's shared RPC fixture matches scripted replies against requests on the same connection, since request IDs can repeat across connections. Its platform-wide request log records all connections for assertions.
 The native `truapi-host` utility runs pairing and signing hosts against the real
 SSO transport for local end-to-end work. See [Install the CLI](#install-the-cli)
 to get it, and the [`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md)

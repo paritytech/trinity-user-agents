@@ -135,9 +135,10 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         product _: ProductExecutionConfig,
         request: RemotePermission
     ) async throws -> TrUAPIPermissionDecision {
-        try await dependencies.permissionGuard.requestPermissionsDecision(
+        guard request != .calling else { return .deny }
+        return try await dependencies.permissionGuard.requestPermissionsDecision(
             productId: dependencies.productId,
-            permissions: request.toDomainRequest().toDomainPermissions()
+            permissions: request.toDomainPermissions()
         ).hostDecision
     }
 
@@ -356,15 +357,27 @@ extension HostDevicePermissionRequest {
 }
 
 extension RemotePermission {
-    /// Maps the TrUAPI remote permission to the Products domain request.
-    func toDomainRequest() -> Products.RemotePermissionRequest? {
+    /// Maps a TrUAPI request to the permissions shown by the Products guard.
+    func toDomainPermissions() -> [ProductPermission] {
         switch self {
-        case let .remote(domains): .remote(domains: domains)
-        case .webRtc: .webRTC
-        case .chainSubmit: .chainSubmit
-        case .preimageSubmit: .preimageSubmit
-        case .statementSubmit: .statementSubmit
-        case .calling: nil
+        case let .remote(domains): Products.RemotePermissionRequest.remote(domains: domains).toDomainPermissions()
+        case .webRtc: Products.RemotePermissionRequest.webRTC.toDomainPermissions()
+        case .chainSubmit: Products.RemotePermissionRequest.chainSubmit.toDomainPermissions()
+        case .preimageSubmit: Products.RemotePermissionRequest.preimageSubmit.toDomainPermissions()
+        case .statementSubmit: Products.RemotePermissionRequest.statementSubmit.toDomainPermissions()
+        case .calling: []
+        case .balanceAccess: [.balanceAccess]
+        case let .nftPurseRead(owner): [.nftPurseRead(ownerProductId: owner.productId)]
+        }
+    }
+}
+
+extension NftPurseOwner {
+    /// The owning product, or `nil` for purses of the user's own account.
+    var productId: String? {
+        switch self {
+        case let .product(productId): productId
+        case .root: nil
         }
     }
 }

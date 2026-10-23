@@ -34,7 +34,7 @@ use crate::{
 		Heads, MortalExtrinsic, Mortality, TxSubmitter, TxValidator, WatchEvent,
 	},
 	chain_runtime::RuntimeFailure,
-	store::{Db, core_db_config},
+	store::{Db, open_temporary_core_db},
 };
 
 /// Genesis hash of the chain every fixture lives on.
@@ -43,9 +43,7 @@ pub const GENESIS: H256 = H256([0xab; 32]);
 /// A core database in a fresh temporary directory, so reads go through the
 /// reader pool as they do in production.
 pub fn open_db() -> (TempDir, Db) {
-	let dir = tempfile::tempdir().unwrap();
-	let db = futures::executor::block_on(Db::open(core_db_config(dir.path()))).unwrap();
-	(dir, db)
+	open_temporary_core_db()
 }
 
 /// Block `number`, with a hash derived from it.

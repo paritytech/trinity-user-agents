@@ -329,6 +329,13 @@ class HostApiInteractor @Inject constructor(
         permissionRequester.prompt(callingProductId, ProductPermission.BalanceAccess)
     }
 
+    suspend fun requestNftPurseReadDecision(
+        callingProductId: ProductId,
+        ownerProductId: String?,
+    ): Result<PermissionDecision> = runCatching {
+        permissionRequester.prompt(callingProductId, ProductPermission.NftPurseRead(ownerProductId))
+    }
+
     suspend fun allowWebRtcAccess(callingProductId: ProductId): Result<Boolean> {
         val permission = ProductPermission.RemotePermission.WebRtcAccess
         return Result.success(permissionGuard.consumePermission(callingProductId, permission))

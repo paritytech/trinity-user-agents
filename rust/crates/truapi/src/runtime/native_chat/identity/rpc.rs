@@ -4,7 +4,8 @@
 use super::super::NativeChatContext;
 use crate::{
 	host_logic::dotns_gateway::{
-		DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, encode_revive_call, view_output,
+		DotnsError, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, encode_revive_call,
+		view_output,
 	},
 	host_rpc_client::HostRpcClient,
 	platform::JsonRpcConnection,
@@ -117,8 +118,8 @@ impl Snapshot {
 
 #[crate::platform::async_trait]
 impl DotnsTransport for Snapshot {
-	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
-		self.storage_value(&key).await
+	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
+		self.storage_value(&key).await.map_err(Into::into)
 	}
 
 	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {

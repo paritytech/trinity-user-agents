@@ -526,7 +526,7 @@ When iterating on the core from a source checkout instead of the published artif
 make android-jni    # needs cargo-ndk, the NDK, and the three Android rust targets
 ```
 
-or point the `mozilla-rust-android-gradle` plugin at `rust/crates/truapi-server` from the host app's own build
+or point the `mozilla-rust-android-gradle` plugin at `rust/crates/truapi` from the host app's own build
 (polkadot-app-android-v2 does this while it still builds from a checkout).
 
 ## Maintainers: cutting a release

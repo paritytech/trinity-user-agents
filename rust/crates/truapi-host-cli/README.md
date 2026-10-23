@@ -89,11 +89,16 @@ installs it with the real installer, and updates it. Nothing contacts GitHub.
 
 ### State directory
 
-Reserved identities derive under `uid.paseo` / `peopl.paseo` on `paseo-next-v2`, and `uid.testnet` / `peopl.testnet` on
-`previewnet`. Managed host state lives under `<base-path>/v2`, including accounts, sessions, pairings, core and product
-storage, and log preferences. The CLI appends `v2` to both the default base path and a path set through `--base-path` or
-`TRUAPI_HOST_BASE_PATH`. For example, `--base-path ./truapi-host-paseo` uses `./truapi-host-paseo/v2`. New script
-projects live separately under `<base-path>/scripts` so clearing host sessions does not delete them.
+Reserved identities derive under `uid.paseo` / `peopl.paseo` on
+`paseo-next-v2`, `uid.testnet` / `peopl.testnet` on `previewnet`, and
+`uid.dot` / `peopl.dot` on `polkadot`.
+Managed host state lives under `<base-path>/v2`, including accounts,
+sessions, pairings, core and product storage, and log
+preferences. The CLI appends `v2` to both the default base path and a path set
+through `--base-path` or `TRUAPI_HOST_BASE_PATH`. For example,
+`--base-path ./truapi-host-paseo` uses `./truapi-host-paseo/v2`.
+New script projects live separately under `<base-path>/scripts` so clearing
+host sessions does not delete them.
 
 The CLI leaves previous host state outside `v2` untouched and unused, and starts normal onboarding automatically. There
 is no state migration. Pair devices again; sign out first on any paired host that still uses an old identity. Existing
@@ -845,17 +850,34 @@ HOST_CLI_SIGNER_MNEMONIC="spin battle …" truapi-host signing-host --deeplink '
 truapi-host alloc-check --mnemonic "spin battle …" --lookback 100
 ```
 
-Both hosts take `--network`, either `paseo-next-v2` (default) or `previewnet`. The network preset owns the identity
-backend URL, the People, Bulletin and Asset Hub RPCs, and their genesis hashes; there is no public `--statement-store`
-flag. Pick `previewnet` when a product's runtime descriptors target previewnet, so its statements, its host chain routes
-and its own chain reads all land on one network. The CLI mints the identity backend's bearer token itself (SPEC.md
-§12.3). Sessions are per preset, so each network gets its own signer identity on the same machine.
-`HOST_CLI_IDENTITY_BACKEND_BASE` swaps only the identity backend (for a local one); `HOST_CLI_IDENTITY_BACKEND_TOKEN`
-supplies its bearer token instead of the CLI minting one. For username registration, an injected token's subject must
-match the session's `uid.<tld>` candidate account. The automatically minted token uses that identity; and
-`HOST_CLI_DOTNS_POP_CONTROLLER` overrides on-chain `DotnsPopController` discovery (see SPEC.md §21). Both also accept
-`--frame-listen <address>` to opt into a TCP product-frame WebSocket; without it, the CLI creates and cleans up a unique
-temporary Unix socket.
+Both hosts take `--network`: `paseo-next-v2` (default), `previewnet`, or
+`polkadot` (mainnet). Mainnet identities are real, so `polkadot` signs only with
+`--mnemonic` / `HOST_CLI_SIGNER_MNEMONIC`, never stores an account, never
+auto-approves, refuses `--product-config` and `attest`, and has no identity backend unless
+`HOST_CLI_IDENTITY_BACKEND_BASE` names one (SPEC.md §14.1).
+The network preset owns the identity backend URL, the People, Bulletin and Asset
+Hub RPCs, and their genesis hashes; there is
+no public `--statement-store` flag. Pick `previewnet` when a product's runtime
+descriptors target previewnet, so its statements, its host chain routes and its
+own chain reads all land on one network. The CLI mints the identity backend's
+bearer token itself (SPEC.md §12.3). Sessions are per preset, so each network
+gets its own signer identity on the same machine.
+`HOST_CLI_IDENTITY_BACKEND_BASE` swaps
+the identity backend (for a local one), and `HOST_CLI_PEOPLE_WS`,
+`HOST_CLI_ASSET_HUB_WS` and `HOST_CLI_BULLETIN_WS` swap a chain's URL for a fork
+of the preset's network, which keeps its genesis hashes. Each must be a `ws://` or
+`wss://` URL. `attest` against a fork also needs `HOST_CLI_IDENTITY_BACKEND_BASE`
+pointing at a backend that serves the fork. For a local network that
+is not a fork, `HOST_CLI_LOCAL_NETWORK_CONFIG` names a file with every chain's URL
+and genesis hash and the backend instead (`docs/local-network.md`); it cannot be
+combined with the chain URL overrides. `HOST_CLI_IDENTITY_BACKEND_TOKEN`
+supplies its bearer token instead of the CLI minting one. For username
+registration, an injected token's subject must match the session's `uid.<tld>`
+candidate account. The automatically minted token uses that identity; and
+`HOST_CLI_DOTNS_POP_CONTROLLER` overrides on-chain `DotnsPopController`
+discovery (see SPEC.md §21). Both also accept `--frame-listen <address>`
+to opt into a TCP product-frame WebSocket; without it, the CLI creates and
+cleans up a unique temporary Unix socket.
 
 For instance-scoped Coinage runtimes, `signing-host` and `dev` require an operator-selected asset instance for Coinage
 operations: pass `--coinage-instance-id <u32>` or set `TRUAPI_COINAGE_INSTANCE_ID`. The flag overrides the environment

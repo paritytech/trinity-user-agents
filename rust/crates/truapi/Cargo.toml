@@ -106,7 +106,7 @@ wasm-signing-host = ["runtime"]
 # resource allocation as granted without allocating anything.
 test-host = ["runtime"]
 # In-memory `MockPlatform` for tests and host simulators.
-mock = ["runtime"]
+mock = ["runtime", "dep:strum"]
 
 [dependencies]
 truapi-macros = { path = "../truapi-macros" }
@@ -115,6 +115,7 @@ derive_more = { workspace = true, default-features = false, features = ["debug",
 futures = { workspace = true, optional = true }
 hex = { workspace = true, default-features = false, features = ["alloc"] }
 parity-scale-codec = { workspace = true, default-features = false, features = ["derive"] }
+strum = { workspace = true, optional = true }
 
 truapi-provider = { path = "../truapi-provider", default-features = false, optional = true }
 truapi-coinage = { path = "../truapi-coinage", optional = true }
@@ -230,6 +231,8 @@ wasm-bindgen-test = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "sync", "macros", "io-util", "time"] }
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "handshake"] }
 tempfile = { workspace = true }
+# Live chain tests reach a node over WebSocket.
+truapi-provider = { path = "../truapi-provider", default-features = false, features = ["ws"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dev-dependencies]
 socket2 = { workspace = true }

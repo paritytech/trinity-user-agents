@@ -14,12 +14,12 @@ use tracing::{debug, info, warn};
 use parity_scale_codec::Encode;
 
 use super::{
-	RenewalState, SigningHost, StatementRenewalTarget, TrackedStatementRenewalTarget,
-	decode_entries, resolve_target, target_label,
+	RenewalState, SigningHost, StatementRenewalError, StatementRenewalTarget,
+	TrackedStatementRenewalTarget, decode_entries, resolve_target, target_label,
 };
 use crate::{
 	host_logic::product_account::derive_root_keypair_from_entropy,
-	platform::{CoreStorage, CoreStorageKey, normalize_product_identifier},
+	platform::{CoreStorage, CoreStorageKey},
 	runtime::{
 		RuntimeServices,
 		authority::ProductAuthority,
@@ -81,19 +81,6 @@ impl StatementRenewalTarget {
 			Self::WalletSso => false,
 		}
 	}
-
-	/// Match the product identifier used by account derivation.
-	fn normalized(self) -> Result<Self, String> {
-		match self {
-			Self::ProductStatementAllowance { product_id } => {
-				let normalized = normalize_product_identifier(&product_id).map_err(|_| {
-					format!("product_id {product_id} is not a valid product identifier")
-				})?;
-				Ok(Self::ProductStatementAllowance { product_id: normalized })
-			},
-			target @ (Self::WalletSso | Self::Account { .. }) => Ok(target),
-		}
-	}
 }
 
 impl TrackedStatementRenewalTarget {
@@ -110,20 +97,18 @@ impl TrackedStatementRenewalTarget {
 
 /// Root public key of the identity rooted at `entropy`, used to own raw ledger
 /// entries.
-fn owner_key(entropy: &[u8]) -> Result<[u8; 32], String> {
-	derive_root_keypair_from_entropy(entropy)
-		.map(|pair| pair.public.to_bytes())
-		.map_err(|err| err.to_string())
+fn owner_key(entropy: &[u8]) -> Result<[u8; 32], StatementRenewalError> {
+	Ok(derive_root_keypair_from_entropy(entropy)?.public.to_bytes())
 }
 
 /// Discard unreadable entries; later allocations rebuild the ledger.
 async fn read_entries(
 	storage: &(impl CoreStorage + ?Sized),
-) -> Result<Vec<TrackedStatementRenewalTarget>, String> {
+) -> Result<Vec<TrackedStatementRenewalTarget>, StatementRenewalError> {
 	let Some(blob) = storage
 		.read_core_storage(CoreStorageKey::StatementRenewalTargets)
 		.await
-		.map_err(|err| format!("renewal ledger read failed: {}", err.reason))?
+		.map_err(StatementRenewalError::ReadLedger)?
 	else {
 		return Ok(Vec::new());
 	};
@@ -143,9 +128,9 @@ async fn track_targets(
 	ledger_lock: &Mutex<()>,
 	owner: [u8; 32],
 	new_targets: Vec<StatementRenewalTarget>,
-) -> Result<(), String> {
+) -> Result<(), StatementRenewalError> {
 	if new_targets.iter().any(StatementRenewalTarget::is_product_grant) {
-		return Err("Product statement allowances require an authorized product request; background renewal cannot access artifact-scoped permissions".to_string());
+		return Err(StatementRenewalError::ProductTargetRequiresAuthorizedRequest);
 	}
 	let _guard = ledger_lock.lock().await;
 	let mut entries = read_entries(storage).await?;
@@ -166,23 +151,19 @@ async fn track_targets(
 async fn write_entries(
 	storage: &(impl CoreStorage + ?Sized),
 	entries: &[TrackedStatementRenewalTarget],
-) -> Result<(), String> {
+) -> Result<(), StatementRenewalError> {
 	storage
 		.write_core_storage(CoreStorageKey::StatementRenewalTargets, entries.encode())
 		.await
-		.map_err(|err| format!("renewal ledger write failed: {}", err.reason))
+		.map_err(StatementRenewalError::WriteLedger)
 }
 
 /// Record `targets` in the ledger under the active identity.
 pub async fn track(
 	signing_host: &SigningHost,
 	targets: Vec<StatementRenewalTarget>,
-) -> Result<(), String> {
-	let targets = targets
-		.into_iter()
-		.map(StatementRenewalTarget::normalized)
-		.collect::<Result<Vec<_>, _>>()?;
-	let entropy = signing_host.root_entropy().map_err(|err| err.to_string())?;
+) -> Result<(), StatementRenewalError> {
+	let entropy = signing_host.root_entropy()?;
 	track_targets(
 		signing_host.platform.as_ref(),
 		signing_host.renewal.ledger_lock(),
@@ -196,7 +177,7 @@ pub async fn track(
 async fn list_entries(
 	storage: &(impl CoreStorage + ?Sized),
 	ledger_lock: &Mutex<()>,
-) -> Result<Vec<TrackedStatementRenewalTarget>, String> {
+) -> Result<Vec<TrackedStatementRenewalTarget>, StatementRenewalError> {
 	let _guard = ledger_lock.lock().await;
 	read_entries(storage).await
 }
@@ -206,7 +187,7 @@ async fn untrack_account(
 	ledger_lock: &Mutex<()>,
 	owner: [u8; 32],
 	account_id: &[u8; 32],
-) -> Result<bool, String> {
+) -> Result<bool, StatementRenewalError> {
 	let _guard = ledger_lock.lock().await;
 	let mut entries = read_entries(storage).await?;
 	let original_len = entries.len();
@@ -230,13 +211,13 @@ async fn untrack_account(
 /// List tracked entries without requiring wallet unlock.
 pub async fn list(
 	signing_host: &SigningHost,
-) -> Result<Vec<TrackedStatementRenewalTarget>, String> {
+) -> Result<Vec<TrackedStatementRenewalTarget>, StatementRenewalError> {
 	list_entries(signing_host.platform.as_ref(), signing_host.renewal.ledger_lock()).await
 }
 
 /// Identify which fixed ledger entries belong to the active wallet.
-pub fn active_owner_key(signing_host: &SigningHost) -> Result<[u8; 32], String> {
-	let entropy = signing_host.root_entropy().map_err(|err| err.to_string())?;
+pub fn active_owner_key(signing_host: &SigningHost) -> Result<[u8; 32], StatementRenewalError> {
+	let entropy = signing_host.root_entropy()?;
 	owner_key(&entropy)
 }
 
@@ -244,8 +225,8 @@ pub fn active_owner_key(signing_host: &SigningHost) -> Result<[u8; 32], String> 
 pub async fn untrack_account_for_signing_host(
 	signing_host: &SigningHost,
 	account_id: &[u8; 32],
-) -> Result<bool, String> {
-	let entropy = signing_host.root_entropy().map_err(|err| err.to_string())?;
+) -> Result<bool, StatementRenewalError> {
+	let entropy = signing_host.root_entropy()?;
 	untrack_account(
 		signing_host.platform.as_ref(),
 		signing_host.renewal.ledger_lock(),
@@ -292,7 +273,7 @@ async fn owned_targets(
 	storage: &(impl CoreStorage + ?Sized),
 	ledger_lock: &Mutex<()>,
 	owner: [u8; 32],
-) -> Result<(Vec<StatementRenewalTarget>, Vec<String>), String> {
+) -> Result<(Vec<StatementRenewalTarget>, Vec<String>), StatementRenewalError> {
 	let _guard = ledger_lock.lock().await;
 	let (owned, foreign): (Vec<_>, Vec<_>) = read_entries(storage)
 		.await?
@@ -314,11 +295,9 @@ async fn owned_targets(
 pub async fn renew_now(
 	services: &Arc<RuntimeServices>,
 	signing_host: &SigningHost,
-) -> Result<StatementRenewalReport, String> {
-	let entropy = signing_host.root_entropy().map_err(|err| err.to_string())?;
-	let period = statement_allowance::slot::current_period(
-		current_unix_secs().map_err(|err| err.to_string())?,
-	);
+) -> Result<StatementRenewalReport, StatementRenewalError> {
+	let entropy = signing_host.root_entropy()?;
+	let period = statement_allowance::slot::current_period(current_unix_secs()?);
 	let (targets, pruned) = owned_targets(
 		signing_host.platform.as_ref(),
 		signing_host.renewal.ledger_lock(),
@@ -337,34 +316,19 @@ pub async fn renew_now(
 
 	// The same accessor on-demand allocation uses, so a change to the reserved
 	// key reaches renewal too — and it revalidates the session first.
-	let session = signing_host
-		.current_session()
-		.ok_or_else(|| "no active session for statement-store renewal".to_string())?;
-	let candidates = signing_host
-		.reserved_person_collection_candidates(&session)
-		.map_err(|err| err.to_string())?;
+	let session = signing_host.current_session().ok_or(StatementRenewalError::NoActiveSession)?;
+	let candidates = signing_host.reserved_person_collection_candidates(&session)?;
 	let rpc = statement_allowance::rpc::RpcClient::new(
-		services
-			.statement_store
-			.client("statement-allowance renewal")
-			.await
-			.map_err(|err| err.to_string())?,
+		services.statement_store.client("statement-allowance renewal").await?,
 	);
-	let metadata = fetch_metadata(&rpc).await.map_err(|err| err.to_string())?;
-	let chain_state = fetch_chain_state(&rpc).await.map_err(|err| err.to_string())?;
-	let network_suffix = statement_allowance::slot::read_network_suffix(&rpc)
-		.await
-		.map_err(|err| err.to_string())?;
+	let metadata = fetch_metadata(&rpc).await?;
+	let chain_state = fetch_chain_state(&rpc).await?;
+	let network_suffix = statement_allowance::slot::read_network_suffix(&rpc).await?;
 	// Every ring back to index 0, because a membership that stopped being
 	// re-included still proves against the ring that holds it.
-	let memberships = find_including_rings(&rpc, &metadata, &candidates, u32::MAX)
-		.await
-		.map_err(|err| err.to_string())?;
+	let memberships = find_including_rings(&rpc, &metadata, &candidates, u32::MAX).await?;
 	if memberships.is_empty() {
-		return Err(
-            "signing account is not a member of any personhood ring; cannot renew statement-store allowances"
-                .to_string(),
-        );
+		return Err(StatementRenewalError::MissingPersonhoodMembership);
 	}
 	let context = RenewalChainContext {
 		rpc: &rpc,
@@ -417,7 +381,10 @@ async fn run_tick(services: &Arc<RuntimeServices>, signing_host: &SigningHost) {
 }
 
 /// Preserve the last completed pass when a later tick fails.
-fn absorb_tick(state: &RenewalState, result: Result<StatementRenewalReport, String>) {
+fn absorb_tick(
+	state: &RenewalState,
+	result: Result<StatementRenewalReport, StatementRenewalError>,
+) {
 	match result {
 		Ok(report) => {
 			if report.slots_exhausted {
@@ -660,7 +627,7 @@ mod tests {
 			}),
 		);
 
-		absorb_tick(&state, Err("no active session".to_string()));
+		absorb_tick(&state, Err(StatementRenewalError::NoActiveSession));
 
 		let seen = state.last_report().expect("the earlier pass is still there");
 		assert_eq!(seen.period, 7);
@@ -799,7 +766,7 @@ mod tests {
 	async fn read_targets(
 		storage: &(impl CoreStorage + ?Sized),
 		owner: [u8; 32],
-	) -> Result<Vec<StatementRenewalTarget>, String> {
+	) -> Result<Vec<StatementRenewalTarget>, StatementRenewalError> {
 		Ok(read_entries(storage)
 			.await?
 			.into_iter()
@@ -1191,30 +1158,5 @@ mod tests {
 	#[test]
 	fn owner_key_follows_the_root_entropy() {
 		assert_ne!(owner_key(&[7u8; 32]).unwrap(), owner_key(&[8u8; 32]).unwrap());
-	}
-
-	// A product connection derives its allowance account from the normalized
-	// id, so tracking any other spelling renews an account no product uses.
-	#[test]
-	fn a_product_target_normalizes_its_identifier() {
-		for supplied in
-			["  truapi-playground.dot  ", "TruAPI-Playground.dot", "TRUAPI-PLAYGROUND.DOT"]
-		{
-			assert_eq!(
-				product(supplied).normalized(),
-				Ok(product("truapi-playground.dot")),
-				"{supplied:?} did not normalize"
-			);
-		}
-		assert_eq!(
-			product("not a product").normalized(),
-			Err("product_id not a product is not a valid product identifier".to_string())
-		);
-		for target in [
-			StatementRenewalTarget::WalletSso,
-			StatementRenewalTarget::Account { account_id: [0x11; 32], label: "device".to_string() },
-		] {
-			assert_eq!(target.clone().normalized(), Ok(target));
-		}
 	}
 }

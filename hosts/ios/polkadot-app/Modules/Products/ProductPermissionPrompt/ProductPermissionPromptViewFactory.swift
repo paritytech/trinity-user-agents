@@ -94,13 +94,21 @@ private extension ProductPermissionPromptViewFactory {
             title = String(localized: .Products.permissionTitleRemote(productId: productId))
         case .chatAuthority:
             title = String(localized: .Products.permissionTitleChatAuthority(productId: productId))
+        case .profileDisclosure:
+            title = String(localized: .Products.permissionTitleProfileDisclosure(productId: productId))
         case .statementStoreAllowance:
             title = String(localized: .Products.permissionTitleStatementStoreAllowance(productId: productId))
+        case let .nftPurseRead(ownerProductId):
+            return PromptContent(
+                title: String(localized: .Products.permissionTitleRemote(productId: productId)),
+                body: NftPurseReadCopy.description(ownerProductId: ownerProductId),
+                icon: makeIcon(systemName: "square.stack.3d.up.fill")
+            )
         }
         return PromptContent(
             title: title,
-            body: permission.permissionDescription,
-            icon: makeIcon(systemName: permission.permissionIconSystemName)
+            body: permissionBody(for: permission),
+            icon: makeIcon(systemName: permissionIconSystemName(for: permission))
         )
     }
 
@@ -118,7 +126,88 @@ private extension ProductPermissionPromptViewFactory {
     }
 
     static func permissionDescription(for permission: ProductPermission) -> String {
-        "- " + permission.permissionDescription
+        "- " + permissionBody(for: permission)
+    }
+
+    static func permissionBody(for permission: ProductPermission) -> String {
+        switch permission {
+        case let .networkAccess(domain):
+            String(localized: .Products.permissionBodyNetworkAccess(domain: domain))
+        case let .networkAccessBundle(domains):
+            String(localized: .Products.permissionBodyNetworkAccess(domain: domains.joined(separator: ", ")))
+        case .balanceAccess:
+            String(localized: .Products.permissionBodyBalanceAccess)
+        case .webRtcAccess:
+            String(localized: .Products.permissionBodyWebRtc)
+        case .chainSubmitAccess:
+            String(localized: .Products.permissionBodyChainSubmit)
+        case .preimageSubmitAccess:
+            String(localized: .Products.permissionBodyPreimageSubmit)
+        case .statementSubmitAccess:
+            String(localized: .Products.permissionBodyStatementSubmit)
+        case let .deviceCapability(capability):
+            capabilityDescription(capability)
+        case let .accountAccess(targetProductId):
+            String(localized: .Products.permissionBodyAccountAccess(targetProductId: targetProductId))
+        case .userIdentityAccess:
+            String(localized: .Products.permissionBodyUserIdentityAccess)
+        case .chatAuthority:
+            String(localized: .Products.permissionBodyChatAuthority)
+        case .profileDisclosure:
+            String(localized: .Products.permissionBodyProfileDisclosure)
+        case let .statementStoreAllowance(derivationIndex):
+            ProductPermission.statementStoreAllowanceDescription(derivationIndex: derivationIndex)
+        case let .nftPurseRead(ownerProductId):
+            NftPurseReadCopy.description(ownerProductId: ownerProductId)
+        }
+    }
+
+    static func permissionIconSystemName(for permission: ProductPermission) -> String {
+        switch permission {
+        case let .deviceCapability(capability): capabilityIconSystemName(capability)
+        case .networkAccess, .networkAccessBundle: "globe"
+        case .accountAccess: "person.crop.circle"
+        case .balanceAccess: "dollarsign.circle.fill"
+        case .webRtcAccess: "video.fill"
+        case .chainSubmitAccess: "link"
+        case .preimageSubmitAccess: "doc.text"
+        case .statementSubmitAccess: "text.bubble"
+        case .userIdentityAccess: "person.text.rectangle"
+        case .chatAuthority: "message.badge.shield"
+        case .profileDisclosure: "person.crop.circle.badge.checkmark"
+        case .statementStoreAllowance: "externaldrive.badge.plus"
+        case .nftPurseRead: "square.stack.3d.up.fill"
+        }
+    }
+
+    static func capabilityDescription(_ capability: DeviceCapabilityType) -> String {
+        switch capability {
+        case .notifications: String(localized: .Products.permissionCapabilityDescriptionNotifications)
+        case .camera: String(localized: .Products.permissionCapabilityDescriptionCamera)
+        case .microphone: String(localized: .Products.permissionCapabilityDescriptionMicrophone)
+        case .bluetooth: String(localized: .Products.permissionCapabilityDescriptionBluetooth)
+        case .nfc: String(localized: .Products.permissionCapabilityDescriptionNfc)
+        case .location: String(localized: .Products.permissionCapabilityDescriptionLocation)
+        case .clipboard: String(localized: .Products.permissionCapabilityDescriptionClipboard)
+        case .openUrl: String(localized: .Products.permissionCapabilityDescriptionOpenUrl)
+        case .biometrics: String(localized: .Products.permissionCapabilityDescriptionBiometrics)
+        case .motion: String(localized: .Products.permissionCapabilityDescriptionMotion)
+        }
+    }
+
+    static func capabilityIconSystemName(_ capability: DeviceCapabilityType) -> String {
+        switch capability {
+        case .notifications: "bell.fill"
+        case .camera: "camera.fill"
+        case .microphone: "mic.fill"
+        case .bluetooth: "antenna.radiowaves.left.and.right"
+        case .nfc: "wave.3.right"
+        case .location: "location.fill"
+        case .clipboard: "doc.on.clipboard.fill"
+        case .openUrl: "safari.fill"
+        case .biometrics: "faceid"
+        case .motion: "figure.walk.motion"
+        }
     }
 
     static func makeAction(
@@ -150,5 +239,15 @@ private extension ProductPermissionPromptViewFactory {
         let config = UIImage.SymbolConfiguration(pointSize: 60, weight: .regular)
         return UIImage(systemName: systemName, withConfiguration: config)?
             .withTintColor(.fgPrimary, renderingMode: .alwaysOriginal)
+    }
+}
+
+/// What reading another owner's NFT purses reveals, shared by the prompt and the settings list.
+enum NftPurseReadCopy {
+    static func description(ownerProductId: String?) -> String {
+        guard let ownerProductId else {
+            return String(localized: .Products.permissionBodyNftPurseReadRoot)
+        }
+        return String(localized: .Products.permissionBodyNftPurseReadProduct(ownerProductId: ownerProductId))
     }
 }

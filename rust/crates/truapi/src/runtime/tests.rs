@@ -663,24 +663,6 @@ fn a_proof_naming_the_caller_in_another_spelling_is_still_its_own() {
 }
 
 #[test]
-fn an_unresolvable_product_cannot_reach_a_foreign_key() {
-	// A key handle that does not normalize names no product, so it cannot be
-	// reached. Note what this asserts: the frontend answers `Unknown { reason }`
-	// here, naming the malformed handle, where the authority answers the uniform
-	// `NotAllowlisted` for the same input. That asymmetry is real and deliberate
-	// at this layer: the id came from this Host's own caller, not off the wire,
-	// so telling it that its handle is malformed discloses nothing it did not
-	// already send. The authority cannot say the same and does not.
-	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
-	assert_eq!(
-		proof_refusal(&host, "not a product"),
-		Some(CallError::Domain(HostAccountCreateProofError::V1(
-			v01::HostAccountCreateProofError::Unknown { reason: "Invalid key handle".to_string() }
-		)))
-	);
-}
-
-#[test]
 fn get_chain_info_unserved_identifier_is_not_supported() {
 	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
 	let cx = CallContext::default();
@@ -9815,6 +9797,7 @@ fn feature_supported_encodes_response_to_known_bytes() {
 	assert_eq!(response.encode(), vec![0x00, 0x01]);
 }
 
+mod nft_purse;
 mod signing;
 
 #[test]

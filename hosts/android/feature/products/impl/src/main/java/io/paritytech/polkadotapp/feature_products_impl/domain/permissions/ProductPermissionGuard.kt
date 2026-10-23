@@ -49,6 +49,7 @@ class RealProductPermissionGuard @Inject constructor(
     private val balanceAccessHandler: ProductPermissionHandler<ProductPermission.BalanceAccess>,
     private val deviceCapabilityHandler: ProductPermissionHandler<ProductPermission.DeviceCapability>,
     private val userIdentityAccessHandler: ProductPermissionHandler<ProductPermission.UserIdentityAccess>,
+    private val nftPurseReadHandler: ProductPermissionHandler<ProductPermission.NftPurseRead>,
     private val repository: ProductPermissionRepository,
     private val requester: ProductPermissionRequester,
 ) : ProductPermissionGuard {
@@ -132,6 +133,7 @@ class RealProductPermissionGuard @Inject constructor(
             ProductPermission.ChatAuthority,
             ProductPermission.ProfileDisclosure,
             is ProductPermission.StatementStoreAllowance -> repository.isGranted(productId, permission)
+            is ProductPermission.NftPurseRead -> nftPurseReadHandler.isGranted(productId, permission)
         }
     }
 
@@ -151,6 +153,7 @@ class RealProductPermissionGuard @Inject constructor(
                 is ProductPermission.BalanceAccess -> balanceAccessHandler.request(productId, permission)
                 is ProductPermission.DeviceCapability -> deviceCapabilityHandler.request(productId, permission)
                 is ProductPermission.UserIdentityAccess -> userIdentityAccessHandler.request(productId, permission)
+                is ProductPermission.NftPurseRead -> nftPurseReadHandler.request(productId, permission)
                 // These operations prompt through the canonical runtime's confirmation flow.
                 // The legacy guard may observe authority, but must not issue a local grant.
                 ProductPermission.ChatAuthority,

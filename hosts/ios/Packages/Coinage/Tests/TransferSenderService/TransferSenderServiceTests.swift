@@ -9,6 +9,7 @@ import ExtrinsicService
 import KeyDerivation
 import SubstrateOperation
 import BackgroundExecution
+import FoundationExtTestSupport
 
 @testable import Coinage
 
@@ -975,7 +976,7 @@ extension TransferSenderServiceTests {
         let planFactory = TransferPlanFactory(
             minter: mockMinter,
             durability: mockDurability,
-            dateProvider: StubDateProvider(now),
+            dateProvider: FixedDateProvider(now),
             logger: nil
         )
 

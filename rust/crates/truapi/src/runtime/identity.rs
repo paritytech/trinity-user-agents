@@ -18,7 +18,8 @@ use crate::{
 	chain_runtime::ChainRuntime,
 	host_logic::{
 		dotns_gateway::{
-			DotnsIdentity, DotnsTransport, classify_labels, discover_pop_controller, resolve_labels,
+			DotnsError, DotnsIdentity, DotnsTransport, DotnsViewError, classify_labels,
+			discover_pop_controller, resolve_labels,
 		},
 		session::SessionInfo,
 	},
@@ -114,6 +115,18 @@ impl From<String> for IdentityLookupError {
 	}
 }
 
+impl From<DotnsError> for IdentityLookupError {
+	fn from(reason: DotnsError) -> Self {
+		Self::Failed(reason.reason())
+	}
+}
+
+impl From<DotnsViewError> for IdentityLookupError {
+	fn from(reason: DotnsViewError) -> Self {
+		Self::Failed(reason.to_string())
+	}
+}
+
 /// Looks up `account`'s dotNS identity and applies any usernames to `session`.
 /// Transient failures are retried against the warmed connection.
 async fn lookup_and_apply(
@@ -149,7 +162,7 @@ async fn lookup_and_apply(
 				warn!(
 					account = %hex::encode(account),
 					attempt,
-					%reason,
+					reason = %reason,
 					"dotNS {label} lookup failed"
 				);
 				if attempt == IDENTITY_LOOKUP_MAX_ATTEMPTS {

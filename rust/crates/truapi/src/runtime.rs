@@ -218,17 +218,17 @@ enum LegacySigner {
 	Identity([u8; 32]),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, derive_more::From)]
 enum LegacySignerError {
 	Unavailable,
-	ProductDerivation(String),
+	ProductDerivation(AuthorityError),
 }
 
 impl LegacySignerError {
 	fn into_reason(self, unavailable_reason: &'static str) -> String {
 		match self {
 			Self::Unavailable => unavailable_reason.to_string(),
-			Self::ProductDerivation(reason) => reason,
+			Self::ProductDerivation(error) => error.to_string(),
 		}
 	}
 
@@ -697,7 +697,7 @@ impl ProductRuntimeHost {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-	) -> Result<[u8; 32], String> {
+	) -> Result<[u8; 32], AuthorityError> {
 		self.product_account_public_key(
 			cx,
 			session,
@@ -707,7 +707,6 @@ impl ProductRuntimeHost {
 			},
 		)
 		.await
-		.map_err(|err| err.to_string())
 	}
 
 	fn product_storage_key(&self, owner: &str, key: String) -> String {
@@ -1036,10 +1035,7 @@ impl ProductRuntimeHost {
 		if session.identity_account_id == Some(requested_key) {
 			return Ok(LegacySigner::Identity(requested_key));
 		}
-		let product_public_key = self
-			.legacy_slot_zero_public_key(cx, session)
-			.await
-			.map_err(LegacySignerError::ProductDerivation)?;
+		let product_public_key = self.legacy_slot_zero_public_key(cx, session).await?;
 		if requested_key == product_public_key {
 			return Ok(LegacySigner::Product);
 		}

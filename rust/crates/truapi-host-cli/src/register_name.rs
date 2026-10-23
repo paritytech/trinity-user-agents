@@ -31,7 +31,9 @@ use truapi::{
 	},
 };
 
-use crate::{dotns_read::AssetHubReader, network::NetworkConfig};
+use crate::{
+	accounts::IdentityDerivationError, dotns_read::AssetHubReader, network::NetworkConfig,
+};
 
 /// Inputs for one full-person registration run.
 pub struct RegisterNameConfig {
@@ -67,10 +69,10 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 		bail!("--link-lite {lite:?} is not a dotted lite username (`name.NN`)");
 	}
 	let who = derive_identity_keypair(&config.entropy, config.network.network_suffix)
-		.map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
+		.map_err(IdentityDerivationError::from)?;
 	let who_public = who.public.to_bytes();
 
-	let mut reader = AssetHubReader::connect(config.network.asset_hub_ws).await?;
+	let mut reader = AssetHubReader::for_network(&config.network).await?;
 	// Registered names (any flow) fail only at submission otherwise; a pending
 	// reservation of `label` is not a mint and stays claimable.
 	if !reader.label_available(label).await? {

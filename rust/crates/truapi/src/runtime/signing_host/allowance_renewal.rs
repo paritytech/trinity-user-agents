@@ -21,14 +21,72 @@ pub use driver::{
 };
 
 use crate::{
-	host_logic::product_account::{derive_identity_keypair, derive_sr25519_hard_path},
+	host_logic::product_account::{
+		ProductAccountError, derive_identity_keypair, derive_sr25519_hard_path,
+	},
 	platform::CoreStorageKey,
-	runtime::statement_allowance::renewal::ResolvedRenewalTarget,
+	runtime::{
+		authority::AuthorityError,
+		statement_allowance::{StatementAllowanceError, renewal::ResolvedRenewalTarget},
+		statement_store_rpc::StatementStoreRpcClientError,
+	},
 };
 use futures::lock::Mutex;
 use parity_scale_codec::{Decode, Encode};
 
-use super::SigningHost;
+use super::{SigningHost, sso_responder::AllowanceAllocationError};
+use truapi::latest::GenericError;
+
+/// Failure reading renewal targets or preparing a statement-store renewal pass.
+#[derive(Debug, thiserror::Error)]
+pub enum StatementRenewalError {
+	/// The active authority could not supply the renewal identity.
+	#[error(transparent)]
+	Authority(#[from] AuthorityError),
+	/// A tracked account could not be derived.
+	#[error(transparent)]
+	ProductAccount(#[from] ProductAccountError),
+	/// The clock could not supply the current allowance period.
+	#[error(transparent)]
+	Clock(#[from] AllowanceAllocationError),
+	/// The chain could not be opened for a renewal pass.
+	#[error(transparent)]
+	RpcClient(#[from] StatementStoreRpcClientError),
+	/// Chain state or allowance preparation failed.
+	#[error(transparent)]
+	Allowance(#[from] StatementAllowanceError),
+	/// The persisted targets could not be read.
+	#[error("renewal ledger read failed: {0}")]
+	ReadLedger(#[source] GenericError),
+	/// The persisted targets could not be written.
+	#[error("renewal ledger write failed: {0}")]
+	WriteLedger(#[source] GenericError),
+	/// Persisted targets are not valid SCALE values.
+	#[error("invalid persisted renewal targets: {0}")]
+	DecodeLedger(#[from] parity_scale_codec::Error),
+	/// Bytes after a complete target list make the ledger invalid.
+	#[error("invalid persisted renewal targets: trailing bytes")]
+	TrailingLedgerBytes,
+	/// Product authorization is artifact-scoped and unavailable to background renewal.
+	#[error(
+		"Product statement allowances require an authorized product request; background renewal cannot access artifact-scoped permissions"
+	)]
+	ProductTargetRequiresAuthorizedRequest,
+	/// The session ended before ring membership could be resolved.
+	#[error("no active session for statement-store renewal")]
+	NoActiveSession,
+	/// Renewal requires a personhood membership for its allowance proof.
+	#[error(
+		"signing account is not a member of any personhood ring; cannot renew statement-store allowances"
+	)]
+	MissingPersonhoodMembership,
+}
+
+impl From<StatementRenewalError> for GenericError {
+	fn from(error: StatementRenewalError) -> Self {
+		Self { reason: error.to_string() }
+	}
+}
 
 /// A statement account or derivation recipe the wallet keeps renewed.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
@@ -85,12 +143,13 @@ impl RenewalState {
 	}
 }
 
-fn decode_entries(blob: &[u8]) -> Result<Vec<TrackedStatementRenewalTarget>, String> {
+fn decode_entries(
+	blob: &[u8],
+) -> Result<Vec<TrackedStatementRenewalTarget>, StatementRenewalError> {
 	let mut input = blob;
-	let entries = Vec::<TrackedStatementRenewalTarget>::decode(&mut input)
-		.map_err(|err| format!("invalid persisted renewal targets: {err}"))?;
+	let entries = Vec::<TrackedStatementRenewalTarget>::decode(&mut input)?;
 	if !input.is_empty() {
-		return Err("invalid persisted renewal targets: trailing bytes".to_string());
+		return Err(StatementRenewalError::TrailingLedgerBytes);
 	}
 	Ok(entries)
 }
@@ -144,7 +203,12 @@ pub async fn inspection_labels(
 		.read_core_storage(CoreStorageKey::StatementRenewalTargets)
 		.await
 		.map_err(|err| format!("renewal ledger read failed: {}", err.reason))?;
-	let entries = bytes.as_deref().map(decode_entries).transpose()?.unwrap_or_default();
+	let entries = bytes
+		.as_deref()
+		.map(decode_entries)
+		.transpose()
+		.map_err(|error| error.to_string())?
+		.unwrap_or_default();
 	let mut labels = crate::runtime::statement_allowance::inspection::AccountLabels::new();
 	for entry in entries {
 		if entry.owner.is_some_and(|recorded| recorded != owner) {

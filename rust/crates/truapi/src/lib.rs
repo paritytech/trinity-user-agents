@@ -149,7 +149,8 @@ pub mod latest {
 			MediaParticipantSnapshot, MediaParticipantState, MediaPeer, MediaPictureKind,
 			MediaPictureSource, MediaPlacement, MediaRect, MediaRemoteState, MediaResource,
 			MediaRuntimeLimits, MediaSessionId, MediaSessionSnapshot, MediaSessionState,
-			MediaSurface, MediaTrackState, MediaViewport, Modifier, NotificationActivation,
+			MediaSurface, MediaTrackState, MediaViewport, Modifier, NFT_PURSE_MAX_NAME_BYTES,
+			NftPurseId, NftPurseOwner, NftPursePurse, NotificationActivation,
 			NotificationActivationAcknowledgeRequest, NotificationActivations,
 			OperationStartedResult, PaymentTopUpSource, PocketCard, ProductAccount,
 			ProductAccountId, ProductProofContext, RawPayload, ReceivingEvent, ReceivingEventKind,
@@ -518,6 +519,21 @@ pub mod latest {
 	/// Failure following a payment top-up.
 	pub type HostPaymentTopUpStatusSubscribeError =
 		LatestOf<versioned::payment::HostPaymentTopUpStatusSubscribeError>;
+	/// NFT purse creation request.
+	pub type HostNftPurseCreatePurseRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseCreatePurseRequest>;
+	/// Created NFT purse.
+	pub type HostNftPurseCreatePurseResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseCreatePurseResponse>;
+	/// NFT purse listing request.
+	pub type HostNftPurseListPursesRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseListPursesRequest>;
+	/// An owner's NFT purses.
+	pub type HostNftPurseListPursesResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseListPursesResponse>;
+	/// NFT purse listing failure.
+	pub type HostNftPurseListPursesError =
+		LatestOf<versioned::nft_purse::HostNftPurseListPursesError>;
 	/// The calling product's Pocket cards.
 	pub type HostPocketListSubscribeItem = LatestOf<versioned::pocket::HostPocketListSubscribeItem>;
 	/// Pocket card removal request.
@@ -987,6 +1003,14 @@ pub mod store;
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub mod durable;
+
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+mod nft;
+
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+mod nft_purse;
 
 #[cfg(feature = "runtime")]
 pub use truapi_core::TrUApiCore;

@@ -18,6 +18,7 @@ public enum ProductPermission: Equatable, Sendable {
     public static let chatAuthorityTypeName = "chat_authority"
     public static let profileDisclosureTypeName = "profile_disclosure"
     public static let statementStoreAllowanceTypeName = "statement_store_allowance"
+    public static let nftPurseReadTypeName = "nft_purse_read"
 
     case deviceCapability(DeviceCapabilityType)
     case networkAccess(domain: String)
@@ -37,6 +38,8 @@ public enum ProductPermission: Equatable, Sendable {
     case profileDisclosure
     /// `nil` is the legacy allowance account, distinct from every product selector.
     case statementStoreAllowance(derivationIndex: ProductAccountSelector?)
+    /// Reading the NFT purses of another owner: a product, or the user's own account when `nil`.
+    case nftPurseRead(ownerProductId: String?)
 
     /// Whether this is one of the core's `RemotePermission` cases: a product's
     /// own outbound access.
@@ -51,8 +54,14 @@ public enum ProductPermission: Equatable, Sendable {
         case .networkAccess, .networkAccessBundle, .webRtcAccess, .chainSubmitAccess, .preimageSubmitAccess,
              .statementSubmitAccess:
             true
-        case .deviceCapability, .accountAccess, .balanceAccess, .userIdentityAccess,
-             .chatAuthority, .profileDisclosure, .statementStoreAllowance:
+        case .deviceCapability,
+             .accountAccess,
+             .balanceAccess,
+             .userIdentityAccess,
+             .chatAuthority,
+             .profileDisclosure,
+             .statementStoreAllowance,
+             .nftPurseRead:
             false
         }
     }
@@ -93,6 +102,8 @@ public enum ProductPermission: Equatable, Sendable {
             Self.profileDisclosureTypeName
         case .statementStoreAllowance:
             Self.statementStoreAllowanceTypeName
+        case .nftPurseRead:
+            Self.nftPurseReadTypeName
         }
     }
 
@@ -115,6 +126,8 @@ public enum ProductPermission: Equatable, Sendable {
             case let .raw(bytes):
                 "raw:\(bytes.base64EncodedString())"
             }
+        case let .nftPurseRead(ownerProductId):
+            ownerProductId ?? ""
         case .balanceAccess,
              .webRtcAccess,
              .chainSubmitAccess,
@@ -170,6 +183,8 @@ public enum ProductPermission: Equatable, Sendable {
                 return .statementStoreAllowance(derivationIndex: .raw(bytes))
             }
             return nil
+        case nftPurseReadTypeName:
+            return .nftPurseRead(ownerProductId: key.isEmpty ? nil : key)
         default:
             return nil
         }

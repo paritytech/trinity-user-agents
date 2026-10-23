@@ -105,7 +105,7 @@ Success is not merely “the product displayed a message.” We need to know whe
 ## Source references
 
 - [iOS startup](../hosts/ios/polkadot-app/Common/Services/ServiceCoordinator.swift): starts native Chat and product workers independently.
-- [Host device state](../rust/crates/truapi-server/src/runtime/native_chat/actor.rs): product-specific device construction and legacy Rust migration.
+- [Host device state](../rust/crates/truapi/src/runtime/native_chat/actor.rs): product-specific device construction and legacy Rust migration.
 - [Chat and main-purse design](rfcs/native-chat-main-purse.md): product/Host ownership and native wallet custody.
 - [iOS CI workflow](../.github/workflows/ios-pr.yml): preview build, Firebase configuration, artifact naming, and installation instructions.
 - [Host build targets](../Makefile): `ios-bootstrap` and simulator/device build options.

@@ -69,15 +69,19 @@ committed to diff against, what it gates is that bindgen still produces a
 binding for every UniFFI-exposed type. It runs on Linux, so it never compiles
 Swift.
 
-The hand-written conformers in `TrUAPIHost.swift` and `Tests/` are covered by the `iOS package (swift compile)` job
-instead, which builds a simulator-only debug XCFramework from the pull request source and runs
-`xcodebuild build-for-testing`. It is path-filtered to pull requests touching `ios/`, `Package.swift`, the `Makefile`,
-`js/container/`, or any of the crates the bindings are generated from (`truapi`, `truapi-platform`, `truapi-server`,
-`truapi-provider`); the filter has to name them explicitly, since a protocol change no longer shows up as an `ios/`
-diff. Nothing compiles `TrUAPIHost.kt` or the embedding apps.
+The hand-written conformers in `TrUAPIHost.swift` and `Tests/` are covered by
+the `iOS package (Swift + WebKit)` job instead, which builds a simulator-only
+debug XCFramework from the pull request source, compiles the package tests,
+and runs the network permission suite in WKWebView. It is path-filtered to pull requests touching `ios/`, `Package.swift`, the
+`Makefile`, `js/container/`, or any of the crates the bindings are generated
+from (`truapi`, `truapi-provider`); the
+filter has to name them explicitly, since a protocol change no longer shows up
+as an `ios/` diff.
+The Android host job compiles `TrUAPIHost.kt` against generated bindings;
+the separate iOS CI workflow builds and tests the embedding app.
 
 Run `rebuild.sh` after changing anything host-visible — the `NativeTrUApiHostRuntime` or `NativeProductExecution`
-methods, `HostCallbacks`, the native mirror types in `rust/crates/truapi-server/src/native*`, or `js/container/src` — to
+methods, `HostCallbacks`, the native mirror types in `rust/crates/truapi/src/native*`, or `js/container/src` — to
 refresh your local build outputs. Nothing to commit: CI regenerates them. To publish from a release PR, add
 `@parity/ios-host <version>` to its `release:` title. After the release commit passes CI, the release workflow rebuilds
 and simulator-tests the XCFramework on macOS, uploads it, cuts the `<version>` tag, and opens the `Package.swift`
@@ -836,14 +840,14 @@ Apple-only tests cannot run on Linux.
 
 `./scripts/rebuild.sh` orchestrates everything; the underlying pieces, should you need one in isolation:
 
-- **xcframework** — `make xcframework` (repo root) builds `truapi-server` for `aarch64-apple-ios` and
+- **xcframework** — `make xcframework` (repo root) builds `truapi` for `aarch64-apple-ios` and
   `aarch64-apple-ios-sim` and bundles `target/truapi_server.xcframework`; the script copies it into `Binaries/` and
   strips the per-slice `module.modulemap` (module resolution comes from the `systemLibrary` target; the slice copy
   collides with other xcframeworks in Xcode's flat include dir).
 - **bindings** — `make uniffi` (run automatically by `make xcframework`) emits the Swift bindings into
   `target/uniffi-swift-out/` via the workspace `uniffi-bindgen-cli`; `scripts/sync-bindings.sh` copies them into
-  `Sources/TrUAPIHost/truapi_server.swift` and `Sources/truapi_serverFFI/include/`, renaming the emitted
-  `truapi_serverFFI.modulemap` to `module.modulemap` so the SwiftPM `systemLibrary` target picks it up. `rebuild.sh`
+  `Sources/TrUAPIHost/truapi.swift` and `Sources/truapiFFI/include/`, renaming the emitted
+  `truapiFFI.modulemap` to `module.modulemap` so the SwiftPM `systemLibrary` target picks it up. `rebuild.sh`
   calls it, and so does the `iOS package (swift compile)` job, which is what puts Swift sources into the package before
   `xcodebuild` runs.
 - **container** — `npm run build` in `js/container/` (repo root) bundles `src/index.ts` into

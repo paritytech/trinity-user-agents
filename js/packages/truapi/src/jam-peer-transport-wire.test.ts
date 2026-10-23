@@ -12,7 +12,7 @@ import {
 } from "./generated/wire-table.js";
 import { decodeWireMessage, encodeWireMessage } from "./transport.js";
 
-// The same bytes `rust/crates/truapi-server/tests/jam_peer_transport_contract.rs`
+// The same bytes `rust/crates/truapi/tests/jam_peer_transport_contract.rs`
 // pins for the Rust SCALE codec: both sides must agree on the frozen V1 layout.
 const GENESIS = "0x353963b9cedfe4ea22038081052a5c151b06b55a4a026a97522cd0320cabf49f" as const;
 const LOOPBACK_V4_MAPPED = "0x00000000000000000000ffff7f000001" as const;

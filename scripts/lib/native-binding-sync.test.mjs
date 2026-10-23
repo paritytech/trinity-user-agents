@@ -50,11 +50,18 @@ test("host binding sync removes obsolete namespaces without deleting hand-writte
 
     execFileSync("sh", [script], { cwd: workspace });
 
-    assert.deepEqual(readdirSync(sources).sort(), ["TrUAPIHost", "truapiFFI"]);
+    assert.deepEqual(readdirSync(sources).sort(), [
+      "TrUAPIHost",
+      "truapiFFI",
+      "truapi_platformFFI",
+      "truapi_serverFFI",
+    ]);
     assert.deepEqual(readdirSync(hostSources).sort(), [
       "Resources",
       "TrUAPIHost.swift",
       "truapi.swift",
+      "truapi_platform.swift",
+      "truapi_server.swift",
     ]);
     assert.equal(
       readFileSync(join(hostSources, "TrUAPIHost.swift"), "utf8"),

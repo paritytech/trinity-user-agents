@@ -14,6 +14,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionStatus
+import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.compose.ownerName
 import io.paritytech.polkadotapp.common.R as RCommon
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.NativeMediaPermissionStatus
 import uniffi.truapi.HostDevicePermissionRequest
@@ -85,6 +86,7 @@ private fun ProductPermission.displayName(): String {
             }
             stringResource(RCommon.string.product_permission_type_allowance, account)
         }
+        is ProductPermission.NftPurseRead -> ownerName()
         is ProductPermission.RemotePermission.NetworkAccess -> domain
         is ProductPermission.RemotePermission.NetworkAccessSet -> domains.joinToString(", ")
         ProductPermission.RemotePermission.WebRtcAccess -> stringResource(RCommon.string.product_permission_type_webrtc)
@@ -128,6 +130,7 @@ private fun ProductPermission.descriptionRes(): Int = when (this) {
     ProductPermission.ChatAuthority -> RCommon.string.product_permission_chat_authority_description
     ProductPermission.ProfileDisclosure -> RCommon.string.product_permission_profile_disclosure_description
     is ProductPermission.StatementStoreAllowance -> RCommon.string.product_permission_allowance_description
+    is ProductPermission.NftPurseRead -> RCommon.string.product_permission_type_nft_purse_read_description
     is ProductPermission.RemotePermission.NetworkAccess -> RCommon.string.product_permission_type_network_access
     is ProductPermission.RemotePermission.NetworkAccessSet -> RCommon.string.product_permission_type_network_access
     ProductPermission.RemotePermission.WebRtcAccess,

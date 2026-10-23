@@ -26,6 +26,7 @@ struct PGASAccountProvisionerTests {
         allowance.balances = balances
         provisioner = PGASAccountProvisioner(
             allowanceManager: allowance,
+            domain: .coinage,
             balanceProvider: balances,
             issueDiagnostics: .make(flow: "pgas-allowance", reporter: NoopIssueReporter()),
             claimTimeout: Self.claimTimeout,
@@ -133,7 +134,8 @@ private final class FakeAllowanceManager: AllowanceManaging, @unchecked Sendable
     func allocate(
         accountId: AccountId,
         policy: OnExistingAllowancePolicy,
-        priority _: AllowanceRecord.Priority
+        priority _: AllowanceRecord.Priority,
+        domain _: AllowanceRecord.Domain
     ) async throws {
         claims.append((accountId, policy))
         if let error { throw error }

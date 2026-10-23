@@ -81,7 +81,8 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
              .userIdentityAccess,
              .chatAuthority,
              .profileDisclosure,
-             .statementStoreAllowance:
+             .statementStoreAllowance,
+             .nftPurseRead:
             try await remoteHandler.request(productId: productId, permission: permission)
         }
     }
@@ -173,7 +174,8 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
              .userIdentityAccess,
              .chatAuthority,
              .profileDisclosure,
-             .statementStoreAllowance:
+             .statementStoreAllowance,
+             .nftPurseRead:
             try await remoteHandler.isGranted(productId: productId, permission: permission)
         }
     }

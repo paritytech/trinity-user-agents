@@ -103,6 +103,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.Whitel
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.AccountAccessPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.BalanceAccessPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.DeviceCapabilityPermissionHandler
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.NftPurseReadPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.ProductPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.RemotePermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.UserIdentityAccessPermissionHandler
@@ -329,6 +330,11 @@ internal interface ProductsModule {
     fun bindUserIdentityAccessPermissionHandler(
         impl: UserIdentityAccessPermissionHandler,
     ): ProductPermissionHandler<ProductPermission.UserIdentityAccess>
+
+    @Binds
+    fun bindNftPurseReadPermissionHandler(
+        impl: NftPurseReadPermissionHandler,
+    ): ProductPermissionHandler<ProductPermission.NftPurseRead>
 
     @Binds
     @Singleton

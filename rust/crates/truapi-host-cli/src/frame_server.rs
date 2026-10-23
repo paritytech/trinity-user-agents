@@ -39,7 +39,9 @@ use tracing::{debug, warn};
 use crate::bootstrap;
 use truapi::{
 	ChannelId, DebugSink, FrameSink, PairingHostRuntime, ProductContext, ProductRuntime,
-	ProductRuntimeError, SigningHostRuntime, platform::ProductExecutionKind,
+	ProductRuntimeError, SigningHostRuntime,
+	latest::{ProductId, ProductIdError},
+	platform::ProductExecutionKind,
 };
 
 /// Pause after a failed `accept()` before trying again.
@@ -72,24 +74,35 @@ pub struct ProductSelection {
 	execution_kind: ProductExecutionKind,
 }
 
+/// The requested product does not identify a supported execution context.
+#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
+#[display("invalid product id")]
+pub struct ProductSelectionError(ProductIdError);
+
 impl ProductSelection {
 	/// Validate and normalize the initial product id.
-	pub fn new(product_id: String, execution_kind: ProductExecutionKind) -> Result<Arc<Self>> {
-		let product = ProductContext::new_with_execution(product_id, execution_kind)
-			.map_err(|error| anyhow::anyhow!("invalid product id: {error}"))?;
+	pub fn new(
+		product_id: String,
+		execution_kind: ProductExecutionKind,
+	) -> Result<Arc<Self>, ProductSelectionError> {
+		let product_id = product_id.parse::<ProductId>()?;
+		let product = ProductContext::new_with_execution(product_id.to_string(), execution_kind)
+			.expect("a parsed product id is a valid product context");
 		let (current, _) = watch::channel(product);
 		Ok(Arc::new(Self { current, execution_kind }))
 	}
 
 	/// Return the normalized current product id.
 	pub fn current(&self) -> String {
-		self.current.borrow().product_id.clone()
+		self.current.borrow().product_id.to_string()
 	}
 
 	/// Select a validated product, returning whether the selection changed.
 	pub fn select(&self, product_id: String) -> Result<bool> {
-		let product = ProductContext::new_with_execution(product_id, self.execution_kind)
-			.map_err(|error| anyhow::anyhow!("invalid product id: {error}"))?;
+		let product_id = product_id.parse::<ProductId>()?;
+		let product =
+			ProductContext::new_with_execution(product_id.to_string(), self.execution_kind)
+				.expect("a parsed product id is a valid product context");
 		Ok(self.current.send_if_modified(|current| {
 			if current == &product {
 				false
@@ -1089,7 +1102,17 @@ mod tests {
 		assert!(product.select("localhost:3000".to_string())?);
 		assert_eq!(product.current(), "localhost:3000");
 		assert!(!product.select("LOCALHOST:3000".to_string())?);
-		assert!(product.select("example.com".to_string()).is_err());
+		let error = ProductSelection::new("example.com".to_string(), ProductExecutionKind::App)
+			.err()
+			.expect("public DNS names are not product ids");
+		assert_eq!(
+			std::error::Error::source(&error).and_then(|source| source.downcast_ref()),
+			Some(&ProductIdError::Invalid { product_id: "example.com".to_string() })
+		);
+		assert_eq!(
+			format!("{:#}", anyhow::Error::new(error)),
+			"invalid product id: product_id must be a dotNS or localhost product identifier, got \"example.com\""
+		);
 		Ok(())
 	}
 

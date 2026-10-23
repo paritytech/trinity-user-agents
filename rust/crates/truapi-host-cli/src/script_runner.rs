@@ -496,7 +496,7 @@ console.log(JSON.stringify({
 				.as_std()
 				.get_envs()
 				.find_map(|(key, value)| { (key == "TRUAPI_SCRIPT_CWD").then_some(value) }),
-			Some(Some(project.path().as_os_str()))
+			Some(Some(fs::canonicalize(project.path())?.as_os_str()))
 		);
 		Ok(())
 	}

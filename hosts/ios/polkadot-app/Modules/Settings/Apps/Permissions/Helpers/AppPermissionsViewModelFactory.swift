@@ -3,7 +3,10 @@ import PolkadotUI
 import Products
 
 protocol AppPermissionsViewModelMaking {
-    func createItems(from grants: [ProductPermissionGrant]) -> [AppPermissionsViewLayout.Item]
+    func createItems(
+        from grants: [ProductPermissionGrant],
+        pendingDeletionIds: Set<String>
+    ) -> [AppPermissionsViewLayout.Item]
 }
 
 final class AppPermissionsViewModelFactory {
@@ -11,75 +14,102 @@ final class AppPermissionsViewModelFactory {
 }
 
 extension AppPermissionsViewModelFactory: AppPermissionsViewModelMaking {
-    func createItems(from grants: [ProductPermissionGrant]) -> [AppPermissionsViewLayout.Item] {
+    func createItems(
+        from grants: [ProductPermissionGrant],
+        pendingDeletionIds: Set<String>
+    ) -> [AppPermissionsViewLayout.Item] {
         grants.map { grant in
-            AppPermissionsViewLayout.Item(
+            let display = displayInfo(for: grant.permission)
+            let isOn = !pendingDeletionIds.contains(grant.identifier)
+            return AppPermissionsViewLayout.Item(
                 id: grant.identifier,
-                title: grant.permission.settingsTitle,
-                description: grant.permission.permissionDescription,
-                isOn: true
+                title: display.title,
+                description: display.description,
+                isOn: isOn
             )
         }
     }
 }
 
-/// Shared descriptions keep consent prompts and the revocation screen in agreement.
-extension ProductPermission {
-    var permissionDescription: String {
-        switch self {
-        case let .deviceCapability(capability): capabilityDescription(capability)
+private extension AppPermissionsViewModelFactory {
+    typealias DisplayInfo = (title: String, description: String)
+
+    func displayInfo(for permission: ProductPermission) -> DisplayInfo {
+        switch permission {
+        case let .deviceCapability(capability):
+            (capabilityTitle(capability), capabilityDescription(capability))
         case let .networkAccess(domain):
-            String(localized: .Products.permissionBodyNetworkAccess(domain: domain))
+            (
+                String(localized: .Products.appPermissionNetworkTitle),
+                String(localized: .Products.permissionBodyNetworkAccess(domain: domain))
+            )
         case let .networkAccessBundle(domains):
-            String(localized: .Products.permissionBodyNetworkAccess(domain: domains.joined(separator: ", ")))
+            (
+                String(localized: .Products.appPermissionNetworkTitle),
+                String(localized: .Products.permissionBodyNetworkAccess(domain: domains.joined(separator: ", ")))
+            )
         case let .accountAccess(targetProductId):
-            String(localized: .Products.permissionBodyAccountAccess(targetProductId: targetProductId))
-        case .balanceAccess: String(localized: .Products.permissionBodyBalanceAccess)
-        case .webRtcAccess: String(localized: .Products.permissionBodyWebRtc)
-        case .chainSubmitAccess: String(localized: .Products.permissionBodyChainSubmit)
-        case .preimageSubmitAccess: String(localized: .Products.permissionBodyPreimageSubmit)
-        case .statementSubmitAccess: String(localized: .Products.permissionBodyStatementSubmit)
-        case .userIdentityAccess: String(localized: .Products.permissionBodyUserIdentityAccess)
-        case .chatAuthority: String(localized: .Products.permissionBodyChatAuthority)
+            (
+                String(localized: .Products.appPermissionAccountTitle),
+                String(
+                    localized: .Products.permissionBodyAccountAccess(
+                        targetProductId: targetProductId
+                    )
+                )
+            )
+        case .balanceAccess:
+            (
+                String(localized: .Products.appPermissionBalanceTitle),
+                String(localized: .Products.permissionBodyBalanceAccess)
+            )
+        case .webRtcAccess:
+            (
+                String(localized: .Products.appPermissionWebRtcTitle),
+                String(localized: .Products.permissionBodyWebRtc)
+            )
+        case .chainSubmitAccess:
+            (
+                String(localized: .Products.appPermissionChainSubmitTitle),
+                String(localized: .Products.permissionBodyChainSubmit)
+            )
+        case .preimageSubmitAccess:
+            (
+                String(localized: .Products.appPermissionPreimageSubmitTitle),
+                String(localized: .Products.permissionBodyPreimageSubmit)
+            )
+        case .statementSubmitAccess:
+            (
+                String(localized: .Products.appPermissionStatementSubmitTitle),
+                String(localized: .Products.permissionBodyStatementSubmit)
+            )
+        case .userIdentityAccess:
+            (
+                String(localized: .Products.appPermissionUserIdentityTitle),
+                String(localized: .Products.permissionBodyUserIdentityAccess)
+            )
+        case .chatAuthority:
+            (
+                String(localized: .Products.appPermissionChatAuthorityTitle),
+                String(localized: .Products.permissionBodyChatAuthority)
+            )
+        case .profileDisclosure:
+            (
+                String(localized: .Products.appPermissionProfileDisclosureTitle),
+                String(localized: .Products.permissionBodyProfileDisclosure)
+            )
         case let .statementStoreAllowance(derivationIndex):
-            ProductPermission.statementStoreAllowanceDescription(derivationIndex: derivationIndex)
+            (
+                String(localized: .Products.appPermissionStatementStoreAllowanceTitle),
+                ProductPermission.statementStoreAllowanceDescription(derivationIndex: derivationIndex)
+            )
+        case let .nftPurseRead(ownerProductId):
+            (
+                String(localized: .Products.appPermissionNftPursesTitle),
+                NftPurseReadCopy.description(ownerProductId: ownerProductId)
+            )
         }
     }
 
-    var permissionIconSystemName: String {
-        switch self {
-        case let .deviceCapability(capability): capabilityIcon(capability)
-        case .networkAccess, .networkAccessBundle: "globe"
-        case .accountAccess: "person.crop.circle"
-        case .balanceAccess: "dollarsign.circle.fill"
-        case .webRtcAccess: "video.fill"
-        case .chainSubmitAccess: "link"
-        case .preimageSubmitAccess: "doc.text"
-        case .statementSubmitAccess: "text.bubble"
-        case .userIdentityAccess: "person.text.rectangle"
-        case .chatAuthority: "message.badge.shield"
-        case .statementStoreAllowance: "externaldrive.badge.plus"
-        }
-    }
-
-    var settingsTitle: String {
-        switch self {
-        case let .deviceCapability(capability): capabilityTitle(capability)
-        case .networkAccess, .networkAccessBundle: String(localized: .Products.appPermissionNetworkTitle)
-        case .accountAccess: String(localized: .Products.appPermissionAccountTitle)
-        case .balanceAccess: String(localized: .Products.appPermissionBalanceTitle)
-        case .webRtcAccess: String(localized: .Products.appPermissionWebRtcTitle)
-        case .chainSubmitAccess: String(localized: .Products.appPermissionChainSubmitTitle)
-        case .preimageSubmitAccess: String(localized: .Products.appPermissionPreimageSubmitTitle)
-        case .statementSubmitAccess: String(localized: .Products.appPermissionStatementSubmitTitle)
-        case .userIdentityAccess: String(localized: .Products.appPermissionUserIdentityTitle)
-        case .chatAuthority: String(localized: .Products.appPermissionChatAuthorityTitle)
-        case .statementStoreAllowance: String(localized: .Products.appPermissionStatementStoreAllowanceTitle)
-        }
-    }
-}
-
-private extension ProductPermission {
     func capabilityTitle(_ capability: DeviceCapabilityType) -> String {
         switch capability {
         case .notifications: String(localized: .Products.appPermissionCapabilityNotifications)
@@ -109,34 +139,6 @@ private extension ProductPermission {
         case .motion: String(localized: .Products.permissionCapabilityDescriptionMotion)
         }
     }
-
-    func capabilityIcon(_ capability: DeviceCapabilityType) -> String {
-        switch capability {
-        case .notifications: "bell.fill"
-        case .camera: "camera.fill"
-        case .microphone: "mic.fill"
-        case .bluetooth: "antenna.radiowaves.left.and.right"
-        case .nfc: "wave.3.right"
-        case .location: "location.fill"
-        case .clipboard: "doc.on.clipboard.fill"
-        case .openUrl: "safari.fill"
-        case .biometrics: "faceid"
-        }
-    }
-
-    func capabilityIcon(_ capability: DeviceCapabilityType) -> String {
-        switch capability {
-        case .notifications: "bell.fill"
-        case .camera: "camera.fill"
-        case .microphone: "mic.fill"
-        case .bluetooth: "antenna.radiowaves.left.and.right"
-        case .nfc: "wave.3.right"
-        case .location: "location.fill"
-        case .clipboard: "doc.on.clipboard.fill"
-        case .openUrl: "safari.fill"
-        case .biometrics: "faceid"
-        }
-    }
 }
 
 extension ProductPermission {
@@ -150,20 +152,6 @@ extension ProductPermission {
             String(localized: .Products.permissionBodyStatementStoreAllowanceRaw(
                 selector: "0x" + bytes.map { String(format: "%02x", $0) }.joined()
             ))
-        }
-    }
-
-    func capabilityIcon(_ capability: DeviceCapabilityType) -> String {
-        switch capability {
-        case .notifications: "bell.fill"
-        case .camera: "camera.fill"
-        case .microphone: "mic.fill"
-        case .bluetooth: "antenna.radiowaves.left.and.right"
-        case .nfc: "wave.3.right"
-        case .location: "location.fill"
-        case .clipboard: "doc.on.clipboard.fill"
-        case .openUrl: "safari.fill"
-        case .biometrics: "faceid"
         }
     }
 }

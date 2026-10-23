@@ -3,7 +3,7 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-cli-update headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run
+.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-trusted-device-permission e2e-chain-head-failure-cause e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run e2e-funding-cli
 
 CARGO ?= cargo
 # The dated nightly CI runs; see nightly-toolchain.
@@ -162,8 +162,8 @@ endif
 UNIFFI_SWIFT_TMP := target/uniffi-swift-out
 PROVIDER_SWIFT_TMP := target/uniffi-provider-swift-out
 
-uniffi: check-generated ## Generate Swift bindings from the truapi-server cdylib into target/uniffi-swift-out (consumed by ios/truapi-host/scripts/rebuild.sh).
-	$(CARGO) build -p truapi-server --profile codegen --features ws-bridge
+uniffi: check-generated ## Generate Swift bindings from the truapi cdylib into target/uniffi-swift-out (consumed by ios/truapi-host/scripts/rebuild.sh).
+	$(CARGO) rustc -p truapi --profile codegen --lib --crate-type cdylib
 	rm -rf $(UNIFFI_SWIFT_TMP)
 	mkdir -p $(UNIFFI_SWIFT_TMP)
 	$(CARGO) run -p uniffi-bindgen-cli -- generate \
@@ -480,14 +480,23 @@ e2e-chat-cli: ## Run the Chat content-screening battery against a chat signing-h
 e2e-pocket-cli: ## Run the Pocket protocol battery against a Pocket signing-host CLI.
 	scripts/battery.sh --pocket-host
 
+e2e-funding-cli: ## Run the funding battery against a scripted funding signing-host CLI.
+	scripts/battery.sh --funding-host
+
 CROSS_PRODUCT_SCENARIOS := $(patsubst scripts/cross-product-%-e2e.sh,%,$(wildcard scripts/cross-product-*-e2e.sh))
 
 e2e-cross-product: ## One product uses another's storage, keys or accounts on the signing-host CLI. Pick a scenario with SCENARIO=<name>.
 	@test -x scripts/cross-product-$(SCENARIO)-e2e.sh || { echo "SCENARIO must be one of: $(CROSS_PRODUCT_SCENARIOS)" >&2; exit 1; }
 	scripts/cross-product-$(SCENARIO)-e2e.sh
 
-e2e-preimage-submit-prompt: ## Upload preimages under a PreimageSubmit grant, retaining one size review per upload.
+e2e-preimage-submit-prompt: ## Upload preimages under a PreimageSubmit grant on the signing-host CLI with no per-upload confirmation.
 	scripts/preimage-submit-prompt-e2e.sh
+
+e2e-trusted-device-permission: ## Send a notification as a trusted product on the signing-host CLI with no device permission prompt.
+	scripts/trusted-device-permission-e2e.sh
+
+e2e-chain-head-failure-cause: ## Cut the chain connection under a chain-head call on the signing-host CLI; both failures must name their cause.
+	scripts/chain-head-failure-cause-e2e.sh
 
 e2e-cli-update: cli-dist ## Install the packaged truapi-host from a fake release and self-update it, with no network.
 	node scripts/e2e-cli-update.mjs
@@ -544,9 +553,8 @@ xcframework: uniffi ## Build truapi_server.xcframework for iOS device + simulato
 	done
 	rm -rf $(XCFRAMEWORK_OUT) $(XCFRAMEWORK_HEADERS)
 	mkdir -p $(XCFRAMEWORK_HEADERS)
-	cp $(UNIFFI_SWIFT_TMP)/truapiFFI.h $(UNIFFI_SWIFT_TMP)/truapi_platformFFI.h \
-		$(UNIFFI_SWIFT_TMP)/truapi_serverFFI.h $(XCFRAMEWORK_HEADERS)/
-	cp $(UNIFFI_SWIFT_TMP)/truapi_serverFFI.modulemap $(XCFRAMEWORK_HEADERS)/module.modulemap
+	cp $(UNIFFI_SWIFT_TMP)/truapiFFI.h $(XCFRAMEWORK_HEADERS)/
+	cp $(UNIFFI_SWIFT_TMP)/truapiFFI.modulemap $(XCFRAMEWORK_HEADERS)/module.modulemap
 	slices=""; \
 	for target in $(XCFRAMEWORK_TARGETS); do \
 		slices="$$slices -library target/$$target/$(XCFRAMEWORK_PROFILE)/libtruapi.a \

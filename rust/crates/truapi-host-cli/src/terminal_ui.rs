@@ -20,7 +20,7 @@ use crossterm::{
 	terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures_util::StreamExt;
-use qrcode::{Color as QrColor, QrCode};
+use qrcode::{Color as QrColor, QrCode, render::unicode::Dense1x2};
 use ratatui::{
 	Terminal,
 	backend::CrosstermBackend,
@@ -199,6 +199,12 @@ impl PairingQr {
 	}
 }
 
+/// `text` as terminal QR rows, with a quiet zone.
+pub fn qr_rows(text: &str) -> qrcode::types::QrResult<Vec<String>> {
+	let drawn = QrCode::new(text.as_bytes())?.render::<Dense1x2>().quiet_zone(true).build();
+	Ok(drawn.lines().map(str::to_owned).collect())
+}
+
 /// Stable lifecycle events with separate machine and interactive presentations.
 #[derive(Debug, Clone)]
 pub enum SystemEvent {
@@ -270,6 +276,10 @@ pub enum SystemEvent {
 	},
 	NotificationCancelled {
 		id: u32,
+	},
+	/// A product asked the host to open a destination (`navigate_to`).
+	NavigationRequested {
+		url: String,
 	},
 	PairingDeeplink {
 		url: String,
@@ -1698,7 +1708,7 @@ impl App {
                     if auto_accept {
                         "Non-payment confirmations are approved automatically; main-purse payments require a terminal review and are denied here"
                     } else {
-                        "Confirmations will be denied: there is no terminal to prompt on, so pass --auto-accept"
+                        "Confirmations will be denied: there is no terminal to prompt on. On a test network preset, pass --auto-accept"
                     }
                 )),
             ),
@@ -1859,6 +1869,11 @@ impl App {
                 format!("Notification #{id} cancelled"),
                 None,
             ),
+			SystemEvent::NavigationRequested { url } => self.notice(
+				NoticeTone::Info,
+				"Navigation requested".to_string(),
+				Some(url),
+			),
             SystemEvent::PairingDeeplink { url } => {
                 self.start_activity(
                     "pairing".to_string(),

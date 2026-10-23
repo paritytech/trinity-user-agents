@@ -401,7 +401,7 @@ fn handle_sso_remote_statement_page<T>(
 					let Some(matched) = matches(message) else {
 						continue;
 					};
-					let response = matched.map_err(SsoRemoteResponseError::Failure)?;
+					let response = matched?;
 					if *request_accepted {
 						return Ok(Some(response));
 					}

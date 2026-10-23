@@ -128,11 +128,11 @@ pub fn sign_backend_challenge(
 }
 
 /// Error while building lite-person registration parameters.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, derive_more::From)]
 pub enum LiteRegistrationError {
 	/// RFC-0022 `uid.<suffix>` identity-account derivation failed.
 	#[error("uid identity derivation failed: {0}")]
-	CandidateDerivation(#[from] ProductAccountError),
+	CandidateDerivation(#[source] ProductAccountError),
 	/// Ring-VRF proof-of-ownership failed.
 	#[error("ring-VRF proof-of-ownership failed: {0}")]
 	ProofOfOwnership(String),

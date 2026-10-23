@@ -6637,6 +6637,7 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
+ "trinity-stack",
  "truapi",
  "truapi-provider",
  "unicode-width 0.2.2",

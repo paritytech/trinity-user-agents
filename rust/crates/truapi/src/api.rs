@@ -13,6 +13,7 @@ pub mod jam_peer_transport;
 pub mod local_storage;
 pub mod locale;
 pub mod media;
+pub mod nft_purse;
 pub mod notifications;
 pub mod payment;
 pub mod permissions;
@@ -41,6 +42,7 @@ pub use jam_peer_transport::JamPeerTransport;
 pub use local_storage::LocalStorage;
 pub use locale::Locale;
 pub use media::Media;
+pub use nft_purse::NftPurse;
 pub use notifications::Notifications;
 pub use payment::Payment;
 pub use permissions::Permissions;
@@ -71,6 +73,7 @@ pub trait TrUApi:
 	+ LocalStorage
 	+ Locale
 	+ Media
+	+ NftPurse
 	+ Notifications
 	+ Payment
 	+ Permissions
@@ -104,6 +107,7 @@ impl<T> TrUApi for T where
 		+ LocalStorage
 		+ Locale
 		+ Media
+		+ NftPurse
 		+ Notifications
 		+ Payment
 		+ Permissions

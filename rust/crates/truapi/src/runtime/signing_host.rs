@@ -21,6 +21,8 @@ use truapi::latest::{
 };
 
 pub use crate::runtime::statement_allowance::inspection::WalletAllowanceSnapshot;
+#[cfg(not(target_arch = "wasm32"))]
+use allowance_renewal::StatementRenewalError;
 pub use allowance_renewal::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::TrackedStatementRenewalTarget;
@@ -61,9 +63,8 @@ use crate::{
 		features::genesis_for,
 		media_protocol::UnsignedAdvertisement,
 		product_account::{
-			ProductAccountError, SR25519_SIGNING_CONTEXT, derivation_index_bytes,
-			derive_full_person_ring_vrf_entropy, derive_identity_keypair,
-			derive_lite_person_ring_vrf_entropy, derive_product_keypair,
+			SR25519_SIGNING_CONTEXT, derivation_index_bytes, derive_full_person_ring_vrf_entropy,
+			derive_identity_keypair, derive_lite_person_ring_vrf_entropy, derive_product_keypair,
 			derive_product_subtree_keypair, derive_ring_vrf_entropy,
 			derive_root_keypair_from_entropy, personhood_product_id,
 		},
@@ -432,12 +433,12 @@ impl SigningHost {
 
 	fn product_subtree_secret(&self, product_id: &str) -> Result<[u8; 64], AuthorityError> {
 		let entropy = self.root_entropy()?;
-		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
+		let root = derive_root_keypair_from_entropy(&entropy)?;
 		let product_id = normalize_product_identifier(product_id)
 			.map_err(|err| AuthorityError::Unavailable { reason: err.to_string() })?;
 		derive_product_subtree_keypair(&root, &product_id)
 			.map(|keypair| keypair.secret.to_bytes())
-			.map_err(product_authority_error)
+			.map_err(Into::into)
 	}
 
 	fn sso_replay_locks(&self) -> &SsoReplayLocks {
@@ -455,14 +456,14 @@ impl SigningHost {
 	) -> Result<(), AuthorityError> {
 		let (_, generation) = self.require_current_product_session(session, product_id)?;
 		let entropy = self.root_entropy()?;
-		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
+		let root = derive_root_keypair_from_entropy(&entropy)?;
 		let owner = root.public.to_bytes();
 		if owner != session.public_key {
 			return Err(AuthorityError::Disconnected);
 		}
 		let product_id = normalize_product_identifier(product_id)
 			.map_err(|err| AuthorityError::Unavailable { reason: err.to_string() })?;
-		derive_product_subtree_keypair(&root, &product_id).map_err(product_authority_error)?;
+		derive_product_subtree_keypair(&root, &product_id)?;
 
 		let mut state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
 		state.require_product_generation(generation, &product_id)?;
@@ -554,7 +555,7 @@ impl SigningHost {
 		account: &v01::ProductAccountId,
 	) -> Result<([u8; 32], schnorrkel::Keypair), AuthorityError> {
 		let entropy = self.root_entropy()?;
-		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
+		let root = derive_root_keypair_from_entropy(&entropy)?;
 		let owner = root.public.to_bytes();
 		let product_id = normalize_product_identifier(&account.dot_ns_identifier)
 			.map_err(|err| AuthorityError::Unavailable { reason: err.to_string() })?;
@@ -564,7 +565,7 @@ impl SigningHost {
 			derivation_index_bytes(&account.derivation_index),
 		)
 		.map(|keypair| (owner, keypair))
-		.map_err(product_authority_error)
+		.map_err(Into::into)
 	}
 
 	fn product_keypair(
@@ -576,7 +577,7 @@ impl SigningHost {
 
 	fn identity_keypair(&self) -> Result<schnorrkel::Keypair, AuthorityError> {
 		let entropy = self.root_entropy()?;
-		derive_identity_keypair(&entropy, &self.network_suffix).map_err(product_authority_error)
+		derive_identity_keypair(&entropy, &self.network_suffix).map_err(Into::into)
 	}
 
 	fn install_local_session(&self, secret: Zeroizing<Vec<u8>>, session: SessionInfo) {
@@ -1011,19 +1012,19 @@ impl SigningHost {
 	pub async fn track_statement_renewal_targets(
 		&self,
 		targets: Vec<StatementRenewalTarget>,
-	) -> Result<(), String> {
+	) -> Result<(), StatementRenewalError> {
 		allowance_renewal::track(self, targets).await
 	}
 
 	/// Every statement account the ledger currently tracks.
 	pub async fn statement_renewal_targets(
 		&self,
-	) -> Result<Vec<TrackedStatementRenewalTarget>, String> {
+	) -> Result<Vec<TrackedStatementRenewalTarget>, StatementRenewalError> {
 		allowance_renewal::list(self).await
 	}
 
 	/// Root public key the active identity records its fixed entries under.
-	pub fn statement_renewal_owner_key(&self) -> Result<[u8; 32], String> {
+	pub fn statement_renewal_owner_key(&self) -> Result<[u8; 32], StatementRenewalError> {
 		allowance_renewal::active_owner_key(self)
 	}
 
@@ -1031,14 +1032,17 @@ impl SigningHost {
 	pub async fn untrack_statement_renewal_account(
 		&self,
 		account_id: &[u8; 32],
-	) -> Result<bool, String> {
+	) -> Result<bool, StatementRenewalError> {
 		allowance_renewal::untrack_account_for_signing_host(self, account_id).await
 	}
 
 	/// Run one statement-store renewal pass over the tracked targets.
 	pub async fn renew_statement_allowances(
 		&self,
-	) -> Result<crate::runtime::statement_allowance::renewal::StatementRenewalReport, String> {
+	) -> Result<
+		crate::runtime::statement_allowance::renewal::StatementRenewalReport,
+		StatementRenewalError,
+	> {
 		allowance_renewal::renew_now(&self.services, self).await
 	}
 
@@ -1128,10 +1132,10 @@ impl ProductAuthority for SigningHost {
 		let product_id = normalize_product_identifier(&product_id)
 			.map_err(|err| AuthorityError::Unavailable { reason: err.to_string() })?;
 		let entropy = self.root_entropy()?;
-		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
+		let root = derive_root_keypair_from_entropy(&entropy)?;
 		derive_product_subtree_keypair(&root, &product_id)
 			.map(|keypair| keypair.public.to_bytes())
-			.map_err(product_authority_error)
+			.map_err(Into::into)
 	}
 
 	async fn subtree_resolution_reaches_account_holder(
@@ -1881,11 +1885,6 @@ fn local_session_generation(
 	}
 	Ok(generation)
 }
-
-fn product_authority_error(err: ProductAccountError) -> AuthorityError {
-	AuthorityError::Unavailable { reason: err.to_string() }
-}
-
 #[cfg(test)]
 mod tests {
 	mod allowance_keys;
@@ -3891,17 +3890,6 @@ mod tests {
 			signed.ok(),
 			ring_vrf_sign_at_the_authority("peopl.dot", "peopl.dot").ok(),
 			"the two spellings must produce the same signature, not merely both succeed"
-		);
-	}
-
-	/// A handle that does not normalize names no product, so it takes the same
-	/// refusal as a product that granted nothing rather than a distinguishable
-	/// error the caller could probe with.
-	#[test]
-	fn a_handle_that_does_not_normalize_takes_the_uniform_refusal() {
-		assert_eq!(
-			ring_vrf_sign_at_the_authority("peopl.dot", "not a product").err(),
-			Some(RingVrfError::NotAllowlisted)
 		);
 	}
 

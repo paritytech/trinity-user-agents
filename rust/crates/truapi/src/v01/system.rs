@@ -24,7 +24,7 @@ pub enum HostFeatureSupportedRequest {
 }
 
 /// Error from [`crate::api::System::navigate_to`].
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display, derive_more::From)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Error))]
 pub enum HostNavigateToError {
 	/// The target host is not authorized for outbound access: the user answered
@@ -34,6 +34,7 @@ pub enum HostNavigateToError {
 	PermissionDenied,
 	/// Catch-all.
 	#[display("{reason}")]
+	#[from]
 	Unknown {
 		/// Human-readable failure reason.
 		reason: String,

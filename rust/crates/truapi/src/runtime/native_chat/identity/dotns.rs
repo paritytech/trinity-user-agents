@@ -223,7 +223,7 @@ fn address(bytes: &[u8]) -> Result<[u8; 20], String> {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use gateway::DotnsViewError;
+	use gateway::{DotnsError, DotnsViewError};
 	use std::collections::HashMap;
 
 	struct Registry {
@@ -233,7 +233,7 @@ mod tests {
 
 	#[crate::platform::async_trait]
 	impl DotnsTransport for Registry {
-		async fn storage(&mut self, _: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+		async fn storage(&mut self, _: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
 			unreachable!()
 		}
 		async fn view(&mut self, _: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {

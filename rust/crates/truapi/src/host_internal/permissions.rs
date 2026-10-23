@@ -2759,6 +2759,8 @@ mod tests {
 			RemotePermission::ChainSubmit,
 			RemotePermission::PreimageSubmit,
 			RemotePermission::StatementSubmit,
+			RemotePermission::BalanceAccess,
+			RemotePermission::NftPurseRead { owner: v01::NftPurseOwner::Root },
 		]
 	}
 
@@ -2966,14 +2968,15 @@ mod tests {
 	#[test]
 	fn an_untrusted_product_still_prompts_for_ordinary_remote_permissions() {
 		let storage = MemStorage::default();
-		let prompt = ScriptedPrompt::new(vec![], vec![true; 5]);
+		let permissions = ordinary_remote_permissions();
+		let prompt = ScriptedPrompt::new(vec![], vec![true; permissions.len()]);
 		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
 
-		for permission in ordinary_remote_permissions() {
-			futures::executor::block_on(service.check_or_prompt_remote(remote(permission)))
+		for permission in &permissions {
+			futures::executor::block_on(service.check_or_prompt_remote(remote(permission.clone())))
 				.unwrap();
 		}
-		assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 5);
+		assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), permissions.len());
 	}
 
 	#[test]

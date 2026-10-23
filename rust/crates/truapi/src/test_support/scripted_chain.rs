@@ -20,6 +20,9 @@ use crate::{
 
 type Responder = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
 
+type SenderSlot = Mutex<Option<fut_mpsc::UnboundedSender<String>>>;
+type ReceiverSlot = Mutex<Option<fut_mpsc::UnboundedReceiver<String>>>;
+
 /// Provider that echoes a canned response for every request it sees,
 /// driven by a `respond` closure. The closure receives each json-rpc
 /// request string and returns the response frames the test wants the
@@ -30,9 +33,13 @@ pub struct ScriptedProvider {
 	respond: Responder,
 	/// Every request frame the core sent, in order.
 	pub sent: Arc<Mutex<Vec<String>>>,
-	/// Response stream sender; dropping it ends the connection's responses.
-	pub sender: Arc<Mutex<Option<fut_mpsc::UnboundedSender<String>>>>,
-	receiver: Arc<Mutex<Option<fut_mpsc::UnboundedReceiver<String>>>>,
+	/// First connection's response sender; dropping it ends that connection's
+	/// responses. Later connections each get their own.
+	pub sender: Arc<SenderSlot>,
+	/// Response senders for every connection after the first, in the order
+	/// they were opened.
+	later_senders: Arc<Mutex<Vec<Arc<SenderSlot>>>>,
+	receiver: Arc<ReceiverSlot>,
 	/// How many times the core asked for a connection.
 	pub connect_calls: Arc<AtomicUsize>,
 }
@@ -54,10 +61,12 @@ impl ScriptedProvider {
 		F: Fn(&str) -> Vec<String> + Send + Sync + 'static,
 	{
 		let (tx, rx) = fut_mpsc::unbounded();
+		let first = Arc::new(Mutex::new(Some(tx)));
 		Self {
 			respond: Arc::new(respond),
 			sent: Arc::new(Mutex::new(Vec::new())),
-			sender: Arc::new(Mutex::new(Some(tx))),
+			sender: first,
+			later_senders: Arc::new(Mutex::new(Vec::new())),
 			receiver: Arc::new(Mutex::new(Some(rx))),
 			connect_calls: Arc::new(AtomicUsize::new(0)),
 		}
@@ -103,13 +112,27 @@ impl RuntimeChainProvider for ScriptedProvider {
 		_genesis_hash: Vec<u8>,
 	) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
 		self.connect_calls.fetch_add(1, Ordering::SeqCst);
-		let receiver = self.receiver.lock().unwrap().take();
-		Ok(Arc::new(ScriptedConnection {
-			respond: self.respond.clone(),
-			sent: self.sent.clone(),
-			sender: self.sender.clone(),
-			receiver: Mutex::new(receiver),
-		}))
+		// The first connection takes the channel built with the provider, so
+		// `notification_sender` keeps reaching it. Each later one gets its own.
+		match self.receiver.lock().unwrap().take() {
+			Some(receiver) => Ok(Arc::new(ScriptedConnection {
+				respond: self.respond.clone(),
+				sent: self.sent.clone(),
+				sender: self.sender.clone(),
+				receiver: Mutex::new(Some(receiver)),
+			})),
+			None => {
+				let (tx, rx) = fut_mpsc::unbounded();
+				let slot: Arc<SenderSlot> = Arc::new(Mutex::new(Some(tx)));
+				self.later_senders.lock().unwrap().push(slot.clone());
+				Ok(Arc::new(ScriptedConnection {
+					respond: self.respond.clone(),
+					sent: self.sent.clone(),
+					sender: slot,
+					receiver: Mutex::new(Some(rx)),
+				}))
+			},
+		}
 	}
 }
 
@@ -123,6 +146,18 @@ pub fn notification_sender(provider: &ScriptedProvider) -> fut_mpsc::UnboundedSe
 		.as_ref()
 		.expect("notification sender available")
 		.clone()
+}
+
+/// Returns a sender for pushing notifications to a connection opened after
+/// the first one. `index` 0 is the second connection. Returns `None` if that
+/// connection has not been opened yet.
+pub fn later_notification_sender(
+	provider: &ScriptedProvider,
+	index: usize,
+) -> Option<fut_mpsc::UnboundedSender<String>> {
+	let senders = provider.later_senders.lock().unwrap();
+	let slot = senders.get(index)?.lock().unwrap();
+	slot.as_ref().cloned()
 }
 
 /// Find the json-rpc request id of the just-sent frame so the scripted

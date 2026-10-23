@@ -32,6 +32,7 @@ internal val ProductPermission.icon: ImageVector
         ProductPermission.ChatAuthority -> NovaIcons.PeopleOutline
         ProductPermission.ProfileDisclosure -> NovaIcons.PeopleOutline
         is ProductPermission.StatementStoreAllowance -> NovaIcons.CloudOn
+        is ProductPermission.NftPurseRead -> NovaIcons.Dollar
         is ProductPermission.RemotePermission.NetworkAccess -> NovaIcons.WiFi
         is ProductPermission.RemotePermission.NetworkAccessSet -> NovaIcons.WiFi
         ProductPermission.RemotePermission.WebRtcAccess -> NovaIcons.CallFilled
@@ -64,6 +65,7 @@ internal fun ProductPermission.title(productId: String): String {
         ProductPermission.ChatAuthority -> stringResource(RCommon.string.product_permission_chat_authority_title, productId)
         ProductPermission.ProfileDisclosure -> stringResource(RCommon.string.product_permission_profile_disclosure_title, productId)
         is ProductPermission.StatementStoreAllowance -> stringResource(RCommon.string.product_permission_allowance_title, productId)
+        is ProductPermission.NftPurseRead -> stringResource(RCommon.string.product_permission_nft_purse_read_title, productId, ownerName())
         is ProductPermission.DeviceCapability -> capability.title(productId)
         is ProductPermission.RemotePermission.NetworkAccess -> stringResource(RCommon.string.product_permission_network_title, productId, domain)
         is ProductPermission.RemotePermission.NetworkAccessSet -> stringResource(RCommon.string.product_permission_network_title, productId, domains.joinToString(", "))
@@ -102,6 +104,7 @@ internal fun ProductPermission.subtitle(): String {
         ProductPermission.ChatAuthority -> stringResource(RCommon.string.product_permission_chat_authority_description)
         ProductPermission.ProfileDisclosure -> stringResource(RCommon.string.product_permission_profile_disclosure_description)
         is ProductPermission.StatementStoreAllowance -> stringResource(RCommon.string.product_permission_allowance_description)
+        is ProductPermission.NftPurseRead -> stringResource(RCommon.string.product_permission_nft_purse_read_subtitle, manageLater)
         is ProductPermission.DeviceCapability -> capability.subtitle(manageLater)
         is ProductPermission.RemotePermission.NetworkAccess -> stringResource(RCommon.string.product_permission_network_subtitle, manageLater)
         is ProductPermission.RemotePermission.NetworkAccessSet -> stringResource(RCommon.string.product_permission_network_subtitle, manageLater)
@@ -142,3 +145,8 @@ internal fun ProductPermission.RemotePermission.shortLabel(): String {
         is ProductPermission.RemotePermission.JamPeersAccess -> stringResource(RCommon.string.product_permission_jam_peers_label, genesis)
     }
 }
+
+/** Whose purses an NFT purse read covers, as the user reads it. */
+@Composable
+internal fun ProductPermission.NftPurseRead.ownerName(): String =
+    ownerProductId ?: stringResource(RCommon.string.product_permission_nft_purse_read_owner_account)
