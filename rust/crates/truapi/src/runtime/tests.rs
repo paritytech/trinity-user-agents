@@ -6431,6 +6431,58 @@ fn a_transaction_naming_an_unresolvable_handle_is_refused() {
 	);
 }
 
+/// A granted host builds the transaction itself. A chain it cannot connect to
+/// may never become reachable, so even a v0.2 product is told `Unknown` rather
+/// than invited to retry, with the reason a v0.1 product gets.
+#[test]
+fn a_transaction_for_a_chain_the_host_cannot_connect_to_is_unknown() {
+	let (_platform, host) = granted_pairing_host();
+	let payload = v01::ProductAccountTxPayload {
+		signer: account_id("myapp.dot", 0),
+		// The chain the fixture serves no provider for.
+		genesis_hash: [1; 32],
+		call_data: vec![0x00, 0x00],
+		extensions: vec![],
+		tx_ext_version: 0,
+		contacts: vec![],
+	};
+	let create = |request| {
+		futures::executor::block_on(host.create_transaction(&CallContext::default(), request))
+			.expect_err("the chain cannot be connected")
+	};
+
+	let v2 = create(HostCreateTransactionRequest::V2(payload.clone()));
+	let v1 = create(HostCreateTransactionRequest::V1(payload));
+
+	let CallError::Domain(HostCreateTransactionError::V2(
+		v02::HostCreateTransactionError::Unknown { reason },
+	)) = v2
+	else {
+		panic!("a chain the host cannot connect to is not retryable, got {v2:?}");
+	};
+	assert_eq!(
+		v1,
+		CallError::Domain(HostCreateTransactionError::V1(
+			v01::HostCreateTransactionError::Unknown { reason }
+		))
+	);
+}
+
+/// `ChainUnavailable` is the one creation failure a product may retry on
+/// alone, so it must reach the wire as itself rather than fold into `Unknown`.
+#[test]
+fn a_node_that_cannot_be_asked_reaches_create_transaction_as_chain_unavailable() {
+	use super::transaction_call_error;
+	use crate::runtime::authority::AuthorityError;
+
+	let reason = "cannot select a metadata block".to_string();
+
+	assert_eq!(
+		transaction_call_error(AuthorityError::ChainUnavailable { reason: reason.clone() }),
+		CallError::Domain(v02::HostCreateTransactionError::ChainUnavailable { reason })
+	);
+}
+
 #[test]
 fn auto_signing_serves_sign_payload_locally_without_prompt() {
 	let (platform, host) = granted_pairing_host();
@@ -8187,7 +8239,8 @@ fn subnames_of_one_product_share_one_cached_manifest() {
 #[test]
 fn an_internal_cancellation_never_becomes_the_cancelled_variant() {
 	use super::{
-		account_get_authority_error, signing_call_error, transaction_call_error, vrf_call_error,
+		account_get_authority_error, legacy_transaction_call_error, signing_call_error,
+		transaction_call_error, vrf_call_error,
 	};
 	use crate::runtime::authority::{AuthorityCancelError, AuthorityError};
 	use truapi::CancellationReason;
@@ -8217,6 +8270,11 @@ fn an_internal_cancellation_never_becomes_the_cancelled_variant() {
 		);
 		assert_domain("signing_call_error", reason_name, signing_call_error(cancelled()));
 		assert_domain("transaction_call_error", reason_name, transaction_call_error(cancelled()));
+		assert_domain(
+			"legacy_transaction_call_error",
+			reason_name,
+			legacy_transaction_call_error(cancelled()),
+		);
 	}
 }
 

@@ -564,7 +564,9 @@ fn create_transaction_accepts_confirmation_then_returns_sso_response() {
 	let cx = CallContext::with_request_id("create-tx-1".to_string());
 	let request = HostCreateTransactionRequest::V1(product_tx_payload("myapp.dot"));
 	let response = futures::executor::block_on(host.create_transaction(&cx, request)).unwrap();
-	let HostCreateTransactionResponse::V1(inner) = response;
+	let HostCreateTransactionResponse::V1(inner) = response else {
+		panic!("a v1 request answers with a v1 response");
+	};
 	assert_eq!(inner.transaction, vec![0xca, 0xfe]);
 	let message = submitted_remote_message(&platform, &session);
 	assert!(matches!(

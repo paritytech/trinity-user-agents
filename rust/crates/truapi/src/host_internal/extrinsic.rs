@@ -17,6 +17,7 @@ use subxt::{
 		ClientState, TransactionExtension as SubxtTransactionExtension, substrate::SubstrateConfig,
 		transaction_extensions::VerifySignature,
 	},
+	error::OnlineClientAtBlockError,
 	ext::{
 		frame_decode::extrinsics::{
 			ExtrinsicTypeInfo, TransactionExtension as FrameTransactionExtension,
@@ -297,7 +298,12 @@ pub enum LocalTransactionError {
 		/// Versions the runtime metadata declares.
 		declared: Vec<u8>,
 	},
-	/// The runtime metadata needed to choose and encode the format is unavailable.
+	/// The host could not connect to the chain, for instance because it serves
+	/// no such chain.
+	#[display("{_0}")]
+	NoChainConnection(String),
+	/// The node could not be asked for the current block or its runtime, as
+	/// while a halted chain is redialed. A later call can succeed.
 	#[display("{_0}")]
 	ChainUnavailable(String),
 	/// The caller's extension list does not fit the runtime's pipeline.
@@ -318,10 +324,15 @@ pub async fn build_local_transaction(
 	tx_ext_version: u8,
 ) -> Result<HostCreateTransactionResponse, LocalTransactionError> {
 	let client = chain.online_client(&genesis_hash).await.map_err(|error| {
-		LocalTransactionError::ChainUnavailable(format!("cannot load chain metadata: {error}"))
+		LocalTransactionError::NoChainConnection(format!("cannot load chain metadata: {error}"))
 	})?;
 	let at_block = client.at_current_block().await.map_err(|error| {
-		LocalTransactionError::ChainUnavailable(format!("cannot select a metadata block: {error}"))
+		let reason = format!("cannot select a metadata block: {error}");
+		if node_unanswered(&error) {
+			LocalTransactionError::ChainUnavailable(reason)
+		} else {
+			LocalTransactionError::Other(reason)
+		}
 	})?;
 	let transaction = build_signed_transaction(
 		&Sr25519Signer::from_keypair(keypair),
@@ -332,6 +343,19 @@ pub async fn build_local_transaction(
 		at_block.metadata(),
 	)?;
 	Ok(HostCreateTransactionResponse { transaction })
+}
+
+/// Whether selecting a block failed because a request to the node got no
+/// answer, which a later call can get past, rather than because of what the
+/// node answered, such as metadata this host cannot use.
+fn node_unanswered(error: &OnlineClientAtBlockError) -> bool {
+	matches!(
+		error,
+		OnlineClientAtBlockError::CannotGetCurrentBlock { .. } |
+			OnlineClientAtBlockError::CannotGetBlockHash { .. } |
+			OnlineClientAtBlockError::CannotGetBlockHeader { .. } |
+			OnlineClientAtBlockError::CannotGetSpecVersion { .. }
+	)
 }
 
 /// Choose the extrinsic format for `tx_ext_version`, then assemble it.
@@ -623,8 +647,15 @@ pub fn build_signed_extrinsic_v5(
 /// test modules.
 #[cfg(test)]
 pub mod tests {
+	use std::sync::Arc;
+
 	use super::*;
-	use crate::runtime::statement_allowance::collection::PersonhoodCollection;
+	use crate::{
+		chain_runtime::{RuntimeChainProvider, RuntimeFailure},
+		platform::JsonRpcConnection,
+		runtime::statement_allowance::collection::PersonhoodCollection,
+		test_support::{chain_refusing_follows, test_spawner},
+	};
 	use parity_scale_codec::{Compact, Decode, Encode};
 	use scale_info::{PortableRegistry, TypeDef, TypeDefPrimitive};
 	use subxt::{
@@ -1835,5 +1866,56 @@ pub mod tests {
 			error,
 			"unsupported tx_ext_version 5; the runtime declares transaction extension versions [0]"
 		);
+	}
+
+	fn build_on(
+		chain: &ChainRuntime,
+	) -> Result<HostCreateTransactionResponse, LocalTransactionError> {
+		let keypair = schnorrkel::MiniSecretKey::from_bytes(&[3; 32])
+			.unwrap()
+			.expand_to_keypair(schnorrkel::ExpansionMode::Ed25519);
+		futures::executor::block_on(build_local_transaction(
+			chain,
+			&keypair,
+			[0xbb; 32],
+			&[0x00, 0x00],
+			&[],
+			0,
+		))
+	}
+
+	/// A product may retry `ChainUnavailable` on its own, so it must mean a
+	/// node that could not be asked, here one whose chain stays halted.
+	#[cfg_attr(target_arch = "wasm32", ignore)]
+	#[test]
+	fn a_node_that_cannot_be_asked_is_chain_unavailable() {
+		let (_provider, chain) = chain_refusing_follows(usize::MAX, -32000);
+
+		let error = build_on(&chain).expect_err("no follow is accepted");
+
+		assert!(matches!(error, LocalTransactionError::ChainUnavailable(_)), "{error:?}");
+	}
+
+	/// A chain the host cannot connect to, such as one it serves no provider
+	/// for, may never become reachable, so it must not invite a retry.
+	#[test]
+	fn a_chain_the_host_cannot_connect_to_is_not_chain_unavailable() {
+		struct NoProvider;
+
+		#[async_trait::async_trait]
+		impl RuntimeChainProvider for NoProvider {
+			async fn connect(
+				&self,
+				_genesis_hash: Vec<u8>,
+			) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
+				Err(RuntimeFailure::unavailable("remote_chain_connect"))
+			}
+		}
+
+		let chain = ChainRuntime::new(Arc::new(NoProvider), test_spawner());
+
+		let error = build_on(&chain).expect_err("the chain cannot be connected");
+
+		assert!(matches!(error, LocalTransactionError::NoChainConnection(_)), "{error:?}");
 	}
 }
