@@ -28,6 +28,8 @@
 	<string>$(BRAND_SHARE_ROOT)</string>
 	<key>BrandTermsHost</key>
 	<string>$(BRAND_TERMS_HOST)</string>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
