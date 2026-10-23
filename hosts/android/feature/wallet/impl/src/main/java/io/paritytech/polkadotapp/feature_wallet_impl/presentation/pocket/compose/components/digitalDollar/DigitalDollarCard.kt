@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,17 +37,16 @@ import io.paritytech.polkadotapp.design.components.icon.vectors.Refreshing
 import io.paritytech.polkadotapp.design.components.progress.Shimmer
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
+import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.formatFiatSigned
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
+import io.paritytech.polkadotapp.feature_wallet_impl.R
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.rememberCountUp
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.leather.WalletLeatherRenderer
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.leather.WalletLeatherSurface
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.PocketCardColors
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.leather.WalletLeatherRenderer
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.leather.WalletLeatherRenderer
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.leather.WalletLeatherSurface
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketBalanceSharedElement
@@ -106,35 +106,9 @@ fun CashCardFace(
                 ) { status ->
                     when (status) {
                         DigitalDollarBalanceStatus.Syncing -> SyncProgress()
-                        DigitalDollarBalanceStatus.AccountBackupPending -> AccountBackupPending()
                         is DigitalDollarBalanceStatus.PartlyReady -> PartlyReadyBalance(amount = status.amount)
 
                         DigitalDollarBalanceStatus.TotalOnly -> Unit
-                    }
-                }
-
-                if (isExpanded) {
-                    Column(
-                        modifier = Modifier.align(Alignment.BottomStart)
-                    ) {
-                        AnimatedContent(
-                            targetState = card.balanceStatus,
-                            contentKey = { it::class },
-                            label = "DigitalDollarBalanceStatus"
-                        ) { status ->
-                            when (status) {
-                                DigitalDollarBalanceStatus.Syncing -> SyncProgress()
-                                is DigitalDollarBalanceStatus.PartlyReady -> PartlyReadyBalance(amount = status.amount)
-
-                                DigitalDollarBalanceStatus.TotalOnly -> Unit
-                            }
-                        }
-
-                        BalanceAmount(
-                            amounts = card.amounts,
-                            cardId = card.id,
-                            isHidden = false
-                        )
                     }
                 }
             }
@@ -240,24 +214,6 @@ private fun SyncProgress() {
     }
 }
 
-@Composable
-private fun AccountBackupPending() {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        NovaIcon(
-            modifier = Modifier.size(18.dp),
-            imageVector = NovaIcons.WarningFilled,
-            tint = PocketCardColors.Primary
-        )
-
-        HorizontalSpacer { tiny }
-
-        NovaText(
-            text = stringResource(RCommon.string.pocket_digital_dollar_account_backup_pending),
-            style = PolkadotTheme.typography.body.medium,
-            color = PocketCardColors.Primary
-        )
-    }
-}
 
 private val CardShape = RoundedCornerShape(23.26.dp)
 private val WalletFallback = Color(0xFF3A2417)

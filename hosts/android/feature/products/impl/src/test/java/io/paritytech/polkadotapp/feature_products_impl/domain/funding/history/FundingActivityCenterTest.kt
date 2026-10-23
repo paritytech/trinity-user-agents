@@ -265,7 +265,6 @@ class FundingActivityCenterTest {
         updates = emptyList(),
         started = emptyList(),
         choice = null,
-        saved = null,
         refund = null,
     )
 }

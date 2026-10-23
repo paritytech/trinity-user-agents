@@ -126,7 +126,6 @@ class AppFundingOverlayTest {
             asset = "EUR",
             network = null,
         ),
-        saved = null,
         refund = null,
     )
 }
