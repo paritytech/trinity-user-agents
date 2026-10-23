@@ -51,6 +51,8 @@ private final class FakeWorkerManager: ProductWorkerManaging, @unchecked Sendabl
 
     var activeCount: Int { active.withLock { $0 } }
 
+    func reload(productId _: ProductId) async {}
+
     func acquire(productId _: ProductId) async -> ProductWorkerLease {
         active.withLock { $0 += 1 }
         let token = ProductWorkerToken { [active] in active.withLock { $0 -= 1 } }

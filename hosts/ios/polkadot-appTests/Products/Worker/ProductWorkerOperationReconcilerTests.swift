@@ -20,6 +20,8 @@ private final class CountingWorkerManager: ProductWorkerManaging, @unchecked Sen
         (changes, continuation) = AsyncStream<Int>.makeStream(bufferingPolicy: .unbounded)
     }
 
+    func reload(productId _: ProductId) async {}
+
     func acquire(productId _: ProductId) async -> ProductWorkerLease {
         let held = count.withLock { $0 += 1; return $0 }
         continuation.yield(held)

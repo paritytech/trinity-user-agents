@@ -16,7 +16,7 @@ import UIKitExt
 final class ProductBot: ChatExtensionBot {
     let product: Product
     private let description: String?
-    private let runtime: ChatRuntimeProtocol
+    private let runtime: ReloadableChatRuntime
     private let resolveImage: WidgetImageResolver
     private let logger: LoggerProtocol
 
@@ -33,7 +33,7 @@ final class ProductBot: ChatExtensionBot {
     init(
         product: Product,
         description: String?,
-        runtime: ChatRuntimeProtocol,
+        runtime: ReloadableChatRuntime,
         resolveImage: WidgetImageResolver,
         logger: LoggerProtocol = Logger.shared
     ) {
@@ -69,6 +69,15 @@ final class ProductBot: ChatExtensionBot {
         }
 
         return .processed
+    }
+
+    func reload() async {
+        do {
+            try await runtime.reload()
+            logger.debug("Reloaded product bot: \(product.name)")
+        } catch {
+            logger.error("Failed to reload product bot \(product.name): \(error)")
+        }
     }
 
     /// Tear down the JS engine and cancel background work.

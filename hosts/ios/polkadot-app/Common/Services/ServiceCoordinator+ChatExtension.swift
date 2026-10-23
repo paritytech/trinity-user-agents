@@ -33,6 +33,7 @@ extension ServiceCoordinator {
         }
 
         let botFactory = ProductBotFactory(
+            contentLoader: spaFlowState.contentLoader,
             productFileProvider: productFileProvider,
             runtimeProvider: truapiRuntimeProvider,
             workers: { pocket?.workers },

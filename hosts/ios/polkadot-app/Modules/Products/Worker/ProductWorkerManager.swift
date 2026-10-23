@@ -35,6 +35,8 @@ protocol ProductWorkerManaging: Sendable {
     /// Waits for the boot so the returned lease carries the start result. Balance
     /// with `ProductWorkerToken.unlock()` (or let the token deinit).
     func acquire(productId: ProductId) async -> ProductWorkerLease
+
+    func reload(productId: ProductId) async
 }
 
 /// A single claim on a product's worker. Releases exactly once, whichever comes
@@ -104,6 +106,20 @@ final class ProductWorkerManager: ProductWorkerManaging, @unchecked Sendable {
             token: token,
             result: result ?? .failure(ProductWorkerManagerError.startProducedNoResult)
         )
+    }
+
+    func reload(productId: ProductId) async {
+        let lifecycle = state.withLock { entries -> Task<Void, Never>? in
+            guard var entry = entries[productId], entry.refCount > 0 else { return nil }
+
+            let dispose = chainDispose(productId: productId, after: entry.lifecycle)
+            entry.lifecycle = chainStart(productId: productId, after: dispose)
+            entries[productId] = entry
+            return entry.lifecycle
+        }
+
+        await lifecycle?.value
+        logger.debug("Worker reloaded for \(productId)")
     }
 
     private func retain(productId: ProductId) -> ProductWorkerToken {
