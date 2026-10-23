@@ -205,6 +205,34 @@ struct SPARustRuntimeTests {
         #expect(scripts[1].frameScope == .allFrames)
     }
 
+    @Test func processStartedMetadataUsesCanonicalRuntimeValues() throws {
+        let launchID = try #require(UUID(uuidString: "d93fe846-8f3c-4cfa-a440-402b6f7b43d3"))
+        let context = makeHostProcessStartedContext(
+            appLaunchID: launchID,
+            processStartUptimeMilliseconds: 42,
+            appVersion: "1.2.3",
+            appBuild: 456,
+            appVariant: "debug",
+            operatingSystemVersion: OperatingSystemVersion(
+                majorVersion: 26,
+                minorVersion: 5,
+                patchVersion: 0
+            )
+        )
+
+        #expect(context.osVersion == "26.5")
+        #expect(context.truapiHostVersion == truapiHostVersion())
+        #expect(context.truapiHostVersion == TrUAPIHost.version)
+    }
+
+    @Test func processStartedOSVersionPreservesANonzeroPatch() {
+        #expect(
+            plainProcessStartedOSVersion(
+                OperatingSystemVersion(majorVersion: 26, minorVersion: 5, patchVersion: 1)
+            ) == "26.5.1"
+        )
+    }
+
     @Test func directURLHandlerAllowsSameHostInterceptsOthers() throws {
         let handler = try DirectURLNavigationDecisionHandler(
             baseURL: #require(URL(string: "http://localhost:3000"))

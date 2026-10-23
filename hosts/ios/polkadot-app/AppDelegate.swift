@@ -72,15 +72,12 @@ private extension AppDelegate {
     func recordProcessStarted() {
         #if NIGHTLY || SAFETYNET || UNSTABLE || DEBUG
             issueMonitoringService.recordProcessStarted(
-                HostProcessStartedContext(
+                makeHostProcessStartedContext(
                     appLaunchID: appLaunchID,
                     processStartUptimeMilliseconds: processStartUptimeMilliseconds,
                     appVersion: Bundle.main.appVersion,
                     appBuild: Bundle.main.appBuild.flatMap { Int($0) },
-                    appVariant: issueMonitoringAppVariant,
-                    platform: "ios",
-                    osVersion: UIDevice.current.systemVersion,
-                    truapiHostVersion: TrUAPIHost.version
+                    appVariant: issueMonitoringAppVariant
                 )
             )
         #endif
@@ -127,6 +124,32 @@ private extension AppDelegate {
             }
         }
     #endif
+}
+
+func makeHostProcessStartedContext(
+    appLaunchID: UUID,
+    processStartUptimeMilliseconds: Double,
+    appVersion: String?,
+    appBuild: Int?,
+    appVariant: String,
+    operatingSystemVersion: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion,
+    truapiVersion: String = TrUAPIHost.version
+) -> HostProcessStartedContext {
+    HostProcessStartedContext(
+        appLaunchID: appLaunchID,
+        processStartUptimeMilliseconds: processStartUptimeMilliseconds,
+        appVersion: appVersion,
+        appBuild: appBuild,
+        appVariant: appVariant,
+        platform: "ios",
+        osVersion: plainProcessStartedOSVersion(operatingSystemVersion),
+        truapiHostVersion: truapiVersion
+    )
+}
+
+func plainProcessStartedOSVersion(_ version: OperatingSystemVersion) -> String {
+    let baseVersion = "\(version.majorVersion).\(version.minorVersion)"
+    return version.patchVersion == 0 ? baseVersion : "\(baseVersion).\(version.patchVersion)"
 }
 
 var isUnitTesting: Bool {
