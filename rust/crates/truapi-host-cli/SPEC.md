@@ -1796,8 +1796,9 @@ the shared service-trait contract requires dispatch futures to be `Send`.
 
 Every chain connection opens a fresh WebSocket through `truapi-provider`'s
 WebSocket backend. [`ws.rs`](../truapi-provider/src/ws.rs) sets the limits and
-timeouts. `wss://` certificates are checked against bundled webpki root
-certificates, not the operating system's trust store.
+timeouts. `wss://` certificates are verified with the root certificates built
+into the binary. Certificate authorities added to the operating system are not
+used.
 
 The connection sends a ping after the keepalive interval without an outgoing
 request, and is treated as dead if nothing arrives within the read timeout. The
