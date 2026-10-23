@@ -59,11 +59,13 @@ use clap::{
 	parser::ValueSource,
 };
 use futures::future::BoxFuture;
+use subxt::utils::H256;
 use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 use truapi::{
 	AnnouncedPairing, DebugSink, PairedSsoPeer, PairingHostConfig, PairingHostRuntime,
 	PairingProposal, ResponderExit, SigningHostConfig, SigningHostRuntime, StatementRenewalTarget,
 	WsDebugSink,
+	chain::ExtrinsicService,
 	host_logic::dotns_gateway::{
 		MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_lite_label, is_registrable_full_label,
 	},
@@ -71,7 +73,7 @@ use truapi::{
 		ChatPlatform, HostInfo, PermissionStatusHost, PlatformInfo, ProductExecutionKind, ProductId,
 	},
 	statement_allowance as alloc,
-	statement_allowance::{PersonhoodSigner, collection::PersonhoodCollection},
+	statement_allowance::{ExtrinsicTarget, PersonhoodSigner, collection::PersonhoodCollection},
 	subscription::Spawner,
 };
 
@@ -714,8 +716,6 @@ async fn run_pgas_check(
 	lookback: u32,
 	submit: bool,
 ) -> Result<()> {
-	use std::sync::Arc;
-
 	use truapi::statement_allowance::pgas;
 
 	let entropy = bip39::Mnemonic::parse(mnemonic.trim())
@@ -746,17 +746,18 @@ async fn run_pgas_check(
 		.map_err(anyhow::Error::msg)?;
 	let asset_hub_metadata =
 		alloc::fetch_metadata(&asset_hub_rpc).await.map_err(anyhow::Error::msg)?;
-	let asset_hub_state =
-		alloc::fetch_chain_state(&asset_hub_rpc).await.map_err(anyhow::Error::msg)?;
+	let (spec_version, transaction_version) =
+		alloc::fetch_runtime_version(&asset_hub_rpc).await.map_err(anyhow::Error::msg)?;
+	let genesis_hash =
+		alloc::fetch_genesis_hash(&asset_hub_rpc).await.map_err(anyhow::Error::msg)?;
 	let network_suffix = alloc::slot::read_network_suffix(&asset_hub_rpc)
 		.await
 		.map_err(anyhow::Error::msg)?;
 	println!(
-		"asset hub: metadata V{} specVersion={} txVersion={} genesis=0x{}",
+		"asset hub: metadata V{} specVersion={spec_version} txVersion={transaction_version} \
+		 genesis=0x{}",
 		asset_hub_metadata.metadata_version(),
-		asset_hub_state.spec_version,
-		asset_hub_state.transaction_version,
-		hex::encode(asset_hub_state.genesis_hash),
+		hex::encode(genesis_hash),
 	);
 
 	for candidate in &candidates {
@@ -839,11 +840,13 @@ async fn run_pgas_check(
 		return Ok(());
 	}
 
-	let asset_hub =
-		alloc::ChainContext { metadata: Arc::new(asset_hub_metadata), state: asset_hub_state };
+	let extrinsics = extrinsic_service(&network);
+	let asset_hub_target =
+		ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256(network.asset_hub_genesis) };
 	let outcome = pgas::claim_pgas(pgas::PgasClaim {
 		asset_hub_rpc: &asset_hub_rpc,
-		asset_hub: &asset_hub,
+		asset_hub_metadata: &asset_hub_metadata,
+		asset_hub_target,
 		people_rpc: &people_rpc,
 		people_metadata: &people_metadata,
 		signer: &signer,
@@ -901,14 +904,14 @@ async fn run_alloc_check(
 		.await
 		.map_err(anyhow::Error::msg)?;
 	let metadata = alloc::fetch_metadata(&rpc).await.map_err(anyhow::Error::msg)?;
-	let chain_state = alloc::fetch_chain_state(&rpc).await.map_err(anyhow::Error::msg)?;
+	let (spec_version, transaction_version) =
+		alloc::fetch_runtime_version(&rpc).await.map_err(anyhow::Error::msg)?;
+	let genesis_hash = alloc::fetch_genesis_hash(&rpc).await.map_err(anyhow::Error::msg)?;
 	let network_suffix =
 		alloc::slot::read_network_suffix(&rpc).await.map_err(anyhow::Error::msg)?;
 	println!(
-		"chain: specVersion={} txVersion={} genesis=0x{}",
-		chain_state.spec_version,
-		chain_state.transaction_version,
-		hex::encode(chain_state.genesis_hash),
+		"chain: specVersion={spec_version} txVersion={transaction_version} genesis=0x{}",
+		hex::encode(genesis_hash),
 	);
 
 	for candidate in &candidates {
@@ -986,10 +989,13 @@ async fn run_alloc_check(
 		)
 		.await
 		.map_err(anyhow::Error::msg)?;
+		let extrinsics = extrinsic_service(&network);
+		let target_chain =
+			ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256(network.people_genesis) };
 		match alloc::register_statement_account_pooled(
 			&rpc,
 			&metadata,
-			&chain_state,
+			target_chain,
 			&signer,
 			&scans,
 			&memberships,
@@ -1089,6 +1095,15 @@ fn approval_policy(auto_accept: bool, network: NetworkConfig) -> Result<Approval
 		network.id
 	);
 	Ok(ApprovalPolicy::AutoAccept)
+}
+
+/// Builds the CLI's own extrinsics over `network`'s chains, with the
+/// network's V5 pipelines as the default extrinsic versions.
+fn extrinsic_service(network: &NetworkConfig) -> ExtrinsicService {
+	let provider =
+		Arc::new(chain::WsChainProvider::new(network.people_ws, network.live_chain_endpoints));
+	let versions = Arc::new(chain::PresetExtensionVersions(network.extension_versions()));
+	ExtrinsicService::from_provider(provider, tokio_spawner(), versions)
 }
 
 /// Spawner that runs runtime futures on the tokio runtime, so their WebSocket

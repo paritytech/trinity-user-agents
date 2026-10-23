@@ -966,6 +966,8 @@ impl Permissions for MockPlatform {
 	}
 }
 
+impl crate::platform::ExtrinsicVersionHost for MockPlatform {}
+
 #[async_trait]
 impl Features for MockPlatform {
 	async fn supported_chains(

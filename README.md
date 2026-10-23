@@ -252,6 +252,25 @@ host owns where the bytes live. The crate stores nothing itself: a host implemen
 `StorageClient` over storage it already owns, on web and native alike, so it keeps
 control of quota and of whether the bytes are backed up or encrypted.
 
+### Building extrinsics
+
+The core builds its own extrinsics through `ExtrinsicService` in the `chain`
+module: statement-store and long-term-storage allowances, PGAS claims, Bulletin
+preimages, and the CLI's dotNS registrations. A caller names the call and the
+extensions it cares about; the builder fills every other extension of the
+runtime's pipeline, computes each extension's value from the bytes of the
+extensions after it, signs, and returns a mortal extrinsic born at the finalized
+head. Submitting it stays with the caller.
+
+The extrinsic version follows the host: `transactionExtensionVersions()` lists the
+chains the host builds as V5 general transactions and the extension pipeline each
+uses, and every other chain is V4. A host that never builds V5 can leave the
+callback at its default, an empty list, but then the core cannot build the
+allowance, PGAS or dotNS extrinsics, which are authorized by a proof and exist
+only as V5. Each authorizer is a typed transaction extension (`AsResourcesExtension`,
+`AsPgasExtension`, `AsDotnsGatewayExtension`) whose value encodes against the
+runtime's type by name.
+
 ### Durable transactions
 
 Native signing hosts keep a ledger of signed transactions in the core database,
