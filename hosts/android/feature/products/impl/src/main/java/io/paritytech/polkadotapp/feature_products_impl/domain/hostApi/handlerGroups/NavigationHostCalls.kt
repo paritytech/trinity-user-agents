@@ -20,7 +20,7 @@ class NavigationHostCalls(
             dotNsTldProvider.getTld().flatMap { tld ->
                 val origin = callingProductIdProvider.getProductId().getOrNull()?.toUri()
                 val destination = params.destination.toUri().let { uri ->
-                    // A bare product name (`dim2.paseo`) parses as a path with no host, which no deeplink handler takes.
+                    // A bare product name parses as a path with no host, which no deeplink handler takes.
                     if (uri.scheme == null) DotNsUtils.normalize(uri, tld) ?: uri else uri
                 }
                 val type = DotNsUtils.classifyNavigation(origin, destination, tld)

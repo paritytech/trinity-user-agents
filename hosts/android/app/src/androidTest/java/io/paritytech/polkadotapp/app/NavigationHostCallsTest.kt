@@ -22,18 +22,18 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class NavigationHostCallsTest {
-    // A chat card opens its product by name (`navigateTo("dim2.paseo")`). Read as a URI that name has
-    // no host, so no deeplink handler would take it.
+    // A chat card opens its product by its bare dotNS name. Read as a URI that name has no host, so
+    // no deeplink handler would take it.
     @Test
     fun aBareProductNameNavigatesToThatProduct() {
-        assertEquals("https://dim2.paseo", navigatedTo("dim2.paseo"))
+        assertEquals("https://game.dot", navigatedTo("game.dot"))
     }
 
     @Test
     fun aDestinationWithASchemeIsHandedOverUnchanged() {
         assertEquals(
-            listOf("https://dim2.paseo/nux", "polkadot://dim2.paseo"),
-            listOf("https://dim2.paseo/nux", "polkadot://dim2.paseo").map(::navigatedTo),
+            listOf("https://game.dot/nux", "polkadot://game.dot"),
+            listOf("https://game.dot/nux", "polkadot://game.dot").map(::navigatedTo),
         )
     }
 
@@ -53,8 +53,8 @@ class NavigationHostCallsTest {
         val bridge = ContainerBridge(transport, this, Gson())
         NavigationHostCalls(
             navigationPolicy = NavigationPolicy.DeeplinkNavigation { navigated.trySend(it.toString()) },
-            callingProductIdProvider = { Result.success(ProductId.fromStoredValue("dim2.paseo")) },
-            dotNsTldProvider = PaseoTld,
+            callingProductIdProvider = { Result.success(ProductId.fromStoredValue("game.dot")) },
+            dotNsTldProvider = DotTld,
         ).registerOn(bridge)
 
         incoming.captured("""{"type":"request","id":"r1","method":"navigateTo","params":{"destination":"$destination"}}""")
@@ -63,11 +63,11 @@ class NavigationHostCallsTest {
     }
 
     // Hand-written: on ART mockk hands back the boxed Result of a suspend stub, not its value.
-    private object PaseoTld : DotNsTldProvider {
-        private val paseo = DotNsTld.parse("paseo")!!
+    private object DotTld : DotNsTldProvider {
+        private val dot = DotNsTld.parse("dot")!!
 
-        override fun currentTldOrNull() = paseo
+        override fun currentTldOrNull() = dot
 
-        override suspend fun getTld() = Result.success(paseo)
+        override suspend fun getTld() = Result.success(dot)
     }
 }
