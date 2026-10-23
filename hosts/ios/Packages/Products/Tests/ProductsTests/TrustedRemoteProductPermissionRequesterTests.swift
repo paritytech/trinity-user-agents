@@ -31,11 +31,11 @@ struct TrustedRemoteProductPermissionRequesterTests {
     /// The core grants a first-party product every remote permission without
     /// prompting, and this is the path that decides the same question in the app.
     @Test("A trusted product gets remote access without reaching the user")
-    func trustedProductSkipsRemotePrompts() async {
+    func trustedProductSkipsRemotePrompts() async throws {
         for permission in Self.remotePermissions {
             let (sut, wrapped) = makeSUT()
 
-            let decision = await sut.prompt(productId: trusted, permission: permission)
+            let decision = try await sut.prompt(productId: trusted, permission: permission)
 
             #expect(decision == .allowAlways)
             #expect(wrapped.promptCalls.isEmpty, "\(permission) must not reach the user")
@@ -45,7 +45,7 @@ struct TrustedRemoteProductPermissionRequesterTests {
     /// The whole point of the narrower wrapper: trust for outbound access is not
     /// trust for the camera, another product's account, or the user's identity.
     @Test("A trusted product still prompts for everything that is not remote access")
-    func trustedProductStillPromptsForTheRest() async {
+    func trustedProductStillPromptsForTheRest() async throws {
         for permission: ProductPermission in [
             .deviceCapability(.camera),
             .accountAccess(targetProductId: "other.dot"),
@@ -54,7 +54,7 @@ struct TrustedRemoteProductPermissionRequesterTests {
         ] {
             let (sut, wrapped) = makeSUT()
 
-            let decision = await sut.prompt(productId: trusted, permission: permission)
+            let decision = try await sut.prompt(productId: trusted, permission: permission)
 
             #expect(decision == .deny)
             #expect(wrapped.promptCalls.count == 1, "\(permission) must reach the user")
@@ -62,10 +62,10 @@ struct TrustedRemoteProductPermissionRequesterTests {
     }
 
     @Test("An untrusted product prompts for remote access like any other")
-    func untrustedProductPromptsForRemoteAccess() async {
+    func untrustedProductPromptsForRemoteAccess() async throws {
         let (sut, wrapped) = makeSUT()
 
-        let decision = await sut.prompt(
+        let decision = try await sut.prompt(
             productId: untrusted,
             permission: .networkAccess(domain: "example.com")
         )
@@ -75,10 +75,10 @@ struct TrustedRemoteProductPermissionRequesterTests {
     }
 
     @Test("A batch of remote permissions is granted as one")
-    func trustedProductSkipsRemoteBatches() async {
+    func trustedProductSkipsRemoteBatches() async throws {
         let (sut, wrapped) = makeSUT()
 
-        let decision = await sut.promptBatched(
+        let decision = try await sut.promptBatched(
             productId: trusted,
             permissions: Self.remotePermissions
         )
@@ -91,10 +91,10 @@ struct TrustedRemoteProductPermissionRequesterTests {
     /// to reach the user: granting it here would hand over the camera on the
     /// strength of a network grant.
     @Test("A batch mixing remote access with anything else still prompts")
-    func aMixedBatchStillPrompts() async {
+    func aMixedBatchStillPrompts() async throws {
         let (sut, wrapped) = makeSUT()
 
-        let decision = await sut.promptBatched(
+        let decision = try await sut.promptBatched(
             productId: trusted,
             permissions: [.networkAccess(domain: "example.com"), .deviceCapability(.camera)]
         )
@@ -104,10 +104,10 @@ struct TrustedRemoteProductPermissionRequesterTests {
     }
 
     @Test("An empty batch asks for nothing and is not granted")
-    func anEmptyBatchIsNotGranted() async {
+    func anEmptyBatchIsNotGranted() async throws {
         let (sut, wrapped) = makeSUT()
 
-        let decision = await sut.promptBatched(productId: trusted, permissions: [])
+        let decision = try await sut.promptBatched(productId: trusted, permissions: [])
 
         #expect(decision == .deny)
         #expect(wrapped.promptBatchedCalls.count == 1)

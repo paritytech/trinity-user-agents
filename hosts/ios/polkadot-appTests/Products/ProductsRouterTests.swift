@@ -10,6 +10,15 @@ import Products
 struct ProductsRouterTests {
     private final class StubView: UIViewController, ControllerBackedProtocol {}
 
+    private func showing(_ root: UIViewController) throws -> UIWindow {
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = root
+        window.isHidden = false
+        root.loadViewIfNeeded()
+        return window
+    }
+
     @Test
     func notReadyUntilPresentationViewAttached() {
         let anchor = StubView()
@@ -30,12 +39,52 @@ struct ProductsRouterTests {
     }
 
     @Test
-    func presentReturnsTrueWhenAnchored() {
+    func presentReturnsTrueWhenAnchoredOnScreen() throws {
         let anchor = StubView()
+        let window = try showing(anchor)
         let router = ProductsRouter()
         router.setPresentationView(anchor)
 
         #expect(router.present(view: StubView()))
+        withExtendedLifetime(window) {}
+    }
+
+    @Test
+    func anAnchorOffScreenCannotPresentWithoutAFallback() {
+        let anchor = StubView()
+        let router = ProductsRouter()
+        router.setPresentationView(anchor)
+
+        #expect(!router.present(view: StubView()))
+    }
+
+    @Test
+    func anAnchorOffScreenPresentsOnTheFallback() throws {
+        let fallback = StubView()
+        let window = try showing(fallback)
+        let router = ProductsRouter(fallback: { fallback })
+        router.setPresentationView(StubView())
+        let presented = StubView()
+
+        #expect(router.present(view: presented))
+        #expect(fallback.presentedViewController === presented)
+        withExtendedLifetime(window) {}
+    }
+
+    @Test
+    func aFallbackWithNothingToOfferCannotPresent() {
+        let router = ProductsRouter(fallback: { nil })
+
+        #expect(!router.present(view: StubView()))
+    }
+
+    @Test
+    func aPromptWithNowhereToShowFailsInsteadOfDenying() async {
+        let requester = ProductPermissionRequester(router: ProductsRouter())
+
+        await #expect(throws: ProductPermissionPromptError.notPresentable) {
+            try await requester.prompt(productId: "game.paseo", permission: .deviceCapability(.notifications))
+        }
     }
 
     @Test
