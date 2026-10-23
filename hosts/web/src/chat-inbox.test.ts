@@ -1,28 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import type { ProductContext } from "@parity/truapi-host";
 import { ChatDiagnostics } from "./chat/diagnostics.js";
-import {
-  ChatInbox,
-  DRAFT_PROVIDER_ID,
-  type InboxChange,
-} from "./chat-inbox.js";
-import { DraftChatSource } from "./draft-chat-source.js";
-import { draftCacheKey, draftEnabledKey } from "./draft-chat.js";
+import { ChatInbox, type InboxChange } from "./chat-inbox.js";
+import { messagePortBridge } from "./chat-v2/contract.js";
+import { ChatV2Host } from "./chat-v2/host.js";
+import { chatV2Over } from "./chat-v2/product.js";
 import type { ChatSession } from "./nova-chat-provider.js";
 import { ProductChat, productChatKey } from "./product-chat.js";
-import {
-  ManualClock,
-  MemoryStorage,
-  draftChannel,
-  settle,
-} from "./test-support.js";
+import { MemoryStorage } from "./test-support.js";
 
 const worker = (productId: string): ProductContext => ({
   productId,
   executionKind: "Worker",
 });
 
-/** A session whose Nova chat stays off, so only product and draft providers run. */
+/** A session whose Nova chat stays off, so only product providers run. */
 const session = (walletId: string): ChatSession =>
   ({
     walletId,
@@ -37,8 +29,7 @@ const session = (walletId: string): ChatSession =>
 function setup() {
   const storage = new MemoryStorage();
   const chat = new ProductChat(storage, () => 1);
-  const channels: ReturnType<typeof draftChannel>[] = [];
-  const clock = new ManualClock();
+  const chatV2 = new ChatV2Host({ media: () => null, log: () => {} });
   const workers = new Set<() => void>();
   let names: string[] = [];
   const inbox = new ChatInbox({
@@ -57,16 +48,8 @@ function setup() {
       log: () => {},
     },
     workerNames: () => names,
-    draftWorker: () => {
-      const channel = draftChannel();
-      channels.push(channel);
-      new DraftChatSource(channel.source, {
-        now: clock.now,
-        schedule: clock.schedule,
-      });
-      return channel.host;
-    },
     log: () => {},
+    chatV2,
   });
   const changes: InboxChange[] = [];
   inbox.onChange((change) => changes.push(change));
@@ -78,14 +61,14 @@ function setup() {
     names = next;
     for (const listener of workers) listener();
   };
-  return { inbox, storage, chat, channels, changes, signIn, setWorkers };
+  return { inbox, chat, chatV2, changes, signIn, setWorkers };
 }
 
 const ids = (inbox: ChatInbox) =>
   inbox.providers().map((provider) => provider.id);
 
 describe("chat inbox", () => {
-  test("has one provider per listed worker or product with rooms, and the draft only when turned on", async () => {
+  test("has one room provider per listed worker or product with rooms, and one chat product provider per listed worker", async () => {
     const { inbox, chat, signIn, setWorkers } = setup();
     signIn("w1");
     expect(inbox.problem()).toContain("did not report");
@@ -96,44 +79,52 @@ describe("chat inbox", () => {
       name: "Quiz",
       icon: "",
     });
-    expect(ids(inbox)).toEqual(["product:game.paseo", "product:quiz.paseo"]);
-    inbox.setDraftEnabled(true);
-    expect(ids(inbox)).toContain(DRAFT_PROVIDER_ID);
+    expect(ids(inbox)).toEqual([
+      "product:game.paseo",
+      "product:quiz.paseo",
+      "chat-v2:game.paseo",
+    ]);
     setWorkers([]);
-    expect(ids(inbox)).toEqual(["product:quiz.paseo", DRAFT_PROVIDER_ID]);
+    expect(ids(inbox)).toEqual(["product:quiz.paseo"]);
   });
 
-  test("a new session ends every provider of the old one, and nothing it owed arrives", async () => {
-    const { inbox, storage, channels, changes, signIn } = setup();
+  test("a new session ends every provider of the old one", async () => {
+    const { inbox, chatV2, changes, signIn, setWorkers } = setup();
+    setWorkers(["chat.paseo"]);
     signIn("w1");
-    inbox.setDraftEnabled(true);
-    await settle();
     const first = inbox
       .providers()
-      .find((provider) => provider.id === DRAFT_PROVIDER_ID)!;
-    const owed = first.timeline("ada");
+      .find((provider) => provider.id === "chat-v2:chat.paseo")!;
+    const channel = new MessageChannel();
+    chatV2.connect("chat.paseo", messagePortBridge(channel.port2));
+    const product = chatV2Over(messagePortBridge(channel.port1));
+    await product.createRoom({
+      roomId: "ada",
+      metadata: { name: "Ada" },
+      config: {
+        productSource: true,
+        reactionDetails: false,
+        participants: false,
+        messageActions: false,
+        reportSeen: false,
+      },
+    });
+    const heard: unknown[] = [];
+    first.subscribe((event) => heard.push(event));
+    expect(first.conversations().map((room) => room.id)).toEqual(["ada"]);
 
     signIn("w2");
-    expect(channels[0].closed()).toBe(true);
-    await expect(owed).rejects.toThrow("The draft chat stopped.");
     expect(changes.at(-1)).toEqual({ type: "session" });
-    // The draft is per wallet: off for the second until it is turned on there.
-    expect(inbox.draftEnabled()).toBe(false);
-    expect(ids(inbox)).toEqual([]);
-
-    signIn("w1");
-    expect(inbox.draftEnabled()).toBe(true);
-    await settle();
-    const again = inbox
+    const second = inbox
       .providers()
-      .find((provider) => provider.id === DRAFT_PROVIDER_ID)!;
-    expect(again).not.toBe(first);
-    expect(again.status()).toEqual({ state: "ready" });
-    expect(storage.getItem(draftEnabledKey("paseo", "w1"))).toBe("on");
-    expect(storage.getItem(draftCacheKey("paseo", "w2"))).toBeNull();
+      .find((provider) => provider.id === "chat-v2:chat.paseo")!;
+    expect(second).not.toBe(first);
+    // The old provider hears nothing more.
+    await product.setRoomMetadata({ roomId: "ada", metadata: { name: "x" } });
+    expect(heard).toEqual([]);
 
     inbox.setSession(null);
-    expect(channels.every((channel) => channel.closed())).toBe(true);
+    expect(ids(inbox)).toEqual([]);
     expect(inbox.signedIn()).toBe(false);
   });
 });

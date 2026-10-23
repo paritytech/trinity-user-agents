@@ -39,10 +39,18 @@ export interface WorkersPanel {
   onChange(listener: () => void): () => void;
 }
 
-/** The switch for the draft worker-owned chat. */
-export interface DraftSwitch {
-  enabled(): boolean;
-  setEnabled(on: boolean): void;
+/**
+ * A local demo the Workers page offers, which only a dev server on this
+ * machine provides: the synthetic chat product, run as one of the host's
+ * workers.
+ */
+export interface LocalDemoControl {
+  productId: string;
+  /** Where its code comes from. */
+  source: string;
+  running(): boolean;
+  start(): void;
+  stop(): void;
   restart(): void;
 }
 
@@ -95,8 +103,8 @@ export class ChatScreen {
     private readonly root: HTMLElement,
     private readonly inbox: ChatInboxView,
     private readonly workers: WorkersPanel,
-    private readonly draft: DraftSwitch | null,
     private readonly onActivity: (pendingRequests: number) => void,
+    private readonly demo?: LocalDemoControl,
   ) {
     root.dataset.chatEngine = "off";
     document.body.append(this.call.root);
@@ -586,7 +594,7 @@ export class ChatScreen {
     return [bar, body];
   }
 
-  /** The workers for this wallet, their state, the form to add one, and the draft chat switch. */
+  /** The workers for this wallet, their state, and the form to add one. */
   private drawWorkers(): HTMLElement[] {
     const bar = el("header", "chat-bar chat-bar-small");
     bar.append(this.back(), el("h2", "chat-title chat-title-small", "Workers"));
@@ -662,34 +670,50 @@ export class ChatScreen {
         "A worker runs while this wallet is signed in and this tab is open. It is the product's own code, on this host's origin.",
       ),
     );
-    if (this.draft !== null) body.append(this.drawDraftSwitch(this.draft));
+    if (this.demo !== undefined) body.prepend(this.drawDemo(this.demo));
     return [bar, body];
   }
 
-  private drawDraftSwitch(draft: DraftSwitch): HTMLElement {
-    const section = el("section", "chat-section draft-switch");
-    const label = el("label", "draft-switch-label");
-    const box = el("input", "");
-    box.type = "checkbox";
-    box.checked = draft.enabled();
-    box.dataset.action = "draft-chat";
-    box.addEventListener("change", () => draft.setEnabled(box.checked));
-    label.append(box, el("span", "chat-row-title", "Draft worker-owned chat"));
+  /** The local chat product demo: what it is, and Start, Stop and Restart. */
+  private drawDemo(demo: LocalDemoControl): HTMLElement {
+    const running = demo.running();
+    const section = el("section", "chat-section local-demo");
+    section.dataset.demo = running ? "running" : "stopped";
     section.append(
-      label,
+      el("h3", "chat-section-title", "Local demo: synthetic chat product"),
       el(
         "p",
         "chat-identity-line",
-        "Runs a synthetic chat worker in this tab, with made-up people and messages. It owns its history and delivery, and the host asks it for pages over a draft channel shaped after the Chat Extension v2 RFC draft. Not TrUAPI, and not shipped by any host.",
+        "Runs a made-up chat product as a product worker, through the same loader, archive check and core as any worker. It keeps its own rooms and history (Ada, a group with Ada and Grace, and Lin) in memory, and nothing leaves this tab. It speaks the Chat Extension v2 draft bridge, not TrUAPI, and it is not the Verbosity chat product. Its calls use a synthetic engine that opens no camera or microphone.",
+      ),
+      el(
+        "p",
+        "chat-row-preview",
+        `Product id ${demo.productId} · ${demo.source} · this machine only`,
       ),
     );
-    if (draft.enabled()) {
-      const restart = button("chat-link", "Restart the worker", () =>
-        draft.restart(),
+    const actions = el("div", "local-demo-actions");
+    const action = (label: string, name: string, run: () => void) => {
+      const node = button(
+        name === "demo-start" ? "chat-pill chat-pill-primary" : "chat-pill",
+        label,
+        run,
       );
-      restart.dataset.action = "draft-restart";
-      section.append(restart);
+      node.dataset.action = name;
+      return node;
+    };
+    if (running)
+      actions.append(
+        action("Stop", "demo-stop", () => demo.stop()),
+        action("Restart", "demo-restart", () => demo.restart()),
+      );
+    else {
+      const start = action("Start demo", "demo-start", () => demo.start());
+      start.disabled = !this.inbox.signedIn();
+      if (start.disabled) start.title = "Sign in with a wallet first.";
+      actions.append(start);
     }
+    section.append(actions);
     return section;
   }
 }

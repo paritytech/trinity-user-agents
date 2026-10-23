@@ -7,8 +7,10 @@
  *   request. No keys, statements or chain.
  * - Product rooms: the real provider over the host's TrUAPI Chat store, with a
  *   stand-in worker channel that draws a counter card and echoes text.
- * - Draft: the real draft provider, connected to the synthetic source running
- *   in a real Web Worker, as the host runs it.
+ * - Chat product: the real Chat Extension v2 draft provider and host end,
+ *   with the synthetic chat product (`browser/synthetic-chat-product.ts`) on
+ *   the other side of a `MessageChannel` in this page. The smoke test runs
+ *   the same product as a real product worker.
  */
 import type { HexString } from "@parity/truapi/scale";
 import type { RendererNode } from "@parity/truapi";
@@ -19,7 +21,14 @@ import { decodeMessage, encodeMessage } from "../src/chat/protocol.js";
 import type { ChatInboxView, InboxChange } from "../src/chat-inbox.js";
 import type { ChatProvider } from "../src/chat-provider.js";
 import { ChatScreen } from "../src/chat-screen.js";
-import { DraftChatProvider, startDraftWorker } from "../src/draft-chat.js";
+import { messagePortBridge } from "../src/chat-v2/contract.js";
+import { ChatV2Host } from "../src/chat-v2/host.js";
+import { chatV2Over, type ChatV2Product } from "../src/chat-v2/product.js";
+import { ChatV2Provider } from "../src/chat-v2/provider.js";
+import {
+  startSyntheticChatProduct,
+  type SyntheticChatProduct,
+} from "./synthetic-chat-product.js";
 import {
   NovaChatProvider,
   type NovaEngine,
@@ -42,6 +51,7 @@ const HOP_URL = "wss://hop.invalid";
 const hopSecret = sr25519.secretFromSeed(new Uint8Array(32).fill(5));
 
 const QUIZ = "quiz.test";
+const CHAT_PRODUCT = "chat.test";
 const KIM = `0x${"4b".repeat(32)}` as HexString;
 const SAM = `0x${"5a".repeat(32)}` as HexString;
 const quizWorker: ProductContext = { productId: QUIZ, executionKind: "Worker" };
@@ -387,7 +397,11 @@ function quizChannel(chat: ProductChat): RoomChannel {
 class TestInbox implements ChatInboxView {
   private list: ChatProvider[] = [];
   private readonly listeners = new Set<(change: InboxChange) => void>();
-  draft: DraftChatProvider | null = null;
+  private chatV2: ChatV2Host | null = null;
+  private product: {
+    bridge: ChatV2Product;
+    product: SyntheticChatProduct;
+  } | null = null;
 
   signedIn(): boolean {
     return true;
@@ -463,13 +477,10 @@ class TestInbox implements ChatInboxView {
       },
     });
     const channel = quizChannel(chat);
-    this.draft = new DraftChatProvider({
-      id: "draft",
-      label: "Draft worker chat",
-      connect: startDraftWorker,
-      storage,
-      cacheKey: "draft-cache",
-    });
+    this.stopProduct();
+    this.chatV2?.reset();
+    this.chatV2 = new ChatV2Host({ media: () => null, log: () => {} });
+    await this.startProduct();
     this.list = [
       new NovaChatProvider(novaEngine(), undefined, {
         media,
@@ -490,13 +501,38 @@ class TestInbox implements ChatInboxView {
         gateway: () => "https://gateway.invalid",
         log: () => {},
       }),
-      this.draft,
+      new ChatV2Provider(CHAT_PRODUCT, this.chatV2),
     ];
     for (const provider of this.list)
       provider.subscribe((event) =>
         this.emit({ type: "provider", providerId: provider.id, event }),
       );
     this.emit({ type: "session" });
+  }
+
+  /** Start the chat product, as its worker would start, and wait for its rooms. */
+  private async startProduct(): Promise<void> {
+    const host = this.chatV2!;
+    const channel = new MessageChannel();
+    host.connect(CHAT_PRODUCT, messagePortBridge(channel.port2));
+    const bridge = chatV2Over(messagePortBridge(channel.port1));
+    // Slow enough that a test leaves a room before the answer comes.
+    const product = startSyntheticChatProduct(bridge, { stepMs: 1500 });
+    this.product = { bridge, product };
+    await product.ready;
+  }
+
+  private stopProduct(): void {
+    this.product?.product.stop();
+    this.product?.bridge.close();
+    this.product = null;
+  }
+
+  /** Stop the chat product and start a fresh one, as a worker restart does. */
+  async restartProduct(): Promise<void> {
+    this.stopProduct();
+    this.chatV2!.disconnect(CHAT_PRODUCT);
+    await this.startProduct();
   }
 
   private emit(change: InboxChange): void {
@@ -508,7 +544,8 @@ export interface ChatHarness {
   /** A conversation's unread count, as its provider reports it. */
   unread(providerId: string, conversationId: string): number | undefined;
   show(visible: boolean): void;
-  restartDraft(): void;
+  /** Stop the chat product and start a fresh one, as a worker restart does. */
+  restartProduct(): Promise<void>;
   newSession(): Promise<void>;
   /** What the stand-in engine and worker were asked, in order. */
   asked(): string[];
@@ -533,7 +570,6 @@ export async function mountChatScreen(root: HTMLElement): Promise<ChatHarness> {
       remove: () => {},
       onChange: () => () => {},
     },
-    null,
     (pending) => (root.dataset.pending = String(pending)),
   );
   await inbox.session();
@@ -546,7 +582,7 @@ export async function mountChatScreen(root: HTMLElement): Promise<ChatHarness> {
         ?.conversations()
         .find((summary) => summary.id === conversationId)?.unread,
     show: (visible) => screen.show(visible),
-    restartDraft: () => inbox.draft?.restart(),
+    restartProduct: () => inbox.restartProduct(),
     newSession: () => inbox.session(),
     asked: () => [...asked],
     kimCall: () => {

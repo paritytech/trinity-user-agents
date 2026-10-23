@@ -1,10 +1,3 @@
-import type {
-  DraftPort,
-  HostToWorker,
-  SourcePort,
-  WorkerToHost,
-} from "./draft-chat.js";
-
 /** An in-memory `Storage`, standing in for `localStorage` in tests. */
 export class MemoryStorage implements Storage {
   private readonly items = new Map<string, string>();
@@ -36,42 +29,6 @@ export class MemoryStorage implements Storage {
   keys(): string[] {
     return [...this.items.keys()];
   }
-}
-
-/**
- * The two ends of an in-memory draft chat channel. Each message is copied and
- * arrives in a later microtask, as `postMessage` delivers it, and nothing is
- * delivered either way once the host closes its end.
- */
-export function draftChannel(): {
-  host: DraftPort;
-  source: SourcePort;
-  closed(): boolean;
-  /** Every request the host sent, in order. */
-  sent: HostToWorker[];
-} {
-  let closed = false;
-  let toSource: ((message: HostToWorker) => void) | null = null;
-  let toHost: ((message: WorkerToHost) => void) | null = null;
-  const sent: HostToWorker[] = [];
-  return {
-    sent,
-    closed: () => closed,
-    host: {
-      post: (message) => {
-        if (closed) return;
-        sent.push(structuredClone(message));
-        queueMicrotask(() => !closed && toSource?.(structuredClone(message)));
-      },
-      listen: (handler) => (toHost = handler),
-      close: () => (closed = true),
-    },
-    source: {
-      post: (message) =>
-        queueMicrotask(() => !closed && toHost?.(structuredClone(message))),
-      listen: (handler) => (toSource = handler),
-    },
-  };
 }
 
 /** A clock and a scheduler that move only when a test says so. */

@@ -30,6 +30,9 @@ import { copyInPage } from "./copy.js";
 import { bindDockResize } from "./dock-resize.js";
 import { resolveSource } from "./dotns.js";
 import { createFrameTap } from "./frame-tap.js";
+import { messagePortBridge } from "./chat-v2/contract.js";
+import { ChatV2Host } from "./chat-v2/host.js";
+import { LocalChatDemo, demoAllowed } from "./chat-v2/local-demo.js";
 import { createHostCallbacks } from "./callbacks.js";
 import { connectNetwork, type Network } from "./network.js";
 import {
@@ -83,7 +86,6 @@ import { bulletinImageUrl } from "./product-render.js";
 import { resolveWidget } from "./widget.js";
 import { ChatScreen } from "./chat-screen.js";
 import { ChatInbox } from "./chat-inbox.js";
-import { startDraftWorker } from "./draft-chat.js";
 import { HostContacts, chooseContact } from "./contacts.js";
 import { accountProofs } from "./account-proofs.js";
 import { ProductChat, productChatKey } from "./product-chat.js";
@@ -186,13 +188,45 @@ const chatBadge = document.querySelector<HTMLElement>(
 const chatDiagnostics = new ChatDiagnostics();
 /** Rooms that product workers keep, and the workers that keep them. */
 const productChat = new ProductChat(localStorage);
+/**
+ * The local chat product demo, offered only by a dev server on this machine:
+ * the synthetic chat product, run as one of the host's workers. A build
+ * reads `import.meta.env.DEV` as false and leaves the demo's code out.
+ */
+const localChatDemo =
+  import.meta.env.DEV && demoAllowed(true, window.location.hostname)
+    ? new LocalChatDemo({
+        base: BASE,
+        origin: window.location.origin,
+        port: window.location.port,
+        changed: () => {
+          if (!localChatDemo!.running())
+            chatV2.forget(localChatDemo!.productId);
+          productWorkers.defaultsChanged();
+        },
+      })
+    : null;
+/**
+ * The host end of the Chat Extension v2 draft bridge. It runs call media only
+ * for the local demo, with the synthetic engine, which opens no device.
+ */
+const chatV2 = new ChatV2Host({
+  media: (productId) => localChatDemo?.media(productId) ?? null,
+  log,
+});
+/** The wallet and network the v2 declarations belong to. */
+let chatV2Scope: string | null = null;
 const workerFrames = document.createElement("div");
 workerFrames.id = "worker-frames";
 workerFrames.hidden = true;
 document.body.append(workerFrames);
 const productWorkers = new ProductWorkers({
   runtime: () => runtime,
-  resolve: resolveWorker,
+  resolve: (name, network) =>
+    localChatDemo?.resolves(name)
+      ? localChatDemo.resolve()
+      : resolveWorker(name, network),
+  defaults: () => localChatDemo?.workerNames() ?? [],
   container: workerFrames,
   base: BASE,
   storage: localStorage,
@@ -201,6 +235,11 @@ const productWorkers = new ProductWorkers({
       ? undefined
       : createFrameTap(inspector, channel, runtime.coreWireSchemaHash),
   log,
+  chatV2: {
+    connect: (productId, port) =>
+      chatV2.connect(productId, messagePortBridge(port)),
+    disconnect: (productId) => chatV2.disconnect(productId),
+  },
 });
 /** The faces of Pocket's cards, drawn by the workers of the products behind them. */
 const pocketFaces = new PocketFaces({
@@ -208,7 +247,7 @@ const pocketFaces = new PocketFaces({
   storage: localStorage,
   log,
 });
-/** The chat providers of the signed-in session: Nova, product rooms, and the draft worker chat. */
+/** The chat providers of the signed-in session: Nova, product rooms, and chat products over the v2 draft bridge. */
 const chatInbox = new ChatInbox({
   storage: localStorage,
   diagnostics: chatDiagnostics,
@@ -223,8 +262,8 @@ const chatInbox = new ChatInbox({
     log,
   },
   workerNames: () => productWorkers.names(),
-  draftWorker: startDraftWorker,
   log,
+  chatV2,
 });
 /** The contact picker products open, over the session's chat contacts. */
 const hostContacts = new HostContacts({
@@ -237,16 +276,24 @@ const chatScreen = new ChatScreen(
   element("chat-screen"),
   chatInbox,
   productWorkers,
-  {
-    enabled: () => chatInbox.draftEnabled(),
-    setEnabled: (on) => chatInbox.setDraftEnabled(on),
-    restart: () => chatInbox.restartDraft(),
-  },
   (pendingRequests) => {
     if (chatBadge === null) return;
     chatBadge.hidden = pendingRequests === 0;
     chatBadge.textContent = String(pendingRequests);
   },
+  localChatDemo === null
+    ? undefined
+    : {
+        productId: localChatDemo.productId,
+        source: localChatDemo.source,
+        running: () => localChatDemo.running(),
+        start: () => localChatDemo.start(),
+        stop: () => localChatDemo.stop(),
+        restart: () => {
+          localChatDemo.stop();
+          localChatDemo.start();
+        },
+      },
 );
 const dockButtons = DESTINATIONS.map((destination) => ({
   destination,
@@ -713,10 +760,20 @@ function syncChatSession(): void {
     pocketFaces.setSession(null);
     productWorkers.setSession(null);
     productChat.setScope(null);
+    localChatDemo?.stop();
+    if (chatV2Scope !== null) chatV2.reset();
+    chatV2Scope = null;
     chatInbox.setSession(null);
     return;
   }
-  productChat.setScope(productChatKey(activeNetwork.id, wallet.id));
+  const scope = productChatKey(activeNetwork.id, wallet.id);
+  if (scope !== chatV2Scope) {
+    // The demo belongs to the session it was started in.
+    localChatDemo?.stop();
+    chatV2.reset();
+  }
+  chatV2Scope = scope;
+  productChat.setScope(scope);
   productWorkers.setSession({ walletId: wallet.id, network: activeNetwork });
   pocketFaces.setSession({
     walletId: wallet.id,

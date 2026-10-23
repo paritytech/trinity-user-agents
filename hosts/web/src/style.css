@@ -1598,25 +1598,6 @@ body[data-surface="chat"] .stage-empty {
   margin: 0 0 4px 12px;
 }
 
-.draft-switch {
-  margin-top: 24px;
-  padding-top: 16px;
-  border-top: 1px solid var(--chat-line);
-}
-
-.draft-switch-label {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 6px;
-  cursor: pointer;
-}
-
-.draft-switch .chat-identity-line {
-  display: block;
-  margin: 0 0 8px;
-}
-
 .chat-media {
   display: block;
   max-width: 100%;
@@ -1886,6 +1867,24 @@ button.chat-reaction {
 .product-worker-form {
   flex: none;
   padding: 0 0 16px;
+}
+
+.local-demo {
+  margin: 0 0 20px;
+  padding: 12px 14px;
+  border: 1px dashed var(--chat-line);
+  border-radius: 14px;
+}
+
+.local-demo .chat-identity-line,
+.local-demo .chat-row-preview {
+  display: block;
+  margin: 0 0 8px;
+}
+
+.local-demo-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .product-worker-list {

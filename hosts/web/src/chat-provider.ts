@@ -18,8 +18,8 @@ import type { RenderHooks } from "./product-render.js";
  *
  * This is the web host's own seam, not TrUAPI. Three providers implement it:
  * the host's Nova chat engine, the rooms product workers keep through TrUAPI
- * Chat, and a draft worker-owned source shaped after the Chat Extension v2
- * RFC draft.
+ * Chat, and the rooms chat products keep themselves over the Chat Extension
+ * v2 draft bridge (`src/chat-v2/`).
  */
 export interface ChatProvider {
   /** Unique on the screen, such as `nova` or `product:<productId>`. */
